@@ -861,7 +861,7 @@ func payloadWithDistinctPart(t *testing.T, db *store.DB, tag string) (*payloads.
 	part := tag + "-PART-1"
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: p.ID, PartNumber: part, PartsPerCycle: 1,
-	}), "create template line")
+	}, ""), "create template line")
 	return p, part
 }
 
@@ -910,9 +910,9 @@ func TestBinManifestService_SyncOrClearForReleased_NoTemplatePreservesManifest(t
 			"here is a bin that books nothing to CMS and reports as having crossed nothing.",
 			len(parsed.Items))
 	}
-	if parsed.Items[0].CatID != "PART" {
-		t.Errorf("manifest item CatID = %q, want %q (the prior list, untouched)",
-			parsed.Items[0].CatID, "PART")
+	if parsed.Items[0].PartNumber != "PART" {
+		t.Errorf("manifest item part number = %q, want %q (the prior list, untouched)",
+			parsed.Items[0].PartNumber, "PART")
 	}
 }
 
@@ -955,10 +955,10 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	if len(parsed.Items) != 1 {
 		t.Fatalf("manifest items = %d, want 1 (the template has one line)", len(parsed.Items))
 	}
-	if parsed.Items[0].CatID != wantPart {
-		t.Errorf("manifest item CatID = %q, want %q (the template's part_number). A payload "+
+	if parsed.Items[0].PartNumber != wantPart {
+		t.Errorf("manifest item part number = %q, want %q (the template's part_number). A payload "+
 			"code here matches no part number, so the bin books nothing to CMS.",
-			parsed.Items[0].CatID, wantPart)
+			parsed.Items[0].PartNumber, wantPart)
 	}
 	// The line carries no count of its own — that is what uop_remaining, just
 	// asserted above, is for. A second copy here is the staleness the old

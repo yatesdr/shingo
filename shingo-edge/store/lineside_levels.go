@@ -62,12 +62,12 @@ type LinesideLevel struct {
 //
 // NO COALESCE TO THE CLAIM, deliberately, and this is the one site where that
 // rule is load-bearing rather than stylistic. A fallback here does not degrade
-// to "slightly less accurate"; it mints an authoritative row under a part
-// number nobody established, and Core stores it keyed on that name.
+// to "slightly less accurate"; it mints an authoritative row under a payload
+// nobody established, and Core stores it keyed on that name.
 //
-// The bucket term matches on part_number so a bucket belonging to another part
-// is not summed under this one. Losing sight of it costs an adjustment Core's
-// ledger still covers; attributing it costs a wrong authoritative row.
+// The bucket term matches on payload_code so a bucket belonging to another
+// payload is not summed under this one. Losing sight of it costs an adjustment
+// Core's ledger still covers; attributing it costs a wrong authoritative row.
 func (db *DB) ListLinesideLevels() ([]LinesideLevel, error) {
 	rows, err := db.Query(`
 		SELECT pn.core_node_name,
@@ -82,11 +82,11 @@ func (db *DB) ListLinesideLevels() ([]LinesideLevel, error) {
 		JOIN style_node_claims c
 		  ON c.style_id = p.active_style_id AND c.core_node_name = pn.core_node_name
 		LEFT JOIN (
-			SELECT node_id, part_number, SUM(qty) AS qty
+			SELECT node_id, payload_code, SUM(qty) AS qty
 			FROM node_lineside_bucket
 			WHERE state = 'active'
-			GROUP BY node_id, part_number
-		) bk ON bk.node_id = pn.id AND bk.part_number = r.lineside_payload_code
+			GROUP BY node_id, payload_code
+		) bk ON bk.node_id = pn.id AND bk.payload_code = r.lineside_payload_code
 		WHERE c.role = 'consume'
 		  AND pn.core_node_name != ''
 		  AND (r.active_bin_id IS NOT NULL OR COALESCE(bk.qty, 0) > 0)`)

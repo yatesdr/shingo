@@ -39,8 +39,8 @@ func TestCoverage_ListInventory(t *testing.T) {
 	// this test asserted against before the derivation landed.
 	pay := &payloads.Payload{Code: "PAY-I", UOPCapacity: 10}
 	payloads.Create(db.DB, pay)
-	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "CAT-1", PartsPerCycle: 2})
-	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "CAT-2", PartsPerCycle: 3})
+	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "CAT-1", PartsPerCycle: 2}, "")
+	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "CAT-2", PartsPerCycle: 3}, "")
 
 	binFull := &bins.Bin{BinTypeID: bt.ID, Label: "INV-FULL", NodeID: &nodeA.ID, Status: "available"}
 	bins.Create(db.DB, binFull)
@@ -60,7 +60,7 @@ func TestCoverage_ListInventory(t *testing.T) {
 	}
 	byKey := map[string]inventory.Row{}
 	for _, r := range rows {
-		byKey[r.BinLabel+"|"+r.CatID] = r
+		byKey[r.BinLabel+"|"+r.PartNumber] = r
 	}
 	r1, ok := byKey["INV-FULL|CAT-1"]
 	if !ok {
@@ -133,7 +133,7 @@ func TestListInventory_QtyFollowsUOPNotTheManifest(t *testing.T) {
 
 	pay := &payloads.Payload{Code: "PAY-DRAIN", UOPCapacity: 10}
 	payloads.Create(db.DB, pay)
-	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "KNOWN", PartsPerCycle: 3})
+	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "KNOWN", PartsPerCycle: 3}, "")
 
 	b := &bins.Bin{BinTypeID: bt.ID, Label: "DRAIN-BIN", NodeID: &node.ID, Status: "available"}
 	bins.Create(db.DB, b)
@@ -147,7 +147,7 @@ func TestListInventory_QtyFollowsUOPNotTheManifest(t *testing.T) {
 			t.Fatalf("List: %v", err)
 		}
 		for _, r := range rows {
-			if r.BinLabel == "DRAIN-BIN" && r.CatID == catID {
+			if r.BinLabel == "DRAIN-BIN" && r.PartNumber == catID {
 				return r.Qty
 			}
 		}

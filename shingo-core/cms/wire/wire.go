@@ -100,9 +100,24 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 			txnType = cfg.DecreaseType
 		}
 		out = append(out, MiddlewareTx{
-			TicketNumber:    1,
-			EntryNumber:     i + 1,
-			PartNumber:      t.CatID,
+			TicketNumber: 1,
+			EntryNumber:  i + 1,
+			// THE PAYLOAD CODE, NOT THE CAT ID, and the two are different
+			// identifiers for the same physical part. Shingo keys its own
+			// parts_per_cycle lookup on the cat id (payload_manifest.part_number,
+			// e.g. "10276"); CMS knows the part by the payload code
+			// (payloads.code, e.g. "7332B4-6RR0A.06"). At Springfield those two
+			// columns hold visibly different things, so sending the wrong one is
+			// not a near miss — it is an identifier CMS has never heard of.
+			//
+			// This carried t.CatID until IT confirmed the contract (2026-09-05).
+			// The field NAMES in this struct were matched to the vendor's sample;
+			// the VALUE bound here was chosen from shingo's side and chose the
+			// internal one. That is F4 in the handoff — "the thirteen field
+			// spellings are inferred from one sample, one review of the vendor
+			// schema is owed before the first real POST" — and this is that
+			// review landing on the one field it changed.
+			PartNumber:      t.PayloadCode,
 			StockLocation:   t.Storeroom,
 			Bin:             t.BinLabel,
 			Quantity:        qty,

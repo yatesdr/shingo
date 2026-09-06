@@ -47,14 +47,14 @@ CREATE TABLE node_lineside_bucket (
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
     pair_key     TEXT NOT NULL DEFAULT '',
     style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    part_number  TEXT NOT NULL,
+    payload_code  TEXT NOT NULL,
     qty          INTEGER NOT NULL DEFAULT 0,
     state        TEXT NOT NULL DEFAULT 'active',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE UNIQUE INDEX idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, style_id, part_number)
+    ON node_lineside_bucket(node_id, style_id, payload_code)
     WHERE state = 'active';
 CREATE INDEX idx_lineside_node_state ON node_lineside_bucket(node_id, state);
 CREATE INDEX idx_lineside_pair_state ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
@@ -85,7 +85,7 @@ func TestCaptureCreatesActiveBucket(t *testing.T) {
 	if b.State != StateActive || b.Qty != 60 {
 		t.Fatalf("bucket state=%s qty=%d, want active/60", b.State, b.Qty)
 	}
-	if b.StyleID != 10 || b.PartNumber != "P-500" || b.NodeID != 100 {
+	if b.StyleID != 10 || b.PayloadCode != "P-500" || b.NodeID != 100 {
 		t.Fatalf("bucket identifiers wrong: %+v", b)
 	}
 }
@@ -155,7 +155,7 @@ func TestCaptureCrossStyleFoldsNotDrops(t *testing.T) {
 	}
 
 	var active int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket WHERE node_id=100 AND part_number='P-500' AND state='active'`).Scan(&active)
+	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket WHERE node_id=100 AND payload_code='P-500' AND state='active'`).Scan(&active)
 	if active != 1 {
 		t.Errorf("active bucket count=%d, want 1 (one physical pile per node+part)", active)
 	}
@@ -195,7 +195,7 @@ func TestCaptureReactivatesInactive(t *testing.T) {
 	// Still exactly one row for this (node, style, part).
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket
-		WHERE node_id=? AND style_id=? AND part_number=?`,
+		WHERE node_id=? AND style_id=? AND payload_code=?`,
 		100, 10, "P-500").Scan(&count)
 	if count != 1 {
 		t.Fatalf("expected 1 row after reactivate, got %d", count)
@@ -209,7 +209,7 @@ func TestDeactivateOtherStylesLeavesKeptStyleUntouched(t *testing.T) {
 		t.Fatalf("Capture A: %v", err)
 	}
 	if _, err := Capture(db, 100, "", 20, "P-600", 40); err != nil {
-		// Both active is legal here because part_number differs —
+		// Both active is legal here because payload_code differs —
 		// matters under either the legacy (node, style, part) index
 		// or the Round-3 A* narrowed (node, part) index. Per-style
 		// transient overlap on the *same* part is no longer allowed
@@ -422,12 +422,12 @@ func TestUniqueActivePerNodeStylePart(t *testing.T) {
 	// must be rejected by the unique index — Capture always merges so
 	// this exercises the index itself.
 	if _, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, part_number, qty, state)
+		(node_id, pair_key, style_id, payload_code, qty, state)
 		VALUES (100, '', 10, 'P-500', 60, 'active')`); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 	_, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, part_number, qty, state)
+		(node_id, pair_key, style_id, payload_code, qty, state)
 		VALUES (100, '', 10, 'P-500', 10, 'active')`)
 	if err == nil {
 		t.Fatal("expected unique-index violation on second active insert, got nil")
@@ -440,7 +440,7 @@ func TestDeactivateDeletesZeroQtyRows(t *testing.T) {
 	// Manually seed a zero-qty active row (wouldn't normally exist, but
 	// we want to confirm the cleanup happens).
 	if _, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, part_number, qty, state)
+		(node_id, pair_key, style_id, payload_code, qty, state)
 		VALUES (100, '', 10, 'P-500', 0, 'active')`); err != nil {
 		t.Fatalf("seed zero row: %v", err)
 	}

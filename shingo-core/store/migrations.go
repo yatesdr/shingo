@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"sort"
 	"strings"
 
 	"shingocore/store/schema"
@@ -4141,7 +4143,436 @@ func migrationList() []migration {
 		{104, "drop corrections — a table nothing has ever written",
 			v104DropCorrections,
 			func(q schema.Querier) bool { return schema.TableAbsent(q, "corrections") }},
+		{105, "lineside_buckets: one payload_code column, the key and the sum on the same value",
+			v105LinesideBucketPayloadCode,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "lineside_buckets", "payload_code") &&
+					schema.ColumnAbsent(q, "lineside_buckets", "part_number") &&
+					schema.ColumnAbsent(q, "lineside_buckets", "cat_id")
+			}},
+		{106, "drop demands — a production quota nobody ever set and nothing ever read",
+			v106DropDemands,
+			func(q schema.Querier) bool { return schema.TableAbsent(q, "demands") }},
+		{107, "parts: a part number and its controls cat id on one row, and a manifest line pointing at it",
+			v107Parts,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "parts") &&
+					schema.ColumnExists(q, "parts", "part_number") &&
+					schema.ColumnExists(q, "parts", "catid") &&
+					schema.ColumnExists(q, "payload_manifest", "part_id")
+			}},
+		{108, "correct the manifest: mint the parts, move the cat ids onto them, re-point the lines",
+			v108CorrectManifestIdentity,
+			// A data migration with no schema post-condition to self-heal
+			// against. A verify that re-derived the correction would re-run it
+			// on every boot at a plant whose kit lines are legitimately still
+			// un-re-pointed. This migration's predicate lives inside its body,
+			// where it can refuse the transaction instead of repeating it.
+			nil},
 	}
+}
+
+// v107Parts gives a part its own row, with BOTH of its names on it.
+//
+// A part is known by two identifiers belonging to two different systems: the
+// PART NUMBER CMS books against, and the CAT ID a cell's PLC declares it is
+// running. They name the same physical thing, and they lived in different
+// tables under names that described each other's contents — which is how a cat
+// id came to be typed into all 144 payload_manifest.part_number rows.
+//
+// CAT ID FOLLOWS THE PART, NOT THE CELL (owner ruling, 2026-09-06). A consume
+// cell combining four parts mints a new cat id for the part it outputs; the
+// four inputs each carry their own, made at their own sub-cells. So the cat id
+// is a property of the part and sits beside its part number on one row.
+//
+// THE FK IS THE STRUCTURAL GUARD, and it is why this is a table rather than a
+// convention: a cat id cannot be WRITTEN into a manifest line if the line
+// points at a parts row. Validation can be forgotten at a door — there were six
+// doors into this column and one had none at all — and a foreign key cannot.
+//
+// part_id IS NULLABLE and the NOT NULL does not land here. v108 re-points every
+// line it can seed without inventing anything; the kit components are typed in
+// by hand afterwards, and a constraint refusing them in the meantime would
+// refuse a plant its own boot.
+func v107Parts(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS parts (
+		id          BIGSERIAL PRIMARY KEY,
+		part_number TEXT NOT NULL UNIQUE,
+		catid       TEXT NOT NULL DEFAULT '',
+		description TEXT NOT NULL DEFAULT '',
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("v107 create parts: %w", err)
+	}
+	// NOT unique: two parts sharing a cat id is a data error worth SEEING, and
+	// a unique index would turn it into a migration that will not run.
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_parts_catid ON parts(catid) WHERE catid <> ''`); err != nil {
+		return fmt.Errorf("v107 index parts.catid: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE payload_manifest
+		ADD COLUMN IF NOT EXISTS part_id BIGINT REFERENCES parts(id)`); err != nil {
+		return fmt.Errorf("v107 add payload_manifest.part_id: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_payload_manifest_part ON payload_manifest(part_id)`); err != nil {
+		return fmt.Errorf("v107 index payload_manifest.part_id: %w", err)
+	}
+	return nil
+}
+
+// PlantConfirmStrayManifestLinesEnv names the environment variable that
+// authorises v108 to DELETE manifest lines. Without it, v108 deletes none.
+//
+// Set it to "1" only after somebody has stood at the plant and confirmed the
+// payload it names is not a real kit. The two candidates at Springfield
+// (payloads 15 and 27) each carry two lines whose values are two OTHER
+// payloads' lines, inserted minutes after them in the same session — the shape
+// of a copy-through, and the owner reads it as one. It is still a deletion of
+// production rows, so it waits for a person.
+const PlantConfirmStrayManifestLinesEnv = "SHINGO_CONFIRM_STRAY_MANIFEST_LINES"
+
+// v108CorrectManifestIdentity is the data half: mint a part per payload, move
+// the old manifest value onto that part as its cat id, re-point the line.
+//
+// WHAT THE OLD VALUES ARE. Every one of the 144 lines at the two plants holds a
+// cat id, and they were never wrong — only mislabeled. The form's identity
+// input renders placeholder="CATID" and the importer documents its column as
+// "Manifest Part (CATID)", so this MOVES the values rather than replacing them.
+// Nothing is invented and no map from IT is needed.
+//
+// WHERE THE PART NUMBER COMES FROM (owner ruling A3, 2026-09-06): CMS books
+// against the payload code, and for a payload holding ONE part the payload code
+// IS that part's number. So a single-line payload seeds
+// (part_number := payloads.code, catid := the old line value) and its line
+// re-points — ~140 of the 144 lines, in two statements.
+//
+// KIT LINES ARE NOT SEEDED, deliberately. A kit's payload code names the KIT,
+// so it is nobody's component part number and there is nothing in the database
+// that is. Those lines keep their value and a NULL part_id until a person types
+// the component's number on the payloads page. Every cat-id read goes through
+// both states for exactly that window.
+//
+// THE PREDICATE IS THE POINT. The wrong-part-on-press guard derives its
+// expected set from these values; an empty set is INERT rather than loud; and
+// the live monitors at both plants carry no manual pin at all. A correction
+// that quietly emptied a set would disarm those cells with nothing in any log.
+// So this computes every payload's derived cat-id set before and after and
+// refuses the whole transaction on any difference it did not make on purpose.
+func v108CorrectManifestIdentity(tx *sql.Tx) error {
+	before, err := derivedCATIDsByPayload(tx)
+	if err != nil {
+		return fmt.Errorf("v108 snapshot derived cat ids: %w", err)
+	}
+
+	// Hopkinsville's seeded test row, named exactly — this deletes that row and
+	// nothing that merely looks like it.
+	res, err := tx.Exec(`DELETE FROM payload_manifest pm
+		USING payloads p
+		WHERE p.id = pm.payload_id AND p.code = 'Test-Payload' AND pm.part_number = '0123'`)
+	if err != nil {
+		return fmt.Errorf("v108 delete the Test-Payload seed row: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("migrations: v108 deleted %d Test-Payload/0123 seed row(s)", n)
+	}
+
+	// The stray lines, and only with a person's say-so. STRUCTURAL rather than
+	// by id: a line on a MULTI-line payload whose value is also carried by a
+	// DIFFERENT payload's line. That is the copy-through shape the census
+	// measured, and it cannot match a real kit component unless that component
+	// is also somebody else's entire payload.
+	strays, err := scanCodeValuePairs(tx.Query(`SELECT p.code, pm.part_number
+		FROM payload_manifest pm
+		JOIN payloads p ON p.id = pm.payload_id
+		WHERE (SELECT count(*) FROM payload_manifest x WHERE x.payload_id = pm.payload_id) > 1
+		  AND EXISTS (SELECT 1 FROM payload_manifest y
+		              WHERE y.part_number = pm.part_number AND y.payload_id <> pm.payload_id)
+		ORDER BY p.code, pm.part_number`))
+	if err != nil {
+		return fmt.Errorf("v108 find stray manifest lines: %w", err)
+	}
+	confirmed := os.Getenv(PlantConfirmStrayManifestLinesEnv) == "1"
+	deletedStray := map[string]bool{}
+	for _, st := range strays {
+		if !confirmed {
+			log.Printf("migrations: v108 payload %s carries a line (%s) that another payload also carries "+
+				"— left in place. If it is copy-through rather than a kit component, set %s=1 and re-run",
+				st.code, st.value, PlantConfirmStrayManifestLinesEnv)
+			continue
+		}
+		deletedStray[st.code] = true
+		log.Printf("migrations: v108 deleting stray manifest line %s from payload %s (%s=1)",
+			st.value, st.code, PlantConfirmStrayManifestLinesEnv)
+	}
+	if confirmed && len(strays) > 0 {
+		if _, err := tx.Exec(strayManifestLineDeleteSQL); err != nil {
+			return fmt.Errorf("v108 delete stray manifest lines: %w", err)
+		}
+	}
+
+	// Mint a part for every payload now holding exactly one line and move that
+	// line's value onto it. ON CONFLICT so a re-run, or a part somebody already
+	// typed in by hand, is not a failure — and the cat id only fills in when the
+	// part has none, because a typed value is the more recent human statement.
+	if _, err := tx.Exec(`INSERT INTO parts (part_number, catid)
+		SELECT p.code, pm.part_number
+		  FROM payloads p
+		  JOIN payload_manifest pm ON pm.payload_id = p.id
+		 WHERE (SELECT count(*) FROM payload_manifest x WHERE x.payload_id = p.id) = 1
+		ON CONFLICT (part_number) DO UPDATE
+		   SET catid = CASE WHEN parts.catid = '' THEN excluded.catid ELSE parts.catid END,
+		       updated_at = NOW()`); err != nil {
+		return fmt.Errorf("v108 mint parts from single-line payloads: %w", err)
+	}
+	repointed, err := tx.Exec(`UPDATE payload_manifest pm
+		SET part_number = p.code, part_id = pt.id
+		FROM payloads p, parts pt
+		WHERE pm.payload_id = p.id
+		  AND pt.part_number = p.code
+		  AND (SELECT count(*) FROM payload_manifest x WHERE x.payload_id = p.id) = 1`)
+	if err != nil {
+		return fmt.Errorf("v108 re-point single-line manifest lines: %w", err)
+	}
+	n, _ := repointed.RowsAffected()
+	log.Printf("migrations: v108 re-pointed %d single-line manifest row(s) onto their parts", n)
+
+	after, err := derivedCATIDsByPayload(tx)
+	if err != nil {
+		return fmt.Errorf("v108 re-read derived cat ids: %w", err)
+	}
+	var diffs []string
+	for code, was := range before {
+		if deletedStray[code] {
+			continue // the owner asked for this one; it is logged above, not refused
+		}
+		if now := after[code]; now != was {
+			diffs = append(diffs, fmt.Sprintf("  payload %s: was %q, now %q", code, was, now))
+		}
+	}
+	for code, now := range after {
+		if _, seen := before[code]; !seen && !deletedStray[code] {
+			diffs = append(diffs, fmt.Sprintf("  payload %s: was (none), now %q", code, now))
+		}
+	}
+	if len(diffs) > 0 {
+		sort.Strings(diffs)
+		return fmt.Errorf("v108 REFUSED: %d payload(s) would leave this correction with a different "+
+			"cat-id set than they entered it with, and a changed set silently arms or disarms the "+
+			"wrong-part guard at whatever cell runs them:\n%s",
+			len(diffs), strings.Join(diffs, "\n"))
+	}
+	return nil
+}
+
+// RunManifestIdentityCorrection runs v108's body against an already-migrated
+// database, in its own transaction.
+//
+// IT EXISTS FOR THE TESTS, AND FOR ONE OPERATIONAL CASE. The template database
+// every docker test opens has already migrated, so a test that wants to watch
+// the correction run has to be able to ask for it. The operational case is the
+// same shape: after a person has entered a kit's components by hand, or set
+// SHINGO_CONFIRM_STRAY_MANIFEST_LINES, the correction has more it can finish —
+// and re-running it is safe by construction, because every statement in it is
+// an upsert or a no-op against rows already in their corrected shape.
+func RunManifestIdentityCorrection(db *DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := v108CorrectManifestIdentity(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// strayManifestLineDeleteSQL deletes exactly the rows v108's stray query names.
+// The predicate is spelled twice and must stay identical: a report and a
+// deletion that describe different rows is the worst possible version of this.
+const strayManifestLineDeleteSQL = `DELETE FROM payload_manifest pm
+	WHERE (SELECT count(*) FROM payload_manifest x WHERE x.payload_id = pm.payload_id) > 1
+	  AND EXISTS (SELECT 1 FROM payload_manifest y
+	              WHERE y.part_number = pm.part_number AND y.payload_id <> pm.payload_id)`
+
+type codeValuePair struct{ code, value string }
+
+func scanCodeValuePairs(rows *sql.Rows, qErr error) ([]codeValuePair, error) {
+	if qErr != nil {
+		return nil, qErr
+	}
+	defer rows.Close()
+	var out []codeValuePair
+	for rows.Next() {
+		var p codeValuePair
+		if err := rows.Scan(&p.code, &p.value); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// derivedCATIDsByPayload reads what the Edge's guard would derive: per payload
+// code, the DISTINCT cat ids its manifest lines resolve to, comma-joined in
+// order. It reads through BOTH states of a line — the part's catid once the
+// line is re-pointed, the line's own value while it is not — which is the same
+// expression payloads.PayloadCATIDs ships, so this measures the thing that
+// actually runs rather than a second opinion about it.
+func derivedCATIDsByPayload(tx *sql.Tx) (map[string]string, error) {
+	rows, err := tx.Query(`SELECT p.code,
+			string_agg(DISTINCT COALESCE(NULLIF(pt.catid, ''), pm.part_number), ','
+				ORDER BY COALESCE(NULLIF(pt.catid, ''), pm.part_number))
+		FROM payload_manifest pm
+		JOIN payloads p ON p.id = pm.payload_id
+		LEFT JOIN parts pt ON pt.id = pm.part_id
+		WHERE COALESCE(NULLIF(pt.catid, ''), pm.part_number) <> ''
+		GROUP BY p.code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var code, joined string
+		if err := rows.Scan(&code, &joined); err != nil {
+			return nil, err
+		}
+		out[code] = joined
+	}
+	return out, rows.Err()
+}
+
+// v106DropDemands removes the demands table.
+//
+// ZERO ROWS AT BOTH PLANTS, FOR ITS WHOLE LIFE. It modelled a per-part
+// production quota — a target qty, a produced counter, and the remainder — and
+// no operator ever entered one. The page that created them is deleted with it.
+//
+// ITS ONE WRITER WROTE INTO NOTHING. HandleBinUOPDelta called IncrementProduced
+// on every production tick, an UPDATE keyed by cat_id that matched no row and
+// no-oped every time. No query read produced_qty back: not a page, not a
+// report, not the replenishment math. The production history the counter looked
+// like it was keeping is in bin_uop_ledger and its daily roll-up, written by
+// the same delta a few lines earlier.
+//
+// AND ITS KEY COLUMN WAS THE CROSSED WIRE IN MINIATURE: `cat_id`, validated
+// against the payload CATALOG — so the value a human typed under a cat-id label
+// had to be a payload code to be accepted at all. The name and the check
+// disagreed in the same direction as payload_manifest.part_number. Nothing has
+// to be decided about which one it should have been.
+//
+// NOT demand_registry, AND NOT demand_origins. Those are different tables with
+// the same word in their names: the registry is the derived payload→loader map
+// the threshold monitor runs on, and the episodes are the live demand grain
+// behind /demand-episodes. Both are untouched. Only the quota table goes.
+//
+// The baseline CREATE goes with it — a dropped table the baseline still creates
+// comes back on the next fresh install, which is the failure v92 named for
+// production_log and v104 re-proved for corrections.
+func v106DropDemands(tx *sql.Tx) error {
+	_, err := tx.Exec(`DROP TABLE IF EXISTS demands`)
+	return err
+}
+
+// LinesideBucketsUniqueConstraintV105 is the post-v105 name of the uniqueness
+// constraint. The pre-v105 name (LinesideBucketsUniqueConstraint, still what
+// the baseline creates) says "part" about a column that holds a payload code;
+// v105 renames the constraint with the column so the two agree.
+//
+// A rename, not a drop-and-add: the constraint's index is the bucket key and
+// dropping it — even inside a transaction — is a needless rebuild on a table
+// the applier writes on every consume tick.
+const LinesideBucketsUniqueConstraintV105 = "lineside_buckets_node_pair_style_payload_key"
+
+// v105LinesideBucketPayloadCode collapses lineside_buckets' two payload columns
+// into one, named payload_code, and it is a correctness fix wearing a rename.
+//
+// THE TABLE HELD THE SAME KIND OF VALUE TWICE:
+//
+//   - The KEY (created as part_number, briefly cat_id at v105) — what the
+//     UPSERT conflicts on, what the GC matches, what the Edge accumulates
+//     under. Every writer feeds it a payload code: the release modal's chips
+//     are the claim's ALLOWED PAYLOAD CODES, the consume tick drains by
+//     payload, and Edge's own ListLinesideLevels joins it straight against
+//     process_node_runtime_states.lineside_payload_code.
+//   - A separate payload_code LATCH (v20), added so SystemUOPForPayload could
+//     sum bins and buckets per payload. It was written from whichever BIN the
+//     reporting Edge had at the node.
+//
+// ON A SINGLE-PAYLOAD NODE THOSE AGREE. On a node that allows several — where
+// an operator pulls payload B off a bin holding payload A — they do not, and
+// the SUM used the latch: B's stock counted toward A's on-hand, inflating it
+// and suppressing A's replenishment. That is the Springfield 74576 shape
+// reached by a third route, and the fix is to stop storing the answer twice.
+//
+// THE KEY'S VALUE WINS, because the key is the pile's own identity and the
+// latch is a fact about a bin that happened to be nearby. Rows where the two
+// disagree change attribution, which is the point; the count is logged so the
+// change is visible rather than silent.
+func v105LinesideBucketPayloadCode(tx *sql.Tx) error {
+	// The key column is part_number on a database that never ran v105 and
+	// cat_id on one that did. Idempotent by inspection: PostgreSQL has no
+	// RENAME COLUMN IF EXISTS.
+	keyCol := ""
+	for _, c := range []string{"part_number", "cat_id"} {
+		if schema.ColumnExists(tx, "lineside_buckets", c) {
+			keyCol = c
+			break
+		}
+	}
+	if keyCol == "" {
+		return nil // already collapsed
+	}
+
+	// Report what changes attribution before it changes. A disagreement is
+	// expected on exactly the multi-payload nodes described above; zero is the
+	// answer at a plant that only ever ran single-payload consume cells.
+	var reattributed int
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT count(*) FROM lineside_buckets
+		WHERE COALESCE(payload_code, '') <> '' AND payload_code <> %s`, keyCol)).Scan(&reattributed); err != nil {
+		return fmt.Errorf("v105 count re-attributed buckets: %w", err)
+	}
+	if reattributed > 0 {
+		log.Printf("migrations: v105 %d lineside_bucket row(s) had a latched payload_code "+
+			"different from their key; the key wins and their stock now counts toward the "+
+			"payload they are a pile of, not the payload of the bin that was at the node",
+			reattributed)
+	}
+
+	// Drop the latch and its index, then rename the key onto the freed name.
+	// Renaming the key preserves the unique constraint and its index, which is
+	// the bucket's identity — a drop-and-recreate would rebuild it for nothing.
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_lineside_buckets_payload`); err != nil {
+		return fmt.Errorf("v105 drop idx_lineside_buckets_payload: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE lineside_buckets DROP COLUMN IF EXISTS payload_code`); err != nil {
+		return fmt.Errorf("v105 drop lineside_buckets.payload_code latch: %w", err)
+	}
+	if _, err := tx.Exec(fmt.Sprintf(
+		`ALTER TABLE lineside_buckets RENAME COLUMN %s TO payload_code`, keyCol)); err != nil {
+		return fmt.Errorf("v105 rename lineside_buckets.%s: %w", keyCol, err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payload_code)`); err != nil {
+		return fmt.Errorf("v105 recreate idx_lineside_buckets_payload: %w", err)
+	}
+
+	// The constraint name travels with the column it describes. Guarded by
+	// introspection because the old name is only present on a database that
+	// reached here through the baseline or v65.
+	if _, err := tx.Exec(fmt.Sprintf(`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'lineside_buckets' AND con.conname = '%s'
+			) THEN
+				ALTER TABLE lineside_buckets RENAME CONSTRAINT %s TO %s;
+			END IF;
+		END $$`, LinesideBucketsUniqueConstraint,
+		LinesideBucketsUniqueConstraint, LinesideBucketsUniqueConstraintV105)); err != nil {
+		return fmt.Errorf("v105 rename lineside_buckets unique constraint: %w", err)
+	}
+	return nil
 }
 
 // v104DropCorrections removes the corrections table.

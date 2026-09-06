@@ -62,14 +62,17 @@ func newMiddlewareStubWith(t *testing.T, status int, response string, h http.Han
 			// body whenever the runtime felt like it — and every assertion
 			// downstream is on that recording. It works today only because the
 			// bodies are small.
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("stub read body: %v", err)
+			}
 			m.mu.Lock()
 			m.bodies = append(m.bodies, body)
 			st, resp := m.status, m.response
 			m.mu.Unlock()
 
 			w.WriteHeader(st)
-			_, _ = w.Write([]byte(resp))
+			w.Write([]byte(resp))
 		}
 	}
 	m.srv = httptest.NewServer(h)
@@ -170,8 +173,10 @@ func tagBoundary(t *testing.T, db *store.DB, name, storeroom string) (*nodes.Nod
 	testutil.MustNoErr(t, db.SetNodeProperty(root.ID, material.CMSStoreroomProperty, storeroom), "tag boundary")
 	slot := &nodes.Node{Name: name + "-SLOT", Enabled: true, ParentID: &root.ID}
 	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
-	root, _ = db.GetNode(root.ID)
-	slot, _ = db.GetNode(slot.ID)
+	gotRoot, err := db.GetNode(root.ID)
+	root = testutil.Must(t, gotRoot, err, "reload boundary root")
+	gotSlot, err := db.GetNode(slot.ID)
+	slot = testutil.Must(t, gotSlot, err, "reload boundary slot")
 	return root, slot
 }
 
@@ -194,15 +199,16 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	testutil.MustNoErr(t, db.CreatePayload(pay), "create payload")
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: pay.ID, PartNumber: "PART-X", PartsPerCycle: 2,
-	}), "create template line")
+	}, ""), "create template line")
 
 	_, srcSlot := tagBoundary(t, db, "E2E-SUPERMARKET", "SM01")
 	_, dstSlot := tagBoundary(t, db, "E2E-LINE", "MAN")
 
 	bin := createTestBinAtNode(t, db, pay.Code, srcSlot.ID, "BIN-E2E")
 	// PARTIALLY DRAWN DOWN: 8 of the 24 cycles left.
-	m := bins.Manifest{Items: []bins.ManifestEntry{{CatID: "PART-X"}}}
-	body, _ := json.Marshal(m)
+	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: "PART-X"}}}
+	body, err := json.Marshal(m)
+	testutil.MustNoErr(t, err, "marshal manifest")
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 8), "set manifest")
 
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
@@ -254,8 +260,16 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	if departure["TransactionType"] != "D" || arrival["TransactionType"] != "I" {
 		t.Errorf("types = %v / %v, want D and I", departure["TransactionType"], arrival["TransactionType"])
 	}
-	if departure["PartNumber"] != "PART-X" {
-		t.Errorf("part number = %v, want PART-X", departure["PartNumber"])
+	// THE IDENTIFIER. CMS books this payload against its CODE, because a bin of
+	// one part is a bin of that part and the code is the name the two systems
+	// share (owner ruling, 2026-09-06). The manifest line names the same part;
+	// on a single-line payload the two answers cannot be told apart, which is
+	// why the discriminating pin lives on the kit case — a multi-line payload's
+	// code names the KIT and matches no line, and posting it once per line
+	// books the movement N times. See TestBuild_MultiLinePayloadIsNotPostedPerLine.
+	if departure["PartNumber"] != "E2E-PAYLOAD" {
+		t.Errorf("part number = %v, want E2E-PAYLOAD — the payload code is what CMS "+
+			"knows this part by", departure["PartNumber"])
 	}
 	if departure["Resource"] != "AMR-042" {
 		t.Errorf("resource = %v, want AMR-042 — the robot that carried it", departure["Resource"])
@@ -295,7 +309,7 @@ func TestCMSEndToEnd_RefusalIsTerminalAndCarriesNoCredentials(t *testing.T) {
 			stub.bodies = append(stub.bodies, []byte("x"))
 			stub.mu.Unlock()
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte("rejected: key=" + r.Header.Get("x-access-key") +
+			w.Write([]byte("rejected: key=" + r.Header.Get("x-access-key") +
 				" secret=" + r.Header.Get("x-secret-key")))
 		})
 	eng := cmsEngine(t, db, stub.srv.URL)
@@ -304,14 +318,15 @@ func TestCMSEndToEnd_RefusalIsTerminalAndCarriesNoCredentials(t *testing.T) {
 	testutil.MustNoErr(t, db.CreatePayload(pay), "create payload")
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: pay.ID, PartNumber: "PART-R", PartsPerCycle: 1,
-	}), "create template line")
+	}, ""), "create template line")
 
 	_, srcSlot := tagBoundary(t, db, "E2E-REJ-SRC", "SM02")
 	_, dstSlot := tagBoundary(t, db, "E2E-REJ-DST", "DOCK")
 
 	bin := createTestBinAtNode(t, db, pay.Code, srcSlot.ID, "BIN-E2E-REJ")
-	m := bins.Manifest{Items: []bins.ManifestEntry{{CatID: "PART-R"}}}
-	body, _ := json.Marshal(m)
+	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: "PART-R"}}}
+	body, err := json.Marshal(m)
+	testutil.MustNoErr(t, err, "marshal manifest")
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 3), "set manifest")
 
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
@@ -367,7 +382,7 @@ func TestCMSEndToEnd_UntaggedBoundariesPostNothing(t *testing.T) {
 	testutil.MustNoErr(t, db.CreatePayload(pay), "create payload")
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: pay.ID, PartNumber: "PART-U", PartsPerCycle: 1,
-	}), "create template line")
+	}, ""), "create template line")
 
 	// Synthetic roots with NO cms_storeroom — the old predicate made exactly
 	// these boundaries by default, so a robot pickup booked a storeroom
@@ -378,8 +393,9 @@ func TestCMSEndToEnd_UntaggedBoundariesPostNothing(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(dst), "create carrier node")
 
 	bin := createTestBinAtNode(t, db, pay.Code, src.ID, "BIN-E2E-UNTAGGED")
-	m := bins.Manifest{Items: []bins.ManifestEntry{{CatID: "PART-U"}}}
-	body, _ := json.Marshal(m)
+	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: "PART-U"}}}
+	body, err := json.Marshal(m)
+	testutil.MustNoErr(t, err, "marshal manifest")
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 5), "set manifest")
 
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{

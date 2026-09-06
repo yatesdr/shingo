@@ -40,9 +40,9 @@ type Row struct {
 	Destination string `json:"destination,omitempty"`
 
 	PayloadCode string `json:"payload_code"`
-	CatID       string `json:"cat_id"`
+	PartNumber  string `json:"part_number"`
 	// Qty is derived at query time as UOPRemaining x the payload template's
-	// parts_per_cycle for this CatID, not read off the bin manifest. Zero
+	// parts_per_cycle for this part, not read off the bin manifest. Zero
 	// when the template carries no line for the part.
 	Qty          int64 `json:"qty"`
 	UOPRemaining int   `json:"uop_remaining"`
@@ -62,10 +62,14 @@ WITH bin_items AS (
     -- The LEFT JOIN keeps a bin listed when its template has no line for
     -- the part; the count is then 0, which is the honest answer when there
     -- is no ratio to count by.
+    -- EITHER KEY: the line is written as 'part_number' and every bin already on
+    -- a plant floor carries 'catid'. Both spellings named the same thing, and a
+    -- jsonb column is not rewritten under a running plant, so reads take the
+    -- new key and fall back — matching domain.ManifestEntry.UnmarshalJSON.
     SELECT b.id AS bin_id, b.label AS bin_label, bt.code AS bin_type,
            b.node_id, b.status, b.payload_code, b.uop_remaining,
            b.manifest_confirmed AS confirmed, b.claimed_by,
-           (item->>'catid') AS cat_id,
+           COALESCE(item->>'part_number', item->>'catid') AS part_number,
            COALESCE(b.uop_remaining * pm.parts_per_cycle, 0)::bigint AS qty
     FROM bins b
     JOIN bin_types bt ON bt.id = b.bin_type_id
@@ -79,7 +83,8 @@ WITH bin_items AS (
         END
     ) AS item ON true
     LEFT JOIN payload_manifest pm
-           ON pm.payload_id = p.id AND pm.part_number = (item->>'catid')
+           ON pm.payload_id = p.id
+          AND pm.part_number = COALESCE(item->>'part_number', item->>'catid')
     WHERE item IS NOT NULL
 
     UNION ALL
@@ -88,7 +93,7 @@ WITH bin_items AS (
     SELECT b.id, b.label, bt.code,
            b.node_id, b.status, b.payload_code, b.uop_remaining,
            b.manifest_confirmed, b.claimed_by,
-           '' AS cat_id, 0 AS qty
+           '' AS part_number, 0 AS qty
     FROM bins b
     JOIN bin_types bt ON bt.id = b.bin_type_id
     WHERE b.manifest IS NULL
@@ -105,7 +110,7 @@ SELECT
     (bi.claimed_by IS NOT NULL AND o.id IS NOT NULL) AS in_transit,
     COALESCE(o.delivery_node, '') AS destination,
     COALESCE(bi.payload_code, '') AS payload_code,
-    COALESCE(bi.cat_id, '') AS cat_id,
+    COALESCE(bi.part_number, '') AS part_number,
     COALESCE(bi.qty, 0) AS qty,
     bi.uop_remaining,
     bi.confirmed
@@ -120,7 +125,7 @@ LEFT JOIN nodes grp ON grp.id = COALESCE(
 LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
 LEFT JOIN orders o ON o.id = bi.claimed_by
     AND o.status NOT IN (%s)
-ORDER BY group_name, lane_name, COALESCE(n.depth, 0), node_name, bi.bin_label, bi.cat_id
+ORDER BY group_name, lane_name, COALESCE(n.depth, 0), node_name, bi.bin_label, bi.part_number
 `, protocol.TerminalStatusSQLList())
 
 // List returns one denormalized inventory row per (bin, manifest item).
@@ -138,7 +143,7 @@ func List(db *sql.DB) ([]Row, error) {
 			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
 			&r.BinID, &r.BinLabel, &r.BinType, &r.Status,
 			&r.InTransit, &r.Destination,
-			&r.PayloadCode, &r.CatID, &r.Qty, &r.UOPRemaining, &r.Confirmed,
+			&r.PayloadCode, &r.PartNumber, &r.Qty, &r.UOPRemaining, &r.Confirmed,
 		); err != nil {
 			return nil, err
 		}
@@ -150,7 +155,7 @@ func List(db *sql.DB) ([]Row, error) {
 // BucketRow is the denormalized lineside_buckets listing row used by
 // the Core inventory page. Mirrors the field naming on Row so the JS
 // renderer can reuse the existing cell/lane/node columns alongside
-// the bucket-specific fields (Station, StyleID, PartNumber, Qty,
+// the bucket-specific fields (Station, StyleID, PayloadCode, Qty,
 // State).
 //
 // State ("active" | "stranded") is derived at query time from the
@@ -169,9 +174,10 @@ type BucketRow struct {
 	NodeName  string `json:"node_name"`
 	Zone      string `json:"zone"`
 
-	Station     string `json:"station"`
-	StyleID     int64  `json:"style_id"`
-	PartNumber  string `json:"part_number"`
+	Station string `json:"station"`
+	StyleID int64  `json:"style_id"`
+	// PayloadCode is the bucket's identity and its key. It used to be two
+	// columns — see ApplyLinesideBucketDelta and v105.
 	PayloadCode string `json:"payload_code"`
 	Qty         int    `json:"qty"`
 	State       string `json:"state"`
@@ -199,8 +205,7 @@ SELECT
     CASE WHEN lane_type.code = 'LANE' THEN COALESCE(lane.name, '') ELSE '' END AS lane_name,
     COALESCE(n.name, b.core_node_name) AS node_name,
     COALESCE(n.zone, '') AS zone,
-    b.station, b.style_id, b.part_number,
-    COALESCE(b.payload_code, '') AS payload_code,
+    b.station, b.style_id, b.payload_code,
     b.qty, b.updated_at,
     (
       EXISTS (
@@ -225,7 +230,7 @@ LEFT JOIN nodes grp ON grp.id = COALESCE(
     n.parent_id
 )
 LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
-ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.part_number
+ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.payload_code
 `
 
 // ListLinesideBuckets returns every lineside_buckets row joined to the
@@ -246,7 +251,7 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 		if err := rows.Scan(
 			&r.ID,
 			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
-			&r.Station, &r.StyleID, &r.PartNumber, &r.PayloadCode, &r.Qty, &r.UpdatedAt,
+			&r.Station, &r.StyleID, &r.PayloadCode, &r.Qty, &r.UpdatedAt,
 			&stranded,
 		); err != nil {
 			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
@@ -319,10 +324,10 @@ func DeleteLinesideBucket(db *sql.DB, id int64) (int, error) {
 		coreNodeName string
 		pairKey      string
 		styleID      int64
-		partNumber   string
+		payloadCode  string
 	)
-	if err := tx.QueryRow(`SELECT station, core_node_name, pair_key, style_id, part_number
-		FROM lineside_buckets WHERE id=$1`, id).Scan(&station, &coreNodeName, &pairKey, &styleID, &partNumber); err != nil {
+	if err := tx.QueryRow(`SELECT station, core_node_name, pair_key, style_id, payload_code
+		FROM lineside_buckets WHERE id=$1`, id).Scan(&station, &coreNodeName, &pairKey, &styleID, &payloadCode); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
@@ -336,10 +341,10 @@ func DeleteLinesideBucket(db *sql.DB, id int64) (int, error) {
 	n, _ := res.RowsAffected()
 
 	// Matching dedup row uses bucketScopeKey's pipe-delimited shape:
-	// <CoreNodeName>|<PairKey>|<StyleID>|<PartNumber>. Inline here so
+	// <CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>. Inline here so
 	// store/inventory/ doesn't depend on shingocore/uop just for the
 	// helper.
-	scopeKey := fmt.Sprintf("%s|%s|%d|%s", coreNodeName, pairKey, styleID, partNumber)
+	scopeKey := fmt.Sprintf("%s|%s|%d|%s", coreNodeName, pairKey, styleID, payloadCode)
 	if _, err := tx.Exec(`DELETE FROM inventory_delta_dedup
 		WHERE station=$1 AND scope_kind='bucket' AND scope_key=$2`, station, scopeKey); err != nil {
 		return 0, fmt.Errorf("delete dedup row for bucket %d (scope_key=%s): %w", id, scopeKey, err)

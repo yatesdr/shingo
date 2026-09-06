@@ -72,7 +72,10 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	// requested style's. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
 
-	plan, err := BuildProducePlan(node, runtime, swapClaim, time.Now(), occupancy, primedPositions)
+	// The carrier's contents, in the ledger's identifiers. Resolved here because
+	// BuildProducePlan is pure and the template lives on Core.
+	plan, err := BuildProducePlan(node, runtime, swapClaim, time.Now(), occupancy, primedPositions,
+		e.producedManifest(claim.PayloadCode, int64(runtime.RemainingUOPCached)))
 	if err != nil {
 		return nil, err
 	}
@@ -515,6 +518,51 @@ func (e *Engine) dispatchProduceIngest(node *processes.Node, claim *processes.No
 // prior successful stamp+clear — the guard is what makes the release click
 // idempotent). Ingest enqueue failure fails the release CLOSED: a full bin
 // must not leave un-manifested when the operator can just click again.
+// producedManifest names what a carrier this cell just filled actually contains,
+// in the identifiers the ledger counts by.
+//
+// THE TEMPLATE'S PART NUMBERS, NOT THE PAYLOAD CODE. A bin's manifest lists
+// parts; a payload code names a KIND OF CONTENT, and the two coincide only for
+// a single-part payload. Both produce sites used to write claim.PayloadCode
+// here, which is right for a bin of one part and wrong for a kit — and wrong at
+// any plant whose manifest lines do not spell the part the way the payload code
+// does. Where it is wrong, EVERY produced carrier is uncountable: the movement
+// builds no CMS rows at all and the part reaches the inventory ledger nowhere.
+// The build-failure counter says so per movement; this is the cause it was
+// pointing at.
+//
+// Asking the template is what makes the two cases one path, because nothing
+// here can tell them apart. One line per template line: material.go mints a
+// transaction per part and the wire rolls EntryNumber over them under one
+// ticket.
+//
+// FALLS BACK TO THE PAYLOAD CODE when Core has no template. That is today's
+// behaviour and it is still a guess — for a single-part payload it is the right
+// answer and for a kit it is a fiction, and this function cannot tell which it
+// is holding. The uncounted-lines log fires on the next movement and names the
+// bin, which is the honest outcome for a payload nobody has given a template.
+func (e *Engine) producedManifest(payloadCode string, qty int64) []protocol.IngestManifestItem {
+	// coreClient may be nil (tests, and any build that never wired one) — its own
+	// Available() is nil-safe for exactly that reason, and this asks before
+	// dereferencing rather than after.
+	var resp *PayloadManifestResponse
+	if e.coreClient.Available() {
+		resp, _ = e.coreClient.FetchPayloadManifest(payloadCode)
+	}
+	if resp == nil || len(resp.Items) == 0 {
+		e.logFn("produce: no manifest template for %s — the carrier is stamped with the payload "+
+			"code, which the ledger cannot count. Give the payload a template line.", payloadCode)
+		return []protocol.IngestManifestItem{{PartNumber: payloadCode, Quantity: qty, Description: payloadCode}}
+	}
+	out := make([]protocol.IngestManifestItem, 0, len(resp.Items))
+	for _, it := range resp.Items {
+		out = append(out, protocol.IngestManifestItem{
+			PartNumber: it.PartNumber, Quantity: qty, Description: it.Description,
+		})
+	}
+	return out
+}
+
 func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil
@@ -535,11 +583,7 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 	// QueueIngestManifest's qty argument — the same number, one line down — is
 	// what Core writes to uop_remaining, and shipping the two consistently is
 	// what makes that readable. Do not read this field as a part count.
-	manifest := []protocol.IngestManifestItem{{
-		PartNumber:  claim.PayloadCode,
-		Quantity:    qty,
-		Description: claim.PayloadCode,
-	}}
+	manifest := e.producedManifest(claim.PayloadCode, qty)
 	if err := e.orderMgr.QueueIngestManifest(
 		claim.PayloadCode, "", binID, node.CoreNodeName, qty, manifest,
 		time.Now().UTC().Format(time.RFC3339),

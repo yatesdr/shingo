@@ -153,7 +153,7 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 	if len(inactive) != 1 {
 		t.Fatalf("inactive buckets = %d, want 1", len(inactive))
 	}
-	if inactive[0].StyleID != otherStyleID || inactive[0].PartNumber != "PART-OLD" {
+	if inactive[0].StyleID != otherStyleID || inactive[0].PayloadCode != "PART-OLD" {
 		t.Errorf("unexpected inactive bucket: %+v", inactive[0])
 	}
 

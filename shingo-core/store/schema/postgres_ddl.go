@@ -324,6 +324,12 @@ CREATE TABLE IF NOT EXISTS payload_bin_types (
 CREATE TABLE IF NOT EXISTS payload_manifest (
     id              BIGSERIAL PRIMARY KEY,
     payload_id      BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,
+    -- The column names a PART and has since it was created. Its VALUES at both
+    -- plants are cat ids, because the entry form asked for one — that is a data
+    -- correction (v107/v108), not a reason to rename the column after the
+    -- mistake. The baseline is the schema as it WAS, and migrations from v21
+    -- onward name this column part_number and must keep resolving against a
+    -- fresh replay.
     part_number     TEXT NOT NULL DEFAULT '',
     parts_per_cycle BIGINT NOT NULL DEFAULT 1,
     description     TEXT NOT NULL DEFAULT '',
@@ -450,16 +456,6 @@ CREATE TABLE IF NOT EXISTS edge_registry (
 -- silently sharing one identity — this whole change exists to end.
 CREATE UNIQUE INDEX IF NOT EXISTS edge_registry_station_uid_key
     ON edge_registry (station_uid) WHERE station_uid <> '';
-
-CREATE TABLE IF NOT EXISTS demands (
-    id           BIGSERIAL PRIMARY KEY,
-    cat_id       TEXT NOT NULL UNIQUE,
-    description  TEXT NOT NULL DEFAULT '',
-    demand_qty   BIGINT NOT NULL DEFAULT 0,
-    produced_qty BIGINT NOT NULL DEFAULT 0,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
 CREATE TABLE IF NOT EXISTS test_commands (
     id              BIGSERIAL PRIMARY KEY,

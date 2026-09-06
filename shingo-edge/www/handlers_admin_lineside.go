@@ -23,7 +23,7 @@ type linesideBucketRow struct {
 	StationName string
 	ProcessName string
 	StyleName   string
-	PartNumber  string
+	PayloadCode string
 	PairKey     string
 	Qty         int
 	State       string

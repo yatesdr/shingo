@@ -51,7 +51,7 @@ func TestPhase3Backfill_InFlightBuckets(t *testing.T) {
 	}
 	byPart := map[string]fakeBucketCall{}
 	for _, c := range sink.bucketCalls {
-		byPart[c.PartNumber] = c
+		byPart[c.PayloadCode] = c
 	}
 	if byPart["PART-BF"].Delta != 35 {
 		t.Errorf("PART-BF seed delta = %d, want 35 (in-flight qty)", byPart["PART-BF"].Delta)
@@ -140,7 +140,7 @@ func TestBucketBackfillNeeded_PopulatedCoreReturnsFalse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(UOPStateResponse{
 			Buckets: []LinesideBucketRow{
-				{NodeName: "BF-POP-NODE", PartNumber: "PART-BFP",
+				{NodeName: "BF-POP-NODE", PayloadCode: "PART-BFP",
 					StyleID: styleID, Qty: 8},
 			},
 		})

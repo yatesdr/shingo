@@ -60,9 +60,9 @@ type Bin struct {
 	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
 }
 
-// ManifestEntry is a single line in a bin's manifest — one CatID / part
-// number, optionally tagged with a lot code and free-form notes.
-// Marshalled into the bins.manifest JSON column.
+// ManifestEntry is a single line in a bin's manifest — one part number,
+// optionally tagged with a lot code and free-form notes. Marshalled into the
+// bins.manifest JSON column.
 //
 // IT CARRIES NO QUANTITY, AND THAT IS DELIBERATE. The manifest says WHICH
 // parts are in the carrier; how many is bins.uop_remaining x the payload
@@ -81,10 +81,45 @@ type Bin struct {
 //
 // Historical bins in production still carry a `qty` key. It is ignored on
 // read; nothing migrates it, because nothing reads it.
+//
+// ── THE KEY IS `part_number`, AND `catid` IS STILL READ ─────────────────────
+//
+// It was written as `catid` for as long as this column has existed, matching
+// payload_manifest's own column — which was itself named part_number and filled
+// with cat ids. Both spellings named the same intent and neither described what
+// was in the box. The line names a PART; the key says so now.
+//
+// Reads accept either, because every bin standing on a plant floor today
+// carries the old key and no migration rewrites a jsonb column under a running
+// plant. UnmarshalJSON takes `part_number` when present and falls back to
+// `catid`; writes emit `part_number` only. A bin loaded before the upgrade and
+// consumed after it reads correctly the whole way through, which is the only
+// property that matters here.
 type ManifestEntry struct {
-	CatID   string `json:"catid"`
-	LotCode string `json:"lot_code,omitempty"`
-	Notes   string `json:"notes,omitempty"`
+	PartNumber string `json:"part_number"`
+	LotCode    string `json:"lot_code,omitempty"`
+	Notes      string `json:"notes,omitempty"`
+}
+
+// UnmarshalJSON reads a manifest line under either key. See the type comment:
+// `part_number` is what this writes, `catid` is what every bin already on the
+// floor carries, and a plant runs both at once for as long as those bins take
+// to drain.
+func (e *ManifestEntry) UnmarshalJSON(b []byte) error {
+	// Alias defeats the recursion; the extra field catches the legacy spelling.
+	type entry ManifestEntry
+	var raw struct {
+		entry
+		LegacyCatID string `json:"catid"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*e = ManifestEntry(raw.entry)
+	if e.PartNumber == "" {
+		e.PartNumber = raw.LegacyCatID
+	}
+	return nil
 }
 
 // Manifest is the parsed form of a Bin.Manifest JSON field — a flat

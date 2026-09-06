@@ -201,11 +201,11 @@ type BinUOPRow struct {
 // local nodeByName map, so Core's internal NodeID is decorative
 // here. Core's wire struct keeps it for parity with database joins.
 type LinesideBucketRow struct {
-	NodeName   string `json:"node_name"`
-	PairKey    string `json:"pair_key"`
-	StyleID    int64  `json:"style_id"`
-	PartNumber string `json:"part_number"`
-	Qty        int    `json:"qty"`
+	NodeName    string `json:"node_name"`
+	PairKey     string `json:"pair_key"`
+	StyleID     int64  `json:"style_id"`
+	PayloadCode string `json:"payload_code"`
+	Qty         int    `json:"qty"`
 }
 
 // UOPStateResponse is the wire shape for /api/telemetry/uop-state.

@@ -131,7 +131,7 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdatePayload(sd.Payload), "update payload uop")
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P-X", PartsPerCycle: 10, Description: "desc",
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("seed manifest item: %v", err)
 	}
 

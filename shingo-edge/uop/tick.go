@@ -105,7 +105,7 @@ func (m *Mutator) Consumed(ev TickEvent) error {
 				// something meaningful instead of zero.
 				styleID = ev.StyleID
 			}
-			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, styleID, part, ev.PayloadCode, -d.Qty, protocol.ReasonConsumeDrain)
+			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, styleID, part, -d.Qty, protocol.ReasonConsumeDrain)
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
@@ -154,7 +154,7 @@ func (m *Mutator) Fallthrough(ev TickEvent) error {
 			if styleID == 0 {
 				styleID = ev.StyleID
 			}
-			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, styleID, part, ev.PayloadCode, -d.Qty, protocol.ReasonConsumeDrain)
+			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, styleID, part, -d.Qty, protocol.ReasonConsumeDrain)
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {

@@ -124,7 +124,7 @@ func buildLinesideRows(eng ServiceAccess) []linesideBucketRow {
 				NodeName:    n.Name,
 				ProcessName: processName[n.ProcessID],
 				StyleName:   styleName[b.StyleID],
-				PartNumber:  b.PartNumber,
+				PayloadCode: b.PayloadCode,
 				PairKey:     b.PairKey,
 				Qty:         b.Qty,
 				State:       b.State,

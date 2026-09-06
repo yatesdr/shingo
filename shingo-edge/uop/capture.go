@@ -91,11 +91,11 @@ func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err err
 				return capturedTotal, fmt.Errorf("capture lineside bucket (node=%d style=%d part=%s): %w",
 					ev.NodeID, ev.StyleID, part, err)
 			}
-			// PayloadCode (UOP-threshold replenishment) — capture event
-			// carries the bin's payload, which is the same payload the
-			// captured parts belong to. Core's SystemUOPForPayload sums
-			// bins + buckets keyed on this.
-			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, ev.StyleID, part, ev.PayloadCode, qty, protocol.ReasonCaptureFill)
+			// The CHIP's payload, not the bin's. They are the same on a
+			// single-payload node and different the moment an operator pulls
+			// one of several allowed payloads off a bin holding another —
+			// which is the case that used to file B's stock under A.
+			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, ev.StyleID, part, qty, protocol.ReasonCaptureFill)
 			capturedTotal += qty
 		}
 	}

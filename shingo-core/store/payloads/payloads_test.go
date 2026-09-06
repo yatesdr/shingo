@@ -325,7 +325,7 @@ func TestCreateItem_AssignsID(t *testing.T) {
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create payload")
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "PN-X", PartsPerCycle: 3, Description: "widget"}
-	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
+	testutil.MustNoErr(t, payloads.CreateItem(db, item, ""), "payloads.CreateItem")
 	if item.ID == 0 {
 		t.Errorf("payloads.CreateItem: ID should be assigned")
 	}
@@ -349,7 +349,7 @@ func TestListManifest_OrderedByID(t *testing.T) {
 	parts := []string{"PN-A", "PN-B", "PN-C"}
 	for i, pn := range parts {
 		item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: pn, PartsPerCycle: int64(i + 1), Description: pn + "-desc"}
-		if err := payloads.CreateItem(db, item); err != nil {
+		if err := payloads.CreateItem(db, item, ""); err != nil {
 			t.Fatalf("payloads.CreateItem %s: %v", pn, err)
 		}
 	}
@@ -404,9 +404,9 @@ func TestUpdateItem_PersistsChanges(t *testing.T) {
 	p := &payloads.Payload{Code: "MU-1", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1, Description: "orig"}
-	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
+	testutil.MustNoErr(t, payloads.CreateItem(db, item, ""), "payloads.CreateItem")
 
-	testutil.MustNoErr(t, payloads.UpdateItem(db, item.ID, "NEW", 77), "payloads.UpdateItem")
+	testutil.MustNoErr(t, payloads.UpdateItem(db, item.ID, "NEW", "", 77), "payloads.UpdateItem")
 
 	list, err := payloads.ListManifest(db, p.ID)
 	if err != nil {
@@ -437,8 +437,8 @@ func TestDeleteItem_RemovesRow(t *testing.T) {
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	keep := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "KEEP", PartsPerCycle: 1}
 	gone := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "GONE", PartsPerCycle: 2}
-	testutil.MustNoErr(t, payloads.CreateItem(db, keep), "payloads.CreateItem keep")
-	testutil.MustNoErr(t, payloads.CreateItem(db, gone), "payloads.CreateItem gone")
+	testutil.MustNoErr(t, payloads.CreateItem(db, keep, ""), "payloads.CreateItem keep")
+	testutil.MustNoErr(t, payloads.CreateItem(db, gone, ""), "payloads.CreateItem gone")
 
 	testutil.MustNoErr(t, payloads.DeleteItem(db, gone.ID), "payloads.DeleteItem")
 
@@ -471,25 +471,15 @@ func TestReplaceManifest_OverwritesAllAndSetsIDs(t *testing.T) {
 	// Seed two existing items that should be replaced.
 	seed1 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-1", PartsPerCycle: 1}
 	seed2 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-2", PartsPerCycle: 2}
-	testutil.MustNoErr(t, payloads.CreateItem(db, seed1), "seed1")
-	testutil.MustNoErr(t, payloads.CreateItem(db, seed2), "seed2")
+	testutil.MustNoErr(t, payloads.CreateItem(db, seed1, ""), "seed1")
+	testutil.MustNoErr(t, payloads.CreateItem(db, seed2, ""), "seed2")
 
-	replacements := []*payloads.ManifestItem{
+	replacements := []payloads.Line{
 		{PartNumber: "R-1", PartsPerCycle: 10, Description: "rep 1"},
 		{PartNumber: "R-2", PartsPerCycle: 20, Description: "rep 2"},
 		{PartNumber: "R-3", PartsPerCycle: 30, Description: "rep 3"},
 	}
 	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, replacements), "payloads.ReplaceManifest")
-
-	// Every replacement should have an ID and PayloadID set.
-	for i, r := range replacements {
-		if r.ID == 0 {
-			t.Errorf("replacements[%d].ID not set", i)
-		}
-		if r.PayloadID != p.ID {
-			t.Errorf("replacements[%d].PayloadID = %d, want %d", i, r.PayloadID, p.ID)
-		}
-	}
 
 	list, err := payloads.ListManifest(db, p.ID)
 	if err != nil {
@@ -508,6 +498,13 @@ func TestReplaceManifest_OverwritesAllAndSetsIDs(t *testing.T) {
 		if list[i].Description != r.Description {
 			t.Errorf("list[%d].Description = %q, want %q", i, list[i].Description, r.Description)
 		}
+		// Every line points at a parts row. That is the structural half of the
+		// identity fix: what a line NAMES is now constrained by a foreign key
+		// rather than by whichever door happened to validate it.
+		if list[i].PartID == 0 {
+			t.Errorf("list[%d] (%s) has no part_id — a manifest line that points at no part is "+
+				"the state the parts table exists to make unwritable", i, list[i].PartNumber)
+		}
 	}
 }
 
@@ -520,7 +517,7 @@ func TestReplaceManifest_EmptyClears(t *testing.T) {
 	p := &payloads.Payload{Code: "MR-EMPTY", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "A", PartsPerCycle: 1}
-	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
+	testutil.MustNoErr(t, payloads.CreateItem(db, item, ""), "payloads.CreateItem")
 
 	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, nil), "payloads.ReplaceManifest nil")
 	list, err := payloads.ListManifest(db, p.ID)
@@ -532,8 +529,8 @@ func TestReplaceManifest_EmptyClears(t *testing.T) {
 	}
 
 	// Also test explicit empty slice.
-	testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "B", PartsPerCycle: 1}), "reseed")
-	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, []*payloads.ManifestItem{}), "payloads.ReplaceManifest empty")
+	testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "B", PartsPerCycle: 1}, ""), "reseed")
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, []payloads.Line{}), "payloads.ReplaceManifest empty")
 	list2, _ := payloads.ListManifest(db, p.ID)
 	if len(list2) != 0 {
 		t.Errorf("expected empty manifest after empty replace, got %d rows", len(list2))
@@ -553,9 +550,9 @@ func TestReplaceManifest_ScopedByPayload(t *testing.T) {
 
 	// Seed a manifest on p2 that must NOT be touched.
 	untouched := &payloads.ManifestItem{PayloadID: p2.ID, PartNumber: "UNTOUCHED", PartsPerCycle: 7}
-	testutil.MustNoErr(t, payloads.CreateItem(db, untouched), "payloads.CreateItem untouched")
+	testutil.MustNoErr(t, payloads.CreateItem(db, untouched, ""), "payloads.CreateItem untouched")
 
-	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p1.ID, []*payloads.ManifestItem{{PartNumber: "P1-ONLY", PartsPerCycle: 1}}), "payloads.ReplaceManifest")
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p1.ID, []payloads.Line{{PartNumber: "P1-ONLY", PartsPerCycle: 1}}), "payloads.ReplaceManifest")
 
 	list2, err := payloads.ListManifest(db, p2.ID)
 	if err != nil {
@@ -582,7 +579,7 @@ func TestReplaceManifest_RollbackOnError(t *testing.T) {
 	p := &payloads.Payload{Code: "MR-RB", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	seed := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED", PartsPerCycle: 1}
-	testutil.MustNoErr(t, payloads.CreateItem(db, seed), "payloads.CreateItem seed")
+	testutil.MustNoErr(t, payloads.CreateItem(db, seed, ""), "payloads.CreateItem seed")
 
 	// Force an error by using a bogus payload_id inside the items slice
 	// (payloads.ReplaceManifest overrides PayloadID from the argument, so we need
@@ -591,7 +588,7 @@ func TestReplaceManifest_RollbackOnError(t *testing.T) {
 	// payload_id as the parameter so the DELETE succeeds on nothing and
 	// the INSERT's FK fails.
 	badPayloadID := int64(999999)
-	err := payloads.ReplaceManifest(db, badPayloadID, []*payloads.ManifestItem{
+	err := payloads.ReplaceManifest(db, badPayloadID, []payloads.Line{
 		{PartNumber: "X", PartsPerCycle: 1},
 	})
 	if err == nil {

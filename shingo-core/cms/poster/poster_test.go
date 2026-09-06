@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
+
 	"shingocore/cms/client"
 	"shingocore/cms/wire"
 	"shingocore/store/cms"
@@ -631,7 +633,8 @@ func TestEnqueue_CreatesOnePendingPostingAndRings(t *testing.T) {
 	if got == nil || got.Status != cms.StatusPending {
 		t.Fatalf("posting = %+v, want one pending row", got)
 	}
-	rows, _ := store.ListCMSTransactionsByPosting(1)
+	gotRows, err := store.ListCMSTransactionsByPosting(1)
+	rows := testutil.Must(t, gotRows, err, "list the posting's transactions")
 	if len(rows) != 3 {
 		t.Errorf("posting carries %d transactions, want 3", len(rows))
 	}
@@ -1047,7 +1050,8 @@ func TestSweep_ReenqueuesOrphanedTransactions(t *testing.T) {
 	if got.Status != cms.StatusPending {
 		t.Errorf("status = %q, want pending", got.Status)
 	}
-	rows, _ := store.ListCMSTransactionsByPosting(got.ID)
+	gotRows, err := store.ListCMSTransactionsByPosting(got.ID)
+	rows := testutil.Must(t, gotRows, err, "list the posting's transactions")
 	if len(rows) != 2 {
 		t.Errorf("posting carries %d transactions, want 2", len(rows))
 	}

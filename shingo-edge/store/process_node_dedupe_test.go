@@ -227,7 +227,7 @@ func TestCollapseDuplicateProcessNodes_UnboundNodesAreNotDuplicates(t *testing.T
 // collision guard's scope.
 //
 // The unique index on node_lineside_bucket is PARTIAL — UNIQUE(node_id,
-// part_number) WHERE state='active' — so only ACTIVE buckets can collide. The
+// payload_code) WHERE state='active' — so only ACTIVE buckets can collide. The
 // guard used to test just the survivor's side: "does the survivor hold an active
 // bucket for this part?" If it did, EVERY bucket on the dead row for that part
 // was refused the move and then deleted, including inactive ones that could never
@@ -243,7 +243,7 @@ func TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets(t *testin
 		t.Fatalf("seed style: %v", err)
 	}
 	mkBucket := func(id, nodeID int64, part, state string, qty int) {
-		if _, err := db.Exec(`INSERT INTO node_lineside_bucket (id, node_id, style_id, part_number, qty, state)
+		if _, err := db.Exec(`INSERT INTO node_lineside_bucket (id, node_id, style_id, payload_code, qty, state)
 			VALUES (?, ?, 1, ?, ?, ?)`, id, nodeID, part, qty, state); err != nil {
 			t.Fatalf("seed bucket %d: %v", id, err)
 		}

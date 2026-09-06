@@ -66,9 +66,10 @@ type ServiceAccess interface {
 	OrderService() *service.OrderService
 	NodeService() *service.NodeService
 	AuditService() *service.AuditService
-	DemandService() *service.DemandService
-	// DemandEpisodeService reads the demand grain (Phase 6). Distinct from
-	// DemandService, which is the production-quota CRUD behind /demand.
+	// DemandEpisodeService reads the demand grain (Phase 6): one open episode
+	// per unmet need, with the orders it fathered. It is the only demand model
+	// Core has — the production-quota CRUD that used to sit beside it under a
+	// near-identical name went with its table at v106.
 	DemandEpisodeService() *service.DemandEpisodeService
 	LoaderService() *service.LoaderService
 	CalculatorService() *service.ThresholdCalculatorService

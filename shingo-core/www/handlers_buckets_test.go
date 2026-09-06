@@ -42,8 +42,8 @@ func TestApiBuckets_WithSeededBuckets(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
-	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "", 1, "PART-BKT-A", 11)
-	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "", 1, "PART-BKT-B", 23)
+	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "", 1, "PAY-BKT-A", 11)
+	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "", 1, "PAY-BKT-B", 23)
 
 	rec := getPlain(t, h.apiBuckets, "/api/buckets")
 	if rec.Code != http.StatusOK {
@@ -54,15 +54,15 @@ func TestApiBuckets_WithSeededBuckets(t *testing.T) {
 
 	found := map[string]int{}
 	for _, r := range rows {
-		part, _ := r["part_number"].(string)
+		code, _ := r["payload_code"].(string)
 		qty, _ := r["qty"].(float64) // JSON numbers
-		found[part] = int(qty)
+		found[code] = int(qty)
 	}
-	if found["PART-BKT-A"] != 11 {
-		t.Errorf("PART-BKT-A qty = %d, want 11; rows=%+v", found["PART-BKT-A"], rows)
+	if found["PAY-BKT-A"] != 11 {
+		t.Errorf("PAY-BKT-A qty = %d, want 11; rows=%+v", found["PAY-BKT-A"], rows)
 	}
-	if found["PART-BKT-B"] != 23 {
-		t.Errorf("PART-BKT-B qty = %d, want 23; rows=%+v", found["PART-BKT-B"], rows)
+	if found["PAY-BKT-B"] != 23 {
+		t.Errorf("PAY-BKT-B qty = %d, want 23; rows=%+v", found["PAY-BKT-B"], rows)
 	}
 
 	// Spot-check that each row carries station + node_name (the keys
@@ -197,20 +197,20 @@ func TestApiBucketDelete_MissingIDReturns400(t *testing.T) {
 }
 
 // seedBucket inserts one lineside_buckets row. Station / node / pair_key
-// / style_id / part_number must be set; qty is the count.
+// / style_id / payload_code must be set; qty is the count.
 //
 // nodeID is unused since the Round-3 Obs 8 migration; we derive the
 // node name from the row's node_id at seed time so call sites don't
 // have to refactor to the new shape. Pass either sd.StorageNode.ID /
 // sd.LineNode.ID — the lookup happens here.
-func seedBucket(t *testing.T, db *store.DB, station string, nodeID int64, pairKey string, styleID int64, part string, qty int) {
+func seedBucket(t *testing.T, db *store.DB, station string, nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) {
 	t.Helper()
 	var coreNodeName string
 	if err := db.QueryRow(`SELECT name FROM nodes WHERE id=$1`, nodeID).Scan(&coreNodeName); err != nil {
 		t.Fatalf("seedBucket lookup node name for id=%d: %v", nodeID, err)
 	}
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty)
-		VALUES ($1, $2, $3, $4, $5, $6)`, station, coreNodeName, pairKey, styleID, part, qty); err != nil {
-		t.Fatalf("seed bucket (%s/%s): %v", station, part, err)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+		VALUES ($1, $2, $3, $4, $5, $6)`, station, coreNodeName, pairKey, styleID, payloadCode, qty); err != nil {
+		t.Fatalf("seed bucket (%s/%s): %v", station, payloadCode, err)
 	}
 }

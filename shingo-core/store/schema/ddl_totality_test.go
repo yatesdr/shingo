@@ -43,6 +43,7 @@ var migrationOnlyTables = map[string]string{
 	"edge_cells":                  "added by a numbered migration after the baseline was frozen",
 	"edge_lineside_reports":       "added by a numbered migration after the baseline was frozen",
 	"order_bins":                  "added by a numbered migration after the baseline was frozen",
+	"parts":                       "added by v107 — a part under both of the names it is known by, the part number CMS books against and the cat id a cell's PLC declares. It is a table rather than two columns on payload_manifest because a cat id belongs to the PART, not to the line that mentions it, and because a foreign key from the line is the one guard that cannot be forgotten at a door",
 	"process_styles":              "added by a numbered migration after the baseline was frozen",
 	"reservations":                "added by a numbered migration after the baseline was frozen",
 	"robot_confidence_daily":      "added by v77 — the permanent per-robot residual roll-up",

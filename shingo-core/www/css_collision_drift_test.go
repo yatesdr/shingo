@@ -41,8 +41,9 @@ import (
 // renders inside layout.html — so its inline block sits in the same document as
 // layout's four linked sheets, LATER in the document, which means at equal
 // specificity the inline block wins. demand.html was overriding bare `.col-num`
-// and bare `.btn-danger` that way. Excluding inline blocks would have left this
-// test green over the two live overrides it most needed to find.
+// and bare `.btn-danger` that way, and both were found here. That page is
+// deleted (v106), which is what resolved them — the pins came out with it,
+// which is the rule this file states: a pin cannot outlive its finding.
 //
 // KNOWN HOLE: a stylesheet built by JS at runtime. sim-speed-strip.js creates a
 // <style> element and is injected by layout.html, so its rules land in the same
@@ -70,14 +71,6 @@ var knownCSSCollisions = map[string]string{
 	"badge-sm": "status-classes.css (0.7rem / 0.1em 0.5em) vs style.css (.75em / 1px 5px). 7 use sites in Core, 0 in Edge. " +
 		"Core's wins, so shared's declaration is unreachable in practice — but shared's is the documented primitive, so " +
 		"the resolution is to delete Core's override and accept 7 badges changing size.",
-	"col-num": "style.css `text-align: right` vs demand.html's inline <style> `text-align: center`. The inline block is " +
-		"later in the document at equal specificity, so CENTRE wins on /demand — contradicting the number doctrine " +
-		"(docs/ui-style-guide.md, § 'Tabular figures, always': tabular-nums aligns the glyphs, only right-alignment " +
-		"aligns the MAGNITUDES) that style.css's rule exists to enforce. style.css already DOCUMENTED this override as " +
-		"a tolerated fact rather than a defect, which is the reason to have a test instead of a comment. Left alone " +
-		"here because it is a visual decision, not a naming one: the three numeric columns move centre -> right on a " +
-		"shipped editable table whose cell-edit overlay is absolutely positioned over them. Right-aligning them is the " +
-		"guide-correct answer and it is the owner's call.",
 }
 
 // sheet is one stylesheet in a page's cascade: a linked file or an inline

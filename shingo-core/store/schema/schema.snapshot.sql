@@ -398,25 +398,6 @@ CREATE SEQUENCE public.demand_registry_id_seq
 
 ALTER SEQUENCE public.demand_registry_id_seq OWNED BY public.demand_registry.id;
 
-CREATE TABLE public.demands (
-    id bigint NOT NULL,
-    cat_id text NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
-    demand_qty bigint DEFAULT 0 NOT NULL,
-    produced_qty bigint DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.demands_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.demands_id_seq OWNED BY public.demands.id;
-
 CREATE TABLE public.downtime_event_dedup (
     station text NOT NULL,
     edge_event_id bigint NOT NULL,
@@ -558,9 +539,8 @@ CREATE TABLE public.lineside_buckets (
     core_node_name text NOT NULL,
     pair_key text NOT NULL,
     style_id bigint NOT NULL,
-    part_number text NOT NULL,
+    payload_code text NOT NULL,
     qty integer NOT NULL,
-    payload_code text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lineside_buckets_qty_check CHECK ((qty >= 0))
@@ -845,6 +825,24 @@ CREATE SEQUENCE public.outbox_id_seq
 
 ALTER SEQUENCE public.outbox_id_seq OWNED BY public.outbox.id;
 
+CREATE TABLE public.parts (
+    id bigint NOT NULL,
+    part_number text NOT NULL,
+    catid text DEFAULT ''::text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.parts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.parts_id_seq OWNED BY public.parts.id;
+
 CREATE TABLE public.payload_bin_types (
     payload_id bigint NOT NULL,
     bin_type_id bigint NOT NULL
@@ -856,7 +854,8 @@ CREATE TABLE public.payload_manifest (
     part_number text DEFAULT ''::text NOT NULL,
     parts_per_cycle bigint DEFAULT 1 NOT NULL,
     description text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    part_id bigint
 );
 
 CREATE SEQUENCE public.payload_manifest_id_seq
@@ -1321,8 +1320,6 @@ ALTER TABLE ONLY public.dashboards ALTER COLUMN id SET DEFAULT nextval('public.d
 
 ALTER TABLE ONLY public.demand_registry ALTER COLUMN id SET DEFAULT nextval('public.demand_registry_id_seq'::regclass);
 
-ALTER TABLE ONLY public.demands ALTER COLUMN id SET DEFAULT nextval('public.demands_id_seq'::regclass);
-
 ALTER TABLE ONLY public.downtime_events ALTER COLUMN id SET DEFAULT nextval('public.downtime_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.edge_registry ALTER COLUMN id SET DEFAULT nextval('public.edge_registry_id_seq'::regclass);
@@ -1346,6 +1343,8 @@ ALTER TABLE ONLY public.order_history ALTER COLUMN id SET DEFAULT nextval('publi
 ALTER TABLE ONLY public.orders ALTER COLUMN id SET DEFAULT nextval('public.orders_id_seq'::regclass);
 
 ALTER TABLE ONLY public.outbox ALTER COLUMN id SET DEFAULT nextval('public.outbox_id_seq'::regclass);
+
+ALTER TABLE ONLY public.parts ALTER COLUMN id SET DEFAULT nextval('public.parts_id_seq'::regclass);
 
 ALTER TABLE ONLY public.payload_manifest ALTER COLUMN id SET DEFAULT nextval('public.payload_manifest_id_seq'::regclass);
 
@@ -1448,12 +1447,6 @@ ALTER TABLE ONLY public.demand_registry
 ALTER TABLE ONLY public.demand_registry
     ADD CONSTRAINT demand_registry_station_id_core_node_name_payload_code_key UNIQUE (station_id, core_node_name, payload_code);
 
-ALTER TABLE ONLY public.demands
-    ADD CONSTRAINT demands_cat_id_key UNIQUE (cat_id);
-
-ALTER TABLE ONLY public.demands
-    ADD CONSTRAINT demands_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.downtime_event_dedup
     ADD CONSTRAINT downtime_event_dedup_pkey PRIMARY KEY (station, edge_event_id);
 
@@ -1482,7 +1475,7 @@ ALTER TABLE ONLY public.lane_robot_confidence_daily
     ADD CONSTRAINT lane_robot_confidence_daily_pkey PRIMARY KEY (day, area_name, lane, version_id, vehicle_id);
 
 ALTER TABLE ONLY public.lineside_buckets
-    ADD CONSTRAINT lineside_buckets_node_pair_style_part_key UNIQUE (core_node_name, pair_key, style_id, part_number);
+    ADD CONSTRAINT lineside_buckets_node_pair_style_payload_key UNIQUE (core_node_name, pair_key, style_id, payload_code);
 
 ALTER TABLE ONLY public.lineside_buckets
     ADD CONSTRAINT lineside_buckets_pkey PRIMARY KEY (id);
@@ -1543,6 +1536,12 @@ ALTER TABLE ONLY public.orders
 
 ALTER TABLE ONLY public.outbox
     ADD CONSTRAINT outbox_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.parts
+    ADD CONSTRAINT parts_part_number_key UNIQUE (part_number);
+
+ALTER TABLE ONLY public.parts
+    ADD CONSTRAINT parts_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.payload_bin_types
     ADD CONSTRAINT payload_bin_types_pkey PRIMARY KEY (payload_id, bin_type_id);
@@ -1714,6 +1713,10 @@ CREATE INDEX idx_orders_vendor ON public.orders USING btree (vendor_order_id);
 
 CREATE INDEX idx_outbox_pending ON public.outbox USING btree (sent_at) WHERE (sent_at IS NULL);
 
+CREATE INDEX idx_parts_catid ON public.parts USING btree (catid) WHERE (catid <> ''::text);
+
+CREATE INDEX idx_payload_manifest_part ON public.payload_manifest USING btree (part_id);
+
 CREATE INDEX idx_payload_manifest_payload ON public.payload_manifest USING btree (payload_id);
 
 CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree (created_at);
@@ -1868,6 +1871,9 @@ ALTER TABLE ONLY public.payload_bin_types
 
 ALTER TABLE ONLY public.payload_bin_types
     ADD CONSTRAINT payload_bin_types_payload_id_fkey FOREIGN KEY (payload_id) REFERENCES public.payloads(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.payload_manifest
+    ADD CONSTRAINT payload_manifest_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id);
 
 ALTER TABLE ONLY public.payload_manifest
     ADD CONSTRAINT payload_manifest_payload_id_fkey FOREIGN KEY (payload_id) REFERENCES public.payloads(id) ON DELETE CASCADE;

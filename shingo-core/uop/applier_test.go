@@ -36,13 +36,13 @@ func makeBinDelta(binID int64, payloadCode string, delta int, seq int64, reason 
 	}
 }
 
-func makeBucketDelta(coreNodeName, pairKey string, styleID int64, partNumber string, delta int, seq int64, reason protocol.LinesideBucketDeltaReason) *protocol.LinesideBucketDelta {
+func makeBucketDelta(coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, seq int64, reason protocol.LinesideBucketDeltaReason) *protocol.LinesideBucketDelta {
 	now := time.Now().UTC()
 	return &protocol.LinesideBucketDelta{
 		CoreNodeName: coreNodeName,
 		PairKey:      pairKey,
 		StyleID:      styleID,
-		PartNumber:   partNumber,
+		PayloadCode:  payloadCode,
 		Delta:        delta,
 		Reason:       reason,
 		SequenceID:   seq,
@@ -256,7 +256,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 
 	var qty int
 	if err := db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`, nodeName).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND payload_code='PART-A'`, nodeName).
 		Scan(&qty); err != nil {
 		t.Fatalf("read bucket after fill: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 
 	var rowCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets
-		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`, nodeName).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND payload_code='PART-A'`, nodeName).
 		Scan(&rowCount)
 	if rowCount != 0 {
 		t.Errorf("bucket row count at zero = %d, want 0 (Option C — empty buckets are deleted)", rowCount)
@@ -319,7 +319,7 @@ func TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations(t *testing.T) 
 	var station string
 	if err := db.QueryRow(`SELECT count(*), COALESCE(SUM(qty),0), COALESCE(MAX(station),'')
 		FROM lineside_buckets
-		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`,
+		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND payload_code='PART-A'`,
 		nodeName).Scan(&rows, &qty, &station); err != nil {
 		t.Fatalf("read bucket: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestInventoryDelta_LinesideBucketOneNodeOneRowAcrossStations(t *testing.T) 
 	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("PLANT.EDGE-1", drain), "edge-1 drains what edge-2 last touched")
 
 	_ = db.QueryRow(`SELECT count(*) FROM lineside_buckets
-		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`,
+		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND payload_code='PART-A'`,
 		nodeName).Scan(&rows)
 	if rows != 0 {
 		t.Errorf("emptied bucket left %d row(s), want 0 — a station-scoped GC cannot delete a row "+
@@ -374,7 +374,7 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 	// Bucket should still hold 5 — the rejected delta must not have applied.
 	var qty int
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L2|U2' AND style_id=200 AND part_number='PART-B'`, nodeName).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L2|U2' AND style_id=200 AND payload_code='PART-B'`, nodeName).
 		Scan(&qty)
 	if qty != 5 {
 		t.Errorf("bucket qty after rejected drain = %d, want 5", qty)
@@ -399,7 +399,7 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsFirstSightNegative(t *testing
 
 	var rowCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets
-		WHERE core_node_name=$1 AND part_number='PART-C'`, nodeName).Scan(&rowCount)
+		WHERE core_node_name=$1 AND payload_code='PART-C'`, nodeName).Scan(&rowCount)
 	if rowCount != 0 {
 		t.Errorf("bucket row count after rejected first-sight negative = %d, want 0 (must not clamp to a 0 row)", rowCount)
 	}
@@ -422,7 +422,7 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 
 	var qty int
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=300 AND part_number='PART-C'`, nodeName).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=300 AND payload_code='PART-C'`, nodeName).
 		Scan(&qty)
 	if qty != 10 {
 		t.Errorf("bucket qty after replay = %d, want 10 (delta applied once)", qty)
@@ -430,7 +430,7 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 }
 
 // TestInventoryDelta_BucketScopeKeysIndependent pins that two buckets
-// at the same node but different (pair_key, style_id, part_number)
+// at the same node but different (pair_key, style_id, payload_code)
 // dedup independently. A reused SequenceID across distinct scopes is
 // not a replay.
 func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
@@ -448,9 +448,9 @@ func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 
 	var d, e int
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE core_node_name=$1 AND part_number='PART-D'`, nodeName).Scan(&d)
+		WHERE core_node_name=$1 AND payload_code='PART-D'`, nodeName).Scan(&d)
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE core_node_name=$1 AND part_number='PART-E'`, nodeName).Scan(&e)
+		WHERE core_node_name=$1 AND payload_code='PART-E'`, nodeName).Scan(&e)
 	if d != 5 {
 		t.Errorf("PART-D qty = %d, want 5", d)
 	}
@@ -528,7 +528,7 @@ func TestInventoryDelta_ListBucketsForNodes_FiltersByNodeNotByReporter(t *testin
 	if err != nil {
 		t.Fatalf("nodeA: %v", err)
 	}
-	if len(rowsA) != 1 || rowsA[0].PartNumber != "PART-A" {
+	if len(rowsA) != 1 || rowsA[0].PayloadCode != "PART-A" {
 		t.Fatalf("nodeA rows = %+v, want one PART-A row. A bucket at a node this edge owns must "+
 			"be visible to its reconciliation no matter which edge last reported it — filtering "+
 			"by the reporter is how the drift detector stops seeing drift.", rowsA)
@@ -541,7 +541,7 @@ func TestInventoryDelta_ListBucketsForNodes_FiltersByNodeNotByReporter(t *testin
 	if err != nil {
 		t.Fatalf("nodeB: %v", err)
 	}
-	if len(rowsB) != 1 || rowsB[0].PartNumber != "PART-B" {
+	if len(rowsB) != 1 || rowsB[0].PayloadCode != "PART-B" {
 		t.Errorf("nodeB rows = %+v, want one PART-B row", rowsB)
 	}
 

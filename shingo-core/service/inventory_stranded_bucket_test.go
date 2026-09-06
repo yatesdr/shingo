@@ -18,9 +18,9 @@ import (
 func insertLinesideBucket(t *testing.T, db *store.DB, node string, styleID int64, payload string, qty int) {
 	t.Helper()
 	if _, err := db.Exec(
-		`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		"test-station", node, "PK", styleID, payload, qty, payload,
+		`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+		 VALUES ($1,$2,$3,$4,$5,$6)`,
+		"test-station", node, "PK", styleID, payload, qty,
 	); err != nil {
 		t.Fatalf("insert lineside bucket %s@%s: %v", payload, node, err)
 	}

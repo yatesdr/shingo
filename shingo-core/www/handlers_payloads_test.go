@@ -228,12 +228,12 @@ func TestApiListManifest_HappyPath(t *testing.T) {
 	// Seed 2 manifest items.
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P1", PartsPerCycle: 3,
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("create manifest item: %v", err)
 	}
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P2", PartsPerCycle: 5,
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("create manifest item: %v", err)
 	}
 
@@ -311,7 +311,7 @@ func TestApiUpdateManifestItem_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "OLD", PartsPerCycle: 1}
-	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "seed")
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item, ""), "seed")
 
 	rec := postJSON(t, h.apiUpdateManifestItem, "/api/payloads/manifest/update",
 		map[string]any{"id": item.ID, "part_number": "NEW", "parts_per_cycle": 9})
@@ -333,7 +333,7 @@ func TestApiDeleteManifestItem_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "GONE", PartsPerCycle: 1}
-	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "seed")
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item, ""), "seed")
 
 	rec := postJSON(t, h.apiDeleteManifestItem, "/api/payloads/manifest/delete",
 		map[string]any{"id": item.ID})

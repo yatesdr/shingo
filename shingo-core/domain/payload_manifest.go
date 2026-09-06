@@ -22,9 +22,21 @@ import "time"
 // payloads.ManifestItem. The domain name is the fully-qualified
 // one so it doesn't collide with the bin-side ManifestEntry.
 type PayloadManifestItem struct {
-	ID            int64     `json:"id"`
-	PayloadID     int64     `json:"payload_id"`
-	PartNumber    string    `json:"part_number"`
+	ID         int64  `json:"id"`
+	PayloadID  int64  `json:"payload_id"`
+	PartNumber string `json:"part_number"`
+	// PartID is the FK to parts. It is the structural half of the identity fix:
+	// a line that points at a part cannot name something that is not one, which
+	// no amount of validation at six separate doors could guarantee. Zero on a
+	// line that has not been re-pointed yet — the kit components a person types
+	// in after v108 — and that state is temporary by construction.
+	PartID int64 `json:"part_id,omitempty"`
+	// CATID is READ-ONLY HERE and belongs to the part, not the line. It rides
+	// along so the entry form can show a known part's controls identity beside
+	// its number, and so a caller can state one when originating a part. It is
+	// never a column on payload_manifest — that arrangement is what crossed the
+	// wire in the first place.
+	CATID         string    `json:"catid,omitempty"`
 	PartsPerCycle int64     `json:"parts_per_cycle"`
 	Description   string    `json:"description"`
 	CreatedAt     time.Time `json:"created_at"`

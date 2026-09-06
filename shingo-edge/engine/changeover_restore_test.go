@@ -87,7 +87,8 @@ func TestRestore_SeedsZeroWhenNoCarrierIsBound(t *testing.T) {
 		t.Fatal("reconcileNodeTask did not advance the staging task")
 	}
 
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	gotRT, err := db.GetProcessNodeRuntime(nodeID)
+	rt := testutil.Must(t, gotRT, err, "reload node runtime")
 	if rt.RemainingUOPCached != 0 {
 		t.Errorf("remaining = %d, want 0 — nothing is bound to this node, so there is no count "+
 			"to carry over from the outgoing style", rt.RemainingUOPCached)

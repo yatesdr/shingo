@@ -38,7 +38,7 @@ type SlotWriter interface {
 // emissions) and admin bucket adjustment.
 type Capturer interface {
 	CaptureToLineside(ev CaptureEvent) (int, error)
-	AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error
+	AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error
 }
 
 // Pickup — bin-pickup boundary event (flush before slot pointers clear).
@@ -82,7 +82,7 @@ type Sink interface {
 	// (post-epoch fix). Callers that pre-date the epoch addition pass 0
 	// for the pre-migration cohort.
 	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64)
-	RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
+	RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
 	Flush()
 	FlushFailures() int64
 }

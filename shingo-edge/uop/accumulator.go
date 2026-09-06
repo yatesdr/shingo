@@ -88,17 +88,18 @@ type binDeltaEntry struct {
 }
 
 // bucketDeltaEntry is the per-bucket accumulator. Composite key is
-// (nodeID, pairKey, styleID, partNumber); these fields are immutable
+// (nodeID, pairKey, styleID, payloadCode); these fields are immutable
 // for the lifetime of an entry (a different composite key produces a
 // different sync.Map entry).
 //
-// payloadCode (UOP-threshold replenishment) carries the payload this
-// bucket's parts belong to. Latched on first non-empty recordBucket
-// call for the key; subsequent calls with the same key only overwrite
-// when they bring a non-empty value (a downstream caller that doesn't
-// have the payload handy shouldn't be able to wipe one that's already
-// set). Empty on the wire = "unknown" — Core's UPSERT preserves the
-// existing payload_code.
+// ONE PAYLOAD CODE, WHICH IS ALSO THE KEY. There used to be two: the bucket's
+// own identifier (called partNumber, holding a payload code) and a second
+// payloadCode latched from whichever BIN was at the node, which
+// SystemUOPForPayload summed the bucket's stock against. On a node that
+// allows several payloads those are different answers — the operator can pull
+// payload B off a bin of payload A — and the latched one attributed B's stock
+// to A. The bucket's own code is the one it is a pile OF, so the latch is gone
+// and the key answers both questions.
 type bucketDeltaEntry struct {
 	mu sync.Mutex
 	// nodeID is Edge's local process_nodes.id — kept so flush-time
@@ -111,7 +112,6 @@ type bucketDeltaEntry struct {
 	coreNodeName string
 	pairKey      string
 	styleID      int64
-	partNumber   string
 	payloadCode  string
 	delta        int
 	reason       protocol.LinesideBucketDeltaReason
@@ -302,14 +302,14 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 // (Round-3 Obs 8). Edge's local nodeID stays only for the in-memory
 // dedup key and flush-time logging — Core no longer sees Edge's
 // process_nodes.id namespace.
-func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
+func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	if delta == 0 {
 		return
 	}
-	if nodeID <= 0 || partNumber == "" {
+	if nodeID <= 0 || payloadCode == "" {
 		return
 	}
-	key := bucketScopeKey(nodeID, pairKey, styleID, partNumber)
+	key := bucketScopeKey(nodeID, pairKey, styleID, payloadCode)
 	now := r.clock()
 
 	for {
@@ -318,7 +318,6 @@ func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, s
 			coreNodeName: coreNodeName,
 			pairKey:      pairKey,
 			styleID:      styleID,
-			partNumber:   partNumber,
 			payloadCode:  payloadCode,
 			windowStart:  now,
 		})
@@ -334,12 +333,6 @@ func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, s
 		if e.delta == 0 {
 			e.windowStart = now
 		}
-		// Only overwrite payloadCode with a non-empty value; an unset
-		// caller must not wipe a previously-latched one. This mirrors
-		// Core's UPSERT policy on the apply side.
-		if payloadCode != "" {
-			e.payloadCode = payloadCode
-		}
 		e.delta += delta
 		e.reason = reason
 		e.windowEnd = now
@@ -348,8 +341,8 @@ func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, s
 		break
 	}
 
-	r.debugLog.Log("inventory_delta: bucket node=%d part=%q payload=%q delta=%+d reason=%s",
-		nodeID, partNumber, payloadCode, delta, reason)
+	r.debugLog.Log("inventory_delta: bucket node=%d payload=%q delta=%+d reason=%s",
+		nodeID, payloadCode, delta, reason)
 }
 
 // flush performs one synchronous flush pass. Boundary triggers call
@@ -536,7 +529,6 @@ func (r *accumulator) flushBuckets() {
 		sCoreNodeName := e.coreNodeName
 		sPairKey := e.pairKey
 		sStyleID := e.styleID
-		sPartNumber := e.partNumber
 		sPayloadCode := e.payloadCode
 		sDelta := e.delta
 		sReason := e.reason
@@ -594,7 +586,6 @@ func (r *accumulator) flushBuckets() {
 				CoreNodeName: sCoreNodeName,
 				PairKey:      sPairKey,
 				StyleID:      sStyleID,
-				PartNumber:   sPartNumber,
 				PayloadCode:  sPayloadCode,
 				Delta:        sDelta,
 				Reason:       sReason,
@@ -632,7 +623,7 @@ func (r *accumulator) flushBuckets() {
 		e.mu.Unlock()
 
 		r.debugLog.Log("uop accumulator: flushed bucket node=%d part=%q delta=%+d seq=%d reason=%s",
-			sNodeID, sPartNumber, sDelta, seq, sReason)
+			sNodeID, sPayloadCode, sDelta, seq, sReason)
 		return true
 	})
 }
@@ -712,7 +703,7 @@ func (r *accumulator) clock() time.Time {
 //
 // The pipe-delimited format is stable; renames break in-flight Edge replays,
 // so any change must come with a coordinated migration on both sides.
-func bucketScopeKey(nodeID int64, pairKey string, styleID int64, partNumber string) string {
+func bucketScopeKey(nodeID int64, pairKey string, styleID int64, payloadCode string) string {
 	var sb strings.Builder
 	sb.WriteString(strconv.FormatInt(nodeID, 10))
 	sb.WriteByte('|')
@@ -720,6 +711,6 @@ func bucketScopeKey(nodeID int64, pairKey string, styleID int64, partNumber stri
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatInt(styleID, 10))
 	sb.WriteByte('|')
-	sb.WriteString(partNumber)
+	sb.WriteString(payloadCode)
 	return sb.String()
 }

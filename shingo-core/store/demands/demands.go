@@ -1,13 +1,12 @@
-// Package demands holds demand + demand-registry persistence for
-// shingo-core.
+// Package demands holds demand-registry persistence for shingo-core: the
+// derived map from a payload code to the manual_swap nodes that accept it,
+// and the per-(loader, payload) replenishment threshold hung off it.
 //
-// Phase 5 of the architecture plan moved demands and demand_registry
-// CRUD out of the flat store/ package and into this sub-package. (The
-// third table it moved, production_log, was dropped at v92 — a
-// write-only shadow of bin_uop_ledger's delta rows since the §14
-// cutover.) The outer store/ keeps type aliases
-// (`store.Demand = demands.Demand`, etc.) and one-line delegate methods
-// on *store.DB so external callers see no API change.
+// THE `demands` TABLE IT WAS NAMED FOR IS GONE (v106), along with the two
+// siblings that moved here with it — production_log at v92, a write-only
+// shadow of bin_uop_ledger, and the quota table itself. The package keeps the
+// name because the registry is the demand model that survived. The outer
+// store/ keeps one-line delegate methods on *store.DB.
 package demands
 
 import (
@@ -17,28 +16,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/store/internal/helpers"
 )
-
-// Demand represents a material demand tracked by cat_id.
-type Demand struct {
-	ID          int64     `json:"id"`
-	CatID       string    `json:"cat_id"`
-	Description string    `json:"description"`
-	DemandQty   int64     `json:"demand_qty"`
-	ProducedQty int64     `json:"produced_qty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// Remaining returns demand_qty - produced_qty (floored at 0).
-func (d *Demand) Remaining() int64 {
-	r := d.DemandQty - d.ProducedQty
-	if r < 0 {
-		return 0
-	}
-	return r
-}
 
 // RegistryEntry maps a payload code to a manual_swap node that accepts
 // it. Derived by Core from the bin_loaders aggregate (BuildDemandRegistryFromAggregate).
@@ -77,102 +55,6 @@ func scanRegistryEntry(row interface{ Scan(...any) error }) (RegistryEntry, erro
 		e.LoaderID = loaderID.Int64
 	}
 	return e, err
-}
-
-const demandSelectCols = `id, cat_id, description, demand_qty, produced_qty, created_at, updated_at`
-
-func scanDemand(row interface{ Scan(...any) error }) (*Demand, error) {
-	var d Demand
-	err := row.Scan(&d.ID, &d.CatID, &d.Description, &d.DemandQty, &d.ProducedQty, &d.CreatedAt, &d.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &d, nil
-}
-
-func scanDemands(rows *sql.Rows) ([]*Demand, error) {
-	var demands []*Demand
-	for rows.Next() {
-		d, err := scanDemand(rows)
-		if err != nil {
-			return nil, err
-		}
-		demands = append(demands, d)
-	}
-	return demands, rows.Err()
-}
-
-// Create inserts a new demand row and returns the new ID.
-func Create(db *sql.DB, catID, description string, demandQty int64) (int64, error) {
-	return helpers.InsertID(db, `INSERT INTO demands (cat_id, description, demand_qty) VALUES ($1, $2, $3) RETURNING id`,
-		catID, description, demandQty)
-}
-
-// Update writes every mutable column on a demand.
-func Update(db *sql.DB, id int64, catID, description string, demandQty, producedQty int64) error {
-	_, err := db.Exec(`UPDATE demands SET cat_id=$1, description=$2, demand_qty=$3, produced_qty=$4, updated_at=NOW() WHERE id=$5`,
-		catID, description, demandQty, producedQty, id)
-	return err
-}
-
-// UpdateAndResetProduced rewrites description + demand_qty and zeroes produced_qty.
-func UpdateAndResetProduced(db *sql.DB, id int64, description string, demandQty int64) error {
-	_, err := db.Exec(`UPDATE demands SET description=$1, demand_qty=$2, produced_qty=0, updated_at=NOW() WHERE id=$3`,
-		description, demandQty, id)
-	return err
-}
-
-// Delete removes a demand row.
-func Delete(db *sql.DB, id int64) error {
-	_, err := db.Exec(`DELETE FROM demands WHERE id=$1`, id)
-	return err
-}
-
-// List returns all demands ordered by cat_id.
-func List(db *sql.DB) ([]*Demand, error) {
-	rows, err := db.Query(`SELECT ` + demandSelectCols + ` FROM demands ORDER BY cat_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanDemands(rows)
-}
-
-// Get fetches a demand by ID.
-func Get(db *sql.DB, id int64) (*Demand, error) {
-	row := db.QueryRow(`SELECT `+demandSelectCols+` FROM demands WHERE id=$1`, id)
-	return scanDemand(row)
-}
-
-// GetByCatID fetches a demand by its unique cat_id.
-func GetByCatID(db *sql.DB, catID string) (*Demand, error) {
-	row := db.QueryRow(`SELECT `+demandSelectCols+` FROM demands WHERE cat_id=$1`, catID)
-	return scanDemand(row)
-}
-
-// IncrementProduced bumps produced_qty by qty for a given cat_id.
-func IncrementProduced(db *sql.DB, catID string, qty int64) error {
-	_, err := db.Exec(`UPDATE demands SET produced_qty = produced_qty + $1, updated_at=NOW() WHERE cat_id=$2`,
-		qty, catID)
-	return err
-}
-
-// ClearAllProduced zeroes produced_qty on every demand row.
-func ClearAllProduced(db *sql.DB) error {
-	_, err := db.Exec(`UPDATE demands SET produced_qty = 0, updated_at=NOW()`)
-	return err
-}
-
-// ClearProduced zeroes produced_qty for a single demand.
-func ClearProduced(db *sql.DB, id int64) error {
-	_, err := db.Exec(`UPDATE demands SET produced_qty = 0, updated_at=NOW() WHERE id=$1`, id)
-	return err
-}
-
-// SetProduced sets produced_qty to qty for a single demand.
-func SetProduced(db *sql.DB, id int64, qty int64) error {
-	_, err := db.Exec(`UPDATE demands SET produced_qty = $1, updated_at=NOW() WHERE id=$2`, qty, id)
-	return err
 }
 
 // RegistryChange describes a single (loader, payload) row whose

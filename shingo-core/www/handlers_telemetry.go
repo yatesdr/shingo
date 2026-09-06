@@ -319,7 +319,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	// rewrites it. The count is uop_remaining x parts_per_cycle at read time.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(req.Manifest))}
 	for i, item := range req.Manifest {
-		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber}
+		manifest.Items[i] = domain.ManifestEntry{PartNumber: item.PartNumber}
 	}
 	manifestJSON, _ := json.Marshal(manifest)
 

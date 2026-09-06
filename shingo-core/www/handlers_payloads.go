@@ -100,17 +100,11 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		PayloadID     int64  `json:"payload_id"`
 		PartNumber    string `json:"part_number"`
+		CATID         string `json:"catid"`
 		PartsPerCycle int64  `json:"parts_per_cycle"`
 		Notes         string `json:"notes"`
 	}
 	if !h.parseJSON(w, r, &req) {
-		return
-	}
-
-	if err := validateManifestLines([]manifestLine{
-		{PartNumber: req.PartNumber, PartsPerCycle: req.PartsPerCycle},
-	}); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -119,8 +113,8 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 		PartNumber:    req.PartNumber,
 		PartsPerCycle: req.PartsPerCycle,
 	}
-	if err := h.engine.PayloadService().CreateManifestItem(m); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+	if err := h.engine.PayloadService().CreateManifestItem(m, req.CATID); err != nil {
+		h.manifestWriteError(w, err)
 		return
 	}
 	h.jsonOK(w, m)
@@ -131,21 +125,15 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		ID            int64  `json:"id"`
 		PartNumber    string `json:"part_number"`
+		CATID         string `json:"catid"`
 		PartsPerCycle int64  `json:"parts_per_cycle"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
-	if err := validateManifestLines([]manifestLine{
-		{PartNumber: req.PartNumber, PartsPerCycle: req.PartsPerCycle},
-	}); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if err := h.engine.PayloadService().UpdateManifestItem(req.ID, req.PartNumber, req.PartsPerCycle); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+	if err := h.engine.PayloadService().UpdateManifestItem(req.ID, req.PartNumber, req.CATID, req.PartsPerCycle); err != nil {
+		h.manifestWriteError(w, err)
 		return
 	}
 	h.jsonSuccess(w)

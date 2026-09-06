@@ -611,6 +611,20 @@ CREATE TABLE IF NOT EXISTS home_location_loaders (
     PRIMARY KEY (core_node_name)
 );
 
+-- Every part identity a press's PLC has actually declared, post-debounce.
+-- The plant's first persisted record of what the wire carries — see
+-- store/plc_catid_observations.go for why that did not exist before. Nothing
+-- reads it to make a decision.
+CREATE TABLE IF NOT EXISTS plc_catid_observations (
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    plc_name     TEXT    NOT NULL DEFAULT '',
+    catid        TEXT    NOT NULL,
+    first_seen   TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_seen    TEXT    NOT NULL DEFAULT (datetime('now')),
+    observations INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (process_id, catid)
+);
+
 CREATE TABLE IF NOT EXISTS process_changeovers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id      INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -842,7 +856,7 @@ CREATE TABLE IF NOT EXISTS node_lineside_bucket (
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
     pair_key     TEXT NOT NULL DEFAULT '',
     style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    part_number  TEXT NOT NULL,
+    payload_code TEXT NOT NULL,
     qty          INTEGER NOT NULL DEFAULT 0,
     state        TEXT NOT NULL DEFAULT 'active',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
@@ -850,7 +864,7 @@ CREATE TABLE IF NOT EXISTS node_lineside_bucket (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, part_number)
+    ON node_lineside_bucket(node_id, payload_code)
     WHERE state = 'active';
 
 CREATE INDEX IF NOT EXISTS idx_lineside_node_state
@@ -868,7 +882,7 @@ CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
 -- scope_kind ∈ {"bin", "bucket"}.
 -- scope_key:
 --   bin scope    → strconv(BinID)
---   bucket scope → "<NodeID>|<PairKey>|<StyleID>|<PartNumber>"
+--   bucket scope → "<NodeID>|<PairKey>|<StyleID>|<PayloadCode>"
 -- epoch labels the bin's load-lifecycle for bins (0 for buckets).
 -- Per-epoch counters mean a new bin load starts seq=1, immune to
 -- prior-epoch counter drift surviving across Edge restarts / DB

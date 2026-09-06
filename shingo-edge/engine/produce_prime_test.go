@@ -75,7 +75,7 @@ func TestBuildProducePlan_PartialEmpty_PrimesBarePairedPosition(t *testing.T) {
 	node, runtime, claim := pressIndexFixtures("")
 
 	occ := map[string]bool{primeHead: true, primePaired: false}
-	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest())
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestBuildProducePlan_PartialEmpty_FullCellStillSwaps(t *testing.T) {
 	node, runtime, claim := pressIndexFixtures("")
 
 	occ := map[string]bool{primeHead: true, primePaired: true}
-	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest())
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestBuildProducePlan_PartialEmpty_ThreePositionPrimesBoth(t *testing.T) {
 	node, runtime, claim := pressIndexFixtures(primeSecond)
 
 	occ := map[string]bool{primeHead: true, primePaired: false, primeSecond: false}
-	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest())
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestBuildProducePlan_PartialEmpty_PrimesOnColdPress(t *testing.T) {
 	runtime.RemainingUOPCached = 0
 
 	occ := map[string]bool{primeHead: true, primePaired: false}
-	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest())
 	if err != nil {
 		t.Fatalf("a cold press with a bare paired position must still prime, not refuse: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestBuildProducePlan_ColdPressWithFullCellStillRefuses(t *testing.T) {
 	runtime.RemainingUOPCached = 0
 
 	occ := map[string]bool{primeHead: true, primePaired: true}
-	if _, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil); err == nil {
+	if _, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest()); err == nil {
 		t.Fatal("want the 'no parts to finalize' refusal for a cold press with a full cell")
 	}
 }
@@ -196,7 +196,7 @@ func TestBuildProducePlan_PartialEmpty_UnknownOccupancyPrimesNothing(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			node, runtime, claim := pressIndexFixtures("")
-			plan, err := BuildProducePlan(node, runtime, claim, fixedNow, tc.occ, nil)
+			plan, err := BuildProducePlan(node, runtime, claim, fixedNow, tc.occ, nil, testManifest())
 			if err != nil {
 				t.Fatalf("BuildProducePlan: %v", err)
 			}
@@ -218,7 +218,7 @@ func TestBuildProducePlan_PartialEmpty_AlreadyPrimedAddsNothing(t *testing.T) {
 
 	occ := map[string]bool{primeHead: true, primePaired: false}
 	primed := map[string]bool{primePaired: true}
-	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, primed)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, primed, testManifest())
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestBuildProducePlan_PartialEmpty_PrimesOnlyTheUnprimedPosition(t *testing.
 
 	occ := map[string]bool{primeHead: true, primePaired: false, primeSecond: false}
 	primed := map[string]bool{primePaired: true}
-	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, primed)
+	plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, primed, testManifest())
 	if err != nil {
 		t.Fatalf("BuildProducePlan: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestBuildProducePlan_PartialEmpty_OtherModesUnaffected(t *testing.T) {
 			t.Parallel()
 			node, runtime, claim := produceFixtures(mode)
 			occ := map[string]bool{primeHead: true, primePaired: false}
-			plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil)
+			plan, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest())
 			if err != nil {
 				t.Fatalf("BuildProducePlan: %v", err)
 			}
@@ -287,7 +287,7 @@ func TestBuildProducePlan_PartialEmpty_NoInboundSourceRefuses(t *testing.T) {
 	claim.InboundSource = ""
 
 	occ := map[string]bool{primeHead: true, primePaired: false}
-	if _, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil); err == nil {
+	if _, err := BuildProducePlan(node, runtime, claim, fixedNow, occ, nil, testManifest()); err == nil {
 		t.Fatal("want an error when a prime is needed and the claim has no inbound source")
 	}
 }

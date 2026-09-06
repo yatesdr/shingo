@@ -79,7 +79,7 @@ type bucketStore interface {
 	// SetLinesideBucketForReconcile writes the bucket's qty to an
 	// exact value (not a delta). Deletes the row when qty=0; matches
 	// the existing "SetForReconcile" semantic. Used by AdjustBucket.
-	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error
+	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) error
 
 	// ListLinesideBuckets returns every bucket row for the given
 	// node. Used by Backfill to enumerate the seed deltas at startup.
@@ -89,7 +89,7 @@ type bucketStore interface {
 	// (creating the row if absent, activating an inactive row).
 	// Returns the resulting bucket row. Used by CaptureToLineside
 	// during operator release-click capture.
-	CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) (*lineside.Bucket, error)
+	CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) (*lineside.Bucket, error)
 
 	// DeactivateOtherLinesideStyles marks all bucket rows for this
 	// node EXCEPT the one matching styleID as inactive. Fires on

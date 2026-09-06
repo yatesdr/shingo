@@ -199,8 +199,8 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 		t.Fatalf("seed bin B: %v", err)
 	}
 	// One bucket of 11.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty)
-		VALUES ('STATION-INV', $1, '', 0, 'PART-INV', 11)`, sd.StorageNode.Name); err != nil {
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+		VALUES ('STATION-INV', $1, '', 0, 'PAY-INV', 11)`, sd.StorageNode.Name); err != nil {
 		t.Fatalf("seed bucket: %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestApiInventoryExport_LinesideBucketSheet(t *testing.T) {
 	if len(rows) < 1 {
 		t.Fatal("lineside sheet has no header row")
 	}
-	want := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
+	want := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Payload Code", "State", "Qty"}
 	if len(rows[0]) != len(want) {
 		t.Fatalf("lineside header has %d columns, want %d: %v", len(rows[0]), len(want), rows[0])
 	}

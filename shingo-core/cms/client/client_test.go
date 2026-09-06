@@ -37,7 +37,7 @@ func serve(t *testing.T, h http.HandlerFunc) *Client {
 func reply(status int, body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
+		w.Write([]byte(body))
 	}
 }
 
@@ -212,7 +212,7 @@ func TestPost_SendsCredentialsAsHeaders(t *testing.T) {
 		gotSecret = r.Header.Get("x-secret-key")
 		gotSHA = r.Header.Get("x-body-sha256")
 		gotType = r.Header.Get("Content-Type")
-		_, _ = w.Write([]byte(`{"TransactionId":"T"}`))
+		w.Write([]byte(`{"TransactionId":"T"}`))
 	})
 	c.Post(context.Background(), []byte(`[{"a":1}]`), "abc123")
 
@@ -240,7 +240,7 @@ func TestKeysNeverAppearInAnyReturnedError(t *testing.T) {
 		// A middleware that echoes the headers it received. Hostile, and
 		// exactly the case a redaction pass exists for.
 		w.WriteHeader(400)
-		_, _ = w.Write([]byte("rejected request with x-access-key=" + r.Header.Get("x-access-key") +
+		w.Write([]byte("rejected request with x-access-key=" + r.Header.Get("x-access-key") +
 			" and x-secret-key=" + r.Header.Get("x-secret-key")))
 	})
 	results := []PostResult{
@@ -387,7 +387,7 @@ func TestGetByTxID_BaseURLWithAQueryStringStillAsksForTheID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query()
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`[{"id":1}]`))
+		w.Write([]byte(`[{"id":1}]`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -504,7 +504,7 @@ func TestGetByTxID_SendsTheIDAndTheCredentials(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query().Get("TransactionId")
 		gotAccess = r.Header.Get("x-access-key")
-		_, _ = w.Write([]byte(`[{"x":1}]`))
+		w.Write([]byte(`[{"x":1}]`))
 	})
 	if _, err := c.GetByTxID(context.Background(), "MW/42 43"); err != nil {
 		t.Fatalf("GetByTxID: %v", err)

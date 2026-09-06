@@ -83,14 +83,12 @@ func (m *Mutator) RecordBin(binID int64, payloadCode string, delta int, reason p
 // (Round-3 Obs 8). Empty values are dropped at flush rather than
 // emitted into the (Core-rejected) cross-namespace translation hole.
 //
-// payloadCode (UOP-threshold replenishment) is the payload these parts
-// belong to so Core's SystemUOPForPayload can sum bins + buckets per
-// payload. Empty string is valid for callers that don't have the
-// payload handy (e.g. uop_backfill startup, where the local row
-// doesn't carry it) — the accumulator preserves any previously-latched
-// non-empty value and Core's UPSERT preserves the existing row value.
-func (m *Mutator) RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
-	m.acc.recordBucket(nodeID, coreNodeName, pairKey, styleID, partNumber, payloadCode, delta, reason)
+// payloadCode identifies the bucket — the payload this pile is a pile OF — and
+// is what Core's SystemUOPForPayload sums against. It is required: a bucket
+// with no payload has no place in that sum and no key to accumulate under, so
+// the accumulator drops it rather than opening a row nothing can attribute.
+func (m *Mutator) RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
+	m.acc.recordBucket(nodeID, coreNodeName, pairKey, styleID, payloadCode, delta, reason)
 }
 
 // Flush performs one synchronous flush pass. Boundary triggers
@@ -249,16 +247,12 @@ func (m *Mutator) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, d
 // Skips delta emission when newQty == currentQty (no-op write).
 // Still writes the row to update updated_at and refresh the audit
 // row, matching pre-refactor behaviour.
-func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
+func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
 	delta := newQty - currentQty
 	if delta != 0 {
-		// Admin adjustments don't carry a payload code (the operator UI
-		// works in part-number terms); pass empty so any previously-
-		// latched payload_code on the bucket is preserved by both the
-		// accumulator and Core's UPSERT.
-		m.acc.recordBucket(nodeID, coreNodeName, pairKey, styleID, partNumber, "", delta, reason)
+		m.acc.recordBucket(nodeID, coreNodeName, pairKey, styleID, payloadCode, delta, reason)
 	}
-	if err := m.buckets.SetLinesideBucketForReconcile(nodeID, pairKey, styleID, partNumber, newQty); err != nil {
+	if err := m.buckets.SetLinesideBucketForReconcile(nodeID, pairKey, styleID, payloadCode, newQty); err != nil {
 		return err
 	}
 	m.acc.flush()

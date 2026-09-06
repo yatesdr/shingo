@@ -1211,7 +1211,7 @@ type LinesideBucketDeltaReason string
 const (
 	// ReasonCaptureFill — operator pulled parts to lineside on release.
 	// Positive delta. Emitted by ReleaseOrderWithLineside's capture
-	// path, one per (style, part_number) captured.
+	// path, one per (style, payload_code) captured.
 	ReasonCaptureFill LinesideBucketDeltaReason = "capture_fill"
 	// ReasonConsumeDrain — PLC consume tick drained the bucket before
 	// reaching the bin. Always negative. Emitted by drainLinesideFirst's
@@ -1318,9 +1318,9 @@ type DowntimeEvent struct {
 // lineside bucket. Sent on subject SubjectLinesideBucketDelta. Core
 // routes on subject, dedups against
 // inventory_delta_dedup(station, "bucket",
-// "<NodeID>|<PairKey>|<StyleID>|<PartNumber>"), and applies via UPSERT
+// "<NodeID>|<PairKey>|<StyleID>|<PayloadCode>"), and applies via UPSERT
 // to the lineside_buckets row keyed on
-// (station, node_id, pair_key, style_id, part_number). When qty hits
+// (station, node_id, pair_key, style_id, payload_code). When qty hits
 // zero Core deletes the row — Option C: active/inactive is computed
 // at query time, so empty buckets carry no useful information.
 //
@@ -1352,16 +1352,21 @@ type DowntimeEvent struct {
 // (`claimDeltaSequence`), so which copy answers "whose sequence counter space
 // is this" is not a cosmetic question.
 type LinesideBucketDelta struct {
-	CoreNodeName string                    `json:"core_node_name"`
-	PairKey      string                    `json:"pair_key"`
-	StyleID      int64                     `json:"style_id"`
-	PartNumber   string                    `json:"part_number"`
-	PayloadCode  string                    `json:"payload_code,omitempty"`
-	Delta        int                       `json:"delta"`
-	Reason       LinesideBucketDeltaReason `json:"reason"`
-	SequenceID   int64                     `json:"sequence_id"`
-	WindowStart  time.Time                 `json:"window_start"`
-	WindowEnd    time.Time                 `json:"window_end"`
+	CoreNodeName string `json:"core_node_name"`
+	PairKey      string `json:"pair_key"`
+	StyleID      int64  `json:"style_id"`
+	// PayloadCode identifies the bucket, and it is required — the pile is a pile
+	// OF this payload. It used to sit beside a second identifier (part_number,
+	// itself holding a payload code) which was the actual key, while this field
+	// was latched from whichever BIN was at the node. On a node that allows
+	// several payloads those are different answers, and the latched one filed
+	// one payload's stock under another. One field now, and it is the key.
+	PayloadCode string                    `json:"payload_code"`
+	Delta       int                       `json:"delta"`
+	Reason      LinesideBucketDeltaReason `json:"reason"`
+	SequenceID  int64                     `json:"sequence_id"`
+	WindowStart time.Time                 `json:"window_start"`
+	WindowEnd   time.Time                 `json:"window_end"`
 }
 
 // UOPAdjustment carries an absolute UOP value set by an admin via Core's

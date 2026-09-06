@@ -323,7 +323,7 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	f.SetSheetName("Sheet1", sheet)
 
 	// Headers
-	headers := []string{"Group", "Lane", "Node", "Zone", "Bin Label", "Bin Type", "Status", "In Transit", "Destination", "Payload Code", "Cat-ID", "Qty", "UOP Remaining", "Confirmed"}
+	headers := []string{"Group", "Lane", "Node", "Zone", "Bin Label", "Bin Type", "Status", "In Transit", "Destination", "Payload Code", "Part Number", "Qty", "UOP Remaining", "Confirmed"}
 	for i, hdr := range headers {
 		c, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, c, hdr)
@@ -350,7 +350,7 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 		f.SetCellValue(sheet, cell("H", rn), transit)
 		f.SetCellValue(sheet, cell("I", rn), row.Destination)
 		f.SetCellValue(sheet, cell("J", rn), row.PayloadCode)
-		f.SetCellValue(sheet, cell("K", rn), row.CatID)
+		f.SetCellValue(sheet, cell("K", rn), row.PartNumber)
 		f.SetCellValue(sheet, cell("L", rn), row.Qty)
 		f.SetCellValue(sheet, cell("M", rn), row.UOPRemaining)
 		confirmed := ""
@@ -400,7 +400,7 @@ func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) 
 	if _, err := f.NewSheet(bucketSheet); err != nil {
 		return
 	}
-	bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
+	bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Payload Code", "State", "Qty"}
 	for i, hdr := range bucketHeaders {
 		c, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(bucketSheet, c, hdr)
@@ -414,10 +414,9 @@ func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) 
 		f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
 		f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
 		f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
-		f.SetCellValue(bucketSheet, cell("G", rn), br.PartNumber)
-		f.SetCellValue(bucketSheet, cell("H", rn), br.PayloadCode)
-		f.SetCellValue(bucketSheet, cell("I", rn), br.State)
-		f.SetCellValue(bucketSheet, cell("J", rn), br.Qty)
+		f.SetCellValue(bucketSheet, cell("G", rn), br.PayloadCode)
+		f.SetCellValue(bucketSheet, cell("H", rn), br.State)
+		f.SetCellValue(bucketSheet, cell("I", rn), br.Qty)
 	}
 }
 

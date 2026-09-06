@@ -53,8 +53,8 @@ func TestBin_ParseManifest_Single(t *testing.T) {
 		t.Fatalf("len(Items) = %d, want 1", len(m.Items))
 	}
 	got := m.Items[0]
-	if got.CatID != "A" {
-		t.Errorf("CatID = %q, want %q", got.CatID, "A")
+	if got.PartNumber != "A" {
+		t.Errorf("PartNumber = %q, want %q", got.PartNumber, "A")
 	}
 	if got.LotCode != "" {
 		t.Errorf("LotCode = %q, want empty", got.LotCode)
@@ -83,10 +83,10 @@ func TestBin_ParseManifest_Multi(t *testing.T) {
 		t.Fatalf("len(Items) = %d, want 3", len(m.Items))
 	}
 
-	wantCatIDs := []string{"A", "B", "C"}
+	wantParts := []string{"A", "B", "C"}
 	for i, it := range m.Items {
-		if it.CatID != wantCatIDs[i] {
-			t.Errorf("Items[%d].CatID = %q, want %q", i, it.CatID, wantCatIDs[i])
+		if it.PartNumber != wantParts[i] {
+			t.Errorf("Items[%d].PartNumber = %q, want %q", i, it.PartNumber, wantParts[i])
 		}
 	}
 
@@ -136,8 +136,8 @@ func TestBin_ParseManifest_IgnoresHistoricalQty(t *testing.T) {
 	if len(m.Items) != 1 {
 		t.Fatalf("len(Items) = %d, want 1", len(m.Items))
 	}
-	if m.Items[0].CatID != "A" || m.Items[0].LotCode != "LOT-9" {
-		t.Errorf("Items[0] = %+v, want CatID A and LotCode LOT-9", m.Items[0])
+	if m.Items[0].PartNumber != "A" || m.Items[0].LotCode != "LOT-9" {
+		t.Errorf("Items[0] = %+v, want PartNumber A and LotCode LOT-9", m.Items[0])
 	}
 }
 
@@ -146,11 +146,60 @@ func TestBin_ParseManifest_IgnoresHistoricalQty(t *testing.T) {
 // removes, and it would round-trip back into every reader that looks for one.
 func TestManifestEntry_MarshalsNoQuantity(t *testing.T) {
 	t.Parallel()
-	body, err := json.Marshal(Manifest{Items: []ManifestEntry{{CatID: "A", LotCode: "L"}}})
+	body, err := json.Marshal(Manifest{Items: []ManifestEntry{{PartNumber: "A", LotCode: "L"}}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if strings.Contains(string(body), `"qty"`) {
 		t.Errorf("manifest JSON carries a qty key: %s", body)
+	}
+}
+
+// TestManifestEntry_ReadsEitherKey pins the compatibility window. Every bin
+// standing on a plant floor when this ships carries `catid`; nothing rewrites a
+// jsonb column under a running plant, so those bins have to keep reading
+// correctly for as long as they take to drain. New writes emit `part_number`,
+// and when a line somehow carries both, the new key wins — a stale `catid`
+// alongside a fresh `part_number` is the one shape where they can disagree, and
+// the fresher writer is the one that knew about both.
+func TestManifestEntry_ReadsEitherKey(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"legacy catid", `{"items":[{"catid":"OLD-1"}]}`, "OLD-1"},
+		{"current part_number", `{"items":[{"part_number":"NEW-1"}]}`, "NEW-1"},
+		{"both, part_number wins", `{"items":[{"part_number":"NEW-1","catid":"OLD-1"}]}`, "NEW-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := tc.raw
+			b := &Bin{Manifest: &raw}
+			m, err := b.ParseManifest()
+			if err != nil {
+				t.Fatalf("ParseManifest: %v", err)
+			}
+			if len(m.Items) != 1 || m.Items[0].PartNumber != tc.want {
+				t.Errorf("parsed %+v, want one line naming %q", m.Items, tc.want)
+			}
+		})
+	}
+}
+
+// TestManifestEntry_MarshalsPartNumberOnly: the write side emits one key. A
+// writer that emitted both would keep the old spelling alive forever and give
+// the two copies a way to disagree.
+func TestManifestEntry_MarshalsPartNumberOnly(t *testing.T) {
+	t.Parallel()
+	body, err := json.Marshal(Manifest{Items: []ManifestEntry{{PartNumber: "A"}}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(body), `"catid"`) {
+		t.Errorf("manifest JSON still writes the old key: %s", body)
+	}
+	if !strings.Contains(string(body), `"part_number":"A"`) {
+		t.Errorf("manifest JSON does not name the part: %s", body)
 	}
 }

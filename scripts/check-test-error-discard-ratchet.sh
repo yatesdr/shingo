@@ -66,11 +66,17 @@ cd "$(dirname "$0")/.."
 
 # ── THE RATCHET CONSTANT ───────────────────────────────────────────────────
 # Current number of silent error discards in test files, all five modules,
-# with -tags docker. Measured 2026-09-05 against golangci-lint v2.11.4.
+# with -tags docker. Measured 2026-09-06 against golangci-lint v2.11.4.
+#
+# It read 1540 when it was written and that number was measured on
+# lineside/carrier alone, before the CMS branch's test files existed. On the
+# integrated tree the same run counts 1557, so this step has been failing since
+# the two branches met — the 17 extra sites were converted, and then the demand
+# quota page's tests took another 36 with them when the table was dropped.
 #
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1540
+FROZEN=1503
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

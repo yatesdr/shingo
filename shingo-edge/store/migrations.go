@@ -419,6 +419,34 @@ func (db *DB) migrate() error {
 	// Rename outbound_source → outbound_destination on style_node_claims (it's a dropoff destination, not a source)
 	db.Exec("ALTER TABLE style_node_claims RENAME COLUMN outbound_source TO outbound_destination")
 
+	// Every cat id a PLC has actually declared. New table, so schema.Apply's
+	// CREATE TABLE IF NOT EXISTS covers a fresh install; this covers a database
+	// that already exists, which is every plant.
+	db.Exec(`CREATE TABLE IF NOT EXISTS plc_catid_observations (
+		process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+		plc_name     TEXT    NOT NULL DEFAULT '',
+		catid        TEXT    NOT NULL,
+		first_seen   TEXT    NOT NULL DEFAULT (datetime('now')),
+		last_seen    TEXT    NOT NULL DEFAULT (datetime('now')),
+		observations INTEGER NOT NULL DEFAULT 1,
+		PRIMARY KEY (process_id, catid)
+	)`)
+
+	// Rename the bucket's identity column to payload_code, which is what it has
+	// always held: the release modal's chips are the claim's ALLOWED PAYLOAD
+	// CODES, the consume tick drains by payload, and ListLinesideLevels joins
+	// this column straight against runtime.lineside_payload_code. It was called
+	// part_number, then briefly cat_id, and neither was ever in it.
+	//
+	// Both spellings are renamed because a dev or sim database may sit at
+	// either — a build that briefly called this column cat_id reached the sim
+	// stacks before it was withdrawn, and a plant never saw it. A failed ALTER
+	// is a no-op here, which is this migrate path's whole idiom. Core's
+	// lineside_buckets makes the same move at v105 and additionally collapses a
+	// duplicate column the Edge never had; the two sides ship together.
+	db.Exec("ALTER TABLE node_lineside_bucket RENAME COLUMN part_number TO payload_code")
+	db.Exec("ALTER TABLE node_lineside_bucket RENAME COLUMN cat_id TO payload_code")
+
 	// A/B node cycling: paired_core_node on claims, active_pull on runtime
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN paired_core_node TEXT NOT NULL DEFAULT ''")
 
@@ -541,14 +569,14 @@ func (db *DB) migrate() error {
 		)`)
 
 	// Round-3 A* (2026-05-21): narrow the lineside-bucket partial
-	// unique index from (node_id, style_id, part_number) to
-	// (node_id, part_number) WHERE state='active'. The style_id was
-	// load-bearing on the original "one bucket per (node, style, part)"
+	// unique index from (node_id, style_id, cat_id) to
+	// (node_id, payload_code) WHERE state='active'. The style_id was
+	// load-bearing on the original "one bucket per (node, style, payload)"
 	// model where multi-style transient overlap during release was
 	// considered legal — but in practice that left buckets stuck
 	// across a style cutover because Drain's old style-included WHERE
 	// could no longer match them. The new invariant is "at most one
-	// active bucket per (node, part)" regardless of style; DeactivateOtherStyles
+	// active bucket per (node, payload)" regardless of style; DeactivateOtherStyles
 	// (uop/capture.go:92) still deactivates other-style buckets on
 	// capture to keep state coherent. Schema enforcement is strictly
 	// stronger than the prior code-only enforcement.
@@ -562,7 +590,7 @@ func (db *DB) migrate() error {
 	if hasLegacyLinesideStyleIndex(db) {
 		db.Exec("DROP INDEX IF EXISTS idx_lineside_active_unique")
 		db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
-			ON node_lineside_bucket(node_id, part_number)
+			ON node_lineside_bucket(node_id, payload_code)
 			WHERE state = 'active'`)
 	}
 
@@ -828,8 +856,8 @@ func (db *DB) migrate() error {
 // index still includes style_id in its definition. SQLite stores the
 // full CREATE statement of every index in sqlite_master.sql, so a
 // simple LIKE on style_id is enough to distinguish the old and new
-// shapes — both reference part_number, but only the legacy shape
-// references style_id.
+// shapes — both reference the bucket's payload column, but only the legacy
+// shape references style_id.
 func hasLegacyLinesideStyleIndex(db *DB) bool {
 	var sql string
 	err := db.QueryRow(`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='index' AND name='idx_lineside_active_unique'`).Scan(&sql)
@@ -1652,36 +1680,36 @@ func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
 			return fmt.Errorf("collapse %s: delete changeover tasks: %w", g.coreNodeName, err)
 		}
 
-		// node_lineside_bucket — UNIQUE(node_id, part_number) WHERE state='active'.
+		// node_lineside_bucket — UNIQUE(node_id, payload_code) WHERE state='active'.
 		//
 		// The guard tests the MOVING row's state as well as the survivor's. The
 		// index is partial on state='active', so an INACTIVE bucket cannot collide
 		// with anything and must always migrate. Without that clause it was matched
-		// by a survivor's active row of the same part number, refused the move, and
-		// then deleted — throwing away closed-out part counts that were never in
+		// by a survivor's active row of the same payload, refused the move, and
+		// then deleted — throwing away closed-out counts that were never in
 		// anyone's way.
 		if _, err := tx.Exec(`
 			UPDATE node_lineside_bucket SET node_id = ?
 			WHERE node_id = ?
 			  AND NOT EXISTS (SELECT 1 FROM node_lineside_bucket s
 			                  WHERE s.node_id = ?
-			                    AND s.part_number = node_lineside_bucket.part_number
+			                    AND s.payload_code = node_lineside_bucket.payload_code
 			                    AND s.state = 'active'
 			                    AND node_lineside_bucket.state = 'active')`,
 			survivor, d, survivor); err != nil {
 			return fmt.Errorf("collapse %s: repoint lineside buckets: %w", g.coreNodeName, err)
 		}
 		// What survives that UPDATE is an ACTIVE bucket the survivor already has a
-		// row for. These carry operator-captured part quantities — say what is lost.
-		buckets, err := scanBucketLosses(tx.Query(`SELECT id, part_number, qty, state
+		// row for. These carry operator-captured quantities — say what is lost.
+		buckets, err := scanBucketLosses(tx.Query(`SELECT id, payload_code, qty, state
 			FROM node_lineside_bucket WHERE node_id = ?`, d))
 		if err != nil {
 			return fmt.Errorf("collapse %s: read colliding lineside buckets: %w", g.coreNodeName, err)
 		}
 		for _, b := range buckets {
 			discards = append(discards, fmt.Sprintf(
-				"migrate: dropped lineside bucket %d (part=%s qty=%d state=%q) from duplicate node %d (%s) — the survivor %d already holds an active bucket for that part; re-count it lineside if the quantity was real",
-				b.id, b.part, b.qty, b.state, d, g.coreNodeName, survivor))
+				"migrate: dropped lineside bucket %d (payload=%s qty=%d state=%q) from duplicate node %d (%s) — the survivor %d already holds an active bucket for that payload; re-count it lineside if the quantity was real",
+				b.id, b.payload, b.qty, b.state, d, g.coreNodeName, survivor))
 		}
 		if _, err := tx.Exec(`DELETE FROM node_lineside_bucket WHERE node_id = ?`, d); err != nil {
 			return fmt.Errorf("collapse %s: delete lineside buckets: %w", g.coreNodeName, err)
@@ -1712,10 +1740,10 @@ type taskLoss struct {
 }
 
 type bucketLoss struct {
-	id    int64
-	part  string
-	qty   int
-	state string
+	id      int64
+	payload string
+	qty     int
+	state   string
 }
 
 func scanIDs(rows *sql.Rows, qErr error) ([]int64, error) {
@@ -1758,7 +1786,7 @@ func scanBucketLosses(rows *sql.Rows, qErr error) ([]bucketLoss, error) {
 	var out []bucketLoss
 	for rows.Next() {
 		var b bucketLoss
-		if err := rows.Scan(&b.id, &b.part, &b.qty, &b.state); err != nil {
+		if err := rows.Scan(&b.id, &b.payload, &b.qty, &b.state); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

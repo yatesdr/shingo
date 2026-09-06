@@ -33,11 +33,11 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	}
 
 	// Seed three buckets across two stations.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
 		VALUES
-		  ('STATION-B', $1, '', 1, 'PART-2', 22, 'PAY-X'),
-		  ('STATION-A', $1, '', 1, 'PART-1', 11, 'PAY-X'),
-		  ('STATION-A', $2, '', 2, 'PART-3', 33, 'PAY-Y')`,
+		  ('STATION-B', $1, '', 1, 'PAY-2', 22),
+		  ('STATION-A', $1, '', 1, 'PAY-1', 11),
+		  ('STATION-A', $2, '', 2, 'PAY-3', 33)`,
 		nodeA.Name, nodeB.Name); err != nil {
 		t.Fatalf("seed buckets: %v", err)
 	}
@@ -53,11 +53,11 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	// Pin field mapping on the first row by station name.
 	byKey := map[string]inventory.BucketRow{}
 	for _, r := range rows {
-		byKey[r.Station+"|"+r.PartNumber] = r
+		byKey[r.Station+"|"+r.PayloadCode] = r
 	}
-	r1, ok := byKey["STATION-A|PART-1"]
+	r1, ok := byKey["STATION-A|PAY-1"]
 	if !ok {
-		t.Fatalf("missing STATION-A/PART-1: %+v", rows)
+		t.Fatalf("missing STATION-A/PAY-1: %+v", rows)
 	}
 	if r1.Qty != 11 {
 		t.Errorf("PART-1 qty = %d, want 11", r1.Qty)
@@ -108,10 +108,10 @@ func TestListLinesideBuckets_MarksStranded(t *testing.T) {
 		t.Fatalf("seed plant claims: %v", err)
 	}
 
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
 		VALUES
-		  ('ST', $1, '', 1, 'PART-A', 100, 'PAY-ACTIVE'),
-		  ('ST', $1, '', 2, 'PART-O', 250, 'PAY-OLD')`,
+		  ('ST', $1, '', 1, 'PAY-ACTIVE', 100),
+		  ('ST', $1, '', 2, 'PAY-OLD', 250)`,
 		node.Name); err != nil {
 		t.Fatalf("seed buckets: %v", err)
 	}

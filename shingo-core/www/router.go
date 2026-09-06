@@ -150,9 +150,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/orders/detail", h.handleOrderDetail)
 		r.Get("/robots", h.handleRobots)
 		r.Get("/inventory", h.handleInventory)
-		r.Get("/demand", h.handleDemand)
-		// Phase 6: the demand GRAIN, a different concept from the quota page
-		// above. Distinct path on purpose — see handlers_demand_episodes.go.
+		// The demand GRAIN. There used to be a /demand quota page beside it
+		// under a near-identical name; it went with its table at v106.
 		r.Get("/demand-episodes", h.handleDemandEpisodes)
 		// 5.12 — origin-indexed forensics: one demand and every order it
 		// spawned, each linking to its /missions/{orderID} detail below.
@@ -381,9 +380,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/recovery/actions", h.apiListRecoveryActions)
 			r.Get("/health", h.apiHealthCheck)
 
-			// Demands
-			r.Get("/demands", h.apiListDemands)
-
 			// ── Protected API (auth required) ──────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(h.requireAuth)
@@ -456,7 +452,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Bulk import (.csv/.xlsx): one row per manifest part, code
 				// repeated. Skips duplicates, reports per-row results.
 				r.Post("/payloads/templates/import", h.apiImportPayloadTemplates)
-				r.Post("/payloads/templates/manifest", h.apiSavePayloadManifestTemplate)
 				r.Post("/payloads/templates/bin-types", h.apiSavePayloadBinTypes)
 				// Advanced load sequences: dropdown source + on-demand Check.
 				r.Get("/payloads/templates/sequences", h.apiListLoadSequences)
@@ -519,16 +514,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Fire alarm
 				r.Get("/fire-alarm/status", h.apiFireAlarmStatus)
 				r.Post("/fire-alarm/trigger", h.apiFireAlarmTrigger)
-
-				// Demands
-				r.Post("/demands", h.apiCreateDemand)
-				r.Put("/demands/{id}", h.apiUpdateDemand)
-				r.Put("/demands/{id}/apply", h.apiApplyDemand)
-				r.Delete("/demands/{id}", h.apiDeleteDemand)
-				r.Post("/demands/apply-all", h.apiApplyAllDemands)
-				r.Put("/demands/{id}/produced", h.apiSetDemandProduced)
-				r.Post("/demands/{id}/clear", h.apiClearDemandProduced)
-				r.Post("/demands/clear-all", h.apiClearAllProduced)
 
 				// Dashboards (write) — management CRUD behind auth. Reads
 				// live in the public API group above.

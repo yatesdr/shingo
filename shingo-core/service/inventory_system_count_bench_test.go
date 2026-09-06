@@ -136,9 +136,9 @@ func seedPlantScale(b *testing.B, db *store.DB) []string {
 		payload := payloads[i]
 		node := nodeNames[i%6]
 		if _, err := db.Exec(
-			`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			"bench-station", node, "PK", int64(1), payload, 40+i, payload,
+			`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+			 VALUES ($1,$2,$3,$4,$5,$6)`,
+			"bench-station", node, "PK", int64(1), payload, 40+i,
 		); err != nil {
 			b.Fatalf("insert bucket for %s@%s: %v", payload, node, err)
 		}

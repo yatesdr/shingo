@@ -345,6 +345,15 @@ func applyCatidEdge(st *catidState, cur string, ok bool, now time.Time) (confirm
 // which arms after the settle window — no prompt; `off` is silent. Called with
 // cm.mu held; keep DB/event work light.
 func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChange bool) {
+	// Record what the press actually said, matching or not. Until this existed
+	// the plant had no persisted evidence of what a PLC sends — only the values
+	// people typed into Core, and only the readings that DISAGREED (on
+	// process_changeovers.verify_live_catid), which is a record of exceptions
+	// and never of the norm. Nothing reads this to decide anything.
+	if err := cm.eng.db.RecordPLCCATIDObservation(processID, st.plcName, st.lastConfirmed); err != nil {
+		log.Printf("plc-catid: record observation for process %d: %v", processID, err)
+	}
+
 	styleID, styleName, set, ok := cm.eng.activeStyleCATIDSet(processID)
 	// A5: alert when the active style has configured/derivable CATIDs and the live
 	// part is NONE of them (not just != a single value — a two-position style runs

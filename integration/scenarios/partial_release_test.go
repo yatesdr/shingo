@@ -98,7 +98,7 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 	const wantPart = "SCN-PART-1"
 	if err := coreDB.CreatePayloadManifestItem(&corepayloads.ManifestItem{
 		PayloadID: pay.ID, PartNumber: wantPart, PartsPerCycle: 1,
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("create template line: %v", err)
 	}
 	const fullManifest = `{"items":[{"catid":"STALE-PART","qty":1000}]}`
@@ -244,10 +244,10 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 			len(parsed.Items))
 	}
 	item := parsed.Items[0]
-	if item.CatID != wantPart {
-		t.Errorf("manifest CatID = %q, want %q (the template's part_number). The pre-release "+
+	if item.PartNumber != wantPart {
+		t.Errorf("manifest part number = %q, want %q (the template's part_number). The pre-release "+
 			"list named STALE-PART, so this also proves the rebuild fired rather than the "+
-			"prior manifest being preserved.", item.CatID, wantPart)
+			"prior manifest being preserved.", item.PartNumber, wantPart)
 	}
 	// The line carries no count of its own — uop_remaining, asserted above, is
 	// the count, and the part count derives from it times the template's

@@ -241,18 +241,12 @@ func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *pro
 		log.Printf("core_handler: production.tick projection queue full, dropped station=%s edge_id=%d", station, snap.EdgeSnapshotID)
 	}
 
-	// §14 production.report retirement — BLOCKED, see Q-024. The gate
-	// (isProductionTick) is ready and tested, and this isNew branch is the
-	// correct, dedup-guarded placement for the IncrementProduced
-	// calls (§14 risk #4). But IncrementProduced needs cat_id = payload_code,
-	// and production.tick is emitted UPSTREAM of payload attribution
-	// (plc/manager.go enqueueProductionTick has only style/process; payload is
-	// attributed later in the engine wiring, where the old production_reporter
-	// gets it). So cat_id is not resolvable from the tick today. Until the team
-	// decides the cat_id source, production.report stays the sole writer —
-	// HandleProductionReport is intentionally left active.
+	// §14 production.report retirement. The gate (isProductionTick) says which
+	// ticks are production events; the counter they were going to feed is gone
+	// (v106 — the demands table held zero rows at both plants for its whole
+	// life and nothing read it), so this branch only reports.
 	if isProductionTick(snap) {
-		s.resp.dbg("production.tick is a production event station=%s style=%d delta=%d (produced-count wiring blocked on cat_id source, Q-024)",
+		s.resp.dbg("production.tick is a production event station=%s style=%d delta=%d",
 			station, snap.StyleID, snap.Delta)
 	}
 }
@@ -300,19 +294,18 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 		s.thresholdMonitor.OnBinUOPDelta(d.PayloadCode, d.Delta)
 	}
 
-	// §14 (Session-4 reframe): production counting retires onto bin_uop_delta.
-	// We are on the APPLIED branch — ApplyBinUOPDelta returned nil, meaning the
-	// delta passed its inventory_delta_dedup gate and was newly applied. A
-	// Kafka redelivery returns ErrInventoryDeltaSkipped above, so the counter
-	// is never double-bumped (§14 risk #4). NOT same-tx with the inventory
-	// write (that lives in the uop package; counting here keeps demands
-	// decoupled from inventory truth) — idempotent via the dedup gate, matching
-	// the durability of the retired production.report path.
+	// §14's produced counter is retired with the table it wrote to (v106).
+	// This was the sole caller of IncrementProduced, and what it wrote was a
+	// column on `demands` — a table that held zero rows at Springfield and
+	// Hopkinsville for its entire life, whose only writer was this line, and
+	// which nothing read. The production HISTORY it was standing in for is in
+	// bin_uop_ledger and its daily roll-up, which this same delta already
+	// wrote before reaching here.
 	//
-	// BOTH produce and consume ticks are production, keyed by payload_code: a
-	// produce tick makes the part; a consume tick draws the sub down as it's
-	// produced into a downstream FG/WIP. Count the magnitude (consume delta is
-	// negative). IncrementProduced is UPDATE-only, so untracked cat_ids no-op.
+	// The debug line stays: which deltas count as production is a real
+	// distinction (a produce tick makes a part; a consume tick draws a sub
+	// down as it is produced into a downstream assembly) and isProductionReason
+	// is where it is written down.
 	if isProductionReason(d.Reason) && d.PayloadCode != "" && d.Delta != 0 {
 		qty := int64(d.Delta)
 		if qty < 0 {
@@ -320,9 +313,6 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 		}
 		s.resp.dbg("production via bin_uop_delta: payload=%s station=%s qty=%d reason=%s",
 			d.PayloadCode, station, qty, d.Reason)
-		if err := s.db.IncrementProduced(d.PayloadCode, qty); err != nil {
-			log.Printf("core_handler: increment produced payload=%s qty=%d: %v", d.PayloadCode, qty, err)
-		}
 	}
 }
 
@@ -351,21 +341,21 @@ func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *p
 	station := env.Src.Station
 	if err := s.inventoryDelta.ApplyLinesideBucketDelta(station, d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
-			s.resp.dbg("lineside_bucket_delta replay station=%s core_node=%q part=%q seq=%d — already applied",
-				station, d.CoreNodeName, d.PartNumber, d.SequenceID)
+			s.resp.dbg("lineside_bucket_delta replay station=%s core_node=%q payload=%q seq=%d — already applied",
+				station, d.CoreNodeName, d.PayloadCode, d.SequenceID)
 			return
 		}
-		log.Printf("core_handler: apply LinesideBucketDelta station=%s core_node=%q part=%q seq=%d delta=%d reason=%s: %v",
-			station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason, err)
+		log.Printf("core_handler: apply LinesideBucketDelta station=%s core_node=%q payload=%q seq=%d delta=%d reason=%s: %v",
+			station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, d.Reason, err)
 		return
 	}
-	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q part=%q seq=%d delta=%d reason=%s",
-		station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
+	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q payload=%q seq=%d delta=%d reason=%s",
+		station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, d.Reason)
 
 	// Notify the UOP-threshold monitor so a bucket drain or capture
 	// re-evaluates loop totals. The monitor's debounce + opt-in gating
-	// inside is what keeps this from being noisy. Empty payload_code is
-	// fine — the monitor short-circuits on unknown payload.
+	// inside is what keeps this from being noisy. An unknown payload
+	// short-circuits inside the monitor.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.OnBucketApplied(station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
 	}

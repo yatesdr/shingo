@@ -293,7 +293,7 @@ func TestApiGetPayloadManifestTemplate_HappyPath(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "X", PartsPerCycle: 1,
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -313,56 +313,6 @@ func TestApiGetPayloadManifestTemplate_InvalidID(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiGetPayloadManifestTemplate, "/api/payloads/templates/manifest?id=x")
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-}
-
-// --- apiSavePayloadManifestTemplate -----------------------------------------
-
-func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
-	t.Parallel()
-	h, db := testHandlers(t)
-	sd := testdb.SetupStandardData(t, db)
-	// Seed one old item to verify it gets replaced.
-	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: sd.Payload.ID, PartNumber: "OLD", PartsPerCycle: 1,
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	rec := postJSON(t, h.apiSavePayloadManifestTemplate, "/api/payloads/templates/manifest",
-		map[string]any{
-			"payload_id": sd.Payload.ID,
-			"items": []map[string]any{
-				{"part_number": "NEW1", "parts_per_cycle": 2, "description": "d1"},
-				{"part_number": "NEW2", "parts_per_cycle": 3, "description": "d2"},
-			},
-		})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	assertJSONStatus(t, rec.Body.Bytes(), "ok")
-
-	items, _ := db.ListPayloadManifest(sd.Payload.ID)
-	if len(items) != 2 {
-		t.Fatalf("items: got %d, want 2", len(items))
-	}
-	if items[0].PartNumber != "NEW1" || items[1].PartNumber != "NEW2" {
-		t.Errorf("items: got %+v", items)
-	}
-	// The ratios have to come back too. A wrong JSON key decodes to zero
-	// without erroring, so an assertion on part numbers alone would pass over
-	// a manifest that stored nothing.
-	if items[0].PartsPerCycle != 2 || items[1].PartsPerCycle != 3 {
-		t.Errorf("parts_per_cycle = %d, %d; want 2, 3", items[0].PartsPerCycle, items[1].PartsPerCycle)
-	}
-}
-
-func TestApiSavePayloadManifestTemplate_InvalidJSON(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-	rec := postRaw(t, h.apiSavePayloadManifestTemplate, "/api/payloads/templates/manifest", []byte("{"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}

@@ -14,14 +14,14 @@ const (
 
 // GetActiveLinesideBucket returns the active bucket for (node, style,
 // part) or sql.ErrNoRows if none exists.
-func (db *DB) GetActiveLinesideBucket(nodeID, styleID int64, partNumber string) (*lineside.Bucket, error) {
-	return lineside.GetActive(db.DB, nodeID, styleID, partNumber)
+func (db *DB) GetActiveLinesideBucket(nodeID, styleID int64, payloadCode string) (*lineside.Bucket, error) {
+	return lineside.GetActive(db.DB, nodeID, styleID, payloadCode)
 }
 
 // FindLinesideBucket returns any bucket (active or inactive) for
 // (node, style, part) or sql.ErrNoRows.
-func (db *DB) FindLinesideBucket(nodeID, styleID int64, partNumber string) (*lineside.Bucket, error) {
-	return lineside.Find(db.DB, nodeID, styleID, partNumber)
+func (db *DB) FindLinesideBucket(nodeID, styleID int64, payloadCode string) (*lineside.Bucket, error) {
+	return lineside.Find(db.DB, nodeID, styleID, payloadCode)
 }
 
 // GetLinesideBucket returns one bucket by id.
@@ -54,8 +54,8 @@ func (db *DB) ListLinesideBucketsForPair(pairKey string) ([]lineside.Bucket, err
 // style, part). Merges into an existing bucket when present (reactivating
 // an inactive one) or creates a fresh active bucket otherwise. Zero qty
 // is a no-op.
-func (db *DB) CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) (*lineside.Bucket, error) {
-	return lineside.Capture(db.DB, nodeID, pairKey, styleID, partNumber, qty)
+func (db *DB) CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) (*lineside.Bucket, error) {
+	return lineside.Capture(db.DB, nodeID, pairKey, styleID, payloadCode, qty)
 }
 
 // DeactivateOtherLinesideStyles flips any other active buckets on the
@@ -72,14 +72,14 @@ func (db *DB) DeactivateOtherLinesideStyles(nodeID, keepStyleID int64) error {
 // to matchedStyleID so Core's dedup scope_key keys on the bucket's
 // actual style, not the caller's claim.StyleID. Round-3 A* dropped
 // style_id from the WHERE clause — see lineside.Drain doc.
-func (db *DB) DrainLinesideBucket(nodeID int64, partNumber string, delta int) (drained int, matchedStyleID int64, err error) {
-	return lineside.Drain(db.DB, nodeID, partNumber, delta)
+func (db *DB) DrainLinesideBucket(nodeID int64, payloadCode string, delta int) (drained int, matchedStyleID int64, err error) {
+	return lineside.Drain(db.DB, nodeID, payloadCode, delta)
 }
 
 // SetLinesideBucketForReconcile overwrites the bucket qty to exactly
 // the given value (UPSERT for positive; DELETE for zero). Used by
 // the UOP reconciler's bucket self-heal path; do NOT use for normal
 // production flows — Capture / Drain are the delta-style mutators.
-func (db *DB) SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error {
-	return lineside.SetForReconcile(db.DB, nodeID, pairKey, styleID, partNumber, qty)
+func (db *DB) SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) error {
+	return lineside.SetForReconcile(db.DB, nodeID, pairKey, styleID, payloadCode, qty)
 }

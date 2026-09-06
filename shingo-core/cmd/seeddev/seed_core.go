@@ -775,11 +775,13 @@ func ensurePayloadTemplate(db *store.DB, payloadID int64, payloadCode string) er
 	if len(items) > 0 {
 		return nil
 	}
+	// No cat id: the sim has no PLC declaring one, and inventing one would give
+	// the wrong-part guard a value nobody supplied.
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID:     payloadID,
 		PartNumber:    seedPartNumber(payloadCode),
 		PartsPerCycle: 1,
-	}); err != nil {
+	}, ""); err != nil {
 		return fmt.Errorf("create payload manifest line for %s: %w", payloadCode, err)
 	}
 	return nil
@@ -809,16 +811,16 @@ func ensureBin(db *store.DB, label string, binTypeID, nodeID int64) (int64, bool
 // per-part rows, the CMS boundary totals) saw one nameless part across the
 // whole sim plant. Building the domain type means the tags cannot drift again.
 //
-// THE ARGUMENT IS A PART NUMBER, NOT A PAYLOAD CODE. catid is matched against
-// payload_manifest.part_number by everything that counts a bin, so seeding the
-// code here made every sim bin resolve to a ratio of zero — the sim reproducing
-// the release-path defect rather than being a place it would show up.
+// THE ARGUMENT IS A PART NUMBER, NOT A PAYLOAD CODE. The line is matched
+// against payload_manifest.part_number by everything that counts a bin, so
+// seeding the code here made every sim bin resolve to a ratio of zero — the sim
+// reproducing the release-path defect rather than being a place it would show up.
 // ensurePayloadTemplate seeds the line this names.
 //
 // No quantity: the count is uop_remaining x the template's parts_per_cycle,
 // and uop is written separately by the caller's SetBinManifest.
 func buildManifest(partNumber string) string {
-	m := domain.Manifest{Items: []domain.ManifestEntry{{CatID: partNumber}}}
+	m := domain.Manifest{Items: []domain.ManifestEntry{{PartNumber: partNumber}}}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return `{"items":[]}`

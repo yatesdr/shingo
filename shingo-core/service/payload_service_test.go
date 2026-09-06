@@ -117,7 +117,7 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 		PartNumber:    "PART-1",
 		PartsPerCycle: 3,
 	}
-	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(item, ""), "CreateManifestItem")
 	if item.ID == 0 {
 		t.Fatal("expected manifest item ID populated")
 	}
@@ -138,9 +138,9 @@ func TestPayloadService_UpdateManifestItem_PersistsChanges(t *testing.T) {
 	p := makePayload(t, svc, "PL-UMI", "", 10)
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", PartsPerCycle: 1}
-	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(item, ""), "CreateManifestItem")
 
-	testutil.MustNoErr(t, svc.UpdateManifestItem(item.ID, "P-NEW", 9), "UpdateManifestItem")
+	testutil.MustNoErr(t, svc.UpdateManifestItem(item.ID, "P-NEW", "", 9), "UpdateManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 1 || rows[0].PartNumber != "P-NEW" || rows[0].PartsPerCycle != 9 {
 		t.Errorf("rows = %+v, want one P-NEW/9", rows)
@@ -154,7 +154,7 @@ func TestPayloadService_DeleteManifestItem_RemovesRow(t *testing.T) {
 	p := makePayload(t, svc, "PL-DMI", "", 10)
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P", PartsPerCycle: 1}
-	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(item, ""), "CreateManifestItem")
 	testutil.MustNoErr(t, svc.DeleteManifestItem(item.ID), "DeleteManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 0 {
@@ -169,13 +169,13 @@ func TestPayloadService_ReplaceManifest_SwapsList(t *testing.T) {
 	p := makePayload(t, svc, "PL-RPL", "", 10)
 
 	// Seed with one item, then replace with two.
-	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1}), "seed CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1}, ""), "seed CreateManifestItem")
 
-	newItems := []*payloads.ManifestItem{
-		{PayloadID: p.ID, PartNumber: "N1", PartsPerCycle: 4},
-		{PayloadID: p.ID, PartNumber: "N2", PartsPerCycle: 5},
+	newLines := []payloads.Line{
+		{PartNumber: "N1", PartsPerCycle: 4},
+		{PartNumber: "N2", PartsPerCycle: 5},
 	}
-	testutil.MustNoErr(t, svc.ReplaceManifest(p.ID, newItems), "ReplaceManifest")
+	testutil.MustNoErr(t, svc.ReplaceManifest(p.ID, newLines), "ReplaceManifest")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 2 {
 		t.Fatalf("len(rows) = %d, want 2", len(rows))

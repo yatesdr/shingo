@@ -684,10 +684,12 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	if err := e.db.SyncPayloadCatalog(rows); err != nil {
 		log.Printf("engine: sync payload catalog: %v", err)
 	}
-	// Now that the catalog (and its CATIDs) is current, retire any expected_catid
-	// stamp that merely duplicates the style's derived single CATID (the guard now
-	// derives the set live from the claims' payloads).
-	e.ClearRedundantExpectedCATIDs()
+	// NOTHING CLEARS expected_catid ANY MORE. A sync used to run
+	// ClearRedundantExpectedCATIDs here, deleting every pin that agreed with the
+	// value derived from the payload — "drift with a scheduler", and the reason
+	// the honest home for a human's answer kept emptying itself. A pin is
+	// permanent human intent: it IS the style's set when present, it always
+	// wins, and only a person removes it.
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
 }
 

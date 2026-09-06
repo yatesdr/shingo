@@ -124,7 +124,7 @@ func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
 		t.Fatalf("bucket calls = %d, want 1: %+v", len(sink.bucketCalls), sink.bucketCalls)
 	}
 	bc := sink.bucketCalls[0]
-	if bc.Delta != 30 || bc.Reason != protocol.ReasonCaptureFill || bc.PartNumber != "PART-CAP" {
+	if bc.Delta != 30 || bc.Reason != protocol.ReasonCaptureFill || bc.PayloadCode != "PART-CAP" {
 		t.Errorf("bucket call mismatch: %+v", bc)
 	}
 

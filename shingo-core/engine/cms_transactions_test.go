@@ -66,7 +66,7 @@ func makeCMSBoundary(t *testing.T, db *store.DB, name string) (*nodes.Node, *nod
 // The count the movement will carry is uop x perCycle.
 func putManifest(t *testing.T, db *store.DB, binID int64, payloadCode, catID string, uop int, perCycle int64) {
 	t.Helper()
-	m := bins.Manifest{Items: []bins.ManifestEntry{{CatID: catID}}}
+	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: catID}}}
 	data, _ := json.Marshal(m)
 	testutil.MustNoErr(t, db.SetBinManifest(binID, string(data), payloadCode, uop), "set bin manifest")
 
@@ -76,7 +76,7 @@ func putManifest(t *testing.T, db *store.DB, binID int64, payloadCode, catID str
 	}
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: p.ID, PartNumber: catID, PartsPerCycle: perCycle,
-	}), "seed payload template line")
+	}, ""), "seed payload template line")
 }
 
 // ── FindCMSBoundary ─────────────────────────────────────────────────

@@ -1,58 +1,31 @@
 package www
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"shingocore/domain"
+	"shingocore/service"
 )
 
-// manifestLine is the shape every JSON manifest payload shares: a part number
-// and its per-cycle ratio.
-type manifestLine struct {
-	PartNumber    string
-	PartsPerCycle int64
-}
-
-// validateManifestLines rejects a manifest line whose per-cycle ratio is
-// missing or non-positive, naming every offending part rather than the first.
+// manifestWriteError renders a manifest write failure at the right status.
 //
-// A MISSING RATIO ARRIVES AS ZERO AND CANNOT BE TOLD FROM A DECLARED ONE. JSON
-// omits it, the browser used to submit a blank box as 0, and a spreadsheet cell
-// left empty parses to 0 — three spellings of "I did not say" landing on a
-// value that reads as "there are none of these in the bin". Four rows reached
-// Springfield that way (payload_manifest ids 117/123/137/150) and were
-// corrected by hand at the plant once the owner declared them entry oversights.
-//
-// Non-positive is refused rather than only missing, because the count a bin
-// ships to the inventory ledger is uop_remaining x this number: a zero line
-// contributes nothing to any count while looking configured. A part that
-// genuinely is not in the carrier is a line that does not belong on the
-// manifest.
-//
-// The form refuses this too, and that is not redundancy — the form is one of
-// five doors. The bulk importer and three JSON endpoints reach the same column,
-// and a client-side check closes none of them. It is also what has to be true
-// before a CHECK (parts_per_cycle > 0) can ship without breaking the plants'
-// own imports.
-func validateManifestLines(lines []manifestLine) error {
-	var bad []string
-	for _, l := range lines {
-		if l.PartNumber == "" {
-			continue
-		}
-		if l.PartsPerCycle < 1 {
-			bad = append(bad, fmt.Sprintf("%s (%d)", l.PartNumber, l.PartsPerCycle))
-		}
+// A CAT-ID CONFLICT IS A QUESTION, NOT A FAULT. UpsertPart refuses when a part
+// already carries a different controls identity, and the operator's answer —
+// "same part" or "typo" — is the only thing that can resolve it. That is a 409:
+// the request was well-formed and the server is not going to guess. Everything
+// else is the caller's error (a blank part, a zero ratio) or the server's.
+func (h *Handlers) manifestWriteError(w http.ResponseWriter, err error) {
+	var conflict *service.CATIDConflict
+	switch {
+	case errors.As(err, &conflict):
+		h.jsonError(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, service.ErrManifestLine):
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	default:
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 	}
-	if len(bad) == 0 {
-		return nil
-	}
-	return fmt.Errorf("parts_per_cycle must be 1 or more on every manifest line; "+
-		"it is how many of the part ONE production cycle uses, usually 1. Fix: %s",
-		strings.Join(bad, ", "))
 }
 
 func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +119,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		BinTypeIDs           []int64 `json:"bin_type_ids"`
 		Manifest             []struct {
 			PartNumber    string `json:"part_number"`
+			CATID         string `json:"catid"`
 			PartsPerCycle int64  `json:"parts_per_cycle"`
 		} `json:"manifest"`
 	}
@@ -153,13 +127,19 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	lines := make([]manifestLine, 0, len(req.Manifest))
+	lines := make([]service.ManifestLine, 0, len(req.Manifest))
 	for _, it := range req.Manifest {
-		lines = append(lines, manifestLine{PartNumber: it.PartNumber, PartsPerCycle: it.PartsPerCycle})
+		lines = append(lines, service.ManifestLine{
+			PartNumber: it.PartNumber, CATID: it.CATID, PartsPerCycle: it.PartsPerCycle,
+		})
 	}
-	if err := validateManifestLines(lines); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
+	if len(lines) > 0 {
+		// Ahead of creating the payload, not because the service will not check
+		// again, but so a bad line does not leave a payload row behind.
+		if err := service.ValidateManifestLines(lines); err != nil {
+			h.jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	p := &domain.Payload{
@@ -188,16 +168,9 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if len(req.Manifest) > 0 {
-		var items []*domain.PayloadManifestItem
-		for _, it := range req.Manifest {
-			items = append(items, &domain.PayloadManifestItem{
-				PartNumber:    it.PartNumber,
-				PartsPerCycle: it.PartsPerCycle,
-			})
-		}
-		if err := h.engine.PayloadService().ReplaceManifest(p.ID, items); err != nil {
-			h.jsonError(w, "manifest: "+err.Error(), http.StatusInternalServerError)
+	if len(lines) > 0 {
+		if err := h.engine.PayloadService().ReplaceManifest(p.ID, lines); err != nil {
+			h.manifestWriteError(w, err)
 			return
 		}
 	}
@@ -222,6 +195,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		BinTypeIDs           []int64 `json:"bin_type_ids"`
 		Manifest             []struct {
 			PartNumber    string `json:"part_number"`
+			CATID         string `json:"catid"`
 			PartsPerCycle int64  `json:"parts_per_cycle"`
 		} `json:"manifest"`
 	}
@@ -229,13 +203,11 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	lines := make([]manifestLine, 0, len(req.Manifest))
+	lines := make([]service.ManifestLine, 0, len(req.Manifest))
 	for _, it := range req.Manifest {
-		lines = append(lines, manifestLine{PartNumber: it.PartNumber, PartsPerCycle: it.PartsPerCycle})
-	}
-	if err := validateManifestLines(lines); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
+		lines = append(lines, service.ManifestLine{
+			PartNumber: it.PartNumber, CATID: it.CATID, PartsPerCycle: it.PartsPerCycle,
+		})
 	}
 
 	p, err := h.engine.PayloadService().Get(req.ID)
@@ -269,15 +241,8 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var items []*domain.PayloadManifestItem
-	for _, it := range req.Manifest {
-		items = append(items, &domain.PayloadManifestItem{
-			PartNumber:    it.PartNumber,
-			PartsPerCycle: it.PartsPerCycle,
-		})
-	}
-	if err := h.engine.PayloadService().ReplaceManifest(p.ID, items); err != nil {
-		h.jsonError(w, "manifest: "+err.Error(), http.StatusInternalServerError)
+	if err := h.engine.PayloadService().ReplaceManifest(p.ID, lines); err != nil {
+		h.manifestWriteError(w, err)
 		return
 	}
 
@@ -331,35 +296,6 @@ func (h *Handlers) apiGetPayloadManifestTemplate(w http.ResponseWriter, r *http.
 		return
 	}
 	h.jsonOK(w, items)
-}
-
-func (h *Handlers) apiSavePayloadManifestTemplate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PayloadID int64 `json:"payload_id"`
-		Items     []struct {
-			PartNumber    string `json:"part_number"`
-			PartsPerCycle int64  `json:"parts_per_cycle"`
-			Description   string `json:"description"`
-		} `json:"items"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-
-	var items []*domain.PayloadManifestItem
-	for _, it := range req.Items {
-		items = append(items, &domain.PayloadManifestItem{
-			PartNumber:    it.PartNumber,
-			PartsPerCycle: it.PartsPerCycle,
-			Description:   it.Description,
-		})
-	}
-
-	if err := h.engine.PayloadService().ReplaceManifest(req.PayloadID, items); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiGetPayloadBinTypes(w http.ResponseWriter, r *http.Request) {

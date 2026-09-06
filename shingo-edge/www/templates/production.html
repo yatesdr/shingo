@@ -78,7 +78,7 @@
 <div class="card mt-4">
     <div class="card-header card-header-row">
         <strong>Lineside Buckets</strong>
-        <span class="text-muted-sm">Part chips currently kitted at nodes</span>
+        <span class="text-muted-sm">Payload chips currently kitted at nodes</span>
     </div>
     <div class="card-body" style="padding:0;overflow-x:auto">
         <table class="table table-compact" id="lineside-table">
@@ -88,7 +88,7 @@
                     <th>Station</th>
                     <th>Node</th>
                     <th>Style</th>
-                    <th>Part</th>
+                    <th>Payload</th>
                     <th>State</th>
                     <th style="text-align:right;">Qty</th>
                     <th style="width:220px;">Edit Qty</th>
@@ -102,7 +102,7 @@
                     <td>{{.StationName}}</td>
                     <td>{{.NodeName}}</td>
                     <td>{{.StyleName}}</td>
-                    <td class="mono">{{.PartNumber}}</td>
+                    <td class="mono">{{.PayloadCode}}</td>
                     <td>
                         {{if eq .State "active"}}<span class="badge">active</span>{{else}}<span class="badge text-muted">{{.State}}</span>{{end}}
                     </td>

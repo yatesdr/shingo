@@ -634,7 +634,7 @@ function rhRowHtml(r) {
   let out = '<tr class="rh-row' + (open ? ' open' : '') + '" data-action="toggleRow:' + escapeHtml(r.payload_code) + '">'
     + '<td><span class="chev"><svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></span></td>'
     + '<td>' + nameCell + '</td>'
-    + '<td><code>' + hl(catIdFor(r.payload_code)) + '</code></td>'
+    + '<td><code>' + hl(partNumberFor(r.payload_code)) + '</code></td>'
     + '<td>' + meterHtml(r) + '</td>'
     + '<td class="rh-num">' + (r.on_hand < 0 ? '<span class="rh-neg">' + num(r.on_hand) + '</span>' : num(r.on_hand))
     + '<div class="rh-split">bins ' + num(r.bin_uop) + ' + line ' + num(r.bucket_uop) + '</div></td>'
@@ -646,9 +646,9 @@ function rhRowHtml(r) {
   if (open) out += editorRowHtml(r);
   return out;
 }
-function catIdFor(pc) {
-  const b = (binsByPayload[pc] || []).find((x) => x.cat_id);
-  return b ? b.cat_id : '';
+function partNumberFor(pc) {
+  const b = (binsByPayload[pc] || []).find((x) => x.part_number);
+  return b ? b.part_number : '';
 }
 
 // Expanded editor: per-loader threshold rows (explicit Save/Discard + Calc) plus
@@ -729,8 +729,7 @@ function renderBuckets() {
     if (groupFilter && b.group_name !== groupFilter) return false;
     if (!searchTerm) return true;
     const t = searchTerm.toLowerCase();
-    return (b.part_number || '').toLowerCase().includes(t)
-      || (b.payload_code || '').toLowerCase().includes(t)
+    return (b.payload_code || '').toLowerCase().includes(t)
       || (b.node_name || '').toLowerCase().includes(t);
   });
   if (!rows.length) {
@@ -747,7 +746,7 @@ function renderBuckets() {
       + '<td>' + hl(b.group_name || '—') + '</td>'
       + '<td>' + hl(b.station || '') + '</td>'
       + '<td><code>' + hl(b.node_name || '') + '</code></td>'
-      + '<td><code>' + hl(b.part_number || b.payload_code || '') + '</code></td>'
+      + '<td><code>' + hl(b.payload_code || '') + '</code></td>'
       + '<td><span class="badge ' + (b.state === 'stranded' ? 'badge-flagged' : 'badge-available') + '">' + escapeHtml(b.state || 'active') + '</span></td>'
       + '<td class="rh-num">' + num(b.qty) + '</td>'
       + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(new Date(b.updated_at).toLocaleString()) + '"' : '')

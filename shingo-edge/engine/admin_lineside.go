@@ -49,7 +49,7 @@ func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearB
 			return fmt.Errorf("resolve process_node %d for bucket %d: %w", bucket.NodeID, bucketID, err)
 		}
 		if err := e.inventoryDelta.AdjustBucket(
-			bucket.NodeID, node.CoreNodeName, bucket.PairKey, bucket.StyleID, bucket.PartNumber,
+			bucket.NodeID, node.CoreNodeName, bucket.PairKey, bucket.StyleID, bucket.PayloadCode,
 			bucket.Qty, targetQty,
 			protocol.ReasonOperatorCorrectionBucket,
 		); err != nil {
@@ -62,7 +62,7 @@ func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearB
 		op = "cleared"
 	}
 	log.Printf("admin_lineside_bucket: %s bucket %d (node=%d style=%d part=%q): %d → %d delta=%+d",
-		op, bucketID, bucket.NodeID, bucket.StyleID, bucket.PartNumber,
+		op, bucketID, bucket.NodeID, bucket.StyleID, bucket.PayloadCode,
 		bucket.Qty, targetQty, targetQty-bucket.Qty)
 	return nil
 }

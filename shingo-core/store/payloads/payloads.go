@@ -51,19 +51,34 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 	return payloads, rows.Err()
 }
 
-// PayloadCATIDs returns payload id → the DISTINCT part numbers in its
-// manifest, comma-joined in part-number order. A single-part payload
-// yields that one value (unchanged behavior); a multi-part payload — a
-// kit bin holding two part numbers — yields the full list, which the
-// edge splits back into the style's part-identity SET (membership
-// semantics, so multi-part is unambiguous by design: the guard accepts
-// any of them). Payloads whose manifest carries no part numbers are
-// omitted, so the edge derives nothing from them.
+// PayloadCATIDs returns payload id → the DISTINCT cat ids its manifest lines
+// resolve to, comma-joined in order. A single-part payload yields that one
+// value; a kit yields the full list, which the edge splits back into the
+// style's part-identity SET (membership semantics, so multi-part is
+// unambiguous by design: the guard accepts any of them). Payloads whose lines
+// resolve to no cat id are omitted, so the edge derives nothing from them.
+//
+// IT READS THE PART'S CAT ID, NOT THE MANIFEST LINE (v107/v108). A cat id is a
+// property of the PART — a consume cell combining four parts mints a new one
+// for what it outputs, and the four inputs each carry their own — so it lives
+// on the parts row beside the part number. This used to read the manifest
+// line's own value, which held a cat id because the entry form asked for one.
+//
+// THE COALESCE IS THE CORRECTION WINDOW, NOT A FALLBACK THAT INVENTS ANYTHING.
+// v108 re-points every single-line payload; a KIT's lines are typed in by hand
+// afterwards, and until they are, the line still carries the cat id it always
+// did. Reading through both states is what makes the re-point a no-op for the
+// guard at every cell, which is the property v108's own predicate refuses to
+// ship without. The second arm retires itself: when the last kit line has a
+// part, nothing reaches it.
 func PayloadCATIDs(db *sql.DB) (map[int64]string, error) {
-	rows, err := db.Query(`SELECT payload_id,
-			string_agg(DISTINCT part_number, ',' ORDER BY part_number)
-		FROM payload_manifest WHERE part_number != ''
-		GROUP BY payload_id`)
+	rows, err := db.Query(`SELECT pm.payload_id,
+			string_agg(DISTINCT COALESCE(NULLIF(pt.catid, ''), pm.part_number), ','
+				ORDER BY COALESCE(NULLIF(pt.catid, ''), pm.part_number))
+		FROM payload_manifest pm
+		LEFT JOIN parts pt ON pt.id = pm.part_id
+		WHERE COALESCE(NULLIF(pt.catid, ''), pm.part_number) <> ''
+		GROUP BY pm.payload_id`)
 	if err != nil {
 		return nil, fmt.Errorf("payload catids: %w", err)
 	}

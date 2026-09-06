@@ -87,7 +87,7 @@ func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
 			name: "capture_fill_positive",
 			d: LinesideBucketDelta{
 				CoreNodeName: "LOADER-A1", PairKey: "L1|U1",
-				StyleID: 100, PartNumber: "PART-A",
+				StyleID: 100, PayloadCode: "PAY-A",
 				Delta: 47, Reason: ReasonCaptureFill,
 				SequenceID: 17, WindowStart: t0, WindowEnd: t0,
 			},
@@ -96,7 +96,7 @@ func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
 			name: "consume_drain_negative",
 			d: LinesideBucketDelta{
 				CoreNodeName: "LOADER-B2", PairKey: "L2|U2",
-				StyleID: 200, PartNumber: "PART-B",
+				StyleID: 200, PayloadCode: "PAY-B",
 				Delta: -3, Reason: ReasonConsumeDrain,
 				SequenceID: 42, WindowStart: t0, WindowEnd: t1,
 			},

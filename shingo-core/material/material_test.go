@@ -217,7 +217,7 @@ func TestBuildMovement_SameBoundaryNoTxns(t *testing.T) {
 
 	f.setTemplate(100, "P1", 5, map[string]int64{"C1": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 5}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "C1"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "C1"}})
 	f.bins[10] = bin
 
 	got, _, err := BuildMovementTransactions(f, MovementEvent{
@@ -239,7 +239,7 @@ func TestBuildMovement_CrossBoundaryProducesPair(t *testing.T) {
 	// 5 cycles left, one C1 per cycle -> 5 parts on the move.
 	f.setTemplate(100, "P1", 24, map[string]int64{"C1": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 5}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "C1"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "C1"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{
@@ -322,7 +322,7 @@ func TestBuildMovement_DerivesFromUOPTimesPartsPerCycle(t *testing.T) {
 	// Two parts per cycle, eight cycles left: sixteen parts move.
 	f.setTemplate(100, "P1", 24, map[string]int64{"A": 2})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 8}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -349,7 +349,7 @@ func TestBuildMovement_PartialFillReflectsActualCount(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	f.setTemplate(100, "P1", 24, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 5}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -373,7 +373,7 @@ func TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1, "B": 3})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 4}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}, {CatID: "B"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}, {PartNumber: "B"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -405,7 +405,7 @@ func TestBuildMovement_DrainedBinProducesNothing(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	f.setTemplate(100, "P1", 24, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 0}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	got, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -434,7 +434,7 @@ func TestBuildMovement_NoTemplateSkips(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	// No setTemplate call: the fake's GetPayloadByCode returns sql.ErrNoRows.
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P-UNKNOWN", UOPRemaining: 9}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	got, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -459,7 +459,7 @@ func TestBuildMovement_BareCarrierSkips(t *testing.T) {
 	addBoundary(f, 1, "src", "SM01")
 	addBoundary(f, 2, "dst", "MAN")
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "", UOPRemaining: 9}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	got, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -486,7 +486,7 @@ func TestBuildMovement_UnreadableTemplateIsAnError(t *testing.T) {
 	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
 	f.failPayloadLookup("P1")
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 9}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	got, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -507,7 +507,7 @@ func TestBuildMovement_PartNotInTemplateContributesNothing(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 6}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}, {CatID: "GONE"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}, {PartNumber: "GONE"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -537,7 +537,7 @@ func TestBuildMovement_PartNotInTemplateIsReportedNotSwallowed(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 6}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}, {CatID: "GONE"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}, {PartNumber: "GONE"}})
 	f.bins[10] = bin
 
 	_, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -572,7 +572,7 @@ func TestBuildMovement_AllPartsMissBooksBuildFailure(t *testing.T) {
 	// The template keys on part numbers; the manifest names the payload code.
 	f.setTemplate(100, "P1", 10, map[string]int64{"PART-A": 2})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 8}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "P1"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "P1"}})
 	f.bins[10] = bin
 
 	txns, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -612,7 +612,7 @@ func TestBuildMovement_DrainedBinIsNotUncountable(t *testing.T) {
 	addBoundary(f, 2, "dst", "MAN")
 	f.setTemplate(100, "P1", 24, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 0}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "GONE"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "GONE"}})
 	f.bins[10] = bin
 
 	txns, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -643,7 +643,7 @@ func TestBuildMovement_StampsRobotIDAndOrderID(t *testing.T) {
 	// The bin's claim is ALREADY RELEASED, exactly as it is by event time.
 	// Anything reading it would see nothing; the event is the only source.
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 4, ClaimedBy: nil}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{
@@ -681,7 +681,7 @@ func TestBuildMovement_OperatorDragLeavesRobotAndOrderBlank(t *testing.T) {
 	// it must not be mistaken for the mover.
 	claim := int64(999)
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 4, ClaimedBy: &claim}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -713,7 +713,7 @@ func TestBuildMovement_StoreroomIsTheCodeNotTheNodeName(t *testing.T) {
 	addBoundary(f, 2, "MANUFACTURING", "MAN")
 	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 3}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
@@ -745,7 +745,7 @@ func TestBuildMovement_StoreroomComesFromTheTaggedANCESTOR(t *testing.T) {
 	addBoundary(f, 4, "ELSEWHERE", "SM02")
 	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 2}
-	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
 	f.bins[10] = bin
 
 	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 3, ToNodeID: 4})

@@ -78,7 +78,7 @@ func payloadWithDistinctPart(t *testing.T, db *store.DB, tag string) (*payloads.
 	part := tag + "-PART-1"
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: p.ID, PartNumber: part, PartsPerCycle: 1,
-	}), "create template line")
+	}, ""), "create template line")
 	return p, part
 }
 
@@ -128,10 +128,10 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 		t.Fatalf("manifest items = %d, want 1 (single-payload normalization)", len(parsed.Items))
 	}
 	item := parsed.Items[0]
-	if item.CatID != wantPart {
-		t.Errorf("manifest item CatID = %q, want %q (the template's part_number). A payload "+
+	if item.PartNumber != wantPart {
+		t.Errorf("manifest item part number = %q, want %q (the template's part_number). A payload "+
 			"code here matches no part number, so the bin books nothing to CMS.",
-			item.CatID, wantPart)
+			item.PartNumber, wantPart)
 	}
 	// The line carries no count of its own; uop_remaining, asserted above, is
 	// the count. A second copy is exactly the staleness this reconstruction
@@ -196,9 +196,9 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 		t.Fatalf("manifest items = %d, want 1", len(parsed.Items))
 	}
 	item := parsed.Items[0]
-	if item.CatID != wantPart {
-		t.Errorf("manifest item CatID = %q, want %q (the template's part_number)",
-			item.CatID, wantPart)
+	if item.PartNumber != wantPart {
+		t.Errorf("manifest item part number = %q, want %q (the template's part_number)",
+			item.PartNumber, wantPart)
 	}
 
 	// The pre-release manifest this test seeds carries qty=100. The

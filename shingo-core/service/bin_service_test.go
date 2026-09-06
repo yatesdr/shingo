@@ -467,7 +467,7 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 		PartNumber:    "PART-X",
 		PartsPerCycle: 7,
 	}
-	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "create payload manifest item")
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item, ""), "create payload manifest item")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-OK", "", 0)
 	twentyFive := 25

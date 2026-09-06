@@ -28,7 +28,7 @@ import (
 // Dedup scope keys (stable; renames break in-flight Edge replays):
 //
 //   - bin scope:    strconv(BinID)
-//   - bucket scope: "<NodeID>|<PairKey>|<StyleID>|<PartNumber>"
+//   - bucket scope: "<NodeID>|<PairKey>|<StyleID>|<PayloadCode>"
 //
 // Either-order arrival tolerance: capture-on-release fires both a bin
 // delta and one bucket delta per part, atomically on Edge's outbox tx.
@@ -704,8 +704,16 @@ func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error
 
 // ApplyLinesideBucketDelta applies a LinesideBucketDelta against the
 // lineside_buckets row keyed on (core_node_name, pair_key, style_id,
-// part_number). Creates the row on first sight via UPSERT; deletes when
+// payload_code). Creates the row on first sight via UPSERT; deletes when
 // qty reaches zero (Option C — empty buckets carry no useful information).
+//
+// ONE PAYLOAD COLUMN, WHICH IS ALSO THE KEY (v105). The table used to carry
+// two: the key, called part_number and holding a payload code, and a separate
+// payload_code latched from whichever BIN the reporting Edge had at the node.
+// SystemUOPForPayload sums against the latch, so on a node that allows several
+// payloads — where an operator can pull payload B off a bin of payload A —
+// B's stock was counted toward A's on-hand and suppressed A's replenishment.
+// The bucket's own code is the answer to both questions.
 //
 // TWO USES OF station IN ONE FUNCTION, AND THEY ARE NOT THE SAME KIND OF
 // THING — this is the distinction v65 turns on:
@@ -740,10 +748,10 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	}
 	if d.CoreNodeName == "" {
 		return fmt.Errorf("LinesideBucketDelta missing core_node_name (station=%s style=%d part=%q)",
-			station, d.StyleID, d.PartNumber)
+			station, d.StyleID, d.PayloadCode)
 	}
-	if d.PartNumber == "" {
-		return fmt.Errorf("LinesideBucketDelta missing part_number (station=%s core_node_name=%s style=%d)",
+	if d.PayloadCode == "" {
+		return fmt.Errorf("LinesideBucketDelta missing payload_code (station=%s core_node_name=%s style=%d)",
 			station, d.CoreNodeName, d.StyleID)
 	}
 
@@ -756,7 +764,7 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	// drop the delta loudly and let the operator investigate.
 	if _, err := s.db.GetNodeByName(d.CoreNodeName); err != nil {
 		return fmt.Errorf("LinesideBucketDelta core_node_name=%q does not resolve to a Core node (station=%s part=%q): %w",
-			d.CoreNodeName, station, d.PartNumber, err)
+			d.CoreNodeName, station, d.PayloadCode, err)
 	}
 
 	tx, err := s.db.Begin()
@@ -765,7 +773,7 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	}
 	defer tx.Rollback()
 
-	scopeKey := bucketScopeKey(d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber)
+	scopeKey := bucketScopeKey(d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode)
 	// Buckets stay on epoch=0 — bucket lifecycle is Edge-observed
 	// (qty zeroing) rather than Core-controlled, and DeleteLinesideBucket
 	// already clears the dedup row on the existing lifecycle exit paths.
@@ -787,14 +795,14 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	if d.Delta < 0 {
 		var exists bool
 		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM lineside_buckets
-			WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND part_number=$4)`,
-			d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber).Scan(&exists); err != nil {
-			return fmt.Errorf("check bucket exists for negative LinesideBucketDelta (core_node_name=%q part=%q): %w",
-				d.CoreNodeName, d.PartNumber, err)
+			WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND payload_code=$4)`,
+			d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode).Scan(&exists); err != nil {
+			return fmt.Errorf("check bucket exists for negative LinesideBucketDelta (core_node_name=%q payload=%q): %w",
+				d.CoreNodeName, d.PayloadCode, err)
 		}
 		if !exists {
-			return fmt.Errorf("LinesideBucketDelta reduction of %d for non-existent bucket (core_node_name=%q part=%q)",
-				d.Delta, d.CoreNodeName, d.PartNumber)
+			return fmt.Errorf("LinesideBucketDelta reduction of %d for non-existent bucket (core_node_name=%q payload=%q)",
+				d.Delta, d.CoreNodeName, d.PayloadCode)
 		}
 	}
 
@@ -803,38 +811,30 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	// constraint violation as a typed error so the handler can log
 	// without spamming the SQL fault line.
 	//
-	// payload_code (UOP-threshold replenishment): write the incoming
-	// value when non-empty; keep the existing row's value when the
-	// incoming is empty. Empty just means "this delta envelope didn't
-	// carry a code" (rare — older Edge build or an envelope built
-	// outside the capture-from-order-context path); we don't want
-	// such a delta to clobber a previously-latched payload code.
-	//
 	// STATION IS WRITTEN, NEVER MATCHED ON (v65). The conflict target is the
 	// physical bucket — node, pair, style, part — and the station rides along
 	// as "who last reported this". Matching on it would mean a bucket reported
 	// by a second edge inserts a SECOND row for one physical place, which the
 	// station-blind SUM in SystemUOPForPayload would then count twice.
 	res, err := tx.Exec(`
-		INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
-		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0), $7)
-		ON CONFLICT (core_node_name, pair_key, style_id, part_number)
+		INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0))
+		ON CONFLICT (core_node_name, pair_key, style_id, payload_code)
 		DO UPDATE SET
 			qty = lineside_buckets.qty + $6,
-			payload_code = CASE WHEN $7 = '' THEN lineside_buckets.payload_code ELSE $7 END,
 			station = $1,
 			updated_at = NOW()`,
-		station, d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber, d.Delta, d.PayloadCode)
+		station, d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode, d.Delta)
 	if err != nil {
 		// Most likely cause: CHECK (qty >= 0) violation when the
 		// DO UPDATE branch tried to drive qty negative. Wrap.
-		return fmt.Errorf("apply LinesideBucketDelta core_node_name=%q part=%q delta=%d: %w",
-			d.CoreNodeName, d.PartNumber, d.Delta, err)
+		return fmt.Errorf("apply LinesideBucketDelta core_node_name=%q payload=%q delta=%d: %w",
+			d.CoreNodeName, d.PayloadCode, d.Delta, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		// UPSERT must always touch a row.
-		return fmt.Errorf("LinesideBucketDelta UPSERT produced no row (core_node_name=%q part=%q)",
-			d.CoreNodeName, d.PartNumber)
+		return fmt.Errorf("LinesideBucketDelta UPSERT produced no row (core_node_name=%q payload=%q)",
+			d.CoreNodeName, d.PayloadCode)
 	}
 
 	// Garbage-collect rows that have hit zero. Option C — empty
@@ -844,15 +844,15 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	// the edge that zeroed it is not the edge whose station is on the row, so
 	// the DELETE matches nothing and a qty=0 row lingers as an orphan.
 	if _, err := tx.Exec(`DELETE FROM lineside_buckets
-		WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND part_number=$4
+		WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND payload_code=$4
 		AND qty=0`,
-		d.CoreNodeName, d.PairKey, d.StyleID, d.PartNumber); err != nil {
-		return fmt.Errorf("gc empty bucket core_node_name=%q part=%q: %w", d.CoreNodeName, d.PartNumber, err)
+		d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode); err != nil {
+		return fmt.Errorf("gc empty bucket core_node_name=%q payload=%q: %w", d.CoreNodeName, d.PayloadCode, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit LinesideBucketDelta core_node_name=%q part=%q: %w",
-			d.CoreNodeName, d.PartNumber, err)
+		return fmt.Errorf("commit LinesideBucketDelta core_node_name=%q payload=%q: %w",
+			d.CoreNodeName, d.PayloadCode, err)
 	}
 	return nil
 }
@@ -896,7 +896,7 @@ func claimDeltaSequence(tx *sql.Tx, station, scopeKind, scopeKey string, epoch, 
 // migration. The v21 migration TRUNCATEs inventory_delta_dedup for
 // scope_kind='bucket' as part of the cutover so old keys can't
 // shadow new ones.
-func bucketScopeKey(coreNodeName, pairKey string, styleID int64, partNumber string) string {
+func bucketScopeKey(coreNodeName, pairKey string, styleID int64, payloadCode string) string {
 	var sb strings.Builder
 	sb.WriteString(coreNodeName)
 	sb.WriteByte('|')
@@ -904,7 +904,7 @@ func bucketScopeKey(coreNodeName, pairKey string, styleID int64, partNumber stri
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatInt(styleID, 10))
 	sb.WriteByte('|')
-	sb.WriteString(partNumber)
+	sb.WriteString(payloadCode)
 	return sb.String()
 }
 
@@ -935,11 +935,11 @@ type BinUOPRow struct {
 // CoreNodeName here since we LEFT JOIN against Core's nodes by name)
 // is the only node-shaped field a reconciling Edge needs.
 type LinesideBucketRow struct {
-	NodeName   string `json:"node_name"`
-	PairKey    string `json:"pair_key"`
-	StyleID    int64  `json:"style_id"`
-	PartNumber string `json:"part_number"`
-	Qty        int    `json:"qty"`
+	NodeName    string `json:"node_name"`
+	PairKey     string `json:"pair_key"`
+	StyleID     int64  `json:"style_id"`
+	PayloadCode string `json:"payload_code"`
+	Qty         int    `json:"qty"`
 }
 
 // ListBinUOPForNodes returns the authoritative uop_remaining for
@@ -1047,10 +1047,10 @@ func (s *InventoryDeltaService) ListBucketsForNodes(names []string) ([]LinesideB
 		args[i] = name
 		placeholders[i] = "$" + strconv.Itoa(i+1)
 	}
-	rows, err := s.db.Query(`SELECT b.core_node_name, b.pair_key, b.style_id, b.part_number, b.qty
+	rows, err := s.db.Query(`SELECT b.core_node_name, b.pair_key, b.style_id, b.payload_code, b.qty
 		FROM lineside_buckets b
 		WHERE b.core_node_name IN (`+strings.Join(placeholders, ",")+`)
-		ORDER BY b.core_node_name, b.part_number`, args...)
+		ORDER BY b.core_node_name, b.payload_code`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query bucket rows: %w", err)
 	}
@@ -1058,7 +1058,7 @@ func (s *InventoryDeltaService) ListBucketsForNodes(names []string) ([]LinesideB
 	var out []LinesideBucketRow
 	for rows.Next() {
 		var r LinesideBucketRow
-		if err := rows.Scan(&r.NodeName, &r.PairKey, &r.StyleID, &r.PartNumber, &r.Qty); err != nil {
+		if err := rows.Scan(&r.NodeName, &r.PairKey, &r.StyleID, &r.PayloadCode, &r.Qty); err != nil {
 			return nil, fmt.Errorf("scan bucket row: %w", err)
 		}
 		out = append(out, r)

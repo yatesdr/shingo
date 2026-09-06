@@ -2397,8 +2397,8 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
  * failure shape as the .chip-warn case the chip drift test exists for, in a
  * class that scan does not cover.
  *
- * demand.html is unaffected: its inline block redeclares .col-num later in the
- * document at equal specificity, so its own centring still wins there. */
+ * That page is deleted (v108) and this is now the class's only declaration, so
+ * the centring that used to win on /demand is gone with it. */
 .col-num { text-align: right; }
 
 /* ── Episode detail (5.12 — origin-indexed forensics) ─────────────────────

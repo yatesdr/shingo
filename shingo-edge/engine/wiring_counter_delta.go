@@ -552,13 +552,13 @@ func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, de
 // `log.Printf + continue` (and so didn't surface the original
 // styleID-mismatch bug for weeks). After Round-3 A* the WHERE clause
 // no longer filters by style, so a drain miss really does mean
-// "no matching part_number active here," not "wrong style." Keeping
+// "no matching payload active here," not "wrong style." Keeping
 // the diagnostic anyway because the failure mode is cheap to log and
 // useful when investigating future inventory-delta drift.
 //
 // Best-effort: a DB error on the visibility check is silently ignored
 // — the function is purely diagnostic, not load-bearing.
-func (e *Engine) logUnexpectedDrainMiss(nodeID int64, partNumber, role string) {
+func (e *Engine) logUnexpectedDrainMiss(nodeID int64, payloadCode, role string) {
 	active, err := e.db.ListActiveLinesideBuckets(nodeID)
 	if err != nil {
 		return
@@ -570,8 +570,8 @@ func (e *Engine) logUnexpectedDrainMiss(nodeID int64, partNumber, role string) {
 	matched := false
 	visible := make([]string, 0, len(active))
 	for _, b := range active {
-		visible = append(visible, b.PartNumber)
-		if b.PartNumber == partNumber {
+		visible = append(visible, b.PayloadCode)
+		if b.PayloadCode == payloadCode {
 			matched = true
 		}
 	}
@@ -584,5 +584,5 @@ func (e *Engine) logUnexpectedDrainMiss(nodeID int64, partNumber, role string) {
 		return
 	}
 	log.Printf("lineside: %s part %q on node %d returned 0 drained despite an active bucket existing — possible drain/capture race (visible parts: %v)",
-		role, partNumber, nodeID, visible)
+		role, payloadCode, nodeID, visible)
 }

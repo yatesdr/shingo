@@ -77,7 +77,10 @@ func (p *ProducePlan) OrderCount() int {
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
-func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, now time.Time, occupancy map[string]bool, primedPositions map[string]bool) (*ProducePlan, error) {
+// manifest names what the filled carrier contains, resolved from the payload's
+// template by the caller (producedManifest). It is a parameter rather than
+// something built here because this function is pure and the answer needs Core.
+func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, now time.Time, occupancy map[string]bool, primedPositions map[string]bool, manifest []protocol.IngestManifestItem) (*ProducePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -153,13 +156,7 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// to uop_remaining and does not store it on the manifest line; the part
 	// count is uop_remaining x the template's parts_per_cycle.
 	plan := &ProducePlan{
-		Manifest: []protocol.IngestManifestItem{
-			{
-				PartNumber:  claim.PayloadCode,
-				Quantity:    int64(runtime.RemainingUOPCached),
-				Description: claim.PayloadCode,
-			},
-		},
+		Manifest:          manifest,
 		ProducedAtRFC3339: now.UTC().Format(time.RFC3339),
 	}
 

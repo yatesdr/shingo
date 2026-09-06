@@ -336,7 +336,7 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	// uopOverride — a number that meant nothing about this bin.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
 	for i, item := range items {
-		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber}
+		manifest.Items[i] = domain.ManifestEntry{PartNumber: item.PartNumber}
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
@@ -919,12 +919,12 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	// second copy to fall out of step. The rewrite still has to happen —
 	// the manifest's PART LIST must match the released payload.
 	//
-	// CATID IS A PART NUMBER, NOT A PAYLOAD CODE, and writing the payload code
-	// here was a silent loss. Everything downstream keys the manifest's catid
-	// against payload_manifest.part_number — the CMS quantity derivation, the
-	// inventory page's per-part rows — and a payload code matches no part
-	// number, so every partial-release bin resolved to a ratio of zero and
-	// booked NOTHING to the ledger for a real physical move. The single-payload
+	// THE LINES, NOT THE PAYLOAD CODE, and writing the code here was a silent
+	// loss. Everything downstream keys a manifest line against
+	// payload_manifest.part_number — the CMS quantity derivation, the inventory
+	// page's per-part rows — and for a kit the payload code matches no line at
+	// all, so every partial-release bin resolved to a ratio of zero and booked
+	// NOTHING to the ledger for a real physical move. The single-payload
 	// normalization assumption this used to encode was about how many PAYLOADS
 	// a bin holds, which was never a statement about how the lines are named.
 	//
@@ -954,7 +954,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 				WHEN COALESCE(payload_code, '') = '' THEN manifest
 				ELSE COALESCE((
 					SELECT jsonb_build_object('items',
-						jsonb_agg(jsonb_build_object('catid', pm.part_number)
+						jsonb_agg(jsonb_build_object('part_number', pm.part_number)
 							ORDER BY pm.part_number))
 					  FROM payload_manifest pm
 					  JOIN payloads p ON p.id = pm.payload_id

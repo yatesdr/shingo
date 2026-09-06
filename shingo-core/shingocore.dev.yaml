@@ -177,6 +177,22 @@ sim:
 # — presence of that property is what makes a node a CMS boundary, and with
 # none set the feed is legitimately empty.
 #
+# ── DEV-ONLY CMS BLOCK (S4) ──────────────────────────────────────────────
+# Points at an address that does not resolve, ON PURPOSE. The subsystem needs a
+# base_url and both keys or it refuses to boot, and what S4 asserts is the half
+# that happens BEFORE the wire: which payload a cms_transaction is minted
+# against, and whether uop_remaining x parts_per_cycle adds up. Those rows are
+# written locally and queue as unposted, which is exactly the state to inspect.
+# The posting/reconcile half needs a middleware to answer and is not covered here.
+cms:
+  base_url: http://cms-middleware.invalid/api/transactions/v1/inventory_transactions
+  access_key: dev-only-not-a-real-key
+  secret_key: dev-only-not-a-real-secret
+  timeout: 5s
+  poll_interval: 30s
+  max_attempts: 3
+  settle_window: 5m
+
 # cms:
 #   base_url: https://mes-apps.example.invalid/mes-middleware-api/api/transactions/v1/inventory_transactions
 #   access_key: <site-supplied>

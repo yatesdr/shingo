@@ -205,11 +205,16 @@ claims:
     inbound_staging: SLN_L2_01
     outbound_destination: SMN_L2
     operator_station: LINE-2-OPS
+  # PART-X under L2-B, so the A->B changeover moves BOTH consume nodes and each
+  # takes a different road there: PRS_010 direct, PRS_011 through its staging
+  # slot. One changeover then exercises the seam and its control at once, which
+  # is the only way to claim the fix left the staged path alone — the two have to
+  # be observed under the same conditions, not in separate runs.
   - core_node: PRS_011
     style: L2-B
     role: consume
     swap_mode: two_robot
-    payload: PART-W
+    payload: PART-X
     uop_capacity: 20
     reorder_point: 8
     auto_reorder: true

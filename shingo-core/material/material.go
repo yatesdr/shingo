@@ -218,8 +218,8 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 	var uncounted []string
 	if bin.UOPRemaining > 0 {
 		for _, m := range parsed.Items {
-			if perCycle[m.CatID] <= 0 {
-				uncounted = append(uncounted, m.CatID)
+			if perCycle[m.PartNumber] <= 0 {
+				uncounted = append(uncounted, m.PartNumber)
 			}
 		}
 	}
@@ -241,7 +241,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 			// signed value instead would pass an overpacked bin's negative
 			// remainder through the source side's -1 and book a positive
 			// arrival where a part left.
-			count := int64(bin.UOPRemaining) * perCycle[m.CatID]
+			count := int64(bin.UOPRemaining) * perCycle[m.PartNumber]
 			if count <= 0 {
 				continue
 			}
@@ -249,7 +249,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 				NodeID:      side.boundary.ID,
 				NodeName:    side.boundary.Name,
 				Storeroom:   side.storeroom,
-				CatID:       m.CatID,
+				CatID:       m.PartNumber,
 				Delta:       side.sign * count,
 				BinID:       &bin.ID,
 				BinLabel:    bin.Label,

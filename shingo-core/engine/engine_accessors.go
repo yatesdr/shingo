@@ -32,7 +32,6 @@ func (e *Engine) BinService() *service.BinService          { return e.binService
 func (e *Engine) OrderService() *service.OrderService      { return e.orderService }
 func (e *Engine) NodeService() *service.NodeService        { return e.nodeService }
 func (e *Engine) AuditService() *service.AuditService      { return e.auditService }
-func (e *Engine) DemandService() *service.DemandService    { return e.demandService }
 
 func (e *Engine) DemandEpisodeService() *service.DemandEpisodeService {
 	return e.demandEpisodeService

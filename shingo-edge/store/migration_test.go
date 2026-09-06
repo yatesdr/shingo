@@ -314,7 +314,7 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 	// Expected columns are present.
 	expected := map[string]bool{
 		"id": false, "node_id": false, "pair_key": false,
-		"style_id": false, "part_number": false, "qty": false,
+		"style_id": false, "payload_code": false, "qty": false,
 		"state": false, "created_at": false, "updated_at": false,
 	}
 	rows, err := db.Query(`SELECT name FROM pragma_table_info('node_lineside_bucket')`)

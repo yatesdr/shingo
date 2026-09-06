@@ -33,7 +33,7 @@ func TestPayloadCATIDs(t *testing.T) {
 		t.Helper()
 		testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{
 			PayloadID: pid, PartNumber: pn, PartsPerCycle: 1,
-		}), "create manifest item")
+		}, ""), "create manifest item")
 	}
 	item(single.ID, "40016911")
 	item(single.ID, "40016911") // same part number — still one distinct

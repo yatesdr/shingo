@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"testing"
 
+	"shingo/protocol/testutil"
+
 	"shingocore/store/cms"
 )
 
@@ -18,9 +20,15 @@ func testConfig() Config {
 	}
 }
 
-func txn(id int64, catID, storeroom, binLabel, robot string, delta int64) *cms.Transaction {
+// txn builds a row the way the ledger does: BOTH identifiers present and
+// different, because that is the whole point. CatID is what shingo keys its
+// parts_per_cycle lookup on; PayloadCode is what CMS knows the part by, and it
+// is the one that goes on the wire. A fixture that set them to the same string
+// could not tell a correct mapping from the inverted one.
+func txn(id int64, payloadCode, storeroom, binLabel, robot string, delta int64) *cms.Transaction {
 	return &cms.Transaction{
-		ID: id, CatID: catID, Storeroom: storeroom, BinLabel: binLabel,
+		ID: id, PayloadCode: payloadCode, CatID: "catid-" + payloadCode,
+		Storeroom: storeroom, BinLabel: binLabel,
 		RobotID: robot, Delta: delta, SourceType: "movement",
 	}
 }
@@ -28,13 +36,13 @@ func txn(id int64, catID, storeroom, binLabel, robot string, delta int64) *cms.T
 func TestBuild_MapsEveryFieldOfOneRow(t *testing.T) {
 	t.Parallel()
 	got := Build([]*cms.Transaction{
-		txn(7, "40016911", "SM01", "SHG:0042", "AMR-003", 16),
+		txn(7, "7332B4-6RR0A.06", "SM01", "SHG:0042", "AMR-003", 16),
 	}, testConfig())
 
 	want := []MiddlewareTx{{
 		TicketNumber:    1,
 		EntryNumber:     1,
-		PartNumber:      "40016911",
+		PartNumber:      "7332B4-6RR0A.06",
 		StockLocation:   "SM01",
 		Bin:             "SHG:0042",
 		Quantity:        16,
@@ -138,7 +146,8 @@ func TestBuild_IsDeterministicUnderPermutation(t *testing.T) {
 
 	// And twice over the same input, which catches map iteration and anything
 	// reading a clock.
-	again, _ := json.Marshal(Build(permutations[0], testConfig()))
+	again, err := json.Marshal(Build(permutations[0], testConfig()))
+	testutil.MustNoErr(t, err, "marshal the second call")
 	if string(again) != string(first) {
 		t.Errorf("the same input serialised differently on a second call:\n got %s\nwant %s", again, first)
 	}
@@ -243,5 +252,36 @@ func TestBuild_JSONKeysAreTheVendorsNotOurs(t *testing.T) {
 	if len(decoded) != len(want) {
 		t.Errorf("wire body has %d keys, want %d — an extra key is a field the vendor did not ask for: %s",
 			len(decoded), len(want), body)
+	}
+}
+
+// TestBuild_PartNumberIsThePayloadCodeNotTheCatID pins the one field the vendor
+// review changed.
+//
+// A transaction carries two identifiers for the same physical part and they are
+// not interchangeable. cat_id is shingo's internal key — it joins to
+// payload_manifest to find parts_per_cycle, and at Springfield it looks like
+// "10276". payload_code is what CMS knows the part by, and there it looks like
+// "7332B4-6RR0A.06". Sending the wrong one is not an approximation; it is an
+// identifier the receiving system has never seen.
+//
+// This shipped bound to CatID. The struct's field NAMES were matched to the
+// vendor's sample and its comment says so; the VALUE was chosen from shingo's
+// side and chose the internal one. IT confirmed the contract on 2026-09-05.
+func TestBuild_PartNumberIsThePayloadCodeNotTheCatID(t *testing.T) {
+	t.Parallel()
+
+	got := Build([]*cms.Transaction{{
+		ID: 1, PayloadCode: "7332B4-6RR0A.06", CatID: "10276",
+		Storeroom: "SM01", BinLabel: "SHG:0001", Delta: 5, SourceType: "movement",
+	}}, testConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("built %d rows, want 1", len(got))
+	}
+	if got[0].PartNumber != "7332B4-6RR0A.06" {
+		t.Errorf("PartNumber = %q, want the PAYLOAD CODE 7332B4-6RR0A.06. That value is the "+
+			"cat id, which is shingo's join key for parts_per_cycle and means nothing to CMS.",
+			got[0].PartNumber)
 	}
 }

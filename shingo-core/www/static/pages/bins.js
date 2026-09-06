@@ -176,11 +176,15 @@ function renderContents(data) {
       perCycle[t.part_number] = t.parts_per_cycle;
     });
     var uop = (b && b.uop_remaining) || 0;
-    html += h`<table class="table-compact"><thead><tr><th>Cat ID</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
+    // Either key: lines are written as part_number, and bins loaded before that
+    // change carry catid. Same fallback the Go reader and the inventory query
+    // make — a bin does not get its jsonb rewritten under a running plant.
+    html += h`<table class="table-compact"><thead><tr><th>Part number</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
       data.manifest.items.map(function(item) {
-        var ppc = perCycle[item.catid];
+        var part = item.part_number || item.catid;
+        var ppc = perCycle[part];
         var qty = ppc == null ? '—' : String(uop * ppc);
-        return h`<tr><td><code>${item.catid}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
+        return h`<tr><td><code>${part}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
       })
     }</tbody></table>`;
   } else {

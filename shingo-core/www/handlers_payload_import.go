@@ -2,13 +2,22 @@
 //
 // The operator picks a .xlsx or .csv file whose columns are, in order:
 //
-//	Payload Code | UoP Capacity | Manifest Part (CATID) | Parts Per Cycle
+//	Payload Code | UoP Capacity | Part Number | CATID | Parts Per Cycle
 //
 // One row per manifest part, with the Payload Code repeated — a payload
 // with two manifest parts is two rows with the same code (that is the
 // whole point of the format: every cell holds one simple value a human
 // can author and verify in Excel). A code may also appear on a single
 // row with no part, creating the payload with an empty manifest.
+//
+// THE THIRD COLUMN WAS "Manifest Part (CATID)" AND IT ASKED FOR THE WRONG
+// THING. It is a manifest line, so it names a PART; the parenthesis told every
+// author to type a cat id instead, and at both plants every one of them did.
+// The cat id now has its own column and goes where it belongs — onto the PART,
+// beside its number, which is the row the wrong-part guard reads. A sheet
+// authored against the old four-column layout still imports: its third column
+// is read as the part number and its fourth as the ratio, which is what those
+// cells have always meant to this importer.
 //
 // Per-row results, never abort-on-first-error: the response reports
 // created / skipped / failed / warning rows so a 200-row file with one
@@ -36,6 +45,7 @@ import (
 	"github.com/xuri/excelize/v2"
 
 	"shingocore/domain"
+	"shingocore/service"
 )
 
 // maxPayloadImportBytes caps the uploaded file. A payload list is text;
@@ -135,10 +145,11 @@ func readXLSXRows(r io.Reader) ([][]string, error) {
 // own line number so a validation failure names the exact row that offended
 // rather than the payload's first row.
 type importEntry struct {
-	line int
-	uop  string
-	part string
-	qty  string
+	line  int
+	uop   string
+	part  string
+	catid string
+	qty   string
 }
 
 // importGroup is every row that shares one payload code, in file order.
@@ -174,7 +185,7 @@ func groupImportRows(rows [][]string, report *importReport) []*importGroup {
 		}
 		code := cell(0)
 		// A wholly blank row is not an error — spreadsheets have them.
-		if code == "" && cell(1) == "" && cell(2) == "" && cell(3) == "" {
+		if code == "" && cell(1) == "" && cell(2) == "" && cell(3) == "" && cell(4) == "" {
 			continue
 		}
 		if code == "" {
@@ -187,7 +198,17 @@ func groupImportRows(rows [][]string, report *importReport) []*importGroup {
 			groups[code] = g
 			order = append(order, g)
 		}
-		g.entries = append(g.entries, importEntry{line: line, uop: cell(1), part: cell(2), qty: cell(3)})
+		// FOUR COLUMNS OR FIVE. A five-column sheet is the current layout
+		// (part, cat id, ratio). A four-column one is the old layout, whose
+		// last cell is the ratio — reading it as a cat id would silently drop
+		// every ratio in the file and replace it with a validation failure.
+		catid, qty := cell(3), cell(4)
+		if qty == "" {
+			catid, qty = "", cell(3)
+		}
+		g.entries = append(g.entries, importEntry{
+			line: line, uop: cell(1), part: cell(2), catid: catid, qty: qty,
+		})
 	}
 	return order
 }
@@ -312,7 +333,7 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 			report.add(importRowResult{Line: g.line, Code: code, Status: "warning",
 				Reason: "UoP is 0 — the bin cannot hold anything"})
 		}
-		parts := make([]*domain.PayloadManifestItem, 0, len(g.entries))
+		lines := make([]service.ManifestLine, 0, len(g.entries))
 		for _, e := range g.entries {
 			if e.part == "" {
 				continue
@@ -320,10 +341,10 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 			// Validated above: a group with any non-positive ratio never
 			// reaches here, so there is no zero left to warn about.
 			q, _ := parseImportInt(e.qty)
-			parts = append(parts, &domain.PayloadManifestItem{PartNumber: e.part, PartsPerCycle: q})
+			lines = append(lines, service.ManifestLine{PartNumber: e.part, CATID: e.catid, PartsPerCycle: q})
 		}
-		if len(parts) > 0 {
-			if err := h.engine.PayloadService().ReplaceManifest(p.ID, parts); err != nil {
+		if len(lines) > 0 {
+			if err := h.engine.PayloadService().ReplaceManifest(p.ID, lines); err != nil {
 				report.add(importRowResult{Line: g.line, Code: code, Status: "failed",
 					Reason: "created, but manifest failed: " + err.Error()})
 			}
