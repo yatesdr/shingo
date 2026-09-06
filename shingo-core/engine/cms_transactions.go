@@ -56,16 +56,23 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 	if uncounted != nil {
 		// THE SAME LOSS BY A THIRD DOOR, and the quietest one. The build
 		// succeeded; part of what crossed the boundary just has no ratio to
-		// count it by, so those parts are booked nowhere. It reached
-		// production as a manifest that named payload codes where the template
-		// keys on part numbers — every partial-release bin resolving to zero,
-		// producing no rows, and looking exactly like a bin that had not moved.
-		// Counting it here is what makes the next spelling mismatch visible on
-		// the day it lands instead of at a stock count.
+		// count it by, so those parts are booked nowhere. It reached production
+		// as a manifest that named payload codes where the template keys on
+		// part numbers — every partial-release bin resolving to zero, producing
+		// no rows, and looking exactly like a bin that had not moved.
+		//
+		// IT IS ALSO THE IDENTITY CORRECTION'S OWN WINDOW. v108 rewrites what a
+		// TEMPLATE line names; a bin already standing on the floor still carries
+		// the value its manifest was written with, and no migration rewrites a
+		// bin's jsonb under a running plant. Those bins are uncountable until
+		// they next cycle — every load and every partial release re-derives the
+		// manifest from the template — and this line is what makes that window
+		// a number on the health page instead of a silence.
 		e.cmsBuildFailures.Add(1)
 		e.logFn("engine: cms movement for bin %d (payload %q): the template counts none of "+
-			"%s — %s NOT reach the CMS ledger. The manifest's catid must be a "+
-			"payload_manifest.part_number.",
+			"%s — %s NOT reach the CMS ledger. A manifest line has to name a part the "+
+			"payload's template lists; a bin loaded before the identity correction names "+
+			"what the template used to say, and is counted again on its next load.",
 			ev.BinID, uncounted.PayloadCode, strings.Join(uncounted.CatIDs, ", "),
 			pluralWill(len(uncounted.CatIDs)))
 	}

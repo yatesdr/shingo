@@ -59,11 +59,23 @@
 #   loader refills it as PART-X if that is what is called for — the identity is on
 #   the carrier, not designed into it.
 #
-#     seats to cover      PRS_010 (1) + PRS_011 (1) + WLD_010 (1)        = 3
+#     seats to cover      PRS_010 + PRS_010B + PRS_011 + WLD_010         = 4
 #     in flight           1-2 legs at a time on this small a market      = 2
 #     spare               the one that absorbs a carrier somewhere odd   = 1
-#     total needed                                                      = 6
-#     seeded              2 PART-W + 2 PART-X + 1 PART-Y + 2 empty       = 7
+#     total needed                                                      = 7
+#     seeded              2 PART-W + 3 PART-X + 1 PART-Y + 3 empty       = 9
+#
+#   THE A/B PAIR IS TWO SEATS, NOT ONE, and this count said three because it
+#   read the pair as its cell. Both halves hold a carrier at once — that is what
+#   a sequential pair IS — so the total was one short before the payload-specific
+#   count below made it two short during a changeover.
+#
+#   AND A CHANGEOVER IS COUNTED PER PAYLOAD, not against the shared pool. The
+#   pool is conserved and fungible in steady state, but on the way from L2-A to
+#   L2-B every cell that claims PART-X needs a PART-X carrier AT ONCE — three of
+#   them — and an empty in the market is not one of them until a loader has
+#   filled it. Seeded with two, the third cell waited in awaiting_material for
+#   as long as the plant ran, and the changeover could never complete.
 #
 #   Produce side mirrors it: evac lead time (~R) < fill time C*t = 20 * 30 s = 10 min.
 #
@@ -102,9 +114,18 @@ zones:
       - {name: L2_Lane_W2, slots: [{name: SMN_L2_003, depth: 1}, {name: SMN_L2_004, depth: 2}]}
       - {name: L2_Lane_X1, slots: [{name: SMN_L2_005, depth: 1}, {name: SMN_L2_006, depth: 2}]}
       - {name: L2_Lane_X2, slots: [{name: SMN_L2_007, depth: 1}, {name: SMN_L2_008, depth: 2}]}
+      # A THIRD X LANE, because L2-B claims PART-X at three cells. See the bins
+      # block: two X carriers cannot cover a three-cell changeover, and the cell
+      # left out waits in awaiting_material forever.
+      - {name: L2_Lane_X3, slots: [{name: SMN_L2_016, depth: 1}, {name: SMN_L2_017, depth: 2}]}
       - {name: L2_Lane_Y1, slots: [{name: SMN_L2_009, depth: 1}, {name: SMN_L2_010, depth: 2}]}
       - {name: L2_Lane_MT1, slots: [{name: SMN_L2_011, depth: 1}, {name: SMN_L2_012, depth: 2}]}
       - {name: L2_Lane_MT2, slots: [{name: SMN_L2_013, depth: 1}, {name: SMN_L2_014, depth: 2}]}
+      # A third empty lane. simcalc -carriers counts the empty floor PER POOL —
+      # a produce station draws its empty from ONE named pool — and SMN_L2 has
+      # three produce stations against two seeded empties. The third plant-wide
+      # empty sits at WLD_010, which is a cell, not this market.
+      - {name: L2_Lane_MT3, slots: [{name: SMN_L2_018, depth: 1}, {name: SMN_L2_019, depth: 2}]}
       # The buffer position: in-flight slack, and a guaranteed place to park a dig.
       - {name: L2_Lane_BUF, slots: [{name: SMN_L2_015, depth: 1}]}
 
@@ -320,13 +341,20 @@ bins:
   - {name: L2-BW-02, slot: SMN_L2_004, payload: PART-W, uop: 20}
   # PART-X seeded FULL and waiting: the A to B changeover pulls from here, and the
   # whole scenario depends on that material being ready to land inside the gap.
+  # ONE PER CELL THAT CLAIMS IT, and the count is not decoration: L2-B claims
+  # PART-X at PRS_010, PRS_010B and PRS_011, so an A to B changeover needs three
+  # PART-X carriers AT ONCE. Seeded with two, the third cell sat in
+  # awaiting_material forever and the changeover could not complete — which
+  # reads exactly like a code defect and is a fixture that cannot count.
   - {name: L2-BX-01, slot: SMN_L2_006, payload: PART-X, uop: 20}
   - {name: L2-BX-02, slot: SMN_L2_008, payload: PART-X, uop: 20}
+  - {name: L2-BX-03, slot: SMN_L2_017, payload: PART-X, uop: 20}
   # Somewhere for finished PART-Y to go.
   - {name: L2-BY-01, slot: SMN_L2_010, payload: PART-Y, uop: 20}
   # Empty carriers — the spares the arithmetic above insists on.
   - {name: L2-MT-01, slot: SMN_L2_012, payload: "", uop: 0}
   - {name: L2-MT-02, slot: SMN_L2_014, payload: "", uop: 0}
+  - {name: L2-MT-03, slot: SMN_L2_019, payload: "", uop: 0}
 
   # ── CARRIERS AT THE CELLS. Without one, seeddev binds no runtime state for the
   # node (it needs a bin AT the claim's node), the PLC tick has nothing to
@@ -348,6 +376,29 @@ demands:
 # shingoedge.edge2.yaml — that list and this one are the same names twice, and a
 # mismatch is silent (the tick fans to nothing).
 reporting_points:
+  # ── THIS PLANT COUNTS ONLY UNDER L2-A, AND IT CANNOT BE FIXED HERE ────────
+  #
+  # The tick fans to the nodes of the ACTIVE (process, style) pair, so under
+  # L2-B all three of these fan to nothing: the presses run, consume nothing,
+  # drain nothing, ask for nothing, and the loop stands still with every cell
+  # holding a full carrier and last_poll_at frozen at the second before cutover.
+  # Measured on this stack 2026-09-06.
+  #
+  # THE OBVIOUS FIX DOES NOT WORK, AND demo.yaml ALREADY TRIED IT. It carries
+  # PRESS-1 and WELD-1 twice, once per style, with a comment saying exactly why
+  # ("a reporting point pinned only to the -RUN style stops counting the instant
+  # a changeover makes -ALT active"). Those two extra rows do not exist:
+  # reporting_points is UNIQUE(plc_name, tag_name), so a physical counter
+  # belongs to ONE style and `INSERT OR IGNORE` drops the second silently.
+  # Measured in EDGE 1's own database — the plant file lists nine points and the
+  # table holds seven, missing exactly the two -ALT rows.
+  #
+  # Widening the key to (style_id, plc_name, tag_name) is not a config change
+  # and is not obviously safe: each row carries its own last_count, so a style
+  # re-entered after a spell away would compute its first delta against a count
+  # from the last time it ran. That is the duplicate-fanout shape, and it is an
+  # owner decision rather than a fixture edit. Written up for the owner; until
+  # it is answered, a scenario that needs counting runs under L2-A.
   - {plc_name: PRESS-10, tag_name: PRESS-10_COUNTER, node: PRS_010, style: L2-A}
   - {plc_name: PRESS-11, tag_name: PRESS-11_COUNTER, node: PRS_011, style: L2-A}
   - {plc_name: WELD-10,  tag_name: WELD-10_COUNTER,  node: WLD_010, style: L2-A}
