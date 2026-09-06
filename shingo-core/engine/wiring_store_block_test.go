@@ -10,6 +10,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -341,4 +342,120 @@ func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
 	// The bin reaches the line. It does not sit at _TRANSIT holding a carrier
 	// out of circulation while the cell reads empty.
 	testdb.RequireBinAtNode(t, db, carried.ID, lineNode.ID)
+}
+
+// TestResolvePickupBin_IntermediateRePickupTakesTheBinThatIsThere is the
+// regression for the wrong-bin resolution that wedged both single_robot cells
+// of the demo plant within three minutes of every seeded run.
+//
+// THE SHAPE. A single_robot swap is one order carrying two bins. It parks the
+// FRESH carrier at InboundStaging (step 2) and collects it again at step 6; it
+// parks the SPENT one at OutboundStaging (step 5) and collects it again at step
+// 8. The junction is written at ALLOCATION time and names the allocator's
+// endpoints, so neither re-pickup has a junction row — and the single-bin
+// fallback answers with order.BinID WITHOUT ASKING WHERE THAT BIN IS.
+//
+// So the step-6 pickup at InboundStaging resolved to the spent carrier sitting
+// at OutboundStaging, and the step-7 dropoff then recorded the SPENT carrier
+// onto the line — with the spent carrier's count, which is what Edge binds and
+// charges PLC ticks against. Worse for the cell: step 8 lifted that same bin
+// off again, so the line position read EMPTY from step 8 onward and the level
+// sweep minted a bare move into a position physically holding the fresh
+// carrier. The move holds there forever and the cell never swaps again.
+//
+// RED at the tree before the fix: bin SPENT moves to _TRANSIT and bin FRESH
+// stays at inbound staging — the exact inversion measured as
+// "transit: bin 24 entered _TRANSIT (order 8, block sg-8-…-b7 @ SLN_005)"
+// while bin 24 was at SLN_006 and bin 7 was the one at SLN_005.
+func TestResolvePickupBin_IntermediateRePickupTakesTheBinThatIsThere(t *testing.T) {
+	t.Parallel()
+
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	inbound := &nodes.Node{Name: "REPICK-IN-STAGING", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(inbound), "create inbound staging")
+	outbound := &nodes.Node{Name: "REPICK-OUT-STAGING", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(outbound), "create outbound staging")
+
+	ord := &orders.Order{
+		EdgeUUID: "repickup-1",
+		// StationID deliberately blank: this case is about bin resolution, and a
+		// station would pull the Edge BinPickedUp notify into it.
+		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
+		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.StorageNode.Name,
+		ProcessNode: sd.LineNode.Name, PayloadDesc: "single_robot swap",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "create swap order")
+
+	// The state at step 6: both carriers parked, both still claimed by the leg.
+	fresh := testdb.CreateBinAtNode(t, db, sd.Payload.Code, inbound.ID, "CARRIER-FRESH")
+	spent := testdb.CreateBinAtNode(t, db, sd.Payload.Code, outbound.ID, "CARRIER-SPENT")
+	testdb.ClaimBinForTest(t, db, fresh.ID, ord.ID)
+	testdb.ClaimBinForTest(t, db, spent.ID, ord.ID)
+
+	// order.BinID names the SPENT carrier — the line bin the allocator picked the
+	// order up around. That is the value the fallback returns, and returning it
+	// here is the defect.
+	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, spent.ID), "bin_id = the spent carrier")
+
+	// No junction row for either staging pickup. That is the shape, not a
+	// shortcut: the allocator writes endpoints, and these are intermediate.
+	rows, err := db.ListOrderBins(ord.ID)
+	testutil.MustNoErr(t, err, "list junction")
+	for _, ob := range rows {
+		if ob.NodeName == inbound.Name || ob.NodeName == outbound.Name {
+			t.Fatalf("fixture: a junction row names %s — this case is only a case while the "+
+				"re-pickups have none", ob.NodeName)
+		}
+	}
+
+	// Step 6: collect the fresh carrier from inbound staging.
+	eng.handlePickupBlockCompleted(BlockCompletedEvent{
+		OrderID: ord.ID, BlockID: "repickup-1-b7",
+		Location: inbound.Name, BinTask: "JackLoad",
+	})
+
+	var transitID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM nodes WHERE name='_TRANSIT'`).Scan(&transitID),
+		"lookup _TRANSIT")
+
+	testdb.RequireBinAtNode(t, db, fresh.ID, transitID)
+	testdb.RequireBinAtNode(t, db, spent.ID, outbound.ID)
+}
+
+// TestResolvePickupBin_SingleBinFallbackStillAnswers pins that the new arm did
+// not take work away from the old one. A single-bin order with no junction rows
+// and no claim registered still resolves through order.BinID — the shape
+// TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll describes from
+// the dropoff side, and the reason the fallback exists.
+func TestResolvePickupBin_SingleBinFallbackStillAnswers(t *testing.T) {
+	t.Parallel()
+
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	ord := &orders.Order{
+		EdgeUUID:  "repickup-fallback-1",
+		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
+		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
+		ProcessNode: sd.LineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "create order")
+
+	only := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "CARRIER-FALLBACK")
+	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, only.ID), "bin_id")
+	// Deliberately NOT claimed and NOT in the junction: nothing but bin_id names it.
+
+	eng.handlePickupBlockCompleted(BlockCompletedEvent{
+		OrderID: ord.ID, BlockID: "repickup-fallback-1-b2",
+		Location: sd.StorageNode.Name, BinTask: "JackLoad",
+	})
+
+	var transitID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM nodes WHERE name='_TRANSIT'`).Scan(&transitID),
+		"lookup _TRANSIT")
+	testdb.RequireBinAtNode(t, db, only.ID, transitID)
 }

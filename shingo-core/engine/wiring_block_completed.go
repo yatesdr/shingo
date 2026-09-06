@@ -211,7 +211,50 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 //     in one swap), pick the earliest unmoved one (lowest step_index
 //     whose bin's NodeID still equals the source node — others have
 //     already transitioned).
-//  2. Single-bin order fallback: order.BinID.
+//  2. The order's own claimed bin AT this location — see below.
+//  3. Single-bin order fallback: order.BinID.
+//
+// ── WHY (2) EXISTS: A PLAN'S RE-PICKUPS HAVE NO JUNCTION ROWS ──────────────
+//
+// The junction is written at ALLOCATION time and names the endpoints the
+// allocator chose. A plan's INTERMEDIATE pickups are not among them. A
+// single_robot swap parks the fresh carrier at InboundStaging (step 2) and
+// collects it again at step 6; it parks the spent one at OutboundStaging
+// (step 5) and collects it again at step 8. Neither of those two pickups has a
+// junction row, so both fell straight through to (3) — which returns
+// `order.BinID` WITHOUT ASKING WHERE THAT BIN IS.
+//
+// So the step-6 pickup at InboundStaging resolved to the SPENT carrier sitting
+// at OutboundStaging, and the step-7 dropoff then recorded the spent carrier
+// onto the LINE — with its own count, which is what the Edge binds and charges
+// PLC ticks against. The fresh carrier stayed recorded at InboundStaging until
+// whole-order FINISHED.
+//
+// Measured on the demo plant, 2026-09-06, order 8 at ALN_004 (and identically
+// order 5 at ALN_003, same run, and again on a clean re-run):
+//
+//	b3 SLN_005 JackUnload   bin 7  stored at SLN_005   the fresh carrier, parked
+//	b6 SLN_006 JackUnload   bin 24 stored at SLN_006   the spent carrier, parked
+//	b7 SLN_005 JackLoad     bin 24 entered _TRANSIT    <- WRONG: bin 24 is at SLN_006
+//	b8 ALN_004 JackUnload   bin 24 stored at ALN_004   <- WRONG: the spent one, on the line
+//	b9 SLN_006 JackLoad     bin 24 entered _TRANSIT    <- and off again
+//
+// The second consequence is the one that wedged cells: because b9 lifted the
+// only bin Core believed was on the line, ALN_004 read EMPTY from step 8
+// onward, and the level sweep minted a bare move into a position that
+// physically held the fresh carrier. That move holds forever. See
+// ISSUE-sim-position-hold-deadlock-2026-09-06.md.
+//
+// (2) ASKS THE SAME QUESTION resolveDropoffBin ASKS, from the other side. That
+// function resolves a dropoff as "the one bin this order has claimed at
+// _TRANSIT" — what the robot is holding — and its header records why one rule
+// beat two special cases. A pickup is the dual: the bin this order lifts at L
+// is the one bin it has claimed AT L. No junction, no step index, no agreement
+// with anything.
+//
+// FAILS CLOSED, and closed here means "today's behaviour". Zero claimed bins at
+// the location or more than one leaves (3) to answer exactly as it does now;
+// nothing that resolves today stops resolving.
 func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, stepIndex int, fromNodeID int64, ok bool) {
 	// LOAD-BEARING (same contract as shingo-edge/engine/handler_bin_picked_up.go):
 	// `location` arrives from BlockCompletedEvent.Location, originally
@@ -253,6 +296,13 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 		}
 	}
 
+	// The order's own claimed bin AT this location. See the header: a plan's
+	// intermediate re-pickups carry no junction row, and the fallback below
+	// answers with order.BinID wherever that bin happens to be.
+	if binID, from, ok := e.claimedBinAt(orderID, locationTrimmed); ok {
+		return binID, 0, from, true
+	}
+
 	// Single-bin fallback.
 	order, err := e.db.GetOrder(orderID)
 	if err != nil || order == nil || order.BinID == nil {
@@ -273,6 +323,45 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 		from = *bin.NodeID
 	}
 	return *order.BinID, 0, from, true
+}
+
+// claimedBinAt returns the single bin this order has claimed at `location`, and
+// the node it is leaving. The pickup dual of resolveDropoffBin's transit rule:
+// one robot lifts one bin, so if exactly one of the order's own bins is sitting
+// at the node the block completed at, that is the bin.
+//
+// Ambiguity is not resolved here, deliberately. Zero means the order has nothing
+// of its own at this node — a junction-less pickup of a bin it does not hold, or
+// a replayed block whose bin has already moved to _TRANSIT. More than one means
+// two of its bins share the node, which one robot cannot lift. Either way the
+// caller falls through to the behaviour that predates this, rather than guessing
+// — and a wrong bin identity here writes a wrong count onto a line position.
+func (e *Engine) claimedBinAt(orderID int64, location string) (binID int64, fromNodeID int64, ok bool) {
+	if location == "" {
+		return 0, 0, false
+	}
+	node, err := e.db.GetNodeByDotName(location)
+	if err != nil || node == nil {
+		return 0, 0, false
+	}
+	held, err := e.db.ListBinsByClaim(orderID)
+	if err != nil {
+		return 0, 0, false
+	}
+	var found []int64
+	for _, b := range held {
+		if b.NodeID != nil && *b.NodeID == node.ID {
+			found = append(found, b.ID)
+		}
+	}
+	if len(found) != 1 {
+		if len(found) > 1 {
+			e.logFn("transit: order %d pickup @ %s — %d of its own bins are at this node, want exactly 1; "+
+				"falling back to the order's bin_id", orderID, location, len(found))
+		}
+		return 0, 0, false
+	}
+	return found[0], node.ID, true
 }
 
 // handleStoreBlockCompleted records a bin at its destination slot the moment
