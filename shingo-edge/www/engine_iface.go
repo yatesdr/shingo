@@ -115,7 +115,7 @@ type EngineOrchestration interface {
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	RequestProduceSwap(nodeID int64) (*engine.NodeOrderResult, error)
-	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
+	LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string) error
 	RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	ClearLoaderHome(nodeID int64) error

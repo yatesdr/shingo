@@ -187,16 +187,16 @@ func (s *stubEngine) ReleaseChangeoverWait(processID int64, disp engine.ReleaseD
 func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {
 	return nil, s.requestProduceSwapErr
 }
-func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
-func (s *stubEngine) ClearBin(int64, string) error                                      { return nil }
-func (s *stubEngine) RecordBinCount(int64, int, string) error                           { return nil }
-func (s *stubEngine) ClearLoaderHome(int64) error                                       { return nil }
-func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                 {}
-func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)             { return nil, nil }
-func (s *stubEngine) PullFromMarket(int64, string) error                                { return nil }
-func (s *stubEngine) PushEmptyOut(int64) error                                          { return nil }
-func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)         { return nil, nil }
-func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
+func (s *stubEngine) LoadBin(int64, string, *int64, []protocol.IngestManifestItem) error { return nil }
+func (s *stubEngine) ClearBin(int64, string) error                                       { return nil }
+func (s *stubEngine) RecordBinCount(int64, int, string) error                            { return nil }
+func (s *stubEngine) ClearLoaderHome(int64) error                                        { return nil }
+func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                  {}
+func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)              { return nil, nil }
+func (s *stubEngine) PullFromMarket(int64, string) error                                 { return nil }
+func (s *stubEngine) PushEmptyOut(int64) error                                           { return nil }
+func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
+func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)           { return nil, nil }
 
 // CreateRetrieveForAPI mirrors the engine's NO-LOADER path, which is what the
 // stub genuinely models: it has an order manager and no loader aggregate, so

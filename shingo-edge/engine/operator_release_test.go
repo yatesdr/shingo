@@ -302,11 +302,11 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	emitOrderCompleted(eng, orderID, "uuid-idemp", orders.TypeComplex, &nodeID)
+	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-idemp", orders.TypeComplex, &nodeID, 100)
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOPCached != 100 {
-		t.Errorf("RemainingUOP = %d, want 100 (delivered handler fallback to claim capacity)",
+		t.Errorf("RemainingUOP = %d, want 100 (the count Core stamped on the delivery envelope)",
 			runtime.RemainingUOPCached)
 	}
 }
@@ -481,11 +481,11 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	emitOrderCompleted(eng, orderID, "uuid-retr", orders.TypeRetrieve, &nodeID)
+	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-retr", orders.TypeRetrieve, &nodeID, 100)
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOPCached != 100 {
-		t.Errorf("RemainingUOP = %d, want 100 (delivered handler fallback to claim capacity)",
+		t.Errorf("RemainingUOP = %d, want 100 (the count Core stamped on the delivery envelope)",
 			runtime.RemainingUOPCached)
 	}
 }

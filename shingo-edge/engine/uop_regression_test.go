@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -100,20 +102,21 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	emitOrderCompleted(eng, orderID, "uuid-reg11-delivery", orders.TypeComplex, &nodeID)
+	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-reg11-delivery", orders.TypeComplex, &nodeID, 200)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (delivery handler fallback to claim capacity)",
+		t.Errorf("RemainingUOP = %d, want 200 (the count Core stamped on the delivery envelope)",
 			rt.RemainingUOPCached)
 	}
 }
 
-// TestRegression_DeliveryResetsToCapacityWithBin pins the
-// bin-ownership flip contract: delivery completion with a bin attached
-// resets the runtime cache to claim.UOPCapacity. PLC ticks then
-// decrement against this number; deltas ship to Core via the outbox.
-// No reconciler heal — Edge owns the count for the bin at lineside.
+// TestRegression_DeliveryResetsToCapacityWithBin pins the bin-ownership flip
+// contract: delivery completion with a bin attached rebinds the slot and seats
+// the count Core stamped on the envelope. PLC ticks then decrement against that
+// number; deltas ship to Core via the outbox. No reconciler heal — Edge owns
+// the count for the bin at lineside, which is exactly why the seat must be
+// Core's measurement and not a local assumption about a full carrier.
 //
 // Companion to TestRegression_RemovalOrderClearsBinAndZeroesUOP which
 // pins the empty-slot path.
@@ -144,15 +147,88 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	emitOrderCompleted(eng, orderID, "uuid-item8-delivery", orders.TypeComplex, &nodeID)
+	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-item8-delivery", orders.TypeComplex, &nodeID, 200)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (delivered handler fallback to claim capacity)",
+		t.Errorf("RemainingUOP = %d, want 200 (the count Core stamped on the delivery envelope)",
 			rt.RemainingUOPCached)
 	}
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != 303 {
 		t.Errorf("ActiveBinID = %v, want 303 (delivered handler binds to order.BinID)",
 			rt.ActiveBinID)
+	}
+}
+
+// TestRegression_BlindDeliverySeatsZeroNotCapacity pins the failure direction
+// for a delivery whose envelope carries no count — Core named a bin and could
+// not read its row.
+//
+// It used to seat claim.UOPCapacity for a consume claim: a full carrier nobody
+// had counted, written into the field Core reads as a measurement. That is the
+// suppressing direction. demand_reconciler evaluates
+// `remaining <= claim.ReorderPoint` off this same value, so a capacity seed
+// puts the node above its reorder point and no replenishment is asked for —
+// the line runs dry while the system believes it is fed, which is the ALN_007
+// shape. Zero asks for material that may not be needed, and the first tick or
+// count withdraws the ask.
+//
+// The justification the capacity seed shipped with ("the reconciler heals to
+// Core's authoritative value within ~60s") named a reconciler that no longer
+// exists; see the note in wiring_test.go.
+func TestRegression_BlindDeliverySeatsZeroNotCapacity(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "BLIND", PayloadCode: "PART-BLIND", UOPCapacity: 200, InitialUOP: 200,
+	})
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
+
+	orderID, err := db.CreateOrder("uuid-blind-delivery", orders.TypeComplex,
+		&nodeID, false, 1, "BLIND-NODE", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID,
+		`[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"BLIND-NODE"}]`), "set steps")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "confirm order")
+	deliveredBin := int64(909)
+	db.UpdateOrderBinID(orderID, &deliveredBin)
+
+	eng := testEngine(t, db)
+	var logs []string
+	eng.logFn = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	eng.wireEventHandlers()
+
+	// No BinUOP on the envelope — the blind path.
+	emitOrderCompleted(eng, orderID, "uuid-blind-delivery", orders.TypeComplex, &nodeID)
+
+	// The marker is the whole reason a blind delivery is findable afterwards:
+	// the post-integration data pass counts it, and the exposure it brackets
+	// (a blind delivery followed by a changeover evac) is invisible without it.
+	// Asserting the emitted string means a rename cannot quietly zero that count.
+	var marked bool
+	for _, l := range logs {
+		if strings.Contains(l, BlindDeliveryMarker) {
+			marked = true
+			break
+		}
+	}
+	if !marked {
+		t.Errorf("no %q line was logged. The seat is only safe because it is loud; "+
+			"a blind delivery nobody can grep for is a silent 0. logs: %v",
+			BlindDeliveryMarker, logs)
+	}
+
+	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	if rt.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0. A delivery that carried no count must not seat a "+
+			"full carrier: at 200 against a reorder point this node reads fed and replenishment "+
+			"is never asked for", rt.RemainingUOPCached)
+	}
+	// The binding itself still has to happen — the count being unknown is not a
+	// reason to leave the slot pointing at nothing.
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != deliveredBin {
+		t.Errorf("ActiveBinID = %v, want %d — the bin still arrived", rt.ActiveBinID, deliveredBin)
 	}
 }

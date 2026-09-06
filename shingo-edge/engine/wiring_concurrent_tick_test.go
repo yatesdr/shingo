@@ -547,11 +547,11 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	emitOrderCompleted(eng, orderID, "uuid-back-return", orders.TypeComplex, &nodeID)
+	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-back-return", orders.TypeComplex, &nodeID, xClaim.UOPCapacity)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != xClaim.UOPCapacity {
-		t.Errorf("post-arrival runtime = %d, want %d (delivered handler fallback to claim.UOPCapacity)",
+		t.Errorf("post-arrival runtime = %d, want %d (the count Core stamped on the delivery envelope)",
 			rt.RemainingUOPCached, xClaim.UOPCapacity)
 	}
 }

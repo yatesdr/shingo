@@ -153,7 +153,12 @@ func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeCla
 // Calls Core's HTTP API directly to set the manifest on the existing bin at
 // that node. No transport order is created — the bin stays in place until a
 // move order sends it to OutboundDestination.
-func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error {
+//
+// uopCount is absent-or-value: nil when nobody declared a count, in which case
+// Core answers from the payload's standard pack. Core resolves it either way
+// and returns what it wrote, and that answer — not this argument — is what
+// gets seated on the node. See seatManuallyLoadedBin.
+func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
@@ -230,23 +235,14 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// No declared count means "assume a full bin", and a full bin is
-	// uop_capacity CYCLES. This used to sum the manifest's part counts, which
-	// is a different unit: it is right only while every payload is one part
-	// per cycle, and wrong by parts_per_cycle for any that is not.
+	// NO LOCAL FALLBACK. An undeclared count travels as absence and Core
+	// resolves it from the payload's standard pack — the same template this
+	// used to fetch, read by the side that owns the ledger. Resolving it here
+	// as well meant two answers to one question, and the Edge's was the one
+	// with no way to say "I could not reach the template": the fetch reports
+	// every failure as a nil result, so the fallback quietly produced 0 and
+	// then wrote that 0 onto the node as if somebody had counted it.
 	//
-	// Core applies the same fallback, so a failed lookup here is not fatal —
-	// sending 0 lets Core answer from the template it already has. What must
-	// not happen is inventing a number from the wrong unit on the way.
-	if uopCount <= 0 {
-		if resp, ferr := e.coreClient.FetchPayloadManifest(payloadCode); ferr == nil && resp != nil {
-			uopCount = int64(resp.UOPCapacity)
-		} else {
-			e.logFn("LoadBin: no UoP declared for %s at node %s and no template capacity available (%v) — deferring to Core",
-				payloadCode, node.Name, ferr)
-		}
-	}
-
 	// Load bin via direct HTTP to Core — synchronous, immediate feedback
 	items := make([]BinLoadItem, len(manifest))
 	for i, m := range manifest {
@@ -262,6 +258,14 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("load bin: %w", err)
 	}
 
+	// CORE'S ANSWER IS THE COUNT, and everything downstream of here uses it
+	// rather than the argument. Core resolved the number it actually wrote to
+	// the ledger — the operator's when they declared one, the standard pack
+	// when they did not — so this is the same value the bin now carries, and
+	// seating anything else puts the Edge and the ledger into disagreement
+	// about a carrier both of them can see.
+	seatedUOP := int64(loadResp.UOPRemaining)
+
 	// The operator's tap on LOAD is the explicit confirmation that the L1
 	// retrieve_empty arrived and has been filled. Confirming the L1 here
 	// transitions it delivered → confirmed, sends a delivery receipt to Core,
@@ -271,7 +275,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// `delivered` indefinitely (Core would auto-confirm on its side, but
 	// Edge had no continuous status sync) and L2 was created here directly,
 	// duplicating the side-cycle handler's responsibility.
-	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(node.CoreNodeName, uopCount); l1Confirmed {
+	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(node.CoreNodeName, seatedUOP); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
 		// Belt-and-suspenders: set active_bin_id directly from Core's LoadBin
 		// response. handleLoaderEmptyInCompletion will also try to set it
@@ -317,7 +321,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		activeBinID = &v
 		deltaEpoch = loadResp.DeltaEpoch
 	}
-	e.seatManuallyLoadedBin(node, claimIDPtr, activeBinID, deltaEpoch, int(uopCount), payloadCode)
+	e.seatManuallyLoadedBin(node, claimIDPtr, activeBinID, deltaEpoch, int(seatedUOP), payloadCode)
 	// L2 to OutboundDestination is unattended (supermarket node) — must
 	// auto-confirm or it sticks at `delivered` forever. See the same reasoning in
 	// applyLoaderEmptyIn. Thread the operator-selected payloadCode through so the

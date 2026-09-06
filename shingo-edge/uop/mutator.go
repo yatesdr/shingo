@@ -267,8 +267,12 @@ func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, style
 
 // ManualLoad atomically writes claim + active_bin_id + epoch + count
 // when an operator imprints a bin via the loader fallback path. Today's
-// caller is operator_bin_ops.go:128 (the fallback path that takes a
-// uop count from the load form rather than from Core's response).
+// caller is seatManuallyLoadedBin in operator_bin_ops.go.
+//
+// The count is CORE'S, off the LoadBin response — the number Core resolved
+// and wrote to the ledger. It used to be the load form's, which was the same
+// number whenever the operator declared one and a locally-invented fallback
+// whenever they did not.
 //
 // binID is *int64 because Core's LoadBin response may not include a
 // bin identity (multi-bin order, pre-fix Core build); in that case

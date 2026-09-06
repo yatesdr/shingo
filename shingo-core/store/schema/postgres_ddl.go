@@ -301,19 +301,6 @@ CREATE TABLE IF NOT EXISTS recovery_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_recovery_actions_created ON recovery_actions(created_at);
 
-CREATE TABLE IF NOT EXISTS corrections (
-    id               BIGSERIAL PRIMARY KEY,
-    correction_type  TEXT NOT NULL,
-    node_id          BIGINT NOT NULL REFERENCES nodes(id),
-    bin_id           BIGINT REFERENCES bins(id),
-    cat_id           TEXT NOT NULL DEFAULT '',
-    description      TEXT NOT NULL DEFAULT '',
-    quantity         BIGINT NOT NULL DEFAULT 0,
-    reason           TEXT NOT NULL,
-    actor            TEXT NOT NULL DEFAULT 'system',
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS admin_users (
     id            BIGSERIAL PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,

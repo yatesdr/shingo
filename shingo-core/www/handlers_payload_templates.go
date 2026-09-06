@@ -1,11 +1,59 @@
 package www
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"shingocore/domain"
 )
+
+// manifestLine is the shape every JSON manifest payload shares: a part number
+// and its per-cycle ratio.
+type manifestLine struct {
+	PartNumber    string
+	PartsPerCycle int64
+}
+
+// validateManifestLines rejects a manifest line whose per-cycle ratio is
+// missing or non-positive, naming every offending part rather than the first.
+//
+// A MISSING RATIO ARRIVES AS ZERO AND CANNOT BE TOLD FROM A DECLARED ONE. JSON
+// omits it, the browser used to submit a blank box as 0, and a spreadsheet cell
+// left empty parses to 0 — three spellings of "I did not say" landing on a
+// value that reads as "there are none of these in the bin". Four rows reached
+// Springfield that way (payload_manifest ids 117/123/137/150) and were
+// corrected by hand at the plant once the owner declared them entry oversights.
+//
+// Non-positive is refused rather than only missing, because the count a bin
+// ships to the inventory ledger is uop_remaining x this number: a zero line
+// contributes nothing to any count while looking configured. A part that
+// genuinely is not in the carrier is a line that does not belong on the
+// manifest.
+//
+// The form refuses this too, and that is not redundancy — the form is one of
+// five doors. The bulk importer and three JSON endpoints reach the same column,
+// and a client-side check closes none of them. It is also what has to be true
+// before a CHECK (parts_per_cycle > 0) can ship without breaking the plants'
+// own imports.
+func validateManifestLines(lines []manifestLine) error {
+	var bad []string
+	for _, l := range lines {
+		if l.PartNumber == "" {
+			continue
+		}
+		if l.PartsPerCycle < 1 {
+			bad = append(bad, fmt.Sprintf("%s (%d)", l.PartNumber, l.PartsPerCycle))
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return fmt.Errorf("parts_per_cycle must be 1 or more on every manifest line; "+
+		"it is how many of the part ONE production cycle uses, usually 1. Fix: %s",
+		strings.Join(bad, ", "))
+}
 
 func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -105,6 +153,15 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	lines := make([]manifestLine, 0, len(req.Manifest))
+	for _, it := range req.Manifest {
+		lines = append(lines, manifestLine{PartNumber: it.PartNumber, PartsPerCycle: it.PartsPerCycle})
+	}
+	if err := validateManifestLines(lines); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	p := &domain.Payload{
 		Code:                 req.Code,
 		Description:          req.Description,
@@ -169,6 +226,15 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		} `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
+		return
+	}
+
+	lines := make([]manifestLine, 0, len(req.Manifest))
+	for _, it := range req.Manifest {
+		lines = append(lines, manifestLine{PartNumber: it.PartNumber, PartsPerCycle: it.PartsPerCycle})
+	}
+	if err := validateManifestLines(lines); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

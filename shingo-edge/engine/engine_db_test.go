@@ -784,7 +784,7 @@ func TestCoreClient_LoadBin_Success(t *testing.T) {
 	resp, err := c.LoadBin(&BinLoadRequest{
 		NodeName:    "N1",
 		PayloadCode: "WIDGET",
-		UOPCount:    100,
+		UOPCount:    declaredUOP(100),
 	})
 	if err != nil {
 		t.Fatalf("LoadBin: %v", err)

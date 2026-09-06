@@ -78,12 +78,26 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 		if order, err := e.db.GetOrder(*task.NextMaterialOrderID); err == nil {
 			if orders.IsTerminal(order.Status) {
 				switch task.State {
-				case "staging_requested":
+				case domain.NodeTaskStagingRequested:
 					if toStyleID > 0 && coreNodeName != "" {
 						if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, coreNodeName); err == nil {
 							claimID := toClaim.ID
 							if e.inventoryDelta != nil {
-								if err := e.inventoryDelta.SetClaimAndCount(task.ProcessNodeID, &claimID, 0); err != nil {
+								// A BOUND CARRIER KEEPS ITS COUNT. The arm fires
+								// because the staging order reached a terminal state
+								// while Edge was down — which is precisely the case
+								// where the bin was delivered and its count seeded, so
+								// zeroing here destroys a measurement of something
+								// physically standing at the node. Advance the claim;
+								// leave the number alone. Same rule as SwitchNode's
+								// seed, which this restore was written alongside and
+								// did not get.
+								uop := 0
+								if rt, rerr := e.db.GetProcessNodeRuntime(task.ProcessNodeID); rerr == nil &&
+									rt != nil && rt.ActiveBinID != nil {
+									uop = rt.RemainingUOPCached
+								}
+								if err := e.inventoryDelta.SetClaimAndCount(task.ProcessNodeID, &claimID, uop); err != nil {
 									log.Printf("changeover: set runtime for node %d: %v", task.ProcessNodeID, err)
 								}
 							}
@@ -93,7 +107,7 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 						log.Printf("changeover: update node task %d to staged: %v", task.ID, err)
 					}
 					advanced = true
-				case "release_requested":
+				case domain.NodeTaskReleaseRequested:
 					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased); err != nil {
 						log.Printf("changeover: update node task %d to released: %v", task.ID, err)
 					}

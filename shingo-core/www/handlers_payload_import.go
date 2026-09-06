@@ -220,11 +220,23 @@ func resolveGroupUoP(g *importGroup, report *importReport) (int64, bool) {
 	return 0, true // no row carried one: UoP 0, which earns a warning downstream
 }
 
-// validateGroupQuantities reports whether every part row's parts-per-cycle parses.
+// validateGroupQuantities reports whether every part row's parts-per-cycle is
+// usable: a whole number, and at least 1.
 //
-// Blank = 0; otherwise a whole number ≥ 0. FAILS FAST on the first bad
-// quantity, reporting ITS row — one failed row per bad payload, pointing at
-// the line that needs fixing rather than one per bad cell.
+// A BLANK CELL FAILS THE PAYLOAD NOW; it used to parse to 0, import, and earn a
+// warning nobody had to act on. That is how four rows reached Springfield
+// declaring that a bin of their payload contains none of the part — the value a
+// spreadsheet produces for "I skipped this cell" is the same value that means
+// "there are none of these", and the ledger reads the second one.
+//
+// It fails the WHOLE payload rather than dropping the offending line, because a
+// manifest is a set: importing it minus one part is not a partial success, it
+// is a different manifest that will under-count every bin of that payload until
+// somebody notices.
+//
+// FAILS FAST on the first bad quantity, reporting ITS row — one failed row per
+// bad payload, pointing at the line that needs fixing rather than one per bad
+// cell.
 func validateGroupQuantities(g *importGroup, report *importReport) bool {
 	for _, e := range g.entries {
 		if e.part == "" {
@@ -233,7 +245,19 @@ func validateGroupQuantities(g *importGroup, report *importReport) bool {
 		q, ok := parseImportInt(e.qty)
 		if !ok {
 			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
-				Reason: fmt.Sprintf("parts-per-cycle %q for part %s must be a whole number ≥ 0", e.qty, e.part)})
+				Reason: fmt.Sprintf("parts-per-cycle %q for part %s must be a whole number ≥ 1", e.qty, e.part)})
+			return false
+		}
+		if q < 1 {
+			blank := ""
+			if strings.TrimSpace(e.qty) == "" {
+				blank = " (the cell is empty)"
+			}
+			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
+				Reason: fmt.Sprintf("parts-per-cycle for part %s is %d%s — it must be 1 or more. "+
+					"It is how many of the part ONE production cycle uses, usually 1, not the "+
+					"number in a full bin. The whole payload was skipped so its manifest is not "+
+					"imported missing a line.", e.part, q, blank)})
 			return false
 		}
 		if q > math.MaxInt64/2 { // absurd guard; bigint holds far more
@@ -293,11 +317,9 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 			if e.part == "" {
 				continue
 			}
-			q, _ := parseImportInt(e.qty) // already validated above
-			if q == 0 {
-				report.add(importRowResult{Line: e.line, Code: code, Status: "warning",
-					Reason: fmt.Sprintf("part %s has parts-per-cycle 0 — it will contribute no count", e.part)})
-			}
+			// Validated above: a group with any non-positive ratio never
+			// reaches here, so there is no zero left to warn about.
+			q, _ := parseImportInt(e.qty)
 			parts = append(parts, &domain.PayloadManifestItem{PartNumber: e.part, PartsPerCycle: q})
 		}
 		if len(parts) > 0 {

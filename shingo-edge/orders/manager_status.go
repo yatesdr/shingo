@@ -18,8 +18,9 @@ import (
 // Core's snapshot of that bin at delivery (from the OrderDelivered envelope)
 // — Edge seeds its runtime cache + active_bin_epoch from them so tick deltas
 // carry the right count baseline and load-lifecycle generation, with no
-// separate HTTP pull. uop nil = older Core didn't send it; Edge falls back to
-// its role default (see wiring_delivered.go).
+// separate HTTP pull. uop nil = no count was sent; the Edge seats 0 and logs
+// the blind delivery rather than assuming a full carrier (see
+// wiring_delivered.go).
 //
 // deliveryNode is the Core dot-name of the destination, forwarded from the
 // OrderDelivered protocol message. When the order isn't found by UUID (Core-
@@ -78,7 +79,8 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		return nil
 	case ReplyDelivered:
 		// Dispatch-reply delivery carries no bin snapshot (that rides the
-		// OrderDelivered envelope); pass nil/0/"" so Edge uses the role default.
+		// OrderDelivered envelope); pass nil/0/"" and let the OrderDelivered
+		// path seat the count when it arrives.
 		return m.handleDelivered(order, statusDetail, nil, nil, nil, nil, 0, "")
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)

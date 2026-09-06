@@ -91,7 +91,7 @@ func TestLoadBin_UnreachableCoreDoesNotPrescribeAWrongFix(t *testing.T) {
 	nodeID := seedManualSwapConsume(t, db, "LOAD-NODE")
 	unreachableCore(t, eng)
 
-	err := eng.LoadBin(nodeID, "PART-A", 50, []protocol.IngestManifestItem{{PartNumber: "PART-A", Quantity: 50}})
+	err := eng.LoadBin(nodeID, "PART-A", declaredUOP(50), []protocol.IngestManifestItem{{PartNumber: "PART-A", Quantity: 50}})
 	if err == nil {
 		t.Fatal("LoadBin succeeded with Core unreachable — it must fail closed")
 	}

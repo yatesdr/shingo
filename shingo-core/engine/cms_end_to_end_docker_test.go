@@ -85,6 +85,64 @@ func (m *middlewareStub) received() [][]byte {
 	return out
 }
 
+// awaitPostingSettled blocks until the newest posting reaches a terminal status,
+// and returns it.
+//
+// THE TEST IS NOT THE ONLY DRAINER. eng.Start() runs the poster's own loop, and
+// Enqueue rings its doorbell — so the moment the subscriber queues a posting,
+// that loop begins draining it concurrently with the explicit DrainOnce below.
+// MarkInflight is guarded on status='pending', so exactly one of them sends and
+// nothing is double-posted; but whichever one loses returns immediately, and a
+// test that asserts right afterwards is reading a row the winner is still
+// working on.
+//
+// That race predates this file's current shape and could not manifest while
+// ClassPosted was a single UPDATE: the row went pending → inflight → posted with
+// no observable middle. Writing the transaction id BEFORE the status (so a
+// failed settle leaves something the reconciler can resolve) opened a window
+// where `inflight` with a real id is a state a reader can catch, and this test
+// caught it — intermittently, which is the worst way to find out.
+//
+// Waiting on the end state is the honest fix. A poster that genuinely never
+// settles still fails here, by timeout, with the last status it had.
+func awaitPostingSettled(t *testing.T, db *store.DB) (status, txID, lastErr string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := db.QueryRow(`SELECT status, transaction_id, last_error
+			FROM cms_postings ORDER BY id DESC LIMIT 1`).Scan(&status, &txID, &lastErr); err != nil {
+			t.Fatalf("read posting: %v", err)
+		}
+		switch status {
+		case "posted", "rejected", "failed":
+			return status, txID, lastErr
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the posting never settled: status=%q transaction_id=%q last_error=%q",
+				status, txID, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// awaitRequests blocks until the stub has received at least n requests, and
+// returns everything it has. Same race as awaitPostingSettled: the send may be
+// on the engine's own poster goroutine.
+func awaitRequests(t *testing.T, stub *middlewareStub, n int) [][]byte {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got := stub.received()
+		if len(got) >= n {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the middleware received %d requests, want %d", len(got), n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // cmsEngine builds an engine with the CMS block pointed at the stub.
 func cmsEngine(t *testing.T, db *store.DB, baseURL string) *Engine {
 	t.Helper()
@@ -160,9 +218,10 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	}
 	eng.cmsPoster.DrainOnce(t.Context())
 
-	got := stub.received()
+	got := awaitRequests(t, stub, 1)
 	if len(got) != 1 {
-		t.Fatalf("the middleware received %d requests, want 1", len(got))
+		t.Fatalf("the middleware received %d requests, want 1 — a second send means two "+
+			"drains both got past MarkInflight, which double-books the transfer", len(got))
 	}
 	var rows []map[string]any
 	if err := json.Unmarshal(got[0], &rows); err != nil {
@@ -206,11 +265,7 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	}
 
 	// The posting settled with the id the middleware named.
-	var status, txID string
-	if err := db.QueryRow(`SELECT status, transaction_id FROM cms_postings ORDER BY id DESC LIMIT 1`).
-		Scan(&status, &txID); err != nil {
-		t.Fatalf("read posting: %v", err)
-	}
+	status, txID, _ := awaitPostingSettled(t, db)
 	if status != "posted" || txID != "MW-E2E-1" {
 		t.Errorf("posting = %s / %q, want posted with the middleware's id", status, txID)
 	}
@@ -265,11 +320,7 @@ func TestCMSEndToEnd_RefusalIsTerminalAndCarriesNoCredentials(t *testing.T) {
 	}})
 	eng.cmsPoster.DrainOnce(t.Context())
 
-	var status, lastErr string
-	if err := db.QueryRow(
-		`SELECT status, last_error FROM cms_postings ORDER BY id DESC LIMIT 1`).Scan(&status, &lastErr); err != nil {
-		t.Fatalf("read posting: %v", err)
-	}
+	status, _, lastErr := awaitPostingSettled(t, db)
 	if status != "rejected" {
 		t.Errorf("status = %q, want rejected — a refused body will be refused again", status)
 	}
@@ -280,7 +331,9 @@ func TestCMSEndToEnd_RefusalIsTerminalAndCarriesNoCredentials(t *testing.T) {
 		t.Errorf("last_error = %q, want it to name the status a person can look up", lastErr)
 	}
 
-	// Draining again must not re-send: the refusal is terminal.
+	// Draining again must not re-send: the refusal is terminal. Safe to read
+	// the count directly here — awaitPostingSettled has already established
+	// that no drain is still in flight.
 	before := len(stub.received())
 	eng.cmsPoster.DrainOnce(t.Context())
 	if after := len(stub.received()); after != before {

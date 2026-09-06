@@ -99,8 +99,31 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 103 {
-		t.Errorf("head migration = %d, want 103", got)
+	if got := store.LatestMigrationVersion(); got != 104 {
+		t.Errorf("head migration = %d, want 104", got)
+	}
+}
+
+// TestMigrate_CorrectionsRetired: v104 drops the corrections table, which
+// nothing in the tree has ever written or read.
+//
+// The second half is the one worth having. A dropped table that the BASELINE
+// still creates comes back on the next fresh install, so the migration and the
+// baseline have to agree — that is the shape v92 called out for production_log,
+// and it is checked here by migrating twice rather than by reading the DDL: the
+// second pass runs the baseline again over a migrated database.
+func TestMigrate_CorrectionsRetired(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if schema.TableExists(db.DB, "corrections") {
+		t.Error("corrections must be dropped by v104")
+	}
+	if err := db.MigrateForTest(); err != nil {
+		t.Fatalf("re-migrate: %v", err)
+	}
+	if schema.TableExists(db.DB, "corrections") {
+		t.Fatal("corrections came back on a second pass — the baseline DDL still creates it, " +
+			"so a fresh install would ship the table the migration exists to remove")
 	}
 }
 

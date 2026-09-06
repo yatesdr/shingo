@@ -186,8 +186,24 @@ func startChangeover(t *testing.T, eng *Engine, db *store.DB, processID, toStyle
 	return changeover, &tasks[0]
 }
 
-// emitOrderCompleted simulates an order completion event on the event bus.
+// emitOrderCompleted simulates an order completion event on the event bus,
+// with NO count on the delivery envelope.
+//
+// That is the blind-delivery shape — Core named a bin and could not read its
+// row — and the Edge seats 0 for it. Most callers here do not care about the
+// count and only need the binding to happen. A test whose subject IS the count
+// wants emitOrderCompletedWithBinUOP, which is the ordinary production shape.
 func emitOrderCompleted(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64) {
+	emitOrderCompletedWithEnvelopeUOP(eng, orderID, orderUUID, orderType, processNodeID, nil)
+}
+
+// emitOrderCompletedWithBinUOP is the ordinary delivery: Core read the bin row
+// and stamped its count on the envelope, and the Edge seats exactly that.
+func emitOrderCompletedWithBinUOP(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64, binUOP int) {
+	emitOrderCompletedWithEnvelopeUOP(eng, orderID, orderUUID, orderType, processNodeID, &binUOP)
+}
+
+func emitOrderCompletedWithEnvelopeUOP(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64, binUOP *int) {
 	// Fire EventOrderDelivered first so the runtime cache binding (which
 	// now lives on the delivered event under the new contract, not on
 	// EventOrderCompleted) sees the bin's arrival before any completion-
@@ -208,6 +224,7 @@ func emitOrderCompleted(eng *Engine, orderID int64, orderUUID string, orderType 
 				OrderType:     orderType,
 				ProcessNodeID: processNodeID,
 				BinID:         binID,
+				BinUOP:        binUOP,
 			},
 		})
 	}

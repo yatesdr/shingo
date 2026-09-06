@@ -298,7 +298,9 @@ type OrderDeliveredEvent struct {
 	// load-lifecycle epoch, carried from the OrderDelivered Kafka envelope
 	// (Core's snapshot at delivery). handleNodeOrderDelivered seeds the
 	// runtime cache + active_bin_epoch from these — no HTTP pull. BinUOP
-	// nil = older Core didn't send it; fall back to the role default.
+	// nil = no count was sent: an older Core, or a current one that named a bin
+	// and could not read its row. The Edge seats 0 and logs it (BlindDeliveryMarker)
+	// rather than assuming a full carrier.
 	BinUOP *int `json:"bin_uop,omitempty"`
 	// BinPayloadCode is what the arriving carrier IS, off the same bin row as
 	// BinUOP and BinEpoch. It is the lineside identity — the answer this side

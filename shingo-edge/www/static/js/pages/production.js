@@ -206,8 +206,20 @@ async function submitLoadBin() {
     });
     if (manifest.length === 0) { toast('Enter at least one quantity', 'warning'); return; }
     try {
-        var uopCount = parseInt((document.getElementById('rb-uop-count') || {}).value || '0', 10);
-        await api.post('/api/process-nodes/' + nodeID + '/load-bin', {payload_code: payloadCode, uop_count: uopCount, manifest: manifest});
+        // An undeclared count is OMITTED, not sent as 0. Absence asks Core for
+        // the payload's standard pack; a 0 is a bin somebody counted as empty,
+        // and this field has no room to mean both. The operator station has its
+        // own guard and never submits without a count; this page's field is
+        // optional and may not be rendered at all.
+        var body = {payload_code: payloadCode, manifest: manifest};
+        var uopEl = document.getElementById('rb-uop-count');
+        var uopRaw = uopEl ? String(uopEl.value).trim() : '';
+        if (uopRaw !== '') {
+            var uopCount = parseInt(uopRaw, 10);
+            if (isNaN(uopCount)) { toast('UoP count must be a number', 'warning'); return; }
+            body.uop_count = uopCount;
+        }
+        await api.post('/api/process-nodes/' + nodeID + '/load-bin', body);
         closeLoadBinModal();
         toast('Bin loaded', 'success');
     } catch(e) {

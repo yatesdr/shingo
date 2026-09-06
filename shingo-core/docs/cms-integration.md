@@ -15,11 +15,16 @@ code is the thing that is true.
 ## What this is
 
 When an AMR carries a bin across a boundary between two CMS storerooms, shingo
-records a pair of inventory transactions locally and POSTs them to
-Hopkinsville's middleware, which batches them into CMS. A node is a boundary
-because it carries a `cms_storeroom` property; the subsystem runs at all because
-the site's yaml carries a `cms:` block. Springfield has neither today and is
-unaffected.
+records a pair of inventory transactions locally and POSTs them to the CMS
+middleware, which batches them into CMS.
+
+**Two switches, both per-site, and neither is a plant name.** A node is a
+boundary because it carries a `cms_storeroom` property. The subsystem runs at
+all because the site's yaml carries a `cms:` block. A site with neither is
+unaffected by everything below; a site with both participates. Which sites have
+them is deployment state and is deliberately not recorded here — this is built
+for the fleet, not for one plant, and a doc that names today's participants
+starts lying on the day the next one is switched on.
 
 **AMR dispatch never waits on this.** If the middleware is unreachable for a
 shift, bins keep moving and rows accumulate. The backlog is a number on the
@@ -386,30 +391,6 @@ A commented example block lives in `shingocore.dev.yaml`.
 
 ---
 
-## Cutover checklist
-
-In this order.
-
-1. **`pg_dump cms_transactions` at both plants.** v101 is the one irreversible
-   migration in this work — it drops `qty_before`, `qty_after` and `txn_type`.
-2. **Do not ship v101 in the same release as the corrections rip.** An old
-   binary still SELECTs those columns.
-3. **Deploy Core and Edge together.** The `parts_per_cycle` rename changes a
-   JSON key on `/api/telemetry/payload/{code}/manifest` with no both-keys
-   transition.
-4. **Tag the boundary nodes** with SCO's storeroom codes (see
-   [Boundary model](#boundary-model)). Until this happens the feed is
-   legitimately empty, and both the startup log and the diagnostics card say so
-   rather than looking broken.
-5. **Add the `cms:` block**, credentials in the site-local yaml.
-6. **Restart core**, and watch the diagnostics card. Expect "configured but
-   unproven" until the first successful post, then green.
-
-Anyone re-importing a payload spreadsheet should read follow-up #7 in the
-deviation log first.
-
----
-
 ## Known limitations (v1)
 
 - **No middleware-side dedup on `x-body-sha256`.** Asked of IT (**F5**). If the
@@ -426,26 +407,32 @@ deviation log first.
   changes what in-flight bins ship to CMS as counts, because the quantity is
   derived at emission rather than captured at load. A separate project if the
   behaviour ever bites.
-- **Four SPR `parts_per_cycle = 0` rows** are unresolved (**F3**). A part
-  declared absent from every bin of that payload — either a declaration or an
-  oversight. v99 deliberately does not touch them; turning a stored 0 into a 1
-  would invent inventory.
+- ~~Four SPR `parts_per_cycle = 0` rows~~ **resolved 2026-09-05.** The owner
+  declared all four entry oversights rather than declarations, and they were
+  corrected at the plant, pinned to row ids. No migration backfilled them: a
+  blanket rewrite of this column would have invented inventory, and it is not
+  a law that a zero means one — other rows legitimately hold 2 and 24. A
+  missing or non-positive ratio is now refused at every entry point, so the
+  question is closed going forward rather than only backwards.
 - **Two flagged template rows await SCO** (**F7**): HK's `Test-Payload` at 24,
   and SPR `76292-6TA0C.06 / 33258` at 2.
 - **Historical `source_type='correction'` rows persist** and remain filterable.
-  The code path that emitted them is deleted; the `corrections` table is kept
-  and its drop is deferred (**F8 / Step 18**), with the count gate pre-cleared
-  at both plants.
+  The code path that emitted them is deleted, and the `corrections` table was
+  dropped (v104) once both plants confirmed zero rows in it and zero
+  transactions carrying that source type.
 - **`GET /api/cms-health` is unauthenticated**, in the same route block as
   `/api/cms-transactions` and `/outbox/deadletters`. Its `muted_reason` can
   embed an excerpt of the middleware's refusal body. The excerpt is bounded
   (500 bytes, cut on a rune boundary) and credential-redacted, so no key leaks —
   but arbitrary middleware error text can reach an unauthenticated reader on
   the plant network. Small surface; documented rather than changed.
-- **19 migration verify predicates** assert an absence by negating a helper that
-  returns false on a query error, which reads a failed check as a satisfied
-  post-condition. Near-zero practical risk and a known ticket; new code uses
-  `schema.ColumnAbsent` / `IndexAbsent` / `NodePropertyKeyAbsent` instead.
+- ~~19 migration verify predicates~~ **fixed.** Eleven assertions across nine
+  verify predicates negated a helper that returns false on a query error, which
+  reads a failed check as a satisfied post-condition; they now use the absence
+  helpers (`schema.ColumnAbsent` / `TableAbsent` / `IndexAbsent` /
+  `NodePropertyKeyAbsent`). The other eight matches of that spelling are inside
+  migration bodies, where the direction is already the safe one, and were left
+  alone. A lint keys on the parameter type so the distinction survives.
 
 ---
 
@@ -456,7 +443,7 @@ deviation log first.
 | boundary walk, row builder | `material/material.go` |
 | persistence and emission | `engine/cms_transactions.go`, `engine/wiring.go` |
 | transactions, postings | `store/cms/` |
-| migrations | `store/migrations.go` (v99–v103) |
+| migrations | `store/migrations.go` (v99–v104) |
 | translator (pure) | `cms/wire/wire.go` |
 | HTTP client | `cms/client/client.go` |
 | drain and reconcile | `cms/poster/poster.go` |
@@ -464,20 +451,19 @@ deviation log first.
 | endpoint and card | `www/handlers_cms_health.go`, `www/static/pages/diagnostics.js` |
 | end-to-end proof | `engine/cms_end_to_end_docker_test.go` |
 
-## References
+## The design record
 
-The audit trail lives OUTSIDE the repository, in the workspace root alongside
-the checkout (`GitHub/` on the dev host, i.e. `../../..` from this file — a
-path that resolves there and nowhere else, which is why the files are named
-rather than linked).
+The argument behind this subsystem — the review rounds, the implementation plan,
+the deviation log with every judgment call and its reasoning — was written
+outside this repository and is **not distributed with the checkout**. It lives in
+the working area alongside it on the machine where the work was done.
 
-| File | What it is for |
-|---|---|
-| `shingo-cms-middleware-implementation-plan.md` | plan v2 — the specification the 17 steps were built from |
-| `shingo-cms-middleware-review-2026-08-25/` | rounds 1–5, five independent reviewers per round |
-| `shingo-cms-middleware-cleanup-plan.md` | the post-round-5 work, commits 1–8 |
-| `shingo-cms-middleware-implementer-deviations.md` | every judgment call, with the reasoning. **Read its follow-up list first.** |
-| `shingo-cms-middleware-pr-draft.md` | the PR narrative |
+That is worth knowing for one reason: several rules above look arbitrary and are
+not. The boundary property having no default, the count being derived at
+emission instead of stored, absence rather than zero on the bin-load wire, the
+refusal to guess a quantity — each of those is a decision someone argued
+against and lost, and the record of why is in that log rather than here.
 
-Read the deviation log before changing anything described above: several of the
-rules here look arbitrary and are not, and it is where the argument is.
+If you are about to change one of them and cannot find the reasoning, ask before
+assuming there was none. The code comments carry the short version at each site;
+this doc carries the shape; the argument is elsewhere.

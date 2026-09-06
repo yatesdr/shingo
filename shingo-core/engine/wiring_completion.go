@@ -154,7 +154,7 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 			p := bin.PayloadCode
 			binPayloadCode = &p
 		} else {
-			e.logFn("engine: order=%d delivered: bin %d uop/epoch lookup failed: %v (Edge falls back to role default)",
+			e.logFn("engine: order=%d delivered: bin %d uop/epoch lookup failed: %v — the envelope goes out with NO count and the Edge will seat 0 for it",
 				order.ID, *binID, binErr)
 		}
 	}

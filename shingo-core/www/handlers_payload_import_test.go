@@ -101,17 +101,22 @@ func TestImportPayloadGroups_ValidatesAndWarns(t *testing.T) {
 		[]string{"BAD-UOP", "abc", "", ""},        // failed: UoP not a number
 		[]string{"NEG-UOP", "-3", "", ""},         // failed: negative
 		[]string{"ZERO-UOP", "", "", ""},          // created + warning
-		[]string{"ZERO-QTY", "5", "40016911", ""}, // created + warning: qty blank = 0
+		[]string{"ZERO-QTY", "5", "40016911", ""}, // failed: qty blank, once a warning
 		[]string{"", "5", "40016911", "1"},        // failed: no code
 		[]string{"BAD-QTY", "5", "40016911", "x"}, // failed: qty not a number
 	))
-	mustEq(t, rep.Summary.Created, 2, "created (ZERO-UOP, ZERO-QTY)")
-	// FOUR, and the label above is the count: BAD-UOP and NEG-UOP fail on the
-	// UoP cell, the code-less row fails before it is ever grouped, and BAD-QTY
-	// fails on the quantity. Every one of them is a failure this fixture asks
+	// ONE. ZERO-UOP still imports with a warning — a bin that holds nothing is
+	// a configuration an operator may be mid-way through. ZERO-QTY does NOT:
+	// a blank ratio used to import with a warning and is now a failure, because
+	// the warning was advisory about a value the inventory ledger treats as a
+	// measurement. See TestImportPayloadGroups_BlankAndZeroRatioFailThePayload.
+	mustEq(t, rep.Summary.Created, 1, "created (ZERO-UOP)")
+	// FIVE: BAD-UOP and NEG-UOP fail on the UoP cell, the code-less row fails
+	// before it is ever grouped, BAD-QTY fails on an unparseable quantity, and
+	// ZERO-QTY fails on a blank one. Every one is a failure this fixture asks
 	// for on purpose — see the row comments — so if this number ever needs
 	// lowering, a row has to leave the fixture with it.
-	mustEq(t, rep.Summary.Failed, 4, "failed (BAD-UOP, NEG-UOP, no-code, BAD-QTY)")
+	mustEq(t, rep.Summary.Failed, 5, "failed (BAD-UOP, NEG-UOP, no-code, BAD-QTY, ZERO-QTY)")
 
 	// Every failure names its file line so the operator can find the row.
 	for _, r := range rep.Rows {
@@ -369,5 +374,64 @@ func TestImportPayloadGroups_OverflowGuards(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("no failure reported for line(s) %v: %+v", want, rep.Rows)
+	}
+}
+
+// TestImportPayloadGroups_BlankAndZeroRatioFailThePayload pins the door the
+// form fix does not close.
+//
+// A blank spreadsheet cell parses to 0, and 0 in this column says "a bin of
+// this payload contains none of that part" — the value the inventory ledger
+// multiplies uop_remaining by. Four rows reached Springfield that way. It used
+// to import with a warning; it fails the payload now.
+//
+// The payload fails WHOLE rather than importing without the offending line: a
+// manifest minus a part is not a partial success, it is a different manifest
+// that under-counts every bin until somebody notices.
+func TestImportPayloadGroups_BlankAndZeroRatioFailThePayload(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+
+	rep := h.importPayloadGroups(importRows(
+		[]string{"BLANK-RATIO", "1000", "40016911", ""}, // line 2: cell skipped
+		[]string{"ZERO-RATIO", "1000", "40016912", "0"}, // line 3: explicit zero
+		[]string{"GOOD-RATIO", "1000", "40016913", "1"}, // line 4: the control
+	))
+
+	mustEq(t, rep.Summary.Failed, 2, "failed (BLANK-RATIO, ZERO-RATIO)")
+	mustEq(t, rep.Summary.Created, 1, "created — only GOOD-RATIO may be written")
+
+	byLine := map[int]importRowResult{}
+	for _, r := range rep.Rows {
+		if r.Status == "failed" {
+			byLine[r.Line] = r
+		}
+	}
+	for _, tc := range []struct {
+		line             int
+		part, wantPhrase string
+	}{
+		{2, "40016911", "the cell is empty"},
+		{3, "40016912", "must be 1 or more"},
+	} {
+		r, ok := byLine[tc.line]
+		if !ok {
+			t.Errorf("no failure reported for line %d: %+v", tc.line, rep.Rows)
+			continue
+		}
+		if !strings.Contains(r.Reason, tc.part) {
+			t.Errorf("line %d reason does not name the offending part %s: %q", tc.line, tc.part, r.Reason)
+		}
+		if !strings.Contains(r.Reason, tc.wantPhrase) {
+			t.Errorf("line %d reason does not say why (%q): %q", tc.line, tc.wantPhrase, r.Reason)
+		}
+	}
+
+	// The blank case must be distinguishable from a typed zero in the message.
+	// They are the same stored value and different mistakes, and the operator
+	// fixing the file needs to know which one they made.
+	if blank, zero := byLine[2].Reason, byLine[3].Reason; blank == zero {
+		t.Errorf("a skipped cell and a typed 0 report identically (%q) — the whole point "+
+			"of refusing them is that they are different mistakes", blank)
 	}
 }

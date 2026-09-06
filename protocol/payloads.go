@@ -307,11 +307,17 @@ type OrderDelivered struct {
 	// applyBinArrivalForOrder). Edge seeds its runtime cache and stamps
 	// outgoing BinUOPDeltas from these — so the seed and the epoch ride
 	// the same Kafka message as the delivery itself, with no separate
-	// HTTP pull. UOPRemaining is a pointer so an older Core that doesn't
-	// send it (nil) is distinguishable from a genuinely-empty bin (0);
-	// Edge falls back to its role default in the nil case. DeltaEpoch 0
-	// is the pre-migration / unknown sentinel. Both are only meaningful
-	// for single-bin orders (BinID != nil).
+	// HTTP pull. UOPRemaining is a pointer so "no count was sent" (nil) is
+	// distinguishable from a genuinely-empty bin (0).
+	//
+	// NIL IS NOT ONLY AN OLD CORE, and reading it that way is how the Edge's
+	// own fallback got its wrong direction. Core sends the count when it named
+	// a bin AND could read that bin's row; a read that fails leaves this nil on
+	// a current build. The Edge seats 0 and says so loudly rather than assuming
+	// a full carrier — see engine.BlindDeliveryMarker.
+	//
+	// DeltaEpoch 0 is the pre-migration / unknown sentinel. Both are only
+	// meaningful for single-bin orders (BinID != nil).
 	UOPRemaining *int  `json:"uop_remaining,omitempty"`
 	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
 
@@ -322,15 +328,16 @@ type OrderDelivered struct {
 	// no bins table.
 	//
 	// WITHOUT IT THE EDGE GUESSES, and the guess is the claim of whichever
-	// style the process is on — the REQUESTED payload, not the resident one.
-	// Those agree until a changeover moves the cell on while a carrier is
-	// still standing on it, which is Springfield SMN_029, 2026-09-02.
+	// style the process is on — what the cell was ASKED FOR, not what is
+	// standing on it. Those agree until a changeover moves the cell on while a
+	// carrier is still there, which is Springfield SMN_029, 2026-09-02.
 	//
 	// This does not move the boundary. The Edge still decides where material
-	// goes; it stops inferring a fact Core was already holding. Pointer so an
-	// older Core that does not send it (nil) is distinguishable from a
-	// genuinely empty carrier (""), the same distinction UOPRemaining draws
-	// and for the same reason. Only meaningful when BinID != nil.
+	// goes; it stops inferring a fact Core was already holding. Pointer so "not
+	// established" (nil) is distinguishable from a carrier known to be empty
+	// (""), the same distinction UOPRemaining draws and for the same reason —
+	// and the Edge keeps that pair apart on its own side too, as
+	// RuntimeState.LinesidePayloadKnown. Only meaningful when BinID != nil.
 	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Populated for all
 	// orders so the Edge can bind the runtime cache even when the order was

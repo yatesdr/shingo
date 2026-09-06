@@ -386,6 +386,36 @@ func TestApiBinLoad_UOPFallbackWithNoTemplateIsZero(t *testing.T) {
 	}
 }
 
+// TestApiBinLoad_DeclaredZeroIsHonoured is the third wire state, and the one
+// the old `uop <= 0` arm could not express: somebody counted the bin and it
+// held nothing. Absence asks for the standard pack; zero is an answer, and
+// spending it on a full carrier hands the line parts nobody put there.
+func TestApiBinLoad_DeclaredZeroIsHonoured(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	sd.Payload.UOPCapacity = 50
+	testutil.MustNoErr(t, db.UpdatePayload(sd.Payload), "set capacity")
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LOAD-ZERO")
+
+	rec := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load",
+		map[string]any{
+			"node_name":    sd.StorageNode.Name,
+			"payload_code": sd.Payload.Code,
+			"uop_count":    0, // declared, and declared empty
+			"manifest":     []map[string]any{{"part_number": "P1", "quantity": 100}},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 0 {
+		t.Errorf("uop_remaining = %d, want 0 — a declared zero is a count, not a missing one; "+
+			"capacity %d means the standard-pack arm ate it", got.UOPRemaining, sd.Payload.UOPCapacity)
+	}
+}
+
 // --- apiBinClear ------------------------------------------------------------
 
 func TestApiBinClear_MissingNodeName(t *testing.T) {

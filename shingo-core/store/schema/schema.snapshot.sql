@@ -328,28 +328,6 @@ CREATE SEQUENCE public.cms_transactions_id_seq
 
 ALTER SEQUENCE public.cms_transactions_id_seq OWNED BY public.cms_transactions.id;
 
-CREATE TABLE public.corrections (
-    id bigint NOT NULL,
-    correction_type text NOT NULL,
-    node_id bigint NOT NULL,
-    bin_id bigint,
-    cat_id text DEFAULT ''::text NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
-    quantity bigint DEFAULT 0 NOT NULL,
-    reason text NOT NULL,
-    actor text DEFAULT 'system'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.corrections_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.corrections_id_seq OWNED BY public.corrections.id;
-
 CREATE TABLE public.dashboards (
     id bigint NOT NULL,
     name text NOT NULL,
@@ -1339,8 +1317,6 @@ ALTER TABLE ONLY public.cms_postings ALTER COLUMN id SET DEFAULT nextval('public
 
 ALTER TABLE ONLY public.cms_transactions ALTER COLUMN id SET DEFAULT nextval('public.cms_transactions_id_seq'::regclass);
 
-ALTER TABLE ONLY public.corrections ALTER COLUMN id SET DEFAULT nextval('public.corrections_id_seq'::regclass);
-
 ALTER TABLE ONLY public.dashboards ALTER COLUMN id SET DEFAULT nextval('public.dashboards_id_seq'::regclass);
 
 ALTER TABLE ONLY public.demand_registry ALTER COLUMN id SET DEFAULT nextval('public.demand_registry_id_seq'::regclass);
@@ -1459,9 +1435,6 @@ ALTER TABLE ONLY public.cms_postings
 
 ALTER TABLE ONLY public.cms_transactions
     ADD CONSTRAINT cms_transactions_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.corrections
-    ADD CONSTRAINT corrections_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.dashboards
     ADD CONSTRAINT dashboards_pkey PRIMARY KEY (id);
@@ -1832,12 +1805,6 @@ ALTER TABLE ONLY public.cms_transactions
 
 ALTER TABLE ONLY public.cms_transactions
     ADD CONSTRAINT cms_transactions_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id);
-
-ALTER TABLE ONLY public.corrections
-    ADD CONSTRAINT corrections_bin_id_fkey FOREIGN KEY (bin_id) REFERENCES public.bins(id);
-
-ALTER TABLE ONLY public.corrections
-    ADD CONSTRAINT corrections_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id);
 
 ALTER TABLE ONLY public.lane_confidence_daily
     ADD CONSTRAINT lane_confidence_daily_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.scene_lane_versions(id);

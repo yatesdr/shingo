@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/store"
 )
 
 // TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse pins the fix in
@@ -46,7 +47,7 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 	eng.coreClient = NewCoreClient(srv.URL)
 
 	manifest := []protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 100, Description: "x"}}
-	err := eng.LoadBin(nodeID, "PART-A", 100, manifest)
+	err := eng.LoadBin(nodeID, "PART-A", declaredUOP(100), manifest)
 
 	if len(sink.manualLoadCalls) != 1 {
 		t.Fatalf("expected exactly 1 ManualLoad call, got %d (LoadBin err=%v)", len(sink.manualLoadCalls), err)
@@ -162,27 +163,36 @@ func TestClearBin_IgnoresTheEpochWhenADifferentCarrierIsBound(t *testing.T) {
 	}
 }
 
-// TestLoadBin_UOPFallsBackToTemplateCapacity pins the fallback's UNIT on the
-// Edge side. An operator who declares no count means "a full bin", and a full
-// bin is uop_capacity CYCLES — not the sum of the manifest's part counts, which
-// is a different unit and agrees only while every payload is one part per cycle.
-//
-// The stub makes the two disagree on purpose: capacity 40, manifest summing 250.
-// A request carrying 250 would be the old behaviour passing.
-func TestLoadBin_UOPFallsBackToTemplateCapacity(t *testing.T) {
-	t.Parallel()
+// declaredUOP is a count somebody took, as LoadBin wants it: a pointer, so
+// that "they declared this many" and "nobody declared one" are different
+// values rather than the same integer read two ways.
+func declaredUOP(n int64) *int64 { return &n }
 
-	var gotUOP int64 = -1
+// loadBinWireProbe stands in for Core on the bin-load call and records the
+// request exactly as it arrived, so a test can tell a count that was DECLARED
+// ZERO from one that was never declared at all. Decoding into BinLoadRequest is
+// what makes that visible: the field is a pointer, so absence is nil and a
+// declared zero is a pointer to zero.
+type loadBinWireProbe struct {
+	got          *BinLoadRequest
+	manifestHits int
+	resolvedUOP  int
+}
+
+func (p *loadBinWireProbe) server(t *testing.T) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost:
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/bin-load"):
 			var req BinLoadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			gotUOP = req.UOPCount
+			p.got = &req
 			_ = json.NewEncoder(w).Encode(BinLoadResponse{
-				Status: "ok", BinID: 42, PayloadCode: "PART-A", UOPRemaining: 40, DeltaEpoch: 1,
+				Status: "ok", BinID: 42, PayloadCode: "PART-A",
+				UOPRemaining: p.resolvedUOP, DeltaEpoch: 1,
 			})
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
+			p.manifestHits++
 			_ = json.NewEncoder(w).Encode(PayloadManifestResponse{
 				UOPCapacity: 40,
 				Items:       []ManifestItem{{PartNumber: "PN-1", PartsPerCycle: 5}},
@@ -191,60 +201,125 @@ func TestLoadBin_UOPFallsBackToTemplateCapacity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
 		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
+func loadBinTestEngine(t *testing.T, srv *httptest.Server) (*Engine, *store.DB, int64) {
+	t.Helper()
 	db := testEngineDB(t)
 	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
-
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
 	eng.coreClient = NewCoreClient(srv.URL)
+	return eng, db, nodeID
+}
 
-	// uopCount 0 — the operator declared none. The manifest sums to 250.
-	manifest := []protocol.IngestManifestItem{
-		{PartNumber: "PN-1", Quantity: 200, Description: "x"},
-		{PartNumber: "PN-2", Quantity: 50, Description: "y"},
+// TestLoadBin_UndeclaredCountTravelsAsAbsence: nobody declared a count, so the
+// field is omitted and Core answers from the payload's standard pack.
+//
+// It also pins that the Edge does NOT look the template up itself. It used to,
+// and that was the defect's first half: FetchPayloadManifest reports every
+// failure as a nil result, so the lookup produced 0 whenever it did not work,
+// and 0 was the same value the wire used for "undeclared" — one number, three
+// meanings, and no way back.
+func TestLoadBin_UndeclaredCountTravelsAsAbsence(t *testing.T) {
+	t.Parallel()
+
+	probe := &loadBinWireProbe{resolvedUOP: 40}
+	eng, _, nodeID := loadBinTestEngine(t, probe.server(t))
+
+	_ = eng.LoadBin(nodeID, "PART-A", nil,
+		[]protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 250}})
+
+	if probe.got == nil {
+		t.Fatal("Core never received a bin-load request")
 	}
-	_ = eng.LoadBin(nodeID, "PART-A", 0, manifest)
-
-	if gotUOP != 40 {
-		t.Errorf("uop_count sent to Core = %d, want 40 (the template's capacity in cycles, not the manifest's 250 parts)", gotUOP)
+	if probe.got.UOPCount != nil {
+		t.Errorf("uop_count = %d, want it ABSENT — an undeclared count is a question for Core, "+
+			"and sending a number makes it indistinguishable from one somebody counted",
+			*probe.got.UOPCount)
+	}
+	if probe.manifestHits != 0 {
+		t.Errorf("Edge fetched the payload template %d time(s); it must not — Core owns that "+
+			"resolution now, and a second answer here is the one with no way to report failure",
+			probe.manifestHits)
 	}
 }
 
-// TestLoadBin_UOPFallbackDefersToCoreWhenTemplateUnreachable: if the template
-// lookup fails there is no capacity to assume, and Edge sends 0 rather than a
-// number in the wrong unit. Core applies the same fallback against the template
-// it already holds, so 0 is a question passed along, not an answer invented.
-func TestLoadBin_UOPFallbackDefersToCoreWhenTemplateUnreachable(t *testing.T) {
+// TestLoadBin_DeclaredCountTravelsAsGiven: the operator counted, so their
+// number goes on the wire untouched. This is the operator-authorship rule at
+// the wire: a count somebody took is not improved by anything downstream.
+func TestLoadBin_DeclaredCountTravelsAsGiven(t *testing.T) {
 	t.Parallel()
 
-	var gotUOP int64 = -1
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost:
-			var req BinLoadRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			gotUOP = req.UOPCount
-			_ = json.NewEncoder(w).Encode(BinLoadResponse{Status: "ok", BinID: 42, DeltaEpoch: 1})
-		case strings.HasSuffix(r.URL.Path, "/manifest"):
-			w.WriteHeader(http.StatusInternalServerError)
-		default:
-			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
-		}
-	}))
-	defer srv.Close()
+	probe := &loadBinWireProbe{resolvedUOP: 250}
+	eng, _, nodeID := loadBinTestEngine(t, probe.server(t))
 
-	db := testEngineDB(t)
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+	declared := int64(250)
+	_ = eng.LoadBin(nodeID, "PART-A", &declared,
+		[]protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 250}})
 
-	eng := testEngine(t, db)
-	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = NewCoreClient(srv.URL)
+	if probe.got == nil || probe.got.UOPCount == nil {
+		t.Fatal("uop_count was absent; the operator declared 250")
+	}
+	if *probe.got.UOPCount != declared {
+		t.Errorf("uop_count = %d, want %d", *probe.got.UOPCount, declared)
+	}
+}
 
-	_ = eng.LoadBin(nodeID, "PART-A", 0, []protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 250}})
+// TestLoadBin_DeclaredZeroIsNotAbsence is the state the old wire could not
+// carry. Somebody counted the carrier and it held nothing; that is an answer,
+// and it must not arrive looking like the question.
+func TestLoadBin_DeclaredZeroIsNotAbsence(t *testing.T) {
+	t.Parallel()
 
-	if gotUOP != 0 {
-		t.Errorf("uop_count sent to Core = %d, want 0 — with no template capacity there is nothing to assume", gotUOP)
+	probe := &loadBinWireProbe{resolvedUOP: 0}
+	eng, _, nodeID := loadBinTestEngine(t, probe.server(t))
+
+	declared := int64(0)
+	_ = eng.LoadBin(nodeID, "PART-A", &declared,
+		[]protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 250}})
+
+	if probe.got == nil {
+		t.Fatal("Core never received a bin-load request")
+	}
+	if probe.got.UOPCount == nil {
+		t.Fatal("uop_count was ABSENT, want a declared 0 — omitting it asks Core for the " +
+			"standard pack, which is how a bin counted as empty comes back full")
+	}
+	if *probe.got.UOPCount != 0 {
+		t.Errorf("uop_count = %d, want 0", *probe.got.UOPCount)
+	}
+}
+
+// TestLoadBin_SeatsTheCountCoreResolved is the regression pin for the seam
+// defect: Core resolves an undeclared count from the standard pack and returns
+// what it wrote, and THAT is what the node must be seated with.
+//
+// Seating the request's own value instead left Core holding a full carrier and
+// the Edge holding a starved node, for the same bin, at the same moment — the
+// policy-number-in-a-measurement-field shape the capacity seed was deleted for,
+// arriving by a different door.
+func TestLoadBin_SeatsTheCountCoreResolved(t *testing.T) {
+	t.Parallel()
+
+	const coreResolved = 4500
+	probe := &loadBinWireProbe{resolvedUOP: coreResolved}
+	eng, db, nodeID := loadBinTestEngine(t, probe.server(t))
+
+	// Undeclared: the request carries nothing, so the only count in the system
+	// is the one Core sends back.
+	_ = eng.LoadBin(nodeID, "PART-A", nil,
+		[]protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 250}})
+
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil || rt == nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if rt.RemainingUOPCached != coreResolved {
+		t.Errorf("remaining = %d, want %d — Core resolved and wrote %d for this bin; "+
+			"seating anything else puts the Edge and the ledger into disagreement about "+
+			"a carrier both of them can see", rt.RemainingUOPCached, coreResolved, coreResolved)
 	}
 }

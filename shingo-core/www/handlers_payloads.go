@@ -107,6 +107,13 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if err := validateManifestLines([]manifestLine{
+		{PartNumber: req.PartNumber, PartsPerCycle: req.PartsPerCycle},
+	}); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	m := &domain.PayloadManifestItem{
 		PayloadID:     req.PayloadID,
 		PartNumber:    req.PartNumber,
@@ -127,6 +134,13 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 		PartsPerCycle int64  `json:"parts_per_cycle"`
 	}
 	if !h.parseJSON(w, r, &req) {
+		return
+	}
+
+	if err := validateManifestLines([]manifestLine{
+		{PartNumber: req.PartNumber, PartsPerCycle: req.PartsPerCycle},
+	}); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

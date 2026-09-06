@@ -102,16 +102,33 @@ func ColumnExists(c Querier, table, column string) bool {
 // return false on error, so a failed check re-runs a DROP ... IF EXISTS and
 // costs nothing.
 //
-// migrations.go still carries a number of !ColumnExists / !TableExists
-// predicates that predate these. They are a known, ticketed sweep rather than a
-// live hazard — information_schema only fails when the connection is already
-// dead, at which point the migration cannot run either — and new absence
-// assertions should use these.
+// Every VERIFY predicate in migrations.go now uses these; the sweep is done and
+// TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers keeps it that
+// way. The `!ColumnExists` spelling that remains there is all inside migration
+// BODIES, guarding whether to do the work, and its direction is the correct one
+// for that job: on a failed check it attempts the idempotent DDL rather than
+// skipping it. Swapping those would invert a check that is already right, which
+// is why the lint keys on the parameter type instead of the spelling.
 func ColumnAbsent(c Querier, table, column string) bool {
 	var exists bool
 	if err := c.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
 		table, column,
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return !exists
+}
+
+// TableAbsent is the absence form for a migration that DROPS a table. Same
+// direction as ColumnAbsent: false on a query error, so a check that could not
+// run re-runs an idempotent DROP ... IF EXISTS instead of recording the
+// migration as applied.
+func TableAbsent(c Querier, table string) bool {
+	var exists bool
+	if err := c.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=$1)`,
+		table,
 	).Scan(&exists); err != nil {
 		return false
 	}

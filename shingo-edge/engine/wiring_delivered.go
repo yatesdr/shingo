@@ -30,30 +30,6 @@ import (
 	"shingoedge/store/processes"
 )
 
-// handleNodeOrderDelivered binds the runtime cache to the just-arrived
-// bin's authoritative uop_remaining. Gates on:
-//
-//   - ProcessNodeID present and resolvable.
-//   - BinID present. For single-bin orders Core always carries it by delivery;
-//     for multi-tote orders (F1b) Core selects the bin destined for the
-//     consuming node and carries it plus BinDestNode. BinID nil on a multi-bin
-//     delivery means Core resolved no bin to this node — the backstop alarm.
-//   - The carried bin landed at this node: BinDestNode == CoreNodeName for
-//     multi-tote; steps finalDropoff / DeliveryNode == CoreNodeName otherwise
-//     (removal-shaped orders flow through this event too — Order B in
-//     two-robot consume delivers to the supermarket — but their slot
-//     accounting is owned by the supply leg's delivery, not theirs).
-//
-// Core-unreachable fallback: the cache + bin pointers still get written,
-// but with claim.UOPCapacity (consume) / 0 (produce) instead of the
-// looked-up bin value. Post-flip (6d226d1) Edge is authoritative for
-// at-node bins; there is no reconciler to rewrite the fallback value
-// when Core comes back. The fallback is bounded — subsequent PLC ticks
-// emit signed deltas that Core applies to whatever value its row holds,
-// so arithmetic stays consistent even if Edge's initial cache value
-// disagreed with Core. Operator UI may display the fallback value
-// briefly; this is the accepted bias (see Risk: Gap A in the refactor
-// plan / architecture doc).
 // legLeftNoBinHereByDesign reports whether the delivered leg's own steps say it
 // was never going to leave a bin at the process node the order names. That is
 // the ordinary shape of a press-index R1 — it carries two bins and sets both
@@ -93,6 +69,30 @@ func (e *Engine) legLeftNoBinHereByDesign(delivered OrderDeliveredEvent) bool {
 	return true
 }
 
+// handleNodeOrderDelivered binds the runtime cache to the just-arrived
+// bin's authoritative uop_remaining. Gates on:
+//
+//   - ProcessNodeID present and resolvable.
+//   - BinID present. For single-bin orders Core always carries it by delivery;
+//     for multi-tote orders (F1b) Core selects the bin destined for the
+//     consuming node and carries it plus BinDestNode. BinID nil on a multi-bin
+//     delivery means Core resolved no bin to this node — the backstop alarm.
+//   - The carried bin landed at this node: BinDestNode == CoreNodeName for
+//     multi-tote; steps finalDropoff / DeliveryNode == CoreNodeName otherwise
+//     (removal-shaped orders flow through this event too — Order B in
+//     two-robot consume delivers to the supermarket — but their slot
+//     accounting is owned by the supply leg's delivery, not theirs).
+//
+// Countless delivery: the cache + bin pointers still get written, with 0.
+// This used to write claim.UOPCapacity for a consume claim — a full bin
+// nobody had counted — and the direction is the whole point: a seeded
+// capacity reads as a fed node and suppresses replenishment, which is the
+// ALN_007 failure, while a zero costs at most one ask the next tick
+// withdraws. Post-flip (6d226d1) Edge is authoritative for at-node bins and
+// no reconciler rewrites the seed, so the correction comes from the first
+// PLC tick or operator count. Subsequent ticks emit signed deltas that Core
+// applies to whatever its own row holds, so the arithmetic stays consistent
+// either way. See blindDeliverySeed for the reader this does NOT fix.
 func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if delivered.ProcessNodeID == nil || delivered.BinID == nil {
 		switch {
@@ -210,14 +210,12 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	// OrderDelivered envelope (taken at the bin's arrival, carried on the
 	// same Kafka message). No HTTP pull — the seed and epoch ride the
 	// delivery event itself, so this works even when Core's HTTP API is
-	// momentarily unreachable. BinUOP nil means an older Core didn't send
-	// a snapshot; fall back to the role default.
-	cacheValue := deliveredFallbackUOP(claim)
+	// momentarily unreachable.
+	cacheValue := 0
 	if delivered.BinUOP != nil {
 		cacheValue = *delivered.BinUOP
 	} else {
-		log.Printf("delivered: bin %d — no uop snapshot on envelope (older Core?), using %s fallback %d",
-			*delivered.BinID, claim.Role, cacheValue)
+		cacheValue = blindDeliverySeed(e, delivered, node.CoreNodeName, claim.Role)
 	}
 	claimID := claim.ID
 	if e.inventoryDelta != nil {
@@ -270,15 +268,61 @@ func (e *Engine) recordDeliveredCarrier(node *processes.Node, delivered OrderDel
 	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, domain.CarrierFromDelivery)
 }
 
-// deliveredFallbackUOP returns the cache value to use when Core is
-// unreachable: produce nodes start at 0 (filling up), other roles
-// fall back to claim capacity (full bin assumption). Mirrors the
-// pre-refactor resolveReplenishUOP defaults.
-func deliveredFallbackUOP(claim *processes.NodeClaim) int {
-	if claim.Role == protocol.ClaimRoleProduce {
-		return 0
+// BlindDeliveryMarker prefixes the SHOULD-BE-ZERO line: a bin arrived and the
+// envelope carried no count for it, so the Edge seated 0 without knowing what
+// is in the carrier.
+//
+// Named here so the emitter and whatever counts it share one definition rather
+// than two string literals that drift — the same reason service.BurialBypassMarker
+// exists. A counter must not quote the marker in its own summary line, or it
+// counts itself.
+const BlindDeliveryMarker = "BLIND DELIVERY"
+
+// blindDeliverySeed is the count for a carrier that arrived with none: zero,
+// and a loud line saying so.
+//
+// IT USED TO INVENT A FULL BIN. For a consume claim this returned
+// claim.UOPCapacity — a policy number written into the field Core reads as a
+// measurement, which is the same shape as the changeover capacity seed that was
+// deleted from SwitchNode for saying a starved node was full. This one says it
+// about a carrier nobody has counted at all.
+//
+// THE FAILURE DIRECTION IS CHOSEN, NOT INHERITED. Neither number is true, so
+// the question is which way to be wrong. A capacity seed reads as a full node
+// and SUPPRESSES replenishment — the ALN_007 direction, where the line runs dry
+// while the system believes it is fed. Zero reads as a starved node and costs
+// at most one replenishment ask that the next tick or count withdraws. An extra
+// ask is recoverable; a suppressed one is the incident.
+//
+// WHAT THIS DOES NOT FIX: zero is still a value standing in for "nobody told
+// me", and one reader spends it — evacDispositionForTask sends a changeover
+// evac as release_empty on a zero count, clearing the manifest. The count has
+// no known-bit the way the carrier's identity does (LinesidePayloadKnown), so
+// an unmeasured carrier and a measured-empty one are the same integer here. The
+// log line below is the only thing that tells them apart today.
+//
+// Reached only when Core named a bin and then could not read its row — Core
+// logs that failure too ("uop/epoch lookup failed"), so the pair brackets the
+// window from both ends.
+//
+// THIS LINE HAS A READER. It is counted by the post-integration data pass,
+// which is the only way we learn whether the exposure above is theoretical: a
+// blind delivery FOLLOWED BY a changeover evac on the same node is the one
+// sequence that turns an unknown count into a physical mistake, and neither
+// half is visible without this marker. The expected count is zero. A non-zero
+// count is not itself a fault — it means Core's bin reads are failing and the
+// window is live, which is a different investigation with a known first step.
+func blindDeliverySeed(e *Engine, delivered OrderDeliveredEvent, coreNodeName string, role protocol.ClaimRole) int {
+	binID := int64(0)
+	if delivered.BinID != nil {
+		binID = *delivered.BinID
 	}
-	return claim.UOPCapacity
+	e.logFn("%s: bin %d at %s (%s) — Core sent NO count on the envelope; "+
+		"seating 0 rather than assuming a full carrier. The node will read starved "+
+		"until the first PLC tick or operator count corrects it, and may ask for "+
+		"material it does not need in the meantime.",
+		BlindDeliveryMarker, binID, coreNodeName, role)
+	return 0
 }
 
 // handleFallbackDelivered binds the runtime cache for Core-admin orders that
@@ -316,9 +360,11 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
 		return
 	}
-	cacheValue := deliveredFallbackUOP(claim)
+	cacheValue := 0
 	if delivered.BinUOP != nil {
 		cacheValue = *delivered.BinUOP
+	} else {
+		cacheValue = blindDeliverySeed(e, delivered, node.CoreNodeName, claim.Role)
 	}
 	claimID := claim.ID
 	if e.inventoryDelta == nil {

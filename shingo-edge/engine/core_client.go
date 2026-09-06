@@ -397,10 +397,16 @@ func OccupancyOutcome(reachable bool, err error) string {
 
 // BinLoadRequest is the request body for loading a bin via HTTP.
 type BinLoadRequest struct {
-	NodeName    string        `json:"node_name"`
-	PayloadCode string        `json:"payload_code"`
-	UOPCount    int64         `json:"uop_count"`
-	Manifest    []BinLoadItem `json:"manifest"`
+	NodeName    string `json:"node_name"`
+	PayloadCode string `json:"payload_code"`
+	// UOPCount is absent-or-value: a count is a count, absence is the
+	// question. nil means nobody declared one and Core answers from the
+	// payload's standard pack; a value is the count somebody counted, and 0
+	// is a bin with nothing in it. It was a plain int64 where 0 carried both
+	// meanings, so "I did not measure" and "I measured none" were the same
+	// bytes on the wire and the receiver had to guess.
+	UOPCount *int64        `json:"uop_count,omitempty"`
+	Manifest []BinLoadItem `json:"manifest"`
 }
 
 // coreErrorText picks the readable half of a failed Core reply.

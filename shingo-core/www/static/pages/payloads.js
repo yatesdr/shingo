@@ -33,7 +33,7 @@ function addManifestRow(containerId, catid, perCycle) {
   row.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem';
   row.innerHTML =
     '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
-    '<input type="number" placeholder="Per cycle" value="' + (perCycle || '') + '" step="1" min="0" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-per-cycle">' +
+    '<input type="number" placeholder="Per cycle *" value="' + (perCycle === undefined || perCycle === null ? '' : perCycle) + '" step="1" min="1" required style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-per-cycle">' +
     '<span class="text-muted mr-fullbin" style="font-size:0.75rem;min-width:6rem"></span>' +
     '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>';
   container.appendChild(row);
@@ -52,15 +52,42 @@ function refreshFullBinCells(containerId) {
   });
 }
 
+// collectManifestRows returns {items, error}. A row with a part number and no
+// usable per-cycle value is an ERROR, not a zero.
+//
+// It used to read `parseInt(...) || 0` and push the row anyway, so leaving the
+// box empty submitted parts_per_cycle: 0 — a template line declaring that a bin
+// of this payload contains none of that part. Nothing on screen said so and
+// nothing downstream could tell that value from a deliberate one, which is how
+// rows reached a plant at zero. Blank now refuses at the door.
+//
+// ZERO IS REFUSED TOO, and that is the same decision one step further: the
+// count a bin ships to the inventory ledger is uop_remaining x this number, so
+// a zero line contributes nothing to any count while looking configured. A
+// part that genuinely is not in the carrier is a line that should not be on the
+// manifest at all. (A DB-level CHECK is the eventual backstop; it must not ship
+// before this validation is deployed, or the plant UI's own inserts fail.)
 function collectManifestRows(containerId) {
   var rows = document.querySelectorAll('#' + containerId + ' .manifest-row');
   var items = [];
+  var bad = [];
   rows.forEach(function(row) {
     var catid = row.querySelector('.mr-catid').value.trim();
-    var perCycle = parseInt(row.querySelector('.mr-per-cycle').value) || 0;
-    if (catid) items.push({part_number: catid, parts_per_cycle: perCycle, description: ''});
+    if (!catid) return;
+    var raw = row.querySelector('.mr-per-cycle').value.trim();
+    var perCycle = parseInt(raw, 10);
+    if (raw === '' || isNaN(perCycle) || perCycle < 1) {
+      bad.push(catid);
+      return;
+    }
+    items.push({part_number: catid, parts_per_cycle: perCycle, description: ''});
   });
-  return items;
+  if (bad.length > 0) {
+    return {items: items, error: 'Per cycle is required and must be 1 or more. Fix: ' +
+      bad.join(', ') + '. It is how many of the part ONE production cycle uses — usually 1, ' +
+      'not the number in a full bin.'};
+  }
+  return {items: items, error: ''};
 }
 
 // The bin-type pickers are CHECKBOX LISTS, not <select multiple>. Multi-select
@@ -204,6 +231,8 @@ function closePLCreateModal() {
 
 function submitPLCreate(el, evt) {
   if (evt) evt.preventDefault();
+  var manifest = collectManifestRows('plc-manifest-rows');
+  if (manifest.error) { toast(manifest.error, 'error'); return; }
   var body = {
     code: document.getElementById('plc-code').value,
     description: document.getElementById('plc-notes').value,
@@ -211,7 +240,7 @@ function submitPLCreate(el, evt) {
     robot_group: document.getElementById('plc-robot-group').value.trim(),
     advanced_load_sequence: document.getElementById('plc-load-sequence').value,
     bin_type_ids: getSelectedBinTypes('plc-bin-types'),
-    manifest: collectManifestRows('plc-manifest-rows')
+    manifest: manifest.items
   };
   console.log('Creating payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/create', {
@@ -288,6 +317,8 @@ function closePLEditModal() {
 
 function submitPLEdit(el, evt) {
   if (evt) evt.preventDefault();
+  var manifest = collectManifestRows('ple-manifest-rows');
+  if (manifest.error) { toast(manifest.error, 'error'); return; }
   var body = {
     id: parseInt(document.getElementById('pl-edit-id').value),
     code: document.getElementById('pl-edit-code').value,
@@ -296,7 +327,7 @@ function submitPLEdit(el, evt) {
     robot_group: document.getElementById('pl-edit-robot-group').value.trim(),
     advanced_load_sequence: document.getElementById('pl-edit-load-sequence').value,
     bin_type_ids: getSelectedBinTypes('ple-bin-types'),
-    manifest: collectManifestRows('ple-manifest-rows')
+    manifest: manifest.items
   };
   console.log('Saving payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/update', {
@@ -427,7 +458,6 @@ delegateActions(document.body, {
     closePLCreateModal,
     closePLEditModal,
     closePLImportModal,
-    collectManifestRows,
     getSelectedBinTypes,
     openCreatePayloadModal,
     openEditPayloadModal,

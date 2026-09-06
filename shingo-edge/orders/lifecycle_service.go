@@ -37,7 +37,7 @@ type LifecycleService struct {
 }
 
 // deliveredSeed is the bin snapshot Core stamps on the OrderDelivered
-// envelope; nil uop means "not provided" (older Core) → role default.
+// envelope; nil uop means "no count was sent" → the Edge seats 0 and says so.
 // binDestNode is set only for multi-tote deliveries (F1b): the Core dot-name of
 // the node the carried bin landed at, so the delivered emit can carry it to the
 // runtime-binding handler.

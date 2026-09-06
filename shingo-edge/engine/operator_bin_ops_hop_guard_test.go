@@ -38,7 +38,7 @@ func TestLoadBin_RejectsStampOnPairedNode(t *testing.T) {
 	testutil.MustNoErr(t, err, "upsert press-index claim")
 
 	eng := testEngine(t, db)
-	err = eng.LoadBin(backNodeID, "WIDGET", 10, []protocol.IngestManifestItem{{PartNumber: "P1", Quantity: 10}})
+	err = eng.LoadBin(backNodeID, "WIDGET", declaredUOP(10), []protocol.IngestManifestItem{{PartNumber: "P1", Quantity: 10}})
 	if err == nil {
 		t.Fatal("expected LoadBin to reject a part stamp on the paired/on-deck node")
 	}

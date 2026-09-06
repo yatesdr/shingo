@@ -3242,7 +3242,7 @@ func migrationList() []migration {
 			v21LinesideBucketsCoreNodeName,
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "lineside_buckets", "core_node_name") &&
-					!schema.ColumnExists(q, "lineside_buckets", "node_id")
+					schema.ColumnAbsent(q, "lineside_buckets", "node_id")
 			}},
 		// v22 ties dedup state to a bin's load-lifecycle. Pre-fix the
 		// inventory_delta_dedup PK was (station, scope_kind, scope_key),
@@ -3448,7 +3448,7 @@ func migrationList() []migration {
 		// aggregate is rebuilt by seeddev / migrateloaders, so there is no data to keep.
 		{39, "drop bin_loaders.core_node_name + its UNIQUE (loader identity is the surrogate id)",
 			v39DropLoaderCoreNodeName,
-			func(q schema.Querier) bool { return !schema.ColumnExists(q, "bin_loaders", "core_node_name") }},
+			func(q schema.Querier) bool { return schema.ColumnAbsent(q, "bin_loaders", "core_node_name") }},
 		// v40: rename the replenishment enum value auto→threshold (role-aware) + swap the
 		// CHECK. Once the legacy bin-count floor is retired, "auto" only ever meant
 		// threshold-driven, so the model is operator|threshold. Conversion is role-aware:
@@ -3802,7 +3802,7 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "edge_registry", "station_uid") &&
 					schema.ColumnExists(q, "edge_registry", "bound_at") &&
-					!schema.ColumnExists(q, "edge_registry", "line_ids")
+					schema.ColumnAbsent(q, "edge_registry", "line_ids")
 			}},
 		{67, "edge_registry.claimed_at — an edge may introduce itself; a human says what it is",
 			v67EdgeClaim,
@@ -3840,7 +3840,7 @@ func migrationList() []migration {
 		// note above v51.
 		{70, "drop pending_restocks (retire the restore-blockers subsystem)",
 			v70DropPendingRestocks,
-			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_restocks") }},
+			func(q schema.Querier) bool { return schema.TableAbsent(q, "pending_restocks") }},
 
 		// THE INDEX SPRINGFIELD ALREADY HAS, WRITTEN DOWN.
 		//
@@ -3965,7 +3965,7 @@ func migrationList() []migration {
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "open_for_children") }},
 		{85, "drop pending_lane_extensions (the expose bridge, deleted with the two-shape ruling)",
 			v78DropPendingLaneExtensions,
-			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_lane_extensions") }},
+			func(q schema.Querier) bool { return schema.TableAbsent(q, "pending_lane_extensions") }},
 
 		// v86 makes the junction's stated grain real. "One row per claimed bin"
 		// is what UpdateOrderBinDestNode is written against and what binForStep
@@ -4038,7 +4038,7 @@ func migrationList() []migration {
 		{91, "drop bin_loaders.buffer_dest — the retired loader staging group",
 			v91DropBufferDest,
 			func(q schema.Querier) bool {
-				return !schema.ColumnExists(q, "bin_loaders", "buffer_dest")
+				return schema.ColumnAbsent(q, "bin_loaders", "buffer_dest")
 			}},
 
 		// v92 drops production_log — the write-only shadow of bin_uop_audit's
@@ -4051,7 +4051,7 @@ func migrationList() []migration {
 		{92, "drop production_log — duplicate ledger of bin_uop_audit deltas",
 			v92DropProductionLog,
 			func(q schema.Querier) bool {
-				return !schema.TableExists(q, "production_log")
+				return schema.TableAbsent(q, "production_log")
 			}},
 
 		// v93 installs bin_uop_exception — the permanent exceptions ledger the
@@ -4102,7 +4102,7 @@ func migrationList() []migration {
 			v99PayloadManifestPartsPerCycle,
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "payload_manifest", "parts_per_cycle") &&
-					!schema.ColumnExists(q, "payload_manifest", "quantity")
+					schema.ColumnAbsent(q, "payload_manifest", "quantity")
 			}},
 		{100, "drop the retired log_cms_transactions node property",
 			v100DropLogCMSTransactionsProperty,
@@ -4117,9 +4117,9 @@ func migrationList() []migration {
 		{101, "drop cms_transactions.qty_before/qty_after/txn_type — derived values stored beside their source",
 			v101DropCMSTransactionDerivedColumns,
 			func(q schema.Querier) bool {
-				return !schema.ColumnExists(q, "cms_transactions", "qty_before") &&
-					!schema.ColumnExists(q, "cms_transactions", "qty_after") &&
-					!schema.ColumnExists(q, "cms_transactions", "txn_type")
+				return schema.ColumnAbsent(q, "cms_transactions", "qty_before") &&
+					schema.ColumnAbsent(q, "cms_transactions", "qty_after") &&
+					schema.ColumnAbsent(q, "cms_transactions", "txn_type")
 			}},
 		{102, "cms_postings + cms_transactions.posting_id/robot_id/storeroom, legacy rows backfilled to 0",
 			v102CMSPostings,
@@ -4138,7 +4138,32 @@ func migrationList() []migration {
 				return schema.ColumnAbsent(q, "cms_postings", "batch_key") &&
 					schema.IndexAbsent(q, "idx_cms_postings_txid")
 			}},
+		{104, "drop corrections — a table nothing has ever written",
+			v104DropCorrections,
+			func(q schema.Querier) bool { return schema.TableAbsent(q, "corrections") }},
 	}
+}
+
+// v104DropCorrections removes the corrections table.
+//
+// NOTHING WRITES IT AND NOTHING READS IT. There is no INSERT, no SELECT and no
+// store method anywhere in the tree; the one query that sounds like it counts
+// corrections reads bin_uop_ledger (store/bins/ledger_integrity.go), which is
+// where a count adjustment has actually been recorded for as long as that
+// ledger has existed. What the table describes — a per-node, per-bin correction
+// with a reason and an actor — is the ledger's job, and the ledger does it.
+//
+// EMPTY AT BOTH PLANTS, CHECKED BEFORE THE DROP: zero rows in corrections, and
+// zero cms_transactions with source_type='correction'. The second half matters
+// because a correction reaching CMS by that source type would have been the one
+// way this table's concept was still live downstream, and it is not.
+//
+// A table with a plausible name and no writer is worse than no table: it reads
+// as the place corrections go, so the next person to need one puts it there,
+// and their rows are then invisible to every count that reads the ledger.
+func v104DropCorrections(tx *sql.Tx) error {
+	_, err := tx.Exec(`DROP TABLE IF EXISTS corrections`)
+	return err
 }
 
 // v103DropCMSPostingBatchKey removes two things v102 added that nothing reads.

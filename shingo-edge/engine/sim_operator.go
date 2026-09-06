@@ -1214,7 +1214,9 @@ func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 		capacity = 1
 	}
 	manifest := []protocol.IngestManifestItem{{PartNumber: payload, Quantity: capacity}}
-	return op.e.LoadBin(nodeID, payload, capacity, manifest)
+	// The sim declares a count, so it travels as a value rather than as the
+	// absence that asks Core for the standard pack.
+	return op.e.LoadBin(nodeID, payload, &capacity, manifest)
 }
 
 // reArmExpiredReleaseCaps drops the release cap for orders that have progressed

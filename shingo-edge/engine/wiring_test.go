@@ -132,27 +132,25 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 	db.UpdateOrderBinID(orderID, &deliveredBin)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
-	emitOrderCompleted(eng, orderID, "uuid-retrieve-con", orders.TypeRetrieve, &nodeID)
+	emitOrderCompletedWithBinUOP(eng, orderID, "uuid-retrieve-con", orders.TypeRetrieve, &nodeID, 200)
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	// New contract: cache flips at delivered, not at confirm. The
-	// emitOrderCompleted helper fires the delivered event first which
-	// invokes handleNodeOrderDelivered → SetProcessNodeRuntimeForDeliveredBin.
-	// Core is unreachable in tests so the fallback (claim.UOPCapacity for
-	// consume) is written.
+	// New contract: cache flips at delivered, not at confirm. The helper fires
+	// the delivered event first, which invokes handleNodeOrderDelivered. The
+	// envelope carries the bin's count and that is what gets seated.
 	if runtime.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (consume node UOPCapacity, Core-unreachable fallback)", runtime.RemainingUOPCached)
+		t.Errorf("RemainingUOP = %d, want 200 (the count Core stamped on the delivery envelope)", runtime.RemainingUOPCached)
 	}
 	_ = processID
 }
 
-// (Item 8 deleted TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP.
-// The BinUOPRemaining-on-the-order branch is gone — runtime now resets
-// to claim.UOPCapacity unconditionally on delivery, and the reconciler
-// heals to Core's authoritative value within ~60s. The existing
-// TestWiring_RetrieveCompletion_ConsumeResetsToCapacity above already
-// covers the capacity-reset contract; the partial-bin test would
-// duplicate it post-Item-8.)
+// (Item 8 deleted TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP
+// on the grounds that runtime reset to claim.UOPCapacity unconditionally and
+// "the reconciler heals to Core's authoritative value within ~60s". That
+// reconciler no longer exists — demand_reconciler closes episodes and never
+// writes the count back — so the unconditional capacity reset spent years with
+// no healer behind it. The count now comes from Core on the delivery envelope,
+// which is what the deleted test was reaching for.)
 
 // TestWiring_CounterDelta_ProduceIncrementsUOP verifies that counter delta
 // events increment UOP for produce nodes (counting UP toward capacity).

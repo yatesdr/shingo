@@ -210,6 +210,9 @@ async function submitLoadBin() {
         showToast('No manifest loaded', 'error');
         return;
     }
+    // This station always declares a count, so uop_count is always present on
+    // its requests and Core's standard-pack arm is never reached from here.
+    // The absence case comes from the production page, whose field is optional.
     if (state.uopCount <= 0) {
         showToast('Set UoP Count first', 'error');
         return;

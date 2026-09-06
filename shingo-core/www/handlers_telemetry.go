@@ -285,7 +285,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeName    string `json:"node_name"`
 		PayloadCode string `json:"payload_code"`
-		UOPCount    int64  `json:"uop_count"`
+		UOPCount    *int64 `json:"uop_count"`
 		Manifest    []struct {
 			PartNumber  string `json:"part_number"`
 			Quantity    int64  `json:"quantity"`
@@ -323,20 +323,23 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	manifestJSON, _ := json.Marshal(manifest)
 
-	// No declared UOP means "assume a full bin", and a full bin is
-	// uop_capacity CYCLES. This used to sum the manifest's part counts, which
+	// ABSENCE IS THE QUESTION, NOT ZERO. A missing uop_count means nobody
+	// declared one, and the standard pack answers it: a full bin is
+	// uop_capacity CYCLES. (It used to sum the manifest's part counts, which
 	// is a different unit — right only while every payload is one part per
-	// cycle, and wrong by parts_per_cycle for any that is not. A payload with
+	// cycle, and wrong by parts_per_cycle for any that is not.) A payload with
 	// no template row gives 0 rather than a guess: an undeclared count on an
 	// unknown payload is not a full bin, it is an unanswered question, and 0
 	// makes the operator answer it.
-	uop := req.UOPCount
-	if uop <= 0 {
-		if p, err := h.engine.PayloadService().GetByCode(req.PayloadCode); err == nil && p != nil {
-			uop = int64(p.UOPCapacity)
-		} else {
-			uop = 0
-		}
+	//
+	// A DECLARED COUNT IS HONOURED AS GIVEN, including zero. This arm keyed on
+	// `uop <= 0`, which spent a declared "the bin is empty" on the standard
+	// pack and handed the line a full carrier nobody had filled.
+	var uop int64
+	if req.UOPCount != nil {
+		uop = *req.UOPCount
+	} else if p, err := h.engine.PayloadService().GetByCode(req.PayloadCode); err == nil && p != nil {
+		uop = int64(p.UOPCapacity)
 	}
 
 	newEpoch, err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop))
