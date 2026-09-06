@@ -413,6 +413,14 @@ func useSharedServer(ctx context.Context, addr string) error {
 	}
 }
 
+// createSlot bounds how many test databases one process clones at once. Four
+// is chosen against the gate's own shape: it runs up to four packages in
+// parallel, so the server sees at most ~16 concurrent template copies instead
+// of one per parallel test. It is a burst limit, not a queue — a template copy
+// takes milliseconds, and the steady-state cost of the bound is not measurable
+// against a suite that spends its time in migrations and queries.
+var createSlot = make(chan struct{}, 4)
+
 // adminConn returns a connection to the server's default "postgres"
 // database, used for CREATE/DROP DATABASE and template metadata changes.
 func adminConn() (*sql.DB, error) {
@@ -682,13 +690,34 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	// limit.
 	dbName := fmt.Sprintf("test_%s_p%d_%d", sanitize(t.Name()), os.Getpid(), rand.Intn(100000))
 
+	// BOUNDED, BECAUSE THE SERVER IS SHARED AND THIS IS THE EXPENSIVE PART.
+	// CREATE DATABASE ... TEMPLATE is a file copy, and every parallel test in
+	// every parallel package asks for one at once: 20 GOMAXPROCS x the gate's
+	// -p is a burst of ~80 concurrent copies against a single Postgres. The
+	// server does not run out of connections — it runs out of CPU, and what
+	// fails is the SCRAM handshake of the NEXT connection, five seconds later,
+	// as `failed SASL auth: timeout`. MEASURED on a 20-core Windows host
+	// (2026-09-06): 20 to 64 of those per run at the gate's -p 4, and zero at
+	// -p 2 on the same tree and the same commit.
+	//
+	// That failure is not a test result, and it is worse than a slow suite in
+	// the specific way this repo has a ratchet about: it reports a nil
+	// dereference or a missing seed row somewhere downstream of a database
+	// that never opened. Bounding the burst is the fix at the mechanism —
+	// lowering the gate's -p bounds the same thing much more bluntly, and
+	// raising connect_timeout would bound it by waiting rather than by not
+	// causing it.
+	createSlot <- struct{}{}
 	admin, err := adminConn()
 	if err != nil {
+		<-createSlot
 		t.Fatalf("open admin connection: %v", err)
 	}
+	_, createErr := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName()))
+	<-createSlot
 	defer admin.Close()
-	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName())); err != nil {
-		t.Fatalf("create test database %s from template: %v%s", dbName, err, ownContainerHint())
+	if createErr != nil {
+		t.Fatalf("create test database %s from template: %v%s", dbName, createErr, ownContainerHint())
 	}
 	atomic.AddInt64(&testDBsCreated, 1)
 
