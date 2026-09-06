@@ -18,16 +18,24 @@ import (
 // overfills (PLN_003).
 //
 // The old guard asked `order.DeliveryNode == node.CoreNodeName`, which skipped
-// exactly the legs that need signing:
+// exactly the legs whose work at a node its delivery_node does not name:
 //
 //   - press-index R1 serves the press by CLEARING it. It leaves no bin there, and
 //     its delivery_node names the index node it stages at.
 //   - single-robot A swaps the press bin out and a fresh one in, but ENDS at the
 //     outbound destination, so its delivery_node names the supermarket.
 //
-// Neither auto-confirms. Both would hang. "Does this leg touch this node?" is the
-// question — weaker than "does it leave a bin here" on purpose, because clearing
-// the press is serving it.
+// "Does this leg touch this node?" is the question — weaker than "does it leave a
+// bin here" on purpose, because clearing the press is serving it.
+//
+// WHICH OF THEM ACTUALLY NEEDS A SIGNATURE is a separate question, and this test
+// used to conflate the two: it asserted AutoConfirmA == false for press-index R1
+// on the reasoning that "neither auto-confirms, both would hang". Since the
+// derived confirm policy (2026-09-03) a leg auto-confirms iff it leaves no bin on
+// claim.CoreNodeName — so unflipped R1, which is the pure evac, auto-confirms and
+// closes itself. Scope and receipt are decided by different predicates
+// (legTouchesNode here, legPlacesBinAt there) and the fixture guard below now
+// says so instead of pinning the old coincidence.
 func TestSimOperator_LegServesNode_ReadsStepsNotDeliveryNode(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -39,17 +47,20 @@ func TestSimOperator_LegServesNode_ReadsStepsNotDeliveryNode(t *testing.T) {
 	disp, err := BuildSwapDispatch(node, claim)
 	testutil.MustNoErr(t, err, "build press-index dispatch")
 
-	// R1: not auto-confirmed, and its delivery_node is the INDEX node — the very
-	// value the old guard compared against the press and rejected.
+	// R1: its delivery_node is the INDEX node — the very value the old guard
+	// compared against the press and rejected.
 	r1 := mkSwapLeg(t, db, nodeID, "sim-r1", disp.StepsA, disp.DeliveryNodeA)
-	if disp.AutoConfirmA {
-		t.Fatal("press-index R1 is expected to need an operator receipt (AutoConfirmA=false)")
-	}
 	if r1.DeliveryNode == press {
 		t.Fatal("fixture is not exercising the bug: R1's delivery_node must NOT be the press")
 	}
+	if legPlacesBinAt(disp.StepsA, press) || !disp.AutoConfirmA {
+		t.Fatal("fixture drift: unflipped press-index R1 is the pure evac — it leaves no bin on the " +
+			"press, so the derived confirm policy auto-confirms it. If that changed, the receipt " +
+			"question moved and this case's subject (SCOPE, not receipt) needs re-stating")
+	}
 	if !op.legServesNode(r1, press) {
-		t.Error("press-index R1 must be signed for — it serves the press by clearing it, and nothing else will confirm it")
+		t.Error("press-index R1 is not in the press operator's scope — it works the press by clearing it, " +
+			"and a scope read off delivery_node would hand it to the index node instead")
 	}
 
 	// R2 is the leg that PLACES the fresh carrier on the press, so since the

@@ -56,7 +56,7 @@ func TestServerClock_SimReportsSimulatedNowAndLabelsItself(t *testing.T) {
 	// Simulated, not wall: the whole point, and the drift is the defect stated
 	// as a value. At 2x from a 2020 origin the clock stands roughly six years
 	// ahead of the machine's real one.
-	if d := got.Sub(time.Now()); d < 365*24*time.Hour {
+	if d := time.Until(got); d < 365*24*time.Hour {
 		t.Errorf("Now = %s is only %s ahead of wall; a 2x clock from 2020 should be years ahead", got, d)
 	}
 	if got.Before(epoch) {
