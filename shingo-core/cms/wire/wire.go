@@ -100,24 +100,29 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 			txnType = cfg.DecreaseType
 		}
 		out = append(out, MiddlewareTx{
+			// TICKET NUMBER IS A CONSTANT 1 AND NOBODY HAS CONFIRMED WHAT IT
+			// MEANS. The field was matched to a single vendor sample; whether
+			// CMS assigns the ticket, expects the caller to, or wants one per
+			// movement is an open question with IT and this is the site it
+			// lands on. It has never been sent — cms_postings has never existed
+			// at a plant — so it is a question, not an incident.
 			TicketNumber: 1,
 			EntryNumber:  i + 1,
-			// THE PAYLOAD CODE, NOT THE CAT ID, and the two are different
-			// identifiers for the same physical part. Shingo keys its own
-			// parts_per_cycle lookup on the cat id (payload_manifest.part_number,
-			// e.g. "10276"); CMS knows the part by the payload code
-			// (payloads.code, e.g. "7332B4-6RR0A.06"). At Springfield those two
-			// columns hold visibly different things, so sending the wrong one is
-			// not a near miss — it is an identifier CMS has never heard of.
+			// THE LINE'S PART NUMBER. A transaction is one manifest line's
+			// movement, and after the identity correction a line names the part
+			// CMS books against — which for a bin of ONE part is the payload
+			// code and for a kit is each component's own number.
 			//
-			// This carried t.CatID until IT confirmed the contract (2026-09-05).
-			// The field NAMES in this struct were matched to the vendor's sample;
-			// the VALUE bound here was chosen from shingo's side and chose the
-			// internal one. That is F4 in the handoff — "the thirteen field
-			// spellings are inferred from one sample, one review of the vendor
-			// schema is owed before the first real POST" — and this is that
-			// review landing on the one field it changed.
-			PartNumber:      t.PayloadCode,
+			// IT CARRIED t.PayloadCode FOR ONE COMMIT, and that was a workaround
+			// for uncorrected data rather than a reading of the contract. It is
+			// right for a single-part payload and it DOUBLE-BOOKS a kit: one
+			// transaction per line, every one of them naming the payload, is a
+			// payload-15 bin of 1000 posting 1000 twice. What makes this line
+			// safe is not the binding, it is the guard on the other side —
+			// material.BuildMovementTransactions refuses to build a movement
+			// whose lines do not resolve to parts, so a value that reaches here
+			// has been through the correction.
+			PartNumber:      t.CatID,
 			StockLocation:   t.Storeroom,
 			Bin:             t.BinLabel,
 			Quantity:        qty,

@@ -333,6 +333,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// Payloads & manifest
 			r.Get("/payloads/templates", h.apiListPayloads)
 			r.Get("/payloads/templates/manifest", h.apiGetPayloadManifestTemplate)
+			// The parts TABLE (a part number and its cat id), not the dashboard's
+			// per-part metrics under /parts/* above. Read-only and public for the
+			// same reason the manifest read is: the payloads form asks whether a
+			// typed part number is already known before the operator has done
+			// anything worth authorising.
+			r.Get("/parts", h.apiListParts)
+			r.Get("/parts/lookup", h.apiGetPart)
 			r.Get("/payloads/templates/bin-types", h.apiGetPayloadBinTypes)
 			r.Get("/payloads", h.apiListPayloads)
 			r.Get("/payloads/detail", h.apiGetPayload)
@@ -455,6 +462,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/payloads/templates/bin-types", h.apiSavePayloadBinTypes)
 				// Advanced load sequences: dropdown source + on-demand Check.
 				r.Get("/payloads/templates/sequences", h.apiListLoadSequences)
+				// Overwrites a part's cat id. Behind auth and separate from every
+				// manifest save on purpose — a save REFUSES a conflicting cat id,
+				// and this is the explicit answer to that refusal.
+				r.Post("/parts/catid", h.apiSetPartCATID)
 				r.Get("/payloads/templates/check-sequence", h.apiCheckLoadSequence)
 
 				// Manifest items

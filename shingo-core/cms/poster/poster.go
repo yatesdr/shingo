@@ -287,12 +287,65 @@ func (p *Poster) SweepOrphansOnce(ctx context.Context) {
 	// LOUD, because reaching here means the enqueue path failed and nothing
 	// else says so. The sweep repairing it silently would turn a broken
 	// subscriber into a permanent 30-second delay nobody ever investigates.
-	p.logf("cms poster: %d cms_transactions were recorded and never queued for posting — "+
-		"re-enqueueing them. Something went wrong in the event subscriber; this sweep is "+
-		"the backstop, not the mechanism.", len(orphans))
-	if err := p.Enqueue(orphans); err != nil {
-		p.logf("cms poster: re-enqueue %d orphaned transactions: %v", len(orphans), err)
+	movements := groupByMovement(orphans)
+	p.logf("cms poster: %d cms_transactions across %d movement(s) were recorded and never "+
+		"queued for posting — re-enqueueing them. Something went wrong in the event "+
+		"subscriber; this sweep is the backstop, not the mechanism.",
+		len(orphans), len(movements))
+	// ONE POSTING PER MOVEMENT, which is what the doorbell path already does —
+	// the subscriber calls Enqueue with one movement's rows. This used to hand
+	// the whole 500-row batch to a single Enqueue, so the recovery path, and
+	// only the recovery path, built bodies carrying many bins' movements under
+	// one ticket. Whether CMS tolerates that is an open question with IT, and a
+	// backstop that behaves differently from the mechanism it backs up is worth
+	// avoiding whatever the answer turns out to be.
+	for _, m := range movements {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := p.Enqueue(m); err != nil {
+			p.logf("cms poster: re-enqueue %d orphaned transactions: %v", len(m), err)
+		}
 	}
+}
+
+// groupByMovement splits transactions into the movements that produced them,
+// preserving the order the rows arrived in.
+//
+// THE KEY IS (bin, order, created_at) and the last part is what makes it exact.
+// One movement's rows are inserted by one Create call inside one transaction,
+// and Postgres NOW() is transaction time — so every row of a movement carries
+// the identical timestamp, and two movements of the same bin on the same order
+// (a there-and-back) carry different ones. Grouping on bin and order alone
+// would merge those two into one body.
+func groupByMovement(txns []*cms.Transaction) [][]*cms.Transaction {
+	type key struct {
+		bin, order int64
+		at         int64
+	}
+	var order []key
+	byKey := map[key][]*cms.Transaction{}
+	for _, t := range txns {
+		if t == nil {
+			continue
+		}
+		k := key{at: t.CreatedAt.UnixNano()}
+		if t.BinID != nil {
+			k.bin = *t.BinID
+		}
+		if t.OrderID != nil {
+			k.order = *t.OrderID
+		}
+		if _, seen := byKey[k]; !seen {
+			order = append(order, k)
+		}
+		byKey[k] = append(byKey[k], t)
+	}
+	out := make([][]*cms.Transaction, 0, len(order))
+	for _, k := range order {
+		out = append(out, byKey[k])
+	}
+	return out
 }
 
 // DrainOnce sends every pending posting that is due.

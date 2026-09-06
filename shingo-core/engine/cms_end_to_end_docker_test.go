@@ -194,11 +194,17 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	stub := newMiddlewareStub(t, http.StatusOK, `{"TransactionId":"MW-E2E-1"}`)
 	eng := cmsEngine(t, db, stub.srv.URL)
 
-	// A payload whose bin holds 24 cycles, at 2 parts of PART-X per cycle.
+	// A payload whose bin holds 24 cycles, at 2 parts per cycle.
+	//
+	// THE LINE NAMES THE PAYLOAD CODE, which is what a single-part payload looks
+	// like after the identity correction: a bin of one part is a bin of that
+	// part, and the code is the name CMS and shingo share for it (owner ruling,
+	// 2026-09-06). The kit case — where the code names the container and matches
+	// no line — is pinned in cms/wire's TestBuild_MultiLinePayloadIsNotPostedPerLine.
 	pay := &payloads.Payload{Code: "E2E-PAYLOAD", UOPCapacity: 24}
 	testutil.MustNoErr(t, db.CreatePayload(pay), "create payload")
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: pay.ID, PartNumber: "PART-X", PartsPerCycle: 2,
+		PayloadID: pay.ID, PartNumber: "E2E-PAYLOAD", PartsPerCycle: 2,
 	}, ""), "create template line")
 
 	_, srcSlot := tagBoundary(t, db, "E2E-SUPERMARKET", "SM01")
@@ -206,7 +212,7 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 
 	bin := createTestBinAtNode(t, db, pay.Code, srcSlot.ID, "BIN-E2E")
 	// PARTIALLY DRAWN DOWN: 8 of the 24 cycles left.
-	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: "PART-X"}}}
+	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: "E2E-PAYLOAD"}}}
 	body, err := json.Marshal(m)
 	testutil.MustNoErr(t, err, "marshal manifest")
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 8), "set manifest")
@@ -260,16 +266,12 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	if departure["TransactionType"] != "D" || arrival["TransactionType"] != "I" {
 		t.Errorf("types = %v / %v, want D and I", departure["TransactionType"], arrival["TransactionType"])
 	}
-	// THE IDENTIFIER. CMS books this payload against its CODE, because a bin of
-	// one part is a bin of that part and the code is the name the two systems
-	// share (owner ruling, 2026-09-06). The manifest line names the same part;
-	// on a single-line payload the two answers cannot be told apart, which is
-	// why the discriminating pin lives on the kit case — a multi-line payload's
-	// code names the KIT and matches no line, and posting it once per line
-	// books the movement N times. See TestBuild_MultiLinePayloadIsNotPostedPerLine.
+	// THE IDENTIFIER, WHICH REACHES THE WIRE FROM THE MANIFEST LINE. For this
+	// payload that is the same string as its code, and it has to be: the line
+	// resolves to a parts row, and a movement whose lines resolve to no part is
+	// held rather than posted with an identifier the middleware has never seen.
 	if departure["PartNumber"] != "E2E-PAYLOAD" {
-		t.Errorf("part number = %v, want E2E-PAYLOAD — the payload code is what CMS "+
-			"knows this part by", departure["PartNumber"])
+		t.Errorf("part number = %v, want E2E-PAYLOAD", departure["PartNumber"])
 	}
 	if departure["Resource"] != "AMR-042" {
 		t.Errorf("resource = %v, want AMR-042 — the robot that carried it", departure["Resource"])

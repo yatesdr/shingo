@@ -855,7 +855,8 @@ CREATE TABLE public.payload_manifest (
     parts_per_cycle bigint DEFAULT 1 NOT NULL,
     description text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    part_id bigint
+    part_id bigint,
+    CONSTRAINT payload_manifest_part_number_not_blank CHECK ((part_number <> ''::text))
 );
 
 CREATE SEQUENCE public.payload_manifest_id_seq
@@ -1718,6 +1719,8 @@ CREATE INDEX idx_parts_catid ON public.parts USING btree (catid) WHERE (catid <>
 CREATE INDEX idx_payload_manifest_part ON public.payload_manifest USING btree (part_id);
 
 CREATE INDEX idx_payload_manifest_payload ON public.payload_manifest USING btree (payload_id);
+
+CREATE UNIQUE INDEX idx_payload_manifest_payload_part ON public.payload_manifest USING btree (payload_id, part_number);
 
 CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree (created_at);
 

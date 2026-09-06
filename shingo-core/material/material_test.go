@@ -762,3 +762,82 @@ func TestBuildMovement_StoreroomComesFromTheTaggedANCESTOR(t *testing.T) {
 		t.Errorf("dst storeroom = %q, want SM02", txns[1].Storeroom)
 	}
 }
+
+// ── the identity gate ───────────────────────────────────────────────────────
+
+// TestBuildMovement_UncorrectedLineIsHeldNotPosted: a line that points at no
+// part still holds whatever was typed into a box labelled CATID, and every row
+// this builds names a part on the wire. Posting one identifies the movement by
+// a number the middleware has never seen.
+//
+// Held rather than approximated. Nothing has ever been posted from either plant
+// — cms_postings has never existed at one — so waiting for a person to name the
+// part costs nothing, and a wrong identifier in a ledger costs a reconciliation.
+func TestBuildMovement_UncorrectedLineIsHeldNotPosted(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
+	f.setUncorrectedTemplate(100, "P1", 24, map[string]int64{"10276": 1})
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 8}
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "10276"}})
+	f.bins[10] = bin
+
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{
+		BinID: 10, FromNodeID: 1, ToNodeID: 2,
+	})
+	if err == nil {
+		t.Fatal("a movement of a payload whose line names no part was built. Every row on " +
+			"the wire carries the part number CMS books against, and an uncorrected line " +
+			"holds a cat id — an identifier the middleware has never seen.")
+	}
+	if len(txns) != 0 {
+		t.Errorf("built %d transactions alongside the refusal — a held movement posts nothing", len(txns))
+	}
+	if !strings.Contains(err.Error(), "P1") || !strings.Contains(err.Error(), "10276") {
+		t.Errorf("the failure does not name the payload and the line: %v", err)
+	}
+}
+
+// TestBuildMovement_KitPostsOneRowPerPartNotPerPayload is the double-book, at
+// the level that produces the rows.
+//
+// A two-line payload's movement is two transactions per boundary, and each has
+// to carry its OWN part. The specimen is Springfield's payload 15 — capacity
+// 1000, two lines — where naming the payload on both rows books 2,000 units for
+// a bin that holds 1,000.
+func TestBuildMovement_KitPostsOneRowPerPartNotPerPayload(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
+	const kit = "74343-6SA0A.06"
+	f.setTemplate(100, kit, 1000, map[string]int64{"51015-LH": 1, "51015-RH": 1})
+	bin := &bins.Bin{ID: 10, Label: "B15", PayloadCode: kit, UOPRemaining: 1000}
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "51015-LH"}, {PartNumber: "51015-RH"}})
+	f.bins[10] = bin
+
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{
+		BinID: 10, FromNodeID: 1, ToNodeID: 2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(txns) != 4 {
+		t.Fatalf("built %d transactions, want 4 (two lines x two boundaries)", len(txns))
+	}
+	seen := map[string]int{}
+	for _, tx := range txns {
+		seen[tx.CatID]++
+		if tx.CatID == kit {
+			t.Errorf("a row is identified by the payload code %q. That is the name of the "+
+				"KIT and matches no line; one row per line under that name books %d units "+
+				"twice.", kit, bin.UOPRemaining)
+		}
+	}
+	for _, part := range []string{"51015-LH", "51015-RH"} {
+		if seen[part] != 2 {
+			t.Errorf("part %s appears on %d rows, want 2 (one per boundary)", part, seen[part])
+		}
+	}
+}

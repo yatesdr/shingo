@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"shingocore/store/cms"
 	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // errCMSBoundaryCycle is returned by FindCMSBoundary when the parent
@@ -185,7 +187,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 	// carry a stored qty that no writer agreed on and nothing rewrote as
 	// production drew the bin down, so whatever it held went stale on the
 	// first consumed part.
-	perCycle, err := partsPerCycle(s, bin.PayloadCode)
+	perCycle, err := postablePartsPerCycle(s, bin.PayloadCode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -290,19 +292,70 @@ type UncountedLines struct {
 	CatIDs      []string
 }
 
-// partsPerCycle returns the payload template's per-cycle ratio keyed by part
-// number, or nil when the payload has no template.
+// postablePartsPerCycle returns the payload template's per-cycle ratios, keyed
+// by part number — and refuses when a line names no part.
 //
-// nil and an empty map are DIFFERENT ANSWERS, and BuildMovementTransactions
+// THE IDENTITY GATE, AND IT IS WHY A KIT CANNOT DOUBLE-BOOK. Every row a
+// movement builds names a part on the wire, so every line it counts has to name
+// one — and a line names a part exactly when it points at a parts row. An
+// unresolved line still holds whatever was typed into a box labelled CATID, and
+// posting that identifies the movement by a number the middleware has never
+// seen.
+//
+// The failure this closes is arithmetic, not cosmetic. Before the parts table
+// there was no way to tell a corrected line from an uncorrected one, so the
+// interim fix bound the wire to the PAYLOAD CODE — right for a bin of one part,
+// and for a kit it books the payload once per line: a payload-15 bin of
+// capacity 1000 posts 1000 twice, 2,000 booked where 1,000 moved. Holding is
+// the honest answer and it is cheap, because nothing has ever been posted from
+// either plant; waiting for a person to name the kit's components loses nothing.
+//
+// nil, nil means "no template" — see templateLines for why that is not the same
+// answer as an empty one.
+func postablePartsPerCycle(s Store, payloadCode string) (map[string]int64, error) {
+	template, err := templateLines(s, payloadCode)
+	if err != nil || template == nil {
+		return nil, err
+	}
+	if unresolved := unresolvedLines(template); len(unresolved) > 0 {
+		return nil, fmt.Errorf("payload %s has %d manifest line(s) that name no part (%s): "+
+			"a movement of it cannot be posted, because every line on the wire has to carry the "+
+			"part number CMS books against. Enter the part on the payloads page",
+			payloadCode, len(unresolved), strings.Join(unresolved, ", "))
+	}
+	perCycle := make(map[string]int64, len(template))
+	for _, it := range template {
+		perCycle[it.PartNumber] = it.PartsPerCycle
+	}
+	return perCycle, nil
+}
+
+// unresolvedLines names the template lines that point at no part. A line names
+// a part exactly when it carries a part_id — the foreign key IS the test, which
+// is the point of having one instead of a rule about what a string looks like.
+func unresolvedLines(items []*payloads.ManifestItem) []string {
+	var out []string
+	for _, it := range items {
+		if it.PartID == 0 {
+			out = append(out, it.PartNumber)
+		}
+	}
+	return out
+}
+
+// templateLines returns the payload template's manifest lines, or nil when the
+// payload has no template.
+//
+// nil and an empty slice are DIFFERENT ANSWERS, and BuildMovementTransactions
 // acts on the difference: nil means "there is no template, so no count can be
-// derived" and it emits nothing at all, while an empty map means "the template
-// exists and lists no parts" — every manifest line is then uncountable and
-// reported as such. Returning an empty map for both would turn a missing
-// template into a silent nothing rather than a finding.
+// derived" and it emits nothing at all, while an empty slice means "the
+// template exists and lists no parts" — every manifest line is then uncountable
+// and reported as such. Returning empty for both would turn a missing template
+// into a silent nothing rather than a finding.
 //
 // A bin with no payload_code has no template by construction; that is a bare
 // carrier, and it returns nil rather than an error.
-func partsPerCycle(s Store, payloadCode string) (map[string]int64, error) {
+func templateLines(s Store, payloadCode string) ([]*payloads.ManifestItem, error) {
 	if payloadCode == "" {
 		return nil, nil
 	}
@@ -324,9 +377,11 @@ func partsPerCycle(s Store, payloadCode string) (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]int64, len(items))
-	for _, it := range items {
-		out[it.PartNumber] = it.PartsPerCycle
+	if items == nil {
+		// A template with no lines still EXISTS, and the caller has to be able
+		// to tell that from "no template". A nil slice from the store would
+		// collapse the two.
+		items = []*payloads.ManifestItem{}
 	}
-	return out, nil
+	return items, nil
 }

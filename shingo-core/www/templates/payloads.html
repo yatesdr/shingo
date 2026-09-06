@@ -80,8 +80,12 @@
     <form id="pl-create-form" method="POST" action="/payloads/create" data-action-submit="submitPLCreate">
       <div class="grid grid-2">
         <div class="form-group">
-          <label>Payload Code <span class="tooltip-trigger" title="Unique identifier used in orders">?</span></label>
+          <label>Payload Code <span class="tooltip-trigger" title="Unique identifier used in orders. For a bin of ONE part this is that part's number — CMS books against it.">?</span></label>
           <input type="text" name="code" id="plc-code" required placeholder="e.g. BRK-ROTOR-KIT">
+          <label class="text-muted-sm" style="display:block;margin-top:0.25rem;font-weight:normal">
+            <input type="checkbox" id="plc-code-from-part" data-action-change="syncCodeFromPart:plc-manifest-rows">
+            use part number as payload code
+          </label>
         </div>
         <div class="form-group">
           <label>UoP Capacity <span class="tooltip-trigger" title="Units of Production per fully loaded cart">?</span></label>
@@ -122,7 +126,7 @@
       </div>
       <div class="mb-1">
         <div class="flex flex-between">
-          <label class="font-semibold text-sm" style="margin:0">Default Manifest <span class="text-muted" style="font-weight:normal">— parts per production cycle, required on every line</span></label>
+          <label class="font-semibold text-sm" style="margin:0">Parts in this payload <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many one production cycle uses</span></label>
           <button type="button" class="btn btn-sm" data-action="addManifestRow:plc-manifest-rows">+ Part</button>
         </div>
         <div id="plc-manifest-rows"></div>
@@ -146,6 +150,10 @@
         <div class="form-group">
           <label>Payload Code</label>
           <input type="text" name="code" id="pl-edit-code" required>
+          <label class="text-muted-sm" style="display:block;margin-top:0.25rem;font-weight:normal">
+            <input type="checkbox" id="ple-code-from-part" data-action-change="syncCodeFromPart:ple-manifest-rows">
+            use part number as payload code
+          </label>
         </div>
         <div class="form-group">
           <label>UoP Capacity</label>
@@ -182,7 +190,7 @@
       </div>
       <div class="mb-1">
         <div class="flex flex-between">
-          <label class="font-semibold text-sm" style="margin:0">Default Manifest <span class="text-muted" style="font-weight:normal">— parts per production cycle, required on every line</span></label>
+          <label class="font-semibold text-sm" style="margin:0">Parts in this payload <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many one production cycle uses</span></label>
           <button type="button" class="btn btn-sm" data-action="addManifestRow:ple-manifest-rows">+ Part</button>
         </div>
         <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
@@ -206,8 +214,9 @@
       <div id="pl-import-summary" class="mb-1" style="font-weight:600"></div>
       <div id="pl-import-results" style="max-height:320px;overflow-y:auto"></div>
       <p class="text-muted" style="font-size:0.8rem;margin-top:0.6rem">
-        Expected columns: Payload Code | UoP Capacity | Manifest Part (CATID) | Qty —
-        one row per part, the code repeated. Duplicates are skipped, not overwritten.
+        Expected columns: Payload Code | UoP Capacity | Part Number | CATID | Parts Per Cycle —
+        one row per part, the code repeated. A four-column sheet in the old layout still
+        imports, its last cell read as the ratio. Duplicates are skipped, not overwritten.
         Bin types, robot group, and load sequence are set per-payload afterward.
       </p>
     </div>

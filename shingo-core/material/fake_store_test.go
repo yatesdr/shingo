@@ -44,13 +44,33 @@ func newFakeStore() *fakeStore {
 
 // setTemplate registers a payload and its per-cycle ratios in one call, since
 // no test wants one without the other.
+// setTemplate seeds a payload whose lines are CORRECTED — each points at a
+// part. That is the normal state after v108, and the state
+// BuildMovementTransactions requires before it will post anything; the
+// uncorrected case has its own test, which is where the refusal is pinned.
+// PartID values are synthetic, because nothing here reads them for anything
+// except "is it zero".
 func (f *fakeStore) setTemplate(id int64, code string, capacity int, perCycle map[string]int64) {
 	f.payloads[code] = &payloads.Payload{ID: id, Code: code, UOPCapacity: capacity}
 	items := make([]*payloads.ManifestItem, 0, len(perCycle))
+	partID := int64(1)
 	for part, n := range perCycle {
-		items = append(items, &payloads.ManifestItem{PayloadID: id, PartNumber: part, PartsPerCycle: n})
+		items = append(items, &payloads.ManifestItem{
+			PayloadID: id, PartNumber: part, PartID: partID, PartsPerCycle: n,
+		})
+		partID++
 	}
 	f.templates[id] = items
+}
+
+// setUncorrectedTemplate seeds a payload whose lines point at NO part — the
+// pre-v108 shape, and the shape a kit's lines are in until a person types the
+// components. Its movements must not post.
+func (f *fakeStore) setUncorrectedTemplate(id int64, code string, capacity int, perCycle map[string]int64) {
+	f.setTemplate(id, code, capacity, perCycle)
+	for _, it := range f.templates[id] {
+		it.PartID = 0
+	}
 }
 
 // setProp seeds a node property (cms_storeroom in practice).

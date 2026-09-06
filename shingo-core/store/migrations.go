@@ -4169,7 +4169,64 @@ func migrationList() []migration {
 			// un-re-pointed. This migration's predicate lives inside its body,
 			// where it can refuse the transaction instead of repeating it.
 			nil},
+		{109, "payload_manifest: one line per part per payload, and no blank part",
+			v109ManifestLineConstraints,
+			func(q schema.Querier) bool {
+				return schema.IndexExists(q, "idx_payload_manifest_payload_part")
+			}},
 	}
+}
+
+// v109ManifestLineConstraints closes the two shapes the entry doors used to
+// allow, AFTER the correction that makes them satisfiable.
+//
+// ORDER IS THE WHOLE SAFETY ARGUMENT, and it is why these are not part of v107.
+// A constraint added before v108 would be asserting a property of values that
+// were about to be replaced; added after, it is asserting a property of the
+// corrected ones. Both are satisfied at Springfield and Hopkinsville today
+// (measured: 144 lines, every one non-blank, no payload carrying the same value
+// twice), so this migration adds two constraints and changes no row — and if a
+// plant has since acquired a row that violates one, the ALTER refuses by name
+// rather than the constraint quietly not existing.
+//
+// THE UNIQUE INDEX IS ON (payload_id, part_number), which is what a manifest
+// means: a payload's line for a part is THE line for that part, and its
+// per-cycle ratio is that part's ratio. Two lines for one part are two answers
+// to one question, and the count a bin ships is uop_remaining x whichever the
+// reader saw first.
+//
+// THE CHECK REFUSES A BLANK. A blank line names nothing, counts nothing, and
+// resolves to no part; the doors already refuse one and this is the floor under
+// them. It is written as NOT VALID + VALIDATE so the table is not held under an
+// exclusive lock while every row is scanned — the same reason the loader
+// migrations do it, on a table small enough that it hardly matters and a
+// pattern worth being consistent about.
+func v109ManifestLineConstraints(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payload_manifest_payload_part
+		ON payload_manifest (payload_id, part_number)`); err != nil {
+		return fmt.Errorf("v109 unique (payload_id, part_number): %w", err)
+	}
+	if _, err := tx.Exec(`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'payload_manifest'
+				  AND con.conname = 'payload_manifest_part_number_not_blank'
+			) THEN
+				ALTER TABLE payload_manifest
+					ADD CONSTRAINT payload_manifest_part_number_not_blank
+					CHECK (part_number <> '') NOT VALID;
+			END IF;
+		END $$`); err != nil {
+		return fmt.Errorf("v109 add blank-part check: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE payload_manifest
+		VALIDATE CONSTRAINT payload_manifest_part_number_not_blank`); err != nil {
+		return fmt.Errorf("v109 validate blank-part check — a manifest line names no part, "+
+			"which the entry doors refuse and this constraint is the floor under: %w", err)
+	}
+	return nil
 }
 
 // v107Parts gives a part its own row, with BOTH of its names on it.

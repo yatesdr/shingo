@@ -20,14 +20,14 @@ func testConfig() Config {
 	}
 }
 
-// txn builds a row the way the ledger does: BOTH identifiers present and
-// different, because that is the whole point. CatID is what shingo keys its
-// parts_per_cycle lookup on; PayloadCode is what CMS knows the part by, and it
-// is the one that goes on the wire. A fixture that set them to the same string
-// could not tell a correct mapping from the inverted one.
-func txn(id int64, payloadCode, storeroom, binLabel, robot string, delta int64) *cms.Transaction {
+// txn builds a row the way the ledger does, for a bin of ONE part — the case
+// where the payload code and the line's part number are the same string,
+// because a bin of one part is a bin of that part. The two fields are set to
+// different values in the kit test below, which is where they diverge and where
+// binding the wrong one has arithmetic consequences.
+func txn(id int64, partNumber, storeroom, binLabel, robot string, delta int64) *cms.Transaction {
 	return &cms.Transaction{
-		ID: id, PayloadCode: payloadCode, CatID: "catid-" + payloadCode,
+		ID: id, PayloadCode: partNumber, CatID: partNumber,
 		Storeroom: storeroom, BinLabel: binLabel,
 		RobotID: robot, Delta: delta, SourceType: "movement",
 	}
@@ -255,33 +255,50 @@ func TestBuild_JSONKeysAreTheVendorsNotOurs(t *testing.T) {
 	}
 }
 
-// TestBuild_PartNumberIsThePayloadCodeNotTheCatID pins the one field the vendor
-// review changed.
+// TestBuild_MultiLinePayloadIsNotPostedPerLine is the pin that separates the
+// two candidate bindings, and it is the kit case because that is the only place
+// they differ.
 //
-// A transaction carries two identifiers for the same physical part and they are
-// not interchangeable. cat_id is shingo's internal key — it joins to
-// payload_manifest to find parts_per_cycle, and at Springfield it looks like
-// "10276". payload_code is what CMS knows the part by, and there it looks like
-// "7332B4-6RR0A.06". Sending the wrong one is not an approximation; it is an
-// identifier the receiving system has never seen.
+// A transaction is ONE MANIFEST LINE's movement, so a two-line payload produces
+// two of them per boundary. Bind PartNumber to the payload code and both rows
+// name the payload: a payload-15 bin of capacity 1000 posts 1000 twice and CMS
+// is told 2,000 moved. Bind it to the line, and each row names the part it is
+// actually about.
 //
-// This shipped bound to CatID. The struct's field NAMES were matched to the
-// vendor's sample and its comment says so; the VALUE was chosen from shingo's
-// side and chose the internal one. IT confirmed the contract on 2026-09-05.
-func TestBuild_PartNumberIsThePayloadCodeNotTheCatID(t *testing.T) {
+// The numbers here are Springfield's payload 15 — capacity 1000, two lines —
+// which is the specimen the census found and the reason this guard exists. The
+// other half of the guard is upstream: material.BuildMovementTransactions will
+// not build these rows at all until both lines resolve to parts, so a value
+// reaching this function has been through the identity correction.
+func TestBuild_MultiLinePayloadIsNotPostedPerLine(t *testing.T) {
 	t.Parallel()
 
-	got := Build([]*cms.Transaction{{
-		ID: 1, PayloadCode: "7332B4-6RR0A.06", CatID: "10276",
-		Storeroom: "SM01", BinLabel: "SHG:0001", Delta: 5, SourceType: "movement",
-	}}, testConfig())
+	const payload = "74343-6SA0A.06"
+	got := Build([]*cms.Transaction{
+		{ID: 1, PayloadCode: payload, CatID: "51015-LH",
+			Storeroom: "SM01", BinLabel: "SHG:0015", Delta: -1000, SourceType: "movement"},
+		{ID: 2, PayloadCode: payload, CatID: "51015-RH",
+			Storeroom: "SM01", BinLabel: "SHG:0015", Delta: -1000, SourceType: "movement"},
+	}, testConfig())
 
-	if len(got) != 1 {
-		t.Fatalf("built %d rows, want 1", len(got))
+	if len(got) != 2 {
+		t.Fatalf("built %d rows, want 2 (one per manifest line)", len(got))
 	}
-	if got[0].PartNumber != "7332B4-6RR0A.06" {
-		t.Errorf("PartNumber = %q, want the PAYLOAD CODE 7332B4-6RR0A.06. That value is the "+
-			"cat id, which is shingo's join key for parts_per_cycle and means nothing to CMS.",
+	if got[0].PartNumber == got[1].PartNumber {
+		t.Fatalf("both rows name %q. A kit's two lines are two different parts; naming the "+
+			"payload on each books the same 1000 units twice — 2,000 where 1,000 moved.",
 			got[0].PartNumber)
+	}
+	for i, want := range []string{"51015-LH", "51015-RH"} {
+		if got[i].PartNumber != want {
+			t.Errorf("row %d PartNumber = %q, want %q — the line's own part, not the kit's name",
+				i, got[i].PartNumber, want)
+		}
+	}
+	for i, r := range got {
+		if r.PartNumber == payload {
+			t.Errorf("row %d names the PAYLOAD CODE %q, which for a kit is the name of the "+
+				"container and matches no line", i, payload)
+		}
 	}
 }

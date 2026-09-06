@@ -2,15 +2,22 @@ import { api, delegateActions, el, escapeHtml, hideModal, removeParentElement, s
 
 /* --- Manifest builder ---
  *
- * The editable number is PER CYCLE — how many of the part one production
- * cycle consumes, usually 1. The full-bin count is that times the payload's
- * UoP capacity, and is shown read-only beside it so the person typing a
- * ratio can see the number they used to type.
+ * A LINE IS THREE TYPED FIELDS: part number, that part's CATID, and how many of
+ * it one production cycle uses. All three are typed, and none of them is a
+ * dropdown — this page is where a NEW PART ENTERS SHINGO, so most of what is
+ * typed here has never been seen before and a list to choose from would offer
+ * the wrong neighbour of the right code, one keystroke away.
  *
- * The derived cell is not decoration. The box was labelled Qty and holds a
- * ratio — nearly always 1 against capacities in the thousands — which reads
- * like an unfilled field until you see what it multiplies out to. The
- * full-bin figure is how someone checks they typed the right thing.
+ * The identity box used to be a single input reading `placeholder="CATID"` on a
+ * line whose column was called part_number. Everyone typed a cat id, because
+ * that is what it asked for and because the wrong-part guard derived its
+ * expected set from what went in. The two identifiers have a box each now, and
+ * typing a cat id into the CATID box is simply correct.
+ *
+ * The editable count is PER CYCLE, asked for directly, as the schema means it.
+ * The full-bin figure beside it is a read-only readout, not a second field: the
+ * ratio is nearly always 1 against capacities in the thousands, which reads
+ * like an unfilled box until you see what it multiplies out to.
  */
 function uopCapacityFor(containerId) {
   var input = document.getElementById(
@@ -26,21 +33,84 @@ function renderFullBin(row, containerId) {
   cell.textContent = cap > 0 ? '= ' + (per * cap) + ' / bin' : '';
 }
 
-function addManifestRow(containerId, catid, perCycle) {
+// renderCATIDNote is the drift-catcher, and it is the reason the CATID box is
+// not simply overwritten from the lookup.
+//
+// A part already known with a DIFFERENT cat id is a question — same part, or a
+// typo? — and neither answer can be assumed. Silently keeping the stored value
+// swallows a real correction; silently taking the typed one gives a part two
+// controls identities, which is how a cell's wrong-part guard starts accepting
+// the wrong thing. So the row says so, and the server refuses the save (409)
+// rather than picking. The answer is given deliberately, on the part itself.
+function renderCATIDNote(row) {
+  var note = row.querySelector('.mr-catid-note');
+  if (!note) return;
+  var known = row.dataset.knownCatid || '';
+  var typed = row.querySelector('.mr-catid').value.trim();
+  if (known && typed && typed !== known) {
+    note.className = 'mr-catid-note text-danger';
+    note.textContent = 'known as ' + known + ' — same part, or a typo?';
+    return;
+  }
+  if (known && !typed) {
+    note.className = 'mr-catid-note text-muted';
+    note.textContent = 'known as ' + known;
+    return;
+  }
+  note.textContent = '';
+}
+
+// lookupPart fills in what shingo already knows about a typed part number: its
+// cat id, when the box is still empty. Best-effort — a failed lookup leaves the
+// row exactly as typed, because the server validates the save regardless and a
+// form that stops working when a GET fails is worse than one that recalls less.
+function lookupPart(row) {
+  var number = row.querySelector('.mr-part').value.trim();
+  if (!number) {
+    row.dataset.knownCatid = '';
+    renderCATIDNote(row);
+    return;
+  }
+  fetch('/api/parts/lookup?part_number=' + encodeURIComponent(number))
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(resp) {
+      var part = (resp && resp.data) || resp;
+      var known = (part && part.catid) || '';
+      row.dataset.knownCatid = known;
+      var box = row.querySelector('.mr-catid');
+      if (known && !box.value.trim()) box.value = known;
+      renderCATIDNote(row);
+    })
+    .catch(function() { /* leave the row as typed */ });
+}
+
+function addManifestRow(containerId, partNumber, catid, perCycle) {
   var container = document.getElementById(containerId);
   var row = document.createElement('div');
   row.className = 'manifest-row';
-  row.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem';
+  row.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem;flex-wrap:wrap';
   row.innerHTML =
-    '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
+    '<input type="text" placeholder="Part number *" value="' + escapeHtml(partNumber || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-part">' +
+    '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
     '<input type="number" placeholder="Per cycle *" value="' + (perCycle === undefined || perCycle === null ? '' : perCycle) + '" step="1" min="1" required style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-per-cycle">' +
     '<span class="text-muted mr-fullbin" style="font-size:0.75rem;min-width:6rem"></span>' +
-    '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>';
+    '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>' +
+    '<span class="mr-catid-note" style="font-size:0.75rem;flex-basis:100%"></span>';
   container.appendChild(row);
+  row.dataset.knownCatid = '';
   renderFullBin(row, containerId);
   row.querySelector('.mr-per-cycle').addEventListener('input', function() {
     renderFullBin(row, containerId);
   });
+  row.querySelector('.mr-part').addEventListener('change', function() {
+    lookupPart(row);
+    mirrorPartNumberToCode(containerId);
+  });
+  row.querySelector('.mr-catid').addEventListener('input', function() {
+    renderCATIDNote(row);
+  });
+  if (partNumber) lookupPart(row);
+  mirrorPartNumberToCode(containerId);
 }
 
 // refreshFullBinCells re-derives every row's full-bin figure. Bound to the two
@@ -50,6 +120,39 @@ function refreshFullBinCells(containerId) {
   document.querySelectorAll('#' + containerId + ' .manifest-row').forEach(function(row) {
     renderFullBin(row, containerId);
   });
+}
+
+/* --- "use part number as payload code" ---
+ *
+ * FOR A BIN OF ONE PART THE TWO ARE THE SAME THING, and CMS books against the
+ * code. Typing it twice is how they end up differing by a character, and a
+ * payload whose code is not its part's number is a payload whose movements
+ * cannot be matched by hand. The checkbox makes the code follow the part.
+ *
+ * It is per-modal state rather than a stored column: nothing downstream cares
+ * HOW the code was arrived at, only what it is.
+ */
+function codeMirrorIDs(containerId) {
+  return containerId === 'plc-manifest-rows'
+    ? {code: 'plc-code', box: 'plc-code-from-part'}
+    : {code: 'pl-edit-code', box: 'ple-code-from-part'};
+}
+
+function mirrorPartNumberToCode(containerId) {
+  var ids = codeMirrorIDs(containerId);
+  var box = document.getElementById(ids.box);
+  var code = document.getElementById(ids.code);
+  if (!box || !code) return;
+  code.readOnly = box.checked;
+  if (!box.checked) return;
+  var first = document.querySelector('#' + containerId + ' .manifest-row .mr-part');
+  code.value = first ? first.value.trim() : '';
+}
+
+// syncCodeFromPart is the checkbox's own handler. Named separately from the
+// mirror so the delegated action reads as what the operator did.
+function syncCodeFromPart(containerId) {
+  mirrorPartNumberToCode(containerId);
 }
 
 // collectManifestRows returns {items, error}. A row with a part number and no
@@ -65,23 +168,36 @@ function refreshFullBinCells(containerId) {
 // count a bin ships to the inventory ledger is uop_remaining x this number, so
 // a zero line contributes nothing to any count while looking configured. A
 // part that genuinely is not in the carrier is a line that should not be on the
-// manifest at all. (A DB-level CHECK is the eventual backstop; it must not ship
-// before this validation is deployed, or the plant UI's own inserts fail.)
+// manifest at all.
+//
+// A ROW WITH A CATID AND NO PART NUMBER IS AN ERROR, not a skipped row. The
+// server refuses it too — the blank-line skip is what made the ratio check
+// optional for exactly the lines least likely to be deliberate — and saying so
+// here is what stops the operator losing the rest of a form to it.
 function collectManifestRows(containerId) {
   var rows = document.querySelectorAll('#' + containerId + ' .manifest-row');
   var items = [];
   var bad = [];
+  var orphans = 0;
   rows.forEach(function(row) {
+    var part = row.querySelector('.mr-part').value.trim();
     var catid = row.querySelector('.mr-catid').value.trim();
-    if (!catid) return;
     var raw = row.querySelector('.mr-per-cycle').value.trim();
-    var perCycle = parseInt(raw, 10);
-    if (raw === '' || isNaN(perCycle) || perCycle < 1) {
-      bad.push(catid);
+    if (!part) {
+      if (catid || raw) orphans++;
       return;
     }
-    items.push({part_number: catid, parts_per_cycle: perCycle, description: ''});
+    var perCycle = parseInt(raw, 10);
+    if (raw === '' || isNaN(perCycle) || perCycle < 1) {
+      bad.push(part);
+      return;
+    }
+    items.push({part_number: part, catid: catid, parts_per_cycle: perCycle, description: ''});
   });
+  if (orphans > 0) {
+    return {items: items, error: orphans + ' line(s) have no part number. A manifest line ' +
+      'names a part; fill it in or remove the row.'};
+  }
   if (bad.length > 0) {
     return {items: items, error: 'Per cycle is required and must be 1 or more. Fix: ' +
       bad.join(', ') + '. It is how many of the part ONE production cycle uses — usually 1, ' +
@@ -288,7 +404,7 @@ function openEditPayloadModal(btn) {
       container.innerHTML = '';
       if (items && items.length > 0) {
         items.forEach(function(item) {
-          addManifestRow('ple-manifest-rows', item.part_number, item.parts_per_cycle);
+          addManifestRow('ple-manifest-rows', item.part_number, item.catid, item.parts_per_cycle);
         });
       }
     })
@@ -464,6 +580,7 @@ delegateActions(document.body, {
     openPayloadImport,
     refreshFullBinCells,
     removeParentElement,
+    syncCodeFromPart,
     submitPLCreate,
     submitPLEdit
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
