@@ -10,6 +10,11 @@
     <script>
     (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
     </script>
+    {{/* Plant timezone for shared/utils.js formatters. Inline and synchronous
+         on purpose: a fetch would paint wrong text first — the exact flicker
+         the plant-local convention removed. Server-rendered timestamps are
+         already plant-local; this is for JS-rendered rows and clocks. */}}
+    <script>window.PLANT_TZ = "{{ plantTZ }}";</script>
     <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
     <link rel="stylesheet" href="/static/shared/status-classes.css?v={{cacheBust}}">
     <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">

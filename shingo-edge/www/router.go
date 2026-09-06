@@ -104,6 +104,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	}
 	go h.specChangeLoop()
 
+	// Resolve the plant timezone before templates parse — formatTime and
+	// header.html's PLANT_TZ inline both read plantLocation.
+	plantLocation = resolvePlantLocation(eng.AppConfig())
+
 	funcMap := templateFuncs()
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
