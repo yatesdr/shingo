@@ -14,13 +14,11 @@
 // created / skipped / failed / warning rows so a 200-row file with one
 // bad ratio still imports the 199 good ones and NAMES the bad one.
 //
-// THE FOURTH COLUMN CHANGED MEANING at the parts_per_cycle rename. It used to
-// be the count in a FULL bin; it is now how many of the part one production
-// cycle consumes — usually 1, and the full-bin count is that times UoP
-// Capacity. A sheet authored against the old format imports its nominals as
-// ratios and inflates every count by UoP Capacity. The column is positional, so
-// nothing here can tell the two apart; the header text and the Payloads page
-// are where an author is told.
+// THE FOURTH COLUMN IS RENAMED, NOT REDEFINED. It was labelled Qty and it has
+// always been the per-cycle ratio — measured at both plants, ~1 on essentially
+// every row. What changed is that the name now says so, and that the Payloads
+// page shows the full-bin figure (ratio x UoP Capacity) beside it. An existing
+// sheet imports unchanged.
 package www
 
 import (

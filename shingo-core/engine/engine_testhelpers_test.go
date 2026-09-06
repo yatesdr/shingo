@@ -67,10 +67,24 @@ func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 // (Measured 2026-08-18: Start() itself costs ~13ms on a test fixture — boot
 // CPU is not the reason to skip it; goroutine noise is.)
 func newUnstartedEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
+	return newUnstartedEngineWith(t, db, flt, nil)
+}
+
+// newUnstartedEngineWith is newUnstartedEngine with a hook to adjust the config
+// BEFORE New sees it.
+//
+// The hook exists because some subsystems are now constructed in New from the
+// config — the CMS poster is — so a test that reaches in and edits eng.cfg
+// afterwards is editing a value nothing will read again. That is the same
+// mistake in a test that the race it fixes was in production.
+func newUnstartedEngineWith(t *testing.T, db *store.DB, flt fleet.Backend, tune func(*config.Config)) *Engine {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "test-core"
 	cfg.Messaging.DispatchTopic = "shingo.dispatch"
+	if tune != nil {
+		tune(cfg)
+	}
 
 	return New(Config{
 		AppConfig: cfg,

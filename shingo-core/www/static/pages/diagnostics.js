@@ -143,7 +143,20 @@ import { onSSE } from '/static/shared/utils.js';
     var counts = document.getElementById('cms-health-counts');
     if (!badge) return;
     fetch('/api/cms-health')
-      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        // r.ok FIRST. A 500 from this endpoint still decodes as JSON — the
+        // handler writes {"error": ...} — and that object has no `enabled`
+        // key, so the badge below read it as "NOT CONFIGURED": a plain grey
+        // pill saying the site does not use CMS, on a site that does. Absence
+        // of data rendering as absence of a problem is the exact failure this
+        // whole card exists to prevent, reproduced in the card itself.
+        if (!r.ok) {
+          var err = new Error('cms-health responded ' + r.status);
+          err.httpStatus = r.status;
+          throw err;
+        }
+        return r.json();
+      })
       .then(function(h) {
         if (!h) return;
         if (!h.enabled) {
@@ -176,7 +189,12 @@ import { onSSE } from '/static/shared/utils.js';
         // show a stale verdict and nothing would say it was stale.
         badge.className = 'badge badge-flagged';
         badge.textContent = 'UNKNOWN';
-        why.textContent = 'could not read the feed health: ' + err;
+        why.textContent = err && err.httpStatus
+          ? 'the health endpoint failed (HTTP ' + err.httpStatus + ') — this says nothing ' +
+            'about whether the feed is working, only that the page could not find out'
+          : 'could not read the feed health: ' + err;
+        // Stale counts beside an UNKNOWN verdict read as current ones.
+        counts.textContent = '';
       });
   }
 

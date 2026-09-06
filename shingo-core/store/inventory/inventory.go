@@ -56,9 +56,9 @@ var inventorySQL = fmt.Sprintf(`
 WITH bin_items AS (
     -- Bins with manifest items
     -- qty is DERIVED: uop_remaining x the template's parts_per_cycle. The
-    -- manifest line carries no count of its own — it used to, and that
-    -- number was a full-bin nominal nothing rewrote as the bin was drawn
-    -- down, so this column reported every partially-consumed bin as full.
+    -- manifest line carries no count of its own — it used to, and nothing
+    -- rewrote that number as the bin was drawn down, so this column reported
+    -- a stale count for every partially-consumed bin.
     -- The LEFT JOIN keeps a bin listed when its template has no line for
     -- the part; the count is then 0, which is the honest answer when there
     -- is no ratio to count by.

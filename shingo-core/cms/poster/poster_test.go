@@ -28,9 +28,19 @@ type fakeStore struct {
 	txns     map[int64][]*cms.Transaction // by posting id
 	nextID   int64
 
-	failCreate   error
-	failAttach   error
-	failNextPend error
+	// orphans are transactions no posting has claimed — the sweep's input.
+	// AttachCMSPosting removes what it claims, mirroring the SQL's
+	// posting_id IS NULL guard.
+	orphans []*cms.Transaction
+
+	failCreate       error
+	failAttach       error
+	failNextPend     error
+	failListUnposted error
+	// failMarkPosted reproduces the one after-send failure the reconciler can
+	// resolve: the POST succeeded and named an id, and the write that would
+	// have settled the row did not land.
+	failMarkPosted error
 }
 
 func newFakeStore() *fakeStore {
@@ -66,11 +76,50 @@ func (f *fakeStore) AttachCMSPosting(txnIDs []int64, postingID int64) (int, erro
 	for _, id := range txnIDs {
 		rows = append(rows, &cms.Transaction{
 			ID: id, CatID: fmt.Sprintf("PART-%d", id), Delta: int64(id),
-			Storeroom: "SM01", BinLabel: "B", SourceType: "movement",
+			Storeroom: "SM01", BinLabel: "B", SourceType: cms.SourceTypeMovement,
 		})
 	}
 	f.txns[postingID] = rows
+	// A claimed row is no longer unposted — the SQL's posting_id IS NULL guard,
+	// in the fake, so a sweep test cannot pass by sweeping the same rows twice.
+	claimed := make(map[int64]bool, len(txnIDs))
+	for _, id := range txnIDs {
+		claimed[id] = true
+	}
+	kept := f.orphans[:0]
+	for _, t := range f.orphans {
+		if !claimed[t.ID] {
+			kept = append(kept, t)
+		}
+	}
+	f.orphans = kept
 	return len(rows), nil
+}
+
+// ListUnpostedCMSTransactions ignores age: every orphan a test plants is one it
+// wants swept. The real query's grace period is about racing a live subscriber,
+// which no test here has.
+func (f *fakeStore) ListUnpostedCMSTransactions(age time.Duration, limit int) ([]*cms.Transaction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failListUnposted != nil {
+		return nil, f.failListUnposted
+	}
+	out := make([]*cms.Transaction, len(f.orphans))
+	copy(out, f.orphans)
+	return out, nil
+}
+
+// orphan plants a transaction the subscriber recorded and no posting claimed.
+func (f *fakeStore) orphan(ids ...int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, id := range ids {
+		f.orphans = append(f.orphans, &cms.Transaction{
+			ID: id, CatID: fmt.Sprintf("PART-%d", id), Delta: int64(id),
+			Storeroom: "SM01", BinLabel: "B", SourceType: cms.SourceTypeMovement,
+		})
+	}
 }
 
 func (f *fakeStore) NextPendingCMSPostings(limit int) ([]*cms.Posting, error) {
@@ -106,7 +155,7 @@ func (f *fakeStore) ListCMSTransactionsByPosting(postingID int64) ([]*cms.Transa
 	return f.txns[postingID], nil
 }
 
-func (f *fakeStore) MarkCMSPostingInflight(id int64, batchKey, bodySHA string) error {
+func (f *fakeStore) MarkCMSPostingInflight(id int64, bodySHA string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p, ok := f.postings[id]
@@ -117,14 +166,33 @@ func (f *fakeStore) MarkCMSPostingInflight(id int64, batchKey, bodySHA string) e
 		return fmt.Errorf("cms posting %d is not pending", id)
 	}
 	now := time.Now()
-	p.Status, p.BatchKey, p.BodySHA, p.InflightAt = cms.StatusInflight, batchKey, bodySHA, &now
+	p.Status, p.BodySHA, p.InflightAt = cms.StatusInflight, bodySHA, &now
 	p.Attempts++
+	return nil
+}
+
+// MarkCMSPostingTransactionID mirrors the SQL's inflight guard: it writes the
+// id and touches nothing else.
+func (f *fakeStore) MarkCMSPostingTransactionID(id int64, transactionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := f.postings[id]
+	if p == nil {
+		return fmt.Errorf("no posting %d", id)
+	}
+	if p.Status != cms.StatusInflight {
+		return fmt.Errorf("cms posting %d is not inflight", id)
+	}
+	p.TransactionID = transactionID
 	return nil
 }
 
 func (f *fakeStore) MarkCMSPostingPosted(id int64, transactionID string, httpStatus int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failMarkPosted != nil {
+		return f.failMarkPosted
+	}
 	p := f.postings[id]
 	if p == nil {
 		return fmt.Errorf("no posting %d", id)
@@ -158,12 +226,14 @@ func (f *fakeStore) MarkCMSPostingPending(id int64, lastErr string, nextRetry ti
 	return nil
 }
 
-func (f *fakeStore) ScheduleCMSPostingRetry(id int64, lastErr string, nextRetry time.Time) error {
+func (f *fakeStore) RecordCMSPostingAfterSendError(id int64, lastErr string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p := f.postings[id]
-	// Attempts deliberately untouched: MarkInflight counts them.
-	p.LastError, p.NextRetryAt = lastErr, &nextRetry
+	// Attempts deliberately untouched: MarkInflight counts them. next_retry_at
+	// is untouched too — an inflight row is not on a retry clock, its only exit
+	// is the reconciler.
+	p.LastError = lastErr
 	return nil
 }
 
@@ -430,19 +500,27 @@ func TestDrain_AuthFaultMutesRatherThanBurningEveryBudget(t *testing.T) {
 	if store.get(2).Status != cms.StatusPending || store.get(3).Status != cms.StatusPending {
 		t.Error("the untried postings did not stay pending — they must survive the mute")
 	}
+	// AND POSTING 1, THE ONE THAT FAULTED. This test asserted only on the rows
+	// that were never tried, so it was blind to what happened to the row that
+	// was — which is where the bug was. A 401 is positive evidence the
+	// middleware did not book it, and the fix is a key in a yaml file, so the
+	// row is safe to send again and must be waiting to be.
+	if got := store.get(1); got.Status != cms.StatusPending {
+		t.Errorf("the faulting posting is %q, want pending — a credential fault is a "+
+			"statement about the configuration, not about this row, and failing it makes "+
+			"the row that happened to be first in the queue a person's problem while its "+
+			"identical neighbours stay queued", got.Status)
+	}
 	if !strings.Contains(p.MutedReason(), "credential") {
 		t.Errorf("muted reason = %q, want it to name the credential fault", p.MutedReason())
 	}
 
-	// Further drains do nothing until somebody clears it.
+	// Further drains do nothing. A mute is cleared by restarting core — there
+	// is no unmute verb, deliberately: the fault it fires on is a credential,
+	// and a credential is fixed in the yaml that is read at boot.
 	p.DrainOnce(context.Background())
 	if tr.postCount() != 1 {
 		t.Errorf("posts = %d after a second drain, want 1 — muted means muted", tr.postCount())
-	}
-	p.Unmute()
-	p.DrainOnce(context.Background())
-	if tr.postCount() == 1 {
-		t.Error("unmuting did not resume the drain")
 	}
 }
 
@@ -553,9 +631,6 @@ func TestEnqueue_CreatesOnePendingPostingAndRings(t *testing.T) {
 	if got == nil || got.Status != cms.StatusPending {
 		t.Fatalf("posting = %+v, want one pending row", got)
 	}
-	if got.BatchKey == "" {
-		t.Error("batch_key is empty — it is what identifies this POST in a log after a crash")
-	}
 	rows, _ := store.ListCMSTransactionsByPosting(1)
 	if len(rows) != 3 {
 		t.Errorf("posting carries %d transactions, want 3", len(rows))
@@ -582,21 +657,139 @@ func TestEnqueue_IgnoresRowsWithNoID(t *testing.T) {
 	}
 }
 
-// ── reconcile ───────────────────────────────────────────────────────────
-
-func TestReconcile_ConfirmedHitSettlesThePosting(t *testing.T) {
+// TestSendOne_MarkPostedFailurePersistsTxID guards the reconciler's only
+// reachable entrance.
+//
+// The POST succeeded and named an id; the write that would have settled the row
+// failed. Before the id was written first, that lost it, leaving an inflight
+// row with nothing to ask about — the one inflight state nothing can resolve.
+// The row must end up inflight AND carrying the id.
+func TestSendOne_MarkPostedFailurePersistsTxID(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
+	store.failMarkPosted = errors.New("connection reset by peer")
+	tr := &fakeTransport{results: []client.PostResult{
+		{Class: client.ClassPosted, TransactionID: "MW-4242", HTTPStatus: 200},
+	}}
+	p := testPoster(t, store, tr)
+	enqueue(t, p, 1)
+
+	p.DrainOnce(context.Background())
+
+	got := store.get(1)
+	if got.Status != cms.StatusInflight {
+		t.Errorf("status = %q, want inflight — the settling write failed", got.Status)
+	}
+	if got.TransactionID != "MW-4242" {
+		t.Fatalf("transaction_id = %q, want %q — without it the reconciler has nothing to "+
+			"ask the middleware about and the row can never be resolved",
+			got.TransactionID, "MW-4242")
+	}
+}
+
+// TestReconcile_ResolvesInflightWithTxIDFromDBBlip drives that same production
+// path and then reconciles what it left.
+//
+// The reconcile tests below used to reach into the fake and assign a
+// TransactionID by hand, under a comment saying "as a 2xx-then-timeout would
+// have" — a thing no production path did, because MarkPosted carried the id and
+// the status together and a lost acknowledgement lost both. They now drive this
+// same path, so the fixture is the production one rather than a description of
+// it.
+func TestReconcile_ResolvesInflightWithTxIDFromDBBlip(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.failMarkPosted = errors.New("connection reset by peer")
 	tr := &fakeTransport{
-		results:  []client.PostResult{{Class: client.ClassRetryableAfterSend, HTTPStatus: 500, Err: errors.New("boom")}},
+		results:  []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-4243", HTTPStatus: 200}},
 		getFound: true,
 	}
 	p := testPoster(t, store, tr)
 	enqueue(t, p, 1)
 	p.DrainOnce(context.Background())
-	// Give it a transaction id, as a 2xx-then-timeout would have.
+
+	// The blip is over: the settling write would work now.
 	store.mu.Lock()
-	store.postings[1].TransactionID = "MW-77"
+	store.failMarkPosted = nil
+	store.mu.Unlock()
+	store.ageInflight(1, 2*time.Minute)
+
+	p.ReconcileOnce(context.Background())
+
+	got := store.get(1)
+	if got.Status != cms.StatusPosted {
+		t.Errorf("status = %q, want posted — the middleware confirmed it holds MW-4243", got.Status)
+	}
+	if len(tr.getCalls) != 1 || tr.getCalls[0] != "MW-4243" {
+		t.Errorf("reconciler asked about %v, want exactly [MW-4243]", tr.getCalls)
+	}
+	if tr.postCount() != 1 {
+		t.Errorf("posts = %d, want 1 — resolving must never re-send", tr.postCount())
+	}
+}
+
+// TestDrain_AuthFaultRequeuesTheFaultingPosting.
+//
+// A 401 is not a statement about the posting. It is positive evidence the
+// middleware did NOT book it — so the row is safe to send again, and it must
+// be, because the fix is a key in a yaml file and a restart after which this
+// exact posting should go out.
+//
+// Failing it made the row that happened to be first in the queue permanently a
+// person's problem while its identical neighbours stayed pending: an arbitrary
+// distinction between rows differing only in ordering. The mute is what
+// protects the rest of the queue, and it does not need a corpse to do it.
+func TestDrain_AuthFaultRequeuesTheFaultingPosting(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	tr := &fakeTransport{results: []client.PostResult{
+		{Class: client.ClassAuthFault, HTTPStatus: 401, Err: errors.New("denied")},
+	}}
+	p := testPoster(t, store, tr)
+	enqueue(t, p, 1)
+
+	p.DrainOnce(context.Background())
+
+	got := store.get(1)
+	if got.Status == cms.StatusFailed {
+		t.Errorf("the faulting posting was failed. A config fault that a yaml edit repairs "+
+			"must not turn a queued transfer into a row somebody has to reason about; "+
+			"last_error was %q", got.LastError)
+	}
+	if got.Status != cms.StatusPending {
+		t.Errorf("status = %q, want pending", got.Status)
+	}
+	if got.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1 — the requeue must not refill the retry budget "+
+			"either, or a wrong key could loop forever once someone unmutes", got.Attempts)
+	}
+	if !p.Muted() {
+		t.Error("the poster is not muted — requeueing without muting would burn every " +
+			"posting's budget against the same bad credential")
+	}
+}
+
+// ── reconcile ───────────────────────────────────────────────────────────
+// ── reconcile ───────────────────────────────────────────────────────────
+
+func TestReconcile_ConfirmedHitSettlesThePosting(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	// The row reaches inflight-with-an-id the way production does: the POST
+	// returned 2xx and named one, and the write that would have settled the
+	// row failed. This used to be set by hand under a comment claiming a
+	// 2xx-then-timeout produced it, which nothing ever did.
+	store.failMarkPosted = errors.New("connection reset by peer")
+	tr := &fakeTransport{
+		results:  []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-77", HTTPStatus: 200}},
+		getFound: true,
+	}
+	p := testPoster(t, store, tr)
+	enqueue(t, p, 1)
+	p.DrainOnce(context.Background())
+	// The blip is over by the time the reconciler runs.
+	store.mu.Lock()
+	store.failMarkPosted = nil
 	store.mu.Unlock()
 	store.ageInflight(1, 2*time.Minute)
 
@@ -612,15 +805,16 @@ func TestReconcile_ConfirmedHitSettlesThePosting(t *testing.T) {
 func TestReconcile_ConfirmedMissIsTheOnlyThingThatRequeues(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
+	store.failMarkPosted = errors.New("connection reset by peer")
 	tr := &fakeTransport{
-		results:  []client.PostResult{{Class: client.ClassRetryableAfterSend, HTTPStatus: 500, Err: errors.New("boom")}},
+		results:  []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-78", HTTPStatus: 200}},
 		getFound: false,
 	}
 	p := testPoster(t, store, tr)
 	enqueue(t, p, 1)
 	p.DrainOnce(context.Background())
 	store.mu.Lock()
-	store.postings[1].TransactionID = "MW-78"
+	store.failMarkPosted = nil
 	store.mu.Unlock()
 	store.ageInflight(1, 2*time.Minute)
 
@@ -644,15 +838,16 @@ func TestReconcile_ConfirmedMissIsTheOnlyThingThatRequeues(t *testing.T) {
 func TestReconcile_CouldNotAskLeavesTheRowAlone(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
+	store.failMarkPosted = errors.New("connection reset by peer")
 	tr := &fakeTransport{
-		results: []client.PostResult{{Class: client.ClassRetryableAfterSend, HTTPStatus: 500, Err: errors.New("boom")}},
+		results: []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-79", HTTPStatus: 200}},
 		getErr:  errors.New("middleware unreachable"),
 	}
 	p := testPoster(t, store, tr)
 	enqueue(t, p, 1)
 	p.DrainOnce(context.Background())
 	store.mu.Lock()
-	store.postings[1].TransactionID = "MW-79"
+	store.failMarkPosted = nil
 	store.mu.Unlock()
 	store.ageInflight(1, 2*time.Minute)
 
@@ -663,6 +858,15 @@ func TestReconcile_CouldNotAskLeavesTheRowAlone(t *testing.T) {
 	}
 	if tr.postCount() != 1 {
 		t.Errorf("posts = %d, want 1 — nothing may be re-sent on a non-answer", tr.postCount())
+	}
+	// AND IT MUST NOT HAVE BEEN REQUEUED. This is the one reconciler branch
+	// where a regression re-sends a posting the middleware is holding: treating
+	// "the query failed" as "the middleware does not have it" is a single
+	// mis-read of a three-valued answer, and it double-books a transfer on an
+	// API with no idempotency key.
+	if got := store.get(1); got.RequeueCount != 0 {
+		t.Errorf("requeue_count = %d, want 0 — a transport error was read as a confirmed "+
+			"miss, which is how a landed transfer gets sent twice", got.RequeueCount)
 	}
 }
 
@@ -701,15 +905,16 @@ func TestReconcile_NoTransactionIDIsNeverAutoResolved(t *testing.T) {
 func TestReconcile_RespectsTheSettleWindow(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
+	store.failMarkPosted = errors.New("connection reset by peer")
 	tr := &fakeTransport{
-		results:  []client.PostResult{{Class: client.ClassRetryableAfterSend, HTTPStatus: 500, Err: errors.New("boom")}},
+		results:  []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-80", HTTPStatus: 200}},
 		getFound: false,
 	}
 	p := testPoster(t, store, tr)
 	enqueue(t, p, 1)
 	p.DrainOnce(context.Background())
 	store.mu.Lock()
-	store.postings[1].TransactionID = "MW-80"
+	store.failMarkPosted = nil
 	store.mu.Unlock()
 	// NOT aged: it went inflight a moment ago.
 
@@ -723,9 +928,200 @@ func TestReconcile_RespectsTheSettleWindow(t *testing.T) {
 	}
 }
 
+// TestReconcile_RequeueLoopIsBounded.
+//
+// The cycle is real and this branch made it reachable: a send that fails after
+// the bytes go out leaves the row inflight, the reconciler asks, the middleware
+// says it does not hold it, the row goes back to pending, and it can fail the
+// same way again. requeue_count was already being incremented for exactly this
+// and nothing read it — a bound with no ceiling is not a bound.
+//
+// attempts does not stop it either: a requeue deliberately PRESERVES the
+// attempt budget, so a row that is requeued before it ever exhausts its
+// attempts could turn indefinitely.
+func TestReconcile_RequeueLoopIsBounded(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	// The one path that reaches a requeue: the POST returns 2xx and names an
+	// id, the settling write fails, and the middleware then says it does not
+	// hold that id after all. An after-send failure would NOT do — it leaves
+	// no id, so the reconciler never asks and never requeues.
+	store.failMarkPosted = errors.New("connection reset by peer")
+	tr := &fakeTransport{
+		results:  []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-LOOP", HTTPStatus: 200}},
+		getFound: false, // ...and then denies holding it, every time
+	}
+	p := New(store, tr, Config{
+		PollInterval: time.Millisecond,
+		MaxAttempts:  100, // deliberately generous: the requeue bound is what must stop this
+		SettleWindow: time.Minute,
+		MaxRequeues:  2,
+		Wire:         wire.Config{ReasonCode: "T", IncreaseType: "I", DecreaseType: "D", UnitOfMeasure: "EA", UserID: "U"},
+	}, func(string, ...any) {})
+	enqueue(t, p, 1)
+
+	// Turn the crank well past the bound.
+	for i := 0; i < 10; i++ {
+		p.DrainOnce(context.Background())
+		store.ageInflight(1, 2*time.Minute)
+		p.ReconcileOnce(context.Background())
+	}
+
+	got := store.get(1)
+	if got.Status != cms.StatusFailed {
+		t.Errorf("status = %q after ten reconcile passes, want failed — the loop has no other "+
+			"ceiling and would turn for as long as the middleware keeps saying no", got.Status)
+	}
+	if got.RequeueCount > 2 {
+		t.Errorf("requeue_count = %d, want at most the configured 2", got.RequeueCount)
+	}
+	if !strings.Contains(got.LastError, "returned this posting to the queue") {
+		t.Errorf("last_error = %q, want it to say the reconciler stopped rather than that a "+
+			"send failed — those send someone to different places", got.LastError)
+	}
+	// And the bound is what stopped it, not the attempt budget.
+	if got.Attempts >= 100 {
+		t.Errorf("attempts = %d — MaxAttempts was set to 100 precisely so it could not be "+
+			"what ended this; if it was, the requeue bound is doing nothing", got.Attempts)
+	}
+}
+
+// TestReconcile_RequeuesUpToTheBound is the selectivity half: a bound that
+// refuses the FIRST requeue would turn one bad round trip into a dead row and
+// defeat the recovery the reconciler exists for.
+func TestReconcile_RequeuesUpToTheBound(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.failMarkPosted = errors.New("connection reset by peer")
+	tr := &fakeTransport{
+		results:  []client.PostResult{{Class: client.ClassPosted, TransactionID: "MW-ONCE", HTTPStatus: 200}},
+		getFound: false,
+	}
+	p := New(store, tr, Config{
+		PollInterval: time.Millisecond, MaxAttempts: 100, SettleWindow: time.Minute,
+		MaxRequeues: 2,
+		Wire:        wire.Config{ReasonCode: "T", IncreaseType: "I", DecreaseType: "D", UnitOfMeasure: "EA", UserID: "U"},
+	}, func(string, ...any) {})
+	enqueue(t, p, 1)
+
+	p.DrainOnce(context.Background())
+	store.ageInflight(1, 2*time.Minute)
+	p.ReconcileOnce(context.Background())
+
+	got := store.get(1)
+	if got.Status != cms.StatusPending {
+		t.Errorf("status = %q after ONE confirmed miss, want pending — that is the recovery "+
+			"the reconciler exists to perform", got.Status)
+	}
+	if got.RequeueCount != 1 {
+		t.Errorf("requeue_count = %d, want 1", got.RequeueCount)
+	}
+}
+
+// ── backoff ─────────────────────────────────────────────────────────────
 // ── backoff ─────────────────────────────────────────────────────────────
 
-// TestNextRetry_GrowsAndIsCapped. The cap is what makes MaxAttempts a bounded
+// TestSweep_ReenqueuesOrphanedTransactions is the reconciliation half of the
+// doorbell.
+//
+// Enqueue runs on the event subscriber's goroutine. If it fails — the posting
+// insert errors, the attach errors, the process dies between them — the
+// transaction rows sit with posting_id NULL and nothing retries, because the
+// only thing that would have was the notification that already failed. You
+// cannot wire up an absence, so the sweep asks the question directly.
+func TestSweep_ReenqueuesOrphanedTransactions(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	p := testPoster(t, store, &fakeTransport{})
+
+	// Two rows the subscriber recorded and never queued.
+	store.orphan(41, 42)
+
+	p.SweepOrphansOnce(context.Background())
+
+	got := store.get(1)
+	if got == nil {
+		t.Fatal("the sweep created no posting — the transactions are still unqueued, and " +
+			"the only thing that would have queued them has already failed")
+	}
+	if got.Status != cms.StatusPending {
+		t.Errorf("status = %q, want pending", got.Status)
+	}
+	rows, _ := store.ListCMSTransactionsByPosting(got.ID)
+	if len(rows) != 2 {
+		t.Errorf("posting carries %d transactions, want 2", len(rows))
+	}
+}
+
+// TestSweep_DoesNotReclaimWhatItAlreadySwept: the sweep must converge. A second
+// pass over rows a first pass claimed would create a posting per tick, forever,
+// for work that is already queued.
+func TestSweep_DoesNotReclaimWhatItAlreadySwept(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	p := testPoster(t, store, &fakeTransport{})
+	store.orphan(41)
+
+	p.SweepOrphansOnce(context.Background())
+	p.SweepOrphansOnce(context.Background())
+	p.SweepOrphansOnce(context.Background())
+
+	store.mu.Lock()
+	n := len(store.postings)
+	store.mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d postings after three sweeps, want 1 — a claimed transaction is no "+
+			"longer unposted, and a sweep that cannot see that manufactures work", n)
+	}
+}
+
+// TestSweep_StaysQuietWhenThereIsNothingToFind. The sweep rides the drain
+// ticker, so on a healthy plant it must do nothing at all — a backstop that
+// creates a posting when there is no orphan is worse than no backstop.
+func TestSweep_StaysQuietWhenThereIsNothingToFind(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	p := testPoster(t, store, &fakeTransport{})
+
+	p.SweepOrphansOnce(context.Background())
+
+	store.mu.Lock()
+	n := len(store.postings)
+	store.mu.Unlock()
+	if n != 0 {
+		t.Errorf("the sweep created %d postings with no orphans to find", n)
+	}
+}
+
+// TestSweep_IsSilencedByTheMute. A credential fault means every send fails
+// identically; sweeping then would keep manufacturing postings to fail against
+// a credential nobody has fixed yet, which is the exact thing the mute exists
+// to stop.
+func TestSweep_IsSilencedByTheMute(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	tr := &fakeTransport{results: []client.PostResult{
+		{Class: client.ClassAuthFault, HTTPStatus: 401, Err: errors.New("denied")},
+	}}
+	p := testPoster(t, store, tr)
+	enqueue(t, p, 1)
+	p.DrainOnce(context.Background())
+	if !p.Muted() {
+		t.Fatal("setup: the poster did not mute")
+	}
+
+	store.orphan(41)
+	p.SweepOrphansOnce(context.Background())
+
+	store.mu.Lock()
+	n := len(store.postings)
+	store.mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d postings, want 1 — the sweep ran while muted", n)
+	}
+}
+
+// TestNextRetry_GrowsAndIsCapped// TestNextRetry_GrowsAndIsCapped. The cap is what makes MaxAttempts a bounded
 // amount of TIME: doubling twelve times off a 30s base would put the last
 // attempt a fortnight out, by which point nobody is watching for it.
 func TestNextRetry_GrowsAndIsCapped(t *testing.T) {

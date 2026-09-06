@@ -16,6 +16,22 @@ import (
 	"shingocore/store/internal/helpers"
 )
 
+// Source types for cms_transactions.source_type. Spelled once so a typo is a
+// compile error rather than a row no query will ever match — the same reason
+// the posting statuses next door are constants.
+//
+// The subscriber in engine/wiring.go filters on SourceTypeMovement, and that is
+// the filter a bare literal would silently break: a typo there drops every
+// posting on the floor while the transactions keep being recorded, which looks
+// from every count like a plant that is not moving anything.
+const (
+	SourceTypeMovement = "movement"
+	// SourceTypeCorrection is HISTORICAL ONLY. The path that wrote it was
+	// removed; the value is kept here so the diagnostics filter and anyone
+	// reading old rows share one vocabulary with the writers.
+	SourceTypeCorrection = "correction"
+)
+
 // Transaction is the cms_transactions row entity. The type is re-aliased
 // at the outer store/ level as store.CMSTransaction so service/, engine/,
 // and material/ compile unchanged.
@@ -101,10 +117,17 @@ func Create(db *sql.DB, txns []*Transaction) error {
 		var id int64
 		// posting_id is deliberately not inserted: a new row is unsent by
 		// definition, and NULL is what the unposted index selects on.
-		err := tx.QueryRow(`INSERT INTO cms_transactions (node_id, node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+		//
+		// notes is not inserted either, and for a different reason: nothing
+		// stamps a note on a new row, so binding it wrote an empty string
+		// through twelve placeholders and made the column look like a field
+		// this path fills. The COLUMN stays — historical rows carry notes and
+		// the diagnostics table still reads them — and the default supplies
+		// the empty string for new ones.
+		err := tx.QueryRow(`INSERT INTO cms_transactions (node_id, node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 			t.NodeID, t.NodeName, t.CatID, t.Delta,
 			helpers.NullableInt64(t.BinID), t.BinLabel, t.PayloadCode, t.SourceType,
-			helpers.NullableInt64(t.OrderID), t.Storeroom, t.RobotID, t.Notes).Scan(&id)
+			helpers.NullableInt64(t.OrderID), t.Storeroom, t.RobotID).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("create cms transaction: %w", err)
 		}
@@ -141,17 +164,32 @@ func ListAll(db *sql.DB, limit, offset int) ([]*Transaction, error) {
 	return scanTransactions(rows)
 }
 
-// ListUnposted returns transactions no posting has claimed yet, oldest first.
+// ListUnpostedOlderThan returns transactions no posting has claimed, older than
+// age, oldest first. It is the poster's orphan sweep.
 //
 // posting_id IS NULL is the queue. It is a structural fact rather than a status
 // column: a row either belongs to a POST or it does not, and there is no third
 // state to fall out of step with the posting's own lifecycle.
-func ListUnposted(db *sql.DB, limit int) ([]*Transaction, error) {
+//
+// THE AGE IS WHAT KEEPS THIS OFF THE HAPPY PATH. A transaction is written and
+// its posting is created moments later, on a different goroutine, so a sweep
+// with no grace period would race the subscriber for every row the system
+// produces. The claim is guarded (AttachPosting takes only NULL rows), so the
+// race is not a correctness problem — it is churn, a posting created and
+// immediately failed for having taken nothing. A grace period longer than the
+// enqueue takes removes it.
+//
+// Legacy rows are not in scope and need no clause here: v102 backfilled them
+// to the 0 sentinel, so they are not NULL. That is the same backfill that keeps
+// them out of the health count.
+func ListUnpostedOlderThan(db *sql.DB, age time.Duration, limit int) ([]*Transaction, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM cms_transactions
-		WHERE posting_id IS NULL ORDER BY id LIMIT $1`, selectCols), limit)
+		WHERE posting_id IS NULL AND created_at < NOW() - $1::interval
+		ORDER BY id LIMIT $2`, selectCols),
+		fmt.Sprintf("%d milliseconds", age.Milliseconds()), limit)
 	if err != nil {
 		return nil, err
 	}

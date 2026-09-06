@@ -24,9 +24,24 @@ import (
 // There is no idempotency key on this API, so `inflight` is the whole reason
 // this table exists: a row in that state can only be resolved by ASKING the
 // middleware whether it has the transaction, never by sending it again.
+//
+// WHAT THE RECONCILER CAN AND CANNOT RESOLVE, IN V1. Asking requires a
+// transaction id, and only one after-send failure has one: a POST that returned
+// 2xx and named an id, whose settling write then failed (see MarkTransactionID,
+// which exists for that window). Every other way into inflight — a 2xx whose
+// body carried no id we could parse, a 5xx, a timeout mid-response, a crash
+// between the send and the acknowledgement — leaves nothing to ask about, and
+// no automatic move from there is safe: re-sending may double-book and marking
+// posted would invent a success. Those rows age, are counted as
+// UnresolvableInflight, and wait for a person to check the middleware. That is
+// a property of the API rather than an unfinished path — if the middleware ever
+// dedupes on the x-body-sha256 the client already sends, the re-send becomes
+// safe and the whole class resolves automatically.
 type Posting struct {
-	ID            int64      `json:"id"`
-	BatchKey      string     `json:"batch_key"`
+	ID int64 `json:"id"`
+	// BodySHA is the sha256 of the canonical JSON that was sent, written
+	// BEFORE the POST so a crash mid-flight leaves a row saying exactly what
+	// went out. It is also the dedup hint the client offers the middleware.
 	BodySHA       string     `json:"body_sha"`
 	Status        string     `json:"status"`
 	TransactionID string     `json:"transaction_id"`
@@ -51,14 +66,14 @@ const (
 	StatusFailed   = "failed"
 )
 
-const postingCols = `id, batch_key, body_sha, status, transaction_id, http_status, attempts,
+const postingCols = `id, body_sha, status, transaction_id, http_status, attempts,
 	requeue_count, next_retry_at, last_error, created_at, inflight_at, posted_at, settled_at`
 
 func scanPosting(row interface{ Scan(...any) error }) (*Posting, error) {
 	var p Posting
 	var httpStatus sql.NullInt64
 	var nextRetry, inflightAt, postedAt, settledAt sql.NullTime
-	err := row.Scan(&p.ID, &p.BatchKey, &p.BodySHA, &p.Status, &p.TransactionID,
+	err := row.Scan(&p.ID, &p.BodySHA, &p.Status, &p.TransactionID,
 		&httpStatus, &p.Attempts, &p.RequeueCount, &nextRetry, &p.LastError,
 		&p.CreatedAt, &inflightAt, &postedAt, &settledAt)
 	if err != nil {
@@ -102,9 +117,9 @@ func scanPostings(rows *sql.Rows) ([]*Posting, error) {
 // A new posting is always pending with next_retry_at = now: it has not been
 // sent, and the drainer should pick it up on its next pass.
 func CreatePosting(db *sql.DB, p *Posting) error {
-	id, err := helpers.InsertID(db, `INSERT INTO cms_postings (batch_key, body_sha, status, next_retry_at)
-		VALUES ($1, $2, $3, NOW()) RETURNING id`,
-		p.BatchKey, p.BodySHA, StatusPending)
+	id, err := helpers.InsertID(db, `INSERT INTO cms_postings (body_sha, status, next_retry_at)
+		VALUES ($1, $2, NOW()) RETURNING id`,
+		p.BodySHA, StatusPending)
 	if err != nil {
 		return fmt.Errorf("create cms posting: %w", err)
 	}
@@ -114,6 +129,12 @@ func CreatePosting(db *sql.DB, p *Posting) error {
 }
 
 // GetPosting returns one posting by id.
+//
+// No production path reads a posting by id — the drain and the reconciler both
+// work from lists — so this exists for the tests that assert on a row after a
+// transition. It is kept rather than inlined because the alternative is raw
+// SQL over thirteen columns in an external test package, which would be a
+// second place the column list is written down.
 func GetPosting(db *sql.DB, id int64) (*Posting, error) {
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM cms_postings WHERE id=$1`, postingCols), id)
 	return scanPosting(row)
@@ -148,10 +169,10 @@ func NextPending(db *sql.DB, limit int) ([]*Posting, error) {
 // "we tried, we do not know" — recoverable, because the reconciler can ask.
 //
 // Guarded on status='pending' so it cannot re-arm a row another pass took.
-func MarkInflight(db *sql.DB, id int64, batchKey, bodySHA string) error {
+func MarkInflight(db *sql.DB, id int64, bodySHA string) error {
 	res, err := db.Exec(`UPDATE cms_postings
-		SET status=$1, batch_key=$2, body_sha=$3, inflight_at=NOW(), attempts=attempts+1
-		WHERE id=$4 AND status=$5`, StatusInflight, batchKey, bodySHA, id, StatusPending)
+		SET status=$1, body_sha=$2, inflight_at=NOW(), attempts=attempts+1
+		WHERE id=$3 AND status=$4`, StatusInflight, bodySHA, id, StatusPending)
 	if err != nil {
 		return fmt.Errorf("mark cms posting %d inflight: %w", id, err)
 	}
@@ -169,6 +190,30 @@ func MarkPosted(db *sql.DB, id int64, transactionID string, httpStatus int) erro
 		WHERE id=$4`, StatusPosted, transactionID, httpStatus, id)
 	if err != nil {
 		return fmt.Errorf("mark cms posting %d posted: %w", id, err)
+	}
+	return nil
+}
+
+// MarkTransactionID records the middleware's transaction id WITHOUT settling
+// the row.
+//
+// It exists for one narrow window, and that window is the reconciler's only
+// reachable entrance. MarkPosted writes the id and the status in one statement,
+// so a failure of it used to lose the id and leave an inflight row with nothing
+// to ask about — the single inflight state that has no automatic resolution at
+// all. Writing the id first turns that same failure into a row the reconciler
+// CAN ask about.
+//
+// Guarded on status='inflight' so it cannot stamp an id onto a row another pass
+// has already settled.
+func MarkTransactionID(db *sql.DB, id int64, transactionID string) error {
+	res, err := db.Exec(`UPDATE cms_postings SET transaction_id=$1
+		WHERE id=$2 AND status=$3`, transactionID, id, StatusInflight)
+	if err != nil {
+		return fmt.Errorf("record transaction id for cms posting %d: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("cms posting %d is not inflight", id)
 	}
 	return nil
 }
@@ -213,20 +258,27 @@ func MarkPending(db *sql.DB, id int64, lastErr string, nextRetry time.Time) erro
 	return nil
 }
 
-// ScheduleRetry records why a try failed and when to look again, WITHOUT
-// touching attempts.
+// RecordAfterSendError records why a send failed, on a row that STAYS
+// inflight. It touches nothing else.
 //
-// MarkInflight is the one place an attempt is counted, because it is the one
-// call that happens exactly once per send. Counting again here would make an
-// after-send failure cost two attempts where a before-send failure costs one,
-// and MaxAttempts would mean half as many tries on the path that needs them
-// most.
-func ScheduleRetry(db *sql.DB, id int64, lastErr string, nextRetry time.Time) error {
+// It does not schedule anything, and the name says so now: it used to also
+// write next_retry_at, which was inert. NextPending reads that column only for
+// PENDING rows, the reconciler keys on inflight_at, and RequeuePending
+// overwrites it on the way out — so the value was written, never read, and
+// implied a retry clock this row is not on. An inflight posting's only exit is
+// the reconciler asking the middleware.
+//
+// attempts is deliberately untouched. MarkInflight is the one place an attempt
+// is counted, because it is the one call that happens exactly once per send;
+// counting again here would make an after-send failure cost two attempts where
+// a before-send failure costs one, and MaxAttempts would mean half as many
+// tries on the path that needs them most.
+func RecordAfterSendError(db *sql.DB, id int64, lastErr string) error {
 	_, err := db.Exec(`UPDATE cms_postings
-		SET last_error=$1, next_retry_at=$2
-		WHERE id=$3`, lastErr, nextRetry, id)
+		SET last_error=$1
+		WHERE id=$2`, lastErr, id)
 	if err != nil {
-		return fmt.Errorf("schedule retry for cms posting %d: %w", id, err)
+		return fmt.Errorf("record after-send error for cms posting %d: %w", id, err)
 	}
 	return nil
 }
@@ -254,8 +306,9 @@ func ListInflightOlderThan(db *sql.DB, d time.Duration) ([]*Posting, error) {
 // transaction, which is the only evidence that re-sending is safe.
 //
 // attempts is preserved so the retry budget still bounds the row; requeue_count
-// counts separately, so a reconciler/poster loop is boundable on its own terms
-// without shortening that budget.
+// counts separately, so a reconciler/poster loop is bounded on its own terms
+// without shortening that budget. The poster reads it against cms.max_requeues
+// before calling this — see ReconcileOnce.
 func RequeuePending(db *sql.DB, id int64) error {
 	res, err := db.Exec(`UPDATE cms_postings
 		SET status=$1, requeue_count=requeue_count+1, next_retry_at=NOW(),
@@ -300,6 +353,27 @@ type Health struct {
 	// counted separately and are always a person's problem.
 	UnresolvableInflight int `json:"unresolvable_inflight_count"`
 
+	// Requeued counts postings the reconciler has returned to the queue at
+	// least once. CONTEXT, NOT A VERDICT INPUT: a requeue is a normal recovery
+	// and a bounded one, and a loop that reaches the bound becomes a `failed`
+	// row, which the verdict already ranks. A second loud signal saying the
+	// same thing in different words is how a health page becomes noise.
+	Requeued int `json:"requeued_count"`
+
+	// RejectedRecent and FailedRecent are the same rows as Rejected and
+	// Failed, restricted to those that became terminal inside the health
+	// window. THE VERDICT READS THESE; the page shows the lifetime totals.
+	//
+	// The split exists because a verdict built on the totals can never return
+	// to green. One refusal in March would still be saying "attention" in
+	// December, and a health surface that cannot go green stops being read —
+	// which costs more than the silence it was built to prevent. The totals do
+	// not disappear: they stay in the counts row, and the healthy sentence
+	// names them so a parked failure is still visible without latching the
+	// verdict on it.
+	RejectedRecent int `json:"rejected_recent_count"`
+	FailedRecent   int `json:"failed_recent_count"`
+
 	// Unposted is cms_transactions rows no posting has claimed. Nonzero and
 	// growing means the subscriber is failing to enqueue — transactions are
 	// being recorded and will never be sent, which no posting-status count
@@ -308,10 +382,22 @@ type Health struct {
 }
 
 // PostingHealth reads the queue's state in one round trip.
-func PostingHealth(db *sql.DB) (*Health, error) {
+//
+// window bounds RejectedRecent and FailedRecent — see those fields. A
+// non-positive window is treated as "everything counts", which is what a
+// misconfigured value should do here: the verdict gets louder, not quieter.
+func PostingHealth(db *sql.DB, window time.Duration) (*Health, error) {
 	var h Health
 	var lastPosted sql.NullTime
 	var oldestPending, oldestInflight sql.NullFloat64
+
+	if window <= 0 {
+		// A century, rather than a branch in the SQL. Fails loud.
+		window = 100 * 365 * 24 * time.Hour
+	}
+	// settled_at, not created_at: the question is when the row became
+	// terminal, which is when somebody would have had cause to look at it.
+	cutoff := fmt.Sprintf("%d milliseconds", window.Milliseconds())
 
 	err := db.QueryRow(`
 		SELECT
@@ -324,11 +410,16 @@ func PostingHealth(db *sql.DB) (*Health, error) {
 			max(posted_at) FILTER (WHERE status = 'posted'),
 			EXTRACT(EPOCH FROM (NOW() - min(created_at) FILTER (WHERE status = 'pending'))),
 			EXTRACT(EPOCH FROM (NOW() - min(inflight_at) FILTER (WHERE status = 'inflight'))),
-			count(*) FILTER (WHERE status = 'inflight' AND transaction_id = '')
-		FROM cms_postings`).Scan(
+			count(*) FILTER (WHERE status = 'inflight' AND transaction_id = ''),
+			count(*) FILTER (WHERE status = 'rejected'
+				AND settled_at IS NOT NULL AND settled_at > NOW() - $1::interval),
+			count(*) FILTER (WHERE status = 'failed'
+				AND settled_at IS NOT NULL AND settled_at > NOW() - $1::interval),
+			count(*) FILTER (WHERE requeue_count > 0)
+		FROM cms_postings`, cutoff).Scan(
 		&h.Pending, &h.Inflight, &h.Posted, &h.Rejected, &h.Failed,
 		&h.PostedLastHour, &lastPosted, &oldestPending, &oldestInflight,
-		&h.UnresolvableInflight)
+		&h.UnresolvableInflight, &h.RejectedRecent, &h.FailedRecent, &h.Requeued)
 	if err != nil {
 		return nil, fmt.Errorf("cms posting health: %w", err)
 	}

@@ -278,7 +278,6 @@ CREATE TABLE public.cell_targets (
 
 CREATE TABLE public.cms_postings (
     id bigint NOT NULL,
-    batch_key text NOT NULL,
     body_sha text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
     transaction_id text DEFAULT ''::text NOT NULL,
@@ -1685,8 +1684,6 @@ CREATE INDEX idx_cell_part_events_cell_time ON ONLY public.cell_part_events USIN
 CREATE INDEX idx_cms_postings_inflight ON public.cms_postings USING btree (id) WHERE (status = 'inflight'::text);
 
 CREATE INDEX idx_cms_postings_pending ON public.cms_postings USING btree (next_retry_at) WHERE (status = 'pending'::text);
-
-CREATE INDEX idx_cms_postings_txid ON public.cms_postings USING btree (transaction_id) WHERE (transaction_id <> ''::text);
 
 CREATE INDEX idx_cms_txn_created ON public.cms_transactions USING btree (created_at);
 

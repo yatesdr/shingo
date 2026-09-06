@@ -56,11 +56,11 @@ func (e *Engine) CMSTransactionService() *service.CMSTransactionService {
 // from the tables alone would report a muted poster with a quiet queue as
 // healthy and idle.
 func (e *Engine) CMSFeedHealth() (*service.FeedHealth, error) {
-	muted, why := false, ""
+	ps := service.ProcessState{Enabled: e.cfg.CMS.Enabled()}
 	if e.cmsPoster != nil {
-		muted, why = e.cmsPoster.Muted(), e.cmsPoster.MutedReason()
+		ps.Muted, ps.MutedReason = e.cmsPoster.Muted(), e.cmsPoster.MutedReason()
 	}
-	h, err := e.cmsPostingService.Health(e.cfg.CMS.Enabled(), muted, why)
+	h, err := e.cmsPostingService.Health(ps)
 	if err != nil {
 		return nil, err
 	}

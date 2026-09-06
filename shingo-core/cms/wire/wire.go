@@ -56,6 +56,13 @@ type MiddlewareTx struct {
 // package-level variable so a test can state it and a second plant could
 // differ without this package knowing there is more than one.
 type Config struct {
+	// Department and Operation are blank in the vendor's sample and blank in
+	// the shipped defaults. They are FIELDS rather than the hardcoded ""s they
+	// were, because the followup list's promise is that all CMS vocabulary is a
+	// yaml edit — and two of the thirteen being a code change and a release
+	// contradicted that on the day SCO comes back with values for them.
+	Department    string
+	Operation     string
 	ReasonCode    string
 	IncreaseType  string
 	DecreaseType  string
@@ -106,11 +113,11 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 			ReasonCode:    cfg.ReasonCode,
 			UnitOfMeasure: cfg.UnitOfMeasure,
 			UserID:        cfg.UserID,
-			// Department and Operation are empty per the vendor's sample. They
-			// are declared rather than omitted so the body's shape does not
-			// change when SCO fills them in.
-			Department: "",
-			Operation:  "",
+			// Empty by default, per the vendor's sample, and declared rather
+			// than omitted so the body's shape does not change when SCO fills
+			// them in — which is now a yaml edit.
+			Department: cfg.Department,
+			Operation:  cfg.Operation,
 		})
 	}
 	return out

@@ -77,17 +77,18 @@ func GetPropertyOrError(db *sql.DB, nodeID int64, key string) (string, error) {
 	return value, nil
 }
 
-// GetProperty returns a single property value for a node, or empty string if not set.
+// GetProperty returns a single property value for a node, or empty string if
+// not set.
+//
+// It is GetPropertyOrError with the error flattened, and it delegates rather
+// than repeating the query so the two cannot drift on what "unset" means. The
+// flattening is the whole difference and it is deliberate for advisory callers;
+// the log line is what stops a DB hiccup masquerading silently as an
+// unconfigured property. A caller that DECIDES something on the answer wants
+// GetPropertyOrError — see its comment.
 func GetProperty(db *sql.DB, nodeID int64, key string) string {
-	var value string
-	err := db.QueryRow(`SELECT value FROM node_properties WHERE node_id=$1 AND key=$2`, nodeID, key).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "" // property not set
-	}
+	value, err := GetPropertyOrError(db, nodeID, key)
 	if err != nil {
-		// Real read failure (not "unset"): keep the "" convenience contract for
-		// callers, but log it so a DB hiccup can't masquerade silently as an
-		// unconfigured property.
 		log.Printf("nodes: get property %q for node %d: %v", key, nodeID, err)
 		return ""
 	}

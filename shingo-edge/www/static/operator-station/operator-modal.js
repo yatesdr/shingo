@@ -690,28 +690,15 @@ function cellCardAction(entry, claim, remaining) {
             action: 'release-prompt:/api/orders/' + staged.id + '/release' };
     }
     if (delivered) {
-        let confirmLabel = 'CONFIRM';
-        const binState = entry.bin_state;
-        // DEAD, AND DEAD TWICE OVER. Core ships bins.manifest as an OBJECT
-        // ({"items":[...]}), so Array.isArray is false and this has never run.
-        // And the shape it reaches for is gone: manifest lines carry no
-        // `quantity` since Core stopped storing a count on them — the count is
-        // bins.uop_remaining x the payload template's parts_per_cycle. Do not
-        // "fix" the isArray check; that would sum a field that is not there and
-        // label the button "qty 0". Left in place rather than deleted because
-        // the label it wanted is worth building properly, from the derived
-        // count, when someone has a reason to.
-        if (binState && binState.manifest) {
-            try {
-                const mf = JSON.parse(binState.manifest);
-                if (Array.isArray(mf) && mf.length > 0) {
-                    const totalQty = mf.reduce(function(sum, item) { return sum + (item.quantity || 0); }, 0);
-                    confirmLabel = 'CONFIRM: ' + mf.length + (mf.length === 1 ? ' part' : ' parts') + ', qty ' + totalQty;
-                }
-            } catch (err) {
-                console.error('cellCardAction manifest parse', err);
-            }
-        }
+        // A part-count label on this button was attempted and never worked: it
+        // gated on Array.isArray of a manifest Core has always shipped as an
+        // object, and summed a `quantity` field the manifest line no longer
+        // carries at all. Deleted rather than annotated — git remembers, and
+        // ten lines of prose explaining unreachable code is a thing every
+        // future reader has to disprove. If the label is wanted, the count is
+        // uop_remaining x the template's parts_per_cycle and Core is where it
+        // would come from.
+        const confirmLabel = 'CONFIRM';
         if (Number.isInteger(delivered.id) && delivered.id > 0) {
             return { label: confirmLabel, cls: 'request', enabled: true,
                 action: '/api/confirm-delivery/' + delivered.id };

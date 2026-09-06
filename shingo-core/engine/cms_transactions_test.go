@@ -387,11 +387,14 @@ func TestCMSPostingSubscriber_QueuesMovementsAndFiltersCorrections(t *testing.T)
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 
-	eng := newUnstartedEngine(t, db, simulator.New())
-	eng.cfg.CMS = config.CMSConfig{
-		BaseURL: "http://middleware.example.invalid/api", AccessKey: "AK", SecretKey: "SK",
-		PollInterval: time.Hour, SettleWindow: time.Hour, MaxAttempts: 3,
-	}
+	// The block goes in BEFORE New: the poster is built there now, so a cfg
+	// edited afterwards is a value nothing will read again.
+	eng := newUnstartedEngineWith(t, db, simulator.New(), func(cfg *config.Config) {
+		cfg.CMS = config.CMSConfig{
+			BaseURL: "http://middleware.example.invalid/api", AccessKey: "AK", SecretKey: "SK",
+			PollInterval: time.Hour, SettleWindow: time.Hour, MaxAttempts: 3,
+		}
+	})
 	eng.Start()
 	t.Cleanup(eng.Stop)
 

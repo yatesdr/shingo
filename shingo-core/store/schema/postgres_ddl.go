@@ -330,8 +330,10 @@ CREATE TABLE IF NOT EXISTS payload_bin_types (
 -- parts_per_cycle is a RATIO, not a count: how many of this part one
 -- production cycle consumes. The physical count in a bin is
 -- bins.uop_remaining x parts_per_cycle, derived at read time and stored
--- nowhere. It was called quantity and held a full-bin nominal until v99,
--- which renamed it and divided by payloads.uop_capacity to recover the ratio.
+-- nowhere. It was called quantity until v99 renamed it; the value did not
+-- change, because it was always the ratio. Default 1: a line with no stated
+-- ratio is one per cycle, and the old default of 0 contributed nothing to any
+-- count while looking configured.
 CREATE TABLE IF NOT EXISTS payload_manifest (
     id              BIGSERIAL PRIMARY KEY,
     payload_id      BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,

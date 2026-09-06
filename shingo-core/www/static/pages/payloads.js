@@ -7,10 +7,10 @@ import { api, delegateActions, el, escapeHtml, hideModal, removeParentElement, s
  * UoP capacity, and is shown read-only beside it so the person typing a
  * ratio can see the number they used to type.
  *
- * The derived cell is not decoration. The field held a full-bin nominal
- * before the parts_per_cycle rename, so someone editing an old template is
- * looking at a box whose meaning changed under them; the full-bin figure is
- * how they check they typed the right thing.
+ * The derived cell is not decoration. The box was labelled Qty and holds a
+ * ratio — nearly always 1 against capacities in the thousands — which reads
+ * like an unfilled field until you see what it multiplies out to. The
+ * full-bin figure is how someone checks they typed the right thing.
  */
 function uopCapacityFor(containerId) {
   var input = document.getElementById(

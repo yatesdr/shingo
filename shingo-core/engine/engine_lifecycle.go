@@ -9,12 +9,13 @@ import (
 	"shingo/protocol"
 	"shingocore/cms/client"
 	"shingocore/cms/poster"
-	"shingocore/cms/wire"
+	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/fulfillment"
 	"shingocore/material"
+	"shingocore/store"
 )
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -218,51 +219,41 @@ func (e *Engine) Start() {
 		e.maintainer.Run(mntCtx)
 	}
 
-	// The CMS poster. Configuration is the gate: with no cms.base_url there is
-	// no poster, the subscriber that would feed it sees nil, and the whole
-	// subsystem is absent rather than switched off.
-	//
-	// It is started here rather than in New because wireEventHandlers has to
-	// have run first — the subscriber reads e.cmsPoster, and a poster that
-	// existed before the subscription would drain an empty queue while the
-	// first arrivals went nowhere.
-	e.startCMSPoster()
+	// The CMS poster's LOOP. The poster itself was built in New; only its
+	// goroutine starts here, and it starts here rather than in New because
+	// wireEventHandlers has to have run first — a drain that began before the
+	// subscription existed would empty the queue while the first arrivals went
+	// nowhere.
+	e.runCMSPoster()
 
 	e.logFn("engine: started")
 }
 
-// startCMSPoster builds and runs the middleware poster when the site has one.
+// newCMSPoster builds the middleware poster when the site has one, and returns
+// nil when it does not. Configuration is the gate: a site with no cms: block
+// has no poster at all rather than a switched-off one.
+//
+// A FREE FUNCTION CALLED FROM New, not a method called from Start, because the
+// field it fills is read without a lock from the event subscriber's goroutine
+// and from HTTP handlers. Written before any of those exist, it needs no lock;
+// written at the end of Start(), it needed one nobody had given it.
 //
 // The credentials were already validated at config load — a base_url without
-// keys refuses to boot — so reaching here with an enabled block means the
-// integration can actually run.
-func (e *Engine) startCMSPoster() {
-	if !e.cfg.CMS.Enabled() {
+// keys, or one that will not parse, refuses to boot — so a non-nil return means
+// the integration can actually run.
+func newCMSPoster(cfg *config.Config, db *store.DB, logFn func(string, ...any)) *poster.Poster {
+	if !cfg.CMS.Enabled() {
+		return nil
+	}
+	return poster.New(db, client.New(cfg.CMS.Client()), cfg.CMS.Poster(), logFn)
+}
+
+// runCMSPoster starts the poster's drain loop and ties it to the engine's stop
+// channel. No-op when the site has no poster.
+func (e *Engine) runCMSPoster() {
+	if e.cmsPoster == nil {
 		return
 	}
-	e.cmsPoster = poster.New(
-		e.db,
-		client.New(client.Config{
-			BaseURL:   e.cfg.CMS.BaseURL,
-			AccessKey: e.cfg.CMS.AccessKey,
-			SecretKey: e.cfg.CMS.SecretKey,
-			Timeout:   e.cfg.CMS.Timeout,
-		}),
-		poster.Config{
-			PollInterval: e.cfg.CMS.PollInterval,
-			MaxAttempts:  e.cfg.CMS.MaxAttempts,
-			SettleWindow: e.cfg.CMS.SettleWindow,
-			Wire: wire.Config{
-				ReasonCode:    e.cfg.CMS.ReasonCode,
-				IncreaseType:  e.cfg.CMS.IncreaseType,
-				DecreaseType:  e.cfg.CMS.DecreaseType,
-				UnitOfMeasure: e.cfg.CMS.UnitOfMeasure,
-				UserID:        e.cfg.CMS.UserID,
-			},
-		},
-		e.logFn,
-	)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		<-e.stopChan
@@ -283,9 +274,8 @@ func (e *Engine) startCMSPoster() {
 // because the feed is broken look identical from the outside, and only this
 // line distinguishes them.
 func (e *Engine) warnIfNoCMSBoundaries() {
-	var n int
-	if err := e.db.QueryRow(`SELECT count(*) FROM node_properties WHERE key = $1`,
-		material.CMSStoreroomProperty).Scan(&n); err != nil {
+	n, err := material.CountCMSBoundaries(e.db.DB)
+	if err != nil {
 		e.logFn("engine: cms boundary census: %v", err)
 		return
 	}

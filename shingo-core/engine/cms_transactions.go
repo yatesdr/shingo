@@ -1,6 +1,10 @@
 package engine
 
-import "shingocore/material"
+import (
+	"strings"
+
+	"shingocore/material"
+)
 
 // cms_transactions.go — thin engine wrappers around shingocore/material.
 //
@@ -31,7 +35,7 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 	if ev.Replay {
 		return
 	}
-	txns, err := material.BuildMovementTransactions(e.db, material.MovementEvent{
+	txns, uncounted, err := material.BuildMovementTransactions(e.db, material.MovementEvent{
 		BinID:      ev.BinID,
 		FromNodeID: ev.FromNodeID,
 		ToNodeID:   ev.ToNodeID,
@@ -49,6 +53,22 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 			ev.BinID, ev.FromNodeID, ev.ToNodeID, err)
 		return
 	}
+	if uncounted != nil {
+		// THE SAME LOSS BY A THIRD DOOR, and the quietest one. The build
+		// succeeded; part of what crossed the boundary just has no ratio to
+		// count it by, so those parts are booked nowhere. It reached
+		// production as a manifest that named payload codes where the template
+		// keys on part numbers — every partial-release bin resolving to zero,
+		// producing no rows, and looking exactly like a bin that had not moved.
+		// Counting it here is what makes the next spelling mismatch visible on
+		// the day it lands instead of at a stock count.
+		e.cmsBuildFailures.Add(1)
+		e.logFn("engine: cms movement for bin %d (payload %q): the template counts none of "+
+			"%s — %s NOT reach the CMS ledger. The manifest's catid must be a "+
+			"payload_manifest.part_number.",
+			ev.BinID, uncounted.PayloadCode, strings.Join(uncounted.CatIDs, ", "),
+			pluralWill(len(uncounted.CatIDs)))
+	}
 	if len(txns) == 0 {
 		return
 	}
@@ -61,4 +81,13 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 		return
 	}
 	e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})
+}
+
+// pluralWill agrees the verb with the number of uncounted parts, so the log
+// line reads as a sentence in both the one-part and many-part cases.
+func pluralWill(n int) string {
+	if n == 1 {
+		return "that part will"
+	}
+	return "those parts will"
 }

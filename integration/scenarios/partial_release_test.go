@@ -25,6 +25,7 @@ import (
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
+	corepayloads "shingocore/store/payloads"
 	coreharness "shingocore/testharness"
 
 	edgeharness "shingoedge/testharness"
@@ -86,8 +87,22 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 	if err := coreDB.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	const fullManifest = `{"items":[{"catid":"PART-A","qty":1000}]}`
-	if err := coreDB.SetBinManifest(bin.ID, fullManifest, sd.Payload.Code, 1000); err != nil {
+	// A payload whose CODE and template PART NUMBER differ. The reconstruction
+	// writes part numbers, and sd.Payload is code "PART-A" with no template
+	// lines at all — so the assertion below could be satisfied by either
+	// identifier, and the rebuild could not run for want of a part list.
+	pay := &corepayloads.Payload{Code: "SCN-PART-PAYLOAD", UOPCapacity: 1000}
+	if err := coreDB.CreatePayload(pay); err != nil {
+		t.Fatalf("create payload: %v", err)
+	}
+	const wantPart = "SCN-PART-1"
+	if err := coreDB.CreatePayloadManifestItem(&corepayloads.ManifestItem{
+		PayloadID: pay.ID, PartNumber: wantPart, PartsPerCycle: 1,
+	}); err != nil {
+		t.Fatalf("create template line: %v", err)
+	}
+	const fullManifest = `{"items":[{"catid":"STALE-PART","qty":1000}]}`
+	if err := coreDB.SetBinManifest(bin.ID, fullManifest, pay.Code, 1000); err != nil {
 		t.Fatalf("set manifest: %v", err)
 	}
 	if err := coreDB.ConfirmBinManifest(bin.ID, ""); err != nil {
@@ -104,7 +119,7 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 		Quantity:     1,
 		SourceNode:   sd.LineNode.Name,
 		DeliveryNode: "OUTBOUND-DEST",
-		PayloadCode:  sd.Payload.Code,
+		PayloadCode:  pay.Code,
 		StepsJSON: `[{"action":"wait","node":"` + sd.LineNode.Name + `"},` +
 			`{"action":"pickup","node":"` + sd.LineNode.Name + `"},` +
 			`{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
@@ -209,9 +224,9 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 
 	// #15: payload_code preserved on partial release (only RELEASE
 	// EMPTY clears it)
-	if got.PayloadCode != sd.Payload.Code {
+	if got.PayloadCode != pay.Code {
 		t.Errorf("PayloadCode = %q, want %q (preserved on partial)",
-			got.PayloadCode, sd.Payload.Code)
+			got.PayloadCode, pay.Code)
 	}
 
 	// #15: manifest rewritten to single-payload form. Pre-fix this
@@ -229,9 +244,10 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 			len(parsed.Items))
 	}
 	item := parsed.Items[0]
-	if item.CatID != sd.Payload.Code {
-		t.Errorf("manifest CatID = %q, want %q (= payload_code per single-payload normalization)",
-			item.CatID, sd.Payload.Code)
+	if item.CatID != wantPart {
+		t.Errorf("manifest CatID = %q, want %q (the template's part_number). The pre-release "+
+			"list named STALE-PART, so this also proves the rebuild fired rather than the "+
+			"prior manifest being preserved.", item.CatID, wantPart)
 	}
 	// The line carries no count of its own — uop_remaining, asserted above, is
 	// the count, and the part count derives from it times the template's

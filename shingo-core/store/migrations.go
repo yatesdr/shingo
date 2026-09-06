@@ -4098,7 +4098,7 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bin_loaders", "changeover_load_directive")
 			}},
-		{99, "payload_manifest.quantity -> parts_per_cycle, backfilled from the full-bin nominal",
+		{99, "rename payload_manifest.quantity to parts_per_cycle — the value is already the ratio",
 			v99PayloadManifestPartsPerCycle,
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "payload_manifest", "parts_per_cycle") &&
@@ -4106,10 +4106,13 @@ func migrationList() []migration {
 			}},
 		{100, "drop the retired log_cms_transactions node property",
 			v100DropLogCMSTransactionsProperty,
+			// Through the helper, like every predicate around it. Hand-rolled,
+			// this dropped the Scan error — so a query that FAILED left exists
+			// false and the predicate returned true, reporting a post-condition
+			// it had not checked as holding. The migration would then be
+			// recorded as applied without having run.
 			func(q schema.Querier) bool {
-				var exists bool
-				q.QueryRow(`SELECT EXISTS (SELECT 1 FROM node_properties WHERE key = 'log_cms_transactions')`).Scan(&exists)
-				return !exists
+				return schema.NodePropertyKeyAbsent(q, "log_cms_transactions")
 			}},
 		{101, "drop cms_transactions.qty_before/qty_after/txn_type — derived values stored beside their source",
 			v101DropCMSTransactionDerivedColumns,
@@ -4118,7 +4121,7 @@ func migrationList() []migration {
 					!schema.ColumnExists(q, "cms_transactions", "qty_after") &&
 					!schema.ColumnExists(q, "cms_transactions", "txn_type")
 			}},
-		{102, "cms_postings + cms_transactions.posting_id/robot_id/storeroom",
+		{102, "cms_postings + cms_transactions.posting_id/robot_id/storeroom, legacy rows backfilled to 0",
 			v102CMSPostings,
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "cms_postings") &&
@@ -4126,7 +4129,45 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "cms_transactions", "robot_id") &&
 					schema.ColumnExists(q, "cms_transactions", "storeroom")
 			}},
+		{103, "drop cms_postings.batch_key and the transaction_id index nothing queries",
+			v103DropCMSPostingBatchKey,
+			// Through the Absent helpers rather than !ColumnExists: an absence
+			// asserted by negating a helper that returns false on error reads a
+			// failed query as a satisfied post-condition. See schema.ColumnAbsent.
+			func(q schema.Querier) bool {
+				return schema.ColumnAbsent(q, "cms_postings", "batch_key") &&
+					schema.IndexAbsent(q, "idx_cms_postings_txid")
+			}},
 	}
+}
+
+// v103DropCMSPostingBatchKey removes two things v102 added that nothing reads.
+//
+// batch_key was a uuid generated per POST, written twice, scanned on every read
+// and consulted by nothing: not in the wire body, not in a query, not on a
+// page. `id` already identifies a posting, and body_sha already identifies what
+// was sent — a second identifier that no code and no operator ever asks for is
+// a column every future reader has to work out the purpose of.
+//
+// idx_cms_postings_txid indexed transaction_id WHERE transaction_id <> ”, and
+// the only predicate anywhere touching that column is the health query's
+// `transaction_id = ”` — which the index's own WHERE clause EXCLUDES. It could
+// not serve the one query that might have wanted it.
+//
+// A migration rather than an edit to v102, even though v102 has never run at a
+// plant: batch_key is NOT NULL with no default, so any dev database that has
+// already applied v102 would refuse every insert the moment the writer stopped
+// supplying it. DROP COLUMN is correct on a fresh database and on that one.
+func v103DropCMSPostingBatchKey(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE cms_postings DROP COLUMN IF EXISTS batch_key`,
+		`DROP INDEX IF EXISTS idx_cms_postings_txid`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v103 drop cms_postings batch_key: %w", err)
+		}
+	}
+	return nil
 }
 
 // v98LoaderChangeoverLoadDirective moves the changeover load directive onto the
@@ -5542,36 +5583,38 @@ func v90MaintainedGroups(tx *sql.Tx) error {
 }
 
 // v99PayloadManifestPartsPerCycle renames payload_manifest.quantity to
-// parts_per_cycle AND divides the stored value by the payload's UOP capacity.
+// parts_per_cycle. A RENAME ONLY — the value is already the ratio.
 //
-// THE DIVIDE IS THE MIGRATION. The rename on its own would multiply every CMS
-// quantity by uop_capacity, because the two columns do not mean the same thing:
+// THIS ALMOST DIVIDED BY uop_capacity, AND THAT WOULD HAVE BEEN WRONG. The
+// argument for dividing was read off the code: resolveTemplateManifest copies
+// `quantity` verbatim into a bin manifest in the same call that writes
+// uop_remaining = payload.uop_capacity, which implies the two describe the same
+// full bin and so that `quantity` is a full-bin nominal. It does not. The two
+// fields disagreed because the manifest's copy was meaningless, which is the
+// nominal-vs-actual defect this project deletes it over — not because
+// `quantity` held a count.
 //
-//   - quantity was a FULL-BIN NOMINAL. resolveTemplateManifest copies it
-//     verbatim into a bin's manifest in the same call that writes
-//     uop_remaining = payload.uop_capacity, and handlers_telemetry synthesises
-//     a missing template line as {part: code, quantity: uop_capacity}. Both
-//     only make sense if the number describes a full bin.
-//   - parts_per_cycle is a RATIO. The CMS wire quantity is
-//     uop_remaining x parts_per_cycle, so for a full bin that product has to
-//     come back to the old nominal — which makes the ratio
-//     nominal / uop_capacity.
+// MEASURED at both plants on 2026-09-05, before this migration ran anywhere:
 //
-// A one-part-per-cycle payload with a 24-cycle bin therefore stores 24 today
-// and must store 1 after this runs. Renaming without dividing would have it
-// post 576 parts to the storeroom ledger for a full bin, and nothing in shingo
-// reads the value back, so nothing would have caught it.
+//	Springfield  127 rows: 122 at quantity=1, 4 at 0, 1 at 2.
+//	                       uop_capacity 100..18000.
+//	                       ZERO rows where quantity = uop_capacity.
+//	Hopkinsville  17 rows:  16 at quantity=1, 1 at 24 (a Test-Payload fixture,
+//	                       the only row anywhere with quantity = uop_capacity).
 //
-// uop_capacity = 0 rows are left alone: there is no ratio to recover, and a bin
-// from such a template carries uop_remaining = 0, so it produces no CMS rows
-// under either value. They are logged with the rest.
+// A full-bin nominal for a 4500-cycle payload would read 4500. Every one of
+// them reads 1. The column has always been the ratio; nobody ever populated it
+// as a count. Dividing would have flattened the one genuine 2-per-cycle
+// template to 1 and turned four deliberate zeroes into ones — inventing parts
+// in an inventory ledger, which is the failure this whole project exists to
+// avoid.
 //
-// GREATEST(1, ...) because a ratio of zero would silence the part entirely, and
-// a template line that exists is a part that is present.
+// The DEFAULT moves 0 -> 1 because that is what the data says the ordinary case
+// is, and because a new template line defaulting to zero contributes nothing to
+// any count while looking configured.
 func v99PayloadManifestPartsPerCycle(tx *sql.Tx) error {
-	// Idempotent by inspection rather than by IF EXISTS: PostgreSQL has no
-	// ALTER TABLE ... RENAME COLUMN IF EXISTS, and re-running the divide on
-	// an already-divided column would drive every ratio to 1.
+	// Idempotent by inspection: PostgreSQL has no
+	// ALTER TABLE ... RENAME COLUMN IF EXISTS.
 	if !schema.ColumnExists(tx, "payload_manifest", "quantity") {
 		return nil
 	}
@@ -5582,22 +5625,20 @@ func v99PayloadManifestPartsPerCycle(tx *sql.Tx) error {
 		return fmt.Errorf("v99 set parts_per_cycle default: %w", err)
 	}
 
-	// Logged BEFORE the update, because the update destroys the evidence.
-	// These are the rows whose stored number was not an exact multiple of the
-	// bin's capacity — so it meant something other than a full-bin nominal, and
-	// the ratio below is a rounding of it. SCO adjudicates this list; the
-	// migration does not block on it, because a plant that cannot start is
-	// worse than a template that needs review.
+	// Flag the rows that are NOT one-per-cycle. That is the whole review list,
+	// and it is short by measurement: five rows at Springfield, one at
+	// Hopkinsville. The predicate is "<> 1" rather than anything involving
+	// uop_capacity because the ratio and the capacity are independent numbers —
+	// comparing them was the mistake above, written down as a query.
+	//
+	// A zero is called out separately: it means the part is counted as absent
+	// from every bin of that payload, which is a legitimate thing to declare
+	// and an easy thing to have left behind by accident.
 	rows, err := tx.Query(`
 		SELECT p.code, pm.part_number, pm.parts_per_cycle, p.uop_capacity
 		  FROM payload_manifest pm
 		  JOIN payloads p ON p.id = pm.payload_id
-		 -- NULLIF, not a bare modulo: PostgreSQL does not promise to evaluate
-		 -- the left arm of an OR first, so "capacity = 0 OR x % capacity <> 0"
-		 -- is free to divide by zero on exactly the rows the left arm is there
-		 -- to catch. With NULLIF a zero capacity makes the modulo NULL, the
-		 -- comparison unknown, and the row is still selected by the left arm.
-		 WHERE p.uop_capacity = 0 OR pm.parts_per_cycle % NULLIF(p.uop_capacity, 0) <> 0
+		 WHERE pm.parts_per_cycle <> 1
 		 ORDER BY p.code, pm.part_number`)
 	if err != nil {
 		return fmt.Errorf("v99 survey payload_manifest ratios: %w", err)
@@ -5605,14 +5646,21 @@ func v99PayloadManifestPartsPerCycle(tx *sql.Tx) error {
 	var flagged int
 	for rows.Next() {
 		var code, part string
-		var stored, capacity int64
-		if err := rows.Scan(&code, &part, &stored, &capacity); err != nil {
+		var perCycle, capacity int64
+		if err := rows.Scan(&code, &part, &perCycle, &capacity); err != nil {
 			rows.Close()
 			return fmt.Errorf("v99 scan survey row: %w", err)
 		}
 		flagged++
-		log.Printf("migrations: v99 payload %s part %s: stored %d is not a whole multiple of uop_capacity %d "+
-			"— parts_per_cycle will be rounded; have SCO confirm the ratio", code, part, stored, capacity)
+		if perCycle == 0 {
+			log.Printf("migrations: v99 payload %s part %s: parts_per_cycle is 0 — this part will "+
+				"be counted as absent from every bin of this payload; have SCO confirm that is meant",
+				code, part)
+			continue
+		}
+		log.Printf("migrations: v99 payload %s part %s: parts_per_cycle %d (a full %d-cycle bin "+
+			"therefore holds %d) — not one-per-cycle; have SCO confirm the ratio",
+			code, part, perCycle, capacity, perCycle*capacity)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -5621,14 +5669,6 @@ func v99PayloadManifestPartsPerCycle(tx *sql.Tx) error {
 	rows.Close()
 	if flagged > 0 {
 		log.Printf("migrations: v99 flagged %d payload_manifest row(s) for SCO review", flagged)
-	}
-
-	if _, err := tx.Exec(`
-		UPDATE payload_manifest pm
-		   SET parts_per_cycle = GREATEST(1, ROUND(pm.parts_per_cycle::numeric / p.uop_capacity))
-		  FROM payloads p
-		 WHERE p.id = pm.payload_id AND p.uop_capacity > 0`); err != nil {
-		return fmt.Errorf("v99 backfill parts_per_cycle: %w", err)
 	}
 	return nil
 }
@@ -5741,6 +5781,23 @@ func v102CMSPostings(tx *sql.Tx) error {
 		// posting_id is NULL until a posting claims the row — that is what
 		// "not yet sent" means, and the partial index below is the queue.
 		`ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS posting_id BIGINT`,
+		// AND THE ROWS THAT PREDATE THE FEED ARE NOT IN THAT QUEUE. Adding the
+		// column makes it NULL for every historical row — 1109 at Springfield,
+		// 355 at Hopkinsville, measured 2026-09-05 — and NULL is the health
+		// surface's definition of "recorded but never queued for posting",
+		// which outranks most real findings in the verdict. Left unbackfilled,
+		// Hopkinsville's card would read "355 transactions have been recorded
+		// but never queued" on day one, permanently, hiding everything beneath
+		// it: a health page that cannot go green stops being read, which costs
+		// more than the silence it was built to prevent.
+		//
+		// 0 is a sentinel meaning "predates the CMS integration". It is safe
+		// as a value because there are no foreign keys here (see above) and no
+		// posting has id 0 — BIGSERIAL starts at 1 — so nothing can mistake
+		// one of these rows for a posting's member. It is also the watermark:
+		// max(id) where posting_id = 0 is the boundary above which every
+		// unclaimed row is genuinely new work.
+		`UPDATE cms_transactions SET posting_id = 0 WHERE posting_id IS NULL`,
 		// robot_id and storeroom are captured at build time. robot_id is the
 		// AMR that carried the bin; storeroom is the CMS code of the boundary
 		// this row is about, so the wire layer needs no reach-back to the node

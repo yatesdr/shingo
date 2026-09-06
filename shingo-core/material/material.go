@@ -1,7 +1,9 @@
 package material
 
 import (
+	"database/sql"
 	"errors"
+	"fmt"
 
 	"shingocore/store/cms"
 	"shingocore/store/nodes"
@@ -39,6 +41,25 @@ type MovementEvent struct {
 // and its value is where; absence means "not a boundary". A node is never a
 // boundary because of where it sits in the tree.
 const CMSStoreroomProperty = "cms_storeroom"
+
+// CountCMSBoundaries returns how many nodes carry the cms_storeroom property.
+//
+// One home for the count, next to the property name it keys on. Two callers ask
+// it — the startup warning and the health surface — and they were asking with
+// two copies of the same SQL, which is one copy too many for a query whose
+// answer decides whether a plant is reported as unconfigured or as broken.
+//
+// Zero is a legitimate state, not an error: it is what a plant looks like
+// between configuring the endpoint and tagging the nodes. Both callers say so
+// in their own words.
+func CountCMSBoundaries(db *sql.DB) (int, error) {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM node_properties WHERE key = $1`,
+		CMSStoreroomProperty).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count cms boundaries: %w", err)
+	}
+	return n, nil
+}
 
 // FindCMSBoundary walks up the parent chain from nodeID and returns the nearest
 // synthetic ancestor (or self) tagged with cms_storeroom, together with that
@@ -98,7 +119,15 @@ func FindCMSBoundary(s Store, nodeID int64) (*nodes.Node, string, error) {
 // items, or neither endpoint has a boundary). The caller should
 // persist and emit for a non-nil slice; a nil slice and nil error
 // means "no-op, carry on".
-func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, error) {
+//
+// The second return names the manifest lines that CROSSED A BOUNDARY AND COULD
+// NOT BE COUNTED. It is separate from the error because those two are different
+// answers: an error means the build could not be attempted, while an uncounted
+// line means it was attempted and part of the answer is missing. Both are
+// losses the caller must make loud; neither may be inferred from the row count,
+// because a bin whose every line is uncountable returns the same empty slice as
+// a move that legitimately crossed nothing.
+func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *UncountedLines, error) {
 	// The storeroom code is stamped onto the row here, where the walk already
 	// found it. Carrying it forward rather than re-deriving it downstream is
 	// what lets the wire layer be a pure struct-to-struct map: a translator
@@ -109,14 +138,14 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, e
 	if ev.FromNodeID != 0 {
 		b, code, err := FindCMSBoundary(s, ev.FromNodeID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		srcBoundary, srcStoreroom = b, code
 	}
 	if ev.ToNodeID != 0 {
 		b, code, err := FindCMSBoundary(s, ev.ToNodeID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		dstBoundary, dstStoreroom = b, code
 	}
@@ -130,12 +159,12 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, e
 		dstID = dstBoundary.ID
 	}
 	if srcID == dstID {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	bin, err := s.GetBin(ev.BinID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// An unparseable manifest is a failure to answer the question, not an
@@ -144,27 +173,27 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, e
 	// real physical move.
 	parsed, err := bin.ParseManifest()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if parsed == nil || len(parsed.Items) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// THE COUNT IS DERIVED, NOT READ. The manifest lists which parts are in
 	// the carrier; how many of each is uop_remaining x the template's
 	// parts_per_cycle, computed here at emission. The bin manifest used to
-	// carry a stored qty and it was a full-bin nominal that nothing rewrote
-	// as production drew the bin down — so a bin at 5 of 24 shipped 24 to
-	// the storeroom ledger.
+	// carry a stored qty that no writer agreed on and nothing rewrote as
+	// production drew the bin down, so whatever it held went stale on the
+	// first consumed part.
 	perCycle, err := partsPerCycle(s, bin.PayloadCode)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if perCycle == nil {
 		// No template to count by. Skipping is deliberate: a movement row
 		// with a guessed quantity is worse than no row, because it is
 		// indistinguishable from a measured one once it reaches CMS.
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// The order comes from the EVENT, not from bin.ClaimedBy. This used to read
@@ -177,68 +206,99 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, e
 		orderID = &id
 	}
 
+	// WHICH LINES THE TEMPLATE CANNOT COUNT, decided ONCE for the bin rather
+	// than once per boundary. It is a property of the manifest and the
+	// template, not of which way the bin crossed, and counting it per side
+	// would report one unknown part twice whenever both endpoints are tagged.
+	//
+	// A DRAINED BIN IS NOT AN UNCOUNTABLE ONE. uop_remaining of zero (or the
+	// negative an overpacked bin carries) makes every count non-positive for a
+	// reason the template answered perfectly well, so it yields no rows and no
+	// finding. Only a MISSING RATIO means the question went unanswered.
+	var uncounted []string
+	if bin.UOPRemaining > 0 {
+		for _, m := range parsed.Items {
+			if perCycle[m.CatID] <= 0 {
+				uncounted = append(uncounted, m.CatID)
+			}
+		}
+	}
+
 	var txns []*cms.Transaction
-
-	// Source boundary: bin leaving → negative delta.
-	if srcBoundary != nil {
+	for _, side := range []struct {
+		boundary  *nodes.Node
+		storeroom string
+		sign      int64
+	}{
+		{srcBoundary, srcStoreroom, -1}, // leaving  → negative delta
+		{dstBoundary, dstStoreroom, +1}, // arriving → positive delta
+	} {
+		if side.boundary == nil {
+			continue
+		}
 		for _, m := range parsed.Items {
+			// The MAGNITUDE is tested, then the direction applied. Testing the
+			// signed value instead would pass an overpacked bin's negative
+			// remainder through the source side's -1 and book a positive
+			// arrival where a part left.
 			count := int64(bin.UOPRemaining) * perCycle[m.CatID]
 			if count <= 0 {
 				continue
 			}
 			txns = append(txns, &cms.Transaction{
-				NodeID:      srcBoundary.ID,
-				NodeName:    srcBoundary.Name,
-				Storeroom:   srcStoreroom,
+				NodeID:      side.boundary.ID,
+				NodeName:    side.boundary.Name,
+				Storeroom:   side.storeroom,
 				CatID:       m.CatID,
-				Delta:       -count,
+				Delta:       side.sign * count,
 				BinID:       &bin.ID,
 				BinLabel:    bin.Label,
 				PayloadCode: bin.PayloadCode,
-				SourceType:  "movement",
+				SourceType:  cms.SourceTypeMovement,
 				OrderID:     orderID,
 				RobotID:     ev.RobotID,
 			})
 		}
 	}
 
-	// Dest boundary: bin arriving → positive delta.
-	if dstBoundary != nil {
-		for _, m := range parsed.Items {
-			count := int64(bin.UOPRemaining) * perCycle[m.CatID]
-			if count <= 0 {
-				continue
-			}
-			txns = append(txns, &cms.Transaction{
-				NodeID:      dstBoundary.ID,
-				NodeName:    dstBoundary.Name,
-				Storeroom:   dstStoreroom,
-				CatID:       m.CatID,
-				Delta:       count,
-				BinID:       &bin.ID,
-				BinLabel:    bin.Label,
-				PayloadCode: bin.PayloadCode,
-				SourceType:  "movement",
-				OrderID:     orderID,
-				RobotID:     ev.RobotID,
-			})
-		}
+	var report *UncountedLines
+	if len(uncounted) > 0 {
+		report = &UncountedLines{PayloadCode: bin.PayloadCode, CatIDs: uncounted}
 	}
-
 	if len(txns) == 0 {
-		return nil, nil
+		return nil, report, nil
 	}
-	return txns, nil
+	return txns, report, nil
+}
+
+// UncountedLines names the manifest lines a movement could not turn into a
+// count, and the payload whose template did not carry them.
+//
+// A RETURN VALUE RATHER THAN A LOG LINE, because the caller is the one holding
+// the counter and this is a loss: the bin physically crossed a storeroom
+// boundary carrying that part, and nothing will ever book it. Left to
+// `continue` silently — which is what the code did — a partial-release bin
+// whose manifest named the payload code rather than a part number booked
+// exactly nothing, and every count on the health page reported a plant that had
+// not moved anything.
+//
+// nil means every line that crossed was counted. A drained bin (uop_remaining
+// of zero) is never reported: its counts are zero for a reason the template
+// answered, which is a different thing from a question it could not answer.
+type UncountedLines struct {
+	PayloadCode string
+	CatIDs      []string
 }
 
 // partsPerCycle returns the payload template's per-cycle ratio keyed by part
 // number, or nil when the payload has no template.
 //
-// nil and an empty map are DIFFERENT ANSWERS and the caller acts on the
-// difference: nil means "there is no template, so no count can be derived",
-// while an empty map means "the template exists and lists no parts". Returning
-// an empty map for both would turn a missing template into a bin that
-// legitimately holds nothing.
+// nil and an empty map are DIFFERENT ANSWERS, and BuildMovementTransactions
+// acts on the difference: nil means "there is no template, so no count can be
+// derived" and it emits nothing at all, while an empty map means "the template
+// exists and lists no parts" — every manifest line is then uncountable and
+// reported as such. Returning an empty map for both would turn a missing
+// template into a silent nothing rather than a finding.
 //
 // A bin with no payload_code has no template by construction; that is a bare
 // carrier, and it returns nil rather than an error.
@@ -247,16 +307,18 @@ func partsPerCycle(s Store, payloadCode string) (map[string]int64, error) {
 		return nil, nil
 	}
 	p, err := s.GetPayloadByCode(payloadCode)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		// Not found is not an error worth failing a movement over — Edge can
-		// drive a direct load with a code Core has no template for. Errors
-		// that are not "no such payload" reach the caller through the same
-		// return, which is the conservative reading: an unreadable template
-		// must not silently become a zero-quantity move.
-		return nil, err
-	}
-	if p == nil {
+		// drive a direct load with a code Core has no template for. The
+		// comment always said so; the code returned every error including this
+		// one, so the sentence above it described a branch that did not exist.
 		return nil, nil
+	}
+	if err != nil {
+		// Anything else IS worth failing over, and that is the conservative
+		// reading: an unreadable template must not silently become a
+		// zero-quantity move.
+		return nil, fmt.Errorf("get payload by code %q: %w", payloadCode, err)
 	}
 	items, err := s.ListPayloadManifest(p.ID)
 	if err != nil {

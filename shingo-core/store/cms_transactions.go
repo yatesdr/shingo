@@ -20,9 +20,10 @@ func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*cms.Transaction, err
 	return cms.ListAll(db.DB, limit, offset)
 }
 
-// ListUnpostedCMSTransactions returns transactions no posting has claimed.
-func (db *DB) ListUnpostedCMSTransactions(limit int) ([]*cms.Transaction, error) {
-	return cms.ListUnposted(db.DB, limit)
+// ListUnpostedCMSTransactions returns transactions no posting has claimed and
+// that are older than age — the poster's orphan sweep.
+func (db *DB) ListUnpostedCMSTransactions(age time.Duration, limit int) ([]*cms.Transaction, error) {
+	return cms.ListUnpostedOlderThan(db.DB, age, limit)
 }
 
 // ListCMSTransactionsByPosting returns every transaction a posting carries.
@@ -39,14 +40,22 @@ func (db *DB) AttachCMSPosting(txnIDs []int64, postingID int64) (int, error) {
 
 func (db *DB) CreateCMSPosting(p *cms.Posting) error { return cms.CreatePosting(db.DB, p) }
 
-func (db *DB) GetCMSPosting(id int64) (*cms.Posting, error) { return cms.GetPosting(db.DB, id) }
+// CMSPostingHealth reads the posting queue's state. window bounds which
+// terminal rows still count toward the verdict; see cms.Health.
+func (db *DB) CMSPostingHealth(window time.Duration) (*cms.Health, error) {
+	return cms.PostingHealth(db.DB, window)
+}
 
 func (db *DB) NextPendingCMSPostings(limit int) ([]*cms.Posting, error) {
 	return cms.NextPending(db.DB, limit)
 }
 
-func (db *DB) MarkCMSPostingInflight(id int64, batchKey, bodySHA string) error {
-	return cms.MarkInflight(db.DB, id, batchKey, bodySHA)
+func (db *DB) MarkCMSPostingInflight(id int64, bodySHA string) error {
+	return cms.MarkInflight(db.DB, id, bodySHA)
+}
+
+func (db *DB) MarkCMSPostingTransactionID(id int64, transactionID string) error {
+	return cms.MarkTransactionID(db.DB, id, transactionID)
 }
 
 func (db *DB) MarkCMSPostingPosted(id int64, transactionID string, httpStatus int) error {
@@ -65,8 +74,8 @@ func (db *DB) MarkCMSPostingPending(id int64, lastErr string, nextRetry time.Tim
 	return cms.MarkPending(db.DB, id, lastErr, nextRetry)
 }
 
-func (db *DB) ScheduleCMSPostingRetry(id int64, lastErr string, nextRetry time.Time) error {
-	return cms.ScheduleRetry(db.DB, id, lastErr, nextRetry)
+func (db *DB) RecordCMSPostingAfterSendError(id int64, lastErr string) error {
+	return cms.RecordAfterSendError(db.DB, id, lastErr)
 }
 
 func (db *DB) ListInflightCMSPostingsOlderThan(d time.Duration) ([]*cms.Posting, error) {

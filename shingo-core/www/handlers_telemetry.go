@@ -183,10 +183,10 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	// parts_per_cycle, not a count. Edge multiplies by the bin's UoP to get
-	// the physical number of a part; sending the count directly is what the
-	// old `quantity` key did, and it was a full-bin nominal that stayed wrong
-	// for every partial fill. Core and Edge change this key in the same
-	// release — there is no both-keys transition.
+	// the physical number of a part. The value is unchanged from the old
+	// `quantity` key — what was wrong was reading a ratio as a count, which
+	// the old name invited and Edge's load screen did. Core and Edge change
+	// this key in the same release; there is no both-keys transition.
 	type manifestItem struct {
 		PartNumber    string `json:"part_number"`
 		PartsPerCycle int64  `json:"parts_per_cycle"`

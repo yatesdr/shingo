@@ -159,9 +159,25 @@ sim:
 #   # away, and asking too early gets "no such transaction" about something
 #   # about to exist.
 #   settle_window: 5m
+#   # How many times the reconciler may return one posting to the queue before
+#   # giving up on it. Separate from max_attempts, which counts failed SENDS:
+#   # a requeue happens when the middleware says it does not hold a transaction
+#   # we thought it might, and it preserves the attempt budget, so without its
+#   # own ceiling that cycle has none.
+#   max_requeues: 3
+#   # How far back a REJECTED or FAILED posting still counts toward the
+#   # diagnostics verdict. Those statuses are permanent marks on a row with no
+#   # acknowledge path, so without a window one refusal holds the card at
+#   # ATTENTION forever — and a health surface that cannot go green stops being
+#   # read. Older rows stay on the page and are named in the healthy sentence.
+#   health_window: 24h
 #   # CMS's vocabulary. Placeholders until SCO confirms them.
 #   reason_code: "TEST-AMR"
 #   increase_type: "I"
 #   decrease_type: "D"
 #   unit_of_measure: "EA"
 #   user_id: "SHINGO"
+#   # Blank in the vendor's sample. Here so a value is a yaml edit rather than
+#   # a release, which is the promise made about every other field above.
+#   department: ""
+#   operation: ""

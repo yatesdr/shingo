@@ -90,17 +90,22 @@ func GetProduced(db *sql.DB, since, until *time.Time, top int) ([]Produced, erro
 		top = 10
 	}
 	dw, args := dateWhere("mt.core_completed", since, until)
-	// parts_per_cycle x uop_capacity is the full-bin nominal the old
-	// pm.quantity column held, so this reports the same number it always did.
-	// It is a NOMINAL: it counts what a full bin of the carried payload would
-	// hold, not what the bin actually held. See GetConsumption's note.
-	q := fmt.Sprintf(`SELECT pm.part_number, COALESCE(SUM(pm.parts_per_cycle * p.uop_capacity),0), COUNT(DISTINCT mt.order_id)
+	// A RENAME ONLY — pm.parts_per_cycle is the same value pm.quantity held,
+	// so this reports exactly the number it always did.
+	//
+	// That number is dubious and stays dubious: parts_per_cycle is ~1 on
+	// almost every row, so summing it over missions counts MISSIONS and calls
+	// them produced quantity. Same defect class the file already documents for
+	// MissionDuration and GetConsumption, and out of scope here — a report
+	// whose meaning changes as a side effect of a column rename is worse than
+	// one that stays consistently wrong until somebody fixes it deliberately.
+	q := fmt.Sprintf(`SELECT pm.part_number, COALESCE(SUM(pm.parts_per_cycle),0), COUNT(DISTINCT mt.order_id)
 		FROM mission_telemetry mt
 		JOIN orders o ON o.id = mt.order_id
 		JOIN payloads p ON p.code = o.payload_code
 		JOIN payload_manifest pm ON pm.payload_id = p.id
 		WHERE mt.terminal_state IN ('FINISHED','delivered','confirmed') AND pm.part_number <> ''%s
-		GROUP BY pm.part_number ORDER BY SUM(pm.parts_per_cycle * p.uop_capacity) DESC LIMIT %d`, dw, top)
+		GROUP BY pm.part_number ORDER BY SUM(pm.parts_per_cycle) DESC LIMIT %d`, dw, top)
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err

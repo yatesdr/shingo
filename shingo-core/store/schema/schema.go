@@ -91,6 +91,67 @@ func ColumnExists(c Querier, table, column string) bool {
 	return exists
 }
 
+// ColumnAbsent and IndexAbsent are the ABSENCE forms of the Exists helpers
+// below, and they exist because negating those is not the same thing.
+//
+// The Exists helpers return false on a query error, which is the right
+// direction where false means "not applied, re-run an idempotent statement".
+// Written as !ColumnExists(...) to assert a DROP, that direction inverts: a
+// query that could not run reports the post-condition as HOLDING, and the
+// migration is recorded as applied without anything having checked. These
+// return false on error, so a failed check re-runs a DROP ... IF EXISTS and
+// costs nothing.
+//
+// migrations.go still carries a number of !ColumnExists / !TableExists
+// predicates that predate these. They are a known, ticketed sweep rather than a
+// live hazard — information_schema only fails when the connection is already
+// dead, at which point the migration cannot run either — and new absence
+// assertions should use these.
+func ColumnAbsent(c Querier, table, column string) bool {
+	var exists bool
+	if err := c.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
+		table, column,
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return !exists
+}
+
+func IndexAbsent(c Querier, indexName string) bool {
+	var exists bool
+	if err := c.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname=$1)`, indexName,
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return !exists
+}
+
+// NodePropertyKeyAbsent reports whether NO node carries the named property key.
+//
+// IT RETURNS FALSE ON A QUERY ERROR, and that direction is the whole reason it
+// exists rather than being written inline. A verify predicate answers "does the
+// post-condition hold" — for a migration that DELETES something, that is an
+// absence, and an absence inferred from a query that did not run is the
+// "absence of data rendering as absence of a problem" failure: the migration
+// gets recorded as applied and never re-runs. False means "not verified", which
+// re-runs an idempotent DELETE and costs nothing.
+//
+// The neighbouring Exists helpers can return false on error safely because they
+// are used in the POSITIVE direction, where false already means "re-run". An
+// absence assertion written as !ColumnExists(...) inverts that and inherits the
+// wrong direction — see the note in migrations.go's v100.
+func NodePropertyKeyAbsent(c Querier, key string) bool {
+	var exists bool
+	if err := c.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM node_properties WHERE key = $1)`, key,
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return !exists
+}
+
 // IndexExists reports whether the named index exists in the database's
 // public schema. Returns false on any query error or if the name is empty.
 func IndexExists(c Querier, indexName string) bool {

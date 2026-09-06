@@ -2,6 +2,7 @@ package service
 
 import (
 	"strconv"
+	"time"
 
 	"shingocore/material"
 	"shingocore/store"
@@ -18,10 +19,30 @@ import (
 // what stays healthy-looking while nothing is being sent.
 type CMSPostingService struct {
 	db *store.DB
+	// healthWindow bounds how far back a terminal posting still counts toward
+	// the verdict. See cms.Health's RejectedRecent/FailedRecent.
+	healthWindow time.Duration
 }
 
-func NewCMSPostingService(db *store.DB) *CMSPostingService {
-	return &CMSPostingService{db: db}
+func NewCMSPostingService(db *store.DB, healthWindow time.Duration) *CMSPostingService {
+	return &CMSPostingService{db: db, healthWindow: healthWindow}
+}
+
+// ProcessState is the half of the feed's health that lives in this process
+// rather than in the database.
+//
+// A STRUCT, NOT TWO POSITIONAL BOOLS. Health(enabled, muted, reason) invites a
+// caller to hand them over the wrong way round, and the two mistakes are not
+// symmetrical: a disabled feed reported as muted is noise, while a MUTED feed
+// reported as disabled renders the grey "this site does not post to the
+// middleware" pill on a site that does and is currently sending nothing. There
+// is one caller today; the type costs four lines and removes the class.
+type ProcessState struct {
+	// Enabled is whether a cms: block is configured at all.
+	Enabled bool
+	// Muted is set when the poster halted on a credential fault.
+	Muted       bool
+	MutedReason string
 }
 
 // FeedHealth is what the diagnostics page renders.
@@ -62,26 +83,27 @@ type FeedHealth struct {
 	Why     string `json:"why"`
 }
 
-// Health assembles the feed's state. enabled/muted come from the caller
-// because they are process state, not database state.
-func (s *CMSPostingService) Health(enabled, muted bool, mutedReason string) (*FeedHealth, error) {
-	out := &FeedHealth{Enabled: enabled, Muted: muted, MutedReason: mutedReason}
-	if !enabled {
+// Health assembles the feed's state. ps comes from the caller because those
+// fields are process state, not database state.
+func (s *CMSPostingService) Health(ps ProcessState) (*FeedHealth, error) {
+	out := &FeedHealth{Enabled: ps.Enabled, Muted: ps.Muted, MutedReason: ps.MutedReason}
+	if !ps.Enabled {
 		out.Why = "no cms: block is configured — this site does not post to the middleware"
 		out.Health = &cms.Health{}
 		return out, nil
 	}
 
-	h, err := cms.PostingHealth(s.db.DB)
+	h, err := s.db.CMSPostingHealth(s.healthWindow)
 	if err != nil {
 		return nil, err
 	}
 	out.Health = h
 
-	if err := s.db.QueryRow(`SELECT count(*) FROM node_properties WHERE key = $1`,
-		material.CMSStoreroomProperty).Scan(&out.ConfiguredStorerooms); err != nil {
+	n, err := material.CountCMSBoundaries(s.db.DB)
+	if err != nil {
 		return nil, err
 	}
+	out.ConfiguredStorerooms = n
 
 	return out, nil
 }
@@ -101,7 +123,29 @@ func (h *FeedHealth) Verdict() {
 //
 // ORDERED WORST FIRST, because a page that reports the mildest of several
 // problems sends someone to fix the wrong one. A muted poster with a growing
-// backlog should say "muted", not "backlog".
+// backlog should say "muted", not "backlog". The order below is the whole
+// ranking and it is deliberate at every step; TestVerdict_Ranking pins it, so
+// changing one of these cases means changing that test on purpose.
+//
+//	BuildFailures        a move that reached no table at all. Invisible
+//	                     everywhere else, so nothing may rank above it.
+//	Muted                the whole feed is sending nothing.
+//	No storerooms        the whole feed CAN never send anything.
+//	UnresolvableInflight a POST whose fate is unknown. Inventory in an
+//	                     ambiguous state; only a person can settle it.
+//	Unposted             recorded and never queued — an ongoing leak, still
+//	                     happening, unlike the parked rows below it.
+//	Failed               out of attempts. Definitely not booked; a person
+//	                     requeues.
+//	Rejected             refused. Definitely not booked; the body needs a fix.
+//	Age findings         a queue that is not draining, or a reconciler that is
+//	                     not settling.
+//	Never posted         configured but unproven. Not a failure.
+//
+// Failed and Rejected are read through their WINDOWED counts. Everything above
+// them is a live condition that clears itself when the cause is fixed; those
+// two are permanent marks on a row, and ranked on the lifetime totals they
+// would hold the verdict red forever. See cms.Health.RejectedRecent.
 func verdict(h *FeedHealth) (bool, string) {
 	switch {
 	case h.BuildFailures > 0:
@@ -124,10 +168,10 @@ func verdict(h *FeedHealth) (bool, string) {
 	case h.Unposted > 0:
 		return false, countOf(h.Unposted, "transaction") +
 			" has been recorded but never queued for posting — the subscriber is failing to enqueue"
-	case h.Failed > 0:
-		return false, countOf(h.Failed, "posting") + " ran out of attempts and is waiting for a person"
-	case h.Rejected > 0:
-		return false, countOf(h.Rejected, "posting") + " was refused by the middleware and will not be retried"
+	case h.FailedRecent > 0:
+		return false, countOf(h.FailedRecent, "posting") + " ran out of attempts and is waiting for a person"
+	case h.RejectedRecent > 0:
+		return false, countOf(h.RejectedRecent, "posting") + " was refused by the middleware and will not be retried"
 	case h.OldestPendingAgeSeconds > agedPendingSeconds:
 		return false, "the oldest pending posting has been waiting " +
 			forSeconds(h.OldestPendingAgeSeconds) + " — the queue is not draining"
@@ -140,9 +184,17 @@ func verdict(h *FeedHealth) (bool, string) {
 		// be a claim about a pipe nothing has been through.
 		return false, "nothing has been posted yet — the feed is configured but unproven"
 	default:
-		return true, "last successful post " + h.LastPostedAt.Format("2006-01-02 15:04:05") +
+		why := "last successful post " + h.LastPostedAt.Format("2006-01-02 15:04:05") +
 			", " + countOf(h.PostedLastHour, "posting") + " in the last hour, " +
 			countOf(h.ConfiguredStorerooms, "tagged boundary node")
+		// Older terminal rows do not hold the verdict red, but they are not
+		// allowed to become invisible either — a windowed finding that nothing
+		// mentions again is a finding that was deleted rather than aged out.
+		if parked := h.Failed + h.Rejected; parked > 0 {
+			why += ". " + countOf(parked, "older posting") +
+				" is parked failed or rejected from before the health window and still needs a person"
+		}
+		return true, why
 	}
 }
 

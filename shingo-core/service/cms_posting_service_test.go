@@ -100,7 +100,7 @@ func TestVerdict_NamesTheWorstProblemFirst(t *testing.T) {
 			name: "an unresolvable inflight posting outranks a failed one",
 			mutate: func(h *FeedHealth) {
 				h.UnresolvableInflight = 1
-				h.Failed = 3
+				h.Failed, h.FailedRecent = 3, 3
 			},
 			wantSub: "never acknowledged with a transaction id",
 			why:     "a failed row can be retried; an unresolvable one needs a human at the middleware",
@@ -109,10 +109,27 @@ func TestVerdict_NamesTheWorstProblemFirst(t *testing.T) {
 			name: "unqueued transactions outrank failed postings",
 			mutate: func(h *FeedHealth) {
 				h.Unposted = 7
-				h.Failed = 1
+				h.Failed, h.FailedRecent = 1, 1
 			},
 			wantSub: "never queued for posting",
 			why:     "a failing subscriber is losing NEW work; a failed posting is one batch",
+		},
+		{
+			name: "a recent failure outranks a recent rejection",
+			mutate: func(h *FeedHealth) {
+				h.Failed, h.FailedRecent = 1, 1
+				h.Rejected, h.RejectedRecent = 1, 1
+			},
+			wantSub: "ran out of attempts",
+			why:     "a failed posting can be requeued once someone looks; a rejection needs the body fixed first",
+		},
+		{
+			name: "a recent rejection is reported when nothing worse is wrong",
+			mutate: func(h *FeedHealth) {
+				h.Rejected, h.RejectedRecent = 2, 2
+			},
+			wantSub: "refused by the middleware",
+			why:     "it is the last terminal finding before the age findings",
 		},
 		{
 			name: "a stale pending queue is reported when nothing worse is wrong",
@@ -139,7 +156,93 @@ func TestVerdict_NamesTheWorstProblemFirst(t *testing.T) {
 	}
 }
 
-// TestVerdict_DisabledIsNotUnhealthy: a site with no cms: block is correctly
+// TestVerdict_TerminalFindingsAreWindowed is the fix for a verdict that could
+// never return to green.
+//
+// `rejected` and `failed` are permanent marks on a row: nothing clears them and
+// there is no acknowledge path. Ranked on the lifetime totals, one refusal ever
+// held the card at "attention" forever — and a health surface that cannot go
+// green stops being read, which costs more than the silence it was built to
+// prevent.
+//
+// The two halves below are the whole contract: OLD terminal rows do not hold
+// the verdict, and they do not vanish either.
+func TestVerdict_TerminalFindingsAreWindowed(t *testing.T) {
+	t.Parallel()
+
+	// A refusal from before the window. The lifetime count still carries it;
+	// the windowed count does not.
+	old := health(func(h *FeedHealth) {
+		h.Rejected, h.RejectedRecent = 1, 0
+		h.Failed, h.FailedRecent = 2, 0
+	})
+	old.Verdict()
+	if !old.Healthy {
+		t.Errorf("a feed whose only findings are older than the health window reports "+
+			"unhealthy: %s. There is no acknowledge path, so this card can never go "+
+			"green again and nobody will read it.", old.Why)
+	}
+	if !strings.Contains(old.Why, "parked") {
+		t.Errorf("why = %q, want the healthy sentence to still name the parked rows — a "+
+			"finding nothing mentions again has been deleted, not aged out", old.Why)
+	}
+
+	// And inside the window it is still a finding.
+	recent := health(func(h *FeedHealth) {
+		h.Rejected, h.RejectedRecent = 1, 1
+	})
+	recent.Verdict()
+	if recent.Healthy {
+		t.Errorf("a refusal inside the health window reported healthy: %s", recent.Why)
+	}
+}
+
+// TestVerdict_RankingIsPinnedInOrder walks the ranking one condition at a time,
+// worst first, removing each condition as it goes.
+//
+// The table above proves individual pairs outrank each other. This proves the
+// whole ORDER, so that inserting a new case in the wrong place is a failure
+// rather than a silent re-ranking — the verdict's usefulness is entirely in
+// which of several simultaneous problems it names.
+func TestVerdict_RankingIsPinnedInOrder(t *testing.T) {
+	t.Parallel()
+	// Applied cumulatively from the bottom up, so that at step i the health
+	// carries every condition from i downward and must report the i-th.
+	ladder := []struct {
+		apply   func(*FeedHealth)
+		wantSub string
+	}{
+		{func(h *FeedHealth) { h.BuildFailures = 1 }, "could not be turned into CMS transactions"},
+		{func(h *FeedHealth) { h.Muted, h.MutedReason = true, "bad key" }, "muted"},
+		{func(h *FeedHealth) { h.ConfiguredStorerooms = 0 }, "cms_storeroom"},
+		{func(h *FeedHealth) { h.UnresolvableInflight = 1 }, "never acknowledged with a transaction id"},
+		{func(h *FeedHealth) { h.Unposted = 1 }, "never queued for posting"},
+		{func(h *FeedHealth) { h.Failed, h.FailedRecent = 1, 1 }, "ran out of attempts"},
+		{func(h *FeedHealth) { h.Rejected, h.RejectedRecent = 1, 1 }, "refused by the middleware"},
+		{func(h *FeedHealth) { h.OldestPendingAgeSeconds = 99999 }, "not draining"},
+		{func(h *FeedHealth) { h.OldestInflightAgeSeconds = 99999 }, "not settling it"},
+	}
+
+	for i := range ladder {
+		h := health(func(h *FeedHealth) {
+			// Everything at this rung and below.
+			for j := i; j < len(ladder); j++ {
+				ladder[j].apply(h)
+			}
+		})
+		h.Verdict()
+		if h.Healthy {
+			t.Fatalf("rung %d reported healthy: %s", i, h.Why)
+		}
+		if !strings.Contains(h.Why, ladder[i].wantSub) {
+			t.Errorf("with every condition from rung %d down, why = %q; want it to name %q. "+
+				"Something below it in the ranking is being reported instead, which sends "+
+				"whoever reads the card to the wrong problem.", i, h.Why, ladder[i].wantSub)
+		}
+	}
+}
+
+// TestVerdict_DisabledIsNotUnhealthy// TestVerdict_DisabledIsNotUnhealthy: a site with no cms: block is correctly
 // configured. Rendering it as a broken feed would train people to ignore the
 // card at the one plant where it means something.
 func TestVerdict_DisabledIsNotUnhealthy(t *testing.T) {

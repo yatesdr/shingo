@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Class is what a caller is allowed to conclude from an attempt.
@@ -33,8 +34,20 @@ import (
 type Class int
 
 const (
+	// ClassRetryableAfterSend — 5xx, or a timeout that may have fired while
+	// waiting for a response to a request the server already has. It MAY have
+	// been booked. The row stays inflight and the reconciler asks.
+	//
+	// FIRST, SO THAT IT IS THE ZERO VALUE, and the placement is the point
+	// rather than an ordering preference. A bare PostResult{} has to mean
+	// something, and the safe thing for it to mean is "this may have landed":
+	// a row left inflight costs one reconciler query. With ClassPosted at iota
+	// 0, a future caller who forgot to set Class would settle a posting that
+	// was never sent — and a settled posting is never looked at again. Every
+	// return in this file sets Class explicitly, so nothing changes today.
+	ClassRetryableAfterSend Class = iota
 	// ClassPosted — 2xx with a transaction id. Done.
-	ClassPosted Class = iota
+	ClassPosted
 	// ClassInflight — 2xx whose body we could not read an id out of. The
 	// middleware accepted something; we do not know what it called it. Never
 	// re-POST: ask.
@@ -42,17 +55,14 @@ const (
 	// ClassRejected — 4xx validation. The body is wrong and will be wrong
 	// again. Terminal.
 	ClassRejected
-	// ClassAuthFault — 401/403. Every subsequent row would fail the same way,
-	// so this must halt the sender rather than burn the retry budget of every
-	// queued posting against a credential nobody has fixed yet.
+	// ClassAuthFault — 401/403, or a request this client could not even build.
+	// Every subsequent row would fail the same way, so this must halt the
+	// sender rather than burn the retry budget of every queued posting against
+	// a fault nobody has fixed yet.
 	ClassAuthFault
 	// ClassRetryableBeforeSend — the request never left. DNS, TLS handshake,
 	// connection refused. Safe to send again: nothing arrived.
 	ClassRetryableBeforeSend
-	// ClassRetryableAfterSend — 5xx, or a timeout that may have fired while
-	// waiting for a response to a request the server already has. It MAY have
-	// been booked. The row stays inflight and the reconciler asks.
-	ClassRetryableAfterSend
 )
 
 func (c Class) String() string {
@@ -98,12 +108,20 @@ type Client struct {
 	http    *http.Client
 }
 
-// New builds a client. A zero timeout gets 30s rather than "wait forever",
-// which is the http.Client default and is how a poster goroutine disappears.
+// DefaultTimeout is the shipped HTTP timeout, and the ONLY place the number
+// lives. config's CMSDefaults and Validate both read it from here rather than
+// spelling it again — three copies of one number is three places to retune and
+// two of them to forget.
+//
+// It is not "wait forever", which is the http.Client default and is how a
+// poster goroutine disappears.
+const DefaultTimeout = 30 * time.Second
+
+// New builds a client. A zero timeout gets DefaultTimeout.
 func New(cfg Config) *Client {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = DefaultTimeout
 	}
 	return &Client{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
@@ -133,8 +151,14 @@ func BodySHA(body []byte) string {
 func (c *Client) Post(ctx context.Context, body []byte, bodySHA string) PostResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
 	if err != nil {
-		// A malformed URL cannot become well-formed by waiting.
-		return PostResult{Class: ClassRejected, Err: fmt.Errorf("build request: %w", redactErr(err, c.access, c.secret))}
+		// A CONFIG FAULT, NOT A REFUSAL, and the difference decides whether a
+		// yaml edit can repair it. This fires when base_url will not parse,
+		// which is identical for every posting in the queue. Classified
+		// rejected — as it was — the first drain marked every posting
+		// terminally rejected, forever, for a typo, and rejected rows are
+		// never retried. AuthFault mutes the sender and leaves the rows
+		// pending, which is the same shape of fault and the same right answer.
+		return PostResult{Class: ClassAuthFault, Err: fmt.Errorf("build request: %w", redactErr(err, c.access, c.secret))}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.authenticate(req)
@@ -200,8 +224,18 @@ func (c *Client) GetByTxID(ctx context.Context, transactionID string) (found boo
 	if transactionID == "" {
 		return false, errors.New("cannot query the middleware for an empty transaction id")
 	}
-	u := c.baseURL + "?TransactionId=" + url.QueryEscape(transactionID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return false, fmt.Errorf("parse base url: %w", redactErr(err, c.access, c.secret))
+	}
+	// Set on the parsed query rather than concatenated onto the string.
+	// base_url is a value someone hand-edits at cutover, and one that already
+	// carried a query string would get a second "?" and ask for nothing.
+	q := u.Query()
+	q.Set("TransactionId", transactionID)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return false, fmt.Errorf("build status request: %w", redactErr(err, c.access, c.secret))
 	}
@@ -290,8 +324,16 @@ func classifyTransportErr(err error) Class {
 // the several shapes a JSON API might use for it. Empty means "not found",
 // which the caller treats as inflight rather than as success.
 func transactionID(raw []byte) string {
+	// UseNumber, NOT the default. encoding/json decodes every JSON number into
+	// a float64 when the destination is `any`, and a float64 carries 53 bits
+	// of mantissa — so an id above 9007199254740992 comes back ROUNDED, and
+	// the value the reconciler would later ask the middleware about is not the
+	// value the middleware gave us. json.Number keeps the literal text, which
+	// is all this function ever wanted: the id is an opaque token to us.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
+	if err := dec.Decode(&obj); err != nil {
 		return ""
 	}
 	for _, k := range []string{"TransactionId", "TransactionID", "transaction_id", "transactionId", "id"} {
@@ -301,8 +343,8 @@ func transactionID(raw []byte) string {
 				if t != "" {
 					return t
 				}
-			case float64:
-				return fmt.Sprintf("%.0f", t)
+			case json.Number:
+				return t.String()
 			}
 		}
 	}
@@ -328,6 +370,14 @@ func emptyResult(raw []byte) bool {
 }
 
 // excerpt renders a bounded, redacted slice of a response body for last_error.
+//
+// THE CUT IS ON A RUNE BOUNDARY, NOT A BYTE ONE. last_error is a Postgres
+// `text` column and Postgres rejects invalid UTF-8 outright, so a response body
+// with a multi-byte rune straddling byte 500 produced a value the database
+// refused — a write failure in the one path built to record failures, taking
+// the reason for the original failure down with it. The middleware's body is
+// not ours and there is nothing stopping it carrying a name with an accent in
+// it.
 func excerpt(raw []byte, secrets ...string) string {
 	s := strings.TrimSpace(string(raw))
 	for _, secret := range secrets {
@@ -335,10 +385,17 @@ func excerpt(raw []byte, secrets ...string) string {
 			s = strings.ReplaceAll(s, secret, "<redacted>")
 		}
 	}
-	if len(s) > maxExcerptBytes {
-		s = s[:maxExcerptBytes] + "…"
+	if len(s) <= maxExcerptBytes {
+		return s
 	}
-	return s
+	// Back up to the start of the rune straddling the limit. Every UTF-8
+	// continuation byte is 10xxxxxx and no rune starts with one, so this walks
+	// back at most three bytes.
+	cut := maxExcerptBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // redactErr scrubs credentials from an error before it can reach a log or a

@@ -331,9 +331,9 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	}
 	// The manifest records WHICH parts, not how many. The count is
 	// uop_remaining x parts_per_cycle wherever it is asked for, so a bin
-	// loaded at 5 of 24 answers 5 rather than the template's full-bin
-	// nominal — which is what this loop used to copy in, regardless of
-	// uopOverride.
+	// loaded at 5 of 24 answers 5. This loop used to copy the template's
+	// per-cycle ratio into the manifest as if it were a count, regardless of
+	// uopOverride — a number that meant nothing about this bin.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
 	for i, item := range items {
 		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber}
@@ -906,13 +906,12 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	}
 	// Positive: sync UOP AND reconstruct manifest, preserve claim.
 	//
-	// Manifest reconstruction (single-payload normalization assumption):
-	// the bin's manifest is rewritten to {"items":[{"catid": payload_code}]}.
-	// Pre-2026-05 this branch only updated uop_remaining, leaving the manifest
-	// carrying the pre-release qty — the SMN_003/ALN_002 stale-manifest bug
-	// class. The reconstruction is atomic with the UOP update via
-	// jsonb_build_object reading payload_code from the same row, so no
-	// read-then-update race.
+	// Manifest reconstruction: the bin's manifest is rewritten to the PART
+	// NUMBERS the payload template lists. Pre-2026-05 this branch only updated
+	// uop_remaining, leaving the manifest carrying the pre-release qty — the
+	// SMN_003/ALN_002 stale-manifest bug class. The reconstruction is atomic
+	// with the UOP update, reading payload_code from the same row, so there is
+	// no read-then-update race.
 	//
 	// The line no longer carries a qty at all, which retires that bug class
 	// rather than re-fixing it: the count is uop_remaining (the $1 this same
@@ -920,21 +919,48 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	// second copy to fall out of step. The rewrite still has to happen —
 	// the manifest's PART LIST must match the released payload.
 	//
-	// The CASE guard preserves the prior manifest if payload_code is
-	// empty (a malformed state — partial-release should always have a
-	// payload). Erroring would be cleaner but risks regressing release
-	// flows in the field; preserving the prior manifest matches the
-	// pre-fix observable behavior for the edge case.
+	// CATID IS A PART NUMBER, NOT A PAYLOAD CODE, and writing the payload code
+	// here was a silent loss. Everything downstream keys the manifest's catid
+	// against payload_manifest.part_number — the CMS quantity derivation, the
+	// inventory page's per-part rows — and a payload code matches no part
+	// number, so every partial-release bin resolved to a ratio of zero and
+	// booked NOTHING to the ledger for a real physical move. The single-payload
+	// normalization assumption this used to encode was about how many PAYLOADS
+	// a bin holds, which was never a statement about how the lines are named.
+	//
+	// Two CASE guards, both preserving the prior manifest rather than blanking
+	// it, and for the same reason: a manifest emptied because we could not
+	// determine the part list is indistinguishable from a bin that holds
+	// nothing, which is exactly the silent zero above by another door.
+	//   - empty payload_code: a malformed state (a partial release should
+	//     always have a payload). Erroring would be cleaner but risks
+	//     regressing release flows in the field.
+	//   - no template lines for the code: an unknown code, or a payload nobody
+	//     has given a manifest. We did not have the input to rewrite the list.
+	//
+	// The HAVING is what makes the second guard work, and it is not optional
+	// decoration. jsonb_agg over zero rows returns NULL, but jsonb_build_object
+	// wrapped around it does NOT — it returns {"items": null}, a perfectly
+	// non-NULL value that sails through COALESCE and writes a manifest parsing
+	// to zero items. HAVING count(*) > 0 makes the subquery yield no row at
+	// all, which is the NULL the COALESCE is looking for.
+	//
+	// The ORDER BY inside the aggregate makes the written list deterministic,
+	// so re-releasing the same bin does not churn the row.
 	syncSQL := `
 		UPDATE bins SET
 			uop_remaining=$1,
 			manifest=CASE
 				WHEN COALESCE(payload_code, '') = '' THEN manifest
-				ELSE jsonb_build_object(
-					'items', jsonb_build_array(
-						jsonb_build_object('catid', payload_code)
-					)
-				)
+				ELSE COALESCE((
+					SELECT jsonb_build_object('items',
+						jsonb_agg(jsonb_build_object('catid', pm.part_number)
+							ORDER BY pm.part_number))
+					  FROM payload_manifest pm
+					  JOIN payloads p ON p.id = pm.payload_id
+					 WHERE p.code = bins.payload_code
+					HAVING count(*) > 0
+				), manifest)
 			END,
 			updated_at=NOW()
 		WHERE id=$2 AND locked=false`

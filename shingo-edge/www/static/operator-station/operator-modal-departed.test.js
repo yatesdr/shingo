@@ -258,10 +258,17 @@ const stagedDeparted = Object.assign({}, stagedLeg, { departed: true });
 btn = card([stagedDeparted]);
 eq(btn.label, 'REQUEST SWAP', 'a departed staged leg does not offer RELEASE');
 
-// ── CONFIRM's manifest label survives the extraction ──────────────────────
+// ── CONFIRM ──────────────────────────────────────────────────────────────
+//
+// The manifest-aware label this used to pin is gone with the code. It read a
+// `quantity` the manifest line no longer carries, behind an Array.isArray gate
+// that Core's object-shaped manifest never satisfied — so the only place that
+// label ever rendered was this assertion, which built the array by hand. A
+// fixture that manufactures a state production cannot reach does not pin
+// behaviour; it pins itself.
 
-btn = card([deliveredR2], { binState: { manifest: '[{"quantity":12},{"quantity":8}]' } });
-eq(btn.label, 'CONFIRM: 2 parts, qty 20', 'the manifest-aware CONFIRM label is unchanged');
+btn = card([deliveredR2], { binState: { manifest: '{"items":[{"catid":"PART-A"}]}' } });
+eq(btn.label, 'CONFIRM', 'the CONFIRM label is plain — no count is derived on this page');
 
 btn = card([{ id: 0, status: 'delivered', departed: false }]);
 eq(btn.label, 'CONFIRM (refresh)', 'a half-built order with no id still renders the refresh guard');

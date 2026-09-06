@@ -67,12 +67,13 @@ type Bin struct {
 // IT CARRIES NO QUANTITY, AND THAT IS DELIBERATE. The manifest says WHICH
 // parts are in the carrier; how many is bins.uop_remaining x the payload
 // template's parts_per_cycle, derived wherever it is needed. It used to
-// carry a `qty` and the field had two live meanings: resolveTemplateManifest
-// wrote the template's full-bin nominal into it regardless of how full the
-// bin actually was, while SyncUOPAndClaim wrote the remaining count. Any
-// reader got whichever writer ran last, and nothing rewrote the manifest as
-// UOP drained during production, so the stored number went stale the moment
-// a part was consumed.
+// carry a `qty`, and it was never a usable count: resolveTemplateManifest
+// copied the TEMPLATE's per-cycle ratio into it regardless of how full the
+// bin actually was, while SyncUOPAndClaim wrote the remaining cycle count.
+// Two different quantities under one name, and a reader got whichever writer
+// ran last. Nothing rewrote the manifest as UOP drained during production
+// either, so whichever number was there went stale on the first consumed
+// part.
 //
 // Do not helpfully add a quantity back. If a workflow ever needs the count
 // as it was at LOAD time rather than as it is now, that is template

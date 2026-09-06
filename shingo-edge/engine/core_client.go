@@ -74,9 +74,9 @@ func (c *CoreClient) Available() bool {
 //
 // PartsPerCycle is a ratio — how many of the part one production cycle
 // consumes, usually 1. The number physically in a bin is that times the bin's
-// UoP count. It was `quantity` and carried a full-bin nominal until Core's
-// parts_per_cycle rename; Core and Edge ship that rename together, so there is
-// no version in which one key is read and the other written.
+// UoP count. The JSON key was `quantity` until Core's rename — same value, a
+// name that says what it is. Core and Edge ship that rename together, so there
+// is no version in which one key is read and the other written.
 //
 // This is NOT the shape a bin-load request carries — see BinLoadItem. The two
 // were one struct, which is how a template ratio and a physical count came to

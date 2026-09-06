@@ -2,6 +2,7 @@ package material
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingocore/store/bins"
@@ -219,7 +220,7 @@ func TestBuildMovement_SameBoundaryNoTxns(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "C1"}})
 	f.bins[10] = bin
 
-	got, err := BuildMovementTransactions(f, MovementEvent{
+	got, _, err := BuildMovementTransactions(f, MovementEvent{
 		BinID: 10, FromNodeID: 1, ToNodeID: 1,
 	})
 	if err != nil {
@@ -241,7 +242,7 @@ func TestBuildMovement_CrossBoundaryProducesPair(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "C1"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{
 		BinID: 10, FromNodeID: 1, ToNodeID: 2,
 	})
 	if err != nil {
@@ -274,7 +275,7 @@ func TestBuildMovement_EmptyManifestNil(t *testing.T) {
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"} // no manifest
 	f.bins[10] = bin
 
-	got, err := BuildMovementTransactions(f, MovementEvent{
+	got, _, err := BuildMovementTransactions(f, MovementEvent{
 		BinID: 10, FromNodeID: 1, ToNodeID: 2,
 	})
 	if err != nil {
@@ -299,7 +300,7 @@ func TestBuildMovementTransactions_ParseErrorPropagates(t *testing.T) {
 	bad := `{"items": [ this is not json`
 	f.bins[10] = &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", Manifest: &bad}
 
-	got, err := BuildMovementTransactions(f, MovementEvent{
+	got, _, err := BuildMovementTransactions(f, MovementEvent{
 		BinID: 10, FromNodeID: 1, ToNodeID: 2,
 	})
 	if err == nil {
@@ -324,7 +325,7 @@ func TestBuildMovement_DerivesFromUOPTimesPartsPerCycle(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -351,7 +352,7 @@ func TestBuildMovement_PartialFillReflectsActualCount(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -375,7 +376,7 @@ func TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}, {CatID: "B"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +408,7 @@ func TestBuildMovement_DrainedBinProducesNothing(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	got, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	got, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -420,22 +421,78 @@ func TestBuildMovement_DrainedBinProducesNothing(t *testing.T) {
 // there is no count. Skipping is the deliberate choice — a movement row with a
 // guessed quantity is indistinguishable from a measured one once it reaches
 // CMS, which makes it worse than no row.
+//
+// P-UNKNOWN, NOT "". An empty payload_code short-circuits partsPerCycle before
+// GetPayloadByCode is reached, so the fixture this test used to carry proved
+// only that a bare carrier is skipped — the not-found branch it names ran in no
+// test at all, and the comment claiming the fake errors for "P-UNKNOWN"
+// described a code path the fixture never took.
 func TestBuildMovement_NoTemplateSkips(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	addBoundary(f, 1, "src", "SM01")
 	addBoundary(f, 2, "dst", "MAN")
-	// No setTemplate call: the fake's GetPayloadByCode errors for "P-UNKNOWN".
+	// No setTemplate call: the fake's GetPayloadByCode returns sql.ErrNoRows.
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P-UNKNOWN", UOPRemaining: 9}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	f.bins[10] = bin
+
+	got, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	if err != nil {
+		t.Fatalf("a code Core has no template for is not an error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("templateless bin produced %d txns, want none", len(got))
+	}
+	if uncounted != nil {
+		t.Errorf("no template at all is not an uncounted LINE: %+v — the report is for a "+
+			"template that exists and falls short, which is a different finding", uncounted)
+	}
+}
+
+// TestBuildMovement_BareCarrierSkips keeps the case the fixture above used to
+// cover by accident: a bin with no payload_code has no template by
+// construction, and never reaches the store.
+func TestBuildMovement_BareCarrierSkips(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "", UOPRemaining: 9}
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	got, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	got, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("a bare carrier is not an error: %v", err)
 	}
 	if got != nil {
-		t.Errorf("templateless bin produced %d txns, want none", len(got))
+		t.Errorf("bare carrier produced %d txns, want none", len(got))
+	}
+}
+
+// TestBuildMovement_UnreadableTemplateIsAnError is the other side of the
+// not-found branch, and the reason that branch has to test the SENTINEL rather
+// than merely "err != nil".
+//
+// A database that cannot answer is not a bin without a template. Collapsing the
+// two would turn every transient store failure into a movement silently booked
+// at zero — a real move, no rows, nothing said.
+func TestBuildMovement_UnreadableTemplateIsAnError(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
+	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
+	f.failPayloadLookup("P1")
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 9}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
+	f.bins[10] = bin
+
+	got, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	if err == nil {
+		t.Fatalf("an unreadable template produced %d txns and no error — a store failure "+
+			"must not read as a bin with no template", len(got))
 	}
 }
 
@@ -453,7 +510,7 @@ func TestBuildMovement_PartNotInTemplateContributesNothing(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}, {CatID: "GONE"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -464,6 +521,110 @@ func TestBuildMovement_PartNotInTemplateContributesNothing(t *testing.T) {
 		if tx.CatID != "A" {
 			t.Errorf("unexpected row for %q: %+v", tx.CatID, tx)
 		}
+	}
+}
+
+// TestBuildMovement_PartNotInTemplateIsReportedNotSwallowed is the other half
+// of the test above, and the half that was missing.
+//
+// Shipping the countable parts is right; doing it silently is not. GONE
+// physically crossed the boundary and will be booked nowhere, and the only
+// place that can ever be seen is the report this returns.
+func TestBuildMovement_PartNotInTemplateIsReportedNotSwallowed(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
+	f.setTemplate(100, "P1", 10, map[string]int64{"A": 1})
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 6}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}, {CatID: "GONE"}})
+	f.bins[10] = bin
+
+	_, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uncounted == nil {
+		t.Fatal("a manifest line the template cannot count was dropped silently")
+	}
+	if got := strings.Join(uncounted.CatIDs, ","); got != "GONE" {
+		t.Errorf("uncounted = %q, want exactly \"GONE\" — once, not once per boundary", got)
+	}
+	if uncounted.PayloadCode != "P1" {
+		t.Errorf("payload = %q, want P1 — the report has to name the template that fell short",
+			uncounted.PayloadCode)
+	}
+}
+
+// TestBuildMovement_AllPartsMissBooksBuildFailure is Defect #2 in miniature,
+// and it is the shape a partial-release bin had in production: a manifest whose
+// every catid is a payload code, and a template keyed on part numbers.
+//
+// Nothing is countable, so no rows are produced — and an empty slice is exactly
+// what a bin that crossed no boundary returns. Without the report the two are
+// indistinguishable, which is how a real physical move booked nothing and every
+// count on the health page still read as a quiet plant.
+func TestBuildMovement_AllPartsMissBooksBuildFailure(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
+	// The template keys on part numbers; the manifest names the payload code.
+	f.setTemplate(100, "P1", 10, map[string]int64{"PART-A": 2})
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 8}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "P1"}})
+	f.bins[10] = bin
+
+	txns, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(txns) != 0 {
+		t.Fatalf("txns = %d, want 0 — nothing in the manifest has a ratio", len(txns))
+	}
+	if uncounted == nil {
+		t.Fatal("a bin whose every manifest line is uncountable returned the same nil report " +
+			"as a bin that crossed nothing — this is the silent loss itself")
+	}
+	if got := strings.Join(uncounted.CatIDs, ","); got != "P1" {
+		t.Errorf("uncounted = %q, want \"P1\"", got)
+	}
+	if uncounted.PayloadCode != "P1" {
+		t.Errorf("payload = %q, want P1", uncounted.PayloadCode)
+	}
+}
+
+// TestBuildMovement_DrainedBinIsNotUncountable draws the line the report must
+// not cross, and it is the SELECTIVITY half of the two tests above.
+//
+// The bin is at zero AND its manifest line has no ratio — both reasons for
+// emitting nothing at once. Only one of them is a loss. Nothing was in the bin,
+// so nothing went unbooked; a report here would fire on every empty carrier
+// crossing a boundary whose template has since dropped a part, and drown the
+// real findings in the noise.
+//
+// The out-of-template catid is load-bearing: with a part the template DOES
+// carry, this test passes whether or not the drained guard exists at all.
+func TestBuildMovement_DrainedBinIsNotUncountable(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	addBoundary(f, 1, "src", "SM01")
+	addBoundary(f, 2, "dst", "MAN")
+	f.setTemplate(100, "P1", 24, map[string]int64{"A": 1})
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 0}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "GONE"}})
+	f.bins[10] = bin
+
+	txns, uncounted, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(txns) != 0 {
+		t.Fatalf("txns = %d, want 0", len(txns))
+	}
+	if uncounted != nil {
+		t.Errorf("an empty bin was reported as uncountable: %+v — the ratio was there, "+
+			"the parts were not", uncounted)
 	}
 }
 
@@ -485,7 +646,7 @@ func TestBuildMovement_StampsRobotIDAndOrderID(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{
 		BinID: 10, FromNodeID: 1, ToNodeID: 2,
 		RobotID: "AMR-003", OrderID: 12345,
 	})
@@ -523,7 +684,7 @@ func TestBuildMovement_OperatorDragLeavesRobotAndOrderBlank(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -555,7 +716,7 @@ func TestBuildMovement_StoreroomIsTheCodeNotTheNodeName(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 1, ToNodeID: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -587,7 +748,7 @@ func TestBuildMovement_StoreroomComesFromTheTaggedANCESTOR(t *testing.T) {
 	setManifest(bin, []bins.ManifestEntry{{CatID: "A"}})
 	f.bins[10] = bin
 
-	txns, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 3, ToNodeID: 4})
+	txns, _, err := BuildMovementTransactions(f, MovementEvent{BinID: 10, FromNodeID: 3, ToNodeID: 4})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

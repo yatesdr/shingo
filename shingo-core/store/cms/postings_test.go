@@ -12,10 +12,70 @@ import (
 	"shingocore/store/nodes"
 )
 
-// seedPosting creates a pending posting and returns it.
-func seedPosting(t *testing.T, db *store.DB, batchKey string) *cms.Posting {
+// TestPostingHealth_WindowsTerminalRowsBySettledAt is the SQL half of the
+// windowing fix. The verdict tests set RejectedRecent by hand; this proves the
+// query fills it, and fills it from the right column.
+//
+// settled_at, not created_at: the question the window asks is "would anyone
+// have had cause to look at this recently", and that is when the row became
+// terminal, not when its transactions happened to be recorded. A posting queued
+// on Monday and refused on Friday is a Friday finding.
+func TestPostingHealth_WindowsTerminalRowsBySettledAt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	fresh := seedPosting(t, db, "window-fresh")
+	stale := seedPosting(t, db, "window-stale")
+	if err := cms.MarkRejected(db.DB, fresh.ID, 400, "bad body"); err != nil {
+		t.Fatalf("MarkRejected(fresh): %v", err)
+	}
+	if err := cms.MarkFailed(db.DB, stale.ID, "gave up"); err != nil {
+		t.Fatalf("MarkFailed(stale): %v", err)
+	}
+	// The stale row settled two days ago. Its created_at stays recent on
+	// purpose: a query keyed on the wrong column would still count it.
+	if _, err := db.Exec(`UPDATE cms_postings SET settled_at = NOW() - INTERVAL '2 days' WHERE id=$1`,
+		stale.ID); err != nil {
+		t.Fatalf("age settled_at: %v", err)
+	}
+
+	h, err := cms.PostingHealth(db.DB, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("PostingHealth: %v", err)
+	}
+
+	// The lifetime totals carry both. They are what the page shows.
+	if h.Rejected != 1 || h.Failed != 1 {
+		t.Errorf("lifetime counts = %d rejected / %d failed, want 1 and 1 — the window must "+
+			"not delete rows from the counts row, only from the verdict", h.Rejected, h.Failed)
+	}
+	// The windowed counts carry only the fresh one.
+	if h.RejectedRecent != 1 {
+		t.Errorf("rejected_recent = %d, want 1 — a refusal minutes old is a finding",
+			h.RejectedRecent)
+	}
+	if h.FailedRecent != 0 {
+		t.Errorf("failed_recent = %d, want 0 — a failure that settled two days ago is outside "+
+			"a 24h window, and holding the verdict on it forever is what makes a health card "+
+			"stop being read", h.FailedRecent)
+	}
+
+	// A window wide enough to include it counts it again: the field tracks the
+	// window, rather than the test having pinned a constant.
+	wide, err := cms.PostingHealth(db.DB, 72*time.Hour)
+	if err != nil {
+		t.Fatalf("PostingHealth(72h): %v", err)
+	}
+	if wide.FailedRecent != 1 {
+		t.Errorf("failed_recent at a 72h window = %d, want 1", wide.FailedRecent)
+	}
+}
+
+// seedPosting creates a pending posting and returns it. tag distinguishes one
+// fixture's body hash from another's; it is not otherwise meaningful.
+func seedPosting(t *testing.T, db *store.DB, tag string) *cms.Posting {
 	t.Helper()
-	p := &cms.Posting{BatchKey: batchKey, BodySHA: "sha-" + batchKey}
+	p := &cms.Posting{BodySHA: "sha-" + tag}
 	if err := cms.CreatePosting(db.DB, p); err != nil {
 		t.Fatalf("CreatePosting: %v", err)
 	}
@@ -43,8 +103,8 @@ func TestPostings_CreateStartsPendingAndReadsBack(t *testing.T) {
 	if got.Status != cms.StatusPending {
 		t.Errorf("status = %q, want pending — a posting that has not been sent is pending", got.Status)
 	}
-	if got.BatchKey != "batch-1" || got.BodySHA != "sha-batch-1" {
-		t.Errorf("posting = %+v, want the batch key and body sha it was created with", got)
+	if got.BodySHA != "sha-batch-1" {
+		t.Errorf("posting = %+v, want the body sha it was created with", got)
 	}
 	if got.Attempts != 0 || got.RequeueCount != 0 {
 		t.Errorf("attempts=%d requeues=%d, want 0/0 on a fresh row", got.Attempts, got.RequeueCount)
@@ -67,10 +127,10 @@ func TestPostings_NextPendingIsPendingOnly(t *testing.T) {
 	rejected := seedPosting(t, db, "np-rejected")
 	failed := seedPosting(t, db, "np-failed")
 
-	if err := cms.MarkInflight(db.DB, inflight.ID, "bk", "sha"); err != nil {
+	if err := cms.MarkInflight(db.DB, inflight.ID, "sha"); err != nil {
 		t.Fatalf("MarkInflight: %v", err)
 	}
-	if err := cms.MarkInflight(db.DB, posted.ID, "bk", "sha"); err != nil {
+	if err := cms.MarkInflight(db.DB, posted.ID, "sha"); err != nil {
 		t.Fatalf("MarkInflight(posted): %v", err)
 	}
 	if err := cms.MarkPosted(db.DB, posted.ID, "TX-1", 200); err != nil {
@@ -134,16 +194,16 @@ func TestPostings_MarkInflightIsGuardedOnPending(t *testing.T) {
 	db := testdb.Open(t)
 	p := seedPosting(t, db, "guard")
 
-	if err := cms.MarkInflight(db.DB, p.ID, "first", "sha-1"); err != nil {
+	if err := cms.MarkInflight(db.DB, p.ID, "sha-1"); err != nil {
 		t.Fatalf("first MarkInflight: %v", err)
 	}
-	if err := cms.MarkInflight(db.DB, p.ID, "second", "sha-2"); err == nil {
+	if err := cms.MarkInflight(db.DB, p.ID, "sha-2"); err == nil {
 		t.Error("second MarkInflight succeeded — a row already inflight must not be re-armed")
 	}
 
 	got := getPosting(t, db, p.ID)
-	if got.BatchKey != "first" || got.BodySHA != "sha-1" {
-		t.Errorf("posting = %+v, want the FIRST arm's batch key and sha", got)
+	if got.BodySHA != "sha-1" {
+		t.Errorf("posting = %+v, want the FIRST arm's body sha", got)
 	}
 	if got.Attempts != 1 {
 		t.Errorf("attempts = %d, want 1 — the refused arm must not count as a try", got.Attempts)
@@ -157,7 +217,7 @@ func TestPostings_MarkPostedRecordsTheTransactionID(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	p := seedPosting(t, db, "posted")
-	if err := cms.MarkInflight(db.DB, p.ID, "bk", "sha"); err != nil {
+	if err := cms.MarkInflight(db.DB, p.ID, "sha"); err != nil {
 		t.Fatalf("MarkInflight: %v", err)
 	}
 	if err := cms.MarkPosted(db.DB, p.ID, "MW-4242", 201); err != nil {
@@ -188,7 +248,7 @@ func TestPostings_RequeueOnlyMovesInflightRows(t *testing.T) {
 	db := testdb.Open(t)
 
 	inflight := seedPosting(t, db, "rq-inflight")
-	if err := cms.MarkInflight(db.DB, inflight.ID, "bk", "sha"); err != nil {
+	if err := cms.MarkInflight(db.DB, inflight.ID, "sha"); err != nil {
 		t.Fatalf("MarkInflight: %v", err)
 	}
 	if err := cms.RequeuePending(db.DB, inflight.ID); err != nil {
@@ -210,7 +270,7 @@ func TestPostings_RequeueOnlyMovesInflightRows(t *testing.T) {
 
 	// A posted row must not be requeued: its fate is known.
 	posted := seedPosting(t, db, "rq-posted")
-	if err := cms.MarkInflight(db.DB, posted.ID, "bk", "sha"); err != nil {
+	if err := cms.MarkInflight(db.DB, posted.ID, "sha"); err != nil {
 		t.Fatalf("MarkInflight(posted): %v", err)
 	}
 	if err := cms.MarkPosted(db.DB, posted.ID, "MW-9", 200); err != nil {
@@ -230,7 +290,7 @@ func TestPostings_ListInflightOlderThanRespectsTheSettleWindow(t *testing.T) {
 	db := testdb.Open(t)
 
 	fresh := seedPosting(t, db, "sw-fresh")
-	if err := cms.MarkInflight(db.DB, fresh.ID, "bk", "sha"); err != nil {
+	if err := cms.MarkInflight(db.DB, fresh.ID, "sha"); err != nil {
 		t.Fatalf("MarkInflight: %v", err)
 	}
 
@@ -345,9 +405,9 @@ func TestTransactions_ListUnpostedFiltersClaimedRows(t *testing.T) {
 	a := seedTxn(t, db, n.ID, "CAT-A", 1)
 	b := seedTxn(t, db, n.ID, "CAT-B", 2)
 
-	unposted, err := cms.ListUnposted(db.DB, 100)
+	unposted, err := cms.ListUnpostedOlderThan(db.DB, 0, 100)
 	if err != nil {
-		t.Fatalf("ListUnposted: %v", err)
+		t.Fatalf("ListUnpostedOlderThan: %v", err)
 	}
 	if len(unposted) != 2 {
 		t.Fatalf("unposted = %d, want 2 before anything claims them", len(unposted))
@@ -357,9 +417,9 @@ func TestTransactions_ListUnpostedFiltersClaimedRows(t *testing.T) {
 	if _, err := cms.AttachPosting(db.DB, []int64{a.ID}, p.ID); err != nil {
 		t.Fatalf("AttachPosting: %v", err)
 	}
-	unposted, err = cms.ListUnposted(db.DB, 100)
+	unposted, err = cms.ListUnpostedOlderThan(db.DB, 0, 100)
 	if err != nil {
-		t.Fatalf("ListUnposted: %v", err)
+		t.Fatalf("ListUnpostedOlderThan: %v", err)
 	}
 	if len(unposted) != 1 || unposted[0].ID != b.ID {
 		t.Errorf("unposted = %+v, want only the unclaimed row (%d)", unposted, b.ID)
@@ -383,7 +443,7 @@ func TestPostingHealth_CountsEveryStateAndAgesThem(t *testing.T) {
 	failed := seedPosting(t, db, "h-failed")
 
 	for _, id := range []int64{inflight.ID, unresolvable.ID, posted.ID, rejected.ID, failed.ID} {
-		if err := cms.MarkInflight(db.DB, id, "bk", "sha"); err != nil {
+		if err := cms.MarkInflight(db.DB, id, "sha"); err != nil {
 			t.Fatalf("MarkInflight(%d): %v", id, err)
 		}
 	}
@@ -407,7 +467,7 @@ func TestPostingHealth_CountsEveryStateAndAgesThem(t *testing.T) {
 		t.Fatalf("age pending: %v", err)
 	}
 
-	h, err := cms.PostingHealth(db.DB)
+	h, err := cms.PostingHealth(db.DB, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PostingHealth: %v", err)
 	}
@@ -445,7 +505,7 @@ func TestPostingHealth_CountsUnpostedTransactions(t *testing.T) {
 	a := seedTxn(t, db, n.ID, "CAT-A", 1)
 	seedTxn(t, db, n.ID, "CAT-B", 2)
 
-	h, err := cms.PostingHealth(db.DB)
+	h, err := cms.PostingHealth(db.DB, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PostingHealth: %v", err)
 	}
@@ -457,7 +517,7 @@ func TestPostingHealth_CountsUnpostedTransactions(t *testing.T) {
 	if _, err := cms.AttachPosting(db.DB, []int64{a.ID}, p.ID); err != nil {
 		t.Fatalf("AttachPosting: %v", err)
 	}
-	h, err = cms.PostingHealth(db.DB)
+	h, err = cms.PostingHealth(db.DB, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PostingHealth: %v", err)
 	}
@@ -473,7 +533,7 @@ func TestPostingHealth_CountsUnpostedTransactions(t *testing.T) {
 func TestPostingHealth_EmptyTableIsAllZeroes(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	h, err := cms.PostingHealth(db.DB)
+	h, err := cms.PostingHealth(db.DB, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PostingHealth on an empty table: %v", err)
 	}

@@ -9,9 +9,11 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // =============================================================================
@@ -32,9 +34,17 @@ import (
 //     (positive remaining_uop), Core must rewrite the bin's manifest JSON
 //     to reflect the new UOP so the bin record at storage matches the
 //     line's view. Today only uop_remaining is updated; the manifest stays
-//     stale (carrying the pre-consumption qty). Per the single-payload
-//     normalization assumption, the reconstructed manifest is:
-//         {"items":[{"catid": payload_code, "qty": remaining_uop}]}
+//     stale (carrying the pre-consumption qty).
+//
+//     The reconstructed manifest lists the PAYLOAD TEMPLATE'S PART NUMBERS
+//     and carries no qty:
+//         {"items":[{"catid": <payload_manifest.part_number>}, ...]}
+//     It wrote the payload CODE into catid until 2026-09-05. Nothing matches a
+//     payload code against a part number, so every partial-release bin
+//     resolved to a per-cycle ratio of zero and booked nothing to the CMS
+//     ledger for a real physical move. The tests below use a payload whose
+//     code and part number DIFFER, because a fixture that spells them the same
+//     cannot tell the two apart — which is how this survived review.
 //
 // Each test below FAILS on current code and PASSES once its named fix lands.
 // When you land the fix:
@@ -50,6 +60,28 @@ import (
 // (see integration/harness/). The Edge-local test runs against a
 // SQLite test DB and exercises the predicate directly.
 
+// payloadWithDistinctPart creates a payload whose CODE and whose one template
+// PART NUMBER are deliberately different strings.
+//
+// SetupStandardData's shared payload is code "PART-A" with no template lines at
+// all, which makes it useless for these two tests twice over: there is no part
+// number to reconstruct from, and its code reads like one. A fixture where the
+// two identifiers coincide passes whichever of them the code under test writes,
+// which is exactly how a manifest full of payload codes reached production
+// behind a green suite.
+//
+// Returns the payload and the part number its manifest must end up naming.
+func payloadWithDistinctPart(t *testing.T, db *store.DB, tag string) (*payloads.Payload, string) {
+	t.Helper()
+	p := &payloads.Payload{Code: tag + "-PAYLOAD", UOPCapacity: 1000, Description: tag + " (test)"}
+	testutil.MustNoErr(t, db.CreatePayload(p), "create payload")
+	part := tag + "-PART-1"
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
+		PayloadID: p.ID, PartNumber: part, PartsPerCycle: 1,
+	}), "create template line")
+	return p, part
+}
+
 // TestRegression_15_PartialBackReconstructsManifest is the strengthened
 // version of TestHandleOrderRelease_RemainingUOPPositiveSyncsUOP. The
 // existing test asserts `got.Manifest == nil` is false but never reads
@@ -64,7 +96,8 @@ import (
 func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, _ := setupTestData(t, db)
+	bp, wantPart := payloadWithDistinctPart(t, db, "REG15-POS")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-reg15-pos", "BIN-REG15-POS")
@@ -95,9 +128,10 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 		t.Fatalf("manifest items = %d, want 1 (single-payload normalization)", len(parsed.Items))
 	}
 	item := parsed.Items[0]
-	if item.CatID != bp.Code {
-		t.Errorf("manifest item CatID = %q, want %q (= payload_code per single-payload normalization)",
-			item.CatID, bp.Code)
+	if item.CatID != wantPart {
+		t.Errorf("manifest item CatID = %q, want %q (the template's part_number). A payload "+
+			"code here matches no part number, so the bin books nothing to CMS.",
+			item.CatID, wantPart)
 	}
 	// The line carries no count of its own; uop_remaining, asserted above, is
 	// the count. A second copy is exactly the staleness this reconstruction
@@ -116,7 +150,8 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, lineNode, bp := setupTestData(t, db)
+	_, lineNode, _ := setupTestData(t, db)
+	bp, wantPart := payloadWithDistinctPart(t, db, "REG15-FB")
 
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-REG15-FB-PART", NodeID: &lineNode.ID, Status: "staged"}
 	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
@@ -161,8 +196,9 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 		t.Fatalf("manifest items = %d, want 1", len(parsed.Items))
 	}
 	item := parsed.Items[0]
-	if item.CatID != bp.Code {
-		t.Errorf("manifest item CatID = %q, want %q", item.CatID, bp.Code)
+	if item.CatID != wantPart {
+		t.Errorf("manifest item CatID = %q, want %q (the template's part_number)",
+			item.CatID, wantPart)
 	}
 
 	// The pre-release manifest this test seeds carries qty=100. The

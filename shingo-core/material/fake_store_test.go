@@ -1,6 +1,7 @@
 package material
 
 import (
+	"database/sql"
 	"errors"
 
 	"shingocore/store/bins"
@@ -25,6 +26,10 @@ type fakeStore struct {
 	// The payload templates, by code, and their manifest lines by payload id.
 	payloads  map[string]*payloads.Payload
 	templates map[int64][]*payloads.ManifestItem
+
+	// payloadErrs[code] makes GetPayloadByCode fail for a reason other than
+	// "no such payload".
+	payloadErrs map[string]bool
 }
 
 func newFakeStore() *fakeStore {
@@ -90,12 +95,28 @@ func (f *fakeStore) GetBin(id int64) (*bins.Bin, error) {
 	return b, nil
 }
 
+// GetPayloadByCode returns sql.ErrNoRows for an unknown code, because that is
+// what store/payloads returns and the caller branches on it. A fake answering
+// with a generic error made "no such payload" indistinguishable from "the
+// database is down", which is the one distinction partsPerCycle exists to draw.
 func (f *fakeStore) GetPayloadByCode(code string) (*payloads.Payload, error) {
+	if f.payloadErrs[code] {
+		return nil, errors.New("payload read failed")
+	}
 	p, ok := f.payloads[code]
 	if !ok {
-		return nil, errors.New("payload not found")
+		return nil, sql.ErrNoRows
 	}
 	return p, nil
+}
+
+// failPayloadLookup makes GetPayloadByCode fail for a reason that is NOT
+// "no such payload", so a test can prove the two are not collapsed.
+func (f *fakeStore) failPayloadLookup(code string) {
+	if f.payloadErrs == nil {
+		f.payloadErrs = map[string]bool{}
+	}
+	f.payloadErrs[code] = true
 }
 
 func (f *fakeStore) ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, error) {

@@ -118,6 +118,15 @@ type Engine struct {
 	// cmsPoster is nil unless cms.base_url is configured. Configuration is the
 	// gate: a site with no cms: block has no poster, and the subscriber that
 	// would feed it checks for nil rather than consulting a flag.
+	//
+	// WRITTEN ONCE, IN New, AND NEVER AGAIN — which is what makes it safe to
+	// read from the event subscriber's goroutine and from an HTTP handler with
+	// no lock. It used to be assigned at the end of Start(), after those
+	// readers existed, and every neighbouring cross-goroutine field on this
+	// struct is an atomic or mutex-guarded for exactly that reason. Fixing it
+	// by construction rather than by adding a fifth synchronised field is the
+	// cheaper answer: a value that never changes needs no synchronisation.
+	// Start() only launches its loop.
 	cmsPoster *poster.Poster
 	// cmsBuildFailures counts movements whose CMS rows could not be built.
 	//
@@ -225,6 +234,9 @@ func New(c Config) *Engine {
 		debugLog:    c.DebugLog,
 		stopChan:    make(chan struct{}),
 		robotsCache: make(map[string]fleet.RobotStatus),
+		// Built here, before any goroutine or handler exists. Its LOOP starts
+		// in Start(); see the field's comment.
+		cmsPoster: newCMSPoster(c.AppConfig, c.DB, logFn),
 	}
 	e.reconciliation = newReconciliationService(e.db, e.logFn)
 	// confirmDelivered late-binds to e.dispatcher. Engine.New leaves
@@ -288,7 +300,7 @@ func New(c Config) *Engine {
 	e.missionService = service.NewMissionService(e.db)
 	e.testCmdService = service.NewTestCommandService(e.db)
 	e.cmsTxnService = service.NewCMSTransactionService(e.db)
-	e.cmsPostingService = service.NewCMSPostingService(e.db)
+	e.cmsPostingService = service.NewCMSPostingService(e.db, e.cfg.CMS.HealthWindow)
 	e.inventoryService = service.NewInventoryService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.healthService = service.NewHealthService(e.db)

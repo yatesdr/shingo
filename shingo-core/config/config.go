@@ -3,12 +3,17 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"slices"
 	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"shingocore/cms/client"
+	"shingocore/cms/poster"
+	"shingocore/cms/wire"
 )
 
 // defaultFaultNoticeAfter is the shipped fault-notice threshold, named because
@@ -760,15 +765,48 @@ type CMSConfig struct {
 	// transaction" about something that is about to exist — an answer that
 	// would requeue a posting that already landed.
 	SettleWindow time.Duration `yaml:"settle_window"`
+	// MaxRequeues bounds how many times the reconciler may return one posting
+	// to the send queue before giving up on it.
+	//
+	// Separate from MaxAttempts because it counts a different event. An attempt
+	// is a send that failed; a requeue is the middleware telling us it does NOT
+	// hold a transaction we thought it might, which puts the row back in the
+	// queue with its attempt budget intact. That is the right behaviour for one
+	// bad round trip and a loop if the same 5xx repeats — and until this
+	// existed the loop had no ceiling at all, because nothing read the
+	// requeue_count the reconciler was incrementing.
+	MaxRequeues int `yaml:"max_requeues"`
+	// HealthWindow is how far back a REJECTED or FAILED posting still counts
+	// toward the diagnostics verdict.
+	//
+	// It exists because those two statuses are permanent marks on a row: one
+	// refusal, ever, held the verdict at "attention" forever with no way back
+	// to green and no acknowledge path. A health surface that cannot return to
+	// green stops being read, which costs more than the silence it was built
+	// to prevent. Rows outside the window are still counted on the page and
+	// still named in the healthy sentence — they stop being the VERDICT, not
+	// stop existing.
+	HealthWindow time.Duration `yaml:"health_window"`
 
 	// The vocabulary CMS expects. Placeholders until SCO confirms them; every
-	// one is a config edit rather than a code change for exactly that reason.
+	// one is a config edit rather than a code change for exactly that reason —
+	// including department and operation, which were hardcoded "" in the
+	// translator and would otherwise have been the two exceptions to that
+	// promise.
 	ReasonCode    string `yaml:"reason_code"`
 	IncreaseType  string `yaml:"increase_type"`
 	DecreaseType  string `yaml:"decrease_type"`
 	UnitOfMeasure string `yaml:"unit_of_measure"`
 	UserID        string `yaml:"user_id"`
+	// Blank in the vendor's sample. Declared so a value is a yaml edit.
+	Department string `yaml:"department"`
+	Operation  string `yaml:"operation"`
 }
+
+// DefaultCMSHealthWindow lives here rather than in a subsystem because no
+// subsystem owns it: the window is a property of the diagnostics verdict, which
+// is assembled in service/ from config. See CMSConfig.HealthWindow.
+const DefaultCMSHealthWindow = 24 * time.Hour
 
 // CMSDefaults returns the shipped CMS configuration: disabled, with the
 // vocabulary and timings pre-filled so a site turns the integration on by
@@ -776,10 +814,12 @@ type CMSConfig struct {
 func CMSDefaults() CMSConfig {
 	return CMSConfig{
 		BaseURL:       "",
-		Timeout:       30 * time.Second,
-		PollInterval:  30 * time.Second,
-		MaxAttempts:   12,
-		SettleWindow:  5 * time.Minute,
+		Timeout:       client.DefaultTimeout,
+		PollInterval:  poster.DefaultPollInterval,
+		MaxAttempts:   poster.DefaultMaxAttempts,
+		SettleWindow:  poster.DefaultSettleWindow,
+		MaxRequeues:   poster.DefaultMaxRequeues,
+		HealthWindow:  DefaultCMSHealthWindow,
 		ReasonCode:    "TEST-AMR",
 		IncreaseType:  "I",
 		DecreaseType:  "D",
@@ -790,6 +830,47 @@ func CMSDefaults() CMSConfig {
 
 // Enabled reports whether the CMS subsystem should run.
 func (c CMSConfig) Enabled() bool { return c.BaseURL != "" }
+
+// Client, Poster and Wire map this block onto the three structs the subsystem
+// actually takes.
+//
+// THE MAPPING LIVES BESIDE THE FIELDS IT MAPS. It was twelve lines of manual
+// copying in engine_lifecycle.go, which is the shape where a field added here
+// is silently not carried: nothing fails to compile, the subsystem just runs on
+// a zero value. TestCMSConfig_MappersCarryEveryField walks the three
+// destination structs by reflection and fails on any field left at its zero
+// value, so adding one here without mapping it is a test failure rather than a
+// production default nobody chose.
+func (c CMSConfig) Client() client.Config {
+	return client.Config{
+		BaseURL:   c.BaseURL,
+		AccessKey: c.AccessKey,
+		SecretKey: c.SecretKey,
+		Timeout:   c.Timeout,
+	}
+}
+
+func (c CMSConfig) Poster() poster.Config {
+	return poster.Config{
+		PollInterval: c.PollInterval,
+		MaxAttempts:  c.MaxAttempts,
+		SettleWindow: c.SettleWindow,
+		MaxRequeues:  c.MaxRequeues,
+		Wire:         c.Wire(),
+	}
+}
+
+func (c CMSConfig) Wire() wire.Config {
+	return wire.Config{
+		ReasonCode:    c.ReasonCode,
+		IncreaseType:  c.IncreaseType,
+		DecreaseType:  c.DecreaseType,
+		UnitOfMeasure: c.UnitOfMeasure,
+		UserID:        c.UserID,
+		Department:    c.Department,
+		Operation:     c.Operation,
+	}
+}
 
 // Validate refuses a configuration that would start the integration without
 // the credentials to use it, and fills zero durations from the defaults.
@@ -806,20 +887,43 @@ func (c CMSConfig) Enabled() bool { return c.BaseURL != "" }
 // An empty BaseURL is not an error. It is how a site says it does not use CMS,
 // and the rest of the block is then irrelevant.
 func (c *CMSConfig) Validate() error {
+	// Every fallback here reads the SAME constant CMSDefaults does, and the
+	// subsystems' own zero-value fallbacks read it too. A default spelled in
+	// more than one place is a value somebody retunes in one of them.
 	if c.Timeout <= 0 {
-		c.Timeout = 30 * time.Second
+		c.Timeout = client.DefaultTimeout
 	}
 	if c.PollInterval <= 0 {
-		c.PollInterval = 30 * time.Second
+		c.PollInterval = poster.DefaultPollInterval
 	}
 	if c.MaxAttempts <= 0 {
-		c.MaxAttempts = 12
+		c.MaxAttempts = poster.DefaultMaxAttempts
 	}
 	if c.SettleWindow <= 0 {
-		c.SettleWindow = 5 * time.Minute
+		c.SettleWindow = poster.DefaultSettleWindow
+	}
+	if c.MaxRequeues <= 0 {
+		c.MaxRequeues = poster.DefaultMaxRequeues
+	}
+	if c.HealthWindow <= 0 {
+		c.HealthWindow = DefaultCMSHealthWindow
 	}
 	if !c.Enabled() {
 		return nil
+	}
+	// PARSED HERE, WHERE THE FAILURE IS CHEAP. A base_url that will not parse
+	// booted fine and then failed inside every POST, one row at a time, in a
+	// table nobody is watching — for a typo one yaml edit repairs. Requiring a
+	// scheme and a host rather than merely "url.Parse returned no error" is the
+	// point: url.Parse accepts almost anything, and "middleware.example.com"
+	// with the https:// forgotten parses cleanly as a relative path.
+	u, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return fmt.Errorf("cms: base_url %q does not parse: %w", c.BaseURL, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("cms: base_url %q needs a scheme and a host (e.g. "+
+			"https://middleware.example.com/api/inventory_transactions)", c.BaseURL)
 	}
 	if c.AccessKey == "" || c.SecretKey == "" {
 		return fmt.Errorf("cms: base_url is set (%s) but access_key or secret_key is empty — "+
@@ -835,11 +939,13 @@ func (c *CMSConfig) Validate() error {
 // up for both verbs because it satisfies fmt.Stringer.
 func (c CMSConfig) String() string {
 	return fmt.Sprintf("CMSConfig{base_url:%s access_key:%s secret_key:%s timeout:%s "+
-		"poll_interval:%s max_attempts:%d settle_window:%s reason_code:%s "+
-		"increase_type:%s decrease_type:%s unit_of_measure:%s user_id:%s}",
+		"poll_interval:%s max_attempts:%d settle_window:%s max_requeues:%d health_window:%s "+
+		"reason_code:%s increase_type:%s decrease_type:%s unit_of_measure:%s user_id:%s "+
+		"department:%s operation:%s}",
 		c.BaseURL, redacted(c.AccessKey), redacted(c.SecretKey), c.Timeout,
-		c.PollInterval, c.MaxAttempts, c.SettleWindow, c.ReasonCode,
-		c.IncreaseType, c.DecreaseType, c.UnitOfMeasure, c.UserID)
+		c.PollInterval, c.MaxAttempts, c.SettleWindow, c.MaxRequeues, c.HealthWindow,
+		c.ReasonCode, c.IncreaseType, c.DecreaseType, c.UnitOfMeasure, c.UserID,
+		c.Department, c.Operation)
 }
 
 // redacted reports whether a secret is present without saying what it is. It

@@ -6,9 +6,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -284,6 +286,126 @@ func TestErrorExcerptsAreBounded(t *testing.T) {
 	}
 }
 
+// TestErrorExcerptsCutOnARuneBoundary is the guard on the path built to record
+// failures.
+//
+// last_error is a Postgres `text` column and Postgres rejects invalid UTF-8, so
+// an excerpt cut through the middle of a multi-byte rune produces a value the
+// database refuses — the write that records WHY a posting failed failing, and
+// taking the reason with it. The middleware's response body is not ours; a name
+// with an accent in it is all this needs.
+func TestErrorExcerptsCutOnARuneBoundary(t *testing.T) {
+	t.Parallel()
+	// A 3-byte rune deliberately straddling the cut: 499 bytes of filler puts
+	// its first byte at index 499, so bytes 500 and 501 are continuations.
+	body := strings.Repeat("x", maxExcerptBytes-1) + "€" + strings.Repeat("y", 100)
+	c := serve(t, reply(400, body))
+
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+	if got.Err == nil {
+		t.Fatal("a 400 with a body produced no error")
+	}
+	if !utf8.ValidString(got.Err.Error()) {
+		t.Errorf("the excerpt is not valid UTF-8; Postgres will refuse this "+
+			"last_error write and the failure will be recorded nowhere: %q", got.Err.Error())
+	}
+}
+
+// TestTransactionIDSurvivesLargeIntegers: the id is an opaque token and must
+// come back byte-for-byte.
+//
+// Decoded into an `any`, a JSON number becomes a float64 — 53 bits of mantissa
+// — so an id past 2^53 comes back rounded. The reconciler would then ask the
+// middleware about a transaction that does not exist and be told, correctly,
+// that it is not held, which is the one answer that makes a re-send look safe.
+func TestTransactionIDSurvivesLargeIntegers(t *testing.T) {
+	t.Parallel()
+	const huge = "9007199254740993" // 2^53 + 1: the first integer a float64 cannot hold
+	c := serve(t, reply(200, `{"TransactionId":`+huge+`}`))
+
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+	if got.Class != ClassPosted {
+		t.Fatalf("class = %v, want posted", got.Class)
+	}
+	if got.TransactionID != huge {
+		t.Errorf("transaction id = %q, want %q — the id was rounded on the way in, and the "+
+			"reconciler would ask about a transaction nobody has", got.TransactionID, huge)
+	}
+}
+
+// TestPostResult_ZeroValueClassifiesConservatively: a bare PostResult{} must
+// not read as "posted".
+//
+// Nothing constructs one today; every return in the package sets Class. This is
+// about the next caller, for whom the cost of the two mistakes is wildly
+// asymmetric: a wrongly-inflight row costs one reconciler query, and a wrongly-
+// posted row is a transfer marked settled that was never sent, which nothing
+// ever looks at again.
+func TestPostResult_ZeroValueClassifiesConservatively(t *testing.T) {
+	t.Parallel()
+	var zero PostResult
+	if zero.Class != ClassRetryableAfterSend {
+		t.Errorf("PostResult{}.Class = %v, want retryable_after_send — the zero value must be "+
+			"the answer that cannot lose a transaction", zero.Class)
+	}
+}
+
+// TestPost_UnbuildableRequestDoesNotTerminateRows: a base_url that will not
+// parse is a CONFIG fault, and the rows are innocent.
+//
+// Classified rejected — as it was — the first drain marked every posting
+// terminally rejected for a typo, and rejected is terminal by design. AuthFault
+// mutes the sender and leaves the rows pending, so the yaml fix and a restart
+// send them.
+func TestPost_UnbuildableRequestDoesNotTerminateRows(t *testing.T) {
+	t.Parallel()
+	// A control character is rejected by url parsing inside NewRequest.
+	c := New(Config{BaseURL: "http://exam\x7fple.invalid", AccessKey: "a", SecretKey: "b"})
+
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+	if got.Err == nil {
+		t.Fatal("an unbuildable request produced no error")
+	}
+	if got.Class == ClassRejected {
+		t.Errorf("class = rejected — one bad character in base_url would mark every posting " +
+			"in the queue permanently refused, for a fault a yaml edit repairs")
+	}
+	if got.Class != ClassAuthFault {
+		t.Errorf("class = %v, want auth_fault (mutes the sender, leaves the rows)", got.Class)
+	}
+}
+
+// TestGetByTxID_BaseURLWithAQueryStringStillAsksForTheID.
+//
+// base_url is hand-edited at cutover. Concatenating "?TransactionId=" onto one
+// that already carries a query produces a second "?" and a request that asks
+// for nothing — and "the middleware does not hold it" is the one answer that
+// makes a re-send look safe.
+func TestGetByTxID_BaseURLWithAQueryStringStillAsksForTheID(t *testing.T) {
+	t.Parallel()
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`[{"id":1}]`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv.URL+"?tenant=acme")
+	if _, err := c.GetByTxID(context.Background(), "MW-77"); err != nil {
+		t.Fatalf("GetByTxID: %v", err)
+	}
+
+	if got := gotQuery.Get("TransactionId"); got != "MW-77" {
+		t.Errorf("TransactionId = %q, want MW-77 — the query the middleware received was %v",
+			got, gotQuery)
+	}
+	if got := gotQuery.Get("tenant"); got != "acme" {
+		t.Errorf("tenant = %q, want acme — the base url's own query was dropped", got)
+	}
+}
+
+// ── body hash ───────────────────────────────────────────────────────────
 // ── body hash ───────────────────────────────────────────────────────────
 
 func TestBodySHA_IsStableAndDistinguishing(t *testing.T) {

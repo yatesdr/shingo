@@ -141,28 +141,13 @@ export async function openReleasePrompt(url, entry) {
         // number that doesn't split across parts, so the manifest is the
         // only per-part source.
         //
-        // DEAD, same as the CONFIRM label in operator-modal.js: Core ships an
-        // OBJECT, so Array.isArray is false and this branch has never run, and
-        // manifest lines no longer carry a `quantity` at all. A per-part split
-        // now means uop_remaining x each part's parts_per_cycle from the
-        // payload template, which is a Core-side derivation this page does not
-        // have. Left in place, and left NOT working, rather than made to look
-        // like it works.
-        const binState = entry && entry.bin_state;
-        if (binState && binState.manifest) {
-            try {
-                const manifest = JSON.parse(binState.manifest);
-                if (Array.isArray(manifest)) {
-                    manifest.forEach(item => {
-                        if (item && item.part_number && item.quantity != null &&
-                            payloads.includes(item.part_number)) {
-                            selected[item.part_number] = item.quantity;
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error('release prompt manifest parse', e);
-            }
+        // The per-part split is NOT IMPLEMENTED here, and the attempt at it has
+        // been deleted: it gated on Array.isArray of a manifest Core ships as
+        // an object, and read a `quantity` the manifest line no longer carries.
+        // Doing it properly means uop_remaining x each part's parts_per_cycle
+        // from the payload template, which is a Core-side derivation this page
+        // does not have. A multi-payload bin therefore gets no per-part
+        // prefill, which is the honest state.
         }
     }
     // Phase 0b override audit: snapshot the auto-suggested values at

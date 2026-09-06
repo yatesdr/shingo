@@ -372,7 +372,7 @@ func (e *Engine) wireEventHandlers() {
 		// arriving on it by inheritance.
 		movements := make([]*cms.Transaction, 0, len(evt.Payload.Transactions))
 		for _, t := range evt.Payload.Transactions {
-			if t != nil && t.SourceType == "movement" {
+			if t != nil && t.SourceType == cms.SourceTypeMovement {
 				movements = append(movements, t)
 			}
 		}

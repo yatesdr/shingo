@@ -26,14 +26,18 @@ import (
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
-//   - h.orchestration (EngineOrchestration) — wide surface adding 12
+//   - h.orchestration (EngineOrchestration) — wide surface adding 13
 //     verbs (direct orders, scene sync, cross-edge messaging, live
-//     reconfig). Embeds ServiceAccess so it can also
+//     reconfig, cms feed health). Embeds ServiceAccess so it can also
 //     reach service accessors and state queries.
 //
 // Both counts measured 2026-08-19; they read "~25" and "12" from the
 // 6.5 split onwards and were never re-measured. engine_iface_width_test.go
-// asserts them now.
+// asserts them now — and it is the reason this prose is right: the 12
+// above was correct until CMSFeedHealth joined the wide surface, and the
+// test failed on the count while the sentence beside it went on saying
+// 12. A number in a comment is only as good as the thing that checks it,
+// so when the test moves, this moves with it.
 //
 // In production both fields point to the same *engine.Engine. In tests
 // they may differ (a service-only test fixture can leave orchestration

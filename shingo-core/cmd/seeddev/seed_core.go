@@ -63,6 +63,9 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return err
 		}
 		payloadIDs[pl.Code] = id
+		if err := ensurePayloadTemplate(db, id, pl.Code); err != nil {
+			return err
+		}
 		if btID, ok := binTypeIDs[pl.BinType]; ok {
 			if err := db.SetPayloadBinTypes(id, []int64{btID}); err != nil {
 				return fmt.Errorf("link payload %s → bin type %s: %w", pl.Code, pl.BinType, err)
@@ -189,7 +192,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return fmt.Errorf("bin %s set available: %w", b.Name, err)
 		}
 		if created && b.Payload != "" {
-			manifest := buildManifest(b.Payload)
+			manifest := buildManifest(seedPartNumber(b.Payload))
 			if err := db.SetBinManifest(binID, manifest, b.Payload, int(b.UOP)); err != nil {
 				return fmt.Errorf("bin %s set manifest: %w", b.Name, err)
 			}
@@ -744,6 +747,44 @@ func ensurePayload(db *store.DB, pl plantspec.Payload) (int64, error) {
 	return p.ID, nil
 }
 
+// seedPartNumber is the part a seeded payload holds.
+//
+// DELIBERATELY NOT THE PAYLOAD CODE. The two are different identifiers — a
+// payload is a recipe, a part number is a thing on a shelf — and code that
+// confuses them still works when a fixture spells them the same. Giving the
+// sim a part number the payload code does not equal means a reader that looks
+// up the wrong one resolves to nothing and says so, instead of quietly
+// agreeing.
+//
+// The plant spec carries no part list, so one line per payload is the most a
+// seed can honestly assert.
+func seedPartNumber(payloadCode string) string { return payloadCode + "-P1" }
+
+// ensurePayloadTemplate gives a seeded payload the manifest line that makes it
+// countable.
+//
+// Both halves or neither: a bin manifest naming a part with no payload_manifest
+// row behind it is a bin nothing can count, and every count derived from it —
+// the inventory page's per-part rows, a CMS movement's quantity — comes out
+// zero for a bin that is physically full.
+func ensurePayloadTemplate(db *store.DB, payloadID int64, payloadCode string) error {
+	items, err := db.ListPayloadManifest(payloadID)
+	if err != nil {
+		return fmt.Errorf("list payload manifest %s: %w", payloadCode, err)
+	}
+	if len(items) > 0 {
+		return nil
+	}
+	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
+		PayloadID:     payloadID,
+		PartNumber:    seedPartNumber(payloadCode),
+		PartsPerCycle: 1,
+	}); err != nil {
+		return fmt.Errorf("create payload manifest line for %s: %w", payloadCode, err)
+	}
+	return nil
+}
+
 // ensureBin returns (id, createdNow, err). createdNow=false means the bin
 // already existed (re-run) and its manifest is left untouched.
 func ensureBin(db *store.DB, label string, binTypeID, nodeID int64) (int64, bool, error) {
@@ -768,10 +809,16 @@ func ensureBin(db *store.DB, label string, binTypeID, nodeID int64) (int64, bool
 // per-part rows, the CMS boundary totals) saw one nameless part across the
 // whole sim plant. Building the domain type means the tags cannot drift again.
 //
+// THE ARGUMENT IS A PART NUMBER, NOT A PAYLOAD CODE. catid is matched against
+// payload_manifest.part_number by everything that counts a bin, so seeding the
+// code here made every sim bin resolve to a ratio of zero — the sim reproducing
+// the release-path defect rather than being a place it would show up.
+// ensurePayloadTemplate seeds the line this names.
+//
 // No quantity: the count is uop_remaining x the template's parts_per_cycle,
 // and uop is written separately by the caller's SetBinManifest.
-func buildManifest(payloadCode string) string {
-	m := domain.Manifest{Items: []domain.ManifestEntry{{CatID: payloadCode}}}
+func buildManifest(partNumber string) string {
+	m := domain.Manifest{Items: []domain.ManifestEntry{{CatID: partNumber}}}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return `{"items":[]}`

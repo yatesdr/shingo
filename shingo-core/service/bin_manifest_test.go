@@ -20,6 +20,7 @@ import (
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 func testDB(t *testing.T) *store.DB {
@@ -846,13 +847,87 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveBumpsEpoch(t *testing
 	}
 }
 
+// payloadWithDistinctPart creates a payload whose code and whose one template
+// part number are deliberately different strings, and returns both.
+//
+// SetupStandardData's shared payload is code "PART-A" with no template lines at
+// all: nothing to reconstruct a part list from, and a code that reads like a
+// part number. A fixture like that cannot tell a payload code from a part
+// number, so it passes whichever one the code under test writes.
+func payloadWithDistinctPart(t *testing.T, db *store.DB, tag string) (*payloads.Payload, string) {
+	t.Helper()
+	p := &payloads.Payload{Code: tag + "-PAYLOAD", UOPCapacity: 1000, Description: tag + " (test)"}
+	testutil.MustNoErr(t, db.CreatePayload(p), "create payload")
+	part := tag + "-PART-1"
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
+		PayloadID: p.ID, PartNumber: part, PartsPerCycle: 1,
+	}), "create template line")
+	return p, part
+}
+
+// TestBinManifestService_SyncOrClearForReleased_NoTemplatePreservesManifest is
+// the guard on the "we could not answer" branch of the reconstruction.
+//
+// The payload has no template lines, so there is no part list to write. The
+// prior manifest is preserved rather than replaced with an empty one, and the
+// distinction is not cosmetic: an empty manifest makes BuildMovementTransactions
+// return before it counts anything, so the bin books NOTHING to CMS and looks
+// exactly like a bin that crossed no boundary — the silent loss this whole
+// commit exists to close, re-created by its own fix.
+//
+// It is also the regression test for a Postgres subtlety that produced exactly
+// that outcome: jsonb_agg over zero rows is NULL, but jsonb_build_object around
+// it is not, so the COALESCE guarding this branch did nothing until a HAVING
+// was added.
+func TestBinManifestService_SyncOrClearForReleased_NoTemplatePreservesManifest(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
+
+	// sd.Payload has NO payload_manifest rows — the untemplated case.
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-NOTMPL", sd.Payload.Code, 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	partial := 800
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""),
+		"SyncOrClearForReleased(800)")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 800 {
+		t.Errorf("UOPRemaining = %d, want 800 — the UOP sync must happen either way", got.UOPRemaining)
+	}
+	if got.Manifest == nil {
+		t.Fatal("Manifest = nil; the prior manifest must be preserved, not cleared")
+	}
+	parsed, err := got.ParseManifest()
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if len(parsed.Items) != 1 {
+		t.Fatalf("manifest items = %d, want 1 (the prior list, preserved). An empty manifest "+
+			"here is a bin that books nothing to CMS and reports as having crossed nothing.",
+			len(parsed.Items))
+	}
+	if parsed.Items[0].CatID != "PART" {
+		t.Errorf("manifest item CatID = %q, want %q (the prior list, untouched)",
+			parsed.Items[0].CatID, "PART")
+	}
+}
+
 func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-POS", "PART-A", 100)
+	// A payload whose CODE and whose template PART NUMBER are different
+	// strings. The reconstruction writes part numbers, and a fixture that
+	// spells the two identifiers the same is satisfied by either — which is
+	// how a manifest full of payload codes passed this test for months.
+	pay, wantPart := payloadWithDistinctPart(t, db, "SOC-POS")
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-POS", pay.Code, 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, bin.ID, order.ID)
 
@@ -866,21 +941,24 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	if got.PayloadCode != bin.PayloadCode {
 		t.Errorf("PayloadCode = %q, want %q (preserved)", got.PayloadCode, bin.PayloadCode)
 	}
-	// Post-#15: the manifest is reconstructed (not preserved unchanged)
-	// to reflect the new uop_remaining. Single-payload normalization
-	// makes this fully recoverable from payload_code + remainingUOP.
+	// Post-#15: the manifest is reconstructed (not preserved unchanged) so its
+	// PART LIST matches the released payload. The list comes from the payload
+	// template, because catid is matched against payload_manifest.part_number
+	// by everything that counts a bin.
 	if got.Manifest == nil {
-		t.Fatal("Manifest = nil; want reconstructed single-payload manifest")
+		t.Fatal("Manifest = nil; want a reconstructed manifest")
 	}
 	parsed, err := got.ParseManifest()
 	if err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
 	if len(parsed.Items) != 1 {
-		t.Fatalf("manifest items = %d, want 1 (single-payload normalization)", len(parsed.Items))
+		t.Fatalf("manifest items = %d, want 1 (the template has one line)", len(parsed.Items))
 	}
-	if parsed.Items[0].CatID != bin.PayloadCode {
-		t.Errorf("manifest item CatID = %q, want %q (= payload_code)", parsed.Items[0].CatID, bin.PayloadCode)
+	if parsed.Items[0].CatID != wantPart {
+		t.Errorf("manifest item CatID = %q, want %q (the template's part_number). A payload "+
+			"code here matches no part number, so the bin books nothing to CMS.",
+			parsed.Items[0].CatID, wantPart)
 	}
 	// The line carries no count of its own — that is what uop_remaining, just
 	// asserted above, is for. A second copy here is the staleness the old
