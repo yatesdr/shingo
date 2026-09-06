@@ -57,10 +57,10 @@ type CellCatalogEntry struct {
 // from ListOrderStations() can match. A field that carries one constant into
 // one wrong answer is not vestigial, it is a defect with a schema.
 type EdgeRegister struct {
-	StationID string             `json:"station_id"`
-	Hostname  string             `json:"hostname"`
-	Instance  string             `json:"instance,omitempty"`
-	Version   string             `json:"version"`
+	StationID string `json:"station_id"`
+	Hostname  string `json:"hostname"`
+	Instance  string `json:"instance,omitempty"`
+	Version   string `json:"version"`
 	// Timezone is the edge's resolved plant display zone (IANA name, e.g.
 	// "America/Chicago"), sent so Core can show each station's clock zone on
 	// the /edges page. Empty on an unconfigured edge — the table shows the

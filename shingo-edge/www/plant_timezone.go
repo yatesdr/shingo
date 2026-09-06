@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"shingoedge/config"
-	"shingoedge/engine"
 )
 
 // plantLocation is edge's single resolution point for the plant's IANA
@@ -40,13 +39,4 @@ func resolvePlantLocation(cfg *config.Config) *time.Location {
 		return time.UTC
 	}
 	return loc
-}
-
-// engineTimezone reads the engine's config, tolerating the test engines
-// that construct without one.
-func engineTimezone(eng *engine.Engine) string {
-	if eng == nil || eng.AppConfig() == nil {
-		return ""
-	}
-	return eng.AppConfig().Timezone
 }

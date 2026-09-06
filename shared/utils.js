@@ -181,12 +181,15 @@ export function formatTime(ts, opts) {
             .format(d) + '.' + String(d.getMilliseconds()).padStart(3, '0');
     }
     // The plant-local twin of shared/planttime displayLayout ("Jan 2, 2006
-    // 15:04 MST" in Go). Change them in both or in neither.
+    // 15:04 MST" in Go). Change them in both or in neither — byte for byte.
+    // Intl emits "Sep 5, 2026, 09:23 CDT" (comma after the year in en-US);
+    // Go's layout has none, so the comma is stripped here to keep the JS
+    // twin identical to the server paint.
     return tzFormatter({
         month: 'short', day: 'numeric', year: 'numeric',
         hour12: false, hour: '2-digit', minute: '2-digit',
         timeZoneName: 'short',
-    }).format(d);
+    }).format(d).replace(/(\d{4}),\s(\d{2}:)/, '$1 $2');
 }
 
 // formatClock renders time-of-day only, plant-local — the JS twin of

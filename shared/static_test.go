@@ -49,6 +49,7 @@ func TestUtilsJSHasExports(t *testing.T) {
 		"export const api",
 		"export function timeAgo",
 		"export function formatTime",
+		"export function formatClock",
 		"export function formatDuration",
 		"export function convertTimestamps",
 		"export function createSSE",
