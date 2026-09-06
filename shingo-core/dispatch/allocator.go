@@ -218,7 +218,24 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//    — SPR ALN_006, 2026-07). A supply fetch at any other node stays
 		//    payload-filtered.
 		removal := isRemovalPickup(pk.step, order.ProcessNode)
-		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk.step, order.PayloadCode, removal)
+		// THE STEP'S PAYLOAD WINS, and the two halves of this decision used to
+		// disagree. resolveStepNode already resolves WHICH NODE a leg goes to
+		// through stepPayload (step's if set, else the order's); this passed the
+		// order's payload straight through, so node resolution and bin selection
+		// answered different questions about the same step.
+		//
+		// On a changeover swap that is the difference between working and
+		// starving. The order carries the FROM payload deliberately — its opening
+		// pickup lifts the old bin off the line, and filtering that for the new
+		// payload is ALN_001 — while the refill leg two steps later carries the TO
+		// payload on the step. Node resolution sent that leg to the slot holding
+		// the incoming material; this then looked there for the OUTGOING part,
+		// found the incoming one, and reported "bins present but none available".
+		// The changeover waited forever with its material in front of it.
+		//
+		// Removal keeps ignoring payload entirely — it clears whatever is resident
+		// (SPR ALN_006) — and that arm is inside findAvailableForNeed, untouched.
+		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk.step, resolvedStepPayload(pk.step, order.PayloadCode), removal)
 		if ferr != nil {
 			return nil, reserveHolding, ferr
 		}

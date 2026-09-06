@@ -179,12 +179,38 @@ func BuildStagedReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrder
 // the payload rather than guessing, which is exactly what they said before.
 func refillPickup(fromClaim, toClaim *processes.NodeClaim) protocol.ComplexOrderStep {
 	step := buildStep("pickup", toClaim.InboundSource)
-	if toClaim.Role != protocol.ClaimRoleProduce || toClaim.InboundSource == "" {
-		// A consume node's inbound leg is a payload-matched FULL retrieve —
-		// the dual of this, and the reason the flag is not unconditional.
+	if toClaim.InboundSource == "" {
 		return step
 	}
-	step.Empty = true
+	// A produce node refills with an EMPTY carrier; a consume node refills with a
+	// payload-matched FULL retrieve. That is the only difference between the two,
+	// and it is this flag.
+	step.Empty = toClaim.Role == protocol.ClaimRoleProduce
+	// ── WHICH PAYLOAD, AND WHY BOTH ROLES HAVE TO SAY IT ──────────────────
+	//
+	// refillCarrierPayload already answers this: blank when the two styles want
+	// the same thing (any carrier will do), the INCOMING style's code when they
+	// differ. Produce asked it; consume returned before reaching it and inherited
+	// the ORDER's payload instead.
+	//
+	// That inheritance is wrong on a changeover, and silently. This order opens by
+	// lifting the old bin off the line, so it is stamped with the FROM style's
+	// payload on purpose — an old-tote pickup filtered for the new payload finds
+	// no bin, which is ALN_001. The refill pickup two steps later then inherited
+	// that same FROM payload and went looking for the outgoing part to feed a cell
+	// that had just changed over. One order, one payload field, two pickups that
+	// want opposite answers.
+	//
+	// It never showed up because it cannot fire on produce: there the parked
+	// position holds an EMPTY, so the order is not stamped with the from-payload
+	// at all (CarriesFromPayloadA: !onDeckEmpty in changeover_planner.go). A
+	// consume A/B pair holds MATERIAL on the parked side, so the stamp lands and
+	// the refill inherits it. No fixture had ever configured one — every
+	// sequential claim in demo.yaml and lane-stress.yaml is produce — so the
+	// changeover simply waited forever for a part the market was never going to
+	// be asked for, with the incoming material sitting unclaimed beside it.
+	//
+	// Naming it per-step is what stops the two pickups sharing one answer.
 	if fromClaim != nil {
 		step.PayloadCode = refillCarrierPayload(fromClaim, toClaim)
 	}

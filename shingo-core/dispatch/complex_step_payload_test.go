@@ -93,3 +93,43 @@ func TestResolvedStep_CarriesPayloadThroughReplay(t *testing.T) {
 			"got %q, want the leg's PANEL-C", stepPayload(replayed, "PANEL-A"))
 	}
 }
+
+// TestResolvedStepPayload_TheStepWinsOverTheOrder pins the half of this rule that
+// bin SELECTION uses, and it was the half that did not follow it.
+//
+// resolveStepNode has always resolved WHICH NODE a leg goes to through
+// stepPayload. reserveComplexPlan then chose the BIN with order.PayloadCode
+// directly, so the two answered different questions about the same step: node
+// resolution sent a changeover's refill leg to the slot holding the INCOMING
+// material, and bin selection went to that slot looking for the OUTGOING part.
+// It found the incoming bin, called it unavailable, and the changeover waited
+// forever with its material in front of it.
+//
+// The order's payload is deliberately the FROM style on such a swap — its
+// opening pickup lifts the old bin off the line, and filtering that for the new
+// payload is ALN_001 — so the order-level answer is right for one leg and wrong
+// for the other. Only the step can tell them apart.
+func TestResolvedStepPayload_TheStepWinsOverTheOrder(t *testing.T) {
+	t.Parallel()
+
+	withOwn := resolvedStep{Node: "MARKET", PayloadCode: "INCOMING"}
+	if got := resolvedStepPayload(withOwn, "OUTGOING"); got != "INCOMING" {
+		t.Errorf("payload = %q, want INCOMING — a leg that names its own payload is answering a "+
+			"different question from the order it rides on, and on a changeover the order's "+
+			"answer is the style being left", got)
+	}
+
+	blank := resolvedStep{Node: "MARKET"}
+	if got := resolvedStepPayload(blank, "OUTGOING"); got != "OUTGOING" {
+		t.Errorf("payload = %q, want OUTGOING — a leg with no payload of its own still rides "+
+			"the order's, which is what every non-changeover leg relies on", got)
+	}
+
+	// The two spellings of this rule must not drift: the wire form and the
+	// resolved form are the same decision on either side of a replay.
+	wire := protocol.ComplexOrderStep{Node: "MARKET", PayloadCode: "INCOMING"}
+	if stepPayload(wire, "OUTGOING") != resolvedStepPayload(withOwn, "OUTGOING") {
+		t.Error("stepPayload and resolvedStepPayload disagree — they are one rule written twice, " +
+			"and a replay crosses between them")
+	}
+}

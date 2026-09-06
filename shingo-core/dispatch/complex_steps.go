@@ -192,6 +192,18 @@ func stepPayload(step protocol.ComplexOrderStep, orderPayload string) string {
 	return orderPayload
 }
 
+// resolvedStepPayload is stepPayload for the resolved form, and it sits here
+// rather than beside its caller so the two spellings of one rule cannot drift.
+// resolvedStep carries the payload through a replay precisely so the answer
+// survives; reading the order's payload instead is how a changeover leg ends up
+// sourcing the style being left.
+func resolvedStepPayload(step resolvedStep, orderPayload string) string {
+	if step.PayloadCode != "" {
+		return step.PayloadCode
+	}
+	return orderPayload
+}
+
 func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayload string,
 	asker reservations.DigAsker, nextDropoff string) (string, string, error) {
 	payloadCode := stepPayload(step, orderPayload)

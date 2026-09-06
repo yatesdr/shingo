@@ -400,9 +400,15 @@ func TestBuildEvacuateChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 // case. Single complex order, 4 steps, no operator gate inside.
 func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
 	t.Parallel()
+	// THE ROLE IS SET, and it was not. A press-index position is a produce
+	// shape, but this fixture left Role at its zero value, so it exercised the
+	// non-produce branch of refillPickup by accident and pinned that branch's
+	// answer — no Empty flag and no payload filter — as if it were this
+	// builder's contract. Both halves of that were artefacts of the omission.
 	from := &processes.NodeClaim{
 		CoreNodeName:        "POS-A",
 		PayloadCode:         "PART-A",
+		Role:                protocol.ClaimRoleProduce,
 		SwapMode:            pressPositionSwapMode,
 		InboundSource:       "MARKET",
 		OutboundDestination: "DEST",
@@ -410,16 +416,21 @@ func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
 	to := &processes.NodeClaim{
 		CoreNodeName:        "POS-A",
 		PayloadCode:         "PART-B",
+		Role:                protocol.ClaimRoleProduce,
 		SwapMode:            pressPositionSwapMode,
 		InboundSource:       "MARKET",
 		OutboundDestination: "DEST",
 	}
 	disp := buildPressIndexPerPositionSwap(from, to)
 
+	// The refill pickup names the INCOMING payload and fetches an empty carrier.
+	// It must not be left blank: this order opens by lifting the old bin, so it
+	// carries the FROM payload, and a blank refill step inherits that and goes
+	// looking for the outgoing part to restock a position that has changed over.
 	want := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "POS-A"},
 		{Action: "dropoff", Node: "DEST"},
-		{Action: "pickup", Node: "MARKET"},
+		{Action: "pickup", Node: "MARKET", Empty: true, PayloadCode: "PART-B"},
 		{Action: "dropoff", Node: "POS-A"},
 	}
 	if len(disp.StepsA) != len(want) {
@@ -1067,5 +1078,58 @@ func TestAssignDispatch_StepsA_PayloadStampFollowsCarriesFromPayloadA(t *testing
 	})
 	if got := plain.SupplyOrder.Complex.PayloadCode; got != "" {
 		t.Errorf("PayloadCode = %q, want blank when the builder doesn't claim an old bin", got)
+	}
+}
+
+// TestRefillPickup_ConsumeChangeoverAsksForTheIncomingPayload is the regression
+// pin for the consume A/B changeover starve.
+//
+// The order that swaps a changed-over position opens by lifting the OLD bin off
+// the line, so it is stamped with the FROM style's payload deliberately — an
+// old-tote pickup filtered for the new payload finds no bin, which is ALN_001.
+// The refill pickup two steps later used to carry no payload of its own on a
+// consume node and inherited that stamp, so the changeover went looking for the
+// OUTGOING part to restock a cell that had just changed over. It waited forever
+// with the incoming material sitting unclaimed in the market.
+//
+// It cannot fire on produce — there the parked position holds an empty, so the
+// order is never stamped with the from-payload (CarriesFromPayloadA:
+// !onDeckEmpty). It took a consume A/B pair to reach, and no fixture had one:
+// every sequential claim in demo.yaml and lane-stress.yaml is produce.
+func TestRefillPickup_ConsumeChangeoverAsksForTheIncomingPayload(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		role      protocol.ClaimRole
+		wantEmpty bool
+	}{
+		{"consume refills with a full retrieve", protocol.ClaimRoleConsume, false},
+		{"produce refills with an empty carrier", protocol.ClaimRoleProduce, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			from := &processes.NodeClaim{CoreNodeName: "POS", PayloadCode: "OUTGOING", Role: tc.role, InboundSource: "MARKET"}
+			to := &processes.NodeClaim{CoreNodeName: "POS", PayloadCode: "INCOMING", Role: tc.role, InboundSource: "MARKET"}
+
+			step := refillPickup(from, to)
+
+			if step.PayloadCode != "INCOMING" {
+				t.Errorf("refill payload = %q, want INCOMING. The cell has changed over; restocking it "+
+					"with %q feeds it the part it just stopped running, and a blank here inherits the "+
+					"order's FROM stamp and does exactly that.", step.PayloadCode, from.PayloadCode)
+			}
+			if step.Empty != tc.wantEmpty {
+				t.Errorf("Empty = %v, want %v — that flag is the ONLY thing that should differ "+
+					"between the roles here", step.Empty, tc.wantEmpty)
+			}
+		})
+	}
+
+	// Same style on both sides: any carrier will do, so no filter is imposed.
+	// This is what keeps the fix from over-constraining a swap that is not a
+	// changeover at all.
+	same := &processes.NodeClaim{CoreNodeName: "POS", PayloadCode: "SAME", Role: protocol.ClaimRoleConsume, InboundSource: "MARKET"}
+	if step := refillPickup(same, same); step.PayloadCode != "" {
+		t.Errorf("refill payload = %q, want blank when the two styles want the same part", step.PayloadCode)
 	}
 }

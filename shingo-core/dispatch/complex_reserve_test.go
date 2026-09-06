@@ -1102,3 +1102,62 @@ func TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces(t *testing.T) {
 		t.Error("no evac_payload_mismatch audit entry — an off-payload evac must surface the anomaly for operator follow-up")
 	}
 }
+
+// TestReserveHonoursTheStepsOwnPayload is the allocator half of N1-c, and it was
+// the half that did not follow the rule this file is named for.
+//
+// resolveStepNode has always resolved WHICH NODE a leg goes to through
+// stepPayload. reserveComplexPlan chose the BIN with order.PayloadCode directly,
+// so the two answered different questions about one step.
+//
+// On a changeover swap that is the whole difference. The order carries the FROM
+// style deliberately — its opening pickup lifts the old bin off the line, and
+// filtering that for the new payload is ALN_001 — while the refill leg names the
+// TO style on the step. Node resolution sent the refill to the slot holding the
+// incoming material; bin selection went to that slot looking for the outgoing
+// part, found the incoming one, and called it unavailable. Measured on EDGE 2:
+// the changeover sat in awaiting_material for its entire window with both
+// incoming carriers unclaimed, unlocked and unreserved in front of it.
+func TestReserveHonoursTheStepsOwnPayload(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	_, lineNode, outgoing := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	incoming := &payloads.Payload{Code: "INCOMING-STYLE", UOPCapacity: 20}
+	testutil.MustNoErr(t, db.CreatePayload(incoming), "incoming payload")
+
+	market := &nodes.Node{Name: "STEP-PAYLOAD-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "market node")
+
+	// Both styles are present. Only the step says which one this leg wants.
+	outBin := testdb.CreateBinAtNode(t, db, outgoing.Code, market.ID, "SP-OUTGOING")
+	inBin := testdb.CreateBinAtNode(t, db, incoming.Code, market.ID, "SP-INCOMING")
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: market.Name, PayloadCode: incoming.Code},
+		{Action: protocol.ActionDropoff, Node: lineNode.Name},
+	}
+	// The ORDER carries the OUTGOING style, exactly as a changeover swap does.
+	order := mkComplexOrder(t, db, "step-payload-1", market.Name, lineNode.Name, lineNode.Name,
+		outgoing.Code, steps)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), outgoing.Code, lineNode.Name)
+
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	testutil.MustNoErr(t, err, "reserve")
+
+	if outcome == reserveHolding {
+		t.Fatalf("outcome = reserveHolding — the leg named %s, a %s bin is sitting at %s "+
+			"unclaimed, and the reserve could not see it. That is the changeover starve: bin "+
+			"selection resolved against the order's %s instead of the step's own payload.",
+			incoming.Code, incoming.Code, market.Name, outgoing.Code)
+	}
+	if len(assigned) != 1 {
+		t.Fatalf("assigned %d pickups, want 1", len(assigned))
+	}
+	if assigned[0].binID != inBin.ID {
+		t.Errorf("reserved bin %d, want %d (%s). Reserving %d would be the OUTGOING style — "+
+			"restocking a changed-over cell with the part it just stopped running.",
+			assigned[0].binID, inBin.ID, incoming.Code, outBin.ID)
+	}
+}
