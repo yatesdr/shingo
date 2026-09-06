@@ -218,7 +218,7 @@ func TestEdgeFilter(t *testing.T) {
 		t.Error("expected filter to accept broadcast")
 	}
 	// Other node
-	if filter(&RawHeader{Dst: Address{Station: "plant-a.line-2"}}) {
+	if filter(&RawHeader{Dst: Address{Station: "edge2.line1"}}) {
 		t.Error("expected filter to reject other node")
 	}
 }

@@ -242,7 +242,7 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	for _, want := range []struct{ key, value string }{
 		{"maintain_enabled", "on"},
 		{"strict_sourcing", "on"},
-		{"maintenance_station", "devplant.line1"},
+		{"maintenance_station", "edge1.line1"},
 		{"overflow_destination", "SYN_SM_Stamp"},
 		// Explicit, never inherited: an ancestor's allowed-bins list must not
 		// silently govern a group that has just been told to hold two types.

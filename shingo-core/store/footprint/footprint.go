@@ -18,7 +18,7 @@ import (
 // not a snapshot, so it ignores the dashboard's station/robot filters).
 type Footprint struct {
 	// CellsManaged counts edge_registry rows — i.e. edge/line registrations
-	// (e.g. "devplant.line1"), NOT physical cells. Surfacing real cells
+	// (e.g. "edge1.line1"), NOT physical cells. Surfacing real cells
 	// (weld cells / presses) needs the PLCName/cell identity the edge currently
 	// drops at emit (Q-034); until then the dashboard labels this "Lines".
 	CellsManaged int64 `json:"cells_managed"`

@@ -27,10 +27,10 @@ func seedOriginRow(t *testing.T, db *store.DB, originID string) {
 		// idx_demand_origins_open_key, a unique index enforcing ONE OPEN EPISODE
 		// PER KEY, so two open fixtures sharing a key is not a test setup detail —
 		// it is a state the system refuses to hold.
-		EpisodeKey:  "cell|devplant.line1|3|PANEL-" + originID[len(originID)-12:] + "|supply",
+		EpisodeKey:  "cell|edge1.line1|3|PANEL-" + originID[len(originID)-12:] + "|supply",
 		Kind:        "cell",
 		Direction:   "supply",
-		StationID:   "devplant.line1",
+		StationID:   "edge1.line1",
 		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    time.Now().UTC().Add(-time.Hour),
@@ -41,7 +41,7 @@ func seedOrderWithOrigin(t *testing.T, db *store.DB, uuid, originID string) *ord
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:    uuid,
-		StationID:   "devplant.line1",
+		StationID:   "edge1.line1",
 		OrderType:   "move",
 		Status:      protocol.StatusPending,
 		Quantity:    1,
@@ -169,7 +169,7 @@ func TestListByOrigin_IsScopedToOneEpisode(t *testing.T) {
 	// And an order with no origin at all — the consume-side / admin-action case,
 	// which is the majority of rows on a real plant. It must not be swept in.
 	noOrigin := &orders.Order{
-		EdgeUUID: "scope-none", StationID: "devplant.line1", OrderType: "move",
+		EdgeUUID: "scope-none", StationID: "edge1.line1", OrderType: "move",
 		Status: protocol.StatusPending, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(noOrigin), "create origin-less order")

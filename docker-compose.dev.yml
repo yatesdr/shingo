@@ -74,7 +74,7 @@ services:
         condition: service_healthy
 
   # ── EDGE 1 ──────────────────────────────────────────────────────────────
-  # The rapid-fire regression edge (station devplant.line1, plants/demo.yaml).
+  # The rapid-fire regression edge (station edge1.line1, plants/demo.yaml).
   # Renamed from "the dev edge" to EDGE 1 so the pair reads EDGE 1 / EDGE 2.
   # LABEL ONLY: its pacing, plant spec and gates are untouched, and the service
   # key stays `edge` because the seeder, the Makefile and every existing gate
@@ -108,7 +108,7 @@ services:
         condition: service_started
 
   # ── EDGE 2 ──────────────────────────────────────────────────────────────
-  # The observable-window edge (station plant-a.line-2, plants/edge2.yaml). Same
+  # The observable-window edge (station edge2.line1, plants/edge2.yaml). Same
   # image and same Core as EDGE 1; it differs in station identity and PACING.
   # See shingo-edge/shingoedge.edge2.yaml for why the clock is shared and the
   # windows are bought in sim time instead.
@@ -217,7 +217,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     profiles: ["tools"]
-    command: ["migrateloaders", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--station", "devplant.line1"]
+    command: ["migrateloaders", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--station", "edge1.line1"]
     environment:
       SHINGO_ALLOW_SIM: "1"
       # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env

@@ -7,8 +7,8 @@
 # any more — that composition was the fleet-wide shared identity the v66 work
 # removed — so the dev stack names its own, exactly as a plant Pi carries the uid
 # Core minted for it. namespace/line_id below are labels only.
-station_uid: devplant.line1
-namespace: devplant
+station_uid: edge1.line1
+namespace: edge1
 line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083

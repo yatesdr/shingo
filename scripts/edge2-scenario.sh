@@ -121,7 +121,7 @@ case "${1:-}" in
          ORDER BY n.name;"
     echo "-- lineside reports (Core read-model) --"
     $QC "SELECT station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty, reported_at
-         FROM edge_lineside_reports WHERE station LIKE 'plant-a%' ORDER BY core_node_name, payload_code;"
+         FROM edge_lineside_reports WHERE station LIKE 'edge2%' ORDER BY core_node_name, payload_code;"
     echo "-- cms transactions --"
     $QC "SELECT id, node_name, cat_id, delta, bin_label, payload_code, source_type, storeroom
          FROM cms_transactions ORDER BY id DESC LIMIT 15;" ;;

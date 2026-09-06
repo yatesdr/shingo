@@ -247,7 +247,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// the enrollment deploy: a register from an unenrolled uid is REFUSED and
 	// writes nothing, so the Edge would heartbeat, publish, and never appear.
 	//
-	// The uid is the composed devplant.line1 rather than a minted stn-… for the
+	// The uid is the composed edge1.line1 rather than a minted stn-… for the
 	// same reason both live plants keep theirs: it is what shingoedge.dev.yaml
 	// carries, it never changes, and readable-but-immutable is not the defect —
 	// self-asserted-and-mutable was.

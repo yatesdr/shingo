@@ -1,7 +1,7 @@
 # plants/edge2.yaml — EDGE 2: the observable-window rig for the lineside+CMS integration.
 #
 # WHY THIS EXISTS AND WHY IT IS NOT EDGE 1. EDGE 1 (plants/demo.yaml, station
-# devplant.line1) is rapid-fire by design and stays that way — it is the regression
+# edge1.line1) is rapid-fire by design and stays that way — it is the regression
 # gate. The scenarios this plant serves need observable WINDOWS: a changeover whose
 # material lands minutes before the changeover completes, and a decision taken inside
 # that gap. At EDGE 1's pace the gap is not a window, it is an instant, and a test
@@ -83,8 +83,8 @@
 # permanently in flight — the spare is what absorbs a carrier that is somewhere
 # unexpected, and a loop sized to its own happy path deadlocks the first time one is.
 
-namespace: plant-a
-line_id: line-2
+namespace: edge2
+line_id: line1
 
 bin_types: [STANDARD]
 

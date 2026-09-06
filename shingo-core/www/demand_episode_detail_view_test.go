@@ -25,12 +25,12 @@ func openedAt() time.Time { return time.Date(2026, 7, 28, 9, 0, 0, 0, time.UTC) 
 func originFor() domain.DemandOrigin {
 	return domain.DemandOrigin{
 		OriginID:    "0f9a1c22-0000-0000-0000-000000000001",
-		EpisodeKey:  "cell|devplant.line1|SNF2|PANEL-A|supply",
+		EpisodeKey:  "cell|edge1.line1|SNF2|PANEL-A|supply",
 		Kind:        "cell",
 		Direction:   "supply",
 		Trigger:     "autoreorder",
 		TriggerRef:  "claim-77",
-		StationID:   "devplant.line1",
+		StationID:   "edge1.line1",
 		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    openedAt(),

@@ -38,7 +38,7 @@
 # starve. Component legs are loader-fed; each consume weld drains its market at 6/min,
 # keeping the loaders re-tripping. Verify with `make dev-rates`.
 
-namespace: devplant
+namespace: edge1
 line_id: line1
 
 # TWO REAL CARRIER TYPES, and the second one now FLOWS (MG2-0). It was declared
@@ -1139,7 +1139,7 @@ cell_configs:
 # the wrong-type / mix-churn measurement the campaign runs.
 maintained_groups:
   - group: SYN_PRESS_EMPTIES
-    station: devplant.line1
+    station: edge1.line1
     strict: false
     overflow: SYN_MARKET
     levels:

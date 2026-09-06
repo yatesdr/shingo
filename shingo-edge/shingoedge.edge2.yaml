@@ -29,9 +29,9 @@
 # 4-minute cutover delay is two minutes of wall clock and four 60 s reporter ticks
 # of sim time, which is the shape the scenarios need.
 
-station_uid: plant-a.line-2
-namespace: plant-a
-line_id: line-2
+station_uid: edge2.line1
+namespace: edge2
+line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083
 

@@ -34,12 +34,12 @@ func seedEpisode(t *testing.T, db *store.DB, originID string, opened time.Time) 
 		Revision: 1,
 		// Keyed off originID: demand_origins enforces ONE OPEN EPISODE PER KEY
 		// (idx_demand_origins_open_key), so two open fixtures cannot share one.
-		EpisodeKey:  "cell|devplant.line1|3|PANEL-" + originID[len(originID)-12:] + "|supply",
+		EpisodeKey:  "cell|edge1.line1|3|PANEL-" + originID[len(originID)-12:] + "|supply",
 		Kind:        "cell",
 		Direction:   "supply",
 		Trigger:     "autoreorder",
 		TriggerRef:  "claim-77",
-		StationID:   "devplant.line1",
+		StationID:   "edge1.line1",
 		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    opened,
@@ -52,7 +52,7 @@ func seedChild(t *testing.T, db *store.DB, originID, uuid string) *orders.Order 
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "devplant.line1",
+		StationID:    "edge1.line1",
 		OrderType:    "move",
 		Status:       protocol.StatusPending,
 		Quantity:     1,

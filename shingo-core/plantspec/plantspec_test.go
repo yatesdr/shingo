@@ -11,7 +11,7 @@ import (
 // to exercise each failure mode.
 func validPlant() *Plant {
 	return &Plant{
-		Namespace: "devplant",
+		Namespace: "edge1",
 		LineID:    "line1",
 		BinTypes:  []string{"STANDARD"},
 		Payloads: []Payload{
@@ -93,7 +93,7 @@ func TestValidate_CatchesProblems(t *testing.T) {
 
 func TestLoad_RoundTrip(t *testing.T) {
 	yaml := `
-namespace: devplant
+namespace: edge1
 line_id: line1
 bin_types: [STANDARD]
 payloads:
@@ -118,7 +118,7 @@ stations:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if p.Namespace != "devplant" || p.LineID != "line1" {
+	if p.Namespace != "edge1" || p.LineID != "line1" {
 		t.Fatalf("header not parsed: %+v", p)
 	}
 	if len(p.Zones) != 1 || len(p.Zones[0].Lanes) != 1 || len(p.Zones[0].Lanes[0].Slots) != 1 {
@@ -150,7 +150,7 @@ func maintainedPlant() *Plant {
 	})
 	p.MaintainedGroups = []MaintainedGroup{{
 		Group:   "PRESS-EMPTIES",
-		Station: "devplant.line1",
+		Station: "edge1.line1",
 		Levels: []MaintainLevel{
 			{BinType: "STANDARD", Want: 2},
 			{BinType: "SMALL", Want: 1},

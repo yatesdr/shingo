@@ -35,7 +35,7 @@
 # KEY DESIGN: each weld cell is ONE process with MULTIPLE claims (consume + produce);
 # a counter tick fans to all its nodes, dispatching per claim.Role. A/B pairs share one
 # process+style; active_pull arbitrates which bin counts/fills.
-namespace: devplant
+namespace: edge1
 line_id: line1
 
 # STANDARD-SM is carried by no payload, on purpose: it gives the maintained group
@@ -796,7 +796,7 @@ cell_configs:
 # nodes those processes' claims name.
 maintained_groups:
   - group: SYN_PRESS_EMPTIES
-    station: devplant.line1
+    station: edge1.line1
     strict: true
     overflow: SYN_SM_Stamp
     levels:
