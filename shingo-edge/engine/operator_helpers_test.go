@@ -11,7 +11,7 @@ import (
 // TestFindActiveClaim_AddNodeChangeoverFallback pins the 2026-05-12 fix:
 // when a changeover adds a brand-new process_node (e.g. 1-node → 2-node
 // topology), that node has NO claim on the active (from) style — it
-// didn't exist there. Pre-fix, findActiveClaim returned nil and every
+// didn't exist there. Pre-fix, requestedClaimAtNode returned nil and every
 // downstream handler (handleNodeOrderDelivered, manual_swap completion,
 // counter delta, status changed) silently short-circuited. Plant
 // symptom: bin arrived at the new node with correct UOP in Core's
@@ -71,12 +71,12 @@ func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 		t.Fatalf("get node: %v", err)
 	}
 
-	got := findActiveClaim(db, node)
+	got := requestedClaimAtNode(db, node)
 	if got == nil {
-		t.Fatal("findActiveClaim returned nil for add-node during changeover — handlers like handleNodeOrderDelivered would short-circuit and leave runtime.remaining_uop_cached at 0")
+		t.Fatal("requestedClaimAtNode returned nil for add-node during changeover — handlers like handleNodeOrderDelivered would short-circuit and leave runtime.remaining_uop_cached at 0")
 	}
 	if got.ID != toClaimID {
-		t.Errorf("findActiveClaim returned claim %d, want to-style claim %d", got.ID, toClaimID)
+		t.Errorf("requestedClaimAtNode returned claim %d, want to-style claim %d", got.ID, toClaimID)
 	}
 }
 
@@ -113,12 +113,12 @@ func TestFindActiveClaim_PrefersActiveOverTarget(t *testing.T) {
 	})
 
 	node, _ := db.GetProcessNode(nodeID)
-	got := findActiveClaim(db, node)
+	got := requestedClaimAtNode(db, node)
 	if got == nil {
-		t.Fatal("findActiveClaim returned nil despite from-style claim existing")
+		t.Fatal("requestedClaimAtNode returned nil despite from-style claim existing")
 	}
 	if got.ID != fromClaimID {
-		t.Errorf("findActiveClaim returned claim %d (want from-style %d, to-style is %d) — fallback must NOT preempt active-style claim",
+		t.Errorf("requestedClaimAtNode returned claim %d (want from-style %d, to-style is %d) — fallback must NOT preempt active-style claim",
 			got.ID, fromClaimID, toClaimID)
 	}
 }

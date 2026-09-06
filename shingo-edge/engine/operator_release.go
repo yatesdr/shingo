@@ -43,9 +43,11 @@ package engine
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
@@ -81,8 +83,13 @@ const (
 //     deactivates buckets for other styles on this node (always — release
 //     click is the "this style is now active here" point, regardless of
 //     disposition).
-//  4. Resets RemainingUOP to the target claim's UOPCapacity for the next bin
-//     and points runtime.ActiveClaimID at the target claim.
+//  4. Writes the OLD bin's finalized count (manifestUOP) to the runtime row,
+//     and nothing else. It does NOT reset RemainingUOP to the target claim's
+//     capacity and it does NOT point runtime.ActiveClaimID at the target claim
+//     — this text said it did both, and SwitchNode's skip arm was written
+//     against that. The claim advances when the changeover's own delivery
+//     completes (applyChangeoverRelease / applyStagedDelivery); the incoming
+//     bin's count arrives on its OrderDelivered envelope.
 //  5. Advances the changeover node task state to "released" if applicable.
 //  6. Calls orderMgr.ReleaseOrder with the computed remaining_uop, which
 //     embeds it in the OrderRelease envelope. Core's HandleOrderRelease
@@ -98,6 +105,33 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order %d: %w", orderID, err)
+	}
+
+	// ── CORE WILL NOT TAKE THIS, SO SAY SO NOW ───────────────────────────
+	//
+	// Same argument as the pull guard below, one frame up: this is the trunk
+	// every release door runs through, so a precondition that belongs to all of
+	// them is asked once here.
+	//
+	// The doors that already had this check kept working and the one that never
+	// had it — /orders/{orderID}/release, straight to this function — did not.
+	// Without it, Manager.ReleaseOrderWithDisposition forces the row to
+	// in_transit regardless, so Edge records a release that Core never accepted
+	// and the two disagree about an order nobody is moving.
+	//
+	// REFUSING IS NOT SKIPPING, and the distinction is the one orders/types.go
+	// spells out. ReleaseStagedOrders gates each leg itself and DEFERS the ones
+	// Core will not take yet, re-firing them at staged; it never arrives here
+	// with a non-releasable leg, so its deferral is untouched. What this
+	// replaces is the case where an operator clicked and got a success they did
+	// not have.
+	//
+	// The refusal names Core's own mirrored account of why the order is stuck
+	// when there is one. "Not releasable" tells an operator nothing they can
+	// act on; "queued: no empty slot at SMN_029" tells them what to go fix.
+	if !orders.ReleasableAtCore(order.Status) {
+		return fmt.Errorf("order %d is %s, which Core will not release%s",
+			orderID, order.Status, queueReasonSuffix(order))
 	}
 
 	// Orders without a process node (pure kanban, generic moves) skip
@@ -259,13 +293,35 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		// failed to go out. It used to sit above the produce-role branch, which
 		// is the same gates-before-side-effects slip the swap release had, in a
 		// narrower place: the only step between them is this enqueue.
+		// FROM THE ORDER, NOT THE CLAIM — the rule this same file states a
+		// hundred lines below, at the capture_reduction emit: the bin being
+		// finished is the order's bin, and its payload is what the order
+		// recorded at create-time. toClaim comes from resolveReleaseClaim,
+		// which returns the TARGET style's claim whenever any changeover is
+		// open on the process, so mid-changeover this asked for a full of the
+		// INCOMING part at an unloader still draining the outgoing one — or
+		// resolved no loader at all and dropped the U1 in silence.
 		if !isSupply && disp.Mode == DispositionCaptureLineside {
-			e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
+			e.MaybeCreateUnloaderFullIn(order.PayloadCode)
 		}
 		return nil
 	}
 
 	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply)
+}
+
+// queueReasonSuffix renders Core's mirrored blocking reason for an operator-
+// facing refusal, or "" when Core has not told us one. Leading separator
+// included so callers can append it unconditionally.
+func queueReasonSuffix(order *storeorders.Order) string {
+	reason := strings.TrimSpace(order.QueueReason)
+	if reason == "" {
+		return ""
+	}
+	if code := strings.TrimSpace(order.QueueCode); code != "" {
+		return fmt.Sprintf(" — %s (%s)", reason, code)
+	}
+	return " — " + reason
 }
 
 // releaseOrderDropFastPath handles the drop-CO release shape. A drop has

@@ -66,7 +66,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		if err != nil || runtime == nil {
 			continue
 		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(task.ProcessNodeID, nil, nil); err != nil {
+		if err := e.db.ClearProcessNodeRuntimeOrders(task.ProcessNodeID); err != nil {
 			log.Printf("changeover: update runtime orders for node %d: %v", task.ProcessNodeID, err)
 		}
 		e.reconcileActiveBinAfterCancel(task.ProcessNodeID, runtime.ActiveClaimID)

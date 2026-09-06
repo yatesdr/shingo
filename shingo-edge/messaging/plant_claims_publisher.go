@@ -148,7 +148,7 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 			return nil, err
 		}
 		// Mark the running style. proc.ActiveStyleID is the field Edge itself
-		// resolves claims through (findActiveClaim keys on it), so publishing it
+		// resolves claims through (requestedClaimAtNode keys on it), so publishing it
 		// tells Core what Edge is already acting on rather than a second,
 		// separately-maintained notion of "running".
 		wire := protocol.PlantClaimsStyle{

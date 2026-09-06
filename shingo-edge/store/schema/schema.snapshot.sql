@@ -400,15 +400,66 @@ CREATE TABLE process_groups (
 CREATE TABLE process_node_runtime_states (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
+    -- active_claim_id NAMES A STYLE'S CLAIM, NOT A CARRIER, and the name is
+    -- the trap. It answers "which style-claim is this node running" —
+    -- configuration and intent — and eighteen paths write it, most of them
+    -- from the process's active style. It is not "the claim the bin standing
+    -- here was stocked for": a changeover moves it while a carrier stays put,
+    -- and reading it for identity is the defect class this table's
+    -- lineside_* columns exist to end. What is standing here is
+    -- lineside_payload_code below.
+    --
+    -- The surviving readers all want the configuration answer: the changeover
+    -- readiness check, the switch-node skip arm, the release-time capacity
+    -- reset, the cancel re-bind, and the clear-shaped writes that thread it
+    -- back unchanged. The claim advance at applyChangeoverRelease /
+    -- applyStagedDelivery is what keeps that answer current during a
+    -- changeover.
+    --
+    -- ON DELETE SET NULL, so a deleted claim leaves the pointer NULL rather
+    -- than dangling, and every reader here treats NULL as "no opinion" and
+    -- fails open. That is the designed degradation and it is also why a
+    -- config edit can silently widen behaviour — HK SMN_01 is the live
+    -- instance. A reader that must not fail open should ask the running
+    -- style through ResolveNodeClaim instead of dereferencing this.
     active_claim_id    INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
     active_bin_id      INTEGER,
     -- active_bin_epoch mirrors Core's bins.delta_epoch for the bin
     -- currently active at this slot. Edge stamps every outgoing
     -- BinUOPDelta with the value so Core's epoch-aware dedup accepts
-    -- the delta. Populated on LoadBin response, FetchNodeBins refresh,
-    -- and bin-arrival events; survives Edge restart so post-restart
-    -- ticks don't emit at epoch=0 against a bin already at epoch>=1.
+    -- the delta. Survives Edge restart so post-restart ticks don't emit
+    -- at epoch=0 against a bin already at epoch>=1.
+    --
+    -- Four writers, and "FetchNodeBins refresh" was not one of them: the
+    -- OrderDelivered envelope, Core's LoadBin/clear/count replies, the
+    -- BinAtLineside re-bind after a changeover cancel, and Core's
+    -- BinEpochRefresh push. Every FetchNodeBins call site discards the
+    -- epoch it is handed.
     active_bin_epoch   INTEGER NOT NULL DEFAULT 0,
+    -- lineside_payload_code is what the carrier standing here actually is,
+    -- as opposed to what this node's style says should be here. Core sends
+    -- it on OrderDelivered, off the same bin row it already reads for the
+    -- count and the epoch; this side has no bins table and cannot look it
+    -- up.
+    lineside_payload_code TEXT NOT NULL DEFAULT '',
+    -- lineside_payload_known is the difference between "this carrier is
+    -- empty" and "nobody could tell me what this carrier is". Both spell
+    -- themselves '' in the column above, and every reader that had to guess
+    -- guessed the same way: fall back to the claim, i.e. to the requested
+    -- identity, which is the read this column pair exists to end. Ask this
+    -- flag, not the emptiness of the string.
+    lineside_payload_known INTEGER NOT NULL DEFAULT 0,
+    -- lineside_source names who asserted the identity: a delivery envelope,
+    -- a person at the window, or the departure that took it away. Not a
+    -- ranking -- an automatic source is not more trustworthy than a person
+    -- here -- it is so a later reader can tell which question was answered.
+    lineside_source TEXT NOT NULL DEFAULT '',
+    -- lineside_at is when the identity was established. updated_at cannot
+    -- answer it: every count tick moves updated_at, so a payload recorded
+    -- once and ticked for an hour reads as an hour old by that clock and is
+    -- not. The identity's staleness is a different question from the
+    -- count's.
+    lineside_at TEXT NOT NULL DEFAULT '',
     remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
     -- pending_uop_delta holds tick counts that arrived while no bin was
     -- bound (the pickup->delivery gap); the next tick with a bound bin

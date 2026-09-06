@@ -3,6 +3,7 @@ package orders
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -323,7 +324,19 @@ func (m *Manager) RollbackForRetry(orderUUID, detail string) error {
 // return it to staged for a retry. Any other state is left untouched: a
 // still-staged leg is already retryable, and a terminal or pre-release leg must
 // not be resurrected or re-failed by a stray fan-out rejection.
-func (m *Manager) RollbackReleaseRejection(orderUUID, detail string) error {
+// THE SENTENCE IS COMPOSED HERE, not at the message handler, because this is
+// where the order is in hand. HandleOrderError never loads it and so cannot
+// name what is actually blocking the release — it appended "Click release to
+// retry." to every rejection, including the ones that will fail identically
+// until something upstream clears. Telling an operator to press a button that
+// cannot work is worse than telling them nothing: they press it, it fails the
+// same way, and the message says to press it again.
+//
+// There is no attempt counter to show, and that is a protocol fact rather than
+// an omission: protocol.OrderError carries {OrderUUID, ErrorCode, Detail} and
+// nothing else. Core's mirrored QueueReason/QueueCode is the best account of
+// the blocker this side has, and it is already on the order row.
+func (m *Manager) RollbackReleaseRejection(orderUUID, coreDetail string) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("get order %s: %w", orderUUID, err)
@@ -333,5 +346,38 @@ func (m *Manager) RollbackReleaseRejection(orderUUID, detail string) error {
 		return nil
 	}
 	m.lifecycle.debug = m.DebugLog
-	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
+	return m.lifecycle.ForceTransition(order.ID, StatusStaged, releaseRejectionDetail(order, coreDetail))
+}
+
+// releaseRejectionDetail builds the operator-facing sentence for an
+// invalid_state rollback.
+//
+// The prefix is load-bearing — store.releaseRejectedPrefix keys the chip on it.
+//
+// The retry advice is CONDITIONAL, which is the whole point. When Core has told
+// us why the order is queued, that blocker is named and no retry is suggested:
+// the release will be refused the same way until it clears. Only when we have
+// no account of the blocker is "click release to retry" honest, because then
+// trying again genuinely is the way to find out.
+func releaseRejectionDetail(order *orders.Order, coreDetail string) string {
+	var b strings.Builder
+	b.WriteString("Core rejected the release")
+	if coreDetail != "" {
+		b.WriteString(": ")
+		b.WriteString(coreDetail)
+	}
+	b.WriteString(".")
+	if reason := strings.TrimSpace(order.QueueReason); reason != "" {
+		b.WriteString(" Blocked by: ")
+		b.WriteString(reason)
+		if code := strings.TrimSpace(order.QueueCode); code != "" {
+			b.WriteString(" (")
+			b.WriteString(code)
+			b.WriteString(")")
+		}
+		b.WriteString(". Release again once that clears.")
+		return b.String()
+	}
+	b.WriteString(" Click release to retry.")
+	return b.String()
 }

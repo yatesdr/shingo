@@ -42,7 +42,12 @@ type LifecycleService struct {
 // the node the carried bin landed at, so the delivered emit can carry it to the
 // runtime-binding handler.
 type deliveredSeed struct {
-	uop         *int
+	uop *int
+	// payloadCode is what the arriving carrier IS, off the same bin row Core
+	// read for uop and epoch. nil means an older Core did not send it, which
+	// is a different thing from an empty carrier ("") — the Edge must not
+	// overwrite what it knows with a blank it was never told.
+	payloadCode *string
 	epoch       int64
 	binDestNode string
 }
@@ -204,13 +209,14 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		// Bin snapshot stashed by HandleDelivered (same goroutine);
 		// absent for force/recovery deliveries → Edge role-default seed.
 		var binUOP *int
+		var binPayloadCode *string
 		var binEpoch int64
 		var binDestNode string
 		if v, ok := s.deliveredSeeds.LoadAndDelete(order.ID); ok {
 			seed := v.(deliveredSeed)
-			binUOP, binEpoch, binDestNode = seed.uop, seed.epoch, seed.binDestNode
+			binUOP, binPayloadCode, binEpoch, binDestNode = seed.uop, seed.payloadCode, seed.epoch, seed.binDestNode
 		}
-		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binEpoch, binDestNode, order.DeliveryNode)
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binPayloadCode, binEpoch, binDestNode, order.DeliveryNode)
 	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
@@ -221,7 +227,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, binDestNode string) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string) error {
 	if stagedExpireAt != nil {
 		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
 			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
@@ -238,7 +244,7 @@ func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail str
 			log.Printf("update order bin_id: %v", err)
 		}
 	}
-	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, epoch: epoch, binDestNode: binDestNode})
+	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode})
 	defer s.deliveredSeeds.Delete(order.ID)
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }

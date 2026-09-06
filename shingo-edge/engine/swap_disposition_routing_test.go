@@ -218,7 +218,7 @@ func seedConsumeSwapPair(t *testing.T, db *store.DB, mode protocol.SwapMode, sec
 		IndexRobotSupplies:   &flipped,
 	})
 	testutil.MustNoErr(t, err, "persist consume claim")
-	claim = findActiveClaim(db, node)
+	claim = requestedClaimAtNode(db, node)
 	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IndexRobotSupplies != flipped {
 		t.Fatalf("claim seed did not take: %+v", claim)
 	}

@@ -161,7 +161,7 @@ func encodeFaultRef(ref *protocol.TermRef) string {
 func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.OrderDelivered) {
 	h.DebugLog.Log("order_delivered uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
 	log.Printf("edge_handler: order delivered: uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
-	if err := h.orderMgr.HandleDeliveredWithExpiry(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID, p.UOPRemaining, p.DeltaEpoch, p.DeliveryNode, p.BinDestNode); err != nil {
+	if err := h.orderMgr.HandleDeliveredWithExpiry(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID, p.UOPRemaining, p.BinPayloadCode, p.DeltaEpoch, p.DeliveryNode, p.BinDestNode); err != nil {
 		log.Printf("edge_handler: handle delivered for %s: %v", p.OrderUUID, err)
 	}
 }
@@ -191,9 +191,14 @@ func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.Order
 	// in_transit leg back to staged for a retry, and ignore the rejection for a
 	// terminal/pre-release leg. (Core's A1 fix stops emitting this for the
 	// faulted case; this is defense-in-depth for the rest.)
+	//
+	// The sentence is composed by RollbackReleaseRejection, which loads the
+	// order and can name the blocker. This handler never loads it, so anything
+	// it wrote about how to recover would be a guess — which is how every
+	// rejection came to end with "Click release to retry.", including those
+	// that will fail identically until an upstream wedge clears.
 	if p.ErrorCode == "invalid_state" {
-		detail := "Core rejected the release: " + p.Detail + ". Click release to retry."
-		if err := h.orderMgr.RollbackReleaseRejection(p.OrderUUID, detail); err != nil {
+		if err := h.orderMgr.RollbackReleaseRejection(p.OrderUUID, p.Detail); err != nil {
 			log.Printf("edge_handler: rollback release rejection %s: %v", p.OrderUUID, err)
 		}
 		return

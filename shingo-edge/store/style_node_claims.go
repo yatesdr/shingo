@@ -20,6 +20,13 @@ func (db *DB) GetStyleNodeClaim(id int64) (*processes.NodeClaim, error) {
 
 // GetStyleNodeClaimByNode returns a claim by its (style_id,
 // core_node_name) pair.
+// ClaimForLinesidePayload returns the single claim at a node matching a
+// carrier's payload — "where does THIS bin belong", asked without reference to
+// which style the process is on. nil when nothing matches or more than one does.
+func (db *DB) ClaimForLinesidePayload(coreNodeName, payloadCode string) (*processes.NodeClaim, error) {
+	return processes.ClaimForLinesidePayload(db.DB, coreNodeName, payloadCode)
+}
+
 func (db *DB) GetStyleNodeClaimByNode(styleID int64, coreNodeName string) (*processes.NodeClaim, error) {
 	return processes.GetClaimByNode(db.DB, styleID, coreNodeName)
 }

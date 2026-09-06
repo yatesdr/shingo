@@ -77,7 +77,7 @@ func keeperClaim(t *testing.T, db *store.DB, nodeID int64) *processes.NodeClaim 
 	t.Helper()
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "get node")
-	claim := findActiveClaim(db, node)
+	claim := requestedClaimAtNode(db, node)
 	if claim == nil {
 		t.Fatal("fixture has no active claim")
 	}

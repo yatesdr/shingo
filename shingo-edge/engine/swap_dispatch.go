@@ -149,8 +149,20 @@ func refillCarrierPayload(fromClaim, toClaim *processes.NodeClaim) string {
 // CONFIRM means "a bin is on the machine and I signed for what is in it". The
 // leg that put it there is the one the operator signs; a leg that only backfills
 // an on-deck index position, or only takes a bin away, self-confirms. That is
-// exactly one receipt per cycle in every mode and both flip states — pinned by
-// TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement.
+// exactly one receipt per cycle in every STEADY-STATE mode and both flip states
+// — pinned by TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement.
+//
+// IT DOES NOT HOLD ON THE CHANGEOVER PATH, and the doc used to say "every mode",
+// which was not true. The changeover builders (buildTwoRobotChangeoverSwap,
+// buildPressIndexChangeoverSwap in material_orders.go) never call this function;
+// they hardcode autoConfirm: true on legs that DO place a bin on the press.
+//
+// That is not an unreconciled disagreement with this predicate — it answers a
+// different question. Steady state has no supervised moment, so the placement
+// receipt is the only one there is. A changeover has one: the cutover, plus
+// openPostCutoverVerify's live-CATID check after it. See
+// buildTwoRobotChangeoverSwap. This predicate's six call sites are all in
+// buildSwapDispatch, and it should stay that way.
 //
 // AutoConfirmA/AutoConfirmB were positional literals, and position is not what
 // the operator signs for. The IndexRobotSupplies flip moves the supermarket trip

@@ -52,13 +52,18 @@ func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
 	}
 }
 
-// TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim verifies
-// the legacy / safety-net path: when nothing has advanced runtime to
-// the to-claim yet (e.g. an operator uses the admin "SWITCH TO TARGET"
-// button without going through the Phase-3 release click), the switch
-// still performs the UOP reset so the counter lands at to-claim
-// capacity.
-func TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim(t *testing.T) {
+// TestSwitchNodeToTarget_SeedsNoCapacityWhenNoCarrierIsBound verifies the
+// safety-net path: when nothing has advanced runtime to the to-claim yet (an
+// operator using the admin "SWITCH TO TARGET" button, or a node whose
+// changeover delivery never completed), the switch advances the claim and
+// leaves the count at zero.
+//
+// IT USED TO SEED THE TO-CLAIM'S CAPACITY, and this test pinned that. The seed
+// was hysteresis — a policy number written so a consume tile would not drop
+// below its reorder point during the window between the switch and its bin
+// landing — in a field Core reads as a count of parts that physically exist. A
+// pinning test is a record of what the code did, not a ruling that it should.
+func TestSwitchNodeToTarget_SeedsNoCapacityWhenNoCarrierIsBound(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, fromClaimID, toClaimID := seedChangeoverScenario(t, db)
@@ -77,9 +82,12 @@ func TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get runtime: %v", err)
 	}
-	// seedChangeoverScenario's to-claim has UOPCapacity=200.
-	if runtime.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (to-claim capacity, legacy reset path)",
+	// seedChangeoverScenario's to-claim has UOPCapacity=200, and that number
+	// must not appear: no carrier is bound at this node, so there are no parts
+	// here and the count says so.
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 — no bin is bound, so any non-zero count is a "+
+			"policy value in a measurement field. 200 means the capacity seed came back.",
 			runtime.RemainingUOPCached)
 	}
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaimID {

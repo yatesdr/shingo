@@ -299,8 +299,14 @@ type OrderDeliveredEvent struct {
 	// (Core's snapshot at delivery). handleNodeOrderDelivered seeds the
 	// runtime cache + active_bin_epoch from these — no HTTP pull. BinUOP
 	// nil = older Core didn't send it; fall back to the role default.
-	BinUOP   *int  `json:"bin_uop,omitempty"`
-	BinEpoch int64 `json:"bin_epoch,omitempty"`
+	BinUOP *int `json:"bin_uop,omitempty"`
+	// BinPayloadCode is what the arriving carrier IS, off the same bin row as
+	// BinUOP and BinEpoch. It is the lineside identity — the answer this side
+	// used to infer from the requested style's claim, which is right only
+	// while the two agree. nil means an older Core did not send it, which is
+	// not the same as an empty carrier ("").
+	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
+	BinEpoch       int64   `json:"bin_epoch,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Set only for
 	// Core-admin (stationless) deliveries where ProcessNodeID is nil because
 	// the Edge has no order row. handleNodeOrderDelivered uses it as a fallback

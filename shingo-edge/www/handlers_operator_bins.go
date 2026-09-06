@@ -7,7 +7,9 @@ package www
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -215,17 +217,50 @@ func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+// apiClearNodeOrders drops both runtime order pointers on a node.
+//
+// IT IS THE ONE BUTTON ON THIS PAGE THAT DESTROYS STATE WITHOUT ASKING, and
+// until this log line it did so invisibly. There is no request logger anywhere
+// under www/ — router.go wires Recoverer and Compress and nothing else — so
+// nothing recorded that the route had been called, let alone what it discarded.
+// A node that lost a live staged leg this way looked exactly like a node that
+// never had one, and no journal search could tell the two apart afterwards.
+//
+// The read is deliberately before the write and its failure is deliberately not
+// fatal: not being able to say what is about to be destroyed is a reason to say
+// so, not a reason to refuse the operator's clear.
 func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.ProcessService().UpdateNodeRuntimeOrders(id, nil, nil); err != nil {
+	nodeName := ""
+	if node, nerr := h.engine.ProcessService().GetNode(id); nerr == nil && node != nil {
+		nodeName = node.CoreNodeName
+	}
+	if rt, rerr := h.engine.ProcessService().EnsureNodeRuntime(id); rerr == nil && rt != nil {
+		log.Printf("clear node orders: node %d (%s) active_order_id=%s staged_order_id=%s — both discarded by operator",
+			id, nodeName, orderRef(rt.ActiveOrderID), orderRef(rt.StagedOrderID))
+	} else {
+		log.Printf("clear node orders: node %d (%s) — both pointers discarded by operator; could not read them first: %v",
+			id, nodeName, rerr)
+	}
+	if err := h.engine.ProcessService().ClearNodeRuntimeOrders(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
+// orderRef renders a nullable order pointer for a log line. "none" rather than
+// "0" or "<nil>", because the whole value of the line is telling apart a slot
+// that held nothing from a slot that held something.
+func orderRef(id *int64) string {
+	if id == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*id, 10)
 }
 
 // apiRefuseSupply records the loader operator's "I cannot fill this call" for

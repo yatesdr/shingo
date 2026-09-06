@@ -193,7 +193,7 @@ func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string,
 	if err != nil || node == nil {
 		return false, "", "", fmt.Errorf("read process node %d: %w", nodeID, err)
 	}
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil || claim.PairedCoreNode == "" {
 		return false, node.CoreNodeName, "", nil // not a paired position — nothing to say
 	}

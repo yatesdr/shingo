@@ -22,6 +22,8 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -58,7 +60,15 @@ type orderCompletionCtx struct {
 	// Lazy field — the to-style NodeClaim at ctx.node during a changeover.
 	// Resolved by ToClaim(). toClaim==nil with toClaimResolved==true means
 	// no active changeover (toStyleID==0) or the lookup failed.
+	//
+	// toClaimErr keeps the two apart. A nil claim because the to-style does
+	// not claim this node is an ANSWER — the incoming style simply does not
+	// feed here — and applyChangeoverRelease acts on it. A nil claim because
+	// the read failed is not an answer, and acting on it would clear a
+	// node's claim pointer on a transient database error. sql.ErrNoRows is
+	// the first; anything else is the second; nil is "claim found".
 	toClaim         *processes.NodeClaim
+	toClaimErr      error
 	toClaimResolved bool
 
 	// Lazy field — the from-style NodeClaim attached to ctx.nodeTask via
@@ -76,7 +86,7 @@ type orderCompletionCtx struct {
 // active claim is set (no active style, or the claim row is missing).
 func (c *orderCompletionCtx) Claim() *processes.NodeClaim {
 	if !c.claimResolved {
-		c.claim = findActiveClaim(c.e.db, c.node)
+		c.claim = requestedClaimAtNode(c.e.db, c.node)
 		c.claimResolved = true
 	}
 	return c.claim
@@ -88,13 +98,30 @@ func (c *orderCompletionCtx) Claim() *processes.NodeClaim {
 func (c *orderCompletionCtx) ToClaim() *processes.NodeClaim {
 	if !c.toClaimResolved {
 		if c.toStyleID != 0 {
-			if tc, err := c.e.db.GetStyleNodeClaimByNode(c.toStyleID, c.node.CoreNodeName); err == nil {
+			tc, err := c.e.db.GetStyleNodeClaimByNode(c.toStyleID, c.node.CoreNodeName)
+			if err == nil {
 				c.toClaim = tc
 			}
+			c.toClaimErr = err
+		} else {
+			c.toClaimErr = errNoActiveChangeover
 		}
 		c.toClaimResolved = true
 	}
 	return c.toClaim
+}
+
+// errNoActiveChangeover marks ToClaim()'s "there is no changeover to have a
+// to-style" case, so toClaimErr is never nil alongside a nil claim.
+var errNoActiveChangeover = errors.New("no active changeover on this process")
+
+// ToStyleClaimsNothingHere reports that the incoming style genuinely has no
+// claim at this node — the lookup ran and found none, as opposed to failing.
+// Callers that would otherwise write a claim pointer use it to tell an answer
+// from an absence of one.
+func (c *orderCompletionCtx) ToStyleClaimsNothingHere() bool {
+	c.ToClaim()
+	return errors.Is(c.toClaimErr, sql.ErrNoRows)
 }
 
 // FromClaim returns the from-style NodeClaim attached to ctx.nodeTask
@@ -375,8 +402,12 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 // Sequential SWAP ships as a single complex order with a mid-sequence
 // cutover wait. Its terminal step is the ACTIVE-side dropoff: by then,
 // both physical positions (CoreNodeName and PairedCoreNode) hold new
-// bins. Per-slot resets fire from handleNodeOrderDelivered for each leg;
-// release here only advances the task state machine.
+// bins. Per-slot resets fire from handleNodeOrderDelivered for each leg.
+//
+// RELEASE ALSO ADVANCES THE CLAIM POINTER, and this comment used to say it
+// did not -- "release here only advances the task state machine", which was
+// true and was the defect. See applyChangeoverRelease for what the delivery
+// left behind and why this is where the intent catches up with it.
 func matchChangeoverRelease(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil ||
 		ctx.nodeTask.NextMaterialOrderID == nil ||
@@ -394,7 +425,52 @@ func matchChangeoverRelease(ctx *orderCompletionCtx) bool {
 	return true
 }
 
+// applyChangeoverRelease advances the node task to `released` and points the
+// node's claim at the incoming style's claim -- the twin of what
+// applyStagedDelivery does for the staging shape.
+//
+// -- THE MISSING LINE, AND WHAT IT COST -----------------------------------
+//
+// The delivery that lands the incoming style's material binds active_claim_id
+// through requestedClaimAtNode (wiring_delivered.go), which resolves from the
+// process's ACTIVE style -- and during a changeover that is still the OUTGOING
+// one. 82% of consume-node changeovers at Springfield take their material
+// before the changeover completes, median 18 minutes ahead of it, so this is
+// the ordinary case and not a race.
+//
+// Nothing on the direct-delivery path then re-pointed the claim.
+// finalizeChangeoverRow writes the style flip, the production state, the
+// counter sync and the changeover row, and never the claim; the staging shape
+// got its advance in applyStagedDelivery and the direct shape got none. The
+// pointer stayed on the outgoing style's claim until some later delivery
+// happened to land while the right style was active. At ALN_007 that was two
+// days and six hours, during which the R1 lineside report joined on that claim
+// and told Core the node was running a part of which zero existed plant-wide
+// -- suppressing replenishment of the part it WAS running.
+//
+// -- WHY DELIVERY-COMPLETION IS THE RIGHT PLACE ---------------------------
+//
+// The predicate above fires only for the changeover's OWN planned material
+// (nodeTask.NextMaterialOrderID == this order). So this is not a physical
+// event overwriting intent: it is the intent catching up with the delivery it
+// asked for. A sweep at cutover would leave the pointer wrong for the whole
+// gap; a changeover-aware resolver would change the answer for every caller
+// that legitimately wants the requested one, which is most of them.
+//
+// -- NIL IS AN ANSWER -----------------------------------------------------
+//
+// When the incoming style does not claim this node at all, the pointer is
+// CLEARED rather than left on the outgoing claim. requestedClaimAtNode's own
+// doc already rules nil the honest answer for a node the new style does not
+// claim, and a stale pointer is the failure this function exists to end. A
+// FAILED lookup is a different thing and changes nothing -- see
+// ToStyleClaimsNothingHere.
+//
+// The count is written back unchanged: this advance is about whose claim the
+// node is on, and the delivery that just completed already wrote the count
+// from Core's envelope.
 func applyChangeoverRelease(e *Engine, ctx *orderCompletionCtx) bool {
+	advanceClaimOnRelease(e, ctx)
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
@@ -402,6 +478,33 @@ func applyChangeoverRelease(e *Engine, ctx *orderCompletionCtx) bool {
 		log.Printf("changeover: try-complete after release for process %d: %v", ctx.node.ProcessID, err)
 	}
 	return true
+}
+
+// advanceClaimOnRelease points ctx.node's claim at the incoming style's claim,
+// or clears it when the incoming style claims this node not at all. A lookup
+// that FAILED leaves the pointer alone: clearing on a database error would take
+// a node off its claim for a reason that has nothing to do with the node.
+func advanceClaimOnRelease(e *Engine, ctx *orderCompletionCtx) {
+	if e.inventoryDelta == nil {
+		return
+	}
+	var claimID *int64
+	switch {
+	case ctx.ToClaim() != nil:
+		id := ctx.ToClaim().ID
+		claimID = &id
+	case ctx.ToStyleClaimsNothingHere():
+		log.Printf("changeover release: node %s -- the incoming style claims this node not at all; "+
+			"clearing the claim pointer rather than leaving it on the outgoing style",
+			ctx.node.CoreNodeName)
+	default:
+		log.Printf("changeover release: node %s -- could not read the incoming style's claim; "+
+			"leaving the claim pointer as it stands", ctx.node.CoreNodeName)
+		return
+	}
+	if err := e.inventoryDelta.SetClaimAndCount(ctx.node.ID, claimID, ctx.runtime.RemainingUOPCached); err != nil {
+		log.Printf("changeover release: advance claim for node %d: %v", ctx.node.ID, err)
+	}
 }
 
 // matchLoaderEmptyIn matches an L1 retrieve_empty order completing at a
@@ -454,10 +557,24 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	// multi-payload loaders, which then fails to drive the per-tile
 	// IN_TRANSIT render in operator-station (tiles filter active orders by
 	// o.payload_code === code).
+	//
+	// THE DECISION IS THE SAME EITHER WAY AND THE RECORD IS NOT. This is the one
+	// census site where an unreachable Core neither refuses nor over-orders: the
+	// L2 is created regardless, with a blank payload, and the mis-tag is durable
+	// on the order row. Nothing distinguishes it afterwards from "Core said the
+	// window is genuinely blank", which is a legitimate state after a race. Say
+	// which one it was.
 	loadedPayloadCode := ""
 	if e.coreClient != nil && e.coreClient.Available() {
-		if bins, _, _ := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName}); len(bins) > 0 {
+		bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName})
+		switch {
+		case len(bins) > 0:
 			loadedPayloadCode = bins[0].PayloadCode
+		case !reachable:
+			e.logFn("side-cycle: loader %s — could not read the loaded payload (Core %s); the L2 "+
+				"is tagged from the claim's primary payload, which mis-renders the IN_TRANSIT "+
+				"chip on a multi-payload loader",
+				ctx.node.Name, OccupancyOutcome(reachable, ferr))
 		}
 	}
 	// L2 always auto-confirms: OutboundDestination is an unattended
@@ -483,7 +600,7 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	// empty bin landing at the loader already wrote active_bin_id /
 	// remaining_uop_cached. Confirm only swaps the active order pointer
 	// so the loader UI shows L2 next.
-	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &orderID, nil); err != nil {
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(ctx.node.ID, &orderID); err != nil {
 		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
 	}
 	return true
@@ -507,7 +624,7 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	// queue don't see stale IDs. Cache state stays as last set by the
 	// delivered handler / release click; the next L1/U1 cycle's
 	// delivery rebinds it.
-	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
+	if err := e.db.ClearProcessNodeRuntimeOrders(ctx.node.ID); err != nil {
 		log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 	}
 	// tryAutoRequest call removed in side-cycle refactor (commit 4f9212b
@@ -551,7 +668,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	// multi-order queue don't see stale IDs. Standard consume/produce
 	// nodes manage order slots via complex order progression.
 	if claim.SwapMode == protocol.SwapModeManualSwap {
-		if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
+		if err := e.db.ClearProcessNodeRuntimeOrders(ctx.node.ID); err != nil {
 			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}
 		// Pre-side-cycle, this called e.tryAutoRequest to re-evaluate

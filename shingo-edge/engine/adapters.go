@@ -88,15 +88,15 @@ func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, order
 	}})
 }
 
-func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64, binDestNode, deliveryNode string) {
+func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string) {
 	e.bus.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID, BinUOP: binUOP, BinEpoch: binEpoch, BinDestNode: binDestNode, DeliveryNode: deliveryNode,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID, BinUOP: binUOP, BinPayloadCode: binPayloadCode, BinEpoch: binEpoch, BinDestNode: binDestNode, DeliveryNode: deliveryNode,
 	}})
 }
 
-func (e *orderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binEpoch int64, deliveryNode string) {
+func (e *orderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string) {
 	e.bus.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		BinID: &binID, BinUOP: binUOP, BinEpoch: binEpoch, DeliveryNode: deliveryNode,
+		BinID: &binID, BinUOP: binUOP, BinPayloadCode: binPayloadCode, BinEpoch: binEpoch, DeliveryNode: deliveryNode,
 	}})
 }
 

@@ -96,6 +96,14 @@ var requiredColumns = []requiredColumn{
 	{"payload_catalog", "catid"},
 	{"changeover_node_tasks", "skip_note"},
 	{"process_node_runtime_states", "remaining_uop_cached"},
+	// The lineside identity columns. scanRuntime SELECTs all four
+	// unconditionally, so a failed ALTER does not degrade the identity read —
+	// it kills every runtime-row query on the box, which is a per-node work
+	// stoppage. lineside_payload_code shipped without an entry here.
+	{"process_node_runtime_states", "lineside_payload_code"},
+	{"process_node_runtime_states", "lineside_payload_known"},
+	{"process_node_runtime_states", "lineside_source"},
+	{"process_node_runtime_states", "lineside_at"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

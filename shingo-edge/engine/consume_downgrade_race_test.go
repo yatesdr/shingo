@@ -236,7 +236,7 @@ func TestConsumeDowngrade_LoaderWindowIsExempt(t *testing.T) {
 	testutil.MustNoErr(t, err, "get node")
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "get runtime")
-	claim := findActiveClaim(db, node)
+	claim := requestedClaimAtNode(db, node)
 	if claim == nil {
 		t.Fatal("no active claim")
 	}

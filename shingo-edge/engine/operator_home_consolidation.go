@@ -183,7 +183,7 @@ func (e *Engine) dispatchBufferConsolidation(c homeConsolidation) {
 	log.Printf("home_consolidation: Order B (partial→home) %d: %s → %s payload=%q",
 		order.ID, c.bufferCoreName, c.homeCoreName, c.payload)
 
-	if err := e.db.UpdateProcessNodeRuntimeOrders(c.homeProcessNodeID, &order.ID, nil); err != nil {
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(c.homeProcessNodeID, &order.ID); err != nil {
 		log.Printf("home_consolidation: update runtime for home node %d: %v", c.homeProcessNodeID, err)
 	}
 }

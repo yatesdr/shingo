@@ -65,19 +65,24 @@ func (m *Manager) resolveClaimForNode(processNodeID *int64) *processes.NodeClaim
 		return nil
 	}
 	process, err := m.db.GetProcess(node.ProcessID)
-	if err != nil || process.ActiveStyleID == nil {
-		return nil
-	}
-	styleID := *process.ActiveStyleID
-	if process.TargetStyleID != nil {
-		if _, err := m.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName); err == nil {
-			styleID = *process.TargetStyleID
-		}
-	}
-	claim, err := m.db.GetStyleNodeClaimByNode(styleID, node.CoreNodeName)
 	if err != nil {
-		m.DebugLog.Log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
 		return nil
+	}
+	// TARGET FIRST — store.TargetStyleFirst. This resolver's subject is an order
+	// that does not exist yet, so mid-changeover the incoming style is the one
+	// that should name its payload and its routing.
+	//
+	// It used to hand-roll that precedence, which made it look like a second
+	// opinion on the same question the engine's resolver answers rather than a
+	// deliberate answer to a different one. THE HAZARD IS STILL LIVE and the
+	// shared name does not close it: this runs from lookupPayloadMeta for any
+	// order created with an empty payload code, including moves that carry a
+	// carrier already standing on the cell. Such a caller wants
+	// store.ActiveStyleFirst and should be passing the resident payload rather
+	// than letting it be backfilled here.
+	claim := m.db.ResolveNodeClaim(process, node, store.TargetStyleFirst)
+	if claim == nil {
+		m.DebugLog.Log("style-node-claim lookup failed: node=%s", node.CoreNodeName)
 	}
 	return claim
 }

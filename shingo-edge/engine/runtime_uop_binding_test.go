@@ -91,6 +91,11 @@ func TestRuntimeBinding_ReleaseDoesNotPreloadIncomingBin(t *testing.T) {
 	bid := incomingBin
 	db.UpdateOrderBinID(orderID, &bid)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	// Staged, because that is the only state a release door is reached in:
+	// Core refuses an OrderRelease for anything but staged/in_transit. The
+	// fixture left the order at its created status, so it was exercising a
+	// click that in production records a release Core never accepted.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, "staged"), "stage the order")
 
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, LinesideCapture: map[string]int{}}
 	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")

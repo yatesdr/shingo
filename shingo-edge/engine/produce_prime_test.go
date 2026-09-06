@@ -19,7 +19,7 @@ func seedRuntimeUOP(t *testing.T, db *store.DB, nodeID int64) {
 	t.Helper()
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "get node")
-	claim := findActiveClaim(db, node)
+	claim := requestedClaimAtNode(db, node)
 	if claim == nil {
 		t.Fatal("no active claim — seed contract changed")
 	}

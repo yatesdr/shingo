@@ -170,3 +170,10 @@ func (s *ProcessService) ListLinesideBucketsForNode(processNodeID int64) ([]line
 func (s *ProcessService) UpdateNodeRuntimeOrders(processNodeID int64, activeOrderID, stagedOrderID *int64) error {
 	return s.db.UpdateProcessNodeRuntimeOrders(processNodeID, activeOrderID, stagedOrderID)
 }
+
+// ClearNodeRuntimeOrders drops both order pointers on one node. Named so the
+// operator clear reads as the deliberate wipe it is, rather than as a two-column
+// write that happens to pass nil twice.
+func (s *ProcessService) ClearNodeRuntimeOrders(processNodeID int64) error {
+	return s.db.ClearProcessNodeRuntimeOrders(processNodeID)
+}

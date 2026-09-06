@@ -130,6 +130,41 @@ func GetClaim(db *sql.DB, id int64) (*NodeClaim, error) {
 	return &c, nil
 }
 
+// ClaimForLinesidePayload returns the claim at a node whose payload matches the
+// carrier standing there — the answer to "where does THIS bin belong", asked
+// without reference to which style the process is currently on.
+//
+// EXACTLY ONE MATCH, or nothing. A node several styles claim for the same
+// payload does not have one home for it, and guessing between them would put a
+// carrier somewhere plausible and wrong. Blank payload returns nothing: an
+// empty carrier's destination is not a payload question.
+func ClaimForLinesidePayload(db *sql.DB, coreNodeName, payloadCode string) (*NodeClaim, error) {
+	if coreNodeName == "" || payloadCode == "" {
+		return nil, nil
+	}
+	rows, err := db.Query(`SELECT `+claimSelect+`
+		FROM style_node_claims WHERE core_node_name=? AND payload_code=?`, coreNodeName, payloadCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var found []NodeClaim
+	for rows.Next() {
+		c, serr := scanNodeClaim(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		found = append(found, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(found) != 1 {
+		return nil, nil
+	}
+	return &found[0], nil
+}
+
 // GetClaimByNode returns a claim by its (style_id, core_node_name) pair.
 func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, error) {
 	c, err := scanNodeClaim(db.QueryRow(`SELECT `+claimSelect+`

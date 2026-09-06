@@ -214,7 +214,7 @@ func TestEveryChangeoverLegDepartsProvably(t *testing.T) {
 				// cell — a changeover swaps the payload, not the node names —
 				// so cellSetFor is the same set either way, which is what makes
 				// the question well-posed: the stamp resolves the claim through
-				// findActiveClaim and does not know which of the two it got.
+				// requestedClaimAtNode and does not know which of the two it got.
 				from := standardClaim(mode, second, false)
 				to := standardClaim(mode, second, false)
 				to.PayloadCode = "WIDGET-B"

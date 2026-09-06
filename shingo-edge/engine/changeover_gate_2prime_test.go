@@ -255,7 +255,7 @@ func TestFindActiveClaim_PostCutover(t *testing.T) {
 	if err != nil || node == nil {
 		t.Fatalf("get node: %v", err)
 	}
-	claim := findActiveClaim(db, node)
+	claim := requestedClaimAtNode(db, node)
 	if claim == nil {
 		t.Fatal("post-cutover resolution returned nil for a node the to-style claims — the active-style branch must answer")
 	}

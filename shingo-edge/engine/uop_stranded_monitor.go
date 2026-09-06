@@ -187,7 +187,7 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, now time.Time) {
 	// Only consume cells count parts down against a bound bin; the "Record Count
 	// on the bin tab" fix and the consuming-active co-condition are consume-
 	// specific. Skip produce / manual_swap / unclaimed nodes and drop any state.
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.SwapMode == protocol.SwapModeManualSwap {
 		delete(sm.states, node.ID)
 		sm.clear(node.CoreNodeName)

@@ -179,6 +179,12 @@ func (db *DB) migrate() error {
 	if err := db.renameRemainingUOPCached(); err != nil {
 		return err
 	}
+	if err := db.addLinesidePayloadCode(); err != nil {
+		return err
+	}
+	if err := db.addLinesideCarrierProvenance(); err != nil {
+		return err
+	}
 	// Runs AFTER the process_nodes column migrations (it reads core_node_name and
 	// operator_station_id) and creates the UNIQUE(process_id, core_node_name) index
 	// once the rows can satisfy it.
@@ -223,9 +229,13 @@ func (db *DB) migrate() error {
 
 	// Epoch mirror for active_bin_id (post-epoch fix). Old rows land
 	// at 0 — the pre-migration cohort that lines up with Core's
-	// backfilled inventory_delta_dedup rows. The next bin lifecycle
-	// event on Core writes a non-zero value here via the LoadBin /
-	// FetchNodeBins response path.
+	// backfilled inventory_delta_dedup rows.
+	//
+	// WHAT MAKES A BACKFILLED 0 NON-ZERO, since this is where somebody comes to
+	// find out: an OrderDelivered envelope, one of Core's LoadBin/clear/count
+	// replies, the BinAtLineside re-bind after a changeover cancel, or Core's
+	// BinEpochRefresh push. Not "the FetchNodeBins response path" — every
+	// FetchNodeBins call site discards the epoch.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_epoch INTEGER NOT NULL DEFAULT 0")
 
 	// Hold-and-replay: pending tick counts accumulated while no bin is
@@ -1208,6 +1218,57 @@ func (db *DB) renameRemainingUOPCached() error {
 	return err
 }
 
+// addLinesidePayloadCode records what the carrier standing on a node actually
+// is, as opposed to what the node's style says should be there.
+//
+// The Edge could not answer that question: it stores active_bin_id, an opaque
+// Core id, and has no bins table. So every path that needed the resident
+// identity read active_claim_id instead — a field written mostly from the
+// process's active style, which is the REQUESTED identity. The two agree until
+// a changeover moves a cell on while a carrier is still standing on it.
+//
+// Core now sends the payload on the OrderDelivered envelope, off the same bin
+// row it already read for the count and the epoch. This column is where that
+// answer is kept between the delivery and the carrier leaving.
+//
+// Empty string means "nothing established", which is also what a node with no
+// carrier reads as; the bin pointer alongside it distinguishes the two.
+// Idempotent ADD COLUMN.
+func (db *DB) addLinesidePayloadCode() error {
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN lineside_payload_code TEXT NOT NULL DEFAULT ''")
+	return nil
+}
+
+// addLinesideCarrierProvenance keeps the rest of the answer the doorway already
+// computes and was throwing away.
+//
+// THE DOUBT HAS TO SURVIVE THE WRITE. domain.LinesideCarrier is deliberately two
+// states -- a KNOWN carrier carrying nothing is an answer, an UNKNOWN carrier is
+// "nobody could tell me" -- and the column above collapses both to an empty string. Every
+// reader then has to guess, and each one guessed the same way: fall back to the
+// claim, which is the requested identity and the thing this whole column exists
+// to stop reading. lineside_payload_known carries the second state through the
+// write so the readers can stop guessing.
+//
+// lineside_source names who asserted it (a delivery envelope, a person, a
+// departure). recordLinesideCarrier already receives it and logs it; nothing
+// could read it afterwards.
+//
+// lineside_at is when. It cannot be inferred from updated_at, which every count
+// tick moves -- so a payload recorded once and then ticked for an hour looks an
+// hour old by that clock and is not. Staleness of the identity is a different
+// question from staleness of the count, and it needs its own timestamp.
+//
+// Idempotent ADD COLUMNs, matching the column above. The defaults are the
+// unknown carrier: a row that predates this migration has no established
+// identity, which is exactly what the pre-migration rows mean.
+func (db *DB) addLinesideCarrierProvenance() error {
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN lineside_payload_known INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN lineside_source TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN lineside_at TEXT NOT NULL DEFAULT ''")
+	return nil
+}
+
 func (db *DB) stripLegacyRuntimeStateColumns() error {
 	hasOldCol, _ := schema.TableHasColumn(db.DB, "process_node_runtime_states", "effective_style_id")
 	if !hasOldCol {
@@ -1415,7 +1476,7 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
 // satisfy the only constraint the table had — UNIQUE(process_id, code) — while
 // core_node_name was left free to duplicate. HK carried three PLN_01 rows.
 //
-// Why it matters: findActiveClaim resolves a claim by core_node_name, not by node
+// Why it matters: requestedClaimAtNode resolves a claim by core_node_name, not by node
 // id, so EVERY duplicate matched the same active claim and handleCounterDelta
 // (which iterates all nodes in the process) applied each PLC tick to all of them.
 // One press stroke counted three times: once on the live row, once against a bin

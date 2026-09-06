@@ -541,13 +541,15 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 
 func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) {
 	var r RuntimeState
-	var updatedAt string
-	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch, &r.RemainingUOPCached,
+	var updatedAt, linesideAt string
+	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch,
+		&r.LinesidePayloadCode, &r.LinesidePayloadKnown, &r.LinesideSource, &linesideAt, &r.RemainingUOPCached,
 		&r.PendingUOPDelta, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
 	}
 	r.UpdatedAt = helpers.ScanTime(updatedAt)
+	r.LinesideAt = helpers.ScanTime(linesideAt)
 	return r, nil
 }
 
@@ -580,7 +582,8 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 		placeholders.WriteByte('?')
 		args = append(args, id)
 	}
-	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, remaining_uop_cached,
+	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
+		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
 		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id IN (`+placeholders.String()+`)`, args...)
 	if err != nil {
@@ -617,7 +620,8 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 
 // GetRuntime returns the runtime row for a process_node.
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
-	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, remaining_uop_cached,
+	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
+		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
 		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
@@ -659,9 +663,14 @@ func SetRuntimeClaimCountAndEpoch(db *sql.DB, processNodeID int64, activeClaimID
 }
 
 // SetRuntimeWithBin updates active_claim_id, active_bin_id, and
-// remaining_uop_cached in one atomic write. Used by every delivery-
-// completion handler so the bin pointer turns over at the same instant
-// the new bin is logically present. activeBinID is the bin physically
+// remaining_uop_cached in one atomic write.
+//
+// USED BY THE CLEAR-SHAPED WRITES, not by deliveries. This said "every
+// delivery-completion handler", and the four completion-time call sites it
+// named were removed with the old delivery handler; deliveries go through
+// SetRuntimeForDeliveredBin, which also carries the epoch. What is left are the
+// two writes that end with the slot empty and no epoch in hand:
+// uop.ClearActiveAndReset and the changeover-cancel reconcile. activeBinID is the bin physically
 // arriving at the slot, or nil for removal-shaped completions where
 // the slot ends up empty.
 func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, remainingUOPCached int) error {
@@ -716,6 +725,12 @@ const epochAssignOnBind = `active_bin_epoch=CASE
 // the message is about a carrier that is not here — writing it would put one
 // carrier's generation on another's counts.
 //
+// ONE STAMP-ONLY WRITE DOES NOT USE THIS RULE. HandleBinEpochRefresh routes
+// through SetActiveBinIDAndEpoch, which uses epochAssignOnBind, and is correct
+// only because the handler refuses the not-here case in Go before it reaches
+// the store. Deleting that guard on the reasoning that the SQL covers it would
+// let a refresh for a departed carrier bind its stamp at this slot.
+//
 // Takes the same three bind parameters, in the same epochArgs order.
 const epochAssignForBoundBin = `active_bin_epoch=CASE
 			WHEN active_bin_id IS ? AND active_bin_epoch < ? THEN ?
@@ -729,10 +744,16 @@ func epochArgs(activeBinID any, deltaEpoch int64) []any {
 
 // SetRuntimeWithBinAndEpoch updates active_claim_id, active_bin_id,
 // active_bin_epoch, and remaining_uop_cached atomically. Same as
-// SetRuntimeWithBin but also writes the epoch — used by ManualLoad
-// (operator imprint) where the epoch comes from Core's LoadBin response
-// rather than the OrderDelivered envelope. The epoch is subject to
-// epochAssignOnBind; the other three columns are written unconditionally.
+// SetRuntimeWithBin but also writes the epoch.
+//
+// Used where the epoch arrives OUTSIDE the delivery envelope, and there are two
+// such callers, not one: ManualLoad (the operator imprint, epoch from Core's
+// LoadBin reply) and the changeover-cancel re-bind (epoch from a BinAtLineside
+// poll). Naming only ManualLoad is how the poll-driven writer went missing from
+// every doc that lists who stamps this column.
+//
+// The epoch is subject to epochAssignOnBind; the other three columns are
+// written unconditionally.
 func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
 	args := []any{activeClaimID, activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
@@ -774,10 +795,11 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 }
 
 // SetActiveBinIDAndEpoch writes active_bin_id and active_bin_epoch
-// together without touching claim or count. Used by BindActiveBin
-// (L1 retrieve confirm at a loader) where Core's LoadBin response
-// provides the epoch but the count was already set by the delivery
-// handler. The epoch is subject to epochAssignOnBind.
+// together without touching claim or count. Two callers: BindActiveBin (L1
+// retrieve confirm at a loader, epoch from Core's LoadBin reply, count already
+// set by the delivery handler) and HandleBinEpochRefresh (a stamp-only
+// re-anchor from Core's push, which passes the bound bin id straight back).
+// The epoch is subject to epochAssignOnBind.
 func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64, deltaEpoch int64) error {
 	args := []any{activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
@@ -788,12 +810,67 @@ func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64,
 	return err
 }
 
-// UpdateRuntimeOrders writes the active and staged order pointers on a
-// runtime row.
+// SetRuntimeLinesidePayload records what the carrier standing at this node is,
+// as told by Core on the delivery envelope. Pass "" to forget it — which the
+// carrier leaving must do, or the next occupant inherits its identity.
+func SetRuntimeLinesidePayload(db *sql.DB, processNodeID int64, payloadCode string, known bool, source string) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		lineside_payload_code=?, lineside_payload_known=?, lineside_source=?, lineside_at=datetime('now'),
+		updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		payloadCode, known, source, processNodeID)
+	return err
+}
+
+// UpdateRuntimeOrders writes BOTH order pointers on a runtime row.
+//
+// PREFER SetRuntimeActiveOrder / SetRuntimeStagedOrder. This one is an absolute
+// two-column write: whatever you pass for a slot becomes that slot's value,
+// including NULL, so calling it to set one pointer silently destroys the other.
+// That is the hazard ClearRuntimeOrderRefs below was written to avoid and this
+// function was not — the clear path got the identity-preserving CASE treatment,
+// the set path stayed blind.
+//
+// The overwhelmingly common mistake is `UpdateRuntimeOrders(node, &order.ID, nil)`
+// to mean "this node's active order is now N". It also means "and this node has
+// no staged order", which is a claim the caller usually has no business making:
+// a two-robot swap's sibling leg lives in the other slot.
+//
+// Legitimate uses are the ones that genuinely decide both slots at once — a swap
+// dispatch that just created (or deliberately did not create) each leg. Those
+// callers know both answers. Everyone else wants a partial setter.
 func UpdateRuntimeOrders(db *sql.DB, processNodeID int64, activeOrderID, stagedOrderID *int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET active_order_id=?, staged_order_id=?, updated_at=datetime('now') WHERE process_node_id=?`,
 		activeOrderID, stagedOrderID, processNodeID)
 	return err
+}
+
+// SetRuntimeActiveOrder writes the active order pointer and LEAVES STAGED
+// ALONE. Pass nil to clear just the active slot.
+func SetRuntimeActiveOrder(db *sql.DB, processNodeID int64, activeOrderID *int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET active_order_id=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		activeOrderID, processNodeID)
+	return err
+}
+
+// SetRuntimeStagedOrder writes the staged order pointer and LEAVES ACTIVE
+// ALONE. Pass nil to clear just the staged slot.
+func SetRuntimeStagedOrder(db *sql.DB, processNodeID int64, stagedOrderID *int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET staged_order_id=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		stagedOrderID, processNodeID)
+	return err
+}
+
+// ClearRuntimeOrders drops BOTH order pointers on one node.
+//
+// Named rather than spelled `UpdateRuntimeOrders(node, nil, nil)` so that
+// throwing away a slot you may not own is a decision with a word for it, and so
+// the sites that mean it can be told apart from the sites that meant to set one
+// pointer and took the other with them. Prefer ClearRuntimeOrderRefs when you
+// know the order id — it drops that order's references wherever they are and
+// never touches a sibling.
+func ClearRuntimeOrders(db *sql.DB, processNodeID int64) error {
+	return UpdateRuntimeOrders(db, processNodeID, nil, nil)
 }
 
 // ClearRuntimeOrderRefs nulls every runtime order pointer that references

@@ -59,7 +59,23 @@ func (e *Engine) reportLinesideLevels() {
 
 	station := e.cfg.StationID()
 	entries := make([]protocol.LinesideLevelEntry, 0, len(levels))
+	var unknown []string
 	for _, l := range levels {
+		// A NODE WHOSE CARRIER NOBODY COULD IDENTIFY SHIPS NO ROW.
+		//
+		// There is no safe guess to make here. The old one — fall back to the
+		// claim — is what put a part number of which zero existed plant-wide on
+		// a carrier holding 7032 of something else, and because the payload is
+		// the join key on Core it took the real part's correction down with it.
+		//
+		// Absence is the designed degradation and Core is already written for
+		// it: past the 3-minute staleness window a node with no fresh report
+		// falls back to its ledger term and makes no adjustment. That is a
+		// less-corrected number, which is a different thing from a wrong one.
+		if !l.PayloadKnown || l.PayloadCode == "" {
+			unknown = append(unknown, l.CoreNodeName)
+			continue
+		}
 		entries = append(entries, protocol.LinesideLevelEntry{
 			CoreNodeName: l.CoreNodeName,
 			PayloadCode:  l.PayloadCode,
@@ -67,6 +83,17 @@ func (e *Engine) reportLinesideLevels() {
 			BinUOP:       l.BinUOP,
 			BucketQty:    l.BucketQty,
 		})
+	}
+	// Loud, because a node dropping out of the adjustment is a real change in
+	// what Core is deciding on and the operator-visible symptom is nothing at
+	// all. A node that stays here across many reports has a carrier no delivery
+	// envelope and no person has ever identified.
+	if len(unknown) > 0 {
+		log.Printf("lineside-reporter: %d node(s) withheld — no established carrier identity: %v",
+			len(unknown), unknown)
+	}
+	if len(entries) == 0 {
+		return
 	}
 
 	env, err := protocol.NewDataEnvelope(

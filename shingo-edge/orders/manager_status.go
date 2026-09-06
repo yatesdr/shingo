@@ -25,21 +25,21 @@ import (
 // OrderDelivered protocol message. When the order isn't found by UUID (Core-
 // admin manual orders have no Edge row), a fallback bind event is emitted using
 // deliveryNode so the runtime cache can still be updated.
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, deliveryNode, binDestNode string) error {
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, deliveryNode, binDestNode string) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		// Core-admin order — no Edge row. Emit a bind-only fallback event so the
 		// runtime cache updates if the delivery node maps to an Edge process node.
 		if binID != nil && deliveryNode != "" {
-			m.emitter.EmitOrderDeliveredFallback(*binID, uop, epoch, deliveryNode)
+			m.emitter.EmitOrderDeliveredFallback(*binID, uop, binPayloadCode, epoch, deliveryNode)
 		}
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch, binDestNode)
+	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode)
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, epoch int64, binDestNode string) error {
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, epoch, binDestNode); err != nil {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string) error {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -79,7 +79,7 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	case ReplyDelivered:
 		// Dispatch-reply delivery carries no bin snapshot (that rides the
 		// OrderDelivered envelope); pass nil/0/"" so Edge uses the role default.
-		return m.handleDelivered(order, statusDetail, nil, nil, nil, 0, "")
+		return m.handleDelivered(order, statusDetail, nil, nil, nil, nil, 0, "")
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
 	case ReplySkipped:

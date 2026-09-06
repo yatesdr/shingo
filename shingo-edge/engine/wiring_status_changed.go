@@ -61,7 +61,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		return
 	}
 
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil || claim.SwapMode != protocol.SwapModeSequential {
 		return
 	}
@@ -78,7 +78,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		log.Printf("sequential backfill for node %s: %v", node.Name, err)
 		return
 	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, runtime.ActiveOrderID, &orderB.ID); err != nil {
+	if err := e.db.SetProcessNodeRuntimeStagedOrder(nodeID, &orderB.ID); err != nil {
 		log.Printf("update runtime orders for node %d: %v", nodeID, err)
 	}
 	// LinkOrderSiblings is log-and-continue here (unlike the three

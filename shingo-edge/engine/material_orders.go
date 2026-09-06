@@ -120,7 +120,24 @@ func BuildStagedReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrder
 }
 
 // refillPickup is the ONE way to express "fetch a fresh carrier from the
-// inbound source". Every builder that opens a leg at InboundSource must use it.
+// inbound source". Every builder that opens a leg at InboundSource must use it,
+// and TestArch_InboundPickupUsesRefillPickup fails the build if one does not.
+//
+// THE SENTENCE ABOVE WAS FALSE WHEN IT WAS WRITTEN, which is its own defect:
+// five builders in this file opened their inbound leg with a raw
+// buildStep("pickup", claim.InboundSource) and got the Empty flag from a
+// post-hoc markInboundEmpty pass in BuildSwapDispatch instead. Three of those
+// five carried their own Role == Produce guard as well; two carried nothing and
+// were correct only because a caller fixed them up afterwards — the exact
+// arrangement this constructor was written to abolish, still standing under a
+// comment claiming it had been.
+//
+// The five are converted and the arch test is what keeps the claim true. Go
+// cannot make it unwriteable: buildStep is already unexported and every bypass
+// was inside this same file, so there is no visibility boundary left to move.
+// A grep-based structural test is the strongest rung actually available here,
+// and saying so is better than a comment that asserts a coverage it does not
+// have.
 //
 // ── WHY A CONSTRUCTOR, AND NOT A CALL AFTER THE STEP LIST ─────────────────
 //
@@ -214,7 +231,7 @@ func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderSte
 		return nil
 	}
 	steps := []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource),        // 1
+		refillPickup(nil, claim),                        // 1
 		stagingDropoff(claim.InboundStaging),            // 2
 		stationWait(claim.CoreNodeName),                 // 3 drive to node + hold
 		{Action: "pickup", Node: claim.CoreNodeName},    // 4
@@ -257,7 +274,7 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 	// stay at in_transit while physically parked, breaking swap_ready and
 	// requiring two RELEASE clicks. See shingo_todo.md.
 	orderA = []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource),       // pick new from source
+		refillPickup(nil, claim),                       // pick new from source
 		stagingDropoff(claim.InboundStaging),           // stage new
 		stationWait(claim.InboundStaging),              // hold at staging until line clears
 		{Action: "pickup", Node: claim.InboundStaging}, // pick new from staging
@@ -338,13 +355,13 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 				protocol.ComplexOrderStep{Action: "dropoff", Node: claim.PairedCoreNode})
 		}
 		orderR2 = append(orderR2,
-			buildStep("pickup", claim.InboundSource),
+			refillPickup(nil, claim),
 			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
 	} else {
 		// UNFLIPPED (today): R1 carries on to the supermarket and backfills the
 		// rearmost position; R2 only shifts the on-deck carrier forward.
 		orderR1 = append(orderR1,
-			buildStep("pickup", claim.InboundSource),
+			refillPickup(nil, claim),
 			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
 		orderR2 = []protocol.ComplexOrderStep{
 			stationWait(claim.PairedCoreNode),
@@ -430,7 +447,7 @@ func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexO
 //  2. dropoff(CoreNodeName)    — deliver to line
 func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	steps := []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource),      // 1
+		refillPickup(nil, claim),                      // 1
 		{Action: "dropoff", Node: claim.CoreNodeName}, // 2
 	}
 	// Produce/consume are duals: a consume backfill pulls a payload-matched FULL bin
@@ -660,7 +677,7 @@ func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Change
 		return ChangeoverDispatch{}
 	}
 	stepsA := []protocol.ComplexOrderStep{
-		refillPickup(fromClaim, toClaim),       // fetch a fresh EMPTY carrier
+		refillPickup(fromClaim, toClaim),       // fetch the incoming carrier: EMPTY on produce, a payload-matched full retrieve on consume
 		stagingDropoff(toClaim.InboundStaging), // stage new
 		stationWait(toClaim.InboundStaging),    // "ready" — shared release gate
 		{Action: "pickup", Node: toClaim.InboundStaging},
@@ -674,9 +691,30 @@ func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Change
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
 			// stepsA fetches new material and delivers it to the line — supply.
+			//
+			//
+			// AUTO-CONFIRM HERE IS CORRECT AND IS NOT confirmPolicy's QUESTION.
+			// stepsA ends with a dropoff at the process node, so confirmPolicy
+			// would call it the leg that needs a receipt. The changeover path
+			// does not use confirmPolicy at all.
+			//
+			// The reason used to be given as "the shared 'ready' wait above IS
+			// the operator's gate", and that is wrong about what the wait does.
+			// The wait is a RELEASE: it holds both robots at their staging points
+			// until the operator starts them, and it fires before either carrier
+			// reaches the press. It signs for nothing.
+			//
+			// The receipt on a changeover is the CUTOVER, plus openPostCutoverVerify
+			// after it — which watches the press's live CATID against the incoming
+			// style and puts a mismatch in front of the operator. That is a
+			// supervised event with a person present, and a per-leg CONFIRM tap
+			// would be a second signature on the same act. Do not route these legs
+			// through confirmPolicy.
 			supply: changeoverLeg{steps: stepsA, deliveryNode: finalDropoff(stepsA), autoConfirm: true},
 			// stepsB waits at the line, lifts the old bin, carries it to
 			// outbound — evac. Core derives its delivery node from the steps.
+			// It leaves nothing on the press, so this one agrees with
+			// confirmPolicy anyway.
 			evac: changeoverLeg{steps: stepsB, autoConfirm: true},
 		},
 	}
@@ -704,15 +742,28 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 	if tooling {
 		r1 = append(r1, stationWait("")) // "tooling done"
 	}
-	// R1's other pickup — the old front tote — keeps the from-style payload it
-	// needs (§ carriesFromPayload below); only this leg fetches a fresh carrier.
-	r1 = append(r1, refillPickup(fromClaim, toClaim))
+	// ── THE FLIP APPLIES HERE TOO ────────────────────────────────────────
+	//
+	// IndexRobotSupplies moves the supermarket trip between the two robots.
+	// The steady-state builder reads it; this one did not, so a press
+	// configured with the flip ran R2-supplies all shift and then inverted the
+	// two robots' roles the moment a changeover started — same cell, same
+	// hardware, opposite choreography, decided by which builder happened to be
+	// running.
+	//
+	// The flip does NOT move the press pickup or the press dropoff, only the
+	// fetch, which is why R1's prefix above and R2's index moves below are
+	// identical in both states.
+	backPosition := fromClaim.PairedCoreNode
 	if fromClaim.SecondPairedCoreNode != "" {
-		// 3-position: refill back position.
-		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: fromClaim.SecondPairedCoreNode})
-	} else {
-		// 2-position: refill paired (back) position.
-		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: fromClaim.PairedCoreNode})
+		backPosition = fromClaim.SecondPairedCoreNode
+	}
+	// R1's other pickup — the old front tote — keeps the from-style payload it
+	// needs (§ carriesFromPayload below); only the fetching leg takes a fresh
+	// carrier.
+	if !fromClaim.IndexRobotSupplies {
+		r1 = append(r1, refillPickup(fromClaim, toClaim))
+		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
 	}
 	var r2 []protocol.ComplexOrderStep
 	if fromClaim.SecondPairedCoreNode != "" {
@@ -730,19 +781,32 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 		}
 	}
+	if fromClaim.IndexRobotSupplies {
+		// Flipped: R2 owns the supermarket trip, exactly as it does in steady
+		// state. It has just placed on the press, so the fresh carrier it
+		// fetches goes to the back position behind it.
+		r2 = append(r2, refillPickup(fromClaim, toClaim))
+		r2 = append(r2, protocol.ComplexOrderStep{Action: "dropoff", Node: backPosition})
+	}
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
-			// R1 lifts the spent tote off the front and refills the back — evac.
-			// Its delivery node is left blank for Core to derive from the steps
-			// (the back position); the old hardcoded fromClaim.CoreNodeName was
-			// a lie — R1's bin comes to rest at the back, not the front, which
-			// is what bound the wrong bin at HK 2026-07-14.
+			// R1 lifts the spent tote off the front — evac — and refills the
+			// back when it owns the fetch. Its delivery node is left blank for
+			// Core to derive from the steps; the old hardcoded
+			// fromClaim.CoreNodeName was a lie — R1's bin comes to rest at the
+			// back (or at outbound, flipped), not the front, which is what bound
+			// the wrong bin at HK 2026-07-14.
 			evac: changeoverLeg{steps: r1, autoConfirm: true},
 			// R2 indexes the fresh tote onto the front — supply. It picks up an
 			// OLD (from-style) tote at the back position, so it carries the
 			// from-style payload; without it the removal filters for the new
 			// payload and finds no bin (ALN_001), the same defect the evac slot
 			// already guards on two_robot.
+			//
+			// R2 drops on the press in both geometries, so confirmPolicy would
+			// want a receipt here. It auto-confirms for the reason given at the
+			// two_robot builder above: the changeover's receipt is the cutover
+			// and its post-cutover verify, not a per-leg tap.
 			supply: changeoverLeg{steps: r2, deliveryNode: finalDropoff(r2), autoConfirm: true, carriesFromPayload: true},
 		},
 	}

@@ -51,6 +51,9 @@ type capturingEmitter struct {
 	status    []string // "oldStatus→newStatus"
 	completed []string
 	failed    []string
+	// fallbackPayloads records what the no-Edge-row delivery path was told the
+	// carrier is. nil entries are an older Core that sends no payload.
+	fallbackPayloads []*string
 }
 
 func (e *capturingEmitter) EmitOrderCreated(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
@@ -65,10 +68,11 @@ func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, o
 	e.completed = append(e.completed, string(orderType)+":"+orderUUID)
 }
 
-func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64, binDestNode, deliveryNode string) {
+func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string) {
 }
 
-func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binEpoch int64, deliveryNode string) {
+func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string) {
+	e.fallbackPayloads = append(e.fallbackPayloads, binPayloadCode)
 }
 
 func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
@@ -287,7 +291,7 @@ func TestCreateMoveOrderWithUOP_ThreadsRemainingUOP(t *testing.T) {
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	remaining := 5
-	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining, false, NoDemand()); err != nil {
+	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", "", &remaining, false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrderWithUOP: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1414,7 +1418,7 @@ func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
 	future := time.Now().UTC().Add(1 * time.Hour)
-	testutil.MustNoErr(t, mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil, nil, 0, "", ""), "HandleDeliveredWithExpiry")
+	testutil.MustNoErr(t, mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil, nil, nil, 0, "", ""), "HandleDeliveredWithExpiry")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusDelivered {
 		t.Errorf("Status: got %q, want delivered", o.Status)
@@ -1429,7 +1433,7 @@ func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil, nil, nil, 0, "", "")
+	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil, nil, nil, nil, 0, "", "")
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
@@ -1633,5 +1637,37 @@ func TestMirrorFollowsCore_BackwardAndImpossibleStayRefused(t *testing.T) {
 	}
 	if protocol.IsForwardJump(StatusQueued, StatusDispatched) {
 		t.Error("IsForwardJump(queued, dispatched) = true — that is a legal single step, not a jump")
+	}
+}
+
+// THE FIFTH DOOR, AT THE SEAM. A Core-admin order has no Edge row, so
+// HandleDeliveredWithExpiry cannot find it by UUID and emits a bind-only
+// fallback. binPayloadCode was in scope on that line and was not passed, so the
+// one delivery path with no order row to reconstruct from was also the one that
+// recorded nothing about what landed.
+func TestHandleDelivered_FallbackCarriesThePayload(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	emitter := &capturingEmitter{}
+	mgr := NewManager(db, emitter, "edge.station")
+
+	binID := int64(7788)
+	payload := "63125-6TA0A.06"
+	err := mgr.HandleDeliveredWithExpiry("uuid-core-admin-no-edge-row", "", nil,
+		&binID, nil, &payload, 5, "ALN_007", "")
+	if err == nil {
+		t.Fatal("expected the not-found error — that is what puts this on the fallback path")
+	}
+	if len(emitter.fallbackPayloads) != 1 {
+		t.Fatalf("fallback emitted %d times, want 1", len(emitter.fallbackPayloads))
+	}
+	got := emitter.fallbackPayloads[0]
+	if got == nil {
+		t.Fatal("the payload was dropped on the way through. Core named the carrier on the " +
+			"envelope and this path binds a claim from the process's active style, which during " +
+			"a changeover is the outgoing one — the incident's mechanism with no record to fix it.")
+	}
+	if *got != payload {
+		t.Errorf("payload = %q, want %q", *got, payload)
 	}
 }

@@ -43,7 +43,7 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 	nodeID, node, claim := seedSwapClaim(t, db, mode, secondPaired)
 	if flipped {
 		// Persisted, not just set in memory: the handler re-reads the claim
-		// through findActiveClaim, so an in-memory flip would build flipped
+		// through requestedClaimAtNode, so an in-memory flip would build flipped
 		// steps and stamp them against an unflipped claim.
 		yes := true
 		_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -59,7 +59,7 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 			IndexRobotSupplies:   &yes,
 		})
 		testutil.MustNoErr(t, err, "flip claim")
-		claim = findActiveClaim(db, node)
+		claim = requestedClaimAtNode(db, node)
 		if claim == nil || !claim.IndexRobotSupplies {
 			t.Fatal("the flip did not persist — the fixture would test the unflipped shape")
 		}

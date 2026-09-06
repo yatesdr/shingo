@@ -140,11 +140,19 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	// multi-bin) leaves the snapshot empty and Edge falls back to its default.
 	var uopRemaining *int
 	var deltaEpoch int64
+	var binPayloadCode *string
 	if binID != nil {
 		if bin, binErr := e.db.GetBin(*binID); binErr == nil {
 			u := bin.UOPRemaining
 			uopRemaining = &u
 			deltaEpoch = bin.DeltaEpoch
+			// The payload rode this row the whole time and was dropped on the
+			// line above. The Edge has no bins table and cannot look it up, so
+			// it was inferring the carrier's identity from the requested
+			// style's claim — right until a changeover moved the cell on
+			// underneath a carrier that stayed.
+			p := bin.PayloadCode
+			binPayloadCode = &p
 		} else {
 			e.logFn("engine: order=%d delivered: bin %d uop/epoch lookup failed: %v (Edge falls back to role default)",
 				order.ID, *binID, binErr)
@@ -164,6 +172,7 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		BinID:          binID,
 		UOPRemaining:   uopRemaining,
 		DeltaEpoch:     deltaEpoch,
+		BinPayloadCode: binPayloadCode,
 		DeliveryNode:   order.DeliveryNode,
 		BinDestNode:    binDestNode,
 	}); err != nil {

@@ -346,7 +346,15 @@ export function renderGrid() {
 // the view-level payload_bin_types catalog. A node configured for tote-payloads
 // only resolves to totes; a node with no payload restriction shows all dunnage
 // types in the catalog.
-function confirmUnloadSwap(nodeID, allowedPayloadCodes) {
+//
+// discarding is the count the clear is about to throw away — the Edge's own
+// remaining_uop_cached for the carrier in the window. The overlay says the
+// number because the clear does not refuse on it and should not: an unloader
+// clears full finished bins by design, and Core records the discard durably in
+// bin_uop_ledger as clear_for_reuse. What was missing was the operator seeing
+// what they were discarding at the moment they discarded it. Pass 0 or null
+// when there is nothing to say and the line is omitted.
+function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding) {
     var view = getView();
     var catalog = (view && view.payload_bin_types) || [];
 
@@ -378,6 +386,10 @@ function confirmUnloadSwap(nodeID, allowedPayloadCodes) {
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full pulled, empty filled?' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
+    if (discarding > 0) {
+        panel.appendChild(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
+            textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
+    }
 
     const binTypes = binTypeCodes.length > 0 ? binTypeCodes : null;
     // Single-type stations auto-fill: skip the picker and send the code
@@ -788,7 +800,8 @@ function buildLoaderCard(entry, code, counters, opts) {
     } else if (cs.action === 'unload') {
         card.style.cursor = 'pointer';
         card.addEventListener('click', function() {
-            confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes);
+            confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
+                entry.runtime && entry.runtime.remaining_uop_cached);
         });
     } else {
         card.style.cursor = 'pointer';
@@ -1248,11 +1261,18 @@ function createNodeButton(entry) {
             btn.appendChild(el('span', { className: 'os-node-payload', textContent: 'Manual Swap' }));
         }
     } else {
+        // NO BIN, not 0. A claimed node with no carrier bound has nothing to
+        // count, and a bare 0 reads as a slot that has run out — the operator
+        // acts on those. The switch used to paper over this window by seeding
+        // the claim's capacity into the count, which put a policy number in a
+        // field Core reads as a physical measurement (SwitchNode); saying what
+        // is true is the replacement for inventing a number.
+        const noCarrier = claim && runtime.active_bin_id == null;
         btn.appendChild(el('span', {
             className: 'os-node-remaining',
-            textContent: claim ? String(remaining) : '--'
+            textContent: claim ? (noCarrier ? 'NO BIN' : String(remaining)) : '--'
         }));
-        if (claim && capacity > 0) {
+        if (claim && capacity > 0 && !noCarrier) {
             btn.appendChild(el('span', {
                 className: 'os-node-capacity',
                 textContent: '/ ' + capacity
@@ -1272,7 +1292,8 @@ function createNodeButton(entry) {
             const bs = entry.bin_state;
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
-            if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes);
+            if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
+                entry.runtime && entry.runtime.remaining_uop_cached);
             else if (emptyPresent) confirmPushEmpty(entry.node.id);
         });
     } else {

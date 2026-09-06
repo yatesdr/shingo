@@ -17,7 +17,7 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	claim := findActiveClaim(db, node)
+	claim := requestedClaimAtNode(db, node)
 	return node, runtime, claim, nil
 }
 
@@ -54,7 +54,7 @@ func (e *Engine) synthLoaderClaim(coreNodeName string) *processes.NodeClaim {
 	return l.SynthClaim(domain.NodeID(coreNodeName))
 }
 
-// findActiveClaim finds the node claim governing this node right now.
+// requestedClaimAtNode finds the node claim governing this node right now.
 // Pure function — takes db parameter instead of Engine receiver.
 //
 // Normal case (no changeover, or existing node during changeover):
@@ -88,33 +88,44 @@ func (e *Engine) synthLoaderClaim(coreNodeName string) *processes.NodeClaim {
 // active claim", the honest answer. Review rejected a defensive fallback here
 // as code for an unreachable case; if this ever fires wrong, fix the caller's
 // expectation, do not widen this resolver.
-func findActiveClaim(db *store.DB, node *processes.Node) *processes.NodeClaim {
+// IT RETURNS THE REQUESTED CLAIM, AND THE NAME NOW SAYS SO. It was
+// findActiveClaim, which reads as "the claim that is active at this node" — i.e.
+// the one describing whatever is standing there. It is not that. It resolves
+// from the PROCESS's active style, so it answers "what does this node's current
+// style say should be here", and it moves the instant a changeover moves the
+// process, whether or not anything physical moved with it.
+//
+// Most of its callers want exactly that: cell geometry, pairing, staging
+// nodes, routing — all properties of the style's plan for the node, correctly
+// requested-derived. The ones that wanted the carrier's identity were reading
+// the wrong thing under a name that hid it. For those, the resident payload on
+// the runtime row is the answer.
+func requestedClaimAtNode(db *store.DB, node *processes.Node) *processes.NodeClaim {
 	process, err := db.GetProcess(node.ProcessID)
 	if err != nil {
 		return nil
 	}
-	return activeClaimForProcess(db, process, node)
+	return requestedClaimForProcess(db, process, node)
 }
 
-// activeClaimForProcess is findActiveClaim for a caller that already holds the
+// requestedClaimForProcess is requestedClaimAtNode for a caller that already holds the
 // process row. Split out for the level sweep, which walks every node of every
 // process once a period: re-deriving the process per node would turn one read
 // into one per node for an answer it was already holding.
-func activeClaimForProcess(db *store.DB, process *processes.Process, node *processes.Node) *processes.NodeClaim {
-	if process == nil || node == nil {
-		return nil
-	}
-	if process.ActiveStyleID != nil {
-		if claim, cerr := db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName); cerr == nil && claim != nil {
-			return claim
-		}
-	}
-	if process.TargetStyleID != nil {
-		if claim, cerr := db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName); cerr == nil && claim != nil {
-			return claim
-		}
-	}
-	return nil
+//
+// ACTIVE FIRST — store.ActiveStyleFirst. It answers "which STYLE'S claim
+// governs this node as configured now", which is what its callers want: counts,
+// releases, evacuations, cell geometry. This sentence used to say "what is
+// standing on this node now", which the resolver cannot know — it reads
+// active_style_id and target_style_id and nothing about a carrier. What is
+// standing there is the runtime row's lineside payload.
+//
+// The opposite precedence is a real and legitimate question, asked by
+// orders.Manager for an order that does not exist yet; it lives under the same
+// name with the other constant, so the two can no longer disagree without a
+// reader seeing which was chosen.
+func requestedClaimForProcess(db *store.DB, process *processes.Process, node *processes.Node) *processes.NodeClaim {
+	return db.ResolveNodeClaim(process, node, store.ActiveStyleFirst)
 }
 
 // positionClaimForTask derives the per-position claim for a press position that owns
@@ -156,7 +167,7 @@ func (e *Engine) changeoverToClaim(toStyleID int64, node *processes.Node, task *
 // changeoverFromClaim resolves the OUTGOING claim — what is physically on the
 // node — with the same position fallback.
 func (e *Engine) changeoverFromClaim(node *processes.Node, task *processes.NodeTask) *processes.NodeClaim {
-	if claim := findActiveClaim(e.db, node); claim != nil {
+	if claim := requestedClaimAtNode(e.db, node); claim != nil {
 		return claim
 	}
 	if task == nil {

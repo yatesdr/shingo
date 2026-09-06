@@ -223,6 +223,14 @@ body {
 .os-co-picker-subtitle {
     font-size: 13px; text-align: center; color: #a8b3c4; margin-bottom: 8px; line-height: 1.4;
 }
+/* The number a CLEAR is about to discard. Amber rather than the subtitle grey
+   because the clear does not refuse on the count and never should — an
+   unloader clears full finished bins by design — so the only thing standing
+   between a mis-tap and a discarded count is the operator reading the line.
+   #f0a43a on the picker's #1a1f2e surface is ~8.6:1. */
+.os-co-picker-warn {
+    color: #f0a43a; font-weight: 700;
+}
 .os-co-picker-btn {
     border: none; border-radius: 10px; padding: 14px 20px; font-size: 16px;
     font-weight: 700; cursor: pointer; touch-action: manipulation;

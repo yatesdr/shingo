@@ -41,7 +41,7 @@ func seedUnflippedPressIndexPair(t *testing.T, flipped bool) (*Engine, *store.DB
 		testutil.MustNoErr(t, err, "flip index_robot_supplies")
 		node, err := db.GetProcessNode(nodeID)
 		testutil.MustNoErr(t, err, "re-read node")
-		claim = findActiveClaim(db, node)
+		claim = requestedClaimAtNode(db, node)
 		if claim == nil || !claim.IndexRobotSupplies {
 			t.Fatal("the flip did not take")
 		}

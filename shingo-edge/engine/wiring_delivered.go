@@ -26,6 +26,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -196,7 +197,7 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if _, err := e.db.EnsureProcessNodeRuntime(node.ID); err != nil {
 		return
 	}
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil {
 		// The bin landed at a node we own but there is no active claim to bind it
 		// to (unpublished/mid-changeover style, orphaned node). Pre-fix this was a
@@ -224,6 +225,15 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			log.Printf("delivered: set runtime for node %d bin %d: %v", node.ID, *delivered.BinID, err)
 		}
 	}
+	// WHAT THIS CARRIER IS, from Core, alongside the claim that says what was
+	// wanted. The claim id above is the requested identity — it comes from
+	// requestedClaimAtNode, which reads the process's active style — and it is right
+	// only while the two agree. This is the fact itself.
+	//
+	// nil means an older Core sent no payload. Leaving the previous value
+	// standing would be worse than the gap: a stale identity is a confident
+	// wrong answer, and this field's readers fail open on an empty one.
+	e.recordDeliveredCarrier(node, delivered)
 
 	// Auto-clear: if this was a pull-from-market delivery, zero the bin UOP
 	// immediately so the operator doesn't need to hit a separate Clear Bin button.
@@ -247,6 +257,19 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	}
 }
 
+// recordDeliveredCarrier tells the node what Core says just landed on it.
+//
+// A nil payload is an older Core that does not send one, and it records as an
+// UNKNOWN carrier rather than being skipped — leaving the previous occupant's
+// identity standing would be a confident wrong answer about this one.
+func (e *Engine) recordDeliveredCarrier(node *processes.Node, delivered OrderDeliveredEvent) {
+	carrier := domain.UnknownCarrier()
+	if delivered.BinPayloadCode != nil {
+		carrier = domain.KnownCarrier(domain.LinesidePayloadCode(*delivered.BinPayloadCode))
+	}
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, domain.CarrierFromDelivery)
+}
+
 // deliveredFallbackUOP returns the cache value to use when Core is
 // unreachable: produce nodes start at 0 (filling up), other roles
 // fall back to claim capacity (full bin assumption). Mirrors the
@@ -262,6 +285,13 @@ func deliveredFallbackUOP(claim *processes.NodeClaim) int {
 // have no Edge row (ProcessNodeID is nil). The delivery node is looked up by
 // Core dot-name; if it maps to an Edge process node that has an active claim,
 // the cache and active_bin_id are updated exactly as for a normal delivery.
+//
+// EXACTLY AS FOR A NORMAL DELIVERY INCLUDES THE CARRIER'S IDENTITY, and it did
+// not. This path bound a claim resolved from the process's active style and
+// recorded nothing about what actually landed, so a Core-admin straight-drop
+// during a changeover produced the incident's mechanism plus no identity record
+// to correct it with. The envelope carried the payload the whole time; the
+// fallback emit dropped it on the way through the orders package.
 func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 	node, err := e.db.GetProcessNodeByCoreNodeName(delivered.DeliveryNode)
 	if err != nil || node == nil {
@@ -281,7 +311,7 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 			fmt.Sprintf("could not open runtime row for the node: %v", err))
 		return
 	}
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil {
 		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
 		return
@@ -300,6 +330,7 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 			fmt.Sprintf("runtime write failed: %v", err))
 		return
 	}
+	e.recordDeliveredCarrier(node, delivered)
 	log.Printf("delivered fallback: bound bin %d to node %s (remaining=%d epoch=%d) via delivery-node resolution",
 		*delivered.BinID, node.CoreNodeName, cacheValue, delivered.BinEpoch)
 }

@@ -168,7 +168,9 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 		t.Fatalf("two_robot: expected both legs, got supply=%v evac=%v", stepsA, stepsB)
 	}
 	if !disp.Roles.supply.autoConfirm || !disp.Roles.evac.autoConfirm {
-		t.Error("two_robot: expected both legs to auto-confirm (the wait IS the gate)")
+		t.Error("two_robot: expected both legs to auto-confirm. The changeover receipt is the " +
+			"cutover plus its post-cutover CATID verify, not a per-leg CONFIRM tap; the shared " +
+			"'ready' wait is a release that fires before either carrier reaches the press.")
 	}
 	if disp.Roles.supply.deliveryNode != "CORE" {
 		t.Errorf("supply leg delivery node: got %q, want CORE", disp.Roles.supply.deliveryNode)

@@ -85,7 +85,7 @@ func seedStagedPressIndexPair(t *testing.T, uuidPrefix string) (*Engine, int64, 
 func TestReleaseOrderWithLineside_U1FiresAfterTheRelease(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, _, _ := seedStagedPressIndexPair(t, "uuid-u1")
-	claim := findActiveClaim(eng.db, mustNode(t, eng.db, nodeID))
+	claim := requestedClaimAtNode(eng.db, mustNode(t, eng.db, nodeID))
 
 	rec := &recordingLoaderStore{}
 	eng.loaderStore = rec

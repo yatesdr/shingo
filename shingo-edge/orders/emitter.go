@@ -15,11 +15,19 @@ type EventEmitter interface {
 	// PLN_01/PLN_04, bound neither, and the presses counted into pending_uop_delta
 	// with no bin). Pass order.DeliveryNode; the handler prefers processNodeID and
 	// falls back to the name.
-	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binEpoch int64, binDestNode, deliveryNode string)
+	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string)
 	// EmitOrderDeliveredFallback binds the runtime cache for Core-admin orders
 	// that have no Edge order row. ProcessNodeID is resolved from deliveryNode by
 	// the engine handler. Called when HandleDeliveredWithExpiry can't find the UUID.
-	EmitOrderDeliveredFallback(binID int64, binUOP *int, binEpoch int64, deliveryNode string)
+	//
+	// binPayloadCode rides along for the same reason EmitOrderDelivered carries
+	// it: this is a delivery, and a delivery is one of the moments the Edge can
+	// learn what carrier is standing on a node. It was in scope at the call site
+	// and dropped, so a Core-admin straight-drop bound a claim and recorded no
+	// identity — the same envelope, the same bin row, the same fact, thrown away
+	// on the one path with no Edge order to reconstruct it from. nil is an older
+	// Core that does not send one, and records as an UNKNOWN carrier.
+	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string)
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
 }

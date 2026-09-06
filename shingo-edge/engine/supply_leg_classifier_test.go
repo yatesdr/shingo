@@ -42,7 +42,7 @@ func seedSwapClaim(t *testing.T, db *store.DB, swapMode protocol.SwapMode, secon
 	testutil.MustNoErr(t, err, "upsert claim")
 	node, err = db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "get node")
-	claim = findActiveClaim(db, node)
+	claim = requestedClaimAtNode(db, node)
 	if claim == nil {
 		t.Fatal("claim not found — seed contract changed")
 	}

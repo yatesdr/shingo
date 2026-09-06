@@ -112,7 +112,7 @@ func TestF1b_MultiToteDelivered_Binds(t *testing.T) {
 	// deliveryNode = lossy last-dropoff (supermarket); binDestNode = the consuming
 	// node Core resolved for this bin. The bind must follow binDestNode.
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "multi-tote delivery", nil, &bid, &uop, 9, "SUPERMARKET-OUT", node.CoreNodeName),
+		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "multi-tote delivery", nil, &bid, &uop, nil, 9, "SUPERMARKET-OUT", node.CoreNodeName),
 		"handle multi-tote delivered")
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
@@ -151,7 +151,7 @@ func TestDeliveredNotBound_NoActiveClaimRaisesAlarm(t *testing.T) {
 	if _, err := db.EnsureProcessNodeRuntime(nodeID); err != nil {
 		t.Fatalf("ensure runtime: %v", err)
 	}
-	// No style, no claim → findActiveClaim returns nil.
+	// No style, no claim → requestedClaimAtNode returns nil.
 
 	const binID int64 = 4242
 	orderID, err := db.CreateOrder("uuid-noclaim", orders.TypeRetrieve, &nodeID, false, 1,
@@ -217,7 +217,7 @@ func TestDeliveredNotBound_ChangeoverAutoConfirmBindsNotSilent(t *testing.T) {
 	bid := binID
 	uop := snapshotUOP
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "changeover auto-confirm delivery", nil, &bid, &uop, 4, node.CoreNodeName, ""),
+		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "changeover auto-confirm delivery", nil, &bid, &uop, nil, 4, node.CoreNodeName, ""),
 		"handle delivered")
 
 	// Bound (not silent) — active bin + snapshot count.

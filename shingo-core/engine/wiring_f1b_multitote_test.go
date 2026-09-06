@@ -162,4 +162,16 @@ func TestF1b_MultiToteDelivered_ShipsConsumingBin(t *testing.T) {
 	if delivered.UOPRemaining == nil {
 		t.Errorf("delivered.UOPRemaining = nil, want the supply bin's count snapshot")
 	}
+	// And WHAT the carrier is, off the same row and at the same moment. The
+	// Edge has no bins table, so without this it infers the carrier's identity
+	// from the requested style's claim — right only until a changeover moves a
+	// cell on while a carrier is still standing on it.
+	if delivered.BinPayloadCode == nil {
+		t.Errorf("delivered.BinPayloadCode = nil, want the supply bin's payload. It rides the " +
+			"same bin row as UOPRemaining and DeltaEpoch and was being dropped on the line " +
+			"that kept them.")
+	} else if supplyBin, err := db.GetBin(supplyBinID); err == nil && *delivered.BinPayloadCode != supplyBin.PayloadCode {
+		t.Errorf("delivered.BinPayloadCode = %q, want the SELECTED (supply) bin's payload %q",
+			*delivered.BinPayloadCode, supplyBin.PayloadCode)
+	}
 }

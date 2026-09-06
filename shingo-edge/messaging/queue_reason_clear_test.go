@@ -47,11 +47,11 @@ func (noopEmitter) EmitOrderCreated(int64, string, protocol.OrderType, *int64, *
 func (noopEmitter) EmitOrderStatusChanged(int64, string, protocol.OrderType, string, string, string, *int64, *int64) {
 }
 func (noopEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64, *int64) {}
-func (noopEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64, *int, int64, string, string) {
+func (noopEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64, *int, *string, int64, string, string) {
 }
-func (noopEmitter) EmitOrderDeliveredFallback(int64, *int, int64, string)     {}
-func (noopEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string) {}
-func (noopEmitter) EmitOrderFaulted(int64, string, string)                    {}
+func (noopEmitter) EmitOrderDeliveredFallback(int64, *int, *string, int64, string) {}
+func (noopEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string)      {}
+func (noopEmitter) EmitOrderFaulted(int64, string, string)                         {}
 
 func testHandler(t *testing.T, db *store.DB) *EdgeHandler {
 	t.Helper()

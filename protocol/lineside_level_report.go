@@ -31,9 +31,12 @@ const SubjectLinesideLevelReport = "inventory.lineside_level_report"
 // flip that made Edge authoritative for lineside counts).
 //
 //   - BinCount: how many bins Edge has bound/present at the node for the payload.
-//   - BinUOP:   Edge's remaining_uop_cached summed across those bins — the
-//     number that diverges to 46 while Core holds 150. This is the
-//     measure the firing-decision comparison uses on the bin side.
+//   - BinUOP:   the BOUND bin's remaining_uop_cached — one bin per node, not a
+//     sum, and 0 when no bin is bound. This is the number that reads
+//     46 while Core holds 150, and it is the measure the
+//     firing-decision comparison uses on the bin side. The word
+//     "summed" was here and said the opposite of the divergence this
+//     message exists to report.
 //   - BucketQty: active lineside bucket parts at the node for the payload.
 type LinesideLevelEntry struct {
 	CoreNodeName string `json:"core_node_name"`

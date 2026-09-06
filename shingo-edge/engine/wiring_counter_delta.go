@@ -16,7 +16,9 @@
 package engine
 
 import (
+	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/store/processes"
@@ -33,6 +35,12 @@ import (
 // handleABFallthrough.
 func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 || delta.Delta <= 0 {
+		// A malformed tick is not a quiet no-op: the PLC path only
+		// emits delta > 0 with both ids set (plc/manager.go), so
+		// anything landing here means the count moved somewhere
+		// upstream and arrived unusable.
+		log.Printf("ERROR: counter delta malformed, dropped: process=%d style=%d delta=%d",
+			delta.ProcessID, delta.StyleID, delta.Delta)
 		return
 	}
 	if delta.Anomaly == "reset" {
@@ -41,8 +49,17 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 
 	nodes, err := e.db.ListProcessNodesByProcess(delta.ProcessID)
 	if err != nil {
+		log.Printf("ERROR: counter delta dropped, cannot list nodes: process=%d style=%d delta=%d: %v",
+			delta.ProcessID, delta.StyleID, delta.Delta, err)
 		return
 	}
+	// Why this tick did or did not land. A counter tick that matches no
+	// node used to fall off the end of this function in silence: the
+	// consume path has the A/B fallthrough net below, produce has none,
+	// so a produce tick against an unclaimed or mis-styled node moved a
+	// PLC count that nothing in this system ever recorded or mentioned.
+	// Diagnosing that took a database. It should take a log line.
+	attr := tickAttribution{nodesWalked: len(nodes)}
 	// A/B fallthrough tracking: if all paired consume nodes are inactive,
 	// decrement the first one found as a safety net ("count to lineside storage").
 	var pairedFallbackNode *processes.Node
@@ -53,16 +70,19 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	for _, node := range nodes {
 		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
 		if err != nil || runtime == nil {
+			attr.noRuntime++
 			continue
 		}
 
 		// Look up active claim for this node
-		claim := findActiveClaim(e.db, &node)
+		claim := requestedClaimAtNode(e.db, &node)
 		if claim == nil {
+			attr.noClaim++
 			continue
 		}
 		// Only process nodes with a claim matching this style
 		if claim.StyleID != delta.StyleID {
+			attr.styleMismatch++
 			continue
 		}
 
@@ -73,6 +93,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		// emission for these nodes so a forklift-loaded bin's manifest
 		// doesn't drift from the operator-declared count.
 		if claim.SwapMode == protocol.SwapModeManualSwap {
+			attr.manualSwap++
 			continue
 		}
 
@@ -81,6 +102,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			// A/B cycling: only decrement the active-pull side.
 			// The inactive side holds staged material.
 			if isInactivePairedNode(claim, runtime) {
+				attr.inactiveConsume++
 				// Remember first inactive paired node as fallback
 				if pairedFallbackNode == nil {
 					nodeCopy := node
@@ -98,16 +120,22 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 				pairedConsumeHandled = true
 			}
 			nodeCopy := node
+			attr.consumeTicks++
 			e.handleConsumeTick(&nodeCopy, runtime, claim, int(delta.Delta))
 
 		case protocol.ClaimRoleProduce:
 			// A/B cycling: only increment the active-pull side.
 			// The inactive side holds its current production.
 			if isInactivePairedNode(claim, runtime) {
+				attr.inactiveProduce++
 				continue
 			}
 			nodeCopy := node
+			attr.produceTicks++
 			e.handleProduceTick(&nodeCopy, runtime, claim, int(delta.Delta))
+
+		default:
+			attr.unknownRole++
 		}
 	}
 
@@ -115,8 +143,75 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	// an inactive paired node, decrement it as a safety net. This covers
 	// the "count to lineside storage" case when neither A nor B is active.
 	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
+		attr.fallthroughTicks++
 		e.handleABFallthrough(delta.ProcessID, pairedFallbackNode, pairedFallbackRuntime, pairedFallbackClaim, int(delta.Delta))
 	}
+
+	if !attr.landed() {
+		log.Printf("ERROR: counter delta unattributed: process=%d style=%d delta=%d rp=%d %s — the cell counted and no node took it",
+			delta.ProcessID, delta.StyleID, delta.Delta, delta.ReportingPointID, attr.skipReport())
+		// Also to the debug log, where it lands on the diagnostics page
+		// under the "engine" subsystem. The journal is the record; this
+		// is the copy a technician can reach from the UI without SSH.
+		e.debugFn("counter delta unattributed: process=%d style=%d delta=%d rp=%d %s",
+			delta.ProcessID, delta.StyleID, delta.Delta, delta.ReportingPointID, attr.skipReport())
+	}
+}
+
+// tickAttribution is the running account of one counter tick's walk over a
+// process's nodes: how many were looked at, and the reason each one that
+// declined the tick declined it. It exists so an unattributed tick can name
+// its own cause in a log line instead of leaving a query against the runtime
+// table as the only way to find out.
+type tickAttribution struct {
+	nodesWalked int
+
+	// Skip reasons, in the order the loop tests them.
+	noRuntime       int
+	noClaim         int
+	styleMismatch   int
+	manualSwap      int
+	inactiveConsume int
+	inactiveProduce int
+	unknownRole     int
+
+	// Landings.
+	consumeTicks     int
+	produceTicks     int
+	fallthroughTicks int
+}
+
+// landed reports whether any node — or the A/B safety net — took the tick.
+func (a tickAttribution) landed() bool {
+	return a.consumeTicks+a.produceTicks+a.fallthroughTicks > 0
+}
+
+// skipReport renders the walk for a log line: the node count followed by
+// every non-zero skip reason. Zero-valued reasons are omitted so the line
+// says what happened rather than what did not.
+func (a tickAttribution) skipReport() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "nodes=%d", a.nodesWalked)
+	for _, r := range []struct {
+		name string
+		n    int
+	}{
+		{"no_runtime", a.noRuntime},
+		{"no_claim", a.noClaim},
+		{"style_mismatch", a.styleMismatch},
+		{string(protocol.SwapModeManualSwap), a.manualSwap},
+		{"inactive_consume", a.inactiveConsume},
+		{"inactive_produce", a.inactiveProduce},
+		{"unknown_role", a.unknownRole},
+	} {
+		if r.n > 0 {
+			fmt.Fprintf(&b, " %s=%d", r.name, r.n)
+		}
+	}
+	if a.nodesWalked == 0 {
+		b.WriteString(" (process has no nodes)")
+	}
+	return b.String()
 }
 
 // applyHoldAndReplay applies one UOP tick to a process node's cached counter
@@ -262,7 +357,7 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 
 	// claim is the one captured in handleCounterDelta's loop, which
 	// already passed the claim.StyleID == delta.StyleID guard. Do NOT
-	// re-derive via findActiveClaim here: it prefers the process
+	// re-derive via requestedClaimAtNode here: it prefers the process
 	// ActiveStyleID claim, which during a changeover can differ from the
 	// tick's style and mis-attribute the lineside drain and bin delta
 	// (R43-1).
@@ -342,13 +437,38 @@ func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.
 // delivery, manual loads, and any other path where a bin is present
 // without a tracking order.
 //
-// payload returns the claim's PayloadCode so Core can validate the
-// wire envelope's payload_code against the bin row.
+// payload is what Core validates the wire envelope against, so it has to be
+// what the BIN is, not what the cell was asked for.
+//
+// IT USED TO BE THE CLAIM'S, AND THAT IS THE MISMATCH ITSELF. The claim is the
+// requested identity: it follows the process's active style, so a changeover
+// over a node that still holds the outgoing carrier moves it while the bin
+// stays put. Every tick then arrived at Core stamped with the incoming part
+// against a bin holding the outgoing one, Core refused the deltas as
+// payload_mismatch_dropped, and the count went nowhere — which is the 36-minute
+// warning on the SMN_029 carrier, logged from the wrong end of the wire.
+//
+// The resident payload is Core's own answer about this bin, sent on the
+// delivery envelope. Falls back to the claim when nothing has been recorded —
+// an older Core, or a node not delivered to since the upgrade — which is
+// exactly today's behaviour and the same value it would have sent anyway.
+//
+// THE FALLBACK ASKS THE KNOWN BIT, NOT THE EMPTY STRING. A carrier known to be
+// carrying nothing spells itself "" and so does a carrier nobody could read,
+// and only the second one wants the claim. Reading emptiness as absence puts
+// the claim's part number back on a carrier the operator has just cleared —
+// the cross product this pair was split to end. Rows written before the known
+// bit existed read as not-established and take the fallback, which is the
+// behaviour they already had.
 func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string, int64) {
 	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, "", 0
 	}
-	return *runtime.ActiveBinID, claim.PayloadCode, runtime.ActiveBinEpoch
+	payload := string(runtime.LinesidePayloadCode)
+	if !runtime.LinesidePayloadKnown {
+		payload = claim.PayloadCode
+	}
+	return *runtime.ActiveBinID, payload, runtime.ActiveBinEpoch
 }
 
 // drainLinesideFirst decrements the active lineside bucket(s) for the

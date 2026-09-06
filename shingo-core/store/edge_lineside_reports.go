@@ -17,6 +17,11 @@ import (
 // The v52 TABLE COMMENT in the database still calls this a shadow read-model.
 // Correcting it needs a migration and a schema-snapshot regeneration for one
 // string, so it was deliberately left; this comment is the accurate one.
+//
+// OWED WITH THE NEXT CORE MIGRATION that touches this area, whatever it is for.
+// The deferral is about not opening a migration for one string, not about the
+// comment being tolerable: somebody reading the database rather than this file
+// is told the feed is a shadow of a decision it in fact makes.
 type EdgeLinesideReport struct {
 	Station      string
 	CoreNodeName string

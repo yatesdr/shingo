@@ -307,7 +307,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 	// that didn't already own the node minted a fresh row, and GenerateUniqueCode
 	// suffixed the code (pln-01, pln-01-2, pln-01-3) to satisfy the only constraint
 	// there was, UNIQUE(process_id, code). Every copy then carried its own runtime
-	// row and drew its own copy of every PLC tick, because findActiveClaim resolves
+	// row and drew its own copy of every PLC tick, because requestedClaimAtNode resolves
 	// a claim by core_node_name rather than by node id — so all three matched.
 	processNodes, err := s.db.ListProcessNodesByProcess(station.ProcessID)
 	if err != nil {

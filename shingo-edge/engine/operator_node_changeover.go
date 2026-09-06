@@ -63,9 +63,10 @@ func (e *Engine) recordChangeoverOrder(
 	newState domain.NodeTaskState,
 ) {
 	if updateRuntime {
-		if err := e.db.UpdateProcessNodeRuntimeOrders(
-			ctx.node.ID, ctx.runtime.ActiveOrderID, nextOrderID,
-		); err != nil {
+		// Staged only. This used to restate ActiveOrderID from ctx.runtime,
+		// which was read back at loadActiveNode — so anything that set the
+		// active pointer in between was silently reverted to the stale value.
+		if err := e.db.SetProcessNodeRuntimeStagedOrder(ctx.node.ID, nextOrderID); err != nil {
 			log.Printf("changeover: update runtime orders for node %s: %v", ctx.node.Name, err)
 		}
 	}
@@ -290,31 +291,43 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	}
 	claimID := claim.ID
 
-	// Lineside phase 5: skip the UOP reset when the release-click path
-	// already pointed runtime at the target claim. Re-resetting here
-	// would clobber any counter drift accumulated while the bots were
-	// heading home — exactly the "post-swap confirm" behaviour we're
-	// removing. Still update runtime (and state transition below) when
-	// the runtime hasn't been advanced yet, so legacy / safety-net
-	// paths continue to work.
+	// Skip the advance when the claim pointer is already on the target.
+	//
+	// WHAT ARMS THE SKIP is the changeover delivery completing —
+	// applyChangeoverRelease for the direct shape, applyStagedDelivery for the
+	// staging one. This comment used to name the release CLICK, which does not
+	// point the claim anywhere: ReleaseOrderWithLineside's only runtime write is
+	// UpdateProcessNodeUOP, a count. On the direct path the skip could therefore
+	// never fire, and this arm re-ran on every switch.
+	//
+	// Re-writing here once the claim is already on target would clobber counter
+	// drift accumulated while the robots were heading home.
 	runtime, runtimeErr := e.db.EnsureProcessNodeRuntime(nodeID)
 	needsUOPReset := runtimeErr != nil || runtime == nil ||
 		runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != claimID
 	if needsUOPReset {
-		// Role-correct seed. This used to be claim.UOPCapacity unconditionally,
-		// which is right for CONSUME (a full bin arrives and counts down) and
-		// wrong for PRODUCE (an empty carrier arrives and fills up). On a produce
-		// node the capacity value renders a FULL bin on a slot that is empty —
-		// and because the switch binds no active_bin_id, nothing ever corrects it.
-		// HK 2026-07-28: PLN_01/PLN_04 sat at 4200/4200 with no bin while the
-		// presses ran, and the held ticks piled up in pending_uop_delta.
+		// NO CAPACITY SEED. This wrote deliveredFallbackUOP(claim) — capacity for
+		// consume, 0 for produce — which is a POLICY number in a field that Core
+		// reads as a physical measurement. It existed to hold a consume tile above
+		// its reorder point during the window between the switch and its bin
+		// landing: hysteresis, invented locally, indistinguishable downstream from
+		// a count of parts somebody could have gone and touched.
 		//
-		// deliveredFallbackUOP is the same role split the delivery path already
-		// uses (produce → 0, everything else → capacity), so the two seeds agree
-		// instead of disagreeing by a full bin. Consume behaviour is unchanged:
-		// it still seeds capacity, which keeps it above its reorder point during
-		// the window between the switch and its bin landing.
-		uop := deliveredFallbackUOP(claim)
+		// The window it covers is a node with no carrier on it. Zero is what is
+		// there. The tile says NO BIN off the same absence rather than rendering
+		// a full carrier that has not arrived (operator-render.js), so the reason
+		// the seed existed is served by saying so instead of by inventing a number.
+		//
+		// A BOUND CARRIER KEEPS ITS COUNT. When active_bin_id names a carrier, the
+		// number on the row is a measurement of something physically standing
+		// there, and both a capacity seed and a zero seed destroy it — the first
+		// tells the line a starved node is full, the second tells it a full node
+		// is starved, and the next PLC tick ships the wrong one to Core. Advance
+		// the claim; leave the measurement alone.
+		uop := 0
+		if runtime != nil && runtime.ActiveBinID != nil {
+			uop = runtime.RemainingUOPCached
+		}
 		if e.inventoryDelta != nil {
 			if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, uop); err != nil {
 				return err

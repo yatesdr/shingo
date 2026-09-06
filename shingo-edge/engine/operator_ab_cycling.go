@@ -191,14 +191,21 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 	// material must be the INCOMING style's — a full bin of the outgoing part is
 	// exactly as useless to a press about to run the new one.
 	//
-	// Both are edge-local. remaining_uop_cached answers "is there material", and
-	// active_claim_id answers "whose" — it names the claim the resident bin was
-	// stocked for, so comparing it against the to-style's claim for this node is
-	// the whole question, with no bin table and no Core call.
+	// Both are edge-local. remaining_uop_cached answers "is there material".
+	//
+	// active_claim_id ANSWERS "WHOSE" ONLY BECAUSE THE CHANGEOVER DELIVERY MOVES
+	// IT, and this comment used to claim more than that: "it names the claim the
+	// resident bin was stocked for". It does not, and swap_evac_dest.go carries
+	// the retraction of that exact sentence. It names the claim the node's
+	// process was on when the field was last written, and most writers derive
+	// that from the active style. What makes the comparison below meaningful is
+	// applyChangeoverRelease and applyStagedDelivery advancing it when the
+	// changeover's OWN material lands — before that fix it read as "the outgoing
+	// style" for a median 18 minutes and refused flips that were ready.
 	//
 	// Unreadable to-claim answers ready(""): this guard catches the operator's
 	// honest mistake, not a query hiccup, and it is confirm-overridable anyway.
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim != nil && claim.Role == protocol.ClaimRoleConsume {
 		if rt.RemainingUOPCached <= 0 {
 			return fmt.Sprintf("%s holds no material to feed the line", node.CoreNodeName)
@@ -217,7 +224,7 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 // Both writers of active_pull go through it, so neither can end up writing one
 // bit while disagreeing about which row the partner is.
 func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
-	claim := findActiveClaim(e.db, node)
+	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}

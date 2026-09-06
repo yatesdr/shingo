@@ -693,7 +693,7 @@ func TestBackfillCellOrigin_JoinsTheProduceCellsEpisode(t *testing.T) {
 // pointer through every call, so claim.BelowReorderSince is always the value
 // the function itself just assigned. That is the ordinary tick shape written
 // down wrongly: production re-derives the claim from the database on every
-// tick (findActiveClaim), so what the evaluator actually reads is whatever
+// tick (requestedClaimAtNode), so what the evaluator actually reads is whatever
 // survived a write and a read.
 //
 // It did not survive. below_reorder_since is written as RFC3339Nano and was

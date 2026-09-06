@@ -86,13 +86,28 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 		}
 		return occ
 	}
-	bins, _, _ := e.coreClient.FetchNodeBins(names)
+	// THE DECISION HERE IS ALREADY RIGHT AND IS NOT CHANGING. The map is filled
+	// from the REQUESTED names rather than the returned rows, so a name Core
+	// never answered about gets an explicit value, and that value is `occupied`
+	// — the suppressing answer. Downstream, BuildConsumePlan only downgrades a
+	// swap mode or emits a paired prime when a node reads NOT occupied, so an
+	// all-occupied map suppresses both. This is the site the others should copy.
+	//
+	// What it did not do was say which it was. The flag is read for the log line
+	// only: "no data from core" covers a node Core answered nothing about and a
+	// read that never left the building, and an over-ordering incident has to be
+	// reconstructable from logs. It also pins the invariant here rather than
+	// inheriting it from FetchNodeBins returning nil on every failure — if that
+	// ever returned partial rows alongside an error, this site would silently
+	// start trusting a partial read.
+	bins, reachable, ferr := e.coreClient.FetchNodeBins(names)
 	for _, b := range bins {
 		occ[b.NodeName] = b.Occupied
 	}
 	for _, n := range names {
 		if _, ok := occ[n]; !ok {
-			log.Printf("[occupied-check] node %s: no data from core, assuming occupied", n)
+			log.Printf("[occupied-check] node %s: occupancy=%s, assuming occupied",
+				n, OccupancyOutcome(reachable, ferr))
 			occ[n] = true
 		}
 	}
@@ -228,7 +243,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		if err != nil {
 			return nil, err
 		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+		if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
 			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 		}
 		order, err = e.refreshOrderStation(order.ID)
@@ -426,6 +441,20 @@ func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemaining
 	if claim.OutboundDestination == "" {
 		return nil, fmt.Errorf("node %s has no outbound destination configured", node.Name)
 	}
+	// THE FOURTH DOOR. This release opens an evac leg for whatever carrier is
+	// standing on the cell, and it read its destination off the REQUESTED claim
+	// — the same defect 1b17b0f9 fixed at the three swap-builder sites and did
+	// not reach here, because this path does not build a swap. runtime has been
+	// in hand since the top of the function.
+	//
+	// Core does not net it either: this mints a move order, and move orders are
+	// planned by planTransport, which never reaches the park-side guard in
+	// placeForDedicatedLoader that 56f16b00 added. Both defences miss this shape.
+	//
+	// Applied after the guard above, deliberately: an unconfigured requested
+	// claim still refuses, exactly as before. The override redirects a release;
+	// it does not authorise one.
+	claim = withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
 	// Manifest sync UOP — operator override (if provided) supersedes cache.
 	// The override path is the safe one for the Material page Release flow
 	// where the operator has declared the bin's actual count via prompt;
@@ -451,12 +480,17 @@ func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemaining
 	// new ask. If no episode is open the origin is left unstated and Core
 	// classifies, which is exactly what happened here before — so this is strictly
 	// more attribution and never a guess.
-	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm,
+	// The carrier's OWN payload, when Core has told us what it is. Left blank
+	// this backfills from the requested style, which mid-changeover names the
+	// incoming part — on an order whose whole job is to carry the outgoing one
+	// away. Blank when unknown, which is the pre-existing behaviour.
+	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination,
+		string(runtime.LinesidePayloadCode), remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm,
 		e.cellEpisodeOrigin(node, claim))
 	if err != nil {
 		return nil, err
 	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, runtime.StagedOrderID); err != nil {
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
 		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 	}
 	refreshed, err := e.db.GetOrder(order.ID)
@@ -546,10 +580,16 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	}
 
 	// manual_swap nodes use a multi-order queue — skip the serial order constraint.
-	if runtime.ActiveClaimID != nil {
-		if claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID); err == nil && claim.SwapMode == protocol.SwapModeManualSwap {
-			return true, ""
-		}
+	//
+	// SwapMode IS CONFIGURATION, so it is read from the node's configured claim
+	// rather than by dereferencing active_claim_id. That pointer is written by
+	// eighteen paths and can be stale, dangling, or nil, and none of those states
+	// says anything about how this window swaps; a node whose claim row was
+	// deleted would silently lose its multi-order queue and start refusing the
+	// operator's second tap. requestedClaimAtNode answers the configuration
+	// question from the style the process is running.
+	if claim := requestedClaimAtNode(e.db, node); claim != nil && claim.SwapMode == protocol.SwapModeManualSwap {
+		return true, ""
 	}
 
 	// orderWorksTheCell, not !IsTerminal: a DEPARTED leg is still a live order
@@ -652,7 +692,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	if claim == nil {
 		return fmt.Errorf("node %s: no active claim for release", node.Name)
 	}
-	// findActiveClaim resolves via (active_style_id, core_node_name) — works
+	// requestedClaimAtNode resolves via (active_style_id, core_node_name) — works
 	// even when runtime.active_claim_id hasn't been stamped yet (it only
 	// gets set on order completion in wiring_completion). Press-index and
 	// two_robot share the same R1+R2 release choreography, so both modes

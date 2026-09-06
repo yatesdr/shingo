@@ -63,7 +63,7 @@ func TestComplexOrder_CarriesTheClaimsKeyRoute(t *testing.T) {
 	eng := testEngine(t, db)
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "get runtime")
-	claim = findActiveClaim(db, node)
+	claim = requestedClaimAtNode(db, node)
 
 	_, err = eng.applyProducePlan(node, runtime, claim, producePlanFor(claim), ordermgr.Attached("episode-route"))
 	testutil.MustNoErr(t, err, "applyProducePlan")

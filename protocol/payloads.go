@@ -314,6 +314,24 @@ type OrderDelivered struct {
 	// for single-bin orders (BinID != nil).
 	UOPRemaining *int  `json:"uop_remaining,omitempty"`
 	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
+
+	// BinPayloadCode is the payload of the bin that just landed, read from
+	// the same row and at the same moment as UOPRemaining and DeltaEpoch
+	// above. It answers "what is this carrier", which the Edge cannot answer
+	// for itself: that side stores active_bin_id, an opaque Core id, and has
+	// no bins table.
+	//
+	// WITHOUT IT THE EDGE GUESSES, and the guess is the claim of whichever
+	// style the process is on — the REQUESTED payload, not the resident one.
+	// Those agree until a changeover moves the cell on while a carrier is
+	// still standing on it, which is Springfield SMN_029, 2026-09-02.
+	//
+	// This does not move the boundary. The Edge still decides where material
+	// goes; it stops inferring a fact Core was already holding. Pointer so an
+	// older Core that does not send it (nil) is distinguishable from a
+	// genuinely empty carrier (""), the same distinction UOPRemaining draws
+	// and for the same reason. Only meaningful when BinID != nil.
+	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Populated for all
 	// orders so the Edge can bind the runtime cache even when the order was
 	// created on Core directly (no Edge order row). Broadcast to all edges when

@@ -272,7 +272,7 @@ func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 	// flips active_style_id (line below) before writing the completed row;
 	// inserting the gate after the flip would leave the system on the
 	// to-style with an still-in-progress changeover row if the gate
-	// blocked. findActiveClaim resolves from process.ActiveStyleID, so
+	// blocked. requestedClaimAtNode resolves from process.ActiveStyleID, so
 	// that order is unrecoverable without operator intervention.
 	// BlockersToReasons keeps this message byte-identical to what it produced
 	// before blockers became structured — the 400 toast is a contract the

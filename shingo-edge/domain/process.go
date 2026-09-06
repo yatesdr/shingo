@@ -188,11 +188,14 @@ type NodeInput struct {
 // directly via the inventory delta path; binAtNode reads from this
 // field, not from the order pointer.
 //
-// RemainingUOPCached is the local write-through cache of the bin's
-// uop_remaining. Edge owns this number while the bin is at the node:
-// PLC ticks decrement here, deltas ship to Core, Core stays in sync.
-// No reverse heal — a stale Core value never overwrites Edge's live
-// number.
+// RemainingUOPCached is the DURABLE LOCAL COUNT for the bin at this node,
+// not a cache of a Core value — the name is residue. PLC ticks decrement it,
+// deltas ship to Core, and nothing heals back: a rejected delta surfaces
+// through FlushFailures rather than being corrected. This said "write-through
+// cache" while contradicting itself two lines later, and
+// wiring_counter_delta.go says the opposite outright. A write-through cache is
+// by definition backed by an authority that can overwrite it; since the
+// bin-ownership flip there is no such authority for an at-node bin.
 type RuntimeState struct {
 	ID            int64  `json:"id"`
 	ProcessNodeID int64  `json:"process_node_id"`
@@ -201,11 +204,44 @@ type RuntimeState struct {
 	// ActiveBinEpoch mirrors Core's bins.delta_epoch for ActiveBinID.
 	// Edge stamps every outgoing BinUOPDelta with this value so Core's
 	// epoch-aware dedup accepts the delta against the right load
-	// generation. Populated by LoadBin response and FetchNodeBins
-	// refresh; persists across Edge restarts via the column on
+	// generation. Persists across Edge restarts via the column on
 	// process_node_runtime_states.
-	ActiveBinEpoch     int64 `json:"active_bin_epoch"`
-	RemainingUOPCached int   `json:"remaining_uop_cached"`
+	//
+	// FOUR WRITERS, AND "FetchNodeBins refresh" WAS NOT ONE OF THEM: the
+	// OrderDelivered envelope, Core's LoadBin/clear/count replies, the
+	// BinAtLineside re-bind after a changeover cancel, and Core's
+	// BinEpochRefresh push. Every FetchNodeBins call site discards DeltaEpoch.
+	// core_client.go already carries the retraction of the identical claim on
+	// its own struct field; this copy outlived it.
+	ActiveBinEpoch int64 `json:"active_bin_epoch"`
+	// LinesidePayloadCode is what the carrier standing at this node actually
+	// is. Core sends it on OrderDelivered, read off the same bin row as the
+	// count and the epoch; this side has no bins table and cannot look it up.
+	//
+	// IT IS NOT ActiveClaimID's PAYLOAD, and that difference is the point.
+	// ActiveClaimID is written mostly from the process's active style — the
+	// REQUESTED identity — so it follows a changeover even when nothing
+	// physical moved. This follows the carrier.
+	//
+	// Empty means one of two things and LinesidePayloadKnown says which:
+	// a carrier known to be carrying nothing, or an identity nobody could
+	// establish. Do not read emptiness as an answer.
+	LinesidePayloadCode LinesidePayloadCode `json:"lineside_payload_code,omitempty"`
+	// LinesidePayloadKnown is the second state of domain.LinesideCarrier,
+	// carried through the write. Without it the column above collapses a known
+	// EMPTY carrier and an unreadable one into the same '', and every reader
+	// that had to guess fell back to the claim -- the requested identity, which
+	// is the read this pair exists to end.
+	LinesidePayloadKnown bool `json:"lineside_payload_known"`
+	// LinesideSource is the domain.CarrierSource that asserted the identity.
+	// Not a ranking: an automatic source is not more trustworthy than a person
+	// here. It records which question was answered.
+	LinesideSource string `json:"lineside_source,omitempty"`
+	// LinesideAt is when the identity was established. UpdatedAt cannot answer
+	// it -- every count tick moves UpdatedAt, so an identity recorded once and
+	// then ticked for an hour reads as an hour old by that clock and is not.
+	LinesideAt         time.Time `json:"lineside_at"`
+	RemainingUOPCached int       `json:"remaining_uop_cached"`
 	// PendingUOPDelta holds count changes that arrived while no bin was
 	// bound at this slot (active_bin_id nil — the pickup→delivery gap).
 	// The next tick that finds a bound bin applies (current + pending) and

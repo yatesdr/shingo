@@ -27,11 +27,27 @@ type (
 // stay here so the existing station_views_test.go tests of the swap-
 // ready logic don't need to move; the service body invokes them.
 
-// releaseErrorPrefix is the leading substring written by
-// orders.Manager.RollbackForRetry into the order_history detail when a
-// manifest_sync_failed rollback occurs. The operator UI keys off this
-// prefix to render the release-error chip.
-const releaseErrorPrefix = "Manifest sync failed at Core"
+// The leading substrings the rollback paths write into the order_history
+// detail. The operator UI keys off these to render the release-error chip, so
+// A PREFIX HERE IS LOAD-BEARING: change one and the chip silently stops
+// appearing for that whole class of rejection.
+//
+// releaseErrorPrefix is orders.Manager.RollbackForRetry's, for a
+// manifest_sync_failed rollback. releaseRejectedPrefix is
+// orders.Manager.RollbackReleaseRejection's, for an invalid_state rollback —
+// which rolled the order back to staged and rendered NO CHIP AT ALL, because
+// this list had one entry and its detail did not begin with that one. The
+// order reappeared in the active list with nothing to say why it had come back.
+const (
+	releaseErrorPrefix    = "Manifest sync failed at Core"
+	releaseRejectedPrefix = "Core rejected the release"
+)
+
+// isReleaseErrorDetail reports whether an order_history detail is one of the
+// rollback sentences the chip renders.
+func isReleaseErrorDetail(d string) bool {
+	return strings.HasPrefix(d, releaseErrorPrefix) || strings.HasPrefix(d, releaseRejectedPrefix)
+}
 
 // LookupLastReleaseError returns the rollback detail for the runtime's
 // tracked orders if either of them has a recent manifest_sync_failed
@@ -62,7 +78,7 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 			if d == "" {
 				continue
 			}
-			if len(d) >= len(releaseErrorPrefix) && d[:len(releaseErrorPrefix)] == releaseErrorPrefix {
+			if isReleaseErrorDetail(d) {
 				detail = d
 				break
 			}
@@ -156,13 +172,39 @@ func LastReleaseErrorsForRuntimes(db *DB, runtimes map[int64]*processes.RuntimeS
 			if oid == nil {
 				continue
 			}
-			if d := lastDetail[*oid]; strings.HasPrefix(d, releaseErrorPrefix) {
+			if d := lastDetail[*oid]; isReleaseErrorDetail(d) {
 				out[nodeID] = d
 				break
 			}
 		}
 	}
 	return out
+}
+
+// stagedSiblingPair reads the pair straight off the durable record: the staged
+// legs sitting on this process node, linked to each other by sibling_order_id.
+//
+// Returns ok only for an unambiguous, mutually-linked pair. Two staged legs that
+// point at third orders are not a pair, and three staged legs on one node is a
+// state this function has no business guessing about — both cases fall through
+// to the rungs below, which is what they did before this existed.
+func stagedSiblingPair(db *DB, processNodeID int64) (evacID, supplyID *int64, ok bool) {
+	staged, err := db.ListStagedOrdersByProcessNode(processNodeID)
+	if err != nil || len(staged) != 2 {
+		return nil, nil, false
+	}
+	a, b := staged[0], staged[1]
+	if a.SiblingOrderID == nil || *a.SiblingOrderID != b.ID {
+		return nil, nil, false
+	}
+	if b.SiblingOrderID == nil || *b.SiblingOrderID != a.ID {
+		return nil, nil, false
+	}
+	// ORDER BY created_at, so a is the first leg opened. The positional
+	// convention this function documents maps the staged slot to the evac, and
+	// the first staged leg is the one that slot would have held.
+	aID, bID := a.ID, b.ID
+	return &aID, &bID, true
 }
 
 // ComputeSwapReady returns true when a two-robot swap can be released via
@@ -341,9 +383,37 @@ func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.No
 			supplyID = &id
 		}
 	}
-	// Task fallback when both runtime pointers are nil. The planner
-	// stamps task.OldMaterialReleaseOrderID at order-creation time and
-	// runtime mutations don't clear it.
+	// ── THE DURABLE RUNG ─────────────────────────────────────────────────
+	//
+	// When the runtime pointers say nothing, ask the orders table before
+	// asking the node task. The pointers are the fragile record: they are two
+	// columns on one row that fourteen call sites used to write absolutely,
+	// each capable of dropping a live sibling it did not own. The staged legs
+	// themselves are the durable one — they carry their own process_node_id and
+	// their own sibling_order_id, and nothing that mutates a runtime slot can
+	// unlink them.
+	//
+	// ListStagedOrdersByProcessNode and idx_orders_process_node_id have both
+	// existed for this the whole time, with no production caller.
+	//
+	// Deliberately anchored on the STAGED leg, which is what this function's
+	// positional convention already calls the evac. That keeps the naming
+	// identical to the runtime path, so a caller that reads these names gets
+	// the same answer whichever rung produced it. The one caller for whom the
+	// names decide anything — ReleaseStagedOrders — re-derives the roles from
+	// the legs' steps regardless.
+	//
+	// sibling_order_id, the INTEGER FK, not sibling_order_uuid: the uuid is
+	// Core's spelling of the link and is not what this side joins on.
+	if evacID == nil && supplyID == nil && runtime != nil {
+		if a, b, ok := stagedSiblingPair(db, runtime.ProcessNodeID); ok {
+			evacID, supplyID = a, b
+		}
+	}
+	// Task fallback, last. The planner stamps task.OldMaterialReleaseOrderID at
+	// order-creation time and runtime mutations don't clear it — but it names
+	// only the release leg, so it still needs the sibling walk below to find
+	// the other half.
 	if evacID == nil && supplyID == nil && task != nil && task.OldMaterialReleaseOrderID != nil {
 		id := *task.OldMaterialReleaseOrderID
 		evacID = &id

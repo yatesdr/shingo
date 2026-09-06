@@ -1021,9 +1021,21 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 		return ReleaseDisposition{}, false
 	}
 	disp := ReleaseDisposition{CalledBy: "sim-operator", Mode: DispositionSendPartialBack}
-	if bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); ferr == nil &&
-		len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0 {
+	bins, reachable, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	switch {
+	case ferr == nil && len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0:
 		disp.Mode = DispositionReleaseUnderpack
+	case !reachable:
+		// A HARNESS-FIDELITY HAZARD, NOT A PRODUCTION ONE, and it is worth a line
+		// because of what it turns into. The default is SendPartialBack, which
+		// returns the carrier LABELLED — and a labelled carrier never satisfies
+		// EmptyCarrierWhere's blank-payload test again, so it is empty and
+		// invisible. A telemetry blip during a soak run therefore shrinks the
+		// empty pool by one, permanently, and reads afterwards exactly like the
+		// carrier famine somebody would be running the soak to diagnose.
+		op.e.debugFn("sim-operator: node %s — occupancy=%s, defaulting to send-partial-back; "+
+			"the carrier returns labelled and leaves the empty pool",
+			node.CoreNodeName, OccupancyOutcome(reachable, ferr))
 	}
 	return disp, true
 }

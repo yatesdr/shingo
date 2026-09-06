@@ -125,9 +125,16 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 		return fmt.Errorf("node %s is not in the outbound market for %s", sourceCoreName, node.Name)
 	}
 
-	// Check the source actually has a bin to pull.
-	bins, _, err := e.coreClient.FetchNodeBins([]string{sourceCoreName})
-	if err != nil || len(bins) == 0 || !bins[0].Occupied {
+	// Check the source actually has a bin to pull. The unreachable arm is split
+	// out of the three-way OR: it used to share "no bin at market slot X" with
+	// the two arms that actually looked, so a read that never completed told the
+	// operator the slot was empty. No order is created either way.
+	bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{sourceCoreName})
+	if !reachable {
+		return fmt.Errorf("cannot check market slot %s — Core %s; nothing was pulled",
+			sourceCoreName, OccupancyOutcome(reachable, ferr))
+	}
+	if len(bins) == 0 || !bins[0].Occupied {
 		return fmt.Errorf("no bin at market slot %s", sourceCoreName)
 	}
 	payload := bins[0].PayloadCode

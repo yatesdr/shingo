@@ -93,8 +93,16 @@ func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity 
 // autoConfirm mirrors CreateMoveOrder so operator-initiated moves at a
 // manual_swap node can self-confirm on delivery.
 // origin is REQUIRED; see the Origin type.
-func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", remainingUOP, autoConfirm, origin)
+//
+// PASS THE PAYLOAD WHEN THE CALLER KNOWS IT. This used to hardcode "", which
+// sends createMoveOrder to lookupPayloadMeta's backfill — and that resolver
+// prefers the TARGET style mid-changeover, because its subject is normally an
+// order that does not exist yet. A move carrying a carrier already standing on
+// a cell is the opposite case: the carrier is the subject, and it got stamped
+// with the incoming style's part. Empty still backfills, for callers with no
+// better answer.
+func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, remainingUOP *int, autoConfirm bool, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, origin)
 }
 
 // createMoveOrder is the one body behind all four move variants.

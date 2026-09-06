@@ -120,7 +120,7 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 	}
 	for i := range nodes {
 		node := &nodes[i]
-		claim := activeClaimForProcess(e.db, process, node)
+		claim := requestedClaimForProcess(e.db, process, node)
 		if claim == nil {
 			continue
 		}

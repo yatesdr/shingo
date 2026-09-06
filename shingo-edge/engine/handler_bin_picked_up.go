@@ -234,6 +234,11 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
 			e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
 		}
+		// The carrier's identity leaves with the carrier. Held over, it would
+		// be inherited by whatever lands next and read as a fact about it —
+		// which is the failure this field exists to end, reintroduced from the
+		// other direction.
+		e.recordLinesideCarrier(*order.ProcessNodeID, "", domain.UnknownCarrier(), domain.CarrierDeparted)
 	}
 
 	e.logFn("bin_picked_up: flushed deltas + cleared active bin for order=%s bin=%d (status=%s)",

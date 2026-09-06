@@ -3,7 +3,6 @@ package engine
 import (
 	"log"
 
-	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -41,10 +40,24 @@ import (
 // bin's, which is how Core came to log payload_mismatch_dropped on this carrier
 // 36 minutes before the robot moved.
 //
-// It does not need the payload. active_claim_id already answers "whose" — it
-// names the claim the resident bin was delivered under — and a claim carries its
-// own outbound destination. One lookup, no new wire field, no staleness question
-// on a value Core owns.
+// It does not need the payload. active_claim_id is the best answer to "whose"
+// this side can give, and a claim carries its own outbound destination. One
+// lookup, no new wire field, no staleness question on a value Core owns.
+//
+// BE PRECISE ABOUT WHAT THAT FIELD ACTUALLY NAMES, because an earlier draft of
+// this comment overstated it. active_claim_id does NOT name "the claim the
+// resident bin was delivered under". It names the claim the node's process was
+// on when the field was last written, and most of the writers derive that from
+// process.ActiveStyleID via requestedClaimAtNode — the REQUESTED style — not from
+// anything about the carrier. Only the two delivery-gated writers in
+// wiring_delivered.go are about a bin that physically arrived, and even they
+// read the value from the active style rather than from the carrier.
+//
+// So this is a heuristic with a good hit rate, not a fact. It is right whenever
+// the last thing to touch the cell was the delivery that put the current carrier
+// there, and wrong when a changeover or a hand-placement has moved the process on
+// underneath a carrier that stayed. That second case is exactly the one this
+// function exists to catch, which is why it fails open everywhere else.
 //
 // Core's park-side guard (dispatch/loader_place.go) refuses a carrier that does
 // not match a pinned home and reroutes it. This is the other half: it stops the
@@ -67,7 +80,56 @@ import (
 // this path is reached on every consume and produce cycle, and the condition it
 // guards against needs a cell to have been left holding a foreign style.
 func (e *Engine) residentEvacDest(runtime *processes.RuntimeState, claim *processes.NodeClaim) string {
-	if runtime == nil || claim == nil || runtime.ActiveClaimID == nil {
+	if runtime == nil || claim == nil {
+		return ""
+	}
+
+	// ── THE FACT, BEFORE THE HEURISTIC ───────────────────────────────────
+	//
+	// lineside_payload_code is what Core said this carrier IS, off the bin row
+	// itself, carried on the delivery envelope. Ask it first. Everything below
+	// is the older inference from active_claim_id — a field written mostly from
+	// the process's active style, which is right only while the requested and
+	// the resident identity agree, and this function is only ever called when
+	// they might not.
+	//
+	// Same fail-open rule throughout: no ESTABLISHED payload, no claim matching
+	// it at this node, or a match that agrees with the request all return "" and
+	// leave today's behaviour exactly as it was.
+	//
+	// The gate is the known bit rather than a non-empty string. A carrier known
+	// to be empty is an answer — it has no payload and therefore no home of its
+	// own to be routed to, so it falls through to the request's destination —
+	// while a carrier nobody could read is not an answer and must not be routed
+	// on. Both spell themselves "".
+	if runtime.LinesidePayloadKnown && string(runtime.LinesidePayloadCode) != claim.PayloadCode {
+		resident, err := e.db.ClaimForLinesidePayload(claim.CoreNodeName, string(runtime.LinesidePayloadCode))
+		if err == nil && resident != nil && resident.OutboundDestination != "" &&
+			resident.OutboundDestination != claim.OutboundDestination {
+			log.Printf("swap evac: node %s holds %s but %s was requested — routing the outgoing "+
+				"carrier to %s, its own home, not %s (source: the carrier's payload from Core)",
+				claim.CoreNodeName, runtime.LinesidePayloadCode, claim.PayloadCode,
+				resident.OutboundDestination, claim.OutboundDestination)
+			return resident.OutboundDestination
+		}
+	}
+
+	// ── THE OLDER INFERENCE, KEPT ON A CLOCK ─────────────────────────────
+	//
+	// Everything below asks active_claim_id, which names a style's claim rather
+	// than a carrier. It stays because on a fresh deploy every runtime row's
+	// lineside identity is unknown until that node sees its first delivery,
+	// hand-load or departure, and until then this is the ONLY evac routing
+	// there is for a carrier that was already standing when the binary
+	// restarted.
+	//
+	// RETIREMENT CONDITION, 2026-09-05: delete this arm once post-deploy data
+	// shows lineside_payload_code populated across the consume nodes at both
+	// plants — a query for nodes with a bound bin and no established identity
+	// returning empty over a full production week. It is a fuse, not a design;
+	// leaving it in permanently keeps a requested-identity read alive inside
+	// the function written to stop them.
+	if runtime.ActiveClaimID == nil {
 		return ""
 	}
 	// The resident IS the requested style — the overwhelmingly common case, and
@@ -81,7 +143,19 @@ func (e *Engine) residentEvacDest(runtime *processes.RuntimeState, claim *proces
 		// A missing or unreadable claim row is not a reason to divert a carrier.
 		return ""
 	}
-	dest := domain.EvacDestinationFor(resident)
+	// The resident's ORDINARY home, not EvacDestinationFor's. That helper
+	// prefers ChangeoverEvacDestination, which is the tooling-clearance
+	// destination for a changeover — and this path is reached on every routine
+	// consume and produce swap. Using it here would route an ordinary outgoing
+	// carrier to the tooling area whenever a cell happened to hold a foreign
+	// style, which is a different wrong place, not a right one.
+	//
+	// The argument is that a truer source was in hand and was not used: we are
+	// asking "where does THIS carrier live", and OutboundDestination is the
+	// field that answers it. That the changeover field is empty at both plants
+	// today is a fuse length, not a verdict — it makes the defect unreachable
+	// for now, not incorrect.
+	dest := resident.OutboundDestination
 	if dest == "" || dest == claim.OutboundDestination {
 		return ""
 	}

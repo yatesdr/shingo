@@ -33,8 +33,11 @@ func (db *DB) SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activ
 }
 
 // SetProcessNodeRuntimeWithBin updates active_claim_id, active_bin_id,
-// and remaining_uop_cached atomically. Used by completion handlers so
-// the bin pointer turns over at the same instant as the runtime reset.
+// and remaining_uop_cached atomically. Used by the CLEAR-shaped writes —
+// ClearActiveAndReset and the changeover-cancel reconcile — where the slot ends
+// up empty and no epoch is in hand. Deliveries use
+// SetProcessNodeRuntimeForDeliveredBin; the completion-handler callers this
+// once named were removed with the old delivery handler.
 func (db *DB) SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error {
 	return processes.SetRuntimeWithBin(db.DB, processNodeID, activeClaimID, activeBinID, remainingUOP)
 }
@@ -71,10 +74,42 @@ func (db *DB) SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeCl
 	return processes.SetRuntimeForDeliveredBin(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
 }
 
-// UpdateProcessNodeRuntimeOrders writes the active and staged order
-// pointers on a runtime row.
+// SetProcessNodeRuntimeLinesidePayload records the identity of the carrier
+// standing at this node, together with whether that identity could be
+// established at all, who asserted it, and when.
+//
+// known is not derivable from payloadCode. A carrier known to be carrying
+// nothing and a carrier nobody could read both spell themselves "", and the
+// readers of this row fail open on the first and must not act on the second.
+// Callers go through Engine.recordLinesideCarrier, which takes a
+// domain.LinesideCarrier and cannot lose the distinction on the way here.
+func (db *DB) SetProcessNodeRuntimeLinesidePayload(processNodeID int64, payloadCode string, known bool, source string) error {
+	return processes.SetRuntimeLinesidePayload(db.DB, processNodeID, payloadCode, known, source)
+}
+
+// UpdateProcessNodeRuntimeOrders writes BOTH order pointers on a runtime row.
+// Only for callers that genuinely decide both slots at once — see
+// processes.UpdateRuntimeOrders. To set one pointer, use the partial setters
+// below; passing nil here for the slot you are not changing destroys it.
 func (db *DB) UpdateProcessNodeRuntimeOrders(processNodeID int64, activeOrderID, stagedOrderID *int64) error {
 	return processes.UpdateRuntimeOrders(db.DB, processNodeID, activeOrderID, stagedOrderID)
+}
+
+// SetProcessNodeRuntimeActiveOrder writes the active order pointer, leaving
+// staged alone.
+func (db *DB) SetProcessNodeRuntimeActiveOrder(processNodeID int64, activeOrderID *int64) error {
+	return processes.SetRuntimeActiveOrder(db.DB, processNodeID, activeOrderID)
+}
+
+// SetProcessNodeRuntimeStagedOrder writes the staged order pointer, leaving
+// active alone.
+func (db *DB) SetProcessNodeRuntimeStagedOrder(processNodeID int64, stagedOrderID *int64) error {
+	return processes.SetRuntimeStagedOrder(db.DB, processNodeID, stagedOrderID)
+}
+
+// ClearProcessNodeRuntimeOrders drops both order pointers on one node.
+func (db *DB) ClearProcessNodeRuntimeOrders(processNodeID int64) error {
+	return processes.ClearRuntimeOrders(db.DB, processNodeID)
 }
 
 // ClearProcessNodeRuntimeOrderRefs nulls every runtime order pointer that

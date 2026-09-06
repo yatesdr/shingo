@@ -192,8 +192,22 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// manifest and double-trigger the side-cycle (bin already in flight to
 	// outbound). The card stays clickable in stale views — server has to
 	// refuse rather than rely on the UI gate.
+	//
+	// Available() SAYS A URL IS CONFIGURED, NOT THAT CORE IS ANSWERING. Past it,
+	// an unreachable Core returns no bins, which used to produce the same
+	// refusal as a genuinely empty node: "no bin at node X — request an empty
+	// bin first". That is a positive claim about the physical world the Edge did
+	// not verify, told to an operator standing in front of the bin, and it
+	// prescribes a corrective action that the request path then refuses too
+	// (claimOccupancy assumes occupied on the same failure). Refusing is right;
+	// saying why is the part that was missing.
 	if e.coreClient.Available() {
-		bins, _, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+		bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+		if !reachable {
+			return fmt.Errorf("cannot check node %s — Core %s. The bin may well be there; "+
+				"this is a read that did not complete, not an empty window",
+				node.Name, OccupancyOutcome(reachable, ferr))
+		}
 		if len(bins) == 0 || !bins[0].Occupied {
 			return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
 		}
@@ -292,11 +306,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		activeBinID = &v
 		deltaEpoch = loadResp.DeltaEpoch
 	}
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ManualLoad(nodeID, claimIDPtr, activeBinID, deltaEpoch, int(uopCount)); err != nil {
-			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
-		}
-	}
+	e.seatManuallyLoadedBin(node, claimIDPtr, activeBinID, deltaEpoch, int(uopCount), payloadCode)
 	// L2 to OutboundDestination is unattended (supermarket node) — must
 	// auto-confirm or it sticks at `delivered` forever. See the same reasoning in
 	// applyLoaderEmptyIn. Thread the operator-selected payloadCode through so the
@@ -310,7 +320,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// racing this branch and applyLoaderEmptyIn is what doubled every outbound
 	// move on the lane-stress rig — see loader_outbound_guard.go.
 	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, claim.OutboundDestination, payloadCode, "load-fallback"); created {
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
+		if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &orderID); err != nil {
 			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 		}
 	}
@@ -364,6 +374,23 @@ func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int
 	return l1ID, true
 }
 
+// seatManuallyLoadedBin writes what a hand-load just put on a node: the runtime
+// binding, and what the carrier is.
+//
+// THE OPERATOR IS THE INSTRUMENT HERE. A manual load has no delivery envelope
+// behind it, so their selection is not a weaker answer than Core's — it is the
+// only one. They chose payloadCode and it was validated against what this node
+// accepts, which makes it exactly the statement the resident identity is for.
+func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeBinID *int64, deltaEpoch int64, uopCount int, payloadCode string) {
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.ManualLoad(node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount); err != nil {
+			log.Printf("bin_ops: set runtime for node %d: %v", node.ID, err)
+		}
+	}
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName,
+		domain.KnownCarrier(domain.LinesidePayloadCode(payloadCode)), domain.CarrierFromOperator)
+}
+
 // ClearBin clears the manifest on the bin at a manual_swap node. For consume-role
 // nodes (unloaders) it ALSO drives the side-cycle's empty-out (U2): the operator's
 // CLEAR tap means "I processed this bin's contents; the now-empty bin is ready to
@@ -396,7 +423,7 @@ func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int
 // dunnage type the operator selected at the confirm tap; empty string means no
 // change to the carrier's bin_type_id (existing behaviour for all other callers).
 func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
-	node, _, claim, err := e.loadActiveNode(nodeID)
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
 	}
@@ -472,6 +499,31 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}
+	// THE CLEAR IS AN IDENTITY EVENT, and it was not going through the doorway.
+	// The three writers were delivery, hand-load and departure; CLEAR left the
+	// previous occupant's part number standing on a carrier the operator had
+	// just emptied, and the doorway's own header names that as the failure mode
+	// — "a value held over from the previous occupant is a confident wrong
+	// answer about this one".
+	//
+	// A KNOWN EMPTY carrier, not an unknown one. The operator is looking at it.
+	// That distinction is why lineside_payload_known has to exist before this
+	// call can be made: writing "" without the known bit would re-arm
+	// binAtNode's claim fallback and put the claim's part number straight back
+	// on the carrier, which is the cross product this pair was split to end.
+	e.recordLinesideCarrier(nodeID, node.CoreNodeName, domain.KnownCarrier(""), domain.CarrierFromOperator)
+	// The count that just went away, on the Edge side of the wire. Core records
+	// it durably (ClearForReuseTx writes a bin_uop_ledger row with before->0 and
+	// op clear_for_reuse, in the clear's own transaction); this line is what
+	// lets somebody reading the Edge log find that row, and it names the number
+	// so a clear of a bin that was not empty is visible from either end.
+	discarded := 0
+	if runtime != nil {
+		discarded = runtime.RemainingUOPCached
+	}
+	log.Printf("bin_ops: CLEAR at node %s discarded %d parts on bin %d (payload=%q, new epoch=%d) — "+
+		"Core holds the ledger row (clear_for_reuse)",
+		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.DeltaEpoch)
 	// Push-driven unloader: bin just left the window, fire the next pull.
 	// Gated inside MaybePushUnloader so non-push claims are no-ops.
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
@@ -507,7 +559,15 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if claim.Role != protocol.ClaimRoleConsume {
 		return fmt.Errorf("node %s is not a consume node", node.Name)
 	}
-	bins, _, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	// FAILS CLOSED, AND THAT IS CORRECT — no bins means refuse, never "push
+	// anyway". What was wrong was the sentence: an unreachable Core also returns
+	// no bins, and the operator was told the window is empty on a read nobody
+	// completed. Same decision, a message that says what happened.
+	bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	if !reachable {
+		return fmt.Errorf("cannot check node %s — Core %s. The carrier may still be there; "+
+			"nothing was pushed", node.Name, OccupancyOutcome(reachable, ferr))
+	}
 	if len(bins) == 0 || !bins[0].Occupied {
 		return fmt.Errorf("node %s has no bin to push", node.Name)
 	}
@@ -611,7 +671,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, node.Name, outbound, payloadCode)
 	// Point the runtime active order at U2 so the unloader UI shows the empty-out next.
 	// (ClearBin's SetClaimAndCount zeroes the count/claim but leaves this pointer.)
-	if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, &order.ID, nil); err != nil {
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(node.ID, &order.ID); err != nil {
 		log.Printf("side-cycle: update runtime orders for unloader %d: %v", node.ID, err)
 	}
 }
@@ -741,7 +801,7 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 					return made, cerr
 				}
 				created = order
-				if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
+				if uerr := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); uerr != nil {
 					log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
 				}
 				made++
@@ -890,7 +950,7 @@ func (e *Engine) requestEmptyForSwapModes(
 	if err != nil {
 		return nil, err
 	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
 		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 	}
 	return order, nil
@@ -973,7 +1033,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 				return made, cerr
 			}
 			created = order
-			if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
+			if uerr := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); uerr != nil {
 				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
 			}
 			made++
