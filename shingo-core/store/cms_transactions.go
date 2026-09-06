@@ -1,15 +1,11 @@
 package store
 
 // Phase 5 delegate file: cms_transactions CRUD lives in store/cms/.
-// SumCatIDsAtBoundary stays here because it crosses into bin manifests
-// (cross-aggregate read coordinator).
 
 import (
-	"encoding/json"
+	"time"
 
-	"shingocore/store/bins"
 	"shingocore/store/cms"
-	"shingocore/store/internal/nodetree"
 )
 
 func (db *DB) CreateCMSTransactions(txns []*cms.Transaction) error {
@@ -24,40 +20,57 @@ func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*cms.Transaction, err
 	return cms.ListAll(db.DB, limit, offset)
 }
 
-// SumCatIDsAtBoundary returns total manifest quantities for all CATIDs
-// across all bins at nodes under the given boundary, parsing from bin
-// manifest JSON. Cross-aggregate (bins): kept at outer store/ level.
-//
-// SubtreeOf, NOT DescendantsOf — the boundary node's OWN bins count. This walk
-// and the group-scoped empty finders' were both spelled "WITH RECURSIVE
-// descendants" and are not the same question: those exclude the group node (it is
-// synthetic and holds no carriers), this includes the boundary node (it can hold
-// bins, and a total that skipped them would be wrong by exactly its contents).
-// The two now have different names for that reason.
-func (db *DB) SumCatIDsAtBoundary(boundaryID int64) map[string]int64 {
-	totals := make(map[string]int64)
-	rows, err := db.Query(nodetree.SubtreeOf(1)+`
-		SELECT b.manifest FROM bins b
-		JOIN descendants d ON b.node_id = d.id
-		WHERE b.manifest IS NOT NULL
-	`, boundaryID)
-	if err != nil {
-		return totals
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var manifestJSON string
-		if rows.Scan(&manifestJSON) != nil {
-			continue
-		}
-		var m bins.Manifest
-		if json.Unmarshal([]byte(manifestJSON), &m) != nil {
-			continue
-		}
-		for _, item := range m.Items {
-			totals[item.CatID] += item.Quantity
-		}
-	}
-	return totals
+// ListUnpostedCMSTransactions returns transactions no posting has claimed.
+func (db *DB) ListUnpostedCMSTransactions(limit int) ([]*cms.Transaction, error) {
+	return cms.ListUnposted(db.DB, limit)
 }
+
+// ListCMSTransactionsByPosting returns every transaction a posting carries.
+func (db *DB) ListCMSTransactionsByPosting(postingID int64) ([]*cms.Transaction, error) {
+	return cms.ListByPosting(db.DB, postingID)
+}
+
+// AttachCMSPosting claims transactions for a posting, returning how many it took.
+func (db *DB) AttachCMSPosting(txnIDs []int64, postingID int64) (int, error) {
+	return cms.AttachPosting(db.DB, txnIDs, postingID)
+}
+
+// --- cms_postings ---------------------------------------------------------
+
+func (db *DB) CreateCMSPosting(p *cms.Posting) error { return cms.CreatePosting(db.DB, p) }
+
+func (db *DB) GetCMSPosting(id int64) (*cms.Posting, error) { return cms.GetPosting(db.DB, id) }
+
+func (db *DB) NextPendingCMSPostings(limit int) ([]*cms.Posting, error) {
+	return cms.NextPending(db.DB, limit)
+}
+
+func (db *DB) MarkCMSPostingInflight(id int64, batchKey, bodySHA string) error {
+	return cms.MarkInflight(db.DB, id, batchKey, bodySHA)
+}
+
+func (db *DB) MarkCMSPostingPosted(id int64, transactionID string, httpStatus int) error {
+	return cms.MarkPosted(db.DB, id, transactionID, httpStatus)
+}
+
+func (db *DB) MarkCMSPostingRejected(id int64, httpStatus int, lastErr string) error {
+	return cms.MarkRejected(db.DB, id, httpStatus, lastErr)
+}
+
+func (db *DB) MarkCMSPostingFailed(id int64, lastErr string) error {
+	return cms.MarkFailed(db.DB, id, lastErr)
+}
+
+func (db *DB) MarkCMSPostingPending(id int64, lastErr string, nextRetry time.Time) error {
+	return cms.MarkPending(db.DB, id, lastErr, nextRetry)
+}
+
+func (db *DB) ScheduleCMSPostingRetry(id int64, lastErr string, nextRetry time.Time) error {
+	return cms.ScheduleRetry(db.DB, id, lastErr, nextRetry)
+}
+
+func (db *DB) ListInflightCMSPostingsOlderThan(d time.Duration) ([]*cms.Posting, error) {
+	return cms.ListInflightOlderThan(db.DB, d)
+}
+
+func (db *DB) RequeueCMSPosting(id int64) error { return cms.RequeuePending(db.DB, id) }

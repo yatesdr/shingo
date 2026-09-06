@@ -277,19 +277,6 @@
         <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> bins</span>
       </div>
       <div id="inv-list"></div>
-      <div id="inv-manifest" class="hide" style="margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
-        <div class="flex flex-between mb-1">
-          <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
-          <div class="flex gap-1">
-            <button type="button" class="btn btn-sm" data-action="addNodeManifestRow" style="font-size:0.7rem">+ Item</button>
-            <button type="button" class="btn btn-sm" data-action="closeManifestExpand" style="font-size:0.7rem">&times; Close</button>
-          </div>
-        </div>
-        <table style="font-size:0.8rem;width:100%" id="inv-manifest-table">
-          <thead><tr><th style="text-align:left">CATID</th><th style="text-align:left;width:5rem">Qty</th><th style="width:1.5rem"></th></tr></thead>
-          <tbody id="inv-manifest-rows"></tbody>
-        </table>
-      </div>
     </div>
 
     <!-- Children section (for synthetic nodes) -->
@@ -320,16 +307,6 @@
         <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> bins</span>
       </div>
       <div id="inv-list"></div>
-      <div id="inv-manifest" class="hide" style="margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
-        <div class="flex flex-between mb-1">
-          <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
-          <button class="btn btn-sm" data-action="closeManifestExpand" style="font-size:0.7rem">&times; Close</button>
-        </div>
-        <table style="font-size:0.8rem;width:100%">
-          <thead><tr><th style="text-align:left">CATID</th><th style="text-align:left">Qty</th><th>Notes</th></tr></thead>
-          <tbody id="inv-manifest-rows"></tbody>
-        </table>
-      </div>
     </div>
     {{end}}
   </div>

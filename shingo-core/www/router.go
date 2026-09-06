@@ -26,9 +26,9 @@ import (
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
-//   - h.orchestration (EngineOrchestration) — wide surface adding 13
-//     verbs (corrections, direct orders, scene sync, cross-edge
-//     messaging, live reconfig). Embeds ServiceAccess so it can also
+//   - h.orchestration (EngineOrchestration) — wide surface adding 12
+//     verbs (direct orders, scene sync, cross-edge messaging, live
+//     reconfig). Embeds ServiceAccess so it can also
 //     reach service accessors and state queries.
 //
 // Both counts measured 2026-08-19; they read "~25" and "12" from the
@@ -370,8 +370,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// Audit (Item 10) — bin_uop_ledger read endpoints
 			r.Get("/audit/bin/{id}", h.apiAuditBinTimeline)
 			r.Get("/audit/discrepancies", h.apiAuditDiscrepancies)
-			r.Get("/corrections", h.apiListNodeCorrections)
 			r.Get("/cms-transactions", h.apiListCMSTransactions)
+			r.Get("/cms-health", h.apiCMSHealth)
 			r.Get("/outbox/deadletters", h.apiListDeadLetterOutbox)
 			r.Get("/reconciliation", h.apiReconciliation)
 			r.Get("/recovery/actions", h.apiListRecoveryActions)
@@ -491,10 +491,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/loader/calculate", h.apiCalculateThreshold)
 				// NOTE: GET /loader/list is registered in the PUBLIC block above
 				// (loaders render read-only on the shop-floor Nodes page).
-
-				// Corrections
-				r.Post("/corrections/create", h.apiCreateCorrection)
-				r.Post("/corrections/batch", h.apiApplyBatchCorrection)
 
 				// Fleet
 				r.Post("/fleet/proxy", h.apiFleetProxy)

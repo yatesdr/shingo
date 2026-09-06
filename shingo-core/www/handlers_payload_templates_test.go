@@ -175,8 +175,8 @@ func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
 			"uop_capacity": 10,
 			"bin_type_ids": []int64{bt.ID},
 			"manifest": []map[string]any{
-				{"part_number": "P1", "quantity": 2},
-				{"part_number": "P2", "quantity": 3},
+				{"part_number": "P1", "parts_per_cycle": 2},
+				{"part_number": "P2", "parts_per_cycle": 3},
 			},
 		})
 	if rec.Code != http.StatusOK {
@@ -195,7 +195,12 @@ func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
 	}
 	items, _ := db.ListPayloadManifest(created.ID)
 	if len(items) != 2 {
-		t.Errorf("manifest items: got %d, want 2", len(items))
+		t.Fatalf("manifest items: got %d, want 2", len(items))
+	}
+	// Read the ratios back. A create that persists two rows of zeroes is not
+	// a create that worked, and a wrong JSON key looks exactly like that.
+	if items[0].PartsPerCycle != 2 || items[1].PartsPerCycle != 3 {
+		t.Errorf("parts_per_cycle = %d, %d; want 2, 3", items[0].PartsPerCycle, items[1].PartsPerCycle)
 	}
 }
 
@@ -247,7 +252,7 @@ func TestApiUpdatePayloadTemplate_HappyPath(t *testing.T) {
 			"uop_capacity": 20,
 			"bin_type_ids": []int64{bt.ID},
 			"manifest": []map[string]any{
-				{"part_number": "Q1", "quantity": 4},
+				{"part_number": "Q1", "parts_per_cycle": 4},
 			},
 		})
 	if rec.Code != http.StatusOK {
@@ -287,7 +292,7 @@ func TestApiGetPayloadManifestTemplate_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: sd.Payload.ID, PartNumber: "X", Quantity: 1,
+		PayloadID: sd.Payload.ID, PartNumber: "X", PartsPerCycle: 1,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -321,7 +326,7 @@ func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	// Seed one old item to verify it gets replaced.
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: sd.Payload.ID, PartNumber: "OLD", Quantity: 1,
+		PayloadID: sd.Payload.ID, PartNumber: "OLD", PartsPerCycle: 1,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -330,8 +335,8 @@ func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
 		map[string]any{
 			"payload_id": sd.Payload.ID,
 			"items": []map[string]any{
-				{"part_number": "NEW1", "quantity": 2, "description": "d1"},
-				{"part_number": "NEW2", "quantity": 3, "description": "d2"},
+				{"part_number": "NEW1", "parts_per_cycle": 2, "description": "d1"},
+				{"part_number": "NEW2", "parts_per_cycle": 3, "description": "d2"},
 			},
 		})
 	if rec.Code != http.StatusOK {
@@ -345,6 +350,12 @@ func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
 	}
 	if items[0].PartNumber != "NEW1" || items[1].PartNumber != "NEW2" {
 		t.Errorf("items: got %+v", items)
+	}
+	// The ratios have to come back too. A wrong JSON key decodes to zero
+	// without erroring, so an assertion on part numbers alone would pass over
+	// a manifest that stored nothing.
+	if items[0].PartsPerCycle != 2 || items[1].PartsPerCycle != 3 {
+		t.Errorf("parts_per_cycle = %d, %d; want 2, 3", items[0].PartsPerCycle, items[1].PartsPerCycle)
 	}
 }
 

@@ -113,9 +113,9 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 	p := makePayload(t, svc, "PL-MAN", "manifest", 10)
 
 	item := &payloads.ManifestItem{
-		PayloadID:  p.ID,
-		PartNumber: "PART-1",
-		Quantity:   3,
+		PayloadID:     p.ID,
+		PartNumber:    "PART-1",
+		PartsPerCycle: 3,
 	}
 	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
 	if item.ID == 0 {
@@ -126,7 +126,7 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListManifest: %v", err)
 	}
-	if len(items) != 1 || items[0].PartNumber != "PART-1" || items[0].Quantity != 3 {
+	if len(items) != 1 || items[0].PartNumber != "PART-1" || items[0].PartsPerCycle != 3 {
 		t.Errorf("items = %+v, want one PART-1/3", items)
 	}
 }
@@ -137,12 +137,12 @@ func TestPayloadService_UpdateManifestItem_PersistsChanges(t *testing.T) {
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-UMI", "", 10)
 
-	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", PartsPerCycle: 1}
 	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
 
 	testutil.MustNoErr(t, svc.UpdateManifestItem(item.ID, "P-NEW", 9), "UpdateManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
-	if len(rows) != 1 || rows[0].PartNumber != "P-NEW" || rows[0].Quantity != 9 {
+	if len(rows) != 1 || rows[0].PartNumber != "P-NEW" || rows[0].PartsPerCycle != 9 {
 		t.Errorf("rows = %+v, want one P-NEW/9", rows)
 	}
 }
@@ -153,7 +153,7 @@ func TestPayloadService_DeleteManifestItem_RemovesRow(t *testing.T) {
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-DMI", "", 10)
 
-	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P", PartsPerCycle: 1}
 	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
 	testutil.MustNoErr(t, svc.DeleteManifestItem(item.ID), "DeleteManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
@@ -169,18 +169,18 @@ func TestPayloadService_ReplaceManifest_SwapsList(t *testing.T) {
 	p := makePayload(t, svc, "PL-RPL", "", 10)
 
 	// Seed with one item, then replace with two.
-	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1}), "seed CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1}), "seed CreateManifestItem")
 
 	newItems := []*payloads.ManifestItem{
-		{PayloadID: p.ID, PartNumber: "N1", Quantity: 4},
-		{PayloadID: p.ID, PartNumber: "N2", Quantity: 5},
+		{PayloadID: p.ID, PartNumber: "N1", PartsPerCycle: 4},
+		{PayloadID: p.ID, PartNumber: "N2", PartsPerCycle: 5},
 	}
 	testutil.MustNoErr(t, svc.ReplaceManifest(p.ID, newItems), "ReplaceManifest")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 2 {
 		t.Fatalf("len(rows) = %d, want 2", len(rows))
 	}
-	parts := map[string]int64{rows[0].PartNumber: rows[0].Quantity, rows[1].PartNumber: rows[1].Quantity}
+	parts := map[string]int64{rows[0].PartNumber: rows[0].PartsPerCycle, rows[1].PartNumber: rows[1].PartsPerCycle}
 	if parts["N1"] != 4 || parts["N2"] != 5 {
 		t.Errorf("parts = %+v, want N1:4 N2:5", parts)
 	}

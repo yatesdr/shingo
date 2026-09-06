@@ -346,7 +346,7 @@ averages (mean of per-function coverage) from `coverage-edge-func.txt`:
 | handlers_bins.go              | Y     | 51.9%         | `handlers_bins_test.go`, `handlers_bins_gaps_test.go` |
 | handlers_cms_transactions.go  | N     | 0.0%          |                                                       |
 | handlers_config.go            | N     | 0.0%          |                                                       |
-| handlers_corrections.go       | N     | 0.0%          |                                                       |
+
 | handlers_dashboard.go         | N     | 0.0%          |                                                       |
 | handlers_demand.go            | Y     | 54.2%         | `handlers_demand_test.go`                             |
 | handlers_diagnostics.go       | Y     | ~40%          | `handlers_diagnostics_test.go` (PR 4)                |

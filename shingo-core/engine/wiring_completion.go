@@ -347,6 +347,10 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 			FromNodeID:  sourceNodeID,
 			ToNodeID:    destNode.ID,
 			NodeID:      destNode.ID,
+			// Captured from the order, which is still in hand — ApplyArrival
+			// above has already released the bin's claim.
+			RobotID: order.RobotID,
+			OrderID: order.ID,
 		}})
 	}
 	return nil
@@ -565,6 +569,8 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 			FromNodeID:  fromNodeIDs[i],
 			ToNodeID:    inst.ToNodeID,
 			NodeID:      inst.ToNodeID,
+			RobotID:     order.RobotID,
+			OrderID:     order.ID,
 		}})
 	}
 	return refusals
@@ -668,6 +674,10 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 			FromNodeID:  sourceNodeID,
 			ToNodeID:    destNode.ID,
 			NodeID:      destNode.ID,
+			// Captured from the order, which is still in hand — ApplyArrival
+			// above has already released the bin's claim.
+			RobotID: order.RobotID,
+			OrderID: order.ID,
 		}})
 	}
 }
@@ -794,6 +804,8 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 			FromNodeID:  fromNodeIDs[i],
 			ToNodeID:    inst.ToNodeID,
 			NodeID:      inst.ToNodeID,
+			RobotID:     order.RobotID,
+			OrderID:     order.ID,
 		}})
 	}
 

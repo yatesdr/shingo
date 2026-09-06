@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -55,9 +56,6 @@ func TestBin_ParseManifest_Single(t *testing.T) {
 	if got.CatID != "A" {
 		t.Errorf("CatID = %q, want %q", got.CatID, "A")
 	}
-	if got.Quantity != 5 {
-		t.Errorf("Quantity = %d, want 5", got.Quantity)
-	}
 	if got.LotCode != "" {
 		t.Errorf("LotCode = %q, want empty", got.LotCode)
 	}
@@ -86,13 +84,9 @@ func TestBin_ParseManifest_Multi(t *testing.T) {
 	}
 
 	wantCatIDs := []string{"A", "B", "C"}
-	wantQty := []int64{1, 2, 3}
 	for i, it := range m.Items {
 		if it.CatID != wantCatIDs[i] {
 			t.Errorf("Items[%d].CatID = %q, want %q", i, it.CatID, wantCatIDs[i])
-		}
-		if it.Quantity != wantQty[i] {
-			t.Errorf("Items[%d].Quantity = %d, want %d", i, it.Quantity, wantQty[i])
 		}
 	}
 
@@ -122,5 +116,41 @@ func TestBin_ParseManifest_Invalid(t *testing.T) {
 	// The implementation wraps the error with a "parse manifest:" prefix.
 	if !strings.Contains(err.Error(), "parse manifest") {
 		t.Errorf("error %q missing %q prefix", err.Error(), "parse manifest")
+	}
+}
+
+// TestBin_ParseManifest_IgnoresHistoricalQty pins the read side of deleting
+// ManifestEntry.Quantity. Production bins written before the deletion still
+// carry a "qty" key, and a decode that CHOKED on it would strand every one of
+// them — encoding/json ignores unknown keys, and this says so out loud so the
+// next person does not add a field back to "handle" it.
+func TestBin_ParseManifest_IgnoresHistoricalQty(t *testing.T) {
+	t.Parallel()
+	raw := `{"items":[{"catid":"A","qty":5,"lot_code":"LOT-9"}]}`
+	b := &Bin{Manifest: &raw}
+
+	m, err := b.ParseManifest()
+	if err != nil {
+		t.Fatalf("a historical manifest with a qty key must still parse: %v", err)
+	}
+	if len(m.Items) != 1 {
+		t.Fatalf("len(Items) = %d, want 1", len(m.Items))
+	}
+	if m.Items[0].CatID != "A" || m.Items[0].LotCode != "LOT-9" {
+		t.Errorf("Items[0] = %+v, want CatID A and LotCode LOT-9", m.Items[0])
+	}
+}
+
+// TestManifestEntry_MarshalsNoQuantity is the write side. New manifests must
+// not carry a count at all: a stored count is the staleness this deletion
+// removes, and it would round-trip back into every reader that looks for one.
+func TestManifestEntry_MarshalsNoQuantity(t *testing.T) {
+	t.Parallel()
+	body, err := json.Marshal(Manifest{Items: []ManifestEntry{{CatID: "A", LotCode: "L"}}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(body), `"qty"`) {
+		t.Errorf("manifest JSON carries a qty key: %s", body)
 	}
 }

@@ -37,7 +37,6 @@ func TestEventTypes_AllDistinctAndNonZero(t *testing.T) {
 		EventOrderQueued,
 		EventBinUpdated,
 		EventNodeUpdated,
-		EventCorrectionApplied,
 		EventFleetConnected,
 		EventFleetDisconnected,
 		EventMessagingConnected,
@@ -191,17 +190,7 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 				}
 			},
 		},
-		{
-			name:    "CorrectionApplied",
-			evtType: EventCorrectionApplied,
-			payload: CorrectionAppliedEvent{CorrectionID: 9, CorrectionType: "bin_move", NodeID: 1, Reason: "drift", Actor: "op1"},
-			check: func(t *testing.T, got any) {
-				p := got.(CorrectionAppliedEvent)
-				if p.CorrectionType != "bin_move" || p.Reason != "drift" {
-					t.Errorf("payload = %+v", p)
-				}
-			},
-		},
+
 		{
 			name:    "FleetConnected",
 			evtType: EventFleetConnected,

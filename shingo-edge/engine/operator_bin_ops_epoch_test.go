@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -158,5 +159,92 @@ func TestClearBin_IgnoresTheEpochWhenADifferentCarrierIsBound(t *testing.T) {
 	if rt.ActiveBinEpoch != boundEpoch {
 		t.Errorf("epoch = %d, want %d — the reply named carrier %d and this node is holding %d; "+
 			"the stamp belongs to a carrier that is not here", rt.ActiveBinEpoch, boundEpoch, clearedBin, boundBin)
+	}
+}
+
+// TestLoadBin_UOPFallsBackToTemplateCapacity pins the fallback's UNIT on the
+// Edge side. An operator who declares no count means "a full bin", and a full
+// bin is uop_capacity CYCLES — not the sum of the manifest's part counts, which
+// is a different unit and agrees only while every payload is one part per cycle.
+//
+// The stub makes the two disagree on purpose: capacity 40, manifest summing 250.
+// A request carrying 250 would be the old behaviour passing.
+func TestLoadBin_UOPFallsBackToTemplateCapacity(t *testing.T) {
+	t.Parallel()
+
+	var gotUOP int64 = -1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			var req BinLoadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			gotUOP = req.UOPCount
+			_ = json.NewEncoder(w).Encode(BinLoadResponse{
+				Status: "ok", BinID: 42, PayloadCode: "PART-A", UOPRemaining: 40, DeltaEpoch: 1,
+			})
+		case strings.HasSuffix(r.URL.Path, "/manifest"):
+			_ = json.NewEncoder(w).Encode(PayloadManifestResponse{
+				UOPCapacity: 40,
+				Items:       []ManifestItem{{PartNumber: "PN-1", PartsPerCycle: 5}},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
+		}
+	}))
+	defer srv.Close()
+
+	db := testEngineDB(t)
+	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+
+	eng := testEngine(t, db)
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	// uopCount 0 — the operator declared none. The manifest sums to 250.
+	manifest := []protocol.IngestManifestItem{
+		{PartNumber: "PN-1", Quantity: 200, Description: "x"},
+		{PartNumber: "PN-2", Quantity: 50, Description: "y"},
+	}
+	_ = eng.LoadBin(nodeID, "PART-A", 0, manifest)
+
+	if gotUOP != 40 {
+		t.Errorf("uop_count sent to Core = %d, want 40 (the template's capacity in cycles, not the manifest's 250 parts)", gotUOP)
+	}
+}
+
+// TestLoadBin_UOPFallbackDefersToCoreWhenTemplateUnreachable: if the template
+// lookup fails there is no capacity to assume, and Edge sends 0 rather than a
+// number in the wrong unit. Core applies the same fallback against the template
+// it already holds, so 0 is a question passed along, not an answer invented.
+func TestLoadBin_UOPFallbackDefersToCoreWhenTemplateUnreachable(t *testing.T) {
+	t.Parallel()
+
+	var gotUOP int64 = -1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			var req BinLoadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			gotUOP = req.UOPCount
+			_ = json.NewEncoder(w).Encode(BinLoadResponse{Status: "ok", BinID: 42, DeltaEpoch: 1})
+		case strings.HasSuffix(r.URL.Path, "/manifest"):
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
+		}
+	}))
+	defer srv.Close()
+
+	db := testEngineDB(t)
+	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
+
+	eng := testEngine(t, db)
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
+	eng.coreClient = NewCoreClient(srv.URL)
+
+	_ = eng.LoadBin(nodeID, "PART-A", 0, []protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 250}})
+
+	if gotUOP != 0 {
+		t.Errorf("uop_count sent to Core = %d, want 0 — with no template capacity there is nothing to assume", gotUOP)
 	}
 }

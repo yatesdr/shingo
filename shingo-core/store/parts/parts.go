@@ -90,13 +90,17 @@ func GetProduced(db *sql.DB, since, until *time.Time, top int) ([]Produced, erro
 		top = 10
 	}
 	dw, args := dateWhere("mt.core_completed", since, until)
-	q := fmt.Sprintf(`SELECT pm.part_number, COALESCE(SUM(pm.quantity),0), COUNT(DISTINCT mt.order_id)
+	// parts_per_cycle x uop_capacity is the full-bin nominal the old
+	// pm.quantity column held, so this reports the same number it always did.
+	// It is a NOMINAL: it counts what a full bin of the carried payload would
+	// hold, not what the bin actually held. See GetConsumption's note.
+	q := fmt.Sprintf(`SELECT pm.part_number, COALESCE(SUM(pm.parts_per_cycle * p.uop_capacity),0), COUNT(DISTINCT mt.order_id)
 		FROM mission_telemetry mt
 		JOIN orders o ON o.id = mt.order_id
 		JOIN payloads p ON p.code = o.payload_code
 		JOIN payload_manifest pm ON pm.payload_id = p.id
 		WHERE mt.terminal_state IN ('FINISHED','delivered','confirmed') AND pm.part_number <> ''%s
-		GROUP BY pm.part_number ORDER BY SUM(pm.quantity) DESC LIMIT %d`, dw, top)
+		GROUP BY pm.part_number ORDER BY SUM(pm.parts_per_cycle * p.uop_capacity) DESC LIMIT %d`, dw, top)
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err

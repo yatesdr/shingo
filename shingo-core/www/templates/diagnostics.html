@@ -61,8 +61,21 @@
       <select id="cms-filter-src" data-action-change="cmsFilter" style="font-size:0.85rem;padding:2px 6px;">
         <option value="">All sources</option>
         <option value="movement">Movement</option>
-        <option value="correction">Correction</option>
       </select>
+    </div>
+  </div>
+
+  <!-- Feed health. It sits ABOVE the transaction table on purpose: the table
+       shows what was recorded locally, which stays busy while nothing is being
+       sent. The one question this page has to answer first is whether the feed
+       is reaching CMS at all. -->
+  <div class="card mb-2" id="cms-health-card">
+    <div class="flex flex-between items-center">
+      <div>
+        <span id="cms-health-badge" class="badge">—</span>
+        <span id="cms-health-why" class="text-muted" style="font-size:0.85rem;margin-left:0.5rem">checking…</span>
+      </div>
+      <div id="cms-health-counts" class="text-muted" style="font-size:0.8rem"></div>
     </div>
   </div>
 
@@ -73,11 +86,8 @@
           <tr>
             <th style="width:150px;">Time</th>
             <th style="width:120px;">Node</th>
-            <th style="width:80px;">Type</th>
             <th style="width:100px;">CATID</th>
             <th style="width:70px;">Delta</th>
-            <th style="width:70px;">Before</th>
-            <th style="width:70px;">After</th>
             <th style="width:100px;">Bin</th>
             <th style="width:90px;">Payload</th>
             <th style="width:80px;">Source</th>

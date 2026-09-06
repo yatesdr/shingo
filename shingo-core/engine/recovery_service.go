@@ -84,6 +84,16 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 			FromNodeID:  sourceNodeID,
 			ToNodeID:    destNode.ID,
 			NodeID:      destNode.ID,
+			// The order is loaded above, so both travel even though the CMS
+			// path skips a replay: any other subscriber that wants to know who
+			// moved the bin gets the same answer here as on a live delivery.
+			RobotID: order.RobotID,
+			OrderID: order.ID,
+			// The move this describes already happened; we are re-running
+			// the side effects of a completion that did not land. Anything
+			// that records the move as a physical event rather than
+			// re-reading state must skip it — see BinUpdatedEvent.Replay.
+			Replay: true,
 		}})
 	}
 

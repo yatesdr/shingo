@@ -1,10 +1,6 @@
 package engine
 
-import (
-	"shingocore/material"
-	"shingocore/store/bins"
-	"shingocore/store/nodes"
-)
+import "shingocore/material"
 
 // cms_transactions.go — thin engine wrappers around shingocore/material.
 //
@@ -15,60 +11,53 @@ import (
 // e.db.CreateCMSTransactions, and emits EventCMSTransaction on the
 // engine event bus.
 //
-// Call sites (unchanged — preserved so Stage 6 edits zero callers):
+// Call site:
 //   - wiring.go "CMS transaction logging" subscription -> RecordMovementTransactions
-//   - corrections.go ApplyBatchCorrection -> RecordCorrectionTransactions
-
-// FindCMSBoundary delegates to material.FindCMSBoundary. Errors
-// (cycle detection, store lookup failures) are logged and collapsed
-// back to nil so the method keeps the single-return contract the
-// rest of the engine expects.
-func (e *Engine) FindCMSBoundary(nodeID int64) *nodes.Node {
-	node, err := material.FindCMSBoundary(e.db, nodeID)
-	if err != nil {
-		e.logFn("engine: cms boundary walk from node %d: %v", nodeID, err)
-		return nil
-	}
-	return node
-}
+//
+// There is deliberately no *Engine method wrapping
+// material.FindCMSBoundary. The one that used to live here collapsed
+// every store error to a nil node, which downstream reads as "no
+// boundary here" — a transient DB failure emitted zero transactions
+// with only a log line as evidence. Its only callers were tests.
+// Call material.FindCMSBoundary directly and handle the error.
 
 // RecordMovementTransactions logs CMS transactions when a bin moves
 // between different CMS boundaries. The build itself is pure; this
 // wrapper handles persistence and event emission.
 func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
+	// A replay re-emits a move the ledger already booked. Emitting a second
+	// source-decrement / dest-increment pair for it is a phantom transfer at
+	// the plant's inventory boundary, not a duplicate audit row.
+	if ev.Replay {
+		return
+	}
 	txns, err := material.BuildMovementTransactions(e.db, material.MovementEvent{
 		BinID:      ev.BinID,
 		FromNodeID: ev.FromNodeID,
 		ToNodeID:   ev.ToNodeID,
+		RobotID:    ev.RobotID,
+		OrderID:    ev.OrderID,
 	})
 	if err != nil {
-		e.logFn("engine: cms movement build: %v", err)
+		// COUNTED, not just logged. This drops a real physical move off the
+		// CMS ledger and leaves no row anywhere — no transaction, therefore no
+		// posting — so every count on the health page would report a plant that
+		// simply did not move anything. The counter is the only trace.
+		e.cmsBuildFailures.Add(1)
+		e.logFn("engine: cms movement build for bin %d (%d -> %d): %v — "+
+			"this move will NOT reach the CMS ledger",
+			ev.BinID, ev.FromNodeID, ev.ToNodeID, err)
 		return
 	}
 	if len(txns) == 0 {
 		return
 	}
 	if err := e.db.CreateCMSTransactions(txns); err != nil {
-		e.logFn("engine: cms transactions: %v", err)
-		return
-	}
-	e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})
-}
-
-// RecordCorrectionTransactions logs CMS adjustment transactions when
-// a bin's manifest is edited. Persistence and emission are the only
-// concerns that live here; the diff itself is done in material.
-func (e *Engine) RecordCorrectionTransactions(binID, nodeID int64, oldManifest, newManifest []bins.ManifestEntry, reason string) {
-	txns, err := material.BuildCorrectionTransactions(e.db, binID, nodeID, oldManifest, newManifest, reason)
-	if err != nil {
-		e.logFn("engine: cms correction build: %v", err)
-		return
-	}
-	if len(txns) == 0 {
-		return
-	}
-	if err := e.db.CreateCMSTransactions(txns); err != nil {
-		e.logFn("engine: cms correction transactions: %v", err)
+		// Same loss by a different door: the rows were built and could not be
+		// stored, so nothing downstream will ever see them either.
+		e.cmsBuildFailures.Add(1)
+		e.logFn("engine: cms transactions for bin %d: %v — "+
+			"%d rows will NOT reach the CMS ledger", ev.BinID, err, len(txns))
 		return
 	}
 	e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})

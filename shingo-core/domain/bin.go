@@ -60,14 +60,30 @@ type Bin struct {
 	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
 }
 
-// ManifestEntry is a single line in a bin's manifest — one CatID /
-// part number at a given quantity, optionally tagged with a lot code
-// and free-form notes. Marshalled into the bins.manifest JSON column.
+// ManifestEntry is a single line in a bin's manifest — one CatID / part
+// number, optionally tagged with a lot code and free-form notes.
+// Marshalled into the bins.manifest JSON column.
+//
+// IT CARRIES NO QUANTITY, AND THAT IS DELIBERATE. The manifest says WHICH
+// parts are in the carrier; how many is bins.uop_remaining x the payload
+// template's parts_per_cycle, derived wherever it is needed. It used to
+// carry a `qty` and the field had two live meanings: resolveTemplateManifest
+// wrote the template's full-bin nominal into it regardless of how full the
+// bin actually was, while SyncUOPAndClaim wrote the remaining count. Any
+// reader got whichever writer ran last, and nothing rewrote the manifest as
+// UOP drained during production, so the stored number went stale the moment
+// a part was consumed.
+//
+// Do not helpfully add a quantity back. If a workflow ever needs the count
+// as it was at LOAD time rather than as it is now, that is template
+// versioning, not a field here — a stored copy would go stale the same way.
+//
+// Historical bins in production still carry a `qty` key. It is ignored on
+// read; nothing migrates it, because nothing reads it.
 type ManifestEntry struct {
-	CatID    string `json:"catid"`
-	Quantity int64  `json:"qty"`
-	LotCode  string `json:"lot_code,omitempty"`
-	Notes    string `json:"notes,omitempty"`
+	CatID   string `json:"catid"`
+	LotCode string `json:"lot_code,omitempty"`
+	Notes   string `json:"notes,omitempty"`
 }
 
 // Manifest is the parsed form of a Bin.Manifest JSON field — a flat

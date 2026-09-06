@@ -386,6 +386,8 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 			// real slot, so kanban's produce-on-storage-exit check must not fire.
 			ToNodeID: destNode.ID,
 			NodeID:   destNode.ID,
+			RobotID:  order.RobotID,
+			OrderID:  order.ID,
 		}})
 
 		// Bind the arrived bin onto the Edge runtime if this dropoff node is an

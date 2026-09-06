@@ -338,11 +338,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("bin-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "bin_id": ev.BinID, "actor": ev.Actor, "detail": ev.Detail}))
 	}, engine.EventBinUpdated)
 
-	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.CorrectionAppliedEvent]) {
-		ev := evt.Payload
-		h.Broadcast("inventory-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": "correction", "type": ev.CorrectionType}))
-	}, engine.EventCorrectionApplied)
-
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.NodeUpdatedEvent]) {
 		ev := evt.Payload
 		h.Broadcast("node-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action}))

@@ -1,16 +1,55 @@
 import { api, delegateActions, el, escapeHtml, hideModal, removeParentElement, showModal, toast } from '/static/app.js';
 
-/* --- Manifest builder --- */
-function addManifestRow(containerId, catid, qty) {
+/* --- Manifest builder ---
+ *
+ * The editable number is PER CYCLE — how many of the part one production
+ * cycle consumes, usually 1. The full-bin count is that times the payload's
+ * UoP capacity, and is shown read-only beside it so the person typing a
+ * ratio can see the number they used to type.
+ *
+ * The derived cell is not decoration. The field held a full-bin nominal
+ * before the parts_per_cycle rename, so someone editing an old template is
+ * looking at a box whose meaning changed under them; the full-bin figure is
+ * how they check they typed the right thing.
+ */
+function uopCapacityFor(containerId) {
+  var input = document.getElementById(
+    containerId === 'plc-manifest-rows' ? 'plc-uop' : 'pl-edit-uop');
+  return (input && parseInt(input.value)) || 0;
+}
+
+function renderFullBin(row, containerId) {
+  var cell = row.querySelector('.mr-fullbin');
+  if (!cell) return;
+  var per = parseInt(row.querySelector('.mr-per-cycle').value) || 0;
+  var cap = uopCapacityFor(containerId);
+  cell.textContent = cap > 0 ? '= ' + (per * cap) + ' / bin' : '';
+}
+
+function addManifestRow(containerId, catid, perCycle) {
   var container = document.getElementById(containerId);
   var row = document.createElement('div');
   row.className = 'manifest-row';
   row.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem';
   row.innerHTML =
     '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
-    '<input type="number" placeholder="Qty" value="' + (qty || '') + '" step="1" min="0" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-qty">' +
+    '<input type="number" placeholder="Per cycle" value="' + (perCycle || '') + '" step="1" min="0" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-per-cycle">' +
+    '<span class="text-muted mr-fullbin" style="font-size:0.75rem;min-width:6rem"></span>' +
     '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>';
   container.appendChild(row);
+  renderFullBin(row, containerId);
+  row.querySelector('.mr-per-cycle').addEventListener('input', function() {
+    renderFullBin(row, containerId);
+  });
+}
+
+// refreshFullBinCells re-derives every row's full-bin figure. Bound to the two
+// UoP capacity inputs: the capacity is the other half of the product, so
+// editing it silently staled every row before this existed.
+function refreshFullBinCells(containerId) {
+  document.querySelectorAll('#' + containerId + ' .manifest-row').forEach(function(row) {
+    renderFullBin(row, containerId);
+  });
 }
 
 function collectManifestRows(containerId) {
@@ -18,8 +57,8 @@ function collectManifestRows(containerId) {
   var items = [];
   rows.forEach(function(row) {
     var catid = row.querySelector('.mr-catid').value.trim();
-    var qty = parseInt(row.querySelector('.mr-qty').value) || 0;
-    if (catid) items.push({part_number: catid, quantity: qty, description: ''});
+    var perCycle = parseInt(row.querySelector('.mr-per-cycle').value) || 0;
+    if (catid) items.push({part_number: catid, parts_per_cycle: perCycle, description: ''});
   });
   return items;
 }
@@ -220,7 +259,7 @@ function openEditPayloadModal(btn) {
       container.innerHTML = '';
       if (items && items.length > 0) {
         items.forEach(function(item) {
-          addManifestRow('ple-manifest-rows', item.part_number, item.quantity);
+          addManifestRow('ple-manifest-rows', item.part_number, item.parts_per_cycle);
         });
       }
     })
@@ -393,6 +432,7 @@ delegateActions(document.body, {
     openCreatePayloadModal,
     openEditPayloadModal,
     openPayloadImport,
+    refreshFullBinCells,
     removeParentElement,
     submitPLCreate,
     submitPLEdit

@@ -130,7 +130,7 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 	sd.Payload.UOPCapacity = 50
 	testutil.MustNoErr(t, db.UpdatePayload(sd.Payload), "update payload uop")
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: sd.Payload.ID, PartNumber: "P-X", Quantity: 10, Description: "desc",
+		PayloadID: sd.Payload.ID, PartNumber: "P-X", PartsPerCycle: 10, Description: "desc",
 	}); err != nil {
 		t.Fatalf("seed manifest item: %v", err)
 	}
@@ -146,9 +146,9 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 	var resp struct {
 		UOPCapacity int `json:"uop_capacity"`
 		Items       []struct {
-			PartNumber  string `json:"part_number"`
-			Quantity    int64  `json:"quantity"`
-			Description string `json:"description"`
+			PartNumber    string `json:"part_number"`
+			PartsPerCycle int64  `json:"parts_per_cycle"`
+			Description   string `json:"description"`
 		} `json:"items"`
 	}
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
@@ -156,7 +156,12 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 		t.Errorf("uop_capacity: got %d, want 50", resp.UOPCapacity)
 	}
 	if len(resp.Items) != 1 || resp.Items[0].PartNumber != "P-X" {
-		t.Errorf("items: got %+v", resp.Items)
+		t.Fatalf("items: got %+v", resp.Items)
+	}
+	// The ratio is the whole point of the endpoint and it is what Edge
+	// multiplies by. A drifted JSON key decodes to zero in silence.
+	if resp.Items[0].PartsPerCycle != 10 {
+		t.Errorf("parts_per_cycle: got %d, want 10", resp.Items[0].PartsPerCycle)
 	}
 }
 
@@ -178,17 +183,21 @@ func TestApiTelemetryPayloadManifest_KnownNoManifest_FallbackEntry(t *testing.T)
 	var resp struct {
 		UOPCapacity int `json:"uop_capacity"`
 		Items       []struct {
-			PartNumber string `json:"part_number"`
-			Quantity   int64  `json:"quantity"`
+			PartNumber    string `json:"part_number"`
+			PartsPerCycle int64  `json:"parts_per_cycle"`
 		} `json:"items"`
 	}
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.UOPCapacity != 30 {
 		t.Errorf("uop_capacity: got %d, want 30", resp.UOPCapacity)
 	}
-	// Fallback entry: one item with part_number = code, quantity = uop_capacity.
-	if len(resp.Items) != 1 || resp.Items[0].PartNumber != sd.Payload.Code || resp.Items[0].Quantity != 30 {
-		t.Errorf("fallback item: got %+v", resp.Items)
+	// Fallback entry: one item with part_number = code and a ratio of 1 —
+	// "a bin of this payload holds uop_remaining of it". Before the
+	// parts_per_cycle rename this said quantity = uop_capacity, which is the
+	// same claim expressed as a full-bin count; 1 x capacity is that count, so
+	// the fallback still describes the same bin.
+	if len(resp.Items) != 1 || resp.Items[0].PartNumber != sd.Payload.Code || resp.Items[0].PartsPerCycle != 1 {
+		t.Errorf("fallback item: got %+v, want one line of %s at 1 per cycle", resp.Items, sd.Payload.Code)
 	}
 }
 
@@ -313,6 +322,67 @@ func TestApiBinLoad_HappyPath(t *testing.T) {
 	}
 	if !got.ManifestConfirmed {
 		t.Error("manifest should be confirmed after bin-load")
+	}
+}
+
+// TestApiBinLoad_UOPFallsBackToCapacity pins the fallback's UNIT. With no
+// declared count the bin is assumed full, and a full bin is uop_capacity
+// CYCLES — not the sum of the manifest's part counts, which is a different
+// unit and agrees only while every payload is one part per cycle.
+//
+// The fixture makes the two disagree on purpose: capacity 50, manifest lines
+// summing 300. Reading 300 would be the old behaviour passing.
+func TestApiBinLoad_UOPFallsBackToCapacity(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	sd.Payload.UOPCapacity = 50
+	testutil.MustNoErr(t, db.UpdatePayload(sd.Payload), "set capacity")
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LOAD-FALLBACK")
+
+	rec := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load",
+		map[string]any{
+			"node_name":    sd.StorageNode.Name,
+			"payload_code": sd.Payload.Code,
+			// uop_count omitted — the operator declared none.
+			"manifest": []map[string]any{
+				{"part_number": "P1", "quantity": 100},
+				{"part_number": "P2", "quantity": 200},
+			},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 50 {
+		t.Errorf("uop_remaining = %d, want 50 (the payload's capacity in cycles, not the manifest's 300 parts)",
+			got.UOPRemaining)
+	}
+}
+
+// TestApiBinLoad_UOPFallbackWithNoTemplateIsZero: an undeclared count on a
+// payload Core has no template for is an unanswered question, not a full bin.
+// Zero makes the operator answer it; a guess would look like a measurement.
+func TestApiBinLoad_UOPFallbackWithNoTemplateIsZero(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LOAD-NOTMPL")
+
+	rec := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load",
+		map[string]any{
+			"node_name":    sd.StorageNode.Name,
+			"payload_code": "PAYLOAD-CORE-HAS-NEVER-SEEN",
+			"manifest":     []map[string]any{{"part_number": "P1", "quantity": 100}},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 0 {
+		t.Errorf("uop_remaining = %d, want 0 — no template means no capacity to assume", got.UOPRemaining)
 	}
 }
 

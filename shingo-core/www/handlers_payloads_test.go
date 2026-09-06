@@ -32,8 +32,7 @@ import (
 // with postJSON + parseIDParam-style GETs and assert on body + DB state.
 
 // --- shared test helpers (used by handlers_payloads_test.go and the rest of
-// the cluster: payload_templates, config, corrections, diagnostics, dashboard,
-// telemetry).
+// the cluster: payload_templates, config, diagnostics, dashboard, telemetry).
 
 // getPlain drives a GET handler at the given URL (path + query) and returns
 // the recorder. The handler itself reads URL.Query() and chi route params; for
@@ -228,12 +227,12 @@ func TestApiListManifest_HappyPath(t *testing.T) {
 
 	// Seed 2 manifest items.
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: sd.Payload.ID, PartNumber: "P1", Quantity: 3,
+		PayloadID: sd.Payload.ID, PartNumber: "P1", PartsPerCycle: 3,
 	}); err != nil {
 		t.Fatalf("create manifest item: %v", err)
 	}
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
-		PayloadID: sd.Payload.ID, PartNumber: "P2", Quantity: 5,
+		PayloadID: sd.Payload.ID, PartNumber: "P2", PartsPerCycle: 5,
 	}); err != nil {
 		t.Fatalf("create manifest item: %v", err)
 	}
@@ -267,16 +266,16 @@ func TestApiCreateManifestItem_HappyPath(t *testing.T) {
 
 	rec := postJSON(t, h.apiCreateManifestItem, "/api/payloads/manifest/create",
 		map[string]any{
-			"payload_id":  sd.Payload.ID,
-			"part_number": "PART-X",
-			"quantity":    7,
+			"payload_id":      sd.Payload.ID,
+			"part_number":     "PART-X",
+			"parts_per_cycle": 7,
 		})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var created payloads.ManifestItem
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&created), "decode")
-	if created.ID == 0 || created.PartNumber != "PART-X" || created.Quantity != 7 {
+	if created.ID == 0 || created.PartNumber != "PART-X" || created.PartsPerCycle != 7 {
 		t.Errorf("created: got %+v", created)
 	}
 
@@ -287,7 +286,7 @@ func TestApiCreateManifestItem_HappyPath(t *testing.T) {
 	}
 	found := false
 	for _, it := range items {
-		if it.PartNumber == "PART-X" && it.Quantity == 7 {
+		if it.PartNumber == "PART-X" && it.PartsPerCycle == 7 {
 			found = true
 		}
 	}
@@ -311,18 +310,18 @@ func TestApiUpdateManifestItem_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "OLD", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "OLD", PartsPerCycle: 1}
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "seed")
 
 	rec := postJSON(t, h.apiUpdateManifestItem, "/api/payloads/manifest/update",
-		map[string]any{"id": item.ID, "part_number": "NEW", "quantity": 9})
+		map[string]any{"id": item.ID, "part_number": "NEW", "parts_per_cycle": 9})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	assertJSONStatus(t, rec.Body.Bytes(), "ok")
 
 	items, _ := db.ListPayloadManifest(sd.Payload.ID)
-	if len(items) != 1 || items[0].PartNumber != "NEW" || items[0].Quantity != 9 {
+	if len(items) != 1 || items[0].PartNumber != "NEW" || items[0].PartsPerCycle != 9 {
 		t.Errorf("after update: got %+v", items)
 	}
 }
@@ -333,7 +332,7 @@ func TestApiDeleteManifestItem_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "GONE", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "GONE", PartsPerCycle: 1}
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "seed")
 
 	rec := postJSON(t, h.apiDeleteManifestItem, "/api/payloads/manifest/delete",

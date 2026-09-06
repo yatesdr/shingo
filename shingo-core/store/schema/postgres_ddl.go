@@ -327,13 +327,18 @@ CREATE TABLE IF NOT EXISTS payload_bin_types (
     PRIMARY KEY (payload_id, bin_type_id)
 );
 
+-- parts_per_cycle is a RATIO, not a count: how many of this part one
+-- production cycle consumes. The physical count in a bin is
+-- bins.uop_remaining x parts_per_cycle, derived at read time and stored
+-- nowhere. It was called quantity and held a full-bin nominal until v99,
+-- which renamed it and divided by payloads.uop_capacity to recover the ratio.
 CREATE TABLE IF NOT EXISTS payload_manifest (
-    id          BIGSERIAL PRIMARY KEY,
-    payload_id  BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,
-    part_number TEXT NOT NULL DEFAULT '',
-    quantity    BIGINT NOT NULL DEFAULT 0,
-    description TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id              BIGSERIAL PRIMARY KEY,
+    payload_id      BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,
+    part_number     TEXT NOT NULL DEFAULT '',
+    parts_per_cycle BIGINT NOT NULL DEFAULT 1,
+    description     TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_payload_manifest_payload ON payload_manifest(payload_id);
 
@@ -530,19 +535,27 @@ CREATE TABLE IF NOT EXISTS node_bin_types (
     PRIMARY KEY (node_id, bin_type_id)
 );
 
+-- delta is SIGNED and is the whole story: negative leaves the boundary,
+-- positive arrives at it. There is deliberately no txn_type (it was
+-- sign(delta) as a word, free to disagree with the delta beside it) and no
+-- qty_before/qty_after (computed at insert time from a recursive subtree scan,
+-- unsound under concurrent moves, read only by a diagnostics table). A running
+-- total is a query, not a column. Dropped by v101 on aged databases.
+--
+-- source_type carries no DEFAULT. Every writer sets it, and after the
+-- correction path was removed there is one legal value for new rows — a
+-- default that silently supplies it is a place for a future writer to forget.
+-- Historical rows carry source_type='correction' and stay browsable.
 CREATE TABLE IF NOT EXISTS cms_transactions (
     id             BIGSERIAL PRIMARY KEY,
     node_id        BIGINT NOT NULL REFERENCES nodes(id),
     node_name      TEXT NOT NULL DEFAULT '',
-    txn_type       TEXT NOT NULL DEFAULT '',
     cat_id         TEXT NOT NULL,
     delta          BIGINT NOT NULL DEFAULT 0,
-    qty_before     BIGINT NOT NULL DEFAULT 0,
-    qty_after      BIGINT NOT NULL DEFAULT 0,
     bin_id         BIGINT REFERENCES bins(id),
     bin_label      TEXT NOT NULL DEFAULT '',
     payload_code   TEXT NOT NULL DEFAULT '',
-    source_type    TEXT NOT NULL DEFAULT 'movement',
+    source_type    TEXT NOT NULL,
     order_id       BIGINT REFERENCES orders(id),
     notes          TEXT NOT NULL DEFAULT '',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()

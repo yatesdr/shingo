@@ -133,12 +133,6 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 | `GET` | `/api/bins/by-node?node_id=<ID>` | Bins at a specific node |
 | `GET` | `/api/bins/available` | List available (unoccupied) bins |
 
-### Corrections
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/corrections` | List inventory corrections |
-
 ### Demands
 
 | Method | Endpoint | Description |
@@ -250,12 +244,6 @@ Authentication required (session cookie).
 | `POST` | `/api/robots/availability` | `{"vehicle_id": "AMR-003", "available": true}` | Set robot availability |
 | `POST` | `/api/robots/retry` | `{"vehicle_id": "AMR-003"}` | Retry failed task |
 | `POST` | `/api/robots/force-complete` | `{"vehicle_id": "AMR-003"}` | Force complete current task |
-
-### Corrections
-
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/corrections/create` | `{"node_id": 1, "type": "add", ...}` | Create inventory correction |
 
 ### Test Orders (Kafka)
 

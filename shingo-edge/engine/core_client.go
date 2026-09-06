@@ -70,8 +70,26 @@ func (c *CoreClient) Available() bool {
 	return c != nil && c.baseURL != ""
 }
 
-// ManifestItem describes a single line in a payload manifest template.
+// ManifestItem describes a single line in a payload manifest TEMPLATE.
+//
+// PartsPerCycle is a ratio — how many of the part one production cycle
+// consumes, usually 1. The number physically in a bin is that times the bin's
+// UoP count. It was `quantity` and carried a full-bin nominal until Core's
+// parts_per_cycle rename; Core and Edge ship that rename together, so there is
+// no version in which one key is read and the other written.
+//
+// This is NOT the shape a bin-load request carries — see BinLoadItem. The two
+// were one struct, which is how a template ratio and a physical count came to
+// share a field name.
 type ManifestItem struct {
+	PartNumber    string `json:"part_number"`
+	PartsPerCycle int64  `json:"parts_per_cycle"`
+	Description   string `json:"description"`
+}
+
+// BinLoadItem is a single line of a bin-load request: a part number and how
+// many of it are actually in the carrier right now. A COUNT, not a ratio.
+type BinLoadItem struct {
 	PartNumber  string `json:"part_number"`
 	Quantity    int64  `json:"quantity"`
 	Description string `json:"description"`
@@ -379,10 +397,10 @@ func OccupancyOutcome(reachable bool, err error) string {
 
 // BinLoadRequest is the request body for loading a bin via HTTP.
 type BinLoadRequest struct {
-	NodeName    string         `json:"node_name"`
-	PayloadCode string         `json:"payload_code"`
-	UOPCount    int64          `json:"uop_count"`
-	Manifest    []ManifestItem `json:"manifest"`
+	NodeName    string        `json:"node_name"`
+	PayloadCode string        `json:"payload_code"`
+	UOPCount    int64         `json:"uop_count"`
+	Manifest    []BinLoadItem `json:"manifest"`
 }
 
 // coreErrorText picks the readable half of a failed Core reply.

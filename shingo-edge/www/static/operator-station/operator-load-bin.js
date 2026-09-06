@@ -96,12 +96,19 @@ async function selectLoadPayload(code) {
         loadBinState.uopCount = data.uop_capacity || 0;
         // Capture the canonical manifest from the payload template — operators
         // shouldn't be redefining it on the fly. They see the line items so
-        // they can verify the bin matches the template, but the values are
-        // sent back to the server unchanged.
+        // they can verify the bin matches the template, but the ratios are
+        // the catalog's and are not editable here.
+        //
+        // What is held is the TEMPLATE (a per-cycle ratio per part). The
+        // physical count for a line is that ratio times the UoP count the
+        // operator sets, so it is derived at render and at submit rather than
+        // stored — the operator can change UoP after the template loads, and a
+        // count captured here would be the count for whatever UoP happened to
+        // be showing at fetch time.
         loadBinState.manifest = items.map(function(item) {
             return {
                 part_number: item.part_number,
-                quantity: item.quantity || 0,
+                parts_per_cycle: item.parts_per_cycle || 0,
                 description: item.description || '',
             };
         });
@@ -141,9 +148,10 @@ function renderRows() {
     document.getElementById('os-load-uop-display').addEventListener('click', openUopKeypad);
 
     // Manifest line items — display-only. Operators can see what the payload
-    // template expects (part numbers + qty per UoP) but can't edit; the values
-    // come from the catalog and sending operator-edited counts here would let
-    // a typo silently corrupt the bin's manifest.
+    // template expects (part numbers, and the count this UoP figure implies)
+    // but can't edit; the ratios come from the catalog and sending
+    // operator-edited counts here would let a typo silently corrupt the bin's
+    // manifest. renderRows re-runs when UoP changes, so the counts follow it.
     state.manifest.forEach(function(item) {
         const row = document.createElement('div');
         row.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-bottom:8px;padding:10px;background:#1a1a1a;border-radius:6px';
@@ -155,7 +163,7 @@ function renderRows() {
                     : '') +
             '</div>' +
             '<div style="min-width:60px;text-align:right;color:#cfd;font-size:18px;font-weight:600">' +
-                item.quantity + '</div>';
+                (item.parts_per_cycle * state.uopCount) + '</div>';
         rows.appendChild(row);
     });
 }
@@ -209,7 +217,15 @@ async function submitLoadBin() {
     const body = {
         payload_code: state.payloadCode,
         uop_count: state.uopCount,
-        manifest: state.manifest,
+        // Ratios become counts on the way out. The template line says how many
+        // per cycle; the bin holds that times the cycles the operator counted.
+        manifest: state.manifest.map(function(item) {
+            return {
+                part_number: item.part_number,
+                quantity: item.parts_per_cycle * state.uopCount,
+                description: item.description,
+            };
+        }),
     };
     const nodeID = state.nodeID;
     setSubmittingUI(true);

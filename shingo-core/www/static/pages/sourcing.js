@@ -131,7 +131,6 @@ if (root) {
   // sourcing-update.
   const DRIFT_MS = 30000;
   onSSE('bin-update', () => scheduleReload(DRIFT_MS));
-  onSSE('inventory-update', () => scheduleReload(DRIFT_MS));
 
   // RECONNECT ONLY — never on first connect.
   //

@@ -68,9 +68,9 @@ func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem) error {
 }
 
 // UpdateManifestItem adjusts a manifest item's part number or
-// quantity.
-func (s *PayloadService) UpdateManifestItem(id int64, partNumber string, quantity int64) error {
-	return s.db.UpdatePayloadManifestItem(id, partNumber, quantity)
+// per-cycle ratio.
+func (s *PayloadService) UpdateManifestItem(id int64, partNumber string, partsPerCycle int64) error {
+	return s.db.UpdatePayloadManifestItem(id, partNumber, partsPerCycle)
 }
 
 // DeleteManifestItem removes a manifest item from a payload template.

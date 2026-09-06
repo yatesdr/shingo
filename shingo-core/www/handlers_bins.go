@@ -284,12 +284,17 @@ func derefInt64(p *int64) int64 {
 // --- Bin detail API ---
 
 type binDetailResponse struct {
-	Bin          *domain.Bin          `json:"bin"`
-	Manifest     *domain.Manifest     `json:"manifest"`
-	Template     *domain.Payload      `json:"template,omitempty"`
-	Audit        []*domain.AuditEntry `json:"audit"`
-	CurrentOrder *domain.Order        `json:"current_order,omitempty"`
-	RecentOrders []*domain.Order      `json:"recent_orders"`
+	Bin      *domain.Bin      `json:"bin"`
+	Manifest *domain.Manifest `json:"manifest"`
+	Template *domain.Payload  `json:"template,omitempty"`
+	// TemplateManifest carries the payload template's per-cycle ratios so the
+	// page can show a count per manifest line: bin.uop_remaining x the
+	// matching line's parts_per_cycle. The bin manifest stores no count of
+	// its own, so without this the page has a part list and no numbers.
+	TemplateManifest []*domain.PayloadManifestItem `json:"template_manifest,omitempty"`
+	Audit            []*domain.AuditEntry          `json:"audit"`
+	CurrentOrder     *domain.Order                 `json:"current_order,omitempty"`
+	RecentOrders     []*domain.Order               `json:"recent_orders"`
 }
 
 func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
@@ -311,10 +316,15 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 		resp.Manifest = m
 	}
 
-	// Payload template
+	// Payload template, and its manifest lines — the page derives each part's
+	// count from uop_remaining x parts_per_cycle, so the ratios travel with
+	// the bin rather than costing the page a second round trip.
 	if b.PayloadCode != "" {
 		if p, err := h.engine.PayloadService().GetByCode(b.PayloadCode); err == nil {
 			resp.Template = p
+			if items, err := h.engine.PayloadService().ListManifest(p.ID); err == nil {
+				resp.TemplateManifest = items
+			}
 		}
 	}
 

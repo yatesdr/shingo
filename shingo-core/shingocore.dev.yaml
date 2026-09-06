@@ -127,3 +127,41 @@ sim:
   fleet_size: 20
   jitter_pct: 0.2
   fail_rate: 0.0
+
+# ── CMS inventory-ledger integration ──────────────────────────────────────
+#
+# COMMENTED OUT, AND THAT IS THE OFF SWITCH. An empty base_url disables the
+# subsystem; there is no enable flag beside it that could disagree with the
+# endpoint it describes. Springfield carries no cms: block at all and therefore
+# posts nothing, without anyone having to remember to turn it off.
+#
+# base_url with either key empty REFUSES TO BOOT. That is deliberate and
+# unlike the rds: block, which repairs a bad value and carries on: a core that
+# starts with a URL and no credentials posts nothing, banks the failures in a
+# table nobody watches, and reports itself healthy.
+#
+# access_key / secret_key belong in the SITE-LOCAL yaml, never here and never
+# in the repo.
+#
+# Turning it on also needs a cms_storeroom node property on the boundary nodes
+# — presence of that property is what makes a node a CMS boundary, and with
+# none set the feed is legitimately empty.
+#
+# cms:
+#   base_url: https://mes-apps.example.invalid/mes-middleware-api/api/transactions/v1/inventory_transactions
+#   access_key: <site-supplied>
+#   secret_key: <site-supplied>
+#   timeout: 30s
+#   poll_interval: 30s
+#   max_attempts: 12
+#   # How long an inflight posting is left alone before the reconciler asks the
+#   # middleware about it. A POST that succeeded may not be queryable straight
+#   # away, and asking too early gets "no such transaction" about something
+#   # about to exist.
+#   settle_window: 5m
+#   # CMS's vocabulary. Placeholders until SCO confirms them.
+#   reason_code: "TEST-AMR"
+#   increase_type: "I"
+#   decrease_type: "D"
+#   unit_of_measure: "EA"
+#   user_id: "SHINGO"

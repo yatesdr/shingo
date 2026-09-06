@@ -230,16 +230,27 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
+	// No declared count means "assume a full bin", and a full bin is
+	// uop_capacity CYCLES. This used to sum the manifest's part counts, which
+	// is a different unit: it is right only while every payload is one part
+	// per cycle, and wrong by parts_per_cycle for any that is not.
+	//
+	// Core applies the same fallback, so a failed lookup here is not fatal —
+	// sending 0 lets Core answer from the template it already has. What must
+	// not happen is inventing a number from the wrong unit on the way.
 	if uopCount <= 0 {
-		for _, item := range manifest {
-			uopCount += item.Quantity
+		if resp, ferr := e.coreClient.FetchPayloadManifest(payloadCode); ferr == nil && resp != nil {
+			uopCount = int64(resp.UOPCapacity)
+		} else {
+			e.logFn("LoadBin: no UoP declared for %s at node %s and no template capacity available (%v) — deferring to Core",
+				payloadCode, node.Name, ferr)
 		}
 	}
 
 	// Load bin via direct HTTP to Core — synchronous, immediate feedback
-	items := make([]ManifestItem, len(manifest))
+	items := make([]BinLoadItem, len(manifest))
 	for i, m := range manifest {
-		items[i] = ManifestItem{PartNumber: m.PartNumber, Quantity: m.Quantity, Description: m.Description}
+		items[i] = BinLoadItem{PartNumber: m.PartNumber, Quantity: m.Quantity, Description: m.Description}
 	}
 	loadResp, err := e.coreClient.LoadBin(&BinLoadRequest{
 		NodeName:    node.CoreNodeName,

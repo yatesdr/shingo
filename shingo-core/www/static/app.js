@@ -299,8 +299,10 @@ document.addEventListener('DOMContentLoaded', convertTimestamps);
 // (order-update, bin-update, robot-update, mission-event, cms-transaction,
 // debug-log, fire-alarm) are subscribed via onSSE in their own page modules.
 // This replaces the legacy auto-connecting SSE IIFE (Q-002) so each tab holds
-// a single EventSource. inventory-update / node-update had no page consumers
-// and are simply no longer subscribed.
+// a single EventSource. node-update is subscribed by the pages that want it,
+// not here. inventory-update no longer exists at all — its only producer was
+// the correction path, which was removed; the two pages that subscribed to it
+// stay live on their bin-update subscriptions.
 onSSE('system-status', function(data) {
   if (!data) return;
   if (data.fleet !== undefined) {

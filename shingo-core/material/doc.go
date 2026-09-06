@@ -1,6 +1,5 @@
-// Package material contains the pure logic that maps a bin's
-// movement or manifest correction into a set of CMS transaction
-// records.
+// Package material contains the pure logic that maps a bin's movement
+// across a CMS boundary into a set of CMS transaction records.
 //
 // This package deliberately does not persist anything and does not
 // emit any events. It takes a narrow Store (read-only, declared
@@ -20,16 +19,22 @@
 // # Boundary walking
 //
 // FindCMSBoundary walks the parent chain from a node looking for the
-// nearest synthetic ancestor whose "log_cms_transactions" property
-// enables CMS logging. Defaults:
+// nearest synthetic ancestor carrying the "cms_storeroom" property, and
+// returns that node together with the storeroom code the property holds.
 //
-//   - a parentless (root) synthetic node is enabled unless the
-//     property is explicitly "false";
-//   - any other synthetic node is disabled unless the property is
-//     explicitly "true".
+// One property, no defaults, fail-closed at every depth: presence makes a
+// node a boundary and says which storeroom it is, absence means it is not
+// one. A node is never a boundary because of where it sits in the tree.
 //
-// If no synthetic ancestor is found the walk returns (nil, nil); if
-// the walk encounters a cycle or a Store error it returns
-// (nil, err) so callers can log the failure separately from the
-// normal "no boundary here" case.
+// That last point is the whole reason this shape exists. The predicate it
+// replaced defaulted parentless synthetic nodes ON, and nothing wrote the
+// property in production — so the default WAS the behaviour, and every
+// parentless synthetic node was a CMS boundary: _TRANSIT, every node group,
+// and every per-robot carrier node. A bin picked up by a robot crossed from
+// its real storeroom into "the robot", and the transfer was booked.
+//
+// If no tagged ancestor is found the walk returns (nil, "", nil). If it
+// encounters a cycle or a Store error it returns (nil, "", err), because
+// "the lookup failed" and "there is no boundary here" are different answers
+// and a caller that cannot tell them apart records nothing for a real move.
 package material

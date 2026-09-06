@@ -13,6 +13,7 @@
 package scenarios
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/integration/harness"
@@ -232,9 +233,12 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 		t.Errorf("manifest CatID = %q, want %q (= payload_code per single-payload normalization)",
 			item.CatID, sd.Payload.Code)
 	}
-	if item.Quantity != int64(partialUOP) {
-		t.Errorf("manifest Quantity = %d, want %d (= operator-declared remaining)",
-			item.Quantity, partialUOP)
+	// The line carries no count of its own — uop_remaining, asserted above, is
+	// the count, and the part count derives from it times the template's
+	// parts_per_cycle. A second copy on the manifest is what went stale as the
+	// bin drained.
+	if strings.Contains(*got.Manifest, `"qty"`) {
+		t.Errorf("reconstructed manifest carries a qty key: %s", *got.Manifest)
 	}
 
 	// claimed_by must still point at this order (release does not

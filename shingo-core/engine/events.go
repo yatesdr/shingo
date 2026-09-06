@@ -20,7 +20,6 @@ const (
 	EventOrderQueued
 	EventBinUpdated
 	EventNodeUpdated
-	EventCorrectionApplied
 	EventFleetConnected
 	EventFleetDisconnected
 	EventMessagingConnected
@@ -168,6 +167,28 @@ type BinUpdatedEvent struct {
 	ToNodeID    int64
 	Actor       string
 	Detail      string
+	// RobotID and OrderID name WHO moved the bin, and they travel on the event
+	// because they cannot be recovered afterwards. ApplyArrival releases the
+	// bin's claim before this fires, so bin.ClaimedBy is NULL by the time any
+	// subscriber reads it — the CMS ledger's order_id column was written from
+	// exactly that read and was therefore NULL for every ordinary delivery.
+	//
+	// Both are blank for an operator drag, which has neither a robot nor an
+	// order. That is a real answer, not a missing one.
+	RobotID string
+	OrderID int64
+	// Replay marks an event re-emitted for a move that already happened —
+	// today only RecoveryService.ReapplyOrderCompletion, which re-runs the
+	// side effects of a completion whose bin is already at the destination.
+	// Subscribers that re-evaluate state (audit, threshold, sourceability,
+	// lane gate, SSE) are idempotent and ignore it. Subscribers that record
+	// a physical event must not: the CMS ledger booked this move the first
+	// time, and a second pair of rows is a phantom transfer at the plant's
+	// inventory boundary. The flag travels with the event rather than being
+	// re-derived downstream because only the emitter knows it is a replay —
+	// "the bin is already at the destination" is also true of a normal
+	// arrival by the time the event fires.
+	Replay bool
 }
 
 // CellTickEvent carries one projected production tick to the SSE layer
@@ -194,15 +215,6 @@ type NodeUpdatedEvent struct {
 	NodeID   int64
 	NodeName string
 	Action   string // "created", "updated", "deleted"
-}
-
-type CorrectionAppliedEvent struct {
-	eventbus.PayloadBase
-	CorrectionID   int64
-	CorrectionType string
-	NodeID         int64
-	Reason         string
-	Actor          string
 }
 
 type ConnectionEvent struct {

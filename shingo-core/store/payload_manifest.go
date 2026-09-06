@@ -8,8 +8,8 @@ func (db *DB) CreatePayloadManifestItem(item *payloads.ManifestItem) error {
 	return payloads.CreateItem(db.DB, item)
 }
 
-func (db *DB) UpdatePayloadManifestItem(id int64, partNumber string, quantity int64) error {
-	return payloads.UpdateItem(db.DB, id, partNumber, quantity)
+func (db *DB) UpdatePayloadManifestItem(id int64, partNumber string, partsPerCycle int64) error {
+	return payloads.UpdateItem(db.DB, id, partNumber, partsPerCycle)
 }
 
 func (db *DB) DeletePayloadManifestItem(id int64) error {

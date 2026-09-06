@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"shingocore/store/reservations"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -881,8 +882,11 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	if parsed.Items[0].CatID != bin.PayloadCode {
 		t.Errorf("manifest item CatID = %q, want %q (= payload_code)", parsed.Items[0].CatID, bin.PayloadCode)
 	}
-	if parsed.Items[0].Quantity != int64(partial) {
-		t.Errorf("manifest item Quantity = %d, want %d (= remainingUOP)", parsed.Items[0].Quantity, partial)
+	// The line carries no count of its own — that is what uop_remaining, just
+	// asserted above, is for. A second copy here is the staleness the old
+	// `qty` key was: nothing rewrote it as the bin drained.
+	if strings.Contains(*got.Manifest, `"qty"`) {
+		t.Errorf("reconstructed manifest carries a qty key: %s", *got.Manifest)
 	}
 	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
 		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)

@@ -18,11 +18,8 @@ func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta in
 	tx := &cms.Transaction{
 		NodeID:     nodeID,
 		NodeName:   "seed-node",
-		TxnType:    "movement",
 		CatID:      catID,
 		Delta:      delta,
-		QtyBefore:  0,
-		QtyAfter:   delta,
 		SourceType: "movement",
 	}
 	testutil.MustNoErr(t, db.CreateCMSTransactions([]*cms.Transaction{tx}), "CreateCMSTransactions")

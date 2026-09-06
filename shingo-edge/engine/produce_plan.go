@@ -149,6 +149,9 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
 
+	// Quantity is the CYCLE count (see produceIngestAtRelease). Core writes it
+	// to uop_remaining and does not store it on the manifest line; the part
+	// count is uop_remaining x the template's parts_per_cycle.
 	plan := &ProducePlan{
 		Manifest: []protocol.IngestManifestItem{
 			{

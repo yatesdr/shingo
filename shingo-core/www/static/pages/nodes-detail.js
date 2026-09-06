@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, delegateActions, el, escapeHtml, removeClosestRow, toast, uiConfirm, uiPrompt } from '/static/app.js';
+import { api, apiGet, apiPost, delegateActions, el, escapeHtml, toast, uiConfirm } from '/static/app.js';
 import { confirmAllowedBinsNarrowing, renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
@@ -329,14 +329,7 @@ async function deleteNode() {
   form.submit();
 }
 
-var currentNodeID = 0;
-var expandedPayloadID = 0;
-
 function loadInventory(nodeID) {
-  currentNodeID = parseInt(nodeID);
-  expandedPayloadID = 0;
-  var manifestSec = document.getElementById('inv-manifest');
-  if (manifestSec) manifestSec.classList.add('hide');
   var list = document.getElementById('inv-list');
   var countEl = document.getElementById('inv-count');
   list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
@@ -371,137 +364,6 @@ function loadInventory(nodeID) {
       console.error('loadInventory', err);
       list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Error loading</span>';
     });
-}
-
-var originalManifest = [];
-
-function expandPayloadManifest(payloadID) {
-  expandedPayloadID = payloadID;
-  var sec = document.getElementById('inv-manifest');
-  document.getElementById('inv-manifest-pid').textContent = payloadID;
-  sec.classList.remove('hide');
-  var tbody = document.getElementById('inv-manifest-rows');
-  tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Loading...</td></tr>';
-  apiGet('/api/payloads/manifest?id=' + payloadID)
-    .then(function(items) {
-      tbody.innerHTML = '';
-      originalManifest = [];
-      if (!items) items = [];
-      if (isAuth) {
-        items.forEach(function(item) {
-          originalManifest.push({id: item.id, catid: item.part_number, qty: item.quantity});
-          addNodeManifestRow(item.id, item.part_number, item.quantity);
-        });
-      } else {
-        if (items.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="3" class="text-muted">No manifest items</td></tr>';
-          return;
-        }
-        items.forEach(function(item) {
-          tbody.innerHTML += '<tr><td>' + escapeHtml(item.part_number) + '</td><td>' + item.quantity + '</td><td></td></tr>';
-        });
-      }
-    })
-    .catch(function(err) {
-      console.error('expandPayloadManifest', err);
-      tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Error</td></tr>';
-    });
-}
-
-function makeEditable(span) {
-  var isQty = span.classList.contains('mr-qty');
-  var input = document.createElement('input');
-  input.type = isQty ? 'number' : 'text';
-  if (isQty) { input.step = '1'; input.min = '0'; }
-  input.className = 'mn-input ' + (isQty ? 'mr-qty' : 'mr-catid');
-  input.value = span.dataset.value || '';
-  if (!isQty) input.placeholder = 'CATID';
-  span.replaceWith(input);
-  input.focus();
-  function commit() {
-    var val = isQty ? (parseInt(input.value) || 0) : input.value.trim();
-    var s = document.createElement('span');
-    s.className = 'mn-val ' + (isQty ? 'mr-qty' : 'mr-catid');
-    if (!val && !isQty) s.classList.add('mn-empty');
-    s.dataset.value = isQty ? val : (val || '');
-    s.textContent = val || (isQty ? '0' : 'CATID');
-    s.onclick = function() { makeEditable(s); };
-    input.replaceWith(s);
-  }
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { input.blur(); }
-  });
-}
-
-function mnSpan(cls, value, empty) {
-  var s = document.createElement('span');
-  s.className = 'mn-val ' + cls;
-  s.dataset.value = value != null ? value : '';
-  if (empty) s.classList.add('mn-empty');
-  s.textContent = empty ? (cls === 'mr-qty' ? '0' : 'CATID') : value;
-  s.onclick = function() { makeEditable(s); };
-  return s;
-}
-
-function addNodeManifestRow(itemId, catid, qty) {
-  var tbody = document.getElementById('inv-manifest-rows');
-  var tr = document.createElement('tr');
-  tr.dataset.itemId = itemId || 0;
-  var td1 = document.createElement('td');
-  var td2 = document.createElement('td');
-  var isNew = !catid && (qty == null || qty === '');
-  td1.appendChild(mnSpan('mr-catid', catid || '', !catid));
-  td2.appendChild(mnSpan('mr-qty', qty != null && qty !== '' ? qty : 0, isNew));
-  tr.appendChild(td1);
-  tr.appendChild(td2);
-  var td3 = document.createElement('td');
-  td3.style.textAlign = 'center';
-  td3.innerHTML = '<button type="button" class="btn btn-danger btn-sm" data-action="removeClosestRow" style="padding:0.1rem 0.3rem;font-size:0.65rem">&times;</button>';
-  tr.appendChild(td3);
-  tbody.appendChild(tr);
-  if (isNew) { makeEditable(td1.querySelector('.mr-catid')); }
-}
-
-function mnReadVal(el) {
-  if (!el) return '';
-  return el.tagName === 'INPUT' ? el.value : (el.dataset.value || '');
-}
-
-function isManifestDirty() {
-  var rows = document.querySelectorAll('#inv-manifest-rows tr');
-  var current = [];
-  rows.forEach(function(tr) {
-    var catidEl = tr.querySelector('.mr-catid');
-    if (!catidEl) return;
-    current.push({
-      id: parseInt(tr.dataset.itemId) || 0,
-      catid: mnReadVal(catidEl).trim(),
-      qty: parseInt(mnReadVal(tr.querySelector('.mr-qty'))) || 0
-    });
-  });
-  if (current.length !== originalManifest.length) return true;
-  for (var i = 0; i < current.length; i++) {
-    var c = current[i], o = originalManifest[i];
-    if (c.id !== o.id || c.catid !== o.catid || c.qty !== o.qty) return true;
-  }
-  return false;
-}
-
-function collectManifestItems() {
-  var rows = document.querySelectorAll('#inv-manifest-rows tr');
-  var items = [];
-  var valid = true;
-  rows.forEach(function(tr) {
-    var catidEl = tr.querySelector('.mr-catid');
-    if (!catidEl) return;
-    var catid = mnReadVal(catidEl).trim();
-    var qty = parseInt(mnReadVal(tr.querySelector('.mr-qty'))) || 0;
-    if (!catid) { valid = false; return; }
-    items.push({id: parseInt(tr.dataset.itemId) || 0, cat_id: catid, quantity: qty});
-  });
-  return valid ? items : null;
 }
 
 // handleNodeSave runs everything the modal saves OUTSIDE the form post, then
@@ -546,26 +408,7 @@ async function handleNodeSave(el, evt) {
   await saveLaneGatePoints();
   await saveMaintainedGroup();
 
-  if (expandedPayloadID && isManifestDirty()) {
-    var items = collectManifestItems();
-    if (!items) { toast('All rows must have a CATID', 'info'); return; }
-    var reason = await uiPrompt('Reason for manifest correction:');
-    if (!reason) return;
-    try {
-      var data = await apiPost('/api/corrections/batch',
-        {payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items});
-      if (data && data.error) { toast(data.error, 'error'); return; }
-    } catch (err) {
-      toast('Error saving manifest: ' + err, 'error');
-      return;
-    }
-  }
   form.submit();
-}
-
-function closeManifestExpand() {
-  document.getElementById('inv-manifest').classList.add('hide');
-  expandedPayloadID = 0;
 }
 
 // The "Check Occupancy" block was removed here: it depended on RDS/SEER bin
@@ -583,23 +426,15 @@ function closeManifestExpand() {
 // single-source.
 delegateActions(document.body, {
     addChip,
-    addNodeManifestRow,
     clearChipPicker,
-    closeManifestExpand,
     closeNodeModal,
-    collectManifestItems,
     deleteNode,
-    expandPayloadManifest,
     filterChipDropdown,
     getPickerConfig,
     handleNodeSave,
     hideChipDropdown,
-    isManifestDirty,
     loadInventory,
     loadNodeDetail,
-    makeEditable,
-    mnReadVal,
-    mnSpan,
     onAsrsToggle,
     onModeChange,
     openNodeModal,

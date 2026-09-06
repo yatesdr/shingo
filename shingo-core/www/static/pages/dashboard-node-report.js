@@ -183,7 +183,6 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
     onSSE('disconnected', function () { setConnected(false); });
     onSSE('bin-update', scheduleReload);
     onSSE('node-update', scheduleReload);
-    onSSE('inventory-update', scheduleReload);
   }
 
   if (document.readyState === 'loading') {

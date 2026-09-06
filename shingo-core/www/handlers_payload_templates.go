@@ -97,8 +97,8 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
 		BinTypeIDs           []int64 `json:"bin_type_ids"`
 		Manifest             []struct {
-			PartNumber string `json:"part_number"`
-			Quantity   int64  `json:"quantity"`
+			PartNumber    string `json:"part_number"`
+			PartsPerCycle int64  `json:"parts_per_cycle"`
 		} `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -135,8 +135,8 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		var items []*domain.PayloadManifestItem
 		for _, it := range req.Manifest {
 			items = append(items, &domain.PayloadManifestItem{
-				PartNumber: it.PartNumber,
-				Quantity:   it.Quantity,
+				PartNumber:    it.PartNumber,
+				PartsPerCycle: it.PartsPerCycle,
 			})
 		}
 		if err := h.engine.PayloadService().ReplaceManifest(p.ID, items); err != nil {
@@ -164,8 +164,8 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
 		BinTypeIDs           []int64 `json:"bin_type_ids"`
 		Manifest             []struct {
-			PartNumber string `json:"part_number"`
-			Quantity   int64  `json:"quantity"`
+			PartNumber    string `json:"part_number"`
+			PartsPerCycle int64  `json:"parts_per_cycle"`
 		} `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -206,8 +206,8 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	var items []*domain.PayloadManifestItem
 	for _, it := range req.Manifest {
 		items = append(items, &domain.PayloadManifestItem{
-			PartNumber: it.PartNumber,
-			Quantity:   it.Quantity,
+			PartNumber:    it.PartNumber,
+			PartsPerCycle: it.PartsPerCycle,
 		})
 	}
 	if err := h.engine.PayloadService().ReplaceManifest(p.ID, items); err != nil {
@@ -271,9 +271,9 @@ func (h *Handlers) apiSavePayloadManifestTemplate(w http.ResponseWriter, r *http
 	var req struct {
 		PayloadID int64 `json:"payload_id"`
 		Items     []struct {
-			PartNumber  string `json:"part_number"`
-			Quantity    int64  `json:"quantity"`
-			Description string `json:"description"`
+			PartNumber    string `json:"part_number"`
+			PartsPerCycle int64  `json:"parts_per_cycle"`
+			Description   string `json:"description"`
 		} `json:"items"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -283,9 +283,9 @@ func (h *Handlers) apiSavePayloadManifestTemplate(w http.ResponseWriter, r *http
 	var items []*domain.PayloadManifestItem
 	for _, it := range req.Items {
 		items = append(items, &domain.PayloadManifestItem{
-			PartNumber:  it.PartNumber,
-			Quantity:    it.Quantity,
-			Description: it.Description,
+			PartNumber:    it.PartNumber,
+			PartsPerCycle: it.PartsPerCycle,
+			Description:   it.Description,
 		})
 	}
 

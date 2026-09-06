@@ -1,12 +1,13 @@
-// Package inventory holds inventory listing + correction persistence
+// Package inventory holds the cross-aggregate inventory listing query
 // for shingo-core.
 //
-// Phase 5 of the architecture plan moved the cross-aggregate inventory
-// listing query and the corrections CRUD out of the flat store/ package
-// and into this sub-package. The outer store/ keeps type aliases
-// (`store.InventoryRow = inventory.Row`,
-// `store.Correction = inventory.Correction`) and one-line delegate
-// methods on *store.DB so external callers see no API change.
+// Phase 5 of the architecture plan moved this query out of the flat
+// store/ package and into this sub-package. The outer store/ keeps a
+// type alias (`store.InventoryRow = inventory.Row`) and one-line
+// delegate methods on *store.DB so external callers see no API change.
+//
+// It also held the corrections CRUD until the correction path was
+// removed wholesale — see the commit that deleted engine/corrections.go.
 //
 // The inventory listing query reads bins + nodes + bin_types + orders
 // in one CTE; it is grouped here (rather than at the outer store/ level)
@@ -21,7 +22,6 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/store/internal/helpers"
 )
 
 // Row is the denormalized inventory listing row.
@@ -39,25 +39,14 @@ type Row struct {
 	InTransit   bool   `json:"in_transit"`
 	Destination string `json:"destination,omitempty"`
 
-	PayloadCode  string `json:"payload_code"`
-	CatID        string `json:"cat_id"`
-	Qty          int64  `json:"qty"`
-	UOPRemaining int    `json:"uop_remaining"`
-	Confirmed    bool   `json:"confirmed"`
-}
-
-// Correction is one corrections-table row.
-type Correction struct {
-	ID             int64     `json:"id"`
-	CorrectionType string    `json:"correction_type"`
-	NodeID         int64     `json:"node_id"`
-	BinID          *int64    `json:"bin_id,omitempty"`
-	CatID          string    `json:"cat_id"`
-	Description    string    `json:"description"`
-	Quantity       int64     `json:"quantity"`
-	Reason         string    `json:"reason"`
-	Actor          string    `json:"actor"`
-	CreatedAt      time.Time `json:"created_at"`
+	PayloadCode string `json:"payload_code"`
+	CatID       string `json:"cat_id"`
+	// Qty is derived at query time as UOPRemaining x the payload template's
+	// parts_per_cycle for this CatID, not read off the bin manifest. Zero
+	// when the template carries no line for the part.
+	Qty          int64 `json:"qty"`
+	UOPRemaining int   `json:"uop_remaining"`
+	Confirmed    bool  `json:"confirmed"`
 }
 
 // inventorySQL is computed once at package init so the terminal-status
@@ -66,13 +55,21 @@ type Correction struct {
 var inventorySQL = fmt.Sprintf(`
 WITH bin_items AS (
     -- Bins with manifest items
+    -- qty is DERIVED: uop_remaining x the template's parts_per_cycle. The
+    -- manifest line carries no count of its own — it used to, and that
+    -- number was a full-bin nominal nothing rewrote as the bin was drawn
+    -- down, so this column reported every partially-consumed bin as full.
+    -- The LEFT JOIN keeps a bin listed when its template has no line for
+    -- the part; the count is then 0, which is the honest answer when there
+    -- is no ratio to count by.
     SELECT b.id AS bin_id, b.label AS bin_label, bt.code AS bin_type,
            b.node_id, b.status, b.payload_code, b.uop_remaining,
            b.manifest_confirmed AS confirmed, b.claimed_by,
            (item->>'catid') AS cat_id,
-           (item->>'qty')::bigint AS qty
+           COALESCE(b.uop_remaining * pm.parts_per_cycle, 0)::bigint AS qty
     FROM bins b
     JOIN bin_types bt ON bt.id = b.bin_type_id
+    LEFT JOIN payloads p ON p.code = b.payload_code
     LEFT JOIN LATERAL jsonb_array_elements(
         CASE WHEN b.manifest IS NOT NULL AND b.manifest != 'null'
              AND jsonb_typeof(b.manifest->'items') = 'array'
@@ -81,6 +78,8 @@ WITH bin_items AS (
              ELSE NULL
         END
     ) AS item ON true
+    LEFT JOIN payload_manifest pm
+           ON pm.payload_id = p.id AND pm.part_number = (item->>'catid')
     WHERE item IS NOT NULL
 
     UNION ALL
@@ -350,71 +349,4 @@ func DeleteLinesideBucket(db *sql.DB, id int64) (int, error) {
 		return 0, fmt.Errorf("commit bucket delete %d: %w", id, err)
 	}
 	return int(n), nil
-}
-
-// CreateCorrection inserts one corrections row and sets c.ID on success.
-func CreateCorrection(db *sql.DB, c *Correction) error {
-	id, err := helpers.InsertID(db, `INSERT INTO corrections (correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-		c.CorrectionType, c.NodeID, helpers.NullableInt64(c.BinID), c.CatID, c.Description, c.Quantity, c.Reason, c.Actor)
-	if err != nil {
-		return err
-	}
-	c.ID = id
-	return nil
-}
-
-// ListCorrections returns recent corrections rows.
-func ListCorrections(db *sql.DB, limit int) ([]*Correction, error) {
-	rows, err := db.Query(`SELECT id, correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor, created_at FROM corrections ORDER BY id DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanCorrections(rows)
-}
-
-// ListCorrectionsByNode returns recent corrections rows for one node.
-func ListCorrectionsByNode(db *sql.DB, nodeID int64, limit int) ([]*Correction, error) {
-	rows, err := db.Query(`SELECT id, correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor, created_at FROM corrections WHERE node_id = $1 ORDER BY id DESC LIMIT $2`, nodeID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanCorrections(rows)
-}
-
-// ApplyBinManifestChanges records corrections rows for a bin's manifest
-// changes inside a single transaction.
-func ApplyBinManifestChanges(db *sql.DB, binID int64, corrections []*Correction) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	for _, c := range corrections {
-		_, err := tx.Exec(`INSERT INTO corrections (correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			c.CorrectionType, c.NodeID, helpers.NullableInt64(c.BinID), c.CatID, c.Description, c.Quantity, c.Reason, c.Actor)
-		if err != nil {
-			return fmt.Errorf("insert correction: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-func scanCorrections(rows *sql.Rows) ([]*Correction, error) {
-	var corrections []*Correction
-	for rows.Next() {
-		var c Correction
-		var binID sql.NullInt64
-		if err := rows.Scan(&c.ID, &c.CorrectionType, &c.NodeID, &binID, &c.CatID, &c.Description, &c.Quantity, &c.Reason, &c.Actor, &c.CreatedAt); err != nil {
-			return nil, err
-		}
-		if binID.Valid {
-			c.BinID = &binID.Int64
-		}
-		corrections = append(corrections, &c)
-	}
-	return corrections, rows.Err()
 }

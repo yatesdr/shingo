@@ -113,18 +113,24 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 63 methods —
-// ServiceAccess's 49 embedded, plus 14 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 62 methods —
+// ServiceAccess's 49 embedded, plus 13 orchestration verbs of its own.
+//
+// CMSFeedHealth is on the wide surface rather than reached through a service
+// accessor because two of its three inputs are PROCESS state — whether a cms:
+// block was configured, and whether the poster has muted itself. A service
+// reading only the database would report a muted poster with a quiet queue as
+// healthy and idle, which is the exact failure the health endpoint exists to
+// make impossible.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
 		"AdminService",
 		"AppConfig",
-		"ApplyBatchCorrection",
-		"ApplyCorrection",
 		"AuditService",
 		"BinManifest",
 		"BinService",
+		"CMSFeedHealth",
 		"CMSTransactionService",
 		"CalculatorService",
 		"CarrierBindings",

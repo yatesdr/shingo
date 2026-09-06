@@ -3,6 +3,7 @@ package nodes
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 
 	"shingocore/domain"
@@ -50,6 +51,30 @@ func ListProperties(db *sql.DB, nodeID int64) ([]*Property, error) {
 		props = append(props, &p)
 	}
 	return props, rows.Err()
+}
+
+// GetPropertyOrError returns a node property, distinguishing UNSET from
+// UNREADABLE. Unset is ("", nil); only a real read failure returns an error.
+//
+// GetProperty below collapses both to "", which is the right convenience for a
+// caller whose property is advisory. It is the wrong contract for one that
+// decides something: a fail-closed predicate reading "" cannot tell "this node
+// is not tagged" from "the database did not answer", and answers the first for
+// both. The CMS boundary walk is such a caller — a DB hiccup there would emit
+// zero inventory transactions for a real physical move.
+//
+// UNSET MUST NOT BE AN ERROR. Returning one for sql.ErrNoRows would make every
+// untagged node a failed walk, which is the same bug with the sign flipped.
+func GetPropertyOrError(db *sql.DB, nodeID int64, key string) (string, error) {
+	var value string
+	err := db.QueryRow(`SELECT value FROM node_properties WHERE node_id=$1 AND key=$2`, nodeID, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get property %q for node %d: %w", key, nodeID, err)
+	}
+	return value, nil
 }
 
 // GetProperty returns a single property value for a node, or empty string if not set.

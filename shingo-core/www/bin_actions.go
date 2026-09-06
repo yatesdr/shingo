@@ -266,6 +266,9 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 		PayloadCode: b.PayloadCode,
 		FromNodeID:  derefInt64(b.NodeID),
 		ToNodeID:    p.NodeID,
+		// RobotID and OrderID stay blank: an operator dragging a bin on the
+		// board is neither a robot nor an order. The CMS row it produces
+		// carries an empty Resource, which is the accurate answer.
 	}})
 
 	// Tell Edge to release the bin from its OLD node's runtime so that node

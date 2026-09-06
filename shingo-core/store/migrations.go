@@ -643,6 +643,16 @@ func migrateDropNodeType(tx *sql.Tx) error {
 	return err
 }
 
+// migrateCMSTransactions is the pre-v6 rename path: `direction` became
+// `txn_type` and `quantity` became `delta`. It is NOT a no-op — a database old
+// enough to carry those names cannot read the current schema without it.
+//
+// It still ADDS qty_before and qty_after, which v101 then drops. That is churn
+// on a fresh database (two ALTERs at first startup) and it is deliberate: this
+// function's job is to bring an ancient vintage up to the shape the migrations
+// AFTER it expect, and v101 is one of those. Editing it to skip them would make
+// it describe today's schema rather than the one it hands off to, which is how
+// a historical migration stops being replayable.
 func migrateCMSTransactions(tx *sql.Tx) error {
 	if !schema.TableExists(tx, "cms_transactions") {
 		return nil
@@ -4088,6 +4098,34 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bin_loaders", "changeover_load_directive")
 			}},
+		{99, "payload_manifest.quantity -> parts_per_cycle, backfilled from the full-bin nominal",
+			v99PayloadManifestPartsPerCycle,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "payload_manifest", "parts_per_cycle") &&
+					!schema.ColumnExists(q, "payload_manifest", "quantity")
+			}},
+		{100, "drop the retired log_cms_transactions node property",
+			v100DropLogCMSTransactionsProperty,
+			func(q schema.Querier) bool {
+				var exists bool
+				q.QueryRow(`SELECT EXISTS (SELECT 1 FROM node_properties WHERE key = 'log_cms_transactions')`).Scan(&exists)
+				return !exists
+			}},
+		{101, "drop cms_transactions.qty_before/qty_after/txn_type — derived values stored beside their source",
+			v101DropCMSTransactionDerivedColumns,
+			func(q schema.Querier) bool {
+				return !schema.ColumnExists(q, "cms_transactions", "qty_before") &&
+					!schema.ColumnExists(q, "cms_transactions", "qty_after") &&
+					!schema.ColumnExists(q, "cms_transactions", "txn_type")
+			}},
+		{102, "cms_postings + cms_transactions.posting_id/robot_id/storeroom",
+			v102CMSPostings,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "cms_postings") &&
+					schema.ColumnExists(q, "cms_transactions", "posting_id") &&
+					schema.ColumnExists(q, "cms_transactions", "robot_id") &&
+					schema.ColumnExists(q, "cms_transactions", "storeroom")
+			}},
 	}
 }
 
@@ -5498,6 +5536,223 @@ func v90MaintainedGroups(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v90 maintained groups: %w", err)
+		}
+	}
+	return nil
+}
+
+// v99PayloadManifestPartsPerCycle renames payload_manifest.quantity to
+// parts_per_cycle AND divides the stored value by the payload's UOP capacity.
+//
+// THE DIVIDE IS THE MIGRATION. The rename on its own would multiply every CMS
+// quantity by uop_capacity, because the two columns do not mean the same thing:
+//
+//   - quantity was a FULL-BIN NOMINAL. resolveTemplateManifest copies it
+//     verbatim into a bin's manifest in the same call that writes
+//     uop_remaining = payload.uop_capacity, and handlers_telemetry synthesises
+//     a missing template line as {part: code, quantity: uop_capacity}. Both
+//     only make sense if the number describes a full bin.
+//   - parts_per_cycle is a RATIO. The CMS wire quantity is
+//     uop_remaining x parts_per_cycle, so for a full bin that product has to
+//     come back to the old nominal — which makes the ratio
+//     nominal / uop_capacity.
+//
+// A one-part-per-cycle payload with a 24-cycle bin therefore stores 24 today
+// and must store 1 after this runs. Renaming without dividing would have it
+// post 576 parts to the storeroom ledger for a full bin, and nothing in shingo
+// reads the value back, so nothing would have caught it.
+//
+// uop_capacity = 0 rows are left alone: there is no ratio to recover, and a bin
+// from such a template carries uop_remaining = 0, so it produces no CMS rows
+// under either value. They are logged with the rest.
+//
+// GREATEST(1, ...) because a ratio of zero would silence the part entirely, and
+// a template line that exists is a part that is present.
+func v99PayloadManifestPartsPerCycle(tx *sql.Tx) error {
+	// Idempotent by inspection rather than by IF EXISTS: PostgreSQL has no
+	// ALTER TABLE ... RENAME COLUMN IF EXISTS, and re-running the divide on
+	// an already-divided column would drive every ratio to 1.
+	if !schema.ColumnExists(tx, "payload_manifest", "quantity") {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE payload_manifest RENAME COLUMN quantity TO parts_per_cycle`); err != nil {
+		return fmt.Errorf("v99 rename payload_manifest.quantity: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE payload_manifest ALTER COLUMN parts_per_cycle SET DEFAULT 1`); err != nil {
+		return fmt.Errorf("v99 set parts_per_cycle default: %w", err)
+	}
+
+	// Logged BEFORE the update, because the update destroys the evidence.
+	// These are the rows whose stored number was not an exact multiple of the
+	// bin's capacity — so it meant something other than a full-bin nominal, and
+	// the ratio below is a rounding of it. SCO adjudicates this list; the
+	// migration does not block on it, because a plant that cannot start is
+	// worse than a template that needs review.
+	rows, err := tx.Query(`
+		SELECT p.code, pm.part_number, pm.parts_per_cycle, p.uop_capacity
+		  FROM payload_manifest pm
+		  JOIN payloads p ON p.id = pm.payload_id
+		 -- NULLIF, not a bare modulo: PostgreSQL does not promise to evaluate
+		 -- the left arm of an OR first, so "capacity = 0 OR x % capacity <> 0"
+		 -- is free to divide by zero on exactly the rows the left arm is there
+		 -- to catch. With NULLIF a zero capacity makes the modulo NULL, the
+		 -- comparison unknown, and the row is still selected by the left arm.
+		 WHERE p.uop_capacity = 0 OR pm.parts_per_cycle % NULLIF(p.uop_capacity, 0) <> 0
+		 ORDER BY p.code, pm.part_number`)
+	if err != nil {
+		return fmt.Errorf("v99 survey payload_manifest ratios: %w", err)
+	}
+	var flagged int
+	for rows.Next() {
+		var code, part string
+		var stored, capacity int64
+		if err := rows.Scan(&code, &part, &stored, &capacity); err != nil {
+			rows.Close()
+			return fmt.Errorf("v99 scan survey row: %w", err)
+		}
+		flagged++
+		log.Printf("migrations: v99 payload %s part %s: stored %d is not a whole multiple of uop_capacity %d "+
+			"— parts_per_cycle will be rounded; have SCO confirm the ratio", code, part, stored, capacity)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("v99 survey payload_manifest ratios: %w", err)
+	}
+	rows.Close()
+	if flagged > 0 {
+		log.Printf("migrations: v99 flagged %d payload_manifest row(s) for SCO review", flagged)
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE payload_manifest pm
+		   SET parts_per_cycle = GREATEST(1, ROUND(pm.parts_per_cycle::numeric / p.uop_capacity))
+		  FROM payloads p
+		 WHERE p.id = pm.payload_id AND p.uop_capacity > 0`); err != nil {
+		return fmt.Errorf("v99 backfill parts_per_cycle: %w", err)
+	}
+	return nil
+}
+
+// v100DropLogCMSTransactionsProperty removes the retired boundary property.
+//
+// Defensive rather than corrective: nothing wrote log_cms_transactions in
+// production, which is precisely why the predicate that read it was dangerous —
+// its DEFAULT was its whole behaviour. The rows this deletes should not exist;
+// deleting them means a plant that somehow has one cannot have the old key
+// silently outlive the code that understood it.
+//
+// cms_storeroom, which replaces it, is inserted per plant at cutover. There is
+// nothing to migrate ACROSS: the old key was a boolean about whether to log,
+// the new one is a storeroom code, and no value of the first implies a value of
+// the second.
+func v100DropLogCMSTransactionsProperty(tx *sql.Tx) error {
+	res, err := tx.Exec(`DELETE FROM node_properties WHERE key = 'log_cms_transactions'`)
+	if err != nil {
+		return fmt.Errorf("v100 drop log_cms_transactions properties: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("migrations: v100 removed %d log_cms_transactions node propert(ies) — "+
+			"CMS boundaries are now declared by cms_storeroom and must be re-declared", n)
+	}
+	return nil
+}
+
+// v101DropCMSTransactionDerivedColumns removes three columns that stored a
+// derived value beside the value it was derived from.
+//
+//   - txn_type was sign(delta) as a word. Two columns for one fact, free to
+//     disagree, and the pair is only ever read as one of them.
+//   - qty_before / qty_after were computed at INSERT time from a recursive
+//     scan of every bin under the boundary. That is not sound under concurrent
+//     moves — two bins crossing at once each read a total the other was about
+//     to change — and their only reader was three columns of a diagnostics
+//     table. delta says what happened; a running total is a query, not a
+//     column.
+//
+// THIS IS THE ONE IRREVERSIBLE STEP IN THE PROJECT. The historical values are
+// gone. pg_dump cms_transactions at both plants before this runs.
+//
+// It also drops source_type's DEFAULT 'movement'. Every writer sets it
+// explicitly, so the default documents an assumption nothing relies on — and
+// after the correction path was removed there is exactly one legal value for
+// new rows, which makes a default that silently supplies it a place for a
+// future writer to forget. The COLUMN stays: historical rows carry
+// source_type='correction' and remain browsable.
+func v101DropCMSTransactionDerivedColumns(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE cms_transactions
+		DROP COLUMN IF EXISTS qty_before,
+		DROP COLUMN IF EXISTS qty_after,
+		DROP COLUMN IF EXISTS txn_type`); err != nil {
+		return fmt.Errorf("v101 drop cms_transactions derived columns: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE cms_transactions ALTER COLUMN source_type DROP DEFAULT`); err != nil {
+		return fmt.Errorf("v101 drop cms_transactions.source_type default: %w", err)
+	}
+	return nil
+}
+
+// v102CMSPostings adds the middleware POST lifecycle and the three columns that
+// link a transaction to the POST that carried it.
+//
+// NO FOREIGN KEYS, deliberately. cms_transactions.node_id's FK-without-ON-DELETE
+// already broke a bulk carrier-node retire, and bin_uop_ledger.loader_id is a
+// plain value for the same reason. A posting outliving a deleted transaction is
+// a stale row; a posting that BLOCKS a delete is an outage.
+//
+// The pending index is partial on status='pending' and that is load-bearing
+// rather than an optimisation. The poster must never pick up an inflight row —
+// a row is inflight because a POST for it may already have landed, and
+// re-POSTing it is how you double-book an inventory transfer with no
+// idempotency key to save you. An index that cannot answer for inflight rows is
+// a second place the rule is written down.
+func v102CMSPostings(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS cms_postings (
+			id                 BIGSERIAL PRIMARY KEY,
+			-- batch_key is one uuid per POST array; body_sha is the sha256 of
+			-- the canonical JSON we sent. Both are written BEFORE the POST, so
+			-- a crash mid-flight leaves a row that says exactly what was sent.
+			batch_key          TEXT        NOT NULL,
+			body_sha           TEXT        NOT NULL,
+			-- pending | inflight | posted | rejected | failed
+			status             TEXT        NOT NULL DEFAULT 'pending',
+			transaction_id     TEXT        NOT NULL DEFAULT '',
+			http_status        INT,
+			attempts           INT         NOT NULL DEFAULT 0,
+			-- requeue_count is separate from attempts on purpose: the
+			-- reconciler flipping an inflight row back to pending is a
+			-- different event from a send failing, and a loop between the two
+			-- has to be boundable without also shortening the retry budget.
+			requeue_count      INT         NOT NULL DEFAULT 0,
+			next_retry_at      TIMESTAMPTZ,
+			last_error         TEXT        NOT NULL DEFAULT '',
+			created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			inflight_at        TIMESTAMPTZ,
+			posted_at          TIMESTAMPTZ,
+			settled_at         TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cms_postings_pending ON cms_postings(next_retry_at)
+			WHERE status = 'pending'`,
+		`CREATE INDEX IF NOT EXISTS idx_cms_postings_inflight ON cms_postings(id)
+			WHERE status = 'inflight'`,
+		`CREATE INDEX IF NOT EXISTS idx_cms_postings_txid ON cms_postings(transaction_id)
+			WHERE transaction_id <> ''`,
+
+		// posting_id is NULL until a posting claims the row — that is what
+		// "not yet sent" means, and the partial index below is the queue.
+		`ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS posting_id BIGINT`,
+		// robot_id and storeroom are captured at build time. robot_id is the
+		// AMR that carried the bin; storeroom is the CMS code of the boundary
+		// this row is about, so the wire layer needs no reach-back to the node
+		// tree to answer "which storeroom".
+		`ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS robot_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS storeroom TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_cms_txn_unposted ON cms_transactions(id)
+			WHERE posting_id IS NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v102 cms postings: %w", err)
 		}
 	}
 	return nil

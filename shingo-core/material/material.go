@@ -3,15 +3,15 @@ package material
 import (
 	"errors"
 
-	"shingocore/store/bins"
 	"shingocore/store/cms"
 	"shingocore/store/nodes"
 )
 
 // errCMSBoundaryCycle is returned by FindCMSBoundary when the parent
-// chain revisits a node. The engine wrapper logs this and falls back
-// to "no boundary" so callers see the same nil-node behaviour they
-// got when this logic lived on *Engine.
+// chain revisits a node. It reaches the caller as an error and not as
+// a nil node: a malformed tree is a failure to locate the boundary,
+// which is a different answer from "this node has no boundary above
+// it".
 var errCMSBoundaryCycle = errors.New("cms boundary: parent chain cycle")
 
 // MovementEvent is the minimal bin-movement payload the material
@@ -24,64 +24,67 @@ type MovementEvent struct {
 	BinID      int64
 	FromNodeID int64
 	ToNodeID   int64
+	// RobotID and OrderID name who moved the bin. They arrive on the event
+	// rather than being read from the bin, because the bin's claim is already
+	// released by the time the event fires — reading bin.ClaimedBy here is what
+	// made cms_transactions.order_id NULL for every ordinary delivery.
+	RobotID string
+	OrderID int64
 }
 
-// FindCMSBoundary walks up the parent chain from nodeID to find the
-// nearest synthetic ancestor (or self) that has CMS transaction
-// logging enabled via the "log_cms_transactions" node property.
+// CMSStoreroomProperty is the node property that makes a node a CMS boundary
+// and carries the storeroom code CMS knows it by ("SM01", "MAN", "DOCK").
 //
-// Defaults:
-//   - parentless (root) synthetic nodes are enabled unless the
-//     property is explicitly "false";
-//   - child synthetic nodes are disabled unless the property is
-//     explicitly "true".
+// ONE PROPERTY, TWO ANSWERS, NO DEFAULT. Presence means "this is a boundary"
+// and its value is where; absence means "not a boundary". A node is never a
+// boundary because of where it sits in the tree.
+const CMSStoreroomProperty = "cms_storeroom"
+
+// FindCMSBoundary walks up the parent chain from nodeID and returns the nearest
+// synthetic ancestor (or self) tagged with cms_storeroom, together with that
+// storeroom's code.
 //
-// Returns (nil, nil) if the walk reaches a root without finding a
-// logging boundary. Returns (nil, err) if a Store call fails or the
-// walk detects a cycle, so callers can distinguish "no boundary
-// here" from "something went wrong on the way up".
-func FindCMSBoundary(s Store, nodeID int64) (*nodes.Node, error) {
+// FAIL-CLOSED AT EVERY DEPTH. The predicate this replaces defaulted parentless
+// synthetic nodes ON — enabled unless the property said "false" — and child
+// synthetic nodes OFF. Nothing wrote that property in production, so the
+// default was the whole behaviour, and it made every parentless synthetic node
+// a CMS boundary: _TRANSIT, every node group, and every per-robot carrier node
+// (_ROBOT:*). A bin picked up by a robot crossed from its real storeroom into
+// "the robot", and shingo booked the transfer.
+//
+// Returns (nil, "", nil) when the walk reaches a root without finding a tagged
+// ancestor. Returns (nil, "", err) when a Store call fails or the walk detects
+// a cycle — "the lookup failed" is not "there is no boundary here", and a
+// caller that cannot tell them apart emits zero transactions for a real move.
+func FindCMSBoundary(s Store, nodeID int64) (*nodes.Node, string, error) {
 	visited := make(map[int64]bool)
 	currentID := nodeID
 	for {
 		if visited[currentID] {
-			return nil, errCMSBoundaryCycle
+			return nil, "", errCMSBoundaryCycle
 		}
 		visited[currentID] = true
 
 		node, err := s.GetNode(currentID)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		if node.IsSynthetic {
-			prop := s.GetNodeProperty(node.ID, "log_cms_transactions")
-			if node.ParentID == nil {
-				if prop != "false" {
-					return node, nil
-				}
-			} else {
-				if prop == "true" {
-					return node, nil
-				}
+			code, err := s.GetNodePropertyOrError(node.ID, CMSStoreroomProperty)
+			if err != nil {
+				return nil, "", err
+			}
+			if code != "" {
+				return node, code, nil
 			}
 		}
 
 		if node.ParentID == nil {
-			return nil, nil
+			return nil, "", nil
 		}
 		currentID = *node.ParentID
 	}
-}
-
-// txnType returns "increase" or "decrease" based on the sign of
-// delta. Zero is treated as an increase; callers that want to skip
-// zero-delta rows filter them out before calling this.
-func txnType(delta int64) string {
-	if delta >= 0 {
-		return "increase"
-	}
-	return "decrease"
 }
 
 // BuildMovementTransactions returns the CMS transaction rows that
@@ -96,20 +99,26 @@ func txnType(delta int64) string {
 // persist and emit for a non-nil slice; a nil slice and nil error
 // means "no-op, carry on".
 func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, error) {
+	// The storeroom code is stamped onto the row here, where the walk already
+	// found it. Carrying it forward rather than re-deriving it downstream is
+	// what lets the wire layer be a pure struct-to-struct map: a translator
+	// that had to look up "which storeroom is node 41" would need the node tree
+	// and a database, and would stop being testable as a table of inputs.
 	var srcBoundary, dstBoundary *nodes.Node
+	var srcStoreroom, dstStoreroom string
 	if ev.FromNodeID != 0 {
-		b, err := FindCMSBoundary(s, ev.FromNodeID)
+		b, code, err := FindCMSBoundary(s, ev.FromNodeID)
 		if err != nil {
 			return nil, err
 		}
-		srcBoundary = b
+		srcBoundary, srcStoreroom = b, code
 	}
 	if ev.ToNodeID != 0 {
-		b, err := FindCMSBoundary(s, ev.ToNodeID)
+		b, code, err := FindCMSBoundary(s, ev.ToNodeID)
 		if err != nil {
 			return nil, err
 		}
-		dstBoundary = b
+		dstBoundary, dstStoreroom = b, code
 	}
 
 	srcID := int64(0)
@@ -129,73 +138,89 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, e
 		return nil, err
 	}
 
-	parsed, _ := bin.ParseManifest()
+	// An unparseable manifest is a failure to answer the question, not an
+	// answer of "no parts". Discarding the error here reported every
+	// corrupt manifest as an empty bin and emitted zero CMS rows for a
+	// real physical move.
+	parsed, err := bin.ParseManifest()
+	if err != nil {
+		return nil, err
+	}
 	if parsed == nil || len(parsed.Items) == 0 {
 		return nil, nil
 	}
 
+	// THE COUNT IS DERIVED, NOT READ. The manifest lists which parts are in
+	// the carrier; how many of each is uop_remaining x the template's
+	// parts_per_cycle, computed here at emission. The bin manifest used to
+	// carry a stored qty and it was a full-bin nominal that nothing rewrote
+	// as production drew the bin down — so a bin at 5 of 24 shipped 24 to
+	// the storeroom ledger.
+	perCycle, err := partsPerCycle(s, bin.PayloadCode)
+	if err != nil {
+		return nil, err
+	}
+	if perCycle == nil {
+		// No template to count by. Skipping is deliberate: a movement row
+		// with a guessed quantity is worse than no row, because it is
+		// indistinguishable from a measured one once it reaches CMS.
+		return nil, nil
+	}
+
+	// The order comes from the EVENT, not from bin.ClaimedBy. This used to read
+	// the claim, and the claim is released by ApplyArrival before the event
+	// fires — so order_id was NULL on every ordinary AMR delivery, a column
+	// written by one path and true only on the paths nobody looked at.
 	var orderID *int64
-	if bin.ClaimedBy != nil && *bin.ClaimedBy != 0 {
-		orderID = bin.ClaimedBy
+	if ev.OrderID != 0 {
+		id := ev.OrderID
+		orderID = &id
 	}
 
 	var txns []*cms.Transaction
 
 	// Source boundary: bin leaving → negative delta.
 	if srcBoundary != nil {
-		totals := s.SumCatIDsAtBoundary(srcBoundary.ID)
 		for _, m := range parsed.Items {
-			if m.Quantity <= 0 {
+			count := int64(bin.UOPRemaining) * perCycle[m.CatID]
+			if count <= 0 {
 				continue
 			}
-			delta := -m.Quantity
-			qtyAfter := totals[m.CatID]
-			qtyBefore := qtyAfter + m.Quantity
 			txns = append(txns, &cms.Transaction{
 				NodeID:      srcBoundary.ID,
 				NodeName:    srcBoundary.Name,
-				TxnType:     txnType(delta),
+				Storeroom:   srcStoreroom,
 				CatID:       m.CatID,
-				Delta:       delta,
-				QtyBefore:   qtyBefore,
-				QtyAfter:    qtyAfter,
+				Delta:       -count,
 				BinID:       &bin.ID,
 				BinLabel:    bin.Label,
 				PayloadCode: bin.PayloadCode,
 				SourceType:  "movement",
 				OrderID:     orderID,
-				Notes:       "auto-log",
+				RobotID:     ev.RobotID,
 			})
 		}
 	}
 
 	// Dest boundary: bin arriving → positive delta.
 	if dstBoundary != nil {
-		totals := s.SumCatIDsAtBoundary(dstBoundary.ID)
 		for _, m := range parsed.Items {
-			if m.Quantity <= 0 {
+			count := int64(bin.UOPRemaining) * perCycle[m.CatID]
+			if count <= 0 {
 				continue
-			}
-			delta := m.Quantity
-			qtyAfter := totals[m.CatID]
-			qtyBefore := qtyAfter - m.Quantity
-			if qtyBefore < 0 {
-				qtyBefore = 0
 			}
 			txns = append(txns, &cms.Transaction{
 				NodeID:      dstBoundary.ID,
 				NodeName:    dstBoundary.Name,
-				TxnType:     txnType(delta),
+				Storeroom:   dstStoreroom,
 				CatID:       m.CatID,
-				Delta:       delta,
-				QtyBefore:   qtyBefore,
-				QtyAfter:    qtyAfter,
+				Delta:       count,
 				BinID:       &bin.ID,
 				BinLabel:    bin.Label,
 				PayloadCode: bin.PayloadCode,
 				SourceType:  "movement",
 				OrderID:     orderID,
-				Notes:       "auto-log",
+				RobotID:     ev.RobotID,
 			})
 		}
 	}
@@ -206,89 +231,40 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, e
 	return txns, nil
 }
 
-// BuildCorrectionTransactions returns the CMS adjustment rows that
-// should be recorded when a bin's manifest is edited in place. Old
-// and new manifests are diffed by CatID; only non-zero deltas
-// produce rows. Reason is copied into CMSTransaction.Notes.
+// partsPerCycle returns the payload template's per-cycle ratio keyed by part
+// number, or nil when the payload has no template.
 //
-// If no boundary is found, the correction is still logged against
-// nodeID itself (falling back to the node's own name), mirroring the
-// behaviour of the old engine method — corrections at a node never
-// silently drop, even if the tree isn't set up for CMS logging.
+// nil and an empty map are DIFFERENT ANSWERS and the caller acts on the
+// difference: nil means "there is no template, so no count can be derived",
+// while an empty map means "the template exists and lists no parts". Returning
+// an empty map for both would turn a missing template into a bin that
+// legitimately holds nothing.
 //
-// Returns a nil slice when there are no non-zero deltas.
-func BuildCorrectionTransactions(s Store, binID, nodeID int64, oldManifest, newManifest []bins.ManifestEntry, reason string) ([]*cms.Transaction, error) {
-	boundary, err := FindCMSBoundary(s, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	var boundaryID int64
-	var boundaryName string
-	if boundary != nil {
-		boundaryID = boundary.ID
-		boundaryName = boundary.Name
-	} else {
-		boundaryID = nodeID
-		node, err := s.GetNode(nodeID)
-		if err != nil {
-			return nil, err
-		}
-		boundaryName = node.Name
-	}
-
-	oldQty := make(map[string]int64)
-	for _, m := range oldManifest {
-		oldQty[m.CatID] += m.Quantity
-	}
-	newQty := make(map[string]int64)
-	for _, m := range newManifest {
-		newQty[m.CatID] += m.Quantity
-	}
-
-	bin, err := s.GetBin(binID)
-	if err != nil {
-		return nil, err
-	}
-
-	allCatIDs := make(map[string]bool)
-	for k := range oldQty {
-		allCatIDs[k] = true
-	}
-	for k := range newQty {
-		allCatIDs[k] = true
-	}
-
-	totals := s.SumCatIDsAtBoundary(boundaryID)
-
-	var txns []*cms.Transaction
-	for catID := range allCatIDs {
-		delta := newQty[catID] - oldQty[catID]
-		if delta == 0 {
-			continue
-		}
-		qtyAfter := totals[catID]
-		qtyBefore := qtyAfter - delta
-		if qtyBefore < 0 {
-			qtyBefore = 0
-		}
-		txns = append(txns, &cms.Transaction{
-			NodeID:      boundaryID,
-			NodeName:    boundaryName,
-			TxnType:     txnType(delta),
-			CatID:       catID,
-			Delta:       delta,
-			QtyBefore:   qtyBefore,
-			QtyAfter:    qtyAfter,
-			BinID:       &bin.ID,
-			BinLabel:    bin.Label,
-			PayloadCode: bin.PayloadCode,
-			SourceType:  "correction",
-			Notes:       reason,
-		})
-	}
-
-	if len(txns) == 0 {
+// A bin with no payload_code has no template by construction; that is a bare
+// carrier, and it returns nil rather than an error.
+func partsPerCycle(s Store, payloadCode string) (map[string]int64, error) {
+	if payloadCode == "" {
 		return nil, nil
 	}
-	return txns, nil
+	p, err := s.GetPayloadByCode(payloadCode)
+	if err != nil {
+		// Not found is not an error worth failing a movement over — Edge can
+		// drive a direct load with a code Core has no template for. Errors
+		// that are not "no such payload" reach the caller through the same
+		// return, which is the conservative reading: an unreadable template
+		// must not silently become a zero-quantity move.
+		return nil, err
+	}
+	if p == nil {
+		return nil, nil
+	}
+	items, err := s.ListPayloadManifest(p.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(items))
+	for _, it := range items {
+		out[it.PartNumber] = it.PartsPerCycle
+	}
+	return out, nil
 }

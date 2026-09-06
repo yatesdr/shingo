@@ -13,7 +13,7 @@ shingo-core/
   dispatch/             Order routing: dispatch to fleet, lifecycle state machine
   dispatch/binresolver/ Slot-picking algorithms (FIFO/COST/FAVL, LKND/DPTH, lane locks)
   fulfillment/          Queued-order fulfillment scanner (narrow Dispatcher/Resolver interfaces)
-  material/             Pure CMS-transaction mapping for bin movement and manifest corrections
+  material/             Pure CMS-transaction mapping for bin movement across CMS boundaries
   service/              Service layer (BinService, BinManifestService) — validation + mutation behind handlers
   scenesync/            Reconciles the fleet backend's authoritative scene with shingo nodes and scene points
   messaging/            Kafka producer/consumer, outbox drainer, InboxDedup decorator, CoreHandler
@@ -199,7 +199,7 @@ engine.Events.Emit(Event{
 })
 ```
 
-Event types: `OrderDispatched`, `OrderStatusChanged`, `OrderFailed`, `OrderCompleted`, `OrderCancelled`, `OrderReceived`, `PayloadChanged`, `NodeUpdated`, `CorrectionApplied`
+Event types: `OrderDispatched`, `OrderStatusChanged`, `OrderFailed`, `OrderCompleted`, `OrderCancelled`, `OrderReceived`, `PayloadChanged`, `NodeUpdated`
 
 Event handlers are wired in `engine/wiring.go`.
 
@@ -264,7 +264,7 @@ This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used
 | `payload_manifest` | Template manifest items per payload |
 | `orders` | Transport orders with full lifecycle state |
 | `order_history` | Status change log per order |
-| `corrections` | Manual inventory corrections |
+| `corrections` | Historical only — the code that wrote it was removed; the table is kept for browsing old rows and is scheduled for a drop |
 | `cms_transactions` | Material movement transaction log |
 | `demands` | Material demand planning entries |
 | `outbox` | Message queue for Kafka delivery |

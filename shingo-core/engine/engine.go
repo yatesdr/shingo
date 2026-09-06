@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"shingo/protocol/types"
+	"shingocore/cms/poster"
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
@@ -102,6 +103,7 @@ type Engine struct {
 	missionService        *service.MissionService
 	testCmdService        *service.TestCommandService
 	cmsTxnService         *service.CMSTransactionService
+	cmsPostingService     *service.CMSPostingService
 	inventoryService      *service.InventoryService
 	adminService          *service.AdminService
 	healthService         *service.HealthService
@@ -113,17 +115,32 @@ type Engine struct {
 	heartbeatService      *service.HeartbeatService
 	thresholdMonitor      *ThresholdMonitor
 	sourceabilityMonitor  *SourceabilityMonitor
-	maintainer            *Maintainer
-	etaCache              *eta.Cache
-	notifier              *notify.Notifier
-	stopChan              chan struct{}
-	stopOnce              sync.Once
-	sceneSyncing          atomic.Bool
-	fleetConnected        atomic.Bool
-	msgConnected          atomic.Bool
-	dbConnected           atomic.Bool
-	robotsMu              sync.RWMutex
-	robotsCache           map[string]fleet.RobotStatus
+	// cmsPoster is nil unless cms.base_url is configured. Configuration is the
+	// gate: a site with no cms: block has no poster, and the subscriber that
+	// would feed it checks for nil rather than consulting a flag.
+	cmsPoster *poster.Poster
+	// cmsBuildFailures counts movements whose CMS rows could not be built.
+	//
+	// A COUNTER rather than only a log line, because the loss is otherwise
+	// invisible: a build failure produces no cms_transactions row, so it
+	// produces no posting either, and every query over those tables reports a
+	// plant that simply did not move anything. Absence of data rendering as
+	// absence of a problem is exactly what this counts against.
+	//
+	// In-memory, so a restart resets it. That is honest — it counts what THIS
+	// process dropped, and a process that just started has dropped nothing.
+	cmsBuildFailures atomic.Int64
+	maintainer       *Maintainer
+	etaCache         *eta.Cache
+	notifier         *notify.Notifier
+	stopChan         chan struct{}
+	stopOnce         sync.Once
+	sceneSyncing     atomic.Bool
+	fleetConnected   atomic.Bool
+	msgConnected     atomic.Bool
+	dbConnected      atomic.Bool
+	robotsMu         sync.RWMutex
+	robotsCache      map[string]fleet.RobotStatus
 
 	// preDisconnectAvailability captures per-robot Available state at the
 	// moment a fleet disconnect is detected. autoResumeAfterFleetReconnect
@@ -271,6 +288,7 @@ func New(c Config) *Engine {
 	e.missionService = service.NewMissionService(e.db)
 	e.testCmdService = service.NewTestCommandService(e.db)
 	e.cmsTxnService = service.NewCMSTransactionService(e.db)
+	e.cmsPostingService = service.NewCMSPostingService(e.db)
 	e.inventoryService = service.NewInventoryService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.healthService = service.NewHealthService(e.db)

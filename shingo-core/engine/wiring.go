@@ -37,6 +37,7 @@ import (
 	"shingo/protocol/eventbus"
 	"shingocore/dispatch"
 	"shingocore/notify"
+	"shingocore/store/cms"
 )
 
 func lookupRobotID(e *Engine, orderID int64) string {
@@ -343,12 +344,6 @@ func (e *Engine) wireEventHandlers() {
 		e.db.AppendAudit("node", ev.NodeID, ev.Action, "", ev.NodeName, "system")
 	}, EventNodeUpdated)
 
-	// Corrections: audit
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CorrectionAppliedEvent]) {
-		ev := evt.Payload
-		e.db.AppendAudit("correction", ev.CorrectionID, ev.CorrectionType, "", ev.Reason, ev.Actor)
-	}, EventCorrectionApplied)
-
 	// ── CMS transaction logging ────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		ev := evt.Payload
@@ -356,6 +351,43 @@ func (e *Engine) wireEventHandlers() {
 			e.RecordMovementTransactions(ev)
 		}
 	}, EventBinUpdated)
+
+	// ── CMS posting queue ──────────────────────────────────────────
+	//
+	// Recorded rows become a pending posting for the middleware. The poster is
+	// nil unless cms.base_url is configured, which is the whole gate — a site
+	// without the block records transactions locally and sends nothing.
+	//
+	// This runs on the EMITTING goroutine and only writes. A bin arrival must
+	// not wait on an HTTP round trip, and it does not: the send happens on the
+	// poster's own loop, woken by the doorbell this rings.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CMSTransactionEvent]) {
+		if e.cmsPoster == nil {
+			return
+		}
+		// MOVEMENTS ONLY. The correction path that also emitted this event is
+		// gone, so today this filter removes nothing — it is here so that a
+		// future re-introduction of corrections has to decide, explicitly,
+		// whether they belong on an inventory-transfer feed, rather than
+		// arriving on it by inheritance.
+		movements := make([]*cms.Transaction, 0, len(evt.Payload.Transactions))
+		for _, t := range evt.Payload.Transactions {
+			if t != nil && t.SourceType == "movement" {
+				movements = append(movements, t)
+			}
+		}
+		if len(movements) == 0 {
+			return
+		}
+		if err := e.cmsPoster.Enqueue(movements); err != nil {
+			// The rows ARE recorded — they just have no posting. Not counted as
+			// a build failure, because unlike that case this loss is visible:
+			// the transactions sit with posting_id NULL, which the health
+			// surface counts as unposted and names as a failing subscriber.
+			e.logFn("engine: queue %d cms transactions for posting: %v — "+
+				"they are recorded but unqueued", len(movements), err)
+		}
+	}, EventCMSTransaction)
 
 	// ── Fulfillment scanner triggers ────────────────────────────────
 	// Async trigger for high-volume signals (bin moves, order

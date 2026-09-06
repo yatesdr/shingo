@@ -145,8 +145,8 @@ type ServiceAccess interface {
 
 // EngineOrchestration is the wide interface for handlers that drive
 // composite-flow business operations spanning multiple subsystems
-// (corrections, direct orders, scene sync, cross-edge messaging,
-// live reconfiguration). Embeds ServiceAccess so orchestration
+// (direct orders, scene sync, cross-edge messaging, live
+// reconfiguration). Embeds ServiceAccess so orchestration
 // handlers retain access to per-domain services.
 //
 // As services absorb orchestration logic over time, individual verbs
@@ -157,9 +157,11 @@ type ServiceAccess interface {
 type EngineOrchestration interface {
 	ServiceAccess
 
-	// ── Corrections ────────────────────────────────────────────────
-	ApplyCorrection(req engine.ApplyCorrectionRequest) (int64, error)
-	ApplyBatchCorrection(req engine.BatchCorrectionRequest) error
+	// ── CMS feed ───────────────────────────────────────────────────
+	// Orchestration rather than a service accessor: two of its three inputs
+	// are PROCESS state (is a cms: block configured, has the poster muted
+	// itself) that no service reading the database can see.
+	CMSFeedHealth() (*service.FeedHealth, error)
 
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)

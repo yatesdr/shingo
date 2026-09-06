@@ -4,6 +4,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // Store is the narrow DB surface the material package depends on.
@@ -13,8 +14,8 @@ import (
 //  1. *store.DB satisfies it for free (Go interface satisfaction is
 //     structural), so engine wiring does not change.
 //  2. Tests can drop a hand-rolled fake into any material.* call and
-//     exercise boundary walks, movement recording, and correction
-//     recording without a database.
+//     exercise boundary walks and movement recording without a
+//     database.
 //
 // The set below is exactly the methods the material functions call on
 // the store — no more, no less. A lint of
@@ -28,9 +29,18 @@ import (
 // the engine is the boundary that writes and emits.
 type Store interface {
 	GetNode(id int64) (*nodes.Node, error)
-	GetNodeProperty(nodeID int64, key string) string
+	// GetNodePropertyOrError, not GetNodeProperty: the boundary walk must be
+	// able to tell an untagged node from a failed read. The plain form
+	// collapses both to "" and would make a DB hiccup look like "not a
+	// boundary", which emits nothing for a real physical move.
+	GetNodePropertyOrError(nodeID int64, key string) (string, error)
 	GetBin(id int64) (*bins.Bin, error)
-	SumCatIDsAtBoundary(boundaryID int64) map[string]int64
+	// The payload template, for the per-cycle ratios. A bin's manifest says
+	// which parts it holds; how many of each is uop_remaining x the
+	// template's parts_per_cycle, and the template is the only place that
+	// ratio lives.
+	GetPayloadByCode(code string) (*payloads.Payload, error)
+	ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, error)
 }
 
 // Compile-time check that *store.DB satisfies Store. If the store

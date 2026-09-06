@@ -529,6 +529,12 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 	if runtime.ActiveBinID != nil {
 		binID = *runtime.ActiveBinID
 	}
+	// Quantity here is the CYCLE count, not a part count, and Core no longer
+	// stores it: the bin's manifest records which parts, and the count is
+	// uop_remaining x parts_per_cycle. It is still carried because
+	// QueueIngestManifest's qty argument — the same number, one line down — is
+	// what Core writes to uop_remaining, and shipping the two consistently is
+	// what makes that readable. Do not read this field as a part count.
 	manifest := []protocol.IngestManifestItem{{
 		PartNumber:  claim.PayloadCode,
 		Quantity:    qty,

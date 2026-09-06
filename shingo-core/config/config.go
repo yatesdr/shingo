@@ -40,6 +40,12 @@ type Config struct {
 
 	RobotConfidence RobotConfidenceConfig `yaml:"robot_confidence"`
 
+	// CMS is the inventory-ledger integration. Empty base_url means the
+	// subsystem does not run — configuration is the gate, there is no on/off
+	// flag beside it that could disagree with the endpoint it is meant to
+	// describe.
+	CMS CMSConfig `yaml:"cms"`
+
 	// Display holds the Phase 6 surfaces' numeric constants. Read it through
 	// DisplayConstants(), not directly — see provenance.go, which also carries
 	// the record of where each of these numbers came from and which of them a
@@ -659,6 +665,7 @@ func Defaults() *Config {
 		// Values and the reasoning behind each of them live in provenance.go,
 		// together, so that neither can be edited without the other in view.
 		Display: DisplayDefaults(),
+		CMS:     CMSDefaults(),
 	}
 }
 
@@ -696,6 +703,16 @@ func Load(path string) (*Config, error) {
 	if cfg.RDS.StrandedSweepWindow <= 0 {
 		cfg.RDS.StrandedSweepWindow = defaultStrandedSweepWindow
 	}
+	// FATAL, unlike the RDS validation ten lines up, and the difference is
+	// deliberate. That one repairs a number deciding what wording an operator
+	// sees; this one decides whether an inventory ledger receives what shingo
+	// believes about the plant's stock. A core that boots with a CMS URL and no
+	// keys posts nothing, banks the failures in a table nobody is watching, and
+	// reports itself healthy. The refusal has to land at boot, where somebody
+	// is looking.
+	if err := cfg.CMS.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -716,3 +733,121 @@ func (c *Config) Unlock() { c.mu.Unlock() }
 // whether it succeeded. Companion to Lock/Unlock; lets callers assert the lock
 // is free without risking a hang on a deadlock.
 func (c *Config) TryLock() bool { return c.mu.TryLock() }
+
+// CMSConfig is the middleware inventory-ledger integration.
+//
+// CONFIGURATION IS THE GATE. An empty BaseURL means the subsystem does not
+// run — there is no separate enable flag, because a flag and an endpoint can
+// disagree and then two things have to be right for one behaviour. Springfield
+// carries no cms: block and therefore no CMS activity, without anyone having
+// to remember to turn it off.
+type CMSConfig struct {
+	// BaseURL is the middleware's inventory_transactions endpoint. Empty
+	// disables the whole subsystem.
+	BaseURL string `yaml:"base_url"`
+	// AccessKey and SecretKey go in the site-local yaml, never the repo.
+	// They are never logged, never in an error, and String() renders them as
+	// <set>/<empty>.
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+
+	Timeout      time.Duration `yaml:"timeout"`
+	PollInterval time.Duration `yaml:"poll_interval"`
+	MaxAttempts  int           `yaml:"max_attempts"`
+	// SettleWindow is how long an inflight posting is left alone before the
+	// reconciler asks the middleware about it. A POST that succeeded may not
+	// be queryable for a moment afterwards, and asking too early gets "no such
+	// transaction" about something that is about to exist — an answer that
+	// would requeue a posting that already landed.
+	SettleWindow time.Duration `yaml:"settle_window"`
+
+	// The vocabulary CMS expects. Placeholders until SCO confirms them; every
+	// one is a config edit rather than a code change for exactly that reason.
+	ReasonCode    string `yaml:"reason_code"`
+	IncreaseType  string `yaml:"increase_type"`
+	DecreaseType  string `yaml:"decrease_type"`
+	UnitOfMeasure string `yaml:"unit_of_measure"`
+	UserID        string `yaml:"user_id"`
+}
+
+// CMSDefaults returns the shipped CMS configuration: disabled, with the
+// vocabulary and timings pre-filled so a site turns the integration on by
+// supplying a URL and two keys.
+func CMSDefaults() CMSConfig {
+	return CMSConfig{
+		BaseURL:       "",
+		Timeout:       30 * time.Second,
+		PollInterval:  30 * time.Second,
+		MaxAttempts:   12,
+		SettleWindow:  5 * time.Minute,
+		ReasonCode:    "TEST-AMR",
+		IncreaseType:  "I",
+		DecreaseType:  "D",
+		UnitOfMeasure: "EA",
+		UserID:        "SHINGO",
+	}
+}
+
+// Enabled reports whether the CMS subsystem should run.
+func (c CMSConfig) Enabled() bool { return c.BaseURL != "" }
+
+// Validate refuses a configuration that would start the integration without
+// the credentials to use it, and fills zero durations from the defaults.
+//
+// FATAL, AND DELIBERATELY UNLIKE RDSConfig.Validate, which is reported and not
+// fatal. That distinction is the point rather than an inconsistency: RDS's
+// validated field decides what wording an operator sees, and a bad number
+// there must not stop a plant's core from starting. This one decides whether
+// an inventory ledger receives what shingo believes about the plant's stock.
+// A core that starts with a URL and no keys posts nothing, records the
+// failures in a table nobody is watching, and looks healthy — so the failure
+// has to happen at boot, where somebody is.
+//
+// An empty BaseURL is not an error. It is how a site says it does not use CMS,
+// and the rest of the block is then irrelevant.
+func (c *CMSConfig) Validate() error {
+	if c.Timeout <= 0 {
+		c.Timeout = 30 * time.Second
+	}
+	if c.PollInterval <= 0 {
+		c.PollInterval = 30 * time.Second
+	}
+	if c.MaxAttempts <= 0 {
+		c.MaxAttempts = 12
+	}
+	if c.SettleWindow <= 0 {
+		c.SettleWindow = 5 * time.Minute
+	}
+	if !c.Enabled() {
+		return nil
+	}
+	if c.AccessKey == "" || c.SecretKey == "" {
+		return fmt.Errorf("cms: base_url is set (%s) but access_key or secret_key is empty — "+
+			"the integration would accept every movement and post none of them", c.BaseURL)
+	}
+	return nil
+}
+
+// String renders the config with the keys redacted.
+//
+// It exists so that a `%v` or `%+v` of a Config — a debug print, a panic dump,
+// a log line written in a hurry — cannot spill the credentials. Go picks this
+// up for both verbs because it satisfies fmt.Stringer.
+func (c CMSConfig) String() string {
+	return fmt.Sprintf("CMSConfig{base_url:%s access_key:%s secret_key:%s timeout:%s "+
+		"poll_interval:%s max_attempts:%d settle_window:%s reason_code:%s "+
+		"increase_type:%s decrease_type:%s unit_of_measure:%s user_id:%s}",
+		c.BaseURL, redacted(c.AccessKey), redacted(c.SecretKey), c.Timeout,
+		c.PollInterval, c.MaxAttempts, c.SettleWindow, c.ReasonCode,
+		c.IncreaseType, c.DecreaseType, c.UnitOfMeasure, c.UserID)
+}
+
+// redacted reports whether a secret is present without saying what it is. It
+// says <set> rather than a length or a prefix: both leak, and a prefix leaks
+// the part an attacker would guess from.
+func redacted(s string) string {
+	if s == "" {
+		return "<empty>"
+	}
+	return "<set>"
+}

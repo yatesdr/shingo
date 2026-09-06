@@ -182,10 +182,15 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		h.jsonOK(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
+	// parts_per_cycle, not a count. Edge multiplies by the bin's UoP to get
+	// the physical number of a part; sending the count directly is what the
+	// old `quantity` key did, and it was a full-bin nominal that stayed wrong
+	// for every partial fill. Core and Edge change this key in the same
+	// release — there is no both-keys transition.
 	type manifestItem struct {
-		PartNumber  string `json:"part_number"`
-		Quantity    int64  `json:"quantity"`
-		Description string `json:"description"`
+		PartNumber    string `json:"part_number"`
+		PartsPerCycle int64  `json:"parts_per_cycle"`
+		Description   string `json:"description"`
 	}
 	// Include the canonical bin type code so press-index changeover on
 	// Edge can detect from→to bin type changes without a dedicated
@@ -207,8 +212,12 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		h.jsonOK(w, map[string]any{
 			"uop_capacity":  payload.UOPCapacity,
 			"bin_type_code": binTypeCode,
+			// One part per cycle: with no template to say otherwise, a bin of
+			// this payload holds uop_remaining of the part. The old shape said
+			// Quantity: UOPCapacity, which is the same claim written as a
+			// full-bin count.
 			"items": []manifestItem{
-				{PartNumber: code, Quantity: int64(payload.UOPCapacity), Description: payload.Description},
+				{PartNumber: code, PartsPerCycle: 1, Description: payload.Description},
 			},
 		})
 		return
@@ -216,9 +225,9 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 	result := make([]manifestItem, len(items))
 	for i, item := range items {
 		result[i] = manifestItem{
-			PartNumber:  item.PartNumber,
-			Quantity:    item.Quantity,
-			Description: item.Description,
+			PartNumber:    item.PartNumber,
+			PartsPerCycle: item.PartsPerCycle,
+			Description:   item.Description,
 		}
 	}
 	h.jsonOK(w, map[string]any{
@@ -305,17 +314,29 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	bin := binList[0]
 
+	// The manifest stores WHICH parts. The per-line counts Edge sends are not
+	// stored: a stored count goes stale as the bin is drawn down and nothing
+	// rewrites it. The count is uop_remaining x parts_per_cycle at read time.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(req.Manifest))}
-	var totalQty int64
 	for i, item := range req.Manifest {
-		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
-		totalQty += item.Quantity
+		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber}
 	}
 	manifestJSON, _ := json.Marshal(manifest)
 
+	// No declared UOP means "assume a full bin", and a full bin is
+	// uop_capacity CYCLES. This used to sum the manifest's part counts, which
+	// is a different unit — right only while every payload is one part per
+	// cycle, and wrong by parts_per_cycle for any that is not. A payload with
+	// no template row gives 0 rather than a guess: an undeclared count on an
+	// unknown payload is not a full bin, it is an unanswered question, and 0
+	// makes the operator answer it.
 	uop := req.UOPCount
 	if uop <= 0 {
-		uop = totalQty
+		if p, err := h.engine.PayloadService().GetByCode(req.PayloadCode); err == nil && p != nil {
+			uop = int64(p.UOPCapacity)
+		} else {
+			uop = 0
+		}
 	}
 
 	newEpoch, err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop))

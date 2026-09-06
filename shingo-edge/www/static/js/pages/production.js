@@ -59,9 +59,14 @@ function viewBinContents() {
             var manifest = typeof binState.manifest === 'string' ? JSON.parse(binState.manifest) : binState.manifest;
             var items = manifest.items || [];
             if (items.length > 0) {
-                html += '<table class="table" style="font-size:0.85rem"><thead><tr><th>Part</th><th>Qty</th></tr></thead><tbody>';
+                // Parts only. The manifest carries no count — the bin's count
+                // is uop_remaining (shown above) x the payload template's
+                // parts_per_cycle, and this page has the former but not the
+                // latter. A "Qty" column reading item.qty would print 0 for
+                // every line, which is worse than not printing it.
+                html += '<table class="table" style="font-size:0.85rem"><thead><tr><th>Part</th></tr></thead><tbody>';
                 items.forEach(function(item) {
-                    html += '<tr><td>' + escapeHtml(item.catid || item.part_number || '') + '</td><td>' + (item.qty || item.quantity || 0) + '</td></tr>';
+                    html += '<tr><td>' + escapeHtml(item.catid || item.part_number || '') + '</td></tr>';
                 });
                 html += '</tbody></table>';
             }
@@ -164,13 +169,19 @@ async function onLoadPayloadChanged() {
         uopRow.innerHTML = '<div style="font-weight:600">UoP Count</div>' +
             '<input type="number" id="rb-uop-count" class="form-input" value="' + uopCapacity + '" style="text-align:center;font-weight:600">';
         rows.appendChild(uopRow);
+        // The input is a COUNT — how many of the part are in the carrier. The
+        // template supplies a per-cycle RATIO, so the default is that ratio
+        // times a full bin's cycles, which is the number this field defaulted
+        // to before the rename. It stays editable: this form is the operator
+        // saying what is actually in the bin.
         items.forEach(function(item) {
+            var perCycle = item.parts_per_cycle || 0;
             var row = document.createElement('div');
             row.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px';
             row.innerHTML =
                 '<div><div style="font-weight:500">' + escapeHtml(item.part_number) + '</div>' +
                 '<div style="color:var(--text-muted);font-size:0.85rem">' + escapeHtml(item.description || '') + '</div></div>' +
-                '<input type="number" class="form-input rb-manifest-qty" value="' + (item.quantity || 0) + '" ' +
+                '<input type="number" class="form-input rb-manifest-qty" value="' + (perCycle * uopCapacity) + '" ' +
                     'data-part="' + escapeHtml(item.part_number) + '" data-desc="' + escapeHtml(item.description || '') + '" ' +
                     'style="text-align:center">';
             rows.appendChild(row);

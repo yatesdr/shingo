@@ -22,10 +22,10 @@ func TestCoverage_CreateAndListCMSTransactions(t *testing.T) {
 		t.Fatalf("create nodeB: %v", err)
 	}
 	txns := []*cms.Transaction{
-		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", TxnType: "arrival", CatID: "CAT-1", Delta: 5, QtyAfter: 5, SourceType: "movement"},
-		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", TxnType: "departure", CatID: "CAT-1", Delta: -2, QtyBefore: 5, QtyAfter: 3, SourceType: "movement"},
-		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", TxnType: "arrival", CatID: "CAT-2", Delta: 7, QtyAfter: 7, SourceType: "movement"},
-		{NodeID: nodeB.ID, NodeName: "CMS-NODE-B", TxnType: "arrival", CatID: "CAT-1", Delta: 3, QtyAfter: 3, SourceType: "movement"},
+		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", CatID: "CAT-1", Delta: 5, SourceType: "movement"},
+		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", CatID: "CAT-1", Delta: -2, SourceType: "movement"},
+		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", CatID: "CAT-2", Delta: 7, SourceType: "movement"},
+		{NodeID: nodeB.ID, NodeName: "CMS-NODE-B", CatID: "CAT-1", Delta: 3, SourceType: "movement"},
 	}
 	if err := cms.Create(db.DB, txns); err != nil {
 		t.Fatalf("Create: %v", err)

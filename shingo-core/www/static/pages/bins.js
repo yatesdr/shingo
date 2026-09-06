@@ -167,9 +167,20 @@ function renderContents(data) {
   var html = '';
 
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
+    // The count is derived, not stored: uop_remaining x the template line's
+    // parts_per_cycle. A part the template no longer lists shows "—" rather
+    // than 0, because "we cannot count this" and "there are none" are
+    // different things to tell someone standing at the bin.
+    var perCycle = {};
+    (data.template_manifest || []).forEach(function(t) {
+      perCycle[t.part_number] = t.parts_per_cycle;
+    });
+    var uop = (b && b.uop_remaining) || 0;
     html += h`<table class="table-compact"><thead><tr><th>Cat ID</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
       data.manifest.items.map(function(item) {
-        return h`<tr><td><code>${item.catid}</code></td><td>${item.qty}</td><td>${item.notes || ''}</td></tr>`;
+        var ppc = perCycle[item.catid];
+        var qty = ppc == null ? '—' : String(uop * ppc);
+        return h`<tr><td><code>${item.catid}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
       })
     }</tbody></table>`;
   } else {

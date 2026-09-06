@@ -368,7 +368,7 @@ orders --< order_history
   |---> bins
   +--< reservations (resource_kind bin→bins / slot→nodes)
 
-corrections ---> nodes, bins
+corrections ---> nodes, bins        (historical only — nothing writes it)
 cms_transactions ---> nodes, bins, orders
 
 outbox                  (message queue)

@@ -32,7 +32,7 @@ func TestPayloadCATIDs(t *testing.T) {
 	item := func(pid int64, pn string) {
 		t.Helper()
 		testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{
-			PayloadID: pid, PartNumber: pn, Quantity: 1,
+			PayloadID: pid, PartNumber: pn, PartsPerCycle: 1,
 		}), "create manifest item")
 	}
 	item(single.ID, "40016911")

@@ -329,12 +329,14 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	if err != nil {
 		return "", 0, fmt.Errorf("payload manifest: %w", err)
 	}
+	// The manifest records WHICH parts, not how many. The count is
+	// uop_remaining x parts_per_cycle wherever it is asked for, so a bin
+	// loaded at 5 of 24 answers 5 rather than the template's full-bin
+	// nominal — which is what this loop used to copy in, regardless of
+	// uopOverride.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
 	for i, item := range items {
-		manifest.Items[i] = domain.ManifestEntry{
-			CatID:    item.PartNumber,
-			Quantity: item.Quantity,
-		}
+		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber}
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
@@ -905,12 +907,18 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	// Positive: sync UOP AND reconstruct manifest, preserve claim.
 	//
 	// Manifest reconstruction (single-payload normalization assumption):
-	// the bin's manifest is rewritten to {"items":[{"catid": payload_code,
-	// "qty": remaining_uop}]}. Pre-2026-05 this branch only updated
-	// uop_remaining, leaving the manifest carrying the pre-release qty
-	// — the SMN_003/ALN_002 stale-manifest bug class. The reconstruction
-	// is atomic with the UOP update via jsonb_build_object reading
-	// payload_code from the same row, so no read-then-update race.
+	// the bin's manifest is rewritten to {"items":[{"catid": payload_code}]}.
+	// Pre-2026-05 this branch only updated uop_remaining, leaving the manifest
+	// carrying the pre-release qty — the SMN_003/ALN_002 stale-manifest bug
+	// class. The reconstruction is atomic with the UOP update via
+	// jsonb_build_object reading payload_code from the same row, so no
+	// read-then-update race.
+	//
+	// The line no longer carries a qty at all, which retires that bug class
+	// rather than re-fixing it: the count is uop_remaining (the $1 this same
+	// statement writes) times the template's parts_per_cycle, so there is no
+	// second copy to fall out of step. The rewrite still has to happen —
+	// the manifest's PART LIST must match the released payload.
 	//
 	// The CASE guard preserves the prior manifest if payload_code is
 	// empty (a malformed state — partial-release should always have a
@@ -924,7 +932,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 				WHEN COALESCE(payload_code, '') = '' THEN manifest
 				ELSE jsonb_build_object(
 					'items', jsonb_build_array(
-						jsonb_build_object('catid', payload_code, 'qty', $1::int)
+						jsonb_build_object('catid', payload_code)
 					)
 				)
 			END,

@@ -6,7 +6,6 @@ import (
 
 	"shingocore/store"
 	"shingocore/store/bins"
-	"shingocore/store/inventory"
 	"shingocore/store/nodes"
 	"shingocore/store/registry"
 	"shingocore/store/scene"
@@ -300,13 +299,6 @@ func (s *NodeService) RecentSceneDiffsWithLanes(limit int) ([]SceneDiff, error) 
 		out = append(out, SceneDiff{DiffView: d, Lanes: lanesByDiff[d.ID]})
 	}
 	return out, nil
-}
-
-// ListCorrectionsByNode returns the most recent correction entries
-// filed against a single node, capped at limit rows. Absorbed from
-// engine_db_methods.go as part of the Phase 3a closeout (PR 3a.6).
-func (s *NodeService) ListCorrectionsByNode(nodeID int64, limit int) ([]*inventory.Correction, error) {
-	return s.db.ListCorrectionsByNode(nodeID, limit)
 }
 
 // ListNodeStates returns the per-node state snapshot keyed by node ID.

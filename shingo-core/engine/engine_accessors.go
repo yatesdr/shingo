@@ -47,6 +47,30 @@ func (e *Engine) TestCommandService() *service.TestCommandService { return e.tes
 func (e *Engine) CMSTransactionService() *service.CMSTransactionService {
 	return e.cmsTxnService
 }
+
+// CMSFeedHealth answers whether the middleware feed is working.
+//
+// It lives on the Engine rather than purely on the service because two of the
+// three inputs are PROCESS state, not database state: whether a cms: block was
+// configured, and whether the poster has muted itself. A health answer built
+// from the tables alone would report a muted poster with a quiet queue as
+// healthy and idle.
+func (e *Engine) CMSFeedHealth() (*service.FeedHealth, error) {
+	muted, why := false, ""
+	if e.cmsPoster != nil {
+		muted, why = e.cmsPoster.Muted(), e.cmsPoster.MutedReason()
+	}
+	h, err := e.cmsPostingService.Health(e.cfg.CMS.Enabled(), muted, why)
+	if err != nil {
+		return nil, err
+	}
+	// The build-failure counter. A movement whose transaction rows could not be
+	// built never reaches cms_postings at all, so no query over that table can
+	// see it — this is the only place the loss is visible.
+	h.BuildFailures = e.cmsBuildFailures.Load()
+	h.Verdict()
+	return h, nil
+}
 func (e *Engine) InventoryService() *service.InventoryService { return e.inventoryService }
 func (e *Engine) AdminService() *service.AdminService         { return e.adminService }
 func (e *Engine) HealthService() *service.HealthService       { return e.healthService }

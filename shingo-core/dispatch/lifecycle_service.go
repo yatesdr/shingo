@@ -449,7 +449,11 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	if len(p.Manifest) > 0 {
 		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
 		for i, item := range p.Manifest {
-			manifest.Items[i] = bins.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
+			// item.Quantity is not carried: the bin manifest lists parts, and
+			// the count comes from uop_remaining (set just below from the
+			// operator-measured p.Quantity) times the template's
+			// parts_per_cycle.
+			manifest.Items[i] = bins.ManifestEntry{CatID: item.PartNumber}
 		}
 		manifestJSON, _ := json.Marshal(manifest)
 		// Use the operator-measured count Edge captured at finalize time

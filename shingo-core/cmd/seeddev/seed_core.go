@@ -189,7 +189,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return fmt.Errorf("bin %s set available: %w", b.Name, err)
 		}
 		if created && b.Payload != "" {
-			manifest := buildManifest(b.Payload, b.UOP)
+			manifest := buildManifest(b.Payload)
 			if err := db.SetBinManifest(binID, manifest, b.Payload, int(b.UOP)); err != nil {
 				return fmt.Errorf("bin %s set manifest: %w", b.Name, err)
 			}
@@ -759,14 +759,19 @@ func ensureBin(db *store.DB, label string, binTypeID, nodeID int64) (int64, bool
 }
 
 // buildManifest renders a one-line manifest JSON for a loaded bin.
-func buildManifest(payloadCode string, uop int64) string {
-	type item struct {
-		PartNumber string `json:"part_number"`
-		Quantity   int64  `json:"quantity"`
-	}
-	m := struct {
-		Items []item `json:"items"`
-	}{Items: []item{{PartNumber: payloadCode, Quantity: uop}}}
+//
+// It marshals domain.Manifest rather than a local struct, and that is the
+// point: the local struct it used to build wrote `part_number` and `quantity`,
+// while domain.ManifestEntry reads `catid`. Every seeded bin therefore parsed
+// to one item with an EMPTY CatID — which is not a decode error, so nothing
+// said so. Anything keyed on the manifest's catid (the inventory listing's
+// per-part rows, the CMS boundary totals) saw one nameless part across the
+// whole sim plant. Building the domain type means the tags cannot drift again.
+//
+// No quantity: the count is uop_remaining x the template's parts_per_cycle,
+// and uop is written separately by the caller's SetBinManifest.
+func buildManifest(payloadCode string) string {
+	m := domain.Manifest{Items: []domain.ManifestEntry{{CatID: payloadCode}}}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return `{"items":[]}`

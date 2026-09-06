@@ -16,8 +16,8 @@ type ManifestItem = domain.PayloadManifestItem
 
 // CreateItem inserts a manifest line and sets item.ID on success.
 func CreateItem(db *sql.DB, item *ManifestItem) error {
-	id, err := helpers.InsertID(db, `INSERT INTO payload_manifest (payload_id, part_number, quantity, description) VALUES ($1, $2, $3, $4) RETURNING id`,
-		item.PayloadID, item.PartNumber, item.Quantity, item.Description)
+	id, err := helpers.InsertID(db, `INSERT INTO payload_manifest (payload_id, part_number, parts_per_cycle, description) VALUES ($1, $2, $3, $4) RETURNING id`,
+		item.PayloadID, item.PartNumber, item.PartsPerCycle, item.Description)
 	if err != nil {
 		return err
 	}
@@ -25,10 +25,10 @@ func CreateItem(db *sql.DB, item *ManifestItem) error {
 	return nil
 }
 
-// UpdateItem changes a manifest line's part number and quantity.
-func UpdateItem(db *sql.DB, id int64, partNumber string, quantity int64) error {
-	_, err := db.Exec(`UPDATE payload_manifest SET part_number=$1, quantity=$2 WHERE id=$3`,
-		partNumber, quantity, id)
+// UpdateItem changes a manifest line's part number and per-cycle ratio.
+func UpdateItem(db *sql.DB, id int64, partNumber string, partsPerCycle int64) error {
+	_, err := db.Exec(`UPDATE payload_manifest SET part_number=$1, parts_per_cycle=$2 WHERE id=$3`,
+		partNumber, partsPerCycle, id)
 	return err
 }
 
@@ -40,7 +40,7 @@ func DeleteItem(db *sql.DB, id int64) error {
 
 // ListManifest returns all manifest items for a payload, ordered by insertion.
 func ListManifest(db *sql.DB, payloadID int64) ([]*ManifestItem, error) {
-	rows, err := db.Query(`SELECT id, payload_id, part_number, quantity, description, created_at FROM payload_manifest WHERE payload_id=$1 ORDER BY id`, payloadID)
+	rows, err := db.Query(`SELECT id, payload_id, part_number, parts_per_cycle, description, created_at FROM payload_manifest WHERE payload_id=$1 ORDER BY id`, payloadID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +49,7 @@ func ListManifest(db *sql.DB, payloadID int64) ([]*ManifestItem, error) {
 	var items []*ManifestItem
 	for rows.Next() {
 		item := &ManifestItem{}
-		if err := rows.Scan(&item.ID, &item.PayloadID, &item.PartNumber, &item.Quantity, &item.Description, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.PayloadID, &item.PartNumber, &item.PartsPerCycle, &item.Description, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -71,8 +71,8 @@ func ReplaceManifest(db *sql.DB, payloadID int64, items []*ManifestItem) error {
 	for _, item := range items {
 		item.PayloadID = payloadID
 		var id int64
-		err := tx.QueryRow(`INSERT INTO payload_manifest (payload_id, part_number, quantity, description) VALUES ($1, $2, $3, $4) RETURNING id`,
-			item.PayloadID, item.PartNumber, item.Quantity, item.Description).Scan(&id)
+		err := tx.QueryRow(`INSERT INTO payload_manifest (payload_id, part_number, parts_per_cycle, description) VALUES ($1, $2, $3, $4) RETURNING id`,
+			item.PayloadID, item.PartNumber, item.PartsPerCycle, item.Description).Scan(&id)
 		if err != nil {
 			return err
 		}

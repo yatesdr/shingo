@@ -7,10 +7,14 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/cms/client"
+	"shingocore/cms/poster"
+	"shingocore/cms/wire"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/fulfillment"
+	"shingocore/material"
 )
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -214,7 +218,82 @@ func (e *Engine) Start() {
 		e.maintainer.Run(mntCtx)
 	}
 
+	// The CMS poster. Configuration is the gate: with no cms.base_url there is
+	// no poster, the subscriber that would feed it sees nil, and the whole
+	// subsystem is absent rather than switched off.
+	//
+	// It is started here rather than in New because wireEventHandlers has to
+	// have run first — the subscriber reads e.cmsPoster, and a poster that
+	// existed before the subscription would drain an empty queue while the
+	// first arrivals went nowhere.
+	e.startCMSPoster()
+
 	e.logFn("engine: started")
+}
+
+// startCMSPoster builds and runs the middleware poster when the site has one.
+//
+// The credentials were already validated at config load — a base_url without
+// keys refuses to boot — so reaching here with an enabled block means the
+// integration can actually run.
+func (e *Engine) startCMSPoster() {
+	if !e.cfg.CMS.Enabled() {
+		return
+	}
+	e.cmsPoster = poster.New(
+		e.db,
+		client.New(client.Config{
+			BaseURL:   e.cfg.CMS.BaseURL,
+			AccessKey: e.cfg.CMS.AccessKey,
+			SecretKey: e.cfg.CMS.SecretKey,
+			Timeout:   e.cfg.CMS.Timeout,
+		}),
+		poster.Config{
+			PollInterval: e.cfg.CMS.PollInterval,
+			MaxAttempts:  e.cfg.CMS.MaxAttempts,
+			SettleWindow: e.cfg.CMS.SettleWindow,
+			Wire: wire.Config{
+				ReasonCode:    e.cfg.CMS.ReasonCode,
+				IncreaseType:  e.cfg.CMS.IncreaseType,
+				DecreaseType:  e.cfg.CMS.DecreaseType,
+				UnitOfMeasure: e.cfg.CMS.UnitOfMeasure,
+				UserID:        e.cfg.CMS.UserID,
+			},
+		},
+		e.logFn,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-e.stopChan
+		cancel()
+	}()
+	go e.cmsPoster.Run(ctx)
+
+	// An empty feed is a legitimate state before cutover, and it is
+	// indistinguishable from a broken one without saying which this is.
+	e.warnIfNoCMSBoundaries()
+	e.logFn("engine: cms poster started against %s (poll %s, settle %s, max attempts %d)",
+		e.cfg.CMS.BaseURL, e.cfg.CMS.PollInterval, e.cfg.CMS.SettleWindow, e.cfg.CMS.MaxAttempts)
+}
+
+// warnIfNoCMSBoundaries says so when the integration is on and nothing is
+// tagged. Not fatal: a plant configures the endpoint before it tags the nodes,
+// and that ordering is normal. But zero rows for that reason and zero rows
+// because the feed is broken look identical from the outside, and only this
+// line distinguishes them.
+func (e *Engine) warnIfNoCMSBoundaries() {
+	var n int
+	if err := e.db.QueryRow(`SELECT count(*) FROM node_properties WHERE key = $1`,
+		material.CMSStoreroomProperty).Scan(&n); err != nil {
+		e.logFn("engine: cms boundary census: %v", err)
+		return
+	}
+	if n == 0 {
+		e.logFn("engine: cms is configured but NO node carries a %s property — "+
+			"nothing will ever be posted until the boundary nodes are tagged with their "+
+			"storeroom codes", material.CMSStoreroomProperty)
+	}
 }
 
 // backfillETAsForInTransitOrders re-stamps ETAs for orders that are

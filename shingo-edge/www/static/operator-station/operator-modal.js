@@ -692,6 +692,15 @@ function cellCardAction(entry, claim, remaining) {
     if (delivered) {
         let confirmLabel = 'CONFIRM';
         const binState = entry.bin_state;
+        // DEAD, AND DEAD TWICE OVER. Core ships bins.manifest as an OBJECT
+        // ({"items":[...]}), so Array.isArray is false and this has never run.
+        // And the shape it reaches for is gone: manifest lines carry no
+        // `quantity` since Core stopped storing a count on them — the count is
+        // bins.uop_remaining x the payload template's parts_per_cycle. Do not
+        // "fix" the isArray check; that would sum a field that is not there and
+        // label the button "qty 0". Left in place rather than deleted because
+        // the label it wanted is worth building properly, from the derived
+        // count, when someone has a reason to.
         if (binState && binState.manifest) {
             try {
                 const mf = JSON.parse(binState.manifest);

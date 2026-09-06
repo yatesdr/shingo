@@ -3,7 +3,7 @@
 package dispatch
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -99,9 +99,11 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 		t.Errorf("manifest item CatID = %q, want %q (= payload_code per single-payload normalization)",
 			item.CatID, bp.Code)
 	}
-	if item.Quantity != int64(partial) {
-		t.Errorf("manifest item Quantity = %d, want %d (= remaining_uop)",
-			item.Quantity, partial)
+	// The line carries no count of its own; uop_remaining, asserted above, is
+	// the count. A second copy is exactly the staleness this reconstruction
+	// existed to paper over.
+	if strings.Contains(*got.Manifest, `"qty"`) {
+		t.Errorf("reconstructed manifest carries a qty key: %s", *got.Manifest)
 	}
 }
 
@@ -162,24 +164,14 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 	if item.CatID != bp.Code {
 		t.Errorf("manifest item CatID = %q, want %q", item.CatID, bp.Code)
 	}
-	if item.Quantity != int64(partial) {
-		t.Errorf("manifest item Quantity = %d, want %d", item.Quantity, partial)
-	}
 
-	// Pre-release manifest had qty=100; post-fix the manifest should NOT
-	// still reflect that. Read the raw JSON to be doubly explicit.
-	if got.Manifest != nil {
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(*got.Manifest), &raw); err == nil {
-			items, _ := raw["items"].([]any)
-			if len(items) > 0 {
-				if first, ok := items[0].(map[string]any); ok {
-					if q, ok := first["qty"].(float64); ok && int(q) == 100 {
-						t.Errorf("manifest still carries pre-release qty=100; reconstruction did not fire")
-					}
-				}
-			}
-		}
+	// The pre-release manifest this test seeds carries qty=100. The
+	// reconstruction must replace it, and the replacement carries no qty at
+	// all — so the presence of the key is now the whole assertion, and it
+	// catches "reconstruction never fired" more directly than reading the
+	// value ever did.
+	if strings.Contains(*got.Manifest, `"qty"`) {
+		t.Errorf("manifest still carries a qty key (pre-release was 100); reconstruction did not fire: %s", *got.Manifest)
 	}
 }
 

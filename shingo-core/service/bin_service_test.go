@@ -463,9 +463,9 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 	// Add a manifest item to the standard payload so SetBinManifestFromTemplate
 	// has something concrete to write.
 	item := &payloads.ManifestItem{
-		PayloadID:  sd.Payload.ID,
-		PartNumber: "PART-X",
-		Quantity:   7,
+		PayloadID:     sd.Payload.ID,
+		PartNumber:    "PART-X",
+		PartsPerCycle: 7,
 	}
 	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "create payload manifest item")
 

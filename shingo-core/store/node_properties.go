@@ -18,7 +18,15 @@ func (db *DB) ListNodeProperties(nodeID int64) ([]*nodes.Property, error) {
 }
 
 // GetNodeProperty returns a single property value for a node, or empty
-// string if not set.
+// string if not set. Use it only where the property is advisory — it cannot
+// tell "unset" from "the read failed". Where the answer decides something,
+// use GetNodePropertyOrError.
 func (db *DB) GetNodeProperty(nodeID int64, key string) string {
 	return nodes.GetProperty(db.DB, nodeID, key)
+}
+
+// GetNodePropertyOrError returns a node property, distinguishing UNSET
+// ("", nil) from UNREADABLE ("", err).
+func (db *DB) GetNodePropertyOrError(nodeID int64, key string) (string, error) {
+	return nodes.GetPropertyOrError(db.DB, nodeID, key)
 }

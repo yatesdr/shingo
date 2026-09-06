@@ -852,8 +852,8 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 		if len(m.Items) != 2 {
 			t.Fatalf("Items len = %d, want 2", len(m.Items))
 		}
-		if m.Items[0].CatID != "PART-001" || m.Items[0].Quantity != 5 {
-			t.Errorf("item 0 = %+v, want PART-001 qty 5", m.Items[0])
+		if m.Items[0].CatID != "PART-001" {
+			t.Errorf("item 0 = %+v, want PART-001", m.Items[0])
 		}
 		if m.Items[1].LotCode != "LOT-A" {
 			t.Errorf("item 1 LotCode = %q, want %q", m.Items[1].LotCode, "LOT-A")

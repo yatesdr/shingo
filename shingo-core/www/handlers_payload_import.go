@@ -2,7 +2,7 @@
 //
 // The operator picks a .xlsx or .csv file whose columns are, in order:
 //
-//	Payload Code | UoP Capacity | Manifest Part (CATID) | Qty
+//	Payload Code | UoP Capacity | Manifest Part (CATID) | Parts Per Cycle
 //
 // One row per manifest part, with the Payload Code repeated — a payload
 // with two manifest parts is two rows with the same code (that is the
@@ -12,7 +12,15 @@
 //
 // Per-row results, never abort-on-first-error: the response reports
 // created / skipped / failed / warning rows so a 200-row file with one
-// bad quantity still imports the 199 good ones and NAMES the bad one.
+// bad ratio still imports the 199 good ones and NAMES the bad one.
+//
+// THE FOURTH COLUMN CHANGED MEANING at the parts_per_cycle rename. It used to
+// be the count in a FULL bin; it is now how many of the part one production
+// cycle consumes — usually 1, and the full-bin count is that times UoP
+// Capacity. A sheet authored against the old format imports its nominals as
+// ratios and inflates every count by UoP Capacity. The column is positional, so
+// nothing here can tell the two apart; the header text and the Payloads page
+// are where an author is told.
 package www
 
 import (
@@ -102,7 +110,7 @@ func (h *Handlers) apiImportPayloadTemplates(w http.ResponseWriter, r *http.Requ
 //     first cell and defeats header detection (the header row imports as
 //     a bogus payload whose code starts with \ufeff).
 //   - Ragged rows (fewer cells than the header) read as blank trailing
-//     cells rather than failing the whole file — a missing trailing Qty
+//     cells rather than failing the whole file — a missing trailing ratio
 //     is a per-row warning downstream, not a 400.
 func readCSVRows(r io.Reader) ([][]string, error) {
 	br := bufio.NewReader(r)
@@ -214,7 +222,7 @@ func resolveGroupUoP(g *importGroup, report *importReport) (int64, bool) {
 	return 0, true // no row carried one: UoP 0, which earns a warning downstream
 }
 
-// validateGroupQuantities reports whether every part row's quantity parses.
+// validateGroupQuantities reports whether every part row's parts-per-cycle parses.
 //
 // Blank = 0; otherwise a whole number ≥ 0. FAILS FAST on the first bad
 // quantity, reporting ITS row — one failed row per bad payload, pointing at
@@ -227,12 +235,12 @@ func validateGroupQuantities(g *importGroup, report *importReport) bool {
 		q, ok := parseImportInt(e.qty)
 		if !ok {
 			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
-				Reason: fmt.Sprintf("quantity %q for part %s must be a whole number ≥ 0", e.qty, e.part)})
+				Reason: fmt.Sprintf("parts-per-cycle %q for part %s must be a whole number ≥ 0", e.qty, e.part)})
 			return false
 		}
 		if q > math.MaxInt64/2 { // absurd guard; bigint holds far more
 			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
-				Reason: fmt.Sprintf("quantity %q for part %s is too large", e.qty, e.part)})
+				Reason: fmt.Sprintf("parts-per-cycle %q for part %s is too large", e.qty, e.part)})
 			return false
 		}
 	}
@@ -290,9 +298,9 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 			q, _ := parseImportInt(e.qty) // already validated above
 			if q == 0 {
 				report.add(importRowResult{Line: e.line, Code: code, Status: "warning",
-					Reason: fmt.Sprintf("part %s has quantity 0", e.part)})
+					Reason: fmt.Sprintf("part %s has parts-per-cycle 0 — it will contribute no count", e.part)})
 			}
-			parts = append(parts, &domain.PayloadManifestItem{PartNumber: e.part, Quantity: q})
+			parts = append(parts, &domain.PayloadManifestItem{PartNumber: e.part, PartsPerCycle: q})
 		}
 		if len(parts) > 0 {
 			if err := h.engine.PayloadService().ReplaceManifest(p.ID, parts); err != nil {

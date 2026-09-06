@@ -276,22 +276,48 @@ CREATE TABLE public.cell_targets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.cms_postings (
+    id bigint NOT NULL,
+    batch_key text NOT NULL,
+    body_sha text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    transaction_id text DEFAULT ''::text NOT NULL,
+    http_status integer,
+    attempts integer DEFAULT 0 NOT NULL,
+    requeue_count integer DEFAULT 0 NOT NULL,
+    next_retry_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    inflight_at timestamp with time zone,
+    posted_at timestamp with time zone,
+    settled_at timestamp with time zone
+);
+
+CREATE SEQUENCE public.cms_postings_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.cms_postings_id_seq OWNED BY public.cms_postings.id;
+
 CREATE TABLE public.cms_transactions (
     id bigint NOT NULL,
     node_id bigint NOT NULL,
     node_name text DEFAULT ''::text NOT NULL,
-    txn_type text DEFAULT ''::text NOT NULL,
     cat_id text NOT NULL,
     delta bigint DEFAULT 0 NOT NULL,
-    qty_before bigint DEFAULT 0 NOT NULL,
-    qty_after bigint DEFAULT 0 NOT NULL,
     bin_id bigint,
     bin_label text DEFAULT ''::text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
-    source_type text DEFAULT 'movement'::text NOT NULL,
+    source_type text NOT NULL,
     order_id bigint,
     notes text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    posting_id bigint,
+    robot_id text DEFAULT ''::text NOT NULL,
+    storeroom text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.cms_transactions_id_seq
@@ -851,7 +877,7 @@ CREATE TABLE public.payload_manifest (
     id bigint NOT NULL,
     payload_id bigint NOT NULL,
     part_number text DEFAULT ''::text NOT NULL,
-    quantity bigint DEFAULT 0 NOT NULL,
+    parts_per_cycle bigint DEFAULT 1 NOT NULL,
     description text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -1310,6 +1336,8 @@ ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id
 
 ALTER TABLE ONLY public.cell_part_events ALTER COLUMN id SET DEFAULT nextval('public.cell_part_events_id_seq'::regclass);
 
+ALTER TABLE ONLY public.cms_postings ALTER COLUMN id SET DEFAULT nextval('public.cms_postings_id_seq'::regclass);
+
 ALTER TABLE ONLY public.cms_transactions ALTER COLUMN id SET DEFAULT nextval('public.cms_transactions_id_seq'::regclass);
 
 ALTER TABLE ONLY public.corrections ALTER COLUMN id SET DEFAULT nextval('public.corrections_id_seq'::regclass);
@@ -1426,6 +1454,9 @@ ALTER TABLE ONLY public.cell_config
 
 ALTER TABLE ONLY public.cell_targets
     ADD CONSTRAINT cell_targets_pkey PRIMARY KEY (cell_id, payload_code);
+
+ALTER TABLE ONLY public.cms_postings
+    ADD CONSTRAINT cms_postings_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.cms_transactions
     ADD CONSTRAINT cms_transactions_pkey PRIMARY KEY (id);
@@ -1651,9 +1682,17 @@ CREATE INDEX idx_bins_type ON public.bins USING btree (bin_type_id);
 
 CREATE INDEX idx_cell_part_events_cell_time ON ONLY public.cell_part_events USING btree (cell_id, recorded_at);
 
+CREATE INDEX idx_cms_postings_inflight ON public.cms_postings USING btree (id) WHERE (status = 'inflight'::text);
+
+CREATE INDEX idx_cms_postings_pending ON public.cms_postings USING btree (next_retry_at) WHERE (status = 'pending'::text);
+
+CREATE INDEX idx_cms_postings_txid ON public.cms_postings USING btree (transaction_id) WHERE (transaction_id <> ''::text);
+
 CREATE INDEX idx_cms_txn_created ON public.cms_transactions USING btree (created_at);
 
 CREATE INDEX idx_cms_txn_node ON public.cms_transactions USING btree (node_id);
+
+CREATE INDEX idx_cms_txn_unposted ON public.cms_transactions USING btree (id) WHERE (posting_id IS NULL);
 
 CREATE UNIQUE INDEX idx_demand_origins_open_key ON public.demand_origins USING btree (episode_key) WHERE (closed_at IS NULL);
 

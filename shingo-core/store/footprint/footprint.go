@@ -165,7 +165,9 @@ func binsOccupancyDaily(db *sql.DB, loc *time.Location, n int) []BinDayBucket {
 //
 // This replaced two earlier broken sources (closed Q-011 / Q-015): the prior
 // bins.loaded_at query undercounted (each bin's *latest* load only), and the
-// cms_transactions `txn_type ILIKE '%clear%'` filter matched zero rows.
+// cms_transactions `txn_type ILIKE '%clear%'` filter matched zero rows (that
+// column has since been dropped — it stored sign(delta) as a word, so it never
+// carried a "clear" to match).
 func loadUnloadDaily(db *sql.DB, loc *time.Location, loadedOp string, unloadedOps []string, n int) []Bucket {
 	tz := loc.String()
 	loaded := opDayCounts(db, tz, n, loadedOp)

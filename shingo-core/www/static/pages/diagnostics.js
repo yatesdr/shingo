@@ -27,6 +27,7 @@ import { onSSE } from '/static/shared/utils.js';
     if (tab === 'cms' && !cmsLoaded) {
       cmsLoaded = true;
       loadCMSTransactions();
+      loadCMSHealth();
     }
     if (tab === 'recon' && !reconLoaded) {
       reconLoaded = true;
@@ -115,16 +116,68 @@ import { onSSE } from '/static/shared/utils.js';
     tr.innerHTML =
       '<td>' + formatTime(t.created_at, { precision: 'ms' }) + '</td>' +
       '<td>' + escapeHtml(t.node_name || '') + '</td>' +
-      '<td>' + escapeHtml(t.txn_type || '') + '</td>' +
       '<td>' + escapeHtml(t.cat_id || '') + '</td>' +
+      // The signed delta replaces the Type / Before / After columns. Type was
+      // sign(delta) as a word; Before and After were a running total computed
+      // at insert time from a subtree scan, which is not sound under concurrent
+      // moves — two bins crossing at once each recorded a total the other was
+      // about to change.
       '<td class="' + qtyClass + '">' + deltaLabel + '</td>' +
-      '<td>' + t.qty_before + '</td>' +
-      '<td>' + t.qty_after + '</td>' +
       '<td>' + escapeHtml(t.bin_label || '-') + '</td>' +
       '<td>' + escapeHtml(t.payload_code || '') + '</td>' +
       '<td>' + escapeHtml(t.source_type || '') + '</td>' +
       '<td>' + escapeHtml(t.notes || '') + '</td>';
     return tr;
+  }
+
+  // loadCMSHealth renders the feed verdict.
+  //
+  // The verdict and its sentence are computed SERVER-SIDE, in one place, and
+  // this only paints them. A page that decided for itself what "healthy" means
+  // would be a second definition to keep in step with the first — and the
+  // interesting cases (a muted poster, a plant with no tagged boundaries, a
+  // movement that never became a row) are ones the counts alone do not show.
+  function loadCMSHealth() {
+    var badge = document.getElementById('cms-health-badge');
+    var why = document.getElementById('cms-health-why');
+    var counts = document.getElementById('cms-health-counts');
+    if (!badge) return;
+    fetch('/api/cms-health')
+      .then(function(r) { return r.json(); })
+      .then(function(h) {
+        if (!h) return;
+        if (!h.enabled) {
+          badge.className = 'badge';
+          badge.textContent = 'NOT CONFIGURED';
+          why.textContent = h.why || '';
+          counts.textContent = '';
+          return;
+        }
+        badge.className = 'badge ' + (h.healthy ? 'badge-available' : 'badge-flagged');
+        badge.textContent = h.healthy ? 'FEED OK' : 'ATTENTION';
+        why.textContent = h.why || '';
+        // Counts are context for the sentence, never the verdict. "0 pending"
+        // is not good news on its own — it is what a feed nothing is handed
+        // looks like.
+        var parts = [
+          h.pending_count + ' pending',
+          h.inflight_count + ' inflight',
+          h.posted_last_hour + ' posted/hr',
+        ];
+        if (h.failed_count) parts.push(h.failed_count + ' failed');
+        if (h.rejected_count) parts.push(h.rejected_count + ' rejected');
+        if (h.unposted_transaction_count) parts.push(h.unposted_transaction_count + ' unqueued');
+        if (h.build_failures) parts.push(h.build_failures + ' lost');
+        parts.push(h.configured_storerooms + ' storerooms');
+        counts.textContent = parts.join(' · ');
+      })
+      .catch(function(err) {
+        // A health card that fails silently is worse than none: the page would
+        // show a stale verdict and nothing would say it was stale.
+        badge.className = 'badge badge-flagged';
+        badge.textContent = 'UNKNOWN';
+        why.textContent = 'could not read the feed health: ' + err;
+      });
   }
 
   function loadCMSTransactions() {

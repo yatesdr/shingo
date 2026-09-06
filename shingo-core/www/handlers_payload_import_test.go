@@ -53,8 +53,8 @@ func TestImportPayloadGroups_CreatesPayloadsAndManifests(t *testing.T) {
 	}
 	items, err := db.ListPayloadManifest(kit.ID)
 	testutil.MustNoErr(t, err, "list manifest")
-	if len(items) != 2 || items[0].PartNumber != "40016911" || items[0].Quantity != 2 ||
-		items[1].PartNumber != "40017250" || items[1].Quantity != 1 {
+	if len(items) != 2 || items[0].PartNumber != "40016911" || items[0].PartsPerCycle != 2 ||
+		items[1].PartNumber != "40017250" || items[1].PartsPerCycle != 1 {
 		t.Errorf("kit manifest = %+v, want 40016911x2 then 40017250x1", items)
 	}
 
@@ -356,7 +356,7 @@ func TestImportPayloadGroups_OverflowGuards(t *testing.T) {
 	mustEq(t, rep.Summary.Created, 0, "created — neither payload may be written")
 	mustEq(t, rep.Summary.Failed, 2, "failed (BIG-UOP, BIG-QTY)")
 
-	want := map[int]string{2: "UoP", 3: "quantity"}
+	want := map[int]string{2: "UoP", 3: "parts-per-cycle"}
 	for _, r := range rep.Rows {
 		if r.Status != "failed" {
 			continue

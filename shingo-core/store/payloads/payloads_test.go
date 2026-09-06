@@ -324,7 +324,7 @@ func TestCreateItem_AssignsID(t *testing.T) {
 	p := &payloads.Payload{Code: "MI-1", UOPCapacity: 10}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create payload")
 
-	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "PN-X", Quantity: 3, Description: "widget"}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "PN-X", PartsPerCycle: 3, Description: "widget"}
 	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
 	if item.ID == 0 {
 		t.Errorf("payloads.CreateItem: ID should be assigned")
@@ -348,7 +348,7 @@ func TestListManifest_OrderedByID(t *testing.T) {
 
 	parts := []string{"PN-A", "PN-B", "PN-C"}
 	for i, pn := range parts {
-		item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: pn, Quantity: int64(i + 1), Description: pn + "-desc"}
+		item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: pn, PartsPerCycle: int64(i + 1), Description: pn + "-desc"}
 		if err := payloads.CreateItem(db, item); err != nil {
 			t.Fatalf("payloads.CreateItem %s: %v", pn, err)
 		}
@@ -365,8 +365,8 @@ func TestListManifest_OrderedByID(t *testing.T) {
 		if list[i].PartNumber != pn {
 			t.Errorf("list[%d].PartNumber = %q, want %q", i, list[i].PartNumber, pn)
 		}
-		if list[i].Quantity != int64(i+1) {
-			t.Errorf("list[%d].Quantity = %d, want %d", i, list[i].Quantity, i+1)
+		if list[i].PartsPerCycle != int64(i+1) {
+			t.Errorf("list[%d].PartsPerCycle = %d, want %d", i, list[i].PartsPerCycle, i+1)
 		}
 		if list[i].PayloadID != p.ID {
 			t.Errorf("list[%d].PayloadID = %d, want %d", i, list[i].PayloadID, p.ID)
@@ -403,7 +403,7 @@ func TestUpdateItem_PersistsChanges(t *testing.T) {
 
 	p := &payloads.Payload{Code: "MU-1", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
-	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1, Description: "orig"}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1, Description: "orig"}
 	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
 
 	testutil.MustNoErr(t, payloads.UpdateItem(db, item.ID, "NEW", 77), "payloads.UpdateItem")
@@ -418,8 +418,8 @@ func TestUpdateItem_PersistsChanges(t *testing.T) {
 	if list[0].PartNumber != "NEW" {
 		t.Errorf("PartNumber = %q, want %q", list[0].PartNumber, "NEW")
 	}
-	if list[0].Quantity != 77 {
-		t.Errorf("Quantity = %d, want 77", list[0].Quantity)
+	if list[0].PartsPerCycle != 77 {
+		t.Errorf("PartsPerCycle = %d, want 77", list[0].PartsPerCycle)
 	}
 	// payloads.UpdateItem intentionally does not touch description — confirm it's preserved.
 	if list[0].Description != "orig" {
@@ -435,8 +435,8 @@ func TestDeleteItem_RemovesRow(t *testing.T) {
 
 	p := &payloads.Payload{Code: "MD-1", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
-	keep := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "KEEP", Quantity: 1}
-	gone := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "GONE", Quantity: 2}
+	keep := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "KEEP", PartsPerCycle: 1}
+	gone := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "GONE", PartsPerCycle: 2}
 	testutil.MustNoErr(t, payloads.CreateItem(db, keep), "payloads.CreateItem keep")
 	testutil.MustNoErr(t, payloads.CreateItem(db, gone), "payloads.CreateItem gone")
 
@@ -469,15 +469,15 @@ func TestReplaceManifest_OverwritesAllAndSetsIDs(t *testing.T) {
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	// Seed two existing items that should be replaced.
-	seed1 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-1", Quantity: 1}
-	seed2 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-2", Quantity: 2}
+	seed1 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-1", PartsPerCycle: 1}
+	seed2 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-2", PartsPerCycle: 2}
 	testutil.MustNoErr(t, payloads.CreateItem(db, seed1), "seed1")
 	testutil.MustNoErr(t, payloads.CreateItem(db, seed2), "seed2")
 
 	replacements := []*payloads.ManifestItem{
-		{PartNumber: "R-1", Quantity: 10, Description: "rep 1"},
-		{PartNumber: "R-2", Quantity: 20, Description: "rep 2"},
-		{PartNumber: "R-3", Quantity: 30, Description: "rep 3"},
+		{PartNumber: "R-1", PartsPerCycle: 10, Description: "rep 1"},
+		{PartNumber: "R-2", PartsPerCycle: 20, Description: "rep 2"},
+		{PartNumber: "R-3", PartsPerCycle: 30, Description: "rep 3"},
 	}
 	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, replacements), "payloads.ReplaceManifest")
 
@@ -502,8 +502,8 @@ func TestReplaceManifest_OverwritesAllAndSetsIDs(t *testing.T) {
 		if list[i].PartNumber != r.PartNumber {
 			t.Errorf("list[%d].PartNumber = %q, want %q", i, list[i].PartNumber, r.PartNumber)
 		}
-		if list[i].Quantity != r.Quantity {
-			t.Errorf("list[%d].Quantity = %d, want %d", i, list[i].Quantity, r.Quantity)
+		if list[i].PartsPerCycle != r.PartsPerCycle {
+			t.Errorf("list[%d].PartsPerCycle = %d, want %d", i, list[i].PartsPerCycle, r.PartsPerCycle)
 		}
 		if list[i].Description != r.Description {
 			t.Errorf("list[%d].Description = %q, want %q", i, list[i].Description, r.Description)
@@ -519,7 +519,7 @@ func TestReplaceManifest_EmptyClears(t *testing.T) {
 
 	p := &payloads.Payload{Code: "MR-EMPTY", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
-	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "A", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "A", PartsPerCycle: 1}
 	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
 
 	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, nil), "payloads.ReplaceManifest nil")
@@ -532,7 +532,7 @@ func TestReplaceManifest_EmptyClears(t *testing.T) {
 	}
 
 	// Also test explicit empty slice.
-	testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "B", Quantity: 1}), "reseed")
+	testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "B", PartsPerCycle: 1}), "reseed")
 	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, []*payloads.ManifestItem{}), "payloads.ReplaceManifest empty")
 	list2, _ := payloads.ListManifest(db, p.ID)
 	if len(list2) != 0 {
@@ -552,10 +552,10 @@ func TestReplaceManifest_ScopedByPayload(t *testing.T) {
 	testutil.MustNoErr(t, payloads.Create(db, p2), "payloads.Create p2")
 
 	// Seed a manifest on p2 that must NOT be touched.
-	untouched := &payloads.ManifestItem{PayloadID: p2.ID, PartNumber: "UNTOUCHED", Quantity: 7}
+	untouched := &payloads.ManifestItem{PayloadID: p2.ID, PartNumber: "UNTOUCHED", PartsPerCycle: 7}
 	testutil.MustNoErr(t, payloads.CreateItem(db, untouched), "payloads.CreateItem untouched")
 
-	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p1.ID, []*payloads.ManifestItem{{PartNumber: "P1-ONLY", Quantity: 1}}), "payloads.ReplaceManifest")
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p1.ID, []*payloads.ManifestItem{{PartNumber: "P1-ONLY", PartsPerCycle: 1}}), "payloads.ReplaceManifest")
 
 	list2, err := payloads.ListManifest(db, p2.ID)
 	if err != nil {
@@ -581,7 +581,7 @@ func TestReplaceManifest_RollbackOnError(t *testing.T) {
 
 	p := &payloads.Payload{Code: "MR-RB", UOPCapacity: 1}
 	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
-	seed := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED", Quantity: 1}
+	seed := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED", PartsPerCycle: 1}
 	testutil.MustNoErr(t, payloads.CreateItem(db, seed), "payloads.CreateItem seed")
 
 	// Force an error by using a bogus payload_id inside the items slice
@@ -592,7 +592,7 @@ func TestReplaceManifest_RollbackOnError(t *testing.T) {
 	// the INSERT's FK fails.
 	badPayloadID := int64(999999)
 	err := payloads.ReplaceManifest(db, badPayloadID, []*payloads.ManifestItem{
-		{PartNumber: "X", Quantity: 1},
+		{PartNumber: "X", PartsPerCycle: 1},
 	})
 	if err == nil {
 		// TODO(coverage): If FK isn't enforced on payload_manifest.payload_id,

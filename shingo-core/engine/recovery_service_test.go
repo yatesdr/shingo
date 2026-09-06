@@ -98,6 +98,80 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 	}
 }
 
+// TestReapplyOrderCompletion_SkipsCMSBuildForReplay pins the emit site.
+// A reapply re-runs the side effects of a completion whose bin is already
+// at the destination; the CMS ledger booked that move the first time, and
+// a second source-decrement / dest-increment pair is a phantom transfer
+// across the plant's inventory boundary.
+//
+// The first half of the test is not scenery. Without it the zero-row
+// assertion at the end passes just as well for a node tree that could
+// never have produced a CMS row at all — an untagged boundary, a bin with
+// no manifest, a subscriber that was never wired. Proving the same tree
+// DOES emit for a real move is what makes the second half mean anything.
+func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	srcRoot, srcSlot := makeCMSBoundary(t, db, "RPL-SRC")
+	dstRoot, dstSlot := makeCMSBoundary(t, db, "RPL-DST")
+
+	bin := createTestBinAtNode(t, db, bp.Code, srcSlot.ID, "BIN-REPLAY")
+	putManifest(t, db, bin.ID, bp.Code, "PART-A", 5, 1)
+
+	// A real move across the same two boundaries, through the same wiring.
+	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+		Action:      "moved",
+		BinID:       bin.ID,
+		PayloadCode: bp.Code,
+		FromNodeID:  srcSlot.ID,
+		ToNodeID:    dstSlot.ID,
+		NodeID:      dstSlot.ID,
+	}})
+	srcRows, err := db.ListCMSTransactions(srcRoot.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list src txns: %v", err)
+	}
+	dstRows, err := db.ListCMSTransactions(dstRoot.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list dst txns: %v", err)
+	}
+	if len(srcRows) != 1 || len(dstRows) != 1 {
+		t.Fatalf("setup does not produce CMS rows for a real move (src=%d dst=%d); "+
+			"the replay assertion below would be vacuous", len(srcRows), len(dstRows))
+	}
+
+	// Now the replay of that same move.
+	order := &orders.Order{
+		EdgeUUID:     "recovery-reapply-replay",
+		StationID:    "line-1",
+		OrderType:    "retrieve",
+		Status:       "confirmed",
+		SourceNode:   srcRoot.Name + "." + srcSlot.Name,
+		DeliveryNode: dstRoot.Name + "." + dstSlot.Name,
+		BinID:        &bin.ID,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
+
+	testutil.MustNoErr(t, eng.Recovery().ReapplyOrderCompletion(order.ID, "op-recovery"), "ReapplyOrderCompletion")
+
+	srcAfter, err := db.ListCMSTransactions(srcRoot.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list src txns after reapply: %v", err)
+	}
+	dstAfter, err := db.ListCMSTransactions(dstRoot.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list dst txns after reapply: %v", err)
+	}
+	if len(srcAfter) != 1 || len(dstAfter) != 1 {
+		t.Errorf("reapply added CMS rows: src %d->%d, dst %d->%d; want both unchanged",
+			len(srcRows), len(srcAfter), len(dstRows), len(dstAfter))
+	}
+}
+
 func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

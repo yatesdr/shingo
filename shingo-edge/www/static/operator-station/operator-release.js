@@ -140,6 +140,14 @@ export async function openReleasePrompt(url, entry) {
         // Multi-payload bin holds a mix; runtime.remaining_uop_cached is a single
         // number that doesn't split across parts, so the manifest is the
         // only per-part source.
+        //
+        // DEAD, same as the CONFIRM label in operator-modal.js: Core ships an
+        // OBJECT, so Array.isArray is false and this branch has never run, and
+        // manifest lines no longer carry a `quantity` at all. A per-part split
+        // now means uop_remaining x each part's parts_per_cycle from the
+        // payload template, which is a Core-side derivation this page does not
+        // have. Left in place, and left NOT working, rather than made to look
+        // like it works.
         const binState = entry && entry.bin_state;
         if (binState && binState.manifest) {
             try {

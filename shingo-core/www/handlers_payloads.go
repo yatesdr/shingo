@@ -98,19 +98,19 @@ func (h *Handlers) apiListManifest(w http.ResponseWriter, r *http.Request) {
 // apiCreateManifestItem adds a manifest item to a payload template.
 func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID  int64  `json:"payload_id"`
-		PartNumber string `json:"part_number"`
-		Quantity   int64  `json:"quantity"`
-		Notes      string `json:"notes"`
+		PayloadID     int64  `json:"payload_id"`
+		PartNumber    string `json:"part_number"`
+		PartsPerCycle int64  `json:"parts_per_cycle"`
+		Notes         string `json:"notes"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
 	m := &domain.PayloadManifestItem{
-		PayloadID:  req.PayloadID,
-		PartNumber: req.PartNumber,
-		Quantity:   req.Quantity,
+		PayloadID:     req.PayloadID,
+		PartNumber:    req.PartNumber,
+		PartsPerCycle: req.PartsPerCycle,
 	}
 	if err := h.engine.PayloadService().CreateManifestItem(m); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -122,15 +122,15 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 // apiUpdateManifestItem updates a manifest item on a payload template.
 func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID         int64  `json:"id"`
-		PartNumber string `json:"part_number"`
-		Quantity   int64  `json:"quantity"`
+		ID            int64  `json:"id"`
+		PartNumber    string `json:"part_number"`
+		PartsPerCycle int64  `json:"parts_per_cycle"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
-	if err := h.engine.PayloadService().UpdateManifestItem(req.ID, req.PartNumber, req.Quantity); err != nil {
+	if err := h.engine.PayloadService().UpdateManifestItem(req.ID, req.PartNumber, req.PartsPerCycle); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

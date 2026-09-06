@@ -481,7 +481,7 @@ func TestCoreClient_FetchPayloadManifest_Success(t *testing.T) {
 		resp := PayloadManifestResponse{
 			UOPCapacity: 100,
 			Items: []ManifestItem{
-				{PartNumber: "P1", Quantity: 10, Description: "part one"},
+				{PartNumber: "P1", PartsPerCycle: 10, Description: "part one"},
 			},
 		}
 		json.NewEncoder(w).Encode(resp)
@@ -495,6 +495,12 @@ func TestCoreClient_FetchPayloadManifest_Success(t *testing.T) {
 	}
 	if m.UOPCapacity != 100 || len(m.Items) != 1 || m.Items[0].PartNumber != "P1" {
 		t.Errorf("manifest = %+v", m)
+	}
+	// The ratio has to survive the decode, not just the part number: the key
+	// on the wire changed with Core's rename, and a struct whose tag no longer
+	// matches decodes to a silent zero rather than an error.
+	if m.Items[0].PartsPerCycle != 10 {
+		t.Errorf("parts_per_cycle = %d, want 10 — did the wire key drift?", m.Items[0].PartsPerCycle)
 	}
 }
 
