@@ -1,4 +1,5 @@
 import { api, delegateActions, escapeHtml, getFormData, prompt, toast } from '/static/js/shingoedge.js';
+import { formatTime as sharedFormatTime } from '/static/shared/utils.js';
 
 function collectBrokers() {
     return Array.from(document.querySelectorAll('.broker-row')).map(function(row) {
@@ -170,7 +171,7 @@ async function runBackupNow() {
 function formatMaybeDate(value) {
     if (!value) return '';
     const date = new Date(value);
-    return isNaN(date) ? String(value) : date.toLocaleString();
+    return isNaN(date) ? String(value) : sharedFormatTime(value);
 }
 
 function formatBytes(bytes) {

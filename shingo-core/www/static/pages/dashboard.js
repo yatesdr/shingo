@@ -15,7 +15,7 @@
 // Adding a new dashboard kind: branch on `kind` in init() and render into
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
 (function () {
   var body = document.body;
@@ -25,7 +25,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
   // ── Header chrome: clock + connection dot ──────────────────────────
   function tickClock() {
     var el = document.getElementById('dash-clock');
-    if (el) el.textContent = new Date().toLocaleTimeString();
+    if (el) el.textContent = formatClock(Date.now());
   }
   setInterval(tickClock, 1000);
   tickClock();

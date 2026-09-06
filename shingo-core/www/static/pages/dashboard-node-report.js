@@ -1,4 +1,4 @@
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
 (function () {
   var body = document.body;
@@ -7,7 +7,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
   function tickClock() {
     var el = document.getElementById('dash-clock');
-    if (el) el.textContent = new Date().toLocaleTimeString();
+    if (el) el.textContent = formatClock(Date.now());
   }
   setInterval(tickClock, 1000);
   tickClock();

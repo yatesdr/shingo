@@ -109,6 +109,11 @@ func templateFuncs() template.FuncMap {
 		},
 		// plantTZ feeds header.html's inline `window.PLANT_TZ = "{{ plantTZ }}"`.
 		"plantTZ": func() string { return plantLocation.String() },
+		// formatClock/formatClockSeconds: time-of-day shapes for columns whose
+		// deliberately-narrow format is not a full datetime (diagnostics log
+		// rows). shared/planttime owns the twins.
+		"formatClock":        func(t time.Time) string { return planttime.Clock(t, plantLocation) },
+		"formatClockSeconds": func(t time.Time) string { return planttime.ClockSeconds(t, plantLocation) },
 		"json": func(v any) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)

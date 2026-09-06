@@ -5,7 +5,7 @@
 // store (Since/Until + station/robot + state) drives the data sections.
 
 import { apiGet, el, formatDuration, timeAgo, toast } from '/static/app.js';
-import { createStore, onSSE, debounce } from '/static/shared/utils.js';
+import { createStore, formatTime, onSSE, debounce } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 // BarList is no longer imported here: U3 replaced both breakdown panels with
@@ -642,7 +642,7 @@ function filterQS(state, extra) {
     return p.toString();
 }
 
-function formatAbsTime(ts) { return ts ? new Date(ts).toLocaleString() : ''; }
+function formatAbsTime(ts) { return ts ? formatTime(ts) : ''; }
 function csvCell(v) { if (v === null || v === undefined) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
 function stateLabel(state) {

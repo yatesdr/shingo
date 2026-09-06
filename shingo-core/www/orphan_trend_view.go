@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"shingo/shared/planttime"
 	"shingocore/config"
 	"shingocore/domain"
 )
@@ -136,7 +137,7 @@ func BuildOrphanTrend(buckets []domain.OrphanBucket, since, until time.Time, c c
 		b, seen := byStart[t.Unix()]
 		p := OrphanPoint{
 			Start:       t,
-			Label:       t.Format("15:04"),
+			Label:       planttime.Clock(t, plantLocation),
 			Orphans:     b.Orphans,
 			OrphansText: FormatCount(b.Orphans),
 			Orders:      b.Orders,

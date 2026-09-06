@@ -1,4 +1,5 @@
-import { api, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
+import { api, delegateActions, escapeHtml, h, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
+import { formatTime } from '/static/shared/utils.js';
 import { onSSE } from '/static/shared/utils.js';
 
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';

@@ -237,6 +237,17 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		// A template function, not handler data, so no per-render plumbing:
 		// one registration makes the zone available to every page.
 		"plantTZ": func() string { return plantLocation.String() },
+		// formatClock/formatClockSeconds: time-of-day shapes for columns whose
+		// deliberately-narrow format is not a full datetime (demand-episode
+		// lists, diagnostics log rows). shared/planttime owns the twins.
+		"formatClock":        func(t time.Time) string { return planttime.Clock(t, plantLocation) },
+		"formatClockSeconds": func(t time.Time) string { return planttime.ClockSeconds(t, plantLocation) },
+		// formatDayClock: "Jan 02 15:04" plant-local — trend tables whose
+		// buckets span more than a day need the date, unlike formatClock's
+		// same-day columns.
+		"formatDayClock": func(t time.Time) string {
+			return t.In(plantLocation).Format("Jan 02 15:04")
+		},
 		"statusColor": func(status string) string {
 			switch protocol.Status(status) {
 			case protocol.StatusPending, protocol.StatusSourcing:

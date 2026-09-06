@@ -147,14 +147,57 @@ export function timeAgo(ts) {
     return Math.floor(d / 86400000) + 'd ago';
 }
 
+// PLANT_TZ pins every date rendering below to the plant's wall clock, not
+// the viewer's. The server inlines `window.PLANT_TZ = "America/Chicago"`
+// (or the edge's zone) synchronously in the page head — a fetch would paint
+// wrong text first, which is the flicker the plant-local convention
+// removed. Everything degrades to the browser zone if the inline is absent
+// (a page served without the layout, a test harness), never to garbage.
+function plantTZ() {
+    return (typeof window !== 'undefined' && window.PLANT_TZ) || undefined;
+}
+
+// One Intl.DateTimeFormat per (zone, shape) — constructing these is
+// expensive enough to matter on boards that render hundreds of rows per
+// reconcile. Keyed cache so PLANT_TZ resolution costs once per page.
+const _fmtCache = new Map();
+function tzFormatter(options) {
+    const tz = plantTZ();
+    const key = (tz || 'local') + '|' + JSON.stringify(options);
+    let f = _fmtCache.get(key);
+    if (!f) {
+        f = new Intl.DateTimeFormat('en-US', Object.assign({ timeZone: tz }, options));
+        _fmtCache.set(key, f);
+    }
+    return f;
+}
+
 export function formatTime(ts, opts) {
     if (!ts || ts === '0001-01-01T00:00:00Z') return '-';
     const d = new Date(ts);
     if (isNaN(d.getTime())) return ts;
     if (opts && opts.precision === 'ms') {
-        return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+        return tzFormatter({ hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            .format(d) + '.' + String(d.getMilliseconds()).padStart(3, '0');
     }
-    return d.toLocaleString();
+    // The plant-local twin of shared/planttime displayLayout ("Jan 2, 2006
+    // 15:04 MST" in Go). Change them in both or in neither.
+    return tzFormatter({
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour12: false, hour: '2-digit', minute: '2-digit',
+        timeZoneName: 'short',
+    }).format(d);
+}
+
+// formatClock renders time-of-day only, plant-local — the JS twin of
+// planttime.Clock ("15:04"). Wall-clock displays and log columns whose
+// shape is deliberately narrow; do NOT swap these to formatTime, a full
+// datetime in a clock slot breaks the layout.
+export function formatClock(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return tzFormatter({ hour12: false, hour: '2-digit', minute: '2-digit' }).format(d);
 }
 
 // formatDuration is THE SAME LADDER as protocol.FormatDuration (Go), output
@@ -298,13 +341,32 @@ export function installHtmxLiveDurations() {
     }
 }
 
-// Rewrite <time data-utc="..."> elements to the browser's local-time string.
+// Rewrite <time data-utc="..."> elements to plant-local.
+//
+// UNDER THE PLANT-LOCAL CONVENTION THIS IS A ROLLOVER SHIM, not the render
+// path: the server already paints plant-local labeled text, correct on
+// first paint. The only nodes still carrying the OLD UTC-first markup are
+// partials swapped in by an edge still running pre-plant-local during a
+// rolling deploy. Rewriting them keeps one deploy from showing two clock
+// conventions. When no plant is left on the old build, this whole
+// function and its htmx hook (installHtmxTimestampConversion) can go.
+//
 // Idempotent; safe to re-run after htmx swaps insert new <time> nodes.
+// Marks rewritten nodes so a re-run targets only the unconverted — the
+// server's own plant-local text must never be touched, so no element
+// ever rewrites twice.
 export function convertTimestamps(root) {
     const scope = root || document;
     scope.querySelectorAll('time[data-utc]').forEach(elem => {
+        if (elem.getAttribute('data-converted')) return;
         const d = new Date(elem.getAttribute('data-utc'));
-        if (!isNaN(d.getTime())) elem.textContent = d.toLocaleString();
+        if (isNaN(d.getTime())) return;
+        // Only convert nodes whose server text is the old UTC convention —
+        // recognizable by the trailing " UTC" the old helper emitted.
+        const text = elem.textContent || '';
+        if (!/ UTC$/.test(text)) { elem.setAttribute('data-converted', '1'); return; }
+        elem.textContent = formatTime(elem.getAttribute('data-utc'));
+        elem.setAttribute('data-converted', '1');
     });
 }
 

@@ -400,7 +400,7 @@ func buildBindingRow(c domain.CarrierBinding, age time.Duration, known bool, k c
 	if known {
 		r.SortGroup = bindingGroupRanked
 		r.AgeCell = Value(FormatDuration(age))
-		r.BoundAt = Value(c.BoundAt.UTC().Format("2006-01-02 15:04Z"))
+		r.BoundAt = Value(c.BoundAt.In(plantLocation).Format("2006-01-02 15:04 MST"))
 	} else {
 		r.SortGroup = bindingGroupUnknownAge
 		r.AgeCell = NoData("no load, clear or release row exists for this carrier — the " +
@@ -447,7 +447,7 @@ func buildBindingRow(c domain.CarrierBinding, age time.Duration, known bool, k c
 	}
 
 	if c.LastCountedAt != nil {
-		r.LastCounted = Value(c.LastCountedAt.UTC().Format("2006-01-02"))
+		r.LastCounted = Value(c.LastCountedAt.In(plantLocation).Format("2006-01-02"))
 	} else {
 		r.LastCounted = NoData("this carrier has never been cycle counted — there is no " +
 			"count to age, which is a fact about the carrier and not a read failure")

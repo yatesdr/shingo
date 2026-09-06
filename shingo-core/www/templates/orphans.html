@@ -132,7 +132,7 @@
       <tbody>
         {{range .}}
         <tr class="or-row">
-          <td class="text-muted tnum">{{.Start.Format "Jan 02 15:04"}}</td>
+          <td class="text-muted tnum">{{formatDayClock .Start}}</td>
           <td class="col-num tnum">{{.OrdersText}}</td>
           <td class="col-num tnum de-orders">{{.OrphansText}}</td>
           <td class="col-num tnum">{{template "de-cell" .Rate}}</td>

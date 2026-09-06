@@ -48,7 +48,7 @@
                     <td>{{.ToStyleName}}</td>
                     <td><span class="status-badge">{{.State}}</span></td>
                     <td>{{formatTime .StartedAt}}</td>
-                    <td>{{if .CompletedAt}}{{formatTimePtr .CompletedAt}}{{else}}--{{end}}</td>
+                    <td>{{formatTimePtr .CompletedAt}}</td>
                     <td>{{if .CalledBy}}{{.CalledBy}}{{else}}--{{end}}</td>
                 </tr>
                 {{end}}
