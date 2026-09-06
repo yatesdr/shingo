@@ -76,8 +76,18 @@ sim:
   # message drops); epoch + this shared anchor lock both clocks to one timeline, and
   # epoch == anchor_wall means no wall clamp, so the multiplier is real for Now() as well
   # as for every ticker (§R.98 — it was not, for every run before that).
-  epoch: 2026-07-12T02:30:00Z
-  anchor_wall: 2026-07-12T02:30:00Z
+  # ── THE ANCHOR IS NOT IN THIS FILE ANY MORE ───────────────────────────────
+  #
+  # It was a hardcoded 2026-07-12T02:30:00Z here, in shingocore.dev.yaml and in
+  # the other edge config. A literal origin makes the sim/wall offset grow without
+  # bound — (speed-1) x (wallNow - anchor) — so the rig's clock was eight weeks
+  # into the future at 2x by 2026-09-06, and every live duration in the UI, all of
+  # which are computed against it, read 0 s.
+  #
+  # The anchor now belongs to the RUN: scripts/sim-anchor.sh mints one at bring-up
+  # and compose hands the SAME instant to core and every edge as SHINGO_SIM_ANCHOR,
+  # read identically by clock.ResolveAnchor. The lockstep this pair existed to hold
+  # is kept; the origin is current. See shingocore.dev.yaml for the full note.
   # plc_name/tag_name MUST exactly match the reporting_points the seed tool
   # creates. This list is the source of truth for those names.
   # Rate parity (the anti-starvation core): each press feeds exactly one weld, so press

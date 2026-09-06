@@ -14,6 +14,10 @@
        the plant-local convention removed. Server-rendered timestamps are
        already plant-local; this is for JS-rendered rows and clocks. */}}
   <script>window.PLANT_TZ = "{{ plantTZ }}";</script>
+  {{/* Server-owned now, for shared/utils.js serverNow(). Same reason as
+       PLANT_TZ above and same shape: inline and synchronous, because a page
+       that paints before it knows the server's clock paints wrong ages. */}}
+  <script>window.SHINGO_CLOCK = {{ serverClock }};</script>
   <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
   <link rel="stylesheet" href="/static/shared/status-classes.css?v={{cacheBust}}">
   <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">
@@ -24,7 +28,7 @@
   {{iconSprite}}
   <nav>
     <div class="container flex-center" style="gap:1.5rem;">
-      <a href="/" class="brand">Shingo Core</a>
+      <a href="/" class="brand">Shingo Core</a>{{ simBadge }}
       <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Dashboard</a>
       <a href="/overview"{{if eq .Page "overview"}} class="active"{{end}}>Overview</a>
       <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>

@@ -237,6 +237,16 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		// A template function, not handler data, so no per-render plumbing:
 		// one registration makes the zone available to every page.
 		"plantTZ": func() string { return plantLocation.String() },
+		// serverClock feeds the head's inline `window.SHINGO_CLOCK = {{serverClock}}`.
+		// THE SERVER OWNS NOW, the same way it owns the zone: every elapsed
+		// reading in the UI used to difference a server stamp against the
+		// BROWSER's clock, which on the sim rig are not the same year. See
+		// planttime.ServerClock.
+		"serverClock": planttime.ServerClockJS,
+		// simBadge renders "SIM 2x - 14:07" on a sim stack and NOTHING on a
+		// plant. Simulated time labels itself, or a screenshot of the rig reads
+		// as a screenshot of a plant.
+		"simBadge": func() template.HTML { return planttime.SimBadge(plantLocation) },
 		// formatClock/formatClockSeconds: time-of-day shapes for columns whose
 		// deliberately-narrow format is not a full datetime (demand-episode
 		// lists, diagnostics log rows). shared/planttime owns the twins.

@@ -1,5 +1,9 @@
 // Pure helpers — no DOM mutation outside showToast/postAction's container lookups.
 
+// serverNow, not Date.now: formatETA below differences a SERVER instant, and
+// the two clocks are not the same one. See shared/utils.js.
+import { serverNow } from '/static/shared/utils.js';
+
 export const stationID = parseInt(document.body.dataset.stationId, 10);
 
 // el(tag, props, children) — DOM builder aligned with the shared
@@ -332,7 +336,7 @@ export function formatETA(etaStr) {
     if (!etaStr) return { text: '', overdue: false, empty: true };
     const etaMs = Date.parse(etaStr);
     if (isNaN(etaMs)) return { text: '', overdue: false, empty: true };
-    const remainingSec = (etaMs - Date.now()) / 1000;
+    const remainingSec = (etaMs - serverNow()) / 1000;
     const graceSec = 60;
     if (remainingSec < -graceSec) {
         return { text: 'Running late', overdue: true };

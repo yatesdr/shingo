@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/messaging"
 	"shingocore/store"
 )
@@ -57,13 +58,13 @@ func (e *Engine) startDemandReconciler() {
 }
 
 func (e *Engine) runDemandReconciler() {
-	ticker := time.NewTicker(e.demandReconcileInterval())
+	ticker := clock.Default().NewTicker(e.demandReconcileInterval())
 	defer ticker.Stop()
 	for {
 		select {
 		case <-e.stopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			e.reconcileDemandEpisodes()
 		}
 	}

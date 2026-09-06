@@ -95,13 +95,17 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	ticker := time.NewTicker(interval)
+	// clock.Default(), not time.NewTicker. The cutoff comparison below already
+	// moved to clock.Now() and its comment explains why; the loop that drives
+	// it stayed on the wall. Half a conversion is what left auto-confirm and
+	// abandon firing at 1x against sim-time deadlines.
+	ticker := clock.Default().NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stopCh:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			summary, err := s.Summary()
 			if err != nil {
 				s.logFn("engine: reconciliation summary error: %v", err)

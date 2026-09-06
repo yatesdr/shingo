@@ -44,7 +44,21 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 	// drift apart (clock.BuildSimClock owns that logic + the default 15× cap). Always
 	// a SimClock so the dev speed toggle (POST /api/sim/speed) re-paces live;
 	// SetDefault wires clock.Now() to sim time.
-	clk, mode := clock.BuildSimClock(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
+	// The anchor belongs to the RUN, not to the config file — a hardcoded
+	// epoch drifts (speed-1)x further from wall time every day it sits in the
+	// tree. clock.ResolveAnchor prefers the run's shared env anchor and is the
+	// same function on both binaries, so they cannot read it differently. See
+	// its doc comment for the arithmetic and for why re-anchoring is tied to
+	// fresh volumes.
+	simEpoch, simAnchor, anchorSrc, err := clock.ResolveAnchor(cfg.Sim.Epoch, cfg.Sim.AnchorWall)
+	if err != nil {
+		log.Fatalf("[sim] %v", err)
+	}
+	if anchorSrc == clock.AnchorEnv {
+		log.Printf("[sim] anchor from %s=%s (shared by every process in this run)",
+			clock.AnchorEnv, simAnchor.Format(time.RFC3339))
+	}
+	clk, mode := clock.BuildSimClock(simEpoch, simAnchor, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
 	switch mode {
 	case clock.SimRunning:
 		log.Printf("[sim] live clock: running %.1f× wall, per-process anchor (set sim.anchor_wall in BOTH "+
@@ -54,7 +68,7 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 		// the tickers agree, and a shared anchor, so Core and Edge do too.
 		log.Printf("[sim] synced running clock: %.0f× wall, sustained (epoch=%s anchor=%s; no wall clamp, "+
 			"so Now() and every ticker run at the same speed) — Core/Edge in lockstep",
-			clk.Speed(), cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339))
+			clk.Speed(), simEpoch.Format(time.RFC3339), simAnchor.Format(time.RFC3339))
 	case clock.SimSyncedFastForward:
 		// THE BANNER NAMES THE CATCH-UP, because that is the only window in which
 		// this clock is faster than wall. Once simulated time passes the wall it
@@ -63,11 +77,11 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 		// tuned one.
 		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× while catching up "+
 			"to wall, then Now() clamps to 1× (tickers stay at %.0f×) — Core/Edge in lockstep",
-			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed(), clk.Speed())
+			simEpoch.Format(time.RFC3339), simAnchor.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	case clock.SimUnsyncedFastForward:
 		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): "+
 			"epoch=%s speed=%.0f× while catching up to wall, then Now() clamps to 1× (tickers stay at %.0f×)",
-			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
+			simEpoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	}
 	if clk.RequestedSpeed() > clk.Speed() {
 		log.Printf("[sim] requested %.0f× capped to max_speed %.0f× (raise sim.max_speed only if the box keeps up)", clk.RequestedSpeed(), clk.Speed())

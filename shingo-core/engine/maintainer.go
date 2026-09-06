@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/store"
@@ -108,13 +109,13 @@ func NewMaintainer(eng *Engine, now func() time.Time) *Maintainer {
 // Run ticks until ctx is cancelled.
 func (m *Maintainer) Run(ctx context.Context) {
 	go func() {
-		t := time.NewTicker(m.interval)
+		t := clock.Default().NewTicker(m.interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-t.C():
 				m.Tick()
 			}
 		}

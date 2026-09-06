@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/store"
 )
 
@@ -65,13 +66,13 @@ func (pr *ProductionReporter) Stop() {
 }
 
 func (pr *ProductionReporter) loop() {
-	ticker := time.NewTicker(pr.interval)
+	ticker := clock.Default().NewTicker(pr.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-pr.stopCh:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			pr.flush()
 		}
 	}

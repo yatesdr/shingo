@@ -93,12 +93,26 @@ sim:
   # SLOWED FROM 10x TO 2x (owner's call, 2026-09-05). At 10x the loop could not
   # hold steady state and the reason is a units mismatch, not a tuning miss: the
   # delivery pipeline runs on WALL time (Kafka hop, DB writes, the outbox drain,
-  # simulated robot travel), so a ~30-60 s real round trip lands as 300-600 SIM
+  # and every periodic loop still on a raw time.Ticker), so a ~30-60 s real round
+  # trip lands as 300-600 SIM
   # seconds. Consumption is quoted in sim time — 20 parts x 30 s = 600 s of cover —
   # so the round trip ate the entire depletion budget and cells drained past zero
   # while their replenishment was still in flight. At 2x the same real round trip
   # costs 60-120 sim seconds against the same 600, which is the margin the
   # arithmetic assumed all along.
+  #
+  # CORRECTION (2026-09-06): this list used to name "simulated robot travel" as a
+  # wall-time leg. It is not one, and never was. NewDriver scales transit by speed
+  # ONLY when it is handed a non-SimClock (driver.go:141); sim startup always
+  # builds a *SimClock, so transit keeps its base value and is spent through the
+  # clock's own After — which divides by the multiplier. Robot travel is already
+  # sim-scaled and does not compress the budget at any speed.
+  #
+  # Measured on the rig at 2x: transit_min/max is 15-20 s against a 109 sim-second
+  # mean order life, so travel is ~18% of an order and the other 82% is the
+  # pipeline. Naming travel as the cost pointed tuning at the one leg that was
+  # already correct. The real wall-bound remainder is the pipeline cadence above,
+  # classified site by site in docs/dev-env/sim-timer-census.md.
   #
   # MUST MATCH shingocore.dev.yaml AND every edge, and must be changed HERE rather
   # than through POST /api/sim/speed: a live SetSpeed re-anchors per process and
@@ -137,9 +151,27 @@ sim:
   #
   # Set epoch EARLIER than anchor_wall only to replay history: that still clamps, on
   # purpose, and the boot banner now says when it stops being fast.
-  # Both epoch AND anchor_wall MUST match shingoedge.dev.yaml EXACTLY. Rebuild after edit.
-  epoch: 2026-07-12T02:30:00Z
-  anchor_wall: 2026-07-12T02:30:00Z
+  # ── THE ANCHOR IS NOT IN THIS FILE ANY MORE, AND THAT IS THE FIX ──────────
+  #
+  # epoch and anchor_wall used to be a hardcoded 2026-07-12T02:30:00Z here and in
+  # both edge configs. A literal origin makes the sim/wall offset grow without
+  # bound: it is (speed-1) x (wallNow - anchor), so it widened by one simulated
+  # day per real day at 2x and nine at 10x, whether or not the stack ever ran. By
+  # 2026-09-06 the rig's clock was eight weeks into the future at 2x and would
+  # have been sixteen months ahead at 10x. Every live duration in the UI is
+  # computed against it and every one of them read 0 s.
+  #
+  # The anchor belongs to the RUN. scripts/sim-anchor.sh mints one at bring-up and
+  # docker-compose.dev.yml hands the same instant to core, both edges and the
+  # seeders as SHINGO_SIM_ANCHOR; clock.ResolveAnchor reads it identically in
+  # every binary, so the lockstep this pair existed to hold is kept and the origin
+  # is current. It survives `restart` and `up -d <one service>` and is re-minted
+  # only by `make dev-reset`, because re-anchoring over rows already stamped in
+  # the old frame is the same backwards jump the speed edit caused.
+  #
+  # Setting epoch/anchor_wall here still works and still wins when the env is
+  # unset — that is how you replay history (epoch EARLIER than anchor_wall, which
+  # clamps on purpose). For a normal run, leave both absent.
   # Finite fleet + fast transit. The demo's swap choreography (4 transits per supply
   # cycle) must complete before the consume bin drains from reorder_point to zero.
   # At 6 UOP/min and reorder_point 15 (panels), the drain window is ~150s; at 4×15-20s

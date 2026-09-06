@@ -876,3 +876,33 @@
 .disclosure-bare > summary::-webkit-details-marker {
   display: none;
 }
+
+/* ── SIM badge ────────────────────────────────────────────────────────────
+ *
+ * Worn beside the brand on a sim stack ONLY. planttime.SimBadge emits nothing
+ * at all on a plant, so there is no rule here standing between a production
+ * page and a false claim about itself — the element is absent, not hidden.
+ *
+ * Deliberately loud. The rig's pages are pixel-identical to a plant's and its
+ * clock has been reading months from now; a screenshot of one was
+ * indistinguishable from a screenshot of the other. Shared because both
+ * binaries' headers render it and two copies of a warning drift.
+ */
+.sim-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--warn, #b45309);
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--warn, #b45309) 15%, transparent);
+  color: var(--warn, #b45309);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: help;
+}

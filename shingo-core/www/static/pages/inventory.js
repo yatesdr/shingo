@@ -13,7 +13,7 @@
 import {
   apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, debounce,
 } from '/static/app.js';
-import { formatClock, formatTime, onSSE } from '/static/shared/utils.js';
+import { formatClock, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
@@ -154,7 +154,7 @@ function renderAll() {
   renderMaintained();
   renderBuckets();
   const asof = document.getElementById('inv-asof');
-  if (asof) asof.textContent = 'as of ' + formatClock(Date.now());
+  if (asof) asof.textContent = 'as of ' + formatClock(serverNow());
 }
 
 function populateFilters() {
@@ -719,7 +719,7 @@ function holdingBinsHtml(pc) {
 
 function bucketAgeMs(b) {
   const t = b.updated_at ? new Date(b.updated_at).getTime() : NaN;
-  return isFinite(t) ? (Date.now() - t) : 0;
+  return isFinite(t) ? (serverNow() - t) : 0;
 }
 function renderBuckets() {
   const body = document.getElementById('buckets-body');
@@ -893,8 +893,12 @@ async function renderDrill() {
   const r = health.find((x) => x.payload_code === drillPayload);
   if (!r || !detail) return;
   detail.innerHTML = '<div class="dash-empty">Loading…</div>';
-  const since = new Date(Date.now() - drillDays * 24 * 3600 * 1000).toISOString();
-  const until = new Date().toISOString();
+  // Both bounds in the SERVER's frame: they are sent back as query
+  // parameters and compared against rows the server stamped. A browser-wall
+  // window against simulated rows selects the wrong days, or none.
+  const now = serverNow();
+  const since = new Date(now - drillDays * 24 * 3600 * 1000).toISOString();
+  const until = new Date(now).toISOString();
   let consumed = null, perDay = null, cover = null;
   try {
     const resp = await apiGet('/api/parts/consumption?top=500&since=' + encodeURIComponent(since) + '&until=' + encodeURIComponent(until));

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -48,13 +49,13 @@ func (e *Engine) startDemandReconciler() {
 }
 
 func (e *Engine) runDemandReconciler() {
-	ticker := time.NewTicker(demandReconcileInterval)
+	ticker := clock.Default().NewTicker(demandReconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-e.stopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			e.reconcileDemand()
 		}
 	}

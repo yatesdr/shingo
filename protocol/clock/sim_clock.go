@@ -332,13 +332,30 @@ func (s *SimClock) NewTicker(d time.Duration) Ticker {
 
 type simTicker struct {
 	clk      *SimClock
-	baseDur  time.Duration // simulated interval between ticks
+	mu       sync.Mutex
+	baseDur  time.Duration // simulated interval between ticks; guarded by mu (Reset)
 	ch       chan time.Time
 	stop     chan struct{}
 	stopOnce sync.Once
 }
 
 func (t *simTicker) C() <-chan time.Time { return t.ch }
+
+// Reset changes the SIMULATED interval. pump re-reads baseDur every cycle, so
+// the new rate takes effect on the next tick rather than needing the ticker
+// rebuilt — the same property that lets a live SetSpeed re-pace it.
+func (t *simTicker) Reset(d time.Duration) {
+	t.mu.Lock()
+	t.baseDur = d
+	t.mu.Unlock()
+}
+
+// base reads the simulated interval under lock, for pump.
+func (t *simTicker) base() time.Duration {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.baseDur
+}
 
 // Stop halts the ticker. Idempotent — safe to call more than once, matching
 // time.Ticker.Stop, so a defer plus an explicit Stop can't double-close.
@@ -351,7 +368,7 @@ func (t *simTicker) Stop() {
 // rate in force when the ticker was created.
 func (t *simTicker) pump() {
 	for {
-		realDur := time.Duration(float64(t.baseDur) / t.clk.currentSpeed())
+		realDur := time.Duration(float64(t.base()) / t.clk.currentSpeed())
 		if realDur < time.Millisecond {
 			realDur = time.Millisecond // floor to avoid spinning
 		}

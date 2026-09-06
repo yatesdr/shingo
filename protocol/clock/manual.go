@@ -114,3 +114,18 @@ func (t *manualTicker) Stop() {
 	t.stopped = true
 	t.parent.mu.Unlock()
 }
+
+// Reset changes the interval and re-bases the next deadline on the CURRENT
+// manual now, matching time.Ticker.Reset (which restarts the period rather than
+// keeping the old phase). A non-positive interval is ignored, so a test that
+// resets from a zero-valued config cannot wedge Advance into an infinite
+// same-instant loop.
+func (t *manualTicker) Reset(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t.parent.mu.Lock()
+	t.interval = d
+	t.next = t.parent.now.Add(d)
+	t.parent.mu.Unlock()
+}

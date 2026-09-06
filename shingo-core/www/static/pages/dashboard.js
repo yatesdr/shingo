@@ -15,7 +15,7 @@
 // Adding a new dashboard kind: branch on `kind` in init() and render into
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
-import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
 (function () {
   var body = document.body;
@@ -25,7 +25,7 @@ import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js
   // ── Header chrome: clock + connection dot ──────────────────────────
   function tickClock() {
     var el = document.getElementById('dash-clock');
-    if (el) el.textContent = formatClock(Date.now());
+    if (el) el.textContent = formatClock(serverNow());
   }
   setInterval(tickClock, 1000);
   tickClock();
@@ -46,7 +46,9 @@ import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js
     if (!str) return '-';
     var d = new Date(str);
     if (isNaN(d.getTime())) return '-';
-    var diff = d - Date.now();
+    // The ETA is the server's instant, so the countdown is taken in the
+    // server's frame. See serverNow in shared/utils.js.
+    var diff = d - serverNow();
     if (diff <= 0) return 'arriving';
     var mins = Math.floor(diff / 60000);
     if (mins < 1) return '<1m';

@@ -88,8 +88,18 @@ sim:
   # Reset the data when you change this. The note above about matching core and
   # every edge still applies and is not the same warning.
   speed: 2.0
-  epoch: 2026-07-12T02:30:00Z
-  anchor_wall: 2026-07-12T02:30:00Z
+  # ── THE ANCHOR IS NOT IN THIS FILE ANY MORE ───────────────────────────────
+  #
+  # It was a hardcoded 2026-07-12T02:30:00Z here, in shingocore.dev.yaml and in
+  # the other edge config. A literal origin makes the sim/wall offset grow without
+  # bound — (speed-1) x (wallNow - anchor) — so the rig's clock was eight weeks
+  # into the future at 2x by 2026-09-06, and every live duration in the UI, all of
+  # which are computed against it, read 0 s.
+  #
+  # The anchor now belongs to the RUN: scripts/sim-anchor.sh mints one at bring-up
+  # and compose hands the SAME instant to core and every edge as SHINGO_SIM_ANCHOR,
+  # read identically by clock.ResolveAnchor. The lockstep this pair existed to hold
+  # is kept; the origin is current. See shingocore.dev.yaml for the full note.
 
   # plc_name/tag_name MUST match the reporting_points in plants/edge2.yaml exactly.
   # A mismatch is SILENT: the tick fans to no node and the cell simply never counts.

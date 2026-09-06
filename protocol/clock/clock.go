@@ -20,6 +20,12 @@ type Clock interface {
 type Ticker interface {
 	C() <-chan time.Time
 	Stop()
+	// Reset changes the interval, in the clock's own time domain — so on a sim
+	// clock the new duration is simulated, like the one the ticker was built
+	// with. Loops whose cadence is re-read from config on every tick (the PLC
+	// poll rate) need it; without it they would be stuck at the rate in force
+	// when the loop started.
+	Reset(d time.Duration)
 }
 
 var (
@@ -38,8 +44,9 @@ func (realClock) NewTicker(d time.Duration) Ticker       { return realTicker{tim
 
 type realTicker struct{ t *time.Ticker }
 
-func (r realTicker) C() <-chan time.Time { return r.t.C }
-func (r realTicker) Stop()               { r.t.Stop() }
+func (r realTicker) C() <-chan time.Time   { return r.t.C }
+func (r realTicker) Stop()                 { r.t.Stop() }
+func (r realTicker) Reset(d time.Duration) { r.t.Reset(d) }
 
 // --- Global default clock (G12 — injectable now-provider) ---
 //
@@ -66,6 +73,38 @@ func Now() time.Time {
 	c := defaultCl
 	defaultMu.RUnlock()
 	return c.Now()
+}
+
+// Default returns the process clock itself, for periodic loops that need
+// After/NewTicker rather than just Now().
+//
+// ── WHY A LOOP'S CADENCE IS A CLOCK QUESTION ──────────────────────────────
+//
+// Now() was enough while only TIMESTAMPS had to be sim-governed. It is not
+// enough for the loops that ACT on them, and the gap between the two is a
+// documented defect class: store/bins releases a staged bin when
+// staged_expires_at < clock.Now() — simulated time — while the sweep that calls
+// it ran on a raw time.Ticker, at wall rate. At N× the world produces expiries N
+// times faster than the loop that clears them. reconciliation_service found the
+// same seam from the other side and its own comment says so: the comparison was
+// moved to clock.Now(), the loop that drives it was not.
+//
+// So a loop whose work is simulated takes its cadence from here, and one whose
+// work is real (an SSE keepalive to an actual browser, a Kafka reconnect
+// backoff, retention over real files) keeps calling the standard library
+// directly. That distinction is not a judgement call to be re-made per site:
+// it is recorded, site by site, in docs/dev-env/sim-timer-census.md.
+//
+// Production-identical: with no SimClock installed this IS realClock, so
+// Default().NewTicker(d) is time.NewTicker(d) with one indirection.
+//
+// Read at CALL time, never cached at construction — sim startup installs the
+// SimClock during boot, and a clock captured into a struct field before that
+// would be the real one forever.
+func Default() Clock {
+	defaultMu.RLock()
+	defer defaultMu.RUnlock()
+	return defaultCl
 }
 
 // SetDefault replaces the global default clock.  Call once at sim startup.

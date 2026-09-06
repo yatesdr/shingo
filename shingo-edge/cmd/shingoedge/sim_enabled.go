@@ -48,24 +48,38 @@ func simWarlinkClient(cfg *config.Config) plc.WarlinkClient {
 	// Kafka seam (clock.BuildSimClock owns the logic + the 15× cap that MUST match
 	// core). SetDefault wires clock.Now() to sim time; simClock is shared with the
 	// downtime model + operator.
-	clk, mode := clock.BuildSimClock(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
+	// The anchor belongs to the RUN, not to the config file — a hardcoded
+	// epoch drifts (speed-1)x further from wall time every day it sits in the
+	// tree. clock.ResolveAnchor prefers the run's shared env anchor and is the
+	// same function on both binaries, so they cannot read it differently. See
+	// its doc comment for the arithmetic and for why re-anchoring is tied to
+	// fresh volumes.
+	simEpoch, simAnchor, anchorSrc, err := clock.ResolveAnchor(cfg.Sim.Epoch, cfg.Sim.AnchorWall)
+	if err != nil {
+		log.Fatalf("[sim] %v", err)
+	}
+	if anchorSrc == clock.AnchorEnv {
+		log.Printf("[sim] anchor from %s=%s (shared by every process in this run)",
+			clock.AnchorEnv, simAnchor.Format(time.RFC3339))
+	}
+	clk, mode := clock.BuildSimClock(simEpoch, simAnchor, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
 	switch mode {
 	case clock.SimRunning:
 		log.Printf("[sim] live clock: running %.1f× wall, per-process anchor (change live via POST /api/sim/speed)", clk.Speed())
 	case clock.SimSyncedRunning:
 		log.Printf("[sim] synced running clock: %.0f× wall, sustained (epoch=%s anchor=%s; no wall clamp, "+
 			"so Now() and every ticker run at the same speed) — must match core",
-			clk.Speed(), cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339))
+			clk.Speed(), simEpoch.Format(time.RFC3339), simAnchor.Format(time.RFC3339))
 	case clock.SimSyncedFastForward:
 		// The banner names the catch-up window, because that is the only time this
 		// clock is faster than wall — see the matching sentence in core's.
 		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× while catching up "+
 			"to wall, then Now() clamps to 1× (tickers stay at %.0f×) — must match core",
-			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed(), clk.Speed())
+			simEpoch.Format(time.RFC3339), simAnchor.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	case clock.SimUnsyncedFastForward:
 		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): "+
 			"epoch=%s speed=%.0f× while catching up to wall, then Now() clamps to 1× (tickers stay at %.0f×)",
-			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
+			simEpoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	}
 	if clk.RequestedSpeed() > clk.Speed() {
 		log.Printf("[sim] requested %.0f× capped to max_speed %.0f×", clk.RequestedSpeed(), clk.Speed())

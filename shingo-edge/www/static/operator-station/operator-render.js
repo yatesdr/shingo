@@ -1,5 +1,5 @@
 import { el, esc, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
-import { formatClock } from '/static/shared/utils.js';
+import { formatClock, serverNow } from '/static/shared/utils.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
@@ -618,7 +618,7 @@ function waitedLabel(created) {
     if (!created) return '';
     var t = Date.parse(created);
     if (isNaN(t)) return '';
-    var mins = Math.floor((Date.now() - t) / 60000);
+    var mins = Math.floor((serverNow() - t) / 60000);
     if (mins < 0) return '';
     if (mins < 1) return 'under a minute';
     if (mins < 60) return mins + 'm';

@@ -32,10 +32,15 @@ function truthy(got, label) {
 }
 
 const utilSrc = fs.readFileSync(path.join(__dirname, 'operator-util.js'), 'utf8')
+    .replace(/^import[^;]+;\s*/gm, '')
     .replace(/^export\s+/gm, '');
 const ctx = vm.createContext({
     document: { body: { dataset: { stationId: '1' } }, getElementById: () => null },
     console: console,
+    // Stands in for the shared clock. With no server inline to sync from, the
+    // real serverNow() falls back to Date.now() too, so this is the same answer
+    // and not a special case for the test.
+    serverNow: () => Date.now(),
 });
 vm.runInContext(utilSrc, ctx);
 const { primeNoticeText } = ctx;

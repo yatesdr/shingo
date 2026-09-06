@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/store/processes"
 )
 
@@ -159,13 +160,13 @@ func (e *Engine) startStrandedMonitor() {
 }
 
 func (sm *strandedMonitor) run() {
-	ticker := time.NewTicker(strandedScanInterval)
+	ticker := clock.Default().NewTicker(strandedScanInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-sm.eng.stopChan:
 			return
-		case now := <-ticker.C:
+		case now := <-ticker.C():
 			sm.tick(now)
 		}
 	}

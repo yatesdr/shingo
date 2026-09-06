@@ -1,6 +1,6 @@
 import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
 import { formatTime } from '/static/shared/utils.js';
-import { installLiveDurations, onSSE, reconcileList } from '/static/shared/utils.js';
+import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
 // (detail page with a child-step modal open over it), so the status line is
@@ -254,7 +254,7 @@ function timelineExtra(ev, next) {
 function elapsedLabel(o) {
   if (!o.created_at) return '';
   var start = new Date(o.created_at).getTime();
-  var end = o.completed_at ? new Date(o.completed_at).getTime() : Date.now();
+  var end = o.completed_at ? new Date(o.completed_at).getTime() : serverNow();
   var secs = Math.round((end - start) / 1000);
   if (!isFinite(secs) || secs < 0) return '';
   var txt = durationText(secs);

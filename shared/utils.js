@@ -138,9 +138,72 @@ export const api = {
 
 // ─── Time formatting ─────────────────────────────────────────────────────
 
+// ─── Server-owned now ────────────────────────────────────────────────────
+//
+// THE SERVER OWNS NOW, the same way it owns the timezone. Every elapsed
+// reading below used to be `Date.now() - serverStamp` — a BROWSER wall clock
+// differenced against a SERVER timestamp. Those are not the same clock, and on
+// the sim rig they were not even the same year: simulated time runs at a speed
+// multiplier, so it stood weeks ahead of the wall, every difference came out
+// negative, and formatDuration clamps negatives to zero. Every live duration
+// on the rig read "0 s" — the instrument that distinguishes backpressure from
+// a wedge, dead, for as long as the rig has existed.
+//
+// The server inlines its own now and the rate that now advances (layout.html /
+// header.html, from planttime.ServerClockJS). We extrapolate from the paint
+// rather than re-fetching: correct for a tab left open a week, because the
+// multiplier is applied to the elapsed browser time rather than assumed to be
+// one.
+//
+// Absent the inline — a page served without the layout, a test harness, a
+// partial rendered standalone — this degrades to the browser clock at 1x,
+// which is exactly the old behaviour. Never to garbage.
+const _clock = {
+    serverMs: null,   // server's now at paint, ms
+    wallMs: null,     // browser's now at the same instant, ms
+    speed: 1,
+    sim: false,
+};
+
+// syncServerClock re-pins the origin. Called once at load from the inline, and
+// exported because the sim speed can change under a live page (POST
+// /api/sim/speed) — a page that knows it changed the speed must re-pin or it
+// keeps extrapolating at the old rate.
+export function syncServerClock(sc) {
+    if (!sc || !sc.now) return false;
+    const ms = Date.parse(sc.now);
+    if (isNaN(ms)) return false;
+    _clock.serverMs = ms;
+    _clock.wallMs = Date.now();
+    _clock.speed = (typeof sc.speed === 'number' && sc.speed > 0) ? sc.speed : 1;
+    _clock.sim = !!sc.sim;
+    return true;
+}
+
+// serverNow is the drop-in for Date.now() ANYWHERE the result is compared
+// against a server-supplied timestamp. Milliseconds since the epoch, in the
+// server's frame.
+export function serverNow() {
+    if (_clock.serverMs === null) return Date.now();
+    return _clock.serverMs + (Date.now() - _clock.wallMs) * _clock.speed;
+}
+
+// isSimClock reports whether the server's now is simulated — for the marker
+// that makes a sim page say so.
+export function isSimClock() { return _clock.sim; }
+
+// simSpeed is the multiplier, for the marker's readout. 1 when unknown.
+export function simSpeed() { return _clock.speed; }
+
+if (typeof window !== 'undefined' && window.SHINGO_CLOCK) {
+    syncServerClock(window.SHINGO_CLOCK);
+}
+
 export function timeAgo(ts) {
     if (!ts) return '-';
-    const d = Date.now() - new Date(ts).getTime();
+    // serverNow, not Date.now: the stamp came from the server, so the
+    // difference has to be taken in the server's frame. See serverNow.
+    const d = serverNow() - new Date(ts).getTime();
     if (d < 60000) return 'just now';
     if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
     if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
@@ -280,14 +343,14 @@ export function renderLiveDurations(root) {
         const since = Date.parse(elem.getAttribute('data-since'));
         if (isNaN(since)) return;
         live++;
-        const elapsed = Date.now() - since;
+        const elapsed = serverNow() - since;
         elem.textContent = formatDuration(elapsed);
         applyNoticeWording(elem, elapsed);
     });
     scope.querySelectorAll('[data-until]').forEach(elem => {
         const until = Date.parse(elem.getAttribute('data-until'));
         if (isNaN(until)) return;
-        const left = until - Date.now();
+        const left = until - serverNow();
         if (left <= 0) {
             elem.textContent = elem.getAttribute('data-past') || '—';
             return;

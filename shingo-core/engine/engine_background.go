@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"shingocore/fleet"
+
+	"shingo/protocol/clock"
 )
 
 // ── Background loops ────────────────────────────────────────────────
@@ -20,14 +22,14 @@ import (
 // robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated
 // only when the robot state has actually changed.
 func (e *Engine) robotRefreshLoop() {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := clock.Default().NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	var prevHash [sha256.Size]byte
 	for {
 		select {
 		case <-e.stopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			if !e.fleetConnected.Load() {
 				continue
 			}
@@ -110,13 +112,13 @@ func (e *Engine) laneLivenessFloorLoop() {
 	if e.dispatcher == nil {
 		return
 	}
-	ticker := time.NewTicker(laneLivenessFloorInterval)
+	ticker := clock.Default().NewTicker(laneLivenessFloorInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-e.stopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			// The count is deliberately not logged when zero. Every release it
 			// makes writes its own recovery_actions record naming the order and
 			// the cause; a periodic "floor released 0" line would be the cry-wolf
@@ -172,13 +174,18 @@ func (e *Engine) stagedBinSweepLoop() {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	ticker := time.NewTicker(interval)
+	// clock.Default(), not time.NewTicker: THIS IS THE SHARPEST CASE OF THE
+	// MISMATCH. store/bins releases a staged bin when staged_expires_at <
+	// clock.Now() — simulated time — while this sweep, the thing that clears
+	// them, ran at wall rate. At Nx the world produced expiries N times faster
+	// than the loop draining them. Bucket (i) in docs/dev-env/sim-timer-census.md.
+	ticker := clock.Default().NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-e.stopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			count, err := e.db.ReleaseExpiredStagedBins()
 			if err != nil {
 				e.logFn("engine: staged bin sweep error: %v", err)

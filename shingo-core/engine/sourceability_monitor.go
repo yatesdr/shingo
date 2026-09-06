@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
@@ -107,13 +108,13 @@ func (m *SourceabilityMonitor) broadcast(report protocol.SourcingStateReport) {
 func (m *SourceabilityMonitor) Run(ctx context.Context) {
 	m.recomputeAll()
 	go func() {
-		t := time.NewTicker(m.fullInterval)
+		t := clock.Default().NewTicker(m.fullInterval)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-t.C():
 				m.recomputeAll()
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/dispatch"
 	"shingocore/service"
 	"shingocore/store/nodes"
@@ -111,13 +112,13 @@ func (s *Scanner) RunOnce() int {
 // StartPeriodicSweep runs the scanner every interval as a safety net.
 func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
 	go func() {
-		ticker := time.NewTicker(interval)
+		ticker := clock.Default().NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-s.stopChan:
 				return
-			case <-ticker.C:
+			case <-ticker.C():
 				s.RunOnce()
 			}
 		}

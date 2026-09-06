@@ -44,7 +44,7 @@
 // Every class name in the scene therefore covers both shapes, and only the
 // geometry says which one a given lane is.
 
-import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 // The scene-drawing substrate — projection, cubic arithmetic, lane identity —
 // lives in components/scene-geom.js so a second scene page can draw the same
 // network without inheriting this file's viewport, comets and SSE wiring.
@@ -201,7 +201,7 @@ import {
   // ── header chrome ──────────────────────────────────────────────────
   function tickClock() {
     var el = document.getElementById('dash-clock');
-    if (el) el.textContent = formatClock(Date.now());
+    if (el) el.textContent = formatClock(serverNow());
   }
   setInterval(tickClock, 1000); tickClock();
 
@@ -315,6 +315,13 @@ import {
     }
     robots[rb.id] = rb;
   }
+  // DELIBERATELY Date.now(), not serverNow. firstSeenAt / lastMoveAt / the
+  // activity feed's ts are stamped BY THIS BROWSER when a frame arrives, and
+  // compared against this browser's clock. They measure how long since this tab
+  // observed something, which is a real wall-time question about the SSE feed
+  // and not a question about the plant's clock. Converting them would compare a
+  // browser stamp against a server now, which is the defect serverNow exists to
+  // remove — pointed the other way.
   function isMoving(r) {
     return (Date.now() - (r.lastMoveAt || 0)) < MOVE_LINGER_MS;
   }

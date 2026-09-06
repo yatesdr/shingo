@@ -1,4 +1,4 @@
-import { api, convertTimestamps, formatTime, h, onSSE } from '/static/shared/utils.js';
+import { api, convertTimestamps, formatTime, h, onSSE, serverNow } from '/static/shared/utils.js';
 
 // Sourcing page — direction B (two-pane): a process rail on the left, that
 // process's changeover detail on the right.
@@ -240,7 +240,7 @@ function renderHistory(host, rows, since, truncated) {
         const newer = rows[i - 1];
         let held;
         if (!newer) {
-            const d = fmtHeld(Date.now() - new Date(r.observed_at).getTime());
+            const d = fmtHeld(serverNow() - new Date(r.observed_at).getTime());
             held = d === null
                 ? h`<span class="src-hist-nodata" title="This row is stamped in the future relative to this browser — a clock difference between Core and this machine, not a measurement">&mdash;</span>`
                 : h`<span class="src-hist-now">current</span>` + h` <span class="src-hist-nodata">(${d})</span>`;

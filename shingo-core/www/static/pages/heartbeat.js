@@ -14,20 +14,27 @@
 //   • Clock is server-synced (offset from the connected + cell-heartbeat ts) so
 //     "X ago" doesn't drift over a long soak.
 
-import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, isSimClock, onSSE, serverNow, setSSEReloadOnBuild, simSpeed, syncServerClock } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 
 setSSEReloadOnBuild(true);
 
 // ─── server-synced clock ────────────────────────────────────────────────────
-let clockOffset = 0; // serverNow - localNow (ms)
+//
+// This page had the right idea first and kept a local offset. It is now the
+// shared one (shared/utils.js serverNow), for two reasons: a fixed offset does
+// not survive a speed multiplier — under a 2x clock it falls a second behind
+// per real second — and every other surface needed the same thing, which is
+// what makes it shared rather than local.
+//
+// The SSE re-pin stays and is worth keeping: `connected` fires on every
+// reconnect, so a tab that slept through a speed change re-pins on wake instead
+// of extrapolating from a stale origin.
 function syncClock(tsStr) {
     if (!tsStr) return;
-    const t = Date.parse(tsStr);
-    if (!isNaN(t)) clockOffset = t - Date.now();
+    syncServerClock({ now: tsStr, speed: simSpeed(), sim: isSimClock() });
 }
-function serverNow() { return Date.now() + clockOffset; }
 
 // ─── cells ──────────────────────────────────────────────────────────────────
 const cellTiles = new Map(); // cell_id -> tile
@@ -88,9 +95,10 @@ function refreshCellState(cellID) {
 // stream in on top). Only fires within the strip window end up drawn.
 function seedRhythm(cellID, cellIdx) {
     // serverNow(), not Date.now(): the stored fires are stamped in server (sim)
-    // time, which under fast-forward runs days behind wall — a wall-now window
-    // would back-date past all of them and seed nothing. syncClock has already
-    // run from the SSE 'connected' ts before loadCells() reaches here.
+    // time, which does not track the wall — a running sim clock stands AHEAD of
+    // it by (speed-1) x elapsed, and a replay clock behind. Either way a
+    // wall-now window misses them and seeds nothing. syncClock has already run
+    // from the SSE 'connected' ts before loadCells() reaches here.
     const since = new Date(serverNow() - 2 * 60 * 1000).toISOString();
     fetch('/api/cells/' + encodeURIComponent(cellID) + '/heartbeat?since=' + encodeURIComponent(since))
         .then((r) => r.json())

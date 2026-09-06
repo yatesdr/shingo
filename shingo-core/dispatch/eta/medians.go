@@ -24,6 +24,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"shingo/protocol/clock"
 )
 
 const (
@@ -111,13 +113,13 @@ func (c *Cache) Start(stopChan <-chan struct{}) error {
 }
 
 func (c *Cache) run(stopChan <-chan struct{}) {
-	t := time.NewTicker(refreshInterval)
+	t := clock.Default().NewTicker(refreshInterval)
 	defer t.Stop()
 	for {
 		select {
 		case <-stopChan:
 			return
-		case <-t.C:
+		case <-t.C():
 			if err := c.Refresh(context.Background()); err != nil {
 				log.Printf("eta: refresh: %v", err)
 			}

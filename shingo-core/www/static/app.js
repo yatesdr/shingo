@@ -241,19 +241,18 @@ export function apiPut(url, body)  { return api('PUT',  url, body || {}); }
 export function apiDelete(url)     { return api('DELETE', url); }
 
 // --- Time formatting ---
-// timeAgo:        relative ("3m ago"), '-' on falsy.
 // formatDuration: human-readable elapsed duration in ms.
 // formatTime moved to shared/utils.js (plant-timezone pinned). Pages import
 // it from '/static/shared/utils.js'; app.js keeps no date formatter of its
 // own — two copies of a clock is how the two-convention display bug happened.
-export function timeAgo(ts) {
-  if (!ts) return '-';
-  var d = Date.now() - new Date(ts).getTime();
-  if (d < 60000) return 'just now';
-  if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
-  if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
-  return Math.floor(d / 86400000) + 'd ago';
-}
+//
+// timeAgo went the same way, one step later and for the second half of the same
+// rule: it differenced a SERVER stamp against the BROWSER's Date.now(), and its
+// callers pass server stamps exclusively (last_counted_at, created_at,
+// updated_at). Re-exported rather than re-implemented so every existing
+// `import { timeAgo } from '/static/app.js'` keeps working and there is still
+// only one of it.
+export { timeAgo } from '/static/shared/utils.js';
 
 export function formatDuration(ms) {
   if (!ms || ms <= 0) return '-';

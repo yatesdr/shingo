@@ -50,17 +50,25 @@ function extractFn(src, name) {
 }
 
 const here = __dirname;
-// operator-util.js is import-free but reads document.body at module scope.
+// operator-util.js reads document.body at module scope and imports serverNow
+// from shared/utils.js (formatETA differences a SERVER instant, not the
+// browser's). Strip the import and inject the function, the way the sourcing
+// harness injects onSSE and api.
 // Strip the `export` keyword in ALL its forms — `export function`, `export
 // async function`, `export const`. A narrower pattern misses `export async`
 // and dies on fetchWithTimeout.
 const utilSrc = fs.readFileSync(path.join(here, 'operator-util.js'), 'utf8')
+    .replace(/^import[^;]+;\s*/gm, '')
     .replace(/^export\s+/gm, '');
 const modalSrc = fs.readFileSync(path.join(here, 'operator-modal.js'), 'utf8');
 
 const ctx = vm.createContext({
     document: { body: { dataset: { stationId: '1' } }, getElementById: () => null },
     console: console,
+    // Stands in for the shared clock. With no server inline to sync from, the
+    // real serverNow() falls back to Date.now() too, so this is the same answer
+    // and not a special case for the test.
+    serverNow: () => Date.now(),
 });
 vm.runInContext(utilSrc, ctx);
 vm.runInContext(extractFn(modalSrc, 'waitingLabel') + '\nthis.waitingLabel = waitingLabel;', ctx);

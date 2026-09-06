@@ -78,7 +78,9 @@ function loadUtils(nowMs) {
     vm.runInContext(
         transformed +
         '; this.installLiveDurations = installLiveDurations;' +
-        '  this.renderLiveDurations = renderLiveDurations;',
+        '  this.renderLiveDurations = renderLiveDurations;' +
+        '  this.syncServerClock = syncServerClock;' +
+        '  this.serverNow = serverNow;',
         ctx);
     return { ctx, root, timers };
 }
@@ -274,6 +276,53 @@ const T0 = Date.parse('2026-08-22T14:00:00Z');
     assert(clock.textContent === serverText,
         'first live render changed the server text from ' + JSON.stringify(serverText) +
         ' to ' + JSON.stringify(clock.textContent) + ' — the ladders have drifted');
+}
+
+// ─── the server owns now ──────────────────────────────────────────────────
+//
+// THE "0 s" REGRESSION, pinned. The sim clock runs ahead of the wall by
+// (speed-1) x elapsed, so a row stamped in SIMULATED time is in the browser's
+// FUTURE. Differenced against Date.now() every elapsed came out negative,
+// formatDuration clamped it to zero, and every live duration on the rig read
+// "0 s" — for months, silently, because each half was individually correct.
+{
+    const browserNow = Date.parse('2026-09-06T12:00:00Z');
+    const now = { value: browserNow };
+    const { ctx, root } = loadUtils(now);
+
+    // The server is eight weeks ahead and running at 2x — the rig on 2026-09-06.
+    const simNow = Date.parse('2026-11-01T12:00:00Z');
+    ctx.syncServerClock({ now: '2026-11-01T12:00:00Z', speed: 2, sim: true });
+
+    // A row the server stamped six of ITS minutes ago.
+    const el = node({ 'data-since': new Date(simNow - 6 * 60000).toISOString() });
+    root.append(el);
+
+    ctx.renderLiveDurations(root);
+    assert(el.textContent === '6m 00s',
+        'a six-minute-old row read ' + JSON.stringify(el.textContent) +
+        ' instead of "6m 00s" — this is the 0 s defect');
+    assert(el.textContent !== '0 s',
+        'the duration clamped to 0 s: a server stamp was differenced against browser wall time');
+
+    // And it keeps up: 30 wall-seconds later the sim has advanced 60.
+    now.value = browserNow + 30000;
+    ctx.renderLiveDurations(root);
+    assert(el.textContent === '7m 00s',
+        'after 30 wall-seconds at 2x the row should read "7m 00s", got ' +
+        JSON.stringify(el.textContent) + ' — the multiplier is not being applied');
+}
+
+// A page with no server inline degrades to the browser clock rather than to
+// garbage. This is the plain-partial / test-harness case, and it is the
+// behaviour every other test in this file depends on.
+{
+    const now = { value: Date.parse('2026-08-22T14:00:00Z') };
+    const { ctx } = loadUtils(now);
+    assert(ctx.serverNow() === now.value,
+        'with no inline, serverNow() must equal the browser clock, got ' + ctx.serverNow());
+    assert(ctx.syncServerClock({}) === false, 'an empty clock payload must be refused');
+    assert(ctx.syncServerClock({ now: 'not a date' }) === false, 'an unparseable now must be refused');
 }
 
 console.log('live durations: ' + passed + ' passed, ' + failed + ' failed');

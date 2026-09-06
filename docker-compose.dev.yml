@@ -58,6 +58,12 @@ services:
     command: ["shingocore", "--config", "/etc/shingo/shingocore.dev.yaml"]
     environment:
       SHINGO_ALLOW_SIM: "1"
+      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
+      # (which compose reads automatically). EVERY process that stamps or reads
+      # simulated time takes the same one, or their clocks drift apart by
+      # boot-skew x speed and cross-process messages expire. Empty is legal and
+      # falls back to the config file; see clock.ResolveAnchor.
+      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
     ports:
       - "${SHINGO_BIND:-127.0.0.1}:8083:8083"
     mem_limit: 256m
@@ -84,6 +90,12 @@ services:
     command: ["shingoedge", "--config", "/etc/shingo/shingoedge.dev.yaml"]
     environment:
       SHINGO_ALLOW_SIM: "1"
+      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
+      # (which compose reads automatically). EVERY process that stamps or reads
+      # simulated time takes the same one, or their clocks drift apart by
+      # boot-skew x speed and cross-process messages expire. Empty is legal and
+      # falls back to the config file; see clock.ResolveAnchor.
+      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
     ports:
       - "${SHINGO_BIND:-127.0.0.1}:8081:8081"
     volumes:
@@ -110,6 +122,12 @@ services:
     command: ["shingoedge", "--config", "/etc/shingo/shingoedge.edge2.yaml"]
     environment:
       SHINGO_ALLOW_SIM: "1"
+      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
+      # (which compose reads automatically). EVERY process that stamps or reads
+      # simulated time takes the same one, or their clocks drift apart by
+      # boot-skew x speed and cross-process messages expire. Empty is legal and
+      # falls back to the config file; see clock.ResolveAnchor.
+      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
     ports:
       - "${SHINGO_BIND:-127.0.0.1}:8082:8081"
     volumes:
@@ -136,6 +154,12 @@ services:
     command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "/plants/edge2.yaml", "--yes"]
     environment:
       SHINGO_ALLOW_SIM: "1"
+      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
+      # (which compose reads automatically). EVERY process that stamps or reads
+      # simulated time takes the same one, or their clocks drift apart by
+      # boot-skew x speed and cross-process messages expire. Empty is legal and
+      # falls back to the config file; see clock.ResolveAnchor.
+      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
     volumes:
       - edge2-data:/data
       - ./plants:/plants:ro
@@ -164,6 +188,12 @@ services:
     command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "${SHINGO_PLANT:-/plants/demo.yaml}", "--yes"]
     environment:
       SHINGO_ALLOW_SIM: "1"
+      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
+      # (which compose reads automatically). EVERY process that stamps or reads
+      # simulated time takes the same one, or their clocks drift apart by
+      # boot-skew x speed and cross-process messages expire. Empty is legal and
+      # falls back to the config file; see clock.ResolveAnchor.
+      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
     volumes:
       - edge-data:/data
       - ./plants:/plants:ro
@@ -190,6 +220,12 @@ services:
     command: ["migrateloaders", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--station", "devplant.line1"]
     environment:
       SHINGO_ALLOW_SIM: "1"
+      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
+      # (which compose reads automatically). EVERY process that stamps or reads
+      # simulated time takes the same one, or their clocks drift apart by
+      # boot-skew x speed and cross-process messages expire. Empty is legal and
+      # falls back to the config file; see clock.ResolveAnchor.
+      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
     volumes:
       - edge-data:/data
     depends_on:

@@ -138,6 +138,11 @@ function load(opts) {
         // formatTime is the shared plant-local formatter.
         convertTimestamps: () => {},
         formatTime: (ts) => new Date(ts).toISOString(),
+        // serverNow stands in for the shared clock. It reads through the SAME
+        // stubbed Date the harness pins with opts.nowISO, which is what makes
+        // the history durations below deterministic — and it is also what the
+        // real serverNow() does with no server inline to sync from.
+        serverNow: () => ctxObj.Date.now(),
         api: {
             get: (url) => {
                 apiCalls.push(url);
@@ -150,7 +155,7 @@ function load(opts) {
     vm.createContext(ctxObj);
 
     const src = fs.readFileSync(path.join(__dirname, 'sourcing.js'), 'utf8')
-        .replace(/^import[^;]+;\s*/m, '');   // drop the ES import; onSSE/api/h injected
+        .replace(/^import[^;]+;\s*/gm, '');  // drop the ES imports; onSSE/api/h/serverNow injected
     vm.runInContext(src, ctxObj);
 
     return {

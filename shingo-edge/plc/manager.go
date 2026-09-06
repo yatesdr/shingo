@@ -253,7 +253,13 @@ func (m *Manager) warlinkPollLoop() {
 		return d
 	}
 
-	ticker := time.NewTicker(getPollRate())
+	// clock.Default(), not time.NewTicker: this loop IS the sim ingest path.
+	// warlink.mode is `poll` on the dev stack, so ReadTag serves from the cache
+	// only this loop refreshes — the fake PLC counts at sim rate and this is
+	// what samples it. Left at wall rate, a rising multiplier packs more counts
+	// into each sample until one crosses CalculateDelta JumpThreshold and the
+	// delta is suppressed as an operator-gated jump.
+	ticker := clock.Default().NewTicker(getPollRate())
 	defer ticker.Stop()
 
 	// Do an immediate first poll
@@ -266,7 +272,7 @@ func (m *Manager) warlinkPollLoop() {
 			return
 		case <-m.warlinkStopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			m.warlinkPollTick()
 			ticker.Reset(getPollRate())
 		}
@@ -536,14 +542,14 @@ func (m *Manager) pollLoop() {
 	if pollRate <= 0 {
 		pollRate = time.Second
 	}
-	ticker := time.NewTicker(pollRate)
+	ticker := clock.Default().NewTicker(pollRate)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-m.stopChan:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			m.pollAllReportingPoints()
 		}
 	}

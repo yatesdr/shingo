@@ -4,18 +4,33 @@ COMPOSE := docker compose -f docker-compose.dev.yml
 
 .PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-rates-solve
 
-dev-build: ## Build the three sim binaries into images
-	$(COMPOSE) build
+dev-build: ## Build the sim binaries into images (INCLUDING the tools profile)
+	# --profile tools is load-bearing, not thoroughness. `compose build` without it
+	# builds core/edge/edge2 and SKIPS seed/seed-edge2/migrate-loaders, and seeddev
+	# carries ITS OWN COPY of the migration list. On 2026-09-06 a stale seeder image
+	# survived a teardown and applied two migrations under a retired numbering on top
+	# of a freshly migrated database — pushing it past the chain it was supposed to be
+	# on, with no symptom but a version number inside a line that reads like success.
+	# One build for all six images is what makes that unrepeatable.
+	$(COMPOSE) --profile tools build
 
 dev: dev-build ## Bring up postgres + kafka + core + edge
+	# Keeps the existing anchor if there is one — restarting a stack must not
+	# re-anchor its clock, because the rows already in the volumes are stamped in
+	# the current frame. Only dev-reset mints a new one. See scripts/sim-anchor.sh.
+	bash scripts/sim-anchor.sh ensure
 	$(COMPOSE) up -d postgres kafka core edge
 	$(COMPOSE) ps
 
 dev-down: ## Stop services (keep data volumes)
 	$(COMPOSE) down
 
-dev-reset: ## Stop and delete volumes (fresh DBs on next up)
+dev-reset: ## Stop and delete volumes (fresh DBs + a fresh sim anchor on next up)
 	$(COMPOSE) down -v
+	# Fresh volumes are the ONLY safe moment to re-anchor: no rows survive carrying
+	# simulated stamps in the old frame, so simulated time can restart at today
+	# without landing before data that already exists.
+	bash scripts/sim-anchor.sh mint
 
 dev-seed: ## Seed the demo plant then restart core+edge to pick up the seeded registry + runtime states
 	# --build so an edited seeddev / demo.yaml is always picked up (the seed
