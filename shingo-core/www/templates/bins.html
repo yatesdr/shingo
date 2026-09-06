@@ -122,7 +122,7 @@
           data-claimed="{{if .ClaimedBy}}1{{else}}0{{end}}"
           data-confirmed="{{if .ManifestConfirmed}}1{{else}}0{{end}}"
           data-contents="{{if .PayloadCode}}{{if .ManifestConfirmed}}{{if gt .UOPRemaining 0}}loaded{{else}}depleted{{end}}{{else}}unconfirmed{{end}}{{else}}empty{{end}}"
-          data-action="openBinDetail" data-bin-id="{{.ID}}" data-skip-on-checkbox="1">
+          data-action="openBinDetailRow" data-bin-id="{{.ID}}" data-skip-on-checkbox="1">
         {{if $.Authenticated}}<td data-action="stopPropagation"><input type="checkbox" class="bin-cb" value="{{.ID}}" data-action-change="updateBulkBar"></td>{{end}}
         <td data-sort-value="{{.Label}}">
           <span class="bin-dot bin-dot-{{if .PayloadCode}}{{if .ManifestConfirmed}}{{if gt .UOPRemaining 0}}loaded{{else}}depleted{{end}}{{else}}unconfirmed{{end}}{{else}}empty{{end}}"></span>

@@ -84,18 +84,37 @@ function lookupPart(row) {
     .catch(function() { /* leave the row as typed */ });
 }
 
+// addBlankManifestRow is what the "+ Part" button binds to, and it exists
+// BECAUSE of the signature below.
+//
+// The delegated dispatcher calls every handler as (...verb args, el, evt), so
+// binding data-action="addManifestRow:<container>" straight to a function whose
+// second and third parameters are DATA hands it the button element and the
+// pointer event as the part number and the cat id — which is exactly what the
+// form shipped doing, rendering "[object HTMLButtonElement]" into the part-number
+// box. A verb whose arity the dispatcher cannot overflow is the fix; a guard
+// inside addManifestRow would leave the next binding free to make the same
+// mistake, and the seam is the binding, not the row builder.
+function addBlankManifestRow(containerId) {
+  addManifestRow(containerId);
+}
+
+// addManifestRow takes DATA and is called from code only — never bound to a
+// data-action verb (see addBlankManifestRow).
 function addManifestRow(containerId, partNumber, catid, perCycle) {
   var container = document.getElementById(containerId);
   var row = document.createElement('div');
-  row.className = 'manifest-row';
-  row.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem;flex-wrap:wrap';
+  // plpart-grid is defined once in payloads.html and shared with the column
+  // header, so the labels and the boxes cannot drift apart. Column minimums
+  // there are what keep "Part number *" and "Per cycle *" from rendering clipped.
+  row.className = 'plpart-row plpart-grid';
   row.innerHTML =
-    '<input type="text" placeholder="Part number *" value="' + escapeHtml(partNumber || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-part">' +
-    '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
-    '<input type="number" placeholder="Per cycle *" value="' + (perCycle === undefined || perCycle === null ? '' : perCycle) + '" step="1" min="1" required style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-per-cycle">' +
-    '<span class="text-muted mr-fullbin" style="font-size:0.75rem;min-width:6rem"></span>' +
+    '<input type="text" placeholder="Part number *" value="' + escapeHtml(partNumber || '') + '" class="mr-part">' +
+    '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" class="mr-catid">' +
+    '<input type="number" placeholder="Per cycle *" value="' + (perCycle === undefined || perCycle === null ? '' : perCycle) + '" step="1" min="1" required class="mr-per-cycle">' +
+    '<span class="text-muted mr-fullbin"></span>' +
     '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>' +
-    '<span class="mr-catid-note" style="font-size:0.75rem;flex-basis:100%"></span>';
+    '<span class="mr-catid-note"></span>';
   container.appendChild(row);
   row.dataset.knownCatid = '';
   renderFullBin(row, containerId);
@@ -117,7 +136,7 @@ function addManifestRow(containerId, partNumber, catid, perCycle) {
 // UoP capacity inputs: the capacity is the other half of the product, so
 // editing it silently staled every row before this existed.
 function refreshFullBinCells(containerId) {
-  document.querySelectorAll('#' + containerId + ' .manifest-row').forEach(function(row) {
+  document.querySelectorAll('#' + containerId + ' .plpart-row').forEach(function(row) {
     renderFullBin(row, containerId);
   });
 }
@@ -145,7 +164,7 @@ function mirrorPartNumberToCode(containerId) {
   if (!box || !code) return;
   code.readOnly = box.checked;
   if (!box.checked) return;
-  var first = document.querySelector('#' + containerId + ' .manifest-row .mr-part');
+  var first = document.querySelector('#' + containerId + ' .plpart-row .mr-part');
   code.value = first ? first.value.trim() : '';
 }
 
@@ -175,7 +194,7 @@ function syncCodeFromPart(containerId) {
 // optional for exactly the lines least likely to be deliberate — and saying so
 // here is what stops the operator losing the rest of a form to it.
 function collectManifestRows(containerId) {
-  var rows = document.querySelectorAll('#' + containerId + ' .manifest-row');
+  var rows = document.querySelectorAll('#' + containerId + ' .plpart-row');
   var items = [];
   var bad = [];
   var orphans = 0;
@@ -336,9 +355,14 @@ function openCreatePayloadModal() {
   document.getElementById('plc-notes').value = '';
   document.getElementById('plc-robot-group').value = '';
   document.getElementById('plc-manifest-rows').innerHTML = '';
+  document.getElementById('plc-code-from-part').checked = false;
   setSelectedBinTypes('plc-bin-types', []);
   loadRobotGroups();
   loadLoadSequences('plc-load-sequence', '');
+  // Open on one blank line. A payload with no parts cannot be counted, so the
+  // empty state is never the answer, and a form whose first field is a button
+  // asks the person to discover the point of the page.
+  addManifestRow('plc-manifest-rows');
   showModal('pl-create-modal');
 }
 function closePLCreateModal() {
@@ -568,7 +592,7 @@ document.addEventListener('keydown', function(e) {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
-    addManifestRow,
+    addBlankManifestRow,
     checkPLCreateSequence,
     checkPLEditSequence,
     closePLCreateModal,

@@ -1,4 +1,35 @@
 {{define "content"}}
+<style>
+  /* ── Manifest lines ───────────────────────────────────────────────────────
+     ONE column definition, shared by the header and every row. The header used
+     to be a second flex list whose widths were hand-matched to the row's, which
+     cannot stay aligned: the row carries two cells the header does not (the
+     full-bin readout and the remove button), so the same flex ratios divide a
+     different amount of free space and the labels drift off their own columns.
+     A grid states the columns once and both use it. */
+  .plpart-grid {
+    display: grid;
+    grid-template-columns:
+      minmax(11rem, 2fr)    /* part number  */
+      minmax(9rem, 1.4fr)   /* CATID        */
+      minmax(8rem, 1fr)     /* per cycle    */
+      6rem                  /* = N / bin    */
+      2.2rem;               /* remove       */
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .plpart-head {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-top: 0.4rem;
+  }
+  .plpart-row { margin-top: 0.3rem; }
+  .plpart-row input { font-size: 0.85rem; padding: 0.3rem; min-width: 0; }
+  .mr-fullbin { font-size: 0.75rem; }
+  /* The drift note is a full-width footnote under the line it belongs to. */
+  .mr-catid-note { grid-column: 1 / -1; font-size: 0.75rem; }
+</style>
 <div>
   <div class="flex flex-between mb-2">
     <h1>Payloads</h1>
@@ -72,12 +103,28 @@
 <datalist id="robot-groups-list"></datalist>
 <!-- Create Payload Modal -->
 <div id="pl-create-modal" class="modal-overlay" data-backdrop-close>
-  <div class="modal" style="max-width:560px">
+  <div class="modal" style="max-width:720px">
     <div class="modal-header flex flex-between">
       <h2>Create Payload</h2>
       <button class="modal-close" data-action="closePLCreateModal">&times;</button>
     </div>
     <form id="pl-create-form" method="POST" action="/payloads/create" data-action-submit="submitPLCreate">
+      <!-- THE PARTS COME FIRST. This page is where a new part enters shingo, so
+           the lines are the subject of the form and everything else describes the
+           carrier that holds them. The old order opened on Payload Code and left
+           the lines under four collapsed-looking fields at the bottom. -->
+      <div class="form-group mb-1">
+        <div class="flex flex-between">
+          <label class="font-semibold text-sm" style="margin:0">Parts in this payload <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many one production cycle uses</span></label>
+          <button type="button" class="btn btn-sm" data-action="addBlankManifestRow:plc-manifest-rows">+ Part</button>
+        </div>
+        <div class="plpart-grid plpart-head text-muted">
+          <span>Part number</span>
+          <span>CATID</span>
+          <span>Parts per cycle</span>
+        </div>
+        <div id="plc-manifest-rows"></div>
+      </div>
       <div class="grid grid-2">
         <div class="form-group">
           <label>Payload Code <span class="tooltip-trigger" title="Unique identifier used in orders. For a bin of ONE part this is that part's number — CMS books against it.">?</span></label>
@@ -124,13 +171,6 @@
         <label>Notes</label>
         <textarea name="description" id="plc-notes" rows="2" placeholder="Optional notes"></textarea>
       </div>
-      <div class="mb-1">
-        <div class="flex flex-between">
-          <label class="font-semibold text-sm" style="margin:0">Parts in this payload <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many one production cycle uses</span></label>
-          <button type="button" class="btn btn-sm" data-action="addManifestRow:plc-manifest-rows">+ Part</button>
-        </div>
-        <div id="plc-manifest-rows"></div>
-      </div>
       <button type="submit" class="btn btn-primary">Create</button>
       <button type="button" class="btn ml-05" data-action="closePLCreateModal">Cancel</button>
     </form>
@@ -139,13 +179,26 @@
 
 <!-- Edit Payload Modal -->
 <div id="pl-edit-modal" class="modal-overlay" data-backdrop-close>
-  <div class="modal" style="max-width:560px">
+  <div class="modal" style="max-width:720px">
     <div class="modal-header flex flex-between">
       <h2>Edit Payload</h2>
       <button class="modal-close" data-action="closePLEditModal">&times;</button>
     </div>
     <form id="pl-edit-form" method="POST" action="/payloads/update" data-action-submit="submitPLEdit">
       <input type="hidden" name="id" id="pl-edit-id">
+      <!-- Same order as Create, for the same reason. -->
+      <div class="form-group mb-1">
+        <div class="flex flex-between">
+          <label class="font-semibold text-sm" style="margin:0">Parts in this payload <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many one production cycle uses</span></label>
+          <button type="button" class="btn btn-sm" data-action="addBlankManifestRow:ple-manifest-rows">+ Part</button>
+        </div>
+        <div class="plpart-grid plpart-head text-muted">
+          <span>Part number</span>
+          <span>CATID</span>
+          <span>Parts per cycle</span>
+        </div>
+        <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
+      </div>
       <div class="grid grid-2">
         <div class="form-group">
           <label>Payload Code</label>
@@ -187,13 +240,6 @@
       <div class="form-group mb-1">
         <label>Notes</label>
         <textarea name="description" id="pl-edit-notes" rows="2"></textarea>
-      </div>
-      <div class="mb-1">
-        <div class="flex flex-between">
-          <label class="font-semibold text-sm" style="margin:0">Parts in this payload <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many one production cycle uses</span></label>
-          <button type="button" class="btn btn-sm" data-action="addManifestRow:ple-manifest-rows">+ Part</button>
-        </div>
-        <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
       <button type="button" class="btn ml-05" data-action="closePLEditModal">Cancel</button>

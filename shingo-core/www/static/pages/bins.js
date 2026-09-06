@@ -51,13 +51,18 @@ function filterBins() {
 }
 
 // ===== DETAIL MODAL =====
+
+// openBinDetailRow is what a bin row binds to. The delegated dispatcher calls
+// handlers as (...verb args, el, evt), so a zero-arg verb hands the row element
+// to openBinDetail's FIRST parameter — which is a bin id. This used to be
+// absorbed by a typeof check inside openBinDetail; reading the id out here keeps
+// the element on the element side of the seam and leaves the id function taking
+// an id, which is what every other caller passes it.
+function openBinDetailRow(el) {
+  openBinDetail(parseInt(el.dataset.binId, 10));
+}
+
 function openBinDetail(id) {
-  // Invoked two ways: directly with a numeric id (internal callers like
-  // SSE refresh and post-action reload) and via data-action delegation
-  // on a row, where the first arg is the row element. Normalize to id.
-  if (id && typeof id === 'object' && id.dataset) {
-    id = parseInt(id.dataset.binId, 10);
-  }
   currentBinId = id;
   apiGet('/api/bins/detail?id=' + id)
     .then(function(resp) {
@@ -899,7 +904,7 @@ delegateActions(document.body, {
     loadPayload,
     lockBin,
     moveBin,
-    openBinDetail,
+    openBinDetailRow,
     openCreateBTModal,
     openCreateBinModal,
     openCycleCount,
