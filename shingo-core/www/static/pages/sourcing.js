@@ -1,4 +1,4 @@
-import { api, h, onSSE } from '/static/shared/utils.js';
+import { api, convertTimestamps, formatTime, h, onSSE } from '/static/shared/utils.js';
 
 // Sourcing page — direction B (two-pane): a process rail on the left, that
 // process's changeover detail on the right.
@@ -308,7 +308,7 @@ async function loadVerdictHistory() {
     // print — not the one this client asked for. The handler silently ignores a
     // malformed ?since= and falls back to seven days, so the request is not
     // evidence of the window.
-    const since = (payload && payload.since) ? new Date(payload.since).toLocaleString() : 'the default 7-day window';
+    const since = (payload && payload.since) ? formatTime(payload.since) : 'the default 7-day window';
     const truncated = events.length >= HISTORY_LIMIT;
 
     const byProcess = new Map();
@@ -321,11 +321,11 @@ async function loadVerdictHistory() {
         renderHistory(host, byProcess.get(host.dataset.process) || [], since, truncated);
     }
     // These <time data-utc> cells were just inserted, and Core runs no htmx
-    // swap hook, so convert them here.
-    for (const elem of document.querySelectorAll('.src-history time[data-utc]')) {
-        const d = new Date(elem.getAttribute('data-utc'));
-        if (!isNaN(d.getTime())) elem.textContent = d.toLocaleString();
-    }
+    // swap hook, so convert them here — through the shared convertTimestamps,
+    // which is pinned to the plant timezone and only rewrites old UTC-text
+    // nodes. The inline loop this replaces was a third convertTimestamps
+    // duplicate rendering browser-local.
+    convertTimestamps(document.querySelector('.src-history') || document);
 }
 
 loadVerdictHistory();

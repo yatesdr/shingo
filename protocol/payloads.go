@@ -57,11 +57,18 @@ type CellCatalogEntry struct {
 // from ListOrderStations() can match. A field that carries one constant into
 // one wrong answer is not vestigial, it is a defect with a schema.
 type EdgeRegister struct {
-	StationID string             `json:"station_id"`
-	Hostname  string             `json:"hostname"`
-	Instance  string             `json:"instance,omitempty"`
-	Version   string             `json:"version"`
-	Catalog   []CellCatalogEntry `json:"catalog,omitempty"`
+	StationID string `json:"station_id"`
+	Hostname  string `json:"hostname"`
+	Instance  string `json:"instance,omitempty"`
+	Version   string `json:"version"`
+	// Timezone is the edge's resolved plant display zone (IANA name, e.g.
+	// "America/Chicago"), sent so Core can show each station's clock zone on
+	// the /edges page. Empty on an unconfigured edge — the table shows the
+	// emptiness, which is the "go set it" signal. Additive: an old Core
+	// drops the unknown field (no DisallowUnknownFields anywhere); an old
+	// edge sends nothing and a new Core reads absence as "unknown".
+	Timezone string             `json:"timezone,omitempty"`
+	Catalog  []CellCatalogEntry `json:"catalog,omitempty"`
 }
 
 // EdgeHeartbeat is sent periodically by an edge.
@@ -69,6 +76,11 @@ type EdgeHeartbeat struct {
 	StationID string `json:"station_id"`
 	Uptime    int64  `json:"uptime_s"`
 	Orders    int    `json:"active_orders"`
+	// Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads
+	// it once at boot (not live), so the wire value flips only when a
+	// process that actually renders the new zone comes up — Core's table
+	// shows what each edge is ON, never "saved but not yet restarted".
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // EdgeRegistered acknowledges edge registration.

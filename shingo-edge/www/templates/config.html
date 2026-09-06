@@ -21,6 +21,19 @@
         </div>
         <button class="btn btn-primary" data-action="saveIdentity">Save Identity</button>
     </div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.75rem">
+        <div class="form-group" style="margin:0;min-width:18rem;flex:1">
+            <label>Plant Timezone (IANA)</label>
+            <input type="text" id="timezone-input" class="form-input" value="{{.Config.Timezone}}" placeholder="America/Chicago">
+        </div>
+        <div style="color:var(--text-muted);font-size:0.9rem;flex:1;min-width:16rem">
+            The plant&#39;s wall-clock zone, for display <em>and</em> hourly-count bucketing.
+            Empty is unconfigured: display falls back to UTC and counts bucket in the box&#39;s
+            OS zone, which may disagree with the plant clock.
+            <strong>Takes effect on restart.</strong>
+        </div>
+        <button class="btn btn-primary" data-action="saveTimezone">Save Timezone</button>
+    </div>
 </div>
 
 <div class="card" style="margin-bottom:1rem">

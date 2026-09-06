@@ -36,15 +36,22 @@ ORIG_ARGS=("$@")
 LEGACY_CONFIG_ARG=""
 ASSUME_YES=no
 FORCE_REINSTALL=no
+# Seed timezone for a FRESH install's placeholder yaml. Default: the box's
+# own OS zone, which is a suggestion a human confirms at a plant whose OS
+# zone disagrees with the wall clock (Hopkinsville: OS Eastern, plant
+# Central). --timezone overrides for unattended installs that know better.
+EDGE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "America/Chicago")
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
         --legacy-config=*) LEGACY_CONFIG_ARG="${1#*=}"; shift ;;
         --yes|-y)          ASSUME_YES=yes; shift ;;
         --reinstall)       FORCE_REINSTALL=yes; shift ;;
+        --timezone)        EDGE_TIMEZONE="$2"; shift 2 ;;
+        --timezone=*)      EDGE_TIMEZONE="${1#*=}"; shift ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes]"
+            echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes] [--timezone IANA_ZONE]"
             exit 1
             ;;
     esac
@@ -748,7 +755,7 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
         # nobody could have typed differently. station_uid is now empty and
         # commented, and an empty one is a startup refusal that names this step.
         echo "==> Writing placeholder /etc/shingo/shingoedge.yaml..."
-        cat > /etc/shingo/shingoedge.yaml <<'YAML'
+        cat > /etc/shingo/shingoedge.yaml <<YAML
 # shingo-edge configuration. Configure other settings via the web UI
 # after first boot (http://<host>:<port>/system-config).
 
@@ -762,13 +769,41 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
 # shingoedge REFUSES TO START until this is set.
 station_uid: ""
 
+# IANA zone for display AND hourly-count bucketing. OS zone is a SUGGESTED
+# DEFAULT, never ground truth: at Hopkinsville the Pi's OS zone is Eastern
+# while the plant wall clock is Central — verify before accepting.
+timezone: ${EDGE_TIMEZONE}
+
 database_path: /var/lib/shingo-edge/shingoedge.db
 YAML
     fi
     chown shingo:shingo /etc/shingo/shingoedge.yaml
     chmod 644 /etc/shingo/shingoedge.yaml
 else
-    echo "==> /etc/shingo/shingoedge.yaml already exists; leaving in place"
+    echo "==> /etc/shingo/shingoedge.yaml already exists"
+    # Narrow exception to "leave in place": a config whose timezone: is absent
+    # or empty is an UNCONFIGURED clock — display falls back to UTC and
+    # hourly counts bucket in the box's OS zone (which at Hopkinsville is an
+    # hour off the plant). Both live plants shipped with the key present but
+    # empty, so "absent" alone would have matched neither.
+    if ! grep -qE '^[[:space:]]*timezone[[:space:]]*:[[:space:]]*[^[:space:]#]' /etc/shingo/shingoedge.yaml; then
+        suggested_tz=$(timedatectl show -p Timezone --value 2>/dev/null || echo "")
+        [ -z "$suggested_tz" ] && suggested_tz="America/Chicago"
+        echo "    timezone: is unset in the existing config"
+        echo "    OS zone suggests: $suggested_tz"
+        echo "    CAUTION: the OS zone is a default, not truth. Hopkinsville's boxes"
+        echo "    report Eastern-family zones while the plant clock is Central."
+        if [ "$ASSUME_YES" = "yes" ]; then
+            echo "    --yes: leaving timezone unset (set it in the web UI or yaml)"
+        elif confirm "Set timezone: to $suggested_tz?"; then
+            if grep -qE '^[[:space:]]*timezone[[:space:]]*:' /etc/shingo/shingoedge.yaml; then
+                sed -i -E "s|^[[:space:]]*timezone[[:space:]]*:.*|timezone: $suggested_tz|" /etc/shingo/shingoedge.yaml
+            else
+                echo "timezone: $suggested_tz" >> /etc/shingo/shingoedge.yaml
+            fi
+            echo "    timezone set to $suggested_tz"
+        fi
+    fi
 fi
 
 # ----------------------------------------------------------------------

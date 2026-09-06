@@ -318,7 +318,7 @@ func Claim(db *sql.DB, uid, displayName string) (bool, error) {
 // hostname must read as "cannot judge" in BOTH directions: it must not raise a
 // false alarm against the bound host, and it must not become the binding,
 // which would then make the real hostname look like the intruder.
-func Register(db *sql.DB, uid, hostname, instance, version string) (*Conflict, error) {
+func Register(db *sql.DB, uid, hostname, instance, version, timezone string) (*Conflict, error) {
 	var boundHost string
 	var count int64
 	var at sql.NullTime
@@ -331,6 +331,7 @@ func Register(db *sql.DB, uid, hostname, instance, version string) (*Conflict, e
 		UPDATE edge_registry e SET
 			hostname = $2,
 			version = $4,
+			timezone = $5,
 			registered_at = NOW(),
 			status = 'active',
 			bound_hostname = CASE
@@ -356,7 +357,7 @@ func Register(db *sql.DB, uid, hostname, instance, version string) (*Conflict, e
 		RETURNING prev.bound_hostname, e.conflict_count, e.conflict_at,
 		          (prev.bound_hostname NOT IN ('', $2) AND $2 <> ''),
 		          ($3 <> '' AND prev.prev_instance = $3)
-	`, uid, hostname, instance, version).Scan(
+	`, uid, hostname, instance, version, timezone).Scan(
 		&boundHost, &count, &at, &hostConflict, &instConflict)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUnknownStation
@@ -454,11 +455,11 @@ func SetDisplayName(db *sql.DB, uid, displayName string) (bool, error) {
 // edge.register_request. The difference is that the request is now the ONLY
 // outcome, rather than a notification about a row heartbeating itself into
 // existence.
-func UpdateHeartbeat(db *sql.DB, uid string) (found bool, err error) {
+func UpdateHeartbeat(db *sql.DB, uid, timezone string) (found bool, err error) {
 	res, err := db.Exec(`
-		UPDATE edge_registry SET last_heartbeat = NOW(), status = 'active'
+		UPDATE edge_registry SET last_heartbeat = NOW(), status = 'active', timezone = $2
 		WHERE station_uid = $1
-	`, uid)
+	`, uid, timezone)
 	if err != nil {
 		return false, err
 	}
@@ -469,14 +470,16 @@ func UpdateHeartbeat(db *sql.DB, uid string) (found bool, err error) {
 const edgeColumns = `id, station_uid, display_name, station_id, hostname, version,
 	       registered_at, last_heartbeat, status,
 	       bound_hostname, bound_instance, prev_instance, bound_at, claimed_at,
-	       conflict_hostname, conflict_count, conflict_at`
+	       conflict_hostname, conflict_count, conflict_at,
+	       timezone`
 
 func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 	var e Edge
 	err := sc.Scan(&e.ID, &e.StationUID, &e.DisplayName, &e.StationID, &e.Hostname, &e.Version,
 		&e.RegisteredAt, &e.LastHeartbeat, &e.Status,
 		&e.BoundHostname, &e.BoundInstance, &e.PrevInstance, &e.BoundAt, &e.ClaimedAt,
-		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt)
+		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt,
+		&e.Timezone)
 	return e, err
 }
 

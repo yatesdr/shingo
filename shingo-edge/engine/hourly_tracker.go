@@ -23,8 +23,20 @@ type HourlyTracker struct {
 // calendar day for however many hours the plant sits behind UTC — five, at
 // Springfield. Two copies of this parse is exactly how that drift starts, so
 // cmd/shingoedge/main.go calls this rather than repeating it.
+//
+// The empty-config fallback STAYS time.Local, deliberately: switching it to
+// UTC would silently re-zone Springfield's live bucketing (Chicago→UTC)
+// mid-history and split one consistent plant into a seam. An unset config is
+// fixed by seeding timezone: at deploy (install-edge.sh confirms it in), not
+// by moving the fallback — but the log names the source so an unset box is
+// visible in journald instead of silently adopting the OS zone. At
+// Hopkinsville that OS zone is Eastern while the plant clock is Central,
+// which is the live finding this log exists to surface.
 func BucketLocation(timezone string) *time.Location {
 	if timezone == "" {
+		log.Printf("hourly bucketing: timezone unset in shingoedge.yaml — using OS zone %s. "+
+			"Set timezone: to the PLANT zone (the OS zone may disagree with the wall clock)",
+			time.Local)
 		return time.Local
 	}
 	parsed, err := time.LoadLocation(timezone)

@@ -56,4 +56,11 @@ type RegistryEdge struct {
 	ConflictHostname string     `json:"conflict_hostname"`
 	ConflictCount    int64      `json:"conflict_count"`
 	ConflictAt       *time.Time `json:"conflict_at"`
+
+	// Timezone is the plant display zone this edge's process is ON (IANA
+	// name), reported on register and heartbeat. Empty means unconfigured —
+	// the /edges table shows the blank rather than guessing, because a
+	// guessed zone is exactly the wrongness this column exists to surface.
+	// Written only from the wire, never by a human.
+	Timezone string `json:"timezone"`
 }

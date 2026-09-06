@@ -1,4 +1,5 @@
 import { el, esc, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
+import { formatClock } from '/static/shared/utils.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
@@ -1524,10 +1525,11 @@ function maybeShowRefusalModal() {
 }
 
 // shortTime renders an ISO timestamp as wall-clock for the operator. Computed at
-// render from server state, never held in a timer.
+// render from server state, never held in a timer. Plant-timezone pinned —
+// the operator station must agree with every other surface's clock.
 function shortTime(iso) {
     try {
-        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return formatClock(iso);
     } catch (err) {
         return '';
     }

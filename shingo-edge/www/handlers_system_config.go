@@ -114,6 +114,47 @@ func (h *Handlers) apiUpdateMessaging(w http.ResponseWriter, r *http.Request) {
 // field is `yaml:"-"` now, so no Save can write it and no config can override
 // the derivation. See config.KafkaConfig.GroupID.
 //
+// apiUpdateTimezone writes the plant timezone into shingoedge.yaml.
+//
+// Same restart-to-apply contract as apiUpdateStationID, and for the same
+// reason said out loud there: the running process captured plantLocation
+// (display) and the HourlyTracker's bucket zone at startup, and neither is
+// rewirable live. Two consumers, one key — display rendering and hourly
+// count bucketing — so setting it here fixes both on the same restart.
+//
+// The value is validated as an IANA location BEFORE saving: a typo would
+// otherwise only surface at boot as a logged fallback, on a headless box
+// nobody reads until the counts are wrong.
+func (h *Handlers) apiUpdateTimezone(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Timezone string `json:"timezone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	loc, err := time.LoadLocation(req.Timezone)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("not an IANA timezone: %q", req.Timezone))
+		return
+	}
+
+	cfg := h.engine.AppConfig()
+	cfg.Lock()
+	cfg.Timezone = loc.String()
+	cfg.Unlock()
+
+	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.requestBackup("timezone")
+	writeJSON(w, map[string]string{
+		"status": "ok",
+		"note":   "written to shingoedge.yaml — RESTART shingoedge for display and hourly bucketing to pick it up",
+	})
+}
+
 // station_uid is the enrolled identity Core minted. station_id is the legacy
 // override and is accepted for the migration window only.
 func (h *Handlers) apiUpdateStationID(w http.ResponseWriter, r *http.Request) {

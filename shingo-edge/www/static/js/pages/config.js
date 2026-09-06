@@ -1,4 +1,5 @@
 import { api, delegateActions, escapeHtml, getFormData, prompt, toast } from '/static/js/shingoedge.js';
+import { formatTime as sharedFormatTime } from '/static/shared/utils.js';
 
 function collectBrokers() {
     return Array.from(document.querySelectorAll('.broker-row')).map(function(row) {
@@ -56,6 +57,20 @@ async function saveIdentity() {
             station_uid: document.getElementById('station-uid-input').value.trim()
         });
         toast('Station identity saved — RESTART shingoedge for it to take effect', 'success');
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+async function saveTimezone() {
+    try {
+        const tz = document.getElementById('timezone-input').value.trim();
+        if (!tz) {
+            toast('Enter an IANA zone (e.g. America/Chicago); empty means unconfigured', 'error');
+            return;
+        }
+        await api.put('/api/config/timezone', { timezone: tz });
+        toast('Timezone saved — RESTART shingoedge for display and hourly counts to pick it up', 'success');
     } catch (e) {
         toast('Error: ' + e, 'error');
     }
@@ -170,7 +185,7 @@ async function runBackupNow() {
 function formatMaybeDate(value) {
     if (!value) return '';
     const date = new Date(value);
-    return isNaN(date) ? String(value) : date.toLocaleString();
+    return isNaN(date) ? String(value) : sharedFormatTime(value);
 }
 
 function formatBytes(bytes) {
@@ -454,6 +469,7 @@ delegateActions(document.body, {
     saveBackupConfig,
     saveCoreAPI,
     saveIdentity,
+    saveTimezone,
     saveMessaging,
     saveShifts,
     saveWarLink,

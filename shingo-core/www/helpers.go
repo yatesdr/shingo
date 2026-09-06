@@ -13,6 +13,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared"
+	"shingo/shared/planttime"
 	"shingocore/dispatch"
 	"shingocore/domain"
 	"shingocore/engine"
@@ -222,19 +223,30 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 				return fmt.Sprintf("%d days ago", days)
 			}
 		},
+		// formatTime/formatTimePtr render plant-local via shared/planttime —
+		// the ONE implementation both binaries share, so a core board and an
+		// edge station cannot show the same event on different clocks. First
+		// paint is correct and final; there is no UTC-then-convert flicker.
 		"formatTime": func(t time.Time) template.HTML {
-			if t.IsZero() {
-				return template.HTML("-")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
+			return planttime.Format(t, plantLocation)
 		},
 		"formatTimePtr": func(t *time.Time) template.HTML {
-			if t == nil {
-				return template.HTML("-")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
+			return planttime.FormatPtr(t, plantLocation)
+		},
+		// plantTZ feeds the layout's inline `window.PLANT_TZ = "{{ plantTZ }}"`.
+		// A template function, not handler data, so no per-render plumbing:
+		// one registration makes the zone available to every page.
+		"plantTZ": func() string { return plantLocation.String() },
+		// formatClock/formatClockSeconds: time-of-day shapes for columns whose
+		// deliberately-narrow format is not a full datetime (demand-episode
+		// lists, diagnostics log rows). shared/planttime owns the twins.
+		"formatClock":        func(t time.Time) string { return planttime.Clock(t, plantLocation) },
+		"formatClockSeconds": func(t time.Time) string { return planttime.ClockSeconds(t, plantLocation) },
+		// formatDayClock: "Jan 02 15:04" plant-local — trend tables whose
+		// buckets span more than a day need the date, unlike formatClock's
+		// same-day columns.
+		"formatDayClock": func(t time.Time) string {
+			return t.In(plantLocation).Format("Jan 02 15:04")
 		},
 		"statusColor": func(status string) string {
 			switch protocol.Status(status) {

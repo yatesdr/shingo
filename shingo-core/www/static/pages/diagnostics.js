@@ -1,5 +1,8 @@
-import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } from '/static/app.js';
+import { api, delegateActions, el, escapeHtml, toast, uiConfirm } from '/static/app.js';
+import { formatTime } from '/static/shared/utils.js';
 import { onSSE } from '/static/shared/utils.js';
+// formatTime above is the shared plant-timezone formatter — diagnostics.js
+// previously imported its browser-local twin from app.js.
 
 (function() {
   // Tab switching
@@ -411,7 +414,7 @@ import { onSSE } from '/static/shared/utils.js';
     if (changedEl && changedAt) {
       var d = new Date(changedAt);
       if (!isNaN(d.getTime())) {
-        changedEl.textContent = 'since ' + d.toLocaleString();
+        changedEl.textContent = 'since ' + formatTime(changedAt);
       } else {
         changedEl.textContent = '';
       }

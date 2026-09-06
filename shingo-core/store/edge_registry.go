@@ -24,8 +24,8 @@ func (db *DB) EnrollEdge(uid, displayName, stationID string) (*registry.Edge, er
 // The conflict is returned rather than swallowed so the caller can put it
 // somewhere the operator will see; it is already logged by registry.Register,
 // so a caller that has nothing better to do with it may ignore it.
-func (db *DB) RegisterEdge(uid, hostname, instance, version string) (*registry.Conflict, error) {
-	return registry.Register(db.DB, uid, hostname, instance, version)
+func (db *DB) RegisterEdge(uid, hostname, instance, version, timezone string) (*registry.Conflict, error) {
+	return registry.Register(db.DB, uid, hostname, instance, version, timezone)
 }
 
 // RebindEdgeHostname moves a station's binding to a new machine and clears its
@@ -42,8 +42,11 @@ func (db *DB) RenameEdge(uid, displayName string) (bool, error) {
 
 // UpdateHeartbeat marks an enrolled station alive. found=false means no
 // enrolled station carries the uid, which is the signal to ask it to register.
-func (db *DB) UpdateHeartbeat(uid string) (found bool, err error) {
-	return registry.UpdateHeartbeat(db.DB, uid)
+// The timezone is the zone the edge process reports being on — written from
+// the wire on every heartbeat so the /edges table tracks a restart even when
+// no register follows it.
+func (db *DB) UpdateHeartbeat(uid, timezone string) (found bool, err error) {
+	return registry.UpdateHeartbeat(db.DB, uid, timezone)
 }
 
 func (db *DB) ListEdges() ([]registry.Edge, error) { return registry.List(db.DB) }

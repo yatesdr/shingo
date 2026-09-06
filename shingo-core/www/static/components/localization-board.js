@@ -14,6 +14,7 @@
 // so the client never parses the server's lane string back apart.
 
 import { makeProjector, cubicPathD, laneKey } from '/static/components/scene-geom.js';
+import { formatTime } from '/static/shared/utils.js';
 
 // BAND_STROKE carries the ordering a SECOND time, in weight.
 //
@@ -841,7 +842,7 @@ export function createBoard(root, opts) {
                 : 'max ' + Number(d.max_delta_m).toFixed(2) + ' m';
             return '<button type="button" class="lb-diff' + (on ? ' on' : '') +
                 '" data-diff="' + d.id + '">' +
-                '<span class="lb-diff-when">' + new Date(d.observed_at).toLocaleString() + '</span>' +
+                '<span class="lb-diff-when">' + formatTime(d.observed_at) + '</span>' +
                 '<span class="lb-diff-what">' + (d.objects_changed || 0) + ' changed · ' +
                 (d.objects_added || 0) + ' added · ' + (d.objects_removed || 0) + ' removed</span>' +
                 '<span class="lb-diff-mag">' + moved + '</span>' +
@@ -939,7 +940,7 @@ export function createBoard(root, opts) {
             ' d) · ' + c.n_after + ' after (' + c.days_after + ' d)</td></tr>';
 
         return '<div class="lb-hist-title">Change</div>' + banner +
-            '<div class="lb-change-hd">changed ' + new Date(c.changed_at).toLocaleString() +
+            '<div class="lb-change-hd">changed ' + formatTime(c.changed_at) +
             ' · ' + moved + '</div>' +
             // GUARD 4: grey below the minimum, never absent. Absence reads as fine.
             '<table class="lb-change' + (c.below_min_n ? ' lb-thin' : '') + '"><tbody>' +

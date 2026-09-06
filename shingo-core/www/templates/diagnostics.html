@@ -41,7 +41,7 @@
         <tbody id="debug-log-body">
           {{range .Entries}}
           <tr class="debug-row" data-subsystem="{{.Subsystem}}">
-            <td>{{.Time.Format "15:04:05.000"}}</td>
+            <td>{{formatClockSeconds .Time}}</td>
             <td>{{.Subsystem}}</td>
             <td>{{.Message}}</td>
           </tr>

@@ -462,7 +462,8 @@ CREATE TABLE public.edge_registry (
     claimed_at timestamp with time zone,
     conflict_hostname text DEFAULT ''::text NOT NULL,
     conflict_count bigint DEFAULT 0 NOT NULL,
-    conflict_at timestamp with time zone
+    conflict_at timestamp with time zone,
+    timezone text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.edge_registry_id_seq

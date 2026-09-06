@@ -105,11 +105,13 @@ function loadUtilsForHtmx() {
     return { ctx, body, bodyListeners };
 }
 
-function makeTimeNode(utc) {
+function makeTimeNode(utc, text) {
+    const attrs = { 'data-utc': utc };
     return {
         tagName: 'TIME',
-        textContent: utc, // pre-conversion sentinel
-        getAttribute: (name) => name === 'data-utc' ? utc : null,
+        textContent: text !== undefined ? text : utc, // default: old UTC-text convention
+        getAttribute: (name) => attrs[name] !== undefined ? attrs[name] : null,
+        setAttribute: (name, val) => { attrs[name] = String(val); },
     };
 }
 
@@ -207,18 +209,28 @@ function makeTimeNode(utc) {
     assert(Array.isArray(body._listeners) || typeof body._fire === 'function',
         'install wired a body listener');
 
-    // Synthetic swapped-in subtree carrying two <time data-utc=…> nodes.
-    const t1 = makeTimeNode('2026-05-24T12:00:00Z');
-    const t2 = makeTimeNode('2026-05-24T12:30:00Z');
+    // Synthetic swapped-in subtree carrying two <time data-utc=…> nodes in
+    // the OLD UTC-text convention (the only nodes convertTimestamps still
+    // rewrites — a rollover shim for partials from a pre-plant-local edge).
+    const t1 = makeTimeNode('2026-05-24T12:00:00Z', '2026-05-24 12:00:00 UTC');
+    const t2 = makeTimeNode('2026-05-24T12:30:00Z', '2026-05-24 12:30:00 UTC');
+    // A node already in the NEW convention: plant-local text from the
+    // server. It must survive a swap untouched — rewriting it is the
+    // post-paint-rewrite bug this shim exists to retire.
+    const t3 = makeTimeNode('2026-05-24T12:45:00Z', 'May 24, 2026 07:45 CDT');
     const swappedSubtree = {
-        querySelectorAll: (sel) => sel === 'time[data-utc]' ? [t1, t2] : [],
+        querySelectorAll: (sel) => sel === 'time[data-utc]' ? [t1, t2, t3] : [],
     };
     body._fire('htmx:afterSwap', { detail: { target: swappedSubtree } });
 
-    assert(t1.textContent !== '2026-05-24T12:00:00Z',
-        'first time node textContent rewritten away from raw UTC');
-    assert(t2.textContent !== '2026-05-24T12:30:00Z',
-        'second time node textContent rewritten away from raw UTC');
+    assert(t1.textContent !== '2026-05-24 12:00:00 UTC',
+        'old-convention node rewritten away from UTC text');
+    assert(t1.getAttribute('data-converted') === '1',
+        'rewritten node is marked so a re-run cannot touch it');
+    assert(t2.textContent !== '2026-05-24 12:30:00 UTC',
+        'second old-convention node rewritten away from UTC text');
+    assert(t3.textContent === 'May 24, 2026 07:45 CDT',
+        'plant-local server text is never rewritten');
 })();
 
 (function testHtmxInstallIsIdempotent() {

@@ -1,5 +1,5 @@
 import { api, debounce, el, h } from '/static/app.js';
-import { onSSE } from '/static/shared/utils.js';
+import { formatTime, onSSE } from '/static/shared/utils.js';
 
 (function() {
   var orderID = document.getElementById('mission-order-id').textContent;
@@ -17,11 +17,8 @@ import { onSSE } from '/static/shared/utils.js';
     return h + 'h ' + m + 'm';
   }
 
-  function formatTime(ts) {
-    if (!ts) return '-';
-    var d = new Date(ts);
-    return d.toLocaleString();
-  }
+  // formatTime comes from shared/utils.js now — this file's local def
+  // (browser-local toLocaleString) was one of the pre-plant-local copies.
 
   // THERE IS NO stateLabel HERE ANY MORE, AND THAT IS THE CHANGE.
   //

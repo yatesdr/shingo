@@ -44,7 +44,7 @@
 // Every class name in the scene therefore covers both shapes, and only the
 // geometry says which one a given lane is.
 
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 // The scene-drawing substrate — projection, cubic arithmetic, lane identity —
 // lives in components/scene-geom.js so a second scene page can draw the same
 // network without inheriting this file's viewport, comets and SSE wiring.
@@ -201,7 +201,7 @@ import {
   // ── header chrome ──────────────────────────────────────────────────
   function tickClock() {
     var el = document.getElementById('dash-clock');
-    if (el) el.textContent = new Date().toLocaleTimeString();
+    if (el) el.textContent = formatClock(Date.now());
   }
   setInterval(tickClock, 1000); tickClock();
 

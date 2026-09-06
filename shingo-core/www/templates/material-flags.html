@@ -124,7 +124,7 @@
       {{range .Flags}}
       <tr class="de-row de-band-{{.Band}} de-open">
         {{/* THE DOOR. 5.12's forensics for this one demand. */}}
-        <td class="tnum"><a href="/demand-episodes/{{.OriginID}}">{{.OpenedAt.Format "15:04"}}</a></td>
+        <td class="tnum"><a href="/demand-episodes/{{.OriginID}}">{{formatClock .OpenedAt}}</a></td>
         <td>{{.KindLabel}}{{if .Direction}} <span class="text-muted">· {{.Direction}}</span>{{end}}</td>
         <td>
           <div>{{if .Payload}}{{.Payload}}{{else}}<span class="text-muted">—</span>{{end}}</div>

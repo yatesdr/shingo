@@ -1,4 +1,5 @@
-import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
+import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
+import { formatTime } from '/static/shared/utils.js';
 import { installLiveDurations, onSSE, reconcileList } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once

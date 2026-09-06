@@ -63,6 +63,9 @@ function render(events, telemetry) {
         api: {},
         el: function() {},
         h: function() {},
+        // formatTime now comes from shared/utils.js (plant-timezone pinned);
+        // the legs test doesn't assert on its output, so a stub suffices.
+        formatTime: function(ts) { return String(ts); },
     };
     ctxObj.window = ctxObj;
     vm.createContext(ctxObj);

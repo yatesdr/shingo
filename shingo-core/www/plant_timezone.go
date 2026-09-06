@@ -8,18 +8,28 @@ import (
 	"time"
 )
 
+// defaultPlantTimezone is the zone a config that predates the `timezone:`
+// key resolves to. Both plants' wall clocks are Central, so this keeps
+// Hopkinsville correct today only by default — the install script seeds
+// the explicit key so the correctness stops being an accident.
+const defaultPlantTimezone = "America/Chicago"
+
 // plantLocation is the plant's IANA timezone, resolved once from the
 // PLANT_TIMEZONE env var (default America/Chicago). The dashboards follow a
 // plant-local-at-server convention (Q-004): timestamps are stored UTC, but
 // bare YYYY-MM-DD date filters from the URL resolve in THIS zone — so "Today"
 // means the plant's calendar day, not the server's (which runs UTC). Without
 // this, a CST plant on a UTC server saw "Today" start at 6pm the prior day.
+//
+// Display rendering is plant-local for every viewer (shared/planttime), and
+// plantLocation is the one resolution point for it on core: date filters,
+// day truncation, and the formatTime template helper all read this var.
 var plantLocation = loadPlantLocation()
 
 func loadPlantLocation() *time.Location {
 	name := os.Getenv("PLANT_TIMEZONE")
 	if name == "" {
-		name = "America/Chicago"
+		name = defaultPlantTimezone
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
@@ -27,6 +37,30 @@ func loadPlantLocation() *time.Location {
 		return time.UTC
 	}
 	return loc
+}
+
+// applyPlantTimezoneConfig folds the yaml `timezone:` field in at router
+// construction, before any request is served. Precedence: PLANT_TIMEZONE
+// env (applied at package init — kept working so existing deployments
+// don't move on upgrade), then the config field, then the default. The log
+// names the SOURCE so a wrong zone is diagnosable from the journal —
+// "which knob made this clock" is the first question at a plant.
+func applyPlantTimezoneConfig(cfgTimezone string) {
+	if env := os.Getenv("PLANT_TIMEZONE"); env != "" {
+		log.Printf("www: plant timezone %s (from PLANT_TIMEZONE env)", plantLocation)
+		return
+	}
+	if cfgTimezone == "" {
+		log.Printf("www: plant timezone %s (default; set timezone: in shingocore.yaml)", plantLocation)
+		return
+	}
+	loc, err := time.LoadLocation(cfgTimezone)
+	if err != nil {
+		log.Printf("www: config timezone %q invalid (%v); keeping %s", cfgTimezone, err, plantLocation)
+		return
+	}
+	plantLocation = loc
+	log.Printf("www: plant timezone %s (from config)", plantLocation)
 }
 
 // plantDayStart truncates t to midnight in the plant timezone. parseMissionFilter

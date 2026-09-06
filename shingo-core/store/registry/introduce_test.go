@@ -152,7 +152,7 @@ func TestRegister_DoesNotClearTheClaim(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := registry.Register(db.DB, e.StationUID, "pi-new", "inst-1", "v2"); err != nil {
+		if _, err := registry.Register(db.DB, e.StationUID, "pi-new", "inst-1", "v2", ""); err != nil {
 			t.Fatalf("Register: %v", err)
 		}
 	}

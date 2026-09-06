@@ -76,6 +76,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 	sessionStore := newSessionStore(eng.AppConfig().Web.SessionSecret)
 
+	// Fold the yaml `timezone:` into plantLocation BEFORE any template is
+	// parsed or request served — formatTime and the layout's PLANT_TZ inline
+	// both read it. Precedence and source-naming log: plant_timezone.go.
+	applyPlantTimezoneConfig(eng.AppConfig().Timezone)
+
 	// Parse layout + partials as a base template set. Each page is cloned separately
 	// to avoid the "last define wins" problem with {{define "content"}}.
 	base := template.New("").Funcs(templateFuncs(eng.NodeService()))

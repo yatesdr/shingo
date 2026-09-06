@@ -13,7 +13,7 @@
 import {
   apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, debounce,
 } from '/static/app.js';
-import { onSSE } from '/static/shared/utils.js';
+import { formatClock, formatTime, onSSE } from '/static/shared/utils.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
@@ -154,7 +154,7 @@ function renderAll() {
   renderMaintained();
   renderBuckets();
   const asof = document.getElementById('inv-asof');
-  if (asof) asof.textContent = 'as of ' + new Date().toLocaleTimeString();
+  if (asof) asof.textContent = 'as of ' + formatClock(Date.now());
 }
 
 function populateFilters() {
@@ -380,7 +380,7 @@ function renderLedgerExceptions() {
 
   const rows = openBins.map((b) => {
     const since = b.negative_since
-      ? ' since ' + new Date(b.negative_since).toLocaleString()
+      ? ' since ' + formatTime(b.negative_since)
       // The crossing predates the audit trail — say so rather than implying it
       // just happened.
       : ' (start unknown)';
@@ -749,7 +749,7 @@ function renderBuckets() {
       + '<td><code>' + hl(b.payload_code || '') + '</code></td>'
       + '<td><span class="badge ' + (b.state === 'stranded' ? 'badge-flagged' : 'badge-available') + '">' + escapeHtml(b.state || 'active') + '</span></td>'
       + '<td class="rh-num">' + num(b.qty) + '</td>'
-      + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(new Date(b.updated_at).toLocaleString()) + '"' : '')
+      + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(formatTime(b.updated_at)) + '"' : '')
       + '>' + escapeHtml(ageText) + (stale ? ' · <b>stale</b>' : '') + '</td>'
       + (isAuth ? '<td><button class="btn btn-sm btn-danger" data-action="deleteBucket:' + b.id + '">Delete</button></td>' : '<td></td>')
       + '</tr>';

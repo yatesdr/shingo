@@ -4174,7 +4174,45 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.IndexExists(q, "idx_payload_manifest_payload_part")
 			}},
+
+		{110, "edge_registry.timezone — each station's resolved plant display zone, reported over the wire",
+			v110EdgeRegistryTimezone,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "timezone")
+			}},
 	}
+}
+
+// v110EdgeRegistryTimezone adds the plant display zone each edge reports on
+// register and heartbeat, so the /edges page shows every station's clock zone
+// in one table. The observability half of plant-local display (brief §4 Item
+// C): wrongness becomes visible from one page instead of by SSH.
+//
+// Written from the wire (EdgeRegister/EdgeHeartbeat .Timezone) and never by a
+// human — it records what the edge process is ON, so a zone saved on the edge
+// but not yet restarted stays blank here until the restart actually happens.
+// An unconfigured edge sends "" and the table shows the emptiness, which is
+// the "go set it" signal. Additive only: pre-v110 rows are NULL, rendered as
+// unknown rather than guessed.
+//
+// NUMBERED 110, NOT 99, AND THAT RENUMBER IS THE MERGE. It was authored as v99
+// on a branch cut from main when 98 was the head; this branch had meanwhile
+// taken 99 through 109. Two branches cannot both own a version — the number is
+// the identity the migrator records, not a label — so the later-merged one
+// moves to the tip. The body is unchanged and the column is the same column.
+//
+// The one database this can bite is a dev box that already ran the migration
+// AS v99: it has the column and a schema_migrations row 99, so v110's
+// ColumnExists predicate correctly skips the re-add, but row 99 now blocks
+// THIS branch's v99 (the parts_per_cycle rename) from ever running there. That
+// box needs `down -v`, same as the renumbered chain already required. No plant
+// is affected — Springfield is on 67 and Hopkinsville on 53.
+func v110EdgeRegistryTimezone(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE edge_registry
+		ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v110 edge_registry.timezone: %w", err)
+	}
+	return nil
 }
 
 // v109ManifestLineConstraints closes the two shapes the entry doors used to

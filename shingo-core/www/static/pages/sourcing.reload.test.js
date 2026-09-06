@@ -112,9 +112,12 @@ function load(opts) {
         console,
         document: {
             getElementById: (id) => (id === 'src-root' ? root : null),
+            // querySelector backs sourcing.js's convertTimestamps call — it
+            // scopes the rollover shim to the .src-history subtree.
+            querySelector: (sel) => (sel === '.src-history' ? (histHosts[0] || null) : null),
             querySelectorAll: (sel) => {
                 if (sel === '.src-history') return histHosts;
-                if (sel === '.src-history time[data-utc]') return [];
+                if (sel === 'time[data-utc]') return [];
                 return [];
             },
             addEventListener: (ev, fn) => { (docListeners[ev] = docListeners[ev] || []).push(fn); },
@@ -130,7 +133,11 @@ function load(opts) {
         clearTimeout: () => {},
         Date: opts.nowISO ? fixedNowDate(opts.nowISO) : Date,
         onSSE: (name, fn) => { (sseHandlers[name] = sseHandlers[name] || []).push(fn); },
-        // Injected in place of the ES import, same as onSSE.
+        // Injected in place of the ES imports, same as onSSE. convertTimestamps
+        // is the shared rollover shim (no-op on the stub's empty node list);
+        // formatTime is the shared plant-local formatter.
+        convertTimestamps: () => {},
+        formatTime: (ts) => new Date(ts).toISOString(),
         api: {
             get: (url) => {
                 apiCalls.push(url);

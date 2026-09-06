@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/planttime"
 	"shingoedge/domain"
 )
 
@@ -94,20 +95,25 @@ func templateFuncs() template.FuncMap {
 		},
 		"buildVer":  func() string { return buildVer },
 		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
+		// formatTime/formatTimePtr render plant-local via shared/planttime —
+		// the ONE implementation both binaries share, so a core board and an
+		// edge station cannot show the same event on different clocks. First
+		// paint is correct and final; there is no UTC-then-convert flicker.
+		// Nil/zero now renders "-" — core's spelling — replacing this
+		// binary's historical "" and changeover.html's hand-written "--".
 		"formatTime": func(t time.Time) template.HTML {
-			if t.IsZero() {
-				return template.HTML("")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
+			return planttime.Format(t, plantLocation)
 		},
 		"formatTimePtr": func(t *time.Time) template.HTML {
-			if t == nil {
-				return template.HTML("")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
+			return planttime.FormatPtr(t, plantLocation)
 		},
+		// plantTZ feeds header.html's inline `window.PLANT_TZ = "{{ plantTZ }}"`.
+		"plantTZ": func() string { return plantLocation.String() },
+		// formatClock/formatClockSeconds: time-of-day shapes for columns whose
+		// deliberately-narrow format is not a full datetime (diagnostics log
+		// rows). shared/planttime owns the twins.
+		"formatClock":        func(t time.Time) string { return planttime.Clock(t, plantLocation) },
+		"formatClockSeconds": func(t time.Time) string { return planttime.ClockSeconds(t, plantLocation) },
 		"json": func(v any) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)

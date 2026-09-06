@@ -242,9 +242,10 @@ export function apiDelete(url)     { return api('DELETE', url); }
 
 // --- Time formatting ---
 // timeAgo:        relative ("3m ago"), '-' on falsy.
-// formatTime:     local-time string. opts.precision === 'ms' returns
-//                 HH:MM:SS.mmm for high-resolution log views.
 // formatDuration: human-readable elapsed duration in ms.
+// formatTime moved to shared/utils.js (plant-timezone pinned). Pages import
+// it from '/static/shared/utils.js'; app.js keeps no date formatter of its
+// own — two copies of a clock is how the two-convention display bug happened.
 export function timeAgo(ts) {
   if (!ts) return '-';
   var d = Date.now() - new Date(ts).getTime();
@@ -252,16 +253,6 @@ export function timeAgo(ts) {
   if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
   if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
   return Math.floor(d / 86400000) + 'd ago';
-}
-
-export function formatTime(ts, opts) {
-  if (!ts || ts === '0001-01-01T00:00:00Z') return '-';
-  var d = new Date(ts);
-  if (isNaN(d.getTime())) return ts;
-  if (opts && opts.precision === 'ms') {
-    return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
-  }
-  return d.toLocaleString();
 }
 
 export function formatDuration(ms) {
@@ -277,16 +268,12 @@ export function formatDuration(ms) {
   return h + 'h ' + m + 'm';
 }
 
-// Convert UTC timestamps to browser local time
-export function convertTimestamps() {
-  document.querySelectorAll('time[data-utc]').forEach(function(el) {
-    var d = new Date(el.getAttribute('data-utc'));
-    if (!isNaN(d)) {
-      el.textContent = d.toLocaleString();
-    }
-  });
-}
-document.addEventListener('DOMContentLoaded', convertTimestamps);
+// Timestamp conversion: the formatTime/convertTimestamps pair that used to
+// live here was a byte-identical twin of shared/utils.js's. Deleted — pages
+// import from '/static/shared/utils.js', whose formatter is pinned to the
+// plant timezone (window.PLANT_TZ, inlined by layout.html). The server
+// already renders plant-local on first paint; there is no DOMContentLoaded
+// rewrite to do.
 
 // ─── Nav chrome: live health pills ──────────────────────────────────────
 //

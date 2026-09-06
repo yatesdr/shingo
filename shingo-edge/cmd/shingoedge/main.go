@@ -280,6 +280,19 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		}
 		return messaging.BuildCellCatalog(pts)
 	}
+	// Plant display zone on every register/heartbeat, so Core's /edges table
+	// shows what this edge is ON. Read from the engine config snapshot the
+	// process booted with — a zone saved mid-run applies at restart, and the
+	// wire flips exactly then, not before. Unset config sends "" and Core's
+	// table shows the blank, which is the "go set it" signal.
+	hb.TimezoneFn = func() string {
+		if cfg := eng.AppConfig(); cfg != nil {
+			cfg.Lock()
+			defer cfg.Unlock()
+			return cfg.Timezone
+		}
+		return ""
+	}
 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.SubjectX is registered against the closure that

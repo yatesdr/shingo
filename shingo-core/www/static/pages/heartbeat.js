@@ -14,7 +14,7 @@
 //   • Clock is server-synced (offset from the connected + cell-heartbeat ts) so
 //     "X ago" doesn't drift over a long soak.
 
-import { onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, onSSE, setSSEReloadOnBuild } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 
@@ -207,7 +207,7 @@ function stopLoop() {
 // ─── clock text (1Hz; separate from the rAF strip) ──────────────────────────
 function tickClock() {
     const elc = document.getElementById('hb-clock');
-    if (elc) elc.textContent = new Date(serverNow()).toLocaleTimeString();
+    if (elc) elc.textContent = formatClock(serverNow());
 }
 
 // ─── connection pill ────────────────────────────────────────────────────────

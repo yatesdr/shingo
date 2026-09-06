@@ -56,6 +56,17 @@ type Config struct {
 	// the record of where each of these numbers came from and which of them a
 	// plant has to re-derive.
 	Display DisplayConfig `yaml:"display"`
+
+	// Timezone is the plant's IANA zone for DISPLAY rendering (plant-local
+	// timestamps on every core page, via shared/planttime) and for the
+	// plant-local date-filter resolution (Q-004). Empty resolves to
+	// America/Chicago — correct for both plants' wall clocks, and at
+	// Hopkinsville it is the only thing making core right until the key is
+	// seeded (the box's OS zone is Eastern; the plant clock is Central).
+	// Storage and the wire stay UTC regardless; this field never touches
+	// either. PLANT_TIMEZONE env still overrides it, so existing
+	// deployments don't move on upgrade.
+	Timezone string `yaml:"timezone"`
 }
 
 // DemandConfig tunes Core's reconciling sweep over demand episodes — the
@@ -671,6 +682,11 @@ func Defaults() *Config {
 		// together, so that neither can be edited without the other in view.
 		Display: DisplayDefaults(),
 		CMS:     CMSDefaults(),
+
+		// Empty, not "America/Chicago": the www layer owns the default and
+		// logs which source resolved, so a plant running on the default is
+		// told so in the journal rather than the value hiding here.
+		Timezone: "",
 	}
 }
 

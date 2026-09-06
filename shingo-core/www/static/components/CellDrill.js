@@ -10,6 +10,7 @@
 // plus a 60s idle auto-dismiss, matching DrillModal.
 
 import { el, h } from '/static/app.js';
+import { formatClock, formatTime } from '/static/shared/utils.js';
 
 let _active = null;
 const MAX_DOTS = 400; // cap per strip; a wider window samples down to this
@@ -142,6 +143,6 @@ function fmtMin(ms) {
     return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
 }
 function fmtRange(a, b) {
-    try { return new Date(a).toLocaleString() + ' → ' + new Date(b).toLocaleTimeString(); }
+    try { return formatTime(a) + ' → ' + formatClock(b); }
     catch (_) { return ''; }
 }
