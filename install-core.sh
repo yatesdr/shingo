@@ -41,14 +41,20 @@ ORIG_ARGS=("$@")
 
 LEGACY_CONFIG_ARG=""
 ASSUME_YES=no
+# Seed timezone for a FRESH install's placeholder yaml — same contract as
+# install-edge.sh: OS zone as the suggested default, --timezone to override
+# for unattended installs that know the plant clock disagrees with the box.
+CORE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "America/Chicago")
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
         --legacy-config=*) LEGACY_CONFIG_ARG="${1#*=}"; shift ;;
         --yes|-y)          ASSUME_YES=yes; shift ;;
+        --timezone)        CORE_TIMEZONE="$2"; shift 2 ;;
+        --timezone=*)      CORE_TIMEZONE="${1#*=}"; shift ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml] [--yes]"
+            echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml] [--yes] [--timezone IANA_ZONE]"
             exit 1
             ;;
     esac
@@ -569,7 +575,7 @@ if [ ! -f /etc/shingo/shingocore.yaml ]; then
         cp "$LEGACY_CONFIG" /etc/shingo/shingocore.yaml
     else
         echo "==> Writing placeholder /etc/shingo/shingocore.yaml..."
-        cat > /etc/shingo/shingocore.yaml <<'YAML'
+        cat > /etc/shingo/shingocore.yaml <<YAML
 # shingo-core configuration.
 #
 # REQUIRED: configure the PostgreSQL connection before starting the service.
@@ -584,12 +590,35 @@ if [ ! -f /etc/shingo/shingocore.yaml ]; then
 #     password: <fill in>
 #     database: shingocore
 #     sslmode:  disable
+
+# IANA zone for plant-local display. Storage and the wire stay UTC; this is
+# the rendering clock only. The OS zone is a SUGGESTED DEFAULT — at
+# Hopkinsville the core VM reports America/New_York while the plant clock
+# is Central. PLANT_TIMEZONE env still overrides this key.
+timezone: ${CORE_TIMEZONE}
 YAML
     fi
     chown shingo:shingo /etc/shingo/shingocore.yaml
     chmod 644 /etc/shingo/shingocore.yaml
 else
-    echo "==> /etc/shingo/shingocore.yaml already exists; leaving in place"
+    echo "==> /etc/shingo/shingocore.yaml already exists"
+    # Same narrow exception as edge: absent-or-empty timezone: means the
+    # display clock is running on the code default (America/Chicago) with
+    # nothing in the file recording that decision. Both live plants are in
+    # this state today — right by default, not by record.
+    if ! grep -qE '^[[:space:]]*timezone[[:space:]]*:[[:space:]]*[^[:space:]#]' /etc/shingo/shingocore.yaml; then
+        suggested_tz=$(timedatectl show -p Timezone --value 2>/dev/null || echo "")
+        [ -z "$suggested_tz" ] && suggested_tz="America/Chicago"
+        echo "    timezone: is unset in the existing config"
+        echo "    OS zone suggests: $suggested_tz (core is likely running the"
+        echo "    America/Chicago code default — confirm that is the plant clock)"
+        if [ "$ASSUME_YES" = "yes" ]; then
+            echo "    --yes: leaving timezone unset (code default applies)"
+        elif confirm "Record timezone: $suggested_tz in the config?"; then
+            echo "timezone: $suggested_tz" >> /etc/shingo/shingocore.yaml
+            echo "    timezone recorded"
+        fi
+    fi
 fi
 
 # ----------------------------------------------------------------------

@@ -376,7 +376,7 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s)",
 		uid, p.Hostname, p.Instance, p.Version)
 
-	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
+	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version, p.Timezone)
 	if errors.Is(err, registry.ErrUnknownStation) {
 		// AN EDGE MAY INTRODUCE ITSELF. IT MAY NOT SAY WHICH STATION IT IS.
 		//
@@ -407,7 +407,7 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 		}
 		// Re-register so the binding lease, instance and conflict detection all
 		// run against the row exactly as they would for any other station.
-		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version)
+		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version, p.Timezone)
 	}
 	if err != nil {
 		log.Printf("core_handler: register edge %s: %v", uid, err)
@@ -481,7 +481,7 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 // found=false drives the same edge.register_request the old isNew flag did;
 // the difference is that the request is now the only outcome.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
-	found, err := s.db.UpdateHeartbeat(p.StationID)
+	found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone)
 	if err != nil {
 		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
 		return

@@ -441,6 +441,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Post("/config/core-api/test", h.apiTestCoreAPI)
 				r.Put("/config/messaging", h.apiUpdateMessaging)
 				r.Put("/config/station-id", h.apiUpdateStationID)
+				r.Put("/config/timezone", h.apiUpdateTimezone)
 				r.Post("/config/kafka/test", h.apiTestKafka)
 				r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
 				r.Post("/config/password", h.apiChangePassword)

@@ -62,6 +62,20 @@ async function saveIdentity() {
     }
 }
 
+async function saveTimezone() {
+    try {
+        const tz = document.getElementById('timezone-input').value.trim();
+        if (!tz) {
+            toast('Enter an IANA zone (e.g. America/Chicago); empty means unconfigured', 'error');
+            return;
+        }
+        await api.put('/api/config/timezone', { timezone: tz });
+        toast('Timezone saved — RESTART shingoedge for display and hourly counts to pick it up', 'success');
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
 async function saveWarLink() {
     try {
         const form = document.getElementById('warlink-form');
@@ -455,6 +469,7 @@ delegateActions(document.body, {
     saveBackupConfig,
     saveCoreAPI,
     saveIdentity,
+    saveTimezone,
     saveMessaging,
     saveShifts,
     saveWarLink,

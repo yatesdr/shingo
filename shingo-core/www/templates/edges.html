@@ -36,6 +36,7 @@
       <th>Station uid</th>
       <th>Host</th>
       <th>Status</th>
+      <th title="The plant display zone this edge reports being on. Blank means its shingoedge.yaml has no timezone: set one (Edge → System Config → Plant Timezone) and restart it.">Zone</th>
       <th title="Registers that arrived from a machine other than the one this station is bound to. A climbing count means two machines are alive on one identity.">Conflicts</th>
       <th></th>
     </tr>
@@ -59,6 +60,13 @@
       <td><code>{{.StationUID}}</code></td>
       <td>{{if .Hostname}}{{.Hostname}}{{else}}-{{end}}</td>
       <td>{{.Status}}</td>
+      <td>
+        {{/* Wire-reported, never hand-set. Blank = the edge is unconfigured —
+             shown as the warning it is, because a guessed zone is exactly the
+             wrongness this column exists to surface (HK: OS Eastern, plant
+             Central). */}}
+        {{if .Timezone}}<code>{{.Timezone}}</code>{{else}}<span class="badge badge-warn" title="shingoedge.yaml has no timezone:">unset</span>{{end}}
+      </td>
       <td class="col-num tnum">
         {{if gt .ConflictCount 0}}<span class="badge badge-warn">{{.ConflictCount}}</span>{{else}}0{{end}}
       </td>

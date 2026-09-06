@@ -18,6 +18,12 @@ type ActiveOrderCountFunc func() int
 // catalog" — an old/absent catalog is not an error.
 type CellCatalogFunc func() []protocol.CellCatalogEntry
 
+// TimezoneFunc returns the edge's resolved plant display zone (IANA name).
+// Called on every register and heartbeat so a zone saved via /system-config
+// reaches Core's registry within one interval. Nil or "" means "unconfigured" —
+// Core's edges table shows the emptiness.
+type TimezoneFunc func() string
+
 // Heartbeater sends edge.register on startup and edge.heartbeat periodically.
 type Heartbeater struct {
 	sender       *DataSender
@@ -34,6 +40,10 @@ type Heartbeater struct {
 	// CatalogFn, when set, supplies the Q-034 cell catalog included on every
 	// register (startup + reconnect). Set post-construction, like DebugLog.
 	CatalogFn CellCatalogFunc
+
+	// TimezoneFn, when set, supplies the plant display zone stamped onto
+	// every register and heartbeat (see TimezoneFunc). Set post-construction.
+	TimezoneFn TimezoneFunc
 
 	DebugLog DebugLogFunc
 }
@@ -87,6 +97,10 @@ func (h *Heartbeater) sendRegister() {
 	if h.CatalogFn != nil {
 		catalog = h.CatalogFn()
 	}
+	var tz string
+	if h.TimezoneFn != nil {
+		tz = h.TimezoneFn()
+	}
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeRegister,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
@@ -96,6 +110,7 @@ func (h *Heartbeater) sendRegister() {
 			Hostname:  hostname,
 			Instance:  h.instance,
 			Version:   h.version,
+			Timezone:  tz,
 			Catalog:   catalog,
 		},
 	)
@@ -168,6 +183,10 @@ func (h *Heartbeater) sendHeartbeat() {
 	if h.orderCountFn != nil {
 		activeOrders = h.orderCountFn()
 	}
+	var tz string
+	if h.TimezoneFn != nil {
+		tz = h.TimezoneFn()
+	}
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
@@ -176,6 +195,7 @@ func (h *Heartbeater) sendHeartbeat() {
 			StationID: h.stationID,
 			Uptime:    uptime,
 			Orders:    activeOrders,
+			Timezone:  tz,
 		},
 	)
 	if err != nil {

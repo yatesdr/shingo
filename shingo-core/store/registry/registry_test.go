@@ -39,7 +39,7 @@ func TestCoverage_Register_UnknownStationIsRefusedAndWritesNothing(t *testing.T)
 	t.Parallel()
 	db := testdb.Open(t)
 
-	_, err := registry.Register(db.DB, "stn-never-enrolled", "some-pi", "inst-1", "v1")
+	_, err := registry.Register(db.DB, "stn-never-enrolled", "some-pi", "inst-1", "v1", "")
 	if !errors.Is(err, registry.ErrUnknownStation) {
 		t.Fatalf("Register on an unenrolled uid: err = %v, want ErrUnknownStation", err)
 	}
@@ -66,7 +66,7 @@ func TestCoverage_UpdateHeartbeat_UnknownStationIsRefusedAndWritesNothing(t *tes
 	t.Parallel()
 	db := testdb.Open(t)
 
-	found, err := registry.UpdateHeartbeat(db.DB, "stn-never-enrolled-hb")
+	found, err := registry.UpdateHeartbeat(db.DB, "stn-never-enrolled-hb", "")
 	if err != nil {
 		t.Fatalf("UpdateHeartbeat: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestCoverage_RegisterEdge_UpdatesAndKeepsTheFirstBinding(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-line-1")
 
-	conflict, err := registry.Register(db.DB, "stn-line-1", "host-a", "inst-a", "v1.0.0")
+	conflict, err := registry.Register(db.DB, "stn-line-1", "host-a", "inst-a", "v1.0.0", "")
 	if err != nil {
 		t.Fatalf("Register initial: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestCoverage_RegisterEdge_UpdatesAndKeepsTheFirstBinding(t *testing.T) {
 	// A DIFFERENT HOSTNAME ON THE SAME STATION IS THE DUPLICATE-EDGE CASE. The
 	// update still lands (see Register's comment on why it must); what is new
 	// since v64 is that the register reports it and the first hostname survives.
-	conflict, err = registry.Register(db.DB, "stn-line-1", "host-b", "inst-b", "v2.0.0")
+	conflict, err = registry.Register(db.DB, "stn-line-1", "host-b", "inst-b", "v2.0.0", "")
 	if err != nil {
 		t.Fatalf("Register update: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestCoverage_Register_SameHostnameNeverConflicts(t *testing.T) {
 	enrolled(t, db, "stn-same")
 
 	for i := range 5 {
-		c, err := registry.Register(db.DB, "stn-same", "the-pi", "the-instance", "v1")
+		c, err := registry.Register(db.DB, "stn-same", "the-pi", "the-instance", "v1", "")
 		if err != nil {
 			t.Fatalf("Register %d: %v", i, err)
 		}
@@ -261,7 +261,7 @@ func TestCoverage_Register_EmptyHostnameNeitherClaimsNorConflicts(t *testing.T) 
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-anon")
 
-	if _, err := registry.Register(db.DB, "stn-anon", "", "", "v1"); err != nil {
+	if _, err := registry.Register(db.DB, "stn-anon", "", "", "v1", ""); err != nil {
 		t.Fatalf("Register with empty hostname: %v", err)
 	}
 	e, _ := registry.GetByUID(db.DB, "stn-anon")
@@ -270,7 +270,7 @@ func TestCoverage_Register_EmptyHostnameNeitherClaimsNorConflicts(t *testing.T) 
 	}
 
 	// The real hostname arrives and claims the unbound station — cleanly.
-	c, err := registry.Register(db.DB, "stn-anon", "real-pi", "", "v1")
+	c, err := registry.Register(db.DB, "stn-anon", "real-pi", "", "v1", "")
 	if err != nil {
 		t.Fatalf("Register with real hostname: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestCoverage_Register_EmptyHostnameNeitherClaimsNorConflicts(t *testing.T) 
 	}
 
 	// And a later empty-hostname register does not accuse the bound machine.
-	c, err = registry.Register(db.DB, "stn-anon", "", "", "v1")
+	c, err = registry.Register(db.DB, "stn-anon", "", "", "v1", "")
 	if err != nil {
 		t.Fatalf("Register with empty hostname after binding: %v", err)
 	}
@@ -304,19 +304,19 @@ func TestCoverage_Register_ConflictCountDistinguishesFlapFromMove(t *testing.T) 
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-dup")
 
-	if _, err := registry.Register(db.DB, "stn-dup", "pi-one", "inst-one", "v1"); err != nil {
+	if _, err := registry.Register(db.DB, "stn-dup", "pi-one", "inst-one", "v1", ""); err != nil {
 		t.Fatalf("bind pi-one: %v", err)
 	}
 	// Two machines alternating, exactly as two edges sharing one uid do.
 	for i := range 3 {
-		c, err := registry.Register(db.DB, "stn-dup", "pi-two", "inst-two", "v1")
+		c, err := registry.Register(db.DB, "stn-dup", "pi-two", "inst-two", "v1", "")
 		if err != nil {
 			t.Fatalf("pi-two register %d: %v", i, err)
 		}
 		if c == nil {
 			t.Fatalf("pi-two register %d reported no conflict", i)
 		}
-		if _, err := registry.Register(db.DB, "stn-dup", "pi-one", "inst-one", "v1"); err != nil {
+		if _, err := registry.Register(db.DB, "stn-dup", "pi-one", "inst-one", "v1", ""); err != nil {
 			t.Fatalf("pi-one register %d: %v", i, err)
 		}
 	}
@@ -360,19 +360,19 @@ func TestCoverage_Register_InstanceRecurrenceCatchesTheSDCardClone(t *testing.T)
 
 	const sameHost = "shingo-edge" // one image, one hostname, two machines
 
-	if c, err := registry.Register(db.DB, "stn-clone", sameHost, "inst-A", "v1"); err != nil || c != nil {
+	if c, err := registry.Register(db.DB, "stn-clone", sameHost, "inst-A", "v1", ""); err != nil || c != nil {
 		t.Fatalf("clone A first register: c=%v err=%v", c, err)
 	}
 	// Clone B comes up. Its instance has never been seen, which is
 	// indistinguishable from A having restarted — so this must NOT alarm.
-	if c, err := registry.Register(db.DB, "stn-clone", sameHost, "inst-B", "v1"); err != nil || c != nil {
+	if c, err := registry.Register(db.DB, "stn-clone", sameHost, "inst-B", "v1", ""); err != nil || c != nil {
 		t.Fatalf("clone B first register alarmed, but a fresh instance is also what a "+
 			"restart looks like: c=%v err=%v", c, err)
 	}
 	// A registers again — from a process B already displaced. A single machine
 	// cannot produce this: a reboot draws a value it has never used, and a live
 	// process reuses the one it holds.
-	c, err := registry.Register(db.DB, "stn-clone", sameHost, "inst-A", "v1")
+	c, err := registry.Register(db.DB, "stn-clone", sameHost, "inst-A", "v1", "")
 	if err != nil {
 		t.Fatalf("clone A second register: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestCoverage_Register_RestartsNeverRecur(t *testing.T) {
 	enrolled(t, db, "stn-restart")
 
 	for _, inst := range []string{"boot-1", "boot-2", "boot-3", "boot-4"} {
-		c, err := registry.Register(db.DB, "stn-restart", "the-pi", inst, "v1")
+		c, err := registry.Register(db.DB, "stn-restart", "the-pi", inst, "v1", "")
 		if err != nil {
 			t.Fatalf("register %s: %v", inst, err)
 		}
@@ -411,7 +411,7 @@ func TestCoverage_Register_RestartsNeverRecur(t *testing.T) {
 			t.Fatalf("restart %s reported a conflict: %s", inst, c)
 		}
 		// A reconnect inside the same process reuses the instance — also clean.
-		if c, err := registry.Register(db.DB, "stn-restart", "the-pi", inst, "v1"); err != nil || c != nil {
+		if c, err := registry.Register(db.DB, "stn-restart", "the-pi", inst, "v1", ""); err != nil || c != nil {
 			t.Fatalf("reconnect within %s: c=%v err=%v", inst, c, err)
 		}
 	}
@@ -439,11 +439,11 @@ func TestCoverage_Register_EmptyInstanceIsNeverJudged(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-legacy")
 
-	if c, err := registry.Register(db.DB, "stn-legacy", "old-pi", "inst-real", "v1"); err != nil || c != nil {
+	if c, err := registry.Register(db.DB, "stn-legacy", "old-pi", "inst-real", "v1", ""); err != nil || c != nil {
 		t.Fatalf("bind: c=%v err=%v", c, err)
 	}
 	// An old edge (or a failed draw) registers with no instance.
-	if c, err := registry.Register(db.DB, "stn-legacy", "old-pi", "", "v1"); err != nil || c != nil {
+	if c, err := registry.Register(db.DB, "stn-legacy", "old-pi", "", "v1", ""); err != nil || c != nil {
 		t.Fatalf("empty instance judged: c=%v err=%v", c, err)
 	}
 	e, _ := registry.GetByUID(db.DB, "stn-legacy")
@@ -451,7 +451,7 @@ func TestCoverage_Register_EmptyInstanceIsNeverJudged(t *testing.T) {
 		t.Errorf("bound_instance = %q — an empty instance must not take the lease", e.BoundInstance)
 	}
 	// And the real one comes back without looking like an intruder.
-	if c, err := registry.Register(db.DB, "stn-legacy", "old-pi", "inst-real", "v1"); err != nil || c != nil {
+	if c, err := registry.Register(db.DB, "stn-legacy", "old-pi", "inst-real", "v1", ""); err != nil || c != nil {
 		t.Fatalf("the real instance was accused after an empty one: c=%v err=%v", c, err)
 	}
 }
@@ -468,8 +468,8 @@ func TestCoverage_Rebind_ClearsTheAlarmAndMovesTheBinding(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-swap")
 
-	registry.Register(db.DB, "stn-swap", "old-pi", "inst-old", "v1") //nolint:errcheck // fixture
-	if _, err := registry.Register(db.DB, "stn-swap", "new-pi", "inst-new", "v1"); err != nil {
+	registry.Register(db.DB, "stn-swap", "old-pi", "inst-old", "v1", "") //nolint:errcheck // fixture
+	if _, err := registry.Register(db.DB, "stn-swap", "new-pi", "inst-new", "v1", ""); err != nil {
 		t.Fatalf("register new-pi: %v", err)
 	}
 
@@ -497,7 +497,7 @@ func TestCoverage_Rebind_ClearsTheAlarmAndMovesTheBinding(t *testing.T) {
 	}
 
 	// And the alarm stays quiet from here — the whole point of clearing it.
-	c, err := registry.Register(db.DB, "stn-swap", "new-pi", "inst-new", "v1")
+	c, err := registry.Register(db.DB, "stn-swap", "new-pi", "inst-new", "v1", "")
 	if err != nil {
 		t.Fatalf("register after rebind: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestCoverage_UpdateHeartbeat_FoundThenNewer(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-fresh")
 
-	found, err := registry.UpdateHeartbeat(db.DB, "stn-fresh")
+	found, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "")
 	if err != nil {
 		t.Fatalf("UpdateHeartbeat first: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestCoverage_UpdateHeartbeat_FoundThenNewer(t *testing.T) {
 	firstBeat := e.LastHeartbeat
 	// KEEP: timestamp separation — second heartbeat must record a later timestamp.
 	time.Sleep(10 * time.Millisecond)
-	if _, err := registry.UpdateHeartbeat(db.DB, "stn-fresh"); err != nil {
+	if _, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", ""); err != nil {
 		t.Fatalf("UpdateHeartbeat second: %v", err)
 	}
 	e2, _ := registry.GetByUID(db.DB, "stn-fresh")
@@ -565,10 +565,10 @@ func TestCoverage_MarkStaleEdges(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-stale-1")
 	enrolled(t, db, "stn-stale-2")
-	registry.Register(db.DB, "stn-stale-1", "h1", "i1", "v") //nolint:errcheck // fixture
-	registry.UpdateHeartbeat(db.DB, "stn-stale-1")           //nolint:errcheck // fixture
-	registry.Register(db.DB, "stn-stale-2", "h2", "i2", "v") //nolint:errcheck // fixture
-	registry.UpdateHeartbeat(db.DB, "stn-stale-2")           //nolint:errcheck // fixture
+	registry.Register(db.DB, "stn-stale-1", "h1", "i1", "v", "") //nolint:errcheck // fixture
+	registry.UpdateHeartbeat(db.DB, "stn-stale-1", "")           //nolint:errcheck // fixture
+	registry.Register(db.DB, "stn-stale-2", "h2", "i2", "v", "") //nolint:errcheck // fixture
+	registry.UpdateHeartbeat(db.DB, "stn-stale-2", "")           //nolint:errcheck // fixture
 	stale, err := registry.MarkStale(db.DB, 0)
 	if err != nil {
 		t.Fatalf("MarkStale: %v", err)
@@ -638,8 +638,8 @@ func TestCoverage_MarkStaleEdges_ThresholdIsHonoured(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-recent")
 	enrolled(t, db, "stn-old")
-	registry.Register(db.DB, "stn-recent", "h", "i", "v") //nolint:errcheck // fixture
-	registry.Register(db.DB, "stn-old", "h", "i", "v")    //nolint:errcheck // fixture
+	registry.Register(db.DB, "stn-recent", "h", "i", "v", "") //nolint:errcheck // fixture
+	registry.Register(db.DB, "stn-old", "h", "i", "v", "")    //nolint:errcheck // fixture
 	if _, err := db.DB.Exec(
 		`UPDATE edge_registry SET last_heartbeat = NOW() - interval '10 seconds' WHERE station_uid = 'stn-recent'`,
 	); err != nil {

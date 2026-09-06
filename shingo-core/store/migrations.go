@@ -4088,7 +4088,32 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bin_loaders", "changeover_load_directive")
 			}},
+
+		{99, "edge_registry.timezone — each station's resolved plant display zone, reported over the wire",
+			v99EdgeRegistryTimezone,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "timezone")
+			}},
 	}
+}
+
+// v99EdgeRegistryTimezone adds the plant display zone each edge reports on
+// register and heartbeat, so the /edges page shows every station's clock zone
+// in one table. The observability half of plant-local display (brief §4 Item
+// C): wrongness becomes visible from one page instead of by SSH.
+//
+// Written from the wire (EdgeRegister/EdgeHeartbeat .Timezone) and never by a
+// human — it records what the edge process is ON, so a zone saved on the edge
+// but not yet restarted stays blank here until the restart actually happens.
+// An unconfigured edge sends "" and the table shows the emptiness, which is
+// the "go set it" signal. Additive only: pre-v99 rows are NULL, rendered as
+// unknown rather than guessed.
+func v99EdgeRegistryTimezone(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE edge_registry
+		ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v99 edge_registry.timezone: %w", err)
+	}
+	return nil
 }
 
 // v98LoaderChangeoverLoadDirective moves the changeover load directive onto the
