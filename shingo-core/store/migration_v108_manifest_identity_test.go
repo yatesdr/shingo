@@ -45,18 +45,18 @@ func derivedFor(t *testing.T, db *store.DB, payloadID int64) string {
 	return catids[payloadID]
 }
 
-// TestV110_MovesTheCATIDToThePartAndLeavesTheGuardAlone is the correction's
+// TestV108_MovesTheCATIDToThePartAndLeavesTheGuardAlone is the correction's
 // whole contract on a single-line payload: the line comes out naming the
 // payload code (which for a bin of one part IS that part's number), the old
 // value comes out on the part as its cat id, and the value the guard derives
 // is byte-identical across the move.
-func TestV110_MovesTheCATIDToThePartAndLeavesTheGuardAlone(t *testing.T) {
+func TestV108_MovesTheCATIDToThePartAndLeavesTheGuardAlone(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
 	// The template database has already migrated, so put a payload back into the
 	// pre-correction shape and re-run the correction over it.
-	payloadID := seedUncorrectedPayload(t, db, "V110-SINGLE", "10276")
+	payloadID := seedUncorrectedPayload(t, db, "V108-SINGLE", "10276")
 	beforeDerived := derivedFor(t, db, payloadID)
 	if beforeDerived != "10276" {
 		t.Fatalf("pre-correction derived value = %q, want the raw manifest value", beforeDerived)
@@ -69,7 +69,7 @@ func TestV110_MovesTheCATIDToThePartAndLeavesTheGuardAlone(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("manifest has %d lines, want 1", len(items))
 	}
-	if items[0].PartNumber != "V110-SINGLE" {
+	if items[0].PartNumber != "V108-SINGLE" {
 		t.Errorf("line names %q, want the payload code — for a bin of one part the "+
 			"code IS the part number CMS books against", items[0].PartNumber)
 	}
@@ -89,15 +89,15 @@ func TestV110_MovesTheCATIDToThePartAndLeavesTheGuardAlone(t *testing.T) {
 	}
 }
 
-// TestV110_LeavesAKitAloneAndStillDerivesItsCATIDs: a kit's payload code names
+// TestV108_LeavesAKitAloneAndStillDerivesItsCATIDs: a kit's payload code names
 // the KIT, so it is nobody's component part number and there is nothing in the
 // database that is. Those lines are left for a person — and the guard must not
 // notice, which is what the COALESCE in PayloadCATIDs is for.
-func TestV110_LeavesAKitAloneAndStillDerivesItsCATIDs(t *testing.T) {
+func TestV108_LeavesAKitAloneAndStillDerivesItsCATIDs(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
-	payloadID := seedUncorrectedPayload(t, db, "V110-KIT", "33142", "33143")
+	payloadID := seedUncorrectedPayload(t, db, "V108-KIT", "33142", "33143")
 	before := derivedFor(t, db, payloadID)
 	if before != "33142,33143" {
 		t.Fatalf("pre-correction derived = %q, want both values", before)
@@ -122,17 +122,17 @@ func TestV110_LeavesAKitAloneAndStillDerivesItsCATIDs(t *testing.T) {
 	}
 }
 
-// TestV110_RefusesWhenTheGuardWouldChange is the predicate itself. Nothing in
+// TestV108_RefusesWhenTheGuardWouldChange is the predicate itself. Nothing in
 // the shipped correction can produce this state; the test manufactures one (a
 // part minted by hand with a DIFFERENT cat id than the line holds) to prove the
 // refusal is real rather than a comment about one.
-func TestV110_RefusesWhenTheGuardWouldChange(t *testing.T) {
+func TestV108_RefusesWhenTheGuardWouldChange(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
-	payloadID := seedUncorrectedPayload(t, db, "V110-REFUSE", "40016911")
+	payloadID := seedUncorrectedPayload(t, db, "V108-REFUSE", "40016911")
 	// Somebody entered this part already, with a different controls identity.
-	if _, err := db.Exec(`INSERT INTO parts (part_number, catid) VALUES ('V110-REFUSE', '99999999')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO parts (part_number, catid) VALUES ('V108-REFUSE', '99999999')`); err != nil {
 		t.Fatalf("seed conflicting part: %v", err)
 	}
 
