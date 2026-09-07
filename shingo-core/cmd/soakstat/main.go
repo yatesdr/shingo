@@ -28,6 +28,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/store"
+	"shingocore/store/bins"
 )
 
 func main() {
@@ -580,6 +582,7 @@ var invariantChecks = []struct {
 	{"orders waiting under a cause nothing declares", checkUndeclaredWaits},
 	{"orders that have not moved for their population's budget", checkStalledOrders},
 	{"a negative total UOP across bins", checkNegativeTotalUOP},
+	{"a carrier type with no empty left to source", checkExhaustedCarrierPool},
 }
 
 func checkInvariants(db *store.DB) []string {
@@ -1420,5 +1423,96 @@ func checkNegativeTotalUOP(db *store.DB) []string {
 	if total < 0 {
 		out = append(out, "negative total UOP across bins")
 	}
+	return out
+}
+
+// checkExhaustedCarrierPool reports a carrier type whose every carrier is full.
+//
+// ── THE DEADLOCK THAT PASSES EVERY RATE CHECK ────────────────────────────────
+//
+// A produce station needs an EMPTY to start the next carrier. When a type's
+// empty population reaches zero, every producer on that type stops — and it
+// stops holding a full carrier it cannot put down, so nothing frees an empty
+// either. Nothing is broken, nothing is unbalanced, and nothing moves.
+//
+// MEASURED, demo.yaml 2026-09-06: STANDARD-SM ended a run with 13 carriers, 12
+// at 30 of 30 and one at 8. Zero empty. PRESS-2 stopped for want of one and the
+// two retrieve_empty orders feeding it queued for the rest of the run, each
+// wearing a cause that named the finder rather than the pool.
+//
+// ── WHY THIS IS A RUNTIME CHECK AND NOT A SEED-TIME ONE ──────────────────────
+//
+// It was tried in simcalc first and it does not work there. At seed time the same
+// pool holds 115 units across 13 carriers with nine of them empty and is, by any
+// static reading, healthy — the 368 units that fill it are ACCUMULATED over the
+// run by a rate asymmetry simcalc now reports as a sensitivity precisely because
+// it cannot predict the realized number (see cmd/simcalc/carriers.go,
+// inputCoupling). The exhaustion is a property of a run. So it is asserted where
+// runs are read.
+//
+// ── AND IT COUNTS THE POPULATION SOURCING COUNTS ─────────────────────────────
+//
+// Over bins.EmptyCarrierWhere, not over `payload_code IS NULL`. A carrier that is
+// claimed, locked, staged, spoken for by a reservation, or standing on a cell's
+// own position is not one a producer can be given, and a check that counts those
+// as available reports a pool of empties nobody can have. That constant's own
+// comment makes the requirement explicit: "any count over the same population
+// must agree".
+func checkExhaustedCarrierPool(db *store.DB) []string {
+	var out []string
+
+	rows, err := db.DB.Query(`
+		SELECT bt.code,
+		       COUNT(*) AS total,
+		       COUNT(*) FILTER (WHERE COALESCE(b.payload_code, '') <> '') AS full
+		FROM bins b
+		JOIN bin_types bt ON bt.id = b.bin_type_id
+		GROUP BY bt.code
+		ORDER BY bt.code`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	type pool struct{ total, full int }
+	pools := map[string]pool{}
+	for rows.Next() {
+		var code string
+		var total, full int
+		if err := rows.Scan(&code, &total, &full); err != nil {
+			return out
+		}
+		pools[code] = pool{total, full}
+	}
+	rows.Close()
+
+	for code, p := range pools {
+		if p.total == 0 {
+			continue
+		}
+		// The SOURCEABLE count, over the population the finders read.
+		sourceable := scalar(db, `SELECT COUNT(*) `+
+			bins.BinFromClause+bins.EmptyCarrierWhere+bins.OfTypeArm(1), code)
+		if sourceable > 0 {
+			continue
+		}
+		// Distinguish the two zeros. Every carrier full is the deadlock; empties
+		// that exist but are all spoken for is a different fault with a different
+		// fix, and calling both "exhausted" sends the reader to the wrong place.
+		switch {
+		case p.full == p.total:
+			out = append(out, fmt.Sprintf(
+				"carrier type %s is exhausted: all %d carriers are FULL, so no produce station "+
+					"on this type can start another — and none can free one either",
+				code, p.total))
+		default:
+			out = append(out, fmt.Sprintf(
+				"carrier type %s has %d empty carriers and NONE sourceable (%d of %d full): the "+
+					"empties exist but are claimed, locked, staged, reserved, or standing on a "+
+					"cell's own position",
+				code, p.total-p.full, p.full, p.total))
+		}
+	}
+	sort.Strings(out)
 	return out
 }
