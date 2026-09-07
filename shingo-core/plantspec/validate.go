@@ -38,6 +38,24 @@ func (p *Plant) Validate() error {
 		}
 	}
 
+	// ── THE A/B TWO-CONTAINER RULE ───────────────────────────────────────
+	//
+	// "If a process wants to run an A/B swap it needs at least two containers
+	// in the system. Two nodes lineside holding the same part — it can't
+	// function with less than 2." Paired positions are counted from the
+	// claims' own geometry (see carrier_pairs.go); a frozen baseline reports
+	// instead of refusing, same polarity as the census above.
+	if cp := p.CarrierPairsAtBirth(); !cp.Clean() {
+		if p.BaselineFrozenAt != "" {
+			for _, f := range cp.Findings() {
+				fmt.Printf("plantspec: KNOWN SEED DEFECT (frozen as a baseline by %s, not corrected on "+
+					"purpose): %s\n", p.BaselineFrozenAt, f)
+			}
+		} else {
+			errs = append(errs, cp.Findings()...)
+		}
+	}
+
 	if strings.TrimSpace(p.Namespace) == "" {
 		add("namespace is required")
 	}
