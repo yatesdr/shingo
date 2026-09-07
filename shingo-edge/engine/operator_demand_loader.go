@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -340,6 +342,16 @@ func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.Paylo
 		made := 0
 		for i, deliveryNode := range deliveryNodes {
 			node, nerr := e.db.GetProcessNodeByCoreNodeName(deliveryNode)
+			if errors.Is(nerr, sql.ErrNoRows) {
+				// One plant, several Edges: Core broadcasts the loader config to
+				// every Edge, and each Edge holds process_node rows only for its
+				// own windows. A sweep on this Edge routinely walks windows served
+				// by another Edge, and sql.ErrNoRows is the store's ordinary "we
+				// do not own this destination" answer — skip the window, don't
+				// fail the sweep.
+				e.debugFn("%s: window %s has no process_node here — another Edge's window; skipped", source.logTag(), deliveryNode)
+				continue
+			}
 			if nerr != nil || node == nil {
 				return made, fmt.Errorf("%s: no process_node for delivery target %s: %w", source.logTag(), deliveryNode, nerr)
 			}

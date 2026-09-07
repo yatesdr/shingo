@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -136,6 +138,16 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 		made := 0
 		for _, deliveryNode := range deliveryNodes {
 			node, nerr := e.db.GetProcessNodeByCoreNodeName(deliveryNode)
+			if errors.Is(nerr, sql.ErrNoRows) {
+				// Same shape as the loader L1: one plant, several Edges — Core
+				// broadcasts the loader config to every Edge, and this sweep
+				// routinely walks a window served by another Edge. ErrNoRows is
+				// the store's "not ours" answer — skip, don't fail. Measured 520
+				// of these an hour on edge1 of the two-Edge sim stack (2026-09-07)
+				// while edge2, which owns FGN_L2_01, logged none.
+				e.debugFn("side-cycle: unloader window %s has no process_node here — another Edge's window; skipped", deliveryNode)
+				continue
+			}
 			if nerr != nil || node == nil {
 				return made, fmt.Errorf("side-cycle: no process_node for unloader window %s: %w", deliveryNode, nerr)
 			}
