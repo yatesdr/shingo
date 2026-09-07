@@ -112,6 +112,57 @@ type carrierPlan struct {
 	unpooled     []string // payloads whose claims name no pool — cannot be attributed
 }
 
+// inputCoupling is the derate exposure for one payload: what happens to its
+// carriers when its consumer has more ways to stop than its producer does.
+//
+// ── THE ASYMMETRY THE RATE CHECK CANNOT SEE ──────────────────────────────────
+//
+// The balance above matches bins filled against bins emptied at their CONFIGURED
+// rates, and a plant in balance there can still accumulate, because the two
+// sides are not equally able to hit those rates.
+//
+//	a single-input producer stops when ITS input starves           — one way
+//	an N-input consumer stops when ANY of its N inputs starves      — N ways
+//
+// So the producer runs closer to nominal than the consumer can, the difference
+// lands as FULL carriers, and the empty pool for that carrier type drains at
+// exactly the rate of the gap. Every payload stays "balanced" the whole way
+// down, because nothing about the configured rates has changed.
+//
+// MEASURED, demo.yaml 2026-09-06: WELD-2 draws PANEL-B from PRESS-2 and BRKT
+// from LOADER-COMP, and it cannot cycle without both. PRESS-2 has no such
+// coupling. 28 produce swaps against 17 consume, and the STANDARD-SM pool ended
+// the run with 13 carriers full, ZERO empty and 368 units against the 360 its
+// carriers can hold — PRESS-2 stopped for want of an empty, and the
+// retrieve_empty orders feeding it queued for the rest of the run.
+//
+// ── AND WHY THE OBVIOUS FIX IS NOT ONE ───────────────────────────────────────
+//
+// The fixture's own answer to the last occurrence was three more carriers
+// (plants/demo.yaml, BIN-MT-13..15: "these three make the SM pool eleven"). More
+// carriers buy TIME proportional to the pool; they do not slow a drain. That is
+// the whole reason this section reports an hours-to-jam rather than a verdict:
+// the question a coupled loop poses is not "are there enough carriers" but "how
+// long until there are not", and the answer moves with an availability nobody
+// has measured.
+//
+// NOT A VERDICT, DELIBERATELY. The realized availability of a coupled consumer
+// is a property of a RUN — buffer depths, transit variance, how often the other
+// input is late. It is not in the plant file, and the last attempt to turn an
+// accumulation into a seed-time check produced a confident WILL JAM on a healthy
+// pool and an "ok" on the one that actually jammed. So this prints a sensitivity
+// and never fails the command.
+type inputCoupling struct {
+	payload   string
+	producer  string
+	consumer  string
+	siblings  []string // the OTHER payloads that consumer also waits on
+	binType   string
+	fillRate  float64 // bins/min the producer fills
+	poolEmpty int     // empty carriers of that bin type, plant-wide
+	poolTotal int     // all carriers of that bin type
+}
+
 // zoneHeadroom is the shuffle picture for one zone.
 type zoneHeadroom struct {
 	name        string
@@ -152,6 +203,8 @@ func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plant
 	balanceOK := reportBalance(plan)
 	floorOK := reportStockFloor(plan, mins)
 	headroomOK := reportHeadroom(zones)
+	// Informational only, and it returns nothing to AND in: see inputCoupling.
+	reportCoupling(computeCoupling(plant, rate))
 	ok := balanceOK && floorOK && headroomOK
 
 	fmt.Printf("\n%s\n", headline(ok))
@@ -744,4 +797,140 @@ func reportHeadroom(zones []zoneHeadroom) bool {
 	fmt.Printf("  split is kept because a second mark holds the dug corridor shut for as long\n")
 	fmt.Printf("  as that lane is congested, and that duration is not known to be bounded.\n")
 	return ok
+}
+
+// computeCoupling finds every payload whose consumer waits on more inputs than
+// its producer does, and sizes the empty pool that absorbs the difference.
+func computeCoupling(plant *plantspec.Plant, rate map[string]float64) []inputCoupling {
+	binTypeOf := map[string]string{}
+	capOf := map[string]int64{}
+	for _, pl := range plant.Payloads {
+		binTypeOf[pl.Code] = pl.BinType
+		capOf[pl.Code] = pl.UOPCapacity
+	}
+	// A bin's type is its OWN field, falling back to the first declared type —
+	// mirroring seed_core.go exactly. NOT inferred from the payload it carries:
+	// an empty bin has no payload to infer from, and empties are the whole
+	// population this section is about.
+	defaultType := ""
+	if len(plant.BinTypes) > 0 {
+		defaultType = plant.BinTypes[0]
+	}
+	poolEmpty, poolTotal := map[string]int{}, map[string]int{}
+	for _, b := range plant.Bins {
+		bt := b.BinType
+		if bt == "" {
+			bt = defaultType
+		}
+		poolTotal[bt]++
+		if b.Payload == "" {
+			poolEmpty[bt]++
+		}
+	}
+
+	// Tick inputs per process, on the ACTIVE style only. A manual_swap claim
+	// carries no counter and does not gate the machine's cycle.
+	inputsOf := map[string][]string{}
+	producerOf := map[string]string{} // payload -> process making it on a tick
+	consumerOf := map[string]string{} // payload -> process drawing it on a tick
+	for _, ac := range activeClaims(plant) {
+		c := ac.claim
+		if c.IsManualSwap() || !c.IsActivePull() {
+			continue
+		}
+		switch c.Role {
+		case "consume":
+			inputsOf[ac.proc] = appendUniq(inputsOf[ac.proc], c.Payload)
+			consumerOf[c.Payload] = ac.proc
+		case "produce":
+			producerOf[c.Payload] = ac.proc
+		}
+	}
+
+	var out []inputCoupling
+	for payload, consumer := range consumerOf {
+		producer := producerOf[payload]
+		if producer == "" {
+			continue // loader-fed: no tick producer to outrun the consumer
+		}
+		inputs := inputsOf[consumer]
+		if len(inputs) < 2 {
+			continue // one input, one way to stop — no asymmetry to report
+		}
+		// The producer's own coupling matters too: a producer that is ITSELF a
+		// multi-input consumer stops for the same reasons, and the gap is what
+		// is left over. Only report where the consumer is strictly more exposed.
+		if len(inputsOf[producer]) >= len(inputs) {
+			continue
+		}
+		var siblings []string
+		for _, in := range inputs {
+			if in != payload {
+				siblings = append(siblings, in)
+			}
+		}
+		sort.Strings(siblings)
+
+		fill := 0.0
+		if c := capOf[payload]; c > 0 {
+			fill = rate[producer] / float64(c)
+		}
+		bt := binTypeOf[payload]
+		if bt == "" {
+			bt = defaultType
+		}
+		out = append(out, inputCoupling{
+			payload: payload, producer: producer, consumer: consumer,
+			siblings: siblings, binType: bt, fillRate: fill,
+			poolEmpty: poolEmpty[bt], poolTotal: poolTotal[bt],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].payload < out[j].payload })
+	return out
+}
+
+// reportCoupling prints the exposure and the hours-to-jam sensitivity. It
+// returns nothing: see inputCoupling for why this is not a verdict.
+func reportCoupling(cs []inputCoupling) {
+	fmt.Printf("\nINPUT COUPLING (a consumer with N inputs has N ways to stop; its producer has one)\n")
+	fmt.Println(strings.Repeat("─", 84))
+	if len(cs) == 0 {
+		fmt.Printf("  no payload whose consumer is more coupled than its producer — nothing accumulates\n")
+		return
+	}
+	fmt.Printf("  %-10s %-10s %-10s %-14s %-13s %s\n",
+		"PAYLOAD", "PRODUCER", "CONSUMER", "ALSO WAITS ON", "BIN TYPE", "POOL")
+	for _, c := range cs {
+		fmt.Printf("  %-10s %-10s %-10s %-14s %-13s %d empty of %d\n",
+			c.payload, c.producer, c.consumer, strings.Join(c.siblings, ","),
+			c.binType, c.poolEmpty, c.poolTotal)
+	}
+
+	fmt.Printf("\n  HOURS UNTIL THE EMPTY POOL IS GONE, if the consumer realizes only:\n")
+	fmt.Printf("  %-10s %-10s %-9s %-9s %-9s %s\n", "PAYLOAD", "FILLS/min", "99%", "97%", "95%", "90%")
+	for _, c := range cs {
+		if c.fillRate <= 0 || c.poolEmpty == 0 {
+			fmt.Printf("  %-10s %-10.2f %s\n", c.payload, c.fillRate,
+				"— no fill rate or no empties to drain")
+			continue
+		}
+		cells := ""
+		for _, a := range []float64{0.99, 0.97, 0.95, 0.90} {
+			drain := c.fillRate * (1 - a) // bins/min the consumer cannot take
+			cells += fmt.Sprintf("%-9s", fmt.Sprintf("%.1fh", float64(c.poolEmpty)/drain/60))
+		}
+		fmt.Printf("  %-10s %-10.2f %s\n", c.payload, c.fillRate, strings.TrimRight(cells, " "))
+	}
+
+	fmt.Println()
+	fmt.Println("  The producer keeps filling while the consumer is stopped, so the shortfall")
+	fmt.Println("  lands as FULL carriers and that bin type's empties go to zero — at which")
+	fmt.Println("  point the producer stops for want of an empty and the loop is wedged with")
+	fmt.Println("  every carrier full. The rate check passes throughout: nothing is unbalanced,")
+	fmt.Println("  the consumer simply never got to run at the rate it was balanced against.")
+	fmt.Println()
+	fmt.Println("  MORE CARRIERS MOVE THESE HOURS, THEY DO NOT REMOVE THEM. To actually close")
+	fmt.Println("  the gap the producer has to be configured BELOW parity — at the rate its")
+	fmt.Println("  consumer can sustain, not the rate the consumer would sustain if its other")
+	fmt.Println("  inputs never made it wait.")
 }

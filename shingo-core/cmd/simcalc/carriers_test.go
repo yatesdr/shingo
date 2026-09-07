@@ -533,3 +533,114 @@ func TestCarriers_MaintainedGroupSurplusOverflowsToItsCounterparty(t *testing.T)
 		t.Errorf("the kept group nets %+.3f after the keeper flow; a level-held pool settles to zero", eff)
 	}
 }
+
+// coupledPlant builds demo.yaml's WELD-2 shape: a press feeding a weld cell that
+// also waits on a second part from somewhere else.
+//
+//	PRESS  ──PANEL──▶ WELD ◀──BRKT── LOADER
+//
+// The press has one way to stop. The weld cell has two, and only one of them is
+// the press's problem.
+func coupledPlant() *plantspec.Plant {
+	return &plantspec.Plant{
+		BinTypes: []string{"STANDARD", "STANDARD-SM"},
+		Payloads: []plantspec.Payload{
+			{Code: "PANEL", UOPCapacity: 30, BinType: "STANDARD-SM"},
+			{Code: "BRKT", UOPCapacity: 40, BinType: "STANDARD"},
+		},
+		Processes: []plantspec.Process{
+			{Name: "PRESS", ActiveStyle: "PRESS-RUN"},
+			{Name: "WELD", ActiveStyle: "WELD-RUN"},
+			{Name: "LOADER", ActiveStyle: "LOADER-RUN"},
+		},
+		Styles: []plantspec.Style{
+			{Name: "PRESS-RUN", Process: "PRESS", Payload: "PANEL"},
+			{Name: "WELD-RUN", Process: "WELD", Payload: "PANEL"},
+			{Name: "LOADER-RUN", Process: "LOADER", Payload: "BRKT"},
+		},
+		Claims: []plantspec.Claim{
+			{CoreNode: "PLN_1", Style: "PRESS-RUN", Role: "produce", SwapMode: "single_robot",
+				Payload: "PANEL", UOPCapacity: 30},
+			{CoreNode: "ALN_1", Style: "WELD-RUN", Role: "consume", SwapMode: "single_robot",
+				Payload: "PANEL", UOPCapacity: 30},
+			// The SECOND input, on the same process. This is the whole fixture.
+			{CoreNode: "ALN_2", Style: "WELD-RUN", Role: "consume", SwapMode: "single_robot",
+				Payload: "BRKT", UOPCapacity: 40},
+			{CoreNode: "PLK_1", Style: "LOADER-RUN", Role: "produce", SwapMode: "manual_swap",
+				Payload: "BRKT", UOPCapacity: 40},
+		},
+		// Six carriers, four of them the small type PANEL rides.
+		Bins: []plantspec.Bin{
+			{Name: "sm1", Slot: "X1", BinType: "STANDARD-SM"},
+			{Name: "sm2", Slot: "X2", BinType: "STANDARD-SM"},
+			{Name: "sm3", Slot: "X3", BinType: "STANDARD-SM"},
+			{Name: "sm4", Slot: "X4", BinType: "STANDARD-SM", Payload: "PANEL", UOP: 30},
+			// No bin_type: falls back to the FIRST declared type, as seed_core.go does.
+			{Name: "st1", Slot: "X5"},
+			{Name: "st2", Slot: "X6"},
+		},
+	}
+}
+
+// TestCoupling_FindsTheConsumerWithMoreWaysToStop pins the shape that drained
+// demo.yaml's STANDARD-SM pool, and the arithmetic that sizes how long it takes.
+//
+// The rate check passes this plant at every moment: PANEL is filled and emptied
+// at the same configured rate. What it cannot see is that only one side is ABLE
+// to hit its rate — the weld cell also waits on BRKT — so the difference lands
+// as full carriers and the small-carrier pool goes to zero.
+func TestCoupling_FindsTheConsumerWithMoreWaysToStop(t *testing.T) {
+	t.Parallel()
+	// The press fills 6 parts/min into 30-UOP carriers: 0.20 bins/min.
+	cs := computeCoupling(coupledPlant(), map[string]float64{"PRESS": 6.0, "WELD": 6.0})
+
+	if len(cs) != 1 {
+		t.Fatalf("got %d couplings, want exactly 1 (PANEL): %+v", len(cs), cs)
+	}
+	c := cs[0]
+	if c.payload != "PANEL" || c.producer != "PRESS" || c.consumer != "WELD" {
+		t.Errorf("got %s %s->%s, want PANEL PRESS->WELD", c.payload, c.producer, c.consumer)
+	}
+	if len(c.siblings) != 1 || c.siblings[0] != "BRKT" {
+		t.Errorf("siblings = %v, want [BRKT] — naming the OTHER input is the actionable half; "+
+			"without it the report says a cell stalls and not what it is waiting for", c.siblings)
+	}
+	// THE CARRIER TYPE IS THE PAYLOAD'S, AND THE POOL IS COUNTED OFF THE BIN'S
+	// OWN FIELD. An empty bin has no payload to infer a type from, and empties
+	// are the entire population this measures.
+	if c.binType != "STANDARD-SM" {
+		t.Errorf("binType = %q, want STANDARD-SM", c.binType)
+	}
+	if c.poolEmpty != 3 || c.poolTotal != 4 {
+		t.Errorf("pool = %d empty of %d, want 3 of 4 — the two untyped carriers belong to "+
+			"STANDARD (the first declared type, which is what seed_core.go falls back to) and "+
+			"must not be counted as room for a small one", c.poolEmpty, c.poolTotal)
+	}
+	if math.Abs(c.fillRate-0.20) > 0.001 {
+		t.Errorf("fillRate = %.3f bins/min, want 0.20", c.fillRate)
+	}
+	// The drain, at the 95% column: 0.20 x 0.05 = 0.01 bins/min against 3
+	// empties is 300 minutes.
+	if drain := c.fillRate * 0.05; math.Abs(float64(c.poolEmpty)/drain-300) > 1 {
+		t.Errorf("hours-to-jam arithmetic drifted: %.1f min at 95%%, want 300", float64(c.poolEmpty)/drain)
+	}
+}
+
+// TestCoupling_SaysNothingWhenBothSidesAreEquallyExposed keeps the section quiet
+// on the ordinary case. A report that fires on every plant is one people stop
+// reading, and the balanced two-station loop is most of every fixture.
+func TestCoupling_SaysNothingWhenBothSidesAreEquallyExposed(t *testing.T) {
+	t.Parallel()
+	if cs := computeCoupling(carrierPlant(30, 30), map[string]float64{"PRESS": 6.0, "WELD": 6.0}); len(cs) != 0 {
+		t.Errorf("got %d couplings on a one-in/one-out loop, want 0: %+v", len(cs), cs)
+	}
+
+	// And a LOADER-fed payload is not an accumulation risk either: a manual_swap
+	// producer has no counter to outrun its consumer with — it fills on demand.
+	p := coupledPlant()
+	p.Claims[0].SwapMode = "manual_swap" // the press becomes a loader
+	if cs := computeCoupling(p, map[string]float64{"PRESS": 6.0, "WELD": 6.0}); len(cs) != 0 {
+		t.Errorf("got %d couplings with no tick producer, want 0. A loader fills what is asked "+
+			"for; it cannot run ahead of a stopped consumer: %+v", len(cs), cs)
+	}
+}
