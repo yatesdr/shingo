@@ -563,7 +563,7 @@ func (e *Engine) producedManifest(payloadCode string, qty int64) []protocol.Inge
 	return out
 }
 
-func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
+func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, placingOrderID *int64) error {
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil
 	}
@@ -589,6 +589,51 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("queue release-time ingest for node %s: %w", node.Name, err)
+	}
+	// ── gate: is the bound bin the one LEAVING, or the one that just
+	// ARRIVED? ───────────────────────────────────────────────────────────
+	//
+	// The clear below opens the hold-and-replay window on the premise that
+	// the slot's active bin is the DEPARTING bin. Under press-index that
+	// premise can already be false at the tap: the index leg
+	// auto-dispatches at creation and binds its bin through the delivery
+	// handler, so by the time the operator clicks, the active bin can be
+	// the one the press is filling INTO. Clearing then erases a bin that
+	// is standing on the press mid-production; nothing rebinds it (the
+	// uop_adjustment anti-ghost guard and bin_epoch_refresh both decline
+	// by design) and SimMachineReady gates the machine off permanently —
+	// sim 2026-09-07, PLN_001 dead at counter 66 for the rest of the run.
+	//
+	// Discriminate by bin identity, not timing. The evac leg Edge cannot
+	// name a bin for (its bin_id is set late, on the Core side), but the
+	// PLACING leg carries the bin it delivered, and the delivery handler
+	// is the only binder of active_bin_id. If the placing order's bin is
+	// the one bound, the count belongs to the NEXT cycle — there is no
+	// hold window to open, because the next bin is already on the
+	// position and ticks keep landing on it. In plain two_robot the
+	// supply leg parks at a staging node and never binds here, so the
+	// match cannot fire; the classic clear is untouched.
+	//
+	// Ambiguity breaks toward NOT destroying state: a placing order that
+	// is terminal but carries no bin_id cannot be ruled out as the binder,
+	// so the clear is skipped and a breadcrumb logged. A clear that
+	// should have fired costs a few ticks landing on the departing bin
+	// before pickup (bounded, replays at the next cycle); a clear that
+	// should not have fired costs the press.
+	if placingOrderID != nil {
+		if placing, err := e.db.GetOrder(*placingOrderID); err == nil {
+			if placing.BinID != nil && runtime.ActiveBinID != nil &&
+				*placing.BinID == *runtime.ActiveBinID {
+				e.logFn("produce release: node %s active bin %d is the bin order %d PLACED here — not the departing one; keeping the slot bound",
+					node.Name, *runtime.ActiveBinID, placing.ID)
+				return nil
+			}
+			if placing.BinID == nil && ordermgr.IsTerminalSuccess(placing.Status) {
+				e.logFn("produce release: node %s placing order %d is terminal with no bin on the row — skipping the clear rather than risk erasing a bin standing on the position",
+					node.Name, placing.ID)
+				return nil
+			}
+		}
 	}
 	// Snapshot taken — the count now belongs to the departing bin. Clear
 	// active + zero so the hold-and-replay window starts HERE, not at the

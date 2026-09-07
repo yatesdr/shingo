@@ -812,8 +812,12 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// Changeover-owned pairs are excluded — their manifests belong to the
 	// changeover release dispositions, and this pair resolution can be
 	// serving a changeover task's legs (the task fallback above).
+	//
+	// supplyOrderID rides along so the produce paperwork can tell the
+	// placed bin from the departing one (see produceIngestAtRelease): the
+	// placing leg is the only half of the pair Edge can name a bin for.
 	if task == nil {
-		if err := e.produceIngestAtRelease(node, runtime, claim); err != nil {
+		if err := e.produceIngestAtRelease(node, runtime, claim, supplyOrderID); err != nil {
 			return err
 		}
 	}
