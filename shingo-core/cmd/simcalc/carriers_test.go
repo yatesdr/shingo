@@ -592,7 +592,7 @@ func coupledPlant() *plantspec.Plant {
 func TestCoupling_FindsTheConsumerWithMoreWaysToStop(t *testing.T) {
 	t.Parallel()
 	// The press fills 6 parts/min into 30-UOP carriers: 0.20 bins/min.
-	cs := computeCoupling(coupledPlant(), map[string]float64{"PRESS": 6.0, "WELD": 6.0})
+	cs := computeCoupling(coupledPlant(), map[string]float64{"PRESS": 6.0, "WELD": 6.0}, nil)
 
 	if len(cs) != 1 {
 		t.Fatalf("got %d couplings, want exactly 1 (PANEL): %+v", len(cs), cs)
@@ -631,7 +631,7 @@ func TestCoupling_FindsTheConsumerWithMoreWaysToStop(t *testing.T) {
 // reading, and the balanced two-station loop is most of every fixture.
 func TestCoupling_SaysNothingWhenBothSidesAreEquallyExposed(t *testing.T) {
 	t.Parallel()
-	if cs := computeCoupling(carrierPlant(30, 30), map[string]float64{"PRESS": 6.0, "WELD": 6.0}); len(cs) != 0 {
+	if cs := computeCoupling(carrierPlant(30, 30), map[string]float64{"PRESS": 6.0, "WELD": 6.0}, nil); len(cs) != 0 {
 		t.Errorf("got %d couplings on a one-in/one-out loop, want 0: %+v", len(cs), cs)
 	}
 
@@ -639,7 +639,7 @@ func TestCoupling_SaysNothingWhenBothSidesAreEquallyExposed(t *testing.T) {
 	// producer has no counter to outrun its consumer with — it fills on demand.
 	p := coupledPlant()
 	p.Claims[0].SwapMode = "manual_swap" // the press becomes a loader
-	if cs := computeCoupling(p, map[string]float64{"PRESS": 6.0, "WELD": 6.0}); len(cs) != 0 {
+	if cs := computeCoupling(p, map[string]float64{"PRESS": 6.0, "WELD": 6.0}, nil); len(cs) != 0 {
 		t.Errorf("got %d couplings with no tick producer, want 0. A loader fills what is asked "+
 			"for; it cannot run ahead of a stopped consumer: %+v", len(cs), cs)
 	}

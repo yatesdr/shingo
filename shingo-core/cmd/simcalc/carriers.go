@@ -174,7 +174,7 @@ type zoneHeadroom struct {
 	deepestLane string
 }
 
-func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plantPath string, loaderCap, unloaderCap float64) {
+func runCarriers(plant *plantspec.Plant, rate, avail map[string]float64, transit, plantPath string, loaderCap, unloaderCap float64) {
 	d := 10 * time.Minute
 	if transit != "" {
 		parsed, err := time.ParseDuration(transit)
@@ -204,7 +204,7 @@ func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plant
 	floorOK := reportStockFloor(plan, mins)
 	headroomOK := reportHeadroom(zones)
 	// Informational only, and it returns nothing to AND in: see inputCoupling.
-	reportCoupling(computeCoupling(plant, rate))
+	reportCoupling(computeCoupling(plant, rate, avail))
 	ok := balanceOK && floorOK && headroomOK
 
 	fmt.Printf("\n%s\n", headline(ok))
@@ -801,7 +801,7 @@ func reportHeadroom(zones []zoneHeadroom) bool {
 
 // computeCoupling finds every payload whose consumer waits on more inputs than
 // its producer does, and sizes the empty pool that absorbs the difference.
-func computeCoupling(plant *plantspec.Plant, rate map[string]float64) []inputCoupling {
+func computeCoupling(plant *plantspec.Plant, rate, avail map[string]float64) []inputCoupling {
 	binTypeOf := map[string]string{}
 	capOf := map[string]int64{}
 	for _, pl := range plant.Payloads {
@@ -871,9 +871,25 @@ func computeCoupling(plant *plantspec.Plant, rate map[string]float64) []inputCou
 		}
 		sort.Strings(siblings)
 
+		// THE PRODUCER'S OWN DOWNTIME COUNTS, and the edge config declares it.
+		//
+		// Using the configured tick rate overstates the drain by the producer's
+		// unavailability — 18% at demo.yaml's 0.85 — because a press that is down
+		// is not filling carriers either. The columns below are the CONSUMER's
+		// realized fraction ON TOP of this, which is what makes the two comparable:
+		// both sides start from what their machines actually do.
+		//
+		// AND NOTE WHAT THE CONFIG ALREADY SAYS. demo.yaml's downtime block gives
+		// PRESS-2 and WELD-2 the SAME 0.85. Symmetric machine availability reads
+		// as balance and is not: WELD-2 has a way to stop that PRESS-2 does not,
+		// so equal downtime still leaves the press ahead.
 		fill := 0.0
 		if c := capOf[payload]; c > 0 {
-			fill = rate[producer] / float64(c)
+			a := 1.0
+			if v, ok := avail[producer]; ok && v > 0 {
+				a = v
+			}
+			fill = rate[producer] * a / float64(c)
 		}
 		bt := binTypeOf[payload]
 		if bt == "" {

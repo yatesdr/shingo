@@ -136,7 +136,7 @@ func main() {
 		return
 	}
 	if *carriers {
-		runCarriers(plant, rate, *transit, *plantPath,
+		runCarriers(plant, rate, avail, *transit, *plantPath,
 			capacityPerMin(edge.Sim.Operators.LoaderAutoLoad),
 			capacityPerMin(edge.Sim.Operators.UnloaderAutoClear))
 		return
