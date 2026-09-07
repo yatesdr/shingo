@@ -592,8 +592,8 @@ func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p
 	if g == nil || location == "" {
 		return false
 	}
-	ok, blockedBy := g.CanEnterPosition(vid, location, binTask)
-	if ok {
+	hold := g.CanEnterPosition(vid, location, binTask)
+	if !hold.Held {
 		if p.heldAt != "" {
 			log.Printf("[sim] order %s resumed at %s (position cleared)", vid, p.heldAt)
 			p.heldAt = ""
@@ -602,7 +602,7 @@ func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p
 	}
 	if p.heldAt != location {
 		log.Printf("[sim] order %s HOLDING at %s — %s (a robot cannot place onto an occupied position)",
-			vid, location, blockedBy)
+			vid, location, hold.Reason)
 		p.heldAt = location
 		p.heldSince = now
 		p.heldWarned = false
@@ -640,13 +640,22 @@ func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p
 	// markDone and from gcProgress once the simulator has evicted the order, and a
 	// permanently-held order reaches neither — but a fleet is elastic and a cell
 	// is not.
-	if !p.heldWarned && now.Sub(p.heldSince) >= unresolvableHoldAfter {
+	//
+	// WHEN the diagnostic fires now splits on who owns the blocker, which the
+	// gate reports as data (hold.BlockerClaimedBy) instead of prose. A blocker
+	// claimed by NOBODY fires IMMEDIATELY: the case above is not a "could this
+	// still be a queue?" question but a settled one, and waiting five minutes to
+	// say so only delays the loudest signal the run produces. The five-minute
+	// bound is kept for blockers an order owns or whose ownership is unknown
+	// (the fail-closed arm cannot name an owner) — there the hold still might be
+	// a genuine queue, and the bound exists to out-wait one.
+	if !p.heldWarned && (hold.BlockerClaimedBy == nil || now.Sub(p.heldSince) >= unresolvableHoldAfter) {
 		p.heldWarned = true
 		log.Printf("[sim] order %s HAS BEEN HOLDING AT %s FOR %s AND IS NOT A QUEUE — %s. "+
 			"Nothing is scheduled to move that bin, so this order never terminates: the cell it is "+
 			"serving never swaps again, its lineside position is lost for the run, and the robot stays "+
 			"assigned to it. See ISSUE-sim-position-hold-deadlock-2026-09-06.md",
-			vid, location, now.Sub(p.heldSince).Round(time.Second), blockedBy)
+			vid, location, now.Sub(p.heldSince).Round(time.Second), hold.Reason)
 	}
 	// Re-check on the next tick. Deliberately does NOT draw from the PRNG, so the
 	// seeded draw sequence stays identical for any order that never has to hold.

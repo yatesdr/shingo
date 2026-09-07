@@ -67,7 +67,7 @@ func newMachineFixture(t *testing.T) *machineFixture {
 	testutil.MustNoErr(t, err, "upsert produce claim")
 
 	f := &machineFixture{
-		db: db,
+		db:        db,
 		consumeID: consumeID, produceID: produceID, styleID: styleID, processID: procID,
 	}
 	// A running cell: consume half-drawn, produce half-filled, both bound.

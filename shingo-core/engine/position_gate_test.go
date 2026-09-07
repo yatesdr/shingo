@@ -50,15 +50,20 @@ func TestPositionGate_HoldsWhenAnotherOrderOwnsTheBin(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderVendor(emptyIn.ID, "sim-empty-in", "RUNNING", "bot-1"), "set vendor id")
 
 	drop := seerrds.BinTaskForAction(protocol.ActionDropoff)
-	ok, why := eng.CanEnterPosition("sim-empty-in", press.Name, drop)
-	if ok {
+	hold := eng.CanEnterPosition("sim-empty-in", press.Name, drop)
+	if !hold.Held {
 		t.Fatalf("the empty-in was allowed to place onto %s while it still holds bin %d (claimed by the "+
 			"removal order %d).\nA robot cannot lower a bin onto an occupied position — it must HOLD. "+
 			"Completing here is what made Core evict a good bin as a stale ghost.",
 			press.Name, full.ID, fullOut.ID)
 	}
-	if why == "" {
+	if hold.Reason == "" {
 		t.Error("a hold must explain itself — the sim log is the only place this is visible")
+	}
+	if hold.BlockerClaimedBy == nil || *hold.BlockerClaimedBy != fullOut.ID {
+		t.Errorf("the blocker is bin %d, claimed by order %d, but the hold reports BlockerClaimedBy=%v — "+
+			"the driver splits its not-a-queue diagnostic on this field and must not guess it from prose",
+			full.ID, fullOut.ID, hold.BlockerClaimedBy)
 	}
 
 	// The removal order lifts the full bin out (bin leaves the press). The position
@@ -68,8 +73,8 @@ func TestPositionGate_HoldsWhenAnotherOrderOwnsTheBin(t *testing.T) {
 	_, err = eng.BinService().ApplyArrival(full.ID, transit.ID, false, nil, 0)
 	testutil.MustNoErr(t, err, "lift the full bin out of the press")
 
-	if ok, why := eng.CanEnterPosition("sim-empty-in", press.Name, drop); !ok {
-		t.Fatalf("the press is empty now, but the empty-in is still held: %s", why)
+	if hold := eng.CanEnterPosition("sim-empty-in", press.Name, drop); hold.Held {
+		t.Fatalf("the press is empty now, but the empty-in is still held: %s", hold.Reason)
 	}
 }
 
@@ -98,17 +103,17 @@ func TestPositionGate_NeverHoldsAPickup(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateBin(target), "create bin")
 
 	load := seerrds.BinTaskForAction(protocol.ActionPickup)
-	if ok, why := eng.CanEnterPosition("sim-own", press.Name, load); !ok {
+	if hold := eng.CanEnterPosition("sim-own", press.Name, load); hold.Held {
 		t.Fatalf("order %d was HELD at %s while trying to PICK UP bin %d: %s\n"+
 			"A pickup REMOVES the bin; occupancy cannot obstruct it. Holding here deadlocks the "+
 			"robot against the very bin it came for — it stalled two compound restock legs for "+
-			"six minutes on the sim.", pickup.ID, press.Name, target.ID, why)
+			"six minutes on the sim.", pickup.ID, press.Name, target.ID, hold.Reason)
 	}
 
 	wait := seerrds.BinTaskForAction(protocol.ActionWait)
-	if ok, why := eng.CanEnterPosition("sim-own", press.Name, wait); !ok {
+	if hold := eng.CanEnterPosition("sim-own", press.Name, wait); hold.Held {
 		t.Fatalf("order %d was HELD at %s on a WAIT block: %s — a robot dwelling beside a bin is "+
-			"not placing onto it", pickup.ID, press.Name, why)
+			"not placing onto it", pickup.ID, press.Name, hold.Reason)
 	}
 }
 
@@ -119,8 +124,8 @@ func TestPositionGate_ExemptsSyntheticNodes(t *testing.T) {
 	db := testDB(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	if ok, why := eng.CanEnterPosition("sim-whatever", "_TRANSIT", seerrds.BinTaskForAction(protocol.ActionDropoff)); !ok {
-		t.Fatalf("_TRANSIT is synthetic and holds many bins by design, but the gate held: %s", why)
+	if hold := eng.CanEnterPosition("sim-whatever", "_TRANSIT", seerrds.BinTaskForAction(protocol.ActionDropoff)); hold.Held {
+		t.Fatalf("_TRANSIT is synthetic and holds many bins by design, but the gate held: %s", hold.Reason)
 	}
 }
 
@@ -156,7 +161,7 @@ func TestPositionGate_HoldsWhenTheOrderIsUnresolvable(t *testing.T) {
 
 	drop := seerrds.BinTaskForAction(protocol.ActionDropoff)
 	// No order carries this vendor id.
-	if ok, _ := eng.CanEnterPosition("sim-no-such-vendor-order", press.Name, drop); ok {
+	if hold := eng.CanEnterPosition("sim-no-such-vendor-order", press.Name, drop); !hold.Held {
 		t.Fatalf("the gate PASSED a placement onto %s, which holds bin %d, because it could not "+
 			"resolve the order. Occupancy was already established; only ownership was unknown, "+
 			"and the safe answer to an unknown owner is not 'drop onto it anyway'", press.Name, resident.ID)

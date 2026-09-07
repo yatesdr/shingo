@@ -126,10 +126,27 @@ type CreateOrderRequest struct {
 // vendor-neutral. Real backends do not implement PositionGated and are unaffected.
 type PositionGate interface {
 	// CanEnterPosition reports whether vendorOrderID's robot may complete a block
-	// with binTask at location now. ok=false means HOLD — retry on a later tick.
-	// blockedBy is a human-readable reason for the sim log. Only placements are
-	// ever held; the implementation decides what counts as one.
-	CanEnterPosition(vendorOrderID, location, binTask string) (ok bool, blockedBy string)
+	// with binTask at location now. A Held result means HOLD — retry on a later
+	// tick; its Reason is the line for the sim log. Only placements are ever
+	// held; the implementation decides what counts as one.
+	CanEnterPosition(vendorOrderID, location, binTask string) PositionHold
+}
+
+// PositionHold is the structured answer to a PositionGate question. Held=false
+// is a pass. A hold carries the log line and, separately from the prose, who
+// owns the bin in the way — BlockerClaimedBy nil means the blocking bin is
+// claimed by NOBODY — so a caller can act on that distinction without parsing
+// English.
+//
+// The driver needs it: queueing behind a bin another order owns has an end
+// (that order finishes and the bin leaves), but a hold behind a bin nobody
+// owns can never clear — nothing is scheduled to move it — and the two deserve
+// different diagnostics on different clocks. That discrimination used to live
+// only in the prose reason.
+type PositionHold struct {
+	Held             bool
+	Reason           string // human-readable line for the sim log
+	BlockerClaimedBy *int64 // the order that owns the blocking bin; nil = claimed by nobody
 }
 
 // PositionGated is the optional setter a backend exposes to receive a

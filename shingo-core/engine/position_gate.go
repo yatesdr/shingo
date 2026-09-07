@@ -61,31 +61,45 @@ import (
 // "is this position obstructed" gets exactly that, without the gate's fail-closed
 // arm riding along. A second spelling of the occupancy rule is how the simulator's
 // physics and anything that later reports on it drift apart.
-func (e *Engine) CanEnterPosition(vendorOrderID, location, binTask string) (bool, string) {
+//
+// THE RESULT IS STRUCTURED, NOT PROSE (fleet.PositionHold): along with the log
+// line, both hold arms report who owns the blocking bin, nil meaning claimed by
+// nobody. The distinction used to live only in the sentence — "(claimed by
+// nobody)" — and the driver needs it in code, because a hold behind a bin
+// nobody owns can never clear while a queue behind an owned one always does.
+func (e *Engine) CanEnterPosition(vendorOrderID, location, binTask string) fleet.PositionHold {
 	// Only a placement can be obstructed. Anything else — pickup, wait, or a task
 	// we do not recognise — passes untouched.
 	if binTask != seerrds.BinTaskForAction(protocol.ActionDropoff) {
-		return true, ""
+		return fleet.PositionHold{}
 	}
 
 	blocker, occupied := e.positionOccupiedBy(location, 0)
 	if !occupied {
-		return true, ""
+		return fleet.PositionHold{}
 	}
 
 	order, err := e.db.GetOrderByVendorID(vendorOrderID)
 	if err != nil || order == nil {
-		return false, fmt.Sprintf("%s holds bin %d and the order is unresolvable", location, blocker.ID)
+		return fleet.PositionHold{
+			Held:             true,
+			Reason:           fmt.Sprintf("%s holds bin %d and the order is unresolvable", location, blocker.ID),
+			BlockerClaimedBy: blocker.ClaimedBy,
+		}
 	}
 
 	// Re-ask with the order's identity: a bin this order already owns is not an
 	// obstruction to itself (a multi-bin order placing beside its own load).
 	blocker, occupied = e.positionOccupiedBy(location, order.ID)
 	if !occupied {
-		return true, ""
+		return fleet.PositionHold{}
 	}
-	return false, fmt.Sprintf("%s holds bin %d (claimed by %s), order %d cannot place onto it",
-		location, blocker.ID, claimOwner(blocker.ClaimedBy), order.ID)
+	return fleet.PositionHold{
+		Held: true,
+		Reason: fmt.Sprintf("%s holds bin %d (claimed by %s), order %d cannot place onto it",
+			location, blocker.ID, claimOwner(blocker.ClaimedBy), order.ID),
+		BlockerClaimedBy: blocker.ClaimedBy,
+	}
 }
 
 // positionOccupiedBy is the occupancy half of CanEnterPosition, on its own so
