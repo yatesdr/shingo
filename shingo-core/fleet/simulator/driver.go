@@ -48,6 +48,12 @@ type orderProgress struct {
 	heldAt      string    // non-empty while stalled at an occupied position (log-once)
 	heldSince   time.Time // when the current hold began — bounds an unresolvable hold
 	heldWarned  bool      // the unresolvable-hold diagnostic is printed once per hold
+	// pendingFault: the fault die said FAILED and the report deferred (Fix
+	// A) — the retry re-reports exactly that FAILED, roll-free. A retry is
+	// not a re-decision, and not re-rolling also keeps a deferral free of
+	// extra PRNG draws (the fleet-full arm's "no PRNG while queued" rule,
+	// generalized to every deferred transition).
+	pendingFault bool
 }
 
 // Driver advances simulated orders through their lifecycle on a clock tick,
@@ -264,21 +270,34 @@ func (d *Driver) step(now time.Time) {
 func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgress) {
 	switch p.phase {
 	case phaseCreated:
+		// A fault die already cast whose FAILED report deferred (Fix A) is
+		// re-reported FIRST, before any other arm — the verdict is cast, and
+		// holding its report behind a robot wait would invert the order.
+		if d.retryPendingFault(vid, p, now) {
+			return
+		}
 		// Finite fleet (G16): a move needs a free robot. If the pool is full
 		// the order queues — it stays CREATED, retries next tick, and accrues
 		// queue-wait. No PRNG is drawn while queued, so the seeded draw
 		// sequence is identical for any order that never has to wait.
-		if d.fleetSize > 0 && d.robotsInUse >= d.fleetSize {
+		// An order retrying a deferred RUNNING already holds its robot (Fix
+		// A), so the full pool it counts toward is not full FOR IT.
+		if d.fleetSize > 0 && p.robotID == "" && d.robotsInUse >= d.fleetSize {
 			d.enqueue(now, p)
 			p.deadline = now.Add(time.Second)
 			return
 		}
-		d.dequeue(p) // leaving CREATED this tick, whether we fault or depart
-		if d.maybeFault(vid) {
+		d.dequeue(p) // leaving CREATED this tick, unless the RUNNING report defers
+		switch d.faultOrDefer(vid, p, now) {
+		case faultDone:
 			p.phase = phaseDone
 			return
+		case faultDeferred:
+			return
 		}
-		d.acquireRobot(p)
+		if p.robotID == "" {
+			d.acquireRobot(p) // a retried attempt re-supplies the robot it holds
+		}
 		// Carry a robot ID on the first RUNNING transition. Core gates the
 		// waybill — and thus the acknowledged→in_transit transition — on first
 		// robot assignment (wiring_vendor_status.go). Real RDS reports a vehicle
@@ -289,7 +308,16 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 		// "sim-bot-"+vid — one robot per order, so the fleet had as many
 		// members as the run had orders and every fleet-shaped metric read as
 		// a population of one.
-		d.sim.DriveStateWithRobot(vid, "RUNNING", p.robotID)
+		//
+		// If the RUNNING report defers (Fix A) the order keeps the robot it
+		// acquired: releasing it would hand the slot to a co-queued order only
+		// to have the next retry immediately re-take it, and re-acquiring on
+		// the retry would corrupt the in-use count. Phase stays CREATED and
+		// the transition retries on the re-armed deadline.
+		if _, _, dfr := d.sim.DriveStateWithRobot(vid, "RUNNING", p.robotID); dfr {
+			d.holdDeferred(p, now)
+			return
+		}
 		p.phase = phaseRunning
 		p.blockIndex = 0
 		p.blockStart = now
@@ -297,14 +325,30 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 
 	case phaseRunning:
 		blocks := ov.Blocks
+		// A fault verdict already cast whose FAILED report deferred (Fix A)
+		// is re-reported FIRST — see phaseCreated.
+		if d.retryPendingFault(vid, p, now) {
+			return
+		}
 		// No more released blocks to process.
 		if p.blockIndex >= len(blocks) {
 			if ov.Complete {
-				if d.maybeFault(vid) {
+				switch d.faultOrDefer(vid, p, now) {
+				case faultDone:
 					d.markDone(p)
 					return
+				case faultDeferred:
+					return
 				}
-				d.sim.DriveState(vid, "FINISHED")
+				if _, _, dfr := d.sim.DriveState(vid, "FINISHED"); dfr {
+					// HOLD THE TRANSITION (Fix A): no phase advance, no
+					// markDone — markDone releases the robot and forgets the
+					// slot, and a robot released behind a FINISHED that never
+					// landed is the double-assign shape this fix exists to
+					// kill. Retry on the re-armed deadline.
+					d.holdDeferred(p, now)
+					return
+				}
 				d.markDone(p)
 				return
 			}
@@ -314,7 +358,16 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 			// auto-release keys on the "staged" transition. Without it the order
 			// reads as a frozen in_transit and the swap never releases.
 			if !p.staged {
-				d.sim.DriveState(vid, "WAITING")
+				if _, _, dfr := d.sim.DriveState(vid, "WAITING"); dfr {
+					// HOLD THE TRANSITION (Fix A): p.staged must NOT latch
+					// here — the latch was exactly what made the old
+					// dropped-emission loss permanent (the order then dwelled
+					// as frozen in_transit with the WAITING never retried).
+					// The retry re-enters this arm with p.staged still false
+					// and drives WAITING again.
+					d.holdDeferred(p, now)
+					return
+				}
 				p.staged = true
 			}
 			p.deadline = now.Add(time.Second)
@@ -323,15 +376,25 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 
 		// Blocks were released after the wait — resume movement from staged.
 		if p.staged {
-			d.sim.DriveState(vid, "RUNNING")
+			if _, _, dfr := d.sim.DriveState(vid, "RUNNING"); dfr {
+				// HOLD THE TRANSITION (Fix A): keep p.staged latched so the
+				// retry re-takes the resume arm; clearing it before the
+				// transition commits would strand the order in "staged"
+				// status with no live transition to leave it.
+				d.holdDeferred(p, now)
+				return
+			}
 			p.staged = false
 			// The staged dwell belongs to the WAIT, not to the block that
 			// follows it, so the block clock restarts on resume.
 			p.blockStart = now
 		}
 
-		if d.maybeFault(vid) {
+		switch d.faultOrDefer(vid, p, now) {
+		case faultDone:
 			d.markDone(p)
+			return
+		case faultDeferred:
 			return
 		}
 
@@ -342,7 +405,16 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 			if d.holdForPosition(now, vid, blocks[p.blockIndex].Location, blocks[p.blockIndex].BinTask, p) {
 				return
 			}
-			d.sim.DriveState(vid, "FINISHED")
+			if _, _, dfr := d.sim.DriveState(vid, "FINISHED"); dfr {
+				// HOLD THE TRANSITION (Fix A): the position hold was released
+				// by holdForPosition returning false, so a retry re-takes the
+				// hold check first — fine, it re-validates and a gate-passing
+				// retry passes again. Do not markDone: the order's robot must
+				// stay assigned until the FINISHED report lands, exactly as in
+				// the drain arm above.
+				d.holdDeferred(p, now)
+				return
+			}
 			d.markDone(p)
 			return
 		}
@@ -513,18 +585,67 @@ func (d *Driver) Metrics() FleetMetrics {
 	return m
 }
 
-// maybeFault rolls the seeded PRNG and, with probability failRate, drives the
-// order to FAILED. Returns true if it faulted. Draws no value when failRate<=0
-// so the zero-fault path keeps a clean (jitter-only) draw sequence.
-func (d *Driver) maybeFault(vid string) bool {
+// faultResult is what a fault roll means for the attempt in flight (Fix A:
+// the FAILED report is a DriveState like any other, so it can defer too).
+type faultResult int
+
+const (
+	faultNone     faultResult = iota // no fault drawn — proceed with the transition
+	faultDeferred                    // FAILED drawn, but the report deferred — hold and retry
+	faultDone                        // FAILED committed — the order is done failing
+)
+
+// faultOrDefer rolls the fault die (no value drawn while failRate<=0, so the
+// zero-fault path keeps a clean jitter-only draw sequence) and, when it says
+// fail, reports FAILED to the backend. The FAILED report is a DriveState like
+// any other, so it can defer too:
+//
+//   - faultNone: no fault drawn — the caller proceeds with its transition.
+//   - faultDone: FAILED committed; the caller marks the order done.
+//   - faultDeferred: FAILED drawn but its report did not land — the order is
+//     latched on pendingFault and parked for this tick; the caller returns.
+//
+// The die is NOT re-rolled on the retry: retryPendingFault re-reports the
+// already-drawn verdict, so a resolver outage cannot flip a drawn fault into
+// a clean run or burn extra PRNG draws.
+func (d *Driver) faultOrDefer(vid string, p *orderProgress, now time.Time) faultResult {
 	if d.failRate <= 0 {
+		return faultNone
+	}
+	if d.rng.Float64() >= d.failRate {
+		return faultNone
+	}
+	if _, _, dfr := d.sim.DriveState(vid, "FAILED"); dfr {
+		p.pendingFault = true
+		d.holdDeferred(p, now)
+		return faultDeferred
+	}
+	return faultDone
+}
+
+// retryPendingFault re-reports a FAILED whose report deferred (Fix A); true
+// when the order is (still) in this routine's care and the caller must hold.
+// When the report lands the order is done; the caller never learns which.
+func (d *Driver) retryPendingFault(vid string, p *orderProgress, now time.Time) bool {
+	if !p.pendingFault {
 		return false
 	}
-	if d.rng.Float64() < d.failRate {
-		d.sim.DriveState(vid, "FAILED")
+	if _, _, dfr := d.sim.DriveState(vid, "FAILED"); dfr {
+		d.holdDeferred(p, now)
 		return true
 	}
-	return false
+	p.pendingFault = false
+	d.markDone(p)
+	return true
+}
+
+// holdDeferred parks an order whose in-flight transition deferred (Fix A):
+// no phase advance, no commit, and a retry when the re-armed deadline fires.
+// The fleet-full arm in phaseCreated is the same shape. The re-arm
+// deliberately does NOT draw from the PRNG — a retry is not a new move, and
+// a deferral must stay as cheap to the draw sequence as a queued wait is.
+func (d *Driver) holdDeferred(p *orderProgress, now time.Time) {
+	p.deadline = now.Add(time.Second)
 }
 
 // nextDeadline returns now + the time for one move. With transit_min/_max set

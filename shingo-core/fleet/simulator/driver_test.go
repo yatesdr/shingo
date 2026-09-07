@@ -3,6 +3,7 @@
 package simulator
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -204,4 +205,151 @@ func contains(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// ── Fix A (2026-09-07): a deferred transition is held, not dropped ──────────
+//
+// The simulator used to commit order.state before the resolver ran and drop
+// the emission on a miss — the one drop path that left no trace. Now the
+// state does not advance and the driver retries, mirroring the real RDS
+// poller's retry-on-resolver-miss. These tests pin the driver side.
+
+// flakyResolver misses until flipped, then maps "sim-N" → N like seqResolver.
+type flakyResolver struct {
+	seq    seqResolver
+	resist bool
+}
+
+func (r *flakyResolver) ResolveVendorOrderID(vid string) (int64, error) {
+	if r.resist {
+		return 0, errors.New("UpdateOrderVendor has not landed yet")
+	}
+	return r.seq.ResolveVendorOrderID(vid)
+}
+
+// The headline scenario: the first RUNNING defers once (the CreateOrder→
+// UpdateOrderVendor race), the driver must not advance its phase or latch
+// anything, and on a later tick — once the resolver resolves — the order must
+// still reach in_transit and finish normally. Before Fix A this deferral
+// didn't exist: the state committed anyway and the emission was dropped,
+// which stranded the order at acknowledged on Edge for the life of the run
+// (§R.98 / the acceptance Families post-mortem).
+func TestDriverDeferredRunningRetriesToInTransit(t *testing.T) {
+	cfg := config.SimConfig{TransitTime: 5 * time.Second, JitterPct: 0, FailRate: 0}
+	m := clock.NewManual(driverStart)
+	em := &captureEmitter{}
+	s := New(WithClock(m))
+	res := &flakyResolver{resist: true}
+	s.InitTracker(em, res)
+	d := NewDriver(s, cfg, m, rand.New(rand.NewSource(3)))
+
+	vid := mkTransport(t, s, "o1")
+	// First tick (t=1): the driver schedules the advance (deadline =
+	// createdFraction × transit = 1.5 s). The t=2 tick is still before the
+	// deadline; the t=3 tick fires the first RUNNING attempt, whose report
+	// defers while resist holds.
+	runTicks(d, m, 3)
+	if got := s.GetOrder(vid).State; got != "CREATED" {
+		t.Fatalf("a deferred first RUNNING must leave the order CREATED; got %q", got)
+	}
+	if len(em.status) != 0 {
+		t.Fatalf("nothing may emit on a deferral; emitted %v", em.status)
+	}
+	if p := d.progress[vid]; p.phase != phaseCreated {
+		t.Fatalf("the driver must stay in phaseCreated across a deferral; phase=%v", p.phase)
+	}
+
+	// The resolver resolves; the next tick's retry carries it the rest of the
+	// way — including to in_transit on Core (the waybill went out with the
+	// robot id).
+	res.resist = false
+	runTicks(d, m, 1)
+	if got := s.GetOrder(vid).State; got != "RUNNING" {
+		t.Fatalf("the retry must drive RUNNING; got %q", got)
+	}
+	if len(em.assigned) != 1 || em.assigned[0] != vid+":AMR-01" {
+		t.Fatalf("the waybill must carry the robot on the retried RUNNING; got %v", em.assigned)
+	}
+	if got := s.MapState(s.GetOrder(vid).State); got != "in_transit" {
+		t.Fatalf("RUNNING maps to in_transit; got %q", got)
+	}
+}
+
+// The WAITING arm must not latch p.staged on a deferral (the latch was what
+// made the old drop permanent), and the retry must drive WAITING cleanly —
+// status reaches "staged" exactly once the report lands.
+func TestDriverDeferredWaitingDoesNotLatchStaged(t *testing.T) {
+	cfg := config.SimConfig{TransitTime: 5 * time.Second, JitterPct: 0, FailRate: 0}
+	m := clock.NewManual(driverStart)
+	em := &captureEmitter{}
+	s := New(WithClock(m))
+	res := &flakyResolver{resist: true}
+	s.InitTracker(em, res)
+	d := NewDriver(s, cfg, m, rand.New(rand.NewSource(11)))
+
+	// A staged-shape order: one pickup block, Complete=false — the driver
+	// drains it and dwells at the wait point, where it drives WAITING.
+	created, err := s.CreateOrder(fleet.CreateOrderRequest{
+		ExternalID: "waiter",
+		Blocks:     []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+		Complete:   false,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+	vid := created.VendorOrderID
+
+	// Setup with resist=true: the first RUNNING defers. Once resolved, the
+	// block completes (~5 s) — and the dwell deadline is one tick after the
+	// block completes, so the WAITING attempt can fire inside a coarse
+	// runTicks window. Walk forward one tick at a time and stop the moment
+	// the order dwells RUNNING with nothing to drive, BEFORE the WAITING
+	// deadline fires.
+	res.resist = false
+	// The block completes on some tick inside the long window; WAITING could
+	// be driven the very next tick (dwell deadline = completion tick + 1 s),
+	// so stop the instant the block has completed and leave zero slack for a
+	// WAITING attempt — which would have landed (resist was off) and ruined
+	// the scenario. The completion is visible as an EmitBlockCompleted.
+	for i := 0; i < 20; i++ {
+		runTicks(d, m, 1)
+		if len(em.blocks) == 1 {
+			break
+		}
+	}
+	if len(em.blocks) != 1 {
+		t.Fatalf("setup: the pickup block never completed; blocks=%v", em.blocks)
+	}
+	if got := s.GetOrder(vid).State; got != "RUNNING" {
+		t.Fatalf("setup: order should dwell RUNNING after its released block, got %q", got)
+	}
+
+	// The resist window must COVER the dwell deadline: completing a block
+	// re-arms the deadline at now+transit (5 s), so the WAITING attempt fires
+	// 5 ticks after the completion, not 1. Resist stays on through it. The
+	// WAITING attempt defers; p.staged must NOT latch — a latched staged with
+	// no WAITING committed is the frozen-in_transit shape this test exists to
+	// kill.
+	res.resist = true
+	runTicks(d, m, 5)
+	if got := s.GetOrder(vid).State; got != "RUNNING" {
+		t.Fatalf("a deferred WAITING must not advance the state; got %q", got)
+	}
+	if p := d.progress[vid]; p.staged {
+		t.Fatalf("a deferred WAITING must not latch p.staged")
+	}
+	if contains(em.status, vid+":WAITING") {
+		t.Fatalf("no WAITING may emit on the deferral; emitted %v", em.status)
+	}
+
+	// Resolve: the retried WAITING lands (the deferral re-armed the deadline
+	// at +1 s) and the staged latch lands with it.
+	res.resist = false
+	runTicks(d, m, 1)
+	if got := s.GetOrder(vid).State; got != "WAITING" {
+		t.Fatalf("the retried WAITING must land; got %q", got)
+	}
+	if p := d.progress[vid]; !p.staged {
+		t.Fatalf("the landed WAITING must latch p.staged")
+	}
 }
