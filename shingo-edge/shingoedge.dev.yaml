@@ -100,9 +100,35 @@ sim:
       tag_name: PRESS-1_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
+    # PRESS-2 IS SLOWER THAN PARITY, ON PURPOSE (acceptance run 2026-09-07).
+    #
+    # "press rate = weld rate" held for PANEL-A but NOT for PANEL-B, and the
+    # difference is input coupling: WELD-1 consumes only PANEL-A, while WELD-2
+    # consumes PANEL-B AND BRKT — every BRKT hiccup and every second of WELD-2's
+    # own downtime stalls the PANEL-B draw while PRESS-2 keeps making. Measured
+    # over the 2026-09-07 acceptance run: PRESS-2 1890 ticks vs WELD-2 1638 —
+    # a ~15% PANEL-B excess. The excess is not free storage: PANEL-B rides the
+    # 13-carrier STANDARD-SM pool, so accumulating fulls captive-load carriers
+    # that should cycle back as empties. At ~70 sim-minutes SYN_PRESS_EMPTIES
+    # hit 0 and the press stalled (self-recovered 13:44->14:29, but starved
+    # again). A producer must not outpace its sole consumer's EFFECTIVE draw.
+    #
+    # 12s = 5/min, the same interval WELD-3/WELD-4 carry for the mirrored
+    # reason (a component payload entering only via a loader round trip cannot
+    # be drained as fast as it is replenished). The 115-uop PANEL-B buffer
+    # (~19 min cover) absorbs the gap's variance.
+    #
+    # `make dev-rates` WILL REPORT PANEL-B AS STARVE (−1.0/min nominal) AND
+    # THAT IS EXPECTED AT THIS SETTING: simcalc's nominal check pairs one
+    # producer with one consumer at nameplate rates and knows nothing of
+    # WELD-2's second input (BRKT) or its downtime. The MEASURED effective
+    # draw on the 2026-09-07 run was 1638 PANEL-B ticks in 390 sim-minutes =
+    # 4.2/min, and 5/min × 0.85 availability ≈ 4.25/min effective — parity.
+    # The nominal verdict is the one to distrust here; the carrier check
+    # (dev-rates' second half) is the one that bit before.
     - plc_name: PRESS-2
       tag_name: PRESS-2_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
     # WELD-1 IS BACK TO THE LINE RATE, and the halving it carried was compensation
     # for a drain that no longer exists.
