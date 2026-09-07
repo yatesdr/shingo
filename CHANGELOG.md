@@ -3,6 +3,29 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-07 — The acceptance families fixed: a held emission, a bounded witness
+
+- A simulator resolver miss holds the transition instead of dropping it — parity
+  with the RDS poller, which always retried (acceptance Family A)
+- The commit re-validates after the resolve window, so an attempt lands on a
+  moved-on order is voided rather than committed over it
+- Emit moved after commit: an event never describes a transition the vendor did
+  not take
+- A drawn-but-unreported fault is latched and re-reported roll-free, so a
+  resolver outage cannot flip a drawn fault into a clean run or shift the
+  seeded sequence
+- A deferred first RUNNING keeps its robot; the full-pool check exempts holders
+- A never-dispatched lane witness stops counting once motionless — no status
+  change for 15 core-clock minutes retires it (acceptance Family C2; the
+  14-sim-hour 379/376 wedge)
+- The three physically-coming keep-arms are untouched — a dispatched store, a
+  robot in the corridor, a dweller at the mark survive any age, which is why
+  the wall soak's protection is structurally unaffected
+- The age read is `LatestHistoryTimes` — the per-status batch shape with the
+  filter dropped; cause-stamps update in place and never fake liveness
+- A witness absent from the history read keeps; the safe direction in a filter
+  whose philosophy was "the set only grew"
+
 ## 2026-09-06 — One clock everywhere, carrier identity, the CMS ledger, departed legs
 
 - Both binaries render one plant-local clock through `shared/planttime`, at first paint
