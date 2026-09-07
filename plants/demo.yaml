@@ -510,11 +510,17 @@ bins:
   # preserves the property that comment names while still banking the carriers.
   #
   # THIS DOES NOT CURE THE MARKET POOL, and nothing about a count could.
-  # SYN_MARKET reads RATE DEFICIT 0.45/min — it spends empties faster than they
-  # come back — and the tool says so in as many words: "drains regardless of
-  # size". Carriers buy time against that, not a fix. Its floor of 23 against 15
-  # seeded is unreachable anyway without eating the reshuffle headroom above,
-  # which is the trade this comment exists to stop somebody making silently.
+  # When these carriers were added the tool read SYN_MARKET at a 0.45/min
+  # deficit — spends outrunning returns — and said "drains regardless of size".
+  # That reading was the TOOL's, not the plant's: half a closed loader loop
+  # counted as a market draw, and the maintained group's surplus was stranded
+  # instead of overflowing back (the simcalc commit titled "three rules it was
+# enforcing that the plant and the dispatcher had both moved on from"). Against the corrected
+  # checker the market reads 1.00 in / 1.00 out and SUSTAINS. The floor of 23
+  # this block once cited was the same artefact, and the real constraint below
+  # stands regardless: fill the market further only by eating the reshuffle
+  # headroom above, which is the trade this comment exists to stop somebody
+  # making silently.
   - {name: BIN-MT-16, slot: SMN_035, bin_type: STANDARD-SM}
   - {name: BIN-MT-17, slot: SMN_036, bin_type: STANDARD-SM}
 

@@ -59,18 +59,22 @@ dev-rates: ## Fill/starve AND carrier-deadlock check on the demo plant (no Docke
 	#   default    per-PAYLOAD balance — is each part made as fast as it is drawn?
 	#   -carriers  per-POOL empty-bin balance — can the loop physically circulate?
 	#
-	# A plant passes the first and jams on the second, which is exactly what
-	# carriers.go was written for ("THE CHECK THAT WOULD HAVE SAVED THE
-	# TWEAKING"). demo.yaml reports "SUSTAINS" from the payload check while the
-	# carrier check reports WILL JAM on SYN_MARKET — a 0.45 bins/min empty
-	# deficit that drains the pool regardless of how many carriers are seeded.
-	# Measured 2026-09-06, and the rig reached exactly that state: 13 STANDARD-SM
-	# carriers all full, zero empty, PRESS-2 stalled, and the retrieve_empty
-	# orders feeding it queued for the rest of the run.
+	# The second check exists because a plant can pass the first and jam on the
+	# second — the rig proved it on 2026-09-06: 13 STANDARD-SM carriers all
+	# full, zero empty, PRESS-2 stalled, retrieve_empty orders queued for the
+	# rest of the run. What that run exposed was a tool defect too: simcalc
+	# read SYN_MARKET at a 0.45 bins/min deficit it created itself (half a
+	# closed loader loop charged as a market draw; a maintained group's surplus
+	# stranded instead of overflowing back — fixed in the simcalc rework). The
+	# rig jam was real anyway — the pool DID run dry — and the corrected
+	# checker still names the mechanism that dries it: input coupling, where a
+	# consumer with a second part waits, its producer keeps filling, and that
+	# bin type's empties go to zero. demo.yaml reads SUSTAINS on both halves
+	# today; that is the floor this target defends, not a law of the plant.
 	#
-	# The carrier check EXITS NON-ZERO on WILL JAM, so this target now fails on a
-	# plant that will deadlock. That is the point — a verdict nobody runs is a
-	# verdict nobody has.
+	# The carrier check EXITS NON-ZERO on a pool that cannot circulate, so this
+	# target fails on a plant that will deadlock. That is the point — a verdict
+	# nobody runs is a verdict nobody has.
 	cd shingo-core && go run ./cmd/simcalc -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
 	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
 
