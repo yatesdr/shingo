@@ -5,11 +5,39 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"shingo/protocol/clock"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
+
+// motionlessWitnessBound is how long a NEVER-DISPATCHED witness may sit without
+// a status change and still hold a shallower store parked behind it.
+//
+// The first keep-arm of stillComingToLane keeps every vendor-less order as a
+// blocker on the theory that it is "certainly still coming". That is true for
+// minutes and false for hours: an order queued behind a dead consumer never
+// dispatches, never transitions, and never leaves the active set — acceptance
+// 2026-09-06 parked order 379 behind exactly such a witness (376, motionless
+// from 22:38) for fourteen sim-hours while the evaluator correctly re-answered
+// "park" every sweep. The bound retires a witness that has gone quiet.
+//
+// 15 minutes, core clock, from the same reasoning the stall checker uses for
+// its queued budget: a park is expected to be long — material waits legitimately
+// run to the next production tick and the slowest replenishment cycle is
+// minutes — but the rig's mean cycle is ~120s, so an order motionless for
+// fifteen is not slow, it is stuck. Ages compare against clock.Now(), the same
+// injected clock that stamps order_history rows, so the bound scales with sim
+// speed by construction.
+//
+// What the bound buys is bounded parking, not perfection: at 15 minutes it
+// releases a wedged dweller ~15 minutes late rather than never. The transient
+// famine it cannot prevent (the pool hit zero at 22:52; a 15-minute bound
+// releases at ~22:53) is measured on the acceptance re-run, and tightening is
+// a calibration question with that data in hand.
+const motionlessWitnessBound = 15 * time.Minute
 
 // Tiered depth-ordered lane entry (the tiered-entry arm). A store about to be
 // submitted into a mouth-enforced lane is held (parked) until it is safe to enter
@@ -260,8 +288,37 @@ func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]
 			inbound[h.OrderID] = true
 		}
 	}
+
+	// The motionless read for the never-dispatched arm. The other three arms
+	// are physically-coming facts that age cannot retire; only arm 1's
+	// "certainly still coming" is an inference about intent, and it is the one
+	// the bound exists to bound. Batched once per call, only when the arm has
+	// candidates; an unreadable answer keeps EVERY witness (a read that failed
+	// is not a fact about the order, and dropping a live witness walks an
+	// entrant into a lane somebody is still coming to).
+	motionless, err := d.motionlessWitnesses(active)
+	if err != nil {
+		return nil, err
+	}
+
 	kept := make([]*orders.Order, 0, len(active))
 	for _, o := range active {
+		// THE ONE NARROWING, and it happens before the keep-arms rather than
+		// inside arm 1 so the arms below read exactly as they always have. A
+		// never-dispatched witness past the bound is dropped as a blocker.
+		//
+		// Logged HERE rather than in the release sentence because the drop
+		// CAUSES the admission: once this order filters out, the candidate
+		// classifies clean and the refusal arm never runs, so a refusal-side
+		// line would be structurally absent for exactly the case it exists to
+		// explain. Repeats per sweep like the "still held" lines do, and stops
+		// the same way — when the dweller admits and the lane stops being
+		// evaluated.
+		if o.VendorOrderID == "" && motionless[o.ID] {
+			d.dbg("lane entry: order %d dropped as a witness in lane %d — never dispatched and no status "+
+				"change for over %s", o.ID, laneID, motionlessWitnessBound)
+			continue
+		}
 		switch {
 		case o.VendorOrderID == "": // not dispatched — certainly still coming
 		case inCorridor[o.ID]: // physically inside the lane
@@ -273,6 +330,53 @@ func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]
 		kept = append(kept, o)
 	}
 	return kept, nil
+}
+
+// motionlessWitnesses resolves which of the never-dispatched orders in the
+// active set have gone quiet: no order_history transition of any status for
+// longer than motionlessWitnessBound. Returns the motionless subset keyed by
+// order id; an order absent from the history read is NOT motionless (the safe
+// direction — see the caller).
+//
+// THE BOUND ONLY EVER NARROWS ARM 1, and what it does not touch is the safety
+// argument. A dispatched store, a robot in the corridor, a dweller at a mark,
+// an inbound mouth-row holder — those are facts about the physical world and
+// survive however old they are. The witness set "only grew" before this; it
+// still only grows, except for orders that never reached the fleet AND have
+// been motionless past the bound.
+//
+// The one honest trade: arm 1 cannot tell DEAD from FLEET-BLOCKED. An order
+// queued for a free robot for longer than the bound is also motionless and
+// also drops; when capacity returns it dispatches into a lane whose mouth slot
+// may since have been taken — a manufactured wall, recovered by the existing
+// dig / re-resolve machinery. The wall soak cannot see this (its stores are
+// all dispatched); the acceptance re-run is where it would show.
+func (d *Dispatcher) motionlessWitnesses(active []*orders.Order) (map[int64]bool, error) {
+	var pending []int64
+	for _, o := range active {
+		if o.VendorOrderID == "" {
+			pending = append(pending, o.ID)
+		}
+	}
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	lastMoved, err := d.db.LatestOrderHistoryTimes(pending)
+	if err != nil {
+		return nil, err
+	}
+	now := clock.Now().UTC()
+	out := make(map[int64]bool, len(pending))
+	for _, id := range pending {
+		at, ok := lastMoved[id]
+		if !ok {
+			continue // no history rows: keep the witness, never drop it
+		}
+		if now.Sub(at) > motionlessWitnessBound {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 // gateWaitLane names the lane the order's current wait gates, or 0.

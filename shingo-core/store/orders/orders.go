@@ -1046,6 +1046,49 @@ func LatestHistoryTimesForStatus(db *sql.DB, orderIDs []int64, status protocol.S
 	return out, rows.Err()
 }
 
+// LatestHistoryTimes is LatestHistoryTimesForStatus without the status filter:
+// order id -> the instant of that order's most recent transition, whatever it
+// was. The distinction is the whole point — "motionless" is not a property of
+// any one status, so a caller asking whether an order has gone quiet must see
+// the LAST row across all of them. Same DISTINCT ON (order_id) … ORDER BY
+// order_id, id DESC shape so this and the per-status read cannot disagree
+// about which row is latest; same positional-IN expansion (no pq.Array in this
+// package — see above); an order with no history rows is simply absent from
+// the map, and what absence means is the caller's to decide.
+//
+// Liveness is honest here by construction: UpdateStatusFromWithReason writes a
+// fresh row per real transition, while SetQueueDetail updates the current
+// episode's row in place (code only, created_at untouched), so repeated
+// cause-stamps do not fake motion. Only a status change does.
+func LatestHistoryTimes(db *sql.DB, orderIDs []int64) (map[int64]time.Time, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(orderIDs))
+	args := make([]any, 0, len(orderIDs))
+	for i, id := range orderIDs {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	rows, err := db.Query(`SELECT DISTINCT ON (order_id) order_id, created_at
+		FROM order_history WHERE order_id IN (`+strings.Join(ph, ",")+`)
+		ORDER BY order_id, id DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest history for %d orders: %w", len(orderIDs), err)
+	}
+	defer rows.Close()
+	out := make(map[int64]time.Time, len(orderIDs))
+	for rows.Next() {
+		var id int64
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = at
+	}
+	return out, rows.Err()
+}
+
 func LatestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (*History, error) {
 	var h History
 	var code, actor sql.NullString

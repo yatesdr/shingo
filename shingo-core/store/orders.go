@@ -717,6 +717,13 @@ func (db *DB) LatestOrderHistoryTimesForStatus(orderIDs []int64, status protocol
 	return orders.LatestHistoryTimesForStatus(db.DB, orderIDs, status)
 }
 
+// LatestOrderHistoryTimes is the status-less form: order id -> the instant of
+// each order's most recent transition of ANY status. See
+// orders.LatestHistoryTimes.
+func (db *DB) LatestOrderHistoryTimes(orderIDs []int64) (map[int64]time.Time, error) {
+	return orders.LatestHistoryTimes(db.DB, orderIDs)
+}
+
 // OrderEverReachedStatus reports whether the order ever recorded the status —
 // see orders.EverReachedStatus.
 func (db *DB) OrderEverReachedStatus(orderID int64, status string) (bool, error) {
