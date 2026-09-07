@@ -76,6 +76,25 @@ type poolPlan struct {
 	emptySupply  float64 // empties freed per minute (consume swaps returning here)
 	producePoint int     // stations drawing from this pool that need one to wait on
 	isZone       bool    // false = the pool names something that is not a seeded zone
+
+	// ── WHAT MOVES BETWEEN POOLS, WHICH THE FIRST VERSION HAD NO TERM FOR ────
+	//
+	// The split above assumed every pool is closed: empties are freed into it by
+	// consume swaps and spent out of it by produce swaps, and nothing else. Two
+	// shapes in the demo plant break that, and between them they invented the
+	// whole 0.45 bins/min deficit this check reported on SYN_MARKET while the
+	// plant-wide balance sat at exactly 0.00. Material was conserved; the model
+	// had lost track of which pool was holding it.
+	keeperIn  float64 // empties arriving from a level keeper or a group overflow
+	keeperOut float64 // empties leaving to one
+	// isMaintained marks a pool Core holds at a declared level. Its stock is not
+	// a function of transit — the keeper sets it — so it is judged against
+	// levelWant instead of the in-flight floor.
+	isMaintained bool
+	levelWant    int
+	// isClosedLoop marks a pool that is a dedicated-loader circuit rather than a
+	// stocked zone: the same carriers go round it and none enter or leave.
+	isClosedLoop bool
 }
 
 // carrierPlan is the computed carrier picture for one plant.
@@ -200,34 +219,107 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		}
 	}
 
-	// Count the swap points that need a carrier to be waiting on, regardless of
-	// rate — a station with a slow cadence still occupies one. Charged to the
-	// pool it DRAWS FROM, which is the one that has to have it.
-	for _, ac := range activeClaims(plant) {
-		if ac.claim.Role == "produce" && ac.claim.IsActivePull() {
-			p.producePoint++
-			if src := ac.claim.InboundSource; src != "" {
-				pool(src).producePoint++
-			}
-		}
-	}
 	// Which pool each payload's two sides act on. A produce claim spends an empty
 	// from its inbound_source; a consume claim frees one into its
 	// outbound_destination. Collected per payload because the rates below are per
 	// payload.
-	drawsFrom := map[string][]string{} // payload → pools its produce side spends from
+	//
+	// THE RETURN SIDE IS WALKED FIRST because the draw side consults it: whether
+	// a loader's inbound_source is a real draw depends on whether something hands
+	// its empties straight back to it.
 	returnsTo := map[string][]string{} // payload → pools its consume side frees into
+	homeGroup := map[string]string{}   // dedicated position → the loader identity it belongs to
 	for _, ac := range activeClaims(plant) {
 		c := ac.claim
-		switch c.Role {
-		case "produce":
-			if c.InboundSource != "" {
-				drawsFrom[c.Payload] = appendUniq(drawsFrom[c.Payload], c.InboundSource)
+		if c.Role == "consume" && c.OutboundDestination != "" {
+			returnsTo[c.Payload] = appendUniq(returnsTo[c.Payload], c.OutboundDestination)
+		}
+		if c.HomeOf != "" {
+			homeGroup[c.CoreNode] = c.HomeOf
+		}
+	}
+
+	// ── A CLOSED LOOP IS NOT A DRAW ON THE MARKET ────────────────────────────
+	//
+	// A dedicated-position loader with NO outbound_destination does not push the
+	// carriers it fills anywhere. The carrier stands on its home until the line's
+	// supply leg comes for it, and the line hands the empty back to that same
+	// home — demo.yaml's ALN_008 names PLK_H1 as BOTH its inbound_source and its
+	// outbound_destination, which is what that node block exists to exercise. The
+	// empty the loader fills next is the empty the cell just returned. Nothing
+	// enters the circuit and nothing leaves it.
+	//
+	// Reading inbound_source literally is what made this wrong. It charged the
+	// loop's entire spend to SYN_MARKET while crediting its supply to PLK_H1, so
+	// a circuit that conserves every carrier it holds read as a 0.25 bins/min
+	// drain on a pool it never touches — and PLK_H1 collected the matching
+	// surplus, which then went unjudged because it is not a seeded zone. Half a
+	// loop counted twice, in opposite directions, in two different columns.
+	//
+	// The plant file already said so in words: "inbound_source stays SYN_MARKET
+	// as a top-up path if a carrier is lost out of the loop; in steady state it
+	// should not be needed." A top-up path is not a steady-state rate.
+	//
+	// So the draw is charged where the empty actually comes from — the position
+	// the consume side returns it to. The produce-station floor moves with it: a
+	// closed loop's standing carrier is its own, and charging it to the market
+	// asks that pool to keep one spare for a station that never comes for one.
+	//
+	// GROUP-WIDE, NOT PER POSITION. A return to any position of a dedicated
+	// loader closes the circuit for the whole of it, because the buffers are
+	// spare parking inside that circuit rather than independent draws.
+	closedLoopPool := func(c plantspec.Claim) string {
+		if c.HomeOf == "" || c.OutboundDestination != "" {
+			return ""
+		}
+		for _, dest := range returnsTo[c.Payload] {
+			if homeGroup[dest] == c.HomeOf {
+				return dest
 			}
-		case "consume":
-			if c.OutboundDestination != "" {
-				returnsTo[c.Payload] = appendUniq(returnsTo[c.Payload], c.OutboundDestination)
+		}
+		return ""
+	}
+	drawPool := func(c plantspec.Claim) string {
+		if q := closedLoopPool(c); q != "" {
+			return q
+		}
+		return c.InboundSource
+	}
+
+	// Count the swap points that need a carrier to be waiting on, regardless of
+	// rate — a station with a slow cadence still occupies one. Charged to the
+	// pool it DRAWS FROM, which is the one that has to have it.
+	drawsFrom := map[string][]string{} // payload → pools its produce side spends from
+	for _, ac := range activeClaims(plant) {
+		c := ac.claim
+		if c.Role != "produce" {
+			continue
+		}
+		src := drawPool(c)
+		if loop := closedLoopPool(c); loop != "" {
+			q := pool(loop)
+			q.isClosedLoop = true
+			// ONE STANDING CARRIER PER CIRCUIT, NOT ONE PER POSITION. The four
+			// PLK_* claims are one dedicated loader: a pinned home and three
+			// buffers that are spare parking inside the same loop. Charging each
+			// of them a carrier to wait on counts the same circuit four times.
+			if c.IsActivePull() && q.producePoint == 0 {
+				q.producePoint++
 			}
+			if c.IsActivePull() {
+				p.producePoint++
+			}
+			drawsFrom[c.Payload] = appendUniq(drawsFrom[c.Payload], loop)
+			continue
+		}
+		if c.IsActivePull() {
+			p.producePoint++
+			if src != "" {
+				pool(src).producePoint++
+			}
+		}
+		if src != "" {
+			drawsFrom[c.Payload] = appendUniq(drawsFrom[c.Payload], src)
 		}
 	}
 
@@ -311,6 +403,51 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			}
 		}
 	}
+	// ── A MAINTAINED GROUP DOES NOT ACCUMULATE; IT OVERFLOWS ─────────────────
+	//
+	// A group named in maintained_groups is a LEVEL-CONTROLLED buffer, not a free
+	// pool. Core holds it at its declared want: surplus above the level goes out
+	// to the overflow zone, and a shortfall is asked for from the plant at large
+	// — Maintainer.createAsks deliberately sends its ask with SourceNode "" so
+	// the finder's tiers pick the source, because "naming the group here would
+	// make the keeper source from the group it is trying to fill". Either way the
+	// difference MOVES, and the only pool the config names as its counterparty is
+	// the overflow.
+	//
+	// Modelling the group as closed strands that difference. demo.yaml's
+	// SYN_PRESS_EMPTIES takes 0.60 bins/min back from the ASSY unloader and gives
+	// 0.40 to the two presses; the 0.20 surplus does not pile up forever in eight
+	// positions declared to hold six. It overflows to SYN_MARKET — the same
+	// SYN_MARKET this check was reporting a deficit on.
+	//
+	// The group's own rate is therefore not a verdict. Absorbing that difference
+	// is exactly what the keeper is for, so a group in rate deficit is a group
+	// doing its job. What CAN go wrong is the pool behind it running out, and
+	// that now lands there, where it belongs and where it can be seeded.
+	for _, g := range plant.MaintainedGroups {
+		q := pool(g.Group)
+		q.isMaintained = true
+		for _, lv := range g.Levels {
+			q.levelWant += lv.Want
+		}
+		if g.Overflow == "" {
+			// No counterparty declared. The keeper still sources plant-wide, but
+			// nothing in the file says from where, and putting the number against
+			// a pool the config never paired it with is how this check got its
+			// last wrong answer.
+			continue
+		}
+		o := pool(g.Overflow)
+		switch net := q.emptySupply - q.emptyDemand; {
+		case net > 0:
+			q.keeperOut += net
+			o.keeperIn += net
+		case net < 0:
+			q.keeperIn += -net
+			o.keeperOut += -net
+		}
+	}
+
 	for name := range p.pools {
 		p.pools[name].isZone = isZone[name]
 	}
@@ -468,34 +605,76 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 	fmt.Printf("    %-44s %d, seeded %d\n", "REQUIRED ≥", floor, plan.seededEmpty)
 
 	fmt.Printf("\n  PER POOL — a produce station draws its empty from ONE named pool\n")
-	fmt.Printf("  %-14s %-9s %-9s %-9s %-9s %s\n", "POOL", "SPENDS", "FREES", "REQUIRED", "SEEDED", "VERDICT")
+	fmt.Printf("  %-18s %-8s %-8s %-8s %-9s %-8s %s\n",
+		"POOL", "SPENDS", "FREES", "KEEPER", "REQUIRED", "SEEDED", "VERDICT")
 	fmt.Println(strings.Repeat("─", 84))
 	for _, q := range sortedPools(plan.pools) {
-		pInFlight := q.emptyDemand * mins
+		// SPENDS and FREES are what the swap points do; KEEPER is what crosses the
+		// pool boundary on top of that — a maintained group's overflow, or the
+		// keeper's ask coming the other way. The balance is judged on the sum,
+		// because a pool that gives away its surplus is not in surplus.
+		spends := q.emptyDemand + q.keeperOut
+		frees := q.emptySupply + q.keeperIn
+		keeper := q.keeperIn - q.keeperOut
+
+		pInFlight := spends * mins
 		pFloor := int(math.Ceil(pInFlight)) + q.producePoint
 		verdict := "ok"
 		switch {
+		case q.isClosedLoop:
+			// A closed circuit's carrier count is fixed by what was seeded into
+			// it, and its positions are nodes rather than zone slots, so there is
+			// no seeded-empty figure to judge and no floor that means anything.
+			// Printing demand x transit here put a REQUIRED 7 beside a SEEDED 0
+			// for a loop that holds three carriers and needs no more — a number
+			// with no referent, next to a number that was never counted.
+			verdict = "closed circuit — carriers conserved, no floor applies"
+			pFloor = 0
+		case q.isMaintained:
+			// A LEVEL IS NOT A FLOOR. Core holds this pool at its declared want,
+			// so what it needs seeded is that want — not demand x transit, which
+			// describes a pool nobody is topping up. Judging a kept group on the
+			// transit floor asks it to carry stock the keeper exists to deliver.
+			pFloor = q.levelWant
+			if q.isZone && q.seededEmpty < pFloor {
+				ok = false
+				verdict = fmt.Sprintf("BELOW LEVEL by %d — the keeper starts behind", pFloor-q.seededEmpty)
+			} else {
+				verdict = fmt.Sprintf("level-kept (want %d)", q.levelWant)
+			}
 		case !q.isZone:
 			// The pool names something that is not a seeded zone (a concrete node,
 			// a dedicated home). We cannot count its stock, so we do not judge it —
 			// and we say so rather than scoring it 0 and crying wolf.
 			verdict = "not a seeded zone — stock not judged"
-		case q.emptySupply-q.emptyDemand < -0.001:
+		case frees-spends < -0.001:
 			ok = false
-			verdict = fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size",
-				q.emptyDemand-q.emptySupply)
+			verdict = fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size", spends-frees)
 		case q.seededEmpty < pFloor:
 			ok = false
 			verdict = fmt.Sprintf("SHORT BY %d", pFloor-q.seededEmpty)
 		}
-		fmt.Printf("  %-14s %-9.2f %-9.2f %-9d %-9d %s\n",
-			q.name, q.emptyDemand, q.emptySupply, pFloor, q.seededEmpty, verdict)
+		keeperCol := "—"
+		if math.Abs(keeper) > 0.001 {
+			keeperCol = fmt.Sprintf("%+.2f", keeper)
+		}
+		floorCol, seededCol := fmt.Sprintf("%d", pFloor), fmt.Sprintf("%d", q.seededEmpty)
+		if q.isClosedLoop {
+			floorCol, seededCol = "—", "—"
+		}
+		fmt.Printf("  %-18s %-8.2f %-8.2f %-8s %-9s %-8s %s\n",
+			q.name, spends, frees, keeperCol, floorCol, seededCol, verdict)
 	}
 	if len(plan.unpooled) > 0 {
 		fmt.Printf("\n  NOT ATTRIBUTED: %s — these payloads' claims name no inbound_source /\n",
 			strings.Join(plan.unpooled, ", "))
 		fmt.Printf("  outbound_destination, so their carriers belong to no pool this can check.\n")
 	}
+	fmt.Printf("\n  KEEPER is carriers crossing a pool boundary outside the swap points: a\n")
+	fmt.Printf("  maintained group sends its surplus to the overflow zone and asks the plant\n")
+	fmt.Printf("  for its shortfall, so the two pools settle against each other rather than\n")
+	fmt.Printf("  one draining while the other piles up. Without this term SYN_PRESS_EMPTIES\n")
+	fmt.Printf("  read +0.20/min forever and SYN_MARKET wore the matching deficit.\n")
 	fmt.Printf("\n  A pool short here deadlocks EVEN IF the plant total is comfortable: the\n")
 	fmt.Printf("  empties exist, in the wrong zone, and nothing routes them back. That is how\n")
 	fmt.Printf("  lane-stress passed at 24/22 and wedged with 15 empties in SYN_COMP and 0 in\n")
@@ -511,19 +690,58 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 func reportHeadroom(zones []zoneHeadroom) bool {
 	ok := true
 	// ── 4. shuffle headroom ──────────────────────────────────────────────────
+	//
+	// A GATED LANE IS SHUFFLE SPACE. IT USED NOT TO BE, AND THIS CHECK WAS THE
+	// LAST PLACE STILL SAYING SO.
+	//
+	// This counted only slots in UNMARKED lanes, on the reasoning that "a dig
+	// cannot park a blocker in a gated lane it is not allowed to enter". That
+	// rule was real in the dispatcher and it was DELETED on 2026-08-31:
+	// shuffleSlotsFrom now opens with "A GATED DIG MAY PARK ITS BLOCKER IN
+	// ANOTHER GATED LANE. IT USED NOT TO." The refusal that forced the exclusion
+	// — spliceLaneWait allowing only one gated lane per plan — stopped existing
+	// when rule 2 became "a wait per gated lane the plan enters".
+	//
+	// The measurement that settled it is the same shape as the failure here:
+	// with every lane marked, "park in an ungated lane" names no slot in the
+	// plant, so every dig held. Six stuck from the first minute of the run.
+	//
+	// And demo.yaml is that plant. SYN_MARKET carries fifteen wait_points and
+	// SYN_CLEAR one, so EVERY lane in this fixture is marked and FREE-UNG was
+	// structurally zero — the check reported SYN_MARKET "SHORT — Lane_01 needs 2,
+	// has 0" while thirteen free slots sat in it, ready, and the dispatcher was
+	// perfectly willing to use them. A static checker enforcing a constraint the
+	// runtime dropped is worse than no checker: it fails a healthy plant, and a
+	// gate that cries wolf is a gate people learn to skip.
+	//
+	// THE SPLIT STAYS IN THE TABLE, because the objection the exclusion was
+	// protecting is explicitly still unmeasured: a dig holds its lane
+	// exclusively, so a leg dwelling at a second lane's mark keeps the dug
+	// corridor shut while that lane is congested. Lawful and self-clearing, but
+	// not known to be BOUNDED. Showing which half of the headroom is gated keeps
+	// that cost visible without failing a plant for it.
 	fmt.Printf("\nSHUFFLE HEADROOM (a dig on a depth-N lane relocates N-1 blockers)\n")
-	fmt.Printf("%-14s %-7s %-8s %-9s %-9s %s\n", "ZONE", "SLOTS", "SEEDED", "FREE-UNG", "DEEPEST", "VERDICT")
+	fmt.Printf("%-18s %-7s %-7s %-9s %-8s %-8s %s\n",
+		"ZONE", "SLOTS", "SEEDED", "FREE-UNG", "FREE-GT", "DEEPEST", "VERDICT")
 	fmt.Println(strings.Repeat("─", 84))
 	for _, z := range zones {
+		free := z.freeUngated + z.freeGated
 		verdict := "ok"
-		if z.deepestDig > z.freeUngated {
+		switch {
+		case z.deepestDig > free:
 			ok = false
-			verdict = fmt.Sprintf("SHORT — %s needs %d, has %d", z.deepestLane, z.deepestDig, z.freeUngated)
+			verdict = fmt.Sprintf("SHORT — %s needs %d, has %d", z.deepestLane, z.deepestDig, free)
+		case z.deepestDig > z.freeUngated:
+			// It fits, but only by using marked lanes — which is lawful and is
+			// the case whose dwell cost has never been measured.
+			verdict = "ok — leans on gated space (dwell cost unmeasured)"
 		}
-		fmt.Printf("%-14s %-7d %-8d %-9d %-9d %s\n",
-			z.name, z.slots, z.seeded, z.freeUngated, z.deepestDig, verdict)
+		fmt.Printf("%-18s %-7d %-7d %-9d %-8d %-8d %s\n",
+			z.name, z.slots, z.seeded, z.freeUngated, z.freeGated, z.deepestDig, verdict)
 	}
-	fmt.Printf("\n  FREE-UNG counts only slots in UNMARKED lanes: a dig cannot park a blocker in\n")
-	fmt.Printf("  a gated lane it is not allowed to enter, so gated free space does not count.\n")
+	fmt.Printf("\n  BOTH columns count toward a dig: shuffleSlotsFrom lets a gated dig park its\n")
+	fmt.Printf("  blocker in another gated lane, each leg waiting at its own lane's mark. The\n")
+	fmt.Printf("  split is kept because a second mark holds the dug corridor shut for as long\n")
+	fmt.Printf("  as that lane is congested, and that duration is not known to be bounded.\n")
 	return ok
 }

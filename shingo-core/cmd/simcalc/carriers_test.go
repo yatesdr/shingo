@@ -252,7 +252,21 @@ func TestCarriers_ManualPointIsNotChargedAtItsCeiling(t *testing.T) {
 // TestHeadroom_GatedFreeSlotsDoNotCount — a dig cannot park a blocker in a gated
 // lane it is not allowed to enter, so gated free space is not headroom. Counting
 // it is how a plant reads as roomy and then waits constantly.
-func TestHeadroom_GatedFreeSlotsDoNotCount(t *testing.T) {
+// TestHeadroom_GatedFreeSlotsDoCount pins the rule the DISPATCHER now applies,
+// which is the opposite of what this test used to assert.
+//
+// It was TestHeadroom_GatedFreeSlotsDoNotCount, and it was right when it was
+// written: shuffleSlotsFrom excluded gated lanes from the shuffle pool. That
+// exclusion was DELETED on 2026-08-31 — the function now opens "A GATED DIG MAY
+// PARK ITS BLOCKER IN ANOTHER GATED LANE. IT USED NOT TO." — because with every
+// lane in demo.yaml marked, "park in an ungated lane" named no slot in the plant
+// and six digs held from the first minute of the run.
+//
+// The test kept passing the whole time, which is the point worth keeping: it was
+// pinning simcalc against simcalc, not against the dispatcher, so nothing went
+// red when the behaviour it described stopped being true. What it cost was a
+// permanent false SHORT on the only fixture anyone runs.
+func TestHeadroom_GatedFreeSlotsDoCount(t *testing.T) {
 	t.Parallel()
 	plant := &plantspec.Plant{
 		Zones: []plantspec.Zone{{
@@ -291,9 +305,22 @@ func TestHeadroom_GatedFreeSlotsDoNotCount(t *testing.T) {
 	if z.deepestDig != 4 {
 		t.Errorf("deepestDig = %d, want 4 (a depth-5 lane has four blockers)", z.deepestDig)
 	}
+	// THE SPLIT IS STILL MEASURED — a second mark holds the dug corridor shut
+	// while that lane is congested, and that duration has never been bounded — so
+	// the columns stay separate even though both now count.
 	if z.deepestDig <= z.freeUngated {
-		t.Error("this plant must read as SHORT: a four-blocker dig with zero reachable free slots " +
-			"is the shape that waits forever while the free-slot total looks healthy")
+		t.Fatal("fixture: the free slots must all be GATED for this to test anything")
+	}
+
+	// AND THE VERDICT ITSELF IS ASSERTED, not re-derived here. The version of
+	// this test that computed `freeUngated + freeGated` and checked its own sum
+	// went on passing when reportHeadroom was mutated back to the old rule —
+	// which is the same way the original test survived the dispatcher change it
+	// was supposed to be describing. A checker's test has to call the checker.
+	if !reportHeadroom(zones) {
+		t.Error("reportHeadroom failed a zone whose only free space is GATED. shuffleSlotsFrom " +
+			"parks blockers in gated lanes now, so this plant has room — and calling it short " +
+			"fails every fixture in this repo, all of which are marked")
 	}
 }
 
@@ -358,5 +385,151 @@ func TestFlatPositionsAreCountedAsSlots(t *testing.T) {
 		t.Errorf("deepestDig = %d, want 0. Flat positions have nothing in front of anything, "+
 			"so no dig can be raised against them and they must not inflate the depth a zone "+
 			"needs shuffle room for", zh.deepestDig)
+	}
+}
+
+// dedicatedLoopPlant builds the SHIM shape from demo.yaml: a dedicated-position
+// loader whose home is refilled by the very cell it feeds.
+//
+//	LOADER (produce, home_of=G, NO outbound) fills a carrier on H1
+//	CELL   (consume, in=H1, out=H1)          takes it and hands the empty back
+//
+// MARKET is named as the loader's inbound_source and is the top-up path only —
+// the plant file says so: "in steady state it should not be needed".
+func dedicatedLoopPlant() *plantspec.Plant {
+	return &plantspec.Plant{
+		Payloads: []plantspec.Payload{{Code: "SHIM", UOPCapacity: 40}},
+		Processes: []plantspec.Process{
+			{Name: "LOADER", ActiveStyle: "LOADER-RUN"},
+			{Name: "CELL", ActiveStyle: "CELL-RUN"},
+		},
+		Styles: []plantspec.Style{
+			{Name: "LOADER-RUN", Process: "LOADER", Payload: "SHIM"},
+			{Name: "CELL-RUN", Process: "CELL", Payload: "SHIM"},
+		},
+		Claims: []plantspec.Claim{
+			// The pinned home and one buffer: same circuit, both naming the market.
+			{CoreNode: "H1", Style: "LOADER-RUN", Role: "produce", SwapMode: "manual_swap",
+				Payload: "SHIM", UOPCapacity: 40, InboundSource: "MARKET", HomeOf: "G"},
+			{CoreNode: "H2", Style: "LOADER-RUN", Role: "produce", SwapMode: "manual_swap",
+				Payload: "SHIM", UOPCapacity: 40, InboundSource: "MARKET", HomeOf: "G", HomeKind: "buffer"},
+			{CoreNode: "ALN_8", Style: "CELL-RUN", Role: "consume", SwapMode: "two_robot",
+				Payload: "SHIM", UOPCapacity: 40, InboundSource: "H1", OutboundDestination: "H1"},
+		},
+		Zones: []plantspec.Zone{{
+			Name:  "MARKET",
+			Lanes: []plantspec.Lane{{Name: "L1", Slots: []plantspec.Slot{{Name: "M1", Depth: 1}, {Name: "M2", Depth: 2}}}},
+		}},
+		Bins: []plantspec.Bin{{Name: "mt1", Slot: "M1"}, {Name: "mt2", Slot: "M2"}},
+	}
+}
+
+// TestCarriers_ClosedDedicatedLoopIsNotADrawOnTheMarket pins the first of the two
+// mis-models that invented demo.yaml's 0.45 bins/min SYN_MARKET deficit.
+//
+// The loop conserves every carrier it holds: the empty the loader fills next is
+// the one the cell just returned. Reading inbound_source literally charged the
+// whole spend to the market and credited the whole supply to the home, so a
+// closed circuit read as a drain on a pool it never touches — and the matching
+// surplus landed on a pool that is "not a seeded zone", where it went unjudged.
+//
+// The tell was there all along and nobody could see it: the plant-wide balance
+// was EXACTLY 0.00 while a pool showed a deficit. Material was conserved; only
+// the attribution leaked.
+func TestCarriers_ClosedDedicatedLoopIsNotADrawOnTheMarket(t *testing.T) {
+	t.Parallel()
+	plant := dedicatedLoopPlant()
+	// The cell draws 10 parts/min against a 40-UOP carrier: 0.25 bins/min.
+	p := computeCarriers(plant, map[string]float64{"CELL": 10.0}, 0, 0)
+
+	market, home := p.pools["MARKET"], p.pools["H1"]
+	if home == nil {
+		t.Fatalf("the loop's own pool was never created: %v", p.pools)
+	}
+	if market != nil && market.emptyDemand > 0.001 {
+		t.Errorf("MARKET is charged %.2f bins/min of spend for a CLOSED loop. Its inbound_source "+
+			"is the top-up path for a carrier lost out of the circuit, not a steady-state draw",
+			market.emptyDemand)
+	}
+	if home.emptyDemand < 0.001 || home.emptySupply < 0.001 {
+		t.Fatalf("the circuit shows spend %.2f supply %.2f — both sides must land on the loop",
+			home.emptyDemand, home.emptySupply)
+	}
+	if net := home.emptySupply - home.emptyDemand; math.Abs(net) > 0.001 {
+		t.Errorf("the closed loop nets %+.2f bins/min. A circuit where the consumer hands its empty "+
+			"straight back to the producer neither gains nor loses carriers", net)
+	}
+	if !home.isClosedLoop {
+		t.Error("the loop was not marked as a closed circuit, so it will be judged against a " +
+			"transit floor — a REQUIRED with no referent beside a SEEDED that was never counted")
+	}
+	// ONE standing carrier for the circuit, not one per position.
+	if home.producePoint != 1 {
+		t.Errorf("producePoint = %d, want 1. The home and its buffers are one dedicated loader; "+
+			"charging each a carrier to wait on counts the same circuit twice", home.producePoint)
+	}
+	if market != nil && market.producePoint != 0 {
+		t.Errorf("MARKET carries %d produce points for stations inside a closed loop — it is being "+
+			"asked to keep a spare carrier for a station that never comes for one", market.producePoint)
+	}
+}
+
+// TestCarriers_MaintainedGroupSurplusOverflowsToItsCounterparty pins the second
+// mis-model. A maintained group is a LEVEL-CONTROLLED buffer: Core holds it at
+// its declared want, so a surplus does not pile up in it forever — it goes to the
+// overflow zone, which is where the carriers actually end up.
+//
+// Modelling the group as closed stranded that surplus and left the overflow pool
+// wearing a deficit for carriers it was in fact receiving.
+func TestCarriers_MaintainedGroupSurplusOverflowsToItsCounterparty(t *testing.T) {
+	t.Parallel()
+	plant := carrierPlant(30, 30)
+	// The press draws its empties from the kept bank; the weld cell returns them
+	// there too, but the fixture makes the return side faster so the bank runs a
+	// surplus that has to go somewhere.
+	plant.Claims[0].InboundSource = "BANK"
+	plant.Claims[1].OutboundDestination = "BANK"
+	plant.Zones = append(plant.Zones, plantspec.Zone{
+		Name:      "BANK",
+		Positions: []plantspec.Slot{{Name: "B1", Depth: 1}, {Name: "B2", Depth: 1}, {Name: "B3", Depth: 1}},
+	}, plantspec.Zone{
+		Name:  "MARKET",
+		Lanes: []plantspec.Lane{{Name: "ML", Slots: []plantspec.Slot{{Name: "M1", Depth: 1}}}},
+	})
+	plant.Bins = append(plant.Bins,
+		plantspec.Bin{Name: "mt1", Slot: "B1"}, plantspec.Bin{Name: "mt2", Slot: "B2"})
+	plant.MaintainedGroups = []plantspec.MaintainedGroup{{
+		Group: "BANK", Station: "edge1.line1", Overflow: "MARKET",
+		Levels: []plantspec.MaintainLevel{{BinType: "STANDARD", Want: 2}},
+	}}
+
+	// Consumer twice the producer: the bank frees more than it spends.
+	p := computeCarriers(plant, map[string]float64{"PRESS": 6.0, "WELD": 12.0}, 0, 0)
+
+	bank, market := p.pools["BANK"], p.pools["MARKET"]
+	if bank == nil || market == nil {
+		t.Fatalf("pools not attributed: %v", p.pools)
+	}
+	if !bank.isMaintained || bank.levelWant != 2 {
+		t.Errorf("BANK isMaintained=%v levelWant=%d, want true/2 — a kept group is judged against "+
+			"its declared level, not against demand x transit", bank.isMaintained, bank.levelWant)
+	}
+	net := bank.emptySupply - bank.emptyDemand
+	if net < 0.001 {
+		t.Fatalf("fixture: the bank must run a SURPLUS to test the overflow, got %+.3f", net)
+	}
+	if math.Abs(bank.keeperOut-net) > 0.001 {
+		t.Errorf("keeperOut = %.3f, want %.3f — the surplus leaves the group for its overflow zone "+
+			"rather than accumulating in positions declared to hold a fixed level",
+			bank.keeperOut, net)
+	}
+	if math.Abs(market.keeperIn-net) > 0.001 {
+		t.Errorf("MARKET keeperIn = %.3f, want %.3f. The carriers the bank sheds arrive HERE, and "+
+			"without this term the overflow pool wears a deficit for empties it is being handed",
+			market.keeperIn, net)
+	}
+	// The two must settle against each other, which is the whole point.
+	if eff := (bank.emptySupply + bank.keeperIn) - (bank.emptyDemand + bank.keeperOut); math.Abs(eff) > 0.001 {
+		t.Errorf("the kept group nets %+.3f after the keeper flow; a level-held pool settles to zero", eff)
 	}
 }

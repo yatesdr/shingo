@@ -2,7 +2,7 @@
 # Quickstart: make dev && make dev-seed   (see README.dev.md, added in T5.3)
 COMPOSE := docker compose -f docker-compose.dev.yml
 
-.PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-rates-solve
+.PHONY: dev-build dev dev-down dev-reset dev-seed dev-logs dev-rates dev-carriers dev-rates-solve
 
 dev-build: ## Build the sim binaries into images (INCLUDING the tools profile)
 	# --profile tools is load-bearing, not thoroughness. `compose build` without it
@@ -52,8 +52,30 @@ dev-seed: ## Seed the demo plant then restart core+edge to pick up the seeded re
 dev-logs: ## Tail core + edge logs
 	$(COMPOSE) logs -f core edge
 
-dev-rates: ## Fill/starve check on the demo plant (run after editing it; no Docker needed)
+dev-rates: ## Fill/starve AND carrier-deadlock check on the demo plant (no Docker needed)
+	# BOTH CHECKS, AND THE SECOND ONE IS THE ONE THAT BITES. simcalc answers two
+	# different questions and only the first ran here:
+	#
+	#   default    per-PAYLOAD balance — is each part made as fast as it is drawn?
+	#   -carriers  per-POOL empty-bin balance — can the loop physically circulate?
+	#
+	# A plant passes the first and jams on the second, which is exactly what
+	# carriers.go was written for ("THE CHECK THAT WOULD HAVE SAVED THE
+	# TWEAKING"). demo.yaml reports "SUSTAINS" from the payload check while the
+	# carrier check reports WILL JAM on SYN_MARKET — a 0.45 bins/min empty
+	# deficit that drains the pool regardless of how many carriers are seeded.
+	# Measured 2026-09-06, and the rig reached exactly that state: 13 STANDARD-SM
+	# carriers all full, zero empty, PRESS-2 stalled, and the retrieve_empty
+	# orders feeding it queued for the rest of the run.
+	#
+	# The carrier check EXITS NON-ZERO on WILL JAM, so this target now fails on a
+	# plant that will deadlock. That is the point — a verdict nobody runs is a
+	# verdict nobody has.
 	cd shingo-core && go run ./cmd/simcalc -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
+	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
+
+dev-carriers: ## Carrier/empty-pool deadlock check alone (the half that exits non-zero)
+	cd shingo-core && go run ./cmd/simcalc -carriers -plant ../plants/demo.yaml -edge ../shingo-edge/shingoedge.dev.yaml
 
 dev-rates-solve: ## Derive balanced tick rates. Override: make dev-rates-solve ARGS="-line-rate 8 -transit 15m"
 	cd shingo-core && go run ./cmd/simcalc -solve -plant ../plants/demo.yaml $(ARGS)
