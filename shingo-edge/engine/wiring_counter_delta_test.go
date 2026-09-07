@@ -74,6 +74,7 @@ type fakeDeltaSink struct {
 // satisfies it.
 type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
+	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
@@ -157,7 +158,7 @@ func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) error {
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeActiveBinID(nodeID, nil)
+		return db.ClearProcessNodeActiveBinAndCount(nodeID)
 	}
 	return nil
 }
@@ -529,7 +530,8 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 		ProcessID: processID, StyleID: styleID, Delta: 8,
 	}})
 
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	rtRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	rt := testutil.Must(t, rtRt, errRt, "load node runtime")
 	if rt.RemainingUOPCached != -5 {
 		t.Errorf("runtime.RemainingUOPCached = %d, want -5 (3 - 8; signed semantic, no clamp at 0)",
 			rt.RemainingUOPCached)
@@ -711,7 +713,8 @@ func TestRegression_NoSinkNoEmissionDoesNotPanic(t *testing.T) {
 		},
 	})
 
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	runtimeRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	runtime := testutil.Must(t, runtimeRt, errRt, "load node runtime")
 	if runtime.RemainingUOPCached != 99 {
 		t.Errorf("RemainingUOP = %d, want 99 (tick still applied via direct write)",
 			runtime.RemainingUOPCached)

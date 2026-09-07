@@ -34,6 +34,12 @@ type runtimeWriter interface {
 	// to clear the pointer.
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 
+	// ClearProcessNodeActiveBinAndCount clears the bin pointer and zeroes
+	// the cached count in one statement. Used by ClearActiveBin when the
+	// bin physically departs the slot (the count on the row is the
+	// departed bin's).
+	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
+
 	// SetProcessNodeActiveBinIDAndEpoch writes active_bin_id and
 	// active_bin_epoch together. Used by BindActiveBin when the epoch
 	// is known (loader L1 confirm with Core's LoadBin response).

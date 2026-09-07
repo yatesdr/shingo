@@ -49,6 +49,13 @@ func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64)
 	return processes.SetActiveBinID(db.DB, processNodeID, activeBinID)
 }
 
+// ClearProcessNodeActiveBinAndCount clears the bin pointer and zeroes the
+// cached count atomically — the pickup-departure write. See
+// processes.ClearActiveBinAndCount.
+func (db *DB) ClearProcessNodeActiveBinAndCount(processNodeID int64) error {
+	return processes.ClearActiveBinAndCount(db.DB, processNodeID)
+}
+
 // SetProcessNodeActiveBinIDAndEpoch writes the active bin pointer and
 // epoch together. Used by BindActiveBin (loader L1 confirm) where
 // Core's LoadBin response provides the epoch.

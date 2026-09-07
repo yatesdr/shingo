@@ -794,6 +794,22 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 	return err
 }
 
+// ClearActiveBinAndCount clears active_bin_id and zeroes
+// remaining_uop_cached in ONE statement, leaving the claim and both order
+// pointers alone. Used by ClearActiveBin (bin-pickup departure): the count on
+// the row is the departed bin's, and a count surviving the bin it describes is
+// read by the pickup→delivery window's readers as material that is no longer
+// there. Atomic for the same reason SetRuntimeWithBin is — a tick landing
+// between two separate writes could see an empty slot still carrying its old
+// count, which is exactly the state the pickup exists to end.
+func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_bin_id=NULL, remaining_uop_cached=0, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		processNodeID)
+	return err
+}
+
 // SetActiveBinIDAndEpoch writes active_bin_id and active_bin_epoch
 // together without touching claim or count. Two callers: BindActiveBin (L1
 // retrieve confirm at a loader, epoch from Core's LoadBin reply, count already

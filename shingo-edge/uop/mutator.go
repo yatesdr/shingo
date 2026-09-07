@@ -154,13 +154,26 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 	return m.rw.SetProcessNodeActiveBinIDAndEpoch(nodeID, &binID, deltaEpoch)
 }
 
-// ClearActiveBin clears the active bin pointer on a process node's
-// runtime row. Today's caller is handler_bin_picked_up.go:126 (Core
-// BinPickedUp arrival — the bin has physically left the slot, so any
-// subsequent ticks attribute to nothing rather than to the now-gone
-// bin). Does NOT touch count or claim.
+// ClearActiveBin clears the active bin pointer AND zeroes the cached count on
+// a process node's runtime row, in one statement. Today's caller is
+// handler_bin_picked_up.go (Core BinPickedUp arrival — the bin has physically
+// left the slot, so any subsequent ticks attribute to nothing rather than to
+// the now-gone bin).
+//
+// THE COUNT GOES WITH THE BIN. The count on the row is the departed carrier's;
+// held over, every reader in the pickup→delivery window sees material that is
+// no longer there — flipTargetReady's changeover arm reads it as "holds no
+// material to feed the line" only by the accident of the value's sign, and the
+// demand reconciler reads it as stock. Zeroing at the pickup is the same
+// atomic semantics as ClearActiveAndReset (both land the slot in "empty and
+// knows it"), differing only in leaving the claim and order pointers for the
+// callers that own them.
+//
+// ActiveOrderID IS DELIBERATELY LEFT ALONE — it is the cell-busy pointer the
+// admission guards read, released by orderWorksTheCell on terminal/departure,
+// not by the pickup.
 func (m *Mutator) ClearActiveBin(nodeID int64) error {
-	return m.rw.SetProcessNodeActiveBinID(nodeID, nil)
+	return m.rw.ClearProcessNodeActiveBinAndCount(nodeID)
 }
 
 // ClearActiveAndReset atomically clears active_bin_id and zeros the

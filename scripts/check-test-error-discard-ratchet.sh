@@ -73,10 +73,13 @@ cd "$(dirname "$0")/.."
 # integrated tree the same run counts 1557, so this step has been failing since
 # the two branches met — the 17 extra sites were converted, and then the demand
 # quota page's tests took another 36 with them when the table was dropped.
+# The pickup-count rider converted the 12 GetProcessNodeRuntime/GetOrder
+# discards its test files carried (8 pre-existing, 4 its own additions), taking
+# the count 1503 → 1489.
 #
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1503
+FROZEN=1489
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

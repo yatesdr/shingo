@@ -56,7 +56,8 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 	// ActiveBinID at the bin-as-truth flip, and nulling it declared the cell
 	// free five steps before the leg was done with it. orderWorksTheCell frees
 	// it instead, on terminal or departure.
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	rtRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	rt := testutil.Must(t, rtRt, errRt, "load node runtime")
 	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != orderID {
 		t.Errorf("ActiveOrderID = %v, want %d — the pickup must not clear the cell-busy pointer",
 			rt.ActiveOrderID, orderID)
@@ -200,7 +201,8 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 95), "seed active bin")
 
 	// Pre-condition: old bin bound at the slot, cache=95.
-	pre, _ := db.GetProcessNodeRuntime(nodeID)
+	preRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	pre := testutil.Must(t, preRt, errRt, "load node runtime")
 	if pre.ActiveBinID == nil || *pre.ActiveBinID != oldBinID {
 		t.Fatalf("pre: ActiveBinID = %v, want %d", pre.ActiveBinID, oldBinID)
 	}
@@ -219,7 +221,8 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 	// Supply robot's first physical step: pickup at InboundSource
 	// (the supermarket). Core publishes BinPickedUp with location set
 	// to the source node, NOT the consume node's slot.
-	supplyOrder, _ := db.GetOrder(orderA)
+	supplyOrder, errOrder := db.GetOrder(orderA)
+	supplyOrder = testutil.Must(t, supplyOrder, errOrder, "load supply order")
 	const supplyBinID int64 = 800
 	eng.HandleBinPickedUp(supplyOrder.UUID, supplyBinID, "TR-SOURCE")
 
@@ -227,7 +230,8 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 	// points at the old bin; active_order_id still points at the supply
 	// order. The old bin stays bound, so PLC ticks below will continue to
 	// decrement remaining_uop_cached.
-	post, _ := db.GetProcessNodeRuntime(nodeID)
+	postRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	post := testutil.Must(t, postRt, errRt, "load node runtime")
 	if post.ActiveBinID == nil || *post.ActiveBinID != oldBinID {
 		t.Errorf("post-supermarket-pickup ActiveBinID = %v, want %d (must stay — old bin physically still in slot)",
 			post.ActiveBinID, oldBinID)
@@ -244,7 +248,8 @@ func TestRegression_TwoRobotSupplyLegSupermarketPickupDoesNotFreezeCache(t *test
 		ProcessID: processID, StyleID: styleID, Delta: 3,
 	}})
 
-	after, _ := db.GetProcessNodeRuntime(nodeID)
+	afterRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	after := testutil.Must(t, afterRt, errRt, "load node runtime")
 	if after.RemainingUOPCached != 92 {
 		t.Errorf("post-tick RemainingUOPCached = %d, want 92 (95-3) — cache must continue decrementing through the staging window; pre-fix freeze at 95",
 			after.RemainingUOPCached)
@@ -290,7 +295,8 @@ func TestRegression_AbortedEvacPickupClearsActiveBinByIdentity(t *testing.T) {
 	}
 	_ = db.UpdateOrderBinID(evacID, &bid)
 
-	pre, _ := db.GetProcessNodeRuntime(nodeID)
+	preRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	pre := testutil.Must(t, preRt, errRt, "load node runtime")
 	if pre.ActiveBinID == nil || *pre.ActiveBinID != oldBinID {
 		t.Fatalf("pre: ActiveBinID = %v, want %d", pre.ActiveBinID, oldBinID)
 	}
@@ -308,21 +314,29 @@ func TestRegression_AbortedEvacPickupClearsActiveBinByIdentity(t *testing.T) {
 
 	// Fix: active_bin_id cleared because the bin that left IS the active bin,
 	// even though ActiveOrderID didn't match (it was nil).
-	post, _ := db.GetProcessNodeRuntime(nodeID)
+	postRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	post := testutil.Must(t, postRt, errRt, "load node runtime")
 	if post.ActiveBinID != nil {
 		t.Errorf("post-pickup ActiveBinID = %v, want nil (departed bin must unbind by identity through an abort)",
 			post.ActiveBinID)
 	}
 
 	// Symptom guard: a PLC tick now must be HELD, not charged to the departed
-	// bin — RemainingUOPCached stays at 60. Pre-fix it would have drained.
+	// bin. The pickup zeroed the count with the departure (it was the departed
+	// bin's), so the held tick lands in pending and the cached count stays 0.
+	// Pre-fix the count would have drained from 60 against a bin that was gone.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
 		ProcessID: processID, StyleID: styleID, Delta: 5,
 	}})
-	after, _ := db.GetProcessNodeRuntime(nodeID)
-	if after.RemainingUOPCached != 60 {
-		t.Errorf("post-tick RemainingUOPCached = %d, want 60 (ticks held while no bin bound; pre-fix would charge the departed bin)",
+	afterRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	after := testutil.Must(t, afterRt, errRt, "load node runtime")
+	if after.RemainingUOPCached != 0 {
+		t.Errorf("post-tick RemainingUOPCached = %d, want 0 (pickup zeroed the departed bin's count; the tick is held in pending, not charged)",
 			after.RemainingUOPCached)
+	}
+	if after.PendingUOPDelta != 5 {
+		t.Errorf("post-tick PendingUOPDelta = %d, want 5 (held for the next bin to replay)",
+			after.PendingUOPDelta)
 	}
 }
 
@@ -352,14 +366,16 @@ func TestRegression_BinPickedUpAtRemoteLocationIsIgnored(t *testing.T) {
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
-	supplyOrder, _ := db.GetOrder(orderA)
+	supplyOrder, errOrder := db.GetOrder(orderA)
+	supplyOrder = testutil.Must(t, supplyOrder, errOrder, "load supply order")
 
 	// Hit every remote pickup location a supply leg can fire from:
 	// the source supermarket and the inbound staging buffer. None
 	// should touch runtime.
 	for _, location := range []string{"TR-SOURCE", "TR-STAGING"} {
 		eng.HandleBinPickedUp(supplyOrder.UUID, 1, location)
-		rt, _ := db.GetProcessNodeRuntime(nodeID)
+		rtRt, errRt := db.GetProcessNodeRuntime(nodeID)
+		rt := testutil.Must(t, rtRt, errRt, "load node runtime")
 		if rt.ActiveBinID == nil || *rt.ActiveBinID != oldBinID {
 			t.Errorf("location=%q: ActiveBinID = %v, want %d (remote pickup must not touch runtime)",
 				location, rt.ActiveBinID, oldBinID)
@@ -413,7 +429,8 @@ func TestRegression_BinPickedUpEmptyLocationFailsClosed(t *testing.T) {
 	eng.HandleBinPickedUp(orderUUID, binID, "")
 
 	// Runtime must be untouched — active state stays pinned.
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	rtRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	rt := testutil.Must(t, rtRt, errRt, "load node runtime")
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != binID {
 		t.Errorf("ActiveBinID = %v, want %d (empty-Location must not clear active state)", rt.ActiveBinID, binID)
 	}
@@ -468,7 +485,8 @@ func TestRegression_BinPickedUpWhitespaceLocationMatches(t *testing.T) {
 	// The at-slot side effect is the BIN pointer, not the order pointer: the bin
 	// physically left, and ticks must stop charging it. ActiveOrderID stays set
 	// — it is the cell-busy pointer, and it is orderWorksTheCell's to release.
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	rtRt, errRt := db.GetProcessNodeRuntime(nodeID)
+	rt := testutil.Must(t, rtRt, errRt, "load node runtime")
 	if rt.ActiveBinID != nil {
 		t.Errorf("ActiveBinID = %v, want nil (the bin left the slot; the at-slot path must clear it)", rt.ActiveBinID)
 	}
