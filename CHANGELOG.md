@@ -3,6 +3,62 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-06 — One clock everywhere, carrier identity, the CMS ledger, departed legs
+
+- Both binaries render one plant-local clock through `shared/planttime`, at first paint
+- Every surface converted: templates, Go views, 15 `toLocale` sites, three duplicate `formatTime` copies deleted
+- The plant timezone is seeded by both installers, editable on /system-config, reported on /edges
+- An unconfigured zone renders as a warn badge rather than a plausible wrong time
+- The rendered clock is pinned Go against JS, byte for byte
+- The server owns `now` — elapsed stopped differencing a browser clock against a server stamp
+- `ui-style-guide.md` gains the Timestamps section and its anti-patterns
+- A carrier reports what was delivered, stamped at delivery and cleared at pickup, not what the claim asked for
+- "Known to be empty" and "nobody has said" stop reading as the same zero — the ALN_007 suppression
+- A node with nothing established reports nothing rather than a guess
+- Three more sites that invented a count for a carrier nobody had counted
+- The cached count leaves with the carrier at pickup
+- The cell level check moves off the PLC tick onto the sweep
+- `below_reorder_since` was written in a layout its own reader could not parse
+- A bin crossing a storeroom boundary reaches the CMS ledger, end to end
+- The boundary is a node property, not inferred from parentage — `_TRANSIT` and every robot node had counted as one
+- The transaction count is derived at emission, not read from a stored quantity nothing rewrote
+- A replayed completion does not re-book the move; a failed boundary lookup is not "no boundary"
+- `payload_manifest.quantity` renamed to `parts_per_cycle` (v99), measured at both plants first
+- A part carries both of its names — the number CMS books and the cat id the PLC declares
+- The wire binds the manifest line's part, so a kit and a single-part bin need no branch
+- Two blockers and nine bugs from five CMS review rounds
+- A CMS health surface that says why the poster is not green, with the number behind it
+- The + Part button stopped writing `[object HTMLButtonElement]` into the part number
+- A leg departs the cell at its last cell step, derived from the steps and never from `claim.SwapMode`
+- A leg that placed cannot depart until the placement is recorded
+- Confirm belongs to the leg that placed on the press, not to a position literal
+- An auto-confirm leg never arms CONFIRM, departed or not
+- A pickup takes the bin that is at the node, not the order's `bin_id`
+- A pinned home refuses a carrier that is not its own — SMN_029 held one for 11h24m
+- The evac leg goes where the carrier belongs, not where the request does
+- A consume A/B refill asks for the incoming payload, not the one it just stopped
+- EDGE 2, a second edge paced slowly enough to watch a changeover window
+- Both rigs carry EDGE 1 / EDGE 2 in their station identifiers
+- The sim speed ceiling is 5x, measured in orders finished per wall minute — 10x runs at less than half of 2x
+- A hold that cannot resolve stops looking like a queue
+- The position-hold answer is typed; a nobody-owned blocker is data, not prose
+- The machine-ready predicate gets one spelling, in the engine
+- A release goroutine no longer outlives the engine it holds
+- simcalc drops three rules the plant and the dispatcher had both moved on from
+- simcalc: an N-input consumer has N ways to stop, its single-input producer one
+- simcalc: the carrier check reads the downtime the edge config already declares
+- soakstat: an exhausted carrier type is a deadlock nothing else notices
+- plantspec: an A/B pair needs at least two containers, and the seed says so
+- Both tiers run `--log-debug`, and the debug file gets rotation
+- Both installers ship the journald retention drop-in
+- Edit-triggered backups skip cleanly when storage is unconfigured
+- The changeover picker scrolls — a picker must fit the screen it opens on
+- The orders-board rendering tests do not race the fulfillment scanner
+- Test-database clones are bounded against one postgres
+- 114 discarded lookup errors converted in the docker suites; the rest held by a count ratchet
+- The append-mode probe asserts on the line's tail, not its head
+- Docs-truth pass over the round-14 range — ten of eleven docs carried a flat falsehood
+
 ## 2026-08-31 — Wait causes and their releasers, the lane gate's group model, and a fixture that had been lying
 
 **Every wait names its own releaser.** The through-line of this range: an order
