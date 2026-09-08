@@ -14,6 +14,8 @@ package counters
 
 import (
 	"database/sql"
+	"fmt"
+	"time"
 
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
@@ -154,28 +156,51 @@ func DismissAnomaly(db *sql.DB, id int64) error {
 
 // --- hourly counts ---
 
-// UpsertHourly adds delta to the existing count for the given
-// process/style/date/hour, or inserts a new row if none exists.
-func UpsertHourly(db *sql.DB, processID, styleID int64, countDate string, hour int, delta int64) error {
+// HourBucket is the single definition of which bucket an instant belongs to:
+// the start of its UTC hour, in unix seconds. Writer and reader both go
+// through this, so they cannot disagree about a boundary.
+func HourBucket(t time.Time) int64 {
+	return t.UTC().Truncate(time.Hour).Unix()
+}
+
+// DayBounds renders a plant-local calendar day as the half-open UTC range
+// [from, to) that covers it.
+//
+// THIS IS WHERE THE PLANT ZONE ENTERS, and the only place it does on the read
+// path. time.Date resolves the local midnights, so a DST day is 23 or 25 hours
+// wide and the range is still exactly that day — which is the property local
+// bucketing could not hold: it had no way to represent a 25-hour day, so the
+// repeated hour collided on the unique key and summed.
+func DayBounds(countDate string, loc *time.Location) (int64, int64, error) {
+	d, err := time.ParseInLocation(DateLayout, countDate, loc)
+	if err != nil {
+		return 0, 0, fmt.Errorf("day bounds %q: %w", countDate, err)
+	}
+	return d.UTC().Unix(), d.AddDate(0, 0, 1).UTC().Unix(), nil
+}
+
+// UpsertHourly adds delta to the UTC hour bucket, or inserts it if new.
+func UpsertHourly(db *sql.DB, processID, styleID, bucketStart, delta int64) error {
 	_, err := db.Exec(
-		`INSERT INTO hourly_counts (process_id, style_id, count_date, hour, delta)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(process_id, style_id, count_date, hour)
+		`INSERT INTO hourly_counts (process_id, style_id, bucket_start, delta)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(process_id, style_id, bucket_start)
 		 DO UPDATE SET delta = delta + excluded.delta, updated_at = datetime('now')`,
-		processID, styleID, countDate, hour, delta,
+		processID, styleID, bucketStart, delta,
 	)
 	return err
 }
 
-// ListHourly returns all hourly count rows for a given
-// process/style/date.
-func ListHourly(db *sql.DB, processID, styleID int64, countDate string) ([]HourlyCount, error) {
+// ListHourly returns the hourly rows for one process/style whose buckets fall
+// in the half-open UTC range [from, to).
+func ListHourly(db *sql.DB, processID, styleID, from, to int64) ([]HourlyCount, error) {
 	rows, err := db.Query(
-		`SELECT id, process_id, style_id, count_date, hour, delta
+		`SELECT id, process_id, style_id, bucket_start, delta
 		 FROM hourly_counts
-		 WHERE process_id = ? AND style_id = ? AND count_date = ?
-		 ORDER BY hour`,
-		processID, styleID, countDate,
+		 WHERE process_id = ? AND style_id = ?
+		   AND bucket_start >= ? AND bucket_start < ?
+		 ORDER BY bucket_start`,
+		processID, styleID, from, to,
 	)
 	if err != nil {
 		return nil, err
@@ -185,7 +210,7 @@ func ListHourly(db *sql.DB, processID, styleID int64, countDate string) ([]Hourl
 	var counts []HourlyCount
 	for rows.Next() {
 		var c HourlyCount
-		if err := rows.Scan(&c.ID, &c.ProcessID, &c.StyleID, &c.CountDate, &c.Hour, &c.Delta); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProcessID, &c.StyleID, &c.BucketStart, &c.Delta); err != nil {
 			return nil, err
 		}
 		counts = append(counts, c)
@@ -193,28 +218,29 @@ func ListHourly(db *sql.DB, processID, styleID int64, countDate string) ([]Hourl
 	return counts, rows.Err()
 }
 
-// HourlyTotals returns per-hour totals for a process/date, summed
-// across all styles.
-func HourlyTotals(db *sql.DB, processID int64, countDate string) (map[int]int64, error) {
+// HourlyTotals returns per-bucket totals for a process over the half-open UTC
+// range [from, to), summed across styles and keyed by bucket_start. Callers
+// that want plant-local hours map the keys through the plant zone — see
+// service.CounterService.HourlyTotals.
+func HourlyTotals(db *sql.DB, processID, from, to int64) (map[int64]int64, error) {
 	rows, err := db.Query(
-		`SELECT hour, SUM(delta) FROM hourly_counts
-		 WHERE process_id = ? AND count_date = ?
-		 GROUP BY hour ORDER BY hour`,
-		processID, countDate,
+		`SELECT bucket_start, SUM(delta) FROM hourly_counts
+		 WHERE process_id = ? AND bucket_start >= ? AND bucket_start < ?
+		 GROUP BY bucket_start ORDER BY bucket_start`,
+		processID, from, to,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	totals := make(map[int]int64)
+	totals := make(map[int64]int64)
 	for rows.Next() {
-		var hour int
-		var sum int64
-		if err := rows.Scan(&hour, &sum); err != nil {
+		var bucket, sum int64
+		if err := rows.Scan(&bucket, &sum); err != nil {
 			return nil, err
 		}
-		totals[hour] = sum
+		totals[bucket] = sum
 	}
 	return totals, rows.Err()
 }

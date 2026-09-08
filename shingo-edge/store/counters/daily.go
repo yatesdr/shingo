@@ -1,18 +1,36 @@
 package counters
 
-// daily.go — the permanent end of the counting ladder, and the 90-day
-// retention on the rung above it.
+// daily.go — the plant-local end of the counting ladder.
 //
 //	counter_snapshots  raw, one row per poll   14 days   retention.go
-//	hourly_counts      per process/style/hour  90 days   this file
-//	daily_counts       per process/style/day   permanent this file
+//	hourly_counts      per process/style/hour  permanent counters.go (UTC)
+//	daily_counts       per process/style/day   permanent this file (plant-local)
 //
-// THE ROLLUP AND THE HOURLY PURGE LIVE IN ONE FILE ON PURPOSE. The purge's
-// predicate is defined by the rollup — it deletes an hour only when the day it
-// belongs to has already been summarised — and that coupling is the entire
-// safety argument. Split across two files it is a convention, and the first
-// edit that changes one without the other silently turns "aggregate, then
-// delete" into "delete".
+// THE HOURLY PURGE IS GONE, and with it PurgeRolledUpHourly, HourlyRetention
+// and CutoffDate. It was a deliberate, measured design — hour detail is a
+// shift-shaped read, the day total is what survives the question — so the
+// reversal owes a reason.
+//
+// The reason is that keeping the hours is what makes daily_counts honest.
+// count_date is plant-local and cannot be anything else and still mean "the
+// plant's day", so it is the one place a timezone still enters stored data.
+// While the hours underneath survive, that is a cache: change the plant zone,
+// re-run the roll-up, and the days are right. Purge the hours and it becomes
+// the record — frozen in whatever zone the box believed at the time, which at
+// Hopkinsville was the wrong one for three months.
+//
+// The cost is rows, and it was checked rather than assumed. A row appears only
+// for an hour that actually produced: Hopkinsville carries 350 rows for three
+// months, Springfield 2,907 over 70 dates (~41.5 a date). The 90-day window
+// deleted 78 rows on the day it was measured — 1.14% of a restored database.
+// Nobody ran that pass for the bytes, and nobody needs to now. If a
+// forty-counter plant ever makes the growth real, retention comes back as a
+// plain `DELETE WHERE bucket_start < ?` — with no zone in it at all, which is
+// what made the old purge's EXISTS guard necessary in the first place.
+//
+// It also retires a documented regression: `?date=` on the production page is
+// free text, so an engineer could ask for a date past the window and get an
+// empty chart where the day total still existed. That trade is no longer made.
 
 import (
 	"database/sql"
@@ -27,139 +45,87 @@ import (
 // ReportingPoint pattern at the top of counters.go.
 type DailyCount = domain.DailyCount
 
-// DateLayout is the shape of hourly_counts.count_date and
-// daily_counts.count_date.
+// DateLayout is the shape of daily_counts.count_date.
 //
-// IT IS A PLANT-LOCAL DATE, NOT A UTC ONE. engine.HourlyTracker.HandleDelta
-// formats it from time.Now().In(ht.loc), where loc comes from cfg.Timezone
-// (engine.go, NewHourlyTracker). So every cutoff computed against these
-// columns has to be rendered in the SAME location, which is why the functions
-// below take a *time.Location instead of reaching for time.Now().UTC(). At
-// Springfield (UTC-5) a UTC-derived cutoff is one calendar day too aggressive
-// for five hours out of every twenty-four — small, invisible, and free to
-// avoid.
+// IT IS A PLANT-LOCAL DATE, and it is now the ONLY plant-local thing stored
+// anywhere in the counting ladder. hourly_counts moved to UTC bucket_start in
+// 2026-09; a day, unlike an hour, cannot be stored zone-free and still mean
+// "the plant's day", so this is where the zone necessarily lands. It stays
+// honest because the hours underneath it are kept forever: a daily row is a
+// CACHE of a plant-local grouping over UTC hours, and re-deriving it after a
+// zone change is a rebuild, not a loss.
 const DateLayout = "2006-01-02"
 
-// HourlyRetention is how long the Edge keeps per-hour detail.
+// RollUpDaily recomputes daily_counts from the UTC hour buckets, grouping them
+// into PLANT-LOCAL calendar days, and reports how many daily rows were written.
 //
-// NINETY DAYS BECAUSE THE DAY'S TOTAL IS ALREADY SOMEWHERE ELSE, not because
-// of size. Measured on the restored Springfield database of 2026-07-27
-// (edge-golden.db, md5 22fd294c2aa0b62d278c636e774f6a4a for its edge.sql):
-// hourly_counts is 2,907 rows over 70 distinct dates, 143,360 B of table plus
-// 86,016 B of unique index. That is 229,376 B — 1.14% of the restored file's
-// 20,164,608 B, or 0.7% of the 31.60 MB the LIVE Pi carries, the difference
-// being the 11.33 MB of freelist a restore does not reproduce. Both denominators
-// are stated because quoting one against the other is how a size argument
-// quietly becomes wrong. A 90-day window deletes 78 of those rows today. Nobody
-// would run this pass for the bytes.
+// THE GROUPING IS DONE IN GO, NOT SQL, because SQLite has no IANA timezone
+// support — it can shift by a fixed offset and nothing more, which is exactly
+// wrong across a DST boundary. Reading the table costs nothing at the measured
+// rate (Hopkinsville: 350 rows for three months; Springfield: 2,907 rows over
+// 70 dates), and correctness across the two days a year that matter is not
+// worth trading for a GROUP BY.
 //
-// The reason to run it is that hourly detail is a shift-shaped read and the
-// day total is the one that survives the question. www/handlers_production.go
-// takes ONE date at a time and renders it as an hour-by-hour chart against the
-// shift boundaries; daily_counts holds the same production in 11.7x fewer rows
-// — 248 against 2,907 on identical data, measured.
+// IT RECOMPUTES RATHER THAN ACCUMULATES. Every pass re-derives each day total
+// from the hours still present, so a delta that lands late — a confirmed
+// anomaly released hours after the fact, a bucket backfilled by a catch-up
+// poll — is picked up without anyone tracking a high-water mark.
 //
-// STATE THE COST PLAINLY: ?date= on the production page is free text, so an
-// engineer CAN ask for a date older than this window, and after this deploys
-// that chart comes back empty where today it comes back populated. The day's
-// total is still there, via ListDaily and GET /api/daily-counts. That is the
-// trade, and it is the trade the ladder is: hour-level resolution for a
-// quarter, day-level for good.
+// THERE IS NO frozenBefore GUARD ANY MORE, because the thing it guarded against
+// is gone. It existed so that an hourly row appearing for an ALREADY-PURGED
+// date could not make the next pass recompute that day from one stray row and
+// overwrite years-old truth. Nothing is purged now, so a recompute always sees
+// the whole day and can only reproduce it.
 //
-// The window matters more later than now. counters.SnapshotRetention's comment
-// works the cell expansion out for raw snapshots; the same six-to-forty counter
-// expansion takes hourly_counts from the 94.3 rows per producing day measured
-// across July (1,132 rows over 12 dates) to roughly 630, and 90 days is what
-// keeps that flat instead of accumulating for the life of the box.
-//
-// It also closes a specific FK repair: RUNBOOK-0.5's ordered data plan leaves
-// exactly one dangling row behind, hourly_counts id 144030 (style 32,
-// count_date 2026-06-25), and this window is what removes it — on 2026-09-23,
-// ninety days after that date, NOT on the deploy. Anyone timing the
-// foreign_keys(1) flip off "retention removes it on its own" needs the date,
-// not just the mechanism.
-const HourlyRetention = 90 * 24 * time.Hour
-
-// CutoffDate renders the retention boundary as a plant-local YYYY-MM-DD
-// string. Rows strictly BEFORE this date are eligible to be purged, so the
-// window keeps the last olderThan of calendar dates plus today.
-func CutoffDate(now time.Time, loc *time.Location, olderThan time.Duration) string {
+// Days written before the 2026-09 UTC migration are not visited at all: their
+// hours live in hourly_counts_local_legacy, which nothing reads. Those daily
+// rows therefore survive untouched, which is what preserves the pre-migration
+// history the migration deliberately declined to reinterpret.
+func RollUpDaily(db *sql.DB, loc *time.Location) (int64, error) {
 	if loc == nil {
-		loc = time.Local
+		loc = time.UTC
 	}
-	return now.In(loc).Add(-olderThan).Format(DateLayout)
-}
-
-// RollUpDaily recomputes daily_counts from hourly_counts and reports how many
-// daily rows were inserted or updated.
-//
-// IT RECOMPUTES RATHER THAN ACCUMULATES. Every pass re-derives the day total
-// from the hours that are still there, so a delta that lands late — a
-// confirmed anomaly released hours after the fact, an hour bucket backfilled
-// by a catch-up poll — is picked up without anyone tracking a high-water mark.
-// Verified against the restored Springfield database: 2,907 hourly rows roll
-// into 248 daily rows and the grand total is 264,024 both before and after.
-//
-// A DAY GOES QUIET ON ITS OWN. Once PurgeRolledUpHourly has taken a date's
-// hours, that date is no longer in the SELECT, so its daily row is simply not
-// visited again — no delete, no revision, no bookkeeping.
-//
-// frozenBefore IS THE GUARD ON THE WORD "PERMANENT". The DO UPDATE carries a
-// WHERE, so a daily row for a date older than the retention cutoff can never
-// be rewritten. Without it there is a silent corruption path: an hourly row
-// appearing for an already-purged date — which on a Pi means a backwards clock
-// step, since these boxes have no battery-backed RTC and take their time from
-// NTP after boot — would make the next pass recompute that day's total from
-// the one stray row and overwrite years-old truth with it. The INSERT path is
-// deliberately NOT guarded, so a date older than the cutoff that has never
-// been summarised is still captured the first time this runs; that is the
-// normal case on the first pass at an existing plant, where Springfield's
-// hourly detail reaches back 96 days.
-func RollUpDaily(db *sql.DB, frozenBefore string) (int64, error) {
-	res, err := db.Exec(`INSERT INTO daily_counts (process_id, style_id, count_date, total)
-		SELECT process_id, style_id, count_date, SUM(delta)
-		  FROM hourly_counts
-		 GROUP BY process_id, style_id, count_date
-		ON CONFLICT(process_id, style_id, count_date) DO UPDATE SET
-		       total      = excluded.total,
-		       updated_at = datetime('now')
-		 WHERE daily_counts.count_date >= ?`, frozenBefore)
+	rows, err := db.Query(`SELECT process_id, style_id, bucket_start, delta FROM hourly_counts`)
 	if err != nil {
-		return 0, fmt.Errorf("roll up daily counts: %w", err)
+		return 0, fmt.Errorf("roll up daily counts: read hourly: %w", err)
 	}
-	return res.RowsAffected()
-}
+	defer rows.Close()
 
-// PurgeRolledUpHourly deletes hourly_counts rows older than the cutoff date,
-// but ONLY where daily_counts already holds that day's total. Returns the
-// number deleted.
-//
-// The EXISTS clause is what makes the 90-day window safe rather than merely
-// scheduled. Call order stops mattering, a rollup that failed this pass leaves
-// nothing to delete, and a future refactor that moves the two calls apart
-// cannot turn this into a plain DELETE. The failure direction is retention,
-// never loss: if the rollup is broken, hourly detail accumulates and the log
-// line in cmd/shingoedge/main.go says the rollup errored.
-//
-// NO COALESCE HERE, AND THAT IS CHECKED RATHER THAN ASSUMED. The sibling purge
-// in retention.go needed one because `NOT (anomaly = 'jump' AND ...)` is
-// three-valued over a nullable column and retained anomaly-NULL rows forever,
-// invisibly. Every column this predicate touches is NOT NULL in the stored
-// schema — verified on the Springfield database's own CREATE TABLE text, where
-// hourly_counts declares process_id, style_id and count_date all NOT NULL —
-// and EXISTS yields 0 or 1, never NULL. So the predicate is two-valued
-// already. TestPurgeRolledUpHourly_NullSafe pins that rather than trusting it.
-func PurgeRolledUpHourly(db *sql.DB, cutoffDate string) (int64, error) {
-	res, err := db.Exec(`DELETE FROM hourly_counts
-		WHERE count_date < ?
-		  AND EXISTS (SELECT 1 FROM daily_counts d
-		               WHERE d.process_id = hourly_counts.process_id
-		                 AND d.style_id   = hourly_counts.style_id
-		                 AND d.count_date = hourly_counts.count_date)`, cutoffDate)
-	if err != nil {
-		return 0, fmt.Errorf("purge rolled-up hourly counts: %w", err)
+	type key struct {
+		process, style int64
+		date           string
 	}
-	return res.RowsAffected()
+	totals := make(map[key]int64)
+	for rows.Next() {
+		var processID, styleID, bucket, delta int64
+		if err := rows.Scan(&processID, &styleID, &bucket, &delta); err != nil {
+			return 0, fmt.Errorf("roll up daily counts: scan: %w", err)
+		}
+		date := time.Unix(bucket, 0).In(loc).Format(DateLayout)
+		totals[key{processID, styleID, date}] += delta
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("roll up daily counts: iterate: %w", err)
+	}
+
+	var written int64
+	for k, total := range totals {
+		res, err := db.Exec(`INSERT INTO daily_counts (process_id, style_id, count_date, total)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(process_id, style_id, count_date) DO UPDATE SET
+			       total      = excluded.total,
+			       updated_at = datetime('now')`,
+			k.process, k.style, k.date, total)
+		if err != nil {
+			return written, fmt.Errorf("roll up daily counts: upsert %s: %w", k.date, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return written, fmt.Errorf("roll up daily counts: rows affected: %w", err)
+		}
+		written += n
+	}
+	return written, nil
 }
 
 // ListDaily returns daily totals for one process over an inclusive date range,

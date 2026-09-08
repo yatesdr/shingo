@@ -7,24 +7,27 @@ import (
 	"shingoedge/store/counters"
 )
 
-// seedHourly writes one hourly_counts row directly. UpsertHourlyCount buckets
-// on time.Now(), which is no use for testing a 90-day cutoff.
-func seedHourly(t *testing.T, db *DB, processID, styleID int64, countDate string, hour int, delta int64) {
+// mustBucket turns an RFC3339 UTC instant into the hour bucket it belongs to.
+// Seeding through this rather than through UpsertHourlyCount is deliberate:
+// the writer buckets on time.Now(), which is no use for pinning a day boundary
+// or a DST transition.
+func mustBucket(t *testing.T, rfc3339 string) int64 {
 	t.Helper()
-	if _, err := db.Exec(
-		`INSERT INTO hourly_counts (process_id, style_id, count_date, hour, delta)
-		 VALUES (?, ?, ?, ?, ?)`, processID, styleID, countDate, hour, delta); err != nil {
-		t.Fatalf("seed hourly %s h%d: %v", countDate, hour, err)
+	ts, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rfc3339, err)
 	}
+	return counters.HourBucket(ts)
 }
 
-func hourlyRowCount(t *testing.T, db *DB) int {
+// seedHourly writes one hourly_counts row directly, at a chosen UTC bucket.
+func seedHourly(t *testing.T, db *DB, processID, styleID, bucket, delta int64) {
 	t.Helper()
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM hourly_counts`).Scan(&n); err != nil {
-		t.Fatalf("count hourly: %v", err)
+	if _, err := db.Exec(
+		`INSERT INTO hourly_counts (process_id, style_id, bucket_start, delta)
+		 VALUES (?, ?, ?, ?)`, processID, styleID, bucket, delta); err != nil {
+		t.Fatalf("seed hourly bucket %d: %v", bucket, err)
 	}
-	return n
 }
 
 // dailyTotal returns the stored total for one (process, style, date), and
@@ -41,15 +44,18 @@ func dailyTotal(t *testing.T, db *DB, processID, styleID int64, countDate string
 	return total, true
 }
 
+func chicago(t *testing.T) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skipf("no tzdata for America/Chicago: %v", err)
+	}
+	return loc
+}
+
 // TestRollUpDaily_SumsHoursAndStaysIdempotent is the rollup contract: a day's
 // hours become one row carrying their sum, re-running changes nothing, and a
 // late hour is picked up because the total is RECOMPUTED rather than added to.
-//
-// Verified red three ways:
-//   - SUM(delta) -> COUNT(delta): "2026-05-04 total = 3, want 30".
-//   - dropping the GROUP BY style_id: "styles were merged into one row".
-//   - DO UPDATE SET total = excluded.total -> total = daily_counts.total (the
-//     accumulate spelling): "after the late hour total = 30, want 37".
 func TestRollUpDaily_SumsHoursAndStaysIdempotent(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
@@ -60,14 +66,12 @@ func TestRollUpDaily_SumsHoursAndStaysIdempotent(t *testing.T) {
 	}
 
 	const day = "2026-05-04"
-	seedHourly(t, db, pid, sidA, day, 6, 10)
-	seedHourly(t, db, pid, sidA, day, 7, 20)
-	seedHourly(t, db, pid, sidB, day, 7, 5)
-	seedHourly(t, db, pid, sidA, "2026-05-05", 6, 99)
+	seedHourly(t, db, pid, sidA, mustBucket(t, "2026-05-04T06:00:00Z"), 10)
+	seedHourly(t, db, pid, sidA, mustBucket(t, "2026-05-04T07:00:00Z"), 20)
+	seedHourly(t, db, pid, sidB, mustBucket(t, "2026-05-04T07:00:00Z"), 5)
+	seedHourly(t, db, pid, sidA, mustBucket(t, "2026-05-05T06:00:00Z"), 99)
 
-	// frozenBefore well in the past: nothing is frozen for this test.
-	const openWindow = "2000-01-01"
-	if _, err := counters.RollUpDaily(db.DB, openWindow); err != nil {
+	if _, err := counters.RollUpDaily(db.DB, time.UTC); err != nil {
 		t.Fatalf("roll up: %v", err)
 	}
 
@@ -82,7 +86,7 @@ func TestRollUpDaily_SumsHoursAndStaysIdempotent(t *testing.T) {
 	}
 
 	// Idempotent: a second pass over unchanged detail leaves the same numbers.
-	if _, err := counters.RollUpDaily(db.DB, openWindow); err != nil {
+	if _, err := counters.RollUpDaily(db.DB, time.UTC); err != nil {
 		t.Fatalf("second roll up: %v", err)
 	}
 	if got, _ := dailyTotal(t, db, pid, sidA, day); got != 30 {
@@ -90,8 +94,8 @@ func TestRollUpDaily_SumsHoursAndStaysIdempotent(t *testing.T) {
 	}
 
 	// A late hour lands. Recomputation must pick it up.
-	seedHourly(t, db, pid, sidA, day, 8, 7)
-	if _, err := counters.RollUpDaily(db.DB, openWindow); err != nil {
+	seedHourly(t, db, pid, sidA, mustBucket(t, "2026-05-04T08:00:00Z"), 7)
+	if _, err := counters.RollUpDaily(db.DB, time.UTC); err != nil {
 		t.Fatalf("third roll up: %v", err)
 	}
 	if got, _ := dailyTotal(t, db, pid, sidA, day); got != 37 {
@@ -99,166 +103,142 @@ func TestRollUpDaily_SumsHoursAndStaysIdempotent(t *testing.T) {
 	}
 }
 
-// TestRollUpDaily_FreezesDatesPastTheCutoff pins the guard on the word
-// "permanent": once a date is older than the retention cutoff its daily total
-// can no longer be rewritten, so an hourly row appearing for an already-purged
-// day — a backwards clock step on a Pi with no RTC — cannot overwrite years-old
-// truth with a fragment.
+// TestRollUpDaily_GroupsIntoPlantLocalDays pins the whole point of storing UTC:
+// the day a bucket belongs to is decided on the way OUT, in the plant's zone,
+// not on the way in.
 //
-// The INSERT half is asserted in the same test on purpose: freezing must not
-// stop a never-summarised old date being captured, which is the normal case on
-// the FIRST pass at an existing plant (Springfield's hourly detail reaches back
-// 96 days).
-//
-// Verified red: removing `WHERE daily_counts.count_date >= ?` from the DO
-// UPDATE fails with "the stray hour rewrote a frozen day: total = 3, want 500".
-func TestRollUpDaily_FreezesDatesPastTheCutoff(t *testing.T) {
+// 04:00Z on the 4th is 23:00 CDT on the 3rd. The last hour of the plant's day
+// therefore has to land on the 3rd, which is exactly the hour Hopkinsville was
+// getting wrong for three months — its buckets were stamped in an Eastern zone,
+// so that production was booked to the following date.
+func TestRollUpDaily_GroupsIntoPlantLocalDays(t *testing.T) {
 	t.Parallel()
+	loc := chicago(t)
 	db := coverageDB(t)
 	pid, sid := seedProcessStyle(t, db, "P", "S")
 
-	const oldDay = "2026-01-01"
-	const cutoff = "2026-04-01"
+	seedHourly(t, db, pid, sid, mustBucket(t, "2026-05-04T04:00:00Z"), 11) // 23:00 CDT on the 3rd
+	seedHourly(t, db, pid, sid, mustBucket(t, "2026-05-04T05:00:00Z"), 22) // 00:00 CDT on the 4th
 
-	// A never-summarised date older than the cutoff is still captured: this is
-	// the INSERT path, which is deliberately not frozen.
-	seedHourly(t, db, pid, sid, oldDay, 6, 500)
-	if _, err := counters.RollUpDaily(db.DB, cutoff); err != nil {
-		t.Fatalf("first roll up: %v", err)
-	}
-	if got, ok := dailyTotal(t, db, pid, sid, oldDay); !ok || got != 500 {
-		t.Fatalf("first pass did not capture a pre-cutoff date: total = %d, present = %v, want 500", got, ok)
+	if _, err := counters.RollUpDaily(db.DB, loc); err != nil {
+		t.Fatalf("roll up: %v", err)
 	}
 
-	// The detail ages out, and then a stray hour appears for that same day.
-	if _, err := counters.PurgeRolledUpHourly(db.DB, cutoff); err != nil {
-		t.Fatalf("purge: %v", err)
+	if got, ok := dailyTotal(t, db, pid, sid, "2026-05-03"); !ok || got != 11 {
+		t.Errorf("2026-05-03 total = %d (present=%v), want 11 — the plant's last hour "+
+			"was booked to the wrong calendar day", got, ok)
 	}
-	if n := hourlyRowCount(t, db); n != 0 {
-		t.Fatalf("purge left %d hourly rows, want 0", n)
+	if got, ok := dailyTotal(t, db, pid, sid, "2026-05-04"); !ok || got != 22 {
+		t.Errorf("2026-05-04 total = %d (present=%v), want 22", got, ok)
 	}
-	seedHourly(t, db, pid, sid, oldDay, 9, 3)
 
-	if _, err := counters.RollUpDaily(db.DB, cutoff); err != nil {
-		t.Fatalf("second roll up: %v", err)
+	// Stated so the difference is visible rather than asserted in the abstract:
+	// rolled up in UTC, both hours fall on the 4th.
+	if _, err := counters.RollUpDaily(db.DB, time.UTC); err != nil {
+		t.Fatalf("roll up in UTC: %v", err)
 	}
-	if got, _ := dailyTotal(t, db, pid, sid, oldDay); got != 500 {
-		t.Errorf("the stray hour rewrote a frozen day: total = %d, want 500", got)
+	if got, _ := dailyTotal(t, db, pid, sid, "2026-05-04"); got != 33 {
+		t.Errorf("UTC grouping put %d on 2026-05-04, want 33 — the two zones must disagree here, "+
+			"or this test is not testing anything", got)
 	}
 }
 
-// TestPurgeRolledUpHourly_OnlyDeletesWhatWasSummarised is the safety property
-// the whole 90-day window rests on. An old hour whose day is in daily_counts
-// goes; an old hour whose day is NOT goes nowhere, however old it is; a recent
-// hour stays regardless.
+// TestRollUpDaily_DSTFallBackKeepsBothRepeatedHours is the bug the old schema
+// could not even express.
 //
-// The un-summarised arm is the one that matters: it is what makes a failed
-// rollup fail towards retaining data rather than towards losing it, and it is
-// what stops a later refactor that separates the two calls from turning this
-// into a plain DELETE.
-//
-// Verified red: dropping the EXISTS clause fails with "an hour with no daily
-// row was deleted — a failed rollup would now lose data" and "purged 2 rows,
-// want 1".
-func TestPurgeRolledUpHourly_OnlyDeletesWhatWasSummarised(t *testing.T) {
+// On 2026-11-01 America/Chicago repeats 01:00: 06:00Z is 01:00 CDT and 07:00Z
+// is 01:00 CST. Under the old plant-local key both writes carried
+// (count_date=2026-11-01, hour=1), collided on the UNIQUE constraint, and the
+// upsert SUMMED two different real hours into one row — indistinguishable, once
+// stored, from a single busy hour. Bucketed in UTC they stay two rows, and the
+// day is 25 hours wide with both of them in it.
+func TestRollUpDaily_DSTFallBackKeepsBothRepeatedHours(t *testing.T) {
 	t.Parallel()
+	loc := chicago(t)
 	db := coverageDB(t)
 	pid, sid := seedProcessStyle(t, db, "P", "S")
 
-	const cutoff = "2026-04-01"
-	seedHourly(t, db, pid, sid, "2026-01-01", 6, 11) // old, will be summarised
-	seedHourly(t, db, pid, sid, "2026-02-02", 6, 22) // old, will NOT be
-	seedHourly(t, db, pid, sid, "2026-06-06", 6, 33) // recent
-
-	// Summarise only the first day.
-	if _, err := db.Exec(`INSERT INTO daily_counts (process_id, style_id, count_date, total)
-		VALUES (?, ?, '2026-01-01', 11)`, pid, sid); err != nil {
-		t.Fatalf("seed daily: %v", err)
+	first := mustBucket(t, "2026-11-01T06:00:00Z")  // 01:00 CDT
+	second := mustBucket(t, "2026-11-01T07:00:00Z") // 01:00 CST, the repeat
+	if first == second {
+		t.Fatal("the two repeated local hours share a bucket — they must not")
 	}
+	seedHourly(t, db, pid, sid, first, 40)
+	seedHourly(t, db, pid, sid, second, 2)
 
-	n, err := counters.PurgeRolledUpHourly(db.DB, cutoff)
-	if err != nil {
-		t.Fatalf("purge: %v", err)
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM hourly_counts`).Scan(&rows); err != nil {
+		t.Fatalf("count hourly: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("purged %d rows, want 1", n)
+	if rows != 2 {
+		t.Fatalf("the repeated hour stored %d row(s), want 2 — a UTC bucket must keep them apart", rows)
 	}
 
-	var jan, feb, jun int
-	db.QueryRow(`SELECT COUNT(*) FROM hourly_counts WHERE count_date='2026-01-01'`).Scan(&jan)
-	db.QueryRow(`SELECT COUNT(*) FROM hourly_counts WHERE count_date='2026-02-02'`).Scan(&feb)
-	db.QueryRow(`SELECT COUNT(*) FROM hourly_counts WHERE count_date='2026-06-06'`).Scan(&jun)
-
-	if jan != 0 {
-		t.Error("a summarised old hour survived the purge")
+	if _, err := counters.RollUpDaily(db.DB, loc); err != nil {
+		t.Fatalf("roll up: %v", err)
 	}
-	if feb != 1 {
-		t.Error("an hour with no daily row was deleted — a failed rollup would now lose data")
-	}
-	if jun != 1 {
-		t.Error("an hour inside the window was purged")
+	if got, ok := dailyTotal(t, db, pid, sid, "2026-11-01"); !ok || got != 42 {
+		t.Errorf("fall-back day total = %d (present=%v), want 42 — a 25-hour day must carry "+
+			"both passes through 01:00", got, ok)
 	}
 }
 
-// TestPurgeRolledUpHourly_NullSafe is the sibling of
-// TestPurgeOldCounterSnapshots_DeletesNullAnomalyUnconfirmed, and it exists
-// because that bug's shape is a class rather than an incident: a purge
-// predicate over a column that can be NULL is three-valued, and the rows it
-// silently keeps are invisible from the outside.
-//
-// The claim under test is that this predicate CANNOT have that defect, and the
-// claim is checked rather than asserted. Every column it touches is declared
-// NOT NULL, so the schema itself is the proof — the test reads
-// pragma_table_info instead of trusting the CREATE TABLE text in the repo,
-// because a plant's shape is whatever its migration path left behind. EXISTS
-// contributes 0 or 1 and never NULL, so with NOT NULL inputs the whole
-// predicate is two-valued.
-//
-// Verified red: dropping NOT NULL from count_date in schema/sqlite_ddl.go makes
-// this fail with "hourly_counts.count_date is nullable — PurgeRolledUpHourly's
-// predicate is no longer two-valued".
-func TestPurgeRolledUpHourly_NullSafe(t *testing.T) {
+// TestRollUpDaily_DSTSpringForwardIsA23HourDay is the other half. Local 02:00
+// never happens on 2026-03-08, so the day is 23 hours; production either side
+// of the skip still belongs to that date and nothing is invented for the hour
+// that does not exist.
+func TestRollUpDaily_DSTSpringForwardIsA23HourDay(t *testing.T) {
 	t.Parallel()
+	loc := chicago(t)
 	db := coverageDB(t)
+	pid, sid := seedProcessStyle(t, db, "P", "S")
 
-	for _, col := range []string{"process_id", "style_id", "count_date"} {
-		var notNull int
-		if err := db.QueryRow(
-			`SELECT "notnull" FROM pragma_table_info('hourly_counts') WHERE name = ?`, col).
-			Scan(&notNull); err != nil {
-			t.Fatalf("pragma_table_info hourly_counts.%s: %v", col, err)
-		}
-		if notNull != 1 {
-			t.Errorf("hourly_counts.%s is nullable — PurgeRolledUpHourly's predicate is no longer two-valued; "+
-				"it needs the COALESCE treatment counters.PurgeOldSnapshots got", col)
-		}
+	seedHourly(t, db, pid, sid, mustBucket(t, "2026-03-08T07:00:00Z"), 5) // 01:00 CST
+	seedHourly(t, db, pid, sid, mustBucket(t, "2026-03-08T08:00:00Z"), 6) // 03:00 CDT — 02:00 skipped
+
+	if _, err := counters.RollUpDaily(db.DB, loc); err != nil {
+		t.Fatalf("roll up: %v", err)
 	}
-	for _, col := range []string{"process_id", "style_id", "count_date"} {
-		var notNull int
-		if err := db.QueryRow(
-			`SELECT "notnull" FROM pragma_table_info('daily_counts') WHERE name = ?`, col).
-			Scan(&notNull); err != nil {
-			t.Fatalf("pragma_table_info daily_counts.%s: %v", col, err)
-		}
-		if notNull != 1 {
-			t.Errorf("daily_counts.%s is nullable — the EXISTS subquery would stop matching silently", col)
-		}
+	if got, ok := dailyTotal(t, db, pid, sid, "2026-03-08"); !ok || got != 11 {
+		t.Errorf("spring-forward day total = %d (present=%v), want 11", got, ok)
 	}
 }
 
-// TestDailyCounts_CarriesNoForeignKeys pins the design decision argued in
-// schema/sqlite_ddl.go, because it is the kind that gets "tidied" later by
-// somebody making the new table look like its sibling.
-//
-// Two things are at stake. A CASCADE edge would let a hard DELETE of a process
-// (store/processes/processes.go, DeleteProcess — still a hard delete) destroy
-// the permanent record; a RESTRICT edge would rebuild the trap that made 6 of 8
-// style deletions impossible on the Springfield dump. And a table with no FK
-// clauses contributes nothing to PRAGMA foreign_key_check, so it cannot regress
-// the enforcement gate RUNBOOK-0.5 exists to open — asserted here directly.
-//
-// Verified red: adding `REFERENCES processes(id) ON DELETE CASCADE` to
-// daily_counts.process_id fails with "daily_counts declares 1 foreign key(s)".
+// TestDayBounds_CoversTheWholePlantDay pins the read-side half: a plant day is
+// the half-open UTC range between its local midnights, which is 23, 24 or 25
+// hours wide depending on the date. A fixed 24-hour window would silently drop
+// or double an hour twice a year.
+func TestDayBounds_CoversTheWholePlantDay(t *testing.T) {
+	t.Parallel()
+	loc := chicago(t)
+
+	for _, tc := range []struct {
+		date  string
+		hours int64
+	}{
+		{"2026-05-04", 24},
+		{"2026-03-08", 23}, // spring forward
+		{"2026-11-01", 25}, // fall back
+	} {
+		from, to, err := counters.DayBounds(tc.date, loc)
+		if err != nil {
+			t.Fatalf("day bounds %s: %v", tc.date, err)
+		}
+		if got := (to - from) / 3600; got != tc.hours {
+			t.Errorf("%s spans %d hours, want %d", tc.date, got, tc.hours)
+		}
+	}
+
+	if _, _, err := counters.DayBounds("not-a-date", loc); err == nil {
+		t.Error("DayBounds accepted a malformed date")
+	}
+}
+
+// TestDailyCounts_CarriesNoForeignKeys pins the deliberate absence of FKs on
+// the permanent table: CASCADE would let a process delete destroy the permanent
+// record, RESTRICT would rebuild the counter_snapshots trap, and either would
+// let the rollup fail on a dangling parent (Springfield carries 457 such hourly
+// rows).
 func TestDailyCounts_CarriesNoForeignKeys(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
@@ -268,16 +248,13 @@ func TestDailyCounts_CarriesNoForeignKeys(t *testing.T) {
 		t.Fatalf("pragma_foreign_key_list: %v", err)
 	}
 	if fks != 0 {
-		t.Errorf("daily_counts declares %d foreign key(s); it must declare none — "+
-			"CASCADE would let a process delete destroy the permanent record, RESTRICT would "+
-			"rebuild the counter_snapshots trap, and either would let the rollup fail on a "+
-			"dangling parent (Springfield carries 457 such hourly rows)", fks)
+		t.Errorf("daily_counts declares %d foreign key(s); it must declare none", fks)
 	}
 
 	// The rollup must therefore survive a parent that is gone. This is the
 	// style-32 row RUNBOOK-0.5 leaves behind, in miniature.
 	pid, sid := seedProcessStyle(t, db, "P", "S")
-	seedHourly(t, db, pid, sid, "2026-05-04", 6, 42)
+	seedHourly(t, db, pid, sid, mustBucket(t, "2026-05-04T06:00:00Z"), 42)
 	if _, err := db.Exec(`DELETE FROM styles WHERE id = ?`, sid); err != nil {
 		t.Fatalf("hard-delete style: %v", err)
 	}
@@ -286,40 +263,11 @@ func TestDailyCounts_CarriesNoForeignKeys(t *testing.T) {
 	}
 	defer db.Exec(`PRAGMA foreign_keys = OFF`)
 
-	if _, err := counters.RollUpDaily(db.DB, "2000-01-01"); err != nil {
+	if _, err := counters.RollUpDaily(db.DB, time.UTC); err != nil {
 		t.Fatalf("rollup refused a dangling style under foreign_keys(1): %v — "+
 			"this is exactly the broken-background-job failure the no-FK decision avoids", err)
 	}
 	if got, ok := dailyTotal(t, db, pid, sid, "2026-05-04"); !ok || got != 42 {
 		t.Errorf("orphaned hour was not rolled up: total = %d, present = %v, want 42", got, ok)
-	}
-}
-
-// TestCutoffDate_UsesThePlantsTimezone pins the coupling between
-// counters.CutoffDate and engine.HourlyTracker: count_date is written in the
-// plant's local zone, so a cutoff rendered in UTC is a calendar day too
-// aggressive for the hours the plant sits behind it.
-//
-// Verified red: replacing now.In(loc) with now.UTC() in CutoffDate fails with
-// "cutoff = 2026-05-04, want 2026-05-03".
-func TestCutoffDate_UsesThePlantsTimezone(t *testing.T) {
-	t.Parallel()
-	chicago, err := time.LoadLocation("America/Chicago")
-	if err != nil {
-		t.Skipf("no tzdata for America/Chicago: %v", err)
-	}
-
-	// 03:00 UTC on 2026-08-02 is 22:00 CDT on 2026-08-01 — a different
-	// calendar day, which is the whole point.
-	now := time.Date(2026, 8, 2, 3, 0, 0, 0, time.UTC)
-	got := counters.CutoffDate(now, chicago, 90*24*time.Hour)
-	if want := "2026-05-03"; got != want {
-		t.Errorf("cutoff = %s, want %s — the window is a calendar day off for the "+
-			"hours the plant sits behind UTC", got, want)
-	}
-	// And UTC's own answer, stated so the difference is visible rather than
-	// asserted in the abstract.
-	if utc := counters.CutoffDate(now, time.UTC, 90*24*time.Hour); utc != "2026-05-04" {
-		t.Errorf("UTC cutoff = %s, want 2026-05-04 (the value this function exists to avoid)", utc)
 	}
 }

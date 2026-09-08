@@ -5,58 +5,56 @@ import (
 	"time"
 
 	"shingoedge/store"
+	"shingoedge/store/counters"
 )
 
 // HourlyTracker accumulates counter deltas into hourly buckets in the database.
+//
+// It holds NO location. Buckets are UTC, so the writer has no timezone
+// decision to make and cannot drift from the reader — which is what the two
+// copies of a zone parse used to risk.
 type HourlyTracker struct {
-	db  *store.DB
-	loc *time.Location
+	db *store.DB
 }
 
-// BucketLocation resolves the IANA timezone (e.g. "America/Chicago") that
-// hourly_counts.count_date and .hour are bucketed in, falling back to the
-// server's local zone when it is empty or unparseable.
+// ReportingLocation resolves the plant's IANA zone (e.g. "America/Chicago") —
+// the zone a stored UTC bucket is REPORTED in. It no longer decides how
+// anything is stored: buckets are UTC, so this is a display and roll-up
+// concern only, and a wrong value is cosmetic and fixed by restarting with the
+// right one rather than by repairing data.
 //
-// EXPORTED SO THE RETENTION PASS CANNOT DISAGREE WITH THE WRITER. This is the
-// only place a count_date is derived from, and counters.HourlyRetention's
-// cutoff has to be rendered in the same zone or the window is off by a
-// calendar day for however many hours the plant sits behind UTC — five, at
-// Springfield. Two copies of this parse is exactly how that drift starts, so
-// cmd/shingoedge/main.go calls this rather than repeating it.
+// EMPTY FALLS BACK TO UTC, matching www.resolvePlantLocation. It used to fall
+// back to time.Local, so the pair DISAGREED on an unconfigured box: display
+// said UTC while bucketing said whatever zone the machine happened to sit in.
+// At Hopkinsville that was America/Indiana/Indianapolis at a Central plant,
+// and it mislabelled three months of hourly counts without ever looking wrong.
+// The old note here argued the fallback had to stay time.Local so that
+// changing it would not re-zone live history mid-stream — true while the
+// history was zoned, and moot now that it is not.
 //
-// The empty-config fallback STAYS time.Local, deliberately: switching it to
-// UTC would silently re-zone Springfield's live bucketing (Chicago→UTC)
-// mid-history and split one consistent plant into a seam. An unset config is
-// fixed by seeding timezone: at deploy (install-edge.sh confirms it in), not
-// by moving the fallback — but the log names the source so an unset box is
-// visible in journald instead of silently adopting the OS zone. At
-// Hopkinsville that OS zone is Eastern while the plant clock is Central,
-// which is the live finding this log exists to surface.
-func BucketLocation(timezone string) *time.Location {
+// The log names the source, so "which knob made this clock" stays answerable
+// from journald.
+func ReportingLocation(timezone string) *time.Location {
 	if timezone == "" {
-		log.Printf("hourly bucketing: timezone unset in shingoedge.yaml — using OS zone %s. "+
-			"Set timezone: to the PLANT zone (the OS zone may disagree with the wall clock)",
-			time.Local)
-		return time.Local
+		log.Printf("reporting zone: timezone unset in shingoedge.yaml — using UTC. " +
+			"Set timezone: to the PLANT zone (the box's OS zone is not it)")
+		return time.UTC
 	}
 	parsed, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Printf("hourly bucketing: invalid timezone %q, using local: %v", timezone, err)
-		return time.Local
+		log.Printf("reporting zone: invalid timezone %q, using UTC: %v", timezone, err)
+		return time.UTC
 	}
 	return parsed
 }
 
-// NewHourlyTracker creates a new HourlyTracker.
-// If timezone is a valid IANA location (e.g. "America/Chicago"), it is used
-// for date/hour bucketing. Otherwise the server's local timezone is used.
-func NewHourlyTracker(db *store.DB, timezone string) *HourlyTracker {
-	loc := BucketLocation(timezone)
-	log.Printf("hourly tracker: using timezone %s", loc)
-	return &HourlyTracker{db: db, loc: loc}
+// NewHourlyTracker creates a new HourlyTracker. It takes no timezone, because
+// the buckets it writes are UTC.
+func NewHourlyTracker(db *store.DB) *HourlyTracker {
+	return &HourlyTracker{db: db}
 }
 
-// HandleDelta records a counter delta into the current date/hour bucket.
+// HandleDelta records a counter delta into the current UTC hour bucket.
 // Reset anomaly deltas are skipped to avoid counting PLC reset artifacts as production.
 func (ht *HourlyTracker) HandleDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 {
@@ -66,11 +64,9 @@ func (ht *HourlyTracker) HandleDelta(delta CounterDeltaEvent) {
 		return // skip reset-derived deltas
 	}
 
-	now := time.Now().In(ht.loc)
-	countDate := now.Format("2006-01-02")
-	hour := now.Hour()
+	bucket := counters.HourBucket(time.Now())
 
-	if err := ht.db.UpsertHourlyCount(delta.ProcessID, delta.StyleID, countDate, hour, delta.Delta); err != nil {
+	if err := ht.db.UpsertHourlyCount(delta.ProcessID, delta.StyleID, bucket, delta.Delta); err != nil {
 		log.Printf("hourly tracker upsert: %v", err)
 	}
 }

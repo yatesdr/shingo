@@ -167,12 +167,21 @@ INSERT INTO hourly_counts (id, line_id, job_style_id, count_date, hour, delta) V
 	}
 
 	// 3. The rebuild must not have lost the rows it was moving.
+	//
+	// hourly_counts is the exception, and deliberately so: the 2026-09 UTC
+	// migration PARKS the plant-local rows in hourly_counts_local_legacy rather
+	// than converting them, because converting means asserting which zone each
+	// row was written in and that is precisely what is not recorded. So the
+	// live table starts empty and the history is still on disk, which is the
+	// property worth pinning — a migration that quietly dropped those rows and
+	// one that quietly reinterpreted them would both pass a bare "1 row" check.
 	for _, c := range []struct {
 		table string
 		want  int
 	}{
 		{"processes", 1}, {"styles", 1}, {"reporting_points", 1},
-		{"counter_snapshots", 1}, {"hourly_counts", 1},
+		{"counter_snapshots", 1},
+		{"hourly_counts", 0}, {"hourly_counts_local_legacy", 1},
 	} {
 		var n int
 		if err := db.QueryRow(`SELECT count(*) FROM "` + c.table + `"`).Scan(&n); err != nil {

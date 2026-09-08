@@ -20,13 +20,18 @@ type CounterSnapshot struct {
 // HourlyCount aggregates CounterSnapshot deltas into per-hour buckets
 // keyed by Process + Style + date + hour. Driven by a periodic roll-up
 // from the snapshots table.
+// BucketStart is the unix second at the start of the UTC hour this count
+// landed in. It is deliberately NOT a plant-local date and hour: storing
+// those put a timezone into the data, which made a wrong or unset zone
+// permanent instead of cosmetic, and merged two real hours into one row every
+// autumn when the local clock repeated 01:00. The plant zone is applied on
+// read, where it belongs. See store/schema/sqlite_ddl.go.
 type HourlyCount struct {
-	ID        int64  `json:"id"`
-	ProcessID int64  `json:"process_id"`
-	StyleID   int64  `json:"style_id"`
-	CountDate string `json:"count_date"`
-	Hour      int    `json:"hour"`
-	Delta     int64  `json:"delta"`
+	ID          int64 `json:"id"`
+	ProcessID   int64 `json:"process_id"`
+	StyleID     int64 `json:"style_id"`
+	BucketStart int64 `json:"bucket_start"`
+	Delta       int64 `json:"delta"`
 }
 
 // DailyCount is one calendar day of production for a Process + Style —

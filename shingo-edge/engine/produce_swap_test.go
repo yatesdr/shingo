@@ -100,7 +100,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		logFn:   func(string, ...any) {},
 		debugFn: func(string, ...any) {},
 	}
-	eng.hourlyTracker = NewHourlyTracker(db, "")
+	eng.hourlyTracker = NewHourlyTracker(db)
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
 	// Phase 3a: default sink that does real DB writes so tests

@@ -295,7 +295,7 @@ func (s *stubEngine) ShiftService() *service.ShiftService {
 	return service.NewShiftService(s.db)
 }
 func (s *stubEngine) CounterService() *service.CounterService {
-	return service.NewCounterService(s.db)
+	return service.NewCounterService(s.db, time.UTC)
 }
 func (s *stubEngine) CatalogService() *service.CatalogService {
 	return service.NewCatalogService(s.db)

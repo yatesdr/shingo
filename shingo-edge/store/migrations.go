@@ -167,6 +167,9 @@ func (db *DB) migrate() error {
 	if err := db.migrateHourlyCountFKs(); err != nil {
 		return err
 	}
+	if err := db.migrateHourlyCountsToUTC(); err != nil {
+		return err
+	}
 	if err := db.migrateOperatorStationColumns(); err != nil {
 		return err
 	}
@@ -1080,6 +1083,71 @@ FROM hourly_counts_legacy;
 DROP TABLE hourly_counts_legacy;
 `)
 }
+
+// migrateHourlyCountsToUTC moves hourly bucketing off the plant-local
+// (count_date, hour) key onto a UTC bucket_start, and PRESERVES the old rows
+// instead of reinterpreting them.
+//
+// THE OLD ROWS ARE NOT CONVERTED, ON PURPOSE. Converting means asserting which
+// zone each row was written in, and that is exactly what is not known: the
+// bucket zone was cfg.Timezone when set and the box's OS zone when not, so a
+// row's meaning depends on a config value and an OS setting at the moment it
+// was written, neither of which is recorded anywhere. Hopkinsville's three
+// months were written in America/Indiana/Indianapolis at a Central plant; a
+// backfill that assumed "the current OS zone" would be right there today and
+// silently wrong at any site whose box was ever re-zoned. Core keeps an
+// independent UTC record of the same production (bin_uop_ledger, back to
+// 2026-05-13), so nothing authoritative is lost by declining to guess.
+//
+// The old table therefore survives under a name that says what it holds. It is
+// readable, dated, and inert — nothing writes it and nothing reads it into the
+// new series. The boundary between the two is the migration timestamp.
+func (db *DB) migrateHourlyCountsToUTC() error {
+	has, err := schema.TableHasColumn(db.DB, "hourly_counts", "count_date")
+	if err != nil || !has {
+		return err
+	}
+	// schema.Apply has already created hourly_counts_local_legacy, EMPTY,
+	// because it is declared in the canonical DDL so that a fresh database and
+	// an upgraded one converge. Drop that placeholder to free the name for the
+	// rename. It runs after the line_id→process_id rebuild above, so what gets
+	// archived always carries the modern column names rather than whichever
+	// vintage the box happens to be on.
+	//
+	// A placeholder with ROWS in it means an archive already exists while
+	// hourly_counts is somehow still plant-local. That is not a state this
+	// migration can produce, so it is refused rather than overwritten:
+	// clobbering the only copy of the pre-UTC history to make a migration
+	// idempotent would be the wrong trade.
+	var archived int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM hourly_counts_local_legacy`).Scan(&archived); err != nil {
+		archived = 0 // absent on a vintage predating the canonical declaration
+	}
+	if archived > 0 {
+		return fmt.Errorf(
+			"hourly_counts UTC migration: hourly_counts_local_legacy already holds %d row(s) while "+
+				"hourly_counts is still plant-local — refusing to overwrite an existing archive", archived)
+	}
+	return db.rebuildTable("hourly_counts", `
+DROP TABLE IF EXISTS hourly_counts_local_legacy;
+ALTER TABLE hourly_counts RENAME TO hourly_counts_local_legacy;
+`+hourlyCountsUTCDDL)
+}
+
+// hourlyCountsUTCDDL is the post-migration shape. It matches
+// schema/sqlite_ddl.go's CREATE for hourly_counts byte for byte in columns and
+// constraint; a fresh DB gets it from there and an upgraded one from here.
+const hourlyCountsUTCDDL = `
+CREATE TABLE hourly_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
+    bucket_start INTEGER NOT NULL,
+    delta        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT DEFAULT (datetime('now')),
+    UNIQUE(process_id, style_id, bucket_start)
+);
+`
 
 // migrateHourlyCountFKs adds foreign keys to hourly_counts if missing.
 func (db *DB) migrateHourlyCountFKs() error {

@@ -31,8 +31,8 @@ func seedStyleWithHistory(t *testing.T, db *DB, processName, styleName string) (
 			t.Fatalf("insert snapshot: %v", err)
 		}
 	}
-	if _, err := db.Exec(`INSERT INTO hourly_counts (process_id, style_id, count_date, hour, delta)
-		VALUES (?, ?, '2026-07-27', 9, 17)`, processID, styleID); err != nil {
+	if _, err := db.Exec(`INSERT INTO hourly_counts (process_id, style_id, bucket_start, delta)
+		VALUES (?, ?, 1785142800, 17)`, processID, styleID); err != nil {
 		t.Fatalf("insert hourly: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state, started_at, updated_at)

@@ -887,7 +887,7 @@ func main() {
 	// future write on the SD card for ptrmap maintenance — a recurring cost to
 	// avoid a rebuild that the threshold already makes a once-ever event. It
 	// also never defragments, which is the half that matters on flash.
-	bucketLoc := engine.BucketLocation(cfg.Timezone)
+	reportLoc := engine.ReportingLocation(cfg.Timezone)
 	retentionStop := make(chan struct{})
 	defer close(retentionStop)
 	goSafe("store-retention", func() {
@@ -898,18 +898,13 @@ func main() {
 			case <-retentionStop:
 				return
 			case <-ticker.C:
-				cutoff := counters.CutoffDate(time.Now(), bucketLoc, counters.HourlyRetention)
-
-				if n, err := counters.RollUpDaily(db.DB, cutoff); err != nil {
+				// The hourly rung has no purge any more — the hours are what
+				// keep daily_counts re-derivable across a plant-zone change.
+				// See store/counters/daily.go for why that reversal was made.
+				if n, err := counters.RollUpDaily(db.DB, reportLoc); err != nil {
 					log.Printf("retention: roll up daily counts: %v", err)
 				} else if n > 0 {
-					log.Printf("retention: rolled %d daily count rows up from hourly_counts", n)
-				}
-
-				if n, err := counters.PurgeRolledUpHourly(db.DB, cutoff); err != nil {
-					log.Printf("retention: purge hourly counts: %v", err)
-				} else if n > 0 {
-					log.Printf("retention: purged %d hourly counts before %s (already rolled up)", n, cutoff)
+					log.Printf("retention: rolled %d daily count rows up from hourly_counts (%s)", n, reportLoc)
 				}
 
 				if n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention); err != nil {

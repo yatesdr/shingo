@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"shingoedge/store"
 	"shingoedge/store/counters"
 )
@@ -19,6 +21,14 @@ import (
 type CounterService struct {
 	db           *store.DB
 	deltaEmitter CounterDeltaEmitter
+	// loc is the plant's reporting zone. Counts are STORED in UTC hour
+	// buckets, so this is used only to turn a plant-local date into the UTC
+	// range that covers it, and to label the hours coming back. Nil means UTC,
+	// which is what an unconfigured edge reports — visibly wrong rather than
+	// plausibly wrong. Captured at construction, like every other consumer of
+	// cfg.Timezone, so a change takes effect on restart and the whole process
+	// agrees about which clock it is on.
+	loc *time.Location
 }
 
 // CounterDeltaEmitter is the one thing this service needs from the
@@ -32,9 +42,12 @@ type CounterDeltaEmitter interface {
 }
 
 // NewCounterService constructs a CounterService wrapping the shared
-// *store.DB.
-func NewCounterService(db *store.DB) *CounterService {
-	return &CounterService{db: db}
+// *store.DB. loc is the plant reporting zone; nil means UTC.
+func NewCounterService(db *store.DB, loc *time.Location) *CounterService {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &CounterService{db: db, loc: loc}
 }
 
 // SetDeltaEmitter installs the sink ConfirmAnomaly releases a confirmed
@@ -152,16 +165,42 @@ func (s *CounterService) DismissAnomaly(id int64) error {
 
 // ── Hourly counts ────────────────────────────────────────────────
 
-// ListHourlyCounts returns hourly_counts rows for one (process,
-// style, date) tuple.
+// ListHourlyCounts returns the hourly rows for one (process, style) whose UTC
+// buckets fall inside the given PLANT-LOCAL calendar date.
 func (s *CounterService) ListHourlyCounts(processID, styleID int64, countDate string) ([]counters.HourlyCount, error) {
-	return s.db.ListHourlyCounts(processID, styleID, countDate)
+	from, to, err := counters.DayBounds(countDate, s.loc)
+	if err != nil {
+		return nil, err
+	}
+	return s.db.ListHourlyCounts(processID, styleID, from, to)
 }
 
-// HourlyTotals returns hour-bucketed totals for one (process, date)
-// tuple, summed across all styles. Used by the production view.
+// HourlyTotals returns totals for one (process, PLANT-LOCAL date) keyed by the
+// plant-local HOUR OF DAY, summed across styles. Used by the production view,
+// which renders them against shift boundaries.
+//
+// The map key is a local hour, not a bucket: the store returns UTC buckets and
+// this is the one place they become the operator's clock. On the autumn DST
+// day two distinct UTC buckets map to the same local hour, so the totals are
+// SUMMED rather than assigned — that repeated hour genuinely did happen twice,
+// and a 25-hour day is the honest shape of it. The old local-keyed schema had
+// no way to say that: both writes collided on one row and were summed by the
+// database, which looked identical and was not, because it also silently
+// merged them for every other purpose.
 func (s *CounterService) HourlyTotals(processID int64, countDate string) (map[int]int64, error) {
-	return s.db.HourlyCountTotals(processID, countDate)
+	from, to, err := counters.DayBounds(countDate, s.loc)
+	if err != nil {
+		return nil, err
+	}
+	buckets, err := s.db.HourlyCountTotals(processID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	totals := make(map[int]int64, len(buckets))
+	for bucket, sum := range buckets {
+		totals[time.Unix(bucket, 0).In(s.loc).Hour()] += sum
+	}
+	return totals, nil
 }
 
 // ── Daily counts ─────────────────────────────────────────────────

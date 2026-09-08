@@ -48,8 +48,8 @@ func seedProcessWithChildren(t *testing.T, db *DB, name string) (processID, styl
 		t.Fatalf("EnsureProcessNodeRuntime: %v", err)
 	}
 	// The permanent production record, and the two name-keyed mirrors.
-	if _, err := db.Exec(`INSERT INTO hourly_counts (process_id, style_id, count_date, hour, delta)
-		VALUES (?, ?, '2026-08-26', 9, 42)`, processID, styleID); err != nil {
+	if _, err := db.Exec(`INSERT INTO hourly_counts (process_id, style_id, bucket_start, delta)
+		VALUES (?, ?, 1787734800, 42)`, processID, styleID); err != nil {
 		t.Fatalf("insert hourly: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO daily_counts (process_id, style_id, count_date, total)

@@ -237,17 +237,72 @@ CREATE TABLE IF NOT EXISTS shifts (
     end_time     TEXT NOT NULL
 );
 
--- hourly_counts is the MIDDLE rung of the counting ladder, and as of 2026-07 it
--- is the only one with a bounded life:
+-- hourly_counts is the MIDDLE rung of the counting ladder:
 --
 --     counter_snapshots  raw, one row per poll   14 days  (counters.SnapshotRetention)
---     hourly_counts      per process/style/hour  90 days  (counters.HourlyRetention)
---     daily_counts       per process/style/day   permanent
+--     hourly_counts      per process/style/hour  permanent
+--     daily_counts       per process/style/day   permanent (a DERIVED cache)
 --
--- The 90-day window is only safe because daily_counts already holds the total,
--- and counters.PurgeRolledUpHourly enforces that literally rather than by
--- convention — it refuses to delete an hour whose day has no daily_counts row.
+-- BUCKETS ARE UTC. bucket_start is the unix second at the start of the UTC hour
+-- a delta landed in, and it is the ONLY timezone-bearing decision in the
+-- counting path — which is to say there is now no timezone decision stored at
+-- all. The plant zone enters on the way OUT, when a local day or a local hour
+-- is asked for.
+--
+-- WHY THIS CHANGED (2026-09-08). The buckets used to be keyed by plant-local
+-- count_date + hour, which put a timezone into stored data and made an
+-- unconfigured or wrong zone permanent rather than cosmetic. Hopkinsville ran
+-- for three months with the Pi's OS zone (America/Indiana/Indianapolis) at a
+-- Central plant, so every bucket was labelled an hour late and each day's last
+-- hour landed on the following date. Core already stores UTC and resolves local
+-- on read (shingo-core/www/plant_timezone.go, Q-004); this is the counter
+-- rollup finally doing the same.
+--
+-- IT ALSO FIXES A BUG NOBODY HAD HIT YET. Local bucketing breaks at DST: on the
+-- autumn fall-back 01:00-02:00 happens TWICE, both writes carry the same
+-- (count_date, hour), and the UNIQUE + upsert SUMS two different real hours into
+-- one row. In spring, hour 2 never exists and reads as downtime. UTC has no DST,
+-- so neither can happen.
+--
+-- Retention is gone from this rung. It existed to bound growth, but the measured
+-- rate is ~1,400 rows a year (Hopkinsville: 350 rows in three months — a row
+-- appears only for an hour that actually produced). Keeping every hour forever
+-- costs nothing and is what makes daily_counts re-derivable, so a later change
+-- of plant zone is a rebuild rather than a loss.
 CREATE TABLE IF NOT EXISTS hourly_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
+    bucket_start INTEGER NOT NULL,
+    delta        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT DEFAULT (datetime('now')),
+    UNIQUE(process_id, style_id, bucket_start)
+);
+
+-- hourly_counts_local_legacy holds the plant-local rows written BEFORE the
+-- 2026-09 move to UTC buckets. Nothing reads it and nothing writes it; it is
+-- an archive, kept because the migration declined to reinterpret those rows
+-- (see store/migrations.go migrateHourlyCountsToUTC for why guessing the zone
+-- they were written in is not something the data supports).
+--
+-- IT IS DECLARED HERE, SO A FRESH INSTALL HAS IT TOO — EMPTY. That looks
+-- redundant and is not: schema convergence between a fresh database and an
+-- upgraded one is a tested property (internal/schemadump), and the alternative
+-- was an entry in KnownDivergences, a list whose header says in capitals that
+-- nothing new goes in it. An empty table on a new plant costs one line of
+-- sqlite_master; a suppressed convergence failure costs the next person the
+-- test was written for.
+--
+-- Safe to drop once the pre-2026-09 hour detail is no longer wanted. The day
+-- totals for those dates are unaffected either way: they live in daily_counts,
+-- which the migration does not touch.
+-- The foreign keys are here because the upgraded copy has them: this table is
+-- produced by RENAMEing hourly_counts, which carries its CREATE text across
+-- unchanged. Declaring it without them makes a fresh database differ from an
+-- upgraded one in exactly the way the convergence test exists to catch. The
+-- CASCADE is therefore not a new decision — deleting a process discarded that
+-- process's archived hours before this migration too.
+CREATE TABLE IF NOT EXISTS hourly_counts_local_legacy (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
     style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,

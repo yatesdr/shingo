@@ -13,6 +13,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/store/catalog"
+	"shingoedge/store/counters"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -690,21 +691,24 @@ func TestHourlyCounts_UpsertAccumulates(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	pid, sid := seedProcessStyle(t, db, "P", "S")
-	date := "2026-04-19"
+	h8 := mustBucket(t, "2026-04-19T08:00:00Z")
+	h9 := mustBucket(t, "2026-04-19T09:00:00Z")
 
-	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, date, 8, 5), "upsert")
-	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, date, 8, 3), "upsert second")
-	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, date, 9, 7), "upsert hour 9")
+	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, h8, 5), "upsert")
+	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, h8, 3), "upsert second")
+	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, h9, 7), "upsert hour 9")
 
-	list, err := db.ListHourlyCounts(pid, sid, date)
+	from, to, err := counters.DayBounds("2026-04-19", time.UTC)
+	testutil.MustNoErr(t, err, "day bounds")
+	list, err := db.ListHourlyCounts(pid, sid, from, to)
 	if err != nil || len(list) != 2 {
 		t.Fatalf("list: %v len=%d", err, len(list))
 	}
-	// Ordered by hour.
-	if list[0].Hour != 8 || list[0].Delta != 8 {
+	// Ordered by bucket.
+	if list[0].BucketStart != h8 || list[0].Delta != 8 {
 		t.Errorf("hour 8 = %+v, want delta=8 (5+3)", list[0])
 	}
-	if list[1].Hour != 9 || list[1].Delta != 7 {
+	if list[1].BucketStart != h9 || list[1].Delta != 7 {
 		t.Errorf("hour 9 = %+v", list[1])
 	}
 }
@@ -714,21 +718,25 @@ func TestHourlyCounts_Totals(t *testing.T) {
 	db := coverageDB(t)
 	pid, sid1 := seedProcessStyle(t, db, "P", "S1")
 	sid2, _ := db.CreateStyle("S2", "", pid)
-	date := "2026-04-19"
 
-	db.UpsertHourlyCount(pid, sid1, date, 8, 10)
-	db.UpsertHourlyCount(pid, sid2, date, 8, 5)
-	db.UpsertHourlyCount(pid, sid1, date, 9, 3)
+	h8 := mustBucket(t, "2026-04-19T08:00:00Z")
+	h9 := mustBucket(t, "2026-04-19T09:00:00Z")
 
-	totals, err := db.HourlyCountTotals(pid, date)
+	db.UpsertHourlyCount(pid, sid1, h8, 10)
+	db.UpsertHourlyCount(pid, sid2, h8, 5)
+	db.UpsertHourlyCount(pid, sid1, h9, 3)
+
+	from, to, err := counters.DayBounds("2026-04-19", time.UTC)
+	testutil.MustNoErr(t, err, "day bounds")
+	totals, err := db.HourlyCountTotals(pid, from, to)
 	if err != nil {
 		t.Fatalf("totals: %v", err)
 	}
-	if totals[8] != 15 {
-		t.Errorf("hour 8 total = %d, want 15", totals[8])
+	if totals[h8] != 15 {
+		t.Errorf("bucket 8 total = %d, want 15", totals[h8])
 	}
-	if totals[9] != 3 {
-		t.Errorf("hour 9 total = %d, want 3", totals[9])
+	if totals[h9] != 3 {
+		t.Errorf("bucket 9 total = %d, want 3", totals[h9])
 	}
 }
 

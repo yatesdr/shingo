@@ -176,7 +176,12 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	if shiftsJSON == nil {
 		shiftsJSON = []byte("[]")
 	}
-	todayStr := time.Now().Format("2006-01-02")
+	// PLANT-local today, not the box's. time.Now() alone renders in the
+	// process zone, which is the Pi's OS zone — Indianapolis at a Central
+	// plant — so for the hour between plant midnight and box midnight this
+	// page asked for tomorrow. plantLocation is the same zone the stored UTC
+	// buckets are reported in, so the chart and its title agree.
+	todayStr := time.Now().In(plantLocation).Format("2006-01-02")
 	var hourlyCounts map[int]int64
 	if isAll {
 		// Sum hourly counts across all processes for the initial page load
@@ -348,7 +353,7 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	dateStr := r.URL.Query().Get("date")
 	if dateStr == "" {
-		dateStr = time.Now().Format("2006-01-02")
+		dateStr = time.Now().In(plantLocation).Format("2006-01-02")
 	}
 	processIDStr := r.URL.Query().Get("process_id")
 
@@ -393,11 +398,11 @@ func (h *Handlers) apiGetDailyCounts(w http.ResponseWriter, r *http.Request) {
 
 	toDate := r.URL.Query().Get("to")
 	if toDate == "" {
-		toDate = time.Now().Format("2006-01-02")
+		toDate = time.Now().In(plantLocation).Format("2006-01-02")
 	}
 	fromDate := r.URL.Query().Get("from")
 	if fromDate == "" {
-		fromDate = time.Now().AddDate(0, 0, -90).Format("2006-01-02")
+		fromDate = time.Now().In(plantLocation).AddDate(0, 0, -90).Format("2006-01-02")
 	}
 
 	counts, err := h.engine.CounterService().DailyCounts(processID, fromDate, toDate)

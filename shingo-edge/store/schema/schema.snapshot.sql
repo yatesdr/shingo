@@ -212,6 +212,16 @@ CREATE TABLE hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
     style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
+    bucket_start INTEGER NOT NULL,
+    delta        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT DEFAULT (datetime('now')),
+    UNIQUE(process_id, style_id, bucket_start)
+);
+
+CREATE TABLE hourly_counts_local_legacy (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
     count_date   TEXT NOT NULL,
     hour         INTEGER NOT NULL,
     delta        INTEGER NOT NULL DEFAULT 0,

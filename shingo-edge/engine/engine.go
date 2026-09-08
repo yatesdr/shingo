@@ -315,7 +315,7 @@ func New(c Config) *Engine {
 	e.processService = service.NewProcessService(e.db)
 	e.styleService = service.NewStyleService(e.db)
 	e.shiftService = service.NewShiftService(e.db)
-	e.counterService = service.NewCounterService(e.db)
+	e.counterService = service.NewCounterService(e.db, ReportingLocation(e.cfg.Timezone))
 	e.catalogService = service.NewCatalogService(e.db)
 	e.orderService = service.NewOrderService(e.db)
 	e.preflightChecker = service.NewPreflightChecker(e.db, e.coreClient, e.cfg.StationID())
@@ -355,7 +355,7 @@ func (e *Engine) Start() {
 		e.plcMgr.DebugLog = plc.DebugLogFunc(e.debugLogger.Func("plc"))
 		e.orderMgr.DebugLog = orders.DebugLogFunc(e.debugLogger.Func("orders"))
 	}
-	e.hourlyTracker = NewHourlyTracker(e.db, e.cfg.Timezone)
+	e.hourlyTracker = NewHourlyTracker(e.db)
 
 	// Wire the event chain
 	e.wireEventHandlers()
