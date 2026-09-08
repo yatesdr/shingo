@@ -148,7 +148,6 @@ export async function openReleasePrompt(url, entry) {
         // from the payload template, which is a Core-side derivation this page
         // does not have. A multi-payload bin therefore gets no per-part
         // prefill, which is the honest state.
-        }
     }
     // Phase 0b override audit: snapshot the auto-suggested values at
     // modal-open. Whatever the chip grid was pre-populated with becomes
