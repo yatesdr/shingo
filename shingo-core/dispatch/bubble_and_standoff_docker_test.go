@@ -242,7 +242,16 @@ func TestServiceDig_OneEpisodeGetsOneExcavationAtATime(t *testing.T) {
 
 	// THE SECOND ASK, for a different lane and a different bin, on behalf of the
 	// same demand. It is refused, and the refusal names itself.
-	before := countOrders(t, db)
+	before := countOrdersForEpisode(t, db, demand.OriginID)
+	// A SCOPED COUNT CAN GO VACUOUS IN A WAY A GLOBAL ONE CANNOT: if a dig ever
+	// stopped inheriting its demand's origin, this would silently become 0 → 0
+	// and pass on any behaviour at all. The demand and its first dig are both
+	// this episode's, so the window must already hold them.
+	if before < 2 {
+		t.Fatalf("episode %s has %d order row(s) before the second ask, want at least 2 (the demand "+
+			"and its first dig) — the scope is not capturing this episode, so the assertion below "+
+			"would be vacuous", demand.OriginID, before)
+	}
 	res := d.proposeLaneClearDig(second, secondSlots[1], demand)
 	if res.outcome != laneClearEpisodeAlreadyDigging {
 		t.Fatalf("the second dig's outcome is %v, want laneClearEpisodeAlreadyDigging. This demand "+
@@ -258,21 +267,34 @@ func TestServiceDig_OneEpisodeGetsOneExcavationAtATime(t *testing.T) {
 		t.Errorf("lane %s was taken by a dig that was refused — the guard must run before the acquire",
 			second.Name)
 	}
-	// AND NOTHING WAS WRITTEN AT ALL — counted rather than identified, so the
-	// assertion cannot go stale behind a column or a marker.
-	after := countOrders(t, db)
+	// AND NOTHING WAS WRITTEN FOR THIS EPISODE.
+	//
+	// SCOPED TO origin_id, NOT THE WHOLE TABLE, and that is a correctness fix
+	// rather than a weakening. This test is t.Parallel() on testDBShared, so
+	// every test in this file writes to ONE database concurrently: a global
+	// count(*) samples siblings' inserts between the two reads and fails on
+	// their timing, not on this dig. It did, in CI, at 2 → 3.
+	//
+	// The episode is also the right unit to assert on. The guard being tested
+	// is one-dig-per-EPISODE, a dig inherits its demand's OriginID
+	// (lane_clear_end_to_end_docker_test.go pins that), so "no order appeared
+	// for this origin" is exactly the claim — a refusal costs a read, not an
+	// order minted and cancelled per pass, which is the churn this file has
+	// measured twice (16,947 and 38,203). Rows belonging to other episodes were
+	// never evidence either way.
+	after := countOrdersForEpisode(t, db, demand.OriginID)
 	if after != before {
-		t.Errorf("%d order row(s) appeared across a refused dig (%d → %d). The guard is asked before "+
-			"the plan and before the parent precisely so a refusal costs a read — an order minted and "+
-			"cancelled per pass is the churn this file has measured twice (16,947 and 38,203)",
+		t.Errorf("%d order row(s) appeared for this episode across a refused dig (%d → %d). The guard "+
+			"is asked before the plan and before the parent precisely so a refusal costs a read",
 			after-before, before, after)
 	}
 }
 
 // countOrders is the whole orders table, for the before/after around a refusal.
-func countOrders(t *testing.T, db *store.DB) int {
+func countOrdersForEpisode(t *testing.T, db *store.DB, originID string) int {
 	t.Helper()
 	var n int
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM orders`).Scan(&n), "count orders")
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT count(*) FROM orders WHERE origin_id = $1`, originID).Scan(&n), "count orders for episode")
 	return n
 }
