@@ -122,10 +122,66 @@ func TestV108_LeavesAKitAloneAndStillDerivesItsCATIDs(t *testing.T) {
 	}
 }
 
-// TestV108_RefusesWhenTheGuardWouldChange is the predicate itself. Nothing in
-// the shipped correction can produce this state; the test manufactures one (a
-// part minted by hand with a DIFFERENT cat id than the line holds) to prove the
-// refusal is real rather than a comment about one.
+// TestV108_DoesNotRefuseItsOwnSeedDeletion is Hopkinsville, reproduced.
+//
+// v108 deletes the Test-Payload/0123 seed row by name. That leaves the payload
+// with no manifest line, so its derived cat-id set goes EMPTY — and the verify
+// predicate then compared before against after, found the change, and refused the
+// whole transaction. A failed migration fails `open database`, so Core exited 1
+// and systemd restarted it forever: the correction was unrunnable at the one plant
+// that carries the row, and it took the plant down on 2026-09-07 rather than
+// failing at some later step.
+//
+// The exemption is what makes it runnable, and it is narrow: only the payloads
+// this migration changed ON PURPOSE. Everything else still refuses, which
+// TestV108_RefusesWhenTheGuardWouldChange below still proves.
+func TestV108_DoesNotRefuseItsOwnSeedDeletion(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	// HK's shape exactly: the payload named Test-Payload carrying one line whose
+	// value is 0123. A correction run over this must succeed.
+	payloadID := seedUncorrectedPayload(t, db, "Test-Payload", "0123")
+	if before := derivedFor(t, db, payloadID); before != "0123" {
+		t.Fatalf("fixture derived value = %q, want 0123 — the test is not reproducing HK", before)
+	}
+
+	// A second, ordinary payload alongside it, so the run has real work to verify
+	// and the assertion is not about an otherwise-empty database.
+	otherID := seedUncorrectedPayload(t, db, "V108-SEED-NEIGHBOUR", "40016911")
+
+	if err := store.RunManifestIdentityCorrection(db); err != nil {
+		t.Fatalf("v108 REFUSED its own seed deletion: %v\n\nThis is the failure that "+
+			"crash-looped Hopkinsville: the migration deletes the row, sees the set it just "+
+			"emptied, and refuses itself. It can never pass at a plant carrying that row.", err)
+	}
+
+	// The seed row is gone — the deletion still happens, it is only the refusal
+	// that was wrong.
+	items, err := db.ListPayloadManifest(payloadID)
+	testutil.MustNoErr(t, err, "ListPayloadManifest")
+	if len(items) != 0 {
+		t.Errorf("Test-Payload still holds %d manifest line(s): %+v — the exemption must not "+
+			"have suppressed the deletion itself", len(items), items)
+	}
+
+	// And the neighbour was corrected normally in the same transaction, so the
+	// exemption did not turn the verify predicate off wholesale.
+	otherItems, err := db.ListPayloadManifest(otherID)
+	testutil.MustNoErr(t, err, "ListPayloadManifest neighbour")
+	if len(otherItems) != 1 || otherItems[0].PartNumber != "V108-SEED-NEIGHBOUR" || otherItems[0].PartID == 0 {
+		t.Errorf("the neighbour was not corrected: %+v", otherItems)
+	}
+	if otherItems[0].CATID != "40016911" {
+		t.Errorf("neighbour cat id = %q, want 40016911", otherItems[0].CATID)
+	}
+}
+
+// TestV108_RefusesWhenTheGuardWouldChange is the predicate itself, and the
+// exemption above must not have widened it. The state is manufactured (a part
+// minted by hand with a DIFFERENT cat id than the line holds) because the only
+// change the shipped correction makes on purpose is the seed deletion, which is
+// exempted by name.
 func TestV108_RefusesWhenTheGuardWouldChange(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

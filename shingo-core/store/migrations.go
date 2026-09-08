@@ -4326,6 +4326,21 @@ func v107Parts(tx *sql.Tx) error {
 // production rows, so it waits for a person.
 const PlantConfirmStrayManifestLinesEnv = "SHINGO_CONFIRM_STRAY_MANIFEST_LINES"
 
+// v108SeedPayloadCode and v108SeedPartNumber name Hopkinsville's seeded test
+// row, which v108 deletes.
+//
+// SPELLED ONCE BECAUSE TWO PLACES HAVE TO AGREE: the DELETE that removes the row
+// and the exemption that tells the verify predicate the removal was deliberate.
+// When they disagreed, v108 refused its own act — HK 2026-09-07, where the
+// correction deleted this row, saw Test-Payload's derived cat-id set go empty,
+// refused the whole transaction, and took Core down on every boot because a
+// failed migration fails `open database`. The migration was unrunnable at the one
+// plant that carries the row.
+const (
+	v108SeedPayloadCode = "Test-Payload"
+	v108SeedPartNumber  = "0123"
+)
+
 // v108CorrectManifestIdentity is the data half: mint a part per payload, move
 // the old manifest value onto that part as its cat id, re-point the line.
 //
@@ -4359,16 +4374,31 @@ func v108CorrectManifestIdentity(tx *sql.Tx) error {
 		return fmt.Errorf("v108 snapshot derived cat ids: %w", err)
 	}
 
+	// THE PAYLOADS THIS MIGRATION CHANGES THE CAT-ID SET OF ON PURPOSE, and why.
+	// The verify predicate at the bottom skips exactly these and nothing else.
+	// It has to: a refusal on the migration's own deliberate act makes the
+	// correction unrunnable, and an unrunnable migration is a plant that will not
+	// boot.
+	intended := map[string]string{}
+
 	// Hopkinsville's seeded test row, named exactly — this deletes that row and
 	// nothing that merely looks like it.
 	res, err := tx.Exec(`DELETE FROM payload_manifest pm
 		USING payloads p
-		WHERE p.id = pm.payload_id AND p.code = 'Test-Payload' AND pm.part_number = '0123'`)
+		WHERE p.id = pm.payload_id AND p.code = $1 AND pm.part_number = $2`,
+		v108SeedPayloadCode, v108SeedPartNumber)
 	if err != nil {
-		return fmt.Errorf("v108 delete the Test-Payload seed row: %w", err)
+		return fmt.Errorf("v108 delete the %s seed row: %w", v108SeedPayloadCode, err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		log.Printf("migrations: v108 deleted %d Test-Payload/0123 seed row(s)", n)
+		// REGISTERED, NOT JUST LOGGED. This leaves the payload with no manifest
+		// line at all, so its derived set goes empty — which is precisely the
+		// change the predicate below exists to refuse. Without this line the
+		// migration refuses itself.
+		intended[v108SeedPayloadCode] = fmt.Sprintf("the %d seeded test row(s) named %s were deleted",
+			n, v108SeedPartNumber)
+		log.Printf("migrations: v108 deleted %d %s/%s seed row(s)",
+			n, v108SeedPayloadCode, v108SeedPartNumber)
 	}
 
 	// The stray lines, and only with a person's say-so. STRUCTURAL rather than
@@ -4387,7 +4417,6 @@ func v108CorrectManifestIdentity(tx *sql.Tx) error {
 		return fmt.Errorf("v108 find stray manifest lines: %w", err)
 	}
 	confirmed := os.Getenv(PlantConfirmStrayManifestLinesEnv) == "1"
-	deletedStray := map[string]bool{}
 	for _, st := range strays {
 		if !confirmed {
 			log.Printf("migrations: v108 payload %s carries a line (%s) that another payload also carries "+
@@ -4395,7 +4424,8 @@ func v108CorrectManifestIdentity(tx *sql.Tx) error {
 				st.code, st.value, PlantConfirmStrayManifestLinesEnv)
 			continue
 		}
-		deletedStray[st.code] = true
+		intended[st.code] = fmt.Sprintf("the stray line %s was deleted with %s=1",
+			st.value, PlantConfirmStrayManifestLinesEnv)
 		log.Printf("migrations: v108 deleting stray manifest line %s from payload %s (%s=1)",
 			st.value, st.code, PlantConfirmStrayManifestLinesEnv)
 	}
@@ -4437,15 +4467,17 @@ func v108CorrectManifestIdentity(tx *sql.Tx) error {
 	}
 	var diffs []string
 	for code, was := range before {
-		if deletedStray[code] {
-			continue // the owner asked for this one; it is logged above, not refused
+		if _, onPurpose := intended[code]; onPurpose {
+			continue // this migration changed it on purpose; named below, not refused
 		}
 		if now := after[code]; now != was {
 			diffs = append(diffs, fmt.Sprintf("  payload %s: was %q, now %q", code, was, now))
 		}
 	}
 	for code, now := range after {
-		if _, seen := before[code]; !seen && !deletedStray[code] {
+		_, seen := before[code]
+		_, onPurpose := intended[code]
+		if !seen && !onPurpose {
 			diffs = append(diffs, fmt.Sprintf("  payload %s: was (none), now %q", code, now))
 		}
 	}
@@ -4455,6 +4487,27 @@ func v108CorrectManifestIdentity(tx *sql.Tx) error {
 			"cat-id set than they entered it with, and a changed set silently arms or disarms the "+
 			"wrong-part guard at whatever cell runs them:\n%s",
 			len(diffs), strings.Join(diffs, "\n"))
+	}
+
+	// EXEMPTED IS NOT UNNOTICED. Skipping these is what makes the migration
+	// runnable at all; saying nothing about them would hand back exactly the
+	// silence this predicate exists to break. An EMPTY set after the change means
+	// no wrong-part guard for whatever cell runs that payload, so it is spelled
+	// out rather than left for someone to infer from an absence.
+	exempted := make([]string, 0, len(intended))
+	for code, why := range intended {
+		note := ""
+		if after[code] == "" {
+			note = " — its set is now EMPTY, so any cell running this payload has NO " +
+				"wrong-part guard until a person enters one"
+		}
+		exempted = append(exempted, fmt.Sprintf("  payload %s: %q -> %q (%s)%s",
+			code, before[code], after[code], why, note))
+	}
+	if len(exempted) > 0 {
+		sort.Strings(exempted)
+		log.Printf("migrations: v108 changed %d payload(s) derived cat-id set ON PURPOSE and did "+
+			"not refuse them:\n%s", len(exempted), strings.Join(exempted, "\n"))
 	}
 	return nil
 }
