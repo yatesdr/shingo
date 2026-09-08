@@ -9,7 +9,9 @@ package cms
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -69,16 +71,31 @@ func Postable(sourceType string) bool {
 // a recursive subtree scan, which is not sound under concurrent moves, and the
 // only reader was the diagnostics table.
 type Transaction struct {
-	ID          int64  `json:"id"`
-	NodeID      int64  `json:"node_id"`
-	NodeName    string `json:"node_name"`
-	CatID       string `json:"cat_id"`
-	Delta       int64  `json:"delta"`
-	BinID       *int64 `json:"bin_id,omitempty"`
-	BinLabel    string `json:"bin_label"`
-	PayloadCode string `json:"payload_code"`
-	SourceType  string `json:"source_type"`
-	OrderID     *int64 `json:"order_id,omitempty"`
+	ID     int64 `json:"id"`
+	NodeID int64 `json:"node_id"`
+	// NodeName is the BOUNDARY -- the tagged ancestor the location resolved
+	// to, which is what Storeroom derives from. It is frequently a GROUP in
+	// the node tree rather than a place a carrier can stand
+	// (`Supermarket Area`), so it is not the answer to "where was this".
+	// LocationNodeName is.
+	NodeName string `json:"node_name"`
+	// LocationNodeID / LocationNodeName are WHERE THE MATERIAL ACTUALLY WAS:
+	// the concrete node the walk started from, before it climbed to the
+	// boundary above. Kept because the boundary cannot be walked back down --
+	// it is an ancestor of many nodes -- so a row that stored only the
+	// boundary had permanently lost the place.
+	//
+	// Zero/empty on rows written before v111, and on any path that has no
+	// concrete node to name. Never inferred from the boundary.
+	LocationNodeID   int64  `json:"location_node_id,omitempty"`
+	LocationNodeName string `json:"location_node_name"`
+	CatID            string `json:"cat_id"`
+	Delta            int64  `json:"delta"`
+	BinID            *int64 `json:"bin_id,omitempty"`
+	BinLabel         string `json:"bin_label"`
+	PayloadCode      string `json:"payload_code"`
+	SourceType       string `json:"source_type"`
+	OrderID          *int64 `json:"order_id,omitempty"`
 	// Storeroom is the CMS code of the boundary this row is about, stamped at
 	// build time from the node property. It travels on the row so the wire
 	// layer needs no reach-back into the node tree — a translator that had to
@@ -94,19 +111,24 @@ type Transaction struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const selectCols = `id, node_id, node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id, posting_id, notes, created_at`
+const selectCols = `id, node_id, node_name, location_node_id, location_node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id, posting_id, notes, created_at`
 
 func scanTransaction(row interface{ Scan(...any) error }) (*Transaction, error) {
 	var t Transaction
 	var binID sql.NullInt64
 	var orderID sql.NullInt64
 	var postingID sql.NullInt64
-	err := row.Scan(&t.ID, &t.NodeID, &t.NodeName, &t.CatID, &t.Delta,
+	var locationNodeID sql.NullInt64
+	err := row.Scan(&t.ID, &t.NodeID, &t.NodeName,
+		&locationNodeID, &t.LocationNodeName, &t.CatID, &t.Delta,
 		&binID, &t.BinLabel, &t.PayloadCode,
 		&t.SourceType, &orderID, &t.Storeroom, &t.RobotID, &postingID,
 		&t.Notes, &t.CreatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if locationNodeID.Valid {
+		t.LocationNodeID = locationNodeID.Int64
 	}
 	if binID.Valid {
 		t.BinID = &binID.Int64
@@ -157,6 +179,7 @@ func Create(db *sql.DB, txns []*Transaction) error {
 // failure. Same family as MarkInflight committing before the POST: the durable
 // record and the irreversible act are ordered on purpose.
 func CreateInTx(q helpers.QueryRower, txns []*Transaction) error {
+	skipped := 0
 	for _, t := range txns {
 		// posting_id is deliberately not inserted: a new row is unsent by
 		// definition, and NULL is what the unposted index selects on.
@@ -167,14 +190,37 @@ func CreateInTx(q helpers.QueryRower, txns []*Transaction) error {
 		// this path fills. The COLUMN stays — historical rows carry notes and
 		// the diagnostics table still reads them — and the default supplies
 		// the empty string for new ones.
-		id, err := helpers.InsertID(q, `INSERT INTO cms_transactions (node_id, node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-			t.NodeID, t.NodeName, t.CatID, t.Delta,
+		var locationNodeID any
+		if t.LocationNodeID != 0 {
+			locationNodeID = t.LocationNodeID
+		}
+		// ON CONFLICT DO NOTHING against idx_cms_txn_one_movement (v112): more
+		// than one engine emitter can report the same arrival, and booking it
+		// twice is a transfer the plant never made. The conflict is the NORMAL
+		// outcome of a second report, not an error — the row it would duplicate
+		// is already there and already queued.
+		//
+		// A skipped row returns no id, so it keeps t.ID zero and is reported to
+		// the caller. It must NOT abort the batch: on the clear path these rows
+		// commit inside the caller's transaction alongside the act they
+		// describe, and failing there would refuse a clear because the ledger
+		// already knew about it.
+		id, err := helpers.InsertID(q, `INSERT INTO cms_transactions (node_id, node_name, location_node_id, location_node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT DO NOTHING RETURNING id`,
+			t.NodeID, t.NodeName, locationNodeID, t.LocationNodeName, t.CatID, t.Delta,
 			helpers.NullableInt64(t.BinID), t.BinLabel, t.PayloadCode, t.SourceType,
 			helpers.NullableInt64(t.OrderID), t.Storeroom, t.RobotID)
+		if errors.Is(err, sql.ErrNoRows) {
+			skipped++
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("create cms transaction: %w", err)
 		}
 		t.ID = id
+	}
+	if skipped > 0 {
+		log.Printf("cms: %d of %d movement row(s) were already recorded — a second emitter reported the same arrival; not booking it twice",
+			skipped, len(txns))
 	}
 	return nil
 }

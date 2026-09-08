@@ -220,7 +220,7 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 		Action: "moved", BinID: bin.ID, PayloadCode: pay.Code,
 		FromNodeID: srcSlot.ID, ToNodeID: dstSlot.ID, NodeID: dstSlot.ID,
-		RobotID: "AMR-042", OrderID: 0,
+		RobotID: "AMR-42", OrderID: 0,
 	}})
 
 	// The subscriber queues; the poster sends on its own loop. Drain it here
@@ -273,8 +273,10 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	if departure["PartNumber"] != "E2E-PAYLOAD" {
 		t.Errorf("part number = %v, want E2E-PAYLOAD", departure["PartNumber"])
 	}
-	if departure["Resource"] != "AMR-042" {
-		t.Errorf("resource = %v, want AMR-042 — the robot that carried it", departure["Resource"])
+	// The hyphen is stripped: the middleware caps Resource at 5 characters and
+	// shingo's ids are AMR-42. See wire.resourceFor.
+	if departure["Resource"] != "AMR42" {
+		t.Errorf("resource = %v, want AMR42 — the robot that carried it, without its hyphen", departure["Resource"])
 	}
 	if departure["ReasonCode"] != "TEST-AMR" || departure["UserId"] != "SHINGO" {
 		t.Errorf("configured vocabulary did not reach the wire: %s", got[0])
@@ -425,5 +427,79 @@ func TestCMSEndToEnd_UntaggedBoundariesPostNothing(t *testing.T) {
 	}
 	if !strings.Contains(health.Why, "cms_storeroom") {
 		t.Errorf("why = %q, want it to say no node is tagged", health.Why)
+	}
+}
+
+// TestCMSEndToEnd_AnIntermediateDropoffBooksItsArrival is the pin on the guard
+// that silenced the ledger for a whole order.
+//
+// An intermediate dropoff emits FromNodeID 0 — the bin arrives from _TRANSIT,
+// not a real slot, and that zero is deliberate so kanban's
+// produce-on-storage-exit does not fire. The CMS subscription used to require
+// BOTH ends to be non-zero, so it dropped the event entirely: material
+// physically landed in a tagged storeroom and CMS was told nothing until the
+// whole order finished, which at Hopkinsville on 2026-09-08 was 49 minutes
+// later. An order cancelled while wedged would never have booked it at all.
+//
+// The regression to catch is someone restoring the symmetric `&&` because it
+// reads tidier. Nothing else fails if they do — the arrival still happens, the
+// slot still updates, replenishment still fires — the ledger just goes quiet.
+func TestCMSEndToEnd_AnIntermediateDropoffBooksItsArrival(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	stub := newMiddlewareStub(t, http.StatusOK, `{"TransactionId":"MW-INTERMEDIATE"}`)
+	eng := cmsEngine(t, db, stub.srv.URL)
+
+	pay := &payloads.Payload{Code: "E2E-INTERMEDIATE", UOPCapacity: 10}
+	testutil.MustNoErr(t, db.CreatePayload(pay), "create payload")
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{
+		PayloadID: pay.ID, PartNumber: "E2E-INTERMEDIATE", PartsPerCycle: 3,
+	}, ""), "create template line")
+
+	// Only the DESTINATION is tagged. The press side carries no boundary, which
+	// is the real Hopkinsville shape: one tagged storeroom, material arriving
+	// into it from an untagged plant.
+	_, dstSlot := tagBoundary(t, db, "E2E-MARKET", "ASTEST")
+
+	bin := createTestBinAtNode(t, db, pay.Code, dstSlot.ID, "BIN-INTERMEDIATE")
+	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: "E2E-INTERMEDIATE"}}}
+	body, err := json.Marshal(m)
+	testutil.MustNoErr(t, err, "marshal manifest")
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 10), "set manifest")
+
+	// FromNodeID 0 — exactly what wiring_block_completed.go emits on an
+	// intermediate dropoff.
+	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+		Action: "moved", BinID: bin.ID, PayloadCode: pay.Code,
+		FromNodeID: 0, ToNodeID: dstSlot.ID, NodeID: dstSlot.ID,
+		RobotID: "AMR-07", OrderID: 0,
+	}})
+
+	if eng.cmsPoster == nil {
+		t.Fatal("no poster was started for a configured cms: block")
+	}
+	eng.cmsPoster.DrainOnce(t.Context())
+
+	got := awaitRequests(t, stub, 1)
+	if len(got) != 1 {
+		t.Fatalf("the middleware received %d requests, want 1 — an intermediate "+
+			"dropoff into a tagged storeroom must book its arrival when it happens", len(got))
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(got[0], &rows); err != nil {
+		t.Fatalf("body is not a JSON array: %v (%s)", err, got[0])
+	}
+	if len(rows) != 1 {
+		t.Fatalf("posted %d rows, want 1 — only the destination is tagged, so the "+
+			"source half must produce nothing", len(rows))
+	}
+	if got := rows[0]["StockLocation"]; got != "ASTEST" {
+		t.Errorf("StockLocation = %v, want ASTEST", got)
+	}
+	if got := rows[0]["Quantity"]; got != float64(30) {
+		t.Errorf("Quantity = %v, want 30 (10 cycles x 3 per cycle)", got)
+	}
+	if got := rows[0]["TransactionType"]; got != "I" {
+		t.Errorf("TransactionType = %v, want I — an arrival is an increase", got)
 	}
 }

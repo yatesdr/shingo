@@ -818,6 +818,11 @@ type CMSConfig struct {
 	Department string `yaml:"department"`
 	Operation  string `yaml:"operation"`
 
+	// Bin is the CMS bin code this site's rows carry — master data CMS owns,
+	// not anything shingo can derive. See wire.Config.Bin. Empty ships an empty
+	// Bin, which the middleware refuses; no site in this repository sets one.
+	Bin string `yaml:"bin"`
+
 	// InsecureSkipVerify disables TLS certificate verification on the calls to
 	// the middleware. It defaults to FALSE and the repository ships no site
 	// that sets it — it is opt-in, per site, in the site-local yaml.
@@ -910,6 +915,7 @@ func (c CMSConfig) Wire() wire.Config {
 		UserID:        c.UserID,
 		Department:    c.Department,
 		Operation:     c.Operation,
+		Bin:           c.Bin,
 	}
 }
 
@@ -982,11 +988,11 @@ func (c CMSConfig) String() string {
 	return fmt.Sprintf("CMSConfig{base_url:%s access_key:%s secret_key:%s timeout:%s "+
 		"poll_interval:%s max_attempts:%d settle_window:%s max_requeues:%d health_window:%s "+
 		"reason_code:%s increase_type:%s decrease_type:%s unit_of_measure:%s user_id:%s "+
-		"department:%s operation:%s insecure_skip_verify:%t}",
+		"department:%s operation:%s bin:%s insecure_skip_verify:%t}",
 		c.BaseURL, redacted(c.AccessKey), redacted(c.SecretKey), c.Timeout,
 		c.PollInterval, c.MaxAttempts, c.SettleWindow, c.MaxRequeues, c.HealthWindow,
 		c.ReasonCode, c.IncreaseType, c.DecreaseType, c.UnitOfMeasure, c.UserID,
-		c.Department, c.Operation, c.InsecureSkipVerify)
+		c.Department, c.Operation, c.Bin, c.InsecureSkipVerify)
 }
 
 // redacted reports whether a secret is present without saying what it is. It

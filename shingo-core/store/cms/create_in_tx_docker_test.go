@@ -177,3 +177,95 @@ func TestCreateInTx_AndCreateAgreeOnWhatTheyWrite(t *testing.T) {
 		t.Error("a new row must have posting_id NULL — NULL is the unposted queue")
 	}
 }
+
+// TestCreateInTx_ASecondReportOfTheSameMovementIsNotBooked pins v112.
+//
+// Hopkinsville 2026-09-08: order 2039 booked +2913 for CARRIER-0004 at SMN_04
+// twice — once at the intermediate dropoff and again when the order completed.
+// Both are genuine engine events and neither is a replay, so nothing upstream
+// can tell the second one is a repeat. The ledger has to refuse it, because a
+// second increase at an inventory boundary is a transfer the plant never made.
+//
+// A check-then-insert would race between two emitters; this asserts the
+// CONSTRAINT holds, which is the only version that does.
+func TestCreateInTx_ASecondReportOfTheSameMovementIsNotBooked(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	node := &nodes.Node{Name: "CIT-DUP-BOUNDARY", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	order := testdb.CreateOrder(t, db)
+	orderID := order.ID
+
+	row := func() *cms.Transaction {
+		return &cms.Transaction{
+			NodeID: node.ID, NodeName: node.Name,
+			LocationNodeID: node.ID, LocationNodeName: "SMN_04",
+			CatID: "LK41 5019 A PIA17", Delta: 2913,
+			BinLabel:    "CARRIER-0004",
+			PayloadCode: "LK41 5019 A PIA17", SourceType: cms.SourceTypeMovement,
+			OrderID: &orderID, Storeroom: "ASTEST", RobotID: "AMR-03",
+		}
+	}
+
+	first := row()
+	if err := cms.Create(db.DB, []*cms.Transaction{first}); err != nil {
+		t.Fatalf("first booking: %v", err)
+	}
+	if first.ID == 0 {
+		t.Fatal("the first report of a movement must be recorded")
+	}
+
+	second := row()
+	if err := cms.Create(db.DB, []*cms.Transaction{second}); err != nil {
+		t.Fatalf("a duplicate must not be an error — it is the normal outcome of a second emitter: %v", err)
+	}
+	if second.ID != 0 {
+		t.Errorf("the second report got id %d — it was booked, which double-counts the transfer", second.ID)
+	}
+
+	var n int
+	if err := db.DB.QueryRow(
+		`SELECT count(*) FROM cms_transactions WHERE order_id = $1`,
+		orderID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("%d rows for one arrival, want 1", n)
+	}
+}
+
+// TestCreateInTx_TwoClearsOfTheSameBinAreBothBooked: the index is scoped to
+// order_id IS NOT NULL on purpose. A clear carries no order, and two clears of
+// the same bin at the same node are two separate departures — collapsing them
+// would lose material that really left.
+func TestCreateInTx_TwoClearsOfTheSameBinAreBothBooked(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	node := &nodes.Node{Name: "CIT-CLEAR-BOUNDARY", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	clear := func() *cms.Transaction {
+		return &cms.Transaction{
+			NodeID: node.ID, NodeName: node.Name,
+			LocationNodeID: node.ID, LocationNodeName: "SMN_04",
+			CatID: "PART-X", Delta: -500,
+			BinLabel:    "CARRIER-0009",
+			PayloadCode: "PART-X", SourceType: cms.SourceTypeClear,
+			Storeroom: "ASTEST",
+		}
+	}
+
+	a, b := clear(), clear()
+	if err := cms.Create(db.DB, []*cms.Transaction{a}); err != nil {
+		t.Fatalf("first clear: %v", err)
+	}
+	if err := cms.Create(db.DB, []*cms.Transaction{b}); err != nil {
+		t.Fatalf("second clear: %v", err)
+	}
+	if a.ID == 0 || b.ID == 0 || a.ID == b.ID {
+		t.Errorf("both clears must be booked separately (got %d and %d)", a.ID, b.ID)
+	}
+}

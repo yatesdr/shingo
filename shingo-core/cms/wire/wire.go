@@ -16,6 +16,7 @@ package wire
 
 import (
 	"sort"
+	"strings"
 
 	"shingocore/store/cms"
 )
@@ -68,6 +69,26 @@ type Config struct {
 	DecreaseType  string
 	UnitOfMeasure string
 	UserID        string
+
+	// Bin is the CMS bin code every row of this site's feed carries.
+	//
+	// CMS's model is Stock Room -> Bin and both halves are MASTER DATA CMS
+	// OWNS: room `W3U MAIN WAREHOUSE` holds bins `FLOOR`, `BFT`, `F101B`. The
+	// field is a key into that list, which is why neither of shingo's own
+	// vocabularies fits it -- the carrier label `CARRIER-0010` was refused for
+	// length, and the node name `SMN_03` would be refused as not a bin.
+	//
+	// ONE VALUE FOR THE WHOLE SITE, because there is no way to do better yet:
+	// shingo cannot read CMS's bin master, so a per-node mapping would be a
+	// tree of values nobody can verify. When that lookup exists this becomes
+	// per-node and every supermarket node names its own bin; until then the
+	// feed says "the AMR supermarket is this one bin", which is true at the
+	// resolution CMS can currently see.
+	//
+	// Empty sends an empty Bin and the middleware refuses it. That is
+	// deliberate: no site in this repository configures a bin, and a plausible
+	// wrong value is how this field stayed broken through two rounds of 400s.
+	Bin string
 }
 
 // Build converts transaction rows into the middleware array.
@@ -130,14 +151,19 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 			// material.BuildMovementTransactions refuses to build a movement
 			// whose lines do not resolve to parts, so a value that reaches here
 			// has been through the correction.
-			PartNumber:      t.CatID,
-			StockLocation:   t.Storeroom,
-			Bin:             t.BinLabel,
+			PartNumber:    t.CatID,
+			StockLocation: t.Storeroom,
+			// THE CONFIGURED CMS BIN CODE. See Config.Bin: this is master data
+			// CMS owns, so it comes from the site's yaml rather than from
+			// anything shingo knows about the node. location_node_name on the
+			// row records where the material actually was in shingo's own
+			// vocabulary; the two are different systems' names for one place.
+			Bin:             cfg.Bin,
 			Quantity:        qty,
 			TransactionType: txnType,
 			// Blank for an operator drag: no robot moved it, and an invented
 			// resource would be a claim about the plant that is not true.
-			Resource:      t.RobotID,
+			Resource:      resourceFor(t.RobotID),
 			ReasonCode:    cfg.ReasonCode,
 			UnitOfMeasure: cfg.UnitOfMeasure,
 			UserID:        cfg.UserID,
@@ -149,4 +175,22 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 		})
 	}
 	return out
+}
+
+// resourceFor spells a robot id the way the middleware will accept it.
+//
+// Resource is capped at 5 characters and shingo's ids are `AMR-07` -- six. The
+// hyphen is a SEPARATOR rather than part of the identity, so removing it is
+// lossless: `AMR07` names the same robot and reverses unambiguously. That is
+// what makes this different from the Bin episode, where the value was refused
+// because it was the wrong FIELD and no amount of reformatting would have made
+// it right.
+//
+// An id that is still too long after this is sent AS IS and refused by the
+// middleware. Truncating would produce a resource that names a different robot
+// -- or no robot -- while looking valid, and a loud 400 naming the field beats
+// a plausible wrong answer in a ledger. Today every Hopkinsville id is AMR-01
+// through AMR-12, so this always lands at exactly 5.
+func resourceFor(robotID string) string {
+	return strings.ReplaceAll(robotID, "-", "")
 }

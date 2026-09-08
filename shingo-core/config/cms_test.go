@@ -269,6 +269,7 @@ func TestCMSConfig_MappersCarryEveryField(t *testing.T) {
 		ReasonCode: "RC", IncreaseType: "IT", DecreaseType: "DT",
 		UnitOfMeasure: "UOM", UserID: "UID",
 		Department: "DEPT", Operation: "OP",
+		Bin:                "FLOOR",
 		InsecureSkipVerify: true,
 	}
 
@@ -317,6 +318,7 @@ func TestCMSConfig_MappersMatchTheSourceValues(t *testing.T) {
 	c.Timeout, c.PollInterval, c.SettleWindow = 7*time.Second, 11*time.Second, 13*time.Minute
 	c.MaxAttempts, c.MaxRequeues = 5, 9
 	c.Department, c.Operation = "DEPT", "OP"
+	c.Bin = "FLOOR"
 	c.InsecureSkipVerify = true
 
 	cl, p, w := c.Client(), c.Poster(), c.Wire()
@@ -341,6 +343,7 @@ func TestCMSConfig_MappersMatchTheSourceValues(t *testing.T) {
 		{"wire.UserID", w.UserID, c.UserID},
 		{"wire.Department", w.Department, c.Department},
 		{"wire.Operation", w.Operation, c.Operation},
+		{"wire.Bin", w.Bin, c.Bin},
 	} {
 		if !reflect.DeepEqual(tc.got, tc.want) {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)

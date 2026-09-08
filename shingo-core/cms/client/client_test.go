@@ -634,3 +634,63 @@ func TestClassifyTransportErr_UnknownFailsSafe(t *testing.T) {
 		}
 	}
 }
+
+// TestPost_HopkinsvilleResponseShapeIsNamed uses the middleware's ACTUAL reply,
+// copied from the first posting that CMS ever accepted (2026-09-08 15:09).
+//
+// The vendor's sample showed a top-level TransactionId and the parser was
+// written against it. The endpoint answers with the id nested in results[], so
+// every accepted posting read as "accepted, unnamed" and stayed inflight — and
+// there is no way out of inflight at this site, because the status GET 404s.
+// The id in this body is the only success signal that exists.
+func TestPost_HopkinsvilleResponseShapeIsNamed(t *testing.T) {
+	t.Parallel()
+	body := `{"ok":true,"method":"POST","route":"/api/transactions/v1/inventory_transactions",` +
+		`"client":{"client_id":2,"client_project_id":3,"client_project_credential_id":11},` +
+		`"endpoint":{"api_endpoint_id":12,"endpoint_code":"inventory_transactions"},` +
+		`"received_at":"2026-09-08T15:09:12.781Z","groups":1,"rows":1,` +
+		`"results":[{"transaction_id":15,"ticket_number":1,"entries":{"from":1,"to":1},"rows_inserted":1}]}`
+
+	c := serve(t, reply(200, body))
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+
+	if got.Class != ClassPosted {
+		t.Errorf("class = %s, want posted — the middleware named the transaction (err: %v)",
+			got.Class, got.Err)
+	}
+	if got.TransactionID != "15" {
+		t.Errorf("transaction id = %q, want 15 — read from results[].transaction_id", got.TransactionID)
+	}
+}
+
+// TestPost_SplitResultsStayInflight: a posting stores ONE transaction id, so a
+// response naming several is a shape this schema cannot record. Reporting the
+// first would identify part of the posting and silently drop the rest, which is
+// worse than admitting we cannot name it.
+func TestPost_SplitResultsStayInflight(t *testing.T) {
+	t.Parallel()
+	body := `{"ok":true,"groups":2,"rows":2,"results":[` +
+		`{"transaction_id":21,"rows_inserted":1},{"transaction_id":22,"rows_inserted":1}]}`
+
+	c := serve(t, reply(200, body))
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+
+	if got.Class != ClassInflight {
+		t.Errorf("class = %s, want inflight — two ids cannot be stored as one", got.Class)
+	}
+	if got.TransactionID != "" {
+		t.Errorf("transaction id = %q, want empty — naming one of two is a false record", got.TransactionID)
+	}
+}
+
+// TestPost_RepeatedIdAcrossResultsIsStillOneTransaction: the same id echoed in
+// several entries is one transaction reported per row, not a split.
+func TestPost_RepeatedIdAcrossResultsIsStillOneTransaction(t *testing.T) {
+	t.Parallel()
+	body := `{"ok":true,"results":[{"transaction_id":15},{"transaction_id":15}]}`
+	c := serve(t, reply(200, body))
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+	if got.Class != ClassPosted || got.TransactionID != "15" {
+		t.Errorf("class = %s id = %q, want posted/15", got.Class, got.TransactionID)
+	}
+}

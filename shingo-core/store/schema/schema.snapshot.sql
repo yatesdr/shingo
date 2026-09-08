@@ -316,7 +316,9 @@ CREATE TABLE public.cms_transactions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     posting_id bigint,
     robot_id text DEFAULT ''::text NOT NULL,
-    storeroom text DEFAULT ''::text NOT NULL
+    storeroom text DEFAULT ''::text NOT NULL,
+    location_node_id bigint,
+    location_node_name text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.cms_transactions_id_seq
@@ -1662,6 +1664,8 @@ CREATE INDEX idx_cms_postings_pending ON public.cms_postings USING btree (next_r
 CREATE INDEX idx_cms_txn_created ON public.cms_transactions USING btree (created_at);
 
 CREATE INDEX idx_cms_txn_node ON public.cms_transactions USING btree (node_id);
+
+CREATE UNIQUE INDEX idx_cms_txn_one_movement ON public.cms_transactions USING btree (order_id, bin_id, node_id, cat_id, delta) NULLS NOT DISTINCT WHERE (order_id IS NOT NULL);
 
 CREATE INDEX idx_cms_txn_unposted ON public.cms_transactions USING btree (id) WHERE (posting_id IS NULL);
 

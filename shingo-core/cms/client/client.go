@@ -352,16 +352,75 @@ func transactionID(raw []byte) string {
 	if err := dec.Decode(&obj); err != nil {
 		return ""
 	}
-	for _, k := range []string{"TransactionId", "TransactionID", "transaction_id", "transactionId", "id"} {
-		if v, ok := obj[k]; ok {
-			switch t := v.(type) {
-			case string:
-				if t != "" {
-					return t
-				}
-			case json.Number:
-				return t.String()
+	for _, k := range idKeys {
+		if id := idFrom(obj[k]); id != "" {
+			return id
+		}
+	}
+	return nestedTransactionID(obj)
+}
+
+// idKeys are the spellings the id might use, at the top level or inside a
+// results entry.
+var idKeys = []string{"TransactionId", "TransactionID", "transaction_id", "transactionId", "id"}
+
+func idFrom(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case json.Number:
+		return t.String()
+	}
+	return ""
+}
+
+// nestedTransactionID reads the id out of a results array.
+//
+// HOPKINSVILLE'S MIDDLEWARE PUTS IT THERE, and the vendor's sample did not --
+// the sample showed a top-level TransactionId, so that is what the loop above
+// was written against. What the endpoint actually answers is
+//
+//	{"ok":true,"groups":1,"rows":1,
+//	 "results":[{"transaction_id":15,"ticket_number":1,
+//	             "entries":{"from":1,"to":1},"rows_inserted":1}]}
+//
+// Without this, an accepted posting reads as "accepted, unnamed" and stays
+// INFLIGHT FOREVER: the status GET 404s at this middleware, so there is no
+// reconciler path out of it and a person is asked to check by hand every five
+// minutes. The id in the POST response is the only success signal there is.
+//
+// MORE THAN ONE DISTINCT ID RETURNS EMPTY, deliberately. A posting stores one
+// transaction id, so a split response is a thing this schema cannot name --
+// and inflight is what "it landed and we cannot name it" means. Reporting the
+// first of several would record an id that identifies part of the posting and
+// silently drop the rest. shingo posts a single group today, so this is a
+// guard on a shape that has not happened rather than a case being handled.
+func nestedTransactionID(obj map[string]any) string {
+	for _, key := range []string{"results", "data", "transactions"} {
+		entries, ok := obj[key].([]any)
+		if !ok {
+			continue
+		}
+		seen := ""
+		for _, e := range entries {
+			row, ok := e.(map[string]any)
+			if !ok {
+				continue
 			}
+			for _, k := range idKeys {
+				id := idFrom(row[k])
+				if id == "" {
+					continue
+				}
+				if seen != "" && seen != id {
+					return "" // split across ids: unnameable, stays inflight
+				}
+				seen = id
+				break
+			}
+		}
+		if seen != "" {
+			return seen
 		}
 	}
 	return ""

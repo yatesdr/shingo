@@ -137,6 +137,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 	// that had to look up "which storeroom is node 41" would need the node tree
 	// and a database, and would stop being testable as a table of inputs.
 	var srcBoundary, dstBoundary *nodes.Node
+	var srcLocation, dstLocation *nodes.Node
 	var srcStoreroom, dstStoreroom string
 	if ev.FromNodeID != 0 {
 		b, code, err := FindCMSBoundary(s, ev.FromNodeID)
@@ -144,6 +145,14 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 			return nil, nil, err
 		}
 		srcBoundary, srcStoreroom = b, code
+		// EACH SIDE CARRIES ITS OWN PLACE. Looked up only when this side has a
+		// boundary, because a side with no boundary emits no row and the
+		// lookup would be a query for a value nothing reads.
+		if b != nil {
+			if srcLocation, err = s.GetNode(ev.FromNodeID); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	if ev.ToNodeID != 0 {
 		b, code, err := FindCMSBoundary(s, ev.ToNodeID)
@@ -151,6 +160,11 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 			return nil, nil, err
 		}
 		dstBoundary, dstStoreroom = b, code
+		if b != nil {
+			if dstLocation, err = s.GetNode(ev.ToNodeID); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 
 	srcID := int64(0)
@@ -181,9 +195,9 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 	}
 
 	var txns []*cms.Transaction
-	txns = append(txns, rowsAtBoundary(c, srcBoundary, srcStoreroom, -1, // leaving  → negative delta
+	txns = append(txns, rowsAtBoundary(c, srcBoundary, srcLocation, srcStoreroom, -1, // leaving  → negative delta
 		cms.SourceTypeMovement, orderID, ev.RobotID)...)
-	txns = append(txns, rowsAtBoundary(c, dstBoundary, dstStoreroom, +1, // arriving → positive delta
+	txns = append(txns, rowsAtBoundary(c, dstBoundary, dstLocation, dstStoreroom, +1, // arriving → positive delta
 		cms.SourceTypeMovement, orderID, ev.RobotID)...)
 
 	report := c.report()
@@ -252,7 +266,14 @@ func BuildClearTransactions(s Store, ev ClearEvent) ([]*cms.Transaction, *Uncoun
 		return nil, nil, err
 	}
 
-	txns := rowsAtBoundary(c, boundary, storeroom, -1, cms.SourceTypeClear, nil, "")
+	// The node the clear happened ON — already in hand as ev.NodeID, and until
+	// v111 used only to find the boundary above and then discarded.
+	location, err := s.GetNode(ev.NodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	txns := rowsAtBoundary(c, boundary, location, storeroom, -1, cms.SourceTypeClear, nil, "")
 	report := c.report()
 	if len(txns) == 0 {
 		return nil, report, nil
@@ -350,10 +371,22 @@ func (c *binContents) report() *UncountedLines {
 // rowsAtBoundary turns a bin's countable lines into one transaction per line at
 // boundary, signed by sign. A nil boundary yields nothing, so a caller with only
 // one tagged endpoint passes the other one nil rather than branching.
-func rowsAtBoundary(c *binContents, boundary *nodes.Node, storeroom string, sign int64,
+func rowsAtBoundary(c *binContents, boundary *nodes.Node, location *nodes.Node,
+	storeroom string, sign int64,
 	sourceType string, orderID *int64, robotID string) []*cms.Transaction {
 	if boundary == nil {
 		return nil
+	}
+	// THE LOCATION IS THIS SIDE'S OWN NODE, not the boundary and not the other
+	// side's. On a movement the two halves stand in different places, so a
+	// single location stamped on both rows would be wrong in a way that reads
+	// as correct. A nil location leaves the fields empty rather than falling
+	// back to the boundary: the boundary is frequently a GROUP, and a group
+	// recorded as a place is the defect this pair of columns exists to fix.
+	var locationID int64
+	var locationName string
+	if location != nil {
+		locationID, locationName = location.ID, location.Name
 	}
 	var txns []*cms.Transaction
 	for _, m := range c.items {
@@ -366,17 +399,19 @@ func rowsAtBoundary(c *binContents, boundary *nodes.Node, storeroom string, sign
 			continue
 		}
 		txns = append(txns, &cms.Transaction{
-			NodeID:      boundary.ID,
-			NodeName:    boundary.Name,
-			Storeroom:   storeroom,
-			CatID:       m.PartNumber,
-			Delta:       sign * count,
-			BinID:       &c.bin.ID,
-			BinLabel:    c.bin.Label,
-			PayloadCode: c.bin.PayloadCode,
-			SourceType:  sourceType,
-			OrderID:     orderID,
-			RobotID:     robotID,
+			NodeID:           boundary.ID,
+			NodeName:         boundary.Name,
+			LocationNodeID:   locationID,
+			LocationNodeName: locationName,
+			Storeroom:        storeroom,
+			CatID:            m.PartNumber,
+			Delta:            sign * count,
+			BinID:            &c.bin.ID,
+			BinLabel:         c.bin.Label,
+			PayloadCode:      c.bin.PayloadCode,
+			SourceType:       sourceType,
+			OrderID:          orderID,
+			RobotID:          robotID,
 		})
 	}
 	return txns

@@ -35,9 +35,14 @@ func txn(id int64, partNumber, storeroom, binLabel, robot string, delta int64) *
 
 func TestBuild_MapsEveryFieldOfOneRow(t *testing.T) {
 	t.Parallel()
-	got := Build([]*cms.Transaction{
-		txn(7, "7332B4-6RR0A.06", "SM01", "SHG:0042", "AMR-003", 16),
-	}, testConfig())
+	cfg := testConfig()
+	cfg.Bin = "FLOOR"
+	row := txn(7, "7332B4-6RR0A.06", "SM01", "SHG:0042", "AMR-03", 16)
+	// The carrier label and the shingo node name both stay on the row — they
+	// are still recorded — but Bin is CMS's own code, so all three are set here
+	// and only one of them may appear.
+	row.LocationNodeID, row.LocationNodeName = 11, "SMN_01"
+	got := Build([]*cms.Transaction{row}, cfg)
 
 	want := []MiddlewareTx{{
 		TicketNumber: 1,
@@ -47,15 +52,16 @@ func TestBuild_MapsEveryFieldOfOneRow(t *testing.T) {
 		EntryNumber:     7,
 		PartNumber:      "7332B4-6RR0A.06",
 		StockLocation:   "SM01",
-		Bin:             "SHG:0042",
+		Bin:             "FLOOR",
 		Quantity:        16,
 		TransactionType: "I",
-		Resource:        "AMR-003",
-		ReasonCode:      "TEST-AMR",
-		UnitOfMeasure:   "EA",
-		UserID:          "SHINGO",
-		Department:      "",
-		Operation:       "",
+		// The hyphen is dropped: the middleware caps Resource at 5 characters.
+		Resource:      "AMR03",
+		ReasonCode:    "TEST-AMR",
+		UnitOfMeasure: "EA",
+		UserID:        "SHINGO",
+		Department:    "",
+		Operation:     "",
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Build() = %+v\nwant %+v", got, want)
@@ -354,6 +360,108 @@ func TestBuild_MultiLinePayloadIsNotPostedPerLine(t *testing.T) {
 		if r.PartNumber == payload {
 			t.Errorf("row %d names the PAYLOAD CODE %q, which for a kit is the name of the "+
 				"container and matches no line", i, payload)
+		}
+	}
+}
+
+// ── Bin is the concrete node ────────────────────────────────────────────
+
+// TestBuild_BinIsTheCMSCodeNotTheNodeOrTheCarrier is the pin on the field that
+// has now been wrong twice.
+//
+// It carried the CARRIER label first — refused with "Bin must be shorter than
+// or equal to 10 characters", because labels are 12. It then carried shingo's
+// NODE NAME, which fits the cap and is still wrong: CMS reads Bin as a key into
+// its own bin master (room W3U holds FLOOR, BFT, F101B), and no shingo node
+// name appears in that list.
+//
+// This asserts neither of the two wrong answers appears, not merely that the
+// right one does — both previous values would satisfy a weaker check.
+func TestBuild_BinIsTheCMSCodeNotTheNodeOrTheCarrier(t *testing.T) {
+	t.Parallel()
+	cfg := testConfig()
+	cfg.Bin = "FLOOR"
+	row := txn(1, "PART-A", "W3U", "CARRIER-0010", "AMR-01", 24)
+	row.LocationNodeID, row.LocationNodeName = 11, "SMN_01"
+
+	got := Build([]*cms.Transaction{row}, cfg)
+	if len(got) != 1 {
+		t.Fatalf("built %d rows, want 1", len(got))
+	}
+	if got[0].Bin != "FLOOR" {
+		t.Errorf("Bin = %q, want FLOOR — CMS's own bin code", got[0].Bin)
+	}
+	if got[0].Bin == row.BinLabel {
+		t.Errorf("Bin is the carrier label again (%q) — refused for length", got[0].Bin)
+	}
+	if got[0].Bin == row.LocationNodeName {
+		t.Errorf("Bin is the shingo node name again (%q) — not in CMS's bin master", got[0].Bin)
+	}
+}
+
+// TestBuild_StockLocationAndBinAreTheTwoHalves: the storeroom is the coarse
+// half and the bin the fine one, and they come from different properties. A row
+// must carry both, and the boundary node name belongs to neither.
+func TestBuild_StockLocationAndBinAreTheTwoHalves(t *testing.T) {
+	t.Parallel()
+	cfg := testConfig()
+	cfg.Bin = "FLOOR"
+	row := txn(1, "PART-A", "W3U", "CARRIER-0010", "AMR-01", 24)
+	row.NodeID, row.NodeName = 14, "Supermarket Area"
+	row.LocationNodeID, row.LocationNodeName = 11, "SMN_01"
+
+	got := Build([]*cms.Transaction{row}, cfg)
+	if got[0].StockLocation != "W3U" {
+		t.Errorf("StockLocation = %q, want W3U", got[0].StockLocation)
+	}
+	if got[0].Bin != "FLOOR" {
+		t.Errorf("Bin = %q, want FLOOR", got[0].Bin)
+	}
+}
+
+// TestBuild_NoConfiguredBinSendsAnEmptyBin: a site that has not configured a
+// bin code has none, and none can be invented. An empty field the middleware
+// refuses is the honest answer; falling back to the node name or the carrier
+// puts a value CMS cannot resolve behind a field that looks populated, which is
+// how this field stayed wrong through two rounds of 400s.
+func TestBuild_NoConfiguredBinSendsAnEmptyBin(t *testing.T) {
+	t.Parallel()
+	row := txn(1, "PART-A", "W3U", "CARRIER-0010", "AMR-01", 24)
+	row.LocationNodeID, row.LocationNodeName = 11, "SMN_01" // known, but not a CMS code
+	got := Build([]*cms.Transaction{row}, testConfig())
+	if got[0].Bin != "" {
+		t.Errorf("Bin = %q, want empty when the site configures no bin", got[0].Bin)
+	}
+}
+
+// TestBuild_ResourceDropsTheHyphenFromTheRobotID pins the 5-character contract.
+//
+// The middleware refused AMR-07 with "Resource must be shorter than or equal to
+// 5 characters". The hyphen is a separator rather than part of the identity, so
+// dropping it is lossless and reversible — unlike the Bin episode, where the
+// value was refused for being the wrong FIELD.
+//
+// This exists because reverting it is silent: Resource would go back to
+// t.RobotID, every posting would be refused with a 400, and nothing would fail
+// locally. An empty robot id must stay empty — an operator drag has no robot
+// and inventing one is a claim about the plant that is not true.
+func TestBuild_ResourceDropsTheHyphenFromTheRobotID(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ robotID, want string }{
+		{"AMR-07", "AMR07"},
+		{"AMR-01", "AMR01"},
+		{"AMR-12", "AMR12"},
+		{"", ""}, // operator drag: no robot, and none invented
+	} {
+		row := txn(1, "PART-A", "ASTEST", "CARRIER-0010", tc.robotID, 24)
+		row.LocationNodeID, row.LocationNodeName = 11, "SMN_01"
+		got := Build([]*cms.Transaction{row}, testConfig())
+		if got[0].Resource != tc.want {
+			t.Errorf("robot %q -> Resource %q, want %q", tc.robotID, got[0].Resource, tc.want)
+		}
+		if len(got[0].Resource) > 5 {
+			t.Errorf("Resource %q is %d characters; the middleware caps it at 5",
+				got[0].Resource, len(got[0].Resource))
 		}
 	}
 }

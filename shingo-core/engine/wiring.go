@@ -347,7 +347,31 @@ func (e *Engine) wireEventHandlers() {
 	// ── CMS transaction logging ────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		ev := evt.Payload
-		if ev.Action == "moved" && ev.FromNodeID != 0 && ev.ToNodeID != 0 {
+		// EITHER END IS ENOUGH, and CMS is deliberately the only subscriber
+		// that reads it that way.
+		//
+		// An INTERMEDIATE dropoff emits FromNodeID 0 on purpose
+		// (wiring_block_completed.go): the bin arrives from _TRANSIT rather than
+		// a real slot, so kanban's produce-on-storage-exit must not fire. That
+		// zero is right for every other subscriber and wrong for this one --
+		// material arriving from outside a tagged storeroom is exactly what an
+		// inventory ledger wants to hear, and requiring both ends meant CMS
+		// never heard about an intermediate dropoff at all.
+		//
+		// Hopkinsville 2026-09-08: a press delivered 3000 parts to SMN_01 as
+		// step 3 of a 5-step swap and the ledger stayed silent until the whole
+		// order finished 49 minutes later. Had the order been cancelled while
+		// wedged, the arrival would never have booked. It only worked before
+		// because the press used to deliver STRAIGHT to the supermarket, where
+		// the node is the delivery node and books at whole-order FINISHED.
+		//
+		// The fix belongs here rather than at the emitter: five other
+		// subscribers read that payload, and giving the dropoff a real
+		// FromNodeID would change kanban, replenishment, sourceability and the
+		// lane gate to correct one ledger. BuildMovementTransactions already
+		// handles a zero end -- no boundary, so no row for that side -- and
+		// both ends zero still short-circuits on srcID == dstID.
+		if ev.Action == "moved" && (ev.FromNodeID != 0 || ev.ToNodeID != 0) {
 			e.RecordMovementTransactions(ev)
 		}
 	}, EventBinUpdated)

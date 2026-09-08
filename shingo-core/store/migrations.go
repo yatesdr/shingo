@@ -4180,7 +4180,105 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "edge_registry", "timezone")
 			}},
+
+		{111, "cms_transactions.location_node — the concrete node, kept beside the boundary it resolved to",
+			v111CMSLocationNode,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "cms_transactions", "location_node_id")
+			}},
+
+		{112, "cms_transactions: one movement per (order, bin, node, part, delta) — the ledger cannot book a transfer twice",
+			v112CMSMovementUnique,
+			func(q schema.Querier) bool {
+				return schema.IndexExists(q, "idx_cms_txn_one_movement")
+			}},
 	}
+}
+
+// v112CMSMovementUnique makes a double-booked movement impossible to store.
+//
+// MORE THAN ONE EMITTER CAN REPORT THE SAME ARRIVAL. Hopkinsville 2026-09-08:
+// order 2039 booked +2913 for CARRIER-0004 at SMN_04 twice — once at the
+// intermediate dropoff (16:56:59) and again when the order completed
+// (17:05:29). Both are real events in the engine; neither is a replay; and the
+// CMS subscription cannot tell from a BinUpdatedEvent that it has already
+// recorded that arrival.
+//
+// The application cannot close this on its own. A check-then-insert races
+// between two emitters on different goroutines, and the second insert is the
+// one that books a transfer that never happened. A unique index is the only
+// thing that actually holds, which is why this is a constraint rather than a
+// guard in RecordMovementTransactions.
+//
+// THE KEY DELIBERATELY INCLUDES delta AND cat_id. Two legitimate movements of
+// the same bin to the same node under one order would have to carry the same
+// part and the same quantity to collide, which is a repeat rather than a second
+// movement. order_id IS NULL is excluded entirely: a clear carries no order, and
+// two clears of the same bin at the same node ARE two separate departures.
+//
+// NULLS NOT DISTINCT because the default would let a movement with no bin_id
+// duplicate freely — Postgres treats NULLs as distinct in a unique index, so
+// the one shape with nothing to compare on would be the one shape unguarded.
+// Requires Postgres 15+; both plants run 15.18.
+//
+// NULLS NOT DISTINCT because the default would let a movement with no bin_id
+// duplicate freely -- Postgres treats NULLs as distinct in a unique index, so
+// the one shape with nothing to compare on would be the one shape unguarded.
+// Requires Postgres 15+; both plants run 15.18.
+//
+// Pre-existing duplicates are collapsed first, keeping the LOWEST id — the row
+// booked when the movement physically happened, rather than the one a later
+// completion re-reported.
+func v112CMSMovementUnique(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		DELETE FROM cms_transactions a
+		USING cms_transactions b
+		WHERE a.order_id IS NOT NULL
+		  AND a.order_id = b.order_id
+		  AND a.bin_id   IS NOT DISTINCT FROM b.bin_id
+		  AND a.node_id  = b.node_id
+		  AND a.cat_id   = b.cat_id
+		  AND a.delta    = b.delta
+		  AND a.id > b.id`); err != nil {
+		return fmt.Errorf("v112 collapse duplicate movements: %w", err)
+	}
+	if _, err := tx.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_cms_txn_one_movement
+		ON cms_transactions (order_id, bin_id, node_id, cat_id, delta)
+		NULLS NOT DISTINCT
+		WHERE order_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("v112 unique movement index: %w", err)
+	}
+	return nil
+}
+
+// v111CMSLocationNode records WHERE THE MATERIAL ACTUALLY WAS, beside the
+// boundary that location resolves to.
+//
+// The two are different questions and the table only ever answered one of them.
+// node_id/node_name hold the TAGGED ANCESTOR — the node carrying cms_storeroom,
+// which is what StockLocation derives from. rowsAtBoundary stamped that and
+// nothing else, so every Hopkinsville row reads `Supermarket Area`, a GROUP in
+// the tree rather than a place a carrier can stand. The concrete node was
+// already in hand at emission (BuildClearTransactions receives it as
+// ev.NodeID and uses it only to FIND the boundary) and was then dropped.
+//
+// IT IS A SECOND COLUMN, NOT A REPLACEMENT. StockLocation still comes from the
+// boundary, so a row needs both: the place, and the storeroom that place
+// belongs to. Collapsing them would trade one missing answer for the other.
+//
+// Additive and nullable-by-default: rows written before this migration have no
+// concrete node and never will, because the value was not recorded at the time
+// and cannot be inferred afterwards — the boundary is an ancestor of many nodes
+// and the walk is not reversible. They are left empty rather than backfilled
+// with a guess.
+func v111CMSLocationNode(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE cms_transactions
+		ADD COLUMN IF NOT EXISTS location_node_id BIGINT,
+		ADD COLUMN IF NOT EXISTS location_node_name TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v111 cms_transactions.location_node: %w", err)
+	}
+	return nil
 }
 
 // v110EdgeRegistryTimezone adds the plant display zone each edge reports on
