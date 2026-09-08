@@ -817,6 +817,30 @@ type CMSConfig struct {
 	// Blank in the vendor's sample. Declared so a value is a yaml edit.
 	Department string `yaml:"department"`
 	Operation  string `yaml:"operation"`
+
+	// InsecureSkipVerify disables TLS certificate verification on the calls to
+	// the middleware. It defaults to FALSE and the repository ships no site
+	// that sets it — it is opt-in, per site, in the site-local yaml.
+	//
+	// It exists because Hopkinsville's middleware presents a certificate issued
+	// by `Martinrea International Root CA`, an internal CA that is pushed to
+	// domain-joined Windows machines by group policy and is therefore absent
+	// from a Linux core box's trust store. The endpoint owner's instruction
+	// (2026-09-08) was to skip verification rather than distribute the root.
+	//
+	// WHAT IT COSTS, so that whoever reads this next is not deciding blind:
+	// verification is the only thing establishing that the host answering is
+	// the middleware. With it off — and with `mes-apps.martinrea.com` pinned to
+	// an IP in /etc/hosts, which is how that box resolves it — nothing
+	// authenticates the far end, and every request carries access_key and
+	// secret_key in its headers. The alternative that keeps verification is one
+	// file in /usr/local/share/ca-certificates/ and `update-ca-certificates`.
+	//
+	// It is a per-site field rather than a constant in the client for exactly
+	// one reason: a site that never sets it must not inherit this. Springfield
+	// carries no cms: block at all today, and when it gets one it should start
+	// from a verifying default and have to choose otherwise in writing.
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify"`
 }
 
 // DefaultCMSHealthWindow lives here rather than in a subsystem because no
@@ -859,10 +883,11 @@ func (c CMSConfig) Enabled() bool { return c.BaseURL != "" }
 // production default nobody chose.
 func (c CMSConfig) Client() client.Config {
 	return client.Config{
-		BaseURL:   c.BaseURL,
-		AccessKey: c.AccessKey,
-		SecretKey: c.SecretKey,
-		Timeout:   c.Timeout,
+		BaseURL:            c.BaseURL,
+		AccessKey:          c.AccessKey,
+		SecretKey:          c.SecretKey,
+		Timeout:            c.Timeout,
+		InsecureSkipVerify: c.InsecureSkipVerify,
 	}
 }
 
@@ -957,11 +982,11 @@ func (c CMSConfig) String() string {
 	return fmt.Sprintf("CMSConfig{base_url:%s access_key:%s secret_key:%s timeout:%s "+
 		"poll_interval:%s max_attempts:%d settle_window:%s max_requeues:%d health_window:%s "+
 		"reason_code:%s increase_type:%s decrease_type:%s unit_of_measure:%s user_id:%s "+
-		"department:%s operation:%s}",
+		"department:%s operation:%s insecure_skip_verify:%t}",
 		c.BaseURL, redacted(c.AccessKey), redacted(c.SecretKey), c.Timeout,
 		c.PollInterval, c.MaxAttempts, c.SettleWindow, c.MaxRequeues, c.HealthWindow,
 		c.ReasonCode, c.IncreaseType, c.DecreaseType, c.UnitOfMeasure, c.UserID,
-		c.Department, c.Operation)
+		c.Department, c.Operation, c.InsecureSkipVerify)
 }
 
 // redacted reports whether a secret is present without saying what it is. It

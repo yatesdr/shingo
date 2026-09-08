@@ -167,6 +167,74 @@ func TestPost_RefusedConnectionIsBeforeSend(t *testing.T) {
 	}
 }
 
+// ── TLS verification ────────────────────────────────────────────────────
+//
+// httptest.NewTLSServer presents a certificate from its own throwaway CA, which
+// no trust store contains — the same situation as a middleware presenting an
+// internal CA's certificate to a box that does not carry that CA. So these two
+// tests are the real thing, not a mock of it.
+
+// TestPost_UnverifiableCertificateIsRefusedByDefault is the guard on the
+// DEFAULT, and it is the one worth keeping.
+//
+// InsecureSkipVerify is opt-in per site and no site in this repository sets it.
+// The failure this test exists to catch is somebody deciding the opt-in is a
+// nuisance and moving it into the client as a constant — at which point every
+// deployment silently stops verifying, including ones whose certificates
+// verified perfectly well.
+//
+// The class also matters on its own terms: a handshake that fails means nothing
+// was written, so the posting is safe to retry rather than stranded inflight.
+func TestPost_UnverifiableCertificateIsRefusedByDefault(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(reply(200, `{"TransactionId":"MW-1"}`))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv.URL) // Config{} leaves InsecureSkipVerify false.
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+
+	if got.Class != ClassRetryableBeforeSend {
+		t.Errorf("class = %s, want retryable_before_send — an untrusted certificate "+
+			"aborts the handshake, so no bytes reached the middleware", got.Class)
+	}
+	if got.TransactionID != "" {
+		t.Errorf("transaction id = %q from a connection that was never established", got.TransactionID)
+	}
+	if got.Err == nil {
+		t.Fatal("a rejected certificate produced no error — nobody could diagnose this")
+	}
+	if !strings.Contains(got.Err.Error(), "certificate") {
+		t.Errorf("error %q does not mention the certificate, so the operator is left "+
+			"chasing a generic transport failure", got.Err)
+	}
+}
+
+// TestPost_InsecureSkipVerifyReachesAnUnverifiableEndpoint is the opt-in half:
+// the same server, the same untrusted certificate, and the request now lands.
+//
+// Hopkinsville runs with this set (2026-09-08) at the endpoint owner's
+// instruction. What it gives up is stated on CMSConfig.InsecureSkipVerify.
+func TestPost_InsecureSkipVerifyReachesAnUnverifiableEndpoint(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(reply(200, `{"TransactionId":"MW-1"}`))
+	t.Cleanup(srv.Close)
+
+	c := New(Config{
+		BaseURL: srv.URL, AccessKey: testAccessKey, SecretKey: testSecretKey,
+		Timeout: 2 * time.Second, InsecureSkipVerify: true,
+	})
+	got := c.Post(context.Background(), []byte(`[]`), "sha")
+
+	if got.Class != ClassPosted {
+		t.Errorf("class = %s, want posted — with verification off the handshake "+
+			"should complete against a certificate no trust store contains "+
+			"(err: %v)", got.Class, got.Err)
+	}
+	if got.TransactionID != "MW-1" {
+		t.Errorf("transaction id = %q, want MW-1", got.TransactionID)
+	}
+}
+
 // TestPost_ResponseTimeoutIsAfterSend is the dangerous one. The server HAS the
 // request and is simply slow to answer; the client's timeout fires anyway.
 // Classifying this as before-send would re-POST a transfer the middleware is in

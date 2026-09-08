@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -98,6 +99,11 @@ type Config struct {
 	AccessKey string
 	SecretKey string
 	Timeout   time.Duration
+	// InsecureSkipVerify disables TLS certificate verification for this
+	// client. See CMSConfig.InsecureSkipVerify for why a site would set it and
+	// what it costs; the short version is that it authenticates NOTHING about
+	// the far end, on a connection carrying the site's CMS credentials.
+	InsecureSkipVerify bool
 }
 
 // Client posts inventory transactions and asks after them.
@@ -123,11 +129,21 @@ func New(cfg Config) *Client {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
+	httpc := &http.Client{Timeout: timeout}
+	if cfg.InsecureSkipVerify {
+		// Clone the stdlib's transport rather than building a bare one, so
+		// connection pooling, proxy handling and the HTTP/2 upgrade stay
+		// whatever Go ships. ONLY the trust decision changes; a hand-rolled
+		// &http.Transport{} would silently drop the rest.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // site-local opt-in; see CMSConfig.InsecureSkipVerify
+		httpc.Transport = tr
+	}
 	return &Client{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		access:  cfg.AccessKey,
 		secret:  cfg.SecretKey,
-		http:    &http.Client{Timeout: timeout},
+		http:    httpc,
 	}
 }
 

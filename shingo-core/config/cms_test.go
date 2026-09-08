@@ -269,6 +269,7 @@ func TestCMSConfig_MappersCarryEveryField(t *testing.T) {
 		ReasonCode: "RC", IncreaseType: "IT", DecreaseType: "DT",
 		UnitOfMeasure: "UOM", UserID: "UID",
 		Department: "DEPT", Operation: "OP",
+		InsecureSkipVerify: true,
 	}
 
 	for _, tc := range []struct {
@@ -316,6 +317,7 @@ func TestCMSConfig_MappersMatchTheSourceValues(t *testing.T) {
 	c.Timeout, c.PollInterval, c.SettleWindow = 7*time.Second, 11*time.Second, 13*time.Minute
 	c.MaxAttempts, c.MaxRequeues = 5, 9
 	c.Department, c.Operation = "DEPT", "OP"
+	c.InsecureSkipVerify = true
 
 	cl, p, w := c.Client(), c.Poster(), c.Wire()
 	for _, tc := range []struct {
@@ -326,6 +328,7 @@ func TestCMSConfig_MappersMatchTheSourceValues(t *testing.T) {
 		{"client.AccessKey", cl.AccessKey, c.AccessKey},
 		{"client.SecretKey", cl.SecretKey, c.SecretKey},
 		{"client.Timeout", cl.Timeout, c.Timeout},
+		{"client.InsecureSkipVerify", cl.InsecureSkipVerify, c.InsecureSkipVerify},
 		{"poster.PollInterval", p.PollInterval, c.PollInterval},
 		{"poster.MaxAttempts", p.MaxAttempts, c.MaxAttempts},
 		{"poster.SettleWindow", p.SettleWindow, c.SettleWindow},
