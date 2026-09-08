@@ -18,6 +18,11 @@ When an AMR carries a bin across a boundary between two CMS storerooms, shingo
 records a pair of inventory transactions locally and POSTs them to the CMS
 middleware, which batches them into CMS.
 
+**And when the unloader CLEARS a bin at a tagged node, shingo books the
+departure.** That is the second event, and it is one-sided: clearing is how
+material leaves the AMR supermarket for a CMS zone shingo cannot see, so there is
+a decrement and no matching credit. See [the clear](#the-clear-a-one-sided-departure).
+
 **Two switches, both per-site, and neither is a plant name.** A node is a
 boundary because it carries a `cms_storeroom` property. The subsystem runs at
 all because the site's yaml carries a `cms:` block. A site with neither is
@@ -49,12 +54,14 @@ Headers:
 
 Spellings follow the vendor's sample and are **not** shingo's vocabulary — they
 are kept so a person can compare `cms/wire/wire.go`'s `MiddlewareTx` against the
-vendor document line by line. That comparison has not happened yet (F4).
+vendor document line by line. **That comparison happened 2026-09-07** and
+`MiddlewareTx` matches the sample exactly (F4 closed). The line above used to say
+it was still owed.
 
 | Field | Where it comes from | Notes |
 |---|---|---|
-| `TicketNumber` | constant `1` | Per the sample. Not an identifier we control and **not usable as an idempotency key** — it does not distinguish two postings. |
-| `EntryNumber` | 1-based index within this array | Assigned over a sort by `cms_transactions.id`, so a given set of rows always serialises identically. This is what makes `body_sha` meaningful. |
+| `TicketNumber` | constant `1` | Per the sample. Not an identifier we control and **not usable as an idempotency key** — it does not distinguish two postings. `EntryNumber` is what distinguishes them. |
+| `EntryNumber` | `cms_transactions.id` | The ROW ID, globally unique. It was a 1-based index, which with `TicketNumber` pinned to `1` made every single-row post send the pair `(1, 1)` — and nobody has confirmed what that pair means to CMS. The array is sorted by this same id, so a given set of rows still serialises identically, which is what makes `body_sha` meaningful. |
 | `PartNumber` | `cms_transactions.cat_id` | A `payload_manifest.part_number`. **Not** a payload code — see [Quantity derivation](#quantity-derivation). |
 | `StockLocation` | `cms_transactions.storeroom` | The boundary's `cms_storeroom` value, stamped at build time. |
 | `Bin` | `cms_transactions.bin_label` | CMS's own bin concept; shingo's carrier label is what fills it. |
@@ -95,6 +102,8 @@ caller must treat it that way:
 
 ## Signal flow
 
+There are TWO entry points, and they differ in more than which rows they build.
+
 ```
 bin moves
   └─ engine emits BinUpdatedEvent{Action:"moved"}
@@ -108,9 +117,27 @@ bin moves
             ├─ error or uncounted lines → cmsBuildFailures++ and a log line
             ├─ db.CreateCMSTransactions(rows)
             └─ Events.Emit(EventCMSTransaction)
-                 └─ subscriber (engine/wiring.go)
-                      ├─ filters SourceTypeMovement
-                      └─ poster.Enqueue → cms_postings row + AttachPosting
+
+the unloader clears a bin       POST /api/telemetry/bin-clear
+  └─ ClearForReuseAndBookDeparture          engine/cms_transactions.go
+       ├─ buildClearDeparture
+       │    └─ material.BuildClearTransactions
+       │         ├─ FindCMSBoundary(node)  ← BEFORE the bin is read
+       │         ├─ no boundary → nothing
+       │         └─ rows: −count at that one boundary
+       │    └─ error or uncounted lines → cmsBuildFailures++ and a log line
+       │       naming the payload and uop_remaining, which the clear destroys
+       ├─ no rows → binManifest.ClearForReuse (its own transaction, as before)
+       └─ rows → ONE transaction:
+            ├─ cms.CreateInTx(tx, rows)     ← fails ⇒ the clear is REFUSED
+            ├─ binManifest.ClearForReuseTx(tx, …)
+            ├─ commit
+            └─ Events.Emit(EventCMSTransaction)   ← after the commit, never before
+
+both then reach
+  └─ subscriber (engine/wiring.go)
+       ├─ cms.Postable(source_type)          movement, clear — not correction
+       └─ poster.Enqueue → cms_postings row + AttachPosting
                            └─ Ring() — the doorbell
                                 └─ poster.DrainOnce
                                      ├─ wire.Build → JSON
@@ -162,7 +189,8 @@ line as evidence.
 
 **Same-boundary moves emit nothing.** Cross-boundary moves emit a paired
 negative at the source and positive at the destination. A move with only one
-tagged endpoint emits only that side.
+tagged endpoint emits only that side. A **clear** resolves one node and emits only
+a negative at whatever boundary it found — see [the clear](#the-clear-a-one-sided-departure).
 
 ### Tagging a node
 
@@ -173,6 +201,80 @@ cutover the codes go in by hand:
 INSERT INTO node_properties (node_id, key, value)
 VALUES (<node id>, 'cms_storeroom', '<SCO's code>');
 ```
+
+---
+
+## The clear: a one-sided departure
+
+`POST /api/telemetry/bin-clear` is **Edge's door and the unloader's**. At
+Hopkinsville the unloader takes bins out of the AMR supermarket by clearing them
+and moving the material elsewhere, so the clear IS the departure. Before this it
+emitted an SSE broadcast and never reached the event bus: the arrival posted, the
+departure did not, and the storeroom climbed forever.
+
+`engine.ClearForReuseAndBookDeparture` owns it.
+
+**Deliberately one-sided.** shingo does not know which CMS zone the material went
+to, and inventing one would be a claim about the plant that is not true. CMS
+credits the destination by its own logic, as it credits MAN at label print. On the
+wire that is one row, `TransactionType` `D`, `Quantity` equal to the bin's
+contents at the moment of the clear.
+
+**`Resource` is blank.** No robot cleared the bin; a person did.
+
+### One transaction, and the ordering is the point
+
+The clear destroys `uop_remaining` and the manifest — the two values the quantity
+is derived from. So:
+
+- rows written **after** the clear cannot be reconstructed if their write fails;
+- rows committed **before** it become a departure the plant never made if the
+  clear then fails.
+
+One transaction is the only arrangement with neither failure, and it is reachable
+because `BinManifestService.ClearForReuseTx` takes a caller's `*sql.Tx` and
+`cms.CreateInTx` was split out of `cms.Create` to match. If the row write fails
+the clear is **refused** — the unloader presses the button again, which is
+recoverable; a clear that silently drops inventory is not. Same family as
+`MarkInflight` committing before the POST.
+
+The event is emitted **after** the commit. A posting for rows a rollback removed
+would send CMS a departure that did not happen.
+
+Pinned by `TestCMSClearEndToEnd_AFailedBookingRefusesTheClear`, which installs a
+CHECK constraint that refuses the row and asserts the bin still holds its
+contents. It goes red against a two-transaction implementation.
+
+### A build failure does not block the door
+
+An unparseable manifest, a template line naming no part, a cycle in the node tree
+— each of those would make the bin **permanently unclearable** if the door refused
+on them, which takes the operator's repair path away. That is the HK 2026-07-28
+trap: the instinctive fix being the one action that guarantees no recovery. A
+broken inventory feed must not become a brake on the plant.
+
+So the loss is counted into `cmsBuildFailures`, which **ranks first** on the
+health verdict, and the log line names the payload and `uop_remaining` **while
+they still exist** — the movement path does not need to, because there the bin
+still stands and can be re-counted.
+
+### The boundary is resolved before the bin is read
+
+That ordering is what keeps an untagged site away from this code entirely: nothing
+below the boundary check runs for a plant that has tagged nothing, so no template
+defect anywhere can surface at its clear door. Pinned by
+`TestBuildClear_UntaggedNodeProducesNothing`, whose fixture carries a template
+that WOULD refuse — move the check below the bin read and it goes red.
+
+### Not the UI's clear
+
+`binClear` (`www/bin_actions.go:182`) is the admin door, and it stays silent. It
+is what an operator reaches for to REPAIR a wrong record, and booking a repair as
+an inventory movement writes fiction into a ledger. The same gesture serving both
+"this record was wrong" and "I took this material away" is the real problem, and
+the fix is to let the person say which — not to make clear book unconditionally.
+Recorded as deferred in `NEXT-STEPS-cms.md`; the split is pinned by
+`TestCMSClearEndToEnd_TheServiceClearStaysSilent` so it cannot become incidental.
 
 ---
 
@@ -393,16 +495,31 @@ A commented example block lives in `shingocore.dev.yaml`.
 
 ## Known limitations (v1)
 
-- **No middleware-side dedup on `x-body-sha256`.** Asked of IT (**F5**). If the
-  answer is yes, the whole `inflight` class becomes auto-resolvable and this
-  design gets much smaller.
+- **No middleware-side dedup on `x-body-sha256`** — **answered 2026-09-07**
+  (**F5**): there is none, and each POST regenerates a transaction id, so a
+  re-send DOUBLE-BOOKS. The `inflight` class stays manually resolvable as
+  designed, and no posting is ever retried by hand.
+- **The status GET ignores `TransactionId`** — "next release" per the middleware
+  owner, 2026-09-07. With the param ignored the endpoint returns ALL
+  transactions, so the reconciler's "2xx with a non-empty result" reads as *held*
+  for any id it asks about. Narrow (it needs an inflight row carrying an id) and
+  silent. **Do not trust an automatic inflight resolution until the param
+  ships.**
 - **After-send failures without a returned id resolve manually.** See
   [what the reconciler can and cannot resolve](#what-the-reconciler-can-and-cannot-resolve).
   A person checks the middleware and marks the row posted or requeues it.
-- **The thirteen field spellings are inferred from one sample** (**F4**). A test
-  pins them and fails on an extra key as well as a missing one, so a correction
-  is a one-line change plus that test — but one review of the vendor schema is
-  owed before the first real POST.
+- ~~The thirteen field spellings are inferred from one sample~~ (**F4**)
+  **closed 2026-09-07** against the vendor's own sample; `MiddlewareTx` matches
+  exactly. A test pins them and fails on an extra key as well as a missing one.
+- **A UI clear books nothing** (`www/bin_actions.go:182`), so material pulled
+  through that door is invisible to CMS. Deliberate — see
+  [not the UI's clear](#not-the-uis-clear) — and the standing item in
+  `NEXT-STEPS-cms.md`.
+- **Consumption in place is invisible.** A bin drawn to zero where it stands and
+  then removed as an empty posts nothing: the quantity derives from
+  `uop_remaining` at emission and a drained bin counts zero. The material left by
+  being consumed, not carried, and shingo has no consumption transaction. Only
+  bites where a tagged storeroom is consumed from directly.
 - **No template versioning.** SCO editing a payload template retroactively
   changes what in-flight bins ship to CMS as counts, because the quantity is
   derived at emission rather than captured at load. A separate project if the
@@ -440,8 +557,10 @@ A commented example block lives in `shingocore.dev.yaml`.
 
 | | |
 |---|---|
-| boundary walk, row builder | `material/material.go` |
+| boundary walk, row builders (move and clear) | `material/material.go` |
 | persistence and emission | `engine/cms_transactions.go`, `engine/wiring.go` |
+| the unloader's door | `www/handlers_telemetry.go` `apiBinClear` |
+| the source-type vocabulary and `Postable` | `store/cms/cms.go` |
 | transactions, postings | `store/cms/` |
 | migrations | `store/migrations.go` (v99–v104) |
 | translator (pure) | `cms/wire/wire.go` |
@@ -449,7 +568,7 @@ A commented example block lives in `shingocore.dev.yaml`.
 | drain and reconcile | `cms/poster/poster.go` |
 | health verdict | `service/cms_posting_service.go` |
 | endpoint and card | `www/handlers_cms_health.go`, `www/static/pages/diagnostics.js` |
-| end-to-end proof | `engine/cms_end_to_end_docker_test.go` |
+| end-to-end proof | `engine/cms_end_to_end_docker_test.go`, `engine/cms_clear_end_to_end_docker_test.go` |
 
 ## The design record
 
