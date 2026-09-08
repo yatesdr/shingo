@@ -1,0 +1,45 @@
+name: JS
+
+# WHY THIS IS NOT A JOB IN lint.yml: that workflow filters to '**.go' on
+# purpose ("lint runs Go-only rules, so a README tweak shouldn't burn a CI
+# minute"), and its real work is a five-module golangci matrix. Adding '**.js'
+# there would fire all five of those jobs on every JavaScript edit to run one
+# grep-cheap script. A separate workflow keeps each gate's trigger honest.
+
+on:
+  push:
+    paths:
+      - '**.js'
+      # The guard itself, and this workflow. core.yml's rule: "a gate whose
+      # own edits do not run it cannot report on them."
+      - 'scripts/check-js-parses.sh'
+      - '.github/workflows/js.yml'
+  pull_request:
+    paths:
+      - '**.js'
+      - 'scripts/check-js-parses.sh'
+      - '.github/workflows/js.yml'
+  workflow_call:
+
+permissions:
+  contents: read
+
+# See core.yml — coalesce burst pushes; only the latest commit matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parse:
+    # Guards against a syntax error reaching a plant. The operator station is
+    # an ES module graph: one unparseable file means the graph never links and
+    # every HMI sits on "Loading..." with a server that looks perfectly
+    # healthy. See scripts/check-js-parses.sh for the incident.
+    #
+    # No actions/setup-node step: ubuntu-latest ships Node preinstalled, and
+    # the script fails loudly rather than skipping if it is ever absent.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: check
+        run: bash scripts/check-js-parses.sh
