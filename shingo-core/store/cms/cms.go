@@ -20,17 +20,44 @@ import (
 // compile error rather than a row no query will ever match — the same reason
 // the posting statuses next door are constants.
 //
-// The subscriber in engine/wiring.go filters on SourceTypeMovement, and that is
-// the filter a bare literal would silently break: a typo there drops every
-// posting on the floor while the transactions keep being recorded, which looks
-// from every count like a plant that is not moving anything.
+// Which of them reach the middleware is Postable's answer, below — the
+// subscriber in engine/wiring.go asks it rather than comparing literals, because
+// a typo in that comparison drops every posting on the floor while the
+// transactions keep being recorded, which looks from every count like a plant
+// that is not moving anything.
 const (
 	SourceTypeMovement = "movement"
+	// SourceTypeClear is the unloader emptying a carrier: material leaving a
+	// tagged storeroom for a CMS zone shingo cannot see. ONE-SIDED BY
+	// CONSTRUCTION, which is why it is its own type rather than a movement with
+	// a missing half — a movement is a pair and a reader is entitled to expect
+	// the other row exists.
+	SourceTypeClear = "clear"
 	// SourceTypeCorrection is HISTORICAL ONLY. The path that wrote it was
 	// removed; the value is kept here so the diagnostics filter and anyone
 	// reading old rows share one vocabulary with the writers.
 	SourceTypeCorrection = "correction"
 )
+
+// Postable answers whether a source type belongs on the inventory feed — the
+// question engine/wiring.go's subscriber asks of every recorded row before it
+// becomes a posting.
+//
+// IT LIVES HERE, TWO LINES UNDER THE VOCABULARY, so that adding a source type
+// forces the decision in the same edit. A FACT WITH NO READER IS NOT DONE: a
+// type the subscriber does not accept writes cms_transactions rows that never
+// become postings and never reach CMS, and every count on the health page then
+// describes a plant that moved nothing. That class is behind three of this
+// codebase's incidents, and the filter being a bare literal in another package
+// is what made it easy to ship the fact without its consumer.
+//
+// SourceTypeCorrection is deliberately NOT postable. The path that wrote it is
+// deleted and its rows are historical; re-introducing corrections has to argue
+// that a correction belongs on an inventory-TRANSFER feed rather than arriving
+// on it by inheritance.
+func Postable(sourceType string) bool {
+	return sourceType == SourceTypeMovement || sourceType == SourceTypeClear
+}
 
 // Transaction is the cms_transactions row entity. The type is re-aliased
 // at the outer store/ level as store.CMSTransaction so service/, engine/,
@@ -113,8 +140,24 @@ func Create(db *sql.DB, txns []*Transaction) error {
 		return fmt.Errorf("begin cms tx: %w", err)
 	}
 	defer tx.Rollback()
+	if err := CreateInTx(tx, txns); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CreateInTx inserts the rows inside a transaction the CALLER owns, and sets
+// each row's ID on success.
+//
+// IT EXISTS FOR THE CLEAR PATH, where the rows and the act they describe have to
+// commit together. A clear destroys the bin contents the quantities were derived
+// from, so rows written after it cannot be reconstructed if the write fails —
+// and rows committed before it become a departure the plant never made if the
+// clear then fails. One transaction is the only arrangement with neither
+// failure. Same family as MarkInflight committing before the POST: the durable
+// record and the irreversible act are ordered on purpose.
+func CreateInTx(q helpers.QueryRower, txns []*Transaction) error {
 	for _, t := range txns {
-		var id int64
 		// posting_id is deliberately not inserted: a new row is unsent by
 		// definition, and NULL is what the unposted index selects on.
 		//
@@ -124,16 +167,16 @@ func Create(db *sql.DB, txns []*Transaction) error {
 		// this path fills. The COLUMN stays — historical rows carry notes and
 		// the diagnostics table still reads them — and the default supplies
 		// the empty string for new ones.
-		err := tx.QueryRow(`INSERT INTO cms_transactions (node_id, node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+		id, err := helpers.InsertID(q, `INSERT INTO cms_transactions (node_id, node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 			t.NodeID, t.NodeName, t.CatID, t.Delta,
 			helpers.NullableInt64(t.BinID), t.BinLabel, t.PayloadCode, t.SourceType,
-			helpers.NullableInt64(t.OrderID), t.Storeroom, t.RobotID).Scan(&id)
+			helpers.NullableInt64(t.OrderID), t.Storeroom, t.RobotID)
 		if err != nil {
 			return fmt.Errorf("create cms transaction: %w", err)
 		}
 		t.ID = id
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ListByNode returns the most recent cms_transactions for a node.

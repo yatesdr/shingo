@@ -163,6 +163,15 @@ type EngineOrchestration interface {
 	// are PROCESS state (is a cms: block configured, has the poster muted
 	// itself) that no service reading the database can see.
 	CMSFeedHealth() (*service.FeedHealth, error)
+	// ClearForReuseAndBookDeparture is the TELEMETRY clear — Edge's door, the
+	// unloader's. Orchestration rather than BinManifest().ClearForReuse because
+	// it spans two aggregates in one transaction: the bin's manifest and the CMS
+	// ledger rows the clear would otherwise destroy the inputs to.
+	//
+	// The UI's admin clear is NOT this. It goes to the service and stays silent,
+	// because an operator repairing a wrong record is not material leaving a
+	// storeroom.
+	ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *int64) (int64, error)
 
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)

@@ -529,7 +529,18 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		binTypeID = &id
 	}
 
-	newEpoch, err := h.engine.BinManifest().ClearForReuse(bin.ID, binTypeID)
+	// THE ENGINE'S CLEAR, NOT THE SERVICE'S, and that is what makes this door
+	// the one CMS hears. When the node resolves to a CMS boundary the bin's
+	// contents are booked as a departure in the SAME transaction as the clear;
+	// when it does not, this is byte-for-byte the old call. The UI's admin clear
+	// deliberately still goes to the service and stays silent — see
+	// engine.ClearForReuseAndBookDeparture.
+	//
+	// A REFUSAL HERE IS RECOVERABLE AND IS MEANT TO BE. If the departure rows
+	// cannot be written the clear is refused with them, and the unloader presses
+	// the button again; the alternative is a clear that destroys the count with
+	// nothing recording that material left.
+	newEpoch, err := h.orchestration.ClearForReuseAndBookDeparture(bin.ID, node.ID, binTypeID)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

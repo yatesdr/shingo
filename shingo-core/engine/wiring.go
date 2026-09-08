@@ -365,27 +365,30 @@ func (e *Engine) wireEventHandlers() {
 		if e.cmsPoster == nil {
 			return
 		}
-		// MOVEMENTS ONLY. The correction path that also emitted this event is
-		// gone, so today this filter removes nothing — it is here so that a
-		// future re-introduction of corrections has to decide, explicitly,
-		// whether they belong on an inventory-transfer feed, rather than
-		// arriving on it by inheritance.
-		movements := make([]*cms.Transaction, 0, len(evt.Payload.Transactions))
+		// THE FILTER IS cms.Postable, NOT A LITERAL, and it lives beside the
+		// source-type vocabulary so that adding a type forces the decision here
+		// in the same edit. A type this gate does not accept writes
+		// cms_transactions rows that never become postings and never reach CMS —
+		// a fact with no reader, which is the class behind three of this
+		// codebase's incidents. Movements and clears pass; the deleted
+		// correction path does not, and re-introducing it has to argue its way
+		// onto an inventory-transfer feed rather than inherit a place on it.
+		postable := make([]*cms.Transaction, 0, len(evt.Payload.Transactions))
 		for _, t := range evt.Payload.Transactions {
-			if t != nil && t.SourceType == cms.SourceTypeMovement {
-				movements = append(movements, t)
+			if t != nil && cms.Postable(t.SourceType) {
+				postable = append(postable, t)
 			}
 		}
-		if len(movements) == 0 {
+		if len(postable) == 0 {
 			return
 		}
-		if err := e.cmsPoster.Enqueue(movements); err != nil {
+		if err := e.cmsPoster.Enqueue(postable); err != nil {
 			// The rows ARE recorded — they just have no posting. Not counted as
 			// a build failure, because unlike that case this loss is visible:
 			// the transactions sit with posting_id NULL, which the health
 			// surface counts as unposted and names as a failing subscriber.
 			e.logFn("engine: queue %d cms transactions for posting: %v — "+
-				"they are recorded but unqueued", len(movements), err)
+				"they are recorded but unqueued", len(postable), err)
 		}
 	}, EventCMSTransaction)
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingocore/store/bins"
 	"shingocore/store/cms"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
@@ -164,38 +165,9 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 		return nil, nil, nil
 	}
 
-	bin, err := s.GetBin(ev.BinID)
-	if err != nil {
+	c, err := readBinContents(s, ev.BinID)
+	if err != nil || c == nil {
 		return nil, nil, err
-	}
-
-	// An unparseable manifest is a failure to answer the question, not an
-	// answer of "no parts". Discarding the error here reported every
-	// corrupt manifest as an empty bin and emitted zero CMS rows for a
-	// real physical move.
-	parsed, err := bin.ParseManifest()
-	if err != nil {
-		return nil, nil, err
-	}
-	if parsed == nil || len(parsed.Items) == 0 {
-		return nil, nil, nil
-	}
-
-	// THE COUNT IS DERIVED, NOT READ. The manifest lists which parts are in
-	// the carrier; how many of each is uop_remaining x the template's
-	// parts_per_cycle, computed here at emission. The bin manifest used to
-	// carry a stored qty that no writer agreed on and nothing rewrote as
-	// production drew the bin down, so whatever it held went stale on the
-	// first consumed part.
-	perCycle, err := postablePartsPerCycle(s, bin.PayloadCode)
-	if err != nil {
-		return nil, nil, err
-	}
-	if perCycle == nil {
-		// No template to count by. Skipping is deliberate: a movement row
-		// with a guessed quantity is worse than no row, because it is
-		// indistinguishable from a measured one once it reaches CMS.
-		return nil, nil, nil
 	}
 
 	// The order comes from the EVENT, not from bin.ClaimedBy. This used to read
@@ -206,6 +178,143 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 	if ev.OrderID != 0 {
 		id := ev.OrderID
 		orderID = &id
+	}
+
+	var txns []*cms.Transaction
+	txns = append(txns, rowsAtBoundary(c, srcBoundary, srcStoreroom, -1, // leaving  → negative delta
+		cms.SourceTypeMovement, orderID, ev.RobotID)...)
+	txns = append(txns, rowsAtBoundary(c, dstBoundary, dstStoreroom, +1, // arriving → positive delta
+		cms.SourceTypeMovement, orderID, ev.RobotID)...)
+
+	report := c.report()
+	if len(txns) == 0 {
+		return nil, report, nil
+	}
+	return txns, report, nil
+}
+
+// ClearEvent is the minimal payload a CLEAR needs in order to book the
+// departure of a bin's contents: which bin, and the node it is standing on.
+//
+// IT CARRIES NO ROBOT AND NO ORDER, and that is the difference from
+// MovementEvent rather than an omission. A clear is a person at a station
+// emptying a carrier — the unloader taking material out of the supermarket and
+// into another CMS zone — so there is no AMR to name in Resource and no order
+// to key it to. Inventing either would be a claim about the plant that is not
+// true.
+type ClearEvent struct {
+	BinID  int64
+	NodeID int64
+}
+
+// BuildClearTransactions returns the CMS transaction rows that should be
+// recorded when the bin at nodeID is CLEARED — the unloader's door, where
+// material leaves the supermarket for another CMS zone.
+//
+// DELIBERATELY ONE-SIDED, and that is the design rather than an unfinished
+// half. shingo does not know which CMS zone the material went to, so it books
+// only the departure it can see; CMS credits the destination by its own logic,
+// as it credits MAN at label print. A guessed destination storeroom would be
+// indistinguishable from a measured one once it reached the ledger.
+//
+// Returns a nil slice when nothing needs recording: the node resolves to no
+// boundary (an untagged clear is invisible to CMS and that is correct), the bin
+// is drained, or it carries no manifest and no template.
+//
+// THE BOUNDARY IS RESOLVED BEFORE THE BIN IS READ, which is what keeps an
+// untagged site away from this code entirely. Nothing downstream — the manifest
+// parse, the template lookup, the refusal on a line that names no part — can
+// fail for a plant that has tagged nothing, because none of it runs. A site
+// participates in CMS by tagging a node, and until it does, this function's only
+// reachable answer is "nothing".
+//
+// The second return names the manifest lines that could not be counted, on the
+// same terms as BuildMovementTransactions: separate from the error because an
+// error means the build could not be attempted, while an uncounted line means
+// it was attempted and part of the answer is missing. On this path the loss is
+// worse than on a movement, because the clear destroys the contents the count
+// would have been derived from — see the caller.
+func BuildClearTransactions(s Store, ev ClearEvent) ([]*cms.Transaction, *UncountedLines, error) {
+	boundary, storeroom, err := FindCMSBoundary(s, ev.NodeID)
+	if err != nil {
+		// THREE-VALUED, AND THE CALLER MUST NOT COLLAPSE IT. A failed lookup is
+		// not "no boundary": read that way, a transient database error books
+		// nothing for material that physically left the storeroom, and the
+		// clear that destroys the evidence still succeeds.
+		return nil, nil, err
+	}
+	if boundary == nil {
+		return nil, nil, nil
+	}
+
+	c, err := readBinContents(s, ev.BinID)
+	if err != nil || c == nil {
+		return nil, nil, err
+	}
+
+	txns := rowsAtBoundary(c, boundary, storeroom, -1, cms.SourceTypeClear, nil, "")
+	report := c.report()
+	if len(txns) == 0 {
+		return nil, report, nil
+	}
+	return txns, report, nil
+}
+
+// binContents is what a bin comes to at emission time: the carrier itself, the
+// manifest lines it names, the template ratio each line is counted by, and the
+// lines no ratio could count.
+//
+// ONE DERIVATION, TWO CALLERS. A movement and a clear ask the same question of
+// a bin — what is in it, and how much of each — and differ only in which
+// boundaries the answer is booked against and with what sign. A second copy of
+// the quantity maths is a second place for it to drift from
+// payload_manifest.parts_per_cycle.
+type binContents struct {
+	bin       *bins.Bin
+	items     []bins.ManifestEntry
+	perCycle  map[string]int64
+	uncounted []string
+}
+
+// readBinContents resolves a bin and the template its counts derive from.
+//
+// (nil, nil) means there is nothing any boundary could book, for a reason that
+// is not a failure: the bin has no manifest lines, or no template to count them
+// by. Those are different from an error, which means the question could not be
+// answered at all.
+func readBinContents(s Store, binID int64) (*binContents, error) {
+	bin, err := s.GetBin(binID)
+	if err != nil {
+		return nil, err
+	}
+
+	// An unparseable manifest is a failure to answer the question, not an
+	// answer of "no parts". Discarding the error here reported every
+	// corrupt manifest as an empty bin and emitted zero CMS rows for a
+	// real physical move.
+	parsed, err := bin.ParseManifest()
+	if err != nil {
+		return nil, err
+	}
+	if parsed == nil || len(parsed.Items) == 0 {
+		return nil, nil
+	}
+
+	// THE COUNT IS DERIVED, NOT READ. The manifest lists which parts are in
+	// the carrier; how many of each is uop_remaining x the template's
+	// parts_per_cycle, computed here at emission. The bin manifest used to
+	// carry a stored qty that no writer agreed on and nothing rewrote as
+	// production drew the bin down, so whatever it held went stale on the
+	// first consumed part.
+	perCycle, err := postablePartsPerCycle(s, bin.PayloadCode)
+	if err != nil {
+		return nil, err
+	}
+	if perCycle == nil {
+		// No template to count by. Skipping is deliberate: a movement row
+		// with a guessed quantity is worse than no row, because it is
+		// indistinguishable from a measured one once it reaches CMS.
+		return nil, nil
 	}
 
 	// WHICH LINES THE TEMPLATE CANNOT COUNT, decided ONCE for the bin rather
@@ -226,51 +335,51 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, *
 		}
 	}
 
+	return &binContents{bin: bin, items: parsed.Items, perCycle: perCycle, uncounted: uncounted}, nil
+}
+
+// report names the uncounted lines for the caller's counter, or nil when every
+// line that crossed was counted.
+func (c *binContents) report() *UncountedLines {
+	if len(c.uncounted) == 0 {
+		return nil
+	}
+	return &UncountedLines{PayloadCode: c.bin.PayloadCode, CatIDs: c.uncounted}
+}
+
+// rowsAtBoundary turns a bin's countable lines into one transaction per line at
+// boundary, signed by sign. A nil boundary yields nothing, so a caller with only
+// one tagged endpoint passes the other one nil rather than branching.
+func rowsAtBoundary(c *binContents, boundary *nodes.Node, storeroom string, sign int64,
+	sourceType string, orderID *int64, robotID string) []*cms.Transaction {
+	if boundary == nil {
+		return nil
+	}
 	var txns []*cms.Transaction
-	for _, side := range []struct {
-		boundary  *nodes.Node
-		storeroom string
-		sign      int64
-	}{
-		{srcBoundary, srcStoreroom, -1}, // leaving  → negative delta
-		{dstBoundary, dstStoreroom, +1}, // arriving → positive delta
-	} {
-		if side.boundary == nil {
+	for _, m := range c.items {
+		// The MAGNITUDE is tested, then the direction applied. Testing the
+		// signed value instead would pass an overpacked bin's negative
+		// remainder through the source side's -1 and book a positive
+		// arrival where a part left.
+		count := int64(c.bin.UOPRemaining) * c.perCycle[m.PartNumber]
+		if count <= 0 {
 			continue
 		}
-		for _, m := range parsed.Items {
-			// The MAGNITUDE is tested, then the direction applied. Testing the
-			// signed value instead would pass an overpacked bin's negative
-			// remainder through the source side's -1 and book a positive
-			// arrival where a part left.
-			count := int64(bin.UOPRemaining) * perCycle[m.PartNumber]
-			if count <= 0 {
-				continue
-			}
-			txns = append(txns, &cms.Transaction{
-				NodeID:      side.boundary.ID,
-				NodeName:    side.boundary.Name,
-				Storeroom:   side.storeroom,
-				CatID:       m.PartNumber,
-				Delta:       side.sign * count,
-				BinID:       &bin.ID,
-				BinLabel:    bin.Label,
-				PayloadCode: bin.PayloadCode,
-				SourceType:  cms.SourceTypeMovement,
-				OrderID:     orderID,
-				RobotID:     ev.RobotID,
-			})
-		}
+		txns = append(txns, &cms.Transaction{
+			NodeID:      boundary.ID,
+			NodeName:    boundary.Name,
+			Storeroom:   storeroom,
+			CatID:       m.PartNumber,
+			Delta:       sign * count,
+			BinID:       &c.bin.ID,
+			BinLabel:    c.bin.Label,
+			PayloadCode: c.bin.PayloadCode,
+			SourceType:  sourceType,
+			OrderID:     orderID,
+			RobotID:     robotID,
+		})
 	}
-
-	var report *UncountedLines
-	if len(uncounted) > 0 {
-		report = &UncountedLines{PayloadCode: bin.PayloadCode, CatIDs: uncounted}
-	}
-	if len(txns) == 0 {
-		return nil, report, nil
-	}
-	return txns, report, nil
+	return txns
 }
 
 // UncountedLines names the manifest lines a movement could not turn into a

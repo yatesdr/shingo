@@ -112,8 +112,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 62 methods —
-// ServiceAccess's 49 embedded, plus 13 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 63 methods —
+// ServiceAccess's 49 embedded, plus 14 orchestration verbs of its own.
 //
 // CMSFeedHealth is on the wide surface rather than reached through a service
 // accessor because two of its three inputs are PROCESS state — whether a cms:
@@ -121,6 +121,11 @@ func TestServiceAccessWidth(t *testing.T) {
 // reading only the database would report a muted poster with a quiet queue as
 // healthy and idle, which is the exact failure the health endpoint exists to
 // make impossible.
+//
+// ClearForReuseAndBookDeparture is here for the other reason a verb belongs on
+// the wide surface: it spans two aggregates in one transaction — the bin's
+// manifest and the CMS ledger rows whose quantities the clear destroys. Reached
+// through BinManifest() it could only be one or the other.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -133,6 +138,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CMSTransactionService",
 		"CalculatorService",
 		"CarrierBindings",
+		"ClearForReuseAndBookDeparture",
 		"ConfigPath",
 		"CreateBinMove",
 		"DashboardService",
