@@ -83,6 +83,63 @@
     <!-- Toast container -->
     <div id="os-toast"></div>
 
+    {{/* BOOT WATCHDOG — deliberately a classic inline script, not a module.
+
+         createSSE already reloads a long-lived board when the build id
+         changes, and that is the right mechanism. Its flaw is location: it
+         lives INSIDE the module graph it protects, so it is reachable only
+         if operator.js links. A syntax error anywhere in that graph disables
+         the graph AND its own recovery, and the board sits on the
+         "Loading..." placeholder above until somebody walks the floor. That
+         is exactly what happened at Hopkinsville on 2026-09-08.
+
+         Inline and dependency-free, this cannot be taken down by any module
+         failure. It arms only when the graph did NOT boot, so a healthy
+         board never opens a second EventSource.
+
+         It waits for the build id to CHANGE rather than reloading straight
+         away: re-loading a broken build just re-breaks and spins. Sitting
+         quietly until a fix is actually deployed is the useful behaviour —
+         and it makes `systemctl restart shingo-edge` a fleet-wide "reload
+         every HMI", since serverInstance is what the id is cut from. */}}
+    <script>
+    (function () {
+        // Modules link within milliseconds of page load, so a flag still
+        // unset this late means linking genuinely failed — not that the
+        // network is slow. A hung VIEW FETCH is a different failure with its
+        // own poll loop, and correctly does not arm this.
+        setTimeout(function () {
+            if (window.__osBooted) return;
+
+            var info = document.getElementById('os-header-info');
+            if (info) {
+                info.textContent = 'Display code failed to load — waiting for an update';
+            }
+
+            // EventSource reconnects on its own, so no backoff is needed
+            // here; each reconnect re-delivers `connected` (sse.go emits
+            // `data: {"build":"<serverInstance>"}`).
+            var seenBuild = null;
+            var es;
+            try {
+                es = new EventSource('/events');
+            } catch (_) {
+                return;
+            }
+            es.addEventListener('connected', function (e) {
+                var build = '';
+                try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
+                if (!build) return;
+                if (seenBuild === null) {
+                    seenBuild = build;
+                } else if (seenBuild !== build) {
+                    location.reload();
+                }
+            });
+        }, 15000);
+    })();
+    </script>
+
     <script type="module" src="/static/js/shingoedge.js?v={{cacheBust}}"></script>
     <script type="module" src="/static/operator-station/operator.js?v={{cacheBust}}"></script>
 </body>

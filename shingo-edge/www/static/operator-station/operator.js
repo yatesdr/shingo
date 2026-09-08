@@ -333,3 +333,9 @@ loadView();
 
 // Re-layout on resize (orientation change, window resize).
 window.addEventListener('resize', function() { if (getView()) renderGrid(); });
+
+// Tells operator-display.html's boot watchdog the module graph linked and ran
+// to the end. Last statement in the file on purpose: anything earlier could be
+// set by a module that later threw. If a link error means this never runs, the
+// watchdog arms and reloads the board once a fixed build is deployed.
+window.__osBooted = true;
