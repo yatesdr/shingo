@@ -1560,14 +1560,18 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 // those nodes on lane depth read from node_properties rather than
 // widening the exclusion.
 func checkBinResidenceOverlap(db *store.DB) []string {
-	// delivered/confirmed per (order, node the order's steps touch) — the
-	// arrival arm needs a dropoff at the node, the departure arm a pickup.
+	// One row per order: its terminal event times plus its decoded steps. The
+	// ARRIVAL arm (a dropoff at the node) reads the order's `delivered` time —
+	// the bin is standing there from that moment. The DEPARTURE arm (a pickup
+	// at the node) reads the LIFTING ORDER's `delivered` time, not its
+	// `confirmed`: `confirmed` is the terminal, operator-confirm-inclusive
+	// stamp, which lags the physical lift by the confirm delay and inflates
+	// overlaps; the lifting order's `delivered` (its downstream dropoff
+	// completing) is an upper bound on the lift that never carries that lag.
 	rows, err := db.DB.Query(`
 		SELECT o.id, o.bin_id, o.steps_json,
 		       (SELECT MIN(h.created_at) FROM order_history h
-		         WHERE h.order_id = o.id AND h.status = 'delivered'),
-		       (SELECT MIN(h.created_at) FROM order_history h
-		         WHERE h.order_id = o.id AND h.status = 'confirmed')
+		         WHERE h.order_id = o.id AND h.status = 'delivered')
 		FROM orders o
 		WHERE o.bin_id IS NOT NULL AND o.steps_json <> ''`)
 	if err != nil {
@@ -1575,15 +1579,26 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 	}
 	defer rows.Close()
 
-	// arrive[node][bin] / depart[node][bin] — earliest matching event wins.
-	arrive := map[string]map[int64]time.Time{}
-	depart := map[string]map[int64]time.Time{}
+	// Per (node, bin) an ordered event list: every arrival and every lift.
+	// Earlier draft collapsed these to one earliest-arrival/earliest-departure
+	// pair per (node, bin), which a healthy carousel defeats — a bin cycling a
+	// cell every few minutes gets its first visit's lift paired against its
+	// last visit's arrival (or vice versa), and the check read a clean cell as
+	// "still standing since forever" on the 2026-09-07 re-run. Visits, not
+	// bins, are the unit.
+	type evKind bool // true = arrival (dropoff), false = lift (pickup)
+	type ev struct {
+		at   time.Time
+		kind evKind
+	}
+	events := map[string]map[int64][]ev{} // node → bin → events
 	for rows.Next() {
 		var orderID, binID int64
-		var stepsJSON, deliveredAt, confirmedAt sql.NullString
-		if err := rows.Scan(&orderID, &binID, &stepsJSON, &deliveredAt, &confirmedAt); err != nil {
+		var stepsJSON, deliveredAt sql.NullString
+		if err := rows.Scan(&orderID, &binID, &stepsJSON, &deliveredAt); err != nil {
 			continue
 		}
+		_ = orderID
 		var steps []protocol.ComplexOrderStep
 		if err := json.Unmarshal([]byte(stepsJSON.String), &steps); err != nil {
 			continue
@@ -1592,64 +1607,60 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 			if s.Node == "" || s.Node == "_TRANSIT" {
 				continue
 			}
+			if !deliveredAt.Valid {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339, deliveredAt.String)
+			if err != nil {
+				continue
+			}
 			switch s.Action {
-			case protocol.ActionDropoff:
-				if !deliveredAt.Valid {
-					continue
+			case protocol.ActionDropoff, protocol.ActionPickup:
+				if events[s.Node] == nil {
+					events[s.Node] = map[int64][]ev{}
 				}
-				t, err := time.Parse(time.RFC3339, deliveredAt.String)
-				if err != nil {
-					continue
-				}
-				if m := arrive[s.Node]; m == nil {
-					arrive[s.Node] = map[int64]time.Time{binID: t}
-				} else if _, seen := m[binID]; !seen || t.Before(m[binID]) {
-					m[binID] = t
-				}
-			case protocol.ActionPickup:
-				if !confirmedAt.Valid {
-					continue
-				}
-				t, err := time.Parse(time.RFC3339, confirmedAt.String)
-				if err != nil {
-					continue
-				}
-				if m := depart[s.Node]; m == nil {
-					depart[s.Node] = map[int64]time.Time{binID: t}
-				} else if _, seen := m[binID]; !seen || t.Before(m[binID]) {
-					m[binID] = t
-				}
+				events[s.Node][binID] = append(events[s.Node][binID], ev{at: t, kind: s.Action == protocol.ActionDropoff})
 			}
 		}
 	}
 
-	// Interval set per node, then sort by arrival and sweep: an overlap is
-	// an arrival that lands before the previous resident lifted.
-	type interval struct {
+	// Pair each (node, bin) event list into VISITS (arrival … lift), then
+	// sweep the visits of different bins for overlap. A trailing un-lifted
+	// arrival is a still-standing visit — its interval is open-ended.
+	type visit struct {
 		binID int64
 		arr   time.Time
-		dep   *time.Time
+		dep   *time.Time // nil = open-ended (never lifted)
 	}
 	var out []string
-	for node, binsAt := range arrive {
-		intervals := make([]interval, 0, len(binsAt))
-		for binID, arr := range binsAt {
-			var dep *time.Time
-			if t, ok := depart[node][binID]; ok && t.After(arr) {
-				u := t
-				dep = &u
+	for node, bins := range events {
+		visits := make([]visit, 0, len(bins))
+		for binID, evs := range bins {
+			sort.Slice(evs, func(i, j int) bool { return evs[i].at.Before(evs[j].at) })
+			for i := 0; i < len(evs); i++ {
+				if !evs[i].kind {
+					continue // a lift with no preceding arrival: the seed-time
+					// resident's departure; its arrival predates the run
+				}
+				v := visit{binID: binID, arr: evs[i].at}
+				if i+1 < len(evs) && !evs[i+1].kind {
+					u := evs[i+1].at
+					v.dep = &u
+				}
+				visits = append(visits, v)
 			}
-			intervals = append(intervals, interval{binID, arr, dep})
 		}
-		sort.Slice(intervals, func(i, j int) bool {
-			if intervals[i].arr.Equal(intervals[j].arr) {
-				return intervals[i].binID < intervals[j].binID
+		sort.Slice(visits, func(i, j int) bool {
+			if visits[i].arr.Equal(visits[j].arr) {
+				return visits[i].binID < visits[j].binID
 			}
-			return intervals[i].arr.Before(intervals[j].arr)
+			return visits[i].arr.Before(visits[j].arr)
 		})
-		for i := 1; i < len(intervals); i++ {
-			prev := intervals[i-1]
-			cur := intervals[i]
+		for i := 1; i < len(visits); i++ {
+			prev, cur := visits[i-1], visits[i]
+			if prev.binID == cur.binID {
+				continue // consecutive visits of the same bin cannot overlap
+			}
 			if prev.dep == nil || cur.arr.Before(*prev.dep) {
 				dur := ""
 				if prev.dep != nil {

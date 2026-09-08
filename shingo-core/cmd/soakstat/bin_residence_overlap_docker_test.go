@@ -94,7 +94,12 @@ func seedPair(t *testing.T, db *store.DB, label string, overlap bool) (node stri
 	}
 
 	mustOrder(t, db, label+"-arrA", node, binA, dropoffStep(node), "delivered", aArr)
-	mustOrder(t, db, label+"-depA", node, binA, pickupStep(node), "confirmed", aDep)
+	// The departure row's status is `delivered`, not `confirmed`: the check
+	// reads the LIFTING order's delivered stamp (its downstream dropoff
+	// completing — an upper bound on the physical lift that never carries the
+	// operator-confirm lag `confirmed` does). Production lifting orders reach
+	// delivered before confirmed; the fixture mirrors that.
+	mustOrder(t, db, label+"-depA", node, binA, pickupStep(node), "delivered", aDep)
 	mustOrder(t, db, label+"-arrB", node, binB, dropoffStep(node), "delivered", bArr)
 	return node
 }
@@ -132,5 +137,47 @@ func TestBinResidenceOverlap_QuietWhenSequential(t *testing.T) {
 	if got := checkBinResidenceOverlap(db); hasLine(got, "node "+node) {
 		t.Errorf("a clean handover at %s was reported as an overlap. A check that fires on "+
 			"ordinary swaps teaches the reader to skip its violations.\ngot: %v", node, got)
+	}
+}
+
+// TestBinResidenceOverlap_QuietOnARevisitingCarousel pins the false positive
+// that broke the check's first construction, measured on the 2026-09-07 re-run:
+// bin 25 cycled ALN_006 every ~2 minutes (arrive 18:20:45, lift 18:22:08,
+// arrive 18:24:42, lift 18:26:08, ...) and the earliest-arrival /
+// earliest-departure collapse paired the LAST visit's arrival with the FIRST
+// visit's lift, reading a healthy carousel as "still standing since forever"
+// and tripping on the next bin's clean arrival. Visits, not bins, are the unit.
+func TestBinResidenceOverlap_QuietOnARevisitingCarousel(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	label := "CAR"
+	node := fmt.Sprintf("SOAKPOS-%s", label)
+	now := time.Now().UTC()
+	binA, binB := int64(9101), int64(9102)
+
+	bt := &bins.BinType{Code: fmt.Sprintf("SOAKRES-%s", label), Description: "residence fixture"}
+	if err := db.CreateBinType(bt); err != nil {
+		t.Fatalf("create bin type: %v", err)
+	}
+	for _, b := range []int64{binA, binB} {
+		if _, err := db.DB.Exec(
+			`INSERT INTO bins (id, bin_type_id, label, status) VALUES ($1, $2, $3, 'available')`,
+			b, bt.ID, fmt.Sprintf("SOAK-RES-%s-%d", label, b)); err != nil {
+			t.Fatalf("seed bin %d: %v", b, err)
+		}
+	}
+
+	// Bin A makes three full visits, each lifting before B ever lands; bin B
+	// arrives once, long after A's last lift. Nothing overlaps.
+	for i := 0; i < 3; i++ {
+		base := now.Add(-time.Duration(30-i*8) * time.Minute)
+		mustOrder(t, db, fmt.Sprintf("%s-arr-%d", label, i), node, binA, dropoffStep(node), "delivered", base)
+		mustOrder(t, db, fmt.Sprintf("%s-lift-%d", label, i), node, binA, pickupStep(node), "delivered", base.Add(3*time.Minute))
+	}
+	mustOrder(t, db, label+"-arrB", node, binB, dropoffStep(node), "delivered", now.Add(-2*time.Minute))
+
+	if got := checkBinResidenceOverlap(db); hasLine(got, "node "+node) {
+		t.Errorf("a bin cleanly revisiting %s was reported as an overlap — the visiting-unit "+
+			"regression (first-visit lift paired against last-visit arrival).\ngot: %v", node, got)
 	}
 }
