@@ -55,6 +55,22 @@ function releasedNothingBody(calledBy) {
     };
 }
 
+// A PRODUCE RELEASE SAYS NOTHING ABOUT LINESIDE, because the question does not
+// apply: the bin is going OUT full, not coming back drawn-down. So this body
+// carries no disposition at all, which Core reads as "no manifest action" and
+// leaves the carrier's contents alone.
+//
+// It used to post releasedNothingBody — capture_lineside with an empty
+// qty_by_part — which ComputeReleaseRemainingUOP turns into &0, i.e. "the bin
+// is empty, clear it". The screen said RELEASE FULL and the wire said empty.
+// That contradiction was inert only while the engine's produce-role branch
+// discarded the disposition; releaseOrderDropFastPath skips that branch, so at
+// a changeover the meaningless payload became the instruction. Hopkinsville:
+// 46 wipes, 140,762 parts, 2026-07-16 to 09-08.
+function releasedFullBody(calledBy) {
+    return { called_by: calledBy };
+}
+
 // ── A RELEASE WITH ONE OUTCOME DOES NOT ASK ─────────────────────────────
 //
 // The prompt exists to collect a DISPOSITION. In two shapes there is none to
@@ -85,7 +101,7 @@ function releasedNothingBody(calledBy) {
 function singleOutcomeReleaseBody(entry, payloads) {
     const claim = entry && entry.active_claim;
     if (!claim) return null;
-    if (claim.role === 'produce') return releasedNothingBody(calledByFromView());
+    if (claim.role === 'produce') return releasedFullBody(calledByFromView());
     if (payloads.length > 0) return null;
     // STRICTER THAN THE RENDERER, DELIBERATELY. renderReleasePromptStep1 reads
     // a missing remaining_uop_cached as 0 because it is only choosing a label
@@ -472,7 +488,7 @@ async function handleReleasePromptAction(evt) {
         // one builder, so the two paths cannot drift apart. Still reachable:
         // a produce entry whose active_claim has not loaded yet renders the
         // prompt, and this submits it.
-        const body = releasedNothingBody(calledByFromView());
+        const body = releasedFullBody(calledByFromView());
         closeReleasePrompt();
         evt.currentTarget.disabled = true;
         const ok = await postAction(state.url, body, loadViewRef);

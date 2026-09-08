@@ -57,6 +57,7 @@ const ctx = vm.createContext({ console: console, getView: () => ({ station: { na
 vm.runInContext(
     extractFn(src, 'calledByFromView') + '\n' +
     extractFn(src, 'releasedNothingBody') + '\n' +
+    extractFn(src, 'releasedFullBody') + '\n' +
     extractFn(src, 'singleOutcomeReleaseBody') + '\n' +
     'this.singleOutcomeReleaseBody = singleOutcomeReleaseBody;\n' +
     'this.calledByFromView = calledByFromView;', ctx);
@@ -69,8 +70,22 @@ const consume = (uop) => ({ active_claim: { role: 'consume' }, runtime: { remain
 
 const p = singleOutcomeReleaseBody(produce, ['TESTPAYLOAD']);
 truthy(p, 'produce release skips the modal even with payloads configured');
-eq(p && p.disposition, 'capture_lineside', 'produce posts capture_lineside');
-eq(p && Object.keys(p.qty_by_part).length, 0, 'produce pulls nothing to lineside');
+// A PRODUCE RELEASE CARRIES NO DISPOSITION, and this assertion used to say the
+// opposite. capture_lineside with an empty qty_by_part is the RELEASE EMPTY
+// wire shape: ComputeReleaseRemainingUOP turns it into &0 and Core clears the
+// carrier. The button says RELEASE FULL. That contradiction was inert only
+// while the engine's produce-role branch discarded the disposition, and
+// releaseOrderDropFastPath skips that branch — so at a changeover it became the
+// instruction that emptied a full bin. Hopkinsville: 46 wipes, 140,762 parts,
+// 2026-07-16 to 09-08. An absent mode reaches ComputeReleaseRemainingUOP's
+// default, which is "no manifest action".
+eq(p && p.disposition, undefined, 'produce posts NO disposition — the bin goes out full');
+eq(p && p.called_by, 'P400', 'produce still names who released it');
+// No lineside fields at all, rather than empty ones. An empty qty_by_part is
+// still an ANSWER to "what was pulled to lineside?" — and the answer it encodes
+// is "nothing, so the bin is empty". A produce release is not answering that
+// question, so it must not appear to.
+eq(p && p.qty_by_part, undefined, 'produce carries no qty_by_part — it is not answering a lineside question');
 eq(p && p.called_by, 'P400', 'produce names the station');
 
 // A produce press at full capacity still skips: the engine discards the
