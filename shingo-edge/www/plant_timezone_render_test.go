@@ -71,9 +71,17 @@ func TestHeaderCarriesPlantTZ(t *testing.T) {
 	plantLocation = chicago
 	defer func() { plantLocation = orig }()
 
+	// The whole set, like the sibling test above: the PLANT_TZ / SHINGO_CLOCK
+	// inlines live in partials/clock-globals.html now, so header.html alone no
+	// longer parses. This still pins what it always pinned — that the RENDERED
+	// header carries the plant zone — and the output is unchanged by the move.
+	//
+	// What it cannot pin is a page that never includes the partial, which is
+	// the actual defect the move exists to fix. TestEveryClockPageCarriesGlobals
+	// covers that.
 	tmpl := template.Must(template.New("").
 		Funcs(templateFuncs()).
-		ParseFS(templatesFS, "templates/header.html"))
+		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "header", map[string]any{

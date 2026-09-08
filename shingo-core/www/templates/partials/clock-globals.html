@@ -1,0 +1,22 @@
+{{/* clock-globals — the two values shared/utils.js needs before it paints.
+
+     BOTH ARE INLINE AND SYNCHRONOUS ON PURPOSE. A fetch would paint wrong text
+     first, which is the exact flicker the plant-local convention removed.
+     Server-rendered timestamps are already plant-local; these are for the rows
+     and clocks JS renders itself.
+
+     IT IS A PARTIAL BECAUSE FOUR PAGES DID NOT HAVE IT. These lines lived only
+     in layout.html, and dashboard-display, dashboard-map, dashboard-node-report
+     and heartbeat are full pages that do not use it — yet every one of them
+     loads JS importing formatClock and serverNow. shared/utils.js degrades
+     rather than throwing when they are absent (plantTZ() -> undefined -> the
+     VIEWER's zone, serverNow() -> Date.now()), so those dashboards quietly
+     rendered on whatever clock the browser was on, including the big display
+     board.
+
+     Anything that renders a timestamp must include this. The drift test in
+     clock_globals_drift_test.go enforces that rather than trusting it. */}}
+{{define "clock-globals"}}
+  <script>window.PLANT_TZ = "{{ plantTZ }}";</script>
+  <script>window.SHINGO_CLOCK = {{ serverClock }};</script>
+{{end}}

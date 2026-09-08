@@ -8,11 +8,30 @@ import (
 	"time"
 )
 
-// defaultPlantTimezone is the zone a config that predates the `timezone:`
-// key resolves to. Both plants' wall clocks are Central, so this keeps
-// Hopkinsville correct today only by default — the install script seeds
-// the explicit key so the correctness stops being an accident.
-const defaultPlantTimezone = "America/Chicago"
+// defaultPlantTimezone is what an unconfigured core resolves to.
+//
+// IT IS UTC BECAUSE VISIBLY WRONG BEATS PLAUSIBLY RIGHT. It used to be
+// America/Chicago, which kept both existing plants correct BY ACCIDENT — their
+// wall clocks are Central and nobody had to say so. That is a defect dressed as
+// a convenience: a plant whose clock is not Central would have rendered every
+// timestamp, and every "Today" filter, silently shifted, with nothing on any
+// screen to say the zone had never been set. Future sites are expected to be
+// Eastern and others, so that day was coming.
+//
+// UTC is nobody's plant clock, which is the point: an unset zone now shows up
+// as an obviously foreign one instead of a subtly wrong local one, and edges
+// report their zone to /edges where blank renders as a warn badge.
+//
+// DEPLOY PRECONDITION, PER PLANT: `timezone:` must be set in that site's
+// shingocore.yaml BEFORE this reaches it. A plant still relying on the old
+// default lands on UTC — not just in the labels, but in the bare YYYY-MM-DD
+// filters below, which would make "Today" start at 19:00 the previous evening.
+// Set the key first, then ship the default; never the other way round.
+//
+// Status 2026-09-08: Hopkinsville is set (America/Chicago). SPRINGFIELD IS NOT
+// — it is still running on the old default and is Central, so it needs the key
+// before a core deploy carries this there.
+const defaultPlantTimezone = "UTC"
 
 // plantLocation is the plant's IANA timezone, resolved once from the
 // PLANT_TIMEZONE env var (default America/Chicago). The dashboards follow a
