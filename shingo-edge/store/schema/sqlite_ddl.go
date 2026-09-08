@@ -313,9 +313,24 @@ CREATE TABLE IF NOT EXISTS hourly_counts_local_legacy (
     UNIQUE(process_id, style_id, count_date, hour)
 );
 
--- daily_counts is the permanent end of the ladder: one row per process, style
--- and calendar date, ~1,900 rows a year at Springfield's measured rate. Written
--- only by counters.RollUpDaily, never deleted.
+-- daily_counts is FROZEN HISTORY, and nothing writes it any more.
+--
+-- It was the permanent end of the ladder — one row per process, style and
+-- calendar date, written by counters.RollUpDaily. As of the 2026-09 UTC move a
+-- day is DERIVED from the hour buckets at read time (counters.ListDaily),
+-- because a stored day total has to be keyed by a plant-local date, and that
+-- put a timezone back into stored data one table after taking it out of
+-- another. The hours are kept forever, so the derivation is always available
+-- and a change of plant zone needs no migration and no re-run.
+--
+-- What survives here is the day totals written BEFORE that move, whose hour
+-- detail sits in hourly_counts_local_legacy and is deliberately not
+-- reinterpreted. ListDaily reads a row from this table only where the buckets
+-- answer nothing for that (style, date), so history still answers and a relic
+-- can never shadow a live day.
+--
+-- Safe to drop once the pre-2026-09 day totals are no longer wanted; nothing
+-- else reads it.
 --
 -- IT CARRIES NO FOREIGN KEYS, AND THAT IS THE DESIGN, NOT AN OVERSIGHT. Its
 -- sibling hourly_counts declares ON DELETE CASCADE on both process_id and

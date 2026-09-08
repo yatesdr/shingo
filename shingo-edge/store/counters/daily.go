@@ -1,40 +1,46 @@
 package counters
 
-// daily.go — the plant-local end of the counting ladder.
+// daily.go — the day view over the hour buckets.
 //
-//	counter_snapshots  raw, one row per poll   14 days   retention.go
-//	hourly_counts      per process/style/hour  permanent counters.go (UTC)
-//	daily_counts       per process/style/day   permanent this file (plant-local)
+//	counter_snapshots  raw, one row per poll   14 days     retention.go
+//	hourly_counts      per process/style/hour  permanent   counters.go (UTC)
+//	daily_counts       FROZEN pre-2026-09 rollup, read-only, this file
 //
-// THE HOURLY PURGE IS GONE, and with it PurgeRolledUpHourly, HourlyRetention
-// and CutoffDate. It was a deliberate, measured design — hour detail is a
-// shift-shaped read, the day total is what survives the question — so the
-// reversal owes a reason.
+// A DAY IS DERIVED, NOT STORED. Grouping UTC hour buckets into plant-local days
+// happens in ListDaily, at read time, so NO stored row anywhere in the counting
+// ladder carries a timezone. Changing the plant clock changes what the reads
+// answer, with nothing to migrate and no job to re-run — which is the property
+// the whole 2026-09 move was for, and which a cached day total would have given
+// straight back by baking a zone into its key.
 //
-// The reason is that keeping the hours is what makes daily_counts honest.
-// count_date is plant-local and cannot be anything else and still mean "the
-// plant's day", so it is the one place a timezone still enters stored data.
-// While the hours underneath survive, that is a cache: change the plant zone,
-// re-run the roll-up, and the days are right. Purge the hours and it becomes
-// the record — frozen in whatever zone the box believed at the time, which at
-// Hopkinsville was the wrong one for three months.
+// THE ROLLUP AND THE HOURLY PURGE ARE BOTH GONE, and both were deliberate
+// designs, so the reversals owe reasons.
 //
-// The cost is rows, and it was checked rather than assumed. A row appears only
-// for an hour that actually produced: Hopkinsville carries 350 rows for three
-// months, Springfield 2,907 over 70 dates (~41.5 a date). The 90-day window
-// deleted 78 rows on the day it was measured — 1.14% of a restored database.
-// Nobody ran that pass for the bytes, and nobody needs to now. If a
-// forty-counter plant ever makes the growth real, retention comes back as a
-// plain `DELETE WHERE bucket_start < ?` — with no zone in it at all, which is
-// what made the old purge's EXISTS guard necessary in the first place.
+// The purge (PurgeRolledUpHourly, HourlyRetention, CutoffDate) existed to bound
+// growth. But a row appears only for an hour that actually produced — 350 rows
+// for three months at Hopkinsville, 2,907 over 70 dates at Springfield — and
+// keeping the hours is what makes a day derivable at all. If a forty-counter
+// plant ever makes the growth real, retention returns as a plain
+// `DELETE WHERE bucket_start < ?`, with no zone in it, which is what made the
+// old purge's EXISTS guard necessary in the first place.
 //
-// It also retires a documented regression: `?date=` on the production page is
-// free text, so an engineer could ask for a date past the window and get an
-// empty chart where the day total still existed. That trade is no longer made.
+// RollUpDaily followed it: once the hours are permanent, a stored day total is
+// a second copy of the same truth with a timezone in its key, and second copies
+// drift. Deriving costs a range query over a table measured in hundreds of rows.
+//
+// Deleting the purge also retired a documented regression: `?date=` on the
+// production page is free text, so an engineer could ask for a date past the
+// 90-day window and get an empty chart where the day total still existed.
+//
+// daily_counts SURVIVES AS HISTORY ONLY. It holds the day totals written before
+// the migration, whose hour detail sits in hourly_counts_local_legacy and is
+// deliberately not reinterpreted. ListDaily reads it only where the buckets
+// answer nothing for that (style, date), so it can never shadow a live day.
 
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
 
 	"shingoedge/domain"
@@ -56,104 +62,109 @@ type DailyCount = domain.DailyCount
 // zone change is a rebuild, not a loss.
 const DateLayout = "2006-01-02"
 
-// RollUpDaily recomputes daily_counts from the UTC hour buckets, grouping them
-// into PLANT-LOCAL calendar days, and reports how many daily rows were written.
+// ListDaily returns daily totals for one process over an inclusive PLANT-LOCAL
+// date range, newest first.
 //
-// THE GROUPING IS DONE IN GO, NOT SQL, because SQLite has no IANA timezone
-// support — it can shift by a fixed offset and nothing more, which is exactly
-// wrong across a DST boundary. Reading the table costs nothing at the measured
-// rate (Hopkinsville: 350 rows for three months; Springfield: 2,907 rows over
-// 70 dates), and correctness across the two days a year that matter is not
-// worth trading for a GROUP BY.
+// IT DERIVES, IT DOES NOT READ A ROLLUP. The day totals are grouped out of the
+// UTC hour buckets at read time, in the plant's zone. That is what keeps the
+// zone out of stored data entirely: a day is a QUESTION asked of the hours, not
+// a fact written down, so changing the plant zone changes the answer with
+// nothing to migrate and nothing to re-run. The rollup job and its stored
+// upsert are gone for that reason — a cached day total is a second copy of the
+// truth with a timezone baked into its key, which is the whole defect this work
+// exists to remove.
 //
-// IT RECOMPUTES RATHER THAN ACCUMULATES. Every pass re-derives each day total
-// from the hours still present, so a delta that lands late — a confirmed
-// anomaly released hours after the fact, a bucket backfilled by a catch-up
-// poll — is picked up without anyone tracking a high-water mark.
+// Deriving is affordable because a bucket row exists only for an hour that
+// actually produced: 350 rows for three months at Hopkinsville, 2,907 over 70
+// dates at Springfield. A range query over that is not worth caching.
 //
-// THERE IS NO frozenBefore GUARD ANY MORE, because the thing it guarded against
-// is gone. It existed so that an hourly row appearing for an ALREADY-PURGED
-// date could not make the next pass recompute that day from one stray row and
-// overwrite years-old truth. Nothing is purged now, so a recompute always sees
-// the whole day and can only reproduce it.
-//
-// Days written before the 2026-09 UTC migration are not visited at all: their
-// hours live in hourly_counts_local_legacy, which nothing reads. Those daily
-// rows therefore survive untouched, which is what preserves the pre-migration
-// history the migration deliberately declined to reinterpret.
-func RollUpDaily(db *sql.DB, loc *time.Location) (int64, error) {
-	if loc == nil {
-		loc = time.UTC
-	}
-	rows, err := db.Query(`SELECT process_id, style_id, bucket_start, delta FROM hourly_counts`)
-	if err != nil {
-		return 0, fmt.Errorf("roll up daily counts: read hourly: %w", err)
-	}
-	defer rows.Close()
-
-	type key struct {
-		process, style int64
-		date           string
-	}
-	totals := make(map[key]int64)
-	for rows.Next() {
-		var processID, styleID, bucket, delta int64
-		if err := rows.Scan(&processID, &styleID, &bucket, &delta); err != nil {
-			return 0, fmt.Errorf("roll up daily counts: scan: %w", err)
-		}
-		date := time.Unix(bucket, 0).In(loc).Format(DateLayout)
-		totals[key{processID, styleID, date}] += delta
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("roll up daily counts: iterate: %w", err)
-	}
-
-	var written int64
-	for k, total := range totals {
-		res, err := db.Exec(`INSERT INTO daily_counts (process_id, style_id, count_date, total)
-			VALUES (?, ?, ?, ?)
-			ON CONFLICT(process_id, style_id, count_date) DO UPDATE SET
-			       total      = excluded.total,
-			       updated_at = datetime('now')`,
-			k.process, k.style, k.date, total)
-		if err != nil {
-			return written, fmt.Errorf("roll up daily counts: upsert %s: %w", k.date, err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return written, fmt.Errorf("roll up daily counts: rows affected: %w", err)
-		}
-		written += n
-	}
-	return written, nil
-}
-
-// ListDaily returns daily totals for one process over an inclusive date range,
-// newest first. This is the read that makes the hourly purge honest: once a
-// date's hours are gone, this is where its production went.
+// daily_counts IS STILL READ, FOR PRE-MIGRATION DATES ONLY. It is frozen —
+// nothing has written it since the 2026-09 UTC migration — and it holds the day
+// totals for the period whose hour detail lives in hourly_counts_local_legacy,
+// which is deliberately not reinterpreted. A stored row is used only where the
+// hours produce nothing for that (style, date), so post-migration days always
+// come from the buckets and history still answers.
 //
 // Rows are NOT joined to styles. A daily row outlives its style by design (see
 // the daily_counts comment in schema/sqlite_ddl.go), and store/processes/
 // styles.go's rule for reads — filter where the answer is "what may I pick
 // now", never where it is "what was this" — puts this firmly in the second
 // category.
-func ListDaily(db *sql.DB, processID int64, fromDate, toDate string) ([]DailyCount, error) {
-	rows, err := db.Query(`SELECT process_id, style_id, count_date, total
-		FROM daily_counts
-		WHERE process_id = ? AND count_date >= ? AND count_date <= ?
-		ORDER BY count_date DESC, style_id`, processID, fromDate, toDate)
+func ListDaily(db *sql.DB, processID int64, fromDate, toDate string, loc *time.Location) ([]DailyCount, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	from, _, err := DayBounds(fromDate, loc)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var out []DailyCount
-	for rows.Next() {
-		var d DailyCount
-		if err := rows.Scan(&d.ProcessID, &d.StyleID, &d.CountDate, &d.Total); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
+	_, to, err := DayBounds(toDate, loc)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+
+	type key struct {
+		style int64
+		date  string
+	}
+	derived := make(map[key]int64)
+
+	rows, err := db.Query(`SELECT style_id, bucket_start, delta FROM hourly_counts
+		WHERE process_id = ? AND bucket_start >= ? AND bucket_start < ?`,
+		processID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("list daily: read hourly: %w", err)
+	}
+	for rows.Next() {
+		var styleID, bucket, delta int64
+		if err := rows.Scan(&styleID, &bucket, &delta); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("list daily: scan hourly: %w", err)
+		}
+		derived[key{styleID, time.Unix(bucket, 0).In(loc).Format(DateLayout)}] += delta
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("list daily: iterate hourly: %w", err)
+	}
+	rows.Close()
+
+	out := make([]DailyCount, 0, len(derived))
+	for k, total := range derived {
+		out = append(out, DailyCount{ProcessID: processID, StyleID: k.style, CountDate: k.date, Total: total})
+	}
+
+	// Pre-migration history. A stored row loses to a derived one, so a date the
+	// buckets cover is answered by the buckets even if a stale rollup row for it
+	// still exists.
+	legacy, err := db.Query(`SELECT style_id, count_date, total FROM daily_counts
+		WHERE process_id = ? AND count_date >= ? AND count_date <= ?`,
+		processID, fromDate, toDate)
+	if err != nil {
+		return nil, fmt.Errorf("list daily: read frozen rollup: %w", err)
+	}
+	defer legacy.Close()
+	for legacy.Next() {
+		var styleID, total int64
+		var date string
+		if err := legacy.Scan(&styleID, &date, &total); err != nil {
+			return nil, fmt.Errorf("list daily: scan frozen rollup: %w", err)
+		}
+		if _, ok := derived[key{styleID, date}]; ok {
+			continue
+		}
+		out = append(out, DailyCount{ProcessID: processID, StyleID: styleID, CountDate: date, Total: total})
+	}
+	if err := legacy.Err(); err != nil {
+		return nil, fmt.Errorf("list daily: iterate frozen rollup: %w", err)
+	}
+
+	// Newest first, then style — the order the old SQL ORDER BY produced.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CountDate != out[j].CountDate {
+			return out[i].CountDate > out[j].CountDate
+		}
+		return out[i].StyleID < out[j].StyleID
+	})
+	return out, nil
 }

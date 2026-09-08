@@ -887,7 +887,10 @@ func main() {
 	// future write on the SD card for ptrmap maintenance — a recurring cost to
 	// avoid a rebuild that the threshold already makes a once-ever event. It
 	// also never defragments, which is the half that matters on flash.
-	reportLoc := engine.ReportingLocation(cfg.Timezone)
+	// No reporting zone is resolved here any more: with day totals derived at
+	// read time, nothing on this timer needs one. The engine still resolves it
+	// once for CounterService, and that call is what logs the zone and its
+	// source at boot.
 	retentionStop := make(chan struct{})
 	defer close(retentionStop)
 	goSafe("store-retention", func() {
@@ -898,15 +901,14 @@ func main() {
 			case <-retentionStop:
 				return
 			case <-ticker.C:
-				// The hourly rung has no purge any more — the hours are what
-				// keep daily_counts re-derivable across a plant-zone change.
-				// See store/counters/daily.go for why that reversal was made.
-				if n, err := counters.RollUpDaily(db.DB, reportLoc); err != nil {
-					log.Printf("retention: roll up daily counts: %v", err)
-				} else if n > 0 {
-					log.Printf("retention: rolled %d daily count rows up from hourly_counts (%s)", n, reportLoc)
-				}
-
+				// NO COUNTER ROLL-UP AND NO HOURLY PURGE HERE ANY MORE. Day
+				// totals are derived from the UTC hour buckets at read time
+				// (counters.ListDaily) and the hours are kept, so there is
+				// nothing to aggregate on a timer and nothing to delete. That
+				// is what keeps every stored row free of a timezone; see
+				// store/counters/daily.go for the reasoning behind both
+				// reversals. Snapshots still age out — they are raw and
+				// genuinely unbounded.
 				if n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention); err != nil {
 					log.Printf("retention: purge counter snapshots: %v", err)
 				} else if n > 0 {

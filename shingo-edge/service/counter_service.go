@@ -222,7 +222,7 @@ func (s *CounterService) HourlyTotals(processID int64, countDate string) (map[in
 // interface, not *store.DB directly" makes the handler unable to name the
 // element type, so this is the only layer that can spell the empty value.
 func (s *CounterService) DailyCounts(processID int64, fromDate, toDate string) ([]counters.DailyCount, error) {
-	out, err := counters.ListDaily(s.db.DB, processID, fromDate, toDate)
+	out, err := counters.ListDaily(s.db.DB, processID, fromDate, toDate, s.loc)
 	if err != nil {
 		return nil, err
 	}
