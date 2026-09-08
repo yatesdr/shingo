@@ -40,8 +40,11 @@ func TestBuild_MapsEveryFieldOfOneRow(t *testing.T) {
 	}, testConfig())
 
 	want := []MiddlewareTx{{
-		TicketNumber:    1,
-		EntryNumber:     1,
+		TicketNumber: 1,
+		// The ROW ID, not the position. This row's id is 7, and a single-row
+		// post used to send EntryNumber 1 beside TicketNumber 1 — the repeating
+		// pair nobody has confirmed the meaning of.
+		EntryNumber:     7,
 		PartNumber:      "7332B4-6RR0A.06",
 		StockLocation:   "SM01",
 		Bin:             "SHG:0042",
@@ -81,11 +84,15 @@ func TestBuild_DirectionIsTypeAndQuantityIsUnsigned(t *testing.T) {
 	}
 }
 
-// TestBuild_EntryNumberFollowsRowIDNotSlicePosition. EntryNumber is assigned
-// over a sort by id, so the same rows serialise identically however they arrive.
-// That is what makes body_sha a usable dedup key and what stops a retry sending
-// a permutation of the body the middleware may already hold.
-func TestBuild_EntryNumberFollowsRowIDNotSlicePosition(t *testing.T) {
+// TestBuild_EntryNumberIsTheRowIDNotTheSlicePosition pins TWO properties that
+// used to be one, and the old test's name claimed the property its assertion did
+// not check: it asserted 1, 2, 3 against ids 10, 20, 30, which is the position.
+//
+// The ORDER is by row id, so the same rows serialise identically however they
+// arrive — what makes body_sha a usable dedup hint and stops a retry sending a
+// permutation of a body the middleware may already hold. The IDENTITY is the row
+// id itself, so no two rows ever built anywhere share an EntryNumber.
+func TestBuild_EntryNumberIsTheRowIDNotTheSlicePosition(t *testing.T) {
 	t.Parallel()
 	rows := []*cms.Transaction{
 		txn(30, "C", "SM01", "B", "R", 3),
@@ -95,12 +102,14 @@ func TestBuild_EntryNumberFollowsRowIDNotSlicePosition(t *testing.T) {
 	got := Build(rows, testConfig())
 
 	wantParts := []string{"A", "B", "C"}
+	wantEntries := []int{10, 20, 30}
 	for i, w := range wantParts {
 		if got[i].PartNumber != w {
 			t.Errorf("row %d part = %q, want %q — output must be ordered by row id", i, got[i].PartNumber, w)
 		}
-		if got[i].EntryNumber != i+1 {
-			t.Errorf("row %d EntryNumber = %d, want %d", i, got[i].EntryNumber, i+1)
+		if got[i].EntryNumber != wantEntries[i] {
+			t.Errorf("row %d EntryNumber = %d, want %d — the row id, not the position",
+				i, got[i].EntryNumber, wantEntries[i])
 		}
 	}
 
@@ -170,8 +179,54 @@ func TestBuild_DropsZeroDeltaRows(t *testing.T) {
 	if got[0].PartNumber != "B" {
 		t.Errorf("surviving row = %q, want B", got[0].PartNumber)
 	}
-	if got[0].EntryNumber != 1 {
-		t.Errorf("EntryNumber = %d, want 1 — numbering counts what is SENT, not what was offered", got[0].EntryNumber)
+	// The survivor keeps its OWN id. Dropping a row no longer renumbers what
+	// follows it, which is the point of keying on the id: the same row carries
+	// the same EntryNumber whatever it was batched beside.
+	if got[0].EntryNumber != 2 {
+		t.Errorf("EntryNumber = %d, want 2 — the surviving row's own id", got[0].EntryNumber)
+	}
+}
+
+// TestBuild_TwoSeparateBodiesNeverShareAnEntryNumber is the pin the change was
+// made for. With EntryNumber assigned by position, EVERY single-row post sent
+// (TicketNumber 1, EntryNumber 1) — two different movements arriving at the
+// middleware under one pair of identifiers, and nobody has confirmed what that
+// pair means to CMS. Row ids are globally unique, so two separately-built bodies
+// cannot collide.
+func TestBuild_TwoSeparateBodiesNeverShareAnEntryNumber(t *testing.T) {
+	t.Parallel()
+	first := Build([]*cms.Transaction{txn(4471, "A", "SM01", "B1", "AMR-07", 240)}, testConfig())
+	second := Build([]*cms.Transaction{txn(4472, "A", "SM01", "B2", "AMR-07", 240)}, testConfig())
+
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("rows = %d and %d, want 1 each", len(first), len(second))
+	}
+	if first[0].EntryNumber == second[0].EntryNumber {
+		t.Errorf("two separate posts both sent EntryNumber %d — the pair (TicketNumber, "+
+			"EntryNumber) has to distinguish two movements", first[0].EntryNumber)
+	}
+	if first[0].EntryNumber != 4471 || second[0].EntryNumber != 4472 {
+		t.Errorf("EntryNumbers = %d and %d, want 4471 and 4472 (the row ids)",
+			first[0].EntryNumber, second[0].EntryNumber)
+	}
+}
+
+// TestBuild_RebuildingTheSameRowsIsByteIdentical: body_sha is offered as a dedup
+// hint, so the bytes have to be a function of the rows alone. Keying EntryNumber
+// on the row id rather than on the batch's shape is what keeps that true when a
+// retry batches the same row differently.
+func TestBuild_RebuildingTheSameRowsIsByteIdentical(t *testing.T) {
+	t.Parallel()
+	rows := []*cms.Transaction{
+		txn(11, "A", "SM01", "B", "R", 5),
+		txn(12, "B", "SM01", "B", "R", 7),
+	}
+	one, err := json.Marshal(Build(rows, testConfig()))
+	testutil.MustNoErr(t, err, "marshal the first build")
+	two, err := json.Marshal(Build(rows, testConfig()))
+	testutil.MustNoErr(t, err, "marshal the rebuild")
+	if string(one) != string(two) {
+		t.Errorf("rebuilding the same rows produced different bytes: %s then %s", one, two)
 	}
 }
 

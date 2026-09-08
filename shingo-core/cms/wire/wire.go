@@ -92,7 +92,7 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 
 	out := make([]MiddlewareTx, 0, len(ordered))
-	for i, t := range ordered {
+	for _, t := range ordered {
 		qty := t.Delta
 		txnType := cfg.IncreaseType
 		if qty < 0 {
@@ -107,7 +107,15 @@ func Build(txns []*cms.Transaction, cfg Config) []MiddlewareTx {
 			// lands on. It has never been sent — cms_postings has never existed
 			// at a plant — so it is a question, not an incident.
 			TicketNumber: 1,
-			EntryNumber:  i + 1,
+			// THE ROW ID, NOT THE INDEX IN THIS ARRAY. With TicketNumber pinned
+			// to a constant 1, an index made every single-row post send the pair
+			// (1, 1) — and nobody has confirmed what that pair means to CMS, so
+			// the one thing not to send it is a value that repeats. The id is
+			// monotonic, globally unique and stable, which is also what keeps
+			// body_sha meaningful across a retry: the array is already sorted by
+			// this same id (below), so rebuilding the same rows rebuilds the same
+			// bytes.
+			EntryNumber: int(t.ID),
 			// THE LINE'S PART NUMBER. A transaction is one manifest line's
 			// movement, and after the identity correction a line names the part
 			// CMS books against — which for a bin of ONE part is the payload
