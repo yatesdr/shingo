@@ -33,7 +33,7 @@ func clearBoundaryBin(t *testing.T, db *store.DB, code string, ppc int64, uopLef
 		PayloadID: pay.ID, PartNumber: code, PartsPerCycle: ppc,
 	}, ""), "create template line")
 
-	_, slot := tagBoundary(t, db, "E2E-CLEAR-"+code, "AMR_SUPERMARKET_TEST")
+	_, slot := tagBoundary(t, db, "E2E-CLEAR-"+code, "ASTEST")
 	bin := createTestBinAtNode(t, db, pay.Code, slot.ID, "BIN-CLEAR-"+code)
 	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: code}}}
 	body, err := json.Marshal(m)
@@ -116,7 +116,7 @@ func TestCMSClearEndToEnd_TheDepartureReachesTheMiddleware(t *testing.T) {
 		t.Errorf("Quantity = %v, want 240 (10 cycles x 24 per cycle), unsigned: %s",
 			r["Quantity"], got[0])
 	}
-	if r["StockLocation"] != "AMR_SUPERMARKET_TEST" {
+	if r["StockLocation"] != "ASTEST" {
 		t.Errorf("StockLocation = %v, want the boundary's code", r["StockLocation"])
 	}
 	// BLANK, AND THAT IS ACCURATE. No robot cleared this bin — a person did.

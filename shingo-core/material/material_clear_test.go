@@ -26,7 +26,7 @@ import (
 func TestBuildClear_AtBoundaryBooksTheDeparture(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
-	addBoundary(f, 14, "Supermarket Area", "AMR_SUPERMARKET_TEST")
+	addBoundary(f, 14, "Supermarket Area", "ASTEST")
 	addNode(f, 20, "SMN_01", false, 14)
 	// 10 cycles left at 24 parts per cycle -> 240 parts leaving.
 	f.setTemplate(100, "KK21 5019 A PIA14", 12000, map[string]int64{"KK21 5019 A PIA14": 24})
@@ -51,7 +51,7 @@ func TestBuildClear_AtBoundaryBooksTheDeparture(t *testing.T) {
 	if got.NodeID != 14 || got.NodeName != "Supermarket Area" {
 		t.Errorf("row names node %d/%q, want the BOUNDARY 14/Supermarket Area", got.NodeID, got.NodeName)
 	}
-	if got.Storeroom != "AMR_SUPERMARKET_TEST" {
+	if got.Storeroom != "ASTEST" {
 		t.Errorf("storeroom = %q, want the walk's code", got.Storeroom)
 	}
 	if got.SourceType != "clear" {

@@ -36,7 +36,7 @@ func TestCreateInTx_TheCallerOwnsTheCommit(t *testing.T) {
 	}
 	rows := []*cms.Transaction{
 		{NodeID: node.ID, NodeName: node.Name, CatID: "CAT-1", Delta: -240,
-			SourceType: cms.SourceTypeClear, Storeroom: "AMR_SUPERMARKET_TEST"},
+			SourceType: cms.SourceTypeClear, Storeroom: "ASTEST"},
 	}
 	if err := cms.CreateInTx(tx, rows); err != nil {
 		t.Fatalf("CreateInTx: %v", err)
@@ -96,7 +96,7 @@ func TestCreateInTx_AFailedRowTakesTheCallersWorkWithIt(t *testing.T) {
 	missingBin := int64(9_000_000_001)
 	rows := []*cms.Transaction{
 		{NodeID: node.ID, NodeName: node.Name, CatID: "CAT-1", Delta: -240,
-			SourceType: cms.SourceTypeClear, Storeroom: "AMR_SUPERMARKET_TEST",
+			SourceType: cms.SourceTypeClear, Storeroom: "ASTEST",
 			BinID: &missingBin},
 	}
 	if err := cms.CreateInTx(tx, rows); err == nil {
