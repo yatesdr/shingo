@@ -45,13 +45,18 @@ ASSUME_YES=no
 # install-edge.sh: OS zone as the suggested default, --timezone to override
 # for unattended installs that know the plant clock disagrees with the box.
 CORE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "America/Chicago")
+# Distinguishes a zone somebody TYPED from one that merely defaulted to the OS
+# zone above. --yes must refuse to guess, but it must not refuse an explicit
+# instruction: without this there is no way to set the zone in an unattended
+# install, which is the plant-rollout case.
+CORE_TIMEZONE_EXPLICIT=no
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
         --legacy-config=*) LEGACY_CONFIG_ARG="${1#*=}"; shift ;;
         --yes|-y)          ASSUME_YES=yes; shift ;;
-        --timezone)        CORE_TIMEZONE="$2"; shift 2 ;;
-        --timezone=*)      CORE_TIMEZONE="${1#*=}"; shift ;;
+        --timezone)        CORE_TIMEZONE="$2"; CORE_TIMEZONE_EXPLICIT=yes; shift 2 ;;
+        --timezone=*)      CORE_TIMEZONE="${1#*=}"; CORE_TIMEZONE_EXPLICIT=yes; shift ;;
         *)
             echo "Unknown argument: $1"
             echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml] [--yes] [--timezone IANA_ZONE]"
@@ -574,6 +579,27 @@ if [ ! -f /etc/shingo/shingocore.yaml ]; then
         echo "==> Copying config from $LEGACY_CONFIG to /etc/shingo/shingocore.yaml..."
         cp "$LEGACY_CONFIG" /etc/shingo/shingocore.yaml
     else
+        # NEVER INVENT A TIMEZONE, on a fresh install either. Seeding the box's
+        # OS zone here is the same defect as seeding it into an existing config,
+        # with a WIDER blast radius: core is the plant's authority for the zone,
+        # and once edges inherit it, one wrong guess here is wrong on every box
+        # at the site. Hopkinsville's core VM reports America/New_York while the
+        # plant clock is Central — that guess would have been wrong.
+        #
+        # Empty is the honest answer and a diagnosable one: an unset zone shows
+        # as unconfigured rather than as a plausible wrong number.
+        SEED_TZ=""
+        if [ "$CORE_TIMEZONE_EXPLICIT" = "yes" ]; then
+            SEED_TZ="$CORE_TIMEZONE"
+        elif [ "$ASSUME_YES" != "yes" ]; then
+            echo "    Plant timezone is UNSET. The OS zone is $CORE_TIMEZONE,"
+            echo "    which is a suggestion, not the plant clock — confirm it."
+            if confirm "Record timezone: $CORE_TIMEZONE?"; then
+                SEED_TZ="$CORE_TIMEZONE"
+            fi
+        else
+            echo "    --yes: leaving timezone unset; pass --timezone IANA_ZONE to set it"
+        fi
         echo "==> Writing placeholder /etc/shingo/shingocore.yaml..."
         cat > /etc/shingo/shingocore.yaml <<YAML
 # shingo-core configuration.
@@ -592,10 +618,12 @@ if [ ! -f /etc/shingo/shingocore.yaml ]; then
 #     sslmode:  disable
 
 # IANA zone for plant-local display. Storage and the wire stay UTC; this is
-# the rendering clock only. The OS zone is a SUGGESTED DEFAULT — at
-# Hopkinsville the core VM reports America/New_York while the plant clock
-# is Central. PLANT_TIMEZONE env still overrides this key.
-timezone: ${CORE_TIMEZONE}
+# the rendering clock only. Empty means UNCONFIGURED, and is left that way on
+# purpose: the installer never guesses a zone, because the box's OS zone is not
+# the plant's clock (Hopkinsville's core VM reports America/New_York while the
+# plant runs Central). Set it here, in the web UI, or with --timezone.
+# PLANT_TIMEZONE env still overrides this key.
+timezone: "${SEED_TZ}"
 YAML
     fi
     chown shingo:shingo /etc/shingo/shingocore.yaml
@@ -606,17 +634,46 @@ else
     # display clock is running on the code default (America/Chicago) with
     # nothing in the file recording that decision. Both live plants are in
     # this state today — right by default, not by record.
-    if ! grep -qE '^[[:space:]]*timezone[[:space:]]*:[[:space:]]*[^[:space:]#]' /etc/shingo/shingocore.yaml; then
-        suggested_tz=$(timedatectl show -p Timezone --value 2>/dev/null || echo "")
+    #
+    # READ THE VALUE, do not pattern-match "looks set". The previous test was
+    # `grep -qE 'timezone:[[:space:]]*[^[:space:]#]'`, and the quote character
+    # in `timezone: ""` satisfies [^[:space:]#] — so the exact state both
+    # plants ship in read as CONFIGURED and this block never ran. The comment
+    # above claimed to handle empty; the regex only ever caught absent.
+    # Verified against the live boxes 2026-09-08: core (key absent) prompted,
+    # edge (key present, empty) said nothing at all.
+    current_tz=$(sed -nE 's/^[[:space:]]*timezone[[:space:]]*:[[:space:]]*(.*)$/\1/p' \
+                 /etc/shingo/shingocore.yaml | head -1 | tr -d "\"' ")
+    if [ -z "$current_tz" ]; then
+        suggested_tz="$CORE_TIMEZONE"
         [ -z "$suggested_tz" ] && suggested_tz="America/Chicago"
         echo "    timezone: is unset in the existing config"
         echo "    OS zone suggests: $suggested_tz (core is likely running the"
         echo "    America/Chicago code default — confirm that is the plant clock)"
-        if [ "$ASSUME_YES" = "yes" ]; then
+        write_tz=""
+        if [ "$CORE_TIMEZONE_EXPLICIT" = "yes" ]; then
+            # Typed, not guessed. Honour it with or without --yes.
+            write_tz="$CORE_TIMEZONE"
+        elif [ "$ASSUME_YES" = "yes" ]; then
             echo "    --yes: leaving timezone unset (code default applies)"
+            echo "    pass --timezone IANA_ZONE to set it unattended"
         elif confirm "Record timezone: $suggested_tz in the config?"; then
-            echo "timezone: $suggested_tz" >> /etc/shingo/shingocore.yaml
-            echo "    timezone recorded"
+            write_tz="$suggested_tz"
+        fi
+        if [ -n "$write_tz" ]; then
+            # REPLACE an existing key, only append when there is none. Core
+            # appended unconditionally before, which was harmless only while
+            # the empty case was unreachable: with detection fixed, appending
+            # to a file that already carries `timezone: ""` yields a DUPLICATE
+            # key, and gopkg.in/yaml.v3 rejects those outright ("mapping key
+            # already defined") — the config parses to nothing and core does
+            # not start. Verified against yaml.v3 v3.0.1.
+            if grep -qE '^[[:space:]]*timezone[[:space:]]*:' /etc/shingo/shingocore.yaml; then
+                sed -i -E "s|^[[:space:]]*timezone[[:space:]]*:.*|timezone: $write_tz|" /etc/shingo/shingocore.yaml
+            else
+                echo "timezone: $write_tz" >> /etc/shingo/shingocore.yaml
+            fi
+            echo "    timezone recorded: $write_tz"
         fi
     fi
 fi

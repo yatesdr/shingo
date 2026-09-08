@@ -41,14 +41,19 @@ FORCE_REINSTALL=no
 # zone disagrees with the wall clock (Hopkinsville: OS Eastern, plant
 # Central). --timezone overrides for unattended installs that know better.
 EDGE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "America/Chicago")
+# Distinguishes a zone somebody TYPED from one that merely defaulted to the OS
+# zone above. --yes must refuse to guess, but it must not refuse an explicit
+# instruction: without this there is no way to set the zone in an unattended
+# install, which is the plant-rollout case.
+EDGE_TIMEZONE_EXPLICIT=no
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
         --legacy-config=*) LEGACY_CONFIG_ARG="${1#*=}"; shift ;;
         --yes|-y)          ASSUME_YES=yes; shift ;;
         --reinstall)       FORCE_REINSTALL=yes; shift ;;
-        --timezone)        EDGE_TIMEZONE="$2"; shift 2 ;;
-        --timezone=*)      EDGE_TIMEZONE="${1#*=}"; shift ;;
+        --timezone)        EDGE_TIMEZONE="$2"; EDGE_TIMEZONE_EXPLICIT=yes; shift 2 ;;
+        --timezone=*)      EDGE_TIMEZONE="${1#*=}"; EDGE_TIMEZONE_EXPLICIT=yes; shift ;;
         *)
             echo "Unknown argument: $1"
             echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes] [--timezone IANA_ZONE]"
@@ -754,6 +759,25 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
         # defaults and came up as `plant-a.line-1` — a value nobody typed and
         # nobody could have typed differently. station_uid is now empty and
         # commented, and an empty one is a startup refusal that names this step.
+        #
+        # The timezone knob follows the same principle as station_uid: NEVER
+        # INVENT ONE. Seeding the box's OS zone produces a plausible wrong
+        # number rather than a visible blank — at Hopkinsville the Pi reports
+        # America/Indiana/Indianapolis while the plant runs Central. Empty is
+        # honest: display falls back to UTC (visibly wrong, diagnosable) and
+        # Core tells the edge the plant zone once it registers.
+        SEED_TZ=""
+        if [ "$EDGE_TIMEZONE_EXPLICIT" = "yes" ]; then
+            SEED_TZ="$EDGE_TIMEZONE"
+        elif [ "$ASSUME_YES" != "yes" ]; then
+            echo "    Plant timezone is UNSET. The OS zone is $EDGE_TIMEZONE,"
+            echo "    which is a suggestion, not the plant clock — confirm it."
+            if confirm "Set timezone: to $EDGE_TIMEZONE?"; then
+                SEED_TZ="$EDGE_TIMEZONE"
+            fi
+        else
+            echo "    --yes: leaving timezone unset; pass --timezone IANA_ZONE to set it"
+        fi
         echo "==> Writing placeholder /etc/shingo/shingoedge.yaml..."
         cat > /etc/shingo/shingoedge.yaml <<YAML
 # shingo-edge configuration. Configure other settings via the web UI
@@ -769,10 +793,12 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
 # shingoedge REFUSES TO START until this is set.
 station_uid: ""
 
-# IANA zone for display AND hourly-count bucketing. OS zone is a SUGGESTED
-# DEFAULT, never ground truth: at Hopkinsville the Pi's OS zone is Eastern
-# while the plant wall clock is Central — verify before accepting.
-timezone: ${EDGE_TIMEZONE}
+# IANA zone for plant-local DISPLAY. Empty means UNCONFIGURED and is left that
+# way on purpose — the installer never guesses, because the box's OS zone is not
+# the plant's clock (this Pi family reports Eastern zones at a Central plant).
+# Unset renders UTC: visibly wrong beats plausibly wrong. Core also supplies the
+# plant zone once this edge registers, so leaving it blank is the normal path.
+timezone: "${SEED_TZ}"
 
 database_path: /var/lib/shingo-edge/shingoedge.db
 YAML
@@ -786,22 +812,40 @@ else
     # hourly counts bucket in the box's OS zone (which at Hopkinsville is an
     # hour off the plant). Both live plants shipped with the key present but
     # empty, so "absent" alone would have matched neither.
-    if ! grep -qE '^[[:space:]]*timezone[[:space:]]*:[[:space:]]*[^[:space:]#]' /etc/shingo/shingoedge.yaml; then
-        suggested_tz=$(timedatectl show -p Timezone --value 2>/dev/null || echo "")
+    #
+    # READ THE VALUE, do not pattern-match "looks set". The previous test was
+    # `grep -qE 'timezone:[[:space:]]*[^[:space:]#]'`, and the quote character
+    # in `timezone: ""` satisfies [^[:space:]#] — so the exact state named two
+    # lines up read as CONFIGURED and this block never ran. The replace branch
+    # below existed solely to overwrite an empty value and was therefore
+    # unreachable. Verified on the live boxes 2026-09-08: core (key absent)
+    # prompted, edge (key present, empty) printed nothing about timezone.
+    current_tz=$(sed -nE 's/^[[:space:]]*timezone[[:space:]]*:[[:space:]]*(.*)$/\1/p' \
+                 /etc/shingo/shingoedge.yaml | head -1 | tr -d "\"' ")
+    if [ -z "$current_tz" ]; then
+        suggested_tz="$EDGE_TIMEZONE"
         [ -z "$suggested_tz" ] && suggested_tz="America/Chicago"
         echo "    timezone: is unset in the existing config"
         echo "    OS zone suggests: $suggested_tz"
         echo "    CAUTION: the OS zone is a default, not truth. Hopkinsville's boxes"
         echo "    report Eastern-family zones while the plant clock is Central."
-        if [ "$ASSUME_YES" = "yes" ]; then
+        write_tz=""
+        if [ "$EDGE_TIMEZONE_EXPLICIT" = "yes" ]; then
+            # Typed, not guessed. Honour it with or without --yes.
+            write_tz="$EDGE_TIMEZONE"
+        elif [ "$ASSUME_YES" = "yes" ]; then
             echo "    --yes: leaving timezone unset (set it in the web UI or yaml)"
+            echo "    pass --timezone IANA_ZONE to set it unattended"
         elif confirm "Set timezone: to $suggested_tz?"; then
+            write_tz="$suggested_tz"
+        fi
+        if [ -n "$write_tz" ]; then
             if grep -qE '^[[:space:]]*timezone[[:space:]]*:' /etc/shingo/shingoedge.yaml; then
-                sed -i -E "s|^[[:space:]]*timezone[[:space:]]*:.*|timezone: $suggested_tz|" /etc/shingo/shingoedge.yaml
+                sed -i -E "s|^[[:space:]]*timezone[[:space:]]*:.*|timezone: $write_tz|" /etc/shingo/shingoedge.yaml
             else
-                echo "timezone: $suggested_tz" >> /etc/shingo/shingoedge.yaml
+                echo "timezone: $write_tz" >> /etc/shingo/shingoedge.yaml
             fi
-            echo "    timezone set to $suggested_tz"
+            echo "    timezone set to $write_tz"
         fi
     fi
 fi
