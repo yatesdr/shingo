@@ -31,6 +31,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"shingo/shared"
 )
@@ -59,17 +60,14 @@ type Result struct {
 	Script string
 }
 
-// Audit walks every full page in templates, follows the scripts it loads
-// (including their transitive imports), and reports the pages that reach a
-// clock function without carrying the globals.
-//
-// carriers are the substrings that count as carrying them — each tree spells
-// its own inclusion differently, so the marker is the caller's to name.
-// Returns the findings and the number of pages that were subject to the rule,
-// which the caller should assert is non-zero: a resolver that quietly matches
-// nothing would let every page pass.
-func Audit(templates, static fs.FS, carriers []string) ([]Result, int, error) {
-	resolve := func(url string) (string, bool) {
+// resolver maps a served URL path to the file behind it.
+type resolver func(url string) (string, bool)
+
+// newResolver splits /static/shared/* from /static/* the same way each tree's
+// router serves them: the former comes from this module's embed, the latter
+// from the caller's.
+func newResolver(static fs.FS) resolver {
+	return func(url string) (string, bool) {
 		clean := strings.SplitN(url, "?", 2)[0]
 		switch {
 		case strings.HasPrefix(clean, "/static/shared/"):
@@ -81,55 +79,84 @@ func Audit(templates, static fs.FS, carriers []string) ([]Result, int, error) {
 		}
 		return "", false
 	}
+}
 
-	// One level of imports is not enough: Edge's operator.js reaches
-	// formatClock only through operator-render.js.
-	var usesClock func(url string, seen map[string]bool) bool
-	usesClock = func(url string, seen map[string]bool) bool {
-		clean := strings.SplitN(url, "?", 2)[0]
-		if seen[clean] {
-			return false
-		}
-		seen[clean] = true
-		src, ok := resolve(clean)
-		if !ok {
-			return false
-		}
-		resolveSpec := func(spec string) string {
-			if strings.HasPrefix(spec, "/") {
-				return spec
-			}
-			dir := clean[:strings.LastIndex(clean, "/")+1]
-			return dir + strings.TrimPrefix(spec, "./")
-		}
+// resolveSpec turns an import specifier into a served path, relative to the
+// file that imported it.
+func resolveSpec(fromURL, spec string) string {
+	if strings.HasPrefix(spec, "/") {
+		return spec
+	}
+	dir := fromURL[:strings.LastIndex(fromURL, "/")+1]
+	return dir + strings.TrimPrefix(spec, "./")
+}
 
-		// Does THIS module take a clock function out of utils.js?
-		for _, m := range namedImportRe.FindAllStringSubmatch(src, -1) {
-			if !strings.HasSuffix(resolveSpec(m[2]), "/shared/utils.js") {
-				continue
-			}
-			// FieldsFunc rather than Split: the import list is comma AND
-			// whitespace separated, and `x as y` aliases would otherwise need
-			// trimming by hand.
-			names := strings.FieldsFunc(m[1], func(r rune) bool {
-				return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-			})
-			for _, name := range names {
-				if slices.Contains(ClockFuncs, name) {
-					return true
-				}
-			}
+// takesClockFunc reports whether this source imports a clock function OUT of
+// shared/utils.js. Reading the import list is the whole point: matching only
+// the `from '...'` tail cannot see the names, so a detector built on it matches
+// nothing and every page trivially passes.
+func takesClockFunc(src, fromURL string) bool {
+	for _, m := range namedImportRe.FindAllStringSubmatch(src, -1) {
+		if !strings.HasSuffix(resolveSpec(fromURL, m[2]), "/shared/utils.js") {
+			continue
 		}
-
-		// Otherwise follow everything it imports.
-		for _, m := range anyFromRe.FindAllStringSubmatch(src, -1) {
-			if usesClock(resolveSpec(m[1]), seen) {
+		names := strings.FieldsFunc(m[1], func(r rune) bool {
+			return r == ',' || unicode.IsSpace(r)
+		})
+		for _, name := range names {
+			if slices.Contains(ClockFuncs, name) {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// reachesClock walks a script and everything it imports. One level is not
+// enough: Edge's operator.js reaches formatClock only through
+// operator-render.js.
+func reachesClock(res resolver, url string, seen map[string]bool) bool {
+	clean := strings.SplitN(url, "?", 2)[0]
+	if seen[clean] {
 		return false
 	}
+	seen[clean] = true
+	src, ok := res(clean)
+	if !ok {
+		return false
+	}
+	if takesClockFunc(src, clean) {
+		return true
+	}
+	for _, m := range anyFromRe.FindAllStringSubmatch(src, -1) {
+		if reachesClock(res, resolveSpec(clean, m[1]), seen) {
+			return true
+		}
+	}
+	return false
+}
 
+// carries reports whether a page body spells one of the accepted inclusions.
+func carries(body string, markers []string) bool {
+	for _, c := range markers {
+		if strings.Contains(body, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// Audit walks every full page in templates, follows the scripts it loads
+// (including their transitive imports), and reports the pages that reach a
+// clock function without carrying the globals.
+//
+// carriers are the substrings that count as carrying them — each tree spells
+// its own inclusion differently, so the marker is the caller's to name.
+// Returns the findings and the number of pages that were subject to the rule,
+// which the caller should assert is non-zero: a resolver that quietly matches
+// nothing would let every page pass.
+func Audit(templates, static fs.FS, carriers []string) ([]Result, int, error) {
+	res := newResolver(static)
 	pages, err := fs.Glob(templates, "templates/*.html")
 	if err != nil {
 		return nil, 0, fmt.Errorf("glob templates: %w", err)
@@ -152,7 +179,7 @@ func Audit(templates, static fs.FS, carriers []string) ([]Result, int, error) {
 
 		var hit string
 		for _, m := range srcRe.FindAllStringSubmatch(body, -1) {
-			if usesClock(m[1], map[string]bool{}) {
+			if reachesClock(res, m[1], map[string]bool{}) {
 				hit = m[1]
 				break
 			}
@@ -161,15 +188,7 @@ func Audit(templates, static fs.FS, carriers []string) ([]Result, int, error) {
 			continue
 		}
 		subject++
-
-		carried := false
-		for _, c := range carriers {
-			if strings.Contains(body, c) {
-				carried = true
-				break
-			}
-		}
-		if !carried {
+		if !carries(body, carriers) {
 			out = append(out, Result{Page: page, Script: hit})
 		}
 	}

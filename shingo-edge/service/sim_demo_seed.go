@@ -5,6 +5,8 @@ package service
 import (
 	"fmt"
 	"time"
+
+	"shingoedge/store/counters"
 )
 
 // SeedDemoLinesideBuckets captures a handful of demo lineside buckets on
@@ -69,6 +71,29 @@ func (s *ProcessService) SeedDemoLinesideBuckets() (int, error) {
 	return inserted, nil
 }
 
+// demoDayBuckets turns a plant-local calendar date into the UTC range covering
+// it plus a hour-of-day -> UTC bucket resolver.
+//
+// The seeder thinks in the plant's hours ("hour 6 is the start of first
+// shift"), which is the right vocabulary for a demo profile, but hourly_counts
+// is keyed by UTC bucket. Resolving each hour through the plant zone rather
+// than adding a fixed offset keeps a DST day honest: on the spring-forward day
+// local 02:00 does not exist, and time.Date lands the caller on 03:00 rather
+// than inventing a bucket nothing can hold.
+func (s *CounterService) demoDayBuckets(countDate string) (from, to int64, bucketFor func(hour int) int64, err error) {
+	from, to, err = counters.DayBounds(countDate, s.loc)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	day, err := time.ParseInLocation(counters.DateLayout, countDate, s.loc)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	return from, to, func(hour int) int64 {
+		return counters.HourBucket(day.Add(time.Duration(hour) * time.Hour))
+	}, nil
+}
+
 // SeedDemoHourlyCountsForProcess seeds 500 parts per shift (1500 total)
 // for a single process, spread unevenly across 24 hours. Re-running is
 // safe: existing rows for the process+date are wiped first. Sim builds only.
@@ -77,12 +102,16 @@ func (s *CounterService) SeedDemoHourlyCountsForProcess(processID, styleID int64
 		return fmt.Errorf("no process selected")
 	}
 	if countDate == "" {
-		countDate = time.Now().Format("2006-01-02")
+		countDate = time.Now().In(s.loc).Format(counters.DateLayout)
 	}
 
+	from, to, bucketFor, err := s.demoDayBuckets(countDate)
+	if err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(
-		`DELETE FROM hourly_counts WHERE process_id = ? AND count_date = ?`,
-		processID, countDate,
+		`DELETE FROM hourly_counts WHERE process_id = ? AND bucket_start >= ? AND bucket_start < ?`,
+		processID, from, to,
 	); err != nil {
 		return fmt.Errorf("clear existing hourly_counts: %w", err)
 	}
@@ -100,7 +129,7 @@ func (s *CounterService) SeedDemoHourlyCountsForProcess(processID, styleID int64
 		14: 55, 15: 68, 16: 74, 17: 81, 18: 79, 19: 65, 20: 48, 21: 30,
 	}
 	for hour, delta := range demo {
-		if err := s.db.UpsertHourlyCount(processID, styleID, countDate, hour, delta); err != nil {
+		if err := s.db.UpsertHourlyCount(processID, styleID, bucketFor(hour), delta); err != nil {
 			return fmt.Errorf("upsert hour %d: %w", hour, err)
 		}
 	}
@@ -112,11 +141,15 @@ func (s *CounterService) SeedDemoHourlyCountsForProcess(processID, styleID int64
 // before injecting fresh data on the three loaders. Sim builds only.
 func (s *CounterService) SeedDemoHourlyCountsClear(processID int64, countDate string) error {
 	if countDate == "" {
-		countDate = time.Now().Format("2006-01-02")
+		countDate = time.Now().In(s.loc).Format(counters.DateLayout)
 	}
-	_, err := s.db.Exec(
-		`DELETE FROM hourly_counts WHERE process_id = ? AND count_date = ?`,
-		processID, countDate,
+	from, to, _, err := s.demoDayBuckets(countDate)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`DELETE FROM hourly_counts WHERE process_id = ? AND bucket_start >= ? AND bucket_start < ?`,
+		processID, from, to,
 	)
 	return err
 }
@@ -130,7 +163,12 @@ func (s *CounterService) SeedDemoHourlyCountsClear(processID int64, countDate st
 // Re-running is safe: each process's rows for the date are wiped first.
 func (s *CounterService) SeedDemoHourlyCountsAllProcesses(countDate string) (int, error) {
 	if countDate == "" {
-		countDate = time.Now().Format("2006-01-02")
+		countDate = time.Now().In(s.loc).Format(counters.DateLayout)
+	}
+
+	from, to, bucketFor, err := s.demoDayBuckets(countDate)
+	if err != nil {
+		return 0, err
 	}
 
 	processes, err := s.db.ListProcesses()
@@ -177,8 +215,8 @@ func (s *CounterService) SeedDemoHourlyCountsAllProcesses(countDate string) (int
 
 		// Wipe existing rows for this process+date.
 		if _, err := s.db.Exec(
-			`DELETE FROM hourly_counts WHERE process_id = ? AND count_date = ?`,
-			p.ID, countDate,
+			`DELETE FROM hourly_counts WHERE process_id = ? AND bucket_start >= ? AND bucket_start < ?`,
+			p.ID, from, to,
 		); err != nil {
 			return seeded, fmt.Errorf("clear hourly_counts for process %d: %w", p.ID, err)
 		}
@@ -188,7 +226,7 @@ func (s *CounterService) SeedDemoHourlyCountsAllProcesses(countDate string) (int
 			if scaled < 0 {
 				scaled = 0
 			}
-			if err := s.db.UpsertHourlyCount(p.ID, styleID, countDate, hour, scaled); err != nil {
+			if err := s.db.UpsertHourlyCount(p.ID, styleID, bucketFor(hour), scaled); err != nil {
 				return seeded, fmt.Errorf("upsert hour %d for process %d: %w", hour, p.ID, err)
 			}
 		}
