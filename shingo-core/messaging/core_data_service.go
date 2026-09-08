@@ -69,6 +69,16 @@ type CoreDataService struct {
 	// downtimeCh buffers downtime event projections for the async worker
 	// started by StartDowntimeProjection (G9). Mirrors tickCh pattern.
 	downtimeCh chan downtime.DowntimeEvent
+	// plantTimezone is the EXPLICITLY configured plant zone, echoed to every
+	// edge on its heartbeat ack so a site is configured in one place instead of
+	// once per box. Deliberately NOT Core's resolved zone: see
+	// protocol.EdgeHeartbeatAck.Timezone for why a default must not be
+	// broadcast as though it were an answer.
+	//
+	// Set once at the composition root. Leaving it unset propagates nothing,
+	// which is the same as an unconfigured Core — so forgetting the call fails
+	// safe rather than shipping a wrong clock to the fleet.
+	plantTimezone string
 	// cellTickEmitter, if set, fires after a tick is projected so the
 	// composition root can fan it out — the SSE cell-heartbeat broadcast
 	// (Phase E). Optional; nil in tests and headless runs. Set once before
@@ -128,6 +138,11 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 		downtimeCh:     make(chan downtime.DowntimeEvent, 1024),
 	}
 }
+
+// SetPlantTimezone installs the configured plant zone echoed to edges on every
+// heartbeat ack. Pass the RAW config value, not a resolved location: empty must
+// stay empty so an unconfigured Core propagates nothing.
+func (s *CoreDataService) SetPlantTimezone(tz string) { s.plantTimezone = tz }
 
 // StartHeartbeatProjection launches the async cell_part_events projection
 // worker and the monthly-partition manager (plan §12). Call once at the
@@ -478,7 +493,11 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	}
 
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
-		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: clock.Now().UTC()})
+		&protocol.EdgeHeartbeatAck{
+			StationID: p.StationID,
+			ServerTS:  clock.Now().UTC(),
+			Timezone:  s.plantTimezone,
+		})
 
 	if !found {
 		log.Printf("core_handler: heartbeat from unenrolled station %s, requesting registration", p.StationID)

@@ -407,6 +407,11 @@ func main() {
 	// re-evaluation. Engine.Start() has already constructed the monitor
 	// and kicked its startup-sweep goroutine.
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
+	// The plant clock, configured once here and inherited by every edge at this
+	// site rather than typed into each box's yaml. The RAW config value on
+	// purpose: empty must propagate as empty, so an unconfigured Core tells its
+	// edges nothing instead of broadcasting its own default as an answer.
+	coreDataService.SetPlantTimezone(cfg.Timezone)
 	// So a reconciling Edge can render a faulted order's sentence and clock
 	// instead of a badge with nothing under it. Read once at boot: a live
 	// config edit drifts an in-flight countdown, which is acceptable for a

@@ -93,6 +93,22 @@ type EdgeRegistered struct {
 type EdgeHeartbeatAck struct {
 	StationID string    `json:"station_id"`
 	ServerTS  time.Time `json:"server_ts"`
+	// Timezone is the plant's IANA zone as EXPLICITLY CONFIGURED on Core, and
+	// empty when Core has not been told either. It is deliberately not Core's
+	// RESOLVED zone: resolving folds in Core's own default, so an unconfigured
+	// site would broadcast that default to every edge with the confidence of an
+	// answer, the blank-zone warnings would clear, and a value nobody chose
+	// would quietly become the plant's clock. Empty propagates nothing and
+	// leaves every box visibly unset, which is the honest state.
+	//
+	// An edge adopts it only to FILL A BLANK — see the edge handler. Config
+	// arriving over a network must never overwrite a zone somebody typed
+	// locally.
+	//
+	// Additive, like EdgeRegister.Timezone: an old edge ignores the unknown
+	// field, and an old Core sends nothing, which a new edge reads as "Core has
+	// no opinion" rather than as an instruction.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // --- Order payloads: Edge -> Core ---

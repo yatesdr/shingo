@@ -336,6 +336,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
+		adoptPlantTimezone(eng.AppConfig(), eng.ConfigPath(), ack.Timezone)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
 		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",
@@ -1142,4 +1143,60 @@ func promptS3Settings(reader *bufio.Reader) (string, config.BackupS3Config, erro
 		InsecureSkipTLSVerify: insecureSkip,
 	}
 	return stationID, s3cfg, nil
+}
+
+// adoptPlantTimezone takes the plant clock Core offers on a heartbeat ack, so
+// a site is configured in ONE place instead of once per box. It is the whole
+// point of protocol.EdgeHeartbeatAck.Timezone.
+//
+// IT FILLS A BLANK AND NOTHING ELSE. A zone already in this edge's config —
+// typed into the yaml, or saved through /system-config — always wins. Config
+// arriving over a network must never overwrite a local decision: the wire is
+// how a site distributes a default, not how it overrides a deliberate one.
+//
+// Core sends its EXPLICITLY configured zone, so an empty offer means "Core was
+// not told either" rather than "Core says UTC". Nothing to adopt, nothing
+// logged, and every box stays visibly unset — which is the honest state and the
+// signal that somebody still has to say what the plant clock is.
+//
+// The value is validated before it is written: a zone that does not parse would
+// otherwise sit in the yaml and only surface at the next boot, as a logged
+// fallback on a headless box.
+//
+// Applies at RESTART, matching the same contract /system-config's timezone
+// field states out loud — plantLocation and the reporting zone are both
+// captured once at startup.
+func adoptPlantTimezone(cfg *config.Config, configPath, offered string) {
+	if offered == "" || cfg == nil {
+		return
+	}
+	cfg.Lock()
+	existing := cfg.Timezone
+	cfg.Unlock()
+	if existing != "" {
+		return
+	}
+
+	loc, err := time.LoadLocation(offered)
+	if err != nil {
+		log.Printf("edge_handler: Core offered plant timezone %q, which is not an IANA zone (%v) — ignoring", offered, err)
+		return
+	}
+
+	cfg.Lock()
+	cfg.Timezone = loc.String()
+	cfg.Unlock()
+
+	if err := cfg.Save(configPath); err != nil {
+		// Put it back rather than run on a zone that is not on disk: the next
+		// heartbeat then offers it again, instead of this process reporting a
+		// setting that would vanish on restart.
+		cfg.Lock()
+		cfg.Timezone = ""
+		cfg.Unlock()
+		log.Printf("edge_handler: could not persist plant timezone %s from Core (%v) — will retry on the next heartbeat", loc, err)
+		return
+	}
+	log.Printf("edge_handler: plant timezone %s adopted from Core and written to config — "+
+		"RESTART shingoedge for display to pick it up", loc)
 }

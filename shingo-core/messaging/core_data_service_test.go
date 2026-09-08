@@ -215,3 +215,49 @@ func nodeNames(nodes []protocol.NodeInfo) []string {
 	}
 	return names
 }
+
+// TestHeartbeatAck_CarriesTheConfiguredPlantTimezone is Core's half of the
+// zone-inheritance contract: a site is configured once here and every edge
+// picks it up from its heartbeat ack, instead of the zone being typed into each
+// box's yaml.
+//
+// THE VALUE SENT IS THE CONFIGURED ONE, NOT THE RESOLVED ONE. Resolving folds
+// in Core's own default, so an unconfigured site would broadcast that default
+// to the whole fleet with the confidence of an answer — the blank-zone warnings
+// on /edges would clear and a value nobody chose would become the plant's
+// clock. Empty has to stay empty, which is the second case below.
+func TestHeartbeatAck_CarriesTheConfiguredPlantTimezone(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	ackTimezone := func(configured string) string {
+		t.Helper()
+		resp := &captureResponder{}
+		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+		svc.SetPlantTimezone(configured)
+
+		svc.HandleEdgeHeartbeat(&protocol.Envelope{}, &protocol.EdgeHeartbeat{StationID: "stn-tz-test"})
+
+		for _, r := range resp.replies {
+			if r.subject != protocol.SubjectEdgeHeartbeatAck {
+				continue
+			}
+			ack, ok := r.payload.(*protocol.EdgeHeartbeatAck)
+			if !ok {
+				t.Fatalf("ack payload is %T, want *protocol.EdgeHeartbeatAck", r.payload)
+			}
+			return ack.Timezone
+		}
+		t.Fatal("no heartbeat ack was sent")
+		return ""
+	}
+
+	if got := ackTimezone("America/Chicago"); got != "America/Chicago" {
+		t.Errorf("ack timezone = %q, want America/Chicago — edges cannot inherit a zone Core "+
+			"does not send", got)
+	}
+	if got := ackTimezone(""); got != "" {
+		t.Errorf("ack timezone = %q, want empty — an unconfigured Core must propagate nothing, "+
+			"or its own default silently becomes the whole site's clock", got)
+	}
+}
