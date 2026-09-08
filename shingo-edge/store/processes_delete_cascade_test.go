@@ -52,10 +52,6 @@ func seedProcessWithChildren(t *testing.T, db *DB, name string) (processID, styl
 		VALUES (?, ?, 1787734800, 42)`, processID, styleID); err != nil {
 		t.Fatalf("insert hourly: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO daily_counts (process_id, style_id, count_date, total)
-		VALUES (?, ?, '2026-08-26', 42)`, processID, styleID); err != nil {
-		t.Fatalf("insert daily: %v", err)
-	}
 	if _, err := db.Exec(`INSERT INTO sourcing_state (process_id, style_id, status)
 		VALUES (?, 'Default', 'green')`, name); err != nil {
 		t.Fatalf("insert sourcing_state: %v", err)
@@ -123,9 +119,11 @@ func TestDeleteProcess_RetiresItsChildren(t *testing.T) {
 }
 
 // The production record is the thing a config action must never be able to
-// reach. hourly_counts and daily_counts carry no FK precisely so that a process
-// delete cannot take them, and this asserts the cascade honours that rather
-// than re-introducing the defect by hand.
+// reach. Since the 2026-09 UTC move that record is hourly_counts ALONE:
+// daily_counts was dropped because it cached a SUM of these very rows, and the
+// hours are now kept permanently instead of being purged at 90 days. So this
+// assertion carries the whole weight that used to be split across two tables —
+// delete a process and its counting history must still be there.
 func TestDeleteProcess_LeavesTheProductionRecord(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -137,9 +135,6 @@ func TestDeleteProcess_LeavesTheProductionRecord(t *testing.T) {
 
 	if n := count(t, db, `SELECT COUNT(*) FROM hourly_counts WHERE process_id=?`, pid); n != 1 {
 		t.Errorf("hourly_counts destroyed by a config action: got %d", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM daily_counts WHERE process_id=?`, pid); n != 1 {
-		t.Errorf("daily_counts destroyed by a config action: got %d", n)
 	}
 }
 

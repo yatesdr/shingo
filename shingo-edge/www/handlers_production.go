@@ -388,27 +388,3 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, counts)
 }
-
-func (h *Handlers) apiGetDailyCounts(w http.ResponseWriter, r *http.Request) {
-	processID, _ := strconv.ParseInt(r.URL.Query().Get("process_id"), 10, 64)
-	if processID == 0 {
-		writeJSON(w, []any{})
-		return
-	}
-
-	toDate := r.URL.Query().Get("to")
-	if toDate == "" {
-		toDate = time.Now().In(plantLocation).Format("2006-01-02")
-	}
-	fromDate := r.URL.Query().Get("from")
-	if fromDate == "" {
-		fromDate = time.Now().In(plantLocation).AddDate(0, 0, -90).Format("2006-01-02")
-	}
-
-	counts, err := h.engine.CounterService().DailyCounts(processID, fromDate, toDate)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, counts)
-}

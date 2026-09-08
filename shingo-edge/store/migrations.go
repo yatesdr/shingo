@@ -89,6 +89,17 @@ DROP TABLE IF EXISTS kanban_templates;
 DROP TABLE IF EXISTS operator_screens;
 DROP TABLE IF EXISTS kanban_calculations;
 DROP TABLE IF EXISTS threshold_calculations;
+-- daily_counts was a cache of SUM(hourly_counts.delta) GROUP BY day, written
+-- by a six-hourly roll-up. It is dropped rather than frozen because it is pure
+-- redundancy: verified on Hopkinsville 2026-09-08, all 84 rows reproduce
+-- EXACTLY from the hour rows, zero exceptions, and those hours are now kept
+-- permanently (the 90-day purge went with the UTC move). Its only reason to
+-- exist was surviving a purge that no longer happens.
+--
+-- Pre-migration day totals therefore remain available from
+-- hourly_counts_local_legacy with a SUM ... GROUP BY count_date; nothing is
+-- lost by removing the second copy.
+DROP TABLE IF EXISTS daily_counts;
 `
 
 // migrate runs the full forward-migration pipeline: legacy DROPs,

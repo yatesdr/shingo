@@ -132,7 +132,7 @@ var ErrProcessHasStock = errors.New("process still has lineside stock booked at 
 // stop applying just because the parent is going:
 //
 //   - STYLES are soft-deleted and their reporting points disabled, mirroring
-//     DeleteStyle. hourly_counts and daily_counts key on style_id, so hard-deleting
+//     DeleteStyle. hourly_counts keys on style_id, so hard-deleting
 //     a style strands the production record it counted — the exact defect soft
 //     delete was introduced to fix.
 //   - PROCESS_NODES are soft-deleted and their runtime states dropped, mirroring
@@ -142,9 +142,9 @@ var ErrProcessHasStock = errors.New("process still has lineside stock booked at 
 //     ListNodesByProcess filters on liveNodes, so a retired row can no longer be
 //     adopted by name.
 //
-// DELIBERATELY NOT TOUCHED: hourly_counts and daily_counts (the permanent
-// production record — they carry no FK precisely so a config action cannot reach
-// them, see store/schema/sqlite_ddl.go), process_changeovers and orders (history
+// DELIBERATELY NOT TOUCHED: hourly_counts (the permanent production record —
+// a config action must not be able to reach it, and since the daily roll-up was
+// dropped this is the only copy), process_changeovers and orders (history
 // that stays readable), and style_node_claims (owned by their now-retired style,
 // and kept so that restoring the style is still a restore).
 func Delete(db *sql.DB, id int64) error {

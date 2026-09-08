@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS reporting_points (
 -- That is the edge that blocks enabling enforcement at all, so it is a schema
 -- decision and not a preference. The cost is bounded by counters.SnapshotRetention
 -- (14 days), so a style deletion destroys at most two weeks of raw readings —
--- the rollups live in hourly_counts (90 days) and daily_counts (permanent).
+-- the counting record lives in hourly_counts, which is kept permanently.
 CREATE TABLE IF NOT EXISTS counter_snapshots (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id) ON DELETE CASCADE,
@@ -241,7 +241,10 @@ CREATE TABLE IF NOT EXISTS shifts (
 --
 --     counter_snapshots  raw, one row per poll   14 days  (counters.SnapshotRetention)
 --     hourly_counts      per process/style/hour  permanent
---     daily_counts       per process/style/day   permanent (a DERIVED cache)
+--
+-- There is no daily rung. A day total is SUM(delta) over the buckets in that
+-- day's UTC range, which is a query, not a table — see the note on retention
+-- below for why keeping the hours makes the second copy pointless.
 --
 -- BUCKETS ARE UTC. bucket_start is the unix second at the start of the UTC hour
 -- a delta landed in, and it is the ONLY timezone-bearing decision in the
@@ -267,8 +270,10 @@ CREATE TABLE IF NOT EXISTS shifts (
 -- Retention is gone from this rung. It existed to bound growth, but the measured
 -- rate is ~1,400 rows a year (Hopkinsville: 350 rows in three months — a row
 -- appears only for an hour that actually produced). Keeping every hour forever
--- costs nothing and is what makes daily_counts re-derivable, so a later change
--- of plant zone is a rebuild rather than a loss.
+-- costs nothing and is what makes a DAY re-derivable at all, in whatever zone
+-- is asked for. That is what retired the daily roll-up: its rows reproduced
+-- exactly from these (verified across all 84 at Hopkinsville), so it was a
+-- second copy of the same truth with a plant-local date baked into its key.
 CREATE TABLE IF NOT EXISTS hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -294,8 +299,8 @@ CREATE TABLE IF NOT EXISTS hourly_counts (
 -- test was written for.
 --
 -- Safe to drop once the pre-2026-09 hour detail is no longer wanted. The day
--- totals for those dates are unaffected either way: they live in daily_counts,
--- which the migration does not touch.
+-- totals for those dates are unaffected either way: SUM these rows by
+-- count_date and they are exactly what the retired daily roll-up held.
 -- The foreign keys are here because the upgraded copy has them: this table is
 -- produced by RENAMEing hourly_counts, which carries its CREATE text across
 -- unchanged. Declaring it without them makes a fresh database differ from an
@@ -311,65 +316,6 @@ CREATE TABLE IF NOT EXISTS hourly_counts_local_legacy (
     delta        INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT DEFAULT (datetime('now')),
     UNIQUE(process_id, style_id, count_date, hour)
-);
-
--- daily_counts is FROZEN HISTORY, and nothing writes it any more.
---
--- It was the permanent end of the ladder — one row per process, style and
--- calendar date, written by counters.RollUpDaily. As of the 2026-09 UTC move a
--- day is DERIVED from the hour buckets at read time (counters.ListDaily),
--- because a stored day total has to be keyed by a plant-local date, and that
--- put a timezone back into stored data one table after taking it out of
--- another. The hours are kept forever, so the derivation is always available
--- and a change of plant zone needs no migration and no re-run.
---
--- What survives here is the day totals written BEFORE that move, whose hour
--- detail sits in hourly_counts_local_legacy and is deliberately not
--- reinterpreted. ListDaily reads a row from this table only where the buckets
--- answer nothing for that (style, date), so history still answers and a relic
--- can never shadow a live day.
---
--- Safe to drop once the pre-2026-09 day totals are no longer wanted; nothing
--- else reads it.
---
--- IT CARRIES NO FOREIGN KEYS, AND THAT IS THE DESIGN, NOT AN OVERSIGHT. Its
--- sibling hourly_counts declares ON DELETE CASCADE on both process_id and
--- style_id. Copying that here would mean:
---
---  1. A HARD DELETE OF A PROCESS DESTROYS THE PERMANENT RECORD. Styles are
---     soft-deleted now (store/processes/styles.go, DeleteStyle sets deleted_at)
---     precisely so that retiring a part number stops destroying what it
---     counted. processes is still a hard DELETE
---     (store/processes/processes.go, DeleteProcess), so a CASCADE from there
---     would take every year of daily totals with it on a routine config
---     action. That is the same defect one table over.
---
---  2. THE ALTERNATIVE — RESTRICT — REBUILDS THE TRAP DIRECTLY ABOVE. A NO
---     ACTION clause on a NOT NULL child column is exactly what made 6 of 8
---     style deletions impossible on the Springfield dump. A new child table
---     with a restricting edge is that bug with a different name.
---
---  3. THE ROLLUP COULD THEN FAIL ON DATA THAT ALREADY EXISTS. The Springfield
---     database of 2026-07-27 carries 457 hourly_counts rows whose style row is
---     gone (styles 8, 10, 11, 32 — measured on edge-golden.db). After
---     RUNBOOK-0.5's ordered data plan one survives: id 144030, style 32,
---     count_date 2026-06-25. With foreign_keys(1) enabled and an FK here, the
---     rollup's INSERT for that row is refused and the whole retention pass
---     errors — a stale row would become a broken background job.
---
--- The integrity that FKs would buy is bought instead by having exactly one
--- writer: RollUpDaily aggregates rows that are already in hourly_counts, so
--- there is no ingress that could invent a process_id or style_id. And a table
--- with no FK clauses contributes zero rows to PRAGMA foreign_key_check, so it
--- cannot regress the enforcement gate that RUNBOOK-0.5 exists to open.
-CREATE TABLE IF NOT EXISTS daily_counts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id   INTEGER NOT NULL,
-    style_id     INTEGER NOT NULL,
-    count_date   TEXT NOT NULL,
-    total        INTEGER NOT NULL DEFAULT 0,
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, style_id, count_date)
 );
 
 CREATE TABLE IF NOT EXISTS payload_catalog (

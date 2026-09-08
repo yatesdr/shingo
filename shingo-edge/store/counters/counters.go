@@ -156,6 +156,14 @@ func DismissAnomaly(db *sql.DB, id int64) error {
 
 // --- hourly counts ---
 
+// DateLayout is the shape a plant-local calendar date is rendered in.
+//
+// NOTHING STORED IS KEYED BY IT. It names a day only on the way out — in
+// DayBounds, which turns a date into the UTC range covering it. The one table
+// still holding dates in this shape is hourly_counts_local_legacy, the parked
+// pre-2026-09 hours, which nothing reads or writes.
+const DateLayout = "2006-01-02"
+
 // HourBucket is the single definition of which bucket an instant belongs to:
 // the start of its UTC hour, in unix seconds. Writer and reader both go
 // through this, so they cannot disagree about a boundary.

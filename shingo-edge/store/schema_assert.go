@@ -51,7 +51,6 @@ var requiredTables = []string{
 	// here. A stale binary whose schema.Apply never created this table would
 	// leave the purge deleting nothing forever, which is the silent-no-op
 	// failure this manifest exists to make loud.
-	"daily_counts",
 	// supply_refusals_open is asserted for the same reason daily_counts is: the
 	// clear-on-load path DELETES against it. A stale binary whose schema.Apply
 	// never created it would leave every LOAD failing to clear a refusal that

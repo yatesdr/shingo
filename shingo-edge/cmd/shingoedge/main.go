@@ -814,20 +814,23 @@ func main() {
 	})
 
 	// ── Retention ticker ───────────────────────────────────────────────
-	// One pass over the counting ladder, four times a day:
+	// ONE RUNG LEFT. The counting ladder used to have three:
 	//
-	//   counter_snapshots  raw poll rows           14 days   counters.SnapshotRetention
-	//   hourly_counts      per process/style/hour  90 days   counters.HourlyRetention
-	//   daily_counts       per process/style/day   permanent counters.RollUpDaily
+	//   counter_snapshots  raw poll rows           14 days     purged here
+	//   hourly_counts      per process/style/hour  permanent   (was 90 days)
+	//   daily_counts       per process/style/day   FROZEN, nothing writes it
 	//
-	// ORDER IS LOAD-BEARING AT THE TOP AND CONVENIENT AT THE BOTTOM. Rolling
-	// up before purging hourly is the obvious sequence, but it is NOT what
-	// makes it safe — counters.PurgeRolledUpHourly refuses to delete an hour
-	// whose day is not already in daily_counts, so a failed rollup deletes
-	// nothing no matter when it is called. Each step therefore logs and
-	// continues rather than aborting the pass; a broken rollup must not stop
-	// counter_snapshots being purged. The VACUUM genuinely does want to be
-	// last, so it sees every page all three purges freed.
+	// The hourly purge went when the hours became the counting record: a row
+	// exists only for an hour that produced, so the growth it bounded is
+	// hundreds of rows a year. The daily roll-up went with it, because a stored
+	// day total has to be keyed by a plant-local date and that puts a timezone
+	// back into stored data. Day totals are derived from the UTC buckets if and
+	// when something asks; nothing does today.
+	//
+	// So snapshots are all that ages out, and they are raw and genuinely
+	// unbounded.
+	// The VACUUM still wants to be last, so it sees every page the purge
+	// freed. The step logs and continues rather than aborting the pass.
 	//
 	// counter_snapshots is the table with a real growth driver: roughly one
 	// row per part produced, 472 per counter per calendar day, and no purge
@@ -902,14 +905,6 @@ func main() {
 			case <-retentionStop:
 				return
 			case <-ticker.C:
-				// NO COUNTER ROLL-UP AND NO HOURLY PURGE HERE ANY MORE. Day
-				// totals are derived from the UTC hour buckets at read time
-				// (counters.ListDaily) and the hours are kept, so there is
-				// nothing to aggregate on a timer and nothing to delete. That
-				// is what keeps every stored row free of a timezone; see
-				// store/counters/daily.go for the reasoning behind both
-				// reversals. Snapshots still age out — they are raw and
-				// genuinely unbounded.
 				if n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention); err != nil {
 					log.Printf("retention: purge counter snapshots: %v", err)
 				} else if n > 0 {
