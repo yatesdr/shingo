@@ -172,8 +172,11 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// index legs then saw the wrong-part on-deck bins as unavailable and hung.
 	// Refuse the stamp on any node another claim names as a paired/on-deck
 	// position, with a clear operator-facing message (surfaced as a toast). Runs
-	// before the manual_swap/claim gates so a paired node gets THIS message, not
-	// the generic "not a manual_swap node". Fail-open on a read error — a local
+	// before requireLoaderClaim so a paired node gets THIS message, not the
+	// generic "not a manual_swap node" — which is why that helper takes an
+	// already-loaded claim instead of resolving one itself, and why moving this
+	// check below it would silently swap the operator's diagnosis for a worse
+	// one. Fail-open on a read error — a local
 	// SQLite blip must not block a legitimate loader load; the guard is defense
 	// in depth, not the only backstop.
 	if onDeck, derr := e.db.IsPairedOnDeckNode(node.ProcessID, node.CoreNodeName); derr != nil {

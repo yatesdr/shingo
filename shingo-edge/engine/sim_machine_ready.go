@@ -91,7 +91,7 @@ func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 		if !activePull {
 			continue
 		}
-		// All active non-manual_swap nodes need a bound carrier.
+		// Every active non-loader node needs a bound carrier.
 		if !activeBinID.Valid || activeBinID.Int64 == 0 {
 			return false // nothing on the position
 		}

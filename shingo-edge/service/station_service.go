@@ -851,8 +851,10 @@ func isLoaderProduceTile(nv *store.StationNodeView) bool {
 // Gate on the board actually having a tile that consumes the result.
 // activePayloadLineside is a PLANT-WIDE scan — every active consume claim on
 // the edge, not just this station's — so a board with no manual_swap produce
-// tile was paying the full cost and then discarding every value. The
-// predicate is exactly the one the loop below filters on.
+// tile was paying the full cost and then discarding every value. The gate and
+// the loop below must agree exactly about which tiles qualify, and they now do
+// so by construction: both call isLoaderProduceTile. They used to be two
+// hand-written copies in opposite polarity, kept in step by nothing but care.
 func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
 	wantsLineside := false
 	for i := range view.Nodes {
