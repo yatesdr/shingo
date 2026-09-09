@@ -556,9 +556,13 @@ func (c *NodeClaim) AllowedPayloads() []string {
 //
 // WHY THE MODE FIELD IS STILL WHAT IT READS. manual_swap is authored
 // configuration, not an internal marker: it is persisted in
-// style_node_claims.swap_mode, listed in ConfigurableSwapModes so the editor's
-// Swap Mode dropdown offers it, written by hand in every plants/*.yaml, and read
-// off the wire by the operator board's JavaScript. Retiring the value is a
+// style_node_claims.swap_mode, accepted by the server-side upsert allowlist
+// (protocol.ConfigurableSwapModes), written by hand in every plants/*.yaml, and
+// read off the wire by the operator board's JavaScript. The editor's Swap Mode
+// dropdown does NOT offer it — loaders are Core-owned and are no longer
+// authored there, and processes_enum_drift_test.go pins that omission — but the
+// value is still stored, still rendered read-only in the claims list, and still
+// saveable through the compare grid, which echoes swap_mode back verbatim. Retiring the value is a
 // migration plus a wire change plus a front-end change, and nothing the loader
 // question needs requires it. So the value stays as the STORAGE for a node-kind
 // fact, and this method is the boundary: one derivation, and callers that name

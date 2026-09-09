@@ -223,18 +223,23 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		in.Role = protocol.ClaimRoleConsume
 	}
 	// swap_mode is required — fail loud on blank rather than silently pick a
-	// mode. The editor defaults new claims to single_robot, so the normal path
-	// never hits this; a blank here is a non-UI caller (import, stale API poke).
+	// mode. Both UI writers always send one: the claim editor defaults new claims
+	// to single_robot, and the compare grid echoes the claim's stored value back
+	// verbatim (www/static/js/pages/processes.js claimToBody). So a blank here is
+	// a non-UI caller — an import, or a stale API poke.
 	// No mode is a safe default: two_robot needs inbound staging and
 	// single_robot needs inbound+outbound staging, so any default would only
 	// trade a mode error for a more misleading staging error.
 	if in.SwapMode == "" {
 		return 0, fmt.Errorf("%w: swap_mode is required", protocol.ErrInvalidSwapMode)
 	}
-	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() so it can
-	// never drift from the editor dropdown or its drift test. The retired
-	// "simple" is deliberately absent — it survives only as a runtime CycleMode
-	// descriptor, never a persisted claim mode. "press_position" (the
+	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() — the set of
+	// values that may be PERSISTED. It is deliberately NOT the editor dropdown:
+	// the dropdown omits manual_swap (loaders are Core-owned and not authored
+	// there) and carries a hidden "simple" for rendering old rows, and
+	// www/processes_enum_drift_test.go asserts that disagreement rather than
+	// forbidding it. The retired "simple" is absent here — it survives only as a
+	// runtime CycleMode descriptor, never a persisted claim mode. "press_position" (the
 	// per-position fan-out marker) is in-memory only and must never persist; the
 	// allowlist also rejects typos and stale import values.
 	if !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode) {
@@ -244,6 +249,16 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// OutboundDestination — without one the post-swap bin has nowhere to go and
 	// the node deadlocks — and it must auto-confirm delivery, because the
 	// operator's own action at the window IS the acknowledgement.
+	//
+	// THIS ARM IS STILL REACHED FROM THE UI. The claim editor can neither author
+	// nor edit a manual_swap claim: the Swap Mode dropdown drops the option, and
+	// the claims list renders a read-only "Loader" badge in place of Edit. The
+	// COMPARE GRID can — claimToBody echoes swap_mode verbatim and saveCompareCell
+	// has an explicit manual_swap branch for the payload cell
+	// (www/static/js/pages/processes.js) — so an existing loader claim is still
+	// saved through here by a person clicking a cell. Anything that closes the
+	// allowlist against manual_swap turns that click into an operator-visible
+	// error.
 	if in.IsLoaderNode() {
 		if in.OutboundDestination == "" {
 			return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")

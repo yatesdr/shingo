@@ -126,12 +126,27 @@ func AllSwapModes() []SwapMode {
 // errors.Is sees it end to end.
 var ErrInvalidSwapMode = errors.New("invalid swap_mode")
 
-// ConfigurableSwapModes returns every swap mode that may be persisted on a
+// ConfigurableSwapModes returns every swap mode that may be PERSISTED on a
 // style node claim: AllSwapModes minus SwapModeSimple. Simple is retired as a
 // configurable mode — it survives ONLY as a runtime CycleMode descriptor for
-// the node-empty downgrade, never as a stored claim mode. The claim-upsert
-// allowlist, the editor's Swap Mode dropdown, and its drift test all key on
-// this set so they can never disagree about what is selectable.
+// the node-empty downgrade, never as a stored claim mode.
+//
+// WHAT KEYS ON THIS SET, AND IT IS NOT THE DROPDOWN. Three server-side gates:
+// the claim-upsert allowlist (store/processes.UpsertClaim), the input validator
+// (domain.ValidateNodeClaim), and seeddev's raw INSERT gate
+// (shingo-core/cmd/seeddev/seed_edge.go), which mirrors the allowlist by hand
+// because it cannot import the edge module. That third one is easy to miss and
+// load-bearing: drop a value from this set and seeddev refuses every
+// plants/*.yaml that uses it, so local dev and the CI sim rigs stop seeding.
+//
+// The editor's Swap Mode dropdown does NOT key on this set. It is hardcoded
+// HTML (www/templates/processes.html) that reads nothing at runtime, and it
+// deliberately DISAGREES: it omits manual_swap, because bin loaders are
+// Core-owned topology and are no longer authored in the editor, and it carries
+// a hidden "simple" option so an old row still renders when opened.
+// www/processes_enum_drift_test.go asserts exactly that disagreement. "What may
+// be stored" and "what the editor offers" are different questions; only the
+// first one is this function's.
 func ConfigurableSwapModes() []SwapMode {
 	return []SwapMode{
 		SwapModeSingleRobot,

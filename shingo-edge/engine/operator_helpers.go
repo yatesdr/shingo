@@ -30,6 +30,20 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 // per-style style_node_claim. This completes the Core-owned loader refactor — Core
 // owns the loader; the edge needs no style_node_claim to operate it. The synthetic
 // claim has ID==0; callers that persist active_claim_id MUST guard on ID==0.
+//
+// WHICH AUTHORITY WINS: THE PERSISTED CLAIM, SILENTLY. Two things can answer
+// "is this node a loader?" — a stored style_node_claim and Core's loader
+// aggregate — and the short-circuit below decides it. When a per-style claim
+// exists it is returned and synthLoaderClaim is never consulted, so a node
+// carrying a stored manual_swap claim reads as a loader EVEN IF Core's aggregate
+// says it is not one, including when Core's derived loader has been archived.
+// That state exists in the field: Springfield's SMN_001 holds stored manual_swap
+// claims whose Core loader was archived 2026-07-30.
+//
+// Written down because nothing else says it, and DELIBERATELY NOT GATED. A
+// check that refused the stored claim when Core disagreed would refuse an
+// operator board that someone may still be using. Reconciling those rows is a
+// data decision about the plant, not a code one.
 func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil || claim != nil || node == nil {
