@@ -372,8 +372,10 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 // one of them inventing a double-occupancy at SMN_009 out of an inferred recovery
 // that had gone unaudited the same way.
 //
-// The action is "evicted", not "moved": a reader can then tell a displacement from
-// a delivery, and it stays out of the kanban demand path that keys on "moved".
+// The action is "evicted", not "moved": a reader can then tell a displacement
+// from a delivery. (An older comment added that kanban keyed on "moved" — that
+// demand path was deleted in 2026-08; the distinction survives on its own
+// merits, and "moved" would also book CMS transfer rows for a displacement.)
 func (e *Engine) noteEvictedGhosts(evicted []int64, what string, byBinID int64, atNode string) {
 	if len(evicted) == 0 {
 		return
@@ -419,8 +421,9 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 	var refusals []*ArrivalRefusal
 	var instructions []orders.BinArrivalInstruction
 	// fromNodeIDs[i] is the source node of instructions[i]. Captured here
-	// so the post-arrival BinUpdatedEvent can carry FromNodeID — without it
-	// handleKanbanDemand cannot fire produce signals on storage-slot exit.
+	// so the post-arrival BinUpdatedEvent can carry FromNodeID — the CMS
+	// ledger books the From side of a boundary crossing, and the lane gate
+	// evaluates the lane the bin left.
 	var fromNodeIDs []int64
 
 	// Measured before anything is placed, because the interesting number is how
@@ -490,8 +493,9 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		})
 
 		// Resolve the per-bin source node (the OrderBin.NodeName is the dot-path
-		// of the pickup step). 0 means "unknown source" — kanban will simply not
-		// fire the FROM-side check, which is the correct degradation.
+		// of the pickup step). 0 means "unknown source" — the CMS ledger books no
+		// From-side row and the lane gate skips the From-side evaluation, which is
+		// the correct degradation.
 		fromNodeID := int64(0)
 		if ob.NodeName != "" {
 			if srcNode, err := e.db.GetNodeByDotName(ob.NodeName); err == nil && srcNode != nil {
@@ -689,8 +693,8 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*orders.OrderBin) {
 	var instructions []orders.BinArrivalInstruction
 	// fromNodeIDs[i] is the source node of instructions[i] — same purpose as
-	// in applyMultiBinArrivalForOrder: keep FromNodeID intact so kanban can
-	// fire on storage-slot exit when this safety-net path actually moves a bin.
+	// in applyMultiBinArrivalForOrder: keep FromNodeID intact so the CMS ledger
+	// can book the From side when this safety-net path actually moves a bin.
 	var fromNodeIDs []int64
 
 	// Note: previously had an "operatorConfirmed" override forcing staged=false

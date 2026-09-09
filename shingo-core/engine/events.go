@@ -235,6 +235,40 @@ type BinUpdatedEvent struct {
 	Replay bool
 }
 
+// ── The reader contract: NUDGE vs RECORD ─────────────────────────────────
+//
+// BinUpdatedEvent's subscribers split by what being wrong costs them, not by
+// what they read. A new subscriber must know which class it is joining,
+// because the two classes may assume opposite things about this event.
+//
+// NUDGE subscribers — the fulfillment scanner trigger, the lane gate, the
+// sourceability monitor, SSE, the threshold monitor. A duplicate event is
+// harmless (they re-read authoritative state), a miss costs only latency, and
+// each has a floor: the scanner's 60s sweep, the lane gate's 60s waiter
+// sweep, sourceability's 2-minute full recompute. That contract is also
+// stated where four of them live (wiring_lane_gate.go). ONE EXCEPTION: the
+// threshold monitor has NO periodic sweep — "There is no ongoing reconcile
+// sweep" (threshold_monitor.go); it re-reads the authoritative sum on every
+// evaluation, so a missed event waits for the next bin event on that payload
+// rather than being rescued by a timer.
+//
+// RECORD subscribers — the audit journal and the CMS ledger. A duplicate is
+// not harmless: it is a false journal row, or a phantom transfer at the
+// plant's inventory boundary (what order 2039 did at Hopkinsville before the
+// v112 unique index). A miss is not latency: it is a permanent hole, because
+// nothing re-derives a physical move afterwards. There is no floor. Both
+// recorders have been hurt under this event (the intermediate-dropoff
+// silence, the noteEvictedGhosts audit hole) while no nudge reader ever has —
+// the generosity that makes this event cheap for the five is exactly what
+// makes it dangerous for the two.
+//
+// What follows for an emitter: the event may fire more than once for one
+// physical move (two emitters can report the same arrival), so a record
+// subscriber MUST have its own dedup — the v112 unique index is that, for
+// CMS; nothing else is. What follows for a future subscriber: if what you are
+// building records a fact rather than re-reading state, do not lean on this
+// event alone, and say so where you subscribe.
+
 // CellTickEvent carries one projected production tick to the SSE layer
 // (Phase E). Station is cell_part_events.cell_id; the frontend matches it plus
 // ProcessID against its cell_config to know which cell/dot to pulse.

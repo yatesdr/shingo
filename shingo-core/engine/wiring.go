@@ -350,13 +350,11 @@ func (e *Engine) wireEventHandlers() {
 		// EITHER END IS ENOUGH, and CMS is deliberately the only subscriber
 		// that reads it that way.
 		//
-		// An INTERMEDIATE dropoff emits FromNodeID 0 on purpose
-		// (wiring_block_completed.go): the bin arrives from _TRANSIT rather than
-		// a real slot, so kanban's produce-on-storage-exit must not fire. That
-		// zero is right for every other subscriber and wrong for this one --
-		// material arriving from outside a tagged storeroom is exactly what an
-		// inventory ledger wants to hear, and requiring both ends meant CMS
-		// never heard about an intermediate dropoff at all.
+		// The OR is what books INTERMEDIATE-side arrivals: a dropoff at a mid-
+		// plan node carries FromNodeID = _TRANSIT and a real ToNodeID, and
+		// requiring both ends real would drop the From side of every such move
+		// — material arriving from outside a tagged storeroom is exactly what
+		// an inventory ledger wants to hear.
 		//
 		// Hopkinsville 2026-09-08: a press delivered 3000 parts to SMN_01 as
 		// step 3 of a 5-step swap and the ledger stayed silent until the whole
@@ -365,12 +363,20 @@ func (e *Engine) wireEventHandlers() {
 		// because the press used to deliver STRAIGHT to the supermarket, where
 		// the node is the delivery node and books at whole-order FINISHED.
 		//
-		// The fix belongs here rather than at the emitter: five other
-		// subscribers read that payload, and giving the dropoff a real
-		// FromNodeID would change kanban, replenishment, sourceability and the
-		// lane gate to correct one ledger. BuildMovementTransactions already
-		// handles a zero end -- no boundary, so no row for that side -- and
-		// both ends zero still short-circuits on srcID == dstID.
+		// WHY THE FIX LIVES AT THE SUBSCRIBER. An earlier version of this
+		// comment justified it with four named readers (kanban, replenishment,
+		// sourceability, the lane gate) that a real FromNodeID would change —
+		// but kanban's demand path was already deleted (2026-08), replenishment
+		// and sourceability read PayloadCode only and cannot observe the field,
+		// and the lane gate's own header says a duplicate evaluation is
+		// harmless. The population was never checked, and the count was wrong
+		// besides (six other subscribers, not five). The fix is still right to
+		// live here, on narrower grounds: the intermediate dropoff has emitted
+		// FromNodeID = _TRANSIT since 2026-09-09 (see the emit site), and this
+		// guard books either real end without the emitter having to care which
+		// side a ledger wants. BuildMovementTransactions handles a zero end —
+		// no boundary, so no row for that side — and both ends zero still
+		// short-circuits on srcID == dstID.
 		if ev.Action == BinActionMoved && (ev.FromNodeID != 0 || ev.ToNodeID != 0) {
 			e.RecordMovementTransactions(ev)
 		}
