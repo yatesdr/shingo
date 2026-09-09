@@ -21,37 +21,58 @@ import (
 //
 // WHAT THE ALLOWLIST IS FOR. Every remaining reference is here with the reason
 // it is allowed to stay, so the residue is a written record rather than a
-// leftover. Three kinds live here and only three: the declaration itself, the
-// derivations, and the sites where the mode genuinely IS the answer — choosing
-// or costing a step list, or naming one for a human to read. A site that cannot
-// be described as one of those does not belong on the list; it belongs behind
-// IsLoaderNode.
+// leftover. A site that cannot be described by one of the kinds below does not
+// belong on the list; it belongs behind IsLoaderNode.
+//
+// THE COUNT IS PART OF THE EXEMPTION. The allowlist used to be file-granular:
+// it computed how many times each file read the constant, printed that number
+// in the failure message, and never asserted on it. domain/process.go is ~1000
+// lines and was exempted wholesale, so a third reference anywhere in it passed
+// in silence — the guard against the cluster growing back could not see it grow
+// inside a file it had already forgiven. Each entry now states how many reads
+// it is exempting, and gaining or losing one fails.
+//
+// n = -1 means the count cannot be bounded and why says what governs it
+// instead. No entry uses it today; it exists so that a genuinely unbounded
+// site has somewhere to go other than deleting the assertion for everyone.
 //
 // MUTATION: write `claim.SwapMode == protocol.SwapModeManualSwap` in any file
-// not listed below — this names the file and says what to call instead.
-var loaderModeReaders = map[string]string{
-	"protocol/swap_mode.go": "the declaration, and the law that governs it",
+// not listed below — this names the file and says what to call instead. Add a
+// tenth read to domain/process.go — this now names that too.
+type modeReader struct {
+	n    int    // reads of SwapModeManualSwap in this file; -1 = unbounded
+	kind string // declaration | derivation | write | shape | label
+	why  string
+}
 
-	"shingo-edge/domain/process.go": "THE Edge derivation — NodeClaim.IsLoaderNode and its " +
-		"NodeClaimInput twin. Everything on the Edge asks the question here",
-	"shingo-core/plantspec/plantspec.go": "THE Core derivation — Claim.IsLoader",
+var loaderModeReaders = map[string]modeReader{
+	"protocol/swap_mode.go": {3, "declaration", "the constant, plus its membership in AllSwapModes " +
+		"and ConfigurableSwapModes. The law that governs it lives here too"},
 
-	"shingo-edge/domain/loader.go": "Loader.SynthClaim WRITES the mode, it does not read it. A " +
-		"Core-owned loader window has no per-style claim, so the synthesised one carries the " +
+	"shingo-edge/domain/process.go": {2, "derivation", "THE Edge derivation — NodeClaim.IsLoaderNode " +
+		"and its NodeClaimInput twin, one read each. Everything on the Edge asks the question here"},
+	"shingo-core/plantspec/plantspec.go": {1, "derivation", "THE Core derivation — Claim.IsLoader"},
+
+	"shingo-edge/domain/loader.go": {1, "write", "Loader.SynthClaim WRITES the mode, it does not read " +
+		"it. A Core-owned loader window has no per-style claim, so the synthesised one carries the " +
 		"node-kind fact in the field that stores it. Deleting this stamp does not remove a " +
-		"branch; it makes every Core-owned loader board stop working",
-	"shingo-edge/store/processes/walk.go": "PayloadsForLoader WRITES the mode into a WalkOpts " +
-		"filter — a query predicate against the stored column, which is where the fact lives",
+		"branch; it makes every Core-owned loader board stop working"},
+	"shingo-edge/store/processes/walk.go": {1, "write", "PayloadsForLoader WRITES the mode into a " +
+		"WalkOpts filter — a query predicate against the stored column, which is where the fact lives"},
 
-	"shingo-edge/domain/claim_validation.go": "the per-mode required-field registry. Its arms say " +
-		"what each SHAPE OF SWAP needs configured, so the mode is the answer and not a proxy",
-	"shingo-core/cmd/simcalc/main.go": "fleetMovesPerSwap costs each step-list shape in floor " +
-		"crossings and robots. It switches over every mode because the shape is the question",
+	"shingo-core/cmd/simcalc/main.go": {1, "shape", "fleetMovesPerSwap costs each step-list shape in " +
+		"floor crossings and robots. It switches over every mode because the shape is the question"},
+	"shingo-edge/domain/claim_validation.go": {1, "shape", "the per-mode required-field registry. The " +
+		"OTHER arms are shape-of-swap questions; THIS one is not — a loader has no shape of swap, and " +
+		"the arm only says a loader claim needs an outbound_destination. It is a node-kind arm sitting " +
+		"in a switch over the mode, which is the honest description and the reason it is a `shape` " +
+		"entry only by adjacency. Rewriting the switch to ask IsLoaderNode for this one arm is a " +
+		"change to a validated input path, not a comment fix, so it is left alone deliberately"},
 
-	"shingo-edge/engine/completion_table.go": "the mode's STRING as a completion-case row name, " +
-		"for the log. The predicate behind the row is matchManualSwap, which asks IsLoaderNode",
-	"shingo-edge/engine/wiring_counter_delta.go": "the mode's STRING as a skip-reason label in a " +
-		"log line",
+	"shingo-edge/engine/completion_table.go": {1, "label", "the mode's STRING as a completion-case row " +
+		"name, for the log. The predicate behind the row is matchManualSwap, which asks IsLoaderNode"},
+	"shingo-edge/engine/wiring_counter_delta.go": {1, "label", "the mode's STRING as a skip-reason " +
+		"label in a log line"},
 }
 
 // TestLoaderQuestionHasOneDerivationPoint walks every production file in every
@@ -79,23 +100,32 @@ func TestLoaderQuestionHasOneDerivationPoint(t *testing.T) {
 	}
 
 	for rel, n := range found {
-		if _, ok := loaderModeReaders[rel]; !ok {
+		e, ok := loaderModeReaders[rel]
+		if !ok {
 			t.Errorf("%s reads SwapModeManualSwap %d time(s) and is not an allowed reader.\n"+
 				"Ask the loader question by name instead — claim.IsLoaderNode() on the Edge, "+
 				"c.IsLoader() on Core. If this really is a step-list-shape question and not a "+
 				"node-kind one, add the file to loaderModeReaders with the reason, which is the "+
 				"argument you would have had to make anyway.", rel, n)
+			continue
+		}
+		if e.n >= 0 && n != e.n {
+			t.Errorf("%s reads SwapModeManualSwap %d time(s), but its exemption covers %d.\n"+
+				"kind=%s why=%q\n"+
+				"A file on this list is forgiven for the reads it was ADDED for, not for any "+
+				"number of them. If the new read is the same kind, raise the count and say so; "+
+				"if it is not, it belongs behind IsLoaderNode.", rel, n, e.n, e.kind, e.why)
 		}
 	}
 
 	// The list must not rot either. An entry for a file that no longer mentions
 	// the constant is a stale exemption, and a stale exemption silently pre-
 	// approves the next reference someone adds to that file.
-	for rel, why := range loaderModeReaders {
+	for rel, e := range loaderModeReaders {
 		if found[rel] == 0 {
 			t.Errorf("loaderModeReaders lists %s (%q) but that file no longer references "+
 				"SwapModeManualSwap — drop the entry rather than leaving it to pre-approve the "+
-				"next one", rel, why)
+				"next one", rel, e.why)
 		}
 	}
 }

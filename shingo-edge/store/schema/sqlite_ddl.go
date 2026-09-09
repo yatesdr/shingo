@@ -566,6 +566,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
 --      turn out empty. Springfield's are correctly on Core (verified
 --      2026-07-21); other plants are unverified.
 --
+-- Its last code reader was shingo-core/cmd/migrateloaders, which is now deleted.
+-- Nothing reads the rows any more; reason 2 above is a HUMAN remediation input,
+-- not a program's. Both reasons for keeping it are still good, and neither one
+-- is a code dependency.
+--
 -- Drop it with a normal migration once both plants have run a clean week on a
 -- post-sweep binary. See EXEC-LOG-cobalt-kestrel-2284.md (queue item 5) and
 -- FOLLOWUPS.md.

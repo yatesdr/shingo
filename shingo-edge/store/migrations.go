@@ -149,9 +149,16 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE location_nodes RENAME TO nodes")
 	// transitional_loaders → operator_driven_loaders: "transitional" read like a
 	// changeover/temporary state when it just means operator-driven replenishment.
-	// Same set, clearer name. Renamed before schema.Apply so existing rows migrate
-	// into the new table rather than being orphaned behind a fresh empty one.
-	// No-op on a fresh DB (old table absent → ALTER errors, ignored).
+	// Same set, clearer name. No-op on a fresh DB (old table absent → ALTER
+	// errors, ignored).
+	//
+	// THE RENAME NO LONGER PRESERVES ANYTHING. It was written to carry existing
+	// rows into the new name instead of orphaning them behind a fresh empty
+	// table, and that stopped being true when the DROP below landed: this run
+	// renames the table and then drops it, so the pair is now just "remove
+	// transitional_loaders under either of its two names". It stays because a
+	// plant DB may still be on the old name, and a DROP of only the new name
+	// would leave that one behind forever.
 	db.Exec("ALTER TABLE transitional_loaders RENAME TO operator_driven_loaders")
 
 	// 3. Canonical CREATE TABLE IF NOT EXISTS pass.

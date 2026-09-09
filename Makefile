@@ -45,7 +45,7 @@ dev-seed: ## Seed the demo plant then restart core+edge to pick up the seeded re
 	# seed depends on edge), so the sweep always predates the seed. Restarting
 	# core re-runs the sweep against the populated registry. Mirrors production,
 	# where a deploy restarts Core after an out-of-band registry write
-	# (migrateloaders). See threshold_monitor.go startupSweep / Resync.
+	# (seeddev). See threshold_monitor.go startupSweep / Resync.
 	$(COMPOSE) run --build --rm seed
 	$(COMPOSE) restart core edge
 

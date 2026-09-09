@@ -3447,7 +3447,7 @@ func migrationList() []migration {
 		// (windows/positions, FK'd to nodes). So the loader no longer borrows the
 		// universal node id, and the synthetic anchor string a multi-window loader had
 		// to invent is gone. Postgres drops the dependent UNIQUE with the column. The
-		// aggregate is rebuilt by seeddev / migrateloaders, so there is no data to keep.
+		// aggregate is rebuilt by seeddev, so there is no data to keep.
 		{39, "drop bin_loaders.core_node_name + its UNIQUE (loader identity is the surrogate id)",
 			v39DropLoaderCoreNodeName,
 			func(q schema.Querier) bool { return schema.ColumnAbsent(q, "bin_loaders", "core_node_name") }},
