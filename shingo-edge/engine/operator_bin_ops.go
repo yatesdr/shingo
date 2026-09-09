@@ -130,8 +130,17 @@ func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeC
 // the per-style edge claim union (PayloadsForLoader), then the claim's own list,
 // and a union read error fails open to the active claim. This is the pre-cutover
 // behaviour, preserved only for the non-aggregate path.
+//
+// RESOLVED BY NODE, NOT BY THE CLAIM'S ROLE. Which role a loader is, is Core's
+// fact, and asking the aggregate for it through the stored claim's copy is how a
+// live loader becomes invisible: a claim left saying "produce" over a loader Core
+// now runs as consume misses the lookup entirely, and this falls all the way back
+// to the retired claim's payload list. LoaderForNode cannot be ambiguous —
+// bin_loader_homes is UNIQUE on position_node_id, so a node belongs to exactly one
+// loader whatever its role. The claim's role still keys the legacy union below,
+// which is a query over stored claims and is the right key for that.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
-	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(claim.Role)); err == nil && l != nil {
+	if l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && l != nil {
 		// Scoped to THIS node: a dedicated home loads only its own pinned payload,
 		// not the loader's other positions' parts; a shared window loads the whole set.
 		if codes := l.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
@@ -334,7 +343,22 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// world, and only the second one is safe to create an order on. Two callers
 	// racing this branch and applyLoaderEmptyIn is what doubled every outbound
 	// move on the lane-stress rig — see loader_outbound_guard.go.
-	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, claim.OutboundDestination, payloadCode, "load-fallback"); created {
+	//
+	// THE AGGREGATE WINS, THE CLAIM IS THE FALLBACK — byte-for-byte the shape
+	// applyLoaderEmptyIn already uses, and RoleProduce for the same reason it
+	// does: these two are the only creators of this one L2 move, so a different
+	// resolution here is a way for them to send the same carrier to two places.
+	// They could: this read was the claim's alone, so a loader whose outbound was
+	// edited in Core — or retired and recreated — routed the LOAD's move to the
+	// old destination and the L1-completion's move to the new one.
+	//
+	// A consume window reaching LoadBin (the modal's delivered-card tap) misses
+	// the produce lookup and keeps the claim's outbound, exactly as today.
+	outbound := claim.OutboundDestination
+	if l, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleProduce); lerr == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, outbound, payloadCode, "load-fallback"); created {
 		if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &orderID); err != nil {
 			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 		}

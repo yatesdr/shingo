@@ -1205,8 +1205,14 @@ func (s *StationService) applyManualSwapLoaderFields(
 		// the runtime uses — so the board and the engine never disagree. A node absent
 		// from the aggregate resolves to nil (exactly as for the runtime), leaving the
 		// operator/layout fields false.
+		// RESOLVED BY NODE, NOT BY THE CLAIM'S ROLE — the same substitution as
+		// the engine's loadablePayloads, and it has to be the same or the board
+		// and the gate disagree about which loader this window belongs to. Role
+		// is Core's fact; routing the lookup through the stored claim's copy of it
+		// makes a live loader invisible whenever the two disagree, and the tile
+		// then renders its unconfigured defaults while looking configured.
 		if s.loaders != nil {
-			if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil {
+			if loader, err := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && loader != nil {
 				nodeView.OperatorDriven = loader.IsOperatorDriven()
 				nodeView.HomeLocationLoader = loader.IsDedicated()
 				// Core owns the loader's payload set — the board shows it (the edge claim
