@@ -639,8 +639,8 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 }
 
 // TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding pins the seed-ordering
-// fix. A demand_registry binding written OUT-OF-BAND (seeddev / migrateloaders
-// write it directly; the Edge pushes no claim config over the wire) is
+// fix. A demand_registry binding written OUT-OF-BAND (seeddev writes it
+// directly; the Edge pushes no claim config over the wire) is
 // invisible to the monitor's one-shot startup sweep. Resync — called on Edge
 // (re)connect — must engage that binding and fire it immediately when already
 // below threshold, WITHOUT relying on a SyncDemandRegistry diff (the registry was

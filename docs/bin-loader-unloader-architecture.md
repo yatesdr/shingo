@@ -269,7 +269,7 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 
 | File | Role |
 |------|------|
-| `store/loaders/loaders.go`, `store/loaders.go` | The `bin_loaders` aggregate: `bin_loaders` (identity, role, layout, replenishment, flow dests) + `bin_loader_homes` (windows / dedicated positions, `UNIQUE(position_node_id)`) + `bin_loader_payloads` (shared-window payload set). CRUD + `GroupIntoLoaders` (migration derive) + `DeleteLoader` (soft-archive `archived_at`). |
+| `store/loaders/loaders.go`, `store/loaders.go` | The `bin_loaders` aggregate: `bin_loaders` (identity, role, layout, replenishment, flow dests) + `bin_loader_homes` (windows / dedicated positions, `UNIQUE(position_node_id)`) + `bin_loader_payloads` (shared-window payload set). CRUD + `DeleteLoader` (soft-archive `archived_at`). |
 | `service/loader_service.go` | Loader CRUD service (Create/Update/Delete/SetHome/SetPayload). `rederive` rebuilds `demand_registry` from the aggregate for the union of registry stations + registered edges and nudges the threshold monitor. |
 | `store/loaders_sync.go` | `BuildLoaderInfos` (loader config for the node-list sync), `BuildDemandRegistryFromAggregate`, `DemandRegistryStations`. |
 | `store/demand_registry.go`, `store/demands/demands.go` | `demand_registry` table + `SyncDemandRegistry` (diff/upsert). |
