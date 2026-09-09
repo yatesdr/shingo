@@ -9,6 +9,54 @@ import (
 // process node claim. Wraps string so it serializes natively over JSON /
 // SQL while gaining compile-time distinction from raw strings and other
 // enum-shaped string types (e.g. ClaimRole, Status).
+//
+// WHAT A SWAP MODE IS ALLOWED TO MEAN.
+//
+// A swap mode names a STEP-LIST SHAPE and nothing else. Gates read the steps,
+// or a property declared on the claim — never the mode name.
+//
+// The worked example is already in the tree and it is the one that matters
+// most. swapLegHoldVerdict (shingo-core/dispatch/swap_hold.go) is the
+// safety-critical admission gate: it is what stops a line stranding empty
+// (ALN_003, 2026-06-03) and what stops two bins landing on one press
+// (Hopkinsville press-index, 2026-07). It serves two_robot,
+// two_robot_press_index and sequential correctly, and there is not one
+// SwapMode reference in it. It reaches its verdict by asking three questions
+// of the steps — does this leg take the line's bin (legTakesLineBin), does it
+// place one (legPlacesLineBin), does it secure its own replacement
+// (legSecuresOwnReplacement). The most dangerous decision in the swap path is
+// mode-blind, so a gate that claims it cannot be has to explain why it is
+// harder than that one.
+//
+// The reason is not tidiness. A mode-name branch is a claim about every
+// current AND future member of the set, made by an author who could only see
+// the current members: add a mode and every such branch is silently wrong in
+// whichever direction its author happened to write it, with nothing failing.
+// A property read is a claim about the thing in front of it, so a new mode
+// answers it or does not compile.
+//
+// COROLLARY: NODE KIND IS NOT A SWAP MODE.
+//
+// "manual_swap" is the standing counter-example, and it is worth reading
+// before adding another. It does not name a choreography — it names a place a
+// forklift driver works. plantspec.Claim.IsManualSwap documents itself as
+// "a forklift-managed loader/unloader claim"; store/processes.PayloadsForLoader
+// implements the word "loader" as WalkOpts{SwapMode: manual_swap}; and
+// domain.Loader.SynthClaim stamps the mode onto an in-memory claim for a thing
+// that has no swap at all, purely so those branches engage. The cost is that a
+// reader who wants to know what a loader is has to find the sites and infer
+// the concept. Ask the loader question of the claim
+// (NodeClaim.IsLoaderNode), not of this field.
+//
+// HOW TO TELL AN ESSENTIAL MODE BRANCH FROM ONE THAT SHOULD MOVE.
+//
+// A branch may be deleted only when a property read replaces it. A branch that
+// cannot be replaced is ESSENTIAL and stays — the honest residue is small and
+// it is all one shape: code that is choosing or costing the step list itself.
+// The builders pick which list to construct; simcalc's fleetMovesPerSwap costs
+// each shape's floor crossings; ConfigurableSwapModes says which values may be
+// persisted at all. Those read the mode because the mode is the answer, not
+// because it is a convenient proxy for something else.
 type SwapMode string
 
 // Canonical swap-mode constants shared by core and edge. Wire/DB values
