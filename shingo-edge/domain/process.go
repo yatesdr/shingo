@@ -420,12 +420,8 @@ type NodeClaim struct {
 	// (fires only on a produce-role lineside release). See
 	// engine/operator_demand.go MaybePushUnloader. The kanban demand signal
 	// this comment used to name was deleted 2026-08.
-	AutoPush bool `json:"auto_push"`
-	// HomeLocationLoader is the same kind of computed, display-only field for the
-	// home_location_loaders set (the LAYOUT axis) — populated by the API list path
-	// for produce manual_swap claims so the editor can reflect/toggle it.
-	HomeLocationLoader bool      `json:"home_location_loader"`
-	CreatedAt          time.Time `json:"created_at"`
+	AutoPush  bool      `json:"auto_push"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SwapModePressPosition marks a per-position claim synthesized from a
@@ -928,17 +924,11 @@ type NodeClaimInput struct {
 	// A pointer is the fix at the contract rather than at each caller: nil
 	// means the writer is not speaking about this column. On INSERT they
 	// take their documented defaults (sequence = next free, source =
-	// "legacy", flags off). Same rules as HomeLocationLoader below.
+	// "legacy", flags off).
 	ReorderPointSource *string `json:"reorder_point_source,omitempty"`
 	AutoReorder        *bool   `json:"auto_reorder,omitempty"`
 	KeepStaged         *bool   `json:"keep_staged,omitempty"`
 	Sequence           *int    `json:"sequence,omitempty"`
-
-	// HomeLocationLoader toggles the loader-wide home_location_loaders set
-	// (Edge-only, keyed by core_node_name) — the dedicated-position LAYOUT.
-	// Same rules as OperatorDriven: applied only for a produce manual_swap
-	// claim; a nil pointer leaves the set untouched.
-	HomeLocationLoader *bool `json:"home_location_loader,omitempty"`
 }
 
 // IsLoaderNode reports whether the claim being submitted describes a

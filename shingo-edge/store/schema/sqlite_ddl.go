@@ -632,8 +632,22 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
 
 -- home_location_loaders — membership set marking a bin loader's layout as
 -- "home location" (each payload its own dedicated node) vs the default single
--- window. Orthogonal to operator_driven_loaders (type vs layout). See
--- store/home_location_loaders.go.
+-- window.
+--
+-- NO EDGE READER OR WRITER REMAINS. The layout fact is Core's
+-- (bin_loaders.layout → Loader.IsDedicated() → StationNodeView), and the Go
+-- surface that mirrored it here — store/home_location_loaders.go, the
+-- StyleService method, the API input field and the handler arm — was removed
+-- once the claim editor stopped sending the flag.
+--
+-- THE TABLE HAS NO READER LEFT ANYWHERE. Its last one was
+-- shingo-core/cmd/migrateloaders, and that command is deleted: its derivation
+-- ran at both plants in June 2026 and its input can no longer be produced,
+-- because manual_swap has not been authorable in the claim editor since
+-- 0ef5b959 (2026-06-22). The DDL stays only so a fresh edge DB keeps the same
+-- shape as the plants' — DROPPING THE TABLE IS NOW PURELY A DATA DECISION and
+-- nothing in code is waiting on it. Do not re-derive a purpose for it. Its
+-- sibling operator_driven_loaders is dropped outright in migrate().
 CREATE TABLE IF NOT EXISTS home_location_loaders (
     core_node_name TEXT NOT NULL,
     updated_at     TEXT NOT NULL DEFAULT (datetime('now')),

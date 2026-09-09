@@ -14,12 +14,22 @@ import (
 
 // operator_supply_refusal_test.go — the supplier's write path.
 //
-// EVERY CASE RUNS TWICE, ONCE PER BOARD LAYOUT, because the owner's rule is "all
-// loaders" and the two shapes reach the card differently: a shared_window
-// renders one card per payload on one node, a dedicated_positions board renders
-// one card per home across several nodes. They reach the SAME key, and proving
-// that is the point of running both — a design that needed to know the layout to
-// identify the card would be the wrong design.
+// THIS USED TO RUN EVERY CASE TWICE, ONCE PER BOARD LAYOUT. The intent was that
+// a shared_window renders one card per payload on one node and a
+// dedicated_positions board renders one card per home across several nodes, and
+// that both reach the SAME refusal key. The axis never actually did that: the
+// fixture built ONE node either way, and the only difference between the two
+// runs was a row written into the Edge-only home_location_loaders table. That
+// table's last reader left with the loader move to Core, so the two runs were
+// executing identical code over identical state under two different names — an
+// inert axis, and one that would have read to the next auditor as live coverage
+// of a layout distinction.
+//
+// The layout fact now lives on the Core aggregate (bin_loaders.layout →
+// Loader.IsDedicated() → StationNodeView.HomeLocationLoader). Nothing in the
+// REFUSAL path reads it, which is the property that made the axis inert and is
+// still true. Restoring the two runs means driving them from a Core loader
+// aggregate, not from the dropped table.
 
 // loaderFixture is one loader window set up as a card the operator can act on.
 type loaderFixture struct {
@@ -29,10 +39,8 @@ type loaderFixture struct {
 	core   string
 }
 
-// seedLoaderCard builds a manual_swap loader window on its own station, in one
-// of the two layouts. dedicated marks it home-location; everything else is
-// identical, which is the property under test.
-func seedLoaderCard(t *testing.T, dedicated bool) *loaderFixture {
+// seedLoaderCard builds a manual_swap loader window on its own station.
+func seedLoaderCard(t *testing.T) *loaderFixture {
 	t.Helper()
 	db := testEngineDB(t)
 
@@ -61,9 +69,6 @@ func seedLoaderCard(t *testing.T, dedicated bool) *loaderFixture {
 	testutil.MustNoErr(t, err, "upsert loader claim")
 	db.EnsureProcessNodeRuntime(nodeID)
 
-	if dedicated {
-		testutil.MustNoErr(t, db.SetHomeLocationLoader(core, true, "test"), "mark dedicated layout")
-	}
 	return &loaderFixture{db: db, eng: testEngine(t, db), nodeID: nodeID, core: core}
 }
 
@@ -78,20 +83,13 @@ func (f *loaderFixture) call(t *testing.T, payload string) int64 {
 	return id
 }
 
+// eachLayout ran the body once per board layout. The layout axis was inert (see
+// the file header), so it now runs the body once. Kept as the call shape rather
+// than inlined so every case below reads exactly as it did and no assertion
+// moved with this change.
 func eachLayout(t *testing.T, run func(t *testing.T, f *loaderFixture)) {
 	t.Helper()
-	for _, tc := range []struct {
-		name      string
-		dedicated bool
-	}{
-		{"shared_window", false},
-		{"dedicated_positions", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			run(t, seedLoaderCard(t, tc.dedicated))
-		})
-	}
+	run(t, seedLoaderCard(t))
 }
 
 func TestRefuseSupply_WritesOneRowKeyedOnTheCard(t *testing.T) {
@@ -226,7 +224,7 @@ func TestUndoSupplyRefusal_WorksAfterTheCallIsGone(t *testing.T) {
 // disturb what is already there.
 func TestHandleSupplyRefusalState_AppliesTheBroadcast(t *testing.T) {
 	t.Parallel()
-	f := seedLoaderCard(t, false)
+	f := seedLoaderCard(t)
 
 	f.eng.HandleSupplyRefusalState(protocol.SupplyRefusalState{
 		Action: protocol.SupplyRefusalOpened, LoaderNode: "SMN_099",
@@ -272,7 +270,7 @@ func TestHandleSupplyRefusalState_AppliesTheBroadcast(t *testing.T) {
 // project started from. ack_at IS NULL is the queryable form of the second.
 func TestAckSupplyRefusal_RecordsTheAnswerAndIsIdempotent(t *testing.T) {
 	t.Parallel()
-	f := seedLoaderCard(t, false)
+	f := seedLoaderCard(t)
 	f.call(t, "PART-A")
 	testutil.MustNoErr(t, f.eng.RefuseSupply(f.nodeID, "PART-A", "Bin Loader"), "refuse")
 
@@ -298,7 +296,7 @@ func TestAckSupplyRefusal_RecordsTheAnswerAndIsIdempotent(t *testing.T) {
 
 func TestAckSupplyRefusal_RejectsAnAnswerThatIsNotAnAnswer(t *testing.T) {
 	t.Parallel()
-	f := seedLoaderCard(t, false)
+	f := seedLoaderCard(t)
 	f.call(t, "PART-A")
 	testutil.MustNoErr(t, f.eng.RefuseSupply(f.nodeID, "PART-A", "Bin Loader"), "refuse")
 
