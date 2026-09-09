@@ -459,3 +459,84 @@ func TestResolvePickupBin_SingleBinFallbackStillAnswers(t *testing.T) {
 		"lookup _TRANSIT")
 	testdb.RequireBinAtNode(t, db, only.ID, transitID)
 }
+
+// TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode pins
+// the From side of the intermediate-dropoff BinUpdatedEvent.
+//
+// This emitter used to send FromNodeID 0 deliberately, to keep "kanban's
+// produce-on-storage-exit check" from firing — a subscriber that was deleted
+// in 2026-08, so the zero silenced nobody. Worse, 0 is not a real node id: a
+// reader cannot tell "arrives from _TRANSIT" from "emitter did not know", and
+// the CMS subscriber grew its EITHER-END guard partly around that ambiguity.
+// The bin genuinely leaves _TRANSIT — a real, addressable node — so the event
+// now says so, and this test holds it to that.
+//
+// The lane gate is the one live reader of FromNodeID (it evaluates the lane on
+// either side of a move); _TRANSIT resolves to no lane, so the behavioural
+// delta of this change is nil — verified per subscriber at 3098a615. The pin
+// exists because "nil either way" is exactly the kind of fact a later refactor
+// re-derives from the zero and gets wrong: reverting to 0 would reintroduce a
+// sentinel that means nothing, silently.
+//
+// MUTATION: restore `FromNodeID: 0` at the emit site and this fails.
+func TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode(t *testing.T) {
+	t.Parallel()
+
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	storeNode := sd.StorageNode
+	lineNode := sd.LineNode
+
+	ord := &orders.Order{
+		EdgeUUID:     "store-from-1",
+		StationID:    "line-1",
+		OrderType:    dispatch.OrderTypeComplex,
+		Status:       dispatch.StatusInTransit,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: lineNode.Name,
+		ProcessNode:  lineNode.Name,
+		PayloadDesc:  "swap",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
+
+	var transitID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM nodes WHERE name='_TRANSIT'`).Scan(&transitID),
+		"lookup _TRANSIT")
+	binStore := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-FROM")
+	testdb.ClaimBinForTest(t, db, binStore.ID, ord.ID)
+	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, binStore.ID, 1, "pickup", lineNode.Name, storeNode.Name), "order_bin store leg")
+
+	captured := make(chan BinUpdatedEvent, 4)
+	eng.Events.SubscribeTypes(func(evt Event) {
+		if p, ok := evt.Payload.(BinUpdatedEvent); ok {
+			captured <- p
+		}
+	}, EventBinUpdated)
+
+	eng.handleStoreBlockCompleted(BlockCompletedEvent{
+		OrderID:  ord.ID,
+		BlockID:  "store-from-1-b3",
+		Location: storeNode.Name,
+		BinTask:  "JackUnload",
+	})
+
+	select {
+	case ev := <-captured:
+		if ev.Action != BinActionMoved {
+			t.Fatalf("action = %q, want moved", ev.Action)
+		}
+		if ev.FromNodeID != transitID {
+			t.Fatalf("FromNodeID = %d, want the real _TRANSIT node id %d — the bin "+
+				"physically leaves _TRANSIT and 0 means nothing; see the emit site's header",
+				ev.FromNodeID, transitID)
+		}
+		if ev.ToNodeID != storeNode.ID || ev.NodeID != storeNode.ID {
+			t.Fatalf("To/Node = %d/%d, want %d — the dropoff lands at the store node",
+				ev.ToNodeID, ev.NodeID, storeNode.ID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no BinUpdatedEvent fired for the intermediate dropoff")
+	}
+}

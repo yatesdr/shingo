@@ -433,13 +433,18 @@ func TestCMSEndToEnd_UntaggedBoundariesPostNothing(t *testing.T) {
 // TestCMSEndToEnd_AnIntermediateDropoffBooksItsArrival is the pin on the guard
 // that silenced the ledger for a whole order.
 //
-// An intermediate dropoff emits FromNodeID 0 — the bin arrives from _TRANSIT,
-// not a real slot, and that zero is deliberate so kanban's
-// produce-on-storage-exit does not fire. The CMS subscription used to require
-// BOTH ends to be non-zero, so it dropped the event entirely: material
-// physically landed in a tagged storeroom and CMS was told nothing until the
-// whole order finished, which at Hopkinsville on 2026-09-08 was 49 minutes
-// later. An order cancelled while wedged would never have booked it at all.
+// Historically an intermediate dropoff emitted FromNodeID 0 (the bin arrives
+// from _TRANSIT, not a real slot — a zero once kept the deleted kanban path
+// quiet). The CMS subscription required BOTH ends to be non-zero, so it
+// dropped the event entirely: material physically landed in a tagged
+// storeroom and CMS was told nothing until the whole order finished, which at
+// Hopkinsville on 2026-09-08 was 49 minutes later. An order cancelled while
+// wedged would never have booked it at all.
+//
+// Since 2026-09-09 the dropoff emits the real _TRANSIT node id
+// (wiring_block_completed.go), but a FromNodeID of 0 is still a legitimate
+// shape — the unknown-source degradation in applyMultiBinArrivalForOrder —
+// so this pin still guards the OR for it: the To side alone must book.
 //
 // The regression to catch is someone restoring the symmetric `&&` because it
 // reads tidier. Nothing else fails if they do — the arrival still happens, the
@@ -467,8 +472,8 @@ func TestCMSEndToEnd_AnIntermediateDropoffBooksItsArrival(t *testing.T) {
 	testutil.MustNoErr(t, err, "marshal manifest")
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 10), "set manifest")
 
-	// FromNodeID 0 — exactly what wiring_block_completed.go emits on an
-	// intermediate dropoff.
+	// FromNodeID 0 — the unknown-source degradation shape; the guard must
+	// still book on the To side alone.
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 		Action: BinActionMoved, BinID: bin.ID, PayloadCode: pay.Code,
 		FromNodeID: 0, ToNodeID: dstSlot.ID, NodeID: dstSlot.ID,

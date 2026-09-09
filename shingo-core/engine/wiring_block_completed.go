@@ -448,6 +448,21 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	}
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
+	// The bin physically leaves _TRANSIT — a real, addressable node — so the
+	// event says so. This used to emit FromNodeID 0 to keep kanban's
+	// produce-on-storage-exit check from firing, but that subscriber was
+	// deleted in 2026-08: the zero silenced nobody while making "arrives from
+	// _TRANSIT" indistinguishable from "emitter did not know". Verified at
+	// 3098a615 that no live reader's behaviour changes: _TRANSIT resolves to
+	// no CMS boundary (FindCMSBoundary) and no lane (LaneForNode), and the
+	// other subscribers read PayloadCode or nothing. Pinned by
+	// TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode.
+	transit, terr := e.db.GetNodeByDotName(domain.TransitNodeName)
+	if terr != nil || transit == nil {
+		e.logFn("transit: order %d dropoff @ %s — cannot resolve %s for the From side: %v",
+			order.ID, location, domain.TransitNodeName, terr)
+		return
+	}
 	// Intermediate, not final — the early-return above already sent every drop
 	// at the delivery node down the whole-order FINISHED path. So the order is
 	// coming back for this bin and keeps its claim; handing it off here is what
@@ -471,12 +486,11 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 			Action:      BinActionMoved,
 			BinID:       updated.ID,
 			PayloadCode: updated.PayloadCode,
-			// FromNodeID intentionally 0: the bin arrives from _TRANSIT, not a
-			// real slot, so kanban's produce-on-storage-exit check must not fire.
-			ToNodeID: destNode.ID,
-			NodeID:   destNode.ID,
-			RobotID:  order.RobotID,
-			OrderID:  order.ID,
+			FromNodeID:  transit.ID,
+			ToNodeID:    destNode.ID,
+			NodeID:      destNode.ID,
+			RobotID:     order.RobotID,
+			OrderID:     order.ID,
 		}})
 
 		// Bind the arrived bin onto the Edge runtime if this dropoff node is an
