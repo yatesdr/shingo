@@ -78,7 +78,7 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	}
 	if bin, err := s.db.GetBin(*order.BinID); err == nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "moved",
+			Action:      BinActionMoved,
 			BinID:       bin.ID,
 			PayloadCode: bin.PayloadCode,
 			FromNodeID:  sourceNodeID,

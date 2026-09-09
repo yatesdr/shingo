@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -169,12 +170,12 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 			name:    "BinUpdated",
 			evtType: EventBinUpdated,
 			payload: BinUpdatedEvent{
-				NodeID: 10, NodeName: "N10", Action: "moved", BinID: 22, PayloadCode: "PC",
+				NodeID: 10, Action: BinActionMoved, BinID: 22, PayloadCode: "PC",
 				FromNodeID: 10, ToNodeID: 11, Actor: "system", Detail: "auto",
 			},
 			check: func(t *testing.T, got any) {
 				p := got.(BinUpdatedEvent)
-				if p.Action != "moved" || p.FromNodeID != 10 || p.ToNodeID != 11 {
+				if p.Action != BinActionMoved || p.FromNodeID != 10 || p.ToNodeID != 11 {
 					t.Errorf("payload = %+v", p)
 				}
 			},
@@ -324,5 +325,157 @@ func TestEvent_TimestampAutofill(t *testing.T) {
 	// Payload survives the roundtrip.
 	if p := got.Payload.(OrderQueuedEvent); p.OrderID != 99 {
 		t.Errorf("payload lost: %+v", p)
+	}
+}
+
+// TestBinAction_FieldContract pins the per-value contract stated next to the
+// BinAction type: which placement fields (FromNodeID / ToNodeID / NodeID) and
+// attribution fields (RobotID / OrderID) each action MUST and MUST NOT carry.
+//
+// The field rules are asserted on VALID emit-site shapes — one canonical
+// emitter per action, fields filled per the contract — by walking every value
+// in the vocabulary through a rules table. An emitter that starts filling a
+// "must not" field (the shape that let a subscriber guess a zeroed field's
+// meaning and guess wrong, 2026-09) breaks the table only if this test is
+// taught the emitter, so the canonical shapes here double as documentation of
+// what each emitter sends.
+//
+// The wire-bytes row is separate and load-bearing: the constants are
+// string-valued precisely so the SSE `bin-update` frame and the audit journal
+// stay byte-identical to the untyped era, and that property is asserted, not
+// assumed.
+//
+// MUTATION: rename a constant's string (e.g. BinActionMoved = "mooved") and
+// the wire-bytes row fails. Add a tenth value and the closed-set row fails
+// until the vocabulary table here is updated — which is the point: a new
+// action must argue its field contract in the same edit.
+func TestBinAction_FieldContract(t *testing.T) {
+	t.Parallel()
+
+	// The closed set, with its wire spelling. This table IS the vocabulary;
+	// adding a BinAction constant without a row here fails the first loop.
+	vocabulary := []struct {
+		value BinAction
+		wire  string
+	}{
+		{BinActionMoved, "moved"},
+		{BinActionEvicted, "evicted"},
+		{BinActionCreated, "created"},
+		{BinActionStatusChanged, "status_changed"},
+		{BinActionLocked, "locked"},
+		{BinActionUnlocked, "unlocked"},
+		{BinActionLoaded, "loaded"},
+		{BinActionCleared, "cleared"},
+		{BinActionCounted, "counted"},
+	}
+	seen := map[BinAction]bool{}
+	for _, v := range vocabulary {
+		if seen[v.value] {
+			t.Errorf("duplicate BinAction value %q", v.value)
+		}
+		seen[v.value] = true
+		if string(v.value) != v.wire {
+			t.Errorf("BinAction %q changed wire spelling to %q — SSE frames and the audit journal are byte-compared downstream", v.wire, string(v.value))
+		}
+	}
+
+	// One canonical emitter shape per action, taken from the real emit sites:
+	// engine/wiring_completion.go (moved, evicted), www/handlers_bins.go
+	// (created), www/bin_actions.go (the rest, via emitBinUpdate).
+	cases := []struct {
+		name  string
+		event BinUpdatedEvent
+		// mustFill / mustNotFill name the placement and attribution fields,
+		// so a refactor that adds a field to the struct fails this test until
+		// the contract is decided for it — not silently after.
+		mustFill    []string
+		mustNotFill []string
+	}{
+		{
+			name: "moved (delivery)",
+			event: BinUpdatedEvent{Action: BinActionMoved, BinID: 1, PayloadCode: "PC",
+				FromNodeID: 10, ToNodeID: 11, NodeID: 11, RobotID: "AMR-1", OrderID: 7},
+			mustFill: []string{"FromNodeID", "ToNodeID", "NodeID", "RobotID", "OrderID"},
+		},
+		{
+			name: "moved (operator drag)",
+			event: BinUpdatedEvent{Action: BinActionMoved, BinID: 1, PayloadCode: "PC",
+				FromNodeID: 10, ToNodeID: 11, NodeID: 11},
+			mustFill: []string{"FromNodeID", "ToNodeID", "NodeID"},
+		},
+		{
+			name: "evicted",
+			event: BinUpdatedEvent{Action: BinActionEvicted, BinID: 1, PayloadCode: "PC",
+				ToNodeID: 99, NodeID: 99},
+			mustFill:    []string{"ToNodeID", "NodeID"},
+			mustNotFill: []string{"FromNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "created",
+			event:       BinUpdatedEvent{Action: BinActionCreated, NodeID: 5},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "status_changed",
+			event:       BinUpdatedEvent{Action: BinActionStatusChanged, BinID: 1, NodeID: 5, PayloadCode: "PC"},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "locked",
+			event:       BinUpdatedEvent{Action: BinActionLocked, BinID: 1, NodeID: 5, PayloadCode: "PC", Detail: "op"},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "unlocked",
+			event:       BinUpdatedEvent{Action: BinActionUnlocked, BinID: 1, NodeID: 5, PayloadCode: "PC"},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "loaded",
+			event:       BinUpdatedEvent{Action: BinActionLoaded, BinID: 1, NodeID: 5, PayloadCode: "PC", Detail: "PC"},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "cleared",
+			event:       BinUpdatedEvent{Action: BinActionCleared, BinID: 1, NodeID: 5},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+		{
+			name:        "counted",
+			event:       BinUpdatedEvent{Action: BinActionCounted, BinID: 1, NodeID: 5, PayloadCode: "PC"},
+			mustFill:    []string{"NodeID"},
+			mustNotFill: []string{"FromNodeID", "ToNodeID", "RobotID", "OrderID"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !seen[tc.event.Action] {
+				t.Fatalf("case %q uses BinAction %q, which is not in the vocabulary table", tc.name, tc.event.Action)
+			}
+			ev := reflect.ValueOf(tc.event)
+			for _, fname := range tc.mustFill {
+				if !ev.FieldByName(fname).IsValid() {
+					t.Fatalf("field %s does not exist on BinUpdatedEvent — the struct grew; decide its contract for every action and update this test", fname)
+				}
+				if ev.FieldByName(fname).IsZero() {
+					t.Errorf("%s: %s must be filled (non-zero) per the contract", tc.event.Action, fname)
+				}
+			}
+			for _, fname := range tc.mustNotFill {
+				if !ev.FieldByName(fname).IsValid() {
+					t.Fatalf("field %s does not exist on BinUpdatedEvent — the struct grew; decide its contract for every action and update this test", fname)
+				}
+				if !ev.FieldByName(fname).IsZero() {
+					t.Errorf("%s: %s must NOT be filled per the contract — a value here teaches the next subscriber the field is sometimes meaningful for this action", tc.event.Action, fname)
+				}
+			}
+		})
 	}
 }

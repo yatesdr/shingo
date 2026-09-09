@@ -341,7 +341,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 	}
 	if updatedBin != nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "moved",
+			Action:      BinActionMoved,
 			BinID:       updatedBin.ID,
 			PayloadCode: updatedBin.PayloadCode,
 			FromNodeID:  sourceNodeID,
@@ -395,7 +395,7 @@ func (e *Engine) noteEvictedGhosts(evicted []int64, what string, byBinID int64, 
 			continue
 		}
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "evicted",
+			Action:      BinActionEvicted,
 			BinID:       ghost.ID,
 			PayloadCode: ghost.PayloadCode,
 			ToNodeID:    transit.ID,
@@ -563,7 +563,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 			continue
 		}
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "moved",
+			Action:      BinActionMoved,
 			BinID:       bin.ID,
 			PayloadCode: bin.PayloadCode,
 			FromNodeID:  fromNodeIDs[i],
@@ -668,7 +668,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	}
 	if updatedBin != nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "moved",
+			Action:      BinActionMoved,
 			BinID:       updatedBin.ID,
 			PayloadCode: updatedBin.PayloadCode,
 			FromNodeID:  sourceNodeID,
@@ -798,7 +798,7 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 			continue
 		}
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "moved",
+			Action:      BinActionMoved,
 			BinID:       bin.ID,
 			PayloadCode: bin.PayloadCode,
 			FromNodeID:  fromNodeIDs[i],

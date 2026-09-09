@@ -210,7 +210,7 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 	// read it, the audit handler (wiring.go:199-202) does, and we
 	// only know the bin type + node here, not the persisted IDs.
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
-		Action: "created",
+		Action: engine.BinActionCreated,
 		NodeID: derefInt64(nodeID),
 	}})
 

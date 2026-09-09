@@ -468,7 +468,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	}
 	if updated != nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-			Action:      "moved",
+			Action:      BinActionMoved,
 			BinID:       updated.ID,
 			PayloadCode: updated.PayloadCode,
 			// FromNodeID intentionally 0: the bin arrives from _TRANSIT, not a

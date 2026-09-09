@@ -172,7 +172,7 @@ func TestRecordMovementTransactions_PersistsAndEmits(t *testing.T) {
 		FromNodeID:  srcSlot.ID,
 		ToNodeID:    dstSlot.ID,
 		PayloadCode: bp.Code,
-		Action:      "moved",
+		Action:      BinActionMoved,
 	})
 
 	// Two rows expected: one decrement at src boundary, one increment at dst.
@@ -229,7 +229,7 @@ func TestRecordMovementTransactions_SkipsReplay(t *testing.T) {
 	putManifest(t, db, bin.ID, bp.Code, "PART-A", 5, 1)
 
 	ev := BinUpdatedEvent{
-		Action:      "moved",
+		Action:      BinActionMoved,
 		BinID:       bin.ID,
 		PayloadCode: bp.Code,
 		FromNodeID:  srcSlot.ID,
@@ -429,7 +429,7 @@ func TestCMSPostingSubscriber_QueuesMovementsAndFiltersCorrections(t *testing.T)
 
 	// A real movement must produce one.
 	eng.RecordMovementTransactions(BinUpdatedEvent{
-		Action: "moved", BinID: bin.ID, PayloadCode: bp.Code,
+		Action: BinActionMoved, BinID: bin.ID, PayloadCode: bp.Code,
 		FromNodeID: srcSlot.ID, ToNodeID: dstSlot.ID,
 	})
 	if n := countPostings(); n != 1 {

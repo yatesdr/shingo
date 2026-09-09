@@ -335,7 +335,7 @@ func (e *Engine) wireEventHandlers() {
 	// Bin contents changes: audit
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		ev := evt.Payload
-		e.db.AppendAudit("bin", ev.BinID, ev.Action, "", fmt.Sprintf("payload=%s node=%d", ev.PayloadCode, ev.NodeID), "system")
+		e.db.AppendAudit("bin", ev.BinID, string(ev.Action), "", fmt.Sprintf("payload=%s node=%d", ev.PayloadCode, ev.NodeID), "system")
 	}, EventBinUpdated)
 
 	// Node updates: audit
@@ -371,7 +371,7 @@ func (e *Engine) wireEventHandlers() {
 		// lane gate to correct one ledger. BuildMovementTransactions already
 		// handles a zero end -- no boundary, so no row for that side -- and
 		// both ends zero still short-circuits on srcID == dstID.
-		if ev.Action == "moved" && (ev.FromNodeID != 0 || ev.ToNodeID != 0) {
+		if ev.Action == BinActionMoved && (ev.FromNodeID != 0 || ev.ToNodeID != 0) {
 			e.RecordMovementTransactions(ev)
 		}
 	}, EventBinUpdated)

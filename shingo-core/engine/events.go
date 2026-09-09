@@ -156,11 +156,55 @@ type OrderQueuedEvent struct {
 	PayloadCode string
 }
 
+// BinAction is the closed vocabulary of BinUpdatedEvent.Action. String-valued
+// so the SSE `bin-update` frame and every log line stay byte-identical to the
+// untyped era; the type exists so an emitter cannot spell a value nobody
+// produces and a subscriber cannot switch on one. Pinned by
+// TestBinAction_FieldContract in events_test.go.
+//
+// ── Per-value field contract ─────────────────────────────────────────────
+//
+// Every action states which of the placement fields (FromNodeID / ToNodeID /
+// NodeID) and attribution fields (RobotID / OrderID) an emitter MUST and MUST
+// NOT fill. An emitter filling a "must not" field is not richer — it teaches
+// the next subscriber that the field is sometimes meaningful for that action,
+// and this event has seven readers who cannot check.
+//
+//	moved: From, To, Node all real; Robot/Order when a delivery
+//	  drove the move, blank for an operator drag (a real answer, not a
+//	  missing one — see RobotID/OrderID below).
+//	evicted: To/Node = _TRANSIT; From MUST NOT be filled (the stale record's
+//	  prior node is already wrong — it was overwritten precisely because
+//	  nobody could vouch for it).
+//	created: Node where the batch landed, when known; no endpoints (nothing
+//	  moved), no attribution. BinID stays 0 — CreateBatch does not return
+//	  per-bin ids and no subscriber needs them.
+//	status_changed / locked / unlocked / loaded / cleared / counted: Node
+//	  where the bin stands; no endpoints (nothing moved) and no Robot/Order.
+//	  loaded also carries the payload in Detail; locked carries the actor
+//	  who locked it.
+//
+// The four values the old comment listed with no producer — added, removed,
+// claimed, unclaimed — were deleted in 2026-09, not renamed: no emitter ever
+// produced them and no subscriber ever read them.
+type BinAction string
+
+const (
+	BinActionMoved         BinAction = "moved"
+	BinActionEvicted       BinAction = "evicted"
+	BinActionCreated       BinAction = "created"
+	BinActionStatusChanged BinAction = "status_changed"
+	BinActionLocked        BinAction = "locked"
+	BinActionUnlocked      BinAction = "unlocked"
+	BinActionLoaded        BinAction = "loaded"
+	BinActionCleared       BinAction = "cleared"
+	BinActionCounted       BinAction = "counted"
+)
+
 type BinUpdatedEvent struct {
 	eventbus.PayloadBase
 	NodeID      int64
-	NodeName    string
-	Action      string // "added", "removed", "moved", "evicted", "claimed", "unclaimed", "locked", "unlocked", "loaded", "cleared", "counted", "status_changed"
+	Action      BinAction
 	BinID       int64
 	PayloadCode string
 	FromNodeID  int64

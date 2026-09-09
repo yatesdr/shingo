@@ -123,7 +123,7 @@ func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
 
 	// A real move across the same two boundaries, through the same wiring.
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-		Action:      "moved",
+		Action:      BinActionMoved,
 		BinID:       bin.ID,
 		PayloadCode: bp.Code,
 		FromNodeID:  srcSlot.ID,

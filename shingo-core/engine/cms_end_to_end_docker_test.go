@@ -218,7 +218,7 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 8), "set manifest")
 
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-		Action: "moved", BinID: bin.ID, PayloadCode: pay.Code,
+		Action: BinActionMoved, BinID: bin.ID, PayloadCode: pay.Code,
 		FromNodeID: srcSlot.ID, ToNodeID: dstSlot.ID, NodeID: dstSlot.ID,
 		RobotID: "AMR-42", OrderID: 0,
 	}})
@@ -334,7 +334,7 @@ func TestCMSEndToEnd_RefusalIsTerminalAndCarriesNoCredentials(t *testing.T) {
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 3), "set manifest")
 
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-		Action: "moved", BinID: bin.ID, PayloadCode: pay.Code,
+		Action: BinActionMoved, BinID: bin.ID, PayloadCode: pay.Code,
 		FromNodeID: srcSlot.ID, ToNodeID: dstSlot.ID, NodeID: dstSlot.ID,
 	}})
 	eng.cmsPoster.DrainOnce(t.Context())
@@ -403,7 +403,7 @@ func TestCMSEndToEnd_UntaggedBoundariesPostNothing(t *testing.T) {
 	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(body), pay.Code, 5), "set manifest")
 
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-		Action: "moved", BinID: bin.ID, PayloadCode: pay.Code,
+		Action: BinActionMoved, BinID: bin.ID, PayloadCode: pay.Code,
 		FromNodeID: src.ID, ToNodeID: dst.ID, NodeID: dst.ID,
 	}})
 	eng.cmsPoster.DrainOnce(t.Context())
@@ -470,7 +470,7 @@ func TestCMSEndToEnd_AnIntermediateDropoffBooksItsArrival(t *testing.T) {
 	// FromNodeID 0 — exactly what wiring_block_completed.go emits on an
 	// intermediate dropoff.
 	eng.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-		Action: "moved", BinID: bin.ID, PayloadCode: pay.Code,
+		Action: BinActionMoved, BinID: bin.ID, PayloadCode: pay.Code,
 		FromNodeID: 0, ToNodeID: dstSlot.ID, NodeID: dstSlot.ID,
 		RobotID: "AMR-07", OrderID: 0,
 	}})

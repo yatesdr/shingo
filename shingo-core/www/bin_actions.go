@@ -49,7 +49,7 @@ func (h *Handlers) binActivate(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusAvailable), protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -58,7 +58,7 @@ func (h *Handlers) binFlag(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusFlagged), protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -79,7 +79,7 @@ func (h *Handlers) binQualityHold(b *domain.Bin, params json.RawMessage) error {
 	if p.Reason != "" {
 		svc.AddNote(b.ID, "hold", p.Reason, actor)
 	}
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -88,7 +88,7 @@ func (h *Handlers) binMaintenance(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusMaintenance), protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -103,7 +103,7 @@ func (h *Handlers) binRetire(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusRetired), protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -112,7 +112,7 @@ func (h *Handlers) binRelease(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", string(domain.BinStatusStaged), string(domain.BinStatusAvailable), protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -121,7 +121,7 @@ func (h *Handlers) binStage(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusStaged), protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
@@ -137,7 +137,7 @@ func (h *Handlers) binLock(b *domain.Bin, params json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "locked", "", actor, actor)
-	h.emitBinUpdate(b, "locked", actor)
+	h.emitBinUpdate(b, engine.BinActionLocked, actor)
 	return nil
 }
 
@@ -146,7 +146,7 @@ func (h *Handlers) binUnlock(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "unlocked", b.LockedBy, "", protocol.AuditActorUI)
-	h.emitBinUpdate(b, "unlocked", "")
+	h.emitBinUpdate(b, engine.BinActionUnlocked, "")
 	return nil
 }
 
@@ -175,7 +175,7 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 	if fresh != nil {
 		b = fresh
 	}
-	h.emitBinUpdate(b, "loaded", p.PayloadCode)
+	h.emitBinUpdate(b, engine.BinActionLoaded, p.PayloadCode)
 	return nil
 }
 
@@ -186,7 +186,7 @@ func (h *Handlers) binClear(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", protocol.AuditActorUI)
-	h.emitBinUpdate(b, "cleared", "")
+	h.emitBinUpdate(b, engine.BinActionCleared, "")
 	// Tell Edge the bin at this node is now EMPTY — not that it left.
 	//
 	// This used to send Released=true, borrowed from binMove. Released means "the
@@ -226,7 +226,7 @@ func (h *Handlers) binConfirmManifest(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "confirmed", "unconfirmed", "confirmed", protocol.AuditActorUI)
-	h.emitBinUpdate(b, "loaded", "")
+	h.emitBinUpdate(b, engine.BinActionLoaded, "")
 	return nil
 }
 
@@ -235,7 +235,7 @@ func (h *Handlers) binUnconfirmManifest(b *domain.Bin, _ json.RawMessage) error 
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "unconfirmed", "confirmed", "unconfirmed", protocol.AuditActorUI)
-	h.emitBinUpdate(b, "loaded", "")
+	h.emitBinUpdate(b, engine.BinActionLoaded, "")
 	return nil
 }
 
@@ -262,7 +262,7 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
 		BinID:       b.ID,
 		NodeID:      p.NodeID,
-		Action:      "moved",
+		Action:      engine.BinActionMoved,
 		PayloadCode: b.PayloadCode,
 		FromNodeID:  derefInt64(b.NodeID),
 		ToNodeID:    p.NodeID,
@@ -341,7 +341,7 @@ func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 	if res.Warning != "" {
 		svc.AddNote(b.ID, "count", res.Warning, actor)
 	}
-	h.emitBinUpdate(b, "counted", "")
+	h.emitBinUpdate(b, engine.BinActionCounted, "")
 
 	// Broadcast the corrected UOP to every Edge station. The station that
 	// models this Core node applies it: if the bin is already bound there it
@@ -397,11 +397,11 @@ func (h *Handlers) binUpdate(b *domain.Bin, params json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "updated", "", "", protocol.AuditActorUI)
-	h.emitBinUpdate(b, "status_changed", "")
+	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }
 
-func (h *Handlers) emitBinUpdate(b *domain.Bin, action, detail string) {
+func (h *Handlers) emitBinUpdate(b *domain.Bin, action engine.BinAction, detail string) {
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
 		BinID:       b.ID,
 		NodeID:      derefInt64(b.NodeID),
