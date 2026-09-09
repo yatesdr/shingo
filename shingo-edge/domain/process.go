@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"time"
 
 	"shingo/protocol"
@@ -514,11 +515,87 @@ func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim 
 		return nil
 	}
 	// The position must be one this parent actually names. Any other claimless node
-	// holding a task is a different problem and stays claimless.
-	if parent.PairedCoreNode != coreNodeName && parent.SecondPairedCoreNode != coreNodeName {
+	// holding a task is a different problem and stays claimless. EXTENSIONS ONLY:
+	// the front node has its own persisted claim and never needs synthesising.
+	if !slices.Contains(parent.ExtensionPositions(), coreNodeName) {
 		return nil
 	}
 	return SynthesizePositionClaim(parent, coreNodeName)
+}
+
+// Positions returns every core node this claim's layout occupies, front first:
+// its own node, then the index positions behind it. Blank names are dropped, so
+// a two-position press yields two, a three-position press three, and an
+// ordinary single-node cell one.
+//
+// THE ONE PLACE THE GEOMETRY QUESTION IS DERIVED. "Which core nodes does this
+// claim occupy" was answered by hand-writing the three fields into a literal at
+// a dozen sites, which meant the question had no name and no reader could tell
+// two spellings of it apart from two different questions. The duplication is
+// not hypothetical: pressIndexExtensionPositions was extracted after the
+// fan-out and the participant builder disagreed about a press's geometry, and
+// that extraction reached two of the sites.
+//
+// UNGATED BY SWAP MODE, deliberately. A claim occupies the nodes it names,
+// whatever mode it runs; only two_robot_press_index names more than one today,
+// so for every other mode this returns the single front node and the callers
+// that already knew that lose nothing. A caller that needs the answer only for
+// a press keeps its own mode check — see pressIndexPositions, whose gate is
+// load-bearing at its call sites — because folding a gate in here would make
+// one function answer two questions.
+//
+// Nil-safe: a claim that does not exist occupies nothing, which removes a nil
+// check from every call site rather than moving it. Returns nil rather than an
+// empty slice when there is nothing to return, matching the free functions it
+// replaces.
+func (c *NodeClaim) Positions() []string {
+	if c == nil {
+		return nil
+	}
+	return nonBlank(c.CoreNodeName, c.PairedCoreNode, c.SecondPairedCoreNode)
+}
+
+// ExtensionPositions returns the index positions BEHIND this claim's own node —
+// the paired position and, on a three-position press, the second paired one.
+// Blank names are dropped.
+//
+// IT IS NOT Positions()[1:]. The front node can itself be blank on a partly
+// built claim, and a tail-slice would then silently return the paired position
+// as though it were the front. Both derive from the same walk instead.
+//
+// THE SCOPE IS THE POINT, and it is why this is a second method rather than a
+// parameter. fanOutPositions wants the front as slot 0; FanOutPressIndexCrossMode
+// must NOT include it, because the front is already the diff's own node. A
+// single function with an includeFront flag would put that difference at the
+// call sites as a boolean, which is where it was before it had a name.
+func (c *NodeClaim) ExtensionPositions() []string {
+	if c == nil {
+		return nil
+	}
+	return nonBlank(c.PairedCoreNode, c.SecondPairedCoreNode)
+}
+
+// Positions is the input-shape twin of NodeClaim.Positions — the same question
+// asked of a claim that is not stored yet, which is what validation sees.
+//
+// A second call of the same helper rather than a conversion, for the reason
+// NodeClaimInput.IsLoaderNode gives: building a NodeClaim from an input just to
+// ask this would invent values the submitter did not send.
+func (in NodeClaimInput) Positions() []string {
+	return nonBlank(in.CoreNodeName, in.PairedCoreNode, in.SecondPairedCoreNode)
+}
+
+// nonBlank collects the non-empty names in order. Both geometry readers and
+// their input twin share it so that "blank means this position does not exist"
+// is decided once.
+func nonBlank(names ...string) []string {
+	var out []string
+	for _, n := range names {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // AllowedPayloads returns the effective set of payload codes this claim
@@ -720,16 +797,11 @@ func ToolingClearanceApplies(from, to *NodeClaim) bool {
 
 // claimOccupies reports whether this claim's layout occupies the named core
 // node — its own, or either index position behind it.
+//
+// Kept as a free function rather than promoted to a method: both callers are in
+// this package, and the geometry it asks about is already exported as Positions.
 func claimOccupies(c *NodeClaim, coreNode string) bool {
-	if c == nil {
-		return false
-	}
-	for _, n := range []string{c.CoreNodeName, c.PairedCoreNode, c.SecondPairedCoreNode} {
-		if n != "" && n == coreNode {
-			return true
-		}
-	}
-	return false
+	return coreNode != "" && slices.Contains(c.Positions(), coreNode)
 }
 
 // MarkedEvacNodes is every node this claim marks for changeover clearance, in

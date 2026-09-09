@@ -111,17 +111,17 @@ func (t toolingChangeover) active() bool { return len(t.presses) > 0 }
 
 // pressIndexPositions is every core node a press-index claim occupies, front to
 // back. Empty for a claim that is not press-index.
+//
+// THE GATE IS THE FUNCTION. Claim.Positions answers the geometry for any claim;
+// this narrows it to a press, and both callers depend on that narrowing — one
+// ranges over the result, the other tests it for emptiness to mean "not a press
+// with positions". Asking Positions directly at those sites would widen them to
+// every single-node cell on the line.
 func pressIndexPositions(c *processes.NodeClaim) []string {
 	if c == nil || c.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return nil
 	}
-	var out []string
-	for _, n := range []string{c.CoreNodeName, c.PairedCoreNode, c.SecondPairedCoreNode} {
-		if n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
+	return c.Positions()
 }
 
 // planToolingChangeover reads the ORIGINAL claim lists — not the diffs — and

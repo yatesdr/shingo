@@ -166,13 +166,11 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		// intentionally out of scope here — they don't trigger this
 		// downgrade and need a separate decision (refuse vs. auto-prime).
 		if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-			if claim.PairedCoreNode != "" && !isOccupied(occupancy, claim.PairedCoreNode) {
-				plan.PrimePairedPositions = append(plan.PrimePairedPositions,
-					SimplePrime{Source: claim.InboundSource, Dest: claim.PairedCoreNode})
-			}
-			if claim.SecondPairedCoreNode != "" && !isOccupied(occupancy, claim.SecondPairedCoreNode) {
-				plan.PrimePairedPositions = append(plan.PrimePairedPositions,
-					SimplePrime{Source: claim.InboundSource, Dest: claim.SecondPairedCoreNode})
+			for _, pos := range claim.ExtensionPositions() {
+				if !isOccupied(occupancy, pos) {
+					plan.PrimePairedPositions = append(plan.PrimePairedPositions,
+						SimplePrime{Source: claim.InboundSource, Dest: pos})
+				}
 			}
 		}
 		return plan, nil

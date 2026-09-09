@@ -70,14 +70,15 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 	if claim == nil {
 		return occ
 	}
+	// The head node unconditionally, EVEN IF BLANK: the map is keyed by the
+	// names asked about and isOccupied treats a missing key as occupied, so
+	// dropping a blank head here would change a suppressing answer into a
+	// permissive one. The extensions come from the claim's geometry, and only
+	// for a press — a stale PairedCoreNode on some other mode is not a position
+	// this cell occupies and must not be queried.
 	names := []string{claim.CoreNodeName}
 	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		if claim.PairedCoreNode != "" {
-			names = append(names, claim.PairedCoreNode)
-		}
-		if claim.SecondPairedCoreNode != "" {
-			names = append(names, claim.SecondPairedCoreNode)
-		}
+		names = append(names, claim.ExtensionPositions()...)
 	}
 	if !e.coreClient.Available() {
 		log.Printf("[occupied-check] core API not configured, assuming occupied for %v", names)
@@ -964,7 +965,7 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		// One-legged: there is no sibling to wait for.
 		return nil
 	}
-	positions := pressPositionNodes(claim)
+	positions := claim.Positions()
 	// TWO ARMS, AND THEY ARE NOT SYMMETRIC.
 	//
 	// The supply leg is the placing leg BY THE CALLER'S OWN CLASSIFICATION —
@@ -1019,18 +1020,6 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(sibling.Status)}
 	}
 	return nil
-}
-
-// pressPositionNodes lists the physical positions of a press-index cell, front
-// first. Empty names are dropped, so a 2-position press yields two.
-func pressPositionNodes(claim *processes.NodeClaim) []string {
-	out := make([]string, 0, 3)
-	for _, n := range []string{claim.CoreNodeName, claim.PairedCoreNode, claim.SecondPairedCoreNode} {
-		if n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
 }
 
 // legPlacesAtAnyPosition returns the first position this order sets a bin down on, or

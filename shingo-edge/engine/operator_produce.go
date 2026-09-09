@@ -199,8 +199,8 @@ func (e *Engine) primeBarePressIndexPositions(
 		return nil, false, perr
 	}
 	var bare, needsPrime []string
-	for _, pos := range []string{claim.PairedCoreNode, claim.SecondPairedCoreNode} {
-		if pos == "" || isOccupied(occupancy, pos) {
+	for _, pos := range claim.ExtensionPositions() {
+		if isOccupied(occupancy, pos) {
 			continue
 		}
 		bare = append(bare, pos)
@@ -270,10 +270,7 @@ func (e *Engine) pairedPositionsAlreadyPrimed(node *processes.Node, claim *proce
 		return nil, nil
 	}
 	primed := map[string]bool{}
-	for _, pos := range []string{claim.PairedCoreNode, claim.SecondPairedCoreNode} {
-		if pos == "" {
-			continue
-		}
+	for _, pos := range claim.ExtensionPositions() {
 		n, err := e.countActiveOrdersAtNode(pos, func(o orders.Order) bool { return o.RetrieveEmpty })
 		if err != nil {
 			return nil, fmt.Errorf("node %s: check inbound empties at paired position %s: %w", node.Name, pos, err)

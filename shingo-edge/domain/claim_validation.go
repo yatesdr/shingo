@@ -224,14 +224,9 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 			add("changeover_evac_nodes",
 				"Per-node changeover clearance applies to a cell whose claim names several nodes; use Evacuate on changeover for a single-node claim")
 		} else {
-			held := map[string]bool{}
-			for _, n := range []string{in.CoreNodeName, in.PairedCoreNode, in.SecondPairedCoreNode} {
-				if n != "" {
-					held[n] = true
-				}
-			}
+			held := in.Positions()
 			for _, node := range marked {
-				if !held[node] {
+				if !slices.Contains(held, node) {
 					add("changeover_evac_nodes", fmt.Sprintf(
 						"%q is marked for changeover clearance but is not one of this claim's nodes", node))
 				}
