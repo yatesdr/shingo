@@ -341,7 +341,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// shared window), orthogonal to role per the home_location_loaders data model, so
 	// a consume manual_swap (unloader) carries it too. Any manual_swap claim qualifies.
 	if in.HomeLocationLoader != nil &&
-		in.SwapMode == protocol.SwapModeManualSwap {
+		in.IsLoaderNode() {
 		username, _ := h.sessions.getUser(r)
 		if err := h.engine.StyleService().SetHomeLocationLoader(in.CoreNodeName, *in.HomeLocationLoader, username); err != nil {
 			log.Printf("WARNING api apiUpsertStyleNodeClaim: set home-location loader %s: %v", in.CoreNodeName, err)

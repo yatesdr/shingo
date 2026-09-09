@@ -82,7 +82,7 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 		out = append(out, FieldError{Field: field, Message: msg, Severity: SeverityError})
 	}
 	route := OptValue(in.KeyRoute)
-	if len(route) > 0 && in.SwapMode == protocol.SwapModeManualSwap {
+	if len(route) > 0 && in.IsLoaderNode() {
 		add("key_route", "Key route applies to robot-served claims; a manual_swap loader does not drive")
 	}
 	seenPoint := map[string]bool{}
@@ -198,7 +198,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 
 	// manual_swap loaders carry no edge-side payload: Core owns the loader's
 	// payload set from the loader board. Every other mode needs a primary.
-	if in.SwapMode != protocol.SwapModeManualSwap &&
+	if !in.IsLoaderNode() &&
 		(in.Role == protocol.ClaimRoleConsume || in.Role == protocol.ClaimRoleProduce) &&
 		in.PayloadCode == "" {
 		add("payload_code", "Select a payload")

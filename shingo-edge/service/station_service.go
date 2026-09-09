@@ -827,6 +827,20 @@ func (s *StationService) prefetchBoardData(
 	}
 }
 
+// isLoaderProduceTile reports whether this board card is a loader's supply
+// window — the only card the lineside pass has anything to say about.
+//
+// One predicate because applyLoaderLineside asks the question twice: once to
+// decide whether the plant-wide scan is worth running at all, and again to pick
+// the cards to write its answer onto. Those two must agree exactly — a scan run
+// for a tile the loop then skips is pure cost, and a tile the loop writes to
+// without the scan having run reads its badges off an empty map — and when they
+// were written out separately, in opposite polarity fifteen lines apart, nothing
+// but care kept them in step.
+func isLoaderProduceTile(nv *store.StationNodeView) bool {
+	return nv.ActiveClaim.IsLoaderNode() && nv.ActiveClaim.Role == protocol.ClaimRoleProduce
+}
+
 // applyLoaderLineside is the board's last pass: lineside UOP per active
 // payload, attached to the manual_swap loader tiles that can render it.
 //
@@ -842,10 +856,7 @@ func (s *StationService) prefetchBoardData(
 func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
 	wantsLineside := false
 	for i := range view.Nodes {
-		nv := &view.Nodes[i]
-		if nv.ActiveClaim != nil &&
-			nv.ActiveClaim.SwapMode == protocol.SwapModeManualSwap &&
-			nv.ActiveClaim.Role == protocol.ClaimRoleProduce {
+		if isLoaderProduceTile(&view.Nodes[i]) {
 			wantsLineside = true
 			break
 		}
@@ -858,9 +869,7 @@ func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
 	if lineside := s.activePayloadLineside(wantsLineside); wantsLineside {
 		for i := range view.Nodes {
 			nv := &view.Nodes[i]
-			if nv.ActiveClaim == nil ||
-				nv.ActiveClaim.SwapMode != protocol.SwapModeManualSwap ||
-				nv.ActiveClaim.Role != protocol.ClaimRoleProduce {
+			if !isLoaderProduceTile(nv) {
 				continue
 			}
 			// THE LOADER AGGREGATE IS CORE-OWNED AND CARRIES THE THRESHOLD.
@@ -1176,7 +1185,7 @@ func (s *StationService) buildNodeTile(
 func (s *StationService) applyManualSwapLoaderFields(
 	nodeView *store.StationNodeView, node processes.Node, b *boardData,
 ) {
-	if nodeView.ActiveClaim != nil && nodeView.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
+	if nodeView.ActiveClaim.IsLoaderNode() {
 		if rp, ok := b.loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
 			nodeView.ActiveStylePayloads = rp.Active
 			nodeView.AllStylePayloads = rp.All

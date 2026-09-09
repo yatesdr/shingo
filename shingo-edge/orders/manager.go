@@ -121,7 +121,7 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	// (RequestEmptyBin / maybeStageLoaderEmpty ship a blank code so the carrier
 	// is generic and LoadBin binds the real payload). Re-injecting the claim's
 	// payload here would silently re-tag that agnostic empty.
-	if payloadCode == "" && claim.SwapMode != protocol.SwapModeManualSwap {
+	if payloadCode == "" && !claim.IsLoaderNode() {
 		payloadCode = claim.PayloadCode
 	}
 	if entry, err := catalog.GetCatalogByCode(m.db.DB, payloadCode); err == nil && entry.Description != "" {

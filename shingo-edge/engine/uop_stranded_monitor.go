@@ -189,7 +189,7 @@ func (sm *strandedMonitor) evaluate(node *processes.Node, now time.Time) {
 	// on the bin tab" fix and the consuming-active co-condition are consume-
 	// specific. Skip produce / manual_swap / unclaimed nodes and drop any state.
 	claim := requestedClaimAtNode(e.db, node)
-	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IsLoaderNode() {
 		delete(sm.states, node.ID)
 		sm.clear(node.CoreNodeName)
 		return

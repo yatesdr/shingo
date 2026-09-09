@@ -835,7 +835,7 @@ func computeCoupling(plant *plantspec.Plant, rate, avail map[string]float64) []i
 	consumerOf := map[string]string{} // payload -> process drawing it on a tick
 	for _, ac := range activeClaims(plant) {
 		c := ac.claim
-		if c.IsManualSwap() || !c.IsActivePull() {
+		if c.IsLoader() || !c.IsActivePull() {
 			continue
 		}
 		switch c.Role {

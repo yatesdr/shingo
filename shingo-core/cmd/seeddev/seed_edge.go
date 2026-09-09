@@ -270,7 +270,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 	}
 	runtimeSeeded := 0
 	for _, c := range p.Claims {
-		if c.IsManualSwap() || (c.Role != "produce" && c.Role != "consume") {
+		if c.IsLoader() || (c.Role != "produce" && c.Role != "consume") {
 			continue
 		}
 		if activeStyleByProcess[styleProc[c.Style]] != c.Style {

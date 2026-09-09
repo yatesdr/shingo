@@ -588,7 +588,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// deleted would silently lose its multi-order queue and start refusing the
 	// operator's second tap. requestedClaimAtNode answers the configuration
 	// question from the style the process is running.
-	if claim := requestedClaimAtNode(e.db, node); claim != nil && claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim := requestedClaimAtNode(e.db, node); claim.IsLoaderNode() {
 		return true, ""
 	}
 

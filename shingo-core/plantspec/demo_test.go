@@ -50,7 +50,7 @@ func TestShippedDemoPlantLoaderTypes(t *testing.T) {
 	// at least one exists.
 	var singles []Claim
 	for _, c := range p.Claims {
-		if c.IsManualSwap() && c.Role == "produce" && c.WindowOf == "" && c.HomeOf == "" {
+		if c.IsLoader() && c.Role == "produce" && c.WindowOf == "" && c.HomeOf == "" {
 			singles = append(singles, c)
 		}
 	}

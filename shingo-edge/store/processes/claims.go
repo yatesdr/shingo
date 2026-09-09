@@ -240,14 +240,14 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode) {
 		return 0, fmt.Errorf("%w: %q is not a configurable swap_mode", protocol.ErrInvalidSwapMode, in.SwapMode)
 	}
-	// manual_swap claims require OutboundDestination — without it the
-	// post-swap bin has nowhere to go and the node deadlocks.
-	if in.SwapMode == protocol.SwapModeManualSwap && in.OutboundDestination == "" {
-		return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
-	}
-	// manual_swap claims must auto-confirm delivery (operator action IS
-	// the acknowledgement).
-	if in.SwapMode == protocol.SwapModeManualSwap {
+	// The two standing rules for a loader claim, asked once. It requires an
+	// OutboundDestination — without one the post-swap bin has nowhere to go and
+	// the node deadlocks — and it must auto-confirm delivery, because the
+	// operator's own action at the window IS the acknowledgement.
+	if in.IsLoaderNode() {
+		if in.OutboundDestination == "" {
+			return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
+		}
 		in.AutoConfirm = true
 	}
 	// two_robot claims require InboundStaging. Robot A drops the new bin

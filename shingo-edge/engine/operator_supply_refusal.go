@@ -220,7 +220,7 @@ func (e *Engine) loaderCardNode(processNodeID int64, payloadCode string) (*proce
 	if cerr != nil || claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
+	if !claim.IsLoaderNode() {
 		return nil, fmt.Errorf("node %s is not a loader window (swap mode %q)", node.Name, claim.SwapMode)
 	}
 	return node, nil

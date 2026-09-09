@@ -285,7 +285,7 @@ func (op *simOperator) runConfirm(orderID, nodeID int64) {
 	if err != nil || node == nil || claim == nil {
 		return
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return // loader/unloader — LOAD/CLEAR owns its lifecycle
 	}
 	order, err := op.e.db.GetOrder(orderID)
@@ -717,7 +717,7 @@ func (op *simOperator) sweepManualSwapNodes() {
 		// THE ENGINE METHOD, not the package function — see classifyFromClaim for
 		// why that distinction is load-bearing for Core-owned loaders.
 		_, runtime, claim, lErr := op.e.loadActiveNode(n.ID)
-		if lErr != nil || claim == nil || claim.SwapMode != protocol.SwapModeManualSwap {
+		if lErr != nil || !claim.IsLoaderNode() {
 			continue
 		}
 		// Same A/B rule the classifier applies: a bin parked at the inactive side
@@ -1198,7 +1198,7 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 	if err != nil || node == nil || claim == nil {
 		return 0, "", nil, false
 	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
+	if !claim.IsLoaderNode() {
 		return 0, "", nil, false // only operator-driven manual_swap nodes
 	}
 	// A/B pair: only the active-pull side is the live window — a bin parked at

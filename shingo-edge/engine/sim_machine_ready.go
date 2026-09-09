@@ -5,7 +5,7 @@ package engine
 import (
 	"database/sql"
 
-	"shingo/protocol"
+	"shingoedge/store/processes"
 )
 
 // SimMachineReady answers ONE question for the whole rig: is this process's
@@ -68,15 +68,19 @@ func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 	defer rows.Close()
 
 	for rows.Next() {
-		var role, swapMode string
+		var role string
 		var uopCap, remainingUOP int
 		var activeBinID sql.NullInt64
 		var activePull bool
-		if err := rows.Scan(&role, &swapMode, &uopCap, &activeBinID, &remainingUOP, &activePull); err != nil {
+		// Scanned into a claim rather than a bare string so the loader question
+		// is asked by name, the same way every other reader asks it. SwapMode is
+		// a sql.Scanner, so this costs nothing at the scan.
+		var claim processes.NodeClaim
+		if err := rows.Scan(&role, &claim.SwapMode, &uopCap, &activeBinID, &remainingUOP, &activePull); err != nil {
 			return true
 		}
-		// manual_swap nodes are operator-managed, not PLC-ticked.
-		if swapMode == string(protocol.SwapModeManualSwap) {
+		// Loader windows are operator-managed, not PLC-ticked.
+		if claim.IsLoaderNode() {
 			continue
 		}
 		// Parked A/B side (active_pull=false): the line isn't filling or draining

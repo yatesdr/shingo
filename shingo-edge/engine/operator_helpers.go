@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -37,6 +39,38 @@ func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.Runti
 		claim = synth
 	}
 	return node, runtime, claim, nil
+}
+
+// requireLoaderClaim is the shared precondition of every operator action that
+// only a loader window may take: LOAD, CLEAR, push-empty-out, request-full-bin.
+// Each of those used to spell it out itself — a nil-claim check and a swap-mode
+// comparison, byte-identical in four files and refusing with the same sentence —
+// and this is that duplication collapsed to one reader.
+//
+// THE MESSAGES ARE VERBATIM WHAT THEY WERE. An operator reads these on the HMI
+// when a tap is refused, so the wording is behaviour: "not a manual_swap node"
+// still says manual_swap, because renaming what a human reads is a product
+// change and this is a refactor. The vocabulary on the floor moves when someone
+// decides it should, not as a side effect of tidying the code behind it.
+//
+// Takes an already-loaded (node, claim) rather than loading them itself: LoadBin
+// deliberately runs its paired/on-deck check BETWEEN the load and this gate, so
+// that a press's on-deck position gets the message explaining on-deck positions
+// rather than a generic refusal. A resolver that did the loading would have
+// reordered that.
+//
+// loaderCardNode (operator_supply_refusal.go) asks the same question and is NOT
+// folded in here: it answers with a different sentence that names the offending
+// mode, which is the more useful diagnostic on a dead refusal button and worth
+// keeping distinct.
+func requireLoaderClaim(node *processes.Node, claim *processes.NodeClaim) error {
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if !claim.IsLoaderNode() {
+		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	}
+	return nil
 }
 
 // synthLoaderClaim returns a synthesized manual_swap NodeClaim for a node that is a

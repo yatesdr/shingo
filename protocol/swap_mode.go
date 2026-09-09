@@ -39,14 +39,19 @@ import (
 //
 // "manual_swap" is the standing counter-example, and it is worth reading
 // before adding another. It does not name a choreography — it names a place a
-// forklift driver works. plantspec.Claim.IsManualSwap documents itself as
-// "a forklift-managed loader/unloader claim"; store/processes.PayloadsForLoader
-// implements the word "loader" as WalkOpts{SwapMode: manual_swap}; and
-// domain.Loader.SynthClaim stamps the mode onto an in-memory claim for a thing
-// that has no swap at all, purely so those branches engage. The cost is that a
-// reader who wants to know what a loader is has to find the sites and infer
-// the concept. Ask the loader question of the claim
-// (NodeClaim.IsLoaderNode), not of this field.
+// forklift driver works, and the code knew it long before it said so:
+// plantspec.Claim's loader predicate was documented as "a forklift-managed
+// loader/unloader claim" while being named IsManualSwap after the field it
+// read; store/processes.PayloadsForLoader implements the word "loader" as
+// WalkOpts{SwapMode: manual_swap}; and domain.Loader.SynthClaim stamps this
+// mode onto an in-memory claim for a thing that has no swap at all, purely so
+// the branches engage. Every author wrote "loader" in the comment and
+// "manual_swap" in the code, so the concept had no name and a reader had to
+// find the sites and infer it.
+//
+// Ask the loader question of the claim — domain.NodeClaim.IsLoaderNode on the
+// Edge, plantspec.Claim.IsLoader on Core — not of this field. Those two are the
+// only permitted readers, and a drift test enforces it.
 //
 // HOW TO TELL AN ESSENTIAL MODE BRANCH FROM ONE THAT SHOULD MOVE.
 //

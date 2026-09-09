@@ -182,11 +182,8 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		return fmt.Errorf("%s is an on-deck / paired position — it may hold only an empty carrier, never a stamped part. Load the part at the press's core (front) position instead", node.Name)
 	}
 
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim", node.Name)
-	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return err
 	}
 	if len(manifest) == 0 {
 		return fmt.Errorf("manifest is empty")
@@ -442,11 +439,8 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if err != nil {
 		return err
 	}
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim", node.Name)
-	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return err
 	}
 	// Capture the bin in the window BEFORE confirm/clear, while Core's manifest is
 	// still coherent. clearedPayload threads onto the empty-out so the operator board
@@ -564,12 +558,9 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if err != nil {
 		return err
 	}
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim", node.Name)
-	}
 	// Mirror ClearBin: PushEmptyOut is for manual_swap consume windows only.
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return err
 	}
 	if claim.Role != protocol.ClaimRoleConsume {
 		return fmt.Errorf("node %s is not a consume node", node.Name)
@@ -732,25 +723,25 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	//
 	//   - simple / multi-step (press swap) nodes: the empty rides the same robot
 	//     choreography as the part it precedes, so a payload is still required.
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	//
+	// Validation and routing are ONE decision, asked once: a loader validates
+	// loosely and routes to the per-loader reservation seam — the same seam the
+	// demand and threshold paths use — while every other mode validates strictly
+	// and routes to the swap seam. They were two consecutive branches on the same
+	// predicate, which read as though a claim could answer them differently.
+	if claim.IsLoaderNode() {
 		if payloadCode != "" && !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 		}
-	} else {
-		if payloadCode == "" {
-			return nil, fmt.Errorf("no payload code specified")
-		}
-		if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
-			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
-		}
-	}
-
-	// manual_swap loaders route their empty-in reservation through the SAME
-	// per-loader seam as the demand/threshold paths — see the extracted arm.
-	if claim.SwapMode == protocol.SwapModeManualSwap {
 		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
 	}
 
+	if payloadCode == "" {
+		return nil, fmt.Errorf("no payload code specified")
+	}
+	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
+		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
 	return e.requestEmptyForSwapModes(nodeID, node, runtime, claim, payloadCode, reqOrigin)
 }
 
@@ -980,11 +971,8 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	if err != nil {
 		return nil, err
 	}
-	if claim == nil {
-		return nil, fmt.Errorf("node %s has no active claim", node.Name)
-	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return nil, err
 	}
 	if claim.Role != protocol.ClaimRoleConsume {
 		return nil, fmt.Errorf("node %s: only consume nodes request full bins", node.Name)

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -120,7 +119,7 @@ func (e *Engine) guardPositionSpokenFor(node *processes.Node, runtime *processes
 	if node == nil || claim == nil {
 		return nil
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return nil
 	}
 	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
@@ -206,7 +205,7 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 	if node == nil || claim == nil {
 		return nil
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return nil
 	}
 	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
@@ -256,7 +255,7 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 	if node == nil || claim == nil {
 		return nil
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return nil
 	}
 	if e.catidMon == nil {

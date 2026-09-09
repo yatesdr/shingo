@@ -542,6 +542,35 @@ func (c *NodeClaim) AllowedPayloads() []string {
 	return nil
 }
 
+// IsLoaderNode reports whether this claim describes a forklift-managed
+// loader/unloader window rather than a robot-served line cell.
+//
+// THE ONE PLACE THE LOADER QUESTION IS DERIVED. Everything that needs to know
+// whether it is looking at a loader asks here; nothing else compares SwapMode
+// to manual_swap. Before this existed the question was asked by pattern-matching
+// the mode field at forty-odd sites, which meant the concept had no name and a
+// reader who wanted to know what a loader is had to find the sites and infer it.
+// See the swap-mode law on protocol.SwapMode for why a gate may not read a mode
+// name, and protocol_test.TestLoaderQuestionHasOneDerivationPoint for the guard
+// that keeps the derivations countable.
+//
+// WHY THE MODE FIELD IS STILL WHAT IT READS. manual_swap is authored
+// configuration, not an internal marker: it is persisted in
+// style_node_claims.swap_mode, listed in ConfigurableSwapModes so the editor's
+// Swap Mode dropdown offers it, written by hand in every plants/*.yaml, and read
+// off the wire by the operator board's JavaScript. Retiring the value is a
+// migration plus a wire change plus a front-end change, and nothing the loader
+// question needs requires it. So the value stays as the STORAGE for a node-kind
+// fact, and this method is the boundary: one derivation, and callers that name
+// the concept instead of matching a string.
+//
+// Nil-safe because most callers reach a claim through a lookup that can miss,
+// and "there is no claim" is not a loader — folding that in here removes a
+// nil check from every call site rather than moving it.
+func (c *NodeClaim) IsLoaderNode() bool {
+	return c != nil && c.SwapMode == protocol.SwapModeManualSwap
+}
+
 // Ptr returns a pointer to v. It exists for the absent-means-untouched fields
 // on NodeClaimInput below, which cannot be written as &true / &1 inline.
 func Ptr[T any](v T) *T { return &v }
@@ -906,6 +935,19 @@ type NodeClaimInput struct {
 	// Same rules as OperatorDriven: applied only for a produce manual_swap
 	// claim; a nil pointer leaves the set untouched.
 	HomeLocationLoader *bool `json:"home_location_loader,omitempty"`
+}
+
+// IsLoaderNode reports whether the claim being submitted describes a
+// forklift-managed loader/unloader window. The input-shape twin of
+// NodeClaim.IsLoaderNode — same question, asked of a claim that is not stored
+// yet, which is what validation and upsert see.
+//
+// It is a second derivation rather than a conversion because the two types are
+// genuinely different shapes: the input carries optional pointer fields for
+// absent-means-untouched, and building a NodeClaim from one just to ask this
+// would invent values the submitter did not send.
+func (in NodeClaimInput) IsLoaderNode() bool {
+	return in.SwapMode == protocol.SwapModeManualSwap
 }
 
 // NodeTaskInput is the input shape for creating a per-node changeover
