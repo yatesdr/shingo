@@ -66,6 +66,36 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		return
 	}
 
+	// ── ONE POSITION, ONE INBOUND CARRIER ─────────────────────────────────────
+	//
+	// The backfill exists because the steady-state Order A only REMOVES: it
+	// lifts the full bin out and brings nothing back, so without Order B the
+	// position never gets a fresh carrier. A changeover's Order A is the other
+	// shape — it drops the old bin at the outbound destination, fetches the new
+	// style's carrier and returns it to this same position. Minting Order B
+	// there sends a second robot with a second carrier to a slot that already
+	// has one coming, and Order B is two steps against Order A's five: B wins,
+	// A returns to an occupied position, and holdForPosition holds forever
+	// ("a robot cannot place onto an occupied position"). The carrier B left is
+	// claimed by nobody, so nothing reclaims it either. 8 of 8 demo runs across
+	// two trees, and the same wedge on 2026-08-28 under a wrong attribution.
+	//
+	// The guard reads what Order A DOES, not whether a changeover is running.
+	// A changeover test would have to be kept in step with the builders by hand
+	// and would say nothing about the tooling-evacuate variant, which has the
+	// same self-refilling tail.
+	//
+	// FAIL-CLOSED, deliberately, and the two outcomes are not symmetric: an
+	// unreadable plan means "cannot prove Order A brings nothing back", and
+	// skipping the mint costs a position that waits for material and an operator
+	// who can press REQUEST, while minting costs a deadlock that needed the
+	// stack torn down. Same disposition as the cutover gate, for the same reason.
+	if e.orderRefillsNodeItself(order, claim.CoreNodeName) {
+		log.Printf("sequential backfill: no Order B for node %s — Order A %d already brings %s its replacement",
+			node.Name, order.ID, claim.CoreNodeName)
+		return
+	}
+
 	steps := BuildSequentialBackfillSteps(claim)
 	nodeID := node.ID
 	// ATTRIBUTED, and it was not. This order is the plant continuing to serve the
