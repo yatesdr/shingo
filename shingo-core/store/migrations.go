@@ -4192,7 +4192,35 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.IndexExists(q, "idx_cms_txn_one_movement")
 			}},
+
+		{113, "orders.swap_spared_at — the spare decision, durable, so it outlives the pass that records it",
+			v113OrdersSwapSparedAt,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "swap_spared_at")
+			}},
 	}
+}
+
+// v113OrdersSwapSparedAt gives the swap peer-terminal spare somewhere durable to
+// live.
+//
+// The spare — do NOT cancel a supply that is parked on a dry source just because
+// its evac died, so the operator can stock the payload — was re-derived every
+// scanner pass from queue_code == waiting_for_material. The same pass that
+// spared the leg then held it (swap_hold.go Face 2's dead-clearer arm) and wrote
+// waiting_for_partner over that code, so the next pass re-asked the question,
+// got a different answer, and cancelled it. The spare survived exactly one pass
+// and Springfield 2026-07-21's re-arm churn could recur.
+//
+// NULL is correct for every existing row and no backfill is possible or wanted:
+// "was this leg spared" is a question about a decision that was never recorded,
+// and inventing an answer for in-flight legs would spare legs nobody spared.
+// Rows written before this column exists run out under the old rule.
+func v113OrdersSwapSparedAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS swap_spared_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("v113 orders.swap_spared_at: %w", err)
+	}
+	return nil
 }
 
 // v112CMSMovementUnique makes a double-booked movement impossible to store.

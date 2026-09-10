@@ -690,8 +690,19 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 					}
 				}
 				d.HandleSwapPeerTerminal(sib.ID, kind)
-				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil && protocol.IsTerminal(self.Status) {
-					return dispatchStep{done: true, err: fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)}
+				// RE-READ, AND USE IT. The unwind writes to this very row — it
+				// cancels it, or it spares it and stamps swap_spared_at — so the
+				// in-memory copy the scanner handed us is stale from here on. It
+				// was already re-read to test for terminality and then thrown away,
+				// which left the hold verdict below judging a row the line above
+				// had just changed: a leg spared on THIS pass still looked unspared
+				// to Face 2, which relabelled its queue code and took the
+				// operator's actionable cause off the board.
+				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil {
+					if protocol.IsTerminal(self.Status) {
+						return dispatchStep{done: true, err: fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)}
+					}
+					order = self
 				}
 			}
 		}
@@ -716,7 +727,12 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// that made the decision is the only thing that can name it — see
 	// swapHoldVerdict.
 	if v := d.swapLegHoldVerdict(order, resolvedSteps); v.held {
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
+		// keepQueueDetail: the hold stands, the label does not move. See
+		// swapHoldVerdict — a spared leg's clearer is dead, so waiting_for_partner
+		// would replace an actionable cause with one nothing can resolve.
+		if !v.keepQueueDetail {
+			d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
+		}
 		d.dbg("complex: order %d held — %s", order.ID, v.reason)
 		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", v.reason)}
 	}

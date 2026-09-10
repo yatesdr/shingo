@@ -43,7 +43,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, swap_spared_at`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -66,6 +66,9 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var originID sql.NullString
 	// key_route is a JSON array in one TEXT column; '' is the ordinary state.
 	var keyRouteJSON string
+	// swap_spared_at is NULL for every leg that was never spared, which is
+	// almost all of them. See Order.SwapSparedAt.
+	var swapSparedAt sql.NullTime
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
@@ -74,7 +77,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren)
+		&originID, &o.OriginClass, &o.OpenForChildren, &swapSparedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +109,10 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	}
 	if queueCause.Valid {
 		o.QueueCause = queueCause.String
+	}
+	if swapSparedAt.Valid {
+		t := swapSparedAt.Time
+		o.SwapSparedAt = &t
 	}
 	return &o, nil
 }
@@ -1624,4 +1631,39 @@ func ActiveByBinID(db *sql.DB, binID int64) ([]*Order, error) {
 	}
 	defer rows.Close()
 	return ScanOrders(rows)
+}
+
+// StampSwapSpared is THE writer of orders.swap_spared_at — the only thing in
+// shingo-core that records that a swap leg was spared when its sibling died.
+// Everything else reads it.
+//
+// ONE WRITER, ONE FACT, and that is the whole reason the column exists. The
+// spare used to be re-derived every scanner pass from queue_code ==
+// waiting_for_material, and the pass that spared the leg went on to HOLD it and
+// write waiting_for_partner over that code (swap_hold.go Face 2, via
+// setQueueReason). The next pass re-asked the question, got a different answer,
+// and cancelled the wait the spare exists to protect — the Springfield
+// 2026-07-21 re-arm churn, back after one pass. A decision was being stored in a
+// field the verdict pass owns.
+//
+// IDEMPOTENT, AND IT KEEPS THE FIRST INSTANT. `WHERE swap_spared_at IS NULL`
+// means the stamp records when the decision was MADE, not when it was last
+// re-observed — applySwapGates re-runs the peer-terminal unwind on every pass
+// while the sibling is terminal, so a plain assignment would march the timestamp
+// forward forever and make "how long has this been spared" unanswerable.
+//
+// NOTHING CLEARS IT. A leg that was spared stays spared; the row reaches a
+// terminal state soon enough either way, and a clear would be a second writer
+// deciding the same fact.
+//
+// A write that matches no row is not an error here, unlike SetCompoundOpen: the
+// caller is a terminal-cascade handler that races real deletion, and it has
+// already logged and audited the decision by the time it gets here.
+func StampSwapSpared(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`UPDATE orders SET swap_spared_at=$2, updated_at=$2
+		WHERE id=$1 AND swap_spared_at IS NULL`, orderID, clock.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("stamp swap_spared_at on order %d: %w", orderID, err)
+	}
+	return nil
 }

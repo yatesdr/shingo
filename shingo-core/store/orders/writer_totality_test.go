@@ -34,6 +34,7 @@ var deliberatelyNotWritten = map[string]string{
 	"queue_cause":     "same",
 	"remaining_uop":   "operator-declared release correction, carried to the bin claim",
 	"orphan_aged_at":  "stamped by the orphan sweep long after creation; an order is never born aged",
+	"swap_spared_at":  "the peer-terminal spare decision; orders.StampSwapSpared is its one writer, and an order is never born spared",
 	// NOT BINDABLE HERE, and the reason is an ordering rather than a preference.
 	// The moment it records happens BEFORE this INSERT runs -- intake's selector
 	// rewrites a destination on a struct that has no id yet -- so admitOrder

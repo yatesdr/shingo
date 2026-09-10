@@ -156,11 +156,27 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		// that can never source stops re-arming every tick. Surface it so the
 		// half-state is visible instead of silently held.
 		if peerIsParkedWaitingForMaterial(peer) {
-			log.Printf("dispatch: two-robot swap evac (order %d) %s — leaving parked supply %d waiting for material (%s); not cancelling a live wait",
-				dead.ID, terminalKind, peer.ID, peer.QueueCause)
-			d.db.AppendAudit("order", peer.ID, "swap_supply_parked_peer_died", "",
-				fmt.Sprintf("evac sibling %d terminal (%s) while this supply is parked waiting for material (%s) — left alive for operator stock/resume",
-					dead.ID, terminalKind, peer.QueueCause), "system")
+			// STAMP BEFORE LOGGING, and stamp every time we reach here rather than
+			// only on the first pass: StampSwapSpared is idempotent and keeps the
+			// FIRST instant, so this is a no-op on later passes and the timestamp
+			// answers "how long has this been spared" instead of "when did the
+			// scanner last look".
+			//
+			// This is the one writer of that fact. Recording it durably is what
+			// makes the spare outlive the same pass's Face 2 hold, which relabels
+			// the queue code this predicate used to be derived from.
+			if err := orders.StampSwapSpared(d.db.DB, peer.ID); err != nil {
+				log.Printf("dispatch: stamp swap spare on order %d: %v", peer.ID, err)
+			}
+			if peer.SwapSparedAt == nil {
+				// First pass only — the audit surface is a record of the decision,
+				// not of every time it is re-observed.
+				d.db.AppendAudit("order", peer.ID, "swap_supply_parked_peer_died", "",
+					fmt.Sprintf("evac sibling %d terminal (%s) while this supply is parked waiting for material (%s) — left alive for operator stock/resume",
+						dead.ID, terminalKind, peer.QueueCause), "system")
+				log.Printf("dispatch: two-robot swap evac (order %d) %s — leaving parked supply %d waiting for material (%s); not cancelling a live wait",
+					dead.ID, terminalKind, peer.ID, peer.QueueCause)
+			}
 			return
 		}
 		d.resolveSwapPeer(peer, dead,
@@ -184,6 +200,22 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 // code yet) is genuinely live and the fail-closed cancel still applies. The
 // queue code is what distinguishes "parked on a dry need" from "mid-acquire".
 func peerIsParkedWaitingForMaterial(peer *orders.Order) bool {
+	// ALREADY SPARED IS SPARED. The decision is durable (orders.swap_spared_at,
+	// stamped by the branch below and by nothing else), and it is read first
+	// because the queue code underneath it does not survive the pass that makes
+	// it: applySwapGates spares this leg and then HOLDS it — Face 2's
+	// dead-clearer arm, correctly, since its clearer died without clearing the
+	// line — and setQueueReason writes waiting_for_partner over
+	// waiting_for_material on the way out. applySwapGates re-runs this unwind on
+	// every pass while the sibling is terminal, so the next pass used to re-ask
+	// the question, get a different answer, and cancel the wait.
+	//
+	// That is the whole defect: a decision recorded in a field another writer
+	// owns. Re-deriving it every pass is what made a same-pass relabel look like
+	// a change of mind. See orders.StampSwapSpared.
+	if peer.SwapSparedAt != nil {
+		return true
+	}
 	return protocol.IsAcquiring(peer.Status) && peer.QueueCode == string(protocol.QueueWaitingForMaterial)
 }
 
