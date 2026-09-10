@@ -130,28 +130,71 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return nil
 	}
 
-	resolvedSteps, st := d.prepareComplexSteps(order)
+	// ── THE PAIR IS THE UNIT OF WORK, WHEN THERE IS ONE (§ the pair rule) ──
+	//
+	// A coordinated multi-leg order dispatches both legs in this pass or neither.
+	// The fork is on PAIR STRUCTURE — does this order name a sibling — and never
+	// on SwapMode; see complex_pair.go for the rule and for why it is expressible
+	// here, at dispatch, without touching a single line of release.
+	//
+	// A solo order falls straight through to the phases below, unchanged.
+	legs, partnerPending := d.coordinatedPairLegs(order)
+	if partnerPending {
+		return d.parkPairAwaitingPartner(order)
+	}
+	if len(legs) > 1 {
+		return d.dispatchPairInOnePass(order, legs)
+	}
+
+	resolvedSteps, st := d.acquireComplexPhases(order)
 	if st.done {
 		return st.err
 	}
+	return d.dispatchComplexToFleet(order, resolvedSteps)
+}
+
+// acquireComplexPhases runs the ACQUISITION half of complex dispatch — prepare,
+// the swap gates, the destination reserve, the source claim, the lane admit —
+// and returns the resolved steps the fleet create needs.
+//
+// ── WHY THE SEQUENCE IS A FUNCTION NOW ────────────────────────────────────
+//
+// It has two callers: a solo order, and each leg of a coordinated pair. The pair
+// rule needs to run every leg's acquisition and only THEN commit any of them, so
+// the acquisition has to be nameable separately from the commit. Extracting it
+// is what makes "both, or neither" a property of the caller rather than a flag
+// threaded through five phases.
+//
+// The phase ORDER is unchanged and load-bearing, and each phase's own doc says
+// why: slots before bins (one claim class fully ordered before the next is what
+// prevents a slot-versus-bin deadlock cycle), and lanes LAST, after the sources
+// are claimed, because a lane refusal is a wait.
+//
+// done=true means the order was parked or terminalized inside a phase and the
+// caller returns st.err verbatim; the returned slice is meaningless then.
+func (d *Dispatcher) acquireComplexPhases(order *orders.Order) ([]resolvedStep, dispatchStep) {
+	resolvedSteps, st := d.prepareComplexSteps(order)
+	if st.done {
+		return nil, st
+	}
 
 	if st := d.applySwapGates(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
 	if st := d.reserveComplexDestination(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
 	if st := d.acquireComplexSources(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
 	if st := d.admitComplexLanes(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
-	return d.dispatchComplexToFleet(order, resolvedSteps)
+	return resolvedSteps, dispatchStep{}
 }
 
 // admitComplexLanes is the physical question, asked for a coordinated order for

@@ -973,28 +973,87 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return false, err
-	}
-	// Release this order's destination-slot claims too (store dual of the bin
-	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
-	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return false, err
-	}
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
-		return false, err
-	}
-	// Release any reservations this order holds (pending or confirmed). Must run
-	// in the same tx so no window exists where the order is terminal but its
-	// reservation still blocks the bin. The owner-liveness reaper is the
-	// defense-in-depth backstop for any row that leaks past this path.
-	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
+	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return won, nil
+}
+
+// releaseOrderHoldingsTx gives an order's acquisitions back: its hard bin
+// claims, its destination-slot claims, its order_bins junction rows, and its
+// reservations (pending and confirmed). One transaction, one body, and
+// idempotent by construction — every statement is keyed on the order id and
+// matches zero rows the second time.
+//
+// ── WHY IT IS A FUNCTION AND NOT A PARAGRAPH INSIDE TerminalizeOrder ──────
+//
+// It was written for the terminal path and it is not ABOUT terminality. What it
+// encodes is "this order is not going to use these, hand them back", and a
+// PARKED order can be in exactly that position: the pair-as-one-job rule refuses
+// to dispatch either leg of a coordinated swap unless both can go, so a leg that
+// acquired everything it needed and then found its partner blocked must give its
+// acquisitions back rather than squat on them while it waits.
+//
+// Copying the four statements to a second site is how the two would drift — a
+// fifth class of holding added to the terminal path and not to the other, which
+// is the leak the terminal chokepoint exists to prevent, reintroduced at a new
+// door. One body, two callers.
+//
+// WHAT IT DELIBERATELY DOES NOT DO: the _TRANSIT anomaly stamp. That marks a bin
+// that never arrived anywhere and it is a statement about an order that ENDED
+// mid-flight. A parked order has dispatched nothing, so there is no flight to
+// have been interrupted, and stamping here would put an anomaly on the operator
+// recovery board for a swap that is merely waiting for a slot. The stamp stays
+// at the terminal call site, where it also must keep running BEFORE this — its
+// WHERE reads claimed_by, which the first statement here clears.
+//
+// LANE MOUTH HOLDS ARE NOT HERE EITHER, and that is pre-existing: the terminal
+// path has never released them from this transaction. dispatch's
+// ReleaseLanesForOrder owns that, keyed on the same order id, and the pair
+// release calls it alongside this.
+func releaseOrderHoldingsTx(tx *sql.Tx, orderID int64) error {
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	// Release this order's destination-slot claims too (store dual of the bin
+	// release above); ReleaseOrphanedClaims is the defense-in-depth backstop.
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+		return err
+	}
+	// Release any reservations this order holds (pending or confirmed). Must run
+	// in the same tx so no window exists where the order is terminal but its
+	// reservation still blocks the bin. The owner-liveness reaper is the
+	// defense-in-depth backstop for any row that leaks past this path.
+	return reservations.ReleaseByOrder(tx, orderID)
+}
+
+// ReleaseOrderHoldings hands back everything an order acquired WITHOUT moving
+// its status — the non-terminal twin of the release TerminalizeOrder performs.
+//
+// The pair-as-one-job rule is its caller: a coordinated swap dispatches both
+// legs in one pass or neither, so a leg that reserved a destination, claimed its
+// source bins and took its lanes, only for its partner to be refused, must not
+// stay parked holding them. Rule 1's relay reading applied to the pair — the
+// unit of work is the pair, and an incomplete pair holds nothing.
+//
+// The order stays exactly where it is (queued or sourcing) and the scanner
+// replays it; this only drops what it was holding.
+func (db *DB) ReleaseOrderHoldings(orderID int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // FailOrderAtomic transitions an order to "failed" and releases all its holds.

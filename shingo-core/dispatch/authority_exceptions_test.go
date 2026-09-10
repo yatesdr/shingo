@@ -191,23 +191,57 @@ func TestRedirect_AsksAdmission(t *testing.T) {
 // order never reaches the scanner's admit, and the valve only guards a GATED
 // lane, so on the ungated lanes both plants run there was nothing between a
 // changeover swap and a corridor.
+//
+// THE INVARIANT DID NOT MOVE; ITS HOME DID. The ask and the send used to sit in
+// one function body, so one Index comparison covered both halves. The pair rule
+// split complex dispatch into an ACQUISITION half (acquireComplexPhases, which
+// ends with the lane admit) and a COMMIT half (the fleet create), precisely so a
+// coordinated pair can run every leg's acquisition before committing any leg.
+// The property being guarded is unchanged — admission is asked, and it is asked
+// before the fleet create — so this checks it across the two symbols it now
+// lives in rather than being weakened to fit.
+//
+// Both entry points are checked. dispatchPairInOnePass is the coordinated one
+// and is where a future edit is most likely to reorder the two stages.
 func TestComplexDispatch_AsksAdmission(t *testing.T) {
 	t.Parallel()
 
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_dispatch.go"))
-	fn := funcBody(t, body, "func (d *Dispatcher) DispatchPreparedComplex(")
+	pairBody := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_pair.go"))
 
-	askAt := strings.Index(fn, "admitComplexLanes(")
-	if askAt < 0 {
-		t.Fatal("DispatchPreparedComplex does not ask admission. The gated valve does not cover this: " +
+	acquire := funcBody(t, body, "func (d *Dispatcher) acquireComplexPhases(")
+	if !strings.Contains(acquire, "admitComplexLanes(") {
+		t.Fatal("acquireComplexPhases does not ask admission. The gated valve does not cover this: " +
 			"it only stands in front of a gated lane, and neither plant has one")
 	}
-	sendAt := strings.Index(fn, "dispatchComplexToFleet(")
+
+	// Solo path: the acquisition, then the fleet create, in that order.
+	solo := funcBody(t, body, "func (d *Dispatcher) DispatchPreparedComplex(")
+	askAt := strings.Index(solo, "acquireComplexPhases(")
+	if askAt < 0 {
+		t.Fatal("DispatchPreparedComplex no longer runs the acquisition phases; re-derive this test")
+	}
+	sendAt := strings.Index(solo, "dispatchComplexToFleet(")
 	if sendAt < 0 {
 		t.Fatal("DispatchPreparedComplex no longer dispatches; re-derive this test")
 	}
 	if askAt > sendAt {
 		t.Error("the complex tail asks admission after the fleet create")
+	}
+
+	// Coordinated path: same order, and every leg's acquisition runs before any
+	// leg's fleet create — which is the pair rule itself.
+	pair := funcBody(t, pairBody, "func (d *Dispatcher) dispatchPairInOnePass(")
+	pairAskAt := strings.Index(pair, "acquireComplexPhases(")
+	if pairAskAt < 0 {
+		t.Fatal("dispatchPairInOnePass no longer runs the acquisition phases; re-derive this test")
+	}
+	pairSendAt := strings.Index(pair, "dispatchComplexToFleet(")
+	if pairSendAt < 0 {
+		t.Fatal("dispatchPairInOnePass no longer dispatches; re-derive this test")
+	}
+	if pairAskAt > pairSendAt {
+		t.Error("the pair commits a leg to the fleet before the pair has asked admission")
 	}
 }
 
