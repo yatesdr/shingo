@@ -22,10 +22,16 @@ func TestLoadablePayloads_PrefersAggregateOverStaleClaim(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	// Stale per-style edge claim: this loader node's allowed list is just PART-OLD
-	// (what the per-style picker held before it was retired).
-	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PROC", "LDR", "PART-OLD")
-
+	// THE SYNC COMES FIRST, AND THE ORDER IS LOAD-BEARING. seedCoreLoader is
+	// SetCoreLoaders, the live node-list path, and that path now quarantines every
+	// stored manual_swap claim — so seeding the claim before the sync would have
+	// the sync move it, and this test would be handed a SYNTHESIZED claim carrying
+	// the aggregate's own list rather than the stale one it is about.
+	//
+	// Sync-then-save is also the only way the state still arises in the field: an
+	// operator saving a loader cell through the compare grid between two node-list
+	// syncs. The scenario, the subject and the assertions below are unchanged.
+	//
 	// Core-owned aggregate: the loader now carries a broader set — PART-NEW was
 	// added on the board after the per-style edge config was frozen.
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
@@ -37,6 +43,10 @@ func TestLoadablePayloads_PrefersAggregateOverStaleClaim(t *testing.T) {
 			{PayloadCode: "PART-OLD"}, {PayloadCode: "PART-NEW"},
 		},
 	})
+
+	// Stale per-style edge claim: this loader node's allowed list is just PART-OLD
+	// (what the per-style picker held before it was retired).
+	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "PROC", "LDR", "PART-OLD")
 
 	node, _, claim, err := eng.loadActiveNode(nodeID)
 	if err != nil {

@@ -890,6 +890,15 @@ func (db *DB) migrate() error {
 	// the new one.
 	db.Exec("ALTER TABLE orders ADD COLUMN cell_left_at TEXT")
 
+	// LAST, AND THAT IS ITS ONLY ORDERING REQUIREMENT. The claim quarantine is a
+	// column-for-column mirror of style_node_claims, derived from the live column
+	// list rather than written down, so it has to look after every ALTER and
+	// rebuild above has run. A column that arrives in a later migration is
+	// mirrored on the next startup by this same pass.
+	if err := db.EnsureClaimQuarantine(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

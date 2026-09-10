@@ -59,6 +59,12 @@ var loaderModeReaders = map[string]modeReader{
 		"branch; it makes every Core-owned loader board stop working"},
 	"shingo-edge/store/processes/walk.go": {1, "write", "PayloadsForLoader WRITES the mode into a " +
 		"WalkOpts filter — a query predicate against the stored column, which is where the fact lives"},
+	"shingo-edge/store/claim_quarantine.go": {2, "write", "the quarantine's predicate, " +
+		"WRITTEN into SQL twice — the count the empty-set guard asks for and the move itself. Same " +
+		"case as walk.go above: the subject is the PERSISTED COLUMN, not a resolved node. " +
+		"IsLoaderNode answers 'is this claim a loader' about a claim already in hand; this asks the " +
+		"database which rows carry the value at all, which is the one question that cannot be asked " +
+		"of an object because the rows are what it is looking for"},
 
 	"shingo-core/cmd/simcalc/main.go": {1, "shape", "fleetMovesPerSwap costs each step-list shape in " +
 		"floor crossings and robots. It switches over every mode because the shape is the question"},
