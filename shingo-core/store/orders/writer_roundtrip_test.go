@@ -122,6 +122,13 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		// it. Round-tripping a probe value through Create would assert the
 		// opposite -- that a caller can hand openness in at creation.
 		"OpenForChildren": "open_for_children",
+		// Same shape, different decision: an order is never born spared. The
+		// peer-terminal handler stamps it through orders.StampSwapSpared when it
+		// declines to cancel a leg whose sibling died, and nothing else writes it.
+		// A probe value through Create would assert that a caller can hand the
+		// decision in at creation, which is the second writer this column exists
+		// to prevent.
+		"SwapSparedAt": "swap_spared_at",
 	}
 
 	// Every excluded field must be excluded for a reason that is written down,
