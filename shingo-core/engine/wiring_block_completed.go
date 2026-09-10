@@ -583,6 +583,15 @@ const lineRebindUnannouncedAction = "line_rebind_unannounced"
 // Best-effort: a failure to record must never stop the handler. Nothing about
 // the bind seam's behaviour changes here — this path already returned without
 // binding, and it still does. All that is added is that it says so.
+//
+// TODO(2026-09-10): study a better shape.
+// This alarm is the BACKSTOP, not the fix. It fires because the rebind had to
+// INFER which bin was placed by counting bins at _TRANSIT, and the count was
+// ambiguous — a derived fact failing, not a placement failing. The better shape
+// is for the dropoff step to carry the bin it placed, which would make this
+// decline unreachable rather than audible; see resolveDropoffBin for what was
+// already checked and why nobody has built it. Until then the operator's
+// "Record Count" is the recovery, and that is a recovery, not a design.
 func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string) {
 	if order == nil || order.ProcessNode == "" || location != order.ProcessNode {
 		return
@@ -657,6 +666,18 @@ func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string)
 // has two bins in flight, which one robot cannot do — either way, guessing would
 // record a bin at a slot it is not in, and a wrong location is worse than a late
 // one (the order-FINISHED path still catches the honest case).
+//
+// TODO(2026-09-10): study a better shape.
+// This INFERS which bin was placed by counting what the order holds at _TRANSIT
+// — a derived fact — so an earlier step that did not land leaves two bins here
+// and the rebind gives up (see noteUnannouncedLineRebind, which alarms on it).
+// The better shape is for the DROPOFF STEP to carry the identity of the bin it
+// placed, so nothing has to count. Checked before writing this: no such field
+// exists on protocol.ComplexOrderStep or on resolvedStep, and the order_bins
+// junction cannot stand in — it records PICKUP rows only, and its dest_node
+// answers "where does this bin end up", which is the different question this
+// predicate replaced. Carrying it means stamping the step after the allocator
+// selects bins, which is a writer nobody has built.
 func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64, bool) {
 	transit, err := e.db.GetNodeByDotName(domain.TransitNodeName)
 	if err != nil || transit == nil {
