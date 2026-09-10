@@ -4260,7 +4260,8 @@ func v114DropOrdersSwapSparedAt(tx *sql.Tx) error {
 // The spare — do NOT cancel a supply that is parked on a dry source just because
 // its evac died, so the operator can stock the payload — was re-derived every
 // scanner pass from queue_code == waiting_for_material. The same pass that
-// spared the leg then held it (swap_hold.go Face 2's dead-clearer arm) and wrote
+// spared the leg then held it (the swap-hold gate's dead-clearer arm, since
+// deleted) and wrote
 // waiting_for_partner over that code, so the next pass re-asked the question,
 // got a different answer, and cancelled it. The spare survived exactly one pass
 // and Springfield 2026-07-21's re-arm churn could recur.

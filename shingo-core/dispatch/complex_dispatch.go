@@ -723,7 +723,7 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// DEAD leg's side — so if this leg did not exist yet when its sibling died (a
 	// supply created + skipped moot in the same tick, before its evac was created),
 	// that unwind found no peer and no-op'd, leaving this leg to hold forever on a
-	// dead sibling (swapLegHeld waits on a claim that will never come). Re-run the
+	// dead sibling. Re-run the
 	// unwind now, from the surviving side, so a leg linked to an already-terminal
 	// sibling is resolved instead of wedged. Reuses the same handler and its
 	// per-role resolution: a moot-evac sibling that legitimately lets this supply
@@ -741,55 +741,54 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 					}
 				}
 				d.HandleSwapPeerTerminal(sib.ID, kind)
-				// RE-READ, AND USE IT. The unwind writes to this very row — it
-				// cancels it, or it spares it and stamps swap_spared_at — so the
-				// in-memory copy the scanner handed us is stale from here on. It
-				// was already re-read to test for terminality and then thrown away,
-				// which left the hold verdict below judging a row the line above
-				// had just changed: a leg spared on THIS pass still looked unspared
-				// to Face 2, which relabelled its queue code and took the
-				// operator's actionable cause off the board.
-				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil {
-					if protocol.IsTerminal(self.Status) {
-						return dispatchStep{done: true, err: fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)}
-					}
-					order = self
+				// RE-READ, BECAUSE THE UNWIND MAY HAVE JUST CANCELLED THIS ROW.
+				// HandleSwapPeerTerminal writes to the very order we are
+				// dispatching, so the in-memory copy the scanner handed us is
+				// stale from here on and proceeding on it would dispatch a robot
+				// for an order that no longer exists.
+				//
+				// IT USED TO CARRY THE FRESH ROW FORWARD (`order = self`) as well,
+				// because the swap-hold verdict below judged it and a leg spared on
+				// THIS pass still looked unspared. Both the spare and that verdict
+				// are deleted, so nothing downstream reads the row again inside
+				// this function — the assignment became dead and staticcheck said
+				// so. The TERMINALITY TEST is the part that was always load-bearing
+				// and it stays.
+				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil &&
+					protocol.IsTerminal(self.Status) {
+					return dispatchStep{done: true, err: fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)}
 				}
 			}
 		}
 	}
 
-	// The INDEX ANTI-COLLISION hold: a leg that places a bin on the shared line
-	// position waits until its clearer sibling is committed to clearing it, or
-	// two bins meet on one position (HOP 07). Stay queued — the scanner replays
-	// on the ordinary event set.
+	// ── AND NOTHING ELSE. THERE IS NO SWAP HOLD AT DISPATCH ANY MORE ──────
 	//
-	// WHAT USED TO BE DESCRIBED HERE was the removal-leg hold (ALN_003), and it
-	// is gone; see applySwapGates' own note and swap_hold.go. The sibling pointer
-	// this reads is carried by BOTH legs on their ComplexOrderRequest, so it is
-	// present even on the synchronous intake-dispatch path — what may not be
-	// present that early is the partner's ROW, which the pair rule handles.
+	// Three gates stood here across this batch's life and all three are gone,
+	// for one reason: DISPATCH DOES NOT MOVE MATERIAL FOR A SWAP LEG. Every leg
+	// of a coordinated swap opens with a WAIT, so what dispatch sends a robot is
+	// "drive to your node and hold" — splitAtWait returns the plan up to that
+	// wait and the rest is appended at RELEASE.
 	//
-	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
-	// to concrete nodes by now, and the line node is concrete either way, so the
-	// pickup/dropoff shape the gate depends on is stable across resolution.
-	// THE CAUSE COMES FROM THE VERDICT, not from this call site. Both faces park
-	// under `swap-hold` today, so this site could hardcode it — and that is
-	// exactly how a cause and the arm that earned it drift apart: a face added
-	// later gets its cause written by a line that never saw the decision. The arm
-	// that made the decision is the only thing that can name it — see
-	// swapHoldVerdict.
-	if v := d.swapLegHoldVerdict(order, resolvedSteps); v.held {
-		// ONE PARK, ONE LABEL. The keepQueueDetail exception went with the spare:
-		// it existed so a leg spared from its partner's death could keep its own
-		// material cause instead of being relabelled "waiting for partner" — a
-		// partner that was never coming. Under the death rule no leg outlives its
-		// partner, so there is no such leg and no label to preserve.
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
-		d.dbg("complex: order %d held — %s", order.ID, v.reason)
-		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", v.reason)}
-	}
-
+	//	Face 1  held an evac until its supply had claimed, "to prevent
+	//	        stranding". It was guarding a parked robot.
+	//	Face 3  held a supply while its evac was blocked on capacity. Buried
+	//	        2026-08-31; its same-resource exemption emptied it.
+	//	Face 2  held a filler until its clearer had committed, so no bin would be
+	//	        placed on an un-cleared position. Also guarding a parked robot:
+	//	        which robot parks first is not a fact about anything, because
+	//	        neither touches a carrier until the operator releases.
+	//
+	// WHAT REPLACES THEM IS NOT ANOTHER GATE. Both legs are admitted in one
+	// scanner pass or neither is (complex_pair.go), so a parked evac implies a
+	// dispatched supply by construction; a leg going terminal takes its sibling
+	// (swap_peer.go); and the collision hazard is answered at RELEASE, where the
+	// bins actually move and refusePlacingLegWhileSiblingPending already orders
+	// the legs. That guard is not this layer's to help.
+	//
+	// The peer-terminal unwind above stays. It resolves a leg whose sibling was
+	// ALREADY dead when this pass began, which is a question about the pair's
+	// existence rather than about sequencing two live robots.
 	return dispatchStep{}
 }
 

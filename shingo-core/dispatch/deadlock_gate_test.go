@@ -43,7 +43,10 @@ func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 	testutil.MustNoErr(t, db.ConfirmBinManifest(srcBin.ID, ""), "confirm")
 
 	// Coordinated (StepsJSON), no wait, delivering TO the occupied line, no sibling
-	// link (so swapLegHeld is not the reason it could hold).
+	// link — so the pair rule reads it as a solo order and is not the reason it
+	// could hold. (This said "swapLegHeld", which was the dispatch-time swap gate;
+	// that gate is deleted and the sibling link now decides pair membership
+	// instead, so the fixture's intent is unchanged and its reason has moved.)
 	order := &orders.Order{
 		EdgeUUID: "coord-occ-line", StationID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,

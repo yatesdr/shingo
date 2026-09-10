@@ -790,13 +790,14 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// EITHER leg is staged, and the loop below happily released whichever leg
 	// Core would accept.
 	//
-	// THIS IS WHERE v1 ENFORCES, and it is the whole reason swap_hold.go is
-	// untouched. A dispatch-time hold on both legs is a permanent mutual
-	// deadlock (SYNTH-round2, 5/5 reviewers); a refused RELEASE is a click the
-	// operator repeats a minute later. Under the IndexRobotSupplies flip both
-	// legs open with a wait and neither is self-sufficient, so dispatch fails
-	// open by design and this is the only thing standing between the flip and
-	// a collision.
+	// THIS IS WHERE IT IS ENFORCED, AND NOW IT IS THE ONLY PLACE. A dispatch-time
+	// hold on both legs is a permanent mutual deadlock (SYNTH-round2, 5/5
+	// reviewers — and later measured on a plain unflipped pair once Core admitted
+	// both legs in one pass); a refused RELEASE is a click the operator repeats a
+	// minute later. Core's dispatch-time swap holds are all deleted: every leg
+	// opens with a wait, so dispatch parks robots and the bins move here. This
+	// guard is what stands between a pair and a collision, and it needs no help
+	// from the dispatch layer.
 	//
 	// Scoped to press-index. two_robot's release ordering has been in
 	// production unchanged for a long time and its supply leg parks at a

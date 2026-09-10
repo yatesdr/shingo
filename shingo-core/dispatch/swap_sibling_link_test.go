@@ -151,10 +151,12 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 		t.Fatalf("precondition: supply back-link = %q, want empty", s)
 	}
 
-	// Processing the evac triggers the on-read repair.
+	// Resolving the evac's pair triggers the on-read repair. It used to be
+	// triggered by the swap-hold gate, which is deleted; the repair moved to
+	// coordinatedPairLegs, which runs for every coordinated leg on every pass
+	// instead of only for legs that reached a gate.
 	evac, _ = db.GetOrderByUUID("swap-removal-rb")
-	evacSteps, _ := decodeSteps(evac.StepsJSON)
-	_, _ = d.swapLegHeld(evac, evacSteps)
+	_, _ = d.coordinatedPairLegs(evac)
 
 	// The supply's back-link is now healed.
 	healed, err := db.OrderSiblingUUID(supply.ID)

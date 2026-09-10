@@ -77,11 +77,12 @@ import (
 // ROW: complex_intake emits EventOrderQueued, the scanner runs SYNCHRONOUSLY on
 // that goroutine, and the partner has not been ingested yet.
 //
-// swapLegHoldVerdict handled that asymmetrically and on purpose — fail CLOSED
+// The swap-hold gate handled that asymmetrically and on purpose — fail CLOSED
 // for an evac ("hold rather than strand the line"), fail OPEN for a filler — so
 // a two_robot supply, which is the leg created first, dispatched alone before
-// its evac existed. TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling pins
-// that the window is real, not theoretical.
+// its evac existed. That gate is deleted; this function is what answers the
+// question now. TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling pins that
+// the window is real, not theoretical.
 //
 // Under the pair rule that fail-open is a half-dispatched pair, so it goes. The
 // releaser is the partner's own intake: it emits EventOrderQueued, the scanner
@@ -116,6 +117,30 @@ func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, 
 	if sib == nil {
 		return nil, true // declared partner, row not ingested yet
 	}
+
+	// ── ON-READ REPAIR OF THE BIDIRECTIONAL LINK ──────────────────────────
+	//
+	// If the peer's back-link is missing — a failed intake back-link write, or a
+	// Core talking to an OLDER EDGE, which sent the pointer on the second-created
+	// leg only — heal it now that both rows exist. Idempotent, and gated on
+	// "actually missing" so the happy path re-touches nothing.
+	//
+	// IT MOVED HERE FROM THE SWAP-HOLD GATE, which is deleted, and this is a
+	// better home than the one it had. There it ran only for legs that reached
+	// the gate; here it runs for EVERY coordinated leg on every pass, which is
+	// the whole population that needs it.
+	//
+	// It matters more than it did. A one-way link used to disarm a hold; now it
+	// decides whether dispatch sees one job or two — an unhealed peer reads as a
+	// solo order from its own side and would dispatch alone. The forward pointer
+	// this function just read is enough for THIS leg, so the pair still forms;
+	// the repair is what stops the PARTNER forming a different answer.
+	if sib.SiblingOrderUUID != order.EdgeUUID {
+		if _, rerr := d.db.LinkOrderSiblingsByEdgeUUID(order.EdgeUUID, sibUUID); rerr != nil {
+			log.Printf("dispatch: swap back-link repair for order %d sib %s: %v", order.ID, sibUUID, rerr)
+		}
+	}
+
 	legs := make([]*orders.Order, 0, 2)
 	for _, leg := range []*orders.Order{order, sib} {
 		if protocol.IsAcquiring(leg.Status) {
@@ -209,33 +234,25 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		ready = append(ready, preparedLeg{order: leg, steps: steps})
 	}
 
-	// ── THE CLEARER COMMITS BEFORE THE FILLER ─────────────────────────────
+	// ── NO ORDERING BETWEEN THE LEGS, AND THAT IS A RULING ────────────────
 	//
-	// A leg that LIFTS the shared line position's bin is handed to the fleet
-	// before a leg that PUTS one there. Both go in this pass either way; this
-	// fixes the order in which they go.
+	// A clearer-before-filler sort stood here. It was the ordering half of the
+	// index anti-collision arm — commit the leg that empties the shared position
+	// before the leg that fills it, so a robot could not be sent to place onto
+	// something nothing had cleared.
 	//
-	// It carries a property the index anti-collision arm used to carry by
-	// WAITING: hold the filler until its clearer is committed, or a robot drives
-	// a bin onto a position nothing has cleared (HOP 07, two bins on one press).
-	// That wait cannot work inside a pair pass — holding the filler parks the
-	// clearer too, so the clearer can never commit, and the press deadlocks
-	// permanently (measured, not predicted; see swap_hold.go's note). Ordering
-	// gives the same guarantee deterministically and cannot deadlock, because it
-	// waits for nothing.
+	// IT WAS GUARDING A PARKING LOT. Both press-index legs open with a WAIT, so
+	// what dispatch sends each robot is "drive to your node and hold". Neither
+	// touches a carrier until the operator releases the choreography, and which
+	// robot parks first is not a fact about anything: the bins move at RELEASE,
+	// in the order the release path chooses. Sequencing the fleet creates was
+	// buying an ordering nobody consumes.
 	//
-	// ROLE FROM THE STEPS, never the mode: legTakesLineBin / legPlacesLineBin,
-	// the same predicates every other role question in the package uses. A leg
-	// that is neither — the self-contained shape, which lifts and replaces in one
-	// trip — sorts with the fillers and is unaffected either way, since it has no
-	// partner to sequence against on that node.
-	//
-	// STABLE, so legs this cannot separate keep their id order and the pass stays
-	// deterministic.
-	sort.SliceStable(ready, func(i, j int) bool {
-		return legClearsItsLine(ready[i]) && !legClearsItsLine(ready[j])
-	})
-
+	// Same finding as Face 1, and the third time this batch has found it — a
+	// dispatch-layer gate written as though dispatch moved material. The
+	// collision hazard is real and it lives at release, where
+	// refusePlacingLegWhileSiblingPending already orders the legs. That guard
+	// needs no help from here.
 	for _, p := range ready {
 		if err := d.dispatchComplexToFleet(p.order, p.steps); err != nil {
 			// The fleet create's own failure path already terminal-fails this
@@ -246,14 +263,6 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		}
 	}
 	return nil
-}
-
-// legClearsItsLine reports whether this prepared leg lifts the bin off its own
-// process node and does not put one back — the clearer shape. Reads the leg's
-// resolved steps, which is the same source every other role question in the
-// package uses, and never the swap mode.
-func legClearsItsLine(p preparedLeg) bool {
-	return legTakesLineBin(p.steps, p.order.ProcessNode)
 }
 
 // parkPair releases everything the pass acquired for every leg and writes the
@@ -269,7 +278,7 @@ func legClearsItsLine(p preparedLeg) bool {
 // The cause written is the one the blocked leg's own phase computed, copied
 // verbatim: the rendered sentence, the code and the cause tag. Copying rather
 // than re-deriving is deliberate — the arm that made the decision is the only
-// thing that can name it (see swapHoldVerdict's own note), and re-deriving here
+// thing that can name it, and re-deriving here
 // would be a second evaluation against a database that may have moved. It also
 // keeps every existing releaser row honest: the pair parks under the cause that
 // already has a releaser sentence written for it, instead of a new tag nothing

@@ -16,17 +16,24 @@ import (
 // or a property declared on the claim — never the mode name.
 //
 // The worked example is already in the tree and it is the one that matters
-// most. swapLegHoldVerdict (shingo-core/dispatch/swap_hold.go) is the
-// safety-critical admission gate: it is what stops a line stranding empty
-// (ALN_003, 2026-06-03) and what stops two bins landing on one press
-// (Hopkinsville press-index, 2026-07). It serves two_robot,
-// two_robot_press_index and sequential correctly, and there is not one
-// SwapMode reference in it. It reaches its verdict by asking three questions
-// of the steps — does this leg take the line's bin (legTakesLineBin), does it
-// place one (legPlacesLineBin), does it secure its own replacement
-// (legSecuresOwnReplacement). The most dangerous decision in the swap path is
-// mode-blind, so a gate that claims it cannot be has to explain why it is
-// harder than that one.
+// most. The PAIR RULE (shingo-core/dispatch/complex_pair.go) decides whether a
+// coordinated swap dispatches at all: both legs are admitted in one scanner
+// pass or neither is, which is what stops a line stranding empty (ALN_003,
+// 2026-06-03). It serves two_robot, two_robot_press_index and anything added
+// later, and there is not one SwapMode reference in it. It reads the PAIR
+// STRUCTURE — does this order name a sibling — and the leg's own steps, and
+// nothing else. The most dangerous decision in the swap path is mode-blind, so
+// a gate that claims it cannot be has to explain why it is harder than that
+// one.
+//
+// THE PREVIOUS WORKED EXAMPLE WAS swapLegHoldVerdict, and it is worth saying
+// what happened to it. It was a mode-blind admission gate too, and correctly
+// so — three faces, all reading the steps. All three are deleted anyway,
+// because they shared a mistake the mode-blindness could not catch: they were
+// gating DISPATCH, and dispatch does not move material for a swap leg. Every
+// leg opens with a WAIT, so dispatch parks a robot under its node and the bins
+// move at RELEASE. Reading a property instead of a mode name keeps a gate
+// correct across modes; it does not make the gate necessary.
 //
 // The reason is not tidiness. A mode-name branch is a claim about every
 // current AND future member of the set, made by an author who could only see

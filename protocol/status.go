@@ -43,8 +43,8 @@ const (
 	// its pair. Two producers, and neither is the removal-leg hold this used to
 	// describe — that was Face 1, deleted with the pair rule, which dispatches
 	// both legs together instead of holding one against the other:
-	//   - dispatch: the pair's partner has no order row yet, or the index
-	//     anti-collision arm is holding a filler until its clearer commits.
+	//   - dispatch: the pair's partner has no order row yet (complex_pair.go).
+	//     There is no other dispatch-time swap hold — all three faces are gone.
 	//   - lane_floor: a dispatched leg parked at its station wait, including the
 	//     survivor of a swap whose other half already finished.
 	QueueWaitingForPartner QueueCode = "waiting_for_partner"

@@ -856,10 +856,10 @@ var causeReleasers = []causeReleaser{
 		populations: []WaitPopulation{PopAcquiring},
 		// IT USED TO NAME THE PREDICATE THAT DEADLOCKED. The row read "the sibling
 		// swap leg claims its bin, clearing the gate", which describes the
-		// live-claim test swapLegHeld ran until 2026-08-11 — the one that hung the
+		// live-claim test the swap-hold gate ran until 2026-08-11 — the one that hung the
 		// ASSY pair when the supply STAGED its replacement, the store unclaimed the
 		// bin, and the claim the evac was waiting for disappeared having already
-		// done its job (swap_hold.go, the arm's own scar). swapLegCommittedToFleet
+		// done its job (the arm's own scar). swapLegCommittedToFleet
 		// replaced it precisely so the hold reads dispatch state instead of a live
 		// claim. A releaser row naming a dead mechanism as live is worse than a
 		// blank one: it sends the reader to look for a claim that is not the gate.

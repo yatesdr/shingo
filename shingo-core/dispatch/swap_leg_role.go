@@ -134,11 +134,12 @@ import (
 //
 // Two sites read that false, and they mean different things by it:
 //
-//   - swap_hold.go's INDEX anti-collision arm asks placesLine && !takesLine
-//     because it is deciding
-//     whether this leg needs a SIBLING to clear the line first. A self-contained
-//     leg clears it itself, so false is the right answer and the gate is correct
-//     as written.
+//   - THE INDEX ANTI-COLLISION ARM asked placesLine && !takesLine, because it
+//     was deciding whether this leg needed a SIBLING to clear the line first. A
+//     self-contained leg clears it itself, so false was the right answer. That
+//     arm is DELETED — dispatch only ever parked the robot, so it was gating a
+//     moment where no bin could move — and legPlacesLineBin now has exactly one
+//     production reader, the next row.
 //   - allocator.go's moot-disposition arm excludes a leg from "the work is void" with
 //     !legPlacesLineBin, so a self-contained leg is not excluded and a moot
 //     disposition SKIPS it terminally, where a two_robot supply leg in the same
@@ -232,43 +233,6 @@ func legPlacesLineBin(steps []resolvedStep, processNode string) bool {
 		}
 	}
 	return placedBin
-}
-
-// legSecuresOwnReplacement reports whether the leg fetches a bin from somewhere
-// other than the line — i.e. it brings a replacement INTO the swap itself and so
-// does not depend on a sibling to secure one.
-//
-// ── ONE CALLER LEFT, AND IT IS NOT THE ONE THIS WAS WRITTEN FOR ───────────
-//
-// It was Face 1's discriminator: a two_robot evac (wait → pickup(LINE) →
-// dropoff(OUT)) has exactly one pickup, so it only removes and had to wait for
-// its supply sibling; a press-index R1 (pickup(LINE) → dropoff(OUT) →
-// pickup(INBOUND) → dropoff(INDEX)) has a second pickup and collects its own
-// fresh carrier. Face 1 is deleted — the pair rule dispatches both legs together
-// rather than holding one against the other — and the ONE remaining caller is
-// the index anti-collision arm, which asks it of the SIBLING: is my partner a
-// self-sufficient clearer, i.e. is there actually a leg here for me to wait
-// behind (swap_hold.go).
-//
-// The predicate itself is unchanged and correct for that question. What changed
-// is that its own name now reads oddly at its only call site, because it is
-// being asked about somebody else. It is left as it is rather than renamed to
-// suit one caller: the six-mode census above is written in these terms, and the
-// verification tables are the expensive part.
-// PIN: TestTwoRobotEvacHasExactlyOnePickup_FaceOnePin guards the INPUT to this
-// predicate rather than the predicate itself. `pickups > 1` is not the question
-// the name asks, and the two agree only by accident of today's step shapes: give
-// the two_robot evac an outbound staging hop and it starts reading as
-// self-sufficient, which silently disarms Face 1 for the mode it was written for.
-// That pin lives in shingo-edge/engine, where the builders are.
-func legSecuresOwnReplacement(steps []resolvedStep) bool {
-	pickups := 0
-	for _, s := range steps {
-		if s.Action == protocol.ActionPickup {
-			pickups++
-		}
-	}
-	return pickups > 1
 }
 
 // decodeSteps parses a stored steps_json. Returns nil (and false) when the steps

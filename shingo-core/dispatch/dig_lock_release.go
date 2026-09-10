@@ -701,3 +701,82 @@ func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, s
 	}
 	return false, ""
 }
+
+// swapLegCommittedToFleet reports whether an order has committed to the fleet —
+// it holds a vendor order and is en route or done.
+//
+// ── IT MOVED HERE WITH ITS LAST CALLER, AND THE NAME IS NOW A FOSSIL ──────
+//
+// It lived in swap_hold.go and served the swap gates: read dispatch STATE, not a
+// live claim, so a hold released correctly even after the sibling completed its
+// part and dropped its claim. All three of those gates are deleted — dispatch
+// only ever parked a swap robot under its node, so none of them was guarding a
+// moment where a bin could move — and swap_hold.go went with them.
+//
+// Every caller is now in this file: handOffDugLane's gate 3 and the two beside
+// it. The `swapLeg` prefix is kept deliberately rather than renamed, because the
+// SCAR is the useful part of this function and renaming would cut it loose from
+// the incident that shaped it: the predicate was once written to test a LIVE
+// CLAIM and deadlocked the rig the moment a supply staged its replacement and
+// the store unclaimed the bin (2026-08-11, orders 21/22). Anything added here
+// must read dispatch state, not a claim.
+//
+// The acquiring states (queued/sourcing) read as not-committed, and so do the
+// failure states where the order will not do its part; a faulted order may
+// recover.
+//
+// ── RESHUFFLING IS AN EXPLICIT ARM, AND IT WAS CORRECT BY ACCIDENT ────────
+//
+// A leg waiting on a dig wears `reshuffling`. It landed in `default` and read as
+// NOT COMMITTED, which is the right answer — it fails both halves of what this
+// predicate means: it holds no vendor order, and it is not en route. But the
+// paragraph above enumerates the not-committed cases as "acquiring" and
+// "failure", and `reshuffling` is neither. Nothing recorded the decision because
+// nobody had made one.
+//
+// That is a live hazard rather than a tidiness point. The plausible mistake is
+// specific and someone will make it: a leg in `reshuffling` is visibly DOING
+// something — robots are moving, blockers are being carried out — so adding it
+// to the committed list reads as a correction. It is not. Committed means
+// committed TO THIS SWAP'S OWN WORK, and a leg mid-dig has not started that
+// work; releasing its partner early is the line clearing with no replacement
+// coming, which is ALN_003 (2026-06-03), the incident the supply-side hold
+// exists for.
+//
+// IT IS ABOUT TO MATTER MUCH MORE. Under §R.91 the demand that raises a dig
+// BECOMES the dig's parent and wears `reshuffling` while it runs — so a swap leg
+// in `reshuffling` goes from a state this predicate never really saw to an
+// ordinary one. Round 2 flagged it for exactly that reason: settle it before the
+// unification arrives and finds it undecided.
+//
+// Written as its own arm rather than folded into `default` so that a future
+// editor has to delete a paragraph to get the answer wrong, instead of adding a
+// constant to a list.
+//
+// ── THE TWO READINGS OF `false`, AND ONLY ONE OF THEM IS LEFT ─────────────
+//
+// This used to warn that two callers agreed on what "not committed" MEANS while
+// disagreeing completely on what it COSTS:
+//
+//	SWAP GATE     not committed → the partner keeps waiting. Erring this way
+//	              cost a wait, so `default` was the safe arm.
+//	GATE 3        not committed → convert the dig row and keep the corridor.
+//	              Erring this way is the leaked hold that wedged the plant.
+//
+// The swap gate is gone, so only the expensive reading remains — which makes the
+// warning MORE load-bearing, not less. `default` is no longer the cheap arm for
+// anybody: every `false` this returns now costs a corridor decision. Adding a
+// status to the committed list, or moving one out of it, is a lane-lock change.
+// `faulted` is handled LOCALLY at gate 3 rather than here, because that caller's
+// answer for it is the right one.
+func swapLegCommittedToFleet(sib *orders.Order) bool {
+	switch sib.Status {
+	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:
+		return true
+	case StatusReshuffling:
+		// Mid-dig. No vendor order, not en route: the partner keeps waiting.
+		return false
+	default:
+		return false
+	}
+}

@@ -106,8 +106,9 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		return
 	}
 
-	// Same discriminator as swapLegHeld — legTakesLineBin: the evac lifts
-	// the line's bin and does not put one back; the supply sets one down.
+	// legTakesLineBin: the evac lifts the line's bin and does not put one back;
+	// the supply sets one down. The same discriminator the deleted swap-hold gate
+	// used, and now the only production reader of a leg's swap role.
 	//
 	// This was `DeliveryNode != ProcessNode`, which mis-reads a 3-position
 	// press-index R2: it drops a bin on the line and then carries on to re-index
@@ -225,5 +226,22 @@ func (d *Dispatcher) resolveSwapPeer(peer, dead *orders.Order, reason string) {
 			peer.ID, peer.Status, dead.ID, dead.Status, reason)
 		d.db.AppendAudit("order", peer.ID, "swap_half_completed", "",
 			fmt.Sprintf("sibling %d terminal (%s) while this leg reached %s — %s", dead.ID, dead.Status, peer.Status, reason), "system")
+	}
+}
+
+// swapTerminalKind maps a terminal order status to the SwapTerminal* kind
+// HandleSwapPeerTerminal expects, or "" when the status is not a swap-relevant
+// terminal — the surviving-side race check skips the unwind for a non-terminal
+// or unmapped sibling.
+func swapTerminalKind(status protocol.Status) string {
+	switch status {
+	case StatusSkipped:
+		return SwapTerminalSkipped
+	case StatusFailed:
+		return SwapTerminalFailed
+	case StatusCancelled:
+		return SwapTerminalCancelled
+	default:
+		return ""
 	}
 }
