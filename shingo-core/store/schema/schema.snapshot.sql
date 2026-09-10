@@ -796,7 +796,6 @@ CREATE TABLE public.orders (
     origin_class text DEFAULT ''::text NOT NULL,
     open_for_children boolean DEFAULT false NOT NULL,
     orphan_aged_at timestamp with time zone,
-    swap_spared_at timestamp with time zone,
     destination_resolved_at timestamp with time zone
 );
 

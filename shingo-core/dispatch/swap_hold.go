@@ -12,10 +12,11 @@ import (
 // ── WHY THE DECISION AND THE PARK ARE ONE VALUE ───────────────────────────
 //
 // The arm that made the decision is the only thing that knows what the wait is,
-// so it is the only thing that can name it. Today both faces park under
-// `swap-hold` and the caller could in principle hardcode that — but hardcoding
-// it at the call site is how a cause and its arm drift apart: the next face
-// added here gets its cause written by a line that never saw the decision. The
+// so it is the only thing that can name it. Both arms of the one remaining gate
+// park under `swap-hold` and the caller could in principle hardcode that — but
+// hardcoding it at the call site is how a cause and its arm drift apart: the
+// next arm added here gets its cause written by a line that never saw the
+// decision. The
 // verdict carries the cause so that adding an arm cannot silently mis-label a
 // park, which is the same "the verdict names the cause" shape the reserve and
 // lane-clear doors use.
@@ -31,10 +32,13 @@ type swapHoldVerdict struct {
 	params QueueParams
 }
 
-// swapHold is the verdict for both faces, which share a cause and a params
-// shape. An arm whose wait ends on something other than the sibling committing
-// would build its own verdict rather than call this — the cause is what the
-// releaser row is keyed on.
+// swapHold is the verdict for the two arms of the index anti-collision gate,
+// which share a cause and a params shape. It served both FACES until Face 1 was
+// deleted; the shape is kept because the reason for it has not changed. An arm
+// whose wait ends on something other than the sibling would build its own
+// verdict rather than call this — the cause is what the releaser row is keyed
+// on, and a park under a cause whose releaser sentence does not describe the
+// wait is worse than a blank one.
 func swapHold(order *orders.Order, reason string) swapHoldVerdict {
 	return swapHoldVerdict{
 		held:   true,
@@ -107,23 +111,24 @@ func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedSte
 		return swapHoldVerdict{}
 	}
 	if sibUUID == "" {
-		// Not a swap leg. The sibling pointer is written ATOMICALLY in the
-		// second-created leg's CreateOrder INSERT (domain.Order.SiblingOrderUUID)
-		// and back-linked onto the first at that leg's intake, so a two-robot leg
-		// can no longer reach here with an empty pointer because a post-create
-		// link step failed — an empty pointer now reliably means "no sibling".
+		// Not a swap leg. BOTH legs carry the pointer on the wire — Edge mints
+		// both uuids before it creates either, "so each leg names its partner and
+		// neither goes out unpaired" (protocol.ComplexOrderRequest) — and it is
+		// written ATOMICALLY in each leg's CreateOrder INSERT, so an empty pointer
+		// reliably means "no sibling".
 		//
-		// (Which leg is created second is a per-mode AND per-DOOR detail, and NOT
-		// a role. On the produce/swap door it follows StepsA/StepsB — Edge's
-		// applier creates SupplyOrder before EvacOrder, and BuildSwapDispatch puts
-		// two_robot's supply in the A slot and press-index's R1 EVAC in it. On the
-		// CHANGEOVER door it does not: assignDispatch takes the role-declared
-		// branch (changeover_planner.go, `if d.Roles != nil`) and fills
-		// SupplyOrder from the declared supply for BOTH modes, so a press-index
-		// changeover creates the supply first — the opposite order. This used to
-		// read "press-index creates the evac first" flat, which is true of one
-		// door and false of the other.
-		// Roles come from the steps — see legTakesLineBin.)
+		// THIS USED TO SAY the pointer rode "the second-created leg's INSERT" and
+		// was back-linked onto the first. That was true of an older Edge and is
+		// not true now, and the difference is not cosmetic: it made CREATION ORDER
+		// a correctness input, which is exactly why the wire was changed. A Core
+		// talking to an older Edge still sees the one-way shape, which is why the
+		// intake back-link and the on-read repair below both stay.
+		//
+		// (Which leg is created FIRST is still a per-mode and per-DOOR detail, and
+		// still NOT a role: two_robot creates the supply first, a press-index
+		// CHANGEOVER creates the supply first, and a STEADY-STATE press-index swap
+		// creates R1 — the evac — first. Roles come from the steps; see
+		// legTakesLineBin.)
 		//
 		// We deliberately do NOT fall back to a fail-closed on the step shape
 		// alone (gate every leg that pulls the line bin): that shape is shared by

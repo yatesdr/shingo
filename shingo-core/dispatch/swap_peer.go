@@ -178,17 +178,25 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 	// shingo-edge/engine/operator_guards.go), which is the only place that can
 	// stop a doomed pair from being created at all. A wait that survives its
 	// partner's death is a leg holding resources for a job that cannot happen.
+	//
+	// ONE CALL, because it is one rule. This was two branches that differed only
+	// in their prose, and two calls to the same function under an if/else is how
+	// a rule stops being one: the next person adding a condition adds it to one
+	// arm. The hazard sentence is chosen; the action is not.
+	//
+	//	dead evac    the resident it never lifted is still on the line, and the
+	//	             supply would drop a second bin onto it.
+	//	dead supply  no replacement is coming, and the evac would lift the
+	//	             line's bin with nothing behind it (a skipped supply is a
+	//	             lost replacement just as much as a failed one).
+	hazard := "cancelling evac so it cannot strand the line"
+	role := "supply"
 	if deadIsEvac {
-		d.resolveSwapPeer(peer, dead,
-			fmt.Sprintf("two-robot swap evac (order %d) %s; cancelling supply so it cannot drop onto an un-cleared line", dead.ID, terminalKind))
-		return
+		hazard = "cancelling supply so it cannot drop onto an un-cleared line"
+		role = "evac"
 	}
-	// Supply leg died (fail/cancel/skip — a skipped supply is a lost replacement
-	// just as much as a failed one). If the evac pulls/pulled the line's resident
-	// there is no replacement coming → strand. Cancel the live evac so the line
-	// keeps its bin; surface if the evac already delivered.
 	d.resolveSwapPeer(peer, dead,
-		fmt.Sprintf("two-robot swap supply (order %d) %s; cancelling evac so it cannot strand the line", dead.ID, terminalKind))
+		fmt.Sprintf("coordinated swap %s (order %d) %s; %s", role, dead.ID, terminalKind, hazard))
 }
 
 // resolveSwapPeer cancels the peer if it is still live, or surfaces the

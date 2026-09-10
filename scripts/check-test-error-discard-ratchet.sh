@@ -77,9 +77,17 @@ cd "$(dirname "$0")/.."
 # discards its test files carried (8 pre-existing, 4 its own additions), taking
 # the count 1503 → 1489.
 #
+# 1488 → 1484: the pair-as-one-job batch deleted the Face 1 and spare pins with
+# the mechanisms they guarded (swap_mutual_hold_pin_test.go whole, plus four
+# tests across bin_lifecycle, window4, swap_press_index_deadlock and
+# swap_peer_test), and four discard sites went with them. Removed by DELETION,
+# not by conversion — which is a legitimate way down and worth saying, because
+# the number does not distinguish them and a reader chasing "what was converted"
+# would find nothing.
+#
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1488
+FROZEN=1484
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"
