@@ -764,21 +764,29 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// isConcreteStorageDropoff's own note. Staging is handled by the declared
 	// loop further down instead.
 	//
-	// AND THE SIBLING PREMISE HAS EXPIRED. The justification above used to end
-	// "and Core has no SiblingOrderID to model that". It does now:
+	// THE PROHIBITION STANDS; ITS OLD REASON DOES NOT. The justification used to
+	// end "and Core has no SiblingOrderID to model that". Core has it:
 	// orders.sibling_order_uuid is stamped at intake (complex_intake.go), linked
-	// durably by LinkOrderSiblingsByEdgeUUID, and already read by the swap-hold
-	// gate a few lines above. (This named `sibling_order_id`, which is EDGE's
-	// column — an INTEGER FK in SQLite. Core's is sibling_order_uuid, TEXT,
-	// holding the peer's edge UUID. The two services genuinely differ here and
-	// the error travelled as far as the round prompt.) So the reason for making this a blunt role test
-	// rather than a modelled dependency no longer holds on its own terms.
+	// durably by LinkOrderSiblingsByEdgeUUID, and read by the swap-hold gate a few
+	// lines above. (It also named `sibling_order_id`, which is EDGE's column — an
+	// INTEGER FK in SQLite. Core's is sibling_order_uuid, TEXT, holding the peer's
+	// edge UUID. The two services genuinely differ here and the error travelled as
+	// far as a round prompt.) That obstacle was removed some time ago; the history
+	// is kept because somebody will re-derive it otherwise.
 	//
-	// It is left AS IS deliberately. Re-deriving the line-node rule from the
-	// sibling link is a design change with a deadlock on the other side of it,
-	// and it is not what the staging fix needed. Recorded here so the next
-	// person weighing it starts from what is true rather than re-discovering
-	// that the stated obstacle was removed some time ago.
+	// WHAT ACTUALLY KEEPS THIS A BLUNT ROLE TEST IS THE PHASE IT RUNS IN, and
+	// modelling the sibling does not move that. This gate runs BEFORE the sources
+	// are acquired, so a refusal here holds CLAIMING, not fleet-create. Hold a
+	// supply on the line node its evac is on the way to clear and you have not
+	// sequenced the pair — you have two legs each waiting for the other to acquire,
+	// which is a mutual wait no event ends. That is the 2b05dce deadlock, and it
+	// is a property of WHERE the check sits rather than of how well the dependency
+	// is expressed: a perfectly modelled dependency evaluated at this phase
+	// deadlocks exactly the same way.
+	//
+	// So the rule is unchanged and the reason is now the one that holds. Moving
+	// the check to a later phase is the design change that would reopen it, and
+	// that is a different conversation from adding a sibling link.
 	// finalChecked records whether the DeliveryNode arm below actually ran, so the
 	// declared-dropoff loop knows whether that node still needs asking about.
 	//

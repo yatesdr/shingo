@@ -80,6 +80,13 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 //     does NOT secure its own replacement is held until its supply sibling has
 //     CLAIMED a replacement — else it pulls the line's bin with nothing coming and
 //     strands the line empty.
+//     TWO ARMS RELEASE IT, not one. This said only "CLAIMED", and the live-claim
+//     arm is the first of two: swapLegCommittedToFleet below also releases, for a
+//     supply that has already STAGED or DELIVERED its replacement and dropped the
+//     claim on the way. That second arm exists because testing the claim alone
+//     deadlocked the rig on 2026-08-11 (orders 21/22) — delivered is a stronger
+//     form of secured than in-hand and read as weaker. A summary naming one arm
+//     sends the next reader looking for a bug in the other.
 //
 //   - INDEX anti-collision (HOP press-index, 2026-07): a leg that PLACES a bin on
 //     the line is held until its clearer sibling has DISPATCHED to clear that
@@ -88,18 +95,38 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 //     (legSecuresOwnReplacement) so it can never mutual-hold the evac case: a
 //     two_robot supply's sibling is a plain evac already held on the supply, and
 //     holding both would deadlock.
+//     PIN: TestSwapFaces_NarrowingIsWhatPreventsTheMutualHold — and it is new:
+//     that deadlock claim named no test for its whole life, and it is the
+//     difference between a working pair and a cell stopped until somebody cancels
+//     a leg. The pin asserts the evac held, the supply NOT held, and that flipping
+//     only legSecuresOwnReplacement's answer makes Face 2 hold the supply too.
+//     Both-held is terminal rather than slow: Face 1 frees the evac when the
+//     supply commits, Face 2 frees the supply when the evac commits, and each
+//     needs the other to dispatch first.
 //
 // A THIRD FACE WAS BUILT AND BURIED, 2026-08-31 — read this before building it
 // again. It would have held a two_robot supply while its evac sibling was parked
 // pre-dispatch on a destination-capacity cause. It carried a same-resource
 // exemption: when the supply's own pickup is in the same room the evac is
 // blocked on, the supply IS the thing that frees that slot, so holding it
-// deadlocks the pair. That exemption is what emptied the face — every two_robot
-// claim in all three RUNNABLE plant specs has inbound_source equal to
-// outbound_destination (demo ALN_001/002/006/007 SYN_MARKET, ALN_008 PLK_H1;
-// lane-stress and lane-stress-packed ALN_001 SYN_STAMP, ALN_002/006/007
-// SYN_COMP), so every reachable claim is always exempt and the face can never
-// fire. Zero fires in a sim run was read as the arm working; it is the same
+// deadlocks the pair. That exemption is what emptied the face — every NARROW
+// two_robot claim in all FOUR runnable plant specs has inbound_source equal to
+// outbound_destination, so every reachable claim is always exempt and the face
+// can never fire.
+//
+// RE-CENSUSED 2026-09-10: 21 of 21, across demo, edge2, lane-stress and
+// lane-stress-packed. This used to say "all three RUNNABLE plant specs", which
+// was true until plants/edge2.yaml landed (2026-09-06); edge2's six two_robot
+// claims (PRS_011, WLD_010) all run SMN_L2 → SMN_L2, so the finding survived the
+// spec that could have broken it. The rest: demo ALN_001/002/006/007 SYN_MARKET
+// and ALN_008 PLK_H1; lane-stress and lane-stress-packed ALN_001 SYN_STAMP,
+// ALN_002/006/007 SYN_COMP.
+//
+// NARROW two_robot, and the word is load-bearing. SwapMode.IsTwoRobot() also
+// matches two_robot_press_index, which is NOT same-resource — demo's PLN_001
+// runs SYN_PRESS_EMPTIES → SYN_MARKET, drawing empties from the maintained group
+// and returning fulls to the market. A census taken through IsTwoRobot would
+// have found exceptions and reached the opposite conclusion about this face. Zero fires in a sim run was read as the arm working; it is the same
 // board a completely broken arm produces. The design record and SYNTH-round8
 // carry the incident and the full argument.
 //

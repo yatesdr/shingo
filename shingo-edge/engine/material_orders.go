@@ -81,6 +81,17 @@ const waitKindStation = "station"
 // NOT FOR LINE NODES. Declaring a line dropoff exclusive would gate a supply leg
 // on a node its sibling evac is on the way to clear, which re-creates the
 // deadlock Core's 2b05dce fixed. Line dropoffs stay plain literals.
+//
+// THE FENCE IS RIGHT; THAT SENTENCE IS NOT WHAT MAKES IT RIGHT. "Its sibling is
+// on the way to clear it" describes a race, and a race is something a wait can
+// win. What cannot be won is the PHASE: Core's exclusive-dropoff check runs
+// before the sources are acquired, so an exclusive line node holds the supply at
+// CLAIMING time while its evac — held on the supply securing a bin — is at the
+// same phase waiting for it. Neither is on the way anywhere yet. Two legs each
+// waiting for the other to acquire is a mutual wait no event ends, which is why
+// this is a fence rather than a tuning knob. See reserveComplexDestination in
+// shingo-core/dispatch/complex_dispatch.go, which states the same rule from the
+// other side.
 func stagingDropoff(node string) protocol.ComplexOrderStep {
 	return protocol.ComplexOrderStep{
 		Action:        "dropoff",

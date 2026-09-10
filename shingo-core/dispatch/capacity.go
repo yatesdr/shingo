@@ -9,7 +9,7 @@
 // haven't seen in production at scale because:
 //
 //   - Production swap orders (the only ones with realistic capacity
-//     pressure) are complex orders that fail-rather-than-queue today.
+//     pressure) were complex orders that failed rather than queued.
 //   - Simple retrieves go to/from loader/unloader nodes where
 //     destination-full is operator-paced or NGRP-resolved (many
 //     slots).
@@ -19,11 +19,31 @@
 // at every planning-time dispatch path so they all queue cleanly
 // instead of racing.
 //
-// NGRP dropoffs are intentionally not gated by this helper today —
-// the binresolver picks a free child at dispatch time and returns an
-// error if all are full. For the Phase 4 work we leave that path as-
-// is (it doesn't queue today, but it doesn't race either; the resolver
-// rejects). Concrete-node dropoffs are the targets here.
+// THE PARAGRAPH ABOVE IS HISTORY, AND IT USED TO BE WRITTEN AS "today".
+// It said complex orders "fail-rather-than-queue today" — describing the
+// pre-Phase-4 world in the present tense, in the file that implements
+// Phase 4. Complex orders queue now; that is what this gate does. Past
+// tense, so the reason survives without the claim. (Corrected
+// 2026-09-10; nothing about the behaviour changed.)
+//
+// ── NGRP DROPOFFS **ARE** GATED HERE, and this header said the opposite ──
+//
+// It read: "NGRP dropoffs are intentionally not gated by this helper
+// today — the binresolver picks a free child at dispatch time and returns
+// an error if all are full. For the Phase 4 work we leave that path
+// as-is." That is FALSE, and the same file says so twice:
+// CheckDropoffCapacityForType routes a synthetic NGRP node straight to
+// checkNGRPCapacity, and that function's own doc describes the walk —
+// "treat as blocked iff EVERY child is occupied or has an in-flight order
+// inbound... this gate is what makes 'all children full' produce a queue
+// rather than a fail."
+//
+// So the exemption was removed at some point and the header was not. A
+// reader trusting it would look for the NGRP queue behaviour somewhere
+// else, or add it a second time; two design rounds read past it.
+// Concrete-node dropoffs are gated here AND so are NGRP parents, by
+// walking their children. LANE and _TRANSIT still pass through to
+// whoever resolves them at dispatch time.
 
 package dispatch
 
