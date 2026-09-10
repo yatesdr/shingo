@@ -333,13 +333,17 @@ type SimProcessConfig struct {
 }
 
 // SimOperatorsConfig configures the auto-operator (loader auto-LOAD, unloader
-// auto-CLEAR, changeover auto-cutover). Global enable only; per-node override is v2 (Q6).
+// auto-CLEAR, swap release). Global enable only; per-node override is v2 (Q6).
+//
+// It does NOT cut a changeover over. changeover_auto_cutover lived here from
+// T3.2 until 2026-09-10 as a field nothing read, with a default of true and a
+// `true` in both dev yamls, and two agents in two days waited on a cutover it
+// was never going to cause. See simOperator's header for what does.
 type SimOperatorsConfig struct {
-	Enabled               bool          `yaml:"enabled"`
-	LoaderAutoLoad        time.Duration `yaml:"loader_auto_load"`        // default 5s
-	UnloaderAutoClear     time.Duration `yaml:"unloader_auto_clear"`     // default 8s
-	ChangeoverAutoCutover bool          `yaml:"changeover_auto_cutover"` // default true (T3.2)
-	CutoverDelay          time.Duration `yaml:"cutover_delay"`           // default 10s
+	Enabled           bool          `yaml:"enabled"`
+	LoaderAutoLoad    time.Duration `yaml:"loader_auto_load"`    // default 5s
+	UnloaderAutoClear time.Duration `yaml:"unloader_auto_clear"` // default 8s
+	CutoverDelay      time.Duration `yaml:"cutover_delay"`       // default 10s
 	// SwapRelease is the simulated reaction time between a swap reaching its
 	// wait (status "staged") and the operator pushing Release. Default 3s.
 	//
@@ -419,11 +423,10 @@ func Defaults() *Config {
 			// YAML can enable sim without spelling out every knob; per-process
 			// TickInterval/UOPPerTick default at consumption (fake WarLink).
 			Operators: SimOperatorsConfig{
-				LoaderAutoLoad:        5 * time.Second,
-				UnloaderAutoClear:     8 * time.Second,
-				ChangeoverAutoCutover: true,
-				CutoverDelay:          10 * time.Second,
-				SwapRelease:           3 * time.Second,
+				LoaderAutoLoad:    5 * time.Second,
+				UnloaderAutoClear: 8 * time.Second,
+				CutoverDelay:      10 * time.Second,
+				SwapRelease:       3 * time.Second,
 			},
 		},
 	}

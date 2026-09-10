@@ -48,7 +48,9 @@ two consumption lines, two bin loaders, and an unloader. Watch for:
 4. **Unloader loop** — full bin delivered to `UNLOADER-1` → sim operator auto-CLEARs after `unloader_auto_clear` → empty stored.
 5. **Reshuffle** — requesting `PART-A` (buried at `SM-A02`/`SM-A03`) triggers an unbury → retrieve → restock compound order.
 
-(A/B cycling and changeover auto-cutover are scaffolded; see the dev-env notes.)
+(A/B cycling runs on its own — a sequential press flips sides and re-supplies itself.
+A changeover does NOT cut over by itself: press the button, or
+`POST /api/processes/{id}/changeover/cutover`.)
 
 ## Tuning the simulation
 

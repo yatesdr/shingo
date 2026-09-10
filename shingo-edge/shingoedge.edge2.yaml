@@ -145,7 +145,6 @@ sim:
     # and it spans four 60 s reporter ticks rather than none.
     loader_auto_load: 30s
     unloader_auto_clear: 30s
-    changeover_auto_cutover: true
     cutover_delay: 4m
     swap_release: 60s
 

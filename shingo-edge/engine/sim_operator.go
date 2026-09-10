@@ -30,9 +30,26 @@ import (
 // for no production benefit. Being //go:build sim, it is absent from every
 // non-sim build (so it can't affect the production engine or its test suites).
 //
-// Deferred within T3.2 (noted in AGENT-REPORT): auto-cutover for changeover
-// (operators.changeover_auto_cutover) and the EventCounterDelta→0 unloader
-// trigger. The delivery-driven LOAD/CLEAR below is the core of the four loops.
+// IT DOES NOT CUT A CHANGEOVER OVER, and nothing in the sim does. A changeover
+// reaches `{"can_complete":true,"blockers":[]}` and then waits for somebody to
+// press the button: POST /api/processes/{id}/changeover/cutover. Drive it from
+// the harness.
+//
+// This note used to say auto-cutover was "deferred within T3.2", beside a
+// config key (operators.changeover_auto_cutover) that defaulted true and was
+// set true in both dev yamls — so a reader had a setting, a default and a
+// deferral note all agreeing that a cutover was coming, and no code anywhere
+// that would cause one. Two agents in two days polled gate-status waiting for
+// it. Key and field deleted 2026-09-10; this paragraph is what replaces them.
+//
+// The EventCounterDelta→0 unloader trigger is still genuinely deferred.
+//
+// NOT TO BE CONFUSED WITH THE CATID MONITOR (plc_catid_monitor.go), which is
+// production, is wired, and does press CUTOVER — on a real PLC reporting the
+// new part on an `auto` process. That is a different mechanism on a different
+// signal; it is not scaffolding and it was never what this key meant.
+//
+// The delivery-driven LOAD/CLEAR below is the core of the four loops.
 
 type simOperator struct {
 	e   *Engine
