@@ -45,7 +45,7 @@ func linesideFixture(t *testing.T, db *DB, coreNode string) (processID, styleID,
 	if err := db.SetActiveStyle(processID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err = upsertClaimRetiredMode(t, db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: coreNode, Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "REQUESTED-PART", UOPCapacity: 500, OutboundDestination: "OUT",
 	})
@@ -171,7 +171,7 @@ func TestListLinesideLevels_ExistenceFollowsConfigNotThePointer(t *testing.T) {
 	}
 	// A produce claim on a style the process is NOT running. Under the old
 	// query this decided both the role filter and the payload.
-	otherClaim, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	otherClaim, err := upsertClaimRetiredMode(t, db, processes.NodeClaimInput{
 		StyleID: otherStyle, CoreNodeName: "ALN_009", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "STALE-PART", UOPCapacity: 500, OutboundDestination: "OUT",
 	})
@@ -282,4 +282,27 @@ func TestListLinesideLevels_BucketOfAnotherPartIsNotSummedIn(t *testing.T) {
 		t.Errorf("BucketQty = %d, want 25. 425 means the foreign part's bucket was summed in "+
 			"under REAL-PART's name.", got.BucketQty)
 	}
+}
+
+// upsertClaimRetiredMode upserts a claim carrying a swap mode the allowlist no
+// longer accepts, by upserting with a configurable placeholder and rewriting the
+// column — the pre-lockdown row shape the read paths still tolerate.
+//
+// manual_swap is retired as a PERSISTED value: Core owns loader configuration
+// and SynthClaim serves it, so a stored loader claim is a second authority and
+// SetCoreLoaders quarantines any that appear. The lineside READ path still has
+// to handle one — a legacy row survives until its Edge takes the sync — which is
+// what the fixtures above are for. The engine package carries the same seam for
+// the same reason; store cannot borrow it (internal/testdb imports store, so
+// this package cannot import back).
+func upsertClaimRetiredMode(t *testing.T, db *DB, in processes.NodeClaimInput) (int64, error) {
+	t.Helper()
+	want := in.SwapMode
+	in.SwapMode = protocol.SwapModeSequential // placeholder to pass the allowlist
+	id, err := db.UpsertStyleNodeClaim(in)
+	if err != nil {
+		return id, err
+	}
+	_, err = db.DB.Exec(`UPDATE style_node_claims SET swap_mode=? WHERE id=?`, string(want), id)
+	return id, err
 }

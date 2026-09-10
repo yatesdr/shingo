@@ -61,7 +61,7 @@ func seedLoaderCard(t *testing.T) *loaderFixture {
 	styleID, err := db.CreateStyle("Style-A", "s", processID)
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
-	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: core, Role: "produce",
 		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "PART-A", UOPCapacity: 100,
 		InboundSource: "MARKET", OutboundDestination: "OUT-MARKET",

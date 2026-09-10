@@ -1511,30 +1511,55 @@ func TestUpsertClaim_RejectsUnknownSwapMode(t *testing.T) {
 	}
 }
 
-func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
+// TestStyleNodeClaims_ManualSwapCannotBePersisted replaces
+// TestStyleNodeClaims_ManualSwapRequiresOutboundDestination, and the swap is the
+// point rather than a fixture detail.
+//
+// That test pinned the two standing rules for a STORED loader claim: it needs an
+// outbound_destination, and it auto-confirms whatever the caller says. Both are
+// still written down in UpsertClaim, but nothing can reach them any more — Core
+// owns loader configuration, SynthClaim serves it, and manual_swap has left
+// protocol.ConfigurableSwapModes(), so the allowlist refuses the mode several
+// lines before either rule is consulted. A test that kept the old assertions
+// alive would have to bypass the allowlist to get there, which is a test of a
+// path production cannot take.
+//
+// What is reachable is the refusal, and that is what this pins: BOTH shapes the
+// old test used — with an outbound destination and without — are rejected, with
+// ErrInvalidSwapMode so the HTTP layer still maps it to a 400 rather than a 500.
+func TestStyleNodeClaims_ManualSwapCannotBePersisted(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
-	// Missing outbound_destination → error.
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N", SwapMode: "manual_swap", PayloadCode: "PL",
-	})
-	if err == nil {
-		t.Fatal("expected error for manual_swap without outbound_destination")
+	for _, tc := range []struct {
+		name string
+		in   processes.NodeClaimInput
+	}{
+		{"without outbound_destination", processes.NodeClaimInput{
+			StyleID: sid, CoreNodeName: "N", SwapMode: "manual_swap", PayloadCode: "PL",
+		}},
+		{"with outbound_destination", processes.NodeClaimInput{
+			StyleID: sid, CoreNodeName: "N", SwapMode: "manual_swap", PayloadCode: "PL",
+			OutboundDestination: "DEST", AutoConfirm: false,
+		}},
+	} {
+		_, err := db.UpsertStyleNodeClaim(tc.in)
+		if err == nil {
+			t.Fatalf("%s: manual_swap must not persist — a stored loader claim is a second "+
+				"authority for config Core owns", tc.name)
+		}
+		if !errors.Is(err, protocol.ErrInvalidSwapMode) {
+			t.Errorf("%s: want ErrInvalidSwapMode (the 400 path), got %v", tc.name, err)
+		}
 	}
 
-	// With outbound_destination → auto-confirm is forced.
-	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N", SwapMode: "manual_swap", PayloadCode: "PL",
-		OutboundDestination: "DEST", AutoConfirm: false,
-	})
-	if err != nil {
-		t.Fatalf("manual_swap with dest: %v", err)
+	var stored int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM style_node_claims WHERE swap_mode='manual_swap'`).Scan(&stored); err != nil {
+		t.Fatalf("count: %v", err)
 	}
-	got, _ := db.GetStyleNodeClaim(id)
-	if !got.AutoConfirm {
-		t.Error("manual_swap should force auto_confirm=true")
+	if stored != 0 {
+		t.Errorf("a refused upsert left %d manual_swap row(s) behind", stored)
 	}
 }
 

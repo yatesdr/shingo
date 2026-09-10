@@ -127,9 +127,27 @@ func AllSwapModes() []SwapMode {
 var ErrInvalidSwapMode = errors.New("invalid swap_mode")
 
 // ConfigurableSwapModes returns every swap mode that may be PERSISTED on a
-// style node claim: AllSwapModes minus SwapModeSimple. Simple is retired as a
-// configurable mode — it survives ONLY as a runtime CycleMode descriptor for
-// the node-empty downgrade, never as a stored claim mode.
+// style node claim: AllSwapModes minus SwapModeSimple and SwapModeManualSwap.
+// Both are retired as configurable modes and for different reasons.
+//
+//	simple       survives ONLY as a runtime CycleMode descriptor for the
+//	             node-empty downgrade.
+//	manual_swap  survives ONLY as a value SynthClaim STAMPS. A loader window is
+//	             Core-owned topology: Core sends the loader set on every
+//	             node-list sync, domain.Loader.SynthClaim builds the claim the
+//	             board and the load gate read, and nothing about that needs a
+//	             row in style_node_claims. A stored copy is a SECOND AUTHORITY
+//	             for the six facts Core owns, and the stored population is now
+//	             zero — SetCoreLoaders moves any that appear to
+//	             style_node_claims_quarantine. This is the write side of the
+//	             same ownership move: the rows were removed first, then the
+//	             door was shut behind them.
+//
+// THE WIRE LEG IS UNTOUCHED, DELIBERATELY. SwapModeManualSwap is still in
+// AllSwapModes, still stamped by SynthClaim, still read by the operator board
+// and by IsLoaderNode. Only PERSISTENCE is retired. Inventing a new wire field
+// to carry the same fact to the same readers would be a rename with migration
+// risk and no reader simplification.
 //
 // WHAT KEYS ON THIS SET, AND IT IS NOT THE DROPDOWN. Three server-side gates:
 // the claim-upsert allowlist (store/processes.UpsertClaim), the input validator
@@ -138,21 +156,26 @@ var ErrInvalidSwapMode = errors.New("invalid swap_mode")
 // because it cannot import the edge module. That third one is easy to miss and
 // load-bearing: drop a value from this set and seeddev refuses every
 // plants/*.yaml that uses it, so local dev and the CI sim rigs stop seeding.
+// That is exactly what dropping manual_swap would have done, and the fixtures
+// KEEP the value — it is a plantspec fact that Core's loader seeding, simcalc
+// and plantspec.Validate all read through Claim.IsLoader. seed_edge stops
+// writing an Edge claim row for those entries instead, which is the honest
+// re-cut: the fixture still describes a loader, the Edge just no longer stores
+// one.
 //
 // The editor's Swap Mode dropdown does NOT key on this set. It is hardcoded
 // HTML (www/templates/processes.html) that reads nothing at runtime, and it
-// deliberately DISAGREES: it omits manual_swap, because bin loaders are
-// Core-owned topology and are no longer authored in the editor, and it carries
-// a hidden "simple" option so an old row still renders when opened.
-// www/processes_enum_drift_test.go asserts exactly that disagreement. "What may
-// be stored" and "what the editor offers" are different questions; only the
-// first one is this function's.
+// carries a hidden "simple" option so an old row still renders when opened.
+// It used to DISAGREE about manual_swap as well — the dropdown omitted a value
+// this set allowed — and www/processes_enum_drift_test.go carried a clause
+// excusing exactly that. The two now agree about loaders, and the clause is
+// gone with it. "What may be stored" and "what the editor offers" are still
+// different questions; only the first one is this function's.
 func ConfigurableSwapModes() []SwapMode {
 	return []SwapMode{
 		SwapModeSingleRobot,
 		SwapModeTwoRobot,
 		SwapModeTwoRobotPressIndex,
 		SwapModeSequential,
-		SwapModeManualSwap,
 	}
 }

@@ -52,7 +52,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 
 	// From-claim: consume node WITHOUT OutboundStaging — prevents Phase 3 auto Order B.
 	// OutboundDestination is kept so the manual EvacuateNode path still works.
-	fromClaimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	fromClaimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "CO-NODE",
 		Role:                "consume",
@@ -67,7 +67,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	}
 
 	// To-claim: consume node with inbound staging (triggers staged delivery path)
-	toClaimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	toClaimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "CO-NODE",
 		Role:           "consume",
@@ -123,7 +123,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: full staging config — enables Phase 3 swap Order B
-	fromClaimID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	fromClaimID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3-NODE",
 		Role:                "consume",
@@ -139,7 +139,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	}
 
 	// To-claim: full staging config
-	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "P3-NODE",
 		Role:           "consume",
@@ -635,7 +635,7 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 
 	// From-style has NO claims on ADD-NODE
 	// To-style has a claim on ADD-NODE — this creates SituationAdd
-	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "ADD-NODE",
 		Role:           "consume",
@@ -785,7 +785,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: full staging config, role=consume
-	fromClaimID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	fromClaimID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3E-NODE",
 		Role:                "consume",
@@ -805,7 +805,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 
 	// To-claim: same payload code, and the outgoing evacuate flag above is
 	// what resolves this to SituationEvacuate.
-	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "P3E-NODE",
 		Role:           "consume",
@@ -963,7 +963,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.Sw
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: KeepStaged=true, full staging config
-	fromClaimID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	fromClaimID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "KS-NODE",
 		Role:                "consume",
@@ -981,7 +981,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.Sw
 	}
 
 	// To-claim: same staging area
-	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "KS-NODE",
 		Role:           "consume",
@@ -1199,14 +1199,14 @@ func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PI-NODE", Role: "consume", SwapMode: "two_robot_press_index",
 		PayloadCode: "PART-A", UOPCapacity: 100, InboundSource: "SRC", OutboundDestination: "DEST",
 		PairedCoreNode: "PI-NODE-B",
 	}); err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PI-NODE", Role: "consume", SwapMode: "two_robot_press_index",
 		PayloadCode: "PART-B", UOPCapacity: 200, InboundSource: "SRC", OutboundDestination: "DEST",
 		PairedCoreNode: "PI-NODE-B",
@@ -1272,7 +1272,7 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	// Sequential is direct-trip; staging fields intentionally omitted
 	// so this test also pins that the planner doesn't divert sequential
 	// claims into the staging-fallback path.
-	fcID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	fcID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "MARKET", OutboundDestination: "DEST",
 		// Outgoing claim owns the evacuate flag.
@@ -1281,7 +1281,7 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
 		PayloadCode: "PART-SAME", UOPCapacity: 250, InboundSource: "MARKET", OutboundDestination: "DEST",
 		PairedCoreNode: "SEQ-B",
@@ -1563,7 +1563,7 @@ func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 		{toStyleID, "SEQ-A", "SEQ-B", toPayload, false},
 		{toStyleID, "SEQ-B", "SEQ-A", toPayload, false},
 	} {
-		if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+		if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 			StyleID: c.style, CoreNodeName: c.own, Role: "produce", SwapMode: "sequential",
 			PayloadCode: c.payload, UOPCapacity: 100,
 			InboundSource: "MARKET", OutboundDestination: "DEST",

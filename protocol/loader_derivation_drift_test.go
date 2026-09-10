@@ -46,8 +46,11 @@ type modeReader struct {
 }
 
 var loaderModeReaders = map[string]modeReader{
-	"protocol/swap_mode.go": {3, "declaration", "the constant, plus its membership in AllSwapModes " +
-		"and ConfigurableSwapModes. The law that governs it lives here too"},
+	"protocol/swap_mode.go": {2, "declaration", "the constant, plus its membership in AllSwapModes. " +
+		"It was three until the loader ownership move took it OUT of ConfigurableSwapModes: a loader " +
+		"is Core-owned topology served by SynthClaim, so the value may no longer be PERSISTED on a " +
+		"style node claim. It is still on the wire and still in AllSwapModes, which is why the count " +
+		"went to two rather than to one. The law that governs it lives here too"},
 
 	"shingo-edge/domain/process.go": {2, "derivation", "THE Edge derivation — NodeClaim.IsLoaderNode " +
 		"and its NodeClaimInput twin, one read each. Everything on the Edge asks the question here"},

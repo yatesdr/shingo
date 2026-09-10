@@ -44,7 +44,7 @@ func TestPayloadsForLoader_UnionsAcrossProcessesActiveVsAll(t *testing.T) {
 	if err := db.SetActiveStyle(procID, &activeStyle); err != nil {
 		t.Fatalf("set active: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: inactiveStyle, CoreNodeName: "SHARED-LOADER",
 		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
 		PayloadCode: "PART-C", AllowedPayloadCodes: []string{"PART-C"},

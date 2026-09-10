@@ -264,7 +264,7 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create inactive style: %v", err)
 	}
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: inactive, CoreNodeName: "LOADER",
 		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
 		PayloadCode: "PART-B", AllowedPayloadCodes: []string{"PART-B"},
@@ -287,7 +287,7 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 }
 
 // seedLegacySimpleClaim seeds a process/node/style/claim carrying the retired
-// "simple" swap mode as a legacy DB row (via upsertClaimLegacySimple). "simple"
+// "simple" swap mode as a legacy DB row (via upsertClaimRetiredMode). "simple"
 // is no longer a configurable mode after the ingress lockdown, but legacy rows
 // still exist and hit the surviving bare-move / nil-dispatch path — this seeds
 // one so PushEmptyOut's guard can be exercised on it.
@@ -314,7 +314,7 @@ func seedLegacySimpleClaim(t *testing.T, db *store.DB, prefix string, role proto
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-SIMPLE-NODE",
 		Role:         role,

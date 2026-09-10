@@ -52,7 +52,7 @@ func seedCapManualSwap(t *testing.T, db *store.DB, proc, coreNode string, role p
 	if err := db.SetActiveStyle(procID, &styleID); err != nil {
 		t.Fatalf("set active style for %s: %v", proc, err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        coreNode,
 		Role:                role,
@@ -120,7 +120,7 @@ func seedActiveManualSwapLoader(t *testing.T, db *store.DB, procName, coreNode, 
 	if err := db.SetActiveStyle(procID, &styleID); err != nil {
 		t.Fatalf("set active style for %s: %v", procName, err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        coreNode,
 		Role:                protocol.ClaimRoleProduce,

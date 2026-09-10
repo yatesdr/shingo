@@ -79,7 +79,7 @@ cd "$(dirname "$0")/.."
 #
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1489
+FROZEN=1488
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

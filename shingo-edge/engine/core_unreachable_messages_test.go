@@ -52,7 +52,7 @@ func seedManualSwapConsume(t *testing.T, db *store.DB, coreNode string) int64 {
 	styleID, err := db.CreateStyle("UNREACH-STYLE-"+coreNode, "", processID)
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: coreNode, Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "PART-A", UOPCapacity: 100,
 		OutboundDestination: "OUT",

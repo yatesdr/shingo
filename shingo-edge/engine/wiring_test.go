@@ -84,7 +84,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",
@@ -306,7 +306,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "BL-NODE",
 		Role:                "produce",
@@ -445,7 +445,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimAID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimAID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-A",
 		Role:           "consume",
@@ -459,7 +459,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 	if err != nil {
 		t.Fatalf("upsert claim A: %v", err)
 	}
-	claimBID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimBID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-B",
 		Role:           "consume",
@@ -676,12 +676,12 @@ func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID,
 	styleID, _ = db.CreateStyle("ABP-STYLE", "a/b produce style", processID)
 	db.SetActiveStyle(processID, &styleID)
 
-	claimAID, _ = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimAID, _ = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ABP-A", Role: "produce", SwapMode: "simple",
 		PayloadCode: "PART-ABP", UOPCapacity: 100, InboundSource: "SRC-EMPTY",
 		PairedCoreNode: "ABP-B",
 	})
-	claimBID, _ = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimBID, _ = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ABP-B", Role: "produce", SwapMode: "simple",
 		PayloadCode: "PART-ABP", UOPCapacity: 100, InboundSource: "SRC-EMPTY",
 		PairedCoreNode: "ABP-A",
@@ -714,11 +714,11 @@ func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeB
 	styleID, _ = db.CreateStyle("ASYM-STYLE", "asym style", processID)
 	db.SetActiveStyle(processID, &styleID)
 
-	claimAID, _ = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimAID, _ = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ASYM-A", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-ASYM", UOPCapacity: 100, PairedCoreNode: "ASYM-B",
 	})
-	claimBID, _ = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimBID, _ = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ASYM-B", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-ASYM", UOPCapacity: 100,
 		// PairedCoreNode intentionally empty — B doesn't know about A
@@ -747,11 +747,11 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 
 	// Create a second style and start changeover
 	style2, _ := db.CreateStyle("AB-STYLE-2", "second style", processID)
-	upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: style2, CoreNodeName: "AB-NODE-A", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 100,
 	})
-	upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: style2, CoreNodeName: "AB-NODE-B", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 100,
 	})
@@ -877,12 +877,12 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 
 	// Create Style 2 with NO pairing (both nodes unpaired)
 	style2ID, _ := db.CreateStyle("AB-STYLE-NO-PAIR", "no pairing", processID)
-	upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: style2ID, CoreNodeName: "AB-NODE-A", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-X", UOPCapacity: 100,
 		// No PairedCoreNode
 	})
-	upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: style2ID, CoreNodeName: "AB-NODE-B", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-X", UOPCapacity: 100,
 		// No PairedCoreNode

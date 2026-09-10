@@ -50,7 +50,7 @@ func seedPressIndexProduceNode(t *testing.T, db *store.DB) (nodeID int64) {
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
 
-	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "PRESS-FRONT",
 		Role:                "produce",

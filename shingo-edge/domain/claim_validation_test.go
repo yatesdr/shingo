@@ -225,13 +225,37 @@ func TestValidateNodeClaim_EvacDestinationIsFreeForm(t *testing.T) {
 	}
 }
 
-func TestValidateNodeClaim_ManualSwapNeedsNoPayload(t *testing.T) {
+// TestValidateNodeClaim_ManualSwapIsNotAConfigurableInput replaces
+// TestValidateNodeClaim_ManualSwapNeedsNoPayload, which asserted the opposite:
+// that a manual_swap claim with a blank payload was ACCEPTED, because Core owns
+// a loader's payload set and there was nothing for the Edge to require.
+//
+// The ownership move finished that argument in the other direction. Core owns
+// the whole loader, not only its payloads, and SynthClaim serves all six facts
+// from the aggregate — so there is no such thing as a loader claim to validate.
+// manual_swap has left protocol.ConfigurableSwapModes() and the input is now
+// refused outright.
+//
+// WHAT THE ASSERTION IS ABOUT IS WHICH FIELD THE REFUSAL NAMES. A person who
+// types this into the claim editor must be told the mode is not configurable,
+// not that they forgot a payload — the payload arm still exempts loaders, so
+// silence there is what leaves swap_mode as the only thing said.
+func TestValidateNodeClaim_ManualSwapIsNotAConfigurableInput(t *testing.T) {
 	t.Parallel()
 	c := validClaim()
 	c.SwapMode = protocol.SwapModeManualSwap
 	c.PayloadCode = ""
-	if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
-		t.Fatalf("manual_swap with no payload must be accepted; findings = %+v", got)
+	got := ValidateNodeClaim(c, ClaimNodeContext{})
+	if !HasErrors(got) {
+		t.Fatalf("manual_swap must be refused as an input; findings = %+v", got)
+	}
+	for _, f := range got {
+		if f.Severity != SeverityError {
+			continue
+		}
+		if f.Field != "swap_mode" {
+			t.Errorf("the refusal must name swap_mode, not %q (%q)", f.Field, f.Message)
+		}
 	}
 }
 

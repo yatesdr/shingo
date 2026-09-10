@@ -189,6 +189,21 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// style_node_claims (the full claim row)
 	claimIDByStyleNode := make(map[string]int64) // "style|core_node" → claim id
 	for _, c := range p.Claims {
+		// A LOADER GETS NO EDGE CLAIM ROW. Core owns loader configuration: the
+		// same fixture entry has already seeded the process node and its operator
+		// station above, and seed_core has built the bin_loader from it, so the
+		// Edge resolves this window through the aggregate and SynthClaim exactly
+		// as a plant does. A style_node_claims row here would be the second
+		// authority the ownership move removed — and manual_swap is no longer a
+		// configurable mode, so the allowlist below would refuse it anyway.
+		//
+		// THE FIXTURE KEEPS swap_mode: manual_swap, and must. It is a plantspec
+		// fact read through Claim.IsLoader by seed_core's loader build, by
+		// simcalc's costing, and by plantspec.Validate. What is retired is
+		// persisting it on the Edge, not describing it in the spec.
+		if c.IsLoader() {
+			continue
+		}
 		sid, ok := styleIDs[c.Style]
 		if !ok {
 			return fmt.Errorf("claim %s/%s: style %q not seeded", c.CoreNode, c.Style, c.Style)

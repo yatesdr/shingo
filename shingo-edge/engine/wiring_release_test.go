@@ -203,7 +203,7 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 	})
 	// Promote the claim to two_robot.
 	claim, _ := db.GetStyleNodeClaimByNode(activeStyleForNode(t, db, nodeID), "REL-SUPPLY-SUPP-NODE")
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        claim.StyleID,
 		CoreNodeName:   claim.CoreNodeName,
 		Role:           claim.Role,
@@ -290,7 +290,7 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 	}
 
 	// Pair on the claim itself — that's what FlipABNode checks.
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:        claimA.StyleID,
 		CoreNodeName:   claimA.CoreNodeName,
 		Role:           claimA.Role,

@@ -235,13 +235,16 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	}
 	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() — the set of
 	// values that may be PERSISTED. It is deliberately NOT the editor dropdown:
-	// the dropdown omits manual_swap (loaders are Core-owned and not authored
-	// there) and carries a hidden "simple" for rendering old rows, and
-	// www/processes_enum_drift_test.go asserts that disagreement rather than
+	// the dropdown carries a hidden "simple" for rendering old rows, and
+	// www/processes_enum_drift_test.go asserts that difference rather than
 	// forbidding it. The retired "simple" is absent here — it survives only as a
-	// runtime CycleMode descriptor, never a persisted claim mode. "press_position" (the
-	// per-position fan-out marker) is in-memory only and must never persist; the
-	// allowlist also rejects typos and stale import values.
+	// runtime CycleMode descriptor, never a persisted claim mode. So is
+	// manual_swap, and for the ownership reason rather than a rendering one: a
+	// loader is Core-owned topology served by SynthClaim, so a stored loader
+	// claim is a second authority and there is now nothing for one to be about.
+	// "press_position" (the per-position fan-out marker) is in-memory only and
+	// must never persist; the allowlist also rejects typos and stale import
+	// values.
 	if !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode) {
 		return 0, fmt.Errorf("%w: %q is not a configurable swap_mode", protocol.ErrInvalidSwapMode, in.SwapMode)
 	}
@@ -250,15 +253,20 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// the node deadlocks — and it must auto-confirm delivery, because the
 	// operator's own action at the window IS the acknowledgement.
 	//
-	// THIS ARM IS STILL REACHED FROM THE UI. The claim editor can neither author
-	// nor edit a manual_swap claim: the Swap Mode dropdown drops the option, and
-	// the claims list renders a read-only "Loader" badge in place of Edit. The
-	// COMPARE GRID can — claimToBody echoes swap_mode verbatim and saveCompareCell
-	// has an explicit manual_swap branch for the payload cell
-	// (www/static/js/pages/processes.js) — so an existing loader claim is still
-	// saved through here by a person clicking a cell. Anything that closes the
-	// allowlist against manual_swap turns that click into an operator-visible
-	// error.
+	// THIS ARM IS NOW UNREACHABLE, and it took a data change to make it so. It
+	// used to be live: the claim editor could neither author nor edit a loader
+	// claim (the dropdown drops the option, the claims list renders a read-only
+	// "Loader" badge in place of Edit), but the COMPARE GRID could — claimToBody
+	// echoes swap_mode verbatim and saveCompareCell has an explicit manual_swap
+	// branch for the payload cell (www/static/js/pages/processes.js) — so a
+	// person clicking a loader's cell saved through here. Closing the allowlist
+	// while such a row still existed would have turned that click into an
+	// operator-visible error, which is why the rows were quarantined FIRST and
+	// the allowlist closed after. With the stored population at zero the grid has
+	// no loader cell to offer, so nothing reaches this arm.
+	//
+	// It stays as an assert rather than a branch: the invariant is about what a
+	// loader claim must look like, and it costs nothing to keep saying so.
 	if in.IsLoaderNode() {
 		if in.OutboundDestination == "" {
 			return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")

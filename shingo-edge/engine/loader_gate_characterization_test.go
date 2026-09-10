@@ -76,7 +76,7 @@ func seedClaimWithSwapMode(
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        prefix + "-NODE",
 		Role:                role,

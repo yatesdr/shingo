@@ -39,7 +39,7 @@ func buildMultiWindowStation(t *testing.T, db *store.DB, procName, windowNode st
 	}); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: windowNode,
 		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeManualSwap,
 		PayloadCode: "PART-A", AllowedPayloadCodes: []string{"PART-A"},
