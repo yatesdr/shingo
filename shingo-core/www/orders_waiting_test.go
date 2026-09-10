@@ -98,3 +98,53 @@ func TestCountQueueCodes_SelectsOnCauseCountsByCode(t *testing.T) {
 			"with no cause is not a wait", got["waiting_for_slot"])
 	}
 }
+
+// A PENDING LEG IS THE FOURTH POPULATION, and it was the one two instruments
+// disagreed about.
+//
+// A dig leg parks with a cause and deliberately does NOT move: being unsent is
+// what the compound re-drive selects, so the cause is written alongside the
+// status rather than instead of it (dispatch/compound.go, six sites). Under
+// IsAcquiring alone the orders page showed no wait at all for any of them —
+// while reconciliation's 30-minute anomaly board flagged the same rows as stuck.
+// One row, two instruments, opposite answers, and the one an operator actually
+// reads was the silent one.
+func TestOrderIsWaiting_IncludesAPendingLegHoldingUnderACause(t *testing.T) {
+	t.Parallel()
+	if !orderIsWaiting(waitingOrder(protocol.StatusPending, "lane-occupied")) {
+		t.Error("a pending order carrying a queue cause did not read as waiting. A dig leg holds " +
+			"at pending under a named cause for as long as its corridor is busy; the page showed " +
+			"nothing while the anomaly board called the same row stuck.")
+	}
+}
+
+// AND IT IS ADMITTED ON THE CAUSE, NOT ON THE WORD `pending`.
+//
+// This is what keeps the widening safe. Pending is a birth certificate: every
+// order in the plant passes through it, and most are only there for the
+// milliseconds before their door queues them. A pending row with no cause is not
+// a wait and must stay invisible, or the board grows a wait clock beside every
+// order the instant it is created.
+func TestOrderIsWaiting_ExcludesAPendingOrderWithNoCause(t *testing.T) {
+	t.Parallel()
+	if orderIsWaiting(waitingOrder(protocol.StatusPending, "")) {
+		t.Error("a freshly created pending order read as waiting. Birth is not a wait, and the " +
+			"cause is the only thing separating a resting leg from an order that was created a " +
+			"moment ago.")
+	}
+}
+
+// The summary chips are the other seam, and they must pick the population up
+// too — they key on the same predicate, which is the point of there being one.
+func TestCountQueueCodes_CountsAPendingLeg(t *testing.T) {
+	t.Parallel()
+	counts := countQueueCodes([]*domain.Order{
+		waitingOrder(protocol.StatusPending, "lane-occupied"),
+		waitingOrder(protocol.StatusPending, ""), // birth, not a wait
+		waitingOrder(protocol.StatusQueued, "ngrp-full"),
+	})
+	if counts["waiting_for_slot"] != 2 {
+		t.Errorf("waiting_for_slot chip = %d, want 2 (the resting leg and the queued order; the "+
+			"causeless pending row is not a wait). Full counts: %v", counts["waiting_for_slot"], counts)
+	}
+}

@@ -267,6 +267,23 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 // slot and then dispatched carries that cause all the way to delivery. Selecting
 // on the cause alone would print a wait clock beside a robot that is driving.
 //
+// ── AND `pending` IS THE FOURTH POPULATION, FOR THE SAME REASON ──────────
+//
+// A dig leg is the one thing in the plant that writes a cause and then RESTS
+// where it is: six sites in dispatch/compound.go park it and deliberately leave
+// the status alone, because being unsent is what the re-drive selects. Under
+// IsAcquiring alone every one of those showed no wait at all — while the
+// 30-minute anomaly board flagged the same legs as stuck. Two instruments
+// looking at one row and disagreeing, and the one an operator reads was the one
+// saying nothing.
+//
+// It is admitted on THE CAUSE, not on the status word — which is what makes it
+// safe here and would not be safe as a widening of IsAcquiring. A pending order
+// with no cause is a birth certificate and stays invisible; a pending order with
+// one is resting, and the causes are cleared when a leg is admitted
+// (compound.go, right after the admission verdict) so an admitted leg stops
+// rendering a wait before it moves.
+//
 // So it is BOTH: a cause on the row, AND a status in which a cause means a
 // present wait. The status list is LOCAL to this page on purpose —
 // protocol.IsAcquiring feeds live order queries, soakstat and a drift pin, and
@@ -280,6 +297,9 @@ func orderIsWaiting(o *domain.Order) bool {
 	case protocol.StatusStaged, protocol.StatusReshuffling:
 		// A robot parked at a lane's mark, or a compound parent whose chapter has
 		// stopped with a leg still open. Both carry causes no acquiring order can.
+		return true
+	case protocol.StatusPending:
+		// A dig leg holding where it is, under a named cause.
 		return true
 	default:
 		return protocol.IsAcquiring(o.Status)

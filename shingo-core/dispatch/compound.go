@@ -710,9 +710,9 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// and a failed leg fails the whole dig and the demand behind it, which makes
 	// this the most expensive place in the family to get wrong.
 	//
-	// Releaser for the hold: the leg stays `pending`, which is what
-	// GetNextChildOrder selects, so the next lane-clearing redrive or completion
-	// event brings it straight back.
+	// Releaser for the hold: the leg stays unsent, which is what
+	// GetNextChildOrder selects (orders.AwaitingFleetSQL), so the next
+	// lane-clearing redrive or completion event brings it straight back.
 	sourceNode, err := d.db.GetNodeByDotName(next.SourceNode)
 	if readFailed(err) {
 		log.Printf("dispatch: compound %d child %d — could not read source node %q: %v (holding the child)",
@@ -852,10 +852,12 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// indistinguishable from a leg nobody had looked at yet, on the row an
 		// operator and every diagnostic query actually read.
 		//
-		// The status deliberately does NOT move. `pending` is what makes the leg
-		// re-drivable — GetNextChildOrder selects it, and no transition out of
-		// sourcing goes back — so the cause is written ALONGSIDE the status rather
-		// than instead of it. Advisory metadata, never a gate.
+		// The status deliberately does NOT move, so the cause is written ALONGSIDE
+		// the status rather than instead of it. Advisory metadata, never a gate.
+		//
+		// What makes the leg re-drivable is having no vendor order, not the word
+		// `pending` — GetNextChildOrder selects orders.AwaitingFleetSQL. The status
+		// stays put because this leg got nowhere and the row should say so.
 		//
 		// FILED AS A LANE WAIT, like the same verdict at the two complex doors: every
 		// cause this arm can carry is a fact about a corridor, and QueueWaitingForSlot
@@ -926,14 +928,24 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// row, it is whether THIS DISPATCH is the moment the robot goes in. Only the
 	// seam knows that, so only the seam can answer it.
 	//
-	// AND BEFORE THE STATUS MOVE, which is what makes the failure arm survivable.
-	// The read above fails closed by holding the child; this has to hold it the
-	// same way, and a child can only be held while it is still `pending` —
-	// GetNextChildOrder selects `status='pending'`, so a child parked at
-	// `sourcing` is invisible to every re-drive, and no transition out of
-	// sourcing goes back to pending (protocol.validTransitions). Holding it one
-	// line further down would strand the leg and leave the parent in
-	// `reshuffling` forever: fail-closed on paper, wedged in fact.
+	// AND BEFORE THE STATUS MOVE — for what the row would SAY, not for whether
+	// the leg survives.
+	//
+	// This justification used to read "a child can only be held while it is still
+	// `pending`, because GetNextChildOrder selects `status='pending'`, so a child
+	// parked at `sourcing` is invisible to every re-drive". That mechanism is
+	// gone: the baton is orders.AwaitingFleetSQL — pre-dispatch AND no vendor id —
+	// so {pending, sourcing} are BOTH selected, and a leg held one line further
+	// down would be found by the next advance and by RedriveHeldCompoundLegs
+	// exactly as it is found here. The ordering is not what keeps the leg alive.
+	//
+	// It is kept because the STATUS IS THE RECORD OF HOW FAR THIS LEG GOT, and
+	// this failure means it got nowhere. Every fail-closed arm above holds the
+	// leg at `pending` with a named cause; moving it to `sourcing` first and then
+	// refusing would file a leg that could not even record its own presence in a
+	// lane under the rung that means the material hunt is under way. Same
+	// disposition, one honest word for it — and the arm below stays a park rather
+	// than becoming a demote.
 	if err := d.TakeLaneOccupancy(next.ID, d.enteredAtDispatch(sourceNode, destNode)...); err != nil {
 		// AND THE CAUSE GOES ON THE ROW, like every other arm in this function. This
 		// one was missed: the leg holds at `pending` with nothing written, so a leg
@@ -952,9 +964,10 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 
 	// THE VERDICT IS THE POINT. transition() compare-and-swaps on the status this
 	// caller loaded (lifecycle.go), so `pending → sourcing` is an ATOMIC CLAIM on
-	// this child: GetNextChildOrder selects `status='pending' … LIMIT 1`, two
-	// concurrent callers therefore resolve to the SAME child, and exactly one of
-	// their CASes matches a row. The database has been answering this correctly
+	// this child: GetNextChildOrder takes the FIRST leg by sequence that is still
+	// awaiting the fleet (orders.AwaitingFleetSQL … LIMIT 1 — not `status='pending'`,
+	// which is what this line used to say), two concurrent callers therefore
+	// resolve to the SAME child, and exactly one of their CASes matches a row. The database has been answering this correctly
 	// all along. This line logged the answer and dispatched anyway.
 	//
 	// Nothing downstream catches it. The loser's struct still reads `pending`, so
@@ -1047,9 +1060,14 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 }
 
 // advanceCompoundChapterEnd is the sql.ErrNoRows half of AdvanceCompoundOrder:
-// there are no PENDING children left, so the question is no longer "dispatch
+// no child is still AWAITING THE FLEET, so the question is no longer "dispatch
 // what next" but "is this chapter over, and what does that mean for the
 // parent, the lane and the dig".
+//
+// It said "no PENDING children left", which names a predicate the baton stopped
+// using: GetNextChildOrder selects orders.AwaitingFleetSQL — pre-dispatch AND no
+// vendor id — so a leg resting in `sourcing` and unsent is still a child this
+// half must NOT be reached for.
 //
 // Moved out verbatim, not rewritten. It never touched the dispatch half's
 // locals — its only free variable is parentOrderID — so the split is the
@@ -1057,7 +1075,8 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 // exactly as it was. The dispatch half and its four recursion sites stay in
 // AdvanceCompoundOrder pending the north-star unification.
 func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
-	// sql.ErrNoRows — no more PENDING children. But "not pending" doesn't mean "done".
+	// sql.ErrNoRows — no child is still awaiting the fleet. But "not awaiting the
+	// fleet" doesn't mean "done".
 	// Children that are dispatched / in_transit / staged / delivered are
 	// in flight. We only confirm or fail the compound parent when every
 	// child has reached a terminal status (confirmed / failed / cancelled).

@@ -432,12 +432,42 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	//   The old spelling could not reach one because it named 'queued'; aiming at
 	//   the current episode can, so the guard becomes explicit.
 	//
-	//   PENDING — never. Pending is the birth certificate, not a wait: the order
-	//   has not entered the ladder, and the doors that write a reason there are
-	//   about to queue it (planning_service, the bin-move door). Their code rides
+	//   PENDING — never, EXCEPT for a compound child. Pending is the birth
+	//   certificate and not a wait, and the doors that write a reason there are
+	//   about to queue it (planning_service, the bin-move door): their code rides
 	//   the transition onto the new row via lifecycle.historyReason, so stamping
 	//   the birth row too would put one wait on two rows and read every
-	//   intake-side park twice.
+	//   intake-side park twice. That reasoning is about doors that MOVE, and it
+	//   is the whole of the guard — so it does not reach the one population that
+	//   writes a reason here and then STAYS.
+	//
+	//   A COMPOUND CHILD RESTS IN `pending` FOR ITS WHOLE PRE-DISPATCH LIFE.
+	//   Six sites in dispatch/compound.go park a leg with a cause and deliberately
+	//   do not move its status — `pending` is what the re-drive selects, so the
+	//   cause is written ALONGSIDE the status rather than instead of it. Nothing
+	//   ever carries that code onto a later row: the admitted path CLEARS it
+	//   (compound.go, right after the admission verdict) before the transition, so
+	//   historyReason reads an empty code and the leg's `sourcing` row is born
+	//   blank by construction. Under the plain guard a leg's wait therefore
+	//   reached history NOWHERE — it lived only in queue_cause, a live column
+	//   overwritten in place, so a leg that parked three times left a record of
+	//   one and a wedged leg left no dated record at all.
+	//
+	//   AND IT IS AN INSERT, NOT THE UPDATE THE OTHER STATUSES GET. Updating "the
+	//   row that opened the current episode" is right where an episode is a
+	//   passage — each visit gets its own row, and re-asserting within one visit
+	//   overwrites it, which is how the buried path NARROWS a cause without
+	//   splitting one wait in two. A leg has no such passage: there is exactly ONE
+	//   `pending` row for its entire existence, so updating it would collapse
+	//   every wait the leg ever has onto a single record — the same disease at a
+	//   different address. Each distinct wait is its own episode here, and gets
+	//   its own dated row.
+	//
+	//   IT CANNOT CHATTER. Every one of the six park sites goes through
+	//   dispatch.WriteQueueDetail, whose short-circuit returns before the store
+	//   call when the sentence, code and cause all match what the row already
+	//   carries — so a leg re-parked under the SAME cause every scanner tick
+	//   writes nothing at all, and only a genuine change of cause opens a row.
 	//
 	// NO ROW FOR THE CURRENT EPISODE means an order created before the birth row
 	// existed — a plant upgrades with live orders on the board. Rather than drop
@@ -451,10 +481,28 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	// waiting does not unmake the fact.
 	if code != "" {
 		var status string
-		if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1`, id).Scan(&status); err != nil {
+		var parentOrderID sql.NullInt64
+		if err := tx.QueryRow(`SELECT status, parent_order_id FROM orders WHERE id=$1`, id).
+			Scan(&status, &parentOrderID); err != nil {
 			return err
 		}
-		if s := protocol.Status(status); !protocol.IsTerminal(s) && s != protocol.StatusPending {
+		s := protocol.Status(status)
+		switch {
+		case protocol.IsTerminal(s):
+			// Nothing. A QueueCode over a TermCode is a category error.
+		case s == protocol.StatusPending && parentOrderID.Valid:
+			// A resting leg's wait, written as its own episode. See the PENDING
+			// clause above for why this one population is an INSERT.
+			if _, err := tx.Exec(
+				`INSERT INTO order_history (order_id, status, detail, code, created_at)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				id, status, reason, code, clock.Now().UTC()); err != nil {
+				return err
+			}
+		case s == protocol.StatusPending:
+			// Nothing. The door that wrote this is about to move the order, and
+			// its code rides the transition onto the new row.
+		default:
 			res, err := tx.Exec(
 				`UPDATE order_history SET code = $2
 				 WHERE id = (SELECT id FROM order_history
