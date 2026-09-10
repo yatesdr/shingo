@@ -45,90 +45,59 @@ func swapHold(order *orders.Order, reason string) swapHoldVerdict {
 }
 
 // swapLegHeld is the BOOLEAN VIEW of the gate, for callers that only need the
-// answer — which is every test that pins a face, and nothing in production.
-// Kept so those pins keep asking the gate the way they always have.
+// answer — which is every test that pins the index anti-collision arm, and
+// nothing in production. Kept so those pins keep asking the gate the way they
+// always have.
 func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (bool, string) {
 	v := d.swapLegHoldVerdict(order, steps)
 	return v.held, v.reason
 }
 
 // swapLegHoldVerdict reports whether a coordinated-swap leg must stay queued
-// because its commit on the shared LINE node is unsafe until its sibling has done
-// its part, and under which cause it parks if so.
-// One gate, two faces of the same invariant — never let one leg physically commit
-// on the shared node while its partner cannot satisfy the precondition that makes
-// that commit safe. Returns the zero verdict for non-swap orders and any leg whose
-// commit is already safe. Fail-open on lookup errors: never freeze a robot on a
-// transient failure.
+// because its commit on the shared LINE node is unsafe until its sibling has
+// done its part, and under which cause it parks if so. Returns the zero verdict
+// for non-swap orders and any leg whose commit is already safe. Fail-open on
+// lookup errors: never freeze a robot on a transient failure.
 //
-// The two faces, both keyed on what the leg does to its ProcessNode (the shared
-// line position), read from the steps — see swap_leg_role.go:
+// ── ONE FACE LEFT, AND IT ANSWERS A GEOMETRY QUESTION ─────────────────────
 //
-//   - EVAC anti-strand (ALN_003, 2026-06-03): a leg that TAKES the line bin and
-//     does NOT secure its own replacement is held until its supply sibling has
-//     CLAIMED a replacement — else it pulls the line's bin with nothing coming and
-//     strands the line empty.
-//     TWO ARMS RELEASE IT, not one. This said only "CLAIMED", and the live-claim
-//     arm is the first of two: swapLegCommittedToFleet below also releases, for a
-//     supply that has already STAGED or DELIVERED its replacement and dropped the
-//     claim on the way. That second arm exists because testing the claim alone
-//     deadlocked the rig on 2026-08-11 (orders 21/22) — delivered is a stronger
-//     form of secured than in-hand and read as weaker. A summary naming one arm
-//     sends the next reader looking for a bug in the other.
+// INDEX anti-collision (HOP press-index, 2026-07): a leg that PLACES a bin on
+// the line is held until its clearer sibling has DISPATCHED to clear that
+// position first — else it drives into a still-occupied node and two bins meet
+// on one line position. Scoped to a self-sufficient evac sibling
+// (legSecuresOwnReplacement), which is what stops it mutual-holding a pair.
 //
-//   - INDEX anti-collision (HOP press-index, 2026-07): a leg that PLACES a bin on
-//     the line is held until its clearer sibling has DISPATCHED to clear that
-//     position first — else it drives into a still-occupied node (two bins on one
-//     line position). Scoped to a self-sufficient evac sibling
-//     (legSecuresOwnReplacement) so it can never mutual-hold the evac case: a
-//     two_robot supply's sibling is a plain evac already held on the supply, and
-//     holding both would deadlock.
-//     PIN: TestSwapFaces_NarrowingIsWhatPreventsTheMutualHold — and it is new:
-//     that deadlock claim named no test for its whole life, and it is the
-//     difference between a working pair and a cell stopped until somebody cancels
-//     a leg. The pin asserts the evac held, the supply NOT held, and that flipping
-//     only legSecuresOwnReplacement's answer makes Face 2 hold the supply too.
-//     Both-held is terminal rather than slow: Face 1 frees the evac when the
-//     supply commits, Face 2 frees the supply when the evac commits, and each
-//     needs the other to dispatch first.
+// It reads the STEPS, never the mode: what does this leg do to its ProcessNode.
+// See swap_leg_role.go.
 //
-// A THIRD FACE WAS BUILT AND BURIED, 2026-08-31 — read this before building it
-// again. It would have held a two_robot supply while its evac sibling was parked
-// pre-dispatch on a destination-capacity cause. It carried a same-resource
-// exemption: when the supply's own pickup is in the same room the evac is
-// blocked on, the supply IS the thing that frees that slot, so holding it
-// deadlocks the pair. That exemption is what emptied the face — every NARROW
-// two_robot claim in all FOUR runnable plant specs has inbound_source equal to
-// outbound_destination, so every reachable claim is always exempt and the face
-// can never fire.
+// ── WHY IT SURVIVED THE PAIR RULE AND FACE 1 DID NOT ──────────────────────
 //
-// RE-CENSUSED 2026-09-10: 21 of 21, across demo, edge2, lane-stress and
-// lane-stress-packed. This used to say "all three RUNNABLE plant specs", which
-// was true until plants/edge2.yaml landed (2026-09-06); edge2's six two_robot
-// claims (PRS_011, WLD_010) all run SMN_L2 → SMN_L2, so the finding survived the
-// spec that could have broken it. The rest: demo ALN_001/002/006/007 SYN_MARKET
-// and ALN_008 PLK_H1; lane-stress and lane-stress-packed ALN_001 SYN_STAMP,
-// ALN_002/006/007 SYN_COMP.
+// The pair rule makes both legs dispatch together, which answers every question
+// about whether a partner is COMING. This arm is not that question. It is about
+// ORDER — the clearer has to reach the position before the filler puts a bin on
+// it — and two legs dispatched in the same pass are still two robots that can
+// arrive in either order. Symmetry does not cover sequence.
 //
-// NARROW two_robot, and the word is load-bearing. SwapMode.IsTwoRobot() also
-// matches two_robot_press_index, which is NOT same-resource — demo's PLN_001
-// runs SYN_PRESS_EMPTIES → SYN_MARKET, drawing empties from the maintained group
-// and returning fulls to the market. A census taken through IsTwoRobot would
-// have found exceptions and reached the opposite conclusion about this face. Zero fires in a sim run was read as the arm working; it is the same
-// board a completely broken arm produces. The design record and SYNTH-round8
-// carry the incident and the full argument.
+// It earned HOP 07 and it is the owner's to remove, not this batch's. The
+// release-layer guard refusePlacingLegWhileSiblingPending covers the same
+// collision at the moment the bin actually moves; whether that makes this
+// redundant is a question about a hazard with an incident behind it, and the
+// honest answer is that it has not been proven, so this stays.
+//
+// A THIRD FACE WAS BUILT AND BURIED, 2026-08-31, and the note that stood here
+// has gone with it — recorded in the U3 commit rather than kept as folklore.
+// The short version, because someone will want to build it again: it would have
+// held a two_robot supply while its evac sibling was parked pre-dispatch on a
+// destination-capacity cause, and its same-resource exemption made it a no-op
+// on every claim it could see. Do not rebuild it. The pair rule is the answer
+// to the question it was asking, and its exemption is the carve-out the
+// no-mode-names ruling forbids.
 //
 // The directions are asymmetric on purpose. A press-index evac (R1) stages the
 // fresh carrier the index leg (R2) later collects, so R1 must be free to run
 // first — holding R1 on R2 is the permanent deadlock
-// TestSwapHold_PressIndexR1_NotHeldOnItsSibling pins shut. Only the FILLER waits;
-// the CLEARER never does.
-//
-// Role is read from the steps, not geometry. It used to be
-// `DeliveryNode != ProcessNode`, a different question: Core derives DeliveryNode
-// from the steps (extractEndpoints = last pickup-or-dropoff), so a press-index R1
-// — ending by staging a carrier at the index node — looked like a removal leg
-// needing help. It isn't; it fetches that carrier itself.
+// TestSwapHold_PressIndexR1_NotHeldOnItsSibling pins shut. Only the FILLER
+// waits; the CLEARER never does.
 func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedStep) swapHoldVerdict {
 	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
 	if err != nil {
@@ -186,63 +155,39 @@ func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedSte
 	takesLine := legTakesLineBin(steps, order.ProcessNode)
 	placesLine := legPlacesLineBin(steps, order.ProcessNode)
 
-	// EVAC anti-strand: a leg that lifts the line's bin but cannot fetch its own
-	// replacement waits for its supply sibling to claim, or the line strands.
-	if takesLine && !legSecuresOwnReplacement(steps) {
-		if sibErr != nil || sib == nil {
-			// Supply row should exist (created first, linked at intake); hold
-			// rather than strand the line if it is somehow missing.
-			return swapHold(order, "swap: awaiting supply sibling")
-		}
-		claimed, err := d.db.ListBinsByClaim(sib.ID)
-		if err != nil {
-			log.Printf("dispatch: swap-hold claim check for order %d sib %d: %v", order.ID, sib.ID, err)
-			return swapHoldVerdict{}
-		}
-		if len(claimed) > 0 {
-			return swapHoldVerdict{} // supply is holding a replacement right now — release
-		}
-		// ── AND A SUPPLY THAT HAS ALREADY DELIVERED ITS REPLACEMENT COUNTS ──
-		//
-		// "Secured" was tested as "holds a claim NOW", and those agree only until
-		// the supply STAGES its replacement: the store unclaims the bin, the claim
-		// disappears, and this arm held the evac forever waiting for a claim that
-		// had already done its job. Delivered is a STRONGER form of secured than
-		// in-hand, and it read as weaker.
-		//
-		// The deadlock, live on the rig 2026-08-11: ASSY two_robot, orders 21 and
-		// 22. The supply picked an empty at LSC_020, dropped it at staging SLN_002,
-		// released its claim, and drove on toward the line — where it could not
-		// place, because the line still held the old bin. The evac that would have
-		// removed that bin was held here, on "supply sibling claims a bin", against
-		// a supply holding zero claims. Each waited for the other; AMR-05 stood
-		// still; WELD-1 stopped producing ASSY; the panel loop stopped consuming
-		// and drained SYN_STAMP's carriers to zero. One predicate, eight wedged
-		// orders.
-		//
-		// swapLegCommittedToFleet solved exactly this for the MIRROR direction and
-		// says so in its own doc — "read from dispatch state, NOT a live claim, so
-		// the hold releases correctly even after the clearer completes and drops
-		// its claim". This arm never got the same treatment. It does now, through
-		// the same predicate, so the two directions cannot drift.
-		//
-		// Committing to the fleet is a safe threshold rather than an optimistic
-		// one: a complex order claims its source bins BEFORE the fleet create
-		// (acquireComplexSources → confirmComplexPlan → dispatchComplexToFleet), so
-		// `dispatched` already implies a replacement was claimed. The acquiring
-		// states it is held FROM read as not-committed, which is the case the guard
-		// was written for (ALN_003, 2026-06-03: never pull the line bin while the
-		// supermarket might be empty).
-		if swapLegCommittedToFleet(sib) {
-			return swapHoldVerdict{} // supply already secured and staged/delivered it — release
-		}
-		return swapHold(order, "swap: holding removal leg until supply sibling secures a bin")
-	}
+	// ── FACE 1 IS GONE, AND THE ANTI-STRAND IS NOW U1's PAIR RULE ─────────
+	//
+	// Face 1 held an evac that could not fetch its own replacement until its
+	// supply sibling had claimed one, "to prevent stranding" (ALN_003,
+	// 2026-06-03). It was guarding a step that moves nothing: dispatch sends a
+	// two_robot evac ONE instruction, wait(LINE) — drive to the line and park —
+	// because splitAtWait returns steps[:1] and the pickup is appended at
+	// release. Nothing this gate could refuse was going to lift a bin.
+	//
+	// THE ANTI-STRAND MECHANISM IS complex_pair.go. The pair dispatches in one
+	// pass or neither leg does, so an evac parked at the line implies its supply
+	// was dispatched in the same pass, and "a supply that was never coming" —
+	// which is what ALN_003 actually was — is unconstructible. If a comment
+	// anywhere still names this arm, or commit 0d95521, as what stops a strand,
+	// it is out of date; send the reader here.
+	//
+	// It also cost a live deadlock on the way out. Testing "supply holds a claim
+	// NOW" wedged the ASSY pair on 2026-08-11 (orders 21/22): the supply staged
+	// its replacement, the store unclaimed the bin, and the evac waited forever
+	// on a claim that had already done its job. That was repaired with
+	// swapLegCommittedToFleet rather than removed, which is the arm this deletes.
 
 	// INDEX anti-collision: a leg that drops a bin onto the line waits until its
 	// clearer sibling is committed to clearing that position first. Only when the
-	// sibling is a self-sufficient evac — otherwise this is a two_robot supply
-	// whose evac sibling is the one held (above), and holding both deadlocks.
+	// sibling is a self-sufficient evac.
+	//
+	// THAT NARROWING USED TO BE A DEADLOCK GUARD and is now a scoping one. It
+	// read "otherwise this is a two_robot supply whose evac sibling is the one
+	// held ABOVE, and holding both deadlocks" — above being Face 1, which is
+	// gone, so there is no longer a second hold to mutual-lock with. It stays
+	// because it is also the honest scope: a sibling that is NOT a self-
+	// sufficient evac is not a clearer, so there is nothing for this filler to
+	// wait behind.
 	if placesLine && !takesLine {
 		if sibErr != nil || sib == nil {
 			// Absent/unreadable peer: fail OPEN. The clearer (evac) is created
@@ -257,13 +202,16 @@ func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedSte
 		// avoid mutual-holding two LIVE legs — a dead peer cannot be waiting on us,
 		// so there is no deadlock to avoid and every filler shape needs this.
 		//
-		// This became reachable when the peer-terminal cascade stopped cancelling a
-		// supply parked on a dry source (swap_peer.go, "spare a swap supply parked on
-		// a dry source"): that cancel was what previously kept a filler from
-		// outliving its clearer. Sparing the wait is right — it stops the re-arm
-		// churn — but the filler must then be held rather than left free to dispatch
-		// once the operator stocks the payload. Core cannot recall a driving robot
-		// (one-way RDS handoff), so dispatch-time admission is the only lever.
+		// IT IS NEARLY UNREACHABLE NOW, AND IT STAYS ANYWAY. It became reachable
+		// when the peer-terminal cascade started SPARING a supply parked on a dry
+		// source, which let a filler outlive its clearer. The spare is deleted and
+		// the death rule is unconditional, so a filler whose clearer died is taken
+		// with it — and the window this arm covers is the pass between the clearer
+		// going terminal and the death rule reaching this row.
+		//
+		// A pass is enough to need it. Core cannot recall a driving robot (one-way
+		// RDS handoff), so dispatch-time admission is the only lever, and the cost
+		// of being wrong here is a bin placed on a position nothing has cleared.
 		//
 		// Terminal-SUCCESS is not this case: a confirmed evac did clear the line and
 		// is released by swapLegCommittedToFleet below. swapTerminalKind is non-empty
@@ -303,11 +251,44 @@ func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedSte
 		sibSteps, ok := decodeSteps(sib.StepsJSON)
 		if !ok || !legSecuresOwnReplacement(sibSteps) {
 			// Sibling is not a self-sufficient evac (the two_robot supply case, or
-			// an unreadable peer) — its evac sibling is held on us; do not mutual-hold.
+			// an unreadable peer) — nothing here for this filler to wait behind.
 			return swapHoldVerdict{}
 		}
 		if swapLegCommittedToFleet(sib) {
 			return swapHoldVerdict{} // evac is committed to clearing the line — release
+		}
+		// ── AN ACQUIRING CLEARER IS BEING DISPATCHED WITH US, NOT AHEAD OF US ─
+		//
+		// THIS ARM DEADLOCKED THE PRESS THE MOMENT THE PAIR RULE LANDED, and it
+		// was measured, not reasoned about: a steady-state press-index pair (R1
+		// the clearer, R2 the filler) sat queued for pass after pass, R1 in
+		// `sourcing`, R2 in `queued`, both on swap-hold, no vendor order on
+		// either. Both robots and the press out until somebody cancels a leg —
+		// which is exactly the permanent mutual hold SYNTH-round2 warned about.
+		//
+		// The mechanism: this arm holds the filler until its clearer is COMMITTED
+		// to the fleet. Under the pair rule, holding the filler parks the WHOLE
+		// pair — so the clearer never reaches its own fleet create, never becomes
+		// committed, and the condition this waits on can never come true. The
+		// gate was written for a world where the two legs dispatched
+		// independently, and it is the last thing in the swap gates that still
+		// assumed it.
+		//
+		// A clearer that is still ACQUIRING is one of two things: our partner in
+		// a pair pass that is sequencing both of us, or a leg that has not got
+		// there yet. In the first case the ordering this arm wants is already
+		// guaranteed — dispatchPairInOnePass hands the CLEARER to the fleet
+		// before the FILLER, by role read from the steps — and it is guaranteed
+		// deterministically rather than by waiting for a state that a wait
+		// prevents. In the second the pair rule will not commit either of us
+		// anyway.
+		//
+		// WHAT IS NOT WEAKENED: the dead-clearer arm above still fires, and it is
+		// the one that carries the collision hazard that matters — a clearer that
+		// never cleared the line leaves its resident sitting there. This arm only
+		// ever answered "not yet", and "not yet" is now answered by ordering.
+		if protocol.IsAcquiring(sib.Status) {
+			return swapHoldVerdict{}
 		}
 		return swapHold(order, "swap: holding index leg until evac sibling clears the line")
 	}
@@ -326,13 +307,15 @@ func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedSte
 //
 //	CLEARER  the filler waits until the evac is committed to clearing the shared
 //	         line position, so the fleet can sequence the drop after the pickup.
-//	SUPPLY   the evac waits until the supply is committed to fetching a
-//	         replacement, so the line cannot strand (ALN_003, 2026-06-03).
 //
-// The supply side used to test a LIVE CLAIM instead, and deadlocked the moment
-// the supply staged its replacement and the store unclaimed the bin — see the
-// call site. Sharing the predicate is what stops the two directions drifting
-// again.
+// ONE DIRECTION NOW, NOT TWO. The other was Face 1 — the evac waiting until its
+// supply was committed to fetching a replacement, so the line could not strand
+// (ALN_003, 2026-06-03) — and it is deleted: the pair rule dispatches both legs
+// together, so an evac at the line implies a dispatched supply by construction.
+// The paragraph is kept because the SHAPE is the lesson: that direction was
+// written to test a LIVE CLAIM and deadlocked the rig the moment the supply
+// staged its replacement and the store unclaimed the bin (2026-08-11, orders
+// 21/22). Anything added here later must read dispatch STATE, not a claim.
 //
 // The acquiring states (queued/sourcing) a leg is held FROM read as
 // not-committed, and so do the failure states where it will not do its part; a

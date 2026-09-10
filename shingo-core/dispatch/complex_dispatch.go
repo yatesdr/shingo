@@ -703,12 +703,20 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	return nil
 }
 
-// applySwapGates runs the two-robot swap guards (Phase B): the swap peer-terminal
-// race unwind (SPR 2424/2425) that resolves a leg whose sibling already went
-// terminal, then the swapLegHeld removal-leg hold (ALN_003) that parks an evac leg
-// until its supply sibling has secured a claim. done=true means the order was
-// resolved by the unwind or parked waiting_for_partner; the orchestrator returns
-// st.err verbatim. Reads the resolved steps read-only.
+// applySwapGates runs the coordinated-swap guards (Phase B): the swap
+// peer-terminal race unwind (SPR 2424/2425) that resolves a leg whose sibling
+// already went terminal, then the INDEX ANTI-COLLISION hold that keeps a filler
+// off a line position its clearer has not committed to clearing (HOP 07).
+//
+// THE REMOVAL-LEG HOLD IS NOT HERE ANY MORE. This used to run Face 1 — park the
+// evac until its supply secured a claim, "to prevent stranding" (ALN_003,
+// 2026-06-03) — and that arm is deleted. Dispatch sends an evac to PARK, so the
+// hold guarded a step that moves nothing, and the anti-strand is now structural:
+// complex_pair.go dispatches both legs of a pair in one pass or neither.
+//
+// done=true means the order was resolved by the unwind or parked
+// waiting_for_partner; the orchestrator returns st.err verbatim. Reads the
+// resolved steps read-only.
 func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
 	// Close the swap peer-terminal RACE (SPR 2424/2425, 2026-07). HandleSwapPeerTerminal
 	// unwinds a swap when one leg reaches a terminal state, but it fires from the
@@ -751,14 +759,16 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 		}
 	}
 
-	// Two-robot swap removal-leg hold: don't let a removal (evac) leg that
-	// cannot fetch its own replacement claim/pull the line bin until its supply
-	// sibling has secured one. Stops a swap from stranding the line when the
-	// supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Stay
-	// queued — the scanner replays on EventBinUpdated when the supply leg
-	// claims, clearing the gate. The sibling pointer is set at intake (the
-	// second leg carries it on its ComplexOrderRequest), so it is present
-	// here even on the synchronous intake-dispatch path.
+	// The INDEX ANTI-COLLISION hold: a leg that places a bin on the shared line
+	// position waits until its clearer sibling is committed to clearing it, or
+	// two bins meet on one position (HOP 07). Stay queued — the scanner replays
+	// on the ordinary event set.
+	//
+	// WHAT USED TO BE DESCRIBED HERE was the removal-leg hold (ALN_003), and it
+	// is gone; see applySwapGates' own note and swap_hold.go. The sibling pointer
+	// this reads is carried by BOTH legs on their ComplexOrderRequest, so it is
+	// present even on the synchronous intake-dispatch path — what may not be
+	// present that early is the partner's ROW, which the pair rule handles.
 	//
 	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
 	// to concrete nodes by now, and the line node is concrete either way, so the

@@ -16,16 +16,28 @@ import (
 
 // TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink pins the Commit-1
 // fix: the two-robot evac's link to its supply is persisted ATOMICALLY in the
-// CreateOrder INSERT (domain.Order.SiblingOrderUUID), so the starvation hold
-// still fires even when the separate post-create link step (the old
+// CreateOrder INSERT (domain.Order.SiblingOrderUUID), so the pair is still
+// recognisable even when the separate post-create link step (the old
 // best-effort LinkOrderSiblingsByEdgeUUID, log-and-continue) never recorded it.
 //
 // This is the ALN_003 fail-open: pre-fix, a failed intake link left
-// sibling_order_uuid empty → swapLegHeld read it as "not a swap leg" →
-// the evac PULLED the line bin with no supply hold → line stranded.
+// sibling_order_uuid empty → the leg read as "not a swap leg" → the evac
+// PULLED the line bin with no hold at all → line stranded.
 //
 // The test models the failed-link case by creating the evac via CreateOrder
 // ALONE (with the sibling set), skipping the fragile link call entirely.
+//
+// ── ITS OBSERVABLE MOVED WITH THE MECHANISM, ITS SUBJECT DID NOT ──────────
+//
+// This used to end by asserting Face 1 held the evac, because Face 1 was what
+// read the pointer. Face 1 is deleted — dispatch sends the evac to park, so it
+// was guarding a step that moves nothing — and the pointer is read by the PAIR
+// RULE instead, which is a stronger dependency than the one it replaced: a lost
+// link no longer merely disarms a hold, it makes the pair invisible, and both
+// legs would dispatch independently.
+//
+// So the assertion is now "the durable INSERT is what lets this be recognised as
+// half a pair". Same fix, same failure mode, the mechanism that now carries it.
 func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
@@ -70,15 +82,20 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 		t.Fatalf("sibling_order_uuid = %q, want %q (durable INSERT did not persist it)", got, "swap-supply-dl")
 	}
 
-	// The gate must HOLD (fail closed) because the supply has no claimed bin —
-	// NOT fail open as it did pre-fix when the link was lost.
+	// The PAIR must be recognised from the durable column alone — NOT read as a
+	// solo order, which is what a lost link produced pre-fix and what would now
+	// let both legs dispatch independently of each other.
 	evac, _ = db.GetOrderByUUID("swap-removal-dl")
-	evacSteps, ok := decodeSteps(evac.StepsJSON)
-	if !ok {
-		t.Fatal("evac has no readable steps")
+	legs, partnerPending := d.coordinatedPairLegs(evac)
+	if partnerPending {
+		t.Fatal("evac read as waiting for a partner row that exists — the durable link was not consulted")
 	}
-	if held, _ := d.swapLegHeld(evac, evacSteps); !held {
-		t.Fatal("evac must be held while supply has no claimed bin, even though the intake link step never ran")
+	if len(legs) != 2 {
+		t.Fatalf("coordinatedPairLegs returned %d leg(s), want 2 — the evac read as a SOLO order even though "+
+			"the durable INSERT recorded its sibling, so both legs would dispatch independently", len(legs))
+	}
+	if legs[0].ID > legs[1].ID {
+		t.Fatalf("legs are not in ascending id order (%d, %d) — the leader election depends on it", legs[0].ID, legs[1].ID)
 	}
 }
 

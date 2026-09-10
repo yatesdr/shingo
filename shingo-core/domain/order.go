@@ -56,12 +56,17 @@ type Order struct {
 	// Stays Core-side — never crosses the wire to Edge. Empty on non-queued rows.
 	QueueCause      string `json:"queue_cause,omitempty"`
 	SkipAutoConfirm bool   `json:"skip_auto_confirm"`
-	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot
-	// swap — the supply's UUID recorded on the evac row (and vice-versa).
-	// Written ATOMICALLY in the CreateOrder INSERT so a two-robot evac's
-	// link to its supply can never be lost by a failed post-create link
-	// step; the swapLegHeld starvation gate depends on it to avoid
-	// the ALN_003 line-strand. "" for every non-swap order.
+	// SiblingOrderUUID is the edge UUID of the paired leg in a coordinated
+	// swap — each leg records the other's (both legs carry it on the wire).
+	// Written ATOMICALLY in the CreateOrder INSERT so the link can never be
+	// lost by a failed post-create link step.
+	//
+	// IT IS THE WHOLE OF WHAT MAKES A PAIR A PAIR at dispatch. It used to arm a
+	// hold that parked the evac until its supply claimed; that hold is gone and
+	// this pointer now decides whether DispatchPreparedComplex sees one job or
+	// two (complex_pair.go). A lost link no longer disarms a guard — it lets both
+	// legs dispatch independently, which is the ALN_003 line-strand by a
+	// different route. "" for every non-swap order.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 	// KeyRoute / KeyTask are the SEER robot-selection hints this order's Edge
 	// claim asked for, carried through to fleet.CreateOrderRequest — see that

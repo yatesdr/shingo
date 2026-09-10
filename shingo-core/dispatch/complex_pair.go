@@ -126,6 +126,14 @@ func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, 
 	return legs, false
 }
 
+// preparedLeg is one leg that has cleared every acquisition phase and is
+// waiting for the pair's commit stage, with the resolved steps the fleet create
+// needs. It exists only between the two stages of one pass.
+type preparedLeg struct {
+	order *orders.Order
+	steps []resolvedStep
+}
+
 // dispatchPairInOnePass is the pair rule's body: run every leg's acquisition
 // phases, and only when EVERY leg has cleared, hand them all to the fleet.
 //
@@ -166,10 +174,6 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		return fmt.Errorf("complex order %d: pair led by order %d this pass", self.ID, legs[0].ID)
 	}
 
-	type preparedLeg struct {
-		order *orders.Order
-		steps []resolvedStep
-	}
 	ready := make([]preparedLeg, 0, len(legs))
 	for _, leg := range legs {
 		steps, st := d.acquireComplexPhases(leg)
@@ -204,6 +208,34 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		}
 		ready = append(ready, preparedLeg{order: leg, steps: steps})
 	}
+
+	// ── THE CLEARER COMMITS BEFORE THE FILLER ─────────────────────────────
+	//
+	// A leg that LIFTS the shared line position's bin is handed to the fleet
+	// before a leg that PUTS one there. Both go in this pass either way; this
+	// fixes the order in which they go.
+	//
+	// It carries a property the index anti-collision arm used to carry by
+	// WAITING: hold the filler until its clearer is committed, or a robot drives
+	// a bin onto a position nothing has cleared (HOP 07, two bins on one press).
+	// That wait cannot work inside a pair pass — holding the filler parks the
+	// clearer too, so the clearer can never commit, and the press deadlocks
+	// permanently (measured, not predicted; see swap_hold.go's note). Ordering
+	// gives the same guarantee deterministically and cannot deadlock, because it
+	// waits for nothing.
+	//
+	// ROLE FROM THE STEPS, never the mode: legTakesLineBin / legPlacesLineBin,
+	// the same predicates every other role question in the package uses. A leg
+	// that is neither — the self-contained shape, which lifts and replaces in one
+	// trip — sorts with the fillers and is unaffected either way, since it has no
+	// partner to sequence against on that node.
+	//
+	// STABLE, so legs this cannot separate keep their id order and the pass stays
+	// deterministic.
+	sort.SliceStable(ready, func(i, j int) bool {
+		return legClearsItsLine(ready[i]) && !legClearsItsLine(ready[j])
+	})
+
 	for _, p := range ready {
 		if err := d.dispatchComplexToFleet(p.order, p.steps); err != nil {
 			// The fleet create's own failure path already terminal-fails this
@@ -214,6 +246,14 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		}
 	}
 	return nil
+}
+
+// legClearsItsLine reports whether this prepared leg lifts the bin off its own
+// process node and does not put one back — the clearer shape. Reads the leg's
+// resolved steps, which is the same source every other role question in the
+// package uses, and never the swap mode.
+func legClearsItsLine(p preparedLeg) bool {
+	return legTakesLineBin(p.steps, p.order.ProcessNode)
 }
 
 // parkPair releases everything the pass acquired for every leg and writes the

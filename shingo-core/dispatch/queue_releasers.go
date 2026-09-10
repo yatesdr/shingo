@@ -864,12 +864,18 @@ var causeReleasers = []causeReleaser{
 		// claim. A releaser row naming a dead mechanism as live is worse than a
 		// blank one: it sends the reader to look for a claim that is not the gate.
 		//
-		// BOTH FACES, because one predicate serves both directions and the row is
-		// keyed by the cause, not by which arm wrote it.
-		what: "the sibling leg commits to the fleet — it holds a vendor order and is en route or " +
-			"done (swapLegCommittedToFleet). For an evac that means its supply secured a " +
-			"replacement; for a filler it means its clearer is committed to clearing the line. " +
-			"NOT a live claim: a supply that has already staged its replacement holds none, and " +
+		// TWO PRODUCERS NOW, AND THE EVAC ONE IS GONE. The row used to cover both
+		// faces of the old gate; Face 1 — the evac waiting on its supply — is
+		// deleted, because the pair rule dispatches both legs in one pass instead
+		// of holding one against the other. What is left writes this cause is a
+		// filler waiting for its clearer, and a leg whose partner has not been
+		// ingested yet. A blocked PAIR does not land here at all: it parks under
+		// the cause of the slot, bin or lane it is short of, on both rows.
+		what: "the partner leg arrives, or commits to the fleet — it holds a vendor order and is " +
+			"en route or done (swapLegCommittedToFleet). For a filler that means its clearer is " +
+			"committed to clearing the line; for a leg whose partner has no order row yet it " +
+			"means that row landing, which its own intake does. " +
+			"NOT a live claim: a leg that has already staged its bin holds none, and " +
 			"reading for one is what deadlocked this gate on 2026-08-11",
 	},
 

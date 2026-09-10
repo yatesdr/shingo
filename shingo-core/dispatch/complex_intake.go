@@ -195,7 +195,9 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 
 	// Two-robot swap pairing, back-link reconcile: the forward pointer
 	// (evac→supply) is already persisted atomically in CreateOrder above, so
-	// the starvation hold no longer depends on this call succeeding. This call
+	// PAIR RECOGNITION no longer depends on this call succeeding — which matters
+	// more now than when it was written: the pointer used to arm a hold, and it
+	// now decides whether dispatch sees a pair at all (complex_pair.go). This call
 	// additionally records the supply's back-link (supply→evac) — bidirectional
 	// via LinkSiblingsByEdgeUUID's CASE — so either leg can find its peer, which
 	// the peer-death handler needs. Runs before EmitOrderQueued triggers the

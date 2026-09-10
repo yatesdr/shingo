@@ -477,7 +477,15 @@ const (
 	// in a histogram as "a complex dropoff refusal from before the split", and do
 	// not write it from new code.
 	CauseDropoffCapacity QueueCause = "dropoff-capacity"
-	// CauseSwapHold — a two-robot swap leg is waiting on its sibling.
+	// CauseSwapHold — a coordinated leg is waiting on the other half of its
+	// pair: the partner's order row has not been ingested yet, or a filler is
+	// waiting for its clearer to commit to clearing the shared line position.
+	//
+	// IT IS NO LONGER THE CAUSE A BLOCKED PAIR PARKS UNDER. When a pair cannot
+	// go because a slot, a bin or a lane is missing, both rows carry the cause of
+	// the thing that is actually missing (complex_pair.go parkPair) — one pair,
+	// one cause, and one the operator can act on. This tag is now only for a wait
+	// whose subject genuinely IS the sibling.
 	CauseSwapHold QueueCause = "swap-hold"
 
 	// ── The finder's tiers (source_finder.go) ─────────────────────────────

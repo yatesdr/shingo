@@ -39,8 +39,14 @@ const (
 	// QueueStorageRearranging: the source bin is buried or its lane is mid-reshuffle
 	// — waiting on storage to be rearranged so the material becomes reachable.
 	QueueStorageRearranging QueueCode = "storage_rearranging"
-	// QueueWaitingForPartner: a two-robot swap removal leg is holding until its
-	// supply sibling secures a replacement bin.
+	// QueueWaitingForPartner: a coordinated leg is waiting on the other half of
+	// its pair. Two producers, and neither is the removal-leg hold this used to
+	// describe — that was Face 1, deleted with the pair rule, which dispatches
+	// both legs together instead of holding one against the other:
+	//   - dispatch: the pair's partner has no order row yet, or the index
+	//     anti-collision arm is holding a filler until its clearer commits.
+	//   - lane_floor: a dispatched leg parked at its station wait, including the
+	//     survivor of a swap whose other half already finished.
 	QueueWaitingForPartner QueueCode = "waiting_for_partner"
 	// QueueFleetUnavailable: the fleet rejected the dispatch — waiting on the robot
 	// system (transient; the order re-queues and retries).

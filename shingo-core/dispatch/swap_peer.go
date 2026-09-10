@@ -74,10 +74,11 @@ func IsOperatorGatedStaging(order *orders.Order) bool {
 // durable sibling link (sibling_order_uuid, made reliable in the durable-link
 // commit), NOT a compound parent, identifies the peer.
 //
-// This closes the ALN_003 POST-DISPATCH window: swapLegHeld is only a
-// dispatch-time admission gate (it stops the evac pulling before the supply has
-// claimed) and nothing re-runs it once a leg is in flight. If a leg then dies,
-// this handler unwinds the other.
+// This closes the POST-DISPATCH window. The pair rule (complex_pair.go) is a
+// dispatch-time admission decision: it guarantees both legs were committed in
+// the same pass, and nothing re-evaluates it once they are in flight. If a leg
+// then dies, this handler unwinds the other — which is the same rule carried
+// past the moment dispatch can enforce it.
 //
 // terminalKind is the terminal the dead leg hit (SwapTerminal*). It matters for
 // the evac: a SKIPPED (moot) evac means the line's resident was already gone, so
