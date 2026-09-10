@@ -29,18 +29,6 @@ type swapHoldVerdict struct {
 	reason string     // the engineer-facing log line
 	cause  QueueCause // zero when not held
 	params QueueParams
-	// keepQueueDetail holds the leg WITHOUT relabelling what it is waiting on.
-	//
-	// The hold and the queue code answer different questions. The hold is an
-	// admission decision — may this leg dispatch — and the queue code is what the
-	// operator's board says they can do about it. They usually agree. They do not
-	// when a leg was SPARED: its clearer is dead, so "waiting for partner" names a
-	// partner that is never coming, while the leg is genuinely parked on a dry
-	// source that an operator can go and stock.
-	//
-	// It also stops a same-pass relabel from erasing the fact the spare is derived
-	// from — see peerIsParkedWaitingForMaterial and orders.StampSwapSpared.
-	keepQueueDetail bool
 }
 
 // swapHold is the verdict for both faces, which share a cause and a params
@@ -299,18 +287,17 @@ func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedSte
 			if kind == SwapTerminalSkipped {
 				return swapHoldVerdict{}
 			}
-			// A SPARED LEG KEEPS ITS OWN CAUSE. The hold below is right — the
-			// clearer died without clearing the line, so this filler must not drive
-			// onto it — but the label is not. This leg was spared by
-			// HandleSwapPeerTerminal precisely because it is parked on a dry source
-			// an operator can stock, and its clearer is dead, so "waiting for
-			// partner" would name something that will never arrive and take the
-			// actionable cause off the board.
-			if order.SwapSparedAt != nil {
-				v := swapHold(order, "swap: holding spared filler — clearer sibling died without clearing the line (cause left as its own material wait)")
-				v.keepQueueDetail = true
-				return v
-			}
+			// THE SPARED ARM IS GONE WITH THE SPARE. It kept a filler's own
+			// material cause on the board when its clearer had died, because the
+			// clearer's death used to leave the filler alive and parked. Under the
+			// death rule a dead clearer takes this leg with it, so a filler cannot
+			// outlive its partner and there is no cause to preserve.
+			//
+			// This hold now covers only the window between the partner going
+			// terminal and the death rule reaching this row — a pass, at most —
+			// and it must stay closed for it: the clearer never cleared the line,
+			// so its resident is still there and Core cannot recall a driving
+			// robot.
 			return swapHold(order, "swap: holding filler — clearer sibling died without clearing the line")
 		}
 		sibSteps, ok := decodeSteps(sib.StepsJSON)

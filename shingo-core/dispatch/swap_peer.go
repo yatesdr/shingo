@@ -135,88 +135,59 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 		return
 	}
 
+	// ── A MOOT SKIP IS NOT A DEATH, AND THAT IS THE ONE ROLE READ LEFT ────
+	//
+	// A skipped evac found NO BIN to clear: the line's resident was already gone,
+	// so there is nothing for the supply to collide with and the supply is the
+	// thing that should put a carrier back. Every other terminal on either side
+	// is a death.
+	//
+	// It survives the death rule deliberately. The rule is "if either leg DIES,
+	// both die", and a leg whose work was found unnecessary did not die — the
+	// distinction is physical, not bookkeeping. Killing the supply here would
+	// leave the line empty and make the level keeper re-ask for the same carrier
+	// one cycle later, through consume_plan's node-empty downgrade. Same carrier,
+	// later, plus a cancelled order on the board.
+	if deadIsEvac && terminalKind == SwapTerminalSkipped {
+		return
+	}
+
+	// ── THE DEATH RULE, WHOLE ─────────────────────────────────────────────
+	//
+	// A leg that goes terminal takes its sibling with it. ONE action, taken the
+	// same way whichever leg died and whatever mode the swap is — the role below
+	// chooses the SENTENCE, never the outcome, because the two hazards are
+	// genuinely different things to tell an operator and the same thing to do
+	// about them.
+	//
+	// THE SPARE IS GONE. It used to keep alive a supply parked on a dry source
+	// whose evac had died, so an operator could stock the payload and let the
+	// supply resume. That was a workaround for a half-dispatched pair: the legs
+	// were two independently-dispatched orders, so one could be mid-wait while
+	// the other died, and cancelling the survivor drove the Springfield
+	// 2026-07-21 re-arm churn (the monitor saw the cancel move the in-loop UOP,
+	// re-armed the changeover, the planner rebuilt the pair, the supply parked
+	// again, the evac died again — hundreds of doomed swaps per changeover,
+	// 74577-6SA0A.06, zero system stock).
+	//
+	// There is no such thing as a half-dispatched pair now: both legs dispatch in
+	// one pass or neither does. And the churn's actual cause was never this
+	// cancellation — it was the planner RE-ARMING into a source it already knew
+	// was dry. That is fixed where the pair is armed (guardSourceKnownDry,
+	// shingo-edge/engine/operator_guards.go), which is the only place that can
+	// stop a doomed pair from being created at all. A wait that survives its
+	// partner's death is a leg holding resources for a job that cannot happen.
 	if deadIsEvac {
-		// A moot (skipped) evac is a clean no-op — the line's resident was
-		// already gone, so the supply proceeds. Only a genuine evac failure/
-		// cancel leaves the resident on the line, where the supply would collide.
-		if terminalKind == SwapTerminalSkipped {
-			return
-		}
-		// Spare a supply that is PARKED waiting for material. The D-ii supply
-		// widening (complex_dispatch.go widenSupplyPickups) parks a dry supply
-		// need as sourcing/waiting_for_material — an operator-resolvable wait
-		// for stock, NOT a dead leg. Cancelling it here used to drive a re-arm
-		// churn: the monitor saw the cancel move the in-loop UOP, re-armed the
-		// changeover, the planner recreated the swap pair, the supply parked
-		// again, the evac died again, and this handler cancelled the supply
-		// again — hundreds of doomed swaps per changeover (Springfield
-		// 2026-07-21, 74577-6SA0A.06, zero system stock). Leaving the parked
-		// supply alone breaks the loop: the wait survives the evac's death, the
-		// operator can stock the payload and the supply resumes, and a swap
-		// that can never source stops re-arming every tick. Surface it so the
-		// half-state is visible instead of silently held.
-		if peerIsParkedWaitingForMaterial(peer) {
-			// STAMP BEFORE LOGGING, and stamp every time we reach here rather than
-			// only on the first pass: StampSwapSpared is idempotent and keeps the
-			// FIRST instant, so this is a no-op on later passes and the timestamp
-			// answers "how long has this been spared" instead of "when did the
-			// scanner last look".
-			//
-			// This is the one writer of that fact. Recording it durably is what
-			// makes the spare outlive the same pass's Face 2 hold, which relabels
-			// the queue code this predicate used to be derived from.
-			if err := orders.StampSwapSpared(d.db.DB, peer.ID); err != nil {
-				log.Printf("dispatch: stamp swap spare on order %d: %v", peer.ID, err)
-			}
-			if peer.SwapSparedAt == nil {
-				// First pass only — the audit surface is a record of the decision,
-				// not of every time it is re-observed.
-				d.db.AppendAudit("order", peer.ID, "swap_supply_parked_peer_died", "",
-					fmt.Sprintf("evac sibling %d terminal (%s) while this supply is parked waiting for material (%s) — left alive for operator stock/resume",
-						dead.ID, terminalKind, peer.QueueCause), "system")
-				log.Printf("dispatch: two-robot swap evac (order %d) %s — leaving parked supply %d waiting for material (%s); not cancelling a live wait",
-					dead.ID, terminalKind, peer.ID, peer.QueueCause)
-			}
-			return
-		}
 		d.resolveSwapPeer(peer, dead,
 			fmt.Sprintf("two-robot swap evac (order %d) %s; cancelling supply so it cannot drop onto an un-cleared line", dead.ID, terminalKind))
 		return
 	}
-
 	// Supply leg died (fail/cancel/skip — a skipped supply is a lost replacement
 	// just as much as a failed one). If the evac pulls/pulled the line's resident
 	// there is no replacement coming → strand. Cancel the live evac so the line
 	// keeps its bin; surface if the evac already delivered.
 	d.resolveSwapPeer(peer, dead,
 		fmt.Sprintf("two-robot swap supply (order %d) %s; cancelling evac so it cannot strand the line", dead.ID, terminalKind))
-}
-
-// peerIsParkedWaitingForMaterial reports whether a swap peer is a supply leg
-// parked on a dry source — sourcing or queued with a waiting_for_material queue
-// code (the D-ii widen park). Such a peer is an operator-resolvable wait, not a
-// dead leg, so the swap-peer cascade must not cancel it when its evac sibling
-// dies. IsAcquiring alone is too broad: an acquiring peer mid-reserve (no queue
-// code yet) is genuinely live and the fail-closed cancel still applies. The
-// queue code is what distinguishes "parked on a dry need" from "mid-acquire".
-func peerIsParkedWaitingForMaterial(peer *orders.Order) bool {
-	// ALREADY SPARED IS SPARED. The decision is durable (orders.swap_spared_at,
-	// stamped by the branch below and by nothing else), and it is read first
-	// because the queue code underneath it does not survive the pass that makes
-	// it: applySwapGates spares this leg and then HOLDS it — Face 2's
-	// dead-clearer arm, correctly, since its clearer died without clearing the
-	// line — and setQueueReason writes waiting_for_partner over
-	// waiting_for_material on the way out. applySwapGates re-runs this unwind on
-	// every pass while the sibling is terminal, so the next pass used to re-ask
-	// the question, get a different answer, and cancel the wait.
-	//
-	// That is the whole defect: a decision recorded in a field another writer
-	// owns. Re-deriving it every pass is what made a same-pass relabel look like
-	// a change of mind. See orders.StampSwapSpared.
-	if peer.SwapSparedAt != nil {
-		return true
-	}
-	return protocol.IsAcquiring(peer.Status) && peer.QueueCode == string(protocol.QueueWaitingForMaterial)
 }
 
 // resolveSwapPeer cancels the peer if it is still live, or surfaces the

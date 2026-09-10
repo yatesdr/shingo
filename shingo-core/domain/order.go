@@ -63,23 +63,6 @@ type Order struct {
 	// step; the swapLegHeld starvation gate depends on it to avoid
 	// the ALN_003 line-strand. "" for every non-swap order.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
-	// SwapSparedAt is when the peer-terminal handler decided NOT to cancel this
-	// leg after its swap sibling died — because it was parked on a dry source and
-	// an operator can still stock the payload. NULL for every leg that was never
-	// spared, which is almost all of them.
-	//
-	// IT IS A COLUMN BECAUSE THE DECISION HAS TO OUTLIVE THE PASS THAT MADE IT.
-	// The spare used to be re-derived every scanner pass from queue_code ==
-	// waiting_for_material, and the same pass that spared the leg then held it and
-	// wrote waiting_for_partner over that code — so the next pass re-asked the
-	// question, got a different answer, and cancelled the wait. A decision was
-	// being stored in a field another writer owns.
-	//
-	// ONE WRITER: orders.StampSwapSpared, called only from
-	// dispatch.HandleSwapPeerTerminal's spare branch. Nothing clears it; a leg
-	// that was spared stays spared, and the row is terminal soon enough either
-	// way.
-	SwapSparedAt *time.Time `json:"swap_spared_at,omitempty"`
 	// KeyRoute / KeyTask are the SEER robot-selection hints this order's Edge
 	// claim asked for, carried through to fleet.CreateOrderRequest — see that
 	// type for the vendor semantics and for why an unresolvable keyRoute point

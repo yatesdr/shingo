@@ -770,12 +770,12 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// that made the decision is the only thing that can name it — see
 	// swapHoldVerdict.
 	if v := d.swapLegHoldVerdict(order, resolvedSteps); v.held {
-		// keepQueueDetail: the hold stands, the label does not move. See
-		// swapHoldVerdict — a spared leg's clearer is dead, so waiting_for_partner
-		// would replace an actionable cause with one nothing can resolve.
-		if !v.keepQueueDetail {
-			d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
-		}
+		// ONE PARK, ONE LABEL. The keepQueueDetail exception went with the spare:
+		// it existed so a leg spared from its partner's death could keep its own
+		// material cause instead of being relabelled "waiting for partner" — a
+		// partner that was never coming. Under the death rule no leg outlives its
+		// partner, so there is no such leg and no label to preserve.
+		d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
 		d.dbg("complex: order %d held — %s", order.ID, v.reason)
 		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", v.reason)}
 	}

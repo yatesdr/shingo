@@ -174,6 +174,27 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 	for _, leg := range legs {
 		steps, st := d.acquireComplexPhases(leg)
 		if st.done {
+			// ── A PHASE CAN END A LEG, AND THAT IS A DEATH, NOT A PARK ────
+			//
+			// acquireComplexPhases has terminal exits: a moot reserve skips the
+			// leg, a malformed plan fails it. A terminalized leg has already
+			// given everything back through TerminalizeOrder, and parking its
+			// partner on a cause the dead leg no longer carries (the terminal
+			// write clears queue_reason) would leave the partner waiting on
+			// something that cannot arrive.
+			//
+			// So the death rule takes it from here: a leg going terminal takes
+			// its siblings with it. Run it IN THIS PASS rather than leaving it
+			// to the surviving side's next one — applySwapGates would find it
+			// eventually, but a pass later, and the partner would spend that
+			// pass acquiring for a job that is already over.
+			if fresh, ferr := d.db.GetOrder(leg.ID); ferr == nil && fresh != nil && protocol.IsTerminal(fresh.Status) {
+				if kind := swapTerminalKind(fresh.Status); kind != "" {
+					d.HandleSwapPeerTerminal(fresh.ID, kind)
+				}
+				d.dbg("complex: pair leg %d went %s during its phases — the death rule has the pair", leg.ID, fresh.Status)
+				return st.err
+			}
 			// THE FIRST REFUSAL PARKS THE PAIR. Every leg gives back what this
 			// pass gave it, including the legs that succeeded — a parked pair
 			// holds nothing — and both rows are written with the blocked leg's

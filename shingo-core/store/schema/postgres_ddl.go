@@ -157,18 +157,6 @@ CREATE TABLE IF NOT EXISTS orders (
     -- both plants; it was missing from this constant, so a fresh install
     -- carried the column only after migrations ran.
     orphan_aged_at  TIMESTAMPTZ,
-    -- When the peer-terminal handler decided NOT to cancel this leg after its
-    -- swap sibling died, because it was parked on a dry source an operator can
-    -- still stock. NULL for every leg that was never spared, which is almost
-    -- all of them.
-    --
-    -- A COLUMN BECAUSE THE DECISION HAS TO OUTLIVE THE PASS THAT MADE IT. The
-    -- spare was re-derived every scanner pass from queue_code =
-    -- 'waiting_for_material', and the same pass that spared the leg then held it
-    -- and wrote 'waiting_for_partner' over that code — so the next pass re-asked
-    -- the question, got a different answer, and cancelled the wait. One writer:
-    -- orders.StampSwapSpared. Added by migration 113.
-    swap_spared_at  TIMESTAMPTZ,
     -- WHEN THE STORE-SLOT SELECTOR CHOSE THIS ORDER'S DESTINATION, at intake.
     --
     -- Written only by admitOrder, only when resolveSyntheticDestination actually

@@ -179,6 +179,15 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
 			return nil, err
 		}
+		// And do not ARM A PAIR INTO A SOURCE ALREADY KNOWN TO BE DRY. This is
+		// the Springfield 2026-07-21 churn's fix at its cause: two legs that
+		// cannot source were created hundreds of times per changeover, and every
+		// mechanism downstream — including the spare that is now deleted — was
+		// coping with orders that should never have existed. Refusing here
+		// creates nothing, so nothing churns; the level keeper re-asks.
+		if err := e.guardSourceKnownDry(node, claim); err != nil {
+			return nil, err
+		}
 	}
 
 	// The demand episode is opened HERE — after the plan exists and before any

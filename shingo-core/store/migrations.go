@@ -4193,12 +4193,65 @@ func migrationList() []migration {
 				return schema.IndexExists(q, "idx_cms_txn_one_movement")
 			}},
 
-		{113, "orders.swap_spared_at — the spare decision, durable, so it outlives the pass that records it",
+		// v113 added orders.swap_spared_at for the peer-terminal SPARE. That
+		// spare is RETIRED — the pair rule makes a half-dispatched pair
+		// unconstructible and the death rule is unconditional — and v114 drops
+		// the column.
+		//
+		// v113's body still adds the column so the migration history stays
+		// intact, but its verify is now ALWAYS-TRUE on purpose: keying it on
+		// ColumnExists would make the self-heal RESURRECT the retired column on
+		// every boot after v114 drops it (verify fails → re-run v113 →
+		// re-create). A retired column's ABSENCE is the correct state, so v113's
+		// application is tracked by schema_migrations alone. Same shape as v23
+		// under v70.
+		{113, "orders.swap_spared_at — the spare decision, durable, so it outlives the pass that records it (retired at v114)",
 			v113OrdersSwapSparedAt,
+			func(schema.Querier) bool { return true }},
+
+		{114, "orders.swap_spared_at — dropped; the spare it recorded no longer exists",
+			v114DropOrdersSwapSparedAt,
 			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "orders", "swap_spared_at")
+				// ColumnAbsent, not !ColumnExists: the negation reports the
+				// post-condition as HOLDING when the query itself fails, which
+				// records a drop as applied without having checked anything.
+				return schema.ColumnAbsent(q, "orders", "swap_spared_at")
 			}},
 	}
+}
+
+// v114DropOrdersSwapSparedAt removes the column migration 113 added, one batch
+// after it, because the decision it recorded is gone.
+//
+// THE SPARE was "do not cancel a supply parked on a dry source just because its
+// evac died". It existed to manage a HALF-DISPATCHED PAIR — the legs were two
+// independently-dispatched orders, so one could be mid-wait while the other
+// died. Under the pair rule both legs dispatch in one pass or neither does, so
+// that state is unconstructible, and the death rule is unconditional: a leg
+// going terminal takes its sibling with it. Nothing reads or writes the column.
+//
+// ── WHY THE DROP AND NOT JUST THE GO CODE ─────────────────────────────────
+//
+// 113 is left in place: it is history, it ran on the plants, and deleting an
+// applied migration makes a fresh database disagree with a migrated one about
+// which steps exist. Dropping here instead keeps both converging on the same
+// shape — the DDL constant in store/schema no longer declares the column, so a
+// fresh install never has it, and a migrated install loses it right here. A
+// column removed from the CREATE TABLE and left on the live table is exactly the
+// drift the schema-constant rule exists to prevent, arrived at from the deleting
+// side.
+//
+// IF EXISTS, so this is a no-op on a database that never ran 113 and on one
+// that has already run this.
+//
+// NOTHING IS LOST THAT MATTERED. The column was NULL for every leg that was
+// never spared, which was almost all of them, and a spared leg's decision is
+// already in order_history and in the audit row the spare wrote.
+func v114DropOrdersSwapSparedAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS swap_spared_at`); err != nil {
+		return fmt.Errorf("v114 drop orders.swap_spared_at: %w", err)
+	}
+	return nil
 }
 
 // v113OrdersSwapSparedAt gives the swap peer-terminal spare somewhere durable to
