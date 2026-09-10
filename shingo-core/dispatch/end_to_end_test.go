@@ -255,7 +255,7 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order2: %v", err)
 	}
-	if order2.Status == StatusQueued {
+	if protocol.IsAcquiring(order2.Status) {
 		t.Errorf("order2 status = %q, want it to dispatch once a slot is free", order2.Status)
 	}
 	if order2.DeliveryNode != slotB.Name {
@@ -329,10 +329,11 @@ func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	}
 	order, err := db.GetOrderByUUID("evac-sat-1")
 	if err != nil {
-		t.Fatalf("get order: %v — capacity-shaped resolution failure should create the order as queued, not reject it", err)
+		t.Fatalf("get order: %v — capacity-shaped resolution failure should create the order waiting, not reject it", err)
 	}
-	if order.Status != StatusQueued {
-		t.Errorf("status = %q, want %q (capacity-blocked complex order must queue)", order.Status, StatusQueued)
+	// Parked in its entry status, which is `sourcing` from birth onwards.
+	if order.Status != StatusSourcing {
+		t.Errorf("status = %q, want %q (capacity-blocked complex order must wait, not fail)", order.Status, StatusSourcing)
 	}
 	if order.QueueReason == "" {
 		t.Errorf("queue_reason empty; expected a sentence so the operator sees why the order is waiting")

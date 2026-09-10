@@ -174,10 +174,10 @@ func TestBurialGuard_ClaimClearEventRedrivesAParkedStore(t *testing.T) {
 	if err != nil || parked == nil {
 		t.Fatalf("reload parked order: %v", err)
 	}
-	if parked.Status != protocol.StatusQueued {
-		t.Fatalf("status = %q, want queued — the store found room in a group whose every lane is "+
-			"closed by a claim, so the guard is not reaching this path and the rest of this test "+
-			"is vacuous", parked.Status)
+	if !protocol.IsAcquiring(parked.Status) {
+		t.Fatalf("status = %q, want it parked and waiting — the store found room in a group whose "+
+			"every lane is closed by a claim, so the guard is not reaching this path and the rest "+
+			"of this test is vacuous", parked.Status)
 	}
 	if parked.QueueCause != "ngrp-resolve" {
 		t.Errorf("queue_cause = %q, want ngrp-resolve", parked.QueueCause)

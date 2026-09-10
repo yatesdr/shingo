@@ -452,7 +452,9 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 	if err != nil {
 		t.Fatalf("get order: %v", err)
 	}
-	if order.Status == StatusQueued {
+	// IsAcquiring, for the same reason submitComplexAndDispatch uses it: this is
+	// standing in for the scanner, and the scanner gates on the set, not a rung.
+	if protocol.IsAcquiring(order.Status) {
 		testutil.MustNoErr(t, d.DispatchPreparedComplex(order), "dispatch prepared complex")
 		order, err = db.GetOrderByUUID(orderUUID)
 		if err != nil {
@@ -1045,8 +1047,9 @@ func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order: %v", err)
 	}
-	if order.Status != StatusQueued {
-		t.Fatalf("pre-dispatch status = %q, want %q", order.Status, StatusQueued)
+	// Born `sourcing`: a complex order's hand is not whole at birth.
+	if order.Status != StatusSourcing {
+		t.Fatalf("pre-dispatch status = %q, want %q", order.Status, StatusSourcing)
 	}
 
 	// Now drive the dispatcher. Source is empty → no_source_bin → Skip.

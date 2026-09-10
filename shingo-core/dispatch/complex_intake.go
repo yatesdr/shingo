@@ -127,10 +127,35 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
 
 	order := &orders.Order{
-		EdgeUUID:     p.OrderUUID,
-		StationID:    stationID,
-		OrderType:    OrderTypeComplex,
-		Status:       StatusQueued, // status-first queueing — scanner picks it up
+		EdgeUUID:  p.OrderUUID,
+		StationID: stationID,
+		OrderType: OrderTypeComplex,
+		// BORN SHOPPING. A complex order's hand is not whole at birth: it has
+		// resolved steps and no bins, and the first thing the scanner does with it
+		// is go looking (acquireComplexSources). `sourcing` is the rung the record's
+		// split test assigns to exactly that — the hand is short — and it is the
+		// rung a complex order actually RESTS in while it re-shops.
+		//
+		// It was born `queued`, which was visibility doing lifecycle's job: what the
+		// literal bought was the scanner picking the order up, and the scanner keys
+		// on IsAcquiring = {queued, sourcing}, so `sourcing` buys it just the same.
+		// Birth-`queued` was never a state anything observed — MoveToSourcing runs at
+		// the start of the first tick and EmitOrderQueued runs the scanner
+		// synchronously, so it lasted milliseconds — and the ladder was already
+		// inconsistent BELOW it: a gate-blocked complex order parked in its entry
+		// status, which meant `queued` on the first pass and `sourcing` on every
+		// retry. One wait, two rungs, depending on which pass caught it.
+		//
+		// No transition edge is needed for this: birth is the INSERT, and every
+		// edge the flow uses out of `sourcing` is already legal (protocol/types.go)
+		// — including sourcing→reshuffling, which the buried-source pivot takes.
+		// The first tick's MoveToSourcing now no-ops on sourcing→sourcing.
+		//
+		// THE ONE MEASURED CONSEQUENCE is the dropoff-capacity gate: it counts
+		// everything non-terminal EXCEPT `queued`, so a shopping complex order now
+		// enters the in-flight count earlier than it used to. That is the deliberate
+		// behaviour change, and it is what the sim certifies.
+		Status:       StatusSourcing,
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
 		PayloadCode:  payloadCode,

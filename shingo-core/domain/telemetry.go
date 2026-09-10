@@ -202,10 +202,37 @@ type DwellPair struct {
 	// Key is the stable name the UI and any consumer keys on. From/To are the
 	// order_history statuses; changing them changes what the key means, so
 	// treat the triple as one unit.
-	Key  string `json:"key"`
-	From string `json:"from"`
-	To   string `json:"to"`
+	Key string `json:"key"`
+	// From is a SET, because one of these spans opens on either of two rungs.
+	// A single-status pair carries a one-element slice and behaves exactly as it
+	// did when this was a string.
+	From []string `json:"from"`
+	To   string   `json:"to"`
+	// FromEarliest anchors the span at the FIRST from-row an order has rather
+	// than its last. False — the default, and every pair but one — keeps the
+	// inherited MAX(from)→MAX(to) collapse.
+	FromEarliest bool `json:"from_earliest,omitempty"`
 }
+
+// AcquiringEntryStatuses is the from-set for "how long did this order wait
+// before a robot was committed to it": the rungs an order can be standing on
+// while it is still in Core's hands and has no armor.
+//
+// IT IS A SET BECAUSE BIRTH IS NOT ALWAYS `queued`. A complex order is born
+// `sourcing` (dispatch/complex_intake.go) — its hand is not whole at birth —
+// so it writes no `queued` history row at all. Measured from `queued` alone,
+// every complex order silently left time_to_dispatch AND AvgL1QueueSeconds:
+// not a wrong number, no number, and a metric that drops a population without
+// saying so reads as "these were fast" rather than "these were not counted".
+//
+// That is not cosmetic. AvgL1QueueSeconds feeds the reorder-point calculator
+// (service/threshold_calculator.go), so a queue segment that omits a family
+// sets that family's reorder points as if waiting in line took no time.
+//
+// ONE SPELLING, TWO READERS. The dwell pair and the lead-time helper both take
+// their from-side from here, pinned by TestAcquiringEntrySeamIsSpelledOnce —
+// two copies is how one of them silently keeps measuring the old population.
+func AcquiringEntryStatuses() []string { return []string{"queued", "sourcing"} }
 
 // DwellStat is the p50/p95 of one DwellPair over a window, in seconds.
 //
@@ -251,11 +278,18 @@ type DwellStat struct {
 // shows up here as a lead-time spike, not as a separate fault count.
 func FlowDwellPairs() []DwellPair {
 	return []DwellPair{
-		{Key: "time_to_dispatch", From: "queued", To: "dispatched"},
-		{Key: "transit", From: "in_transit", To: "delivered"},
-		{Key: "staged_release", From: "staged", To: "in_transit"},
-		{Key: "staged_delivery", From: "staged", To: "delivered"},
-		{Key: "operator_fill", From: "delivered", To: "confirmed"},
+		// THE FIRST ACQUIRING ROW, not the last `queued` one. See
+		// AcquiringEntryStatuses for the population this stopped dropping, and
+		// note what FromEarliest buys beyond it: the honest start of a wait in the
+		// line is when the order JOINED the line, which is also what the demote
+		// door's note below already describes as the right reading. An order with
+		// one acquiring entry — which is every plain order that does not
+		// re-queue — measures exactly what it measured before.
+		{Key: "time_to_dispatch", From: AcquiringEntryStatuses(), To: "dispatched", FromEarliest: true},
+		{Key: "transit", From: []string{"in_transit"}, To: "delivered"},
+		{Key: "staged_release", From: []string{"staged"}, To: "in_transit"},
+		{Key: "staged_delivery", From: []string{"staged"}, To: "delivered"},
+		{Key: "operator_fill", From: []string{"delivered"}, To: "confirmed"},
 	}
 }
 

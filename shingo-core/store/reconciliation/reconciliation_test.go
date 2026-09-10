@@ -108,7 +108,7 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 	}
 }
 
-// TestListAnomalies_QueuedGetsTheLongerBound exercises the stuck-order query
+// TestListAnomalies_MaterialWaitGetsTheLongerBound exercises the stuck-order query
 // THROUGH THE DRIVER, against real Postgres.
 //
 // That is the entire point of it, and it exists because its absence shipped a
@@ -122,7 +122,7 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 //
 // So this test is not really about the thresholds. It is about the query being
 // executed at all, by the thing that executes it in production.
-func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
+func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testdb.Open(t)
@@ -132,7 +132,7 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 
-	mk := func(uuid, status string, ageSeconds int) int64 {
+	mk := func(uuid, status, cause string, ageSeconds int) int64 {
 		o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "retrieve_empty",
 			Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 		if err := orders.Create(db.DB, o); err != nil {
@@ -151,9 +151,10 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		// no reading of a real plant.
 		if _, err := db.DB.Exec(`UPDATE orders
 			SET status=$1,
+			    queue_cause=$4,
 			    updated_at = NOW() - ($2 * INTERVAL '1 second'),
 			    created_at = NOW() - ($2 * INTERVAL '1 second')
-			WHERE id=$3`, status, ageSeconds, o.ID); err != nil {
+			WHERE id=$3`, status, ageSeconds, o.ID, cause); err != nil {
 			t.Fatalf("backdate %s: %v", uuid, err)
 		}
 		if _, err := db.DB.Exec(
@@ -164,9 +165,14 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		return o.ID
 	}
 
-	youngQueued := mk("q-young", "queued", 3600)       // 1h — under the 2h queued bound
-	oldQueued := mk("q-old", "queued", 10800)          // 3h — over it
-	staleDispatched := mk("d-old", "dispatched", 3600) // 1h — 30m bound still applies
+	// THE BOUND KEYS ON THE CAUSE, NOT THE RUNG. An empty pool is a shortage and
+	// may last a shift; everything else is answered in half an hour.
+	youngMaterial := mk("m-young", "queued", "finder-pool-empty", 3600) // 1h — under the 2h bound
+	oldMaterial := mk("m-old", "queued", "finder-pool-empty", 10800)    // 3h — over it
+	staleDispatched := mk("d-old", "dispatched", "", 3600)              // 1h — 30m bound applies
+	// The two the rung-keyed version got wrong, one in each direction.
+	restingClaimFailed := mk("q-claim", "queued", "claim-failed", 3600)    // 1h queued — used to be silent
+	sourcingShortage := mk("s-mat", "sourcing", "finder-pool-empty", 3600) // 1h sourcing — used to alarm
 
 	anomalies, err := reconciliation.ListAnomalies(db.DB)
 	if err != nil {
@@ -180,14 +186,29 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		}
 	}
 
-	if flagged[youngQueued] {
-		t.Error("a queued order waiting 1h was flagged; waiting is what queued is FOR, and a board that fires on ordinary material churn gets ignored")
+	if flagged[youngMaterial] {
+		t.Error("an order waiting 1h on an empty pool was flagged; a shortage is what the longer " +
+			"bound is FOR, and a board that fires on ordinary material churn gets ignored")
 	}
-	if !flagged[oldQueued] {
-		t.Error("a queued order wedged for 3h raised nothing — no sweep covers queued, so this anomaly is the only thing that reports it")
+	if !flagged[oldMaterial] {
+		t.Error("an order wedged 3h on an empty pool raised nothing — no sweep covers a waiting " +
+			"order, so this anomaly is the only thing that reports it")
 	}
 	if !flagged[staleDispatched] {
-		t.Error("a dispatched order stale for 1h was not flagged; the longer bound must apply to queued ONLY, not widen to every status")
+		t.Error("a dispatched order stale for 1h was not flagged; the longer bound must apply to " +
+			"material waits ONLY, not widen to every row")
+	}
+
+	// ── THE TWO THE RUNG-KEYED BOUND GOT WRONG ───────────────────────────
+	if !flagged[restingClaimFailed] {
+		t.Error("a QUEUED order resting an hour under claim-failed was not flagged. Keyed on the " +
+			"rung it got two hours of silence, and claim-failed has no releaser that arrives on " +
+			"its own — the record names a resting claim-failed as the anomaly, not the wait.")
+	}
+	if flagged[sourcingShortage] {
+		t.Error("a SOURCING order waiting an hour on an empty pool was flagged. Keyed on the rung " +
+			"it got the 30-minute alarm on the grounds that `sourcing` is transient — which is " +
+			"false of complex orders, which rest there while re-shopping and are now born there.")
 	}
 }
 

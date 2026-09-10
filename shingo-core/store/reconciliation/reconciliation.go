@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -29,17 +30,9 @@ import (
 const criticalOutboxAge = 5 * time.Minute
 const stuckOrderAge = 30 * time.Minute
 
-// queuedOrderAge is the SEPARATE, longer staleness bound for a `queued` order.
-// Waiting is what that status is FOR, so it needs a different threshold from the
-// ones where the fleet already has the order and nothing is moving.
-//
-// QUEUED ONLY, and this comment said "queued or sourcing" while the SQL it
-// describes has always applied it to queued alone — see the note at the CASE,
-// which states the reason: `sourcing` is meant to be transient, so half an hour
-// resting there is a real signal and the longer bound would silence a working
-// alarm. The Edge's mirror of this bound argues the same thing from its side.
-// The SQL is right; the comment was describing the acquiring set because that is
-// the set the two statuses usually travel in.
+// materialWaitAge is the SEPARATE, longer staleness bound for an order waiting
+// on MATERIAL. It used to be the bound for `queued`, and the difference is the
+// whole of this comment.
 //
 // 30 minutes is the right question to ask of a `dispatched` leg — a robot that
 // has not moved in half an hour has been forgotten. It is the wrong question to
@@ -52,7 +45,71 @@ const stuckOrderAge = 30 * time.Minute
 // material churn clears on its own, short enough to catch a wedge inside one
 // shift. Measured against the live Springfield board the day it was set, this
 // separates a genuinely stuck window (4h41m) from routine contention (48m).
-const queuedOrderAge = 2 * time.Hour
+//
+// ── IT KEYS ON THE CAUSE NOW, NOT ON THE RUNG ─────────────────────────────
+//
+// The bound was `WHEN status = 'queued'`, defended on the grounds that
+// "`sourcing` is meant to be transient, so half an hour resting there is a real
+// signal". That is false of complex orders, which legitimately rest in `sourcing`
+// while they re-shop — one live order was seen taking about forty refusals — and
+// it became false of every complex order the moment they started being BORN
+// there (dispatch/complex_intake.go). Keyed on the rung, the birth-rung move
+// alone would have turned an ordinary material wait into a 30-minute alarm.
+//
+// The rung was never what the two hours was about. The reason a wait may last a
+// shift is that NOBODY HAS THE PART, and that is a fact about the cause. So the
+// cause is what the bound reads, which fixes the mirror-image error at the same
+// time: a `queued` order resting under claim-failed used to get two hours of
+// silence for a condition that has no releaser at all.
+//
+// The two rules this must not break, both from the record:
+//   - AN OUTAGE MUST NEVER READ AS A SHORTAGE. The undetermined family —
+//     read-failed and its siblings — means Core DECLINED to answer, not that the
+//     shelf is empty. Those keep 30 minutes and stay alarms.
+//   - A RESTING claim-failed IS THE ANOMALY. Same: 30 minutes.
+const materialWaitAge = 2 * time.Hour
+
+// Queue causes this package must recognise by VALUE, because it cannot import
+// the package that declares them: dispatch imports store, so store importing
+// dispatch is a cycle. Same shape and same pinning as the station-dwell literals
+// below — TestMaterialWaitCauseLiteralsMatchDispatch fails if any of them drifts
+// from its dispatch constant.
+//
+// ── WHAT IS IN, AND WHY THE CODE COULD NOT BE USED INSTEAD ────────────────
+//
+// These are the waits whose releaser is a carrier arriving somewhere: the
+// finder's four scope tiers, its "carriers exist but none is full", and complex's
+// half-held reserve. Every one of them ends when material shows up, and none of
+// them ends any sooner for being looked at.
+//
+// protocol.QueueCode was the obvious key and does not work HERE: the finder
+// tiers, read-failed, claim-failed, held-bin-missing and lock-race are all
+// written under `waiting_for_material` (dispatch/source_finder.go,
+// fulfillment/scanner.go, dispatch/complex_dispatch.go), so the coarse code
+// cannot tell a shortage from an outage — which is the one distinction this
+// bound exists to make. The Edge's mirror has only the code and is coarser for
+// exactly that reason; Core is where the fine answer lives.
+//
+// DELIBERATELY OUT, each for a stated reason:
+//   - finder-accessibility-unreadable, finder-source-unreadable, read-failed:
+//     the undetermined family. Core declined to answer; an outage is not a
+//     shortage.
+//   - claim-failed, held-bin-missing, lock-race: a broken or lost hold. These
+//     have no releaser that arrives on a truck, and the record names a resting
+//     claim-failed as the anomaly.
+//   - finder-group-fenced, ngrp-at-level, group-holds-empties-only: somebody
+//     configured this. group-holds-empties-only says so in as many words — "a
+//     lead, not routine backpressure".
+//   - every lane and fleet cause: those are THROUGHPUT waits. A corridor that
+//     has not cleared in half an hour is worth a person's attention.
+var materialWaitCauseLiterals = []string{
+	"finder-node-empty",
+	"finder-group-empty",
+	"finder-pool-empty",
+	"finder-plant-empty",
+	"finder-no-full-carrier",
+	"reserve-holding",
+}
 
 // CompletionAnomalyWindow is how far back a completion anomaly still counts
 // AS A VERDICT.
@@ -220,6 +277,41 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 // timestamps, which the mapped Anomaly does not carry — so without this seam it
 // ran the completion query, then called ListAnomalies, which ran it again. Two
 // round trips per health hit, and nothing tied the two results together.
+// stuckOrderQuery builds the runtime-stuck detector's SELECT and its args.
+//
+// Lifted out of listAnomaliesWith because the per-row bound needs a rendered IN
+// list and the loop that builds it pushed that function past the statement
+// limit. It is also the better home: the placeholder ORDER is load-bearing and
+// now sits next to the literals it renders.
+//
+// $1 and $2 are the two bounds — the ::int casts in the CASE are written against
+// those exact positions — then one placeholder per material-wait cause, and
+// `now` last.
+func stuckOrderQuery(now time.Time) (string, []any) {
+	args := []any{int(stuckOrderAge.Seconds()), int(materialWaitAge.Seconds())}
+	causePlaceholders := make([]string, len(materialWaitCauseLiterals))
+	for i, c := range materialWaitCauseLiterals {
+		args = append(args, c)
+		causePlaceholders[i] = fmt.Sprintf("$%d", len(args))
+	}
+	args = append(args, now)
+	return fmt.Sprintf(`
+		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at,
+		       COALESCE(o.queue_cause, '') AS queue_cause
+		FROM orders o
+		LEFT JOIN LATERAL (
+		        SELECT MAX(created_at) AS last_progress
+		        FROM order_history WHERE order_id = o.id
+		) h ON TRUE
+		WHERE o.status IN (%s)
+		  AND COALESCE(h.last_progress, o.created_at) < $%d::timestamptz - (
+		        CASE WHEN COALESCE(o.queue_cause, '') IN (%s) THEN $2::int ELSE $1::int END
+		        * INTERVAL '1 second')
+		ORDER BY progressed_at ASC`,
+		protocol.RuntimeStuckCandidateStatusSQLList(), len(args),
+		strings.Join(causePlaceholders, ", ")), args
+}
+
 func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly, error) {
 	var anomalies []*Anomaly
 	for _, a := range completion {
@@ -244,13 +336,11 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 		})
 	}
 
-	// Two thresholds, picked per row by status — see queuedOrderAge.
+	// Two thresholds, picked per row by CAUSE — see materialWaitAge for why the
+	// rung stopped being the key and what must not break in the swap.
 	//
-	// QUEUED ONLY, not both acquiring statuses. `sourcing` is meant to be
-	// transient (MoveToSourcing sits at the start of the reserve attempt, so few
-	// orders rest there), which makes half an hour in `sourcing` a real signal
-	// worth keeping. Widening the longer bound to cover it would silence an alarm
-	// that currently works, to fix a problem it does not have.
+	// The query already selected queue_cause for the station-dwell rows below, so
+	// the fact was in hand before the bound started reading it.
 	//
 	// Splitting it in SQL rather than running two queries keeps the ORDER BY over
 	// the whole result, so the oldest anomaly is still first regardless of which
@@ -262,7 +352,7 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	// — a live 500 on the health endpoint, from a query that builds and vets
 	// clean. It also survives a psql `PREPARE stuckq(int, int, text)` check,
 	// because declaring the types is exactly what the driver does not do.
-	// TestListAnomalies_QueuedGetsTheLongerBound exercises this through the
+	// TestListAnomalies_MaterialWaitGetsTheLongerBound exercises this through the
 	// driver, which is the only check that would have caught it.
 	//
 	// ── AND `NOW()` WAS THE WRONG CLOCK (§R.98 stage D) ───────────────────
@@ -308,19 +398,8 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	// The POPULATION is untouched — same statuses, same two bounds, same casts.
 	// Only the clock changes.
 	now := clock.Now().UTC()
-	rows, err := db.Query(fmt.Sprintf(`
-		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at,
-		       COALESCE(o.queue_cause, '') AS queue_cause
-		FROM orders o
-		LEFT JOIN LATERAL (
-		        SELECT MAX(created_at) AS last_progress
-		        FROM order_history WHERE order_id = o.id
-		) h ON TRUE
-		WHERE o.status IN (%s)
-		  AND COALESCE(h.last_progress, o.created_at) < $4::timestamptz - (
-		        CASE WHEN o.status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
-		ORDER BY progressed_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
-		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued), now)
+	q, args := stuckOrderQuery(now)
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

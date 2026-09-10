@@ -93,3 +93,52 @@ func TestStationDwellCauseLiteralsMatchDispatch(t *testing.T) {
 		}
 	}
 }
+
+// TestMaterialWaitCauseLiteralsMatchDispatch pins this package's copies of the
+// material-wait causes, for the same reason and in the same way as the station
+// literals above: dispatch imports store, so store cannot import dispatch, and
+// the strings ARE the contract.
+//
+// What a silent drift costs here is the opposite of a missing row. A renamed
+// cause simply stops matching, the order falls to the 30-minute bound, and the
+// anomaly board starts flagging every ordinary material wait in the plant — the
+// exact noise the longer bound exists to prevent, arriving without a single test
+// failing. The dispatch constants are asserted against these same strings in
+// TestQueueCause_ValuesAreUnchanged.
+func TestMaterialWaitCauseLiteralsMatchDispatch(t *testing.T) {
+	t.Parallel()
+	want := []string{
+		"finder-node-empty",
+		"finder-group-empty",
+		"finder-pool-empty",
+		"finder-plant-empty",
+		"finder-no-full-carrier",
+		"reserve-holding",
+	}
+	if len(materialWaitCauseLiterals) != len(want) {
+		t.Fatalf("material-wait causes = %v, want %v.\nAdding one is a decision about which waits "+
+			"may last a shift; state it where the list is declared.", materialWaitCauseLiterals, want)
+	}
+	for i := range want {
+		if materialWaitCauseLiterals[i] != want[i] {
+			t.Errorf("material-wait cause[%d] = %q, want %q — this must equal the dispatch constant "+
+				"of the same name, which is what actually gets written on the order row",
+				i, materialWaitCauseLiterals[i], want[i])
+		}
+	}
+	// AND THE ALARM FAMILIES STAY OUT. These are the ones the record names by
+	// hand: an outage must never read as a shortage, and a resting claim-failed
+	// is the anomaly rather than a wait.
+	for _, banned := range []string{
+		"read-failed", "claim-failed", "held-bin-missing", "lock-race",
+		"finder-accessibility-unreadable", "finder-source-unreadable",
+	} {
+		for _, got := range materialWaitCauseLiterals {
+			if got == banned {
+				t.Errorf("%q is in the material-wait set. It is not a shortage — it is Core "+
+					"declining to answer or a hold that broke, and two hours of silence on it "+
+					"is two hours nobody is told", banned)
+			}
+		}
+	}
+}

@@ -186,7 +186,12 @@ func submitComplexAndDispatch(t *testing.T, d *Dispatcher, db *store.DB, env *pr
 	if err != nil {
 		t.Fatalf("get order %s: %v", p.OrderUUID, err)
 	}
-	if o.Status == StatusQueued {
+	// IsAcquiring, NOT StatusQueued. This helper stands in for the scanner, and
+	// the scanner's own gate is the acquiring set — so gating on one rung of it
+	// made the fixture encode a birth rung rather than the rule. A complex order
+	// is born `sourcing` now, and every test using this helper stopped
+	// dispatching the moment it was.
+	if protocol.IsAcquiring(o.Status) {
 		if err := d.DispatchPreparedComplex(o); err != nil {
 			t.Fatalf("dispatch prepared complex %s: %v", p.OrderUUID, err)
 		}

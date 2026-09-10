@@ -114,8 +114,12 @@ func TestDispatchPreparedComplex_DropoffOccupiedQueuesThenReleases(t *testing.T)
 
 	got, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "re-read order")
-	if got.Status != StatusQueued {
-		t.Errorf("status = %q, want queued", got.Status)
+	// SOURCING, not queued. A gate-blocked complex order parks in its entry
+	// status, and complex is born `sourcing` — its hand is not whole. This used
+	// to read `queued` on the first pass and `sourcing` on a retry, one wait
+	// under two rungs depending on which pass caught it.
+	if got.Status != StatusSourcing {
+		t.Errorf("status = %q, want sourcing", got.Status)
 	}
 	if got.VendorOrderID != "" {
 		t.Errorf("VendorOrderID = %q, want empty — nothing should have reached the fleet", got.VendorOrderID)
@@ -169,7 +173,9 @@ func TestDispatchPreparedComplex_DropoffOccupiedQueuesThenReleases(t *testing.T)
 	if final.VendorOrderID == "" {
 		t.Errorf("VendorOrderID empty after the slot freed — the order never reached the fleet")
 	}
-	if final.Status == StatusQueued {
+	// The whole acquiring set, not just `queued`: the order parks in `sourcing`
+	// now, so "not queued" would pass without the order having gone anywhere.
+	if protocol.IsAcquiring(final.Status) {
 		t.Errorf("status still %q after the slot freed", final.Status)
 	}
 	if QueueCause(final.QueueCause) == CauseDropoffOccupied {

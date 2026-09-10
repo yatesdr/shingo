@@ -27,6 +27,7 @@ package orders
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"shingocore/domain"
@@ -39,8 +40,9 @@ type LeadTimeRange struct {
 	End   time.Time
 }
 
-// AvgL1QueueSeconds returns the mean elapsed seconds from queued → dispatched
-// for L1 retrieve_empty orders in the window. payloadCode "" means all payloads.
+// AvgL1QueueSeconds returns the mean elapsed seconds from the order's FIRST
+// acquiring row → dispatched for L1 retrieve_empty orders in the window.
+// payloadCode "" means all payloads.
 //
 // IT ENDED AT `acknowledged`, AND CORE NEVER WRITES ONE — see FlowDwellPairs in
 // domain/telemetry.go for the arm and why it is dead. This helper was therefore
@@ -48,27 +50,35 @@ type LeadTimeRange struct {
 // adds it to the L1 lead time, so every reorder point in the plant was computed
 // as if waiting in the line took no time at all. `dispatched` is the honest end
 // of that wait — the fleet call made, armor on.
+//
+// AND IT STARTS AT domain.AcquiringEntryStatuses, THE SAME SEAM THE DWELL PAIR
+// USES. It began at `queued` alone, which is a rung an order need not ever stand
+// on: a complex order is born `sourcing`, writes no queued row, and vanished
+// from this mean without appearing as a gap. The whole reason this helper is
+// worth getting right is that its answer becomes a reorder point, and a reorder
+// point computed from a silently-narrowed population is wrong in the direction
+// that under-replenishes.
 func AvgL1QueueSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
-	return avgTransition(db, "queued", "dispatched", payloadCode, "retrieve_empty", r)
+	return avgTransition(db, domain.AcquiringEntryStatuses(), true, "dispatched", payloadCode, "retrieve_empty", r)
 }
 
 // AvgL1TransitSeconds returns the mean in_transit → delivered seconds for L1
 // retrieve_empty orders.
 func AvgL1TransitSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
-	return avgTransition(db, "in_transit", "delivered", payloadCode, "retrieve_empty", r)
+	return avgTransition(db, []string{"in_transit"}, false, "delivered", payloadCode, "retrieve_empty", r)
 }
 
 // MedianL2LoadSeconds returns the median L1-delivered → confirmed seconds (the
 // operator-fill window). Median, not mean, because operator fill is the only
 // operator-driven segment and is exposed to long-tail outliers.
 func MedianL2LoadSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
-	return pctlTransition(db, 0.5, "delivered", "confirmed", payloadCode, "retrieve_empty", r)
+	return pctlTransition(db, 0.5, []string{"delivered"}, false, "confirmed", payloadCode, "retrieve_empty", r)
 }
 
 // P95MarketToCellSeconds returns the 95th-percentile in_transit → delivered
 // seconds for consume-side retrieves (p95 handles reshuffle outliers).
 func P95MarketToCellSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
-	return pctlTransition(db, 0.95, "in_transit", "delivered", payloadCode, "retrieve", r)
+	return pctlTransition(db, 0.95, []string{"in_transit"}, false, "delivered", payloadCode, "retrieve", r)
 }
 
 // CountCompletedOrdersInWindow returns how many distinct orders of orderType
@@ -125,7 +135,7 @@ func FlowDwellPairs() []DwellPair { return domain.FlowDwellPairs() }
 func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r LeadTimeRange) ([]DwellStat, error) {
 	out := make([]DwellStat, 0, len(pairs))
 	for _, p := range pairs {
-		cte, args := transitionCTE(p.From, p.To, payloadCode, orderType, r)
+		cte, args := transitionCTE(p.From, p.FromEarliest, p.To, payloadCode, orderType, r)
 		args = append(args, 0.5, 0.95)
 		q := cte + fmt.Sprintf(`
 			SELECT PERCENTILE_CONT($%d::float8) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (to_ts - from_ts))),
@@ -136,7 +146,7 @@ func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r 
 		var p50, p95 sql.NullFloat64
 		var n int64
 		if err := db.QueryRow(q, args...).Scan(&p50, &p95, &n); err != nil {
-			return nil, fmt.Errorf("dwell %s (%s→%s): %w", p.Key, p.From, p.To, err)
+			return nil, fmt.Errorf("dwell %s (%v→%s): %w", p.Key, p.From, p.To, err)
 		}
 		out = append(out, DwellStat{
 			DwellPair:  p,
@@ -150,13 +160,33 @@ func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r 
 
 // transitionCTE builds the shared "every fromState→toState duration in the
 // window" CTE plus its args in placeholder order. Callers append the final
-// projection (AVG / PERCENTILE_CONT). MAX(created_at) per order collapses
-// retry transitions, matching the Edge.
-func transitionCTE(fromState, toState, payloadCode, orderType string, r LeadTimeRange) (string, []any) {
-	args := []any{toState, fromState, r.Start.UTC(), r.End.UTC()}
-	cte := `WITH transitions AS (
+// projection (AVG / PERCENTILE_CONT).
+//
+// fromStates is a SET, and fromEarliest picks which of an order's from-rows
+// anchors the span. MAX(from)→MAX(to) per order is the inherited collapse and
+// stays the default for every pair; the one caller that passes fromEarliest is
+// the wait-in-the-line measurement, where the honest start is when the order
+// JOINED the line rather than the last time it was seen standing in it. To is
+// always the LAST matching row at or after the anchor.
+func transitionCTE(fromStates []string, fromEarliest bool, toState, payloadCode, orderType string, r LeadTimeRange) (string, []any) {
+	args := []any{toState}
+	// The from-set, one placeholder each. Rendered rather than passed as an
+	// array so this stays driver-agnostic — the package builds every other IN
+	// list the same way.
+	placeholders := make([]string, len(fromStates))
+	for i, s := range fromStates {
+		args = append(args, s)
+		placeholders[i] = fmt.Sprintf("$%d", len(args))
+	}
+	fromAgg := "MAX"
+	if fromEarliest {
+		fromAgg = "MIN"
+	}
+	args = append(args, r.Start.UTC(), r.End.UTC())
+	startArg, endArg := len(args)-1, len(args)
+	cte := fmt.Sprintf(`WITH transitions AS (
 		SELECT h_from.order_id,
-		       MAX(h_from.created_at) AS from_ts,
+		       %s(h_from.created_at) AS from_ts,
 		       MAX(h_to.created_at)   AS to_ts
 		FROM order_history h_from
 		JOIN order_history h_to
@@ -164,10 +194,11 @@ func transitionCTE(fromState, toState, payloadCode, orderType string, r LeadTime
 		 AND h_to.status = $1
 		 AND h_to.created_at >= h_from.created_at
 		JOIN orders o ON o.id = h_from.order_id
-		WHERE h_from.status = $2
-		  AND h_from.created_at >= $3
-		  AND h_from.created_at <= $4`
-	n := 4
+		WHERE h_from.status IN (%s)
+		  AND h_from.created_at >= $%d
+		  AND h_from.created_at <= $%d`,
+		fromAgg, strings.Join(placeholders, ", "), startArg, endArg)
+	n := len(args)
 	if payloadCode != "" {
 		n++
 		cte += fmt.Sprintf(" AND o.payload_code = $%d", n)
@@ -184,12 +215,12 @@ func transitionCTE(fromState, toState, payloadCode, orderType string, r LeadTime
 
 // avgTransition returns the mean transition duration in seconds, 0 when the
 // window has no qualifying transitions.
-func avgTransition(db *sql.DB, fromState, toState, payloadCode, orderType string, r LeadTimeRange) (float64, error) {
-	cte, args := transitionCTE(fromState, toState, payloadCode, orderType, r)
+func avgTransition(db *sql.DB, fromStates []string, fromEarliest bool, toState, payloadCode, orderType string, r LeadTimeRange) (float64, error) {
+	cte, args := transitionCTE(fromStates, fromEarliest, toState, payloadCode, orderType, r)
 	q := cte + ` SELECT AVG(EXTRACT(EPOCH FROM (to_ts - from_ts))) FROM transitions WHERE to_ts > from_ts`
 	var v sql.NullFloat64
 	if err := db.QueryRow(q, args...).Scan(&v); err != nil {
-		return 0, fmt.Errorf("avg %s→%s: %w", fromState, toState, err)
+		return 0, fmt.Errorf("avg %v→%s: %w", fromStates, toState, err)
 	}
 	if !v.Valid {
 		return 0, nil
@@ -201,15 +232,15 @@ func avgTransition(db *sql.DB, fromState, toState, payloadCode, orderType string
 // transition durations in seconds, 0 when the window is empty. The fraction is
 // bound as a parameter (never interpolated) and cast so the planner sees a
 // concrete float8.
-func pctlTransition(db *sql.DB, pctl float64, fromState, toState, payloadCode, orderType string, r LeadTimeRange) (float64, error) {
-	cte, args := transitionCTE(fromState, toState, payloadCode, orderType, r)
+func pctlTransition(db *sql.DB, pctl float64, fromStates []string, fromEarliest bool, toState, payloadCode, orderType string, r LeadTimeRange) (float64, error) {
+	cte, args := transitionCTE(fromStates, fromEarliest, toState, payloadCode, orderType, r)
 	args = append(args, pctl)
 	q := cte + fmt.Sprintf(
 		` SELECT PERCENTILE_CONT($%d::float8) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (to_ts - from_ts))) FROM transitions WHERE to_ts > from_ts`,
 		len(args))
 	var v sql.NullFloat64
 	if err := db.QueryRow(q, args...).Scan(&v); err != nil {
-		return 0, fmt.Errorf("p%.0f %s→%s: %w", pctl*100, fromState, toState, err)
+		return 0, fmt.Errorf("p%.0f %v→%s: %w", pctl*100, fromStates, toState, err)
 	}
 	if !v.Valid {
 		return 0, nil

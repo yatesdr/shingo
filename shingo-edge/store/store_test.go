@@ -1818,23 +1818,35 @@ func TestGetProcessNodeByCoreNodeName(t *testing.T) {
 	}
 }
 
-// TestReconciliationAnomalies_QueuedGetsTheLongerBound pins the two-threshold
-// split: a queued order is given two hours before it counts as stuck, every
-// other runtime-stuck status keeps thirty minutes.
+// TestReconciliationAnomalies_MaterialWaitGetsTheLongerBound pins the two-threshold
+// split: an order WAITING ON MATERIAL is given two hours before it counts as
+// stuck, every other runtime-stuck row keeps thirty minutes.
 //
-// Both halves matter and they fail in opposite directions. Give queued the short
-// bound and every loop waiting on material lights up the board within half an
-// hour, which trains people to ignore it. Give EVERY status the long bound and a
-// dispatched leg that stopped moving goes unreported for two hours.
+// Both halves matter and they fail in opposite directions. Give a material wait
+// the short bound and every loop waiting on a part lights up the board within
+// half an hour, which trains people to ignore it. Give EVERY row the long bound
+// and a dispatched leg that stopped moving goes unreported for two hours.
 //
-// Springfield 2026-08-03 is why queued is on the board at all: it was in neither
-// the sweep set nor the anomaly set, so 290 duplicate orders accumulated at one
-// window over three and a half hours and the system reported nothing.
-func TestReconciliationAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
+// IT USED TO KEY ON `queued`, and the rung was never what the two hours was
+// about: a wait may last a shift because nobody has the part, which is a fact
+// about the WAIT, not about which rung the order is standing on. Keyed on the
+// rung it was wrong both ways — `sourcing` took the 30-minute alarm on the
+// grounds that it is transient, which is false of complex orders (they rest
+// there while re-shopping, and are now born there), while a `queued` order
+// carrying no wait at all got two hours of silence.
+//
+// The Edge keys on queue_code because the fine-grained cause never crosses the
+// wire, so this board cannot separate a shortage from an outage the way Core's
+// can — see the query for that trade, stated rather than hidden.
+//
+// Springfield 2026-08-03 is why a waiting order is on the board at all: it was in
+// neither the sweep set nor the anomaly set, so 290 duplicate orders accumulated
+// at one window over three and a half hours and the system reported nothing.
+func TestReconciliationAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	mk := func(uuid, status string, age time.Duration) int64 {
+	mk := func(uuid, status, code string, age time.Duration) int64 {
 		id, err := db.CreateOrder(uuid, "retrieve", nil, false, 1, "", "", "", "", false, "CODE")
 		if err != nil {
 			t.Fatalf("create %s: %v", uuid, err)
@@ -1843,15 +1855,20 @@ func TestReconciliationAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 			t.Fatalf("status %s: %v", uuid, err)
 		}
 		old := time.Now().UTC().Add(-age).Format("2006-01-02 15:04:05")
-		if _, err := db.Exec(`UPDATE orders SET updated_at=? WHERE id=?`, old, id); err != nil {
+		if _, err := db.Exec(`UPDATE orders SET updated_at=?, queue_code=? WHERE id=?`, old, code, id); err != nil {
 			t.Fatalf("backdate %s: %v", uuid, err)
 		}
 		return id
 	}
 
-	youngQueued := mk("q-young", "queued", 1*time.Hour) // under 2h — must stay quiet
-	oldQueued := mk("q-old", "queued", 3*time.Hour)     // over 2h  — must be flagged
-	submitted := mk("s-old", "submitted", 1*time.Hour)  // 30m bound still applies
+	const material = string(protocol.QueueWaitingForMaterial)
+
+	youngMaterial := mk("m-young", "queued", material, 1*time.Hour) // under 2h — must stay quiet
+	oldMaterial := mk("m-old", "queued", material, 3*time.Hour)     // over 2h  — must be flagged
+	submitted := mk("s-old", "submitted", "", 1*time.Hour)          // 30m bound still applies
+	// The two the rung-keyed bound got wrong, one in each direction.
+	sourcingMaterial := mk("s-mat", "sourcing", material, 1*time.Hour)
+	queuedNoCode := mk("q-bare", "queued", "", 1*time.Hour)
 
 	anomalies, err := db.ListReconciliationAnomalies()
 	if err != nil {
@@ -1864,14 +1881,24 @@ func TestReconciliationAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		}
 	}
 
-	if flagged[youngQueued] {
-		t.Error("a queued order waiting 1h was flagged; waiting is what queued is FOR, and a board that fires on ordinary material churn gets ignored")
+	if flagged[youngMaterial] {
+		t.Error("an order waiting 1h on material was flagged; waiting for a part is what the longer bound is FOR, and a board that fires on ordinary material churn gets ignored")
 	}
-	if !flagged[oldQueued] {
-		t.Error("a queued order wedged for 3h raised nothing — this is the SPR hole: no sweep covers queued, so this anomaly is the only thing that reports it")
+	if !flagged[oldMaterial] {
+		t.Error("an order wedged 3h on material raised nothing — this is the SPR hole: no sweep covers a waiting order, so this anomaly is the only thing that reports it")
 	}
 	if !flagged[submitted] {
-		t.Error("a non-queued order stale for 1h was not flagged; the longer bound must apply to queued ONLY, not widen to every status")
+		t.Error("a non-waiting order stale for 1h was not flagged; the longer bound must apply to material waits ONLY, not widen to every row")
+	}
+	if flagged[sourcingMaterial] {
+		t.Error("a SOURCING order waiting an hour on material was flagged. The bound used to key on " +
+			"the rung and gave `sourcing` the 30-minute alarm on the grounds that it is transient — " +
+			"which is false of complex orders, which rest there while re-shopping and are now born there")
+	}
+	if !flagged[queuedNoCode] {
+		t.Error("a QUEUED order with no queue_code sat an hour and was not flagged. Keyed on the rung " +
+			"it got two hours of silence; an order carrying no wait sentence at all is not a material " +
+			"wait, and an hour of no progress on one is worth a person's attention")
 	}
 }
 

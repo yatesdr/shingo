@@ -157,7 +157,7 @@ func TestDwellStats_FiltersScopeTheResult(t *testing.T) {
 	seed("f-b", "retrieve", "PART-B", 60*s)
 	seed("f-c", "move", "PART-A", 90*s)
 
-	pairs := []domain.DwellPair{{Key: "ttd", From: "queued", To: "acknowledged"}}
+	pairs := []domain.DwellPair{{Key: "ttd", From: []string{"queued"}, To: "acknowledged"}}
 
 	byPayload, err := orders.DwellStats(db, pairs, "PART-A", "", win)
 	testutil.MustNoErr(t, err, "by payload")

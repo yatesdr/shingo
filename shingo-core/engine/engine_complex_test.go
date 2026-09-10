@@ -384,8 +384,11 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	// Source genuinely empty → PARK, not a terminal. The order waits for
 	// material with the scoped queue code; the scanner retries it every
 	// tick and the operator can abandon a changeover-linked one.
-	if order.Status != dispatch.StatusQueued {
-		t.Fatalf("status = %q, want queued (dry supply source must park as waiting_for_material, never terminal)", order.Status)
+	// `sourcing` is the rung a complex order is born on and parks in: the hand is
+	// short, which is exactly what a dry source means. What this test is about is
+	// that it PARKED rather than terminalized, and under which code.
+	if !protocol.IsAcquiring(order.Status) {
+		t.Fatalf("status = %q, want it waiting (dry supply source must park as waiting_for_material, never terminal)", order.Status)
 	}
 	if order.QueueCode != string(protocol.QueueWaitingForMaterial) {
 		t.Errorf("QueueCode = %q, want %q", order.QueueCode, protocol.QueueWaitingForMaterial)

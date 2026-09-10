@@ -463,10 +463,17 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
 	// order stays `sourcing` while it holds partials and the scanner retries it
 	// (the acquiring-set widening, complex scope). Idempotent — a retried order
-	// re-enters sourcing→sourcing every tick, which MoveToSourcing skips. The gates
-	// above (swap-hold, capacity, slot-claim) run first and park a blocked order in
-	// its entry status (queued first pass, sourcing on retry); both are retried by
-	// the complex-scoped scanner, and each wrote queue_reason for the Edge push.
+	// re-enters sourcing→sourcing every tick, which MoveToSourcing skips, and a
+	// complex order is now BORN `sourcing` (complex_intake.go), so the very first
+	// tick self-skips too.
+	//
+	// The gates above (swap-hold, capacity, slot-claim) run first and park a
+	// blocked order in its entry status — which is `sourcing` on every pass now.
+	// It used to be "queued first pass, sourcing on retry": one wait filed under
+	// two different rungs depending on which pass caught it, which is the
+	// inconsistency the birth-rung move ended rather than created. Both are
+	// retried by the complex-scoped scanner, and each wrote queue_reason for the
+	// Edge push.
 	if err := d.lifecycle.MoveToSourcing(order, "scanner", "reserving source bins"); err != nil {
 		// Refused CAS = another actor terminalized or moved this order while we
 		// held a stale snapshot. Everything below reserves bins and ends in a
@@ -950,8 +957,8 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// bin reserve (slots-before-bins + the relay rule: a slot must be held before
 	// the bin leg reads its emptiness). A fungible NGRP slot conflict
 	// reverts-and-re-resolves (the escape valve, preserved); a fixed-concrete
-	// conflict holds (Wait) — both requeue in the order's entry status (queued
-	// first pass, sourcing on retry).
+	// conflict holds (Wait) — both requeue in the order's entry status, which is
+	// `sourcing` from birth onwards (complex_intake.go).
 	//
 	// The canonical node-ID sort is gone WITH the loop: the ABBA class dissolves at
 	// the soft-acquire layer, where a loser backs off holding only revocable slot

@@ -1372,14 +1372,37 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 	return err
 }
 
+// InFlightForDropoffSQL renders "this order is on its way to its delivery node"
+// — the dropoff-capacity gate's population, spelled once.
+//
+// NOT terminal, and NOT `queued`. The queued exclusion is the load-bearing half:
+// the gate asks "is something already coming here", and a queued order holds no
+// destination — the fulfillment scanner depends on it holding none, which is why
+// ListAcquiring and this exclusion are the same rule stated from two sides
+// (CountLiveByOrigin says the converse and deliberately counts queued).
+//
+// IT WAS SPELLED INLINE AT BOTH SITES, under a comment saying the combination was
+// composed inline "because no other site needs this combo" — and the site
+// carrying that comment had a twin four lines below it. Two spellings of one
+// predicate is how a rung move silently changes one gate and not the other, and
+// the birth-rung work moves populations across exactly this boundary.
+//
+// This is a NAME, not a re-home. The gate still reads the STATUS boundary; the
+// record's T1 defers asking the reservation book "does this order hold a
+// destination slot" to after the narrowing/badge, because line and consume
+// destinations reserve nothing and an early re-home would drop them from the
+// count. Naming unblocks no rung move — each keeps its own sim gate.
+func InFlightForDropoffSQL() string {
+	return fmt.Sprintf("status NOT IN (%s) AND status != '%s'",
+		protocol.TerminalStatusSQLList(), protocol.StatusQueued)
+}
+
 // CountInFlightByDeliveryNode counts non-queued, non-terminal active orders
 // targeting a delivery node.
 func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
-	// "In-flight" = not terminal AND not queued. The queued exclusion is
-	// composed inline rather than baked into a predicate because no other
-	// site needs this combo.
-	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s) AND status != 'queued'`, protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND %s`,
+		InFlightForDropoffSQL()), deliveryNode).Scan(&count)
 	return count, err
 }
 
@@ -1390,8 +1413,8 @@ func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 // to count all orders (no exclusion). Phase 4c of bin-transit-state.
 func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, excludeID int64) (int, error) {
 	var count int
-	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s) AND status != 'queued' AND id != $2`, protocol.TerminalStatusSQLList()),
-		deliveryNode, excludeID).Scan(&count)
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND %s AND id != $2`,
+		InFlightForDropoffSQL()), deliveryNode, excludeID).Scan(&count)
 	return count, err
 }
 
@@ -1403,8 +1426,8 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 // differs from the two counts above. Those answer "is something on its way
 // here", and for that question a queued order is correctly invisible: it holds
 // no destination, and the fulfillment scanner depends on it holding none
-// (ListAcquiring and the `status != 'queued'` in the two in-flight counts are
-// the same rule stated twice).
+// (ListAcquiring and InFlightForDropoffSQL's queued exclusion are the same rule
+// stated twice).
 //
 // This answers a different question — "what has this demand already asked for"
 // — and there the answer must include an order that asked and has not yet been
