@@ -681,8 +681,7 @@ function cellCardAction(entry, claim, remaining) {
         // one label in this chain that explains nothing. The blocker is
         // the leg that is not parked — the robot they are waiting on.
         const pair = swapPair(active);
-        const blocker = pair.find(o => o.status !== 'staged') || null;
-        return { label: waitingLabel(blocker), cls: 'close', enabled: false, action: '' };
+        return { label: pairWaitingLabel(pair), cls: 'close', enabled: false, action: '' };
     }
     if (staged) {
         // Sequential / single-robot — single staged, single release.
@@ -835,26 +834,91 @@ function isStationReleasable(o) {
     return o.status === 'staged' && !o.lane_held;
 }
 
-function waitingLabel(blocker) {
-    const base = 'WAITING FOR OTHER ROBOT';
-    if (!blocker) return base;
-    if (blocker.queue_reason) return withQueueCause(base, blocker);
+const WAITING_BASE = 'WAITING FOR OTHER ROBOT';
+
+// blockerPhrase is what ONE leg is doing, without the base label.
+//
+// Split out of waitingLabel so the pair-shaped label below can say the same
+// thing about a named leg mid-sentence. Every string it returns is what
+// waitingLabel already produced — the pins in operator-modal-waiting.test.js
+// assert the composed output and are unchanged.
+function blockerPhrase(blocker) {
+    if (!blocker) return '';
+    if (blocker.queue_reason) return blocker.queue_reason;
     switch (blocker.status) {
         case 'faulted':
-            return base + ' — faulted, recovering';
+            return 'faulted, recovering';
         case 'queued':
-            return base + ' — queued';
+            return 'queued';
         case 'sourcing':
-            return base + ' — sourcing';
+            return 'sourcing';
         case 'acknowledged':
-            return base + ' — acknowledged, not yet dispatched';
+            return 'acknowledged, not yet dispatched';
         case 'in_transit': {
             const eta = formatETA(blocker.eta);
-            return eta.empty ? base + ' — in transit' : base + ' — ' + eta.text;
+            return eta.empty ? 'in transit' : eta.text;
         }
         default:
-            return base;
+            return '';
     }
+}
+
+function waitingLabel(blocker) {
+    const phrase = blockerPhrase(blocker);
+    return phrase ? WAITING_BASE + ' — ' + phrase : WAITING_BASE;
+}
+
+// pairWaitingLabel renders a held pair as ONE wait.
+//
+// THE PAIR IS ONE OBJECT AT THE RELEASE CLICK AND TWO OBJECTS AT REST, and the
+// rest state is the one a person is looking at when a cell is stopped. This site
+// used to take a single leg — `pair.find(o => o.status !== 'staged')` — and show
+// only its cause. So a pair parked for two different reasons told the operator
+// about one of them, chosen by list order, and said nothing about where the
+// other leg was. Two rows, two causes, one shown.
+//
+// Three things, in the order a person needs them:
+//
+//   POSITION  how many legs are parked, so "waiting" is not the whole story.
+//   RELEASER  the leg the cell is actually waiting on, named by order id so the
+//             two rows can be correlated on the orders page. Only when there is
+//             exactly ONE such leg — naming two releasers names none.
+//   CAUSE     every DISTINCT cause across the pair. distinctQueueCauses exists
+//             for exactly this ("a swap pair parked for the same reason has one
+//             reason, not two identical lines") and was not being called here.
+//
+// IT DECIDES NOTHING. This is a label. The release affordance, the >=2 guard and
+// every admission gate are untouched — a pair that could not be released before
+// still cannot, and one that could still can.
+//
+// Anything that is not a resolvable pair falls through to waitingLabel, so every
+// single-blocker shape it pins renders exactly as it did.
+function pairWaitingLabel(pair) {
+    const legs = (pair || []).filter(Boolean);
+    if (legs.length < 2) return waitingLabel(legs[0] || null);
+
+    const parked = legs.filter(function (o) { return o.status === 'staged'; });
+    const moving = legs.filter(function (o) { return o.status !== 'staged'; });
+
+    let label = WAITING_BASE + ' — ' + parked.length + ' of ' + legs.length + ' parked';
+    if (moving.length === 1) {
+        const phrase = blockerPhrase(moving[0]);
+        const who = moving[0].id ? 'order ' + moving[0].id : 'the other leg';
+        // The releaser's own status word, not its queue sentence: the causes go
+        // at the end, together, so the pair reads as one wait rather than two.
+        const word = moving[0].queue_reason ? statusWordOf(moving[0]) : phrase;
+        label += word ? '; ' + who + ' ' + word : '; ' + who + ' is the one to watch';
+    }
+
+    const causes = distinctQueueCauses(legs);
+    return causes.length ? label + ' — ' + causes.join('; ') : label;
+}
+
+// statusWordOf is blockerPhrase's status half only — used when a leg HAS a queue
+// sentence, so the sentence itself can be pooled with its partner's at the end
+// of the label instead of appearing twice.
+function statusWordOf(o) {
+    return blockerPhrase({ status: o && o.status, eta: o && o.eta });
 }
 
 // TO_MARKET is the label for a DEPARTED leg — one whose last cell step the

@@ -79,7 +79,18 @@ vm.createContext(ctx);
 // resolve against.
 vm.runInContext(
     modalSrc.match(/const TO_MARKET_LABEL = '[^']*';/)[0].replace('const ', 'var '), ctx);
-for (const fn of ['isStationReleasable', 'swapPair', 'waitingLabel', 'orderStatusChip', 'cellCardAction']) {
+// WAITING_BASE rides along for the same reason, and pairWaitingLabel is now what
+// the two-robot arm calls — the assertions below are unchanged.
+vm.runInContext(
+    modalSrc.match(/const WAITING_BASE = '[^']*';/)[0].replace('const ', 'var '), ctx);
+// pairWaitingLabel pools the pair's causes through distinctQueueCauses, which
+// lives in operator-util.js. Defined here from the real source rather than
+// stubbed — a stub would let the two drift.
+vm.runInContext(
+    extractFn(fs.readFileSync(path.join(__dirname, 'operator-util.js'), 'utf8'), 'distinctQueueCauses')
+        .replace('export function', 'function'), ctx);
+for (const fn of ['isStationReleasable', 'swapPair', 'blockerPhrase', 'waitingLabel',
+    'statusWordOf', 'pairWaitingLabel', 'orderStatusChip', 'cellCardAction']) {
     vm.runInContext(extractFn(modalSrc, fn), ctx);
 }
 
