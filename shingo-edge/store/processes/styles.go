@@ -235,10 +235,26 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, erro
 	if err != nil {
 		return 0, err
 	}
-	// swap_mode is copied verbatim. This trusts that live claims already hold a
-	// real (configurable) mode: the upsert allowlist has rejected "simple" since
-	// the ingress lockdown, and the pre-merge diagnostic confirmed zero simple
-	// rows — so there is nothing stale to re-validate on the copy.
+	// swap_mode is copied verbatim, and this INSERT never sees UpsertClaim's
+	// allowlist.
+	//
+	// THAT TRUST IS NO LONGER SOUND FOR EVERY MODE. It was written about "simple",
+	// which the allowlist has rejected since the ingress lockdown and which a
+	// pre-merge diagnostic confirmed zero rows of — so there was nothing stale to
+	// re-validate. manual_swap is a different case: it left the allowlist when the
+	// loader ownership move retired it as a persisted value, but rows carrying it
+	// are removed by the QUARANTINE at node-list sync rather than by the write
+	// gate. A row therefore exists between an Edge starting and its first sync
+	// (unbounded when Core never answers), and cloning in that window copies a
+	// mode the allowlist would refuse onto a brand-new style. Measured, not
+	// inferred: a clone of a style holding a loader claim produces
+	// swap_mode="manual_swap" on the copy.
+	//
+	// It is self-correcting rather than harmless — the next sync quarantines the
+	// source row and the copy alike — but until then both are a second authority
+	// for config Core owns, and operator_bin_ops.go's RequestFullBin reads one of
+	// them. Filtering loader claims out of this SELECT is the one-line close;
+	// it is a behaviour change to a config-time path and is not taken here.
 	_, err = tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
 		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ?`,
 		newID, src.ID)

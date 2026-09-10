@@ -1038,9 +1038,37 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	//
 	// Source stays claim.InboundSource (the FG supermarket the unloader pulls
 	// from; without it Core's planRetrieve falls back to global FIFO and can pull
-	// from the wrong supermarket). The aggregate's InboundSource is believed
-	// equal — the produce branch uses it — but switching would be a second
-	// behavior change in a deploy that is meant to carry one.
+	// from the wrong supermarket).
+	//
+	// THE CLAIM WINS HERE, AND IT IS NOT EQUAL TO THE AGGREGATE. This comment used
+	// to say the two were "believed equal — the produce branch uses it". They are
+	// not, and the belief was never checked. style_node_claims.inbound_source and
+	// bin_loaders' are authored on different screens with no cross-check between
+	// them, so nothing makes them agree. Driven against a real store: a stored
+	// consume claim carrying OLD-FG-MARKET beside a live loader carrying
+	// NEW-FG-MARKET resolves the stored claim, and the order this creates carries
+	// OLD-FG-MARKET while `dl` two lines below says NEW.
+	//
+	// They ARE equal for a SYNTHESIZED claim, which copies the aggregate's value —
+	// which is why the produce branch gets away with reading the aggregate and
+	// this one would not. So the question is whether a STORED claim can still
+	// reach this line, and it can, by two paths:
+	//
+	//   1. Before the first node-list sync of a boot. The quarantine that removes
+	//      stored loader claims runs only in SetCoreLoaders, so a legacy row
+	//      survives startup, migration and every operator tap until a node-list
+	//      RESPONSE arrives. Unbounded when Core never answers — which is a
+	//      condition this plant has been in.
+	//   2. CloneStyle / GenerateStyles. cloneStyleTx copies swap_mode with a raw
+	//      INSERT that never sees the upsert allowlist, so cloning a style that
+	//      still carries a loader claim mints another one. See styles.go.
+	//
+	// SO FLIPPING THIS TO PREFER THE AGGREGATE IS A LIVE ROUTING CHANGE, not a
+	// severing: it would move which supermarket a real unloader pulls from at any
+	// plant holding such a row. A blank or wrong source here is the shape of
+	// Hopkinsville 2026-05-14 — planRetrieveEmpty falls back to a global FIFO scan
+	// and pulls from the wrong market. That decision wants plant data behind it,
+	// so it is stated rather than taken.
 	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume)
 	if lerr != nil {
 		return nil, fmt.Errorf("node %s: resolve unloader: %w", node.Name, lerr)
