@@ -196,7 +196,6 @@ sim:
     enabled: true
     loader_auto_load: 5s
     unloader_auto_clear: 8s
-    cutover_delay: 10s
   # Downtime model v1 (G9, §3.1): clustered random outages.
   # Per-machine 85% availability via exponential TBF + bounded MTTR.
   # Produces realistic clustering (good weeks / bad weeks) for OEE.

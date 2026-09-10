@@ -38,7 +38,6 @@ sim.downtime.machines = <empty>
 sim.enabled = false
 sim.epoch = 0001-01-01 00:00:00 +0000 UTC
 sim.max_speed = 0
-sim.operators.cutover_delay = 10s
 sim.operators.enabled = false
 sim.operators.loader_auto_load = 5s
 sim.operators.pair_release = false

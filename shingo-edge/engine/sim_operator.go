@@ -35,12 +35,14 @@ import (
 // press the button: POST /api/processes/{id}/changeover/cutover. Drive it from
 // the harness.
 //
-// This note used to say auto-cutover was "deferred within T3.2", beside a
-// config key (operators.changeover_auto_cutover) that defaulted true and was
-// set true in both dev yamls — so a reader had a setting, a default and a
-// deferral note all agreeing that a cutover was coming, and no code anywhere
-// that would cause one. Two agents in two days polled gate-status waiting for
-// it. Key and field deleted 2026-09-10; this paragraph is what replaces them.
+// This note used to say auto-cutover was "deferred within T3.2", beside TWO
+// config keys that agreed with it: operators.changeover_auto_cutover, which
+// defaulted true and was set true in both dev yamls, and operators.cutover_delay,
+// which EDGE 2 set to 4m under a comment giving the cutover a time. So a reader
+// had a setting, a default, a duration, a timeline and a deferral note all
+// describing a cutover that was coming, and no code anywhere that would cause
+// one. Two agents in two days polled gate-status waiting for it. Both keys and
+// both fields deleted 2026-09-10; this paragraph is what replaces them.
 //
 // The EventCounterDelta→0 unloader trigger is still genuinely deferred.
 //

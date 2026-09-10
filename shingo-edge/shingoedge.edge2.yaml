@@ -139,13 +139,22 @@ sim:
     #   changeover starts        t+0
     #   material delivered       t+1-2 min   (AMR round trip, observed)
     #   operator releases        t+1 min     (swap_release below)
-    #   changeover cuts over     t+4 min     (cutover_delay below)
+    #   changeover cuts over     when the harness presses it
     #
-    # The gap between delivery and cutover is the several minutes S1 and S4 need,
-    # and it spans four 60 s reporter ticks rather than none.
+    # THE LAST LINE USED TO READ "t+4 min (cutover_delay below)", and there was a
+    # cutover_delay of 4m set under it. Nothing read it. The sim does not cut a
+    # changeover over at all — the gate opens and waits for
+    # POST /api/processes/{id}/changeover/cutover — so the delay bought no window
+    # and the timeline promised a step that never came. Key deleted 2026-09-10;
+    # a scenario that needs the gap between delivery and cutover holds the
+    # changeover open by not pressing the button, which is the same several
+    # minutes and is under the scenario's control rather than a config file's.
+    #
+    # The three below ARE read — simOperator.loaderDelay, unloaderDelay and
+    # swapReleaseDelay. Named by symbol, not line: the line numbers this comment
+    # first carried had already drifted by its next rebase.
     loader_auto_load: 30s
     unloader_auto_clear: 30s
-    cutover_delay: 4m
     swap_release: 60s
 
   # Downtime OFF, deliberately. EDGE 1 runs it for OEE realism; here a random

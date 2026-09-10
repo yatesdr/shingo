@@ -335,15 +335,20 @@ type SimProcessConfig struct {
 // SimOperatorsConfig configures the auto-operator (loader auto-LOAD, unloader
 // auto-CLEAR, swap release). Global enable only; per-node override is v2 (Q6).
 //
-// It does NOT cut a changeover over. changeover_auto_cutover lived here from
-// T3.2 until 2026-09-10 as a field nothing read, with a default of true and a
-// `true` in both dev yamls, and two agents in two days waited on a cutover it
-// was never going to cause. See simOperator's header for what does.
+// It does NOT cut a changeover over, and TWO keys used to say otherwise.
+// changeover_auto_cutover lived here from T3.2 until 2026-09-10 with a default
+// of true and a `true` in both dev yamls; cutover_delay went with it the same
+// day, a duration nothing read that EDGE 2 set to 4m under a comment promising
+// a cutover at t+4. Neither had a reader anywhere in the tree, and two agents
+// in two days waited on the cutover the pair described. Every remaining field
+// below has a reader in simOperator — loader_auto_load in loaderDelay,
+// unloader_auto_clear in unloaderDelay, swap_release in swapReleaseDelay. Check
+// that before adding a third. See simOperator's header for what does cut a
+// changeover over.
 type SimOperatorsConfig struct {
 	Enabled           bool          `yaml:"enabled"`
 	LoaderAutoLoad    time.Duration `yaml:"loader_auto_load"`    // default 5s
 	UnloaderAutoClear time.Duration `yaml:"unloader_auto_clear"` // default 8s
-	CutoverDelay      time.Duration `yaml:"cutover_delay"`       // default 10s
 	// SwapRelease is the simulated reaction time between a swap reaching its
 	// wait (status "staged") and the operator pushing Release. Default 3s.
 	//
@@ -425,7 +430,6 @@ func Defaults() *Config {
 			Operators: SimOperatorsConfig{
 				LoaderAutoLoad:    5 * time.Second,
 				UnloaderAutoClear: 8 * time.Second,
-				CutoverDelay:      10 * time.Second,
 				SwapRelease:       3 * time.Second,
 			},
 		},
