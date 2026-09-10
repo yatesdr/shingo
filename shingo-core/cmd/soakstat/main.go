@@ -37,6 +37,7 @@ import (
 	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/dispatch"
+	"shingocore/engine"
 	"shingocore/store"
 	"shingocore/store/bins"
 )
@@ -1519,160 +1520,190 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 	return out
 }
 
-// checkBinResidenceOverlap reports two distinct bins whose residence at one
-// physical node overlapped in wall time.
+// checkBinResidenceOverlap reports a bin placed at a node that another bin was
+// still standing on.
 //
 // ── WHY THIS CHECK EXISTS ──────────────────────────────────────────────────
 //
 // The lane invariants above protect corridors; nothing protects POSITIONS.
 // A placing leg that does not ride the release-click path bypasses
-// refusePlacingLegWhileSiblingPending entirely (the Edge guard gates
-// operator clicks, and the press-index index leg auto-dispatches at
-// creation), so a robot can set a bin down on an occupied position and no
-// existing assertion ever sees it. Sim 2026-09-07 proved the shape real:
-// the index leg placed bin 30 on PLN_001 at 11:32:19 while bin 17 still
-// stood there — the evac confirmed only at 11:32:39 — twenty seconds of
-// two bins at one position, invisible to every check in this registry.
+// refusePlacingLegWhileSiblingPending entirely, so a robot can set a bin down
+// on an occupied position and no existing assertion ever sees it. Sim
+// 2026-09-07 proved the shape real: an index leg placed bin 30 on PLN_001 at
+// 11:32:19 while bin 17 still stood there — twenty seconds of two bins at one
+// position, invisible to every check in this registry.
 //
-// In the plant the consequence is the wedge family first (a robot
-// commanded to place at an occupied position blocks, the lane behind it
-// clogs), with physical contact as the tail risk traffic control usually
-// intercepts earlier.
+// ── IT MEASURES FROM THE PER-BLOCK LEDGER, AND IT DID NOT USED TO ──────────
 //
-// ── HOW IT MEASURES ────────────────────────────────────────────────────────
+// Every "two bins at one node" row this check emitted before 2026-09-10 was a
+// FALSE ALARM — run3's 9128s, 470s and 310s, run2's 8971s, 5761s, 874s and
+// 522s. It timed a step by its ORDER's `delivered` stamp, so:
 //
-// Residence is reconstructed from order history, not sampled: a bin ARRIVES
-// at a node when an order carrying it reaches `delivered` and its steps
-// drop a bin off there; it DEPARTS when an order carrying it reaches
-// `confirmed` with a pickup at that node (the robot has lifted it). Both
-// events are terminal in order_history, so the intervals are durable and
-// the check reads a finished run as well as a live one.
+//   - a single_robot consume swap, which is ONE order that lifts the resident
+//     and places the replacement, had its lift and its placement stamped at the
+//     same instant — the moment the order finished, often hours after the lift;
+//   - and the lift was attributed to orders.bin_id, which is the bin the order
+//     PLACED, not the one it lifted. So the previous resident's arrival never
+//     found a departure, read as "never lifted (still standing)", and tripped on
+//     the next carrier's perfectly ordinary arrival.
 //
-// Steps are decoded, not regexed — a CROSS JOIN over nodes with
-// steps_json ~ patterns is quadratic on a six-hour run and times out. One
-// query, one decode per order, intervals grouped per node, then a sort and
-// sweep: for each arrival, flag if the previous resident's departure is
-// still pending (nil means never picked up — still standing).
+// A reviewer then showed the event is physically impossible by that route
+// anyway — CanEnterPosition refuses a second bin at an occupied position — so
+// the instrument was manufacturing alarms for a shape the plant cannot produce,
+// in a check the soak certifies with.
 //
-// `_TRANSIT` is excluded (many bins legitimately in flight); lanes modeled
-// deeper than 1 can legitimately stack, but this fixture family is
-// flattened to depth-1 everywhere. If a deep-lane fixture appears, gate
-// those nodes on lane depth read from node_properties rather than
-// widening the exclusion.
+// THE PLAN IS NOT THE EXECUTION. An earlier fix proposed deriving the departure
+// from the line-pickup step in steps_json. steps_json is the PLAN; it carries no
+// timestamps at all. An executed step's time lives in the per-block ledger —
+// mission_events rows carrying BLOCK_FINISHED, one per block the fleet reported
+// finished (engine.recordBlockLeg). That is what this reads.
+//
+// ── ONE CLOCK ──────────────────────────────────────────────────────────────
+//
+// Times come from `created_at` on both sources — mission_events for executed
+// blocks, order_history for the final delivery — and both are written by Core
+// from clock.Now(). The ledger also carries the vendor's own epoch seconds in
+// blocks_json, and they are deliberately NOT used: mission_events' own DDL note
+// warns that two clocks meet in that table and that order_history is the one
+// Core's state machine writes. Comparing a vendor stamp against a Core stamp to
+// decide whether two events overlapped is how a clock skew becomes a violation
+// report. A poll-interval lag applied equally to both endpoints does not move a
+// comparison; a mixed clock does.
+//
+// ── WHY THE FINAL DELIVERY COMES FROM order_history ────────────────────────
+//
+// The last block of a completed order gets no ledger row: the simulator's driver
+// represents it by the order reaching FINISHED (fleet/simulator/driver.go), and
+// the engine records that arrival through handleOrderDelivered. So an order's
+// FINAL dropoff — which for a two_robot supply or a single_robot swap is the
+// line placement, the arrival that matters most — is read from its `delivered`
+// row instead, and only when the ledger has no dropoff row at that node for that
+// order. Taking both would count one placement twice and flag it against itself.
+//
+// ── OCCUPANCY, NOT BIN PAIRING ─────────────────────────────────────────────
+//
+// The sweep tracks whether the position is occupied, not which bin is on it: a
+// pickup block at a node means whatever was standing there left, whoever lifted
+// it and whatever bin id its order happens to carry. That is the physical
+// question, and it is what dissolves the old attribution bug — the lift no
+// longer has to be matched to the right bin to count.
+//
+// Bin ids appear in the message as LABELS only. A node whose first event is a
+// lift is a pre-run resident departing and clears the position rather than
+// flagging: a run that opens with a lift must not report its first honest
+// placement.
+//
+// `_TRANSIT` is excluded (many bins legitimately in flight).
 func checkBinResidenceOverlap(db *store.DB) []string {
-	// One row per order: its terminal event times plus its decoded steps. The
-	// ARRIVAL arm (a dropoff at the node) reads the order's `delivered` time —
-	// the bin is standing there from that moment. The DEPARTURE arm (a pickup
-	// at the node) reads the LIFTING ORDER's `delivered` time, not its
-	// `confirmed`: `confirmed` is the terminal, operator-confirm-inclusive
-	// stamp, which lags the physical lift by the confirm delay and inflates
-	// overlaps; the lifting order's `delivered` (its downstream dropoff
-	// completing) is an upper bound on the lift that never carries that lag.
+	type ev struct {
+		at      time.Time
+		arrival bool
+		orderID int64
+		binID   int64
+	}
+	events := map[string][]ev{} // node → events
+
+	// ── EXECUTED BLOCKS ────────────────────────────────────────────────────
 	rows, err := db.DB.Query(`
-		SELECT o.id, o.bin_id, o.steps_json,
+		SELECT me.order_id, me.created_at, me.blocks_json, COALESCE(o.bin_id, 0)
+		FROM mission_events me
+		JOIN orders o ON o.id = me.order_id
+		WHERE me.new_state = $1`, engine.BlockLegState)
+	if err != nil {
+		return []string{"bin residence overlap: unreadable block ledger: " + err.Error()}
+	}
+	// Which (order, node) pairs already have a dropoff on the ledger, so the
+	// final-delivery arm below does not add a second arrival for the same
+	// placement.
+	type orderNode struct {
+		orderID int64
+		node    string
+	}
+	ledgerDropoff := map[orderNode]bool{}
+	for rows.Next() {
+		var orderID, binID int64
+		var at time.Time
+		var blocksJSON string
+		if err := rows.Scan(&orderID, &at, &blocksJSON, &binID); err != nil {
+			continue
+		}
+		var legs []struct {
+			Location string `json:"location"`
+			BinTask  string `json:"binTask"`
+		}
+		if err := json.Unmarshal([]byte(blocksJSON), &legs); err != nil {
+			continue
+		}
+		for _, leg := range legs {
+			if leg.Location == "" || leg.Location == "_TRANSIT" {
+				continue
+			}
+			switch {
+			case engine.IsDropoffBlock(leg.BinTask):
+				events[leg.Location] = append(events[leg.Location],
+					ev{at: at, arrival: true, orderID: orderID, binID: binID})
+				ledgerDropoff[orderNode{orderID, leg.Location}] = true
+			case engine.IsPickupBlock(leg.BinTask):
+				events[leg.Location] = append(events[leg.Location],
+					ev{at: at, arrival: false, orderID: orderID, binID: binID})
+			}
+		}
+	}
+	rows.Close()
+
+	// ── FINAL DELIVERIES THE LEDGER DOES NOT CARRY ─────────────────────────
+	dels, err := db.DB.Query(`
+		SELECT o.id, o.delivery_node, COALESCE(o.bin_id, 0),
 		       (SELECT MIN(h.created_at) FROM order_history h
 		         WHERE h.order_id = o.id AND h.status = 'delivered')
 		FROM orders o
-		WHERE o.bin_id IS NOT NULL AND o.steps_json <> ''`)
+		WHERE o.delivery_node <> '' AND o.delivery_node <> '_TRANSIT'`)
 	if err != nil {
-		return []string{"bin residence overlap: unreadable orders: " + err.Error()}
+		return []string{"bin residence overlap: unreadable deliveries: " + err.Error()}
 	}
-	defer rows.Close()
-
-	// Per (node, bin) an ordered event list: every arrival and every lift.
-	// Earlier draft collapsed these to one earliest-arrival/earliest-departure
-	// pair per (node, bin), which a healthy carousel defeats — a bin cycling a
-	// cell every few minutes gets its first visit's lift paired against its
-	// last visit's arrival (or vice versa), and the check read a clean cell as
-	// "still standing since forever" on the 2026-09-07 re-run. Visits, not
-	// bins, are the unit.
-	type evKind bool // true = arrival (dropoff), false = lift (pickup)
-	type ev struct {
-		at   time.Time
-		kind evKind
-	}
-	events := map[string]map[int64][]ev{} // node → bin → events
-	for rows.Next() {
+	for dels.Next() {
 		var orderID, binID int64
-		var stepsJSON, deliveredAt sql.NullString
-		if err := rows.Scan(&orderID, &binID, &stepsJSON, &deliveredAt); err != nil {
+		var node string
+		var at sql.NullTime
+		if err := dels.Scan(&orderID, &node, &binID, &at); err != nil {
 			continue
 		}
-		_ = orderID
-		var steps []protocol.ComplexOrderStep
-		if err := json.Unmarshal([]byte(stepsJSON.String), &steps); err != nil {
+		if !at.Valid || ledgerDropoff[orderNode{orderID, node}] {
 			continue
 		}
-		for _, s := range steps {
-			if s.Node == "" || s.Node == "_TRANSIT" {
-				continue
-			}
-			if !deliveredAt.Valid {
-				continue
-			}
-			t, err := time.Parse(time.RFC3339, deliveredAt.String)
-			if err != nil {
-				continue
-			}
-			switch s.Action {
-			case protocol.ActionDropoff, protocol.ActionPickup:
-				if events[s.Node] == nil {
-					events[s.Node] = map[int64][]ev{}
-				}
-				events[s.Node][binID] = append(events[s.Node][binID], ev{at: t, kind: s.Action == protocol.ActionDropoff})
-			}
-		}
+		events[node] = append(events[node], ev{at: at.Time, arrival: true, orderID: orderID, binID: binID})
 	}
+	dels.Close()
 
-	// Pair each (node, bin) event list into VISITS (arrival … lift), then
-	// sweep the visits of different bins for overlap. A trailing un-lifted
-	// arrival is a still-standing visit — its interval is open-ended.
-	type visit struct {
-		binID int64
-		arr   time.Time
-		dep   *time.Time // nil = open-ended (never lifted)
-	}
 	var out []string
-	for node, bins := range events {
-		visits := make([]visit, 0, len(bins))
-		for binID, evs := range bins {
-			sort.Slice(evs, func(i, j int) bool { return evs[i].at.Before(evs[j].at) })
-			for i := 0; i < len(evs); i++ {
-				if !evs[i].kind {
-					continue // a lift with no preceding arrival: the seed-time
-					// resident's departure; its arrival predates the run
-				}
-				v := visit{binID: binID, arr: evs[i].at}
-				if i+1 < len(evs) && !evs[i+1].kind {
-					u := evs[i+1].at
-					v.dep = &u
-				}
-				visits = append(visits, v)
+	for node, evs := range events {
+		sort.Slice(evs, func(i, j int) bool {
+			if evs[i].at.Equal(evs[j].at) {
+				// A lift sorts before an arrival at the same instant: one order
+				// that lifts and places at a node did them in that order, and a
+				// tie is a fixture-grain artefact, not a collision.
+				return !evs[i].arrival && evs[j].arrival
 			}
-		}
-		sort.Slice(visits, func(i, j int) bool {
-			if visits[i].arr.Equal(visits[j].arr) {
-				return visits[i].binID < visits[j].binID
-			}
-			return visits[i].arr.Before(visits[j].arr)
+			return evs[i].at.Before(evs[j].at)
 		})
-		for i := 1; i < len(visits); i++ {
-			prev, cur := visits[i-1], visits[i]
-			if prev.binID == cur.binID {
-				continue // consecutive visits of the same bin cannot overlap
+		var resident *ev
+		for i := range evs {
+			e := evs[i]
+			if !e.arrival {
+				resident = nil // whatever stood here has been lifted
+				continue
 			}
-			if prev.dep == nil || cur.arr.Before(*prev.dep) {
-				dur := ""
-				if prev.dep != nil {
-					dur = fmt.Sprintf(" (%.0fs overlap)", cur.arr.Sub(*prev.dep).Seconds()*-1)
-				}
+			if resident != nil && resident.orderID != e.orderID {
 				out = append(out, fmt.Sprintf(
-					"TWO BINS AT ONE NODE: node %s — bin %d arrived %s while bin %d was still in "+
-						"residence (arrived %s, departure %s)%s. The lane checks protect corridors; "+
-						"this is a placing leg that set a bin down on an occupied position",
-					node, cur.binID, cur.arr.Format("15:04:05"), prev.binID,
-					prev.arr.Format("15:04:05"), depString(prev.dep), dur))
+					"TWO BINS AT ONE NODE: node %s — bin %d (order %d) arrived %s while bin %d "+
+						"(order %d) was still in residence, placed %s with no lift recorded at "+
+						"this node between them. The lane checks protect corridors; this is a "+
+						"placing leg that set a bin down on an occupied position",
+					node, e.binID, e.orderID, e.at.Format("15:04:05"),
+					resident.binID, resident.orderID, resident.at.Format("15:04:05")))
 			}
+			cur := e
+			resident = &cur
 		}
 	}
 	sort.Strings(out)
@@ -1680,12 +1711,4 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 		out = out[:8]
 	}
 	return out
-}
-
-// depString renders a nil-able departure for the overlap message.
-func depString(dep *time.Time) string {
-	if dep == nil {
-		return "never lifted (still standing)"
-	}
-	return dep.Format("15:04:05")
 }

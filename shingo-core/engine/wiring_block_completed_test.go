@@ -2,7 +2,7 @@ package engine
 
 import "testing"
 
-// isPickupBlock is the BinTask classifier used by handleBlockCompleted.
+// IsPickupBlock is the BinTask classifier used by handleBlockCompleted.
 // Pure function, no DB — table-driven test verifies every classification.
 //
 // The vendor's BinTask vocabulary is roboshop-configurable, so the
@@ -42,14 +42,14 @@ func TestIsPickupBlock(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := isPickupBlock(tc.binTask)
+		got := IsPickupBlock(tc.binTask)
 		if got != tc.want {
-			t.Errorf("isPickupBlock(%q) = %v, want %v — %s", tc.binTask, got, tc.want, tc.reason)
+			t.Errorf("IsPickupBlock(%q) = %v, want %v — %s", tc.binTask, got, tc.want, tc.reason)
 		}
 	}
 }
 
-// isDropoffBlock is the store/deliver dual classifier used by
+// IsDropoffBlock is the store/deliver dual classifier used by
 // handleBlockCompleted to route intermediate storage dropoffs through
 // handleStoreBlockCompleted. Pickup and dropoff classifiers must be
 // disjoint — a block routed to both paths would double-move a bin — so the
@@ -83,12 +83,12 @@ func TestIsDropoffBlock(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := isDropoffBlock(tc.binTask)
+		got := IsDropoffBlock(tc.binTask)
 		if got != tc.want {
-			t.Errorf("isDropoffBlock(%q) = %v, want %v — %s", tc.binTask, got, tc.want, tc.reason)
+			t.Errorf("IsDropoffBlock(%q) = %v, want %v — %s", tc.binTask, got, tc.want, tc.reason)
 		}
 		// Disjointness: no BinTask may classify as both pickup and dropoff.
-		if got && isPickupBlock(tc.binTask) {
+		if got && IsPickupBlock(tc.binTask) {
 			t.Errorf("binTask %q classified as BOTH pickup and dropoff — routing would double-move the bin", tc.binTask)
 		}
 	}

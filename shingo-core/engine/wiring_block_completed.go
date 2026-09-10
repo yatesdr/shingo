@@ -59,9 +59,9 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 	e.recordBlockLeg(ev)
 
 	switch {
-	case isPickupBlock(ev.BinTask):
+	case IsPickupBlock(ev.BinTask):
 		e.handlePickupBlockCompleted(ev)
-	case isDropoffBlock(ev.BinTask):
+	case IsDropoffBlock(ev.BinTask):
 		e.handleStoreBlockCompleted(ev)
 	}
 }
@@ -614,11 +614,18 @@ func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64,
 	return carried[0], true
 }
 
-// isPickupBlock returns true when a block's BinTask designates a
+// IsPickupBlock returns true when a block's BinTask designates a
 // pickup-shaped operation. The vendor's BinTask vocabulary is
 // roboshop-configurable (the storage-bin-location action key), so we
 // match on common patterns rather than an exact set.
-func isPickupBlock(binTask string) bool {
+//
+// EXPORTED FOR ONE READER, AND THE REASON IS THE VOCABULARY. soakstat's
+// bin-residence check reads the same BLOCK_FINISHED ledger rows this handler
+// writes and has to classify them the same way. A second copy of a
+// roboshop-CONFIGURABLE match would drift the moment a plant renames an action
+// key — and it would drift silently, because the instrument would go on
+// answering, just wrongly. One definition, two readers.
+func IsPickupBlock(binTask string) bool {
 	if binTask == "" {
 		return false
 	}
@@ -638,11 +645,12 @@ func isPickupBlock(binTask string) bool {
 	return false
 }
 
-// isDropoffBlock returns true when a block's BinTask designates a
-// dropoff-shaped operation — the store/deliver dual of isPickupBlock. Same
+// IsDropoffBlock returns true when a block's BinTask designates a
+// dropoff-shaped operation — the store/deliver dual of IsPickupBlock. Same
 // roboshop-configurable-vocabulary caveat, so it mixes exact-match with a
-// substring fallback on "unload"/"drop"/"release".
-func isDropoffBlock(binTask string) bool {
+// substring fallback on "unload"/"drop"/"release". Exported for the same one
+// reader, for the same reason.
+func IsDropoffBlock(binTask string) bool {
 	if binTask == "" {
 		return false
 	}
