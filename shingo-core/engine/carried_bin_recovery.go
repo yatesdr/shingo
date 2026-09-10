@@ -192,6 +192,26 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, "", fmt.Errorf("create recovery order for bin %d: %w", binID, err)
 	}
+	// ── PERSIST THE PIN, BECAUSE THE INSERT DOES NOT ──────────────────────
+	//
+	// orders.Create's column list has no robot_id (store/orders/orders.go): the
+	// column is written by the vendor-dispatch update, where it records the robot
+	// the FLEET assigned. On this door RobotID means the opposite thing — this
+	// robot and no other, set by the creator — and it was being carried only on
+	// the in-memory struct.
+	//
+	// That was invisible while every path dispatched inside this call:
+	// pinnedVehicleFor read the struct in hand and the pin worked. It stops being
+	// invisible the moment the order can PARK, because whatever re-drives it reads
+	// the order back from the database — and an unpinned unload-only plan tells
+	// some other robot to put down a bin it is not carrying. Measured: the parked
+	// order came back from the scanner with robot_id="".
+	//
+	// Through the existing narrow writer rather than by widening the shared INSERT,
+	// which is a different question and not this door's to answer.
+	if err := e.db.UpdateOrderRobotID(order.ID, robotID); err != nil {
+		return nil, "", fmt.Errorf("pin recovery order %d to robot %s: %w", order.ID, robotID, err)
+	}
 
 	// ── DISPATCHED HERE, NOT LEFT FOR THE SCANNER ───────────────────────
 	//
@@ -296,30 +316,108 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 	// because the bin is named and no finder answered the reachability
 	// question. The SOURCE is synthetic and has no lane, so in practice only
 	// the destination's lane can hold this order — which is correct.
+	//
+	// AND IT PARKS, like the sibling door it says it mirrors. This arm called
+	// fail("lane_held"), which terminalizes: a busy corridor — the most ordinary,
+	// most self-clearing condition in the plant — killed the order and, because
+	// the edge_uuid is deterministic per (bin, robot), left the next attempt to
+	// clean up after it. bin_move.go asks the identical question at the identical
+	// point and queues (queueBinMoveForLane). Two spellings of one situation, and
+	// the terminal one was the door whose own doc claims it mirrors the other.
 	if admitted, cause, laneName, aerr := e.dispatcher.AcquireLanesForOrder(
 		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil || !admitted {
-		return fail("lane_held", fmt.Sprintf("the route to %s is not clear right now (%s%s)",
-			destNode.Name, cause, laneSuffix(laneName)), aerr)
+		return e.queueRecoveryForLane(order, destNode, cause, laneName, aerr)
 	}
 	if err := e.dispatcher.ConfirmForDispatch(order, binID, sourceNode, destNode); err != nil {
 		return fail("claim_failed", fmt.Sprintf("could not claim bin %d and slot %s: %v", binID, destNode.Name, err), err)
 	}
 	if _, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode); err != nil {
-		// The door fails the row rather than leaving it queued, for the same
-		// reason the bin-move door does: there is nobody here to wait it out,
-		// and a live order nothing is driving is an orphan on the board.
+		// THIS ARM STAYS TERMINAL, and it is not the lane arm's twin. A fleet
+		// refusal is the sanctioned demand-by-hand exception: the person who
+		// pressed Recover is standing at the door awaiting the answer, and the
+		// robot system saying no is an answer. The lane arm above parks because a
+		// corridor clears on its own and something re-drives the order when it
+		// does; nothing re-drives a plant whose fleet is down, so a row left live
+		// here would be an orphan on the board wearing a cause with no releaser.
 		return fail("fleet_failed", fmt.Sprintf("the fleet did not accept the order: %v", err), err)
 	}
 	return nil
 }
 
-// laneSuffix renders the lane name when there is one, so the refusal reads as a
-// sentence either way.
-func laneSuffix(laneName string) string {
-	if laneName == "" {
-		return ""
+// queueRecoveryForLane parks a recovery order on a busy corridor instead of
+// killing it — the same disposition, and very nearly the same body, as
+// bin_move.go's queueBinMoveForLane.
+//
+// ── WHAT RE-DRIVES IT, WHICH IS THE WHOLE QUESTION ─────────────────
+//
+// A park nobody releases is a wedge wearing a cause, and this file's own header
+// gives the reason to fear one: "the scanner would never pick this up — it
+// sources a move order by FINDING a bin at the source node, and every finder
+// excludes synthetic nodes". That is true of the FIND path, and this order never
+// takes it. A recovery order is born with orders.bin_id set, so the scanner
+// routes it to dispatchHeldBin (fulfillment/scanner.go, the `order.BinID != nil`
+// branch) — the arm that reuses a held bin and never consults a finder. The
+// chain, end to end:
+//
+//   - ListAcquiring selects {queued, sourcing}, so a parked recovery order is in
+//     the scan set (store/orders/orders.go).
+//   - It carries no StepsJSON and no parent, so it takes the plain path.
+//   - dispatchHeldBin resolves the SOURCE by name. The carrier node is a real
+//     row and `_ROBOT:<id>` carries no dot, so GetNodeByDotName falls through to
+//     GetByName and finds it (store/nodes/nodes.go).
+//   - It re-reserves the destination (owner-idempotent), re-asks the lane, and
+//     on success calls the same DispatchDirect this door would have called —
+//     which keys on SourceIntentOnDeck for buildUnloadOnlyPlan and on
+//     pinnedVehicleFor for the robot pin (dispatch/dispatcher.go). The plan the
+//     scanner sends is the plan this door would have sent.
+//
+// Proven end to end by TestRecoveryOrderParksOnAHeldLaneAndTheScannerDispatchesIt.
+//
+// The holds are exactly what that arm expects to find: the bin is SOFT (a
+// pending reservation from ReserveForDispatch, never hard-claimed on this path)
+// and the destination reservation is owner-idempotent. Only the mouth hold the
+// refused acquire may have taken is dropped, so a parked order does not sit on a
+// lane it is not using — the same line, for the same reason, as its sibling.
+func (e *Engine) queueRecoveryForLane(order *orders.Order, destNode *nodes.Node,
+	cause dispatch.QueueCause, laneName string, aerr error,
+) error {
+	code := protocol.QueueStorageRearranging
+	params := dispatch.QueueParams{Lane: laneName, Payload: order.PayloadCode}
+	if aerr != nil {
+		// An unreadable lane is Core declining to answer, not a busy corridor —
+		// the undetermined family, kept distinct so an outage never reads as
+		// congestion.
+		e.logFn("engine: carried bin recovery %d — lane admission could not be read: %v (holding)", order.ID, aerr)
+		cause = dispatch.CauseLaneAcquireError
+		params.Lane = destNode.Name
 	}
-	return " in " + laneName
+	if lerr := e.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
+		e.logFn("engine: release lanes for parked recovery order %d: %v", order.ID, lerr)
+	}
+	// Through the dispatcher's helper so the sentence and the history row's code
+	// come from one computation — see queueBinMoveForLane for what a direct store
+	// write costs here.
+	e.dispatcher.SetQueueReason(order, code, cause, params)
+	if err := e.dispatcher.Lifecycle().Queue(order, "carried-bin-recovery", order.QueueReason); err != nil {
+		// Stuck at `pending`, which no scanner pass selects. Say so loudly and
+		// fail it rather than hand back a row nothing will ever drive.
+		e.logFn("engine: parked recovery order %d could not be queued: %v", order.ID, err)
+		e.failOrderAndEmit(order.ID, "lane_park_failed", "the route was not clear and the order could not be queued")
+		if rerr := e.db.ReleaseReservation(order.ID, *order.BinID); rerr != nil {
+			e.dbg("engine: carried bin recovery: release reservation for bin %d: %v", *order.BinID, rerr)
+		}
+		return &CarriedBinNotRecoverable{BinID: *order.BinID,
+			Reason: fmt.Sprintf("the route to %s was not clear and the order could not be queued: %v", destNode.Name, err)}
+	}
+	// The scanner trigger. Synchronous on this goroutine (wiring.go), so a lane
+	// that is already free dispatches before this call returns.
+	e.Events.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{
+		OrderID:     order.ID,
+		EdgeUUID:    order.EdgeUUID,
+		StationID:   order.StationID,
+		PayloadCode: order.PayloadCode,
+	}})
+	return nil
 }
 
 // robotCanTakeARecoveryOrder is the DISPATCHABLE-ROBOTS-ONLY gate.
