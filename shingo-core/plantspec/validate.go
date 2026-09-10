@@ -349,7 +349,7 @@ func (p *Plant) Validate() error {
 			}
 			seenPoint[pt] = true
 		}
-		if len(c.KeyRoute) > 0 && protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap {
+		if len(c.KeyRoute) > 0 && c.IsLoader() {
 			add("%s: key_route applies to robot-served claims; a manual_swap loader does not drive", where)
 		}
 		if c.KeyTask != "" && c.KeyTask != "load" && c.KeyTask != "unload" {
@@ -386,7 +386,7 @@ func (p *Plant) Validate() error {
 		// empty while the pool sources from buffers; pointed at a market it drains
 		// the loop outright. Either way the plant cannot model a dedicated loader
 		// feeding a line, which is the shape the park side exists to serve.
-		if protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap && c.OutboundDestination == "" && !(c.HomeOf != "" && c.Role == "produce") {
+		if c.IsLoader() && c.OutboundDestination == "" && !(c.HomeOf != "" && c.Role == "produce") {
 			add("%s: manual_swap requires outbound_destination", where)
 		}
 	}

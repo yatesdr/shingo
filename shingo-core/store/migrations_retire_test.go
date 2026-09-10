@@ -99,8 +99,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 112 {
-		t.Errorf("head migration = %d, want 112", got)
+	if got := store.LatestMigrationVersion(); got != 114 {
+		t.Errorf("head migration = %d, want 114", got)
 	}
 }
 

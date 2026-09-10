@@ -191,7 +191,7 @@ func GetLoader(db *sql.DB, id int64) (*Loader, error) {
 }
 
 // GetLoaderByName returns the loader named (name, role), or (nil, nil) if absent.
-// (name, role) is the seed / migrateloaders idempotency key now that identity is the
+// (name, role) is the seed idempotency key now that identity is the
 // surrogate id: a re-run finds the existing loader by its stable operator-facing name
 // rather than the dropped core_node_name.
 func GetLoaderByName(db *sql.DB, name, role string) (*Loader, error) {

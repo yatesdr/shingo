@@ -285,7 +285,7 @@ func (op *simOperator) runConfirm(orderID, nodeID int64) {
 	if err != nil || node == nil || claim == nil {
 		return
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return // loader/unloader — LOAD/CLEAR owns its lifecycle
 	}
 	order, err := op.e.db.GetOrder(orderID)
@@ -717,7 +717,7 @@ func (op *simOperator) sweepManualSwapNodes() {
 		// THE ENGINE METHOD, not the package function — see classifyFromClaim for
 		// why that distinction is load-bearing for Core-owned loaders.
 		_, runtime, claim, lErr := op.e.loadActiveNode(n.ID)
-		if lErr != nil || claim == nil || claim.SwapMode != protocol.SwapModeManualSwap {
+		if lErr != nil || !claim.IsLoaderNode() {
 			continue
 		}
 		// Same A/B rule the classifier applies: a bin parked at the inactive side
@@ -1198,7 +1198,7 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 	if err != nil || node == nil || claim == nil {
 		return 0, "", nil, false
 	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
+	if !claim.IsLoaderNode() {
 		return 0, "", nil, false // only operator-driven manual_swap nodes
 	}
 	// A/B pair: only the active-pull side is the live window — a bin parked at
@@ -1219,9 +1219,37 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 
 // loadBin synthesizes a single-item manifest from the claim's payload + capacity
 // (a human operator scans a card; the sim just fills the configured payload).
+//
+// BOTH FIELDS FALL BACK, because a Core-owned loader's claim is SYNTHESIZED and
+// carries neither. SynthClaim supplies the six facts Core owns — role, swap
+// mode, allowed payloads, inbound source, outbound destination, auto-confirm —
+// and PayloadCode and UOPCapacity are not among them, so a loader window with no
+// stored style_node_claim reads payload "" and capacity 0. LoadBin refuses a
+// blank payload outright ("no payload code specified"), which would have stopped
+// the sim's loaders the moment their stored claims were quarantined.
+//
+// The fallbacks are the right authorities rather than convenient ones. The
+// payload comes from the claim's ALLOWED set, which SynthClaim scopes to this
+// node — a dedicated home carries only its own pinned part, a shared window the
+// whole set — so it is the same list the load gate accepts and the same card an
+// operator would be shown. The capacity comes from payload_catalog, which is the
+// Edge's mirror of Core's payload definitions and where a part's standard pack
+// actually lives; claim.UOPCapacity is a per-cell policy number that a loader
+// window has no business owning. A stored claim that carries its own values
+// still wins, so nothing about a robot-served cell changes.
 func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 	payload := claim.PayloadCode
+	if payload == "" {
+		if codes := claim.AllowedPayloads(); len(codes) > 0 {
+			payload = codes[0]
+		}
+	}
 	capacity := int64(claim.UOPCapacity)
+	if capacity <= 0 && payload != "" {
+		if entry, err := op.e.db.GetPayloadCatalogByCode(payload); err == nil && entry != nil && entry.UOPCapacity > 0 {
+			capacity = int64(entry.UOPCapacity)
+		}
+	}
 	if capacity <= 0 {
 		capacity = 1
 	}

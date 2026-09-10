@@ -88,11 +88,17 @@ type StationNodeView struct {
 	// and stopped consulting it, leaving a toggle on the claim editor that wrote
 	// a row nobody read. Deleted.
 	OperatorDriven bool `json:"operator_driven,omitempty"`
-	// HomeLocationLoader is true when this loader's core node is in the
-	// home_location_loaders set — the dedicated-position LAYOUT. The board then
+	// HomeLocationLoader is true when this loader uses the dedicated-position
+	// LAYOUT — each payload pinned to its own physical position. The board then
 	// renders one card per home (position × its payload) across the station's
 	// loader nodes, instead of one window with a card per payload. Orthogonal to
 	// OperatorDriven (this is layout; that is type).
+	//
+	// Read from the Core-owned loader aggregate: bin_loaders.layout →
+	// Loader.IsDedicated() → service/station_service.go, the SAME resolver the
+	// runtime uses, so the board and the engine cannot disagree. It does NOT come
+	// from the Edge-only home_location_loaders table — that copy was orphaned by
+	// the loader move to Core and has no reader.
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
 	// HasBufferPartial is true when this is a dedicated home position with a
 	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with

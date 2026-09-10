@@ -130,8 +130,17 @@ func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeC
 // the per-style edge claim union (PayloadsForLoader), then the claim's own list,
 // and a union read error fails open to the active claim. This is the pre-cutover
 // behaviour, preserved only for the non-aggregate path.
+//
+// RESOLVED BY NODE, NOT BY THE CLAIM'S ROLE. Which role a loader is, is Core's
+// fact, and asking the aggregate for it through the stored claim's copy is how a
+// live loader becomes invisible: a claim left saying "produce" over a loader Core
+// now runs as consume misses the lookup entirely, and this falls all the way back
+// to the retired claim's payload list. LoaderForNode cannot be ambiguous —
+// bin_loader_homes is UNIQUE on position_node_id, so a node belongs to exactly one
+// loader whatever its role. The claim's role still keys the legacy union below,
+// which is a query over stored claims and is the right key for that.
 func (e *Engine) loadablePayloads(node *processes.Node, claim *processes.NodeClaim) []string {
-	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(claim.Role)); err == nil && l != nil {
+	if l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && l != nil {
 		// Scoped to THIS node: a dedicated home loads only its own pinned payload,
 		// not the loader's other positions' parts; a shared window loads the whole set.
 		if codes := l.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
@@ -172,8 +181,11 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// index legs then saw the wrong-part on-deck bins as unavailable and hung.
 	// Refuse the stamp on any node another claim names as a paired/on-deck
 	// position, with a clear operator-facing message (surfaced as a toast). Runs
-	// before the manual_swap/claim gates so a paired node gets THIS message, not
-	// the generic "not a manual_swap node". Fail-open on a read error — a local
+	// before requireLoaderClaim so a paired node gets THIS message, not the
+	// generic "not a manual_swap node" — which is why that helper takes an
+	// already-loaded claim instead of resolving one itself, and why moving this
+	// check below it would silently swap the operator's diagnosis for a worse
+	// one. Fail-open on a read error — a local
 	// SQLite blip must not block a legitimate loader load; the guard is defense
 	// in depth, not the only backstop.
 	if onDeck, derr := e.db.IsPairedOnDeckNode(node.ProcessID, node.CoreNodeName); derr != nil {
@@ -182,11 +194,8 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		return fmt.Errorf("%s is an on-deck / paired position — it may hold only an empty carrier, never a stamped part. Load the part at the press's core (front) position instead", node.Name)
 	}
 
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim", node.Name)
-	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return err
 	}
 	if len(manifest) == 0 {
 		return fmt.Errorf("manifest is empty")
@@ -334,7 +343,22 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// world, and only the second one is safe to create an order on. Two callers
 	// racing this branch and applyLoaderEmptyIn is what doubled every outbound
 	// move on the lane-stress rig — see loader_outbound_guard.go.
-	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, claim.OutboundDestination, payloadCode, "load-fallback"); created {
+	//
+	// THE AGGREGATE WINS, THE CLAIM IS THE FALLBACK — byte-for-byte the shape
+	// applyLoaderEmptyIn already uses, and RoleProduce for the same reason it
+	// does: these two are the only creators of this one L2 move, so a different
+	// resolution here is a way for them to send the same carrier to two places.
+	// They could: this read was the claim's alone, so a loader whose outbound was
+	// edited in Core — or retired and recreated — routed the LOAD's move to the
+	// old destination and the L1-completion's move to the new one.
+	//
+	// A consume window reaching LoadBin (the modal's delivered-card tap) misses
+	// the produce lookup and keeps the claim's outbound, exactly as today.
+	outbound := claim.OutboundDestination
+	if l, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleProduce); lerr == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, outbound, payloadCode, "load-fallback"); created {
 		if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &orderID); err != nil {
 			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 		}
@@ -442,11 +466,8 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if err != nil {
 		return err
 	}
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim", node.Name)
-	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return err
 	}
 	// Capture the bin in the window BEFORE confirm/clear, while Core's manifest is
 	// still coherent. clearedPayload threads onto the empty-out so the operator board
@@ -564,12 +585,9 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if err != nil {
 		return err
 	}
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim", node.Name)
-	}
 	// Mirror ClearBin: PushEmptyOut is for manual_swap consume windows only.
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return err
 	}
 	if claim.Role != protocol.ClaimRoleConsume {
 		return fmt.Errorf("node %s is not a consume node", node.Name)
@@ -732,25 +750,25 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	//
 	//   - simple / multi-step (press swap) nodes: the empty rides the same robot
 	//     choreography as the part it precedes, so a payload is still required.
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	//
+	// Validation and routing are ONE decision, asked once: a loader validates
+	// loosely and routes to the per-loader reservation seam — the same seam the
+	// demand and threshold paths use — while every other mode validates strictly
+	// and routes to the swap seam. They were two consecutive branches on the same
+	// predicate, which read as though a claim could answer them differently.
+	if claim.IsLoaderNode() {
 		if payloadCode != "" && !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 		}
-	} else {
-		if payloadCode == "" {
-			return nil, fmt.Errorf("no payload code specified")
-		}
-		if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
-			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
-		}
-	}
-
-	// manual_swap loaders route their empty-in reservation through the SAME
-	// per-loader seam as the demand/threshold paths — see the extracted arm.
-	if claim.SwapMode == protocol.SwapModeManualSwap {
 		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
 	}
 
+	if payloadCode == "" {
+		return nil, fmt.Errorf("no payload code specified")
+	}
+	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
+		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
 	return e.requestEmptyForSwapModes(nodeID, node, runtime, claim, payloadCode, reqOrigin)
 }
 
@@ -980,11 +998,8 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	if err != nil {
 		return nil, err
 	}
-	if claim == nil {
-		return nil, fmt.Errorf("node %s has no active claim", node.Name)
-	}
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	if err := requireLoaderClaim(node, claim); err != nil {
+		return nil, err
 	}
 	if claim.Role != protocol.ClaimRoleConsume {
 		return nil, fmt.Errorf("node %s: only consume nodes request full bins", node.Name)
@@ -1023,9 +1038,37 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	//
 	// Source stays claim.InboundSource (the FG supermarket the unloader pulls
 	// from; without it Core's planRetrieve falls back to global FIFO and can pull
-	// from the wrong supermarket). The aggregate's InboundSource is believed
-	// equal — the produce branch uses it — but switching would be a second
-	// behavior change in a deploy that is meant to carry one.
+	// from the wrong supermarket).
+	//
+	// THE CLAIM WINS HERE, AND IT IS NOT EQUAL TO THE AGGREGATE. This comment used
+	// to say the two were "believed equal — the produce branch uses it". They are
+	// not, and the belief was never checked. style_node_claims.inbound_source and
+	// bin_loaders' are authored on different screens with no cross-check between
+	// them, so nothing makes them agree. Driven against a real store: a stored
+	// consume claim carrying OLD-FG-MARKET beside a live loader carrying
+	// NEW-FG-MARKET resolves the stored claim, and the order this creates carries
+	// OLD-FG-MARKET while `dl` two lines below says NEW.
+	//
+	// They ARE equal for a SYNTHESIZED claim, which copies the aggregate's value —
+	// which is why the produce branch gets away with reading the aggregate and
+	// this one would not. So the question is whether a STORED claim can still
+	// reach this line, and it can, by two paths:
+	//
+	//   1. Before the first node-list sync of a boot. The quarantine that removes
+	//      stored loader claims runs only in SetCoreLoaders, so a legacy row
+	//      survives startup, migration and every operator tap until a node-list
+	//      RESPONSE arrives. Unbounded when Core never answers — which is a
+	//      condition this plant has been in.
+	//   2. CloneStyle / GenerateStyles. cloneStyleTx copies swap_mode with a raw
+	//      INSERT that never sees the upsert allowlist, so cloning a style that
+	//      still carries a loader claim mints another one. See styles.go.
+	//
+	// SO FLIPPING THIS TO PREFER THE AGGREGATE IS A LIVE ROUTING CHANGE, not a
+	// severing: it would move which supermarket a real unloader pulls from at any
+	// plant holding such a row. A blank or wrong source here is the shape of
+	// Hopkinsville 2026-05-14 — planRetrieveEmpty falls back to a global FIFO scan
+	// and pulls from the wrong market. That decision wants plant data behind it,
+	// so it is stated rather than taken.
 	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume)
 	if lerr != nil {
 		return nil, fmt.Errorf("node %s: resolve unloader: %w", node.Name, lerr)

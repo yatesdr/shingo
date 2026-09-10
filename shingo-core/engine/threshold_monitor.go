@@ -879,8 +879,8 @@ func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) 
 // firing any binding already below threshold. Called when an Edge (re)connects.
 //
 // The startup sweep reads demand_registry once, ~3s after Core boot. But the
-// registry is populated out-of-band: seeddev and migrateloaders write it directly
-// (separate processes that can't notify a running monitor), and the live runtime
+// registry is populated out-of-band: seeddev writes it directly (a separate
+// process that can't notify a running monitor), and the live runtime
 // trigger (loader config edit → OnThresholdChanges) only fires for edits made
 // through the loader UI, not for seed/CLI writes. Without a re-engage on
 // (re)connect, a binding seeded after the startup sweep stays dark until Core

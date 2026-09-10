@@ -205,35 +205,6 @@ services:
       edge:
         condition: service_started
 
-  # One-time migration for an existing plant: derive Core's bin_loaders aggregate
-  # from the live Edge style_node_claims (+ transitional/threshold tables),
-  # tripwire-check, write Core, seed demand_registry. Like seed it needs BOTH
-  # Postgres (network) and the edge SQLite (mount). Run once when migrating a plant
-  # whose loaders still live only in style_node_claims:
-  #   docker compose -f docker-compose.dev.yml run --rm migrate-loaders
-  # Add --dry-run to the command to derive + tripwire-check without writing.
-  migrate-loaders:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    profiles: ["tools"]
-    command: ["migrateloaders", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--station", "edge1.line1"]
-    environment:
-      SHINGO_ALLOW_SIM: "1"
-      # The run's shared sim anchor, minted by scripts/sim-anchor.sh into .env
-      # (which compose reads automatically). EVERY process that stamps or reads
-      # simulated time takes the same one, or their clocks drift apart by
-      # boot-skew x speed and cross-process messages expire. Empty is legal and
-      # falls back to the config file; see clock.ResolveAnchor.
-      SHINGO_SIM_ANCHOR: "${SHINGO_SIM_ANCHOR:-}"
-    volumes:
-      - edge-data:/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      edge:
-        condition: service_started
-
 volumes:
   edge-data:
   edge2-data:

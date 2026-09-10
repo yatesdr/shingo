@@ -149,9 +149,16 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE location_nodes RENAME TO nodes")
 	// transitional_loaders → operator_driven_loaders: "transitional" read like a
 	// changeover/temporary state when it just means operator-driven replenishment.
-	// Same set, clearer name. Renamed before schema.Apply so existing rows migrate
-	// into the new table rather than being orphaned behind a fresh empty one.
-	// No-op on a fresh DB (old table absent → ALTER errors, ignored).
+	// Same set, clearer name. No-op on a fresh DB (old table absent → ALTER
+	// errors, ignored).
+	//
+	// THE RENAME NO LONGER PRESERVES ANYTHING. It was written to carry existing
+	// rows into the new name instead of orphaning them behind a fresh empty
+	// table, and that stopped being true when the DROP below landed: this run
+	// renames the table and then drops it, so the pair is now just "remove
+	// transitional_loaders under either of its two names". It stays because a
+	// plant DB may still be on the old name, and a DROP of only the new name
+	// would leave that one behind forever.
 	db.Exec("ALTER TABLE transitional_loaders RENAME TO operator_driven_loaders")
 
 	// 3. Canonical CREATE TABLE IF NOT EXISTS pass.
@@ -472,7 +479,27 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN mode TEXT NOT NULL DEFAULT 'loader'")
 
 	// v15: Convert bin_loader role to produce/consume with manual_swap.
-	// The mode column stays as a harmless vestige — code no longer reads it.
+	//
+	// THE mode COLUMN IS A VESTIGE, BUT "CODE NO LONGER READS IT" IS FALSE — this
+	// comment said that, with the two statements that read it on the next two
+	// lines. They are the only readers left in the tree (verified 2026-09-10
+	// across all five modules): the claim SELECT does not carry the column, and
+	// nothing outside this migration mentions it except schema_assert.go's
+	// required-column list.
+	//
+	// SO THE COLUMN CANNOT SIMPLY RETIRE. Dropping it would leave these two
+	// UPDATEs referencing a column that does not exist. They would not fail
+	// loudly — db.Exec discards the error, which is this migrate path's idiom —
+	// they would silently stop converting, and the database that needs them is
+	// exactly the one that has never run them: a pre-v15 edge, which a restore
+	// from an old backup can still produce (backup/restore.go). Both plants
+	// crossed v15 long ago and no writer has produced role='bin_loader' since,
+	// so these select zero rows there and the column is inert in practice.
+	//
+	// Retiring it therefore means deciding that a pre-v15 database will never be
+	// migrated again, and that is a decision about backups rather than a
+	// cleanup. Column, these two statements and the schema_assert entry go
+	// together or not at all.
 	db.Exec(`UPDATE style_node_claims SET role = 'produce', swap_mode = 'manual_swap' WHERE role = 'bin_loader' AND (mode = 'loader' OR mode = '')`)
 	db.Exec(`UPDATE style_node_claims SET role = 'consume', swap_mode = 'manual_swap' WHERE role = 'bin_loader' AND mode = 'unloader'`)
 
@@ -882,6 +909,15 @@ func (db *DB) migrate() error {
 	// in. Existing rows run out under the old rule; the next swap starts under
 	// the new one.
 	db.Exec("ALTER TABLE orders ADD COLUMN cell_left_at TEXT")
+
+	// LAST, AND THAT IS ITS ONLY ORDERING REQUIREMENT. The claim quarantine is a
+	// column-for-column mirror of style_node_claims, derived from the live column
+	// list rather than written down, so it has to look after every ALTER and
+	// rebuild above has run. A column that arrives in a later migration is
+	// mirrored on the next startup by this same pass.
+	if err := db.EnsureClaimQuarantine(); err != nil {
+		return err
+	}
 
 	return nil
 }

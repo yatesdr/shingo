@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -28,6 +30,20 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 // per-style style_node_claim. This completes the Core-owned loader refactor — Core
 // owns the loader; the edge needs no style_node_claim to operate it. The synthetic
 // claim has ID==0; callers that persist active_claim_id MUST guard on ID==0.
+//
+// WHICH AUTHORITY WINS: THE PERSISTED CLAIM, SILENTLY. Two things can answer
+// "is this node a loader?" — a stored style_node_claim and Core's loader
+// aggregate — and the short-circuit below decides it. When a per-style claim
+// exists it is returned and synthLoaderClaim is never consulted, so a node
+// carrying a stored manual_swap claim reads as a loader EVEN IF Core's aggregate
+// says it is not one, including when Core's derived loader has been archived.
+// That state exists in the field: Springfield's SMN_001 holds stored manual_swap
+// claims whose Core loader was archived 2026-07-30.
+//
+// Written down because nothing else says it, and DELIBERATELY NOT GATED. A
+// check that refused the stored claim when Core disagreed would refuse an
+// operator board that someone may still be using. Reconciling those rows is a
+// data decision about the plant, not a code one.
 func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil || claim != nil || node == nil {
@@ -37,6 +53,38 @@ func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.Runti
 		claim = synth
 	}
 	return node, runtime, claim, nil
+}
+
+// requireLoaderClaim is the shared precondition of every operator action that
+// only a loader window may take: LOAD, CLEAR, push-empty-out, request-full-bin.
+// Each of those used to spell it out itself — a nil-claim check and a swap-mode
+// comparison, byte-identical in four files and refusing with the same sentence —
+// and this is that duplication collapsed to one reader.
+//
+// THE MESSAGES ARE VERBATIM WHAT THEY WERE. An operator reads these on the HMI
+// when a tap is refused, so the wording is behaviour: "not a manual_swap node"
+// still says manual_swap, because renaming what a human reads is a product
+// change and this is a refactor. The vocabulary on the floor moves when someone
+// decides it should, not as a side effect of tidying the code behind it.
+//
+// Takes an already-loaded (node, claim) rather than loading them itself: LoadBin
+// deliberately runs its paired/on-deck check BETWEEN the load and this gate, so
+// that a press's on-deck position gets the message explaining on-deck positions
+// rather than a generic refusal. A resolver that did the loading would have
+// reordered that.
+//
+// loaderCardNode (operator_supply_refusal.go) asks the same question and is NOT
+// folded in here: it answers with a different sentence that names the offending
+// mode, which is the more useful diagnostic on a dead refusal button and worth
+// keeping distinct.
+func requireLoaderClaim(node *processes.Node, claim *processes.NodeClaim) error {
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if !claim.IsLoaderNode() {
+		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	}
+	return nil
 }
 
 // synthLoaderClaim returns a synthesized manual_swap NodeClaim for a node that is a

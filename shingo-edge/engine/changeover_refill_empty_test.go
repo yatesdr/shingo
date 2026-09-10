@@ -73,7 +73,7 @@ func TestEveryChangeoverRefillFetchesAnEmpty(t *testing.T) {
 	// the in-memory marker the press-index different-bin-type fan-out synthesizes
 	// — so it is appended by hand. It is the ONE mode this test names directly,
 	// and it is named because it cannot be reached through the registry.
-	modes := append(protocol.ConfigurableSwapModes(), pressPositionSwapMode)
+	modes := withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode))
 
 	for _, mode := range modes {
 		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
@@ -144,7 +144,7 @@ func TestEveryChangeoverRefillFetchesAnEmpty(t *testing.T) {
 // style on the refill step is what makes this side safe to assert.
 func TestEveryChangeoverLegThatLiftsAnOldBinCarriesTheFromPayload(t *testing.T) {
 	t.Parallel()
-	modes := append(protocol.ConfigurableSwapModes(), pressPositionSwapMode)
+	modes := withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode))
 
 	for _, mode := range modes {
 		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
@@ -237,7 +237,7 @@ func firstPickup(steps []protocol.ComplexOrderStep) (protocol.ComplexOrderStep, 
 // everything above.
 func TestChangeoverRefillStaysFullForConsume(t *testing.T) {
 	t.Parallel()
-	for _, mode := range protocol.ConfigurableSwapModes() {
+	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		t.Run(string(mode), func(t *testing.T) {
 			from, to := refillClaims(mode, protocol.ClaimRoleConsume, false)
 			diff := ChangeoverNodeDiff{

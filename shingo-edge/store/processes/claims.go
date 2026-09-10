@@ -223,31 +223,54 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		in.Role = protocol.ClaimRoleConsume
 	}
 	// swap_mode is required — fail loud on blank rather than silently pick a
-	// mode. The editor defaults new claims to single_robot, so the normal path
-	// never hits this; a blank here is a non-UI caller (import, stale API poke).
+	// mode. Both UI writers always send one: the claim editor defaults new claims
+	// to single_robot, and the compare grid echoes the claim's stored value back
+	// verbatim (www/static/js/pages/processes.js claimToBody). So a blank here is
+	// a non-UI caller — an import, or a stale API poke.
 	// No mode is a safe default: two_robot needs inbound staging and
 	// single_robot needs inbound+outbound staging, so any default would only
 	// trade a mode error for a more misleading staging error.
 	if in.SwapMode == "" {
 		return 0, fmt.Errorf("%w: swap_mode is required", protocol.ErrInvalidSwapMode)
 	}
-	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() so it can
-	// never drift from the editor dropdown or its drift test. The retired
-	// "simple" is deliberately absent — it survives only as a runtime CycleMode
-	// descriptor, never a persisted claim mode. "press_position" (the
-	// per-position fan-out marker) is in-memory only and must never persist; the
-	// allowlist also rejects typos and stale import values.
+	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() — the set of
+	// values that may be PERSISTED. It is deliberately NOT the editor dropdown:
+	// the dropdown carries a hidden "simple" for rendering old rows, and
+	// www/processes_enum_drift_test.go asserts that difference rather than
+	// forbidding it. The retired "simple" is absent here — it survives only as a
+	// runtime CycleMode descriptor, never a persisted claim mode. So is
+	// manual_swap, and for the ownership reason rather than a rendering one: a
+	// loader is Core-owned topology served by SynthClaim, so a stored loader
+	// claim is a second authority and there is now nothing for one to be about.
+	// "press_position" (the per-position fan-out marker) is in-memory only and
+	// must never persist; the allowlist also rejects typos and stale import
+	// values.
 	if !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode) {
 		return 0, fmt.Errorf("%w: %q is not a configurable swap_mode", protocol.ErrInvalidSwapMode, in.SwapMode)
 	}
-	// manual_swap claims require OutboundDestination — without it the
-	// post-swap bin has nowhere to go and the node deadlocks.
-	if in.SwapMode == protocol.SwapModeManualSwap && in.OutboundDestination == "" {
-		return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
-	}
-	// manual_swap claims must auto-confirm delivery (operator action IS
-	// the acknowledgement).
-	if in.SwapMode == protocol.SwapModeManualSwap {
+	// The two standing rules for a loader claim, asked once. It requires an
+	// OutboundDestination — without one the post-swap bin has nowhere to go and
+	// the node deadlocks — and it must auto-confirm delivery, because the
+	// operator's own action at the window IS the acknowledgement.
+	//
+	// THIS ARM IS NOW UNREACHABLE, and it took a data change to make it so. It
+	// used to be live: the claim editor could neither author nor edit a loader
+	// claim (the dropdown drops the option, the claims list renders a read-only
+	// "Loader" badge in place of Edit), but the COMPARE GRID could — claimToBody
+	// echoes swap_mode verbatim and saveCompareCell has an explicit manual_swap
+	// branch for the payload cell (www/static/js/pages/processes.js) — so a
+	// person clicking a loader's cell saved through here. Closing the allowlist
+	// while such a row still existed would have turned that click into an
+	// operator-visible error, which is why the rows were quarantined FIRST and
+	// the allowlist closed after. With the stored population at zero the grid has
+	// no loader cell to offer, so nothing reaches this arm.
+	//
+	// It stays as an assert rather than a branch: the invariant is about what a
+	// loader claim must look like, and it costs nothing to keep saying so.
+	if in.IsLoaderNode() {
+		if in.OutboundDestination == "" {
+			return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
+		}
 		in.AutoConfirm = true
 	}
 	// two_robot claims require InboundStaging. Robot A drops the new bin

@@ -33,15 +33,22 @@ func mootPayload(t *testing.T, db *store.DB, code string) *payloads.Payload {
 //	index (65): wait PLN_002 → pickup PLN_002(empty) → dropoff PLN_001
 //
 // The evac clears the press front and stages a fresh carrier at the back; the
-// index then walks that carrier from back to front. The index is correctly held
-// by swapLegHeld until the evac commits — "only the FILLER waits".
+// index then walks that carrier from back to front.
 //
-// ── THE DEADLOCK ──────────────────────────────────────────────────────────
+// ── THE DEADLOCK, AS IT WAS ───────────────────────────────────────────────
 //
 // PLN_001 is empty. The evac's first pickup can never be satisfied, so it never
-// commits, so the index stays held — and the index's dropoff is PLN_001, the
-// only thing that would put a bin back where the evac is looking. Each leg waits
-// for the other, and neither is behaving incorrectly.
+// commits — and at the time, the index was HELD until it did (the index
+// anti-collision arm, "only the FILLER waits"). The index's dropoff is PLN_001,
+// the only thing that would put a bin back where the evac is looking. Each leg
+// waited for the other, and neither was behaving incorrectly.
+//
+// THAT HOLD IS DELETED and the pair rule admits both legs in one pass, so the
+// two-leg wedge cannot form the same way. THE ARM UNDER TEST IS UNAFFECTED and
+// still needed: a leg whose line bin is gone, holding a reservation on its own
+// replacement, has no work left to do. Without the lineBinGone narrowing it
+// falls to reserveHolding and parks on a wait with nothing to wait for — which
+// is what cost 33 minutes on the rig, hold or no hold.
 //
 // reserveMoot exists for exactly this ("a swap evac whose line bin was removed")
 // but tested it as "reserved nothing". An evac that fetches its own replacement
@@ -87,7 +94,18 @@ func TestReserve_EvacHoldingItsReplacementIsMootWhenTheLineBinIsGone(t *testing.
 	if !legTakesLineBin(steps, front.Name) {
 		t.Fatal("fixture is not a pure evac — the narrowing under test would not apply")
 	}
-	if !legSecuresOwnReplacement(steps) {
+	// SPELLED INLINE because legSecuresOwnReplacement is deleted: its last
+	// production caller was Face 2, which is gone. The property still matters to
+	// this fixture — an evac that fetches its own carrier holds a reservation by
+	// the time its line pickup misses, which is what the old moot test could not
+	// see — so the check stays and only its spelling moves here.
+	pickups := 0
+	for _, st := range steps {
+		if st.Action == protocol.ActionPickup {
+			pickups++
+		}
+	}
+	if pickups < 2 {
 		t.Fatal("fixture does not fetch its own replacement — that property is the whole point")
 	}
 

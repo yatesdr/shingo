@@ -90,11 +90,14 @@ func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVar
 
 // ── Style/node claims ─────────────────────────────────────────────
 
-// ListClaims returns every claim for a style. Produce manual_swap (bin
-// loader) claims are enriched with the loader-wide transitional flag (the
-// Edge-only transitional_loaders set, keyed by core_node_name) so the Edge
-// processes claim editor can reflect and toggle it; other claims carry the
-// zero value.
+// ListClaims returns every claim for a style, exactly as stored. It enriches
+// nothing — the body below returns the store's rows unmodified.
+//
+// It used to fold the loader-wide transitional flag (the Edge-only
+// transitional_loaders set, keyed by core_node_name) onto produce manual_swap
+// claims so the claim editor could reflect and toggle it. Replenishment type
+// and dedicated-position layout both moved to the Core loader aggregate, the
+// editor stopped surfacing either, and the enrichment went with them.
 func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) {
 	claims, err := s.db.ListStyleNodeClaims(styleID)
 	if err != nil {
@@ -104,10 +107,6 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 	// the Core aggregate, not these per-style edge flag tables, and the claim editor
 	// no longer surfaces them — so nothing is populated onto the claims here.
 	return claims, nil
-}
-
-func (s *StyleService) SetHomeLocationLoader(coreNodeName string, on bool, updatedBy string) error {
-	return s.db.SetHomeLocationLoader(coreNodeName, on, updatedBy)
 }
 
 // GetClaim returns one claim by id.

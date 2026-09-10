@@ -70,14 +70,15 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 	if claim == nil {
 		return occ
 	}
+	// The head node unconditionally, EVEN IF BLANK: the map is keyed by the
+	// names asked about and isOccupied treats a missing key as occupied, so
+	// dropping a blank head here would change a suppressing answer into a
+	// permissive one. The extensions come from the claim's geometry, and only
+	// for a press — a stale PairedCoreNode on some other mode is not a position
+	// this cell occupies and must not be queried.
 	names := []string{claim.CoreNodeName}
 	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		if claim.PairedCoreNode != "" {
-			names = append(names, claim.PairedCoreNode)
-		}
-		if claim.SecondPairedCoreNode != "" {
-			names = append(names, claim.SecondPairedCoreNode)
-		}
+		names = append(names, claim.ExtensionPositions()...)
 	}
 	if !e.coreClient.Available() {
 		log.Printf("[occupied-check] core API not configured, assuming occupied for %v", names)
@@ -176,6 +177,15 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// operator_guards.go.
 	if plan.Dispatch != nil && plan.Dispatch.RequiresActiveSwapGuard {
 		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+			return nil, err
+		}
+		// And do not ARM A PAIR INTO A SOURCE ALREADY KNOWN TO BE DRY. This is
+		// the Springfield 2026-07-21 churn's fix at its cause: two legs that
+		// cannot source were created hundreds of times per changeover, and every
+		// mechanism downstream — including the spare that is now deleted — was
+		// coping with orders that should never have existed. Refusing here
+		// creates nothing, so nothing churns; the level keeper re-asks.
+		if err := e.guardSourceKnownDry(node, claim); err != nil {
 			return nil, err
 		}
 	}
@@ -588,7 +598,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// deleted would silently lose its multi-order queue and start refusing the
 	// operator's second tap. requestedClaimAtNode answers the configuration
 	// question from the style the process is running.
-	if claim := requestedClaimAtNode(e.db, node); claim != nil && claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim := requestedClaimAtNode(e.db, node); claim.IsLoaderNode() {
 		return true, ""
 	}
 
@@ -780,13 +790,14 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// EITHER leg is staged, and the loop below happily released whichever leg
 	// Core would accept.
 	//
-	// THIS IS WHERE v1 ENFORCES, and it is the whole reason swap_hold.go is
-	// untouched. A dispatch-time hold on both legs is a permanent mutual
-	// deadlock (SYNTH-round2, 5/5 reviewers); a refused RELEASE is a click the
-	// operator repeats a minute later. Under the IndexRobotSupplies flip both
-	// legs open with a wait and neither is self-sufficient, so dispatch fails
-	// open by design and this is the only thing standing between the flip and
-	// a collision.
+	// THIS IS WHERE IT IS ENFORCED, AND NOW IT IS THE ONLY PLACE. A dispatch-time
+	// hold on both legs is a permanent mutual deadlock (SYNTH-round2, 5/5
+	// reviewers — and later measured on a plain unflipped pair once Core admitted
+	// both legs in one pass); a refused RELEASE is a click the operator repeats a
+	// minute later. Core's dispatch-time swap holds are all deleted: every leg
+	// opens with a wait, so dispatch parks robots and the bins move here. This
+	// guard is what stands between a pair and a collision, and it needs no help
+	// from the dispatch layer.
 	//
 	// Scoped to press-index. two_robot's release ordering has been in
 	// production unchanged for a long time and its supply leg parks at a
@@ -964,7 +975,7 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		// One-legged: there is no sibling to wait for.
 		return nil
 	}
-	positions := pressPositionNodes(claim)
+	positions := claim.Positions()
 	// TWO ARMS, AND THEY ARE NOT SYMMETRIC.
 	//
 	// The supply leg is the placing leg BY THE CALLER'S OWN CLASSIFICATION —
@@ -1019,18 +1030,6 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(sibling.Status)}
 	}
 	return nil
-}
-
-// pressPositionNodes lists the physical positions of a press-index cell, front
-// first. Empty names are dropped, so a 2-position press yields two.
-func pressPositionNodes(claim *processes.NodeClaim) []string {
-	out := make([]string, 0, 3)
-	for _, n := range []string{claim.CoreNodeName, claim.PairedCoreNode, claim.SecondPairedCoreNode} {
-		if n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
 }
 
 // legPlacesAtAnyPosition returns the first position this order sets a bin down on, or

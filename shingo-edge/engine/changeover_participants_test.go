@@ -25,43 +25,43 @@ func pressIndexClaim(front, paired, second string) *processes.NodeClaim {
 	}
 }
 
-// TestPressIndexExtensionPositions_ScopeIsExtensionsOnly is the guard on the
-// shared helper's deliberately narrow contract. It must return ONLY the
-// extension positions — no front node, no swap-mode filtering — because its two
-// callers differ on exactly those two points and folding either in would
-// silently change one of them.
-func TestPressIndexExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
+// TestExtensionPositions_ScopeIsExtensionsOnly is the guard on the shared
+// derivation's deliberately narrow contract. It must return ONLY the extension
+// positions — no front node, no swap-mode filtering — because its callers differ
+// on exactly those two points and folding either in would silently change one of
+// them. Asserted from engine because that is where the callers live.
+func TestExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
 	t.Parallel()
 
 	three := pressIndexClaim("PLN_01", "PLN_02", "PLN_03")
-	got := pressIndexExtensionPositions(three)
+	got := three.ExtensionPositions()
 	if len(got) != 2 || got[0] != "PLN_02" || got[1] != "PLN_03" {
 		t.Fatalf("3-position = %v, want [PLN_02 PLN_03]", got)
 	}
 	for _, g := range got {
 		if g == "PLN_01" {
-			t.Error("helper returned the FRONT position; callers own that difference (fanOutPositions prepends it, the cross-mode walk must not)")
+			t.Error("derivation returned the FRONT position; callers own that difference (fanOutPositions prepends it, the cross-mode walk must not)")
 		}
 	}
 
 	two := pressIndexClaim("PLN_04", "PLN_05", "")
-	if got := pressIndexExtensionPositions(two); len(got) != 1 || got[0] != "PLN_05" {
+	if got := two.ExtensionPositions(); len(got) != 1 || got[0] != "PLN_05" {
 		t.Errorf("2-position = %v, want [PLN_05] (empty second position dropped)", got)
 	}
 
-	if got := pressIndexExtensionPositions(nil); got != nil {
+	if got := (*processes.NodeClaim)(nil).ExtensionPositions(); got != nil {
 		t.Errorf("nil claim = %v, want nil", got)
 	}
 
-	// No swap-mode filtering: the helper answers "which positions does this claim
-	// name", and each caller applies its own guard.
+	// No swap-mode filtering: the derivation answers "which positions does this
+	// claim name", and each caller applies its own guard.
 	notPressIndex := &processes.NodeClaim{
 		CoreNodeName:   "ALN_001",
 		SwapMode:       protocol.SwapModeTwoRobot,
 		PairedCoreNode: "ALN_002",
 	}
-	if got := pressIndexExtensionPositions(notPressIndex); len(got) != 1 {
-		t.Errorf("non-press-index claim = %v; the helper must not filter by swap mode — its callers do", got)
+	if got := notPressIndex.ExtensionPositions(); len(got) != 1 {
+		t.Errorf("non-press-index claim = %v; the derivation must not filter by swap mode — its callers do", got)
 	}
 }
 

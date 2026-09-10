@@ -11,9 +11,9 @@ import (
 )
 
 // TestProcessesTemplateSwapModeOptions pins the <option value="..."> set in the
-// Swap Mode dropdown to protocol.ConfigurableSwapModes() — MINUS manual_swap,
-// PLUS the hidden historical "simple". Adding/removing a configurable mode
-// without matching the dropdown (or vice versa) fails this test in CI.
+// Swap Mode dropdown to protocol.ConfigurableSwapModes(), PLUS the hidden
+// historical "simple". Adding/removing a configurable mode without matching the
+// dropdown (or vice versa) fails this test in CI.
 //
 // "simple" is retired as a configurable claim mode: the store upsert allowlist
 // rejects it (it survives only as a runtime CycleMode descriptor, never a
@@ -21,22 +21,20 @@ import (
 // an existing swap_mode="simple" row still renders when an old claim is opened
 // in edit mode; it is not user-selectable.
 //
-// manual_swap is intentionally EXCLUDED from the dropdown (commit 0ef5b95):
-// bin loaders / unloaders are Core-owned topology and resolve at runtime via
-// the loader aggregate (SynthClaim), so they are no longer authored or edited
-// in this editor. Existing manual_swap claims still render read-only in the
-// claims list, but the Swap Mode dropdown drops the option. Every OTHER
-// configurable mode must still match the protocol enum, so the drift guard
-// holds for them.
+// THE manual_swap EXCLUSION IS GONE, AND SO IS WHAT IT EXCUSED. This test used
+// to skip manual_swap while walking the configurable set, because the dropdown
+// omitted a value the set allowed (commit 0ef5b95): bin loaders are Core-owned
+// topology and resolve through the loader aggregate, so the editor stopped
+// offering them while the store still stored them. The clause was the written
+// record of that disagreement. manual_swap has now left ConfigurableSwapModes
+// entirely — the stored population is zero and the allowlist is closed — so the
+// dropdown and the persisted set agree again and there is nothing to excuse.
 func TestProcessesTemplateSwapModeOptions(t *testing.T) {
 	got := readSelectOptions(t, "claims-add-swap")
 	// Hidden historical option (retired mode, still rendered for old rows) plus
-	// every configurable mode except manual_swap (Core-owned; see docstring).
+	// every configurable mode.
 	want := []string{string(protocol.SwapModeSimple)}
 	for _, m := range protocol.ConfigurableSwapModes() {
-		if m == protocol.SwapModeManualSwap {
-			continue // not authored in the editor — see docstring
-		}
 		want = append(want, string(m))
 	}
 	assertSameSet(t, "swap_mode", got, want)

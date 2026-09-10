@@ -827,6 +827,20 @@ func (s *StationService) prefetchBoardData(
 	}
 }
 
+// isLoaderProduceTile reports whether this board card is a loader's supply
+// window — the only card the lineside pass has anything to say about.
+//
+// One predicate because applyLoaderLineside asks the question twice: once to
+// decide whether the plant-wide scan is worth running at all, and again to pick
+// the cards to write its answer onto. Those two must agree exactly — a scan run
+// for a tile the loop then skips is pure cost, and a tile the loop writes to
+// without the scan having run reads its badges off an empty map — and when they
+// were written out separately, in opposite polarity fifteen lines apart, nothing
+// but care kept them in step.
+func isLoaderProduceTile(nv *store.StationNodeView) bool {
+	return nv.ActiveClaim.IsLoaderNode() && nv.ActiveClaim.Role == protocol.ClaimRoleProduce
+}
+
 // applyLoaderLineside is the board's last pass: lineside UOP per active
 // payload, attached to the manual_swap loader tiles that can render it.
 //
@@ -837,15 +851,14 @@ func (s *StationService) prefetchBoardData(
 // Gate on the board actually having a tile that consumes the result.
 // activePayloadLineside is a PLANT-WIDE scan — every active consume claim on
 // the edge, not just this station's — so a board with no manual_swap produce
-// tile was paying the full cost and then discarding every value. The
-// predicate is exactly the one the loop below filters on.
+// tile was paying the full cost and then discarding every value. The gate and
+// the loop below must agree exactly about which tiles qualify, and they now do
+// so by construction: both call isLoaderProduceTile. They used to be two
+// hand-written copies in opposite polarity, kept in step by nothing but care.
 func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
 	wantsLineside := false
 	for i := range view.Nodes {
-		nv := &view.Nodes[i]
-		if nv.ActiveClaim != nil &&
-			nv.ActiveClaim.SwapMode == protocol.SwapModeManualSwap &&
-			nv.ActiveClaim.Role == protocol.ClaimRoleProduce {
+		if isLoaderProduceTile(&view.Nodes[i]) {
 			wantsLineside = true
 			break
 		}
@@ -858,9 +871,7 @@ func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
 	if lineside := s.activePayloadLineside(wantsLineside); wantsLineside {
 		for i := range view.Nodes {
 			nv := &view.Nodes[i]
-			if nv.ActiveClaim == nil ||
-				nv.ActiveClaim.SwapMode != protocol.SwapModeManualSwap ||
-				nv.ActiveClaim.Role != protocol.ClaimRoleProduce {
+			if !isLoaderProduceTile(nv) {
 				continue
 			}
 			// THE LOADER AGGREGATE IS CORE-OWNED AND CARRIES THE THRESHOLD.
@@ -1176,7 +1187,7 @@ func (s *StationService) buildNodeTile(
 func (s *StationService) applyManualSwapLoaderFields(
 	nodeView *store.StationNodeView, node processes.Node, b *boardData,
 ) {
-	if nodeView.ActiveClaim != nil && nodeView.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
+	if nodeView.ActiveClaim.IsLoaderNode() {
 		if rp, ok := b.loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
 			nodeView.ActiveStylePayloads = rp.Active
 			nodeView.AllStylePayloads = rp.All
@@ -1194,8 +1205,14 @@ func (s *StationService) applyManualSwapLoaderFields(
 		// the runtime uses — so the board and the engine never disagree. A node absent
 		// from the aggregate resolves to nil (exactly as for the runtime), leaving the
 		// operator/layout fields false.
+		// RESOLVED BY NODE, NOT BY THE CLAIM'S ROLE — the same substitution as
+		// the engine's loadablePayloads, and it has to be the same or the board
+		// and the gate disagree about which loader this window belongs to. Role
+		// is Core's fact; routing the lookup through the stored claim's copy of it
+		// makes a live loader invisible whenever the two disagree, and the tile
+		// then renders its unconfigured defaults while looking configured.
 		if s.loaders != nil {
-			if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil {
+			if loader, err := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && loader != nil {
 				nodeView.OperatorDriven = loader.IsOperatorDriven()
 				nodeView.HomeLocationLoader = loader.IsDedicated()
 				// Core owns the loader's payload set — the board shows it (the edge claim

@@ -392,6 +392,16 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 // that case it is resolved from the envelope's ProcessNodeID, then DeliveryNode.
 // The front-door instruction is uniform — "Record Count on the bin tab" — which
 // P2-C5 makes actually bind a staged, unbound bin.
+//
+// TODO(2026-09-10): study a better shape.
+// This alarm is the INSTRUMENT, not the fix, and its `reason` strings are
+// separate root causes wearing one label. "No active claim at node" is an order
+// that should not have been created, or a claim-resolution gap. "Multi-bin
+// delivery carried no bin id" is the PRODUCER violating facts-carried-not-
+// derived: the delivery event should always name the bin it delivered.
+// The better shape is to read this alarm as a histogram BY REASON and fix the
+// top reason at its source until it stops firing. The operator's "Record Count"
+// is the backstop, not the design.
 func (e *Engine) raiseDeliveredNotBound(delivered OrderDeliveredEvent, coreNodeName, reason string) {
 	node := coreNodeName
 	if node == "" && delivered.ProcessNodeID != nil {

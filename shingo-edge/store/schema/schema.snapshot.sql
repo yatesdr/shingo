@@ -191,13 +191,6 @@ CREATE TABLE demand_origins_open (
     opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE home_location_loaders (
-    core_node_name TEXT NOT NULL,
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_by     TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (core_node_name)
-);
-
 CREATE TABLE hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -656,6 +649,50 @@ CREATE TABLE style_node_claims (
     created_at              TEXT NOT NULL DEFAULT (datetime('now')), staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '', inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader', second_paired_core_node TEXT NOT NULL DEFAULT '',
     UNIQUE(style_id, core_node_name)
 );
+
+CREATE TABLE style_node_claims_quarantine(
+  id INT,
+  style_id INT,
+  core_node_name TEXT,
+  role TEXT,
+  swap_mode TEXT,
+  payload_code TEXT,
+  uop_capacity INT,
+  reorder_point INT,
+  auto_reorder INT,
+  inbound_staging TEXT,
+  outbound_staging TEXT,
+  inbound_source TEXT,
+  outbound_destination TEXT,
+  allowed_payload_codes TEXT,
+  auto_request_payload TEXT,
+  keep_staged INT,
+  evacuate_on_changeover INT,
+  paired_core_node TEXT,
+  auto_confirm INT,
+  sequence INT,
+  lineside_soft_threshold INT,
+  reuse_compatible_bins INT,
+  changeover_evac_nodes TEXT,
+  changeover_evac_destination TEXT,
+  changeover_carryover_disposition TEXT,
+  index_robot_supplies INT,
+  key_route TEXT,
+  key_task TEXT,
+  auto_push INT,
+  reorder_point_source TEXT,
+  below_reorder_since TEXT,
+  created_at TEXT,
+  staging_node TEXT,
+  release_node TEXT,
+  inbound_source_node TEXT,
+  inbound_source_node_group TEXT,
+  outbound_source_node TEXT,
+  outbound_source_node_group TEXT,
+  outbound_source TEXT,
+  mode TEXT,
+  second_paired_core_node TEXT
+, quarantined_at TEXT NOT NULL DEFAULT '', quarantined_reason TEXT NOT NULL DEFAULT '', quarantined_sync_loader_count INTEGER NOT NULL DEFAULT 0, quarantined_sync_loader_keys TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE styles (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

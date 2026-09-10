@@ -7,58 +7,12 @@ package store
 // builder carries BuildLoaderInfos' output down to the Edge.
 
 import (
-	"fmt"
 	"log"
 
 	"shingo/protocol"
 	"shingocore/store/demands"
 	"shingocore/store/loaders"
 )
-
-// WriteDerivedLoaders persists a migration's derived loader aggregate into Core:
-// one bin_loaders row per loader with its payloads (shared_window) or homes
-// (dedicated_positions — position node NAMES resolved to Core node ids via
-// GetNodeByName). Idempotent — skips a (core_node, role) that already exists.
-// Returns (created, skippedHomes): a home whose position node is absent from
-// Core's topology is skipped (it can't FK to a missing node) rather than
-// failing the whole migration. Run loaders.CheckHomeTripwire / GroupIntoLoaders
-// (which enforces it) before calling.
-func (db *DB) WriteDerivedLoaders(derived []loaders.DerivedLoader) (created, skippedHomes int, err error) {
-	for _, d := range derived {
-		existing, gerr := db.GetLoaderByName(d.Loader.Name, d.Loader.Role)
-		if gerr != nil {
-			return created, skippedHomes, fmt.Errorf("check loader %s/%s: %w", d.Loader.Name, d.Loader.Role, gerr)
-		}
-		if existing != nil {
-			continue
-		}
-		id, cerr := db.CreateLoader(d.Loader)
-		if cerr != nil {
-			return created, skippedHomes, fmt.Errorf("create loader %s: %w", d.Loader.Name, cerr)
-		}
-		for _, p := range d.Payloads {
-			p.LoaderID = id
-			if perr := db.UpsertLoaderPayload(p); perr != nil {
-				return created, skippedHomes, fmt.Errorf("write payload %s: %w", p.PayloadCode, perr)
-			}
-		}
-		for _, h := range d.Homes {
-			node, nerr := db.GetNodeByName(h.PositionNode)
-			if nerr != nil || node == nil {
-				skippedHomes++
-				continue
-			}
-			if herr := db.UpsertLoaderHome(loaders.Home{
-				LoaderID: id, PositionNodeID: node.ID, PayloadCode: h.PayloadCode,
-				UOPThreshold: h.UOPThreshold,
-			}); herr != nil {
-				return created, skippedHomes, fmt.Errorf("write home %s: %w", h.PositionNode, herr)
-			}
-		}
-		created++
-	}
-	return created, skippedHomes, nil
-}
 
 // DemandRegistryStations returns the distinct station_ids present in
 // demand_registry — the stations the loader-config re-derive must refresh after

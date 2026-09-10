@@ -32,7 +32,7 @@ func linesideProcess(t *testing.T, db *store.DB, procName, coreNode, code string
 	if err != nil {
 		t.Fatalf("create node %s: %v", coreNode, err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := upsertClaimRetiredMode(t, db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        coreNode,
 		Role:                protocol.ClaimRoleConsume,
@@ -130,4 +130,26 @@ func TestActivePayloadLineside_GateSkipsScan(t *testing.T) {
 	if got := svc.activePayloadLineside(true); got["PART-X"] != 99 {
 		t.Errorf("gate on returned PART-X = %d, want 99 — the gate must not change the result", got["PART-X"])
 	}
+}
+
+// upsertClaimRetiredMode upserts a claim carrying a swap mode the allowlist no
+// longer accepts, by upserting with a configurable placeholder and rewriting the
+// column — the pre-lockdown row shape the read paths still tolerate.
+//
+// manual_swap is retired as a PERSISTED value: Core owns loader configuration
+// and SynthClaim serves it, so a stored loader claim is a second authority and
+// SetCoreLoaders quarantines any that appear. The station-view READ paths still
+// have to render one — a legacy row survives until its Edge takes the sync — and
+// the fixtures in this package are what pin that. The engine and store packages
+// carry the same seam for the same reason.
+func upsertClaimRetiredMode(t *testing.T, db *store.DB, in processes.NodeClaimInput) (int64, error) {
+	t.Helper()
+	want := in.SwapMode
+	in.SwapMode = protocol.SwapModeSequential // placeholder to pass the allowlist
+	id, err := db.UpsertStyleNodeClaim(in)
+	if err != nil {
+		return id, err
+	}
+	_, err = db.DB.Exec(`UPDATE style_node_claims SET swap_mode=? WHERE id=?`, string(want), id)
+	return id, err
 }

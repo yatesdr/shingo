@@ -39,70 +39,91 @@ import (
 // sequential, simple and manual_swap had never been checked, and the omission
 // hid a third shape neither predicate names. This is all six, across BOTH
 // populations that reach Core as complex orders — steady state and changeover —
-// because a mode's legs differ between them, with file:line per row.
+// because a mode's legs differ between them.
+//
+// CITED BY SYMBOL, NOT BY LINE, and the reason is this census's own history. It
+// was written with a file:line per row, and every one of them rotted: re-derived
+// 2026-09-10, the changeover builders had moved +43 lines, the tooling helper
+// +88, the keep-staged trio +82 to +87, and the two swap_dispatch.go references
+// had gone the OTHER way by 58 and 71. A correction that called the drift
+// "uniformly +43" was itself wrong — it matched two rows of a dozen. Line
+// numbers drift silently, en masse, and in both directions; a symbol either
+// resolves or it does not.
 //
 // T = legTakesLineBin (a pure evac). P = legPlacesLineBin (a pure filler).
-// Every line reference is shingo-edge/engine/material_orders.go unless the row
-// names another file.
+// Builders live in shingo-edge/engine/material_orders.go unless the row names
+// another file.
 //
-// STEADY STATE — BuildSwapDispatch (swap_dispatch.go:141):
+// STEADY STATE — BuildSwapDispatch (shingo-edge/engine/swap_dispatch.go):
 //
-//	simple                  no complex order at all: swap_dispatch.go:214 returns
-//	                        (nil, nil) and consume_plan.go:185-195 issues a bare
-//	                        move, which carries no ProcessNode.      n/a
-//	manual_swap             same — swap_dispatch.go:214. And the level sweep skips
+//	simple                  no complex order at all: buildSwapDispatch returns
+//	                        (nil, nil) and consume_plan.go issues a bare move,
+//	                        which carries no ProcessNode.           n/a
+//	manual_swap             same — buildSwapDispatch. And the level sweep skips
 //	                        these nodes outright (demand_reconciler.go,
 //	                        sweepNodeLevel): a loader/unloader is forklift-managed
 //	                        staging, not a cell with a level.        n/a
-//	single_robot            pickup(LINE) :220 AND dropoff(LINE) :223
+//	single_robot            BuildSingleSwapSteps: pickup(LINE) AND dropoff(LINE)
 //	                                                    T=false P=false  <- both
-//	two_robot A (supply)    dropoff(LINE) :264          T=false P=TRUE
-//	two_robot B (evac)      pickup(LINE) :269           T=TRUE  P=false
-//	press-index R1          pickup(LINE) :319           T=TRUE  P=false
-//	press-index R2          dropoff(LINE) :352 / :333   T=false P=TRUE
-//	sequential A (removal)  pickup(LINE) :421           T=TRUE  P=false
-//	sequential B (backfill) dropoff(LINE) :434          T=false P=TRUE
+//	two_robot A (supply)    BuildTwoRobotSwapSteps orderA: dropoff(LINE)
+//	                                                    T=false P=TRUE
+//	two_robot B (evac)      BuildTwoRobotSwapSteps orderB: pickup(LINE)
+//	                                                    T=TRUE  P=false
+//	press-index R1          BuildTwoRobotPressIndexSwapSteps R1: pickup(LINE)
+//	                                                    T=TRUE  P=false
+//	press-index R2          BuildTwoRobotPressIndexSwapSteps R2: dropoff(LINE)
+//	                                                    T=false P=TRUE
+//	sequential A (removal)  BuildSequentialRemovalSteps: pickup(LINE)
+//	                                                    T=TRUE  P=false
+//	sequential B (backfill) BuildSequentialBackfillSteps: dropoff(LINE)
+//	                                                    T=false P=TRUE
 //
 // Sequential needed no change and that is worth having checked: its removal leg
 // is a pure evac and its backfill a pure filler, so the two predicates already
 // agree about both. The press-index rows hold under BOTH sides of the
-// IndexRobotSupplies flip (:326-342 flipped, :343-358 unflipped) — the flip
-// moves the supermarket fetch between the legs, and neither the line pickup nor
-// the line dropoff moves with it.
+// IndexRobotSupplies flip — the flip moves the supermarket fetch between the
+// legs, and neither the line pickup nor the line dropoff moves with it.
 //
-// CHANGEOVER — BuildSwapChangeoverSteps (:556) / BuildEvacuateChangeoverSteps
-// (:597). This is where "simple" and "manual_swap" DO reach Core despite
-// building nothing in steady state: both switches route every unrecognised mode
-// through the default arm (:575, :619) into the single-robot shape.
+// CHANGEOVER — BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps. This is
+// where "simple" and "manual_swap" DO reach Core despite building nothing in
+// steady state: both switches route every unrecognised mode through the default
+// arm into the single-robot shape.
 //
-//	single_robot | simple | manual_swap | unrecognised — the default arm:
-//	  stage leg             no step at the line at all :180-188
+//	single_robot | simple | manual_swap | unrecognised — the default arm,
+//	buildSingleRobotChangeoverSwap:
+//	  stage leg             BuildStageSteps: no step at the line at all
 //	                                                    T=false P=false
-//	  swap/evac leg         pickup(LINE) :630 AND dropoff(LINE) :638
+//	  swap/evac leg         stepsB: pickup(LINE) AND dropoff(LINE)
 //	                                                    T=false P=false  <- both
-//	two_robot supply        dropoff(LINE) :667          T=false P=TRUE
-//	two_robot evac          pickup(LINE) :671           T=TRUE  P=false
-//	press-index R1          pickup(LINE) :701, refills the BACK position :712/:715
+//	two_robot supply        buildTwoRobotChangeoverSwap stepsA: dropoff(LINE)
+//	                                                    T=false P=TRUE
+//	two_robot evac          buildTwoRobotChangeoverSwap stepsB: pickup(LINE)
 //	                                                    T=TRUE  P=false
-//	press-index R2          dropoff(LINE) :722 / :730   T=false P=TRUE
-//	press_position          pickup(pos) :785 AND dropoff(pos) :793; the order's
-//	  (per-position fan-out) ProcessNode IS pos (changeover_planner.go:233 takes
-//	                        diff.CoreNodeName)          T=false P=false  <- both
-//	sequential swap         pickup(pos) :975 AND dropoff(pos) :978
+//	press-index R1          buildPressIndexChangeoverSwap R1: pickup(LINE),
+//	                        refills the BACK position   T=TRUE  P=false
+//	press-index R2          buildPressIndexChangeoverSwap R2: dropoff(LINE)
+//	                                                    T=false P=TRUE
+//	press_position          buildPressIndexPerPositionSwap: pickup(pos) AND
+//	  (per-position fan-out) dropoff(pos); the order's ProcessNode IS pos
+//	                        (changeover_planner.go takes diff.CoreNodeName)
 //	                                                    T=false P=false  <- both
-//	sequential evacuate     buildToolingEvacSteps :843/:847, called at :1030
-//	                                                    T=false P=false  <- both
-//	press tooling evac      the same helper via changeover_tooling.go:560, whose
-//	                        spec is complexSpecWithPayload(position, position, …)
-//	                        :569 — so pos IS the ProcessNode
-//	                                                    T=false P=false  <- both
+//	sequential swap         buildSequentialPerPositionSwap: pickup(pos) AND
+//	                        dropoff(pos)                T=false P=false  <- both
+//	sequential evacuate     buildSequentialPerPositionEvacuate, via
+//	                        buildToolingEvacSteps       T=false P=false  <- both
+//	press tooling evac      the same helper via changeover_tooling.go, whose spec
+//	                        is complexSpecWithPayload(position, position, …) — so
+//	                        pos IS the ProcessNode      T=false P=false  <- both
 //	tooling carry-over      pickup(position) → dropoff(staging) → wait →
 //	                        pickup(staging) → dropoff(position)
-//	                        (changeover_tooling.go:597) T=false P=false  <- both
-//	keep-staged evac        pickup(LINE) :1052          T=TRUE  P=false
-//	keep-staged deliver     dropoff(LINE) :1066         T=false P=TRUE
-//	keep-staged combined    dropoff(LINE) :1081; its pickups are all at staging
-//	                        or the source               T=false P=TRUE
+//	                        (changeover_tooling.go)     T=false P=false  <- both
+//	keep-staged evac        BuildKeepStagedEvacSteps: pickup(LINE)
+//	                                                    T=TRUE  P=false
+//	keep-staged deliver     BuildKeepStagedDeliverSteps: dropoff(LINE)
+//	                                                    T=false P=TRUE
+//	keep-staged combined    BuildKeepStagedCombinedSteps: dropoff(LINE); its
+//	                        pickups are all at staging or the source
+//	                                                    T=false P=TRUE
 //
 // ── THE THIRD SHAPE, AND WHAT READS IT ────────────────────────────────────
 //
@@ -113,11 +134,13 @@ import (
 //
 // Two sites read that false, and they mean different things by it:
 //
-//   - swap_hold.go:159-160 asks placesLine && !takesLine because it is deciding
-//     whether this leg needs a SIBLING to clear the line first. A self-contained
-//     leg clears it itself, so false is the right answer and the gate is correct
-//     as written.
-//   - allocator.go:345 excludes a leg from "the work is void" with
+//   - THE INDEX ANTI-COLLISION ARM asked placesLine && !takesLine, because it
+//     was deciding whether this leg needed a SIBLING to clear the line first. A
+//     self-contained leg clears it itself, so false was the right answer. That
+//     arm is DELETED — dispatch only ever parked the robot, so it was gating a
+//     moment where no bin could move — and legPlacesLineBin now has exactly one
+//     production reader, the next row.
+//   - allocator.go's moot-disposition arm excludes a leg from "the work is void" with
 //     !legPlacesLineBin, so a self-contained leg is not excluded and a moot
 //     disposition SKIPS it terminally, where a two_robot supply leg in the same
 //     physical situation parks on waiting_for_material.
@@ -135,7 +158,7 @@ import (
 // skip is both correct and self-healing. There is no bin to lift, so the leg's
 // premise is gone; the skip terminalises, which releases the partials and lets
 // the level keeper ask again on its next sweep; and that next ask re-plans
-// against an empty head position, where consume_plan.go:132 downgrades the swap
+// against an empty head position, where consume_plan.go's node-empty arm downgrades the swap
 // to a plain delivery move. A park would do the opposite: waiting_for_material
 // is non-terminal, ListActiveByProcessNode counts it, and the keeper's node
 // dedup then goes quiet for as long as the order sits there.
@@ -210,27 +233,6 @@ func legPlacesLineBin(steps []resolvedStep, processNode string) bool {
 		}
 	}
 	return placedBin
-}
-
-// legSecuresOwnReplacement reports whether the leg fetches a bin from somewhere
-// other than the line — i.e. it brings a replacement INTO the swap itself and so
-// does not depend on a sibling to secure one.
-//
-// A two_robot evac (wait → pickup(LINE) → dropoff(OUT)) has exactly one pickup:
-// it only removes, and must wait for its supply sibling to claim before it pulls
-// the line's bin, or the line strands (ALN_003). A press-index R1
-// (pickup(LINE) → dropoff(OUT) → pickup(INBOUND) → dropoff(INDEX)) has a second
-// pickup: it collects the fresh carrier itself. Holding it on a sibling is what
-// deadlocked the swap — R1 waited on R2's claim while R2's only source was the
-// index position R1 had not filled yet.
-func legSecuresOwnReplacement(steps []resolvedStep) bool {
-	pickups := 0
-	for _, s := range steps {
-		if s.Action == protocol.ActionPickup {
-			pickups++
-		}
-	}
-	return pickups > 1
 }
 
 // decodeSteps parses a stored steps_json. Returns nil (and false) when the steps

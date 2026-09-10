@@ -156,7 +156,7 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 			Active:  proc.ActiveStyleID != nil && *proc.ActiveStyleID == st.ID,
 		}
 		for _, c := range claims {
-			if c.SwapMode == protocol.SwapModeManualSwap {
+			if c.IsLoaderNode() {
 				continue // loaders/unloaders excluded — pool, not claims
 			}
 			wire.Claims = append(wire.Claims, protocol.PlantClaim{

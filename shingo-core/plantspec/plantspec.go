@@ -395,9 +395,19 @@ type Claim struct {
 // IsActivePull reports the node's seeded active-pull state (default true).
 func (c Claim) IsActivePull() bool { return c.ActivePull == nil || *c.ActivePull }
 
-// IsManualSwap reports whether this is a forklift-managed loader/unloader claim
-// (operator-driven; counter ticks skip it).
-func (c Claim) IsManualSwap() bool {
+// IsLoader reports whether this claim describes a forklift-managed
+// loader/unloader window rather than a robot-served line cell.
+//
+// THE ONE PLACE THE LOADER QUESTION IS DERIVED, Core side — the counterpart of
+// domain.NodeClaim.IsLoaderNode on the Edge. It was already the property; it was
+// named after the mode it reads rather than the thing it answers, so every
+// caller said "manual swap" while meaning "loader". See the swap-mode law on
+// protocol.SwapMode: node kind is not a swap mode, and the mode field is the
+// STORAGE for this fact, not the question.
+//
+// Operator-driven, so counter ticks skip it — that consequence is why most of
+// the callers below exist.
+func (c Claim) IsLoader() bool {
 	return protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap
 }
 

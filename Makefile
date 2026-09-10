@@ -6,12 +6,12 @@ COMPOSE := docker compose -f docker-compose.dev.yml
 
 dev-build: ## Build the sim binaries into images (INCLUDING the tools profile)
 	# --profile tools is load-bearing, not thoroughness. `compose build` without it
-	# builds core/edge/edge2 and SKIPS seed/seed-edge2/migrate-loaders, and seeddev
+	# builds core/edge/edge2 and SKIPS seed/seed-edge2, and seeddev
 	# carries ITS OWN COPY of the migration list. On 2026-09-06 a stale seeder image
 	# survived a teardown and applied two migrations under a retired numbering on top
 	# of a freshly migrated database — pushing it past the chain it was supposed to be
 	# on, with no symptom but a version number inside a line that reads like success.
-	# One build for all six images is what makes that unrepeatable.
+	# One build for all five images is what makes that unrepeatable.
 	$(COMPOSE) --profile tools build
 
 dev: dev-build ## Bring up postgres + kafka + core + edge
@@ -45,7 +45,7 @@ dev-seed: ## Seed the demo plant then restart core+edge to pick up the seeded re
 	# seed depends on edge), so the sweep always predates the seed. Restarting
 	# core re-runs the sweep against the populated registry. Mirrors production,
 	# where a deploy restarts Core after an out-of-band registry write
-	# (migrateloaders). See threshold_monitor.go startupSweep / Resync.
+	# (seeddev). See threshold_monitor.go startupSweep / Resync.
 	$(COMPOSE) run --build --rm seed
 	$(COMPOSE) restart core edge
 

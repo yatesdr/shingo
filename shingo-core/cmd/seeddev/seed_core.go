@@ -431,7 +431,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 	homesByLoader := map[string][]plantspec.Claim{} // home_of → dedicated position claims (ordered)
 	homeLead := map[string]plantspec.Claim{}        // home_of → first home claim (config source)
 	for _, c := range p.Claims {
-		if c.SwapMode != string(protocol.SwapModeManualSwap) {
+		if !c.IsLoader() {
 			continue
 		}
 		if c.WindowOf != "" {

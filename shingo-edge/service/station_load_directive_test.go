@@ -77,7 +77,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	mustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// The loader: produce role, carrying the directive flag.
-	loaderClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	loaderClaimID, err := upsertClaimRetiredMode(t, db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "LDR_1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "PART-OLD", UOPCapacity: 10,
 		OutboundDestination: "MARKET",

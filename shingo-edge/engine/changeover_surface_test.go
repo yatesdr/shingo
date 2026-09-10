@@ -164,7 +164,7 @@ func TestChangeoverStart_CarrierToAnUnchangedNodeDoesNotBlock(t *testing.T) {
 	})
 	testutil.MustNoErr(t, err, "create unchanged node")
 	for _, sid := range []int64{fromStyleID, toStyleID} {
-		_, cerr := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+		_, cerr := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 			StyleID: sid, CoreNodeName: "SAME-NODE", Role: "consume", SwapMode: "simple",
 			PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SOURCE-OLD",
 		})
@@ -226,7 +226,7 @@ func TestChangeoverStart_UnchangedParticipantBlocksButIsNotCancelled(t *testing.
 	})
 	testutil.MustNoErr(t, err, "create unchanged node")
 	for _, sid := range []int64{fromStyleID, toStyleID} {
-		_, cerr := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+		_, cerr := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 			StyleID: sid, CoreNodeName: "SAME-NODE", Role: "consume", SwapMode: "simple",
 			PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SOURCE-OLD",
 		})

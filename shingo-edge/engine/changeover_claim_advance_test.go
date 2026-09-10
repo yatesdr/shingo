@@ -40,7 +40,7 @@ func seedDirectChangeover(t *testing.T, db *store.DB) (processID, nodeID, toStyl
 	testutil.MustNoErr(t, err, "create to style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	fromClaimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	fromClaimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "ALN_007", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSimple, PayloadCode: "74871-6SA1A.06", UOPCapacity: 4500,
 		InboundSource: "SOURCE-OLD", OutboundDestination: "DEST-OLD",
@@ -49,7 +49,7 @@ func seedDirectChangeover(t *testing.T, db *store.DB) (processID, nodeID, toStyl
 
 	// No InboundStaging: the supply lands at the node itself, which is what
 	// puts its completion on changeover_release rather than staged_delivery.
-	toClaimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	toClaimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "ALN_007", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSimple, PayloadCode: "63125-6TA0A.06", UOPCapacity: 4500,
 		InboundSource: "SOURCE-NEW", OutboundDestination: "DEST-NEW",

@@ -338,7 +338,7 @@ func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protoco
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	claimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        prefix + "-MSWAP-NODE",
 		Role:                role,
@@ -634,7 +634,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 				claimInput.PairedCoreNode = coreNode + "-PAIR"
 				claimInput.OutboundDestination = "REL-MODE-OUTBOUND"
 			}
-			claimID, err := upsertClaimLegacySimple(db, claimInput)
+			claimID, err := upsertClaimRetiredMode(db, claimInput)
 			if err != nil {
 				t.Fatalf("upsert claim: %v", err)
 			}

@@ -198,7 +198,7 @@ func walkClaims(plant *plantspec.Plant, rate, avail map[string]float64) map[stri
 	for _, ac := range activeClaims(plant) {
 		c, proc := ac.claim, ac.proc
 		f := get(c.Payload)
-		if c.IsManualSwap() {
+		if c.IsLoader() {
 			switch c.Role {
 			case "produce":
 				f.loaders = appendUniq(f.loaders, proc)
@@ -263,7 +263,7 @@ func classify(plant *plantspec.Plant) map[string]*procClass {
 	cls := map[string]*procClass{}
 	for _, ac := range activeClaims(plant) {
 		c, proc := ac.claim, ac.proc
-		if c.IsManualSwap() {
+		if c.IsLoader() {
 			continue
 		}
 		pc := cls[proc]
@@ -503,7 +503,7 @@ func runFleet(plant *plantspec.Plant, rate map[string]float64, transit string, u
 
 	for _, ac := range activeClaims(plant) {
 		c, proc := ac.claim, ac.proc
-		if !c.IsManualSwap() && !c.IsActivePull() {
+		if !c.IsLoader() && !c.IsActivePull() {
 			continue // parked A/B side — the active partner's cadence already counts the pair's swaps
 		}
 		cap := c.UOPCapacity
@@ -518,11 +518,11 @@ func runFleet(plant *plantspec.Plant, rate map[string]float64, transit string, u
 		// parts/min flowing through this node sets its swap cadence.
 		var tp float64
 		switch {
-		case c.IsManualSwap() && c.Role == "produce": // loader: supplies its payload's draw
+		case c.IsLoader() && c.Role == "produce": // loader: supplies its payload's draw
 			if f := flows[c.Payload]; f != nil {
 				tp = f.consume
 			}
-		case c.IsManualSwap() && c.Role == "consume": // unloader: drains its payload's make
+		case c.IsLoader() && c.Role == "consume": // unloader: drains its payload's make
 			if f := flows[c.Payload]; f != nil {
 				tp = f.produce
 			}

@@ -66,13 +66,13 @@ func cellSetFor(claim *processes.NodeClaim) map[string]bool {
 	if claim == nil {
 		return cell
 	}
-	for _, n := range []string{
-		claim.CoreNodeName,
-		claim.PairedCoreNode,
-		claim.SecondPairedCoreNode,
-		claim.InboundStaging,
-		claim.OutboundStaging,
-	} {
+	// The claim's own geometry, plus its two staging nodes — which are part of
+	// the cell for departure purposes but are not positions the cell occupies,
+	// so they are added here rather than folded into Positions.
+	for _, n := range claim.Positions() {
+		cell[n] = true
+	}
+	for _, n := range []string{claim.InboundStaging, claim.OutboundStaging} {
 		if n != "" {
 			cell[n] = true
 		}

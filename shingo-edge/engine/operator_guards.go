@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -38,6 +37,82 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 	}
 	if hasActiveSwap(e, runtime) {
 		return fmt.Errorf("node %s: two-robot swap already in progress — wait for the current cycle to complete or abort it before requesting more material", node.Name)
+	}
+	return nil
+}
+
+// guardSourceKnownDry refuses to ARM a coordinated swap pair whose supply leg
+// would be created against a payload Core reports no stock for.
+//
+// ── THIS IS THE SPRINGFIELD 2026-07-21 CHURN'S ACTUAL FIX ─────────────────
+//
+// 74577-6SA0A.06, zero system stock, hundreds of doomed swaps in one
+// changeover. The loop: the evac leg died, Core's peer-terminal handler
+// cancelled the supply with it, the monitor saw that cancel move the in-loop
+// UOP, re-armed the changeover, the planner rebuilt the pair, the supply parked
+// on the same dry source, the evac died again.
+//
+// The workaround was a SPARE at the far end of that loop — Core kept the parked
+// supply alive so the cancel never happened. It is deleted: it was managing a
+// half-dispatched pair, and under the pair rule there is no such thing. What
+// replaces it is this, at the near end, and it is the honest place: the churn's
+// cause was never the cancellation. It was ARMING A PAIR INTO A SOURCE THAT WAS
+// ALREADY KNOWN TO BE DRY. Two orders that cannot possibly source were created,
+// hundreds of times, and every downstream mechanism was trying to survive them.
+//
+// REFUSING TO ARM DEAD-ENDS NOBODY, which is what makes it safe here and not at
+// StartProcessChangeover. No order is created, so no order is churned; the level
+// keeper re-asks on its next sweep, and the moment the operator stocks the
+// payload the pair arms normally. A refusal that creates nothing is a wait, and
+// wait-not-fail is the house law. (The changeover preflight is deliberately
+// ADVISORY for the opposite reason: it is a deliberate operator action, and
+// refusing it dead-ended the floor with idle robots — Springfield NF SPOT 3,
+// 2026-06-03. A level-keeper tick has no operator standing at it to dead-end.)
+//
+// ── IT FAILS OPEN, EVERYWHERE, ON PURPOSE ─────────────────────────────────
+//
+// Core unreachable, the call erroring, a payload Core cannot count — every one
+// of those passes. This guard exists to stop a KNOWN-dry source, and "we could
+// not find out" is not knowing. A guard that shut the line down when the Core
+// API blipped would be a worse failure than the churn it prevents.
+//
+// THE EMPTY-CARRIER CASE IS ONE OF THOSE, and it is worth naming because it is
+// not an edge case: a PRODUCE swap's supply leg fetches an empty carrier, not a
+// payload (BuildSwapDispatch marks the inbound pickup Empty), and the preflight
+// endpoint counts bins OF a payload. It cannot answer "are there empty carriers"
+// and this guard does not pretend it can. Produce-direction pairs are not
+// covered; the consume direction, which is where 07-21 happened, is.
+//
+// NO MODE NAME. The caller gates on plan.Dispatch.RequiresActiveSwapGuard — a
+// declared property of the dispatch shape, set by the modes that build a
+// multi-leg pair — so this reads "is a pair about to be armed", never "is this
+// two_robot".
+func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.NodeClaim) error {
+	if node == nil || claim == nil {
+		return nil
+	}
+	payload := claim.PayloadCode
+	if payload == "" || payload == "__empty__" {
+		return nil // nothing Core can be asked about; see the empty-carrier note
+	}
+	if e.coreClient == nil || !e.coreClient.Available() {
+		return nil
+	}
+	result, err := e.coreClient.PreflightInventory(e.cfg.StationID(), []string{payload})
+	if err != nil || result == nil {
+		log.Printf("[request-material] node %s: could not check stock for %s (%v) — arming the pair anyway; "+
+			"this guard refuses a KNOWN-dry source, and an unanswered question is not knowing", node.Name, payload, err)
+		return nil
+	}
+	for _, missing := range result.Missing {
+		if missing != payload {
+			continue
+		}
+		log.Printf("[request-material] node %s: NOT arming a swap pair for %s — core reports no available bins. "+
+			"Two legs that cannot source would be created and cancelled together; the level keeper re-asks once stock lands",
+			node.Name, payload)
+		return fmt.Errorf("node %s: no %s in stock — the swap needs a replacement bin before both robots can be committed; "+
+			"load the payload and this will arm itself", node.Name, payload)
 	}
 	return nil
 }
@@ -120,7 +195,7 @@ func (e *Engine) guardPositionSpokenFor(node *processes.Node, runtime *processes
 	if node == nil || claim == nil {
 		return nil
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return nil
 	}
 	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
@@ -206,7 +281,7 @@ func (e *Engine) guardStyleTransition(node *processes.Node, claim *processes.Nod
 	if node == nil || claim == nil {
 		return nil
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return nil
 	}
 	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
@@ -256,7 +331,7 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 	if node == nil || claim == nil {
 		return nil
 	}
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return nil
 	}
 	if e.catidMon == nil {

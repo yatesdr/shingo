@@ -424,7 +424,7 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 			if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 				continue
 			}
-			for _, position := range pressIndexExtensionPositions(claim) {
+			for _, position := range claim.ExtensionPositions() {
 				if taskNodes[position] || seen[position] {
 					continue
 				}

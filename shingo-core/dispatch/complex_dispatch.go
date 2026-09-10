@@ -130,28 +130,71 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return nil
 	}
 
-	resolvedSteps, st := d.prepareComplexSteps(order)
+	// ── THE PAIR IS THE UNIT OF WORK, WHEN THERE IS ONE (§ the pair rule) ──
+	//
+	// A coordinated multi-leg order dispatches both legs in this pass or neither.
+	// The fork is on PAIR STRUCTURE — does this order name a sibling — and never
+	// on SwapMode; see complex_pair.go for the rule and for why it is expressible
+	// here, at dispatch, without touching a single line of release.
+	//
+	// A solo order falls straight through to the phases below, unchanged.
+	legs, partnerPending := d.coordinatedPairLegs(order)
+	if partnerPending {
+		return d.parkPairAwaitingPartner(order)
+	}
+	if len(legs) > 1 {
+		return d.dispatchPairInOnePass(order, legs)
+	}
+
+	resolvedSteps, st := d.acquireComplexPhases(order)
 	if st.done {
 		return st.err
 	}
+	return d.dispatchComplexToFleet(order, resolvedSteps)
+}
+
+// acquireComplexPhases runs the ACQUISITION half of complex dispatch — prepare,
+// the swap gates, the destination reserve, the source claim, the lane admit —
+// and returns the resolved steps the fleet create needs.
+//
+// ── WHY THE SEQUENCE IS A FUNCTION NOW ────────────────────────────────────
+//
+// It has two callers: a solo order, and each leg of a coordinated pair. The pair
+// rule needs to run every leg's acquisition and only THEN commit any of them, so
+// the acquisition has to be nameable separately from the commit. Extracting it
+// is what makes "both, or neither" a property of the caller rather than a flag
+// threaded through five phases.
+//
+// The phase ORDER is unchanged and load-bearing, and each phase's own doc says
+// why: slots before bins (one claim class fully ordered before the next is what
+// prevents a slot-versus-bin deadlock cycle), and lanes LAST, after the sources
+// are claimed, because a lane refusal is a wait.
+//
+// done=true means the order was parked or terminalized inside a phase and the
+// caller returns st.err verbatim; the returned slice is meaningless then.
+func (d *Dispatcher) acquireComplexPhases(order *orders.Order) ([]resolvedStep, dispatchStep) {
+	resolvedSteps, st := d.prepareComplexSteps(order)
+	if st.done {
+		return nil, st
+	}
 
 	if st := d.applySwapGates(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
 	if st := d.reserveComplexDestination(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
 	if st := d.acquireComplexSources(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
 	if st := d.admitComplexLanes(order, resolvedSteps); st.done {
-		return st.err
+		return nil, st
 	}
 
-	return d.dispatchComplexToFleet(order, resolvedSteps)
+	return resolvedSteps, dispatchStep{}
 }
 
 // admitComplexLanes is the physical question, asked for a coordinated order for
@@ -660,19 +703,27 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	return nil
 }
 
-// applySwapGates runs the two-robot swap guards (Phase B): the swap peer-terminal
-// race unwind (SPR 2424/2425) that resolves a leg whose sibling already went
-// terminal, then the swapLegHeld removal-leg hold (ALN_003) that parks an evac leg
-// until its supply sibling has secured a claim. done=true means the order was
-// resolved by the unwind or parked waiting_for_partner; the orchestrator returns
-// st.err verbatim. Reads the resolved steps read-only.
+// applySwapGates runs the coordinated-swap guards (Phase B): the swap
+// peer-terminal race unwind (SPR 2424/2425) that resolves a leg whose sibling
+// already went terminal, then the INDEX ANTI-COLLISION hold that keeps a filler
+// off a line position its clearer has not committed to clearing (HOP 07).
+//
+// THE REMOVAL-LEG HOLD IS NOT HERE ANY MORE. This used to run Face 1 — park the
+// evac until its supply secured a claim, "to prevent stranding" (ALN_003,
+// 2026-06-03) — and that arm is deleted. Dispatch sends an evac to PARK, so the
+// hold guarded a step that moves nothing, and the anti-strand is now structural:
+// complex_pair.go dispatches both legs of a pair in one pass or neither.
+//
+// done=true means the order was resolved by the unwind or parked
+// waiting_for_partner; the orchestrator returns st.err verbatim. Reads the
+// resolved steps read-only.
 func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
 	// Close the swap peer-terminal RACE (SPR 2424/2425, 2026-07). HandleSwapPeerTerminal
 	// unwinds a swap when one leg reaches a terminal state, but it fires from the
 	// DEAD leg's side — so if this leg did not exist yet when its sibling died (a
 	// supply created + skipped moot in the same tick, before its evac was created),
 	// that unwind found no peer and no-op'd, leaving this leg to hold forever on a
-	// dead sibling (swapLegHeld waits on a claim that will never come). Re-run the
+	// dead sibling. Re-run the
 	// unwind now, from the surviving side, so a leg linked to an already-terminal
 	// sibling is resolved instead of wedged. Reuses the same handler and its
 	// per-role resolution: a moot-evac sibling that legitimately lets this supply
@@ -690,37 +741,54 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 					}
 				}
 				d.HandleSwapPeerTerminal(sib.ID, kind)
-				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil && protocol.IsTerminal(self.Status) {
+				// RE-READ, BECAUSE THE UNWIND MAY HAVE JUST CANCELLED THIS ROW.
+				// HandleSwapPeerTerminal writes to the very order we are
+				// dispatching, so the in-memory copy the scanner handed us is
+				// stale from here on and proceeding on it would dispatch a robot
+				// for an order that no longer exists.
+				//
+				// IT USED TO CARRY THE FRESH ROW FORWARD (`order = self`) as well,
+				// because the swap-hold verdict below judged it and a leg spared on
+				// THIS pass still looked unspared. Both the spare and that verdict
+				// are deleted, so nothing downstream reads the row again inside
+				// this function — the assignment became dead and staticcheck said
+				// so. The TERMINALITY TEST is the part that was always load-bearing
+				// and it stays.
+				if self, rerr := d.db.GetOrder(order.ID); rerr == nil && self != nil &&
+					protocol.IsTerminal(self.Status) {
 					return dispatchStep{done: true, err: fmt.Errorf("complex order %d resolved by swap peer-terminal unwind: sibling %d already %s", order.ID, sib.ID, sib.Status)}
 				}
 			}
 		}
 	}
 
-	// Two-robot swap removal-leg hold: don't let a removal (evac) leg that
-	// cannot fetch its own replacement claim/pull the line bin until its supply
-	// sibling has secured one. Stops a swap from stranding the line when the
-	// supermarket is empty (ALN_003 swap-starvation, 2026-06-03). Stay
-	// queued — the scanner replays on EventBinUpdated when the supply leg
-	// claims, clearing the gate. The sibling pointer is set at intake (the
-	// second leg carries it on its ComplexOrderRequest), so it is present
-	// here even on the synchronous intake-dispatch path.
+	// ── AND NOTHING ELSE. THERE IS NO SWAP HOLD AT DISPATCH ANY MORE ──────
 	//
-	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
-	// to concrete nodes by now, and the line node is concrete either way, so the
-	// pickup/dropoff shape the gate depends on is stable across resolution.
-	// THE CAUSE COMES FROM THE VERDICT, not from this call site. Both faces park
-	// under `swap-hold` today, so this site could hardcode it — and that is
-	// exactly how a cause and the arm that earned it drift apart: a face added
-	// later gets its cause written by a line that never saw the decision. The arm
-	// that made the decision is the only thing that can name it — see
-	// swapHoldVerdict.
-	if v := d.swapLegHoldVerdict(order, resolvedSteps); v.held {
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
-		d.dbg("complex: order %d held — %s", order.ID, v.reason)
-		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", v.reason)}
-	}
-
+	// Three gates stood here across this batch's life and all three are gone,
+	// for one reason: DISPATCH DOES NOT MOVE MATERIAL FOR A SWAP LEG. Every leg
+	// of a coordinated swap opens with a WAIT, so what dispatch sends a robot is
+	// "drive to your node and hold" — splitAtWait returns the plan up to that
+	// wait and the rest is appended at RELEASE.
+	//
+	//	Face 1  held an evac until its supply had claimed, "to prevent
+	//	        stranding". It was guarding a parked robot.
+	//	Face 3  held a supply while its evac was blocked on capacity. Buried
+	//	        2026-08-31; its same-resource exemption emptied it.
+	//	Face 2  held a filler until its clearer had committed, so no bin would be
+	//	        placed on an un-cleared position. Also guarding a parked robot:
+	//	        which robot parks first is not a fact about anything, because
+	//	        neither touches a carrier until the operator releases.
+	//
+	// WHAT REPLACES THEM IS NOT ANOTHER GATE. Both legs are admitted in one
+	// scanner pass or neither is (complex_pair.go), so a parked evac implies a
+	// dispatched supply by construction; a leg going terminal takes its sibling
+	// (swap_peer.go); and the collision hazard is answered at RELEASE, where the
+	// bins actually move and refusePlacingLegWhileSiblingPending already orders
+	// the legs. That guard is not this layer's to help.
+	//
+	// The peer-terminal unwind above stays. It resolves a leg whose sibling was
+	// ALREADY dead when this pass began, which is a question about the pair's
+	// existence rather than about sequencing two live robots.
 	return dispatchStep{}
 }
 
@@ -748,21 +816,29 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// isConcreteStorageDropoff's own note. Staging is handled by the declared
 	// loop further down instead.
 	//
-	// AND THE SIBLING PREMISE HAS EXPIRED. The justification above used to end
-	// "and Core has no SiblingOrderID to model that". It does now:
+	// THE PROHIBITION STANDS; ITS OLD REASON DOES NOT. The justification used to
+	// end "and Core has no SiblingOrderID to model that". Core has it:
 	// orders.sibling_order_uuid is stamped at intake (complex_intake.go), linked
-	// durably by LinkOrderSiblingsByEdgeUUID, and already read by the swap-hold
-	// gate a few lines above. (This named `sibling_order_id`, which is EDGE's
-	// column — an INTEGER FK in SQLite. Core's is sibling_order_uuid, TEXT,
-	// holding the peer's edge UUID. The two services genuinely differ here and
-	// the error travelled as far as the round prompt.) So the reason for making this a blunt role test
-	// rather than a modelled dependency no longer holds on its own terms.
+	// durably by LinkOrderSiblingsByEdgeUUID, and read by the swap-hold gate a few
+	// lines above. (It also named `sibling_order_id`, which is EDGE's column — an
+	// INTEGER FK in SQLite. Core's is sibling_order_uuid, TEXT, holding the peer's
+	// edge UUID. The two services genuinely differ here and the error travelled as
+	// far as a round prompt.) That obstacle was removed some time ago; the history
+	// is kept because somebody will re-derive it otherwise.
 	//
-	// It is left AS IS deliberately. Re-deriving the line-node rule from the
-	// sibling link is a design change with a deadlock on the other side of it,
-	// and it is not what the staging fix needed. Recorded here so the next
-	// person weighing it starts from what is true rather than re-discovering
-	// that the stated obstacle was removed some time ago.
+	// WHAT ACTUALLY KEEPS THIS A BLUNT ROLE TEST IS THE PHASE IT RUNS IN, and
+	// modelling the sibling does not move that. This gate runs BEFORE the sources
+	// are acquired, so a refusal here holds CLAIMING, not fleet-create. Hold a
+	// supply on the line node its evac is on the way to clear and you have not
+	// sequenced the pair — you have two legs each waiting for the other to acquire,
+	// which is a mutual wait no event ends. That is the 2b05dce deadlock, and it
+	// is a property of WHERE the check sits rather than of how well the dependency
+	// is expressed: a perfectly modelled dependency evaluated at this phase
+	// deadlocks exactly the same way.
+	//
+	// So the rule is unchanged and the reason is now the one that holds. Moving
+	// the check to a later phase is the design change that would reopen it, and
+	// that is a different conversation from adding a sibling link.
 	// finalChecked records whether the DeliveryNode arm below actually ran, so the
 	// declared-dropoff loop knows whether that node still needs asking about.
 	//

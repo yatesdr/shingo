@@ -521,8 +521,7 @@ func matchLoaderEmptyIn(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := ctx.Claim()
-	return claim != nil &&
-		claim.SwapMode == protocol.SwapModeManualSwap &&
+	return claim.IsLoaderNode() &&
 		claim.Role == protocol.ClaimRoleProduce
 }
 
@@ -613,7 +612,7 @@ func matchManualSwap(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := ctx.Claim()
-	return claim != nil && claim.SwapMode == protocol.SwapModeManualSwap
+	return claim.IsLoaderNode()
 }
 
 func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
@@ -667,7 +666,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	// manual_swap nodes: clear order slots so CanAcceptOrders and the
 	// multi-order queue don't see stale IDs. Standard consume/produce
 	// nodes manage order slots via complex order progression.
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		if err := e.db.ClearProcessNodeRuntimeOrders(ctx.node.ID); err != nil {
 			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}

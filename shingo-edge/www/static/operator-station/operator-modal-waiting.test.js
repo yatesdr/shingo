@@ -71,6 +71,10 @@ const ctx = vm.createContext({
     serverNow: () => Date.now(),
 });
 vm.runInContext(utilSrc, ctx);
+// waitingLabel composes blockerPhrase and WAITING_BASE now. Same outputs — every
+// assertion below is byte-identical — so the extraction just follows the split.
+vm.runInContext(modalSrc.match(/const WAITING_BASE = '[^']*';/)[0].replace('const ', 'var '), ctx);
+vm.runInContext(extractFn(modalSrc, 'blockerPhrase'), ctx);
 vm.runInContext(extractFn(modalSrc, 'waitingLabel') + '\nthis.waitingLabel = waitingLabel;', ctx);
 const waitingLabel = ctx.waitingLabel;
 

@@ -66,7 +66,6 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var originID sql.NullString
 	// key_route is a JSON array in one TEXT column; '' is the ordinary state.
 	var keyRouteJSON string
-
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
@@ -1590,8 +1589,33 @@ func ClearBinID(db *sql.DB, orderID int64) error {
 // UpdateBinID sets the bin_id on an order.
 // (Junction-style write against the orders table; bins-aggregate readers
 // live at outer store/ as composition.)
+//
+// ── IT IS A NO-OP WHEN NOTHING CHANGES, AND THAT IS NOT A MICRO-OPTIMISATION ──
+//
+// `AND bin_id IS DISTINCT FROM $1` is the same guard SetFaultClock carries, for
+// the same reason. confirmComplexPlan calls this on EVERY confirm, and a complex
+// order that re-enters `sourcing` re-confirms every scanner tick — so without
+// the guard an order parked on a wait rewrote bin_id to the value it already
+// held and bumped updated_at for it, once per tick, for as long as the wait
+// lasted.
+//
+// updated_at is a real column that the staleness sweeps and every age instrument
+// on the board read. A spurious bump is not a wasted write, it is a WRONG
+// ANSWER: a wait that has lasted an hour reads as one tick old, and the row that
+// most needs noticing is the one that looks freshest. Same defect queue_detail.go
+// short-circuits against, arriving through a different column.
+//
+// FOUND BY THE PAIR RULE'S HARNESS, not by inspection: the pair releases what it
+// acquired when it parks and re-acquires on the next pass, which made a
+// re-confirm happen on every pass and turned an invisible bump into a visible
+// one. The defect predates that change — any re-confirming order had it.
+//
+// IS DISTINCT FROM, not `<>`: bin_id is NULLABLE, and `bin_id <> $1` is NULL —
+// not true — for a row whose bin_id is NULL, which would make this refuse to
+// write the FIRST binding, the one case that always matters.
 func UpdateBinID(db *sql.DB, orderID, binID int64) error {
-	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=$3 WHERE id=$2`, binID, orderID, clock.Now().UTC())
+	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=$3
+		WHERE id=$2 AND bin_id IS DISTINCT FROM $1`, binID, orderID, clock.Now().UTC())
 	return err
 }
 

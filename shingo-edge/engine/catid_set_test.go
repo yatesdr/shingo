@@ -23,7 +23,7 @@ func styleExpected(t *testing.T, db *store.DB, id int64) string {
 // call twice with different nodes/payloads to build a two-position left/right style.
 func seedProduceClaim(t *testing.T, db *store.DB, styleID int64, coreNode, payloadCode string) {
 	t.Helper()
-	_, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+	_, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        coreNode,
 		Role:                "produce",

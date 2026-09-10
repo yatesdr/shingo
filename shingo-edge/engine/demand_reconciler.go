@@ -157,7 +157,7 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	// Loader replenishment is Core-owned. The tick skips them for the same
 	// reason. The guard sits with the decision rather than with the walk
 	// because there are two callers of it now.
-	if claim.SwapMode == protocol.SwapModeManualSwap {
+	if claim.IsLoaderNode() {
 		return
 	}
 	remaining := runtime.RemainingUOPCached

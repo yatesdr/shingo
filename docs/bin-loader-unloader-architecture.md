@@ -94,7 +94,7 @@ signal — the UOP C-push path.
 
 ### Demand Registry
 
-Core maintains a `demand_registry` table mapping payload codes to loader/unloader station addresses. It is derived from the Core-owned `bin_loaders` aggregate (`BuildDemandRegistryFromAggregate`, run by the seed / `migrateloaders`):
+Core maintains a `demand_registry` table mapping payload codes to loader/unloader station addresses. It is derived from the Core-owned `bin_loaders` aggregate (`BuildDemandRegistryFromAggregate`, run by the seed, and by `core_data_service` on edge (re)connect):
 
 ```
 demand_registry
@@ -269,14 +269,13 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 
 | File | Role |
 |------|------|
-| `store/loaders/loaders.go`, `store/loaders.go` | The `bin_loaders` aggregate: `bin_loaders` (identity, role, layout, replenishment, flow dests) + `bin_loader_homes` (windows / dedicated positions, `UNIQUE(position_node_id)`) + `bin_loader_payloads` (shared-window payload set). CRUD + `GroupIntoLoaders` (migration derive) + `DeleteLoader` (soft-archive `archived_at`). |
+| `store/loaders/loaders.go`, `store/loaders.go` | The `bin_loaders` aggregate: `bin_loaders` (identity, role, layout, replenishment, flow dests) + `bin_loader_homes` (windows / dedicated positions, `UNIQUE(position_node_id)`) + `bin_loader_payloads` (shared-window payload set). CRUD + `DeleteLoader` (soft-archive `archived_at`). |
 | `service/loader_service.go` | Loader CRUD service (Create/Update/Delete/SetHome/SetPayload). `rederive` rebuilds `demand_registry` from the aggregate for the union of registry stations + registered edges and nudges the threshold monitor. |
 | `store/loaders_sync.go` | `BuildLoaderInfos` (loader config for the node-list sync), `BuildDemandRegistryFromAggregate`, `DemandRegistryStations`. |
 | `store/demand_registry.go`, `store/demands/demands.go` | `demand_registry` table + `SyncDemandRegistry` (diff/upsert). |
 | `engine/wiring_staging.go` | `isStorageSlot` (parent LANE/NGRP + loader-home check) — moved here from wiring_kanban.go when the kanban demand-signal path was deleted; `resolveNodeStaging` (arrival staging). (`handleKanbanDemand`/`sendDemandSignals` deleted — see DemandSignal REMOVED above.) |
 | `messaging/core_data_service.go` | Node-list response carries `Loaders` (`BuildLoaderInfos`); **seeds `demand_registry` from the aggregate on edge (re)connect**, then `thresholdMonitor.Resync`. (`HandleClaimSync` deleted.) |
 | `store/migrations.go` | `bin_loaders` aggregate schema (v34–v40); `UNIQUE` on `orders.edge_uuid`. |
-| `cmd/migrateloaders` | One-time per-plant migration: derive the aggregate from the legacy edge `style_node_claims` + seed `demand_registry`. |
 | `www/handlers_loader.go`, `www/static/pages/loaders.js` | Core loader admin UI (create, layout, windows/positions, payload checklist + batch save, replenishment). |
 | `dispatch/` | One-robot-at-a-time + bin-occupied guards in the fulfillment scanner. |
 

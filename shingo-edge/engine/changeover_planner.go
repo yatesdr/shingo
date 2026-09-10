@@ -331,6 +331,14 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 	if fromClaim == nil || toClaim == nil {
 		return nil
 	}
+	// A loader does not go through changeover at all (Locked Decision 4; the UI
+	// removal landed in 62ad397), so there is no step list to have required
+	// fields. That is an exclusion from the registry rather than an entry in it,
+	// which is why it is answered before the switch: the switch below says what
+	// each SHAPE OF SWAP needs, and a forklift window has no swap.
+	if fromClaim.IsLoaderNode() {
+		return nil
+	}
 	var missing []missingField
 	switch fromClaim.SwapMode {
 	case protocol.SwapModeSingleRobot:
@@ -400,11 +408,6 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		if toClaim.InboundSource == "" {
 			missing = append(missing, missingField{Side: "to", Name: "Inbound Source"})
 		}
-	case protocol.SwapModeManualSwap:
-		// manual_swap nodes don't go through changeover (per Locked
-		// Decision 4 — UI removal landed in 62ad397). Don't validate;
-		// if a manual_swap claim somehow gets here the existing
-		// dispatcher's fallthrough handles it.
 	default:
 		// "simple" or unrecognized — fall through to single_robot
 		// pattern per existing dispatcher; share its required fields.

@@ -122,8 +122,8 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// this branch exists to prevent.
 	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex && isOccupied(occupancy, claim.CoreNodeName) {
 		var bare, needsPrime []string
-		for _, pos := range []string{claim.PairedCoreNode, claim.SecondPairedCoreNode} {
-			if pos == "" || isOccupied(occupancy, pos) {
+		for _, pos := range claim.ExtensionPositions() {
+			if isOccupied(occupancy, pos) {
 				continue
 			}
 			bare = append(bare, pos)

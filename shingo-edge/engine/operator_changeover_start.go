@@ -251,7 +251,8 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 //
 // Fail-open on a read error. A flaky SQLite read must not block a changeover the
 // operator is standing at the line to run; the resource-level gates (reservations
-// and swapLegHeld) are the real safety net and they hold regardless.
+// and Core's dispatch-time pair rule) are the real safety net and they hold
+// regardless.
 func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 	nodes := blockNodeSet(plan)
 	if len(nodes) == 0 {
@@ -261,8 +262,8 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 	if err != nil {
 		// Fail OPEN, as this function always has. A flaky read must not block a
 		// changeover the operator is standing at the line to run; the
-		// resource-level gates (reservations, swapLegHeld) are the real safety
-		// net and they hold regardless.
+		// resource-level gates (reservations, Core's dispatch-time pair rule) are
+		// the real safety net and they hold regardless.
 		e.logFn("changeover: list active orders for the start gate: %v", err)
 		return nil
 	}
@@ -312,14 +313,27 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		}
 		if len(missing) > 0 {
 			// Non-blocking advisory (was a HARD REFUSAL before 2026-06-04).
-			// Core queues an unsourceable supply retrieve (5eb0a3a) and holds
-			// a two-robot swap's removal leg until its supply sibling claims a
-			// bin (0d95521), so a changeover started without stock parks its
-			// supply legs as "Awaiting Stock" and self-heals once the operator
-			// loads + manifest-confirms the material. Refusing here instead
-			// dead-ended the operator with idle robots and no course of action
-			// (Springfield NF SPOT 3, 2026-06-03). Surface the missing list as
-			// advisory and let the changeover proceed.
+			// Core queues an unsourceable supply retrieve (5eb0a3a), so a
+			// changeover started without stock parks its supply legs as
+			// "Awaiting Stock" and self-heals once the operator loads +
+			// manifest-confirms the material. Refusing here instead dead-ended
+			// the operator with idle robots and no course of action (Springfield
+			// NF SPOT 3, 2026-06-03). Surface the missing list as advisory and
+			// let the changeover proceed.
+			//
+			// THE SECOND HALF OF THAT JUSTIFICATION NAMED A MECHANISM THAT IS
+			// GONE. It also cited commit 0d95521 — Core holding a two-robot
+			// swap's removal leg until its supply claimed a bin — and that hold
+			// is deleted. The conclusion is unchanged and the reason is now
+			// stronger: Core's pair rule parks BOTH legs together on the supply's
+			// material wait, so a stockless changeover queues its pairs rather
+			// than half-dispatching them, and the same self-heal applies.
+			//
+			// The steady-state door does NOT rely on that: guardSourceKnownDry
+			// (operator_guards.go) refuses to arm a pair into a known-dry source
+			// at all. The difference is deliberate — a changeover is a deliberate
+			// operator action that must not dead-end, and a level-keeper tick has
+			// nobody standing at it.
 			awaitingStock = missing
 			e.logFn("changeover: process %d → style %d starting with %d payload(s) not yet in stock; supply legs will queue as Awaiting Stock until loaded: %v",
 				processID, toStyleID, len(missing), missing)

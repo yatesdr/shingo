@@ -255,7 +255,7 @@ func PayloadsForManualSwapNodes(db *sql.DB) (map[string]map[protocol.ClaimRole]P
 		if err != nil {
 			return nil, fmt.Errorf("manual-swap payloads: scan claim: %w", err)
 		}
-		if claim.SwapMode != protocol.SwapModeManualSwap {
+		if !claim.IsLoaderNode() {
 			continue
 		}
 		// A claim on a style with no resolvable process was unreachable from the

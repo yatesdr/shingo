@@ -36,7 +36,7 @@ import (
 func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range protocol.ConfigurableSwapModes() {
+	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
 				name := string(mode)
@@ -201,7 +201,7 @@ func TestEveryChangeoverLegDepartsProvably(t *testing.T) {
 	// the press-index different-bin-type fan-out and UpsertClaim rejects it, so
 	// no configured claim ever carries it. It still emits a cell leg the stamp
 	// fires on, which is the only thing that decides whether it belongs here.
-	modes := append(protocol.ConfigurableSwapModes(), pressPositionSwapMode)
+	modes := withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode))
 	for _, mode := range modes {
 		for _, second := range []string{"", "STANDARD-C"} {
 			name := string(mode)
@@ -281,7 +281,7 @@ func standardClaim(mode protocol.SwapMode, secondPaired string, flipped bool) *p
 // the one failure a walker cannot report on itself.
 func TestTheStandardCoversEveryConfigurableMode(t *testing.T) {
 	t.Parallel()
-	for _, mode := range protocol.ConfigurableSwapModes() {
+	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		if mode == protocol.SwapModeManualSwap {
 			// The one deliberate exemption: manual_swap issues no complex
 			// orders at all (multi-order queue, no swap choreography), so
@@ -335,7 +335,7 @@ func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
 
 	// Steady state: ConfigurableSwapModes × both flip states × 2- and 3-position.
 	steady := map[string]bool{}
-	for _, mode := range protocol.ConfigurableSwapModes() {
+	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
 				claim := standardClaim(mode, second, flipped)
@@ -370,7 +370,7 @@ func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
 	// armed, so the downgrade is never reached during one) and fixed anyway,
 	// because the conjunction is at the stamp and knows nothing about builders.
 	changeover := map[string]bool{}
-	for _, mode := range append(protocol.ConfigurableSwapModes(), pressPositionSwapMode) {
+	for _, mode := range withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode)) {
 		for _, second := range []string{"", "STANDARD-C"} {
 			from := standardClaim(mode, second, false)
 			to := standardClaim(mode, second, false)

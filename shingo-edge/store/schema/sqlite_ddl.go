@@ -566,6 +566,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
 --      turn out empty. Springfield's are correctly on Core (verified
 --      2026-07-21); other plants are unverified.
 --
+-- Its last code reader was shingo-core/cmd/migrateloaders, which is now deleted.
+-- Nothing reads the rows any more; reason 2 above is a HUMAN remediation input,
+-- not a program's. Both reasons for keeping it are still good, and neither one
+-- is a code dependency.
+--
 -- Drop it with a normal migration once both plants have run a clean week on a
 -- post-sweep binary. See EXEC-LOG-cobalt-kestrel-2284.md (queue item 5) and
 -- FOLLOWUPS.md.
@@ -630,16 +635,35 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
 );
 
 
--- home_location_loaders — membership set marking a bin loader's layout as
--- "home location" (each payload its own dedicated node) vs the default single
--- window. Orthogonal to operator_driven_loaders (type vs layout). See
--- store/home_location_loaders.go.
-CREATE TABLE IF NOT EXISTS home_location_loaders (
-    core_node_name TEXT NOT NULL,
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_by     TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (core_node_name)
-);
+-- REMOVED 2026-09-10 — home_location_loaders.
+--
+-- Membership set marking a bin loader's layout as "home location" (each payload
+-- its own dedicated node) vs the default single window. The layout fact is
+-- Core's (bin_loaders.layout → Loader.IsDedicated() → StationNodeView), and the
+-- Go surface that mirrored it here — store/home_location_loaders.go, the
+-- StyleService method, the API input field and the handler arm — was removed
+-- once the claim editor stopped sending the flag. Its last reader anywhere was
+-- shingo-core/cmd/migrateloaders, and that command is deleted: its derivation
+-- ran at both plants in June 2026 and its input can no longer be produced,
+-- because manual_swap has not been authorable in the claim editor since
+-- 0ef5b959 (2026-06-22) and is not persistable at all since the retirement.
+--
+-- THE DDL IS DELETED; THE PHYSICAL TABLE IS DELIBERATELY LEFT ON DISK, the same
+-- disposition loader_payload_thresholds got above and for the first of its two
+-- reasons: a pre-sweep binary rolled back onto a plant must still boot, and a
+-- dropped table does not come back. Dropping it is a data decision and the
+-- owner's. Reason 2 there does not apply here — these rows record a layout Core
+-- now owns outright, so they are not a remediation input.
+--
+-- Re-verified 2026-09-10 before deleting the CREATE: no reader and no writer in
+-- any of the five modules. What is left is two comments that mention the name
+-- (domain/station_view.go, engine/operator_supply_refusal_test.go), both
+-- explaining that the copy WAS here and is not any more.
+--
+-- The previous note said the DDL stayed "so a fresh edge DB keeps the same shape
+-- as the plants'". That is exactly the divergence the convergence test records,
+-- not a reason — and it is the shape every entry in schemadump/known.go is about.
+-- Its sibling operator_driven_loaders is dropped outright in migrate().
 
 -- Every part identity a press's PLC has actually declared, post-debounce.
 -- The plant's first persisted record of what the wire carries — see

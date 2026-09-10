@@ -59,9 +59,9 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 	e.recordBlockLeg(ev)
 
 	switch {
-	case isPickupBlock(ev.BinTask):
+	case IsPickupBlock(ev.BinTask):
 		e.handlePickupBlockCompleted(ev)
-	case isDropoffBlock(ev.BinTask):
+	case IsDropoffBlock(ev.BinTask):
 		e.handleStoreBlockCompleted(ev)
 	}
 }
@@ -438,6 +438,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	if !ok {
 		e.dbg("transit: order %d dropoff block %s @ %s — no in-flight claimed bin matched; store recorded at order FINISHED instead",
 			ev.OrderID, ev.BlockID, ev.Location)
+		e.noteUnannouncedLineRebind(order, location)
 		return
 	}
 
@@ -530,6 +531,83 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	}
 }
 
+// lineRebindUnannouncedAction is the recovery_actions verb for a line placement
+// whose rebind announcement Core could not send.
+const lineRebindUnannouncedAction = "line_rebind_unannounced"
+
+// noteUnannouncedLineRebind makes resolveDropoffBin's decline AUDIBLE when the
+// dropoff it declined is the order's own process node.
+//
+// ── WHAT GOES SILENT WITHOUT IT ────────────────────────────────────────────
+//
+// A single_robot consume swap places the fresh carrier on the line at step 7 of
+// nine, and that placement is an INTERMEDIATE dropoff (the order ends at the
+// market at step 9). The rebind rides the UOPAdjustment{Bound} broadcast a few
+// lines below, and the broadcast only happens if resolveDropoffBin resolved a
+// bin. It resolves "the ONE bin this order still has claimed at _TRANSIT", so it
+// declines whenever an earlier step did not land — a step-5 store whose block
+// event was lost leaves the spent carrier at _TRANSIT, and step 6 then puts the
+// fresh one there too.
+//
+// The decline returns quietly. Edge never hears the announcement, and every arm
+// of HandleUOPAdjustment that could bind an empty slot refuses one on purpose,
+// so the cell is left with a full carrier standing on it, active_bin_id NULL,
+// and no releaser. The only trace is the e.dbg line above: nothing at info,
+// nothing durable, no alarm naming the node. One missed step five steps earlier,
+// and silence.
+//
+// ── WHY IT IS A recovery_actions ROW AND NOT DeliveredNotBound ─────────────
+//
+// DeliveredNotBound is the right FAMILY — it exists for "a bin arrived at a node
+// we own and nothing bound", and it carries exactly the instruction an operator
+// needs here. It lives on the EDGE (shingo-edge/engine/wiring_delivered.go), and
+// this decline is known only to CORE. There is no Core→Edge alarm subject on the
+// wire to carry it across, and inventing one to reach a handler is a wire change
+// that should be decided rather than assumed.
+//
+// So the alarm is raised where the fact is, through Core's established durable
+// surface for "something that should have happened did not" — the same table the
+// lane liveness floor, the chapter floor and the dig standoff tripwire write to.
+// It carries the SAME operator instruction, so the front door the operator is
+// sent to is unchanged, and that door genuinely works: a count correction lands
+// as a UOPAdjustment and binds through HandleUOPAdjustment's repair arm.
+//
+// ── NARROW, BECAUSE A FLOOR THAT CRIES WOLF STOPS BEING READ ───────────────
+//
+// Only a decline at the order's OWN PROCESS NODE is alarmed. The identical
+// decline at a staging or supermarket slot is ordinary — the order is coming
+// back for that bin, and two existing tests cover those shapes — and stays at
+// debug. Alarming those would put a row on the board for every intermediate
+// store in the plant, which is how the one row that matters gets skipped.
+//
+// Best-effort: a failure to record must never stop the handler. Nothing about
+// the bind seam's behaviour changes here — this path already returned without
+// binding, and it still does. All that is added is that it says so.
+//
+// TODO(2026-09-10): study a better shape.
+// This alarm is the BACKSTOP, not the fix. It fires because the rebind had to
+// INFER which bin was placed by counting bins at _TRANSIT, and the count was
+// ambiguous — a derived fact failing, not a placement failing. The better shape
+// is for the dropoff step to carry the bin it placed, which would make this
+// decline unreachable rather than audible; see resolveDropoffBin for what was
+// already checked and why nobody has built it. Until then the operator's
+// "Record Count" is the recovery, and that is a recovery, not a design.
+func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string) {
+	if order == nil || order.ProcessNode == "" || location != order.ProcessNode {
+		return
+	}
+	detail := fmt.Sprintf(
+		"order %d placed a bin at %s but Core could not resolve WHICH bin it set down "+
+			"(no single claimed bin at _TRANSIT), so no rebind was announced to the edge. "+
+			"The cell may now hold a carrier with nothing bound to it. "+
+			"Record Count on the bin tab to bind it",
+		order.ID, location)
+	e.logFn("transit: REBIND NOT ANNOUNCED — %s", detail)
+	if err := e.db.RecordRecoveryAction(lineRebindUnannouncedAction, "order", order.ID, detail, "system"); err != nil {
+		e.logFn("transit: record unannounced-rebind alarm for order %d: %v", order.ID, err)
+	}
+}
+
 // resolveDropoffBin finds the bin this order just set down at `location`: the
 // one bin the order still has claimed at _TRANSIT — what the robot is carrying.
 // A bin already delivered is unclaimed and not at _TRANSIT, which makes the
@@ -588,6 +666,18 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 // has two bins in flight, which one robot cannot do — either way, guessing would
 // record a bin at a slot it is not in, and a wrong location is worse than a late
 // one (the order-FINISHED path still catches the honest case).
+//
+// TODO(2026-09-10): study a better shape.
+// This INFERS which bin was placed by counting what the order holds at _TRANSIT
+// — a derived fact — so an earlier step that did not land leaves two bins here
+// and the rebind gives up (see noteUnannouncedLineRebind, which alarms on it).
+// The better shape is for the DROPOFF STEP to carry the identity of the bin it
+// placed, so nothing has to count. Checked before writing this: no such field
+// exists on protocol.ComplexOrderStep or on resolvedStep, and the order_bins
+// junction cannot stand in — it records PICKUP rows only, and its dest_node
+// answers "where does this bin end up", which is the different question this
+// predicate replaced. Carrying it means stamping the step after the allocator
+// selects bins, which is a writer nobody has built.
 func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64, bool) {
 	transit, err := e.db.GetNodeByDotName(domain.TransitNodeName)
 	if err != nil || transit == nil {
@@ -614,11 +704,18 @@ func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64,
 	return carried[0], true
 }
 
-// isPickupBlock returns true when a block's BinTask designates a
+// IsPickupBlock returns true when a block's BinTask designates a
 // pickup-shaped operation. The vendor's BinTask vocabulary is
 // roboshop-configurable (the storage-bin-location action key), so we
 // match on common patterns rather than an exact set.
-func isPickupBlock(binTask string) bool {
+//
+// EXPORTED FOR ONE READER, AND THE REASON IS THE VOCABULARY. soakstat's
+// bin-residence check reads the same BLOCK_FINISHED ledger rows this handler
+// writes and has to classify them the same way. A second copy of a
+// roboshop-CONFIGURABLE match would drift the moment a plant renames an action
+// key — and it would drift silently, because the instrument would go on
+// answering, just wrongly. One definition, two readers.
+func IsPickupBlock(binTask string) bool {
 	if binTask == "" {
 		return false
 	}
@@ -638,11 +735,12 @@ func isPickupBlock(binTask string) bool {
 	return false
 }
 
-// isDropoffBlock returns true when a block's BinTask designates a
-// dropoff-shaped operation — the store/deliver dual of isPickupBlock. Same
+// IsDropoffBlock returns true when a block's BinTask designates a
+// dropoff-shaped operation — the store/deliver dual of IsPickupBlock. Same
 // roboshop-configurable-vocabulary caveat, so it mixes exact-match with a
-// substring fallback on "unload"/"drop"/"release".
-func isDropoffBlock(binTask string) bool {
+// substring fallback on "unload"/"drop"/"release". Exported for the same one
+// reader, for the same reason.
+func IsDropoffBlock(binTask string) bool {
 	if binTask == "" {
 		return false
 	}

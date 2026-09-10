@@ -81,6 +81,17 @@ const waitKindStation = "station"
 // NOT FOR LINE NODES. Declaring a line dropoff exclusive would gate a supply leg
 // on a node its sibling evac is on the way to clear, which re-creates the
 // deadlock Core's 2b05dce fixed. Line dropoffs stay plain literals.
+//
+// THE FENCE IS RIGHT; THAT SENTENCE IS NOT WHAT MAKES IT RIGHT. "Its sibling is
+// on the way to clear it" describes a race, and a race is something a wait can
+// win. What cannot be won is the PHASE: Core's exclusive-dropoff check runs
+// before the sources are acquired, so an exclusive line node holds the supply at
+// CLAIMING time while its evac — held on the supply securing a bin — is at the
+// same phase waiting for it. Neither is on the way anywhere yet. Two legs each
+// waiting for the other to acquire is a mutual wait no event ends, which is why
+// this is a fence rather than a tuning knob. See reserveComplexDestination in
+// shingo-core/dispatch/complex_dispatch.go, which states the same rule from the
+// other side.
 func stagingDropoff(node string) protocol.ComplexOrderStep {
 	return protocol.ComplexOrderStep{
 		Action:        "dropoff",
@@ -333,24 +344,25 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 // Both robots fire on operator release. The fleet manager handles cross-leg
 // sequencing on shared nodes (R2's dropoff(A) waits for R1's pickup(A);
 // R1's dropoff(C) waits for R2's pickup(C) in the 3-position case).
-// ── THE FLIP (IndexRobotSupplies), and why it is safe without a gate change ──
+// ── THE FLIP (IndexRobotSupplies), and why it needs no gate ──────────────────
 //
-// Unflipped, R1 is self-sufficient: it evacuates AND backfills, so today's
-// INDEX anti-collision arm in swap_hold.go reads it as a leg that needs no
-// partner and lets it through. Flipped, R1 is evac-only and R2 owns the
-// refill, and the same arm reads BOTH legs as needing a partner.
+// This used to explain why v1 did not touch Core's index anti-collision arm:
+// unflipped, R1 is self-sufficient and the arm let it through; flipped, the same
+// arm would read BOTH legs as needing a partner, and a hold on both legs is a
+// permanent mutual deadlock — both robots and the press out until someone
+// cancels a leg (SYNTH-round2, 5/5 reviewers independently).
 //
-// v1 DOES NOT TOUCH swap_hold.go. SYNTH-round2 established why: applySwapGates
-// runs BEFORE acquireComplexSources, so a hold gates CLAIMING, not
-// fleet-create — and a stamp that holds both legs is a permanent mutual
-// deadlock, both robots and the press out until someone cancels a leg. 5/5
-// reviewers reached that independently.
+// THAT ARM NO LONGER EXISTS, and the deadlock was not theoretical: once Core
+// admitted both legs in one pass, the arm wedged a plain unflipped pair the same
+// way, and it was measured before it was deleted.
 //
-// So flipped pairs FAIL OPEN at dispatch, deliberately: both legs dispatch and
-// park at their opening stationWait. The physical collision needs one leg
-// RELEASED while the other is not, and that is what Unit 2's release-gate
-// precondition refuses (see ReleaseStagedOrders). A refused release is a click
-// the operator repeats; a refused dispatch is a mutual wait.
+// The conclusion is unchanged and now unconditional. BOTH legs open with a
+// stationWait either way, so dispatch parks two robots under two nodes and no
+// bin moves until the operator releases. The physical collision needs one leg
+// RELEASED while the other is not, and that is what the release-gate
+// precondition refuses (see ReleaseStagedOrders and
+// refusePlacingLegWhileSiblingPending). A refused release is a click the
+// operator repeats; a refused dispatch was a mutual wait.
 func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orderR2 []protocol.ComplexOrderStep) {
 	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {
 		return nil, nil

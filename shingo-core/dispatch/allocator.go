@@ -330,7 +330,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//
 		// The clause below says the same thing but tests it as `len(assigned) == 0`,
 		// and that test cannot see the case it was written for. A press-index evac
-		// fetches its own fresh carrier (legSecuresOwnReplacement), so by the time
+		// fetches its own fresh carrier (a second pickup, away from the line), so by the time
 		// its line pickup comes up empty it is already holding that carrier's
 		// reservation and the destination slot for the bin it meant to store. It
 		// therefore always holds something, always reads as a partial set, and falls
@@ -341,7 +341,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		// WHAT THAT COSTS, MEASURED. lane-stress 2026-08-10: PRESS-1's evac (order
 		// 64) sat in `sourcing` for 33 minutes holding an empty carrier and a
 		// storage slot, against a PLN_001 that held no bin. Its index sibling (65)
-		// was correctly held by swapLegHeld until the evac committed — and the
+		// was, at the time, held by the index anti-collision arm until the evac
+		// committed — and the
 		// sibling's dropoff was PLN_001, the very position the evac was waiting to
 		// find a bin in. Neither leg could move and neither was wrong: the evac
 		// waited for a bin only the index could deliver, the index waited for an

@@ -182,20 +182,27 @@ func TestSeedEdge_DemoPlant(t *testing.T) {
 	if n := count(`SELECT COUNT(*) FROM process_node_runtime_states r JOIN process_nodes pn ON r.process_node_id=pn.id WHERE pn.core_node_name='PLN_004' AND r.active_pull=0`); n != 1 {
 		t.Fatalf("PRESS-2 parked side active_pull=0: want 1, got %d", n)
 	}
-	// A manual_swap loader-WINDOW claim round-trips correctly (PLK_W1 is one window
-	// of the multi-window PLK_LOADER; the loader has no anchor node — its windows
-	// carry the claim config).
-	var role, swap, payload, outDst string
-	var cap, autoReorder int
-	if err := db.QueryRow(`SELECT role, swap_mode, payload_code, uop_capacity, auto_reorder, outbound_destination
-		FROM style_node_claims WHERE core_node_name='PLK_W1'`).
-		Scan(&role, &swap, &payload, &cap, &autoReorder, &outDst); err != nil {
-		t.Fatalf("PLK_W1 (LOADER-COMP window) claim: %v", err)
+	// A LOADER WINDOW GETS NO EDGE CLAIM ROW, and this assertion is the inverse of
+	// the one it replaces. PLK_W1's manual_swap claim used to round-trip into
+	// style_node_claims with its role, payload, capacity and outbound destination,
+	// and that row was a second authority for six facts Core owns: the same
+	// fixture entry builds the bin_loader on the Core side, the Edge receives it
+	// on every node-list sync, and SynthClaim serves the window from the
+	// aggregate. manual_swap is retired as a persisted value, so seed_edge now
+	// skips the claim INSERT for a loader entry.
+	//
+	// Asserted across the whole database rather than on PLK_W1 alone: the rule is
+	// that NO loader claim is stored, and a per-node check would pass while the
+	// homes, the single windows or the unloader still seeded one.
+	if n := count(`SELECT COUNT(*) FROM style_node_claims WHERE swap_mode='manual_swap'`); n != 0 {
+		t.Fatalf("loader claims must not be seeded on the Edge (Core owns them); got %d", n)
 	}
-	if role != "produce" || swap != "manual_swap" || payload != "BRKT" || cap != 20 || autoReorder != 1 || outDst != "SYN_SM_Comp" {
-		t.Fatalf("LOADER-COMP window claim fields wrong: role=%s swap=%s payload=%s cap=%d autoReorder=%d outDst=%s",
-			role, swap, payload, cap, autoReorder, outDst)
-	}
+	// The FIXTURE still says manual_swap and must: plantspec reads it through
+	// Claim.IsLoader to build the loader on the Core side, so what changed is
+	// what the Edge persists, not what the spec describes. The nodes and their
+	// per-window operator stations below are seeded from those same entries and
+	// are unaffected — which is the half that would break if the re-cut had
+	// deleted the entries instead.
 	// The synthetic loader identity PLK_LOADER is NOT a physical node — no anchor
 	// process_node or claim exists for it (the windows are its only nodes).
 	if n := count(`SELECT COUNT(*) FROM style_node_claims WHERE core_node_name='PLK_LOADER'`); n != 0 {

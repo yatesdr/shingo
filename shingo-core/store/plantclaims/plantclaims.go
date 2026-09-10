@@ -92,6 +92,21 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 		}
 	}
 
+	// swap_mode HAS NO CORE READER, AND THE WRITE STILL CANNOT STOP. No SELECT
+	// anywhere in shingo-core reads style_claims.swap_mode back — the mirror's own
+	// readers (PayloadsRequiring below, sourceability, lane_queries, bins,
+	// inventory) all project other columns — so this is a write-only column.
+	//
+	// It cannot simply be dropped from the INSERT: the column is
+	// `swap_mode TEXT NOT NULL` with NO DEFAULT (store/migrations.go v49, and the
+	// frozen schema.snapshot.sql), so omitting it fails every plant-claims replace
+	// with a not-null violation and the mirror stops ingesting at both plants.
+	// Retiring it therefore needs a migration to add a default or drop the column,
+	// which is an owner decision, not a cleanup. Left as-is deliberately.
+	//
+	// Note the wire already excludes loaders: the Edge publisher skips
+	// IsLoaderNode() claims ("pool, not claims"), so manual_swap never reaches
+	// this column in the first place.
 	styleInsert, err := tx.Prepare(
 		`INSERT INTO style_claims
 		 (process_id, style_id, core_node_name, role, swap_mode, payload_code,
