@@ -41,6 +41,31 @@ var KnownDivergences = []KnownDivergence{
 			"while a fresh install no longer creates it at all. Unused; dropping it is a " +
 			"data decision.",
 	},
+	// ADDED 2026-09-10, AND IT IS AN EXCEPTION TO THE "NOTHING NEW" RULE ABOVE.
+	// Stated as an exception rather than slipped in, so that rule keeps meaning
+	// what it says and this can be reverted in one commit if it is meant to be
+	// absolute.
+	//
+	// The rule guards against DRIFT — a shape that reaches a fresh install and
+	// never a plant because nobody noticed. This is the opposite: a DDL deleted
+	// on purpose, whose table is left on plant disks on purpose. It is the same
+	// category as loader_payload_thresholds directly above, which is recorded
+	// here for exactly this shape and was removed the same way.
+	//
+	// Converging instead of recording would mean DROP TABLE in migrate(), which
+	// destroys plant rows — a data decision reserved to the owner. So the choice
+	// was to record it or to keep creating a table with no reader on every new
+	// install. If the rule above is absolute, revert the sqlite_ddl.go deletion
+	// and this entry together.
+	{
+		Key: "table home_location_loaders: present in the upgraded database only",
+		Why: "the DDL was deleted 2026-09-10 after re-verifying no reader or writer in any " +
+			"of the five modules; its last one anywhere was shingo-core/cmd/migrateloaders, " +
+			"which is deleted. The physical table is deliberately left on plant disks so a " +
+			"rollback onto a pre-sweep binary still boots. A fresh install no longer creates " +
+			"it. Observed by the two newer vintages; f446fda7 predates the table entirely and " +
+			"converges without it. Dropping it is a data decision.",
+	},
 }
 
 // KnownDivergence is one recorded difference between a fresh edge database and

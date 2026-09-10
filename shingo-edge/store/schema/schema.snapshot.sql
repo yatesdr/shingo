@@ -191,13 +191,6 @@ CREATE TABLE demand_origins_open (
     opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE home_location_loaders (
-    core_node_name TEXT NOT NULL,
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_by     TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (core_node_name)
-);
-
 CREATE TABLE hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
