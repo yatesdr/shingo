@@ -262,3 +262,144 @@ func TestSingleRobotSwap_LineRebindIsSilentlyDisarmedByATrailingTransitBin(t *te
 	// physically stands on it.
 	testdb.RequireBinAtNode(t, db, fresh.ID, transitID)
 }
+
+// TestSingleRobotSwap_UnresolvedLineRebindRaisesAnAlarm is the audibility fix,
+// red-first.
+//
+// The case above establishes that a trailing _TRANSIT bin makes resolveDropoffBin
+// decline and the rebind announcement never leave Core. This asserts that the
+// decline is now AUDIBLE: a durable recovery_actions row naming the order, the
+// node, and what the operator can do about it.
+//
+// ── WHY recovery_actions AND NOT THE DeliveredNotBound FAMILY ──────────────
+//
+// The brief asked for this to ride DeliveredNotBound, which carries exactly the
+// right operator instruction. That family lives on the EDGE
+// (shingo-edge/engine/wiring_delivered.go) and this decline happens on CORE,
+// with no Core→Edge alarm subject on the wire to carry it across. Rather than
+// invent one, the alarm is raised on the side where the fact is known, through
+// Core's established durable surface for "something that should have happened
+// did not" — the same table the lane liveness floor, the chapter floor and the
+// dig standoff tripwire write to. It carries the SAME operator instruction, so
+// the front door the operator is sent to is unchanged.
+//
+// ── AND IT IS NARROW ON PURPOSE ────────────────────────────────────────────
+//
+// The alarm fires only when the declined dropoff is at the ORDER'S OWN PROCESS
+// NODE — the line placement, the one whose failure leaves a cell unbound. The
+// same decline at a staging or supermarket slot is ordinary (two existing tests
+// cover those shapes) and stays at debug. A check that fired on those would be
+// the cry-wolf this codebase warns about at every other floor.
+func TestSingleRobotSwap_UnresolvedLineRebindRaisesAnAlarm(t *testing.T) {
+	t.Parallel()
+
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	line := sd.LineNode
+	market := sd.StorageNode
+	inStage := &nodes.Node{Name: "SRA-IN-STAGE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(inStage), "create inbound staging")
+	outStage := &nodes.Node{Name: "SRA-OUT-STAGE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(outStage), "create outbound staging")
+
+	ord := &orders.Order{
+		EdgeUUID:     "single-robot-rebind-alarm",
+		StationID:    "line-1",
+		OrderType:    dispatch.OrderTypeComplex,
+		Status:       dispatch.StatusInTransit,
+		Coordinated:  true,
+		SourceNode:   market.Name,
+		DeliveryNode: market.Name,
+		ProcessNode:  line.Name,
+		PayloadCode:  sd.Payload.Code,
+		StepsJSON:    singleRobotSwapSteps(t, line.Name, inStage.Name, outStage.Name, market.Name, market.Name),
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "create single_robot swap order")
+
+	var transitID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM nodes WHERE name='_TRANSIT'`).Scan(&transitID),
+		"lookup _TRANSIT")
+	fresh := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "SRA-FRESH")
+	spent := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "SRA-SPENT")
+	testdb.ClaimBinForTest(t, db, fresh.ID, ord.ID)
+	testdb.ClaimBinForTest(t, db, spent.ID, ord.ID)
+
+	eng.handleStoreBlockCompleted(BlockCompletedEvent{
+		OrderID:  ord.ID,
+		BlockID:  "sra-b7",
+		Location: line.Name,
+		BinTask:  "JackUnload",
+	})
+
+	var n int
+	var detail string
+	err := db.DB.QueryRow(
+		`SELECT count(*), COALESCE(max(detail),'') FROM recovery_actions
+		  WHERE action = $1 AND target_type = 'order' AND target_id = $2`,
+		"line_rebind_unannounced", ord.ID).Scan(&n, &detail)
+	testutil.MustNoErr(t, err, "read recovery_actions")
+	if n == 0 {
+		t.Fatal("the rebind was NOT announced and NOTHING said so.\n" +
+			"A cell is now standing with a full carrier and no binding, and the only trace is a " +
+			"debug line. This is the alarm that makes it audible.")
+	}
+	if !strings.Contains(detail, line.Name) {
+		t.Errorf("the alarm does not name the node (%q) — the operator's first question is WHICH cell.\ndetail: %s",
+			line.Name, detail)
+	}
+	if !strings.Contains(detail, "Record Count") {
+		t.Errorf("the alarm carries no operator instruction. The front door is a count correction, "+
+			"which binds through HandleUOPAdjustment's repair arm.\ndetail: %s", detail)
+	}
+}
+
+// TestStoreBlockDecline_AtAStagingSlotStaysQuiet is the narrowness assertion.
+// The same resolveDropoffBin decline at a node that is NOT the order's process
+// node is ordinary — an intermediate store whose bin the order is coming back
+// for — and must not raise an alarm, or the alarm becomes noise and stops being
+// read.
+func TestStoreBlockDecline_AtAStagingSlotStaysQuiet(t *testing.T) {
+	t.Parallel()
+
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	line := sd.LineNode
+	market := sd.StorageNode
+	outStage := &nodes.Node{Name: "SRQ-OUT-STAGE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(outStage), "create outbound staging")
+
+	ord := &orders.Order{
+		EdgeUUID:     "staging-decline-quiet",
+		StationID:    "line-1",
+		OrderType:    dispatch.OrderTypeComplex,
+		Status:       dispatch.StatusInTransit,
+		SourceNode:   market.Name,
+		DeliveryNode: market.Name,
+		ProcessNode:  line.Name,
+		PayloadCode:  sd.Payload.Code,
+		StepsJSON:    singleRobotSwapSteps(t, line.Name, "SRQ-IN", outStage.Name, market.Name, market.Name),
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "create order")
+
+	// No bin at _TRANSIT at all: resolveDropoffBin declines for the other reason.
+	eng.handleStoreBlockCompleted(BlockCompletedEvent{
+		OrderID:  ord.ID,
+		BlockID:  "srq-b5",
+		Location: outStage.Name,
+		BinTask:  "JackUnload",
+	})
+
+	var n int
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT count(*) FROM recovery_actions WHERE action = $1 AND target_id = $2`,
+		"line_rebind_unannounced", ord.ID).Scan(&n), "read recovery_actions")
+	if n != 0 {
+		t.Fatalf("a decline at a STAGING slot raised %d line-rebind alarm(s). That decline is "+
+			"ordinary — the order is coming back for that bin — and an alarm on it is the "+
+			"cry-wolf every other floor in this codebase warns about", n)
+	}
+}

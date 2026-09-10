@@ -438,6 +438,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	if !ok {
 		e.dbg("transit: order %d dropoff block %s @ %s — no in-flight claimed bin matched; store recorded at order FINISHED instead",
 			ev.OrderID, ev.BlockID, ev.Location)
+		e.noteUnannouncedLineRebind(order, location)
 		return
 	}
 
@@ -527,6 +528,74 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		}); err != nil {
 			e.logFn("transit: bind-to-edge broadcast bin %d -> %s: %v", binID, destNode.Name, err)
 		}
+	}
+}
+
+// lineRebindUnannouncedAction is the recovery_actions verb for a line placement
+// whose rebind announcement Core could not send.
+const lineRebindUnannouncedAction = "line_rebind_unannounced"
+
+// noteUnannouncedLineRebind makes resolveDropoffBin's decline AUDIBLE when the
+// dropoff it declined is the order's own process node.
+//
+// ── WHAT GOES SILENT WITHOUT IT ────────────────────────────────────────────
+//
+// A single_robot consume swap places the fresh carrier on the line at step 7 of
+// nine, and that placement is an INTERMEDIATE dropoff (the order ends at the
+// market at step 9). The rebind rides the UOPAdjustment{Bound} broadcast a few
+// lines below, and the broadcast only happens if resolveDropoffBin resolved a
+// bin. It resolves "the ONE bin this order still has claimed at _TRANSIT", so it
+// declines whenever an earlier step did not land — a step-5 store whose block
+// event was lost leaves the spent carrier at _TRANSIT, and step 6 then puts the
+// fresh one there too.
+//
+// The decline returns quietly. Edge never hears the announcement, and every arm
+// of HandleUOPAdjustment that could bind an empty slot refuses one on purpose,
+// so the cell is left with a full carrier standing on it, active_bin_id NULL,
+// and no releaser. The only trace is the e.dbg line above: nothing at info,
+// nothing durable, no alarm naming the node. One missed step five steps earlier,
+// and silence.
+//
+// ── WHY IT IS A recovery_actions ROW AND NOT DeliveredNotBound ─────────────
+//
+// DeliveredNotBound is the right FAMILY — it exists for "a bin arrived at a node
+// we own and nothing bound", and it carries exactly the instruction an operator
+// needs here. It lives on the EDGE (shingo-edge/engine/wiring_delivered.go), and
+// this decline is known only to CORE. There is no Core→Edge alarm subject on the
+// wire to carry it across, and inventing one to reach a handler is a wire change
+// that should be decided rather than assumed.
+//
+// So the alarm is raised where the fact is, through Core's established durable
+// surface for "something that should have happened did not" — the same table the
+// lane liveness floor, the chapter floor and the dig standoff tripwire write to.
+// It carries the SAME operator instruction, so the front door the operator is
+// sent to is unchanged, and that door genuinely works: a count correction lands
+// as a UOPAdjustment and binds through HandleUOPAdjustment's repair arm.
+//
+// ── NARROW, BECAUSE A FLOOR THAT CRIES WOLF STOPS BEING READ ───────────────
+//
+// Only a decline at the order's OWN PROCESS NODE is alarmed. The identical
+// decline at a staging or supermarket slot is ordinary — the order is coming
+// back for that bin, and two existing tests cover those shapes — and stays at
+// debug. Alarming those would put a row on the board for every intermediate
+// store in the plant, which is how the one row that matters gets skipped.
+//
+// Best-effort: a failure to record must never stop the handler. Nothing about
+// the bind seam's behaviour changes here — this path already returned without
+// binding, and it still does. All that is added is that it says so.
+func (e *Engine) noteUnannouncedLineRebind(order *orders.Order, location string) {
+	if order == nil || order.ProcessNode == "" || location != order.ProcessNode {
+		return
+	}
+	detail := fmt.Sprintf(
+		"order %d placed a bin at %s but Core could not resolve WHICH bin it set down "+
+			"(no single claimed bin at _TRANSIT), so no rebind was announced to the edge. "+
+			"The cell may now hold a carrier with nothing bound to it. "+
+			"Record Count on the bin tab to bind it",
+		order.ID, location)
+	e.logFn("transit: REBIND NOT ANNOUNCED — %s", detail)
+	if err := e.db.RecordRecoveryAction(lineRebindUnannouncedAction, "order", order.ID, detail, "system"); err != nil {
+		e.logFn("transit: record unannounced-rebind alarm for order %d: %v", order.ID, err)
 	}
 }
 
