@@ -33,9 +33,15 @@ import (
 )
 
 // CarriedBinNotRecoverable explains why no recovery order was created. It is
-// returned rather than logged-and-swallowed because both callers — an operator
-// pressing a button and a sweep — need the sentence: one to read, one to
-// record.
+// returned rather than logged-and-swallowed because the caller is a person: the
+// operator who pressed Recover on the bins page is owed the reason, and "ok, no"
+// is not one.
+//
+// THERE IS NO SWEEP CALLER. This used to say there were two callers, an operator
+// and a sweep, and that was never true of this door: sweepCarriedBins is the
+// WATCH half described at the top of this file — it places a bin the robot has
+// already set down, and creates no order. The one caller is
+// www/handlers_diagnostics.go's recover_carried_bin action.
 type CarriedBinNotRecoverable struct {
 	BinID  int64
 	Reason string

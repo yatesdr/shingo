@@ -104,16 +104,68 @@ func TestCensus_OrdersTableInsertStatements(t *testing.T) {
 	}
 }
 
+// writerSymbols is every call that brings an order row into existence, in the
+// spelling a reader would grep for.
+//
+// ONE LIST, BOTH ARMS. The census asks two questions — "is this door still a
+// door" and "has a new door opened" — and they used to be asked with different
+// predicates: the existence arm checked all three writer symbols while the
+// completeness arm greped db.CreateOrder( alone. So the direction that exists to
+// catch a NEW way in was blind to a writer reaching the table through
+// orders.Create or CreateCompoundChildren, and the census reported a
+// completeness it had not checked.
+//
+// AdmitCoreAsk belongs on this list even though it is not the store call. From a
+// caller's side it IS creation: it builds the order, admits it through the same
+// admitOrder body the wire path uses, and hands back the created row. The two
+// Core timer doors reach the table only through it and carry no store symbol of
+// their own — which is exactly how both of them stood uncounted while both
+// census tests passed green.
+var writerSymbols = []string{
+	"db.CreateOrder(",
+	"orders.Create(",
+	"CreateCompoundChildren(",
+	"AdmitCoreAsk(",
+}
+
+// writesOrders reports whether a source file brings orders into existence.
+func writesOrders(src string) bool {
+	for _, sym := range writerSymbols {
+		if strings.Contains(src, sym) {
+			return true
+		}
+	}
+	return false
+}
+
+// unnamedWriters is the completeness arm's whole judgement, lifted out so it can
+// be run against a synthetic tree as well as the real one. A census that can
+// only be exercised against the code it already describes cannot demonstrate
+// that it would catch anything.
+func unnamedWriters(sources map[string]string, named map[string]bool) []string {
+	var unnamed []string
+	for p, src := range sources {
+		if writesOrders(src) && !named[p] {
+			unnamed = append(unnamed, p)
+		}
+	}
+	slices.Sort(unnamed)
+	return unnamed
+}
+
 // door is one way an order can come to exist, described by what a person or a
 // system does rather than by where the code lives.
 //
 // The file list this replaced counted eight "doors" and was wrong in both
-// directions, because a file is not a door. service/order_service.go is a
-// delegate that three different surfaces call, so one file was three doors.
-// engine/orders.go is reached only from the /test-orders page, so one file was
-// a test harness rather than an operator action. And the buried-reshuffle
-// branch was counted as its own door until it turned out to be building the
-// same row complex intake builds — one door that looked like two.
+// directions, because a file is not a door. service/order_service.go was
+// counted as a delegate three surfaces called; the census then found that no
+// surface called it at all, and the delegate was deleted rather than described
+// (see the note where its Create used to be). engine/orders.go is reached only
+// from the /test-orders page, so one file was a test harness rather than an
+// operator action. And the buried-reshuffle branch was counted as its own door
+// until it turned out to be building the same row complex intake builds — one
+// door that looked like two. Meanwhile the two Core timer doors, which no file
+// list ever named, were writing orders the whole time.
 //
 // Counting files answered "how many places call the writer". What anyone
 // actually needs to know is "how many ways can an order appear, and what does
@@ -187,7 +239,51 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//     putting it right. An episode here would count a recovery as demand
 		//     and read every plant's demand history high by however many bins got
 		//     dropped that month.
-		{"carried-bin recovery", "engine/carried_bin_recovery.go", "nobody — Core asks the robot holding a stranded bin to put it down"},
+		{"carried-bin recovery", "engine/carried_bin_recovery.go", "an operator pressing Recover on the bins page — Core then asks the robot holding the stranded bin to put it down"},
+		// THE TWO CORE TIMER DOORS. Both mint retrieve_empty orders nobody on the
+		// Edge requested, both reach the orders table through AdmitCoreAsk and
+		// admitOrder rather than writing a row, and both stood on no list at all
+		// until the completeness arm was widened to see them. The two doors that
+		// fire with nobody watching were the two nothing counted.
+		//
+		// They are TWO doors and not one, for the reason this list exists: a door
+		// is a way an order comes to exist, and a shared body is not that. Two
+		// different systems ask for two different reasons under two different
+		// bounds — the same distinction that made one delegate file three doors
+		// before the delegate turned out to be dead.
+		//
+		// The three questions, loader replenish:
+		//  1. Projects to the Edge? YES, and this is THE case the projection
+		//     exists for. It routes through admitOrder, so it is inside the
+		//     scope; and no Edge station asked for the order, so without the
+		//     projection an operator watches a robot arrive at a window with
+		//     nothing on the board to say why.
+		//  2. Needs the dropoff-capacity gate? Yes, and it consults it per window
+		//     at decision time, with no order of its own to exclude. It then asks
+		//     a SECOND question the gate cannot answer — is a carrier already on
+		//     order for this window — because the gate does not count `queued`,
+		//     and that blindness is what let one dry loader stack 241 identical
+		//     asks at a single window, roughly one a minute.
+		//  3. What origin_class? Whatever the replenish request carries, and never
+		//     blank: AdmitCoreAsk stamps `attached` when an episode id is in hand
+		//     and `orphan` when neither is, rather than defaulting a
+		//     correctly-attributed order into the bucket that exists to find lost
+		//     attributions.
+		{"loader replenish", "dispatch/loader_replenish.go", "nobody — a loader's windows are below level and the replenishment loop asks for empty carriers"},
+		// The three questions, maintained-group level keeper:
+		//  1. Projects to the Edge? Yes, through the same body and for the same
+		//     reason — nobody on the Edge asked, so nobody there has a row.
+		//  2. Needs the dropoff-capacity gate? It does not consult it, and that is
+		//     a decision rather than an omission. The ask is bounded twice before
+		//     it is made: the keeper's own arithmetic subtracts what it already
+		//     asked for and what is already coming (want − resident − asked −
+		//     coming), and ResolveStore refuses a group already at its declared
+		//     level and hands back one concrete free slot. The destination is
+		//     pre-resolved for exactly this reason — one ask per free typed slot,
+		//     so there is no second ask to gate.
+		//  3. What origin_class? `attached`, stated at the call site rather than
+		//     defaulted. The keeper opened the episode itself and knows what it is.
+		{"maintained-group level keeper", "engine/maintainer.go", "nobody — a maintained group holds fewer empty carriers than its declared level and the maintainer's timer tops it up"},
 		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
 		// nothing takes its place, because the order it used to create does not
 		// exist. Its entry read "nobody — the lane gate finds a robot dwelling
@@ -209,18 +305,13 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	// orders has either moved or been merged, and either way this list is now
 	// describing a system that does not exist.
 	sources := scanCoreSources(t)
-	writes := func(src string) bool {
-		return strings.Contains(src, "db.CreateOrder(") ||
-			strings.Contains(src, "orders.Create(") ||
-			strings.Contains(src, "CreateCompoundChildren(")
-	}
 	for _, d := range doors {
 		src, ok := sources[d.site]
 		if !ok {
 			t.Errorf("door %q names %s, which no longer exists", d.name, d.site)
 			continue
 		}
-		if !writes(src) {
+		if !writesOrders(src) {
 			t.Errorf("door %q (%s) no longer creates orders. If it moved, say where; if it merged into another door, delete the entry and widen that one's description.",
 				d.name, d.site)
 		}
@@ -230,7 +321,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	// judgement rather than an omission. This is the distinction the old
 	// file-counting version could not make, and the reason it counted eight.
 	delegates := map[string]string{
-		"service/order_service.go": "delegate; the doors are the surfaces that call it, counted there",
+		"store/orders.go": "the writer itself; every door reaches the orders table through this file, which is why there is one INSERT and not several",
 	}
 
 	// And no site may start writing orders without being named as a door. This
@@ -242,13 +333,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	for site := range delegates {
 		named[site] = true
 	}
-	var unnamed []string
-	for p, src := range sources {
-		if strings.Contains(src, "db.CreateOrder(") && !named[p] {
-			unnamed = append(unnamed, p)
-		}
-	}
-	slices.Sort(unnamed)
+	unnamed := unnamedWriters(sources, named)
 	if len(unnamed) > 0 {
 		t.Errorf("these create orders and are not named as a door: %s\n"+
 			"Add one, in the words someone would use out loud, and answer three questions in the same commit:\n"+
@@ -270,4 +355,53 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestCensus_CompletenessArmSeesEveryWriterSymbol is the census pointed at
+// itself: a new production file that creates orders must fail the census until
+// somebody names it as a door.
+//
+// It exists because the arm was silently half-blind. The existence arm checked
+// all the writer symbols; the completeness arm — the ONE direction that can
+// catch a way in nobody has thought of yet — greped db.CreateOrder( alone. A new
+// file reaching the table through orders.Create, CreateCompoundChildren or
+// AdmitCoreAsk passed straight through it, which is not a hypothetical: two Core
+// timer doors did exactly that, and both census tests stayed green while they
+// did. Against the real tree that blindness is invisible, because the tree's own
+// db.CreateOrder( sites all happen to be named. So the arm is run here against a
+// synthetic tree, one symbol at a time.
+func TestCensus_CompletenessArmSeesEveryWriterSymbol(t *testing.T) {
+	t.Parallel()
+	// The doors named at the time the new file appears. Deliberately not the
+	// real list: this test is about the ARM, not about today's census.
+	named := map[string]bool{"dispatch/existing_door.go": true}
+
+	for _, sym := range writerSymbols {
+		t.Run(sym, func(t *testing.T) {
+			const newDoor = "dispatch/brand_new_door.go"
+			sources := map[string]string{
+				"dispatch/existing_door.go": "package dispatch\n\nfunc old() { " + sym + "o) }\n",
+				newDoor:                     "package dispatch\n\nfunc brandNew() { " + sym + "o) }\n",
+			}
+			got := unnamedWriters(sources, named)
+			if len(got) != 1 || got[0] != newDoor {
+				t.Errorf("a new file calling %s was reported as %v, want [%s].\n"+
+					"The completeness arm has to check every symbol the existence arm checks, or a door can open through the ones it skips.",
+					sym, got, newDoor)
+			}
+		})
+	}
+}
+
+// TestCensus_CompletenessArmIgnoresNonWriters keeps the arm from crying wolf:
+// a file that does not create orders is not an unnamed door, and an arm that
+// flags everything gets whitelisted into uselessness.
+func TestCensus_CompletenessArmIgnoresNonWriters(t *testing.T) {
+	t.Parallel()
+	sources := map[string]string{
+		"dispatch/reader.go": "package dispatch\n\nfunc r() { db.GetOrder(1) }\n",
+	}
+	if got := unnamedWriters(sources, map[string]bool{}); len(got) != 0 {
+		t.Errorf("unnamedWriters flagged non-writers: %v", got)
+	}
 }

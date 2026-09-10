@@ -29,14 +29,12 @@ func NewOrderService(db *store.DB, f fleet.Backend) *OrderService {
 	return &OrderService{db: db, fleet: f}
 }
 
-// --- Creation -------------------------------------------------------------
-
-// Create inserts a new order. Thin delegate kept here so handlers that
-// already hold an *OrderService for other mutations don't have to plumb
-// a second engine accessor through just to insert the row.
-func (s *OrderService) Create(o *orders.Order) error {
-	return s.db.CreateOrder(o)
-}
+// NO Create HERE, AND THAT IS THE POINT. There was one — a thin delegate for
+// "handlers that already hold an *OrderService" — and no handler ever called it.
+// Its only caller was its own test, so it was a door on the order-writer census
+// that nothing could walk through, and the census exempted the whole file from
+// the new-writer check on the strength of it. Order creation happens at the
+// counted doors; a handler that needs to make one goes to a door.
 
 // --- Status & vendor transitions -----------------------------------------
 

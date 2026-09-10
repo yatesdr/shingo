@@ -191,8 +191,11 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 // Core-authored order has no sender), and the received event.
 //
 // This is NOT the only way an order comes into existence in Core — see
-// TestCensus_OrderCreationPaths for the seven other writers. Anything that hangs
-// off this function covers what routes through it and nothing else.
+// TestCensus_OrderCreationDoors for the whole list. Of the seven doors there,
+// THREE route through this body (the Edge wire intake above, and the two Core
+// timer doors by way of AdmitCoreAsk); the other four write their row another
+// way. So anything hung off this function covers three doors in seven, which is
+// the number to hold in mind before saying "every order gets this".
 func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 	destNode, lerr := s.checkOrderRefs(order)
 	if lerr != nil {

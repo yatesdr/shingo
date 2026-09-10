@@ -42,39 +42,6 @@ func makeOrder(t *testing.T, db *store.DB, nodeName string) *orders.Order {
 	return o
 }
 
-func TestOrderService_Create_InsertsRow(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	svc, _ := newOrderSvc(db, false)
-
-	o := &orders.Order{
-		EdgeUUID:     "order-create-1",
-		StationID:    "st-1",
-		OrderType:    "move",
-		Status:       "pending",
-		Quantity:     2,
-		DeliveryNode: "dest",
-	}
-	testutil.MustNoErr(t, svc.Create(o), "Create")
-	if o.ID == 0 {
-		t.Fatal("expected ID to be populated after Create")
-	}
-
-	got, err := db.GetOrder(o.ID)
-	if err != nil {
-		t.Fatalf("GetOrder: %v", err)
-	}
-	if got.EdgeUUID != "order-create-1" {
-		t.Errorf("EdgeUUID = %q, want %q", got.EdgeUUID, "order-create-1")
-	}
-	if got.Quantity != 2 {
-		t.Errorf("Quantity = %d, want 2", got.Quantity)
-	}
-	if got.Status != "pending" {
-		t.Errorf("Status = %q, want pending", got.Status)
-	}
-}
-
 func TestOrderService_UpdateStatus_TransitionAndHistory(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
