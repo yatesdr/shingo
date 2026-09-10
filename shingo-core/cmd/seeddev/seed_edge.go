@@ -243,7 +243,23 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		claimIDByStyleNode[c.Style+"|"+c.CoreNode] = claimID
 	}
 
-	// reporting points (style_id + plc/tag)
+	// reporting points (style_id + plc/tag), and the counter the owning PROCESS
+	// declares.
+	//
+	// TWO PLACES HOLD "THIS CELL COUNTS" AND THEY ARE NOT THE SAME PLACE.
+	// reporting_points is what the poller reads; processes.counter_plc_name /
+	// counter_tag_name / counter_enabled is what the rest of the engine asks —
+	// binDrainedAtCoreNode gates on the PROCESS columns, so with them blank it
+	// answers DrainUnknown and ApplyReuseCompatibleBinsShortcut never fires. The
+	// seeder used to write the first and leave the second at its defaults, so the
+	// demo counted while every process on it declared no counter.
+	//
+	// The tie runs through the style: a point names a style
+	// (plantspec.ReportingPoint.Style) and a style names its process
+	// (plantspec.Style.Process, read into styleProc above).
+	type procCounter struct{ plc, tag, style string }
+	counterByProc := map[string]procCounter{}
+	var counterProcOrder []string
 	for _, rp := range p.ReportingPoints {
 		var sid int64
 		if rp.Style != "" {
@@ -257,6 +273,41 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			`INSERT OR IGNORE INTO reporting_points(style_id, plc_name, tag_name, enabled) VALUES(?,?,?,1)`,
 			sid, rp.PLCName, rp.TagName); err != nil {
 			return fmt.Errorf("reporting point %s/%s: %w", rp.PLCName, rp.TagName, err)
+		}
+
+		proc := styleProc[rp.Style]
+		if proc == "" {
+			// A styleless point names no process, so there is nothing to declare
+			// it on. It still polls; the columns stay blank, honestly.
+			continue
+		}
+		// ONE PROCESS, ONE COUNTER. The three columns hold exactly one, so two
+		// different ones is a plant this seeder cannot honour — and picking
+		// either would make the process declare a counter it does not have.
+		// Refuse by name so the yaml line is findable. Two points naming the
+		// SAME counter (the -RUN/-ALT pair) is not a conflict and is normal.
+		if prev, ok := counterByProc[proc]; ok {
+			if prev.plc != rp.PLCName || prev.tag != rp.TagName {
+				return fmt.Errorf("process %s is given two different counters by its reporting points: "+
+					"%s/%s (style %s) and %s/%s (style %s) — a process declares exactly one",
+					proc, prev.plc, prev.tag, prev.style, rp.PLCName, rp.TagName, rp.Style)
+			}
+			continue
+		}
+		counterByProc[proc] = procCounter{plc: rp.PLCName, tag: rp.TagName, style: rp.Style}
+		counterProcOrder = append(counterProcOrder, proc)
+	}
+	// Spec order, not map order, so a failing seed fails the same way twice.
+	for _, proc := range counterProcOrder {
+		pid, ok := procIDs[proc]
+		if !ok {
+			continue
+		}
+		cn := counterByProc[proc]
+		if _, err := db.Exec(
+			`UPDATE processes SET counter_plc_name=?, counter_tag_name=?, counter_enabled=1 WHERE id=?`,
+			cn.plc, cn.tag, pid); err != nil {
+			return fmt.Errorf("process %s counter %s/%s: %w", proc, cn.plc, cn.tag, err)
 		}
 	}
 
