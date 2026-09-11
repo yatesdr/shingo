@@ -64,6 +64,10 @@ func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T
 		o.Status = protocol.StatusInTransit
 		o.DeliveryNode = target.Name
 	})
+	// Driving there WITH the carrier it is bringing: the dropoff count reads
+	// holders, not statuses, and an order on its way to fill a slot holds its bin.
+	carried := createTestBinAtNode(t, db, bp.Code, prNode(t, db, "BUBBLE-INBOUND-SRC").ID, "BUBBLE-INBOUND-BIN")
+	testdb.ClaimBinForTest(t, db, carried.ID, inbound.ID)
 
 	slots, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), nil)
 	testutil.MustNoErr(t, err, "ask for parking with a deeper slot spoken for")

@@ -178,6 +178,9 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
+	// And hold it, as dispatch's claim leaves a store it sends: the dropoff count
+	// reads the bins an order holds, not its status.
+	testdb.ClaimBinForTest(t, db, bin.ID, plain.ID)
 	plainRaw, err := db.GetOrder(plain.ID)
 	plain = testutil.Must(t, plainRaw, err, "db.GetOrder(plain.ID)")
 	_, dErr := d.DispatchDirect(plain, srcNode, mouth)

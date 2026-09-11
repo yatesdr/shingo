@@ -151,10 +151,12 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		// — including sourcing→reshuffling, which the buried-source pivot takes.
 		// The first tick's MoveToSourcing now no-ops on sourcing→sourcing.
 		//
-		// THE ONE MEASURED CONSEQUENCE is the dropoff-capacity gate: it counts
-		// everything non-terminal EXCEPT `queued`, so a shopping complex order now
-		// enters the in-flight count earlier than it used to. That is the deliberate
-		// behaviour change, and it is what the sim certifies.
+		// THE ONE MEASURED CONSEQUENCE was the dropoff-capacity gate, which counted
+		// everything non-terminal EXCEPT `queued` — so a born-shopping order entered
+		// the in-flight count before it held anything, and two of them bound for one
+		// exclusive dropoff each counted the other and neither went. The gate now
+		// counts HOLDERS, not statuses (orders.InFlightForDropoffSQL): an order is in
+		// flight to a node when it holds a claimed bin bound there, whatever its rung.
 		Status:       StatusSourcing,
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
@@ -215,7 +217,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		if err := d.db.SetOrderQueueDetail(order.ID, queueReason, queueCode, string(queueCause)); err != nil {
 			log.Printf("dispatch: set initial queue_reason for complex order %d: %v", order.ID, err)
 		}
-		log.Printf("dispatch: complex order %d queued at intake — %s", order.ID, queueReason)
+		log.Printf("dispatch: complex order %d parked at intake — %s", order.ID, queueReason)
 	}
 
 	// Two-robot swap pairing, back-link reconcile: the forward pointer

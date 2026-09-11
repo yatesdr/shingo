@@ -234,19 +234,17 @@ func TestQueueWaitMetrics_APlainOrdersNumberIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestInFlightForDropoff_ShoppingCountsAndQueuedDoesNot states the direction of
-// the birth-rung move's one measured consequence, in the place it is measured.
+// TestInFlightForDropoff_CountsHoldersNotStatuses pins the dropoff count's
+// population: orders delivering to the node that hold a claimed bin, and nothing
+// about their status.
 //
-// The dropoff-capacity gate counts everything non-terminal EXCEPT `queued`. A
-// complex order used to be born `queued` and so was invisible to the gate for as
-// long as it stood there; born `sourcing`, it counts from birth. The gate
-// therefore admits FEWER carriers to a node with complex demand aimed at it, and
-// that is the deliberate behaviour the sim certifies — nothing in the code
-// compensates for it.
-//
-// Both halves are asserted, because "counts more" is only meaningful beside the
-// row that still does not count.
-func TestInFlightForDropoff_ShoppingCountsAndQueuedDoesNot(t *testing.T) {
+// It replaces the test that pinned the birth-rung delta — a complex order born
+// `sourcing` entered the old status count at birth, where born `queued` it had
+// entered only on its first tick. That delta is what stood two born-`sourcing`
+// orders to one exclusive dropoff off against each other, each counting the other
+// as already on its way (TestDropoffGate_TwoShoppersForOneExclusiveDropoffOneGoes).
+// An order shopping for a bin is not bringing one, whatever its status says.
+func TestInFlightForDropoff_CountsHoldersNotStatuses(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
@@ -260,20 +258,19 @@ func TestInFlightForDropoff_ShoppingCountsAndQueuedDoesNot(t *testing.T) {
 	}
 
 	mk("cap-queued", protocol.StatusQueued)
+	mk("cap-sourcing", protocol.StatusSourcing)
 	n, err := orders.CountInFlightByDeliveryNode(db, "CAP-NODE")
-	testutil.MustNoErr(t, err, "count with one queued order")
+	testutil.MustNoErr(t, err, "count with two orders that hold nothing")
 	if n != 0 {
-		t.Fatalf("in-flight = %d with one queued order, want 0 — a queued order holds no "+
-			"destination, and the scanner depends on it holding none", n)
+		t.Fatalf("in-flight = %d with a queued and a sourcing order holding nothing, want 0 — neither is "+
+			"bringing a bin, and two shoppers that count each other both wait for ever", n)
 	}
 
-	mk("cap-sourcing", protocol.StatusSourcing)
+	mk("cap-carrying", protocol.StatusInTransit)
+	claimABinFor(t, db, "cap-carrying")
 	n, err = orders.CountInFlightByDeliveryNode(db, "CAP-NODE")
-	testutil.MustNoErr(t, err, "count with a shopping order too")
+	testutil.MustNoErr(t, err, "count with a holder")
 	if n != 1 {
-		t.Errorf("in-flight = %d with one queued and one sourcing order, want 1.\n"+
-			"THIS IS THE DELTA the birth-rung move introduces: a complex order born `sourcing` "+
-			"enters this count at birth where born `queued` it entered only on its first tick. "+
-			"The gate admits fewer carriers to this node as a result, deliberately.", n)
+		t.Errorf("in-flight = %d with one order holding a claimed bin bound here, want 1", n)
 	}
 }

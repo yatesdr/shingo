@@ -10,6 +10,7 @@
 package orders_test
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -591,6 +592,21 @@ func TestListByStation(t *testing.T) {
 
 // -------- CountActiveByDeliveryNode / CountInFlightByDeliveryNode ---------
 
+// claimABinFor gives the order with this uuid a claimed bin, the way dispatch
+// does when it commits an order to carry one.
+func claimABinFor(t *testing.T, db *sql.DB, uuid string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO bin_types (code, description) VALUES ('DEFAULT', 'Default test bin type')
+		ON CONFLICT (code) DO NOTHING`); err != nil {
+		t.Fatalf("ensure bin type: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO bins (bin_type_id, label, status, claimed_by)
+		SELECT (SELECT id FROM bin_types WHERE code='DEFAULT'), 'CARRIED-' || $1, 'available', id
+		FROM orders WHERE edge_uuid = $1`, uuid); err != nil {
+		t.Fatalf("claim a bin for order %s: %v", uuid, err)
+	}
+}
+
 func TestCountByDeliveryNode(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
@@ -621,7 +637,12 @@ func TestCountByDeliveryNode(t *testing.T) {
 		t.Errorf("CountActiveByDeliveryNode(LINE1-IN) = %d, want 3", active)
 	}
 
-	// InFlight also excludes queued: dispatched + in_transit = 2.
+	// InFlight counts the orders bringing a bin — the ones holding a claimed bin —
+	// and reads no status: dispatched + in_transit each carry one = 2, and the
+	// queued and terminal rows hold nothing.
+	for _, uuid := range []string{"d", "t"} {
+		claimABinFor(t, db, uuid)
+	}
 	inFlight, err := orders.CountInFlightByDeliveryNode(db, "LINE1-IN")
 	if err != nil {
 		t.Fatalf("CountInFlightByDeliveryNode: %v", err)

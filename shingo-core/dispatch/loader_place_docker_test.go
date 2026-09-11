@@ -53,8 +53,10 @@ func makeEvacOrder(t *testing.T, db *store.DB, uuid, home, outbound string) *ord
 	return o
 }
 
-// makeInFlightTo inserts an active (non-terminal, non-queued) order delivering to
-// node — a restock the park must observe via the Core in-flight authority.
+// makeInFlightTo inserts an order on its way to node carrying a bin — a restock
+// the park must observe via the Core in-flight authority. The dropoff count reads
+// holders, not statuses, so the order holds the carrier it is bringing; the
+// carrier stands on a node of its own so it occupies none of the fixture's.
 func makeInFlightTo(t *testing.T, db *store.DB, uuid, node string) {
 	t.Helper()
 	o := &orders.Order{
@@ -64,6 +66,12 @@ func makeInFlightTo(t *testing.T, db *store.DB, uuid, node string) {
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create in-flight order: %v", err)
 	}
+	src := &nodes.Node{Name: uuid + "-SRC", Enabled: true}
+	if err := db.CreateNode(src); err != nil {
+		t.Fatalf("create the carrier's source: %v", err)
+	}
+	carried := createTestBinAtNode(t, db, "PART-X", src.ID, uuid+"-BIN")
+	testdb.ClaimBinForTest(t, db, carried.ID, o.ID)
 }
 
 func simpleEvacSteps(home, outbound string) []resolvedStep {

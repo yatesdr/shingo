@@ -1372,33 +1372,37 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 	return err
 }
 
-// InFlightForDropoffSQL renders "this order is on its way to its delivery node"
-// — the dropoff-capacity gate's population, spelled once.
+// InFlightForDropoffSQL renders "this order is bringing a bin to its delivery
+// node" — the dropoff-capacity gate's population, spelled once: the order holds
+// a claimed bin.
 //
-// NOT terminal, and NOT `queued`. The queued exclusion is the load-bearing half:
-// the gate asks "is something already coming here", and a queued order holds no
-// destination — the fulfillment scanner depends on it holding none, which is why
-// ListAcquiring and this exclusion are the same rule stated from two sides
-// (CountLiveByOrigin says the converse and deliberately counts queued).
+// ── A HOLDER, NOT A STATUS ────────────────────────────────────────────────────
 //
-// IT WAS SPELLED INLINE AT BOTH SITES, under a comment saying the combination was
-// composed inline "because no other site needs this combo" — and the site
-// carrying that comment had a twin four lines below it. Two spellings of one
-// predicate is how a rung move silently changes one gate and not the other, and
-// the birth-rung work moves populations across exactly this boundary.
+// It was a status boundary — not terminal, and not `queued` — and the queued
+// exclusion was the tie-break while orders were born `queued` and left it only
+// once they had something. Complex intake is born `sourcing` now, so two orders
+// shopping for one exclusive dropoff each counted the other as already on its
+// way, and both parked on dropoff-inflight with nothing that would ever release
+// either (TestDropoffGate_TwoShoppersForOneExclusiveDropoffOneGoes). A status
+// says where an order is in its life, not whether a bin is coming.
 //
-// This is a NAME, not a re-home. The gate still reads the STATUS boundary; the
-// record's T1 defers asking the reservation book "does this order hold a
-// destination slot" to after the narrowing/badge, because line and consume
-// destinations reserve nothing and an early re-home would drop them from the
-// count. Naming unblocks no rung move — each keeps its own sim gate.
+// What brings a bin is a claim: dispatch claims the bins an order carries,
+// nothing before dispatch does, and terminalization hands them back. So the
+// count reads the claim book and no status word at all. A reservation is not
+// counted — it is a plan, and an order that has only planned is not on its way.
+// The order that loses the race waits its turn at dispatch: the gate refuses it
+// until the holder has landed.
+//
+// Every reader inherits it through the counts below: CheckDropoffCapacityForType
+// (the node arm and the NGRP arm), shuffleSlotFree through that, and
+// loader_place's two direct reads. soakstat's pre-dispatch tallies keep their
+// own status list, because they count something else.
 func InFlightForDropoffSQL() string {
-	return fmt.Sprintf("status NOT IN (%s) AND status != '%s'",
-		protocol.TerminalStatusSQLList(), protocol.StatusQueued)
+	return `EXISTS (SELECT 1 FROM bins b WHERE b.claimed_by = orders.id)`
 }
 
-// CountInFlightByDeliveryNode counts non-queued, non-terminal active orders
-// targeting a delivery node.
+// CountInFlightByDeliveryNode counts the orders delivering to a node that hold a
+// claimed bin — see InFlightForDropoffSQL.
 func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND %s`,
@@ -1407,10 +1411,10 @@ func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 }
 
 // CountInFlightByDeliveryNodeExcluding is the same count but excludes
-// a specific order ID. Used by planning-time capacity gates that check
-// from inside the order's own dispatch path — without exclusion the
-// caller's own pending/sourcing row would self-block. Pass excludeID=0
-// to count all orders (no exclusion). Phase 4c of bin-transit-state.
+// a specific order ID. Used by capacity gates that check from inside the
+// order's own dispatch path — without exclusion an order re-checking after it
+// has claimed would count itself. Pass excludeID=0 to count all orders (no
+// exclusion). Phase 4c of bin-transit-state.
 func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, excludeID int64) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND %s AND id != $2`,
@@ -1424,10 +1428,8 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 //
 // IT DELIBERATELY COUNTS `queued`, which is the whole point and the one way it
 // differs from the two counts above. Those answer "is something on its way
-// here", and for that question a queued order is correctly invisible: it holds
-// no destination, and the fulfillment scanner depends on it holding none
-// (ListAcquiring and InFlightForDropoffSQL's queued exclusion are the same rule
-// stated twice).
+// here", and for that question an order holding no claimed bin is correctly
+// invisible, whatever its status.
 //
 // This answers a different question — "what has this demand already asked for"
 // — and there the answer must include an order that asked and has not yet been

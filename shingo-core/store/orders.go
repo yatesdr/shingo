@@ -1175,18 +1175,17 @@ func (db *DB) DemoteHoldsAfterFleetRefusal(orderID int64, releaseLanes bool) err
 	return tx.Commit()
 }
 
-// CountInFlightOrdersByDeliveryNodeExcluding counts in-flight orders for a
-// delivery node, excluding a specific order ID (the caller's own row).
-// Phase 4c of bin-transit-state: planning-time capacity gates need to
-// avoid self-collision when checking from inside the order's own
-// dispatch path.
+// CountInFlightOrdersByDeliveryNodeExcluding counts the orders delivering to a
+// node that hold a claimed bin — status-blind, see orders.InFlightForDropoffSQL —
+// excluding a specific order ID (the caller's own row, so an order re-checking
+// after it has claimed does not count itself).
 func (db *DB) CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error) {
 	return orders.CountInFlightByDeliveryNodeExcluding(db.DB, deliveryNode, excludeID)
 }
 
 // CountLiveOrdersByOrigin counts a demand episode's own non-terminal orders —
-// unlike the two counts above, `queued` is included. The sizing half of the
-// replenishment bound. See orders.CountLiveByOrigin.
+// by status, `queued` included, where the dropoff count above reads holders. The
+// sizing half of the replenishment bound. See orders.CountLiveByOrigin.
 func (db *DB) CountLiveOrdersByOrigin(originID string) (int, error) {
 	return orders.CountLiveByOrigin(db.DB, originID)
 }

@@ -109,19 +109,17 @@ type CapacityBlock struct {
 // block.Params so the SENTENCE was right while the column an engineer groups by
 // was wrong. See CauseDropoffCapacity's own note.
 //
-// excludeOrderID is the caller's own order — its in-flight status is
-// excluded from the count to prevent self-collision when a gate checks
-// capacity from inside the order's own dispatch/retry path. Every real
-// caller now passes its order.ID: the intake planners always did, and the
-// fulfillment scanner must too since its retry set was widened to
-// include `sourcing` orders (which the in-flight tally counts) — passing 0
-// there would let a self-retrying order block itself forever. Pass 0 only
-// from preview paths that have no order row yet.
+// excludeOrderID is the caller's own order, excluded from the count so a gate
+// checking from inside the order's own dispatch/retry path cannot see itself.
+// Every real caller passes its order.ID; pass 0 only from preview paths that
+// have no order row yet.
 //
-// "Capacity" here is the same predicate the fulfillment scanner has
-// used for queued retrieves: zero physical bins at the node AND zero
-// in-flight orders headed there. Either condition makes the slot
-// unsafe for a fresh dispatch.
+// "Capacity" is two physical facts and no status: zero bins at the node, AND no
+// other order delivering there that holds a claimed bin — the one that is
+// bringing a bin (orders.InFlightForDropoffSQL). Either makes the slot unsafe for
+// a fresh dispatch. An order that has only planned holds nothing and blocks
+// nobody, so two orders shopping for one slot do not wait on each other: the
+// first to claim goes, and the second waits its turn here.
 //
 // Empty deliveryNode → not blocked (the order has no concrete dropoff
 // to gate on; auto-confirm or fleet-resolved destination orders fall
