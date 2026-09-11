@@ -185,8 +185,13 @@ func selectClaim(candidates []*bins.Bin, payloadCode string) (*bins.Bin, []strin
 // live node state: a potential-relay node that STILL holds a bin is the real
 // source it is (a swap's evac: the line still holds the old bin), not a skipped
 // relay; only a potential-relay node that is empty at reserve is an actual
-// re-grab. Splitting the rule this way keeps the pure half unit-testable without a
-// DB while the reserve owns the live half — and leaves exactly one relay
+// re-grab. "Empty" is empty at the re-grab's step, which binsAtStep answers: a
+// bin one of this order's own earlier pickups takes is gone before the re-grab
+// runs, so it does not make the node a source (keep-staged combined collects the
+// kept bin off inbound staging before staging its own carrier there).
+//
+// Splitting the rule this way keeps the pure half unit-testable without a DB
+// while the reserve owns the live half — and leaves exactly one relay
 // discriminator (this) in the tree.
 type pickupNeed struct {
 	stepIndex      int

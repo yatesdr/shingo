@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -113,7 +114,7 @@ func TestConfirmSlotClaim_RefusesWithoutReservation(t *testing.T) {
 	slot := mkSlotNode(t, db.DB, "CS-NORESV")
 	order := mkSlotOrder(t, db.DB, "cs-noresv-o")
 
-	if err := db.ConfirmSlotClaim(slot, order); err == nil {
+	if err := db.ConfirmSlotClaim(slot, order, nil); err == nil {
 		t.Fatal("ConfirmSlotClaim without a pending slot reservation must fail (seatbelt), got nil")
 	}
 	n, _ := nodes.Get(db.DB, slot)
@@ -139,7 +140,7 @@ func TestConfirmSlotClaim_OwnerIdempotentHeal(t *testing.T) {
 	// Seed the wedge: claim the slot (raw fixture claim) but leave the reservation
 	// pending — claim committed, confirm never ran.
 	testdb.ClaimSlotForTest(t, db, slot, order)
-	if err := db.ConfirmSlotClaim(slot, order); err != nil {
+	if err := db.ConfirmSlotClaim(slot, order, nil); err != nil {
 		t.Fatalf("ConfirmSlotClaim of a claimed-but-pending slot must heal, got %v", err)
 	}
 	held, _ := reservations.ListByOrder(db.DB, order)
@@ -163,12 +164,97 @@ func TestConfirmSlotClaim_RefusesOccupiedSlot(t *testing.T) {
 	if err := reservations.AcquireSlot(db.DB, order.ID, node.ID, "test"); err != nil {
 		t.Fatalf("AcquireSlot (reserve succeeds on an occupied node — occupancy is not read at reserve): %v", err)
 	}
-	if err := db.ConfirmSlotClaim(node.ID, order.ID); err == nil {
+	if err := db.ConfirmSlotClaim(node.ID, order.ID, nil); err == nil {
 		t.Fatal("ConfirmSlotClaim on an OCCUPIED slot must be refused at confirm (NOT EXISTS bins), got nil")
 	}
 	n, _ := nodes.Get(db.DB, node.ID)
 	if n.ClaimedBy != nil {
 		t.Errorf("occupied slot claimed_by = %v, want nil", *n.ClaimedBy)
+	}
+}
+
+// ── the node as the plan will find it (takenFirst) ─────────────────────────────
+// The claim reads the node at the step the plan drops there: the bins on it now,
+// less the ones this order's earlier pickups take and it still holds. The first
+// test is the sentence; the other two are what it must still refuse.
+
+// seatStagingWithBin makes a staging node holding one bin, reserved for pickup by
+// holder, and a pending slot reservation on the node for claimer.
+func seatStagingWithBin(t *testing.T, db *store.DB, prefix string, holder, claimer int64) (node, bin int64) {
+	t.Helper()
+	testdb.SetupStandardData(t, db)
+	node = mkSlotNode(t, db.DB, prefix+"-IN-STAGE")
+	bin = testdb.CreateBinAtNode(t, db, "PART-A", node, prefix+"-KEPT").ID
+	if err := reservations.Acquire(db.DB, holder, holder, bin, "test"); err != nil {
+		t.Fatalf("reserve the kept bin for order %d: %v", holder, err)
+	}
+	if err := reservations.AcquireSlot(db.DB, claimer, node, "test"); err != nil {
+		t.Fatalf("reserve the slot for order %d: %v", claimer, err)
+	}
+	return node, bin
+}
+
+// TestConfirmSlotClaim_ClearsABinThePlanTakesFirst: the order holds the bin on
+// the node for an earlier pickup of its own, so at its dropoff the node is empty
+// — the keep-staged combined shape. Refused at bcbde0d2, where the claim read the
+// node as it stood.
+func TestConfirmSlotClaim_ClearsABinThePlanTakesFirst(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	order := mkSlotOrder(t, db.DB, "cs-step-own")
+	node, bin := seatStagingWithBin(t, db, "CS-STEP-OWN", order, order)
+
+	if err := db.ConfirmSlotClaim(node, order, []int64{bin}); err != nil {
+		t.Fatalf("the claim was refused, but the only bin on the node is one this order's own earlier pickup "+
+			"takes before it drops there: %v", err)
+	}
+}
+
+// TestConfirmSlotClaim_RefusesAStrangersBinBesideThePlansOwn: a bin the plan does
+// not take is on the node when its robot arrives, whatever else the plan clears.
+//
+// MUTATION: exempt every bin on the node once takenFirst is non-empty — the
+// claim lands on an occupied node and this fails.
+func TestConfirmSlotClaim_RefusesAStrangersBinBesideThePlansOwn(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	order := mkSlotOrder(t, db.DB, "cs-step-foreign")
+	node, bin := seatStagingWithBin(t, db, "CS-STEP-FOREIGN", order, order)
+	testdb.CreateBinAtNode(t, db, "PART-A", node, "CS-STEP-FOREIGN-OTHER")
+
+	if err := db.ConfirmSlotClaim(node, order, []int64{bin}); err == nil {
+		t.Fatal("the claim landed with a bin on the node that this plan does not take — its robot arrives at " +
+			"an occupied node")
+	}
+	if n, err := nodes.Get(db.DB, node); err != nil {
+		t.Fatalf("read the slot back: %v", err)
+	} else if n.ClaimedBy != nil {
+		t.Errorf("claimed_by = %v after a refused claim, want nil", *n.ClaimedBy)
+	}
+}
+
+// TestConfirmSlotClaim_RefusesThePlansOwnBinOnceItLosesTheHold: takenFirst names a
+// bin this order reserved, but by the time the claim runs another order holds it.
+// This order's pickup will not take it, so it is still on the node at the drop.
+//
+// MUTATION: drop the hold re-check from ClaimSlotTx (trust takenFirst as given) —
+// the claim lands on a node another order's bin still occupies and this fails.
+func TestConfirmSlotClaim_RefusesThePlansOwnBinOnceItLosesTheHold(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	order := mkSlotOrder(t, db.DB, "cs-step-lost")
+	other := mkSlotOrder(t, db.DB, "cs-step-lost-other")
+	node, bin := seatStagingWithBin(t, db, "CS-STEP-LOST", order, order)
+	if err := reservations.Release(db.DB, order, bin); err != nil {
+		t.Fatalf("release this order's hold: %v", err)
+	}
+	if err := reservations.Acquire(db.DB, other, other, bin, "test"); err != nil {
+		t.Fatalf("another order takes the bin: %v", err)
+	}
+
+	if err := db.ConfirmSlotClaim(node, order, []int64{bin}); err == nil {
+		t.Fatal("the claim landed on the strength of a bin this order no longer holds — another order's " +
+			"pickup, not this plan's, decides when it leaves")
 	}
 }
 
@@ -182,7 +268,7 @@ func TestConfirmSlotClaim_OneTx(t *testing.T) {
 	order := mkSlotOrder(t, db.DB, "cs-onetx-o")
 
 	// Failure path (no reservation → claim refused → neither half commits).
-	if err := db.ConfirmSlotClaim(slot, order); err == nil {
+	if err := db.ConfirmSlotClaim(slot, order, nil); err == nil {
 		t.Fatal("ConfirmSlotClaim without reservation must fail")
 	}
 	if n, _ := nodes.Get(db.DB, slot); n.ClaimedBy != nil {
@@ -193,7 +279,7 @@ func TestConfirmSlotClaim_OneTx(t *testing.T) {
 	if err := reservations.AcquireSlot(db.DB, order, slot, "test"); err != nil {
 		t.Fatalf("AcquireSlot: %v", err)
 	}
-	if err := db.ConfirmSlotClaim(slot, order); err != nil {
+	if err := db.ConfirmSlotClaim(slot, order, nil); err != nil {
 		t.Fatalf("ConfirmSlotClaim: %v", err)
 	}
 	n, _ := nodes.Get(db.DB, slot)

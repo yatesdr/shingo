@@ -199,7 +199,7 @@ func (f *fakeStore) ConfirmClaim(binID, orderID int64, _ *int) error {
 // ConfirmSlotClaim is the slot dual of ConfirmClaim — hard-claims the destination
 // slot at dispatch. Only called for a concrete storage dropoff. Records to
 // confirmedSlots.
-func (f *fakeStore) ConfirmSlotClaim(nodeID, orderID int64) error {
+func (f *fakeStore) ConfirmSlotClaim(nodeID, orderID int64, _ []int64) error {
 	f.confirmedSlots = append(f.confirmedSlots, [2]int64{nodeID, orderID})
 	return nil
 }

@@ -247,7 +247,7 @@ func TestAcquiringOrphanClaims_SweepsTheSlotDual(t *testing.T) {
 	if err := reservations.AcquireSlot(db, order.ID, healthy.ID, "test"); err != nil {
 		t.Fatalf("acquire slot: %v", err)
 	}
-	if err := db.ConfirmSlotClaim(healthy.ID, order.ID); err != nil {
+	if err := db.ConfirmSlotClaim(healthy.ID, order.ID, nil); err != nil {
 		t.Fatalf("confirm slot claim: %v", err)
 	}
 

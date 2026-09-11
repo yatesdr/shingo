@@ -91,11 +91,31 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 // does NOT carry the reservation clause — the loop never reserves — and is retired
 // WITH that loop, at which point this is the only slot-claim path. Seatbelts only
 // ever gain clauses; ClaimSlot is not weakened.
-func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64) error {
+//
+// ── NOTHING ON THE NODE, AS THE CLAIMING PLAN WILL FIND IT ───────────────────
+//
+// The occupancy clause is unchanged in what it demands — no bin on the node — and
+// its input is the node at the step the plan drops there, not the node now: the
+// bins there, less the ones in takenFirst that this order still holds. takenFirst
+// comes from dispatch's binsAtStep, the one function every plan-time occupancy
+// check asks; the hold is re-read HERE, inside the claim, so a bin that has gone
+// to another order since the plan was read stays on the node and the claim is
+// refused. An empty takenFirst is the plain "nothing on the node" test.
+//
+// IS NOT DISTINCT FROM, not =: an unclaimed bin's claimed_by is NULL, and a NULL
+// inside the NOT would drop the bin from the subquery and wave the claim through
+// on exactly the bin it must refuse.
+func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64) error {
+	if takenFirst == nil {
+		takenFirst = []int64{} // an array, never NULL: NULL would make the clause vacuous
+	}
 	res, err := tx.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2)
-		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2), orderID, nodeID)
+		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2
+		      AND NOT (b.id = ANY($3::bigint[])
+		               AND (b.claimed_by IS NOT DISTINCT FROM $1 OR EXISTS (SELECT 1 FROM reservations r
+		                    WHERE r.bin_id = b.id AND r.order_id = $1 AND `+reservations.ActiveStateSQL("r.")+`))))
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2), orderID, nodeID, takenFirst)
 	if err != nil {
 		return err
 	}

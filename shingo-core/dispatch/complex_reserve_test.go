@@ -894,8 +894,9 @@ func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
 // order still takes the staging node so a second order cannot have it while the
 // choreography is mid-flight.
 //
-// MUTATION (verified): drop the clearedEarlierInPlan guard. The order parks on
-// dropoff-occupied and never dispatches.
+// MUTATION: make the gate's binsAtStep call count the node as it stands now
+// (skip nothing it takes). The order parks on dropoff-occupied and never
+// dispatches. (Verified against the step-only guard this replaced.)
 func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)

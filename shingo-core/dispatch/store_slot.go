@@ -490,7 +490,7 @@ func (d *Dispatcher) confirmDropoffSlot(order *orders.Order, destNode *nodes.Nod
 		// Already ours — confirm any still-pending reservation in place, no re-claim.
 		return d.db.ConfirmSlotReservation(destNode.ID, order.ID)
 	}
-	return d.db.ConfirmSlotClaim(destNode.ID, order.ID)
+	return d.db.ConfirmSlotClaim(destNode.ID, order.ID, nil)
 }
 
 // RefuseStorageDropoffForTest builds the refusal a real ReserveStorageDropoff

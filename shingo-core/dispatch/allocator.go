@@ -246,8 +246,22 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 			// bins is a real source (bin!=nil would have reserved it), so bin==nil
 			// with bins
 			// present means present-but-taken → a genuine miss.
-			if pk.potentialRelay && !nodeHadBins {
-				continue
+			//
+			// EMPTY AT THIS STEP, NOT EMPTY NOW (binsAtStep — the question the
+			// destination gate and the slot claim ask too). Keep-staged combined
+			// collects the kept bin off inbound staging, stages its own carrier
+			// there, and later re-collects it. Now, the node still holds the kept
+			// bin — the one this order's first pickup takes away — and read as "has
+			// bins" the re-collect was a miss on every pass: the supply held a
+			// partial set for ever and its evac waited behind it.
+			if pk.potentialRelay {
+				remaining, _, oerr := a.binsAtStep(order, plan.ResolvedSteps, pk.stepIndex, pk.step.Node)
+				if oerr != nil {
+					return nil, reserveHolding, oerr
+				}
+				if len(remaining) == 0 {
+					continue
+				}
 			}
 			missing++
 			if nodeHadBins {
@@ -687,7 +701,15 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 			}
 			continue
 		}
-		if err := a.db.ConfirmSlotClaim(node.ID, order.ID); err != nil {
+		// The slot as this plan finds it at the dropoff, not as it stands now: a
+		// bin its own earlier pickup takes is gone by then (binsAtStep).
+		// ConfirmSlotClaim re-checks inside the claim that this order still holds
+		// every bin named here.
+		_, takenFirst, oerr := a.binsAtStep(order, steps, sn.stepIndex, sn.nodeName)
+		if oerr != nil {
+			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("read slot %s for order %d: %v", sn.nodeName, order.ID, oerr)}
+		}
+		if err := a.db.ConfirmSlotClaim(node.ID, order.ID, takenFirst); err != nil {
 			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("confirm slot claim %s for order %d: %v", sn.nodeName, order.ID, err)}
 		}
 		a.db.AppendAudit("node", node.ID, "slot_claimed", "",

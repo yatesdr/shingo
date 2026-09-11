@@ -59,30 +59,6 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
-// clearedEarlierInPlan reports whether `prior` — the steps BEFORE the dropoff
-// being judged — already picks a bin up from `node`.
-//
-// It answers one question for the capacity gate: is this node occupied by
-// something THIS ORDER is about to carry away? A plan that empties a node and
-// then refills it is a choreography, not a conflict, and the occupancy the gate
-// would see at dispatch is one the plan has already accounted for.
-//
-// Callers must pass only the preceding steps. Handing it the whole plan would
-// let a LATER pickup excuse an EARLIER dropoff, which is backwards: the bin has
-// to go down before anything can pick it up, so a node emptied afterwards was
-// still full on arrival.
-func clearedEarlierInPlan(prior []resolvedStep, node string) bool {
-	if node == "" {
-		return false
-	}
-	for _, p := range prior {
-		if p.Action == protocol.ActionPickup && p.Node == node {
-			return true
-		}
-	}
-	return false
-}
-
 // dispatchStep carries a phase helper's decision back to the DispatchPreparedComplex
 // orchestrator. done=true means the phase parked, failed, or skipped the order and
 // the orchestrator must return err verbatim; done=false (the zero value) means the
@@ -939,7 +915,15 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 		// STRICTLY EARLIER. A later pickup does not help: the bin still has to go
 		// down before it can be picked up again, so the node must genuinely be
 		// free when we arrive.
-		if clearedEarlierInPlan(resolvedSteps[:i], s.Node) {
+		//
+		// ASKED OF THE NODE AT STEP i, the way the relay rule and the slot claim
+		// ask it (binsAtStep) — and it used to be asked of the plan's steps alone,
+		// which cleared a node whose bin some other order holds. Skipped only when
+		// this plan takes every bin on the node before it gets there; an empty node,
+		// or one still holding a bin this plan will not take, goes to the capacity
+		// check as before.
+		if remaining, taken, oerr := d.allocator.binsAtStep(order, resolvedSteps, i, s.Node); oerr == nil &&
+			len(taken) > 0 && len(remaining) == 0 {
 			continue
 		}
 		if blocked, cap := CheckDropoffCapacity(d.db, s.Node, order.ID); blocked {

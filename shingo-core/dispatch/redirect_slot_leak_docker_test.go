@@ -50,7 +50,7 @@ func TestRedirect_ReleasesTheOldDestinationsSlot(t *testing.T) {
 	// The destination slot, held the way a dispatched order holds one: reserved,
 	// then confirmed into a hard claim.
 	testutil.MustNoErr(t, db.ReserveSlot(oldDest.ID, order.ID), "reserve the old destination")
-	testutil.MustNoErr(t, db.ConfirmSlotClaim(oldDest.ID, order.ID), "claim the old destination")
+	testutil.MustNoErr(t, db.ConfirmSlotClaim(oldDest.ID, order.ID, nil), "claim the old destination")
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
@@ -101,7 +101,7 @@ func TestRedirect_ToTheSameNodeKeepsItsSlot(t *testing.T) {
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	testutil.MustNoErr(t, db.ReserveSlot(dest.ID, order.ID), "reserve the destination")
-	testutil.MustNoErr(t, db.ConfirmSlotClaim(dest.ID, order.ID), "claim the destination")
+	testutil.MustNoErr(t, db.ConfirmSlotClaim(dest.ID, order.ID, nil), "claim the destination")
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 

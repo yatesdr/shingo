@@ -37,22 +37,28 @@ func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 // BinManifestService.claimAndConfirm. The pending slot reservation was placed
 // earlier by the reserve reconcile; ConfirmSlotClaim does NOT acquire. It
 // runs the seatbelted, owner-idempotent ClaimSlotTx (claimed_by IS NULL OR =order,
-// NOT EXISTS bins, EXISTS a pending slot reservation) then ConfirmSlot — both writes
-// commit together or neither, so a transient failure between them can never leave the
-// slot claimed with its reservation stuck pending.
+// NOT EXISTS bins as the plan will find the node, EXISTS a pending slot
+// reservation) then ConfirmSlot — both writes commit together or neither, so a
+// transient failure between them can never leave the slot claimed with its
+// reservation stuck pending.
 //
 // This is the sanctioned slot-claim path and forbidigo enforces it (.golangci.yml).
 // Live callers: the complex allocator (dispatch/allocator.go) and the storage
 // dropoff (dispatch/store_slot.go). The note here used to say there were no
 // production callers "until commit 4 wires it into confirmComplexPlan" — commit
 // 4 shipped, and it wired somewhere else.
-func (db *DB) ConfirmSlotClaim(nodeID, orderID int64) error {
+//
+// takenFirst is the picture the occupancy clause reads: the bins on the node that
+// this order's own earlier pickups take before it drops there (dispatch's
+// binsAtStep). nil for a dropoff with no pickup before it at the same node, which
+// is every caller but the complex allocator.
+func (db *DB) ConfirmSlotClaim(nodeID, orderID int64, takenFirst []int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if err := nodes.ClaimSlotTx(tx, nodeID, orderID); err != nil {
+	if err := nodes.ClaimSlotTx(tx, nodeID, orderID, takenFirst); err != nil {
 		return err
 	}
 	if err := reservations.ConfirmSlot(tx, orderID, nodeID); err != nil {
