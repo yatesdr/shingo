@@ -270,7 +270,7 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 // ── AND `pending` IS THE FOURTH POPULATION, FOR THE SAME REASON ──────────
 //
 // A dig leg is the one thing in the plant that writes a cause and then RESTS
-// where it is: six sites in dispatch/compound.go park it and deliberately leave
+// where it is: seven sites in dispatch/compound.go park it and deliberately leave
 // the status alone, because being unsent is what the re-drive selects. Under
 // IsAcquiring alone every one of those showed no wait at all — while the
 // 30-minute anomaly board flagged the same legs as stuck. Two instruments

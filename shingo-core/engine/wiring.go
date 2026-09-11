@@ -460,8 +460,8 @@ func (e *Engine) wireEventHandlers() {
 	// because it must observe the mouth row that handler releases. See there.
 
 	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
-	// HandleComplexOrderRequest creates new complex orders as queued and
-	// fires this event; the scanner is the single sync point that calls
+	// HandleComplexOrderRequest creates new complex orders (born `sourcing`)
+	// and fires this event; the scanner is the single sync point that calls
 	// DispatchPreparedComplex, so capacity decisions are serialized via
 	// scan-mu (no TOCTOU between two concurrent fresh intakes for the
 	// same dropoff). Synchronous so the dispatched-status transition is

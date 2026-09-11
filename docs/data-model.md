@@ -181,7 +181,7 @@ Every decision that used to consult the column now reads the leg's steps instead
 |---|---|
 | Did this bin land at my node? | `finalDropoffNode(steps)` — Edge `wiring_delivered.go` |
 | Is this leg the supply or the evac? | `legPlacesBinAt(steps, node)` — Edge `swap_leg_role.go` |
-| Must this leg wait for its sibling to claim? | `legTakesLineBin` + `legSecuresOwnReplacement` — Core `swap_leg_role.go` |
+| When a leg dies, was it the pair's evac? | `legTakesLineBin(steps, node)` — Core `swap_leg_role.go`, read by `HandleSwapPeerTerminal` (`swap_peer.go`). No leg waits for its sibling's claim any more: a pair's legs are admitted in one pass or not at all (`complex_pair.go`) |
 | Should the sim operator sign for this leg? | `legTouchesNode(steps, node)` — Edge `sim_operator.go` |
 
 Core's `delivery_node` is still **load-bearing for robot routing**:

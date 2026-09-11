@@ -196,25 +196,27 @@ on saturation; queueing-on-saturation requires gating before resolution.
 
 ## Status-First Queueing
 
-Complex orders are created in `queued` status by intake, not `pending`.
-The fulfillment scanner is the single sync point that runs the capacity
-gate and transitions queued → sourcing → dispatched.
+Complex orders are born `sourcing` by intake — the rung a complex order
+rests in while it shops — not `pending` and not `queued`. The fulfillment
+scanner is the single sync point that runs the capacity gate and moves
+sourcing → dispatched.
 
 ```
 HandleComplexOrderRequest:                  Scanner.tryFulfill:
   resolve steps                                (scan-mu serialized)
-  create order (status=queued)                 capacity gate
-  ack edge                                     ├─ blocked: set queue_reason, leave queued
+  create order (status=sourcing)               capacity gate
+  ack edge                                     ├─ blocked: set queue_reason, stay sourcing
   emit EventOrderQueued ───────synchronous───▶ └─ green: DispatchPreparedComplex
                                                          claim bins
-                                                         status → sourcing → dispatched
+                                                         status → dispatched
                                                          ship blocks to fleet
 ```
 
-`scan-mu` makes the queued → sourcing transition the single point of
-serialization. Two concurrent intakes for the same dropoff can't both
-pass the gate: the first transitions to `sourcing` (counted by the
-in-flight tally), the second sees in-flight=1 and re-queues.
+`scan-mu` makes the claim the single point of serialization. Two
+concurrent intakes for the same dropoff can't both pass the gate: the
+in-flight tally counts an order that HOLDS a claimed bin bound for the
+dropoff (`orders.InFlightForDropoffSQL` — a holder, not a status), so
+the first to claim is counted and the second sees in-flight=1 and waits.
 
 Simple retrieves and moves use the existing planner-returns-`Queued`
 path — they aren't routed through the scanner because their
@@ -255,7 +257,9 @@ label tracks status:
 
 - `IN QUEUE` — order held by capacity gate
 - `ROBOT IN TRANSIT` — order dispatched, robot moving
-- `WAITING FOR OTHER ROBOT` — two-robot swap, peer not yet in position
+- `WAITING FOR OTHER ROBOT` — a pair released as one, not yet releasable: the
+  label says how many legs are parked, names the leg to watch, and lists every
+  distinct cause across the pair
 
 ### Anomaly recovery
 

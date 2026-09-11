@@ -627,19 +627,15 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // name, and protocol_test.TestLoaderQuestionHasOneDerivationPoint for the guard
 // that keeps the derivations countable.
 //
-// WHY THE MODE FIELD IS STILL WHAT IT READS. manual_swap is authored
-// configuration, not an internal marker: it is persisted in
-// style_node_claims.swap_mode, accepted by the server-side upsert allowlist
-// (protocol.ConfigurableSwapModes), written by hand in every plants/*.yaml, and
-// read off the wire by the operator board's JavaScript. The editor's Swap Mode
-// dropdown does NOT offer it — loaders are Core-owned and are no longer
-// authored there, and processes_enum_drift_test.go pins that omission — but the
-// value is still stored, still rendered read-only in the claims list, and still
-// saveable through the compare grid, which echoes swap_mode back verbatim. Retiring the value is a
-// migration plus a wire change plus a front-end change, and nothing the loader
-// question needs requires it. So the value stays as the STORAGE for a node-kind
-// fact, and this method is the boundary: one derivation, and callers that name
-// the concept instead of matching a string.
+// WHY THE MODE FIELD IS STILL WHAT IT READS. manual_swap is still the value a
+// loader claim carries: the claim a Core-owned loader window is synthesized into
+// (synthLoaderClaim) has it, and the operator board's JavaScript reads it off the
+// wire. It is no longer AUTHORED here. protocol.ConfigurableSwapModes excludes it,
+// so UpsertClaim and ValidateNodeClaim refuse it; the editor's dropdown does not
+// offer it (processes_enum_drift_test.go pins that); and a stored row is moved to
+// style_node_claims_quarantine by the loader sync. So the value is the STORAGE
+// for a node-kind fact, and this method is the boundary: one derivation, and
+// callers that name the concept instead of matching a string.
 //
 // Nil-safe because most callers reach a claim through a lookup that can miss,
 // and "there is no claim" is not a loader — folding that in here removes a

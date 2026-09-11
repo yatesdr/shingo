@@ -37,13 +37,15 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 // exists it is returned and synthLoaderClaim is never consulted, so a node
 // carrying a stored manual_swap claim reads as a loader EVEN IF Core's aggregate
 // says it is not one, including when Core's derived loader has been archived.
-// That state exists in the field: Springfield's SMN_001 holds stored manual_swap
-// claims whose Core loader was archived 2026-07-30.
+// That state existed in the field: Springfield's SMN_001 held stored
+// manual_swap claims whose Core loader was archived 2026-07-30.
 //
-// Written down because nothing else says it, and DELIBERATELY NOT GATED. A
-// check that refused the stored claim when Core disagreed would refuse an
-// operator board that someone may still be using. Reconciling those rows is a
-// data decision about the plant, not a code one.
+// NOT GATED HERE, AND NO LONGER NEEDING TO BE. The loader sync does the
+// reconciling now: reconcileLoaderClaims moves every stored manual_swap row to
+// style_node_claims_quarantine on the first non-empty loader set, so this
+// short-circuit only meets one before that sync. A node whose Core loader is
+// gone — SMN_001 among them — stops being a loader after it, and LOAD, CLEAR
+// and the loader requests refuse with "no active claim" (requireLoaderClaim).
 func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil || claim != nil || node == nil {

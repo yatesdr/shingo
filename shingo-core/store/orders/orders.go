@@ -442,7 +442,7 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	//   writes a reason here and then STAYS.
 	//
 	//   A COMPOUND CHILD RESTS IN `pending` FOR ITS WHOLE PRE-DISPATCH LIFE.
-	//   Six sites in dispatch/compound.go park a leg with a cause and deliberately
+	//   Seven sites in dispatch/compound.go park a leg with a cause and deliberately
 	//   do not move its status — `pending` is what the re-drive selects, so the
 	//   cause is written ALONGSIDE the status rather than instead of it. Nothing
 	//   ever carries that code onto a later row: the admitted path CLEARS it

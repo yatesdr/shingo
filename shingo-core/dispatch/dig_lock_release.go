@@ -497,13 +497,11 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	//
 	// ── AND `faulted` IS ADDED HERE, NOT THERE ────────────────────────────
 	//
-	// The shared predicate's `default` arm means "not committed", and the two
-	// callers read that answer with OPPOSITE consequences: for the swap hold it
-	// means keep waiting, which is safe; here it means convert, which is the leak.
-	// So the one status where they must differ is fixed locally. Widening
-	// swapLegCommittedToFleet would be wrong for the swap caller, which genuinely
-	// wants a faulted sibling to read not-committed because it may yet recover and
-	// do its part.
+	// The shared predicate's `default` arm means "not committed". It had a second
+	// caller once, the swap hold (deleted), for which a faulted sibling had to read
+	// not-committed because it might yet recover and do its part. Here
+	// not-committed means convert, which is the leak, so faulted is fixed locally
+	// rather than by widening swapLegCommittedToFleet for its other callers.
 	//
 	// `faulted` is POST-DISPATCH BY CONSTRUCTION — every inbound edge to it comes
 	// from acknowledged, dispatched, in_transit or staged — so a faulted holder
@@ -739,9 +737,10 @@ func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, s
 // something — robots are moving, blockers are being carried out — so adding it
 // to the committed list reads as a correction. It is not. Committed means
 // committed TO THIS SWAP'S OWN WORK, and a leg mid-dig has not started that
-// work; releasing its partner early is the line clearing with no replacement
-// coming, which is ALN_003 (2026-06-03), the incident the supply-side hold
-// exists for.
+// work; releasing a partner early on it would be the line clearing with no
+// replacement coming, which is ALN_003 (2026-06-03). The pair rule asks its own
+// version of the question (complex_pair.go pairLegCommitted) and answers the
+// same way: a digging partner makes the pair incomplete.
 //
 // IT IS ABOUT TO MATTER MUCH MORE. Under §R.91 the demand that raises a dig
 // BECOMES the dig's parent and wears `reshuffling` while it runs — so a swap leg
@@ -774,7 +773,7 @@ func swapLegCommittedToFleet(sib *orders.Order) bool {
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:
 		return true
 	case StatusReshuffling:
-		// Mid-dig. No vendor order, not en route: the partner keeps waiting.
+		// Mid-dig: no vendor order, not en route.
 		return false
 	default:
 		return false

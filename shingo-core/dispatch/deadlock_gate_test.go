@@ -16,7 +16,7 @@ import (
 // order whose delivery is a LINE the resident bin still occupies must NOT be
 // gated — a sibling evac clears the line and Core can't model that, so gating it
 // deadlocks. It runs the real DispatchPreparedComplex (not a stub), so it
-// exercises the role gate at complex_dispatch.go:359 with an occupied line.
+// exercises the role gate in reserveComplexDestination with an occupied line.
 //
 // The plan is 2-step and NO-wait on purpose: it is the exact shape of
 // BuildStagedDeliverSteps (a real no-wait complex changeover delivery to the

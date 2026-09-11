@@ -72,9 +72,12 @@ func (e *Engine) reconcileLoaderClaims(loaders []protocol.LoaderInfo) {
 		e.logFn("core_loaders: claim reconcile failed — nothing moved: %v", err)
 		return
 	}
-	// Silent when nothing moved, which is the steady state after the first sync:
-	// the population is zero and stays zero, so a repeat sync writes nothing and
-	// says nothing.
+	// Silent when nothing moved — the steady state once a non-empty sync has run,
+	// because nothing after it writes a manual_swap row (UpsertClaim refuses one).
+	// Before it the population is NOT zero: rows survive from Edge boot to the
+	// first non-empty loader set — unbounded while Core is unreachable or sends
+	// an empty one — and cloneStyleTx copies them verbatim into any style cloned
+	// in that window. This loop is what empties them.
 	for _, m := range moved {
 		e.logFn("core_loaders: quarantined style_node_claims id=%d node=%s style=%d payload=%q — %s. "+
 			"The row is in %s; restore it with INSERT ... SELECT if this was wrong.",

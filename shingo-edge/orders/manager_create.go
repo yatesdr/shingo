@@ -201,8 +201,9 @@ func (m *Manager) CreateComplexOrderSibling(processNodeID *int64, quantity int64
 // createComplexOrder used to mint the uuid itself, which made the first leg
 // created structurally unable to name a sibling that did not exist yet: it
 // went in with siblingUUID == "", and everything downstream that pairs legs
-// had to cope with a half-linked pair. swap_hold's fail-open at sibUUID == ""
-// is one such coping mechanism, and SYNTH-round2's finding is that it makes
+// had to cope with a half-linked pair. The deleted swap-hold gate's fail-open at
+// sibUUID == "" was one such coping mechanism, and SYNTH-round2's finding is
+// that it made
 // CREATION ORDER a correctness input — the changeover path creates the filler
 // first, the produce path the supply, and no single ordering is safe once both
 // legs are held.

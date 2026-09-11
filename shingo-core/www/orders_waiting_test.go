@@ -104,7 +104,7 @@ func TestCountQueueCodes_SelectsOnCauseCountsByCode(t *testing.T) {
 //
 // A dig leg parks with a cause and deliberately does NOT move: being unsent is
 // what the compound re-drive selects, so the cause is written alongside the
-// status rather than instead of it (dispatch/compound.go, six sites). Under
+// status rather than instead of it (dispatch/compound.go, seven sites). Under
 // IsAcquiring alone the orders page showed no wait at all for any of them —
 // while reconciliation's 30-minute anomaly board flagged the same rows as stuck.
 // One row, two instruments, opposite answers, and the one an operator actually

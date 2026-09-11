@@ -85,9 +85,9 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// ONLY COMPLEX LEGS GET ONE, because only ComplexOrderRequest carries
 	// SiblingOrderUUID on the wire — a retrieve leg is structurally unpairable
 	// at Core. The old read-back did not know that and would happily stamp an
-	// evac with a retrieve's uuid, producing exactly the ASYMMETRIC link
-	// swap_hold rejects (it checks sib.SiblingOrderUUID == order.EdgeUUID).
-	// Leaving it blank there fails open cleanly instead. Local pairing is
+	// evac with a retrieve's uuid — and Core forms a pair from the forward
+	// pointer alone (coordinatedPairLegs), so it would take the retrieve for the
+	// evac's partner. Leaving it blank there fails open cleanly instead. Local pairing is
 	// unaffected either way: LinkOrderSiblings below works on row ids, and it
 	// is what supply_bin_guard and ComputeSwapReady read.
 	supplyUUID, evacUUID := mintPairableLegUUID(action.SupplyOrder), mintPairableLegUUID(action.EvacOrder)

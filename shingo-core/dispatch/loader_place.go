@@ -426,12 +426,14 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	// make a loader home part of the drop-off capacity gate's role test, so a leg
 	// pointed at an occupied home queues instead of driving. It makes this worse. Holding the home is what
 	// makes the return leg IN-FLIGHT to it, and in-flight is the only state the
-	// replenishment loop's yield check can see — both in-flight counts carry
-	// `AND status != 'queued'` (store/orders/orders.go:1292, :1303), and the
-	// Springfield incident test says so in one sentence
-	// (loader_place_docker_test.go:711-713). A queued leg is invisible, the loop
-	// refills the home, and the gate then refuses on the carrier it caused to be
-	// put there.
+	// replenishment loop's yield check can see. The in-flight counts read
+	// orders.InFlightForDropoffSQL — an order HOLDING a claimed bin bound for the
+	// home, whatever its status (when this was tried they excluded `queued` by
+	// status instead) — and a leg the gate parks has claimed nothing yet. The
+	// Springfield incident test pins the yield
+	// (TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields). A parked leg is
+	// invisible, the loop refills the home, and the gate then refuses on the
+	// carrier it caused to be put there.
 	//
 	// THE THIRD BRANCH IS THE FIX, and this file's header has promised it from the
 	// start: home, then buffer, then DRAIN — decided at release rather than here,

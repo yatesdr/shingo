@@ -15,8 +15,8 @@ import (
 // THE WIRE IS THE ONLY PLACE THIS IS OBSERVABLE. Edge's order row has no
 // sibling_order_uuid column — the local pairing is row-id based
 // (LinkOrderSiblings) and is not what fails. SiblingOrderUUID rides the
-// ComplexOrderRequest, and it is what Core's intake back-link, swap_hold and
-// HandleSwapPeerTerminal all read.
+// ComplexOrderRequest, and it is what Core's intake back-link, its pair rule
+// (coordinatedPairLegs) and HandleSwapPeerTerminal all read.
 func complexRequestsOnTheWire(t *testing.T, db *store.DB) []protocol.ComplexOrderRequest {
 	t.Helper()
 	msgs, err := db.ListPendingOutbox(100)
@@ -38,10 +38,10 @@ func complexRequestsOnTheWire(t *testing.T, db *store.DB) []protocol.ComplexOrde
 // assertMutuallyPaired is the whole point of unit 3: BOTH legs name the other.
 //
 // Not "the second one names the first". A one-way link is what the old
-// mint-inside-create produced, and Core treats it as no link at all —
-// swap_hold checks sib.SiblingOrderUUID == order.EdgeUUID and fails OPEN when
-// it doesn't match, which is the starvation hold and the peer-death handler
-// both silently switching themselves off.
+// mint-inside-create produced: the first-created leg named nobody, so from its
+// own side it was a solo order and could go to the fleet before its partner
+// existed — the fail-OPEN the deleted swap-hold gate had, and a shape the pair
+// rule (coordinatedPairLegs) cannot see from that leg's side.
 func assertMutuallyPaired(t *testing.T, reqs []protocol.ComplexOrderRequest) {
 	t.Helper()
 	if len(reqs) != 2 {

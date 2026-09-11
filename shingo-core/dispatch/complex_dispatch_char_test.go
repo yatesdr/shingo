@@ -13,7 +13,8 @@ package dispatch
 // Gaps already covered elsewhere and deliberately not duplicated here:
 //   - skip (no_source_bin) → phase0_characterization_test.go
 //     (TestPhase0_DispositionTriad_NoSourceBin_Complex)
-//   - swap-hold (waiting_for_partner) → swap_press_index_deadlock_test.go /
+//   - swap-hold (waiting_for_partner) → pair_rule_doors_docker_test.go
+//     (TestPairRule_AwaitingPartnerParksThenGoesWhenThePartnerLands) /
 //     swap_sibling_link_test.go
 //   - reserve-holding (waiting_for_material) → complex_reserve_test.go
 //   - happy-path claim + dispatch end state → complex_dispatch_path_test.go

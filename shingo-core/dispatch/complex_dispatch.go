@@ -71,13 +71,14 @@ type dispatchStep struct {
 }
 
 // DispatchPreparedComplex performs the side-effecting tail of complex-
-// order dispatch: claim bins per pickup step, transition the order
-// queued → sourcing, send blocks to the fleet, transition → dispatched.
+// order dispatch: claim bins per pickup step, send blocks to the fleet,
+// transition → dispatched. A complex order is born `sourcing` and rests
+// there while it shops, so there is no queued → sourcing step to take.
 //
 // Idempotent prerequisites: the order must have StepsJSON populated
-// (intake side stores it on creation) and be in StatusQueued. Caller
-// is responsible for the capacity gate — this method assumes green-
-// light and proceeds with the atomic claim + dispatch.
+// (intake side stores it on creation) and be acquiring (queued or
+// sourcing). Caller is responsible for the capacity gate — this method
+// assumes green-light and proceeds with the atomic claim + dispatch.
 //
 // Called from:
 //   - fulfillment.Scanner.tryFulfill on EventOrderQueued (fresh intake
@@ -86,10 +87,11 @@ type dispatchStep struct {
 //     EventBinEnteredTransit / EventOrderCompleted etc. (slot vacancy
 //     unblocks a previously-blocked order)
 //
-// Errors land on lifecycle.Fail — the order moves to terminal `failed`
-// rather than back to queued, since these are unrecoverable from the
-// scanner's perspective (steps unparseable, bins unavailable, fleet
-// rejects).
+// A refusal it can wait out — no bin, no slot, a lane, a partner not yet
+// received — parks the order acquiring with a queue reason and returns an
+// error the scanner logs. What it cannot wait out — unparseable steps, a
+// fleet rejection, a partner Core refused at intake — fails it through
+// lifecycle.Fail.
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// Defense-in-depth: the fulfillment scanner's tryFulfill already gates on
 	// IsAcquiring ({queued, sourcing}) before calling here, so a parent in
@@ -446,8 +448,9 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	// complex order is now BORN `sourcing` (complex_intake.go), so the very first
 	// tick self-skips too.
 	//
-	// The gates above (swap-hold, capacity, slot-claim) run first and park a
-	// blocked order in its entry status — which is `sourcing` on every pass now.
+	// The phases above (the swap peer-terminal unwind, the destination's capacity
+	// gate and slot reserve) run first and park a blocked order in its entry
+	// status — which is `sourcing` on every pass now.
 	// It used to be "queued first pass, sourcing on retry": one wait filed under
 	// two different rungs depending on which pass caught it, which is the
 	// inconsistency the birth-rung move ended rather than created. Both are
@@ -689,20 +692,21 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	return nil
 }
 
-// applySwapGates runs the coordinated-swap guards (Phase B): the swap
+// applySwapGates runs the one coordinated-swap guard left at dispatch: the swap
 // peer-terminal race unwind (SPR 2424/2425) that resolves a leg whose sibling
-// already went terminal, then the INDEX ANTI-COLLISION hold that keeps a filler
-// off a line position its clearer has not committed to clearing (HOP 07).
+// already went terminal. The name is older than that; the note at the end of
+// the function lists the three gates that stood here and why each went.
 //
 // THE REMOVAL-LEG HOLD IS NOT HERE ANY MORE. This used to run Face 1 — park the
 // evac until its supply secured a claim, "to prevent stranding" (ALN_003,
 // 2026-06-03) — and that arm is deleted. Dispatch sends an evac to PARK, so the
 // hold guarded a step that moves nothing, and the anti-strand is now structural:
-// complex_pair.go dispatches both legs of a pair in one pass or neither.
+// complex_pair.go dispatches both legs of a pair in one pass or neither. The
+// index anti-collision hold (HOP 07) went the same way.
 //
-// done=true means the order was resolved by the unwind or parked
-// waiting_for_partner; the orchestrator returns st.err verbatim. Reads the
-// resolved steps read-only.
+// done=true means the order was resolved by the unwind; the orchestrator
+// returns st.err verbatim. It takes the resolved steps for the phase signature
+// and reads none of them.
 func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
 	// Close the swap peer-terminal RACE (SPR 2424/2425, 2026-07). HandleSwapPeerTerminal
 	// unwinds a swap when one leg reaches a terminal state, but it fires from the
@@ -805,8 +809,9 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// THE PROHIBITION STANDS; ITS OLD REASON DOES NOT. The justification used to
 	// end "and Core has no SiblingOrderID to model that". Core has it:
 	// orders.sibling_order_uuid is stamped at intake (complex_intake.go), linked
-	// durably by LinkOrderSiblingsByEdgeUUID, and read by the swap-hold gate a few
-	// lines above. (It also named `sibling_order_id`, which is EDGE's column — an
+	// durably by LinkOrderSiblingsByEdgeUUID, and read by the pair rule
+	// (complex_pair.go coordinatedPairLegs) and the death rule (swap_peer.go).
+	// (It also named `sibling_order_id`, which is EDGE's column — an
 	// INTEGER FK in SQLite. Core's is sibling_order_uuid, TEXT, holding the peer's
 	// edge UUID. The two services genuinely differ here and the error travelled as
 	// far as a round prompt.) That obstacle was removed some time ago; the history

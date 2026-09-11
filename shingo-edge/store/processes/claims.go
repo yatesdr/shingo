@@ -262,8 +262,11 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// person clicking a loader's cell saved through here. Closing the allowlist
 	// while such a row still existed would have turned that click into an
 	// operator-visible error, which is why the rows were quarantined FIRST and
-	// the allowlist closed after. With the stored population at zero the grid has
-	// no loader cell to offer, so nothing reaches this arm.
+	// the allowlist closed after. Once a loader sync has run the grid has no
+	// loader cell to offer, so nothing reaches this arm. Before the first
+	// non-empty sync the rows are still stored — and cloneStyleTx copies them into
+	// any style cloned meanwhile — so a click there gets the allowlist's refusal
+	// instead.
 	//
 	// It stays as an assert rather than a branch: the invariant is about what a
 	// loader claim must look like, and it costs nothing to keep saying so.

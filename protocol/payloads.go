@@ -582,31 +582,33 @@ type ComplexOrderRequest struct {
 	Priority    int                `json:"priority,omitempty"`
 	ProcessNode string             `json:"process_node,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
-	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot swap.
-	// BOTH legs carry it: Edge mints both uuids before it creates either, so
-	// each leg names its partner and neither goes out unpaired. Empty for
-	// non-swap orders.
+	// SiblingOrderUUID is the edge UUID of the paired leg in a coordinated pair.
+	// BOTH legs carry it: every Edge door that makes a pair mints both uuids
+	// before it creates either, so each leg names its partner and neither goes
+	// out unpaired. Empty for non-swap orders — and for a RELAY, whose second
+	// leg collects what the first delivers (Edge engine/relay_pair.go): its legs
+	// are linked on the Edge only, because a pair at Core would hold the feeder
+	// for a collector that cannot source until the feeder has gone.
 	//
 	// It did once ride only the second-created leg, because a leg could not
 	// name a sibling that did not exist yet. That made CREATION ORDER a
-	// correctness input, and Core reads a one-way link as no link at all
-	// (swap_hold checks sib.SiblingOrderUUID == order.EdgeUUID). A Core
-	// talking to an older Edge still sees the one-way shape, which is why the
-	// intake back-link stays.
+	// correctness input: the first-created leg named nobody, so from its own
+	// side it was a solo order and could go to the fleet before its partner
+	// existed. Core now forms a pair from either leg's pointer alone
+	// (coordinatedPairLegs), and the intake back-link stays so a Core talking to
+	// an older Edge, which still sends the one-way shape, heals it on read.
 	//
-	// Which ROLE the pointer-carrying (second-created) leg is is NOT fixed —
-	// it varies by mode and by the creating path, so do not read a role into
-	// it. two_robot creates the supply leg first and the evac leg second; a
-	// press-index CHANGEOVER does the same (supply first, evac second), but a
-	// steady-state press-index swap creates the evac leg (R1, which clears the
-	// press) first. The pointer says "these two legs are a pair", nothing more;
-	// a leg's role comes from its steps (see legTakesLineBin in Core's dispatch
-	// package).
+	// Which leg is created FIRST is NOT a role, so do not read one into it: it
+	// varies by mode and by the creating path. two_robot creates the supply leg
+	// first; a press-index CHANGEOVER does the same, but a steady-state
+	// press-index swap creates the evac leg (R1, which clears the press) first.
+	// The pointer says "these two legs are a pair", nothing more; a leg's role
+	// comes from its steps (see legTakesLineBin in Core's dispatch package).
 	//
 	// Core links both order rows on ingest — bidirectionally, via
-	// LinkSiblingsByEdgeUUID — so either leg can find the other, and the
-	// dispatch hold can see the pairing at intake, before a removal leg's
-	// synchronous dispatch claims the line bin.
+	// LinkSiblingsByEdgeUUID — so either leg can find the other: the pair rule
+	// admits both legs in one pass (coordinatedPairLegs), and the death rule
+	// resolves the survivor when one dies (HandleSwapPeerTerminal).
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
 	// KeyRoute / KeyTask are SEER robot-SELECTION hints carried from the
 	// claim's Routing configuration through to fleet.CreateOrderRequest. See

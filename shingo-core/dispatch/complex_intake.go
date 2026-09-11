@@ -20,17 +20,15 @@ import (
 //
 // Flow:
 //  1. Validate + resolve steps.
-//  2. Create order with status=queued (was: pending + immediate dispatch).
+//  2. Create the order born `sourcing` (was: pending + immediate dispatch).
 //  3. Ack to edge.
 //  4. Emit EventOrderQueued — scanner subscribes and runs immediately.
 //     Scanner.tryFulfill calls Dispatcher.DispatchPreparedComplex when
-//     capacity is green; leaves it queued otherwise.
+//     capacity is green; the order stays `sourcing`, with a queue reason,
+//     otherwise.
 //
 // The latency cost on the happy path is ~milliseconds (event-driven
 // scanner trigger, runs synchronously on the emitter goroutine).
-// Complex orders briefly transition through `queued` status even when
-// capacity is fine; consumers that only watch terminal states are
-// unaffected.
 func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
 	stationID := env.Src.Station
 	d.dbg("complex order request: station=%s uuid=%s steps=%d", stationID, p.OrderUUID, len(p.Steps))

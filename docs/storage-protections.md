@@ -14,10 +14,10 @@ forbidigo-enforced seatbelts — is documented in [reservations.md](reservations
 | # | Mechanism | Catches | Anchor (symbol) |
 |---|-----------|---------|-----------------|
 | 1 | Advisory dropoff-capacity gate | a plain/complex order dispatching into a full concrete storage slot (child of a LANE/NGRP) or a saturated node group | `shingo-core/dispatch/capacity.go` — `CheckDropoffCapacity` (~:89) |
-| 2 | Swap admission hold (unified, two faces) | a two-robot swap leg physically committing on the shared LINE node before its partner can do its part: an EVAC pulling the line bin before its supply sibling secured a replacement (strands the line, ALN_003), OR an INDEX/filler dropping a bin onto a position its evac sibling has not yet cleared (two bins on the line, HOP press-index 2026-07) | `shingo-core/dispatch/swap_hold.go` — `swapLegHoldVerdict` (~:105; `swapLegHeld` at ~:50 is the test-only boolean view of the same gate) |
+| 2 | Pair admission (a coordinated pair is one job) | the two legs of a pair committing separately — an EVAC sent to lift the line bin while its supply cannot come (strands the line, ALN_003), or one leg sent while its partner is refused. Every leg clears its acquisition phases in one pass and then every fleet create follows, or no leg is sent; an incomplete pair (partner not received yet, or digging its own bin out) parks holding nothing, and a partner Core refused at intake fails the leg that names it | `shingo-core/dispatch/complex_pair.go` — `dispatchPairInOnePass`; what counts as the pair is `coordinatedPairLegs`; the waits are `parkPair` / `parkPairAwaitingPartner`, the refusal `failForRefusedPartner` |
 | 3 | Slot reservation (reserve-only) | two stores resolving the same slot both dispatching into it (store-vs-store); the Dispatcher-surface entry also settles the destination (group→child, re-aim off a dug lane) and its return value is the only node a caller may use | `shingo-core/dispatch/store_slot.go` — `ReserveStorageDropoff` / `claimStoreSlot` (~:168) — a `resource_kind = 'slot'` reservation row, see [reservations.md](reservations.md) |
 | 4 | Atomic slot claim (reservation-guarded CAS) | a slot claim racing occupancy / another claimant | `shingo-core/store/nodes/nodes.go` — `ClaimSlotTx` (~:92); the sanctioned path is `db.ConfirmSlotClaim` (claim + reservation `pending→confirmed` in one tx), enforced by forbidigo — see [reservations.md](reservations.md) §The claim seatbelt |
-| 5 | Swap peer-death handler | a two-robot swap leg dying mid-flight (collide two bins on the line, or strand it) | `shingo-core/dispatch/swap_peer.go` — `HandleSwapPeerTerminal` (~:43) |
+| 5 | Swap peer-death handler | a two-robot swap leg dying mid-flight (collide two bins on the line, or strand it) | `shingo-core/dispatch/swap_peer.go` — `HandleSwapPeerTerminal` |
 | 6 | Arrival reconciliation (stale-ghost eviction) | a delivery landing on a node shingo still records as occupied — the record is a stale ghost, evicted to `_TRANSIT` + `anomaly_at` | `shingo-core/service/bin_service.go` — `ApplyArrival` (~:584); shared helper `shingo-core/store/internal/helpers/helpers.go` — `EvictStaleGhostBinsTx` |
 
 ## The lane family (dispatch-time)
@@ -26,10 +26,10 @@ Lanes need their own protections because only the mouth is reachable, so two
 orders can physically collide inside one lane. These compose with the tiers above
 rather than replacing them; the full model is in [lanes.md](lanes.md).
 
-> **Naming collision, read carefully.** Tier 2 above is the **swap** admission
-> hold — a two-robot swap leg committing on a shared LINE node. It is unrelated
-> to `dispatch/admission.go` in the table below, which answers lane safety. Two
-> different mechanisms, one word.
+> **Naming collision, read carefully.** Tier 2 above is the **pair** admission
+> rule — a coordinated pair's legs committing together or not at all. It is
+> unrelated to `dispatch/admission.go` in the table below, which answers lane
+> safety. Two different mechanisms, one word.
 
 | Mechanism | Catches | Anchor (symbol) |
 |---|---|---|

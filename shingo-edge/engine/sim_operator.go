@@ -153,7 +153,7 @@ func (op *simOperator) dwell(d time.Duration) bool {
 //
 //	panic: runtime error: invalid memory address or nil pointer dereference
 //	shingoedge/store.(*DB).GetOrder(...)
-//	shingoedge/engine.(*simOperator).runRelease(...)  sim_operator.go:913
+//	shingoedge/engine.(*simOperator).runRelease(...)
 //
 // It is `go test -count=20 -tags sim ./engine/` on main, intermittent because
 // the worker has to be scheduled before the binary exits, and it is why the sim

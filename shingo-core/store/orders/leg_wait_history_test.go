@@ -30,7 +30,7 @@ func newLeg(t *testing.T, db *store.DB, uuid string) *orders.Order {
 // TestSetQueueDetail_EveryLegWaitLandsInHistory is the leg half of "a wait's
 // cause lands on that wait's own row".
 //
-// A dig leg is the one population that writes a cause and then STAYS: six sites
+// A dig leg is the one population that writes a cause and then STAYS: seven sites
 // in dispatch/compound.go park it with a reason and deliberately leave the
 // status at `pending`, because being unsent is what the re-drive selects. The
 // stamp refused every one of them — `pending` is a birth certificate, not a

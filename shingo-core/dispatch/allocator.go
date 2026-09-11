@@ -367,8 +367,8 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		// and puts none back. That excludes a filler (no pickup at the line, so
 		// lineBinGone cannot be set for it anyway) and excludes a self-contained
 		// single_robot swap, which also DROPS at the line and so would strand it if
-		// skipped. It is the same predicate the swap admission gate reads, so the
-		// two cannot drift apart.
+		// skipped. It is the same predicate the death rule reads to tell an evac
+		// from a supply (swap_peer.go), so the two answer alike.
 		//
 		// Skipping releases the partials: Skip terminalizes, and TerminalizeOrder
 		// releases the order's reservations, so the carrier and slot this leg was
@@ -396,8 +396,9 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		// leg died ~5ms after creation with "no bin at any source node" and took its
 		// evac sibling down with it, leaving nothing on the board to explain why.
 		//
-		// legPlacesLineBin is the same predicate the swap admission gate uses to tell
-		// a filler from a clearer, so the two cannot drift apart. A leg with no
+		// legPlacesLineBin tells a filler from a clearer by its steps
+		// (swap_leg_role.go). The swap admission gate that shared it is deleted, so
+		// this is its one reader. A leg with no
 		// ProcessNode (a plain non-swap complex order) reads false and keeps the old
 		// skip — this narrows moot, it does not re-home unrelated traffic.
 		return assigned, reserveMoot, nil

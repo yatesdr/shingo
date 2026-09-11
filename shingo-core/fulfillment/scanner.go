@@ -210,7 +210,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// IsCoordinated == the order carries an Edge-authored coordinated plan
 	// (StepsJSON). Coordinated orders take the role gate (isConcreteStorageDropoff)
 	// + the unconditional line/process-node fast-path INSIDE DispatchPreparedComplex
-	// (complex_dispatch.go:359 + the 2b05dce comment) — unchanged. Plain
+	// (reserveComplexDestination and its 2b05dce comment) — unchanged. Plain
 	// single-transport orders take the full occupancy gate + node-driven reserve
 	// below. This preserves today's exact split (StepsJSON!="" ⟺ OrderType==Complex)
 	// while stopping the type read — including the no-wait complex changeover

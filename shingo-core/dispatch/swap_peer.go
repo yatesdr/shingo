@@ -108,7 +108,7 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 
 	// legTakesLineBin: the evac lifts the line's bin and does not put one back;
 	// the supply sets one down. The same discriminator the deleted swap-hold gate
-	// used, and now the only production reader of a leg's swap role.
+	// used; the allocator's moot-reserve arm and loader_place.go read it too.
 	//
 	// This was `DeliveryNode != ProcessNode`, which mis-reads a 3-position
 	// press-index R2: it drops a bin on the line and then carries on to re-index
@@ -172,8 +172,9 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 	// again, the evac died again — hundreds of doomed swaps per changeover,
 	// 74577-6SA0A.06, zero system stock).
 	//
-	// There is no such thing as a half-dispatched pair now: both legs dispatch in
-	// one pass or neither does. And the churn's actual cause was never this
+	// Among legs that name each other there is no such thing as a half-dispatched
+	// pair now: both dispatch in one pass or neither does, and every Edge door
+	// that makes a Core pair names both legs. And the churn's actual cause was never this
 	// cancellation — it was the planner RE-ARMING into a source it already knew
 	// was dry. That is fixed where the pair is armed (guardSourceKnownDry,
 	// shingo-edge/engine/operator_guards.go), which is the only place that can

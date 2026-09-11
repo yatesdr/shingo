@@ -69,7 +69,8 @@ func legPlacesBinAt(steps []protocol.ComplexOrderStep, node string) bool {
 // orderPlacesBinAtAny reports whether a live order will place a bin at any of
 // the given nodes. It is the destination question both changeover gates ask, and
 // it is TWO-ARMED because the store keeps the answer in a different column for
-// each order shape (`sqlite_ddl.go:111`):
+// each order shape (the delivery_node comment on the orders table,
+// store/schema/sqlite_ddl.go):
 //
 //	steps_json == ""  simple order — delivery_node is "authoritative for SIMPLE
 //	                  orders (one bin, one destination)"

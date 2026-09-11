@@ -44,8 +44,9 @@ import (
 // takes the empty out, and the supply arrives shortly after and finishes. A
 // supply slightly behind is the intended flow. A supply that was never coming is
 // ALN_003 (2026-06-03), and dispatching the pair together makes "never coming"
-// unconstructible — if the evac is parked at the line, the supply was dispatched
-// in the same pass.
+// unconstructible — if the evac is parked at the line, its supply was committed
+// to the fleet no later than it was: in the same pass, or already committed when
+// the evac went on its own.
 //
 // So RELEASE IS UNCHANGED and must stay so. ComputeSwapReady, the RELEASE
 // button, the deferral-and-refire machinery and refusePlacingLegWhileSiblingPending
@@ -54,7 +55,7 @@ import (
 // ── NO MODE NAMES. NOT ONE ────────────────────────────────────────────────
 //
 // The rule reads the PAIR STRUCTURE — that the order names a sibling — and never
-// `SwapMode`. That is deliberate and it is the second ruling: two_robot,
+// `SwapMode`. That is deliberate: two_robot,
 // press-index and whatever comes next get the same rule, and there is no
 // carve-out for anybody. A `SwapMode ==` in anything below would be the old
 // exemption re-spelled. See swap_mode.go's law: a gate reads the steps or a
@@ -66,7 +67,7 @@ import (
 // the supply's own pickup is what frees the slot the evac needs. Under the old
 // asymmetry the supply went first and unblocked its partner. Under this rule
 // neither goes, so at 100% outbound capacity such a pair waits for something
-// else to free a slot. That is the accepted cost, ruled on knowingly: a queued
+// else to free a slot. That is the accepted cost: a queued
 // pair is a wait, and wait-not-fail is the house law. The named upgrade path is
 // a reservation model in which the evac's slot IS the one the supply vacates.
 // Do not re-introduce a same-resource exemption to paper over it — that
@@ -90,11 +91,13 @@ import (
 //
 // ── THE POINTER IS PRESENT BEFORE THE ROW IS, AND THAT IS THE WHOLE POINT ─
 //
-// protocol.ComplexOrderRequest.SiblingOrderUUID rides BOTH legs — Edge mints
-// both uuids before it creates either — so the pointer is never the thing that
-// is missing. What IS missing, for the leg created first, is its partner's ORDER
-// ROW: complex_intake emits EventOrderQueued, the scanner runs SYNCHRONOUSLY on
-// that goroutine, and the partner has not been ingested yet.
+// protocol.ComplexOrderRequest.SiblingOrderUUID rides BOTH legs of a Core pair —
+// every Edge door that makes one mints both uuids before it creates either (a
+// relay goes unpaired by design; Edge engine/relay_pair.go) — so the pointer is
+// never the thing that is missing. What IS missing, for the leg created first,
+// is its partner's ORDER ROW: complex_intake emits EventOrderQueued, the scanner
+// runs SYNCHRONOUSLY on that goroutine, and the partner has not been ingested
+// yet.
 //
 // The swap-hold gate handled that asymmetrically and on purpose — fail CLOSED
 // for an evac ("hold rather than strand the line"), fail OPEN for a filler — so
@@ -283,8 +286,9 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 			// write clears queue_reason) would leave the partner waiting on
 			// something that cannot arrive.
 			//
-			// So the death rule takes it from here: a leg going terminal takes
-			// its siblings with it. Run it IN THIS PASS rather than leaving it
+			// So the death rule takes it from here: it decides what a terminal
+			// leg means for its partner — cancelled with it, or, for a moot evac,
+			// free to go on its own. Run it IN THIS PASS rather than leaving it
 			// to the surviving side's next one — applySwapGates would find it
 			// eventually, but a pass later, and the partner would spend that
 			// pass acquiring for a job that is already over.
@@ -324,7 +328,7 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		ready = append(ready, preparedLeg{order: leg, steps: steps})
 	}
 
-	// ── NO ORDERING BETWEEN THE LEGS, AND THAT IS A RULING ────────────────
+	// ── NO ORDERING BETWEEN THE LEGS, ON PURPOSE ──────────────────────────
 	//
 	// A clearer-before-filler sort stood here. It was the ordering half of the
 	// index anti-collision arm — commit the leg that empties the shared position
@@ -345,8 +349,10 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 	// needs no help from here.
 	for _, p := range ready {
 		if err := d.dispatchComplexToFleet(p.order, p.steps); err != nil {
-			// The fleet create's own failure path already terminal-fails this
-			// leg, and a terminal leg takes its siblings with it (swap_peer.go).
+			// The fleet create's failure paths either terminal-fail this leg —
+			// and the death rule then resolves its partner (swap_peer.go) — or
+			// park it on a read that failed before the create, in which case it
+			// is the lowest acquiring leg next pass and completes itself.
 			// Nothing to unwind here, and unwinding a leg that may already be
 			// moving is the one thing that would be worse than the failure.
 			return err
