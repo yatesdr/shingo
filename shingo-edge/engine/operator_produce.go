@@ -437,14 +437,15 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	if dispatch.StepsB != nil {
 		uuidB = ordermgr.NewOrderUUID()
 	}
-	orderA, err := e.dispatchPairedLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, uuidB, uuidA, origin)
+	sibA, sibB := coreSiblings(dispatch.StepsA, dispatch.StepsB, uuidA, uuidB)
+	orderA, err := e.dispatchPairedLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, sibA, uuidA, origin)
 	if err != nil {
 		return nil, err
 	}
 
 	var orderB *orders.Order
 	if dispatch.StepsB != nil {
-		orderB, err = e.dispatchPairedLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, uuidA, uuidB, origin)
+		orderB, err = e.dispatchPairedLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, sibB, uuidB, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -682,14 +683,6 @@ func (e *Engine) dispatchPairedLeg(nodeID int64, quantity int64, steps []protoco
 		dn = ""
 	}
 	return e.orderMgr.CreateComplexOrderPaired(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, orderUUID, origin)
-}
-
-func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode, processNodeName string, autoConfirm bool, siblingUUID string, origin ordermgr.Origin) (*orders.Order, error) {
-	dn := deliveryNode
-	if autoConfirm {
-		dn = ""
-	}
-	return e.orderMgr.CreateComplexOrderSibling(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, origin)
 }
 
 // resetProduceRuntime stamps the dispatched legs on the runtime and, when

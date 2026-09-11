@@ -101,10 +101,14 @@ func TestApplyProducePlan_BothLegsGoOutPaired(t *testing.T) {
 // Driven end-to-end through StartProcessChangeover rather than by calling the
 // applier directly — the planner decides which leg is built first, and the
 // ordering is precisely the thing under test.
+//
+// A two_robot changeover: the clear-then-fill pair Core runs as one job. This
+// used the single-robot fixture until that shape was recognised as a relay,
+// which goes to Core unpaired — see relay_pair_test.go.
 func TestChangeoverApplier_BothLegsGoOutPaired(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, _, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, _, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 	drainAbandonOutbox(t, db)

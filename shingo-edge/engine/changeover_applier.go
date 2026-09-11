@@ -3,6 +3,7 @@ package engine
 import (
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	ordermgr "shingoedge/orders"
@@ -90,10 +91,15 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// unaffected either way: LinkOrderSiblings below works on row ids, and it
 	// is what supply_bin_guard and ComputeSwapReady read.
 	supplyUUID, evacUUID := mintPairableLegUUID(action.SupplyOrder), mintPairableLegUUID(action.EvacOrder)
+	// A RELAY GOES TO CORE UNPAIRED. When one leg collects what the other
+	// delivers (legsRelay), naming each other would have Core hold the feeder for
+	// a collector that cannot source until the feeder has gone. Both uuids are
+	// still minted here; only the pointer each leg sends changes.
+	supplySib, evacSib := coreSiblings(specSteps(action.SupplyOrder), specSteps(action.EvacOrder), supplyUUID, evacUUID)
 
 	var supplyID, evacID *int64
 	if action.SupplyOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, evacUUID, supplyUUID, origin)
+		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, supplySib, supplyUUID, origin)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create supply order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -105,7 +111,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		supplyID = &id
 	}
 	if action.EvacOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID, evacUUID, origin)
+		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, evacSib, evacUUID, origin)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -200,6 +206,14 @@ func mintPairableLegUUID(spec *changeover.OrderSpec) string {
 		return ""
 	}
 	return ordermgr.NewOrderUUID()
+}
+
+// specSteps is a planned leg's complex steps, or nil for a leg with none.
+func specSteps(spec *changeover.OrderSpec) []protocol.ComplexOrderStep {
+	if spec == nil || spec.Complex == nil {
+		return nil
+	}
+	return spec.Complex.Steps
 }
 
 // createPlannedOrder creates one leg. orderUUID is the pre-minted uuid for this

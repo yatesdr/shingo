@@ -60,6 +60,7 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
 		e.handleSequentialBackfill(evt.Payload)
 		e.handleSiblingReleaseRefire(evt.Payload)
+		e.handleRelayPartnerDeath(evt.Payload)
 	}, EventOrderStatusChanged)
 }
 

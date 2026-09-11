@@ -273,3 +273,101 @@ func TestSwapPeerTerminal_Abandoned_LeavesPartner(t *testing.T) {
 		t.Error("no swap_half_accepted audit on the surviving evac — the half-swap must be traceable")
 	}
 }
+
+// ── census 8: the verdict on real 2-position press-index shapes ────────────
+
+// pressIndex2 returns BuildTwoRobotPressIndexSwapSteps' unflipped 2-position legs:
+// R1 lifts the press's tote, takes it out, fetches the replacement and backfills
+// the on-deck position; R2 shifts the on-deck carrier onto the press.
+//
+// The verdict tests above use two_robot shapes and one 3-position R2. The role
+// read (legTakesLineBin) is what decides the moot arm, and it had never been
+// asked about the press-index legs a 2-position press actually builds.
+func pressIndex2(press, back, out, inb string) (r1, r2 []resolvedStep) {
+	r1 = []resolvedStep{
+		{Action: protocol.ActionWait, Node: press},
+		{Action: protocol.ActionPickup, Node: press},
+		{Action: protocol.ActionDropoff, Node: out},
+		{Action: protocol.ActionPickup, Node: inb},
+		{Action: protocol.ActionDropoff, Node: back},
+	}
+	r2 = []resolvedStep{
+		{Action: protocol.ActionWait, Node: back},
+		{Action: protocol.ActionPickup, Node: back},
+		{Action: protocol.ActionDropoff, Node: press},
+	}
+	return r1, r2
+}
+
+// TestSwapPeerTerminal_PressIndex2_EachDeathTakesThePartner: R1 fails → R2 is
+// cancelled (it would set a carrier onto a press R1 never cleared); R2 fails →
+// R1 is cancelled (it would take the press's tote with nothing indexed forward).
+//
+// COVERAGE PIN. Passes at bcbde0d2. MUTATION: in HandleSwapPeerTerminal, return
+// early when the dead leg has more than one pickup — R1's death stops cancelling
+// R2 and the first case fails.
+func TestSwapPeerTerminal_PressIndex2_EachDeathTakesThePartner(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		prefix   string
+		r1Status protocol.Status
+		r2Status protocol.Status
+		dead     string // "r1" or "r2"
+	}{
+		{"R1 fails", "PI2F1", StatusFailed, protocol.StatusStaged, "r1"},
+		{"R2 fails", "PI2F2", protocol.StatusStaged, StatusFailed, "r2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDBShared(t)
+			_, press, bp := setupTestData(t, db)
+			d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+			r1Steps, r2Steps := pressIndex2(press.Name, tc.prefix+"-BACK", tc.prefix+"-OUT", tc.prefix+"-IN")
+			r1 := mkSwapLegWithSteps(t, db, tc.prefix+"-r1", tc.prefix+"-r2", tc.r1Status, press.Name,
+				tc.prefix+"-BACK", bp.Code, r1Steps)
+			r2 := mkSwapLegWithSteps(t, db, tc.prefix+"-r2", tc.prefix+"-r1", tc.r2Status, press.Name,
+				press.Name, bp.Code, r2Steps)
+			dead, live := r1, r2
+			if tc.dead == "r2" {
+				dead, live = r2, r1
+			}
+
+			d.HandleSwapPeerTerminal(dead.ID, SwapTerminalFailed)
+
+			got, err := db.GetOrderByUUID(live.EdgeUUID)
+			testutil.MustNoErr(t, err, "reload the live leg")
+			if got.Status != StatusCancelled {
+				t.Fatalf("%s is %q after its partner failed, want cancelled — a press-index pair is one job, "+
+					"and the survivor's own work collides with (or strands) the press", live.EdgeUUID, got.Status)
+			}
+		})
+	}
+}
+
+// TestSwapPeerTerminal_PressIndex2_R1SkippedLeavesR2: a SKIPPED R1 found no tote
+// on the press to lift. That is moot, not a death — the press is empty and R2 is
+// exactly what should put a carrier on it. R1's shape has two pickups and ends
+// at the on-deck position, so it is also the shape most likely to be misread.
+//
+// COVERAGE PIN. Passes at bcbde0d2. MUTATION: make legTakesLineBin require the
+// leg to END away from the process node's lane (the old delivery-node read) —
+// R1 then reads as a supply, its skip cancels R2, and this fails.
+func TestSwapPeerTerminal_PressIndex2_R1SkippedLeavesR2(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	_, press, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	r1Steps, r2Steps := pressIndex2(press.Name, "PI2S-BACK", "PI2S-OUT", "PI2S-IN")
+	r1 := mkSwapLegWithSteps(t, db, "PI2S-r1", "PI2S-r2", StatusSkipped, press.Name, "PI2S-BACK", bp.Code, r1Steps)
+	mkSwapLegWithSteps(t, db, "PI2S-r2", "PI2S-r1", protocol.StatusStaged, press.Name, press.Name, bp.Code, r2Steps)
+
+	d.HandleSwapPeerTerminal(r1.ID, SwapTerminalSkipped)
+
+	got, err := db.GetOrderByUUID("PI2S-r2")
+	testutil.MustNoErr(t, err, "reload R2")
+	if got.Status != protocol.StatusStaged {
+		t.Fatalf("R2 is %q after a MOOT R1, want staged untouched — the press was already empty, and R2 is "+
+			"the leg that refills it", got.Status)
+	}
+}

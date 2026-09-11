@@ -113,7 +113,7 @@ func TestDirectTwoRobotSwap_LegsAreLinked(t *testing.T) {
 			"complex orders, which turns off the starvation hold, the peer-death " +
 			"unwind and the abandon cascade all at once.")
 	}
-	// Forward link on the second-created leg, back-link filled in by intake.
+	// Each leg names the other in its own request: both uuids are minted first.
 	if a.SiblingOrderUUID != b.EdgeUUID {
 		t.Errorf("leg %d points at %q, want %q", a.ID, a.SiblingOrderUUID, b.EdgeUUID)
 	}

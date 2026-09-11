@@ -282,14 +282,23 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 	}
 
 	dispatch := plan.Dispatch
-	orderA, err := e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", origin)
+	// BOTH UUIDS BEFORE EITHER CREATE, as the produce and changeover doors do.
+	// This door minted leg A's uuid inside its create, so A reached Core naming
+	// no sibling and was a solo order on its own intake pass: the pair rule never
+	// saw it. Creation order is unchanged — A first, so Core is asked for A first.
+	uuidA, uuidB := orders.NewOrderUUID(), ""
+	if dispatch.StepsB != nil {
+		uuidB = orders.NewOrderUUID()
+	}
+	sibA, sibB := coreSiblings(dispatch.StepsA, dispatch.StepsB, uuidA, uuidB)
+	orderA, err := e.dispatchPairedLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, sibA, uuidA, origin)
 	if err != nil {
 		return nil, err
 	}
 
 	var orderB *storeorders.Order
 	if dispatch.StepsB != nil {
-		orderB, err = e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, origin)
+		orderB, err = e.dispatchPairedLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, sibB, uuidB, origin)
 		if err != nil {
 			return nil, err
 		}

@@ -938,13 +938,21 @@ func (e *Engine) requestEmptyForSwapModes(
 		// belong to the operator's one request: an R2 that names no demand is
 		// an orphan by construction, and a service dig raised for it cannot
 		// look up who is collecting its target.
-		orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", reqOrigin)
+		//
+		// Both uuids before either create, as at the consume door and for the
+		// same reason: minted inside the create, leg A went to Core unpaired.
+		uuidA, uuidB := ordermgr.NewOrderUUID(), ""
+		if dispatch.StepsB != nil {
+			uuidB = ordermgr.NewOrderUUID()
+		}
+		sibA, sibB := coreSiblings(dispatch.StepsA, dispatch.StepsB, uuidA, uuidB)
+		orderA, err := e.dispatchPairedLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, sibA, uuidA, reqOrigin)
 		if err != nil {
 			return nil, err
 		}
 		var orderB *orders.Order
 		if dispatch.StepsB != nil {
-			orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, reqOrigin)
+			orderB, err = e.dispatchPairedLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, sibB, uuidB, reqOrigin)
 			if err != nil {
 				return nil, err
 			}

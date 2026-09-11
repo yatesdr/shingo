@@ -94,6 +94,14 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 // with embedded wait step) are both created at changeover start.
 func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
+	return seedPhase3SwapScenarioMode(t, db, "simple")
+}
+
+// seedPhase3SwapScenarioMode is seedPhase3SwapScenario with the claims' swap mode
+// chosen. "simple" falls through to buildSingleRobotChangeoverSwap (a stage leg
+// and a swap leg — a relay); two_robot builds the clear-then-fill pair.
+func seedPhase3SwapScenarioMode(t *testing.T, db *store.DB, mode protocol.SwapMode) (processID, nodeID, fromStyleID, toStyleID int64) {
+	t.Helper()
 
 	processID, err := db.CreateProcess("P3-PROC", "phase3 swap test", "active_production", "", "", false)
 	if err != nil {
@@ -122,15 +130,21 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	// From-claim: full staging config — enables Phase 3 swap Order B
+	// From-claim: full staging config — enables Phase 3 swap Order B. A two_robot
+	// claim must also name its own inbound staging.
+	fromInboundStaging := ""
+	if mode == protocol.SwapModeTwoRobot {
+		fromInboundStaging = "IN-STAGING"
+	}
 	fromClaimID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3-NODE",
 		Role:                "consume",
-		SwapMode:            "simple",
+		SwapMode:            mode,
 		PayloadCode:         "PART-OLD",
 		UOPCapacity:         100,
 		InboundSource:       "SOURCE-OLD",
+		InboundStaging:      fromInboundStaging,
 		OutboundStaging:     "OUT-STAGING",
 		OutboundDestination: "DEST-OLD",
 	})
@@ -143,7 +157,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 		StyleID:        toStyleID,
 		CoreNodeName:   "P3-NODE",
 		Role:           "consume",
-		SwapMode:       "simple",
+		SwapMode:       mode,
 		PayloadCode:    "PART-NEW",
 		UOPCapacity:    200,
 		InboundSource:  "SOURCE-NEW",

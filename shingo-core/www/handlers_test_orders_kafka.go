@@ -195,8 +195,10 @@ func (h *Handlers) apiTestOrderReceipt(w http.ResponseWriter, r *http.Request) {
 // omissions. Arrival order is not guaranteed on this route, which is exactly
 // why the forward pointer is written in the INSERT and the back-link is keyed
 // on the uuid rather than a resolved id.
-func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int, processNode, siblingUUID string) (string, error) {
-	orderUUID := uuid.New().String()
+func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int, processNode, siblingUUID, orderUUID string) (string, error) {
+	if orderUUID == "" {
+		orderUUID = uuid.New().String()
+	}
 
 	complexReq := &protocol.ComplexOrderRequest{
 		OrderUUID:        orderUUID,
@@ -251,7 +253,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 
 	switch req.CycleMode {
 	case protocol.SwapModeSequential:
-		uid, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapSequentialSteps(req), req.Priority, "", "")
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapSequentialSteps(req), req.Priority, "", "", "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -263,14 +265,16 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
 			return
 		}
-		uid1, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapResupplySteps(req), req.Priority, req.Location, "")
+		// Both uuids before either order — see apiDirectComplexOrderSubmit.
+		supplyUUID, removalUUID := uuid.New().String(), uuid.New().String()
+		uid1, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapResupplySteps(req), req.Priority, req.Location, removalUUID, supplyUUID)
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		results = append(results, map[string]any{"role": "resupply", "order_uuid": uid1})
 
-		uid2, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapRemovalSteps(req), req.Priority, req.Location, uid1)
+		uid2, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapRemovalSteps(req), req.Priority, req.Location, supplyUUID, removalUUID)
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -282,7 +286,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
 		}
-		uid, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapSingleRobotSteps(req), req.Priority, "", "")
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapSingleRobotSteps(req), req.Priority, "", "", "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
