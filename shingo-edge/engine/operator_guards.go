@@ -104,15 +104,25 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 			"this guard refuses a KNOWN-dry source, and an unanswered question is not knowing", node.Name, payload, err)
 		return nil
 	}
-	for _, missing := range result.Missing {
-		if missing != payload {
+	// ABSENT, NOT MISSING. This read Missing, which is "no bin FREE right now":
+	// a market whose every bin was reserved or claimed by other pairs read as
+	// dry, and the REQUEST was refused for what was only congestion. Stock that
+	// is spoken for comes free; the pair should be created and wait for it. Only
+	// a payload Core has no bin of at all has nothing to wait for.
+	if !result.AbsentKnown {
+		log.Printf("[request-material] node %s: core does not say whether it has any %s at all (an older core) — "+
+			"arming the pair; not knowing is not knowing it is dry", node.Name, payload)
+		return nil
+	}
+	for _, absent := range result.Absent {
+		if absent != payload {
 			continue
 		}
-		log.Printf("[request-material] node %s: NOT arming a swap pair for %s — core reports no available bins. "+
-			"Two legs that cannot source would be created and cancelled together; the level keeper re-asks once stock lands",
-			node.Name, payload)
-		return fmt.Errorf("node %s: no %s in stock — the swap needs a replacement bin before both robots can be committed; "+
-			"load the payload and this will arm itself", node.Name, payload)
+		log.Printf("[request-material] node %s: NOT arming a swap pair for %s — core has no bin of it anywhere, free "+
+			"or spoken for. Two legs that cannot source would be created and cancelled together; the level keeper "+
+			"re-asks once stock lands", node.Name, payload)
+		return fmt.Errorf("node %s: core has no %s bin anywhere — the swap needs a replacement bin before both robots "+
+			"can be committed; load the payload and this will arm itself", node.Name, payload)
 	}
 	return nil
 }

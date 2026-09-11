@@ -518,7 +518,10 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 	// struct is local because it carries the json tags Core sends; copy
 	// fields into the service-package result type for the return.
 	var wire struct {
-		Missing   []string `json:"missing"`
+		Missing []string `json:"missing"`
+		// A pointer so an absent key (a Core too old to answer) is told apart
+		// from an empty list (a Core that has every payload somewhere).
+		Absent    *[]string `json:"absent"`
 		Available []struct {
 			PayloadCode string `json:"payload_code"`
 			BinCount    int    `json:"bin_count"`
@@ -528,6 +531,9 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 		return nil, fmt.Errorf("decode preflight response: %w", err)
 	}
 	out := &service.PreflightCoreResult{Missing: wire.Missing}
+	if wire.Absent != nil {
+		out.Absent, out.AbsentKnown = *wire.Absent, true
+	}
 	out.Available = make([]service.PreflightCoreAvailability, len(wire.Available))
 	for i, a := range wire.Available {
 		out.Available[i] = service.PreflightCoreAvailability{PayloadCode: a.PayloadCode, BinCount: a.BinCount}

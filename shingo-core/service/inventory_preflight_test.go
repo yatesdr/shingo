@@ -4,6 +4,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingocore/internal/testdb"
@@ -68,6 +70,41 @@ func TestInventoryPreflight_AllAvailable(t *testing.T) {
 	}
 	if len(result.Available) != 1 || result.Available[0].BinCount < 1 {
 		t.Errorf("Available = %v, want one entry with BinCount >= 1", result.Available)
+	}
+}
+
+// TestInventoryPreflight_AbsentIsNoBinAtAll is the Core half of census 11: the
+// preflight answers two questions, and the dry-source guard may refuse only on
+// the second. A payload whose every bin is spoken for is MISSING (none free) but
+// not ABSENT (it exists, and a REQUEST should wait for it); a payload with no bin
+// anywhere is both. The wire carries the new field under its own key, which is
+// how an Edge tells this Core from one too old to say.
+func TestInventoryPreflight_AbsentIsNoBinAtAll(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+	busy := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-BUSY")
+	holder := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, busy.ID, holder.ID)
+
+	svc := NewInventoryService(db)
+	result, err := svc.PreflightAvailability(context.Background(), "", []string{std.Payload.Code, "NO-SUCH-PAYLOAD"})
+	if err != nil {
+		t.Fatalf("PreflightAvailability: %v", err)
+	}
+	if strings.Join(result.Missing, ",") != std.Payload.Code+",NO-SUCH-PAYLOAD" {
+		t.Errorf("Missing = %v, want both — neither has a bin free", result.Missing)
+	}
+	if strings.Join(result.Absent, ",") != "NO-SUCH-PAYLOAD" {
+		t.Errorf("Absent = %v, want only NO-SUCH-PAYLOAD — %s has a bin, spoken for, and a spoken-for bin is "+
+			"a wait, not an empty plant", result.Absent, std.Payload.Code)
+	}
+	wire, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(wire), `"absent":["NO-SUCH-PAYLOAD"]`) {
+		t.Errorf("the wire shape %s does not carry absent under its own key", wire)
 	}
 }
 

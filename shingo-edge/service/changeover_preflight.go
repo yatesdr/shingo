@@ -26,8 +26,14 @@ type PreflightCorePoster interface {
 // Defined here so the interface above doesn't drag the engine package
 // back into service.
 type PreflightCoreResult struct {
-	Missing   []string
-	Available []PreflightCoreAvailability
+	Missing []string
+	// Absent is the payloads Core has no bin of at all — not free, not reserved,
+	// not claimed. Missing ("none free right now") is congestion; Absent is the
+	// only answer with nothing to wait for. AbsentKnown is false when the Core is
+	// too old to send it, and a caller must read that as "not known".
+	Absent      []string
+	AbsentKnown bool
+	Available   []PreflightCoreAvailability
 }
 
 // PreflightCoreAvailability mirrors engine.PreflightAvailability.

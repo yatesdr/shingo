@@ -931,6 +931,12 @@ func (e *Engine) requestEmptyForSwapModes(
 				return nil, err
 			}
 		}
+		// NO DRY-SOURCE GUARD ON THIS DOOR, and not by omission. The consume door
+		// refuses to arm a pair into a payload Core has no bin of
+		// (guardSourceKnownDry); this door asks for an EMPTY carrier, and the
+		// preflight counts bins of a payload — it cannot say whether empties
+		// exist. Guarded, this door would always let the request through, and a
+		// check that never refuses is a comment that runs.
 		// reqOrigin, not Origin{}. The episode was opened at the top of this
 		// method precisely so the orders it creates could name what caused
 		// them, and then the multi-step arm dropped it on the floor while the
