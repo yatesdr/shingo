@@ -554,9 +554,14 @@ func TestSSE_StallReconnects(t *testing.T) {
 
 	// After the reconnect the manager must still consider itself connected
 	// AND still be running — i.e. the loop survived its own recovery.
-	if !m.IsWarLinkConnected() {
-		t.Fatal("after stall-reconnect, warlinkConnected is false — the loop died " +
-			"instead of reconnecting")
+	//
+	// WAIT FOR IT; DO NOT READ IT ONCE. The server counts a connection the
+	// moment its stream opens, but sseConnect marks the manager connected only
+	// after the REST bootstrap that follows (warlinkSync). A single read raced
+	// that round trip, and under load it landed inside it and saw false.
+	if !testutil.AssertEventually(t, 20*time.Millisecond, 5*time.Second, m.IsWarLinkConnected) {
+		t.Fatal("after stall-reconnect, warlinkConnected is still false 5s after the second " +
+			"connection opened — the loop died instead of reconnecting")
 	}
 	// A third connection would prove the loop is cycling on stalls; its
 	// absence after a generous window proves the second stream (with
