@@ -126,6 +126,12 @@ func TestMaterialWaitCauseLiteralsMatchDispatch(t *testing.T) {
 				i, materialWaitCauseLiterals[i], want[i])
 		}
 	}
+	// The resolver's two causes, which take the long bound only under the
+	// material code — same contract, same reason to pin the strings.
+	if got := materialWaitResolverCauseLiterals; len(got) != 2 || got[0] != "intake-resolve" || got[1] != "ngrp-resolve" {
+		t.Errorf("resolver material-wait causes = %v, want [intake-resolve ngrp-resolve] — each must equal "+
+			"its dispatch constant (CauseIntakeResolve, CauseNGRPResolve)", got)
+	}
 	// AND THE ALARM FAMILIES STAY OUT. These are the ones the record names by
 	// hand: an outage must never read as a shortage, and a resting claim-failed
 	// is the anomaly rather than a wait.

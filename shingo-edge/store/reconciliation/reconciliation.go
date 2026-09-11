@@ -89,6 +89,16 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	// than hidden — an outage on an Edge order gets two hours of quiet here where
 	// Core would raise it at thirty minutes, and Core's board is the one to read
 	// for that distinction.
+	//
+	// ── WHERE THIS AGREES WITH CORE'S RULE ───────────────────────────────────
+	//
+	// Core's long bound is: a cause in its material-wait list, OR one of the
+	// node-group resolver's two causes (intake-resolve, ngrp-resolve) written under
+	// waiting_for_material. The same two causes under waiting_for_slot keep thirty
+	// minutes there — a slot wait is a throughput wait. Keyed on the code alone this
+	// board lands on the same answer for both halves of the resolver causes, which
+	// is why the CASE below needs nothing more than the code; the outage family
+	// above is still the one place the two boards differ.
 	rows, err := db.Query(fmt.Sprintf(`SELECT id, uuid, status, updated_at
 		FROM orders
 		WHERE status IN (%s)

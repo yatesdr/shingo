@@ -41,10 +41,23 @@ const stuckOrderAge = 30 * time.Minute
 // 30 minutes trains people to ignore the anomaly board, which costs more than
 // the silence did.
 //
+// THE RULE AS IT NOW IS: an order rests for two hours before it is an anomaly
+// when its cause is in materialWaitCauseLiterals, or when it is one of the
+// resolver's two causes (materialWaitResolverCauseLiterals) written under
+// waiting_for_material. Everything else rests thirty minutes — the undetermined
+// and broken-hold families below, every lane and fleet cause, and the SLOT
+// family: dropoff-occupied, dropoff-inflight, ngrp-full, complex-slot-reserve,
+// and the resolver causes under waiting_for_slot. A slot wait is a throughput
+// wait; its releaser is traffic clearing a position, and a position that has not
+// cleared in half an hour is worth a person's attention. That is a decision, and
+// this paragraph is where it is written.
+//
 // Two hours is the operator judgement (2026-08-03): long enough that ordinary
 // material churn clears on its own, short enough to catch a wedge inside one
-// shift. Measured against the live Springfield board the day it was set, this
-// separates a genuinely stuck window (4h41m) from routine contention (48m).
+// shift. It is a judgement, not a calibration. It was set against a Springfield
+// board that keyed the bound on `status = 'queued'`, so the figures measured then
+// describe a different population, and the cause-keyed one has not been measured
+// since — re-measure it on the board before anyone tightens the bound.
 //
 // ── IT KEYS ON THE CAUSE NOW, NOT ON THE RUNG ─────────────────────────────
 //
@@ -109,6 +122,31 @@ var materialWaitCauseLiterals = []string{
 	"finder-plant-empty",
 	"finder-no-full-carrier",
 	"reserve-holding",
+}
+
+// materialWaitResolverCauseLiterals are the node-group resolver's two causes,
+// which are a material wait only when they are written under the material code.
+//
+// ── ONE CAUSE, TWO FAMILIES, SO HERE THE CODE DECIDES ─────────────────────
+//
+// CauseIntakeResolve and CauseNGRPResolve name the SITE that parked the order
+// (resolution could not place it), not what it is short of, and both are written
+// under whichever code the classified capacity shape picks (queueCodeForCapacity):
+// waiting_for_material when the group holds no bin the order can take, and
+// waiting_for_slot when it holds no free position. The first is a shortage — it
+// ends when a carrier arrives — so it takes materialWaitAge with the finder tiers.
+// The second is a SLOT wait, a throughput wait like the lane and fleet causes, and
+// it keeps the half-hour bound: a group whose every position has stayed full for
+// thirty minutes is worth a person's attention. The other writers of ngrp-resolve
+// (FleetRefusalCause, the planner, the store-slot resolver) write it under
+// waiting_for_slot only, so they stay on the short bound too.
+//
+// This is the only place the code is read, and only for these two: for every
+// cause above the code cannot tell a shortage from an outage, which is why the
+// bound is keyed on cause at all.
+var materialWaitResolverCauseLiterals = []string{
+	"intake-resolve",
+	"ngrp-resolve",
 }
 
 // CompletionAnomalyWindow is how far back a completion anomaly still counts
@@ -285,15 +323,22 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 // now sits next to the literals it renders.
 //
 // $1 and $2 are the two bounds — the ::int casts in the CASE are written against
-// those exact positions — then one placeholder per material-wait cause, and
-// `now` last.
+// those exact positions — then one placeholder per material-wait cause, the
+// material code, one per resolver cause, and `now` last.
 func stuckOrderQuery(now time.Time) (string, []any) {
 	args := []any{int(stuckOrderAge.Seconds()), int(materialWaitAge.Seconds())}
-	causePlaceholders := make([]string, len(materialWaitCauseLiterals))
-	for i, c := range materialWaitCauseLiterals {
-		args = append(args, c)
-		causePlaceholders[i] = fmt.Sprintf("$%d", len(args))
+	placeholders := func(values []string) string {
+		out := make([]string, len(values))
+		for i, v := range values {
+			args = append(args, v)
+			out[i] = fmt.Sprintf("$%d", len(args))
+		}
+		return strings.Join(out, ", ")
 	}
+	causes := placeholders(materialWaitCauseLiterals)
+	args = append(args, string(protocol.QueueWaitingForMaterial))
+	materialCode := len(args)
+	resolverCauses := placeholders(materialWaitResolverCauseLiterals)
 	args = append(args, now)
 	return fmt.Sprintf(`
 		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at,
@@ -305,11 +350,13 @@ func stuckOrderQuery(now time.Time) (string, []any) {
 		) h ON TRUE
 		WHERE o.status IN (%s)
 		  AND COALESCE(h.last_progress, o.created_at) < $%d::timestamptz - (
-		        CASE WHEN COALESCE(o.queue_cause, '') IN (%s) THEN $2::int ELSE $1::int END
+		        CASE WHEN COALESCE(o.queue_cause, '') IN (%s)
+		               OR (COALESCE(o.queue_code, '') = $%d AND COALESCE(o.queue_cause, '') IN (%s))
+		             THEN $2::int ELSE $1::int END
 		        * INTERVAL '1 second')
 		ORDER BY progressed_at ASC`,
 		protocol.RuntimeStuckCandidateStatusSQLList(), len(args),
-		strings.Join(causePlaceholders, ", ")), args
+		causes, materialCode, resolverCauses), args
 }
 
 func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly, error) {
@@ -337,7 +384,8 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	}
 
 	// Two thresholds, picked per row by CAUSE — see materialWaitAge for why the
-	// rung stopped being the key and what must not break in the swap.
+	// rung stopped being the key and what must not break in the swap — and for the
+	// resolver's two causes by cause and code (materialWaitResolverCauseLiterals).
 	//
 	// The query already selected queue_cause for the station-dwell rows below, so
 	// the fact was in hand before the bound started reading it.
