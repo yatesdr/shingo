@@ -38,6 +38,11 @@ var testDB *store.DB
 
 // TestMain creates an ephemeral SQLite database, runs migrations, and makes
 // it available to all tests in this package via the testDB variable.
+//
+// It returns rather than calling os.Exit, so the deferred Close and RemoveAll
+// run; the test binary still exits with m.Run's code. os.Exit skips deferred
+// calls, and every run of this package used to leave its database directory
+// behind in the OS temp dir.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "shingo-edge-test-*")
 	if err != nil {
@@ -52,7 +57,7 @@ func TestMain(m *testing.M) {
 	}
 	defer testDB.Close()
 
-	os.Exit(m.Run())
+	m.Run()
 }
 
 // --- Stub engine ---

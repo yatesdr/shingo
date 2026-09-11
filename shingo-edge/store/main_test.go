@@ -19,6 +19,11 @@ import (
 // the OS temp dir, which forces the library through the init path
 // exactly once on a single goroutine. Subsequent Opens from parallel
 // tests see the init complete and skip the racy code path.
+//
+// After the tests, it deletes the template coverageDB builds once per binary.
+// Nothing else removes it, so every run used to leave a template directory in
+// the OS temp dir. TestMain returns rather than calling os.Exit so that
+// cleanup runs; the test binary still exits with m.Run's code.
 func TestMain(m *testing.M) {
 	tmpDir, err := os.MkdirTemp("", "shingoedge-store-warmup-*")
 	if err == nil {
@@ -28,5 +33,8 @@ func TestMain(m *testing.M) {
 		}
 		_ = os.RemoveAll(tmpDir)
 	}
-	os.Exit(m.Run())
+	m.Run()
+	if coverageTplPath != "" {
+		_ = os.RemoveAll(filepath.Dir(coverageTplPath))
+	}
 }
