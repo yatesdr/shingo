@@ -854,29 +854,17 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseSwapHold,
 		populations: []WaitPopulation{PopAcquiring},
-		// IT USED TO NAME THE PREDICATE THAT DEADLOCKED. The row read "the sibling
-		// swap leg claims its bin, clearing the gate", which describes the
-		// live-claim test the swap-hold gate ran until 2026-08-11 — the one that hung the
-		// ASSY pair when the supply STAGED its replacement, the store unclaimed the
-		// bin, and the claim the evac was waiting for disappeared having already
-		// done its job (the arm's own scar). swapLegCommittedToFleet
-		// replaced it precisely so the hold reads dispatch state instead of a live
-		// claim. A releaser row naming a dead mechanism as live is worse than a
-		// blank one: it sends the reader to look for a claim that is not the gate.
-		//
-		// TWO PRODUCERS NOW, AND THE EVAC ONE IS GONE. The row used to cover both
-		// faces of the old gate; Face 1 — the evac waiting on its supply — is
-		// deleted, because the pair rule dispatches both legs in one pass instead
-		// of holding one against the other. What is left writes this cause is a
-		// filler waiting for its clearer, and a leg whose partner has not been
-		// ingested yet. A blocked PAIR does not land here at all: it parks under
-		// the cause of the slot, bin or lane it is short of, on both rows.
-		what: "the partner leg arrives, or commits to the fleet — it holds a vendor order and is " +
-			"en route or done (swapLegCommittedToFleet). For a filler that means its clearer is " +
-			"committed to clearing the line; for a leg whose partner has no order row yet it " +
-			"means that row landing, which its own intake does. " +
-			"NOT a live claim: a leg that has already staged its bin holds none, and " +
-			"reading for one is what deadlocked this gate on 2026-08-11",
+		// ONE PRODUCER: the pair rule's partner wait (complex_pair.go
+		// parkPairAwaitingPartner) — a partner Core has not received, or one
+		// digging its own bin out. A blocked PAIR does not land here: it parks
+		// under the cause of the slot, bin or lane it is short of, on both rows.
+		// The swap-hold gate and its filler arm, which this row used to describe,
+		// are deleted, and a releaser naming a dead mechanism sends the reader
+		// looking for a gate that is not there.
+		what: "the partner's order reaches Core — its intake emits EventOrderQueued and the two legs go " +
+			"together — or a partner digging its own bin out finishes and resumes through queued. If Core " +
+			"refuses the partner at intake instead, nothing can arrive and the wait ends in failure: this " +
+			"leg fails carrying the partner's reason, at the refusal or on its own first pass after it",
 	},
 
 	// ── The finder's tiers ────────────────────────────────────────────────

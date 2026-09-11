@@ -20,29 +20,32 @@ import (
 //
 // The plausible mistake is specific. A leg in `reshuffling` is visibly DOING
 // something — robots moving, blockers being carried out — so adding it to the
-// committed list reads like a correction rather than a change. It is not.
-// Committed means committed to THIS SWAP'S OWN WORK, and a leg mid-dig has not
-// begun that work. Releasing its partner early is the line clearing with no
-// replacement coming: ALN_003, 2026-06-03, the incident the supply-side hold
-// exists for.
+// committed list reads like a correction rather than a change. It is not: a
+// holder mid-dig has collected nothing yet.
 //
-// ── AND IT IS ABOUT TO BECOME AN ORDINARY STATE ───────────────────────────
+// ── WHAT IT PINS NOW ──────────────────────────────────────────────────────
+//
+// The predicate's callers are the lane hand-off gates in dig_lock_release.go
+// (handOffDugLane's gate 3 and the two beside it), where this answer decides
+// what happens to a holder's dig row and its corridor. The swap gates it was
+// written for are deleted. The pair's own version of the question — a partner
+// digging its own bin out holds its partner back — is pinned by behaviour, not
+// by this predicate: TestPairRule_ASupplyDiggingForItsBinHoldsItsEvac (census 1).
+//
+// ── AND IT IS AN ORDINARY STATE ───────────────────────────────────────────
 //
 // Under §R.91 the demand that raises a dig BECOMES the dig's parent and wears
-// `reshuffling` while it runs. A swap leg in `reshuffling` goes from a shape
-// this predicate barely saw to a routine one. Round 2 flagged it for exactly
-// that reason — settle it before the unification arrives and finds it undecided.
+// `reshuffling` while it runs, so a leg in `reshuffling` is routine, not rare.
 //
 // MUTATION (verified): move StatusReshuffling into the committed list and this
-// fails, naming the incident.
+// fails.
 func TestSwapLegCommittedToFleet_ReshufflingIsNotCommitted(t *testing.T) {
 	t.Parallel()
 
 	if swapLegCommittedToFleet(&orders.Order{Status: StatusReshuffling}) {
-		t.Error("a leg mid-dig reads as COMMITTED TO THE FLEET. It holds no vendor order and is " +
-			"not en route — it has not begun this swap's own work. Its partner must keep waiting; " +
-			"releasing early is the line clearing with no replacement coming (ALN_003, 2026-06-03), " +
-			"which is the incident the supply-side hold exists for.")
+		t.Error("a leg mid-dig reads as COMMITTED TO THE FLEET. It holds no vendor order, is not en " +
+			"route and has collected nothing — and the lane hand-off gates in dig_lock_release.go read " +
+			"this answer to decide what happens to its dig row and its corridor.")
 	}
 }
 

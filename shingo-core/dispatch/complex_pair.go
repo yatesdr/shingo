@@ -18,6 +18,21 @@ import (
 // lane, no partner row yet — parks the whole pair, with ONE cause naming what
 // the pair is waiting on, holding NOTHING.
 //
+// ONE EXCEPTION, AND IT IS NOT A REFUSAL: a leg whose bin is buried can take its
+// own excavation inside its phases (§R.91) — it takes the lane in its own name,
+// goes `reshuffling`, and the dig's first robot is sent. That leg is working,
+// not waiting, and parking it would drop the dig's lane lock under a robot
+// already driving into the corridor. So a pivot keeps what it took, and only
+// its partner parks — on the partner wait, with nothing held — until the dig is
+// done and the pivot is acquiring again.
+//
+// WHAT COUNTS AS THE PAIR. The legs that are acquiring. A partner already
+// committed to the fleet, or terminal, leaves a one-leg slice (the completion
+// path, or the death rule's). A partner that is none of those — digging its own
+// bin out, or not through intake yet — is an incomplete pair, and nothing goes.
+// A partner Core REFUSED at intake is not incomplete but impossible: its row will
+// never exist, so the leg that names it fails, carrying the refusal.
+//
 // ── WHY IT IS EXPRESSIBLE AT DISPATCH, AND ONLY HERE ──────────────────────
 //
 // Dispatch sends a two_robot evac ONE instruction: `wait(LINE)` — drive to the
@@ -59,15 +74,19 @@ import (
 // every claim it could see was same-resource.
 
 // coordinatedPairLegs returns the acquiring legs of order's coordinated pair, in
-// ascending order-id order, plus whether a declared partner's ROW is not there
-// yet.
+// ascending order-id order — or, when the pair cannot be evaluated this pass,
+// what Core knows of the partner it is missing.
 //
 // Three answers, and the caller must distinguish all three:
 //
-//	(nil,  false)  a solo order. Runs the ordinary per-order phases.
-//	(nil,  true)   this order names a partner and the partner's row does not
-//	               exist yet. The pair is incomplete; nothing dispatches.
-//	(legs, false)  the pair, filtered to the legs still acquiring.
+//	(nil,  nil)   a solo order. Runs the ordinary per-order phases.
+//	(nil,  wait)  an incomplete pair: this order names a partner whose row does
+//	              not exist, or whose row is neither acquiring, committed to the
+//	              fleet, nor terminal (it is digging its own bin out). Nothing
+//	              dispatches. wait.refused is set when Core refused the partner
+//	              at intake: its row never will exist, and the leg fails.
+//	(legs, nil)   the pair, filtered to the legs still acquiring — one leg when
+//	              the partner is committed or terminal.
 //
 // ── THE POINTER IS PRESENT BEFORE THE ROW IS, AND THAT IS THE WHOLE POINT ─
 //
@@ -87,6 +106,9 @@ import (
 // Under the pair rule that fail-open is a half-dispatched pair, so it goes. The
 // releaser is the partner's own intake: it emits EventOrderQueued, the scanner
 // re-runs, the pair is complete, both legs go. Bounded, and no new subscription.
+// If that intake REFUSES the partner there is no row to wait for: intake records
+// the refusal (orders.IntakeRefusal), this function hands it to the caller, and
+// the leg fails with the partner's reason.
 //
 // WHICH LEG IS CREATED FIRST IS NOT A ROLE and must not be read as one:
 // two_robot creates the supply first, a press-index CHANGEOVER creates the
@@ -97,25 +119,35 @@ import (
 // cased, because resolving a dead partner is the peer-terminal handler's job and
 // it already runs from the surviving side in applySwapGates. A survivor whose
 // partner is dead falls through to a one-leg slice and is resolved there.
-func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, bool) {
+func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, *pairWait) {
 	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
 	if err != nil {
 		// Transient read error — fail OPEN to the solo path, the same way the
 		// swap gate has always failed open on this read. Never freeze a robot on
 		// a flaky read; the next scanner tick re-asks.
 		log.Printf("dispatch: pair lookup for order %d: %v (treating as solo this pass)", order.ID, err)
-		return nil, false
+		return nil, nil
 	}
 	if sibUUID == "" {
-		return nil, false // not a pair
+		return nil, nil // not a pair
 	}
+	// GetOrderByUUID answers a missing row with sql.ErrNoRows, not (nil, nil), so
+	// absence is the error's business to say and readFailed's to tell apart.
 	sib, sibErr := d.db.GetOrderByUUID(sibUUID)
-	if sibErr != nil {
+	if readFailed(sibErr) {
 		log.Printf("dispatch: pair partner read for order %d (%s): %v", order.ID, sibUUID, sibErr)
-		return nil, true // unreadable partner is an incomplete pair, not a solo order
+		return nil, &pairWait{} // unreadable partner is an incomplete pair, not a solo order
 	}
 	if sib == nil {
-		return nil, true // declared partner, row not ingested yet
+		// Declared partner, no row. Either Core has not received it yet — a wait
+		// its intake ends — or Core refused it and it never will. Only the record
+		// intake keeps of a refusal tells the two apart.
+		refused, rerr := d.db.GetIntakeRefusal(sibUUID)
+		if rerr != nil {
+			log.Printf("dispatch: pair partner refusal read for order %d (%s): %v (treating as not yet received)",
+				order.ID, sibUUID, rerr)
+		}
+		return nil, &pairWait{refused: refused}
 	}
 
 	// ── ON-READ REPAIR OF THE BIDIRECTIONAL LINK ──────────────────────────
@@ -141,6 +173,19 @@ func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, 
 		}
 	}
 
+	// ── A PARTNER THAT IS NOT ACQUIRING IS NOT THEREFORE GONE ─────────────
+	//
+	// This used to keep the acquiring legs and call whatever was left a solo
+	// order. That is right for a partner committed to the fleet (the completion
+	// path) and for a dead one (the death rule's), and wrong for everything else:
+	// a partner `reshuffling` has pivoted into its own dig and is coming back to
+	// acquiring when the dig is done. Read as absent, it let this leg go to the
+	// fleet alone — an evac released while its supply digs lifts the line's bin
+	// with no replacement committed, which is ALN_003.
+	if !protocol.IsAcquiring(sib.Status) && !protocol.IsTerminal(sib.Status) && !pairLegCommitted(sib.Status) {
+		return nil, &pairWait{partner: sib}
+	}
+
 	legs := make([]*orders.Order, 0, 2)
 	for _, leg := range []*orders.Order{order, sib} {
 		if protocol.IsAcquiring(leg.Status) {
@@ -148,7 +193,24 @@ func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, 
 		}
 	}
 	sort.Slice(legs, func(i, j int) bool { return legs[i].ID < legs[j].ID })
-	return legs, false
+	return legs, nil
+}
+
+// pairWait is what Core knows of the partner an incomplete pair is waiting on.
+type pairWait struct {
+	// partner is the partner's row, or nil when Core has none.
+	partner *orders.Order
+	// refused is Core's record of refusing the partner at intake. Non-nil means
+	// the row will never exist, so there is nothing to wait for.
+	refused *orders.IntakeRefusal
+}
+
+// pairLegCommitted reports whether a pair leg has been handed to the fleet: the
+// vendor has it (dispatched, in transit, staged, or faulted inside its grace
+// period) or it has delivered. Its partner then goes on its own — the pass that
+// committed this leg already made the both-or-neither decision.
+func pairLegCommitted(s protocol.Status) bool {
+	return protocol.IsVendorTracked(s) || s == StatusDelivered
 }
 
 // preparedLeg is one leg that has cleared every acquisition phase and is
@@ -185,11 +247,20 @@ type preparedLeg struct {
 //
 // ── A ONE-LEG SLICE IS NOT AN ERROR ───────────────────────────────────────
 //
-// It means the partner has left the acquiring set — committed to the fleet
-// already, or terminal. Committed is the completion path and the leg should go.
-// Terminal is the death rule's business, and applySwapGates already runs the
-// peer-terminal unwind from the surviving side, so the leg is resolved inside
-// its own phases rather than by a test here.
+// It means the partner is committed to the fleet already, or terminal —
+// coordinatedPairLegs parks every other partner state before a slice reaches
+// here, so "not in the slice" never means "still on its way". Committed is the
+// completion path and the leg should go. Terminal is the death rule's business,
+// and applySwapGates runs the peer-terminal unwind from the surviving side, so
+// the leg is resolved inside its own phases rather than by a test here.
+//
+// ── A PIVOT IS NOT A PARK ─────────────────────────────────────────────────
+//
+// A leg can leave its phases `reshuffling`: its bin was buried and it took its
+// own excavation (lane in its own name, the dig's first robot sent). That is
+// done=true like a refusal, and parkPair would release its lanes — dropping the
+// dig's mouth row under a working robot, which only LaneLock.Unlock may do. So
+// the pivot keeps what it took and only its partners park, on the partner wait.
 func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Order) error {
 	if legs[0].ID != self.ID {
 		// Not the leader. Say so at debug and touch NOTHING: this is the no-op
@@ -217,11 +288,30 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 			// to the surviving side's next one — applySwapGates would find it
 			// eventually, but a pass later, and the partner would spend that
 			// pass acquiring for a job that is already over.
-			if fresh, ferr := d.db.GetOrder(leg.ID); ferr == nil && fresh != nil && protocol.IsTerminal(fresh.Status) {
+			fresh, ferr := d.db.GetOrder(leg.ID)
+			if ferr == nil && fresh != nil && protocol.IsTerminal(fresh.Status) {
+				// The legs that acquired earlier in this pass hand it back: this
+				// pass dispatches nothing, and whether a survivor goes at all is the
+				// death rule's call, made below — a survivor that may proceed does
+				// so on its own next pass, as a one-leg slice.
+				for _, other := range legs {
+					if other.ID != leg.ID {
+						d.releaseLegHoldings(other, "pair leg died in the pass")
+					}
+				}
 				if kind := swapTerminalKind(fresh.Status); kind != "" {
 					d.HandleSwapPeerTerminal(fresh.ID, kind)
 				}
 				d.dbg("complex: pair leg %d went %s during its phases — the death rule has the pair", leg.ID, fresh.Status)
+				return st.err
+			}
+			if ferr == nil && fresh != nil && fresh.Status == StatusReshuffling {
+				for _, other := range legs {
+					if other.ID != leg.ID {
+						_ = d.parkPairAwaitingPartner(other, fresh)
+					}
+				}
+				d.dbg("complex: pair leg %d pivoted into its own dig — it keeps its lane; its partner waits", leg.ID)
 				return st.err
 			}
 			// THE FIRST REFUSAL PARKS THE PAIR. Every leg gives back what this
@@ -301,13 +391,7 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 // release errored would trade a described wait for an undescribed stall.
 func (d *Dispatcher) parkPair(legs []*orders.Order, blocked *orders.Order) {
 	for _, leg := range legs {
-		if err := d.db.ReleaseOrderHoldings(leg.ID); err != nil {
-			log.Printf("dispatch: pair park — release holdings for order %d: %v "+
-				"(reconciliation will sweep it)", leg.ID, err)
-		}
-		if err := d.ReleaseLanesForOrder(leg.ID); err != nil {
-			log.Printf("dispatch: pair park — release lanes for order %d: %v", leg.ID, err)
-		}
+		d.releaseLegHoldings(leg, "pair park")
 	}
 
 	// Re-read the blocked leg: its phase wrote the queue detail through
@@ -344,24 +428,63 @@ func (d *Dispatcher) parkPair(legs []*orders.Order, blocked *orders.Order) {
 		blocked.ID, src.QueueCause, len(legs))
 }
 
-// parkPairAwaitingPartner parks a leg whose declared partner has no row yet.
+// releaseLegHoldings hands back everything a pair leg acquired — bin and slot
+// claims, reservations, its bin pointer (ReleaseOrderHoldings) and its lane rows
+// — without moving its status. Best-effort and loud: the reconciliation sweeps
+// are the backstop for a row that leaks past here, and failing a park because a
+// release errored would trade a described wait for an undescribed stall.
+func (d *Dispatcher) releaseLegHoldings(leg *orders.Order, why string) {
+	if err := d.db.ReleaseOrderHoldings(leg.ID); err != nil {
+		log.Printf("dispatch: %s — release holdings for order %d: %v (reconciliation will sweep it)", why, leg.ID, err)
+	}
+	if err := d.ReleaseLanesForOrder(leg.ID); err != nil {
+		log.Printf("dispatch: %s — release lanes for order %d: %v", why, leg.ID, err)
+	}
+}
+
+// parkPairAwaitingPartner parks a leg whose partner is not ready to go with it:
+// Core has no row for it yet (partner nil), or its row is digging its own bin
+// out.
 //
 // The pair cannot be evaluated, so nothing dispatches. It holds nothing for the
 // same reason the rest of the rule holds nothing, and it parks under
 // CauseSwapHold — which is now that cause's ONLY producer: every other swap wait
 // names the physical thing the pair is short of, and this one genuinely is
-// waiting on the sibling itself.
+// waiting on the sibling itself. The sentence says which of the two waits it is,
+// because they end at different events.
 //
-// The releaser is the partner's own intake, which emits EventOrderQueued.
-func (d *Dispatcher) parkPairAwaitingPartner(order *orders.Order) error {
-	if err := d.db.ReleaseOrderHoldings(order.ID); err != nil {
-		log.Printf("dispatch: awaiting-partner park — release holdings for order %d: %v", order.ID, err)
+// The releasers are the partner's own transitions: its intake emits
+// EventOrderQueued, and a finished dig resumes it through `queued`. A partner
+// refused at intake never lands, and failForRefusedPartner ends the wait.
+func (d *Dispatcher) parkPairAwaitingPartner(order, partner *orders.Order) error {
+	var partnerStatus protocol.Status
+	if partner != nil {
+		partnerStatus = partner.Status
 	}
-	if err := d.ReleaseLanesForOrder(order.ID); err != nil {
-		log.Printf("dispatch: awaiting-partner park — release lanes for order %d: %v", order.ID, err)
-	}
+	d.releaseLegHoldings(order, "awaiting-partner park")
 	d.setQueueReason(order, protocol.QueueWaitingForPartner, CauseSwapHold,
-		QueueParams{Sibling: order.SiblingOrderUUID})
-	d.dbg("complex: order %d holding — coordinated partner %s has no order row yet", order.ID, order.SiblingOrderUUID)
-	return fmt.Errorf("complex order %d: coordinated partner %s not ingested yet", order.ID, order.SiblingOrderUUID)
+		QueueParams{Sibling: order.SiblingOrderUUID, SiblingStatus: partnerStatus})
+	d.dbg("complex: order %d holding — coordinated partner %s is not ready to go with it", order.ID, order.SiblingOrderUUID)
+	return fmt.Errorf("complex order %d: waiting for coordinated partner %s", order.ID, order.SiblingOrderUUID)
+}
+
+// failForRefusedPartner ends a pair leg whose partner Core refused at intake.
+//
+// The partner's row will never exist, so a wait for it has no releaser: parked,
+// this leg would sit under swap-hold until the anomaly board noticed, a
+// congestion-shaped row for what is a fault. It fails instead — as a failure and
+// not a peer unwind (TermPartnerRefused) — carrying the partner's own refusal,
+// because that refusal is the only account of what went wrong and the refused
+// leg left no row to carry it.
+//
+// Two callers, one per order of events: complex intake, when the refusal lands
+// on a leg that is already here (refuseComplexIntake), and this leg's own pass,
+// when it arrives after the refusal (DispatchPreparedComplex, from
+// coordinatedPairLegs' record).
+func (d *Dispatcher) failForRefusedPartner(order *orders.Order, r *orders.IntakeRefusal) error {
+	detail := fmt.Sprintf("partner order %s was refused by Core at intake (%s: %s) — this leg cannot go without it",
+		r.EdgeUUID, r.ErrorCode, r.Detail)
+	d.releaseLegHoldings(order, "partner refused")
+	d.failOrderInternal(order, string(protocol.TermPartnerRefused), detail)
+	return fmt.Errorf("complex order %d: %s", order.ID, detail)
 }

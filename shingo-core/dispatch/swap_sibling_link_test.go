@@ -86,8 +86,8 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	// solo order, which is what a lost link produced pre-fix and what would now
 	// let both legs dispatch independently of each other.
 	evac, _ = db.GetOrderByUUID("swap-removal-dl")
-	legs, partnerPending := d.coordinatedPairLegs(evac)
-	if partnerPending {
+	legs, wait := d.coordinatedPairLegs(evac)
+	if wait != nil {
 		t.Fatal("evac read as waiting for a partner row that exists — the durable link was not consulted")
 	}
 	if len(legs) != 2 {

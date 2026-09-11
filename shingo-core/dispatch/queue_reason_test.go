@@ -179,11 +179,18 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 		{
 			// (F3) Sibling was passed at the swap-hold call site and never read.
 			// The pre-code free text explained which leg this is and what it
-			// waits for; this restores that.
-			name:   "partner names the sibling order",
+			// waits for; this restores that. What it waits for is the partner's
+			// order reaching Core — "secures a bin" described an order with no row.
+			name:   "partner not yet received names the sibling order",
 			code:   protocol.QueueWaitingForPartner,
 			params: QueueParams{Sibling: "2ad889a7-1be2-4ece-9bc4-8a4a616f8147"},
-			want:   "Holding this leg until partner order 2ad889a7 secures a bin",
+			want:   "Waiting for partner order 2ad889a7 to be received — the two legs go together",
+		},
+		{
+			name:   "partner digging its own bin out",
+			code:   protocol.QueueWaitingForPartner,
+			params: QueueParams{Sibling: "2ad889a7-1be2-4ece-9bc4-8a4a616f8147", SiblingStatus: StatusReshuffling},
+			want:   "Waiting for partner order 2ad889a7 to dig out its bin — the two legs go together",
 		},
 		{
 			name: "partner without a sibling falls back",

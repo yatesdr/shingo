@@ -661,6 +661,18 @@ func (db *DB) GetOrder(id int64) (*orders.Order, error) { return orders.Get(db.D
 func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return orders.GetByUUID(db.DB, uuid)
 }
+
+// RecordIntakeRefusal stores Core's refusal of one leg of a pair at intake. See
+// orders.IntakeRefusal.
+func (db *DB) RecordIntakeRefusal(edgeUUID, stationID, code, detail string) error {
+	return orders.RecordIntakeRefusal(db.DB, edgeUUID, stationID, code, detail)
+}
+
+// GetIntakeRefusal returns the refusal on record for a uuid, or nil.
+func (db *DB) GetIntakeRefusal(edgeUUID string) (*orders.IntakeRefusal, error) {
+	return orders.GetIntakeRefusal(db.DB, edgeUUID)
+}
+
 func (db *DB) GetOrderByVendorID(vendorOrderID string) (*orders.Order, error) {
 	return orders.GetByVendorID(db.DB, vendorOrderID)
 }
@@ -1044,6 +1056,16 @@ func releaseOrderHoldingsTx(tx *sql.Tx, orderID int64) error {
 //
 // The order stays exactly where it is (queued or sourcing) and the scanner
 // replays it; this only drops what it was holding.
+//
+// ── AND THE POINTER GOES WITH THE HOLD ────────────────────────────────────
+//
+// confirmComplexPlan stamps bin_id when it claims. Handing the claim back and
+// keeping the pointer left a parked order naming a bin it no longer held — the
+// two books disagreeing, which the end-of-test pointer sweep calls a wedge — and
+// anything that read bin_id before the next confirm re-stamped it was reading a
+// bin some other order may now own. The next confirm writes it again. The
+// terminal path keeps bin_id on purpose: there it is the record of what the
+// order carried.
 func (db *DB) ReleaseOrderHoldings(orderID int64) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -1051,6 +1073,9 @@ func (db *DB) ReleaseOrderHoldings(orderID int64) error {
 	}
 	defer tx.Rollback()
 	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE orders SET bin_id=NULL WHERE id=$1 AND bin_id IS NOT NULL`, orderID); err != nil {
 		return err
 	}
 	return tx.Commit()

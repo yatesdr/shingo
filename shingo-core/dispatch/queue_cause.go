@@ -478,14 +478,18 @@ const (
 	// not write it from new code.
 	CauseDropoffCapacity QueueCause = "dropoff-capacity"
 	// CauseSwapHold — a coordinated leg is waiting on the other half of its
-	// pair: the partner's order row has not been ingested yet, or a filler is
-	// waiting for its clearer to commit to clearing the shared line position.
+	// pair: Core has not received the partner's order yet, or the partner is
+	// digging its own bin out. The sentence says which (partnerSentence).
 	//
 	// IT IS NO LONGER THE CAUSE A BLOCKED PAIR PARKS UNDER. When a pair cannot
 	// go because a slot, a bin or a lane is missing, both rows carry the cause of
 	// the thing that is actually missing (complex_pair.go parkPair) — one pair,
 	// one cause, and one the operator can act on. This tag is now only for a wait
 	// whose subject genuinely IS the sibling.
+	//
+	// A PARTNER CORE REFUSED IS NOT A WAIT. Its row will never exist, so nothing
+	// could release this cause; the leg fails instead (TermPartnerRefused),
+	// carrying the partner's refusal (complex_pair.go failForRefusedPartner).
 	CauseSwapHold QueueCause = "swap-hold"
 
 	// ── The finder's tiers (source_finder.go) ─────────────────────────────

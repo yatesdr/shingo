@@ -85,8 +85,12 @@ type QueueParams struct {
 	// the wait is on another order's turn rather than on any machine, so the
 	// operator can look up who it is waiting behind.
 	HolderOrderID int64
-	// Sibling is the partner order's edge UUID in a two-robot swap.
+	// Sibling is the partner order's edge UUID in a coordinated pair.
 	Sibling string
+	// SiblingStatus is the partner's status when Core has its row, and empty when
+	// it has none. The partner wait ends at a different event in each case — the
+	// partner's intake, or the end of its dig — so each gets its own sentence.
+	SiblingStatus protocol.Status
 
 	// Group is the node group whose contents (not whose slots) the order is
 	// short of — the supermarket that has no bin of the payload, NOT the
@@ -309,22 +313,31 @@ func digClause(p QueueParams) string {
 	return fmt.Sprintf(" — dig %d is working this lane", p.DigOrderID)
 }
 
-// partnerSentence names the partner order. The pre-code free text said "swap:
-// holding removal leg until supply sibling claims a bin" — it explained WHICH
-// leg this is and what it is waiting for. Sibling was passed all along and
-// never read.
+// partnerSentence names the partner order a coordinated leg is waiting on, and
+// what the partner has to do before the two can go. The pre-code free text
+// explained WHICH leg this is and what it was waiting for; Sibling was passed
+// all along and never read.
 //
-// Both faces of the swap gate wait on the same thing — the partner committing —
-// so one sentence serves both. A face whose wait ended somewhere else would need
-// a sentence that REPLACES this one rather than extending it (the call
-// slotSentence makes for DestUnresolved and AtLevel): "holding until the partner
-// secures a bin" would be false, not merely vague, and a clause bolted onto a
-// false base is a false sentence.
+// TWO WAITS, TWO SENTENCES, and neither is the old one. "Holding this leg until
+// partner order X secures a bin" was the swap gate's wait — a leg held until its
+// partner committed — and that gate is deleted. The pair rule sends both legs in
+// one pass, so what a leg waits on now is a partner that cannot be evaluated yet:
+// one Core has not received, or one digging its own bin out. "Secures a bin" was
+// false for both, and for the first it described an order with no row. Each wait
+// ends at a different event, so each gets a sentence that REPLACES rather than
+// extends (the call slotSentence makes for DestUnresolved and AtLevel).
 func partnerSentence(p QueueParams) string {
-	if p.Sibling == "" {
+	ref := shortRef(p.Sibling)
+	switch {
+	case p.Sibling == "":
 		return "Waiting for partner robot"
+	case p.SiblingStatus == "":
+		return fmt.Sprintf("Waiting for partner order %s to be received — the two legs go together", ref)
+	case p.SiblingStatus == StatusReshuffling:
+		return fmt.Sprintf("Waiting for partner order %s to dig out its bin — the two legs go together", ref)
+	default:
+		return fmt.Sprintf("Waiting for partner order %s — the two legs go together", ref)
 	}
-	return fmt.Sprintf("Holding this leg until partner order %s secures a bin", shortRef(p.Sibling))
 }
 
 // withStep prefixes the failing step of a multi-step order. A five-step complex

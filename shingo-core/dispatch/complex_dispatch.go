@@ -114,9 +114,12 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// here, at dispatch, without touching a single line of release.
 	//
 	// A solo order falls straight through to the phases below, unchanged.
-	legs, partnerPending := d.coordinatedPairLegs(order)
-	if partnerPending {
-		return d.parkPairAwaitingPartner(order)
+	legs, wait := d.coordinatedPairLegs(order)
+	if wait != nil {
+		if wait.refused != nil {
+			return d.failForRefusedPartner(order, wait.refused)
+		}
+		return d.parkPairAwaitingPartner(order, wait.partner)
 	}
 	if len(legs) > 1 {
 		return d.dispatchPairInOnePass(order, legs)

@@ -4217,7 +4217,37 @@ func migrationList() []migration {
 				// records a drop as applied without having checked anything.
 				return schema.ColumnAbsent(q, "orders", "swap_spared_at")
 			}},
+
+		{115, "order_intake_refusals — the pair legs Core refused at intake, so the partner naming one fails with its reason",
+			v115OrderIntakeRefusals,
+			func(q schema.Querier) bool { return schema.TableExists(q, "order_intake_refusals") }},
 	}
+}
+
+// v115OrderIntakeRefusals records the pair legs Core refused at intake.
+//
+// A refused request leaves no order row — the refusal is a reply and nothing
+// else — so for one leg of a pair, the other leg's sibling pointer names a row
+// that will never exist, and Core could not tell "refused" from "not received
+// yet". Read as the second, the surviving leg waited for ever under swap-hold
+// with only the anomaly board to notice. Complex intake writes a row here when
+// it refuses a request that names a sibling, and the pair rule reads it when a
+// partner's row is absent. See orders.IntakeRefusal.
+//
+// Keyed by the refused leg's edge uuid; a repeat refusal replaces the row. No
+// retention: one row per refused pair leg, which is a defect-shaped event and
+// not traffic. Inert to an older binary, which never reads it.
+func v115OrderIntakeRefusals(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS order_intake_refusals (
+		edge_uuid  TEXT PRIMARY KEY,
+		station_id TEXT NOT NULL DEFAULT '',
+		error_code TEXT NOT NULL,
+		detail     TEXT NOT NULL DEFAULT '',
+		refused_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("v115 order_intake_refusals: %w", err)
+	}
+	return nil
 }
 
 // v114DropOrdersSwapSparedAt removes the column migration 113 added, one batch

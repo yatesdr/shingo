@@ -757,6 +757,14 @@ CREATE SEQUENCE public.order_history_id_seq
 
 ALTER SEQUENCE public.order_history_id_seq OWNED BY public.order_history.id;
 
+CREATE TABLE public.order_intake_refusals (
+    edge_uuid text NOT NULL,
+    station_id text DEFAULT ''::text NOT NULL,
+    error_code text NOT NULL,
+    detail text DEFAULT ''::text NOT NULL,
+    refused_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.orders (
     id bigint NOT NULL,
     edge_uuid text NOT NULL,
@@ -1534,6 +1542,9 @@ ALTER TABLE ONLY public.order_bins
 
 ALTER TABLE ONLY public.order_history
     ADD CONSTRAINT order_history_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.order_intake_refusals
+    ADD CONSTRAINT order_intake_refusals_pkey PRIMARY KEY (edge_uuid);
 
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_pkey PRIMARY KEY (id);

@@ -231,6 +231,12 @@ const (
 	// parked it. Reading either of the other two codes on this event would send
 	// an engineer looking for a race or a construction bug that never happened.
 	TermBinDugAway TermCode = "bin_dug_away"
+	// TermPartnerRefused: Core refused this leg's pair partner at intake, so the
+	// pair can never be whole and this leg cannot go alone. The detail carries the
+	// partner's own refusal. It is a failure and not TermPeerTerminal's unwind:
+	// the refused partner has no Core row, so this leg is the only row the event
+	// leaves, and classing it as deliberate would hide it.
+	TermPartnerRefused TermCode = "partner_refused"
 )
 
 // AllTermCodes returns every terminal code defined in this module. Used by the
@@ -261,6 +267,7 @@ func AllTermCodes() []TermCode {
 		TermPeerTerminal,
 		TermNotNeeded,
 		TermBinDugAway,
+		TermPartnerRefused,
 	}
 }
 

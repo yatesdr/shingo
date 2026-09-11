@@ -195,19 +195,22 @@ func TestRedirect_AsksAdmission(t *testing.T) {
 // THE INVARIANT DID NOT MOVE; ITS HOME DID. The ask and the send used to sit in
 // one function body, so one Index comparison covered both halves. The pair rule
 // split complex dispatch into an ACQUISITION half (acquireComplexPhases, which
-// ends with the lane admit) and a COMMIT half (the fleet create), precisely so a
-// coordinated pair can run every leg's acquisition before committing any leg.
-// The property being guarded is unchanged — admission is asked, and it is asked
-// before the fleet create — so this checks it across the two symbols it now
+// ends with the lane admit) and a COMMIT half (the fleet create). The property
+// being guarded is unchanged — admission is asked, and it is asked before the
+// fleet create — so this checks the solo path across the two symbols it now
 // lives in rather than being weakened to fit.
 //
-// Both entry points are checked. dispatchPairInOnePass is the coordinated one
-// and is where a future edit is most likely to reorder the two stages.
+// THE PAIR PATH IS PINNED BY BEHAVIOUR, NOT HERE. This compared two substrings in
+// dispatchPairInOnePass as well. The pair-rule tests replace that half: they
+// drive both legs through a pass and read the outcome — both dispatched when
+// both can go, neither holding anything when one cannot, in either creation
+// order (TestPairRule_BothLegsSourceDispatchInOnePass,
+// TestPairRule_BlockedEvacParksThePairHoldingNothing,
+// TestPairRule_PressIndexBothOrNeitherInEitherCreationOrder; census 3–5).
 func TestComplexDispatch_AsksAdmission(t *testing.T) {
 	t.Parallel()
 
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_dispatch.go"))
-	pairBody := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_pair.go"))
 
 	acquire := funcBody(t, body, "func (d *Dispatcher) acquireComplexPhases(")
 	if !strings.Contains(acquire, "admitComplexLanes(") {
@@ -227,21 +230,6 @@ func TestComplexDispatch_AsksAdmission(t *testing.T) {
 	}
 	if askAt > sendAt {
 		t.Error("the complex tail asks admission after the fleet create")
-	}
-
-	// Coordinated path: same order, and every leg's acquisition runs before any
-	// leg's fleet create — which is the pair rule itself.
-	pair := funcBody(t, pairBody, "func (d *Dispatcher) dispatchPairInOnePass(")
-	pairAskAt := strings.Index(pair, "acquireComplexPhases(")
-	if pairAskAt < 0 {
-		t.Fatal("dispatchPairInOnePass no longer runs the acquisition phases; re-derive this test")
-	}
-	pairSendAt := strings.Index(pair, "dispatchComplexToFleet(")
-	if pairSendAt < 0 {
-		t.Fatal("dispatchPairInOnePass no longer dispatches; re-derive this test")
-	}
-	if pairAskAt > pairSendAt {
-		t.Error("the pair commits a leg to the fleet before the pair has asked admission")
 	}
 }
 

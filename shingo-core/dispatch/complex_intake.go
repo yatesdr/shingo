@@ -36,7 +36,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	d.dbg("complex order request: station=%s uuid=%s steps=%d", stationID, p.OrderUUID, len(p.Steps))
 
 	if len(p.Steps) == 0 {
-		d.sendError(env, p.OrderUUID, "invalid_steps", "complex order requires at least one step")
+		d.refuseComplexIntake(env, p, "invalid_steps", "complex order requires at least one step")
 		return
 	}
 
@@ -106,14 +106,14 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 				queueParamsForCapacity(capDetail, payloadCode, intakeDelivery))
 		default:
 			// Structural / transient / fatal — terminal at intake.
-			d.sendError(env, p.OrderUUID, "resolution_failed", err.Error())
+			d.refuseComplexIntake(env, p, "resolution_failed", err.Error())
 			return
 		}
 	}
 
 	stepsJSON, err := json.Marshal(resolvedSteps)
 	if err != nil {
-		d.sendError(env, p.OrderUUID, "internal_error", "failed to marshal steps")
+		d.refuseComplexIntake(env, p, "internal_error", "failed to marshal steps")
 		return
 	}
 
@@ -195,13 +195,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// Before the insert, so a refusal leaves nothing behind, and well before the
 	// ack — the ack is the part that made this worse than a slow failure.
 	if _, lerr := d.lifecycle.checkOrderRefs(order); lerr != nil {
-		d.sendError(env, p.OrderUUID, lerr.Code, lerr.Detail)
+		d.refuseComplexIntake(env, p, lerr.Code, lerr.Detail)
 		return
 	}
 
 	if err := d.db.CreateOrder(order); err != nil {
 		log.Printf("dispatch: create complex order: %v", err)
-		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
+		d.refuseComplexIntake(env, p, "internal_error", err.Error())
 		return
 	}
 	if queueReason != "" {
@@ -266,4 +266,40 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// before this function returns. Otherwise the order sits queued with
 	// queue_reason set to the blocking signal.
 	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+}
+
+// refuseComplexIntake answers a complex request Core will not ingest.
+//
+// For a solo request the reply is the whole of it: a refusal leaves nothing
+// behind. For one leg of a pair it is not, because the other leg names this one
+// and would otherwise wait for a row that will never exist. So a refused request
+// that names a sibling is RECORDED (orders.IntakeRefusal), and a partner that is
+// already here, names this leg and is still acquiring fails on the spot, with
+// this refusal as its reason. A partner that arrives later, or is digging its own
+// bin out, finds the record on its next pass (coordinatedPairLegs).
+//
+// A ROW UNDER THIS UUID MEANS IT WAS NOT REFUSED. A resend of a request Core
+// already took fails its create on the duplicate uuid and lands here, but the
+// leg it names was accepted; failing its partner over a duplicate would kill a
+// live pair. Neither the record nor the partner is touched then.
+func (d *Dispatcher) refuseComplexIntake(env *protocol.Envelope, p *protocol.ComplexOrderRequest, code, detail string) {
+	d.sendError(env, p.OrderUUID, code, detail)
+	if p.SiblingOrderUUID == "" {
+		return
+	}
+	// A missing row comes back as sql.ErrNoRows, which is the answer this wants;
+	// any other error means it cannot be told, and the partner is left alone.
+	if own, err := d.db.GetOrderByUUID(p.OrderUUID); readFailed(err) || own != nil {
+		return
+	}
+	if err := d.db.RecordIntakeRefusal(p.OrderUUID, env.Src.Station, code, detail); err != nil {
+		log.Printf("dispatch: record intake refusal of %s (pair with %s): %v", p.OrderUUID, p.SiblingOrderUUID, err)
+	}
+	partner, err := d.db.GetOrderByUUID(p.SiblingOrderUUID)
+	if err != nil || partner == nil || partner.SiblingOrderUUID != p.OrderUUID || !protocol.IsAcquiring(partner.Status) {
+		return
+	}
+	_ = d.failForRefusedPartner(partner, &orders.IntakeRefusal{
+		EdgeUUID: p.OrderUUID, StationID: env.Src.Station, ErrorCode: code, Detail: detail,
+	})
 }
