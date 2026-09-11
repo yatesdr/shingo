@@ -719,7 +719,8 @@ func TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields(t *testing.T) {
 
 	// Link 3: the replenishment loop now runs against that same home. Holding the
 	// home made the return in-flight to it, which is the ONLY thing that makes this
-	// gate yield — a queued order is invisible to it (status != 'queued').
+	// gate yield — an order holding no claimed bin bound for the home is invisible
+	// to it (orders.InFlightForDropoffSQL).
 	cfg, ok, err := d.LoadReplenishConfig(loaderID)
 	if err != nil || !ok {
 		t.Fatalf("load replenish config for loader %d: ok=%v err=%v", loaderID, ok, err)

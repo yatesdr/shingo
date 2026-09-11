@@ -721,13 +721,15 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // The other order leaves `dispatched` with no armor at all, which is the state
 // the two-clause assertion exists to call a violation.
 //
-// PARKS IN `sourcing`, NOT `queued`, and this is deliberate rather than
-// inherited. A demoted order KEEPS its confirmed destination slot, and
-// CountInFlightByDeliveryNode excludes `queued` on the stated grounds that a
-// queued order holds no destination. Park the burst in queued today and the gate
-// that stops two orders being sent to one node counts zero: 23-41 double-booked
-// dropoffs the minute the fleet recovers. The rung move rides the meaning
-// migration, after that reader is re-homed onto a fact.
+// PARKS IN `sourcing`, NOT `queued`: the order still holds its paper and its bin
+// pointer, which is what that rung is for. It holds no claim, so the dropoff gate
+// counts it for nothing (orders.InFlightForDropoffSQL reads holders) and it
+// re-competes for its node. What stops a refusal burst double-booking a node when
+// the fleet comes back is the gate re-run: tryFulfill runs the dropoff gate
+// before it routes a held-bin order to dispatchHeldBin, and ConfirmForDispatch
+// takes the claim before the fleet call, so the first order to re-dispatch
+// claims and every other order bound there parks behind it. Pinned by
+// TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes (engine).
 //
 // IDEMPOTENT, because the plain path invokes it TWICE per refusal —
 // DispatchDirect undoes its own CAS, then the caller parks. MoveToSourcing

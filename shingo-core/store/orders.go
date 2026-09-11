@@ -1022,10 +1022,13 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 // at the terminal call site, where it also must keep running BEFORE this — its
 // WHERE reads claimed_by, which the first statement here clears.
 //
-// LANE MOUTH HOLDS ARE NOT HERE EITHER, and that is pre-existing: the terminal
-// path has never released them from this transaction. dispatch's
-// ReleaseLanesForOrder owns that, keyed on the same order id, and the pair
-// release calls it alongside this.
+// LANE MOUTH HOLDS GO TOO. The last statement, reservations.ReleaseByOrder,
+// deletes every reservation row the order holds, mouth rows included, on the
+// terminal path and the pair release alike; dispatch's ReleaseLanesForOrder,
+// which the pair release calls after this, then finds none of this order's
+// left. So an order that must keep its lane must not come through here:
+// dispatchPairInOnePass keeps a pivot away from releaseLegHoldings for exactly
+// that reason (TestPairRule_ASupplyDiggingForItsBinHoldsItsEvac).
 func releaseOrderHoldingsTx(tx *sql.Tx, orderID int64) error {
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err

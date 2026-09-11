@@ -100,13 +100,13 @@ scratch. See `[[reservations]]`.
    a. Resolve source via SourceFinder (shared with intake)
    b. Allocator.reconcile: keep/release/acquire reservations vs the plan's needs
    c. If a source can't be secured: skip (stays queued/sourcing; retry next tick)
-   d. Confirm reservations + claim via the reservation-guarded seatbelt (ClaimForDispatch)
+   d. Confirm reservations + hard-claim via the reservation-guarded seatbelt (ConfirmForDispatch)
    e. Dispatch to fleet
-   f. If fleet dispatch fails: release reservations, set back to queued
+   f. If fleet dispatch fails: take the claims off, demote the reservations to pending, keep the bin pointer, park in `sourcing` (DemoteAfterFleetRefusal); the next tick re-confirms
 3. Return count fulfilled
 ```
 
-**Node vacancy check:** Before fulfilling, verify the delivery node doesn't already have an active non-queued delivery in flight. Known blind spot (the incident family): `CountInFlight` excludes `queued`, so a queued order already holding the destination is invisible and two queued orders can both pass the vacancy check — the check is not complete.
+**Node vacancy check:** Before fulfilling, the scanner's dropoff gate verifies that the delivery node holds no bin and that no other order delivering there holds a claimed bin (`orders.InFlightForDropoffSQL` — a holder, not a status). An order that has only reserved, or is parked, counts for nothing; the gate runs again before every dispatch attempt, so the first order to claim goes and the others wait their turn (`TestDropoffGate_TwoShoppersForOneExclusiveDropoffOneGoes`, `TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes`).
 
 ### 5. Reply to Edge on Queue
 

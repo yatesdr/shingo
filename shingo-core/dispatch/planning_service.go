@@ -344,7 +344,8 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	}
 
 	// Phase 4 of bin-transit-state: shared dropoff-capacity gate. Self-exclusion
-	// (order.ID) keeps the order's own pending row out of the in-flight tally.
+	// (order.ID) keeps the order's own row out of the in-flight count, which
+	// reads orders holding a claimed bin.
 	// Blocked → queue; the scanner replays when slot vacancy fires.
 	//
 	// This gate MUST stay above source resolution. A simple-retrieve reshuffle

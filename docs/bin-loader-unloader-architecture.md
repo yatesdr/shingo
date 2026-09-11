@@ -141,11 +141,11 @@ On Edge startup, after registration ack, the auto-push sweeps `SweepPushLoaders`
 
 ### One Robot at a Time
 
-`CountInFlightOrdersByDeliveryNode` -- before dispatching, the scanner checks if there's already a non-queued, non-terminal order targeting this delivery node. If yes, skip. Prevents two robots heading to the same node.
+`CountInFlightOrdersByDeliveryNodeExcluding` -- before dispatching, the scanner's dropoff gate (`dispatch.CheckDropoffCapacity`) counts the other orders delivering to this node that hold a claimed bin (`orders.InFlightForDropoffSQL` — a holder, not a status). If there is one, skip. Prevents two robots heading to the same node: an order counts from the moment it claims its bin, and the gate runs again before every re-dispatch, so two orders that were both parked — both refused by the fleet and demoted, for instance — cannot both go (`TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes`).
 
 ### Bin-Occupied Guard
 
-In `tryFulfill`, after the in-flight check: resolve delivery node name via `GetNodeByDotName`, call `CountBinsByNode(nodeID)`. If count > 0, skip. A bin is physically at the node -- the operator hasn't cleared it yet.
+In the same gate, ahead of the in-flight count: resolve the delivery node via `GetNodeByDotName` and call `CountBinsByNode(nodeID)`. If count > 0, skip. A bin is physically at the node -- the operator hasn't cleared it yet.
 
 This prevents dispatching while the operator is still working:
 1. Order A delivered, operator unloads, confirms. Order A is terminal (excluded from in-flight count).

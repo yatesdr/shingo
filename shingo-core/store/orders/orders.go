@@ -442,8 +442,9 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	//   writes a reason here and then STAYS.
 	//
 	//   A COMPOUND CHILD RESTS IN `pending` FOR ITS WHOLE PRE-DISPATCH LIFE.
-	//   Seven sites in dispatch/compound.go park a leg with a cause and deliberately
-	//   do not move its status — `pending` is what the re-drive selects, so the
+	//   Seven sites in dispatch/compound.go (five in AdvanceCompoundOrder, two in
+	//   handleStaleDigLeg) park a leg with a cause and deliberately do not move its
+	//   status — `pending` is what the re-drive selects, so the
 	//   cause is written ALONGSIDE the status rather than instead of it. Nothing
 	//   ever carries that code onto a later row: the admitted path CLEARS it
 	//   (compound.go, right after the admission verdict) before the transition, so
@@ -1386,12 +1387,21 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // either (TestDropoffGate_TwoShoppersForOneExclusiveDropoffOneGoes). A status
 // says where an order is in its life, not whether a bin is coming.
 //
-// What brings a bin is a claim: dispatch claims the bins an order carries,
-// nothing before dispatch does, and terminalization hands them back. So the
-// count reads the claim book and no status word at all. A reservation is not
-// counted — it is a plan, and an order that has only planned is not on its way.
-// The order that loses the race waits its turn at dispatch: the gate refuses it
-// until the holder has landed.
+// What brings a bin is a claim, and three things take one: a plain order's
+// confirm at dispatch (ConfirmForDispatch), a complex leg's acquisition phases in
+// the pass that sends it to the fleet, and a compound child's creation
+// (CreateCompoundChildren claims each child's bin in the transaction that makes
+// it). Terminalization hands them back and a fleet refusal takes them off
+// (DemoteHoldsAfterFleetRefusal). So the count reads the claim book and no status
+// word at all. A reservation is not counted — it is a plan, and an order that has
+// only planned is not on its way. The order that loses the race waits its turn at
+// dispatch: the gate refuses it until the holder has landed.
+//
+// An order parked on paper alone therefore counts for nothing, and two of them
+// bound for one node are kept apart by the gate re-running before every dispatch,
+// not by this count (TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes). A
+// dig is kept off a soft-held requester's own destination by planUnbury, not by
+// this count either (TestHeldBinDig_NeverParksOnTheOrdersOwnDestination).
 //
 // Every reader inherits it through the counts below: CheckDropoffCapacityForType
 // (the node arm and the NGRP arm), shuffleSlotFree through that, and
@@ -1592,10 +1602,11 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 // check would let both put a carrier on the same window, which is the one thing
 // "one order per window" is supposed to mean.
 //
-// Distinct from CountInFlightByDeliveryNode, which excludes `queued` because it
-// answers "is something on its way" for the fulfillment scanner — a question
-// where an unsourced order correctly counts for nothing. Here an unsourced order
-// counts for everything: it is a claim on the window that has not been given up.
+// Distinct from CountInFlightByDeliveryNode, which counts only orders holding a
+// claimed bin, because it answers "is something on its way" for the dropoff gate
+// — a question where an unsourced order correctly counts for nothing. Here an
+// unsourced order counts for everything: it is a claim on the window that has
+// not been given up.
 func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)

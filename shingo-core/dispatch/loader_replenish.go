@@ -190,8 +190,9 @@ func (d *Dispatcher) episodeOutstanding(originID string) (int, error) {
 // the whole of Springfield 2026-08-03. The Edge's seam sized against
 // `CurrentUOP + inFlight*capacity` — it projected the orders it had already
 // created into the total and asked for the remainder. Core replaced that with a
-// per-window capacity check, which reads `status != 'queued'` and therefore
-// cannot see an order that has been created but has not yet been able to source.
+// per-window capacity check whose in-flight count cannot see an order that has
+// been created but has not yet been able to source: it counts orders holding a
+// claimed bin (orders.InFlightForDropoffSQL), and such an order holds none.
 // A loader whose empty market was dry accumulated 241 identical queued
 // retrieve_empty orders at one window, roughly one a minute, because to that
 // check every one of them was the first.

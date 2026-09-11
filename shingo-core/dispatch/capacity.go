@@ -111,8 +111,9 @@ type CapacityBlock struct {
 //
 // excludeOrderID is the caller's own order, excluded from the count so a gate
 // checking from inside the order's own dispatch/retry path cannot see itself.
-// Every real caller passes its order.ID; pass 0 only from preview paths that
-// have no order row yet.
+// Callers dispatching an order pass its order.ID. Callers with no order of their
+// own to exclude pass 0: preview paths, and shuffleSlotFree asking whether a dig
+// may park at a node.
 //
 // "Capacity" is two physical facts and no status: zero bins at the node, AND no
 // other order delivering there that holds a claimed bin — the one that is

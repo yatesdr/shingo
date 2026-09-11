@@ -247,8 +247,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// full-gated. A simple retrieve to an occupied line stays gated — the fast-path
 	// is structurally unreachable here (it lives only in the coordinated branch),
 	// so it can't leak onto a single-transport order (the round-7 requirement).
-	// order.ID self-exclusion (A7): the in-flight tally counts `sourcing` orders,
-	// so a self-retrying order must not count its own row.
+	// order.ID self-exclusion (A7): the in-flight count reads every order holding a
+	// claimed bin bound here (orders.InFlightForDropoffSQL), so an order retrying
+	// after it has claimed must not count its own row.
 	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return false
@@ -319,10 +320,12 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		// The dropoff gate above is the PRECONDITION, not an incidental ordering: a
 		// simple-retrieve reshuffle compound IS the delivery, so it may only be planned
 		// against a destination known clear. That holds here — same tick, same
-		// goroutine, under scanMu. Once the parent flips to `reshuffling` it also
-		// counts as in-flight inbound to its own delivery_node
-		// (CountInFlightByDeliveryNode excludes only `queued` and terminal), so the
-		// destination stays reserved against other orders for the whole compound.
+		// goroutine, under scanMu. The destination then stays covered against other
+		// orders for the whole compound, and not by the parent, which holds no claim:
+		// CreateCompoundChildren claims the target bin for the retrieve child in the
+		// transaction that creates it, and compound.go gives that child the parent's
+		// delivery node, so the child counts as inbound there
+		// (orders.InFlightForDropoffSQL) from creation.
 		//
 		// Return false and never advance the compound: createCompound already
 		// dispatched the first child, and the parent has left the acquiring set
@@ -806,11 +809,14 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 //   - Its BIN is the dig's TARGET, not a blocker. findBuriedBlockers returns
 //     slots strictly SHALLOWER than the target, so the order's own bin is never
 //     one of the things being moved.
-//   - Its DESTINATION slot cannot be chosen as a shuffle spot. shuffleSlotFree
-//     runs CheckDropoffCapacity with no order excluded, and this order is
-//     `sourcing` and inbound to that node — non-excluded by
-//     CountInFlightByDeliveryNode — so its own delivery slot reads occupied to
-//     the shuffle picker.
+//   - Its DESTINATION slot is never parking for its own dig. The order holds it
+//     only as a pending reservation, which the dropoff count does not read, so
+//     shuffleSlotFree would count it free; planUnbury excludes the destination
+//     the dig's retrieve delivers to, and once the compound exists the retrieve
+//     child's claim makes the slot inbound for the release-time resolver too.
+//     With the destination as the only free parking the order waits under
+//     no-shuffle-slot and no dig starts. Pinned by
+//     TestHeldBinDig_NeverParksOnTheOrdersOwnDestination (engine).
 //
 // WAIT, NEVER FAIL, on congestion: ErrReshuffleWait means the lane is
 // busy or no shuffle slot is free right now. The order keeps its held bin and

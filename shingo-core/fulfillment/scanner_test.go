@@ -651,7 +651,8 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 }
 
 // A7: the scanner's capacity gate self-excludes — it passes order.ID, not 0, so
-// the in-flight tally (which counts `sourcing`) can't count the order's own row.
+// the in-flight count (orders holding a claimed bin) can't count the order's own
+// row once it has claimed.
 // With the widened set, simple sourcing orders are scoped out before the gate,
 // so this pins the mechanism a QUEUED order threads; the reserve/confirm split
 // makes it load-bearing once sourcing

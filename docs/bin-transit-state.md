@@ -174,10 +174,12 @@ concrete node, free            → not blocked
 ```
 
 `excludeOrderID` excludes the calling order's own row from the
-in-flight count. Planner callers pass `order.ID` (the order's status is
-`pending` or `sourcing` during planning, both of which the count would
-otherwise tally against). Scanner callers pass 0 since `queued` is
-already excluded from the count.
+in-flight count, which counts orders holding a claimed bin
+(`orders.InFlightForDropoffSQL`). Callers dispatching an order — the
+planners and the fulfillment scanner — pass its `order.ID`, so an order
+re-checking after it has claimed does not count itself. Callers with no
+order of their own to exclude pass 0: preview paths, and
+`shuffleSlotFree` asking whether a dig may park at a node.
 
 The gate is consulted at:
 

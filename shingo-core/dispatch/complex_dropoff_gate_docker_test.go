@@ -37,8 +37,8 @@ import (
 // The second gap is the one that matters. A gate that queues an order and a gate
 // that queues it FOREVER look identical to that test, and "queues forever" is
 // exactly what the reverted commit did to a loader home: the queued leg went
-// invisible to the replenishment loop's in-flight yield check
-// (status != 'queued'), the loop refilled the home, and the gate refused on the
+// invisible to the replenishment loop's in-flight yield check (a parked leg
+// holds no claimed bin), the loop refilled the home, and the gate refused on the
 // carrier it had caused to be put there. A release arm is the only thing that
 // tells those two apart.
 //

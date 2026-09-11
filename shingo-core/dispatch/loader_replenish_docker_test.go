@@ -509,8 +509,8 @@ func TestReplenishLoader_DedicatedGoesToTheNamedPosition(t *testing.T) {
 // sits in `queued`. The second call is the same demand asking the same question
 // about the same window — and it must not create a second carrier. It did, about
 // once a minute for three and a half hours, because the only guard was a
-// capacity check whose in-flight count is `status != 'queued'` and therefore
-// could not see the order it had just made.
+// capacity check whose in-flight count could not see the order it had just made:
+// an order that has not sourced holds no claimed bin.
 //
 // Nothing here needs the market to actually be dry: an order that has not been
 // dispatched yet is in exactly the same state as one that cannot be, and it is
@@ -630,7 +630,8 @@ func TestReplenishLoader_UnattributedRequestIsNotBounded(t *testing.T) {
 // neither can see the other's orders. An episode-scoped check would let both put
 // a carrier on the same window — which is the one thing "one order per window"
 // exists to prevent — and the capacity check cannot catch it either, because the
-// first order is still `queued` and invisible to an in-flight count.
+// first order has not sourced, holds no claimed bin, and so is invisible to the
+// in-flight count.
 func TestReplenishLoader_WindowSpokenForByAnotherDemand(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

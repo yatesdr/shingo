@@ -726,8 +726,14 @@ const (
 //
 // Because the new owner is a LIVE ORDER. Its per-visit release drops the row
 // when its bin clears the lane, and its terminalization drops the row whatever
-// happens to it. There is no state left behind that outlives an order, which is
-// what a hold parked on a finished dig was.
+// happens to it. So does any release of a pair leg's holdings while it is still
+// pre-dispatch: releaseLegHoldings ends in reservations.ReleaseByOrder, which
+// deletes every kind of row, and it runs for a leg parked behind its partner
+// (parkPair, parkPairAwaitingPartner), for the other legs when one dies in the
+// pass (dispatchPairInOnePass), and for a leg whose partner Core refused
+// (failForRefusedPartner). A resumed picker released that way gives its dug
+// corridor back before it has used it. There is no state left behind that
+// outlives an order, which is what a hold parked on a finished dig was.
 //
 // ── AND THAT DEPENDS ENTIRELY ON THE CALLER'S GATE ────────────────────────
 //

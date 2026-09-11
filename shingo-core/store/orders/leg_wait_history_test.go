@@ -31,7 +31,8 @@ func newLeg(t *testing.T, db *store.DB, uuid string) *orders.Order {
 // cause lands on that wait's own row".
 //
 // A dig leg is the one population that writes a cause and then STAYS: seven sites
-// in dispatch/compound.go park it with a reason and deliberately leave the
+// in dispatch/compound.go (five in AdvanceCompoundOrder, two in
+// handleStaleDigLeg) park it with a reason and deliberately leave the
 // status at `pending`, because being unsent is what the re-drive selects. The
 // stamp refused every one of them — `pending` is a birth certificate, not a
 // wait — so the cause lived only in orders.queue_cause, a live column
