@@ -33,6 +33,12 @@ type StationNodeView struct {
 	// points and a single coordinated release can move both forward.
 	// Non-two-robot nodes always report false.
 	SwapReady bool `json:"swap_ready"`
+	// ReleasesAsPair is true when this node's swap pair is released as ONE —
+	// the /release-staged path — rather than leg by leg (store.ReleasesAsPair).
+	// The board's pair-wait arm keys on it together with the order graph, so it
+	// reads a property the server declares instead of a mode name: sequential
+	// and single_robot link their legs too, and release them one at a time.
+	ReleasesAsPair bool `json:"releases_as_pair"`
 
 	// ChangeoverLoadDirective tells a loader's card what to load during a
 	// changeover — see the type. Nil when there is no changeover, the claim

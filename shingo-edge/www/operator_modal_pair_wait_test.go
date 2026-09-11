@@ -8,7 +8,13 @@ import (
 
 // TestOperatorModalPairWaitJS runs the Node-based unit tests for
 // pairWaitingLabel (static/operator-station/operator-modal.js) — the label on
-// the disabled two-robot "waiting" button.
+// the disabled pair "waiting" button — and for which arm of cellCardAction a
+// pair takes to reach it.
+//
+// WHICH PAIRS GET IT is the half that decides something. The arm keys on two
+// linked live legs and on releases_as_pair, the server's declared answer to "is
+// this pair released together". It tested swap_mode === 'two_robot', which left
+// a press-index pair — released as one too — on a single leg's button.
 //
 // THE PARK IS ONE WAIT, NOT TWO. A held pair is one object at the release click
 // and two objects at rest, and the rest state is what a person is looking at

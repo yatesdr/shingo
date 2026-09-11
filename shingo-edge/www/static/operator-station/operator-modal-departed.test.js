@@ -102,7 +102,8 @@ const PRODUCE = { swap_mode: 'two_robot_press_index', role: 'produce', payload_c
 function card(orders, opts) {
     opts = opts || {};
     return cellCardAction(
-        { node: NODE, orders, swap_ready: !!opts.swapReady, bin_state: opts.binState },
+        { node: NODE, orders, swap_ready: !!opts.swapReady, releases_as_pair: !!opts.releasesAsPair,
+            bin_state: opts.binState },
         opts.claim || PRODUCE,
         opts.remaining != null ? opts.remaining : 40);
 }
@@ -240,12 +241,12 @@ eq(btn.action, '/api/confirm-delivery/405',
 const twoRobot = { swap_mode: 'two_robot', role: 'produce', payload_code: 'WIDGET-A' };
 const supplyInTransit = { id: 201, status: 'in_transit', departed: false, sibling_order_id: 202 };
 const evacUndeparted = { id: 202, status: 'in_transit', departed: false, sibling_order_id: 201 };
-btn = card([supplyInTransit, evacUndeparted], { claim: twoRobot });
+btn = card([supplyInTransit, evacUndeparted], { claim: twoRobot, releasesAsPair: true });
 ok(btn.label.indexOf('WAITING FOR OTHER ROBOT') === 0,
-    'two live legs still raise the two-robot waiting label');
+    'two live legs still raise the pair waiting label');
 
 const evacDeparted = Object.assign({}, evacUndeparted, { departed: true });
-btn = card([supplyInTransit, evacDeparted], { claim: twoRobot });
+btn = card([supplyInTransit, evacDeparted], { claim: twoRobot, releasesAsPair: true });
 eq(btn.label, 'ROBOT IN TRANSIT',
     'once the evac has departed the pair reads as one leg, and the survivor drives the card');
 

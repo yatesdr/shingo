@@ -654,12 +654,21 @@ function cellCardAction(entry, claim, remaining) {
         return { label: 'RELEASE', cls: 'request', enabled: true,
             action: 'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged' };
     }
-    if (claim && claim.swap_mode === 'two_robot' && swapPair(active).length >= 2) {
-        // Two-robot swap in progress with BOTH legs still alive but
-        // swap_ready is false — Robot B hasn't reached its wait point.
+    if (entry.releases_as_pair && swapPair(active).length >= 2) {
+        // A pair released as one, in progress with BOTH legs still alive but
+        // swap_ready false — the gating robot hasn't reached its wait point.
         // Show explicit waiting state instead of the per-order RELEASE
         // branch (would release one leg, bypass disposition prompt) or
         // idle REQUEST SWAP/REQUEST (don't apply mid-swap).
+        //
+        // THE ORDER GRAPH AND A DECLARED PROPERTY, NEVER THE MODE NAME. This arm
+        // tested swap_mode === 'two_robot', so a press-index pair — released as
+        // one just the same — fell through to a single leg's button and never
+        // read as one wait. Two linked legs alone is not the test either:
+        // sequential and single_robot link their legs and release them one at a
+        // time, so keyed on the graph alone this arm would take their RELEASE.
+        // releases_as_pair is the server's answer to "is this pair released
+        // together" (store.ReleasesAsPair) — the gate swap_ready sits behind.
         //
         // COUNT THE PAIR, NOT THE ROOM. This guard is the recovery
         // surface: when one leg dies the count drops to <=1, this arm

@@ -51,14 +51,31 @@ function extractFn(src, name) {
 
 const modalSrc = fs.readFileSync(path.join(__dirname, 'operator-modal.js'), 'utf8');
 const utilSrc = fs.readFileSync(path.join(__dirname, 'operator-util.js'), 'utf8');
-const ctx = vm.createContext({ console: console, formatETA: () => ({ empty: true, text: '' }) });
+const statusSrc = fs.readFileSync(path.join(__dirname, 'order-status.js'), 'utf8');
+// TERMINAL_STATUSES from the shipping order-status.js, as the departed-leg test
+// takes it, so cellCardAction's `active` filter sees the real terminal set.
+const terminal = JSON.parse(
+    statusSrc.match(/export const TERMINAL_STATUSES = (\[[^\]]*\])/)[1].replace(/'/g, '"'));
+const ctx = vm.createContext({
+    console: console,
+    JSON: JSON,
+    Number: Number,
+    Array: Array,
+    isActive: (s) => !terminal.includes(s),
+    esc: (s) => String(s),
+    withQueueCause: (base) => base,
+    formatETA: () => ({ empty: true, text: '' }),
+});
 vm.runInContext(modalSrc.match(/const WAITING_BASE = '[^']*';/)[0].replace('const ', 'var '), ctx);
+vm.runInContext(modalSrc.match(/const TO_MARKET_LABEL = '[^']*';/)[0].replace('const ', 'var '), ctx);
 vm.runInContext(extractFn(utilSrc, 'distinctQueueCauses').replace('export function', 'function'), ctx);
-for (const fn of ['blockerPhrase', 'waitingLabel', 'statusWordOf', 'pairWaitingLabel']) {
+for (const fn of ['blockerPhrase', 'waitingLabel', 'statusWordOf', 'pairWaitingLabel',
+    'isStationReleasable', 'swapPair', 'orderStatusChip', 'cellCardAction']) {
     vm.runInContext(extractFn(modalSrc, fn), ctx);
 }
-vm.runInContext('this.pairWaitingLabel = pairWaitingLabel;', ctx);
+vm.runInContext('this.pairWaitingLabel = pairWaitingLabel; this.cellCardAction = cellCardAction;', ctx);
 const pairWaitingLabel = ctx.pairWaitingLabel;
+const cellCardAction = ctx.cellCardAction;
 
 const BASE = 'WAITING FOR OTHER ROBOT';
 
@@ -118,6 +135,78 @@ eq(pairWaitingLabel([
     { id: 1, status: 'staged' },
     { id: 2, status: 'staged' },
 ]), BASE + ' — 2 of 2 parked', 'both parked, no cause invented');
+
+// ── WHICH ARM THE CARD TAKES (census 18 and 19) ─────────────────────────
+//
+// The label is half of it. cellCardAction decides whether a pair gets this
+// label at all, and the pair arm sits ABOVE the per-order RELEASE / CONFIRM /
+// in-flight arms, so the arm chosen is what a person can or cannot act on. The
+// arm tested swap_mode === 'two_robot'; it now keys on two linked live legs and
+// on releases_as_pair, the server's declared answer to "is this pair released
+// together". Each case compares the whole button, so it pins the arm, not only
+// the words on it.
+
+const CELL = { id: 7, name: 'CELL-7' };
+function cardFor(orders, releasesAsPair, claim) {
+    return cellCardAction({ node: CELL, orders: orders, swap_ready: false, releases_as_pair: releasesAsPair },
+        claim, 40);
+}
+function pairArm(pair) {
+    return JSON.stringify({ label: pairWaitingLabel(pair), cls: 'close', enabled: false, action: '' });
+}
+
+// A pair held on two different causes: one leg waiting for its partner, the
+// partner digging its own bin out. Neither leg is parked.
+const digPair = [
+    { id: 601, status: 'sourcing', sibling_order_id: 602,
+        queue_reason: 'Waiting for partner order 4023cd47 to dig out its bin — the two legs go together' },
+    { id: 602, status: 'reshuffling', sibling_order_id: 601,
+        queue_reason: 'Rearranging lane L12 to reach 74577-6SA0A.06' },
+];
+
+// 18. two_robot: the card takes the PAIR arm, with the whole pair on it. The
+// in-flight arm beneath it shows one leg's cause.
+const TWO_ROBOT = { swap_mode: 'two_robot', role: 'consume', payload_code: '74577-6SA0A.06' };
+eq(JSON.stringify(cardFor(digPair, true, TWO_ROBOT)), pairArm(digPair),
+    'census 18: a held two_robot pair takes the pair arm — disabled, both causes on it');
+
+// And the arm's reason to exist: a leg parked while its partner is still on the
+// way gets no RELEASE of its own. That is the per-order button, and it would
+// send one leg of a pair released as one without the other.
+const parkedLeg = [
+    { id: 611, status: 'staged', sibling_order_id: 612 },
+    { id: 612, status: 'in_transit', sibling_order_id: 611 },
+];
+eq(JSON.stringify(cardFor(parkedLeg, true, TWO_ROBOT)), pairArm(parkedLeg),
+    'census 18: a parked leg of a pair released as one does not get a RELEASE of its own');
+
+// 19. two_robot_press_index: released as one just the same, so the same arm.
+// Keyed on the mode name, this pair fell to the in-flight arm and read as a
+// single leg's wait.
+const PRESS_INDEX = { swap_mode: 'two_robot_press_index', role: 'produce', payload_code: 'WIDGET-A' };
+eq(JSON.stringify(cardFor(digPair, true, PRESS_INDEX)), pairArm(digPair),
+    'census 19: a held press-index pair renders as one wait');
+
+// Two linked legs is NOT the test on its own. sequential and single_robot link
+// their legs and release them one at a time; a staged leg there keeps its own
+// RELEASE, and the pair arm must not take it.
+const SEQUENTIAL = { swap_mode: 'sequential', role: 'consume', payload_code: 'PANEL-A' };
+const seqPair = [
+    { id: 621, status: 'staged', sibling_order_id: 622, lane_held: false },
+    { id: 622, status: 'queued', sibling_order_id: 621 },
+];
+const seqBtn = cardFor(seqPair, false, SEQUENTIAL);
+eq(seqBtn.label, 'RELEASE', 'sequential: a staged leg of a linked pair keeps its own RELEASE');
+eq(seqBtn.action, 'release-prompt:/api/orders/621/release', 'and it releases that leg alone');
+
+const SINGLE = { swap_mode: 'single_robot', role: 'consume', payload_code: 'PANEL-A' };
+const relay = [
+    { id: 631, status: 'delivered', sibling_order_id: 632, auto_confirm: true },
+    { id: 632, status: 'staged', sibling_order_id: 631, lane_held: false },
+];
+const relayBtn = cardFor(relay, false, SINGLE);
+eq(relayBtn.label, 'RELEASE', 'single_robot relay: the swap leg keeps its own RELEASE beside its stage leg');
+eq(relayBtn.action, 'release-prompt:/api/orders/632/release', 'and it releases the swap leg');
 
 console.log('operator-modal pairWaitingLabel: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

@@ -207,6 +207,21 @@ func stagedSiblingPair(db *DB, processNodeID int64) (evacID, supplyID *int64, ok
 	return &aID, &bID, true
 }
 
+// ReleasesAsPair reports whether a node's swap pair is released as ONE — the
+// /release-staged path (ReleaseStagedOrders) — rather than leg by leg through
+// /api/orders/{id}/release. It is the property the operator board's pair-wait
+// arm reads (StationNodeView.ReleasesAsPair) and the outer gate of
+// ComputeSwapReady: one answer to one question, so the button and the arm that
+// explains its absence cannot disagree about which pairs they are for.
+//
+// The two-robot family only. sequential links its legs too but routes each
+// leg's disposition on its own release; single_robot's changeover relay links
+// its stage leg to its swap leg and releases the swap leg alone; manual_swap
+// makes no pair.
+func ReleasesAsPair(claim *processes.NodeClaim) bool {
+	return claim != nil && claim.SwapMode.IsTwoRobot()
+}
+
 // ComputeSwapReady returns true when a two-robot swap can be released via
 // the consolidated single-click path: a sibling-linked pair of orders
 // exists at this node and the lineside leg is parked at staged.
@@ -258,7 +273,7 @@ func stagedSiblingPair(db *DB, processNodeID int64) (evacID, supplyID *int64, ok
 // Non-two-robot claims always return false — their single staged order
 // is released via the per-order /api/orders/{id}/release endpoint.
 func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState, task *processes.NodeTask) bool {
-	if claim == nil || !claim.SwapMode.IsTwoRobot() {
+	if !ReleasesAsPair(claim) {
 		return false
 	}
 	// ONE resolver, shared with the release path. This used to walk its own

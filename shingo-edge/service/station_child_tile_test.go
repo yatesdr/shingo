@@ -423,13 +423,19 @@ func TestBuildView_FannedOutPositionGetsSynthesizedClaim(t *testing.T) {
 	if press.ActiveClaim == nil || press.ActiveClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		t.Errorf("front position claim = %+v, want the persisted two_robot_press_index row", press.ActiveClaim)
 	}
+	// And it declares its pair released as one — the property the modal's
+	// pair-wait arm reads instead of the mode name.
+	if !press.ReleasesAsPair {
+		t.Error("front press-index position reports releases_as_pair=false — its held pair would fall " +
+			"to a single leg's button instead of reading as one wait")
+	}
 }
 
 // TestBuildView_FannedOutPositionRoutesToPlainRelease pins the modal path the
 // synthesized claim must land on. operator-modal.js picks its action region in
 // order: manual_swap loader UI, then swap_ready (consolidated two-robot
-// release), then the two_robot "WAITING FOR OTHER ROBOT" hold, then the plain
-// `staged` single-order RELEASE.
+// release), then the pair "WAITING FOR OTHER ROBOT" hold (releases_as_pair and
+// two linked legs), then the plain `staged` single-order RELEASE.
 //
 // A fanned-out position is a standalone evac with no sibling leg, so it must fall
 // all the way through to the LAST branch — the same one the front position used
@@ -454,6 +460,10 @@ func TestBuildView_FannedOutPositionRoutesToPlainRelease(t *testing.T) {
 	if position.SwapReady {
 		t.Error("position reports swap_ready — the modal would offer the consolidated two-robot " +
 			"release for a standalone evac with no sibling")
+	}
+	if position.ReleasesAsPair {
+		t.Error("position reports releases_as_pair — the modal's pair-wait arm is keyed on it, and a " +
+			"standalone evac released on its own must not be read as half of a pair")
 	}
 }
 

@@ -113,6 +113,7 @@
         }
       ],
       "swap_ready": false,
+      "releases_as_pair": false,
       "last_release_error": "Manifest sync failed at Core: bin 42 is claimed by another order"
     },
     {
@@ -142,7 +143,8 @@
         "updated_at": "<ts>"
       },
       "orders": null,
-      "swap_ready": false
+      "swap_ready": false,
+      "releases_as_pair": false
     },
     {
       "node": {
@@ -171,6 +173,7 @@
       },
       "orders": null,
       "swap_ready": false,
+      "releases_as_pair": false,
       "child_of_node": "Press G1"
     }
   ]

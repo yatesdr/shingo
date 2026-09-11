@@ -1124,6 +1124,7 @@ func (s *StationService) buildNodeTile(
 	// stopped firing process-node-tracked orders here.
 	nodeView.Orders = b.boardOrders[node.ID]
 	nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
+	nodeView.ReleasesAsPair = store.ReleasesAsPair(nodeView.ActiveClaim)
 	// Lineside buckets power the active-bar and stranded-chip UI on
 	// the operator station modal. Best-effort — absence of buckets
 	// just means the node has nothing pulled to lineside yet.
