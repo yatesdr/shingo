@@ -91,8 +91,8 @@ go test -v -run "TestChangeover|TestWiring_ABCycling|TestWiring_FlipABNode|TestC
 | TC-98 | Order B fails — swap order failure → error → manual recovery | PASS |
 | TC-99 | Partial completion — 2 of 3 nodes done, 1 errors, cutover blocked | PASS |
 | TC-100 | Cutover completion — switch + cutover sets active style | PASS |
-| TC-101 | Keep-staged + evacuate — both flags on same claim | PASS |
-| TC-102 | Keep-staged from → non-keep-staged to — from-claim drives handler | PASS |
+| TC-101 | Keep-staged + evacuate — refused by the planner (keep-staged withheld 2026-09-10) | PASS |
+| TC-102 | Keep-staged from → non-keep-staged to — the from-claim's flag is refused (withheld 2026-09-10) | PASS |
 | TC-103 | Keep-staged missing staging config — falls back to simple staging | PASS |
 | TC-104 | A/B flip during changeover — flip succeeds, orders blocked | PASS |
 | TC-105 | A/B produce pair — active increments, inactive skipped | FIXED |
@@ -590,7 +590,7 @@ case to != nil && to.PayloadCode == "__empty__":
 
 **Expected behavior:** Same payload + EvacuateOnChangeover → SituationEvacuate. KeepStaged flag triggers keep-staged order handler. Order A completion → `staged`. Order B completion (with Order A done) → `released`.
 
-**Result:** PASS. Both flags coexist correctly. State machine advances through staged → released.
+**Result:** PASS at the time. **Changed 2026-09-10:** keep-staged is withheld from plant configuration; a stored flag now makes the planner refuse the node (task `error`, no orders). See `docs/ui-style-guide.md`.
 
 **Test:** `shingo-edge/engine/changeover_flow_test.go` — `TestChangeoverFlow_KeepStagedWithEvacuate`
 
@@ -602,7 +602,7 @@ case to != nil && to.PayloadCode == "__empty__":
 
 **Expected behavior:** SituationSwap with keep-staged handler (from from-claim). Both Order A and Order B created despite to-style not having KeepStaged.
 
-**Result:** PASS. From-claim's KeepStaged drives the handler. Both orders created.
+**Result:** PASS at the time. **Changed 2026-09-10:** the from-claim's flag still drives the decision, and the decision is now a refusal (task `error`, no orders). See `docs/ui-style-guide.md`.
 
 **Test:** `shingo-edge/engine/changeover_flow_test.go` — `TestChangeoverFlow_KeepStagedToNoKeep`
 

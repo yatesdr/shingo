@@ -426,3 +426,27 @@ func findingOnField(findings []FieldError, field string) bool {
 	}
 	return false
 }
+
+// TestValidateNodeClaim_KeepStagedIsWithheld: keep-staged is withheld from plant
+// configuration, so a claim asking for it is refused at ingress with the one
+// message every door gives; a claim that says false, or nothing, is not.
+func TestValidateNodeClaim_KeepStagedIsWithheld(t *testing.T) {
+	t.Parallel()
+	c := validClaim()
+	c.KeepStaged = Ptr(true)
+	var got string
+	for _, f := range ValidateNodeClaim(c, ClaimNodeContext{}) {
+		if f.Field == "keep_staged" {
+			got = f.Message
+		}
+	}
+	if got != KeepStagedWithheld {
+		t.Fatalf("keep_staged=true: finding %q, want %q", got, KeepStagedWithheld)
+	}
+	for _, v := range []*bool{Ptr(false), nil} {
+		c.KeepStaged = v
+		if hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "keep_staged") {
+			t.Errorf("keep_staged=%v produced a finding; only asking for it is refused", v)
+		}
+	}
+}

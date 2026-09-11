@@ -85,9 +85,14 @@ cd "$(dirname "$0")/.."
 # the number does not distinguish them and a reader chasing "what was converted"
 # would find nothing.
 #
+# 1484 → 1480: withholding keep_staged took the order-completion walk out of
+# changeover_flow_test.go's keep-staged evacuate case (a withheld node plans no
+# orders, so there is nothing to complete), and its four discard sites went with
+# it. Deletion again, not conversion.
+#
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1484
+FROZEN=1480
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

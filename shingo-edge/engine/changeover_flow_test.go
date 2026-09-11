@@ -703,13 +703,14 @@ func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
 		StyleID: fromStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC",
 		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		KeepStaged: domain.Ptr(true), EvacuateOnChangeover: true,
+		EvacuateOnChangeover: true,
 	})
 	upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 200, InboundSource: "SRC",
 		InboundStaging: "STAGING", EvacuateOnChangeover: true,
 	})
+	setLegacyKeepStagedClaim(t, db, fcID)
 
 	db.EnsureProcessNodeRuntime(nodeID)
 	db.SetProcessNodeRuntime(nodeID, &fcID, 50)
@@ -727,35 +728,26 @@ func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
 	if task.Situation != "evacuate" {
 		t.Fatalf("expected evacuate, got %s", task.Situation)
 	}
-	// KeepStaged=true → keep-staged handler creates orders
-	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected both orders for keep-staged evacuate")
+	// keep_staged is withheld: the planner refuses the node instead of planning
+	// it, so its task lands in error with no orders.
+	if task.State != domain.NodeTaskError {
+		t.Errorf("node task state = %q, want %q — a stored keep-staged claim is refused, not planned",
+			task.State, domain.NodeTaskError)
 	}
-
-	// Complete Order A (combined keep-staged)
-	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
-	markOrderTerminal(db, orderA.ID)
-	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskStaged {
-		t.Fatalf("after Order A: expected staged, got %s", task.State)
+	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID != nil {
+		t.Errorf("a refused keep-staged node created orders (next %v, release %v)",
+			task.NextMaterialOrderID, task.OldMaterialReleaseOrderID)
 	}
+}
 
-	// Complete Order B (evac)
-	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	markOrderTerminal(db, orderB.ID)
-	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskReleased {
-		t.Errorf("after Order B (Order A done): expected released, got %s", task.State)
+// setLegacyKeepStagedClaim writes keep_staged=1 behind the store's back. The
+// option is withheld and no writer can set it any more, but rows stored before
+// the withholding carry it, and the planner has to answer for them.
+func setLegacyKeepStagedClaim(t *testing.T, db *store.DB, claimID int64) {
+	t.Helper()
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID); err != nil {
+		t.Fatalf("set legacy keep_staged on claim %d: %v", claimID, err)
 	}
-
-	// phantom-inventory pin no longer applies under the new cache
-	// contract: confirm doesn't touch RemainingUOPCached, so there's no
-	// fall-through reset to assert against. The state-machine assertion
-	// above (task.State == "released") covers the surviving behavior.
 }
 
 // Keep-staged from → non-keep-staged to. Old style had keep-staged,
@@ -776,7 +768,6 @@ func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
 		StyleID: fromStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		KeepStaged: domain.Ptr(true),
 	})
 	upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
@@ -784,6 +775,7 @@ func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
 		InboundStaging: "STAGING",
 		// KeepStaged not set — new style doesn't use keep-staged
 	})
+	setLegacyKeepStagedClaim(t, db, fcID)
 
 	db.EnsureProcessNodeRuntime(nodeID)
 	db.SetProcessNodeRuntime(nodeID, &fcID, 50)
@@ -801,8 +793,14 @@ func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
 	if task.Situation != "swap" {
 		t.Fatalf("expected swap (different payload), got %s", task.Situation)
 	}
-	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected both orders (keep-staged handler triggered by from-claim)")
+	// The from-claim's flag is what the planner reads, and it refuses the node.
+	if task.State != domain.NodeTaskError {
+		t.Errorf("node task state = %q, want %q — the from-claim's keep_staged is refused, not planned",
+			task.State, domain.NodeTaskError)
+	}
+	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID != nil {
+		t.Errorf("a refused keep-staged node created orders (next %v, release %v)",
+			task.NextMaterialOrderID, task.OldMaterialReleaseOrderID)
 	}
 }
 
@@ -823,7 +821,6 @@ func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
 		StyleID: fromStyleID, CoreNodeName: "KSMS-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		KeepStaged: domain.Ptr(true),
 		// InboundStaging not set — can't stage
 	})
 	upsertClaimRetiredMode(db, processes.NodeClaimInput{
@@ -831,6 +828,9 @@ func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
 		PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SRC-NEW",
 		// InboundStaging not set
 	})
+	// The staging check comes before the keep-staged one, so a stored flag on a
+	// node with no staging still falls back rather than being refused.
+	setLegacyKeepStagedClaim(t, db, fcID)
 
 	db.EnsureProcessNodeRuntime(nodeID)
 	db.SetProcessNodeRuntime(nodeID, &fcID, 50)

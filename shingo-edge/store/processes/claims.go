@@ -320,6 +320,13 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// four saves and the first three would each be refused by the other three.
 	warnIndexRobotSuppliesDrift(db, in)
 
+	// Withheld at the store as well as at ingress, for the same reason the
+	// guards above are: a non-API caller must not write what the API refuses.
+	// An absent flag leaves a stored one untouched — nothing here migrates data.
+	if in.KeepStaged != nil && *in.KeepStaged {
+		return 0, fmt.Errorf("keep_staged: %s", domain.KeepStagedWithheld)
+	}
+
 	var existingID int64
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
 		in.StyleID, in.CoreNodeName).Scan(&existingID)

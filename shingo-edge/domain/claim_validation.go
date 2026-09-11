@@ -150,6 +150,12 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 	return out
 }
 
+// KeepStagedWithheld is the refusal every door gives a claim that asks for
+// keep_staged: API ingress (ValidateNodeClaim), the store (UpsertClaim) and the
+// changeover planner. Why it is withheld is written once, beside the planner's
+// refusal in planSwapAction.
+const KeepStagedWithheld = "inbound-staging option not available yet"
+
 // ValidateNodeClaim is the one server-side statement of what a claim must look
 // like. Pure: no database, no HTTP, no logging.
 //
@@ -187,6 +193,10 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		add("swap_mode", "swap_mode is required")
 	case !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode):
 		add("swap_mode", fmt.Sprintf("%q is not a configurable swap mode", in.SwapMode))
+	}
+
+	if in.KeepStaged != nil && *in.KeepStaged {
+		add("keep_staged", KeepStagedWithheld)
 	}
 
 	// Board order. A negative position is not a position; absent means "no

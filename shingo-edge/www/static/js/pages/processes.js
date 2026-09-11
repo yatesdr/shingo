@@ -973,9 +973,6 @@ function claimFieldVisibility(role, swap) {
         // then. Today's runtime rule is unchanged: plain press-index neither
         // shows nor requires staging.
         'claims-staging-fieldset':            !isManual && (usesStaging || (ROUND3_CHANGEOVER && isPressIndex)),
-        // keep_staged parks the incoming bin ON the staging node, so it is
-        // meaningless without one.
-        'claims-add-keep-staged-row':         !isManual && (usesStaging || (ROUND3_CHANGEOVER && isPressIndex)),
         'claims-add-swap-group':              true,
         'claims-source-fieldset':             !isManual,
         'claims-inbound-source-group':        !isManual,
@@ -1142,7 +1139,7 @@ function renderClaimRow(c) {
     }
     var swapLabel = SWAP_MODE_LABELS[c.swap_mode] || c.swap_mode || '';
     var flags = [];
-    if (c.keep_staged) flags.push('staged');
+    if (c.keep_staged) flags.push('keep-staged (withheld)');
     if (c.evacuate_on_changeover) flags.push('evac');
     if (c.auto_reorder) flags.push('auto');
     var flagStr = flags.length ? ' <span style="color:var(--text-muted);font-size:0.75rem">' + flags.join(', ') + '</span>' : '';
@@ -1214,7 +1211,6 @@ function readClaimStateFromForm() {
         reorderPoint: parseInt(get('claims-add-reorder').value, 10) || 0,
         sequence: Math.max(0, parseInt(get('claims-add-sequence').value, 10) || 0),
         autoReorder: get('claims-add-auto-reorder').checked,
-        keepStaged: get('claims-add-keep-staged').checked,
         linesideSoftThreshold: Math.max(0, parseInt(get('claims-add-lineside-soft').value, 10) || 0),
         inboundStaging: get('claims-add-inbound').value,
         outboundStaging: get('claims-add-outbound').value,
@@ -1250,7 +1246,6 @@ function writeClaimStateToForm(state) {
     get('claims-add-reorder').value = String(state.reorderPoint || 0);
     get('claims-add-sequence').value = String(state.sequence || 0);
     get('claims-add-auto-reorder').checked = !!state.autoReorder;
-    get('claims-add-keep-staged').checked = !!state.keepStaged;
     get('claims-add-lineside-soft').value = String(state.linesideSoftThreshold || 0);
     get('claims-add-inbound').value = state.inboundStaging || '';
     get('claims-add-outbound').value = state.outboundStaging || '';
@@ -2079,7 +2074,6 @@ function defaultClaimState() {
         // board slot. Not a real position, and not sent as one.
         sequence: 0,
         autoReorder: false,
-        keepStaged: false,
         linesideSoftThreshold: 0,
         inboundStaging: '',
         outboundStaging: '',
@@ -2141,7 +2135,6 @@ function editClaim(claim) {
         reorderPoint: claim.reorder_point || 0,
         sequence: claim.sequence || 0,
         autoReorder: !!claim.auto_reorder,
-        keepStaged: !!claim.keep_staged,
         linesideSoftThreshold: claim.lineside_soft_threshold || 0,
         inboundStaging: claim.inbound_staging || '',
         outboundStaging: claim.outbound_staging || '',
@@ -2262,7 +2255,6 @@ async function saveClaim() {
         changeover_carryover_disposition: state.changeoverCarryoverDisposition,
         auto_confirm: state.autoConfirm,
         auto_reorder: state.autoReorder,
-        keep_staged: state.keepStaged,
     };
     if (state.sequence > 0) claimBody.sequence = state.sequence;
 

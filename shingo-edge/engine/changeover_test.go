@@ -1006,7 +1006,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.Sw
 // waits, and delivers. Order B evacuates old material from the line.
 func TestChangeover_KeepStagedCombined(t *testing.T) {
 	t.Parallel()
-	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
+	t.Skip("keep-staged is withheld from plant configuration: the planner refuses it (keepStagedWithheld)")
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "")
 	eng := testEngine(t, db)
@@ -1073,7 +1073,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 // evacuates old material with wait.
 func TestChangeover_KeepStagedSplit(t *testing.T) {
 	t.Parallel()
-	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
+	t.Skip("keep-staged is withheld from plant configuration: the planner refuses it (keepStagedWithheld)")
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "two_robot")
 	eng := testEngine(t, db)

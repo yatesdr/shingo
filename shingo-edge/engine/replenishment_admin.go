@@ -60,7 +60,6 @@ func processClaimToInput(c *processes.NodeClaim) domain.NodeClaimInput {
 		OutboundDestination:   c.OutboundDestination,
 		AllowedPayloadCodes:   c.AllowedPayloadCodes,
 		AutoRequestPayload:    c.AutoRequestPayload,
-		KeepStaged:            &c.KeepStaged,
 		EvacuateOnChangeover:  c.EvacuateOnChangeover,
 		PairedCoreNode:        c.PairedCoreNode,
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,

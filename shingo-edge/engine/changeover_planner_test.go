@@ -505,55 +505,30 @@ func TestPlanNodeAction_AddNoStaging_RetrieveFallback(t *testing.T) {
 	}
 }
 
-func TestPlanNodeAction_KeepStagedSplit(t *testing.T) {
+// TestPlanNodeAction_KeepStagedIsWithheld: a claim carrying keep_staged — only a
+// row stored before the option was withheld can — is refused with
+// domain.KeepStagedWithheld instead of being planned, for both variants the
+// planner used to build (split for two_robot, combined for single_robot), and
+// no order is planned for it.
+func TestPlanNodeAction_KeepStagedIsWithheld(t *testing.T) {
 	t.Parallel()
-	from := fullSwapClaim("N1", "PART-A", "consume")
-	from.KeepStaged = true
-	from.SwapMode = "two_robot"
-	to := fullSwapClaim("N1", "PART-B", "consume")
-	diff := ChangeoverNodeDiff{
-		CoreNodeName: "N1",
-		Situation:    SituationSwap,
-		FromClaim:    &from,
-		ToClaim:      &to,
-	}
-	node := &processes.Node{ID: 42, Name: "N1"}
-	action := planNodeAction(diff, node, false, nil)
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
+		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
+			from := fullSwapClaim("N1", "PART-A", "consume")
+			from.KeepStaged = true
+			from.SwapMode = mode
+			to := fullSwapClaim("N1", "PART-B", "consume")
+			diff := ChangeoverNodeDiff{CoreNodeName: "N1", Situation: situation, FromClaim: &from, ToClaim: &to}
+			action := planNodeAction(diff, &processes.Node{ID: 42, Name: "N1"}, false, nil)
 
-	if action.LogTag != "keep_staged_split" {
-		t.Errorf("LogTag = %q, want keep_staged_split", action.LogTag)
-	}
-	if action.SupplyOrder == nil || action.EvacOrder == nil {
-		t.Fatal("keep-staged split needs both orders")
-	}
-	if action.EvacOrder.Complex.PayloadCode != "PART-A" {
-		t.Errorf("keep-staged split evac payload = %q, want PART-A (from-style)", action.EvacOrder.Complex.PayloadCode)
-	}
-}
-
-func TestPlanNodeAction_KeepStagedCombined(t *testing.T) {
-	t.Parallel()
-	from := fullSwapClaim("N1", "PART-A", "consume")
-	from.KeepStaged = true
-	from.SwapMode = "single_robot"
-	to := fullSwapClaim("N1", "PART-B", "consume")
-	diff := ChangeoverNodeDiff{
-		CoreNodeName: "N1",
-		Situation:    SituationSwap,
-		FromClaim:    &from,
-		ToClaim:      &to,
-	}
-	node := &processes.Node{ID: 42, Name: "N1"}
-	action := planNodeAction(diff, node, false, nil)
-
-	if action.LogTag != "keep_staged_combined" {
-		t.Errorf("LogTag = %q, want keep_staged_combined", action.LogTag)
-	}
-	if action.EvacOrder == nil || action.EvacOrder.Complex == nil {
-		t.Fatal("keep-staged combined needs an evac order")
-	}
-	if action.EvacOrder.Complex.PayloadCode != "PART-A" {
-		t.Errorf("keep-staged combined evac payload = %q, want PART-A (from-style)", action.EvacOrder.Complex.PayloadCode)
+			if action.Err == nil || !strings.Contains(action.Err.Error(), domain.KeepStagedWithheld) {
+				t.Errorf("%s/%s: planned %q (err %v), want the keep-staged refusal", mode, situation, action.LogTag, action.Err)
+				continue
+			}
+			if action.SupplyOrder != nil || action.EvacOrder != nil {
+				t.Errorf("%s/%s: a refused node still planned orders", mode, situation)
+			}
+		}
 	}
 }
 

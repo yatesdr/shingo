@@ -239,10 +239,6 @@ func logChangeoverAction(action changeover.NodeAction, supplyID, evacID *int64) 
 		log.Printf("changeover: evacuate node %s — supply=%d (staging), evac=%d (evacuate w/ 2 waits)", action.NodeName, derefID(supplyID), derefID(evacID))
 	case "drop":
 		log.Printf("changeover: drop node %s — evac=%d (single-robot release w/ staged wait)", action.NodeName, derefID(evacID))
-	case "keep_staged_split":
-		log.Printf("changeover: keep-staged split node %s — supply=%d (deliver w/ wait), evac=%d (evac w/ wait)", action.NodeName, derefID(supplyID), derefID(evacID))
-	case "keep_staged_combined":
-		log.Printf("changeover: keep-staged combined node %s — supply=%d (combined w/ wait), evac=%d (evac w/ wait)", action.NodeName, derefID(supplyID), derefID(evacID))
 	case "fallback_staging":
 		log.Printf("changeover: FALLBACK staging node %s — supply=%d (stage-only; the mode's swap builder was bypassed because InboundStaging was blank)", action.NodeName, derefID(supplyID))
 	case "fallback_retrieve":

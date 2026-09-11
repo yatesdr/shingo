@@ -26,7 +26,7 @@ Operators request material by payload type. Shingo Core locates the oldest eligi
 
 ### Changeover Automation
 
-When a production line switches styles, Shingo orchestrates the material changeover automatically. Core aborts in-flight orders on affected nodes, A/B cycles material slots between old and new styles, dispatches fresh material, and confirms completion. Bins staged at lineside are preserved when the payload is shared between styles (keep-staged).
+When a production line switches styles, Shingo orchestrates the material changeover automatically. Core aborts in-flight orders on affected nodes, A/B cycles material slots between old and new styles, dispatches fresh material, and confirms completion. Bins at lineside are left in place when the payload is shared between styles. (The keep-staged option, which would also keep a spare on inbound staging across a changeover, is withheld from plant configuration; see `docs/ui-style-guide.md`.)
 
 ### Plant Integration
 

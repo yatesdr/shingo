@@ -193,26 +193,35 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 	return action
 }
 
-// planKeepStagedAction mirrors createKeepStagedChangeoverOrders.
-func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *processes.NodeClaim) changeover.NodeAction {
-	switch fromClaim.SwapMode {
-	case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex: // .IsTwoRobot()
-		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
-		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
-		// Evac carries the FROM-style payload (the outgoing bin) — see assignDispatch.
-		action.EvacOrder = complexSpecWithPayload("", toClaim.CoreNodeName, evacSteps, true, fromClaim.PayloadCode)
-		action.NextState = domain.NodeTaskStagingRequested
-		action.LogTag = "keep_staged_split"
-	default:
-		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
-		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, combinedSteps, false)
-		// Evac carries the FROM-style payload (the outgoing bin) — see assignDispatch.
-		action.EvacOrder = complexSpecWithPayload("", toClaim.CoreNodeName, evacSteps, true, fromClaim.PayloadCode)
-		action.NextState = domain.NodeTaskStagingRequested
-		action.LogTag = "keep_staged_combined"
-	}
+// ── KEEP-STAGED IS WITHHELD ─────────────────────────────────────────────────
+//
+// A claim with keep_staged set is refused here instead of being planned, and
+// refused the same way at API ingress (domain.ValidateNodeClaim) and at the store
+// (processes.UpsertClaim), all with domain.KeepStagedWithheld. Stored rows are
+// left as they are.
+//
+// Three reasons, one of them closed:
+//
+//   - (a) Nothing restages the spare after a changeover. The option keeps a
+//     carrier on inbound staging across the changeover, and the hook that was to
+//     put one back, handleKeepStagedOrderBCompletion, is a disabled no-op:
+//     applyOrderBComplex falls through to "released" and the spare is gone.
+//   - (b) The split (two-robot) variant stages onto a spot the old spare still
+//     occupies. BuildKeepStagedDeliverSteps drops the new carrier on
+//     InboundStaging, and BuildKeepStagedEvacSteps lifts only the line's bin, so
+//     nothing in the pair takes the spare off first.
+//   - (c) Plan-time occupancy was not step-aware, so the combined (one-robot)
+//     variant, BuildKeepStagedCombinedSteps, could never source: Core read the
+//     kept bin as a source at the reserve and as an obstacle at the slot claim,
+//     though the plan's own first pickup takes it away. CLOSED — Core's
+//     binsAtStep now answers what is on a node at a given step, for the
+//     destination gate, the relay rule and the slot claim alike.
+//
+// (a) and (b) are open. The BuildKeepStaged* builders stay: the combined shape is
+// what the occupancy fix is pinned on (TestPairRule_KeepStagedCombinedPairIsOneJob,
+// in Core).
+func keepStagedWithheld(action changeover.NodeAction, node *processes.Node) changeover.NodeAction {
+	action.Err = fmt.Errorf("node %s: keep_staged: %s", node.Name, domain.KeepStagedWithheld)
 	return action
 }
 
@@ -451,7 +460,7 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 			}
 		}
 		if diff.FromClaim.KeepStaged {
-			return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
+			return keepStagedWithheld(action, node)
 		}
 	}
 	// Per-mode field validation runs BEFORE the builder so missing
@@ -507,7 +516,7 @@ func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, n
 			}
 		}
 		if diff.FromClaim.KeepStaged {
-			return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
+			return keepStagedWithheld(action, node)
 		}
 	}
 	// Per-mode field validation for evacuate.

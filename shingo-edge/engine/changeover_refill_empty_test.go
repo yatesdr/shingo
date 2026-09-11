@@ -39,14 +39,13 @@ import (
 // refillClaims builds a from/to claim pair carrying every field any mode's
 // preflight asks for, so each mode reaches its BUILDER rather than falling out
 // at validation — a test that silently planned nothing would pass vacuously.
-func refillClaims(mode protocol.SwapMode, role protocol.ClaimRole, keepStaged bool) (from, to processes.NodeClaim) {
+func refillClaims(mode protocol.SwapMode, role protocol.ClaimRole) (from, to processes.NodeClaim) {
 	from = fullSwapClaim("N1", "PART-FROM", role)
 	to = fullSwapClaim("N1", "PART-TO", role)
 	for _, c := range []*processes.NodeClaim{&from, &to} {
 		c.SwapMode = mode
 		c.PairedCoreNode = "PAIR_N1" // press-index + sequential geometry
 	}
-	from.KeepStaged = keepStaged
 	return from, to
 }
 
@@ -75,49 +74,45 @@ func TestEveryChangeoverRefillFetchesAnEmpty(t *testing.T) {
 	// and it is named because it cannot be reached through the registry.
 	modes := withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode))
 
+	// keep_staged is not a dimension here any more: it is withheld, and the
+	// planner refuses it (TestPlanNodeAction_KeepStagedIsWithheld).
 	for _, mode := range modes {
 		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
-			for _, keepStaged := range []bool{false, true} {
-				name := string(mode) + "/" + string(situation)
-				if keepStaged {
-					name += "/keep_staged"
+			t.Run(string(mode)+"/"+string(situation), func(t *testing.T) {
+				from, to := refillClaims(mode, protocol.ClaimRoleProduce)
+				diff := ChangeoverNodeDiff{
+					CoreNodeName: "N1",
+					Situation:    situation,
+					FromClaim:    &from,
+					ToClaim:      &to,
 				}
-				t.Run(name, func(t *testing.T) {
-					from, to := refillClaims(mode, protocol.ClaimRoleProduce, keepStaged)
-					diff := ChangeoverNodeDiff{
-						CoreNodeName: "N1",
-						Situation:    situation,
-						FromClaim:    &from,
-						ToClaim:      &to,
-					}
-					action := planNodeAction(diff, &processes.Node{ID: 1, Name: "N1"}, false, nil)
-					if action.Err != nil {
-						t.Fatalf("planning failed, so this mode was never exercised: %v", action.Err)
-					}
+				action := planNodeAction(diff, &processes.Node{ID: 1, Name: "N1"}, false, nil)
+				if action.Err != nil {
+					t.Fatalf("planning failed, so this mode was never exercised: %v", action.Err)
+				}
 
-					refills := refillPickupsIn(action, to.InboundSource)
-					if len(refills) == 0 {
-						// Not pedantry: a builder that stops fetching a carrier
-						// would otherwise make this test pass by doing nothing.
-						t.Fatalf("no pickup at inbound source %q — the refill leg vanished", to.InboundSource)
+				refills := refillPickupsIn(action, to.InboundSource)
+				if len(refills) == 0 {
+					// Not pedantry: a builder that stops fetching a carrier
+					// would otherwise make this test pass by doing nothing.
+					t.Fatalf("no pickup at inbound source %q — the refill leg vanished", to.InboundSource)
+				}
+				for i, s := range refills {
+					if !s.Empty {
+						t.Errorf("refill pickup %d at %q is not Empty: it will hunt a FULL bin of %q in the empty-carrier pool and park on \"no bin of requested payload\"",
+							i, s.Node, to.PayloadCode)
 					}
-					for i, s := range refills {
-						if !s.Empty {
-							t.Errorf("refill pickup %d at %q is not Empty: it will hunt a FULL bin of %q in the empty-carrier pool and park on \"no bin of requested payload\"",
-								i, s.Node, to.PayloadCode)
-						}
-						// Empty drops the content match but NOT bin-type
-						// compatibility, which resolves against the order's
-						// payload — the OUTGOING style's. A refill that names the
-						// from-style fetches the carrier type the cell is
-						// leaving (N1-c, sim 2026-08-24).
-						if s.PayloadCode == from.PayloadCode {
-							t.Errorf("refill pickup %d names the OUTGOING style %q; it must name the incoming style or stay silent",
-								i, s.PayloadCode)
-						}
+					// Empty drops the content match but NOT bin-type
+					// compatibility, which resolves against the order's
+					// payload — the OUTGOING style's. A refill that names the
+					// from-style fetches the carrier type the cell is
+					// leaving (N1-c, sim 2026-08-24).
+					if s.PayloadCode == from.PayloadCode {
+						t.Errorf("refill pickup %d names the OUTGOING style %q; it must name the incoming style or stay silent",
+							i, s.PayloadCode)
 					}
-				})
-			}
+				}
+			})
 		}
 	}
 }
@@ -149,7 +144,7 @@ func TestEveryChangeoverLegThatLiftsAnOldBinCarriesTheFromPayload(t *testing.T) 
 	for _, mode := range modes {
 		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
 			t.Run(string(mode)+"/"+string(situation), func(t *testing.T) {
-				from, to := refillClaims(mode, protocol.ClaimRoleProduce, false)
+				from, to := refillClaims(mode, protocol.ClaimRoleProduce)
 				diff := ChangeoverNodeDiff{
 					CoreNodeName: "N1",
 					Situation:    situation,
@@ -239,7 +234,7 @@ func TestChangeoverRefillStaysFullForConsume(t *testing.T) {
 	t.Parallel()
 	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		t.Run(string(mode), func(t *testing.T) {
-			from, to := refillClaims(mode, protocol.ClaimRoleConsume, false)
+			from, to := refillClaims(mode, protocol.ClaimRoleConsume)
 			diff := ChangeoverNodeDiff{
 				CoreNodeName: "N1",
 				Situation:    SituationSwap,

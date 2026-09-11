@@ -225,8 +225,6 @@ function buildDOM() {
     add('claims-err-sequence', { display: 'none' });
     add('claims-add-auto-reorder-row');
     add('claims-add-auto-reorder', { tag: 'input', type: 'checkbox' });
-    add('claims-add-keep-staged-row');
-    add('claims-add-keep-staged', { tag: 'input', type: 'checkbox' });
     add('claims-add-lineside-group');
     add('claims-lineside-help');
     add('claims-add-lineside-soft', { tag: 'input', value: '0' });
@@ -488,7 +486,6 @@ function expectedVisibility(role, swap) {
         // required — requiring it is an arm-time gate scoped to cells with
         // marked positions, so plain press-index production is untouched.
         'claims-staging-fieldset': !isManual && (usesStaging || isPressIndex),
-        'claims-add-keep-staged-row': !isManual && (usesStaging || isPressIndex),
         'claims-add-swap-group': true,
         'claims-source-fieldset': !isManual,
         'claims-inbound-source-group': !isManual,
@@ -681,16 +678,21 @@ async function runSaveClaimSchemaCase() {
             passed++;
         }
     }
-    // auto_reorder and keep_staged now have controls, so the form owns them and
-    // sends them. They were absent in round 1 because there was nothing to
-    // send; sending them is not a regression of that fix, it is the reason the
-    // fix used pointers instead of preservation hacks.
-    for (const k of ['auto_reorder', 'keep_staged']) {
-        if (!(k in rec.body)) {
-            reportFailure(`saveClaim body[${k}] must be PRESENT (the form owns a control for it)`, 'present', 'absent');
-        } else {
-            passed++;
-        }
+    // auto_reorder has a control, so the form owns it and sends it. It was absent
+    // in round 1 because there was nothing to send; sending it is not a
+    // regression of that fix, it is the reason the fix used pointers instead of
+    // preservation hacks.
+    if (!('auto_reorder' in rec.body)) {
+        reportFailure('saveClaim body[auto_reorder] must be PRESENT (the form owns a control for it)', 'present', 'absent');
+    } else {
+        passed++;
+    }
+    // keep_staged is withheld from plant configuration: the form has no control
+    // for it, so it sends nothing, and a stored flag stays as it is.
+    if ('keep_staged' in rec.body) {
+        reportFailure('saveClaim body[keep_staged] must be ABSENT (keep-staged is withheld)', 'absent', rec.body.keep_staged);
+    } else {
+        passed++;
     }
 }
 
@@ -1329,11 +1331,12 @@ function runShowAllNodesCase() {
 // Round 2 unit 4 — the invisible fields get controls
 // -----------------------------------------------------------------------
 //
-// auto_reorder, keep_staged and sequence are live persisted columns. Round 1
-// stopped the editor CORRUPTING them; they were still unreachable. A form that
-// owns a field sends it, so these now appear in the POST body — except
-// sequence 0, which means "no opinion" and stays absent so the store can
-// assign the next free board slot.
+// auto_reorder and sequence are live persisted columns. Round 1 stopped the
+// editor CORRUPTING them; they were still unreachable. A form that owns a field
+// sends it, so these now appear in the POST body — except sequence 0, which
+// means "no opinion" and stays absent so the store can assign the next free
+// board slot. keep_staged had a control here too until it was withheld from
+// plant configuration; a stored flag now travels nowhere.
 
 async function runSurfacedFieldsSaveCase() {
     const elements = buildDOM();
@@ -1363,14 +1366,10 @@ async function runSurfacedFieldsSaveCase() {
     if (!elements['claims-add-auto-reorder'].checked) {
         reportFailure('surfaced: auto_reorder loads into its checkbox', true, false);
     } else { passed++; }
-    if (!elements['claims-add-keep-staged'].checked) {
-        reportFailure('surfaced: keep_staged loads into its checkbox', true, false);
-    } else { passed++; }
 
     // The operator changes them.
     elements['claims-add-sequence'].value = '9';
     elements['claims-add-auto-reorder'].checked = false;
-    elements['claims-add-keep-staged'].checked = false;
 
     await ctx.saveClaim();
     if (apiRecorder.length !== 1) {
@@ -1378,12 +1377,17 @@ async function runSurfacedFieldsSaveCase() {
         return;
     }
     const body = apiRecorder[0].body;
-    const want = { sequence: 9, auto_reorder: false, keep_staged: false };
+    const want = { sequence: 9, auto_reorder: false };
     for (const k of Object.keys(want)) {
         if (JSON.stringify(body[k]) !== JSON.stringify(want[k])) {
             reportFailure(`surfaced: body[${k}] — a form that owns a field sends it`, want[k], body[k]);
         } else { passed++; }
     }
+    // The stored claim above carries keep_staged; the save must not echo it or
+    // clear it — withheld, and nothing here migrates data.
+    if ('keep_staged' in body) {
+        reportFailure('surfaced: body[keep_staged] must be ABSENT (keep-staged is withheld)', 'absent', body.keep_staged);
+    } else { passed++; }
 }
 
 // sequence 0 is "no opinion", not "position zero". It must stay ABSENT so the
@@ -1413,12 +1417,10 @@ async function runSequenceZeroStaysAbsentCase() {
         reportFailure('sequenceZero: 0 means no opinion and must not be sent',
             'absent', apiRecorder[0].body.sequence);
     } else { passed++; }
-    // ...but the two flags are always sent, because the form owns them.
-    for (const k of ['auto_reorder', 'keep_staged']) {
-        if (!(k in apiRecorder[0].body)) {
-            reportFailure(`sequenceZero: ${k} is owned by this form and must be sent`, 'present', 'absent');
-        } else { passed++; }
-    }
+    // ...but auto_reorder is always sent, because the form owns it.
+    if (!('auto_reorder' in apiRecorder[0].body)) {
+        reportFailure('sequenceZero: auto_reorder is owned by this form and must be sent', 'present', 'absent');
+    } else { passed++; }
 }
 
 // The compare grid is a DIFFERENT surface with a different answer: it edits one

@@ -110,10 +110,10 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		Sequence:           domain.Ptr(7),
 		ReorderPointSource: domain.Ptr("calculated"),
 		AutoReorder:        domain.Ptr(true),
-		KeepStaged:         domain.Ptr(true),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(seed)
 	testutil.MustNoErr(t, err, "seed claim")
+	setLegacyKeepStaged(t, db, claimID)
 
 	before, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "fetch before")
@@ -195,6 +195,44 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	}
 }
 
+// setLegacyKeepStaged writes keep_staged=1 behind the store's back. Keep-staged
+// is withheld and no writer can set it any more, but rows stored before the
+// withholding still carry it, and "absent means untouched" has to hold for them.
+func setLegacyKeepStaged(t *testing.T, db *DB, claimID int64) {
+	t.Helper()
+	_, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
+	testutil.MustNoErr(t, err, "set legacy keep_staged")
+}
+
+// TestUpsertStyleNodeClaim_KeepStagedIsRefused: keep-staged is withheld from plant
+// configuration, and the store refuses it itself — on a new claim and on an update
+// — so a writer that is not the API cannot set what the API refuses.
+func TestUpsertStyleNodeClaim_KeepStagedIsRefused(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	processID, err := db.CreateProcess("KSR-PROC", "", "active_production", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	styleID, err := db.CreateStyle("KSR-STYLE", "", processID)
+	testutil.MustNoErr(t, err, "create style")
+	in := processes.NodeClaimInput{
+		StyleID: styleID, CoreNodeName: "KSR-NODE", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-KSR",
+		InboundStaging: "KSR-IN", OutboundStaging: "KSR-OUT",
+	}
+
+	withFlag := in
+	withFlag.KeepStaged = domain.Ptr(true)
+	if _, err := db.UpsertStyleNodeClaim(withFlag); err == nil || !strings.Contains(err.Error(), domain.KeepStagedWithheld) {
+		t.Fatalf("a new claim asking for keep_staged was not refused as withheld (err %v)", err)
+	}
+	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+		t.Fatalf("create the claim without the flag: %v", err)
+	}
+	if _, err := db.UpsertStyleNodeClaim(withFlag); err == nil || !strings.Contains(err.Error(), domain.KeepStagedWithheld) {
+		t.Fatalf("an update asking for keep_staged was not refused as withheld (err %v)", err)
+	}
+}
+
 // A writer that DOES speak about the four still changes them. "Absent means
 // untouched" must not become "unchangeable" — the replenishment admin page and
 // the board reorder both depend on being able to write them.
@@ -218,10 +256,10 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 		Sequence:           domain.Ptr(3),
 		ReorderPointSource: domain.Ptr("calculated"),
 		AutoReorder:        domain.Ptr(true),
-		KeepStaged:         domain.Ptr(true),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(base)
 	testutil.MustNoErr(t, err, "seed claim")
+	setLegacyKeepStaged(t, db, claimID)
 
 	upd := base
 	upd.Sequence = domain.Ptr(9)

@@ -2057,11 +2057,26 @@ Scheduled removals live in `docs/ui-deprecations.md`:
   legacy row still renders when opened in edit mode. The allowlist, the
   dropdown, and its drift test all key on `protocol.ConfigurableSwapModes()`.
 
-### `claim.keep_staged` column
-- **UI removed:** 2026-03
-- **Schema:** kept as backend safety net
-- **Target removal:** when supermarket rewire ships
-- **Blocking:** supermarket rewire project
+### `claim.keep_staged` column — WITHHELD from plant configuration
+- **Withheld:** 2026-09-10. The claim editor and the compare grid do not offer
+  it. `domain.ValidateNodeClaim` and `processes.UpsertClaim` refuse
+  `keep_staged=true` with "inbound-staging option not available yet"
+  (`domain.KeepStagedWithheld`), and the changeover planner refuses a stored
+  claim that carries it, with the same message, instead of planning it
+  (`keepStagedWithheld` in `shingo-edge/engine/changeover_planner.go`). Stored
+  rows are not migrated.
+- **Why, three reasons, one closed:** (a) nothing restages the spare after a
+  changeover — `handleKeepStagedOrderBCompletion` is a disabled no-op, so
+  `applyOrderBComplex` falls through to "released"; (b) the split (two-robot)
+  variant stages onto a spot the old spare still occupies —
+  `BuildKeepStagedDeliverSteps` drops the new carrier on `InboundStaging` and
+  `BuildKeepStagedEvacSteps` lifts only the line's bin; (c) plan-time occupancy
+  was not step-aware, so the combined (one-robot) variant,
+  `BuildKeepStagedCombinedSteps`, could never source. (c) is closed: Core's
+  `binsAtStep` answers what is on a node at a given step, for the destination
+  gate, the relay rule and the slot claim alike. (a) and (b) are open.
+- **Schema:** kept. `BuildKeepStaged*` kept — the combined shape is what the
+  occupancy fix is pinned on.
 
 ### `ClaimRole = "changeover"` — REMOVED (UI consistency refactor)
 - **Status:** removed. Surviving evacuate-during-changeover mechanic is
