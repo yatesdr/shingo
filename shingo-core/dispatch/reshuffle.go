@@ -153,7 +153,20 @@ func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, e
 // dig that cannot count enough dig-free parking DOES NOT START. It has taken no
 // lane, dispatched no leg and claimed no bin at this point — the plan precedes
 // the lock — so the refusal costs a wait and nothing else.
-func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker) (*ReshufflePlan, int, error) {
+//
+// ── AND NEVER THE DESTINATION OF THE ORDER IT DIGS FOR ────────────────────
+//
+// exclude names slots this count must not treat as parking, and PlanReshuffle
+// passes the one its own retrieve delivers to. compound.go copies the requesting
+// order's delivery node onto that retrieve child, and the child claims the target
+// bin when it is created, so from then on the release-time resolver reads the
+// slot as inbound and never offers it. The count has to agree with the release,
+// or a dig whose only free slot is that destination starts, locks its lane, sends
+// its first leg, and can never put the blocker down. Nothing else keeps the slot
+// out of the count: a soft-held requester holds its destination as a pending
+// reservation, which the dropoff count (orders.InFlightForDropoffSQL) does not
+// read. Pinned by TestHeldBinDig_NeverParksOnTheOrdersOwnDestination (engine).
+func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, exclude map[int64]bool) (*ReshufflePlan, int, error) {
 	if targetSlot.ParentID == nil {
 		return nil, 0, fmt.Errorf("%w: %s", ErrSlotNotInLane, targetSlot.Name)
 	}
@@ -188,7 +201,7 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 	// configuration capacity problem, not a dispatch one. The seed has to carry
 	// enough reachable room to clear a lane, which is what the census at birth
 	// asserts before a single order runs.
-	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, nil); err != nil {
+	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, exclude); err != nil {
 		return nil, 0, fmt.Errorf("find shuffle slots: %w", err)
 	}
 
@@ -223,8 +236,16 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 // mode" — which exposed the bin and handed back to the complex parent to fetch
 // it. The hand-back is what the A batch deleted; the excavation it did is what
 // PlanLaneMouthClear already does, keyed on the SLOT rather than the bin.
-func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64, asker reservations.DigAsker) (*ReshufflePlan, error) {
-	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID, asker)
+//
+// deliverTo is the node that retrieve delivers to — the requesting order's
+// DeliveryNode, resolved by the caller — and planUnbury keeps it out of the
+// parking count (see planUnbury). nil excludes nothing.
+func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64, asker reservations.DigAsker, deliverTo *nodes.Node) (*ReshufflePlan, error) {
+	var exclude map[int64]bool
+	if deliverTo != nil {
+		exclude = map[int64]bool{deliverTo.ID: true}
+	}
+	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID, asker, exclude)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +273,10 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 // lane moved underneath us between the two reads, and the right answer is to do
 // nothing and re-ask on the next pass.
 func PlanLaneMouthClear(db *store.DB, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker) (*ReshufflePlan, error) {
-	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID, asker)
+	// No exclusion: this plan has no retrieve, so no child of it is bound for the
+	// requester's destination. Whether a complex requester's reserved destination
+	// can be the only parking this count sees is not pinned.
+	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID, asker, nil)
 	if err != nil {
 		return nil, err
 	}

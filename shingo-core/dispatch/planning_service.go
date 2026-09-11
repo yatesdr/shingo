@@ -526,7 +526,22 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	// the demand itself — the TryLock two calls down is taken in order.ID's name —
 	// so right of way exempts a lane this same order is already digging (an earlier
 	// generation of the same episode) and refuses every other dig's lane.
-	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID, digAskerFor(order))
+	//
+	// AND THE DIG MUST NOT COUNT THE DELIVERY IT IS DIGGING FOR. The plan's retrieve
+	// delivers to order.DeliveryNode (compound.go copies it onto the child), so that
+	// slot is never parking for this dig — see planUnbury. A read that fails parks
+	// like the lane read above; a destination that does not resolve excludes
+	// nothing, and the retrieve fails at its own dispatch with the real error.
+	deliverTo, err := s.db.GetNodeByDotName(order.DeliveryNode)
+	if readFailed(err) {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+		return nil, &planningError{
+			Code:   codeReadFailed,
+			Detail: fmt.Sprintf("could not read destination %q while planning the dig, retrying: %v", order.DeliveryNode, err),
+			Err:    err,
+		}
+	}
+	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID, digAskerFor(order), deliverTo)
 	if err != nil {
 		// "No free shuffle slot" is CONGESTION, not a fault — a slot frees as soon
 		// as any other order clears one. It must wait and retry, never fail: demand

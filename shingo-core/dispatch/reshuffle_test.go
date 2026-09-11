@@ -97,7 +97,7 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 	// Place target B at depth 2
 	targetB := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-B")
 
-	plan, err := PlanReshuffle(db, targetB, slots[1], lane, grp.ID, reservations.Anyone)
+	plan, err := PlanReshuffle(db, targetB, slots[1], lane, grp.ID, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 	// Place target at depth 3
 	target := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-TGT")
 
-	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID, reservations.Anyone)
+	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 	// Place target at depth 2
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-TGT")
 
-	_, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
+	_, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone, nil)
 	if err == nil {
 		t.Fatal("expected error about insufficient shuffle slots, got nil")
 	}
@@ -235,7 +235,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Plan the reshuffle
-	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
+	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -780,7 +780,7 @@ func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CO-S-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CO-S-TGT")
-	plan, _ := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
+	plan, _ := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone, nil)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
@@ -820,7 +820,7 @@ func TestCreateCompoundOrder_RetrieveInheritsParentDeliveryNode(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent")
 
-	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
+	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
