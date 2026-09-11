@@ -104,6 +104,12 @@ sim:
   # plc_name/tag_name MUST match the reporting_points in plants/edge2.yaml exactly.
   # A mismatch is SILENT: the tick fans to no node and the cell simply never counts.
   #
+  # ONE COUNTER, because LINE-2 is one process and a tick reaches every LINE-2 cell
+  # through it, consume and produce alike (see the reporting_points note in
+  # plants/edge2.yaml). So the produce side fills at the rate it is drained and the
+  # loop neither starves nor pins full — the same rate-parity rule EDGE 1's config
+  # states.
+  #
   # 30 s/uop against a 20-uop carrier is the 10-minute depletion the plant file's
   # arithmetic is built on. It is deliberately an order of magnitude slower than
   # EDGE 1's 10 s: this rig is not trying to move material quickly, it is trying to
@@ -111,16 +117,6 @@ sim:
   processes:
     - plc_name: PRESS-10
       tag_name: PRESS-10_COUNTER
-      tick_interval: 30s
-      uop_per_tick: 1
-    - plc_name: PRESS-11
-      tag_name: PRESS-11_COUNTER
-      tick_interval: 30s
-      uop_per_tick: 1
-    # The produce side fills at the same rate it is drained, so the loop neither
-    # starves nor pins full — the same rate-parity rule EDGE 1's config states.
-    - plc_name: WELD-10
-      tag_name: WELD-10_COUNTER
       tick_interval: 30s
       uop_per_tick: 1
 

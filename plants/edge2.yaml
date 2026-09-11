@@ -372,14 +372,26 @@ demands:
   - {payload: PART-X, node: SMN_L2_02, replenish_uop_threshold: 20}
   - {payload: PART-Y, node: FGN_L2_01, replenish_uop_threshold: 0}
 
-# One PLC counter per counting node. plc_name/tag_name MUST match sim.processes in
-# shingoedge.edge2.yaml — that list and this one are the same names twice, and a
-# mismatch is silent (the tick fans to nothing).
+# ONE PLC COUNTER PER PROCESS, NOT PER CELL. A tick reaches cells through its
+# process, not through the node its point names: handleCounterDelta walks every
+# node of the tick's process and applies the tick to each claim of the tick's
+# style. So LINE-2's one counter drives PRS_010, PRS_011 and WLD_010 together, at
+# the 1 uop per 30 s tick the arithmetic at the top of this file is built on.
+#
+# This plant used to list three counters on LINE-2 (PRESS-10, PRESS-11, WELD-10).
+# Each fed every LINE-2 cell, so a cell took three ticks a cycle, and the plant
+# predates the seeder's one-counter rule: seeddev refuses a process given two
+# different counters, so seed-edge2 failed until LINE-2 had one. demo.yaml has
+# this shape already — one counter per process, repeated per style.
+#
+# plc_name/tag_name MUST match sim.processes in shingoedge.edge2.yaml — that list
+# and this one are the same names twice, and a mismatch is silent (the tick fans
+# to nothing).
 reporting_points:
   # ── THIS PLANT COUNTS ONLY UNDER L2-A, AND IT CANNOT BE FIXED HERE ────────
   #
   # The tick fans to the nodes of the ACTIVE (process, style) pair, so under
-  # L2-B all three of these fan to nothing: the presses run, consume nothing,
+  # L2-B this point fans to nothing: the presses run, consume nothing,
   # drain nothing, ask for nothing, and the loop stands still with every cell
   # holding a full carrier and last_poll_at frozen at the second before cutover.
   # Measured on this stack 2026-09-06.
@@ -400,8 +412,6 @@ reporting_points:
   # owner decision rather than a fixture edit. Written up for the owner; until
   # it is answered, a scenario that needs counting runs under L2-A.
   - {plc_name: PRESS-10, tag_name: PRESS-10_COUNTER, node: PRS_010, style: L2-A}
-  - {plc_name: PRESS-11, tag_name: PRESS-11_COUNTER, node: PRS_011, style: L2-A}
-  - {plc_name: WELD-10,  tag_name: WELD-10_COUNTER,  node: WLD_010, style: L2-A}
 
 cell_configs:
   - {process: LINE-2, station: LINE-2-OPS}
