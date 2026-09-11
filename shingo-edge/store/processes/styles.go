@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -207,23 +208,25 @@ func RestoreStyle(db *sql.DB, id int64) error {
 }
 
 // cloneClaimColumns is the verbatim-copy column list for cloneStyleTx. It
-// mirrors UpsertClaim's INSERT in claims.go exactly: a claim column added
-// there MUST be added here too, or clones silently drop it. Excludes id
-// (autoincrement), style_id (set to the new style), and created_at (defaults
-// to now). Kept as a single const so the SELECT and INSERT lists can't drift
-// apart from each other.
+// mirrors UpsertClaim's INSERT in claims.go: a claim column added there MUST be
+// added here too, or clones silently drop it. Excludes id (autoincrement),
+// style_id (set to the new style) and created_at (defaults to now) — and
+// keep_staged, on purpose: a clone takes that column's default, off, because the
+// option is withheld (see cloneStyleTx). Kept as a single const so the SELECT and
+// INSERT lists can't drift apart from each other.
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
-	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,
 	index_robot_supplies, key_route, key_task`
 
-// cloneStyleTx inserts a new style in src's process and copies every one of
-// src's style_node_claims verbatim, within the caller's transaction. Returns
-// the new style id. Used by both CloneStyle (single) and GenerateStyles
-// (batch) so the copy logic lives in exactly one place.
+// cloneStyleTx inserts a new style in src's process and copies src's
+// style_node_claims verbatim, less what the write gate refuses (below), within
+// the caller's transaction. Returns the new style id. Used by both CloneStyle
+// (single) and GenerateStyles (batch) so the copy logic lives in exactly one
+// place.
 func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, error) {
 	res, err := tx.Exec(
 		`INSERT INTO styles (name, description, process_id) VALUES (?, ?, ?)`,
@@ -235,37 +238,36 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, erro
 	if err != nil {
 		return 0, err
 	}
-	// swap_mode is copied verbatim, and this INSERT never sees UpsertClaim's
-	// allowlist.
+	// THE COPY IS VERBATIM EXCEPT FOR WHAT THE WRITE GATE REFUSES. This INSERT
+	// never meets UpsertClaim, so the two stored values the gate refuses are left
+	// behind here rather than spread to a brand-new style:
 	//
-	// THAT TRUST IS NO LONGER SOUND FOR EVERY MODE. It was written about "simple",
-	// which the allowlist has rejected since the ingress lockdown and which a
-	// pre-merge diagnostic confirmed zero rows of — so there was nothing stale to
-	// re-validate. manual_swap is a different case: it left the allowlist when the
-	// loader ownership move retired it as a persisted value, but rows carrying it
-	// are removed by the QUARANTINE at node-list sync rather than by the write
-	// gate. A row therefore exists between an Edge starting and its first sync
-	// (unbounded when Core never answers), and cloning in that window copies a
-	// mode the allowlist would refuse onto a brand-new style. Measured, not
-	// inferred: a clone of a style holding a loader claim produces
-	// swap_mode="manual_swap" on the copy.
+	//   - keep_staged set. The option is withheld: UpsertClaim and
+	//     ValidateNodeClaim refuse it with domain.KeepStagedWithheld, and the
+	//     changeover planner refuses a stored flag the same way, erroring the node
+	//     task. The column is out of cloneClaimColumns, so a clone takes its
+	//     default, off.
+	//   - a manual_swap claim. The mode is retired as a persisted value: it is not
+	//     in protocol.ConfigurableSwapModes, so UpsertClaim refuses it, and the
+	//     first loader sync quarantines any stored row (QuarantineLoaderClaims). A
+	//     row exists only until that sync — unbounded when Core never answers —
+	//     and copied in that window it would be a second authority for loader
+	//     configuration Core owns, on a style the quarantine has never seen. Those
+	//     rows are not selected.
 	//
-	// It is self-correcting rather than harmless — the next sync quarantines the
-	// source row and the copy alike — but until then both are a second authority
-	// for config Core owns, and operator_bin_ops.go's RequestFullBin reads one of
-	// them. Filtering loader claims out of this SELECT is the one-line close;
-	// it is a behaviour change to a config-time path and is not taken here.
+	// Pinned by TestCloneStyle_LeavesWithheldConfigurationBehind (store).
 	_, err = tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
-		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ?`,
-		newID, src.ID)
+		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ? AND swap_mode != ?`,
+		newID, src.ID, string(protocol.SwapModeManualSwap))
 	if err != nil {
 		return 0, err
 	}
 	return newID, nil
 }
 
-// CloneStyle creates a new style in the same process as src, copying all of
-// src's style_node_claims verbatim. Returns the new style id. The new style
+// CloneStyle creates a new style in the same process as src, copying src's
+// style_node_claims verbatim, less what the write gate refuses (see
+// cloneStyleTx). Returns the new style id. The new style
 // starts inactive — cloning is a config-time scaffold, not a changeover
 // trigger. Operators use this to add a style whose robot choreography matches
 // an existing one, then edit only the per-payload fields on the result.

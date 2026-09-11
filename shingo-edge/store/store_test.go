@@ -1715,6 +1715,64 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 	}
 }
 
+// TestCloneStyle_LeavesWithheldConfigurationBehind: Clone and Generate copy claims
+// with a raw INSERT that never meets UpsertClaim, so the two stored values the
+// write gate refuses have to be left behind at the copy. A keep_staged flag (the
+// option is withheld: UpsertClaim and ValidateNodeClaim refuse it, and the
+// changeover planner errors the node task) and a manual_swap claim (retired as a
+// persisted mode: loaders are Core's, and the first loader sync quarantines the
+// row) must not reach a brand-new style.
+func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
+
+	lineID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: baseID, CoreNodeName: "LINE", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100,
+	})
+	if err != nil {
+		t.Fatalf("seed line claim: %v", err)
+	}
+	// A stored flag, as an Edge that took it before the option was withheld
+	// still holds it; the write gate refuses it now.
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, lineID); err != nil {
+		t.Fatalf("store keep_staged: %v", err)
+	}
+	// A stored loader claim, as one survives until its Edge's first loader sync.
+	if _, err := upsertClaimRetiredMode(t, db, processes.NodeClaimInput{
+		StyleID: baseID, CoreNodeName: "LOADER", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeManualSwap, PayloadCode: "RAW-1", UOPCapacity: 500, OutboundDestination: "OUT",
+	}); err != nil {
+		t.Fatalf("seed loader claim: %v", err)
+	}
+
+	newID, err := db.CloneStyle(baseID, "CLONE", "cloned")
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	claims, err := db.ListStyleNodeClaims(newID)
+	if err != nil {
+		t.Fatalf("list cloned claims: %v", err)
+	}
+	foundLine := false
+	for _, c := range claims {
+		switch c.CoreNodeName {
+		case "LINE":
+			foundLine = true
+			if c.KeepStaged {
+				t.Errorf("the clone's LINE claim has keep_staged set — a flag the write gate refuses, and the " +
+					"changeover planner errors the node task on it at the style's first changeover")
+			}
+		case "LOADER":
+			t.Errorf("the clone carries the stored loader claim (swap_mode %q) — a second authority for "+
+				"loader configuration Core owns, on a style the quarantine has never seen", c.SwapMode)
+		}
+	}
+	if !foundLine {
+		t.Fatal("the clone lost its LINE claim — only the withheld values are to be left behind")
+	}
+}
+
 func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)

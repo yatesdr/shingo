@@ -68,6 +68,10 @@ var loaderModeReaders = map[string]modeReader{
 		"IsLoaderNode answers 'is this claim a loader' about a claim already in hand; this asks the " +
 		"database which rows carry the value at all, which is the one question that cannot be asked " +
 		"of an object because the rows are what it is looking for"},
+	"shingo-edge/store/processes/styles.go": {1, "write", "cloneStyleTx's filter, WRITTEN into SQL: " +
+		"a clone or a generated style must not copy a stored loader claim onto a new style. Same case " +
+		"as claim_quarantine.go above — the subject is the PERSISTED COLUMN, and the rows are what the " +
+		"query is looking for"},
 
 	"shingo-core/cmd/simcalc/main.go": {1, "shape", "fleetMovesPerSwap costs each step-list shape in " +
 		"floor crossings and robots. It switches over every mode because the shape is the question"},
