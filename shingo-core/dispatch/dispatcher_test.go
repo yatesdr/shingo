@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"shingo/protocol"
@@ -164,7 +165,48 @@ func newTestDispatcher(t *testing.T, db *store.DB, backend fleet.Backend) (*Disp
 	t.Helper()
 	emitter := &mockEmitter{}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", nil)
+	d.DebugLog = testDebugLog(t)
 	return d, emitter
+}
+
+// testDebugLog routes the dispatcher's dbg lines into the test log.
+//
+// A RESERVE OR ADMISSION MISS NAMES ITS REASON ONLY THROUGH dbg, and this
+// helper left DebugLog nil — so a failure driven through it arrives as a
+// verdict with no cause. On 2026-09-11 CI failed
+// TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies with
+// "complex order 3 reserve incomplete" and nothing about WHICH miss it was.
+// The allocator distinguishes two that want different fixes — "bins present but
+// none available (claimed/reserved/locked elsewhere)" is contention, "no bins at
+// node" is the node reading empty — and neither reached the log. The run did not
+// reproduce in 63 local attempts, so the next occurrence is the evidence, and it
+// has to carry its own reason.
+//
+// t.Logf and not log.Printf: go test prints a PASSING test's log only under -v,
+// so a green run stays exactly as quiet as it is today while a red one explains
+// itself. log.Printf would add the dbg volume of every dispatcher test to every
+// run's output.
+//
+// The done guard is load-bearing, not decoration: a dispatcher's work can
+// outlive the test body (scanner goroutines, fleet callbacks), and t.Logf after
+// the test has completed panics rather than logging.
+func testDebugLog(t *testing.T) func(string, ...any) {
+	t.Helper()
+	var mu sync.Mutex
+	done := false
+	t.Cleanup(func() {
+		mu.Lock()
+		done = true
+		mu.Unlock()
+	})
+	return func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if done {
+			return
+		}
+		t.Logf(format, args...)
+	}
 }
 
 // submitComplexAndDispatch is the dispatcher-only test harness's
