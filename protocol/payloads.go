@@ -759,7 +759,16 @@ type IngestManifestItem struct {
 // --- Node list data schemas ---
 
 // NodeListRequest is sent by edge to request the core's node list.
-type NodeListRequest struct{}
+//
+// SceneRevision is the revision of the scene geometry the Edge already holds
+// (see NodeListResponse.SceneRevision). Core answers a matching revision with
+// names only and leaves the geometry off; anything else — a stale revision, an
+// empty one, or an older Edge that never sends the field — gets the full
+// geometry. Additive: an older Core ignores the field and sends what it always
+// sent.
+type NodeListRequest struct {
+	SceneRevision string `json:"scene_revision,omitempty"`
+}
 
 // NodeInfo describes a single node in the core's node list.
 type NodeInfo struct {
@@ -797,11 +806,21 @@ type NodeListResponse struct {
 	// Core has mirrored the whole scene graph since the SEER adapter was
 	// written; it simply never sent it down.
 	//
-	// NO COORDINATES. Validation needs names and the picker needs adjacency;
-	// neither needs geometry, and the scene's point set is large enough that
-	// sending x/y on every sync would be paying for a map nobody draws here.
+	// NAMES EVERY TIME, GEOMETRY ON CHANGE. The key-route validator and the
+	// "absence is never a finding" guards read the full name set on every
+	// sync, so names are never left off. The coordinates and handles are what
+	// the station's cell picture draws from, and they are the bulk of the
+	// message — so Core stamps SceneRevision on every response and sends the
+	// geometry only when the request's revision does not match it. An Edge
+	// that received geometry keeps it (durably) and quotes the revision back.
 	ScenePoints []ScenePointInfo `json:"scene_points,omitempty"`
 	SceneEdges  []SceneEdgeInfo  `json:"scene_edges,omitempty"`
+	// SceneRevision identifies the scene the slices above were cut from. Empty
+	// when the scene could not be read in full, in which case the Edge must
+	// keep whatever geometry it already has. It is a hash of the rows, not a
+	// counter: two Cores, or one Core restarted, answer the same scene with the
+	// same revision.
+	SceneRevision string `json:"scene_revision,omitempty"`
 }
 
 // ScenePointInfo is one location in the vendor's map.
@@ -811,16 +830,46 @@ type NodeListResponse struct {
 // A picker that cannot tell them apart cannot offer "the waypoints that lead
 // to this action point", which is the whole reason a route is typed by hand
 // today.
+//
+// POINTERS, NOT FLOATS, for the geometry — and the reason is one coordinate.
+// (0,0) is a real position on a plant map, and a bare float64 under omitempty
+// drops a zero as if it were never set, so a point at the origin would arrive
+// looking exactly like a point whose geometry Core chose not to send. nil
+// means "not sent"; a pointer to 0 means "at the origin". Every reader keeps
+// that distinction: absence is never a coordinate.
 type ScenePointInfo struct {
 	InstanceName string `json:"instance_name"`
 	ClassName    string `json:"class_name"`
+	// PosX / PosY / Dir are the point's world coordinates and heading, present
+	// only on a response that carries geometry (see NodeListResponse).
+	PosX *float64 `json:"pos_x,omitempty"`
+	PosY *float64 `json:"pos_y,omitempty"`
+	Dir  *float64 `json:"dir,omitempty"`
 }
 
 // SceneEdgeInfo is one drivable segment, by endpoint name. The scene's real
-// connectivity — what leads to what — with the geometry left behind.
+// connectivity — what leads to what — plus, on a response that carries
+// geometry, the endpoints and the segment's shape.
+//
+// THE SHAPE IS THE HANDLES, NEVER THE CLASS NAME. SEER's control columns are
+// populated on the Bezier classes and NULL on StraightPath, and a NULL comes
+// across as nil: a segment with nil handles is drawn as its chord. Nothing on
+// either side invents a handle for a straight segment, and a partial pair —
+// three of four — is not a curve either; see domain.SceneEdge.Curved on Core.
 type SceneEdgeInfo struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	// Endpoints, present only with geometry. Pointers for the same (0,0)
+	// reason as ScenePointInfo.
+	FromX *float64 `json:"from_x,omitempty"`
+	FromY *float64 `json:"from_y,omitempty"`
+	ToX   *float64 `json:"to_x,omitempty"`
+	ToY   *float64 `json:"to_y,omitempty"`
+	// Cubic-Bezier control handles. nil on a straight segment.
+	Ctrl1X *float64 `json:"ctrl1_x,omitempty"`
+	Ctrl1Y *float64 `json:"ctrl1_y,omitempty"`
+	Ctrl2X *float64 `json:"ctrl2_x,omitempty"`
+	Ctrl2Y *float64 `json:"ctrl2_y,omitempty"`
 }
 
 // LoaderInfo describes one Core-owned bin loader (produce) or unloader (consume)
