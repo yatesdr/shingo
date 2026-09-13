@@ -2,6 +2,7 @@ package www
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -126,6 +127,24 @@ type stubEngine struct {
 	lastChangeoverReleaseProcessID     int64
 	changeoverReleaseResult            engine.ReleaseChangeoverWaitResult
 	changeoverReleaseErr               error
+
+	// previewPlan is what PreviewChangeoverPlan replays — the preview handler
+	// is a pure mapping of it, so a test sets the plan and reads the JSON.
+	previewPlan changeover.Plan
+
+	// The flow composer's canned answers and spies. The handlers are status
+	// mappings over the engine's named refusals; the engine's own behaviour
+	// is pinned in engine/flow_compose_test.go.
+	flowPreview        *engine.FlowPreview
+	flowPreviewErr     error
+	flowPreviewCalls   []engine.FlowPreviewRequest
+	flowSaveResult     *engine.FlowSaveResult
+	flowSaveErr        error
+	flowSaveCalls      []engine.FlowSaveRequest
+	flowFingerprint    string
+	flowFingerprintErr error
+	startCalls         int
+	clearFlagCalls     int
 }
 
 func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
@@ -228,16 +247,31 @@ func (s *stubEngine) CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*sto
 	return made, nil
 }
 func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error) {
-	return changeover.Plan{}, nil
+	return s.previewPlan, nil
 }
 func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*processes.Changeover, error) {
+	s.startCalls++
 	return nil, nil
+}
+func (s *stubEngine) PreviewFlow(_ context.Context, _ int64, req engine.FlowPreviewRequest) (*engine.FlowPreview, error) {
+	s.flowPreviewCalls = append(s.flowPreviewCalls, req)
+	return s.flowPreview, s.flowPreviewErr
+}
+func (s *stubEngine) SaveFlow(_ int64, req engine.FlowSaveRequest) (*engine.FlowSaveResult, error) {
+	s.flowSaveCalls = append(s.flowSaveCalls, req)
+	return s.flowSaveResult, s.flowSaveErr
+}
+func (s *stubEngine) FlowFingerprint(int64, int64) (string, error) {
+	return s.flowFingerprint, s.flowFingerprintErr
 }
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error          { return nil }
 func (s *stubEngine) CancelProcessChangeover(int64) error                   { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
-func (s *stubEngine) ClearPostCutoverFlag(int64) error                      { return nil }
+func (s *stubEngine) ClearPostCutoverFlag(int64) error {
+	s.clearFlagCalls++
+	return nil
+}
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
 }
@@ -377,6 +411,25 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Delete("/processes/{id}", h.apiDeleteProcess)
 			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
 			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
+			r.Patch("/processes/{id}", h.apiPatchProcess)
+			// The flow doors the Presets tab applies through. Registered here
+			// so the write-path suite can post what the apply modal posts;
+			// the ENGINE is a stub in this router, so what these exercise is
+			// the handler's own rules (R1's source pick, the provenance pair)
+			// and not the write — that is pinned against the real engine in
+			// engine/flow_compose_test.go.
+			r.Post("/processes/{id}/flow/preview", h.apiPreviewFlow)
+			r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
+
+			r.Get("/processes/{id}/presets", h.apiListFlowPresets)
+			r.Post("/processes/{id}/presets", h.apiCreateFlowPreset)
+			r.Post("/processes/{id}/presets/{presetID}/archive", h.apiArchiveFlowPreset)
+
+			r.Get("/processes/{id}/routing-nodes", h.apiListRoutingNodes)
+			r.Post("/processes/{id}/routing-nodes", h.apiUpsertRoutingNode)
+			r.Post("/processes/{id}/routing-nodes/derive", h.apiDeriveRoutingNodes)
+			r.Patch("/processes/{id}/routing-nodes/{rowID}", h.apiPatchRoutingNode)
+			r.Delete("/processes/{id}/routing-nodes/{rowID}", h.apiDeleteRoutingNode)
 
 			r.Get("/styles", h.apiListStyles)
 			r.Post("/styles", h.apiCreateStyle)
@@ -388,6 +441,14 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
 			r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)
 			r.Delete("/style-node-claims/{id}", h.apiDeleteStyleNodeClaim)
+
+			// Operator stations — the desktop's D4 writes to these, and this
+			// router had neither, so a test of the page's screen sheet got a
+			// 404 from the harness rather than an answer from the handler.
+			r.Get("/operator-stations", h.apiListOperatorStations)
+			r.Post("/operator-stations", h.apiCreateOperatorStation)
+			r.Put("/operator-stations/{id}", h.apiUpdateOperatorStation)
+			r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
 
 			// Sync (core nodes, payload catalog)
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
@@ -614,3 +675,8 @@ func (s *stubEngine) CountDeadLetterOutbox() (int, error) { return s.db.CountDea
 func (s *stubEngine) KafkaLastPublish() (bool, time.Time, bool) {
 	return s.statusLastPublishOK, s.statusLastPublishAt, s.statusLastPublishEver
 }
+
+// ptr is a pointer to a literal, for the fields whose zero value and absence
+// mean different things — FlowPreview.OrderCount, where nil is "not planned"
+// and 0 is "planned and fires nothing" (owner ruling R3).
+func ptr[T any](v T) *T { return &v }

@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -18,7 +19,7 @@ import (
 // Edge stays the source of truth for the plant spec; this publisher plumbs it
 // onto Core. Three publish triggers:
 //   - PublishChanged: called by the spec-edit handlers on every style/claim
-//     change (one full snapshot — a message per process).
+//     change (one message, for the process the edit touched).
 //   - PublishAll on registration — Start calls it at boot, and the
 //     SubjectEdgeRegistered handler calls it again on every re-register, which
 //     covers Core restarting (Core sends EdgeRegisterRequest to an edge it does
@@ -96,9 +97,38 @@ func (p *PlantClaimsPublisher) loop() {
 
 // PublishChanged is the spec-change hook: the edit handlers call it after any
 // style or claim mutation so Core sees the new spec without waiting for the
-// periodic tick. Publishes a full snapshot (one message per process).
-func (p *PlantClaimsPublisher) PublishChanged() error {
-	return p.PublishAll()
+// periodic tick. It publishes ONE process's report — the one the edit
+// touched. A PlantClaimsReport is complete for its process and Core replaces
+// its mirror per ProcessID on receipt (HandlePlantClaims →
+// plantclaims.ReplaceProcess deletes WHERE process_id = $1), so the other
+// processes' mirrors are untouched by construction. It used to publish the
+// whole plant, which was ~(1 + processes + Σ styles) queries per claim save.
+//
+// It goes through plain Enqueue, NOT EnqueueSnapshot. EnqueueSnapshot deletes
+// every unsent plant.claims row before inserting, on the argument that each
+// message is a complete snapshot — of the PLANT. A single-process message is
+// a complete snapshot of one process, so superseding through it would delete
+// a pending full snapshot's other processes. The volume EnqueueSnapshot was
+// added against does not come back this way: that was the 5-minute timer
+// (12 full snapshots an hour, ~65 messages) accumulating through an outage,
+// and spec edits are a few per shift — a whole outage holds a handful of
+// one-process rows, each tiny, and the hourly full snapshot (still on
+// EnqueueSnapshot) supersedes them anyway. Ordering is by outbox id, so a
+// per-process row enqueued after a pending full snapshot is delivered after
+// it and wins at Core.
+func (p *PlantClaimsPublisher) PublishChanged(processID int64) error {
+	proc, err := processes.Get(p.db.DB, processID)
+	if err != nil {
+		return fmt.Errorf("plant_claims: process %d: %w", processID, err)
+	}
+	data, err := p.buildProcess(*proc)
+	if err != nil {
+		return fmt.Errorf("plant_claims: build %s: %w", proc.Name, err)
+	}
+	if _, err := p.db.EnqueueOutbox(data, protocol.SubjectPlantClaims); err != nil {
+		return fmt.Errorf("plant_claims: enqueue %s: %w", proc.Name, err)
+	}
+	return nil
 }
 
 // PublishAll reads the current plant spec and publishes one PlantClaimsReport
@@ -133,20 +163,31 @@ func (p *PlantClaimsPublisher) PublishAll() error {
 	return p.db.EnqueueSnapshotOutbox(payloads, protocol.SubjectPlantClaims)
 }
 
+// buildProcess reads one process's spec in TWO queries — its live styles and
+// all of their claims — and groups in Go. It was one ListClaims per style
+// inside the loop, ~(1 + styles) queries on a store pinned to a single
+// connection, and every spec edit paid it for every process at the plant.
+// Grouping by StyleID preserves what the per-style read gave: the claims
+// arrive ordered by (style_id, sequence, core_node_name), so each style's
+// slice is in ListClaims order and Core's Seq column does not churn.
 func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, error) {
 	styles, err := processes.ListStylesByProcess(p.db.DB, proc.ID)
 	if err != nil {
 		return nil, err
+	}
+	allClaims, err := processes.ListLiveClaimsByProcess(p.db.DB, proc.ID)
+	if err != nil {
+		return nil, err
+	}
+	claimsByStyle := make(map[int64][]processes.NodeClaim, len(styles))
+	for _, c := range allClaims {
+		claimsByStyle[c.StyleID] = append(claimsByStyle[c.StyleID], c)
 	}
 	report := protocol.PlantClaimsReport{
 		ProcessID: proc.Name,
 		Styles:    make([]protocol.PlantClaimsStyle, 0, len(styles)),
 	}
 	for _, st := range styles {
-		claims, err := processes.ListClaims(p.db.DB, st.ID)
-		if err != nil {
-			return nil, err
-		}
 		// Mark the running style. proc.ActiveStyleID is the field Edge itself
 		// resolves claims through (requestedClaimAtNode keys on it), so publishing it
 		// tells Core what Edge is already acting on rather than a second,
@@ -155,7 +196,7 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 			StyleID: st.Name,
 			Active:  proc.ActiveStyleID != nil && *proc.ActiveStyleID == st.ID,
 		}
-		for _, c := range claims {
+		for _, c := range claimsByStyle[st.ID] {
 			if c.IsLoaderNode() {
 				continue // loaders/unloaders excluded — pool, not claims
 			}

@@ -25,52 +25,11 @@ import (
 	"shingoedge/engine/changeover"
 )
 
-// changeoverPreviewAction is the JSON DTO for one node in a changeover preview.
-// Mirrors changeover.NodeAction but turns the error into a string and flattens
-// the OrderSpec union so the UI can render it without a discriminator dance.
-type changeoverPreviewAction struct {
-	NodeID      int64                  `json:"node_id"`
-	NodeName    string                 `json:"node_name"`
-	Situation   string                 `json:"situation"`
-	SupplyOrder *changeoverPreviewSpec `json:"supply_order,omitempty"`
-	EvacOrder   *changeoverPreviewSpec `json:"evac_order,omitempty"`
-	NextState   string                 `json:"next_state,omitempty"`
-	LogTag      string                 `json:"log_tag,omitempty"`
-	Error       string                 `json:"error,omitempty"`
-}
-
-type changeoverPreviewSpec struct {
-	Kind         string `json:"kind"` // "complex" or "retrieve"
-	DeliveryNode string `json:"delivery_node,omitempty"`
-	StagingNode  string `json:"staging_node,omitempty"`
-	StepCount    int    `json:"step_count,omitempty"`
-	PayloadCode  string `json:"payload_code,omitempty"`
-	AutoConfirm  bool   `json:"auto_confirm"`
-}
-
-func toPreviewSpec(spec *changeover.OrderSpec) *changeoverPreviewSpec {
-	if spec == nil {
-		return nil
-	}
-	if spec.Complex != nil {
-		return &changeoverPreviewSpec{
-			Kind:         "complex",
-			DeliveryNode: spec.Complex.DeliveryNode,
-			StepCount:    len(spec.Complex.Steps),
-			AutoConfirm:  spec.Complex.AutoConfirm,
-		}
-	}
-	if spec.Retrieve != nil {
-		return &changeoverPreviewSpec{
-			Kind:         "retrieve",
-			DeliveryNode: spec.Retrieve.DeliveryNode,
-			StagingNode:  spec.Retrieve.StagingNode,
-			PayloadCode:  spec.Retrieve.PayloadCode,
-			AutoConfirm:  spec.Retrieve.AutoConfirm,
-		}
-	}
-	return nil
-}
+// The preview DTO (changeover.PreviewAction / PreviewSpec) lives in
+// engine/changeover: the flow composer's preview returns the same actions,
+// and one type serialised by two handlers cannot drift. It carries
+// core_node_name beside node_name — the display name is free text, the core
+// name is the identity the composer's picture is keyed by.
 
 func (h *Handlers) apiPreviewProcessChangeover(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
@@ -91,22 +50,10 @@ func (h *Handlers) apiPreviewProcessChangeover(w http.ResponseWriter, r *http.Re
 		return
 	}
 	dto := struct {
-		Actions []changeoverPreviewAction `json:"actions"`
-	}{Actions: make([]changeoverPreviewAction, 0, len(plan.Actions))}
+		Actions []changeover.PreviewAction `json:"actions"`
+	}{Actions: make([]changeover.PreviewAction, 0, len(plan.Actions))}
 	for _, a := range plan.Actions {
-		out := changeoverPreviewAction{
-			NodeID:      a.NodeID,
-			NodeName:    a.NodeName,
-			Situation:   a.Situation,
-			SupplyOrder: toPreviewSpec(a.SupplyOrder),
-			EvacOrder:   toPreviewSpec(a.EvacOrder),
-			NextState:   string(a.NextState),
-			LogTag:      a.LogTag,
-		}
-		if a.Err != nil {
-			out.Error = a.Err.Error()
-		}
-		dto.Actions = append(dto.Actions, out)
+		dto.Actions = append(dto.Actions, changeover.ToPreviewAction(a))
 	}
 	writeJSON(w, dto)
 }
@@ -121,10 +68,28 @@ func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Requ
 		ToStyleID int64  `json:"to_style_id"`
 		CalledBy  string `json:"called_by"`
 		Notes     string `json:"notes"`
+		// FlowFingerprint is optional: the flow composer sends the fingerprint
+		// its save returned, and the start is refused 409 stale — with zero
+		// side effects — when the stored rows no longer match it. Absent,
+		// today's behaviour, byte for byte.
+		FlowFingerprint string `json:"flow_fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if req.FlowFingerprint != "" {
+		// BEFORE StartProcessChangeover: its first step clears the
+		// post-cutover flag, and a stale start must not run it.
+		current, err := h.orchestration.FlowFingerprint(processID, req.ToStyleID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if current != req.FlowFingerprint {
+			writeFlowRefusal(w, engine.ErrFlowStale)
+			return
+		}
 	}
 	co, err := h.orchestration.StartProcessChangeover(processID, req.ToStyleID, req.CalledBy, req.Notes)
 	if err != nil {

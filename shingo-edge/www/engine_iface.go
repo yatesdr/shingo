@@ -1,6 +1,8 @@
 package www
 
 import (
+	"context"
+
 	"shingo/protocol"
 	"shingoedge/config"
 	"shingoedge/domain"
@@ -133,6 +135,26 @@ type EngineOrchestration interface {
 	// ── Changeover orchestration ───────────────────────────────────
 	PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error)
 	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*domain.Changeover, error)
+	// The flow composer (U7). PreviewFlow plans a draft without writing;
+	// SaveFlow writes it in one transaction under the fingerprint it was
+	// previewed with; FlowFingerprint is what a start compares its
+	// flow_fingerprint against before any side effect. Three verbs because
+	// three routes call them; each is on the interface for the same reason
+	// PreviewChangeoverPlan is.
+	//
+	// PreviewFlow IS THE ONE ENTRY POINT HERE THAT TAKES A CONTEXT, and the
+	// exception is deliberate rather than the start of a sweep. It is the only
+	// verb on this interface that a client makes repeatedly and abandons
+	// routinely — the composer previews every 400 ms while a flow is edited —
+	// and it plans a changeover and can call Core while doing it. Without the
+	// context, closing the screen left the work running: the Springfield
+	// orphan-build incident is the same shape one layer up, where aborted view
+	// fetches piled builds onto the single connection faster than they
+	// drained, and BuildView took a context for exactly this reason
+	// (station_service.go).
+	PreviewFlow(ctx context.Context, processID int64, req engine.FlowPreviewRequest) (*engine.FlowPreview, error)
+	SaveFlow(processID int64, req engine.FlowSaveRequest) (*engine.FlowSaveResult, error)
+	FlowFingerprint(processID, toStyleID int64) (string, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error

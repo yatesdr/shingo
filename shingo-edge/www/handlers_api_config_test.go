@@ -3,6 +3,7 @@ package www
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -450,19 +451,33 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 	// single_robot needs both staging nodes. This fixture used to omit them
 	// and the API stored it: the requirement lived only in the browser, so
 	// every non-browser writer bypassed it. ValidateNodeClaim now refuses it
-	// server-side, which is what makes this fixture have to be valid.
+	// server-side, which is what makes this fixture have to be valid. The
+	// outbound destination joined the list with flowspec D1: the planner had
+	// always required it on the outgoing claim, and the save path caught up.
 	body := processes.NodeClaimInput{
-		StyleID:         sid,
-		CoreNodeName:    "node-1",
-		Role:            "consume",
-		SwapMode:        "single_robot",
-		PayloadCode:     "BIN-A",
-		UOPCapacity:     100,
-		ReorderPoint:    10,
-		InboundStaging:  "node-1-in",
-		OutboundStaging: "node-1-out",
-		AutoReorder:     domain.Ptr(true),
+		StyleID:             sid,
+		CoreNodeName:        "node-1",
+		Role:                "consume",
+		SwapMode:            "single_robot",
+		PayloadCode:         "BIN-A",
+		ReorderPoint:        10,
+		InboundStaging:      "node-1-in",
+		OutboundStaging:     "node-1-out",
+		OutboundDestination: "node-1-dest",
+		AutoReorder:         domain.Ptr(true),
 	}
+	// A CAPACITY IS REFUSED, NOT IGNORED. The column is dead — the value is
+	// resolved from the payload catalog on every read, keyed on payload_code
+	// — so a body that set one used to be accepted and discarded, and the
+	// caller read a different number back and concluded the READ was broken.
+	withCapacity := body
+	withCapacity.UOPCapacity = 100
+	refused := doRequest(t, router, "POST", "/api/style-node-claims", withCapacity, cookie)
+	assertStatus(t, refused, http.StatusBadRequest)
+	if why, _ := decodeBody(t, refused)["error"].(string); !strings.Contains(why, "payload catalog") {
+		t.Errorf("the refusal reads %q; it should say where the capacity actually comes from", why)
+	}
+
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	var createResult map[string]int64
@@ -492,16 +507,16 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 
 	// --- Upsert (update same style_id+core_node_name) ---
 	updateBody := processes.NodeClaimInput{
-		StyleID:         sid,
-		CoreNodeName:    "node-1",
-		Role:            "consume",
-		SwapMode:        "single_robot",
-		PayloadCode:     "BIN-B",
-		UOPCapacity:     200,
-		ReorderPoint:    20,
-		InboundStaging:  "node-1-in",
-		OutboundStaging: "node-1-out",
-		AutoReorder:     domain.Ptr(true),
+		StyleID:             sid,
+		CoreNodeName:        "node-1",
+		Role:                "consume",
+		SwapMode:            "single_robot",
+		PayloadCode:         "BIN-B",
+		ReorderPoint:        20,
+		InboundStaging:      "node-1-in",
+		OutboundStaging:     "node-1-out",
+		OutboundDestination: "node-1-dest",
+		AutoReorder:         domain.Ptr(true),
 	}
 	resp = doRequest(t, router, "POST", "/api/style-node-claims", updateBody, cookie)
 	assertStatus(t, resp, http.StatusOK)

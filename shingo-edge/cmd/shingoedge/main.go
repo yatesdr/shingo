@@ -294,6 +294,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return ""
 	}
 
+	// Quote the scene geometry the Edge already holds on every node-list
+	// request, so Core sends the geometry only when the map changed.
+	hb.SceneRevisionFn = eng.SceneRevision
+
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.SubjectX is registered against the closure that
 	// drives the corresponding Edge subsystem (engine method, heartbeater
@@ -345,6 +349,9 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		eng.SetCoreLoaders(resp.Loaders)
 		eng.SetPayloadBinTypes(resp.PayloadBinTypes)
 		eng.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
+		// The same two slices, second consumer: replaced only when the
+		// response carries the whole scene with its revision.
+		eng.SetSceneGeometry(resp.SceneRevision, resp.ScenePoints, resp.SceneEdges)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
@@ -652,6 +659,17 @@ func main() {
 	db := mustOpenDatabase(cfg.DatabasePath)
 	defer db.Close()
 
+	// Routing-set backfill: derive each process's sources / staging /
+	// destinations from its live claims, once, after migrate, and only while
+	// that process's flow composer is still off. Core has not been heard from
+	// yet, so no name can be checked against the plant here — the log line's
+	// "need a decision" count reads 0, which is the absence of a check and not
+	// a clean bill; the Processes page re-derives against the live Core list.
+	// A failure is logged, not fatal: this is a derivation, not a migration.
+	if _, err := db.DeriveRoutingNodes(nil); err != nil {
+		log.Printf("routing set backfill: %v", err)
+	}
+
 	// ── Engine ──────────────────────────────────────────────────────────
 	eng := engine.New(engine.Config{
 		AppConfig:   cfg,
@@ -935,11 +953,18 @@ func main() {
 	// Publish it for the SubjectEdgeRegistered handler registered far above,
 	// which cannot capture a variable that does not exist yet.
 	plantClaimsPub.Store(plantClaims)
-	h.SetPlantSpecChangeHook(func() {
-		if err := plantClaims.PublishChanged(); err != nil {
-			log.Printf("plant_claims: spec-change publish: %v", err)
-		}
-	})
+	h.SetPlantSpecChangeHook(
+		func(processID int64) {
+			if err := plantClaims.PublishChanged(processID); err != nil {
+				log.Printf("plant_claims: spec-change publish: %v", err)
+			}
+		},
+		func() {
+			if err := plantClaims.PublishAll(); err != nil {
+				log.Printf("plant_claims: spec-change publish (all): %v", err)
+			}
+		},
+	)
 	plantClaims.Start()
 	defer plantClaims.Stop()
 

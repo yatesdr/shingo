@@ -84,8 +84,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 71 methods —
-// ServiceAccess's 20 embedded, plus 51 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 74 methods —
+// ServiceAccess's 20 embedded, plus 54 orchestration verbs of its own.
 //
 // The 51st is SetActivePullSide, added 2026-08-28 under the owner ruling that
 // the operator gets an explicit set/change control for which side of an A/B pair
@@ -93,6 +93,12 @@ func TestServiceAccessWidth(t *testing.T) {
 // own rule applied: the want-list edit follows the conversation, not the other
 // way round. The stated numbers were also two out before this — the list was 70,
 // not 72 — so they are counted rather than carried forward.
+//
+// 52-54 are PreviewFlow, SaveFlow and FlowFingerprint, added 2026-09-03 for
+// the HMI flow composer (design ruling SYNTH-round2 R-S3, brief U7): the two
+// composer routes and the start handler's fingerprint check call them, and
+// each is an orchestration verb for the same reason PreviewChangeoverPlan
+// and StartProcessChangeover are.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -126,6 +132,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"EvacuateNode",
 		"FetchMarketBins",
 		"FlipABNode",
+		"FlowFingerprint",
 		"LoadBin",
 		"ManageReportingPointTag",
 		"OrderManager",
@@ -134,6 +141,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"PayloadBinTypes",
 		"PostCutoverFlag",
 		"PreviewChangeoverPlan",
+		"PreviewFlow",
 		"ProcessService",
 		"PullFromMarket",
 		"PushEmptyOut",
@@ -156,6 +164,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"RequestNodeMaterial",
 		"RequestNodeSync",
 		"RequestProduceSwap",
+		"SaveFlow",
 		"ScenePointNames",
 		"SendEnvelope",
 		"SetActivePullSide",

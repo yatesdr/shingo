@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingoedge/engine"
+	"shingoedge/engine/changeover"
 	"shingoedge/store"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -51,6 +52,8 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Get("/processes/{id}/changeover/gate-status", h.apiChangeoverGateStatus)
 		r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
+		r.Post("/processes/{id}/flow/preview", h.apiPreviewFlow)
+		r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 		r.Post("/processes/{id}/changeover/stage-node/{nodeID}", h.apiStageNodeChangeoverMaterial)
@@ -1020,5 +1023,36 @@ func TestOperatorStations_AdminAuth_RequiresLogin(t *testing.T) {
 					ep.method, ep.path, resp.StatusCode)
 			}
 		})
+	}
+}
+
+// TestOperatorStations_PreviewChangeover_ActionsCarryCoreNodeName: the preview
+// DTO names the node by its CORE name beside the free-text display name. The
+// display name is process_nodes.name, editable and free; the core name is the
+// identity every routing decision and the composer's picture are keyed by.
+func TestOperatorStations_PreviewChangeover_ActionsCarryCoreNodeName(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	stub := h.orchestration.(*stubEngine)
+	stub.previewPlan = changeover.Plan{Actions: []changeover.NodeAction{{
+		NodeID: 3, NodeName: "Press front", CoreNodeName: "PLN_01", Situation: "swap", LogTag: "swap",
+		SupplyOrder: &changeover.OrderSpec{Retrieve: &changeover.RetrieveOrderSpec{DeliveryNode: "PLN_01", PayloadCode: "P"}},
+	}}}
+
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/preview", map[string]any{"to_style_id": 1}, nil)
+	assertStatus(t, resp, http.StatusOK)
+	var body struct {
+		Actions []map[string]any `json:"actions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Actions) != 1 {
+		t.Fatalf("actions = %v, want one", body.Actions)
+	}
+	if got := body.Actions[0]["core_node_name"]; got != "PLN_01" {
+		t.Errorf("core_node_name = %v, want PLN_01", got)
+	}
+	if got := body.Actions[0]["node_name"]; got != "Press front" {
+		t.Errorf("node_name = %v, want the display name kept", got)
 	}
 }

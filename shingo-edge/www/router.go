@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"sync"
 	"time"
 
@@ -52,27 +53,52 @@ type Handlers struct {
 	// N clients asking for the same board each start their own build.
 	stationViews *stationViewGroup
 
-	// specChangeCh is a single-slot channel that coalesces concurrent
-	// admin style/claim mutations into ONE plant-claims re-publish. The
-	// publisher emits a full snapshot, so collapsing N rapid edits into one
-	// publish loses no information (last writer wins on the snapshot view).
+	// specChangePending is the set of process ids whose plant-claims report
+	// must be re-published, and specChangeAll the request to re-publish every
+	// process. specChangeCh is the single-slot doorbell that wakes the loop.
+	//
+	// A set, not a slot. The doorbell used to be the whole signal: every
+	// style/claim edit sent on a 1-slot channel and the loop published a
+	// FULL plant snapshot, so collapsing N edits into one wake lost nothing.
+	// The publish is per process now (a full snapshot on every save is
+	// O(styles) queries at the plant on a one-connection store), and a 1-slot
+	// channel cannot carry two process ids: a burst of edits across Press 4
+	// and Press 6 must publish two reports, not one. The loop drains the set
+	// under the mutex, so a request that lands while a publish is running is
+	// picked up on the next wake rather than dropped.
 	//
 	// Named claimSync* until 2026-07-21, when the retired SendClaimSync()
-	// no-op it also drove was deleted. Publishing the plant-claims snapshot
-	// is now the only work on this signal.
-	specChangeCh   chan struct{}
-	specChangeStop chan struct{}
+	// no-op it also drove was deleted. Publishing plant-claims reports is now
+	// the only work on this signal.
+	specChangeMu      sync.Mutex
+	specChangePending map[int64]struct{}
+	specChangeAll     bool
+	// specChangeRefresh asks the loop to broadcast one material-refresh for
+	// the burst it is draining. See specChangeLoop.
+	specChangeRefresh bool
+	specChangeCh      chan struct{}
+	specChangeStop    chan struct{}
 	// specChangeOnce guards the close of specChangeStop in the cleanup
 	// closure NewRouter returns, for the same reason EventHub.Stop carries
 	// one: an unguarded close panics if the cleanup ever runs twice.
 	specChangeOnce sync.Once
+	// specChangeWindow is how long specChangeLoop absorbs further doorbells
+	// before it publishes. A FIELD, not a package var: the loop reads it from
+	// its own goroutine, so a test shrinking a shared var writes it while that
+	// goroutine reads it — a data race `gate.sh race` covers (www is one of its
+	// two packages) and a cross-test one, since the www suite runs parallel
+	// siblings. A test that wants a short window builds its own Handlers and
+	// sets this before starting the loop.
+	specChangeWindow time.Duration
 
-	// onPlantSpecChange is the plant-claims publisher's spec-change hook.
-	// Set by main after constructing the publisher; fired from
-	// specChangeLoop so the snapshot re-publishes once per BATCH of edits
-	// rather than once per edit. Optional; nil when the publisher is not
-	// wired (e.g. tests), in which case the loop simply does nothing.
-	onPlantSpecChange func()
+	// onPlantSpecChange is the plant-claims publisher's per-process hook and
+	// onPlantSpecChangeAll its whole-plant hook. Set by main after
+	// constructing the publisher; fired from specChangeLoop so a process
+	// re-publishes once per BATCH of edits rather than once per edit.
+	// Optional; nil when the publisher is not wired (e.g. tests), in which
+	// case the loop drains the set and does nothing.
+	onPlantSpecChange    func(processID int64)
+	onPlantSpecChangeAll func()
 }
 
 // NewRouter registers all HTTP endpoints for shingo-edge.
@@ -101,6 +127,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		stationViews:   newStationViewGroup(),
 		specChangeCh:   make(chan struct{}, 1),
 		specChangeStop: make(chan struct{}),
+
+		specChangeWindow: defaultSpecChangeWindow,
 	}
 	go h.specChangeLoop()
 
@@ -253,6 +281,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 			// Operator station views
 			r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
+			// The composer's own read, fetched when the composer opens
+			// rather than riding every poll of the view above. Shop floor,
+			// beside the view and the two flow routes, because the station
+			// has no login; station-shaped, because the admin read carries
+			// the plant map and every style's policy block.
+			r.Get("/operator-stations/{id}/composer", h.apiStationComposer)
 
 			// Process node operations (material request, release, produce, bin ops)
 			r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
@@ -284,6 +318,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/processes/{id}/changeover/gate-status", h.apiChangeoverGateStatus)
 			r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 			r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
+			// The flow composer: preview a draft (read-only, allowed with the
+			// gate off) and save it (refused 403 unless the process's flow
+			// composer is enabled). Shop floor, like the changeover routes.
+			r.Post("/processes/{id}/flow/preview", h.apiPreviewFlow)
+			r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 			r.Get("/processes/{id}/post-cutover-flag", h.apiGetPostCutoverFlag)
@@ -387,6 +426,30 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Delete("/processes/{id}", h.apiDeleteProcess)
 				r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
 				r.Get("/processes/{id}/styles", h.apiListProcessStyles)
+				// The flow-composer gate is its own PATCH: it is flipped from its
+				// own control after a review, never alongside a name edit.
+				r.Patch("/processes/{id}", h.apiPatchProcess)
+
+				// Routing set — the nodes a process may route through that are
+				// not its positions (handlers_routing_nodes.go).
+				// The desktop composer's one read (U9 SPEC §4). Everything else
+				// the Processes page needs already had a door.
+				r.Get("/processes/{id}/composer", h.apiProcessComposer)
+				// Flow presets (U10). Admin-gated: naming a flow is an
+				// engineer's act on the desktop, and the floor never names
+				// one. Apply is deliberately absent — the desktop applies
+				// through flow/preview + flow/save so a preset can never
+				// change a style without a preview on screen.
+				r.Get("/processes/{id}/presets", h.apiListFlowPresets)
+				r.Post("/processes/{id}/presets", h.apiCreateFlowPreset)
+				r.Patch("/processes/{id}/presets/{presetID}", h.apiRenameFlowPreset)
+				r.Post("/processes/{id}/presets/{presetID}/archive", h.apiArchiveFlowPreset)
+
+				r.Get("/processes/{id}/routing-nodes", h.apiListRoutingNodes)
+				r.Post("/processes/{id}/routing-nodes", h.apiUpsertRoutingNode)
+				r.Post("/processes/{id}/routing-nodes/derive", h.apiDeriveRoutingNodes)
+				r.Patch("/processes/{id}/routing-nodes/{rowID}", h.apiPatchRoutingNode)
+				r.Delete("/processes/{id}/routing-nodes/{rowID}", h.apiDeleteRoutingNode)
 
 				// Process groups (UI taxonomy for the Processes admin sidebar)
 				r.Get("/process-groups", h.apiListProcessGroups)
@@ -465,20 +528,24 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	}
 }
 
-// SetPlantSpecChangeHook wires the plant-claims publisher's publish callback
-// so the coalesced spec-change signal (specChangeLoop) re-publishes the
-// plant-claims snapshot on every style/claim edit. Optional; main calls it
-// after constructing the publisher. The hook fires inside specChangeLoop's
-// recover wrapper, so a panic in the publisher cannot orphan the loop.
-func (h *Handlers) SetPlantSpecChangeHook(fn func()) {
-	h.onPlantSpecChange = fn
+// SetPlantSpecChangeHook wires the plant-claims publisher's callbacks so the
+// coalesced spec-change signal (specChangeLoop) re-publishes the edited
+// process's report on every style/claim edit, and the whole plant when a
+// caller could not name the process. Optional; main calls it after
+// constructing the publisher. Both hooks fire inside specChangeLoop's recover
+// wrapper, so a panic in the publisher cannot orphan the loop.
+func (h *Handlers) SetPlantSpecChangeHook(process func(processID int64), all func()) {
+	h.onPlantSpecChange = process
+	h.onPlantSpecChangeAll = all
 }
 
-// specChangeLoop owns plant-claims re-publishing. Multiple concurrent admin
-// style/claim edits collapse into one channel send (capacity 1 with a
-// non-blocking sender); this loop drains the channel and publishes
-// sequentially, which is the same effective behaviour as spawning a goroutine
-// per edit but without the concurrent DB-write race.
+// specChangeLoop owns plant-claims re-publishing. Concurrent admin
+// style/claim edits accumulate in the pending set; this loop drains the set
+// on each doorbell and publishes sequentially, which is the same effective
+// behaviour as spawning a goroutine per edit but without the concurrent
+// DB-write race. A whole-plant request subsumes the per-process ones pending
+// beside it: PublishAll carries every process, so publishing them again
+// afterwards would only add outbox rows.
 //
 // The recover wrapper is the same shape as goSafe in main.go but inline here
 // because the loop must self-heal — a panic in the publisher should not leave
@@ -494,34 +561,151 @@ func (h *Handlers) specChangeLoop() {
 		case <-h.specChangeStop:
 			return
 		case <-h.specChangeCh:
-			// Re-publish the plant-claims snapshot on the coalesced signal —
-			// spec edits changed what every process can source. This used to
-			// also call orchestration.SendClaimSync(); that was a retired
-			// no-op and is gone. The coalescing and the publish are the
-			// live work.
-			if h.onPlantSpecChange != nil {
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							log.Printf("PANIC onPlantSpecChange: %v", r)
-						}
-					}()
-					h.onPlantSpecChange()
-				}()
+			// THE COALESCING WINDOW. Without it the loop woke on the first
+			// doorbell and published immediately, so a burst of SEQUENTIAL
+			// edits — a preset applied to 40 parts is 40 saves, one after the
+			// other — collapsed into nothing at all: the set only absorbed
+			// edits that overlapped. One short wait turns the burst into one
+			// publish and one board refresh.
+			//
+			// It delays a single edit by the window, which is the trade. The
+			// consumers are Core's claims mirror and a board re-poll; neither
+			// is a control loop, and both were already behind an HTTP round
+			// trip.
+			if !h.waitOutSpecChangeBurst() {
+				return
+			}
+			all, ids, refresh := h.takeSpecChangePending()
+			// ONE BROADCAST PER BURST, NOT PER SAVE. Every board re-polls the
+			// full view on this event, at 500 ms, on a Pi with one SQLite
+			// connection — so a 40-part apply firing it per save held every
+			// station on the burst cadence for the whole apply, and the polls
+			// it provoked cost the box about twice what the apply itself did.
+			if refresh {
+				h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "flow-saved"}})
+			}
+			if all {
+				h.fireSpecChangeHook(func() {
+					if h.onPlantSpecChangeAll != nil {
+						h.onPlantSpecChangeAll()
+					}
+				})
+				continue
+			}
+			for _, id := range ids {
+				h.fireSpecChangeHook(func() {
+					if h.onPlantSpecChange != nil {
+						h.onPlantSpecChange(id)
+					}
+				})
 			}
 		}
 	}
 }
 
-// requestSpecChangePublish queues a non-blocking publish request. If one is
-// already pending this is a no-op — the pending request will see the updated
-// state when it runs, and the publisher emits a full snapshot, so coalescing
-// is information-preserving.
-func (h *Handlers) requestSpecChangePublish() {
+// defaultSpecChangeWindow is the shipped coalescing window. Handlers copies it
+// into specChangeWindow at construction; see that field for why it is not a
+// package var tests reach into.
+const defaultSpecChangeWindow = 250 * time.Millisecond
+
+// waitOutSpecChangeBurst absorbs doorbells for the coalescing window. It
+// reports false when the loop was asked to stop.
+func (h *Handlers) waitOutSpecChangeBurst() bool {
+	timer := time.NewTimer(h.specChangeWindow)
+	defer timer.Stop()
+	for {
+		select {
+		case <-h.specChangeStop:
+			return false
+		case <-h.specChangeCh:
+			// Another edit landed inside the window. The pending set already
+			// has it; keep waiting so the burst lands as one publish.
+		case <-timer.C:
+			return true
+		}
+	}
+}
+
+// takeSpecChangePending empties the pending set under the mutex and returns
+// what it held: the whole-plant flag, otherwise the process ids in sorted
+// order so a burst publishes deterministically, and whether the boards were
+// asked to refresh.
+func (h *Handlers) takeSpecChangePending() (all bool, ids []int64, refresh bool) {
+	h.specChangeMu.Lock()
+	defer h.specChangeMu.Unlock()
+	all = h.specChangeAll
+	h.specChangeAll = false
+	refresh = h.specChangeRefresh
+	h.specChangeRefresh = false
+	if !all {
+		ids = make([]int64, 0, len(h.specChangePending))
+		for id := range h.specChangePending {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	clear(h.specChangePending)
+	return all, ids, refresh
+}
+
+// requestSpecChangePublishAndRefresh is requestSpecChangePublish plus the
+// board refresh, coalesced together. A flow save is the one write that needs
+// both, and it is the write an apply repeats forty times.
+func (h *Handlers) requestSpecChangePublishAndRefresh(processID int64) {
+	h.specChangeMu.Lock()
+	if h.specChangePending == nil {
+		h.specChangePending = map[int64]struct{}{}
+	}
+	h.specChangePending[processID] = struct{}{}
+	h.specChangeRefresh = true
+	h.specChangeMu.Unlock()
+	h.ringSpecChangeDoorbell()
+}
+
+// fireSpecChangeHook runs one publish inside the per-call recover, so a panic
+// in the publisher is logged and the loop moves on to the next process.
+func (h *Handlers) fireSpecChangeHook(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC onPlantSpecChange: %v", r)
+		}
+	}()
+	fn()
+}
+
+// requestSpecChangePublish records that processID's plant-claims report must
+// be re-published and rings the doorbell. Non-blocking: a second request for
+// the same process while one is pending is absorbed by the set, and the
+// pending publish sees the updated state when it runs, so coalescing is
+// information-preserving. The map is created on first use because test
+// fixtures build Handlers without NewRouter.
+func (h *Handlers) requestSpecChangePublish(processID int64) {
+	h.specChangeMu.Lock()
+	if h.specChangePending == nil {
+		h.specChangePending = map[int64]struct{}{}
+	}
+	h.specChangePending[processID] = struct{}{}
+	h.specChangeMu.Unlock()
+	h.ringSpecChangeDoorbell()
+}
+
+// requestSpecChangePublishAll asks for every process's report. It is for the
+// caller that genuinely cannot name a process — a lookup that failed after
+// the write already landed — and it is NOT the default: a handler that knows
+// its process calls requestSpecChangePublish, because a whole-plant publish
+// is the O(styles)-per-process cost this coalescer exists to avoid.
+func (h *Handlers) requestSpecChangePublishAll() {
+	h.specChangeMu.Lock()
+	h.specChangeAll = true
+	h.specChangeMu.Unlock()
+	h.ringSpecChangeDoorbell()
+}
+
+func (h *Handlers) ringSpecChangeDoorbell() {
 	select {
 	case h.specChangeCh <- struct{}{}:
 	default:
-		// Already pending; coalesce.
+		// Already rung; the loop will drain the set when it wakes.
 	}
 }
 

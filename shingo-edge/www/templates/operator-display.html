@@ -1,11 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- data-theme=dark is the kiosk convention shared/tokens.css documents: this
+     screen is a fixed dark surface with no theme switch, so it pins the theme
+     rather than reading a preference nobody on the floor can set. -->
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>{{.Station.Name}} - Operator Station</title>
     {{template "clock-globals" .}}
+    <!-- THE SHARED TOKENS, which every other edge page has had since
+         header.html:14. Without them this screen resolved var(--sub-3) to
+         nothing, which is why operator.css carried a hand-copied ramp and a
+         drift test to hold the copy to the original — a whole mechanism whose
+         cause was one missing link. It goes FIRST so operator.css's own
+         station tokens are defined over it. -->
+    <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
     <link rel="stylesheet" href="/static/operator-station/operator.css?v={{cacheBust}}">
+    <link rel="stylesheet" href="/static/operator-station/flow-picture.css?v={{cacheBust}}">
+    <link rel="stylesheet" href="/static/operator-station/composer-glyphs.css?v={{cacheBust}}">
+    <!-- composer.css is NOT here. It is 20 kB for a screen two taps away, and
+         composer-boot.js injects it on the first open, versioned by the same
+         token. flow-picture.css and composer-glyphs.css stay: the board's own
+         style-chip panel and changeover card draw with them. -->
 </head>
 <body data-station-id="{{.Station.ID}}">
 
@@ -142,6 +158,17 @@
     </script>
 
     <script type="module" src="/static/js/shingoedge.js?v={{cacheBust}}"></script>
+    <!-- The composer's model and its glyphs are CLASSIC scripts on purpose.
+         composer-model.js is loaded as CommonJS by its Node characterization
+         test, and composer-glyphs.js ships verbatim from the locked glyph set
+         (brief R6); a classic tag puts both on window without either file
+         needing an ESM-only line the other loader would choke on. -->
+    <script src="/static/operator-station/composer-model.js?v={{cacheBust}}"></script>
+    <script src="/static/operator-station/composer-glyphs.js?v={{cacheBust}}"></script>
+    <!-- flowspec-data.js and composer-render.js are NOT here either — about
+         78 kB more. composer-boot.js loads all three on the first composer
+         open and holds them; see the note at the top of that file for what
+         stays at boot and why. -->
     <script type="module" src="/static/operator-station/operator.js?v={{cacheBust}}"></script>
 </body>
 </html>

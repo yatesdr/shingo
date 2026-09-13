@@ -51,18 +51,18 @@ function check(name, cond, detail) {
 // the first time buildGraph ran and every assertion after that would read the
 // old graph, or the old projection.
 //
-// The geometry itself now lives in components/scene-geom.js. vm runs a SCRIPT,
+// The geometry itself now lives in shared/scene-geom.js. vm runs a SCRIPT,
 // not a module, so BOTH files have their ES module syntax stripped and are
 // evaluated into ONE context: scene-geom's top-level declarations become
 // context globals, and dashboard-map.js's stripped imports then resolve to them
 // through the ordinary scope chain — the same single set of bindings the
 // browser's module loader hands it.
 function loadSceneGeom(ctx) {
-    const file = path.join(__dirname, '..', 'components', 'scene-geom.js');
+    const file = path.join(__dirname, '..', '..', '..', '..', 'shared', 'scene-geom.js');
     const raw = fs.readFileSync(file, 'utf8');
     const src = raw.replace(/^export /mg, '');
     if (src === raw) {
-        throw new Error('components/scene-geom.js no longer declares its exports as ' +
+        throw new Error('shared/scene-geom.js no longer declares its exports as ' +
             '"export function"/"export var" at line start, which this harness strips to ' +
             'run it as a script; update loadSceneGeom in dashboard-map.curve.test.js');
     }

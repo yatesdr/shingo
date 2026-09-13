@@ -45,13 +45,14 @@
 // geometry says which one a given lane is.
 
 import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
-// The scene-drawing substrate — projection, cubic arithmetic, lane identity —
-// lives in components/scene-geom.js so a second scene page can draw the same
-// network without inheriting this file's viewport, comets and SSE wiring.
-// Core-local, not shared/: Edge draws no scene (docs/ui-style-guide.md).
+// The scene-drawing substrate — projection, orientation, cubic arithmetic,
+// lane identity — lives in shared/scene-geom.js so a second scene page, on
+// either surface, draws the same network without inheriting this file's
+// viewport, comets and SSE wiring. Promoted from components/ when the Edge's
+// station cell picture became its second consumer (docs/shared-layer-promotion.md).
 import {
-  makeProjector, dist2, isCoord, cubicLength, cubicPathD, laneKey
-} from '/static/components/scene-geom.js';
+  makeProjector, rotate90For, dist2, isCoord, cubicLength, cubicPathD, laneKey
+} from '/static/shared/scene-geom.js';
 
 (function () {
   var body = document.body;
@@ -612,7 +613,7 @@ import {
     // This is the ONLY place orientation is decided, so it is the only place
     // the projector is rebuilt — the flag itself is still read directly by the
     // robot chevron, which counter-rotates against it.
-    rotate90 = (maxWy - minWy) > (maxWx - minWx);
+    rotate90 = rotate90For(minWx, maxWx, minWy, maxWy);
     proj = makeProjector(rotate90);
 
     // Full-plant screen-space bbox (stable reference for clamping + minimap viewBox)

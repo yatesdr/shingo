@@ -44,6 +44,12 @@ type Heartbeater struct {
 	// TimezoneFn, when set, supplies the plant display zone stamped onto
 	// every register and heartbeat (see TimezoneFunc). Set post-construction.
 	TimezoneFn TimezoneFunc
+	// SceneRevisionFn, when set, supplies the revision of the scene geometry
+	// the Edge already holds, quoted on every node-list request so Core can
+	// leave the geometry off when nothing changed. Read at send time, not
+	// captured: a cache replaced between ticks shows up on the next request.
+	// Nil, or an empty answer, asks Core for the full scene.
+	SceneRevisionFn func() string
 
 	DebugLog DebugLogFunc
 }
@@ -127,12 +133,21 @@ func (h *Heartbeater) sendRegister() {
 	}
 }
 
+// nodeListRequest builds the request body: the cached scene revision, if any.
+func (h *Heartbeater) nodeListRequest() *protocol.NodeListRequest {
+	req := &protocol.NodeListRequest{}
+	if h.SceneRevisionFn != nil {
+		req.SceneRevision = h.SceneRevisionFn()
+	}
+	return req
+}
+
 func (h *Heartbeater) sendNodeListRequest() {
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectNodeListRequest,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.NodeListRequest{},
+		h.nodeListRequest(),
 	)
 	if err != nil {
 		log.Printf("heartbeater: build node list request: %v", err)

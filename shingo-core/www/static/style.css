@@ -134,7 +134,7 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Buttons */
 .btn { display: inline-block; padding: 0.4rem 1rem; border: none; border-radius: 0.3rem; font-size: 0.9rem; cursor: pointer; text-align: center; }
-.btn-primary { background: var(--accent-solid); color: #fff; }
+.btn-primary { background: var(--accent-solid); color: var(--on-accent-solid); }
 .btn-primary:hover { background: var(--accent-solid-hover); }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { background: #bb2d3b; }
@@ -248,7 +248,7 @@ textarea { resize: vertical; min-height: 60px; }
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.45);
+  background: var(--scrim);
   z-index: var(--z-modal);
   align-items: center;
   justify-content: center;

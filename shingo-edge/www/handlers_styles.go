@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -60,7 +61,7 @@ func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 	// until this lands. Missing here until 2026-08-22; the 5-minute snapshot
 	// timer hid it by catching up within a tick, which stops being true now
 	// the safety snapshot is hourly.
-	h.requestSpecChangePublish()
+	h.requestSpecChangePublish(req.ProcessID)
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -84,6 +85,11 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_id is required")
 		return
 	}
+	// The process the style belonged to BEFORE the write. An update can move
+	// a style between processes, and then both reports are stale: the old
+	// one still lists it, the new one does not. Read it first; the row is
+	// about to change.
+	prev, _ := h.engine.StyleService().Get(id)
 	if err := h.engine.StyleService().Update(id, req.Name, req.Description, req.ProcessID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -97,8 +103,12 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 	h.requestBackup("style-updated")
 	// Same as apiCreateStyle: the style NAME is what rides the wire as
 	// PlantClaimsStyle.StyleID, so a rename that never republishes leaves Core
-	// mirroring a style that no longer exists under that name.
-	h.requestSpecChangePublish()
+	// mirroring a style that no longer exists under that name. A move
+	// republishes the process it left as well.
+	h.requestSpecChangePublish(req.ProcessID)
+	if prev != nil && prev.ProcessID != 0 && prev.ProcessID != req.ProcessID {
+		h.requestSpecChangePublish(prev.ProcessID)
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -139,8 +149,9 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 	h.requestBackup("style-deleted")
 	// A retired style's claims must leave Core's demand_registry, exactly as a
 	// hard delete's would have: ListStylesByProcess (which is what the publisher
-	// walks) no longer returns it.
-	h.requestSpecChangePublish()
+	// walks) no longer returns it. GetStyle is unfiltered, so the retired row
+	// still names its process.
+	h.publishSpecChangeForStyle(id)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -157,7 +168,7 @@ func (h *Handlers) apiRestoreStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("style-restored")
-	h.requestSpecChangePublish()
+	h.publishSpecChangeForStyle(id)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -183,6 +194,7 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	// The clone's claims are attributed to the session user, source 'cloned'.
 	calledBy, _ := h.sessions.getUser(r)
 	newID, err := h.engine.StyleService().Clone(id, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), calledBy)
 	if err != nil {
@@ -190,8 +202,9 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("style-cloned")
-	// Cloned claims must reach Core's demand_registry just like edits do.
-	h.requestSpecChangePublish()
+	// Cloned claims must reach Core's demand_registry just like edits do. The
+	// clone lives in the source's process.
+	h.publishSpecChangeForStyle(newID)
 	writeJSON(w, map[string]int64{"id": newID})
 }
 
@@ -217,6 +230,7 @@ func (h *Handlers) apiGenerateStyles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "at least one variant is required")
 		return
 	}
+	// Generated claims are attributed to the session user, source 'generated'.
 	calledBy, _ := h.sessions.getUser(r)
 	ids, err := h.engine.StyleService().GenerateVariants(baseID, req.Variants, calledBy)
 	if err != nil {
@@ -224,10 +238,9 @@ func (h *Handlers) apiGenerateStyles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("styles-generated")
-	// One sync for the whole batch — requestSpecChangePublish coalesces, and
-	// SendClaimSync emits a full snapshot, so a single request covers every
-	// new style's claims.
-	h.requestSpecChangePublish()
+	// One publish for the whole batch: every variant is a clone of the base,
+	// so they all live in the base's process and one report carries them.
+	h.publishSpecChangeForStyle(baseID)
 	writeJSON(w, map[string][]int64{"ids": ids})
 }
 
@@ -247,10 +260,67 @@ func (h *Handlers) apiListStyleNodeClaims(w http.ResponseWriter, r *http.Request
 	writeJSON(w, claims)
 }
 
-func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Request) {
+// claimAttributionFields are the style_node_claims columns the SERVER stamps.
+// A body that carries any of them is refused, not silently ignored: the
+// input type's json:"-" tags already keep them from landing, but a field
+// that falls on the floor is a field somebody will believe they set.
+var claimAttributionFields = []string{"source", "called_by", "updated_at", "retired_at", "source_preset_id", "source_preset_version"}
+
+// rejectClientAttribution names the first attribution field present in a raw
+// claim body, or "" when there is none.
+func rejectClientAttribution(raw []byte) string {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return "" // the typed decode below reports the malformed body
+	}
+	for _, f := range claimAttributionFields {
+		if _, present := keys[f]; present {
+			return f
+		}
+	}
+	return ""
+}
+
+// decodeAdminClaimInput is the admin editor's claim ingress: read the body,
+// refuse client-sent attribution, decode, and stamp the write as the desktop's
+// by the session user. The refusal message is returned as the error text so
+// the handler can hand it straight to writeError.
+func (h *Handlers) decodeAdminClaimInput(r *http.Request) (domain.NodeClaimInput, error) {
 	var in domain.NodeClaimInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return in, err
+	}
+	if f := rejectClientAttribution(raw); f != "" {
+		return in, errors.New(f + " is stamped by the server and cannot be sent by a client")
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return in, err
+	}
+	in.Source = domain.ClaimSourceAdmin
+	in.CalledBy, _ = h.sessions.getUser(r)
+	return in, nil
+}
+
+func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Request) {
+	in, err := h.decodeAdminClaimInput(r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// REFUSED, NOT IGNORED. uop_capacity is not a write: the column is dead
+	// and the value is resolved from the payload catalog on every read, keyed
+	// on payload_code. A body that carried one was accepted and discarded, so
+	// a caller could set a capacity, get a 200, read the row back and find a
+	// different number — and conclude the read was broken.
+	//
+	// The field is still on the decode shape precisely so this can say so.
+	// Deleting it would have encoding/json drop the key without a word, which
+	// is the same silence wearing a different hat.
+	if in.UOPCapacity != 0 {
+		writeError(w, http.StatusBadRequest,
+			"uop_capacity is not settable on a claim: it is resolved from the payload catalog by payload_code. "+
+				"Set it on the catalog entry instead.")
 		return
 	}
 	// Trim node-name-shaped fields at the API ingress. One-shot
@@ -340,9 +410,9 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	h.requestBackup("style-node-claim-updated")
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-updated"}})
 	// Push the refreshed claim set to Core so demand_registry stays in sync
-	// with what the operator just edited. Fire-and-forget — SendClaimSync
+	// with what the operator just edited. Fire-and-forget — the publisher
 	// logs its own failures and the outbox will retry transient send errors.
-	h.requestSpecChangePublish()
+	h.publishSpecChangeForStyle(in.StyleID)
 	// `id` is unchanged for every existing consumer; `warnings` is additive and
 	// only present when there is something advisory to say.
 	resp := map[string]any{"id": id}
@@ -460,6 +530,9 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	// The claim names its style, and the style its process; after the DELETE
+	// neither can be read back, so resolve the style first.
+	claim, _ := h.engine.StyleService().GetClaim(id)
 	if err := h.engine.StyleService().DeleteClaim(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -470,6 +543,30 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// demand_registry drops the corresponding row. Without this push the
 	// registry drifts and Core keeps threshold bindings for a node whose
 	// claim is gone.
-	h.requestSpecChangePublish()
+	if claim != nil {
+		h.publishSpecChangeForStyle(claim.StyleID)
+	} else {
+		log.Printf("spec change: claim %d could not be read before its delete — publishing every process", id)
+		h.requestSpecChangePublishAll()
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// publishSpecChangeForStyle requests a plant-claims publish for the process
+// that owns styleID. Six of the eight spec-edit handlers arrive holding a
+// style id and not a process id, so the style → process step lives here once.
+//
+// The whole-plant fallback is the failure path, not the default: it fires
+// only when the style cannot be read back after a write that already landed,
+// and it logs, because a Core mirror that silently stays stale is the
+// condition the hourly safety snapshot exists to bound and nothing should
+// lean on it on purpose.
+func (h *Handlers) publishSpecChangeForStyle(styleID int64) {
+	style, err := h.engine.StyleService().Get(styleID)
+	if err != nil || style == nil || style.ProcessID == 0 {
+		log.Printf("spec change: style %d has no resolvable process (%v) — publishing every process", styleID, err)
+		h.requestSpecChangePublishAll()
+		return
+	}
+	h.requestSpecChangePublish(style.ProcessID)
 }

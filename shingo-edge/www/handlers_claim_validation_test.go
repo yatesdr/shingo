@@ -5,7 +5,11 @@ import (
 	"net/http"
 	"testing"
 
+	"shingo/protocol/testutil"
+
+	"shingoedge/domain"
 	"shingoedge/store/processes"
+	"strings"
 )
 
 // decodeBody reads a response body into a generic map so a test can assert on
@@ -153,5 +157,127 @@ func TestUpsertClaim_CleanSaveHasNoWarningsKey(t *testing.T) {
 	}
 	if _, ok := got["id"]; !ok {
 		t.Errorf("`id` missing; body = %+v", got)
+	}
+}
+
+// ── Attribution ──────────────────────────────────────────────────────────
+//
+// Every claim row says who wrote it and from where, stamped by the server.
+// The admin editor's write path is here: 'admin' plus the session user, and a
+// client that tries to say otherwise is refused rather than ignored — a
+// silently-dropped field is a field somebody will believe they set.
+
+// TestUpsertClaim_StampsAdminAndSessionUser: the desktop write is attributed
+// to the desktop and the person at it, with updated_at set.
+func TestUpsertClaim_StampsAdminAndSessionUser(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+	pid := seedProcess(t, "AttrLine")
+	sid := seedStyle(t, "AttrStyle", pid)
+
+	resp := doRequest(t, router, "POST", "/api/style-node-claims", processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "ATTR-NODE", Role: "consume", SwapMode: "two_robot",
+		PayloadCode: "PART-A", InboundStaging: "ATTR-STG", OutboundDestination: "ATTR-DST",
+	}, cookie)
+	assertStatus(t, resp, http.StatusOK)
+
+	c, err := testDB.GetStyleNodeClaimByNode(sid, "ATTR-NODE")
+	if err != nil {
+		t.Fatalf("get claim: %v", err)
+	}
+	if c.Source != domain.ClaimSourceAdmin || c.CalledBy != "testadmin" || c.UpdatedAt == nil {
+		t.Fatalf("admin upsert stamped source %q called_by %q updated_at %v; want admin / testadmin / set", c.Source, c.CalledBy, c.UpdatedAt)
+	}
+}
+
+// TestUpsertClaim_RejectsClientAttribution: the six attribution fields are
+// server-stamped; a body carrying any of them is a 400 and nothing is written.
+// Checked on the RAW body, because the input type's json:"-" tags would
+// otherwise let the field fall on the floor without a word.
+func TestUpsertClaim_RejectsClientAttribution(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+	pid := seedProcess(t, "AttrRejectLine")
+	sid := seedStyle(t, "AttrRejectStyle", pid)
+
+	for _, field := range []string{"source", "called_by", "updated_at", "retired_at", "source_preset_id", "source_preset_version"} {
+		body := map[string]any{
+			"style_id": sid, "core_node_name": "ATTR-R-" + field, "role": "consume", "swap_mode": "two_robot",
+			"payload_code": "PART-A", "inbound_staging": "ATTR-STG",
+			field: "hmi",
+		}
+		if strings.HasPrefix(field, "source_preset") {
+			body[field] = 1
+		}
+		resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("body carrying %q: status %d, want 400 — attribution is server-stamped", field, resp.StatusCode)
+		}
+		got := decodeBody(t, resp)
+		if msg, _ := got["error"].(string); !strings.Contains(msg, field) {
+			t.Errorf("body carrying %q: refusal does not name the field: %v", field, got)
+		}
+	}
+	claims, err := testDB.ListStyleNodeClaims(sid)
+	testutil.MustNoErr(t, err, "testDB.ListStyleNodeClaims")
+	if len(claims) != 0 {
+		t.Fatalf("a refused claim was stored: %+v", claims)
+	}
+}
+
+// TestChangeoverView_ResolvesRetiredFromClaim: deleting a claim that a
+// changeover's node task came FROM retires it, and the changeover view still
+// renders the from-part label from the retired row — never blank.
+func TestChangeoverView_ResolvesRetiredFromClaim(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+	pid := seedProcess(t, "RetireLabelLine")
+	sid := seedStyle(t, "RetireLabelStyle", pid)
+	nodeID := seedProcessNode(t, pid, 0, "RETIRE-NODE")
+	claimID, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "RETIRE-NODE", Role: "consume", SwapMode: "two_robot",
+		PayloadCode: "PART-OLD", InboundStaging: "RETIRE-STG", OutboundDestination: "RETIRE-DST",
+	})
+	if err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	res, err := testDB.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state) VALUES (?, ?, 'active')`, pid, sid)
+	if err != nil {
+		t.Fatalf("insert changeover: %v", err)
+	}
+	coID, err := res.LastInsertId()
+	testutil.MustNoErr(t, err, "res.LastInsertId")
+	if _, err := testDB.Exec(`INSERT INTO changeover_node_tasks (process_changeover_id, process_node_id, from_claim_id, situation, state)
+		VALUES (?, ?, ?, 'changed', 'pending')`, coID, nodeID, claimID); err != nil {
+		t.Fatalf("insert node task: %v", err)
+	}
+
+	resp := doRequest(t, router, "DELETE", "/api/style-node-claims/"+itoa(claimID), nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	claims, err := testDB.ListStyleNodeClaims(sid)
+	testutil.MustNoErr(t, err, "testDB.ListStyleNodeClaims")
+	if len(claims) != 0 {
+		t.Fatalf("retired claim still listed: %+v", claims)
+	}
+
+	process, err := testDB.GetProcess(pid)
+	if err != nil {
+		t.Fatalf("get process: %v", err)
+	}
+	d := h.buildChangeoverViewData(process)
+	if d.ActiveChangeover == nil {
+		t.Fatal("the seeded changeover is not active in the view")
+	}
+	var seen bool
+	for _, v := range d.CentralNodeTasks {
+		if v.ProcessNodeID == nodeID {
+			seen = true
+			if v.FromPayload != "PART-OLD" {
+				t.Fatalf("from-part label = %q after the claim was retired, want PART-OLD — the history label rendered blank", v.FromPayload)
+			}
+		}
+	}
+	if !seen {
+		t.Fatalf("node task for %d not in the view: %+v", nodeID, d.CentralNodeTasks)
 	}
 }

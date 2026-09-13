@@ -13,7 +13,7 @@
 // which mirrors Segment.Lane(). Both derive from the same two endpoint names,
 // so the client never parses the server's lane string back apart.
 
-import { makeProjector, cubicPathD, laneKey } from '/static/components/scene-geom.js';
+import { makeProjector, cubicPathD, laneKey } from '/static/shared/scene-geom.js';
 import { formatTime } from '/static/shared/utils.js';
 
 // BAND_STROKE carries the ordering a SECOND time, in weight.

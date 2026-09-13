@@ -48,17 +48,17 @@ function check(name, cond, detail) {
 // message naming what to fix rather than failing an assertion obscurely.
 //
 // Nothing below tests geometry, but dashboard-map.js configures its projector
-// at module scope from components/scene-geom.js, so the module does not
+// at module scope from shared/scene-geom.js, so the module does not
 // EVALUATE without it. vm runs a script, not a module: scene-geom's exports are
 // stripped to plain declarations and evaluated into the same context, where the
 // stripped imports resolve to them. Same technique, spelled out, in
 // dashboard-map.curve.test.js.
 function loadSceneGeom(ctx) {
-    const file = path.join(__dirname, '..', 'components', 'scene-geom.js');
+    const file = path.join(__dirname, '..', '..', '..', '..', 'shared', 'scene-geom.js');
     const raw = fs.readFileSync(file, 'utf8');
     const src = raw.replace(/^export /mg, '');
     if (src === raw) {
-        throw new Error('components/scene-geom.js no longer declares its exports as ' +
+        throw new Error('shared/scene-geom.js no longer declares its exports as ' +
             '"export function"/"export var" at line start, which this harness strips to ' +
             'run it as a script; update loadSceneGeom in dashboard-map.stall.test.js');
     }
