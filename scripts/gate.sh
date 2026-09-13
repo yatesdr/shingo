@@ -295,6 +295,22 @@ step_scripts() {
 step_test() {
   local m failed=0 logdir mods
   mods="${1:-$MODULES}"
+  # NODE IS A PRECONDITION, NOT A NICETY. Five suites of the edge's JS run
+  # under plain node through Go wrappers — composer-model.test.js (1,220
+  # lines), composer-fields.characterization.test.js (the 528-assertion floor
+  # the retired claim editor's suite left), apply-loop.test.js,
+  # operator-flow.test.js, scene-geom.test.js — and every wrapper does
+  # `t.Skipf("node not on PATH")`. That is right for a machine that genuinely
+  # has no node; it is wrong for a gate, which then reports ok on ~2,100 lines
+  # of JS it never executed. CI's ubuntu-latest ships node, so this fires only
+  # on a dev box, which is exactly where the silence was.
+  if ! command -v node >/dev/null 2>&1; then
+    echo "FAIL tests — node not on PATH"
+    echo "  Five JS suites skip silently without it (composer-model,"
+    echo "  composer-fields, apply-loop, operator-flow, scene-geom)."
+    echo "  Install Node LTS (nodejs.org) — CI's ubuntu-latest already has it."
+    return 1
+  fi
   if [ -z "$mods" ]; then
     echo "ok   tests (every module's untagged tests run inside the docker step)"
     return 0

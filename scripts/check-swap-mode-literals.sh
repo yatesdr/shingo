@@ -17,9 +17,19 @@
 # stated per surface. A mode literal is allowed where naming the mode IS the
 # job, and nowhere else:
 #   - *.test.js — fixtures, as for Go.
-#   - shingo-edge/www/static/js/pages/processes.js — the claim editor. It
-#     presents, defaults and validates each mode: the JS counterpart of
-#     swap_mode.go's own validation.
+#   - the FLOW COMPOSER, which is the surface that names modes since U8/U9
+#     replaced the claim editor. It presents, defaults, draws and validates each
+#     mode — the JS counterpart of swap_mode.go's own validation — across five
+#     files, listed rather than globbed so the rest of the operator station
+#     keeps the rule:
+#       processes-desktop.js  the engineer's picker, its labels and its glyphs
+#       composer-model.js     the shared model: modes, their help, their fields
+#       composer-render.js    the station's mode-dependent rows
+#       composer-glyphs.js    one drawing per mode; the mode IS the subject
+#       operator-flow.js      the cell picture's per-mode legs and card lines
+#       flowspec-data.js      GENERATED from domain/flowspec, which is generated
+#                             from swap_mode.go — regenerating it is the guard
+#     This list REPLACES processes.js, which was the claim editor and is gone.
 #   - shingo-core/www/static/pages/test-orders.js — the test-order page, which
 #     builds a swap for whichever mode the tester picks.
 #   - "manual_swap" in the operator station. A hand-loaded node renders a
@@ -28,7 +38,10 @@
 # Everywhere else a JS gate reads the order graph (sibling_order_id) or a
 # property the server declares (releases_as_pair). A 'two_robot' test in the
 # operator modal's card is what kept a press-index pair from reading as one
-# wait, and the Go half of this script could not see it.
+# wait, and the Go half of this script could not see it — which is why the
+# composer list above is five named files and not the directory they sit in:
+# operator-modal.js and operator-render.js share that directory and keep the
+# rule.
 #
 # Exit 0 = clean, exit 1 = violations found.
 
@@ -45,7 +58,8 @@ MODES=(
   '"simple"'
 )
 
-JS_ALLOWED='(\.test\.js:|^shingo-edge/www/static/js/pages/processes\.js:|^shingo-core/www/static/pages/test-orders\.js:)'
+COMPOSER_JS='composer-glyphs|composer-model|composer-render|flowspec-data|operator-flow'
+JS_ALLOWED="(\.test\.js:|^shingo-edge/www/static/js/pages/processes-desktop\.js:|^shingo-edge/www/static/operator-station/($COMPOSER_JS)\.js:|^shingo-core/www/static/pages/test-orders\.js:)"
 JS_MANUAL_SURFACE='^shingo-edge/www/static/operator-station/'
 
 FAIL=0

@@ -112,3 +112,10 @@ AGENTS.md
 # Written by scripts/gate.sh-adjacent CI tooling and by local rehearsals.
 .shard/
 .shard-artifacts/
+
+# The composer shots (scripts/composer-shots.sh). A handoff artefact, not
+# source: 25 PNGs and ~2 MB, re-taken whenever a screen changes, and they carry
+# the test fixture's plant on screen. The copies that go with a report live
+# beside it in the GitHub root, which is where the owner reads them. They were
+# tracked until 2026-09-13.
+composer-shots/
