@@ -25,6 +25,13 @@
 // ─── String / DOM safety ────────────────────────────────────────────────
 
 // Last-resort escape for legacy innerHTML concatenation. Prefer h``.
+//
+// TEXT ONLY. This is DOM-based — text node in, innerHTML out — so it escapes
+// `&`, `<` and `>` and leaves `"` alone, which is wrong for a value going
+// inside a double-quoted ATTRIBUTE. Callers that build attributes by
+// concatenation want esc.js. Left as it is on purpose: every caller here is
+// escaping text between tags, and changing what this returns would move bytes
+// on pages that are not what the composer work is about.
 export function escapeHtml(s) {
     if (s === null || s === undefined || s === '') return '';
     const d = document.createElement('div');

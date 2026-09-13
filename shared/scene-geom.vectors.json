@@ -1,0 +1,204 @@
+{
+ "generated_from": "scene-geom.js",
+ "edges": [
+  {
+   "instance_name": "LM9-PP224",
+   "curved": true,
+   "length": 1.666297593935286,
+   "upright": {
+    "endpoints": [
+     [
+      -0.604,
+      -22.449
+     ],
+     [
+      0.986,
+      -22.169
+     ]
+    ],
+    "pathD": "M-0.604 -22.449C-0.287 -22.094 0.303 -22.142 0.986 -22.169"
+   },
+   "rotated": {
+    "endpoints": [
+     [
+      22.449,
+      -0.604
+     ],
+     [
+      22.169,
+      0.986
+     ]
+    ],
+    "pathD": "M22.449 -0.604C22.094 -0.287 22.142 0.303 22.169 0.986"
+   },
+   "midpoint": {
+    "x": 0.05375000000000002,
+    "y": 22.165750000000003
+   }
+  },
+  {
+   "instance_name": "AP123-LM135",
+   "curved": true,
+   "length": 2.9950327499342335,
+   "upright": {
+    "endpoints": [
+     [
+      -35.459,
+      -57.966
+     ],
+     [
+      -38.448,
+      -58.156
+     ]
+    ],
+    "pathD": "M-35.459 -57.966C-36.455 -58.029 -37.452 -58.093 -38.448 -58.156"
+   },
+   "rotated": {
+    "endpoints": [
+     [
+      57.966,
+      -35.459
+     ],
+     [
+      58.156,
+      -38.448
+     ]
+    ],
+    "pathD": "M57.966 -35.459C58.029 -36.455 58.093 -37.452 58.156 -38.448"
+   },
+   "midpoint": {
+    "x": -36.9535,
+    "y": 58.061
+   }
+  },
+  {
+   "instance_name": "SYN-origin-chord",
+   "curved": false,
+   "length": 5,
+   "upright": {
+    "endpoints": [
+     [
+      0,
+      0
+     ],
+     [
+      3,
+      -4
+     ]
+    ],
+    "pathD": "M0 0L3 -4"
+   },
+   "rotated": {
+    "endpoints": [
+     [
+      0,
+      0
+     ],
+     [
+      4,
+      3
+     ]
+    ],
+    "pathD": "M0 0L4 3"
+   }
+  },
+  {
+   "instance_name": "SYN-origin-handles",
+   "curved": true,
+   "length": 2.8284271247461903,
+   "upright": {
+    "endpoints": [
+     [
+      -1,
+      1
+     ],
+     [
+      1,
+      -1
+     ]
+    ],
+    "pathD": "M-1 1C0 0 0 0 1 -1"
+   },
+   "rotated": {
+    "endpoints": [
+     [
+      -1,
+      -1
+     ],
+     [
+      1,
+      1
+     ]
+    ],
+    "pathD": "M-1 -1C0 0 0 0 1 1"
+   },
+   "midpoint": {
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "instance_name": "SYN-partial-handles",
+   "curved": false,
+   "length": 2.8284271247461903,
+   "upright": {
+    "endpoints": [
+     [
+      1,
+      -1
+     ],
+     [
+      -1,
+      1
+     ]
+    ],
+    "pathD": "M1 -1L-1 1"
+   },
+   "rotated": {
+    "endpoints": [
+     [
+      1,
+      1
+     ],
+     [
+      -1,
+      -1
+     ]
+    ],
+    "pathD": "M1 1L-1 -1"
+   }
+  }
+ ],
+ "isCoord": {
+  "zero": true,
+  "negative": true,
+  "null": false,
+  "undefined": false,
+  "nan": false,
+  "string-zero": false,
+  "infinity": false
+ },
+ "laneKey": [
+  {
+   "a": "LM10",
+   "b": "LM113",
+   "key": "LM10_LM113"
+  },
+  {
+   "a": "LM113",
+   "b": "LM10",
+   "key": "LM10_LM113"
+  },
+  {
+   "a": "AP1",
+   "b": "AP1",
+   "key": "AP1_AP1"
+  },
+  {
+   "a": "B",
+   "b": "A",
+   "key": "A_B"
+  }
+ ],
+ "cubicSamples": 24
+}
