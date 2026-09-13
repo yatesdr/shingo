@@ -287,6 +287,13 @@ export const api = {
             body: JSON.stringify(body)
         }).then(handleResponse);
     },
+    patch: function(url, body) {
+        return fetch(url, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(handleResponse);
+    },
     del: function(url) {
         return fetch(url, { method: 'DELETE' }).then(handleResponse);
     },

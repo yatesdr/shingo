@@ -317,7 +317,7 @@ main.container {
 .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 .btn-block { width: 100%; }
 
-.btn-primary { background: var(--accent-solid); color: white; }
+.btn-primary { background: var(--accent-solid); color: var(--on-accent-solid); }
 .btn-primary:hover { background: var(--accent-solid-hover); }
 
 .btn-danger { background: var(--danger); color: white; }
@@ -534,7 +534,7 @@ textarea.form-input {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--scrim);
     display: none;
     align-items: center;
     justify-content: center;

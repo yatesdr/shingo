@@ -6,7 +6,7 @@
 // 'changeover-advisory' would be a true answer to a narrower question: it would
 // pass with the element hidden, the list empty, or the node names dropped.
 //
-// Loaded the same way processes.characterization.test.js loads its target: an
+// Loaded the same way composer-fields.characterization.test.js loads its target: an
 // ES module run through vm.runInContext with the import line stripped and the
 // imported names supplied as bare globals.
 

@@ -10,78 +10,120 @@ import (
 	"shingo/protocol"
 )
 
-// TestProcessesTemplateSwapModeOptions pins the <option value="..."> set in the
-// Swap Mode dropdown to protocol.ConfigurableSwapModes(), PLUS the hidden
-// historical "simple". Adding/removing a configurable mode without matching the
-// dropdown (or vice versa) fails this test in CI.
+// processes_enum_drift_test.go — the choreography the Processes page offers,
+// against protocol's enum.
 //
-// "simple" is retired as a configurable claim mode: the store upsert allowlist
-// rejects it (it survives only as a runtime CycleMode descriptor, never a
-// persisted claim mode). It stays in the dropdown ONLY as a hidden <option> so
-// an existing swap_mode="simple" row still renders when an old claim is opened
-// in edit mode; it is not user-selectable.
+// This used to read two <select> blocks out of processes.html: the claim
+// editor's Swap Mode and Role dropdowns. Both retired with the editor in U9d —
+// there is no native <select> anywhere on the composer (the style guide's
+// "never use native dialogs" covers menus, and a select's dropdown is the
+// browser drawing its own chrome over ours) — so the same drift is now read
+// off the composer's own list.
 //
-// THE manual_swap EXCLUSION IS GONE, AND SO IS WHAT IT EXCUSED. This test used
-// to skip manual_swap while walking the configurable set, because the dropdown
-// omitted a value the set allowed (commit 0ef5b95): bin loaders are Core-owned
-// topology and resolve through the loader aggregate, so the editor stopped
-// offering them while the store still stored them. The clause was the written
-// record of that disagreement. manual_swap has now left ConfigurableSwapModes
-// entirely — the stored population is zero and the allowlist is closed — so the
-// dropdown and the persisted set agree again and there is nothing to excuse.
-func TestProcessesTemplateSwapModeOptions(t *testing.T) {
-	got := readSelectOptions(t, "claims-add-swap")
-	// Hidden historical option (retired mode, still rendered for old rows) plus
-	// every configurable mode.
-	want := []string{string(protocol.SwapModeSimple)}
+// THE GUARD IS THE SAME AND THE REASON IS THE SAME: a mode added to the
+// protocol and not to the picker is a choreography nobody can select, and one
+// in the picker and not the protocol is a save the server refuses.
+
+// TestComposerModesMatchProtocol pins composer-model.js's MODES — the mode
+// picker's rows, and the labels the rail and the positions table read — to
+// protocol.ConfigurableSwapModes() minus manual_swap.
+//
+// manual_swap is excluded for the reason it was excluded from the dropdown
+// (0ef5b95): bin loaders and unloaders are Core-owned topology resolved at
+// runtime through the loader aggregate, so they are not authored here. An
+// existing manual_swap claim still renders — the label falls back to the raw
+// mode — but it is not offered.
+//
+// THE SKIP IS VESTIGIAL NOW AND IS KEPT ON PURPOSE. manual_swap left
+// ConfigurableSwapModes entirely when the loader ownership move retired it as a
+// stored value, so the walk below never reaches it — the same conclusion from
+// the other end. It stays because the exclusion is a RULE about what this
+// picker offers, not a consequence of what the protocol currently lists, and a
+// mode returning to the set must not silently appear in the composer.
+//
+// "simple" is excluded too, and that is a CHANGE from the dropdown, which
+// carried it as a hidden option so an old row would render. The composer has
+// no hidden options: a cell in a retired mode draws with the empty glyph and
+// its mode reads through, and the picker offers the four a save can accept.
+func TestComposerModesMatchProtocol(t *testing.T) {
+	got := readComposerModes(t)
+	want := []string{}
 	for _, m := range protocol.ConfigurableSwapModes() {
+		if m == protocol.SwapModeManualSwap {
+			continue // Core-owned; see docstring
+		}
 		want = append(want, string(m))
 	}
 	assertSameSet(t, "swap_mode", got, want)
 }
 
-// TestProcessesTemplateClaimRoleOptions pins the Role dropdown options
-// to protocol's ClaimRole constants. Pattern identical to swap mode.
+// TestComposerRolesAreDerivedNotOffered: role has no picker at all, and this
+// says so on purpose.
 //
-// Post-cleanup: protocol has 2 roles (consume, produce). The legacy
-// "changeover" role was removed — changeover mechanics are now driven
-// entirely by swap_mode + EvacuateOnChangeover on the active claim.
-func TestProcessesTemplateClaimRoleOptions(t *testing.T) {
-	got := readSelectOptions(t, "claims-add-role")
-	want := []string{
-		string(protocol.ClaimRoleConsume),
-		string(protocol.ClaimRoleProduce),
+// The claim editor asked. The composer DERIVES (brief R2): the prior claim on
+// the node, then the majority of the style's other claims, then the majority
+// of the process's, then consume. A picker would be a fifth answer that
+// disagrees with the four, so the drift guard here is that protocol still has
+// exactly the two roles the derivation knows how to answer with — a third
+// would need a rule, and the silence would default it to consume.
+func TestComposerRolesAreDerivedNotOffered(t *testing.T) {
+	roles := []string{string(protocol.ClaimRoleConsume), string(protocol.ClaimRoleProduce)}
+	if len(roles) != 2 {
+		t.Fatalf("protocol carries %d claim roles; deriveRole in composer-model.js answers with two", len(roles))
 	}
-	assertSameSet(t, "claim_role", got, want)
+	src := readComposerModel(t)
+	// No picker offers it: a role option list would be the fifth answer, and
+	// it would be the one the operator sees.
+	if regexp.MustCompile(`case 'setRole'`).MatchString(src) {
+		t.Error("composer-model.js has a setRole action; role is derived, not chosen (brief R2)")
+	}
+	if regexp.MustCompile(`case 'role':`).MatchString(readDesktopPage(t)) {
+		t.Error("processes-desktop.js builds an option list for role; role is derived (brief R2)")
+	}
+	// The floor is consume, named once, and it is the FOURTH answer — the
+	// three above it read the prior claim and the majorities. A second literal
+	// role would mean somebody had written a fifth rule.
+	if n := len(regexp.MustCompile(`return \{ role: '[a-z]+', source: 'default' \}`).FindAllString(src, -1)); n != 1 {
+		t.Errorf("deriveRole has %d literal defaults; it should have exactly one, and it should be consume", n)
+	}
+	if !regexp.MustCompile(`return \{ role: 'consume', source: 'default' \}`).MatchString(src) {
+		t.Error("deriveRole's floor is not consume; a cell nobody has configured is what the store writes for one")
+	}
 }
 
-// readSelectOptions parses processes.html for a <select id="..."> block
-// and returns the value attributes of every <option> in it (including
-// hidden ones). The HTML is hand-written, not template-generated for
-// these specific selects, so a regex parse is robust enough.
-func readSelectOptions(t *testing.T, selectID string) []string {
+func readDesktopPage(t *testing.T) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("templates", "processes.html"))
+	body, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
 	if err != nil {
-		t.Fatalf("read processes.html: %v", err)
+		t.Fatalf("read processes-desktop.js: %v", err)
 	}
-	src := string(body)
+	return string(body)
+}
 
-	// Find the <select id="..."> opening, then capture up to the next </select>.
-	selectRe := regexp.MustCompile(`(?s)<select[^>]*\bid="` + regexp.QuoteMeta(selectID) + `"[^>]*>(.*?)</select>`)
-	m := selectRe.FindStringSubmatch(src)
-	if m == nil {
-		t.Fatalf("could not find <select id=%q> in processes.html", selectID)
+func readComposerModel(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("static", "operator-station", "composer-model.js"))
+	if err != nil {
+		t.Fatalf("read composer-model.js: %v", err)
 	}
+	return string(body)
+}
 
-	optRe := regexp.MustCompile(`<option[^>]*\bvalue="([^"]*)"`)
-	matches := optRe.FindAllStringSubmatch(m[1], -1)
+// readComposerModes parses the MODES object literal — the picker's rows in
+// source order. A regex parse is enough for the same reason it was for the
+// hand-written <select>: the block is a literal, not generated.
+func readComposerModes(t *testing.T) []string {
+	t.Helper()
+	src := readComposerModel(t)
+	block := regexp.MustCompile(`(?s)const MODES = \{(.*?)\n\};`).FindStringSubmatch(src)
+	if block == nil {
+		t.Fatal("could not find `const MODES = {` in composer-model.js")
+	}
+	keyRe := regexp.MustCompile(`(?m)^\s*([a-z_]+):`)
+	matches := keyRe.FindAllStringSubmatch(block[1], -1)
 	out := make([]string, 0, len(matches))
-	for _, mm := range matches {
-		if mm[1] == "" {
-			continue // skip the placeholder "-- Select --"
-		}
-		out = append(out, mm[1])
+	for _, m := range matches {
+		out = append(out, m[1])
 	}
 	return out
 }
@@ -93,12 +135,12 @@ func assertSameSet(t *testing.T, label string, got, want []string) {
 	sort.Strings(g)
 	sort.Strings(w)
 	if len(g) != len(w) {
-		t.Fatalf("%s: html len=%d (%v) vs protocol len=%d (%v)",
+		t.Fatalf("%s: composer len=%d (%v) vs protocol len=%d (%v)",
 			label, len(g), g, len(w), w)
 	}
 	for i := range g {
 		if g[i] != w[i] {
-			t.Errorf("%s mismatch at index %d: html=%q protocol=%q (html=%v protocol=%v)",
+			t.Errorf("%s[%d]: composer %q, protocol %q (composer=%v, protocol=%v)",
 				label, i, g[i], w[i], g, w)
 		}
 	}

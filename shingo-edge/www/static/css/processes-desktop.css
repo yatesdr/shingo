@@ -1,0 +1,750 @@
+/* processes-desktop.css — the Processes page: app bar, the P0 list, and D1 Flows.
+ *
+ * Ported from desktop/REFERENCE-press400-desktop-U9-2026-09-10.html; the sizes,
+ * radii and weights are that file's and SPEC-desktop-ux §1's. Every colour is a
+ * token from shared/tokens.css — the reference declares its own :root of
+ * literals because it is a self-contained artefact, and repeating those here
+ * would be a private palette the drift tests cannot see.
+ *
+ * Mouse-first (SPEC §0.6): rows 32, buttons 36, primary 40. The station's
+ * --os-touch-min does not apply on this surface.
+ *
+ * The picture itself is drawn by operator-flow.js and styled by the
+ * .os-flow-picture rules the station already owns — one drawing of the press,
+ * two surfaces. Only what wraps it lives here. */
+
+/* THE PAGE IS THE SCREEN. .container (shared/components.css) caps every admin
+   page at 1200 px, which is right for a form and wrong for a composer: at the
+   spec's 1440 it cost the positions table its last column -- the Advanced
+   badge U9b exists to show -- and wrapped every chip onto two lines. This file
+   loads on the Processes page alone, so the override is scoped by construction
+   and no other admin page moves. */
+main.container { max-width: none; }
+
+/* THE GLYPH FILE'S FIVE NAMES, DECLARED HERE TOO.
+ *
+ * composer-glyphs.css ships verbatim from the locked glyph set and reads
+ * --os-station, --os-robot-1/-2 and --os-sub-3/-4/-5, each with a literal
+ * fallback. operator.css declares all five, and its own comment says why the
+ * aliases exist: "leaving the glyphs on their built-in literal fallbacks would
+ * mean the tokens did not actually drive them". This page loads the glyph file
+ * and declared none of them, so on this surface the fallbacks drove it — and
+ * they are the DARK values.
+ *
+ * That was visible, and only in the light theme: the slot outline, the press
+ * bar and the new bin fall back to #f2f5f8, so every swap-mode glyph in D1's
+ * table and on the preset rows was near-white on a white row. The same defect
+ * flow-picture.css was fixed for, in the other file both surfaces load, found
+ * by shooting D1 in the light theme rather than in the browser's default.
+ *
+ * FOUR ARE THE STATION'S ALIASES VERBATIM. --os-station is not: shared
+ * tokens.css makes --station theme-invariant "because the surfaces that draw a
+ * choreography are dark by construction (the station) or pin dark (the map)",
+ * and this page is neither — the glyph is drawn inline in a table that follows
+ * the engineer's theme. --text-strong is the same near-white in dark and the
+ * body ink in light, which is what a slot outline is on each. */
+:root {
+    --os-station: var(--text-strong);
+    --os-robot-1: var(--robot-1);
+    --os-robot-2: var(--robot-2);
+    --os-sub-3: var(--sub-3);
+    --os-sub-4: var(--sub-4);
+    --os-sub-5: var(--sub-5);
+}
+
+/* THE FLOWS TAB IS APP-SHAPED (owner ruling Q6). The site nav stays — this is
+   the admin surface and an engineer arrives here from it — and everything
+   under it is one app: the page does not scroll, the rail and the main column
+   scroll inside themselves, and the bottom bar pins to the foot of the main
+   column exactly as the reference does.
+
+   The class is put on <body> by the page script, because the shell it has to
+   reshape (body > nav + main.container + footer) belongs to the header
+   template and a rule scoped to #pd-root cannot reach a parent. The footer
+   keeps its row: it is a one-line credit strip, and clipping site chrome to
+   win forty pixels is not a trade this page needs to make. */
+/* `height`, NOT `min-height`. With min-height the shell could still GROW: the
+   picture's 430 px plus the header, the table's rows and the bar came to more
+   than the viewport, the body stretched to fit, and the bottom bar — the thing
+   that is supposed to pin to the foot of the column — ended up below the fold
+   with only its heading showing. A fixed height and `overflow: hidden` mean
+   the app cannot grow, so everything inside it has to give way instead, and
+   the picture is what gives (see .pd-pic). */
+body.pd-body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+/* THE `margin: 0 auto` HAS TO GO, and it is the whole reason the page was
+   1850 px wide inside a 1407 px viewport. An AUTO margin on the cross axis of
+   a flex container suppresses `align-self: stretch`: the item is then sized to
+   fit-content instead of the line, so `main.container` took the positions
+   table's max-content width, the app bar and the bottom bar stretched to that,
+   and the status pill, the header actions and the last two columns sat off the
+   right edge. Centering is what .container's auto margins are for and it is
+   meaningless once the item fills the width. */
+body.pd-body main.container {
+    flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; margin: 0; padding: 0;
+    display: flex; flex-direction: column;
+}
+body.pd-body .pd-root { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+/* THE PAGE NEVER SCROLLS SIDEWAYS. A flex item's min-width is auto, so the
+   positions table — nine nowrap columns, wider than the column it sits in —
+   grew the whole shell past the viewport and clipped the app bar, the legend
+   and the last two columns off the right edge. Every link in the chain from
+   <body> down to .pd-main says min-width: 0, and the ONE thing allowed to
+   scroll horizontally is .pd-postbl, which already does. */
+body.pd-body { overflow-x: hidden; }
+/* Each tab's own body scrolls inside the shell, because the page no longer
+   can. A sheet taller than the viewport was previously handled by the page
+   growing; now it is handled here. */
+body.pd-body .pd-list { overflow: auto; }
+body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+
+/* ── app bar ──────────────────────────────────────────────────────────── */
+.pd-app {
+    height: 56px; background: var(--elev-header, var(--surface));
+    border-bottom: 1px solid var(--sub-1);
+    display: flex; align-items: center; padding: 0 24px; gap: 28px;
+}
+.pd-crumb { color: var(--text-muted); font-size: 13px; }
+.pd-crumb b { color: var(--text); font-weight: 600; font-size: 15px; }
+.pd-tabs { display: flex; gap: 4px; margin-left: 8px; }
+.pd-tabs button {
+    height: 36px; padding: 0 14px; border-radius: 9px; border: 0; background: none;
+    font: inherit; font-weight: 600; color: var(--text-muted); cursor: pointer;
+}
+.pd-tabs button.on { background: var(--surface-2, var(--surface)); color: var(--text); }
+.pd-tabs button.soon { opacity: .45; cursor: default; }
+.pd-tabs button.soon small { font-weight: 500; margin-left: 6px; color: var(--text-muted); }
+.pd-spacer { flex: 1; }
+
+/* THE GATE IS A STATUS, NOT A CONTROL (R3). It reads on the app bar and is set
+ * in Settings; a switch here would be the same decision in two places. */
+.pd-gate { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13px; }
+.pd-pill {
+    font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--sub-3); color: var(--text-muted);
+}
+.pd-pill.on { color: var(--chip-ink-ok); border-color: var(--viz-green); }
+.pd-dimlink { color: var(--text-muted); font-size: 12px; margin-left: 8px; background: none; border: 0; cursor: pointer; font: inherit; }
+
+/* ── buttons ──────────────────────────────────────────────────────────── */
+.pd-btn {
+    height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--sub-2);
+    background: var(--surface-2, var(--surface)); color: var(--text);
+    font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.pd-btn.quiet { border-color: transparent; background: none; color: var(--text-muted); }
+/* A disabled control has to LOOK disabled. Only the primary had this, so
+   "Generate variants..", disabled with its reason in the section note, drew
+   exactly like the live "Sync catalog" beside it. */
+.pd-btn:disabled { opacity: .5; cursor: default; }
+.pd-btn.primary {
+    background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-accent-solid);
+    height: 40px; padding: 0 20px; font-size: 14px;
+}
+.pd-btn.primary:disabled { opacity: .5; cursor: default; }
+.pd-lbl {
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-muted);
+}
+.pd-dim { color: var(--text-muted); font-size: 12px; }
+/* THE FIELD FITS ITS PLACEHOLDER. The app-bar box was sized by its container
+   and the P0 placeholder came out as "find a process, station or p" — a
+   truncated instruction is worse than none, and shortening the words to fit a
+   box is fixing the wrong end. 282 px holds the longest of the two
+   placeholders at 13 px; the rail's box keeps filling its own column. */
+.pd-search {
+    height: 36px; border: 1px solid var(--sub-2); border-radius: 10px; background: var(--surface);
+    display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--text-muted); font-size: 13px;
+    width: 282px; flex: 0 0 auto;
+}
+.pd-search svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.pd-search input { flex: 1; background: none; border: 0; outline: none; color: var(--text); font: inherit; }
+.pd-search input::placeholder { color: var(--text-muted); }
+
+/* ── P0 · the grouped list ────────────────────────────────────────────── */
+.pd-list { padding: 8px 32px 24px; overflow: auto; }
+.pd-lgrp { display: flex; align-items: center; gap: 10px; padding: 22px 0 8px; }
+.pd-tbl {
+    width: 100%; border-collapse: collapse; background: var(--surface);
+    border-radius: 12px; overflow: hidden; table-layout: fixed;
+}
+.pd-tbl th {
+    padding: 10px 14px; background: var(--surface-2, var(--surface));
+    border-bottom: 1px solid var(--sub-1); text-align: left;
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+}
+.pd-tbl td { padding: 12px 14px; border-bottom: 1px solid var(--sub-1); }
+.pd-tbl tr:last-child td { border-bottom: 0; }
+.pd-tbl tbody tr { cursor: pointer; }
+.pd-tbl tbody tr:hover td { background: var(--surface-2, var(--surface)); }
+.pd-tbl tr.on td { background: var(--accent-wash, transparent); }
+.pd-tbl tr.on td.pn { box-shadow: inset 3px 0 0 var(--accent-solid); }
+.pd-tbl td.pn b { font-size: 14px; }
+.pd-tbl td.pn small { display: block; color: var(--text-muted); font-size: 11.5px; }
+.pd-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+.pd-runname { font-weight: 600; }
+.pd-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--sub-3); color: var(--text-muted); }
+.pd-tag.ok { color: var(--chip-ink-ok); border-color: var(--viz-green); }
+.pd-tag.build { color: var(--accent); border-color: var(--accent); }
+.pd-tag.run { color: var(--chip-ink-ok); border-color: var(--viz-green); }
+.pd-cnt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.pd-cnt i { width: 7px; height: 7px; border-radius: 50%; background: var(--sub-4); flex: 0 0 auto; }
+.pd-cnt.ok i { background: var(--viz-green); }
+.pd-state { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted); }
+.pd-state.running { color: var(--chip-ink-ok); }
+
+/* ── D1 · rail + main ─────────────────────────────────────────────────── */
+/* The app area is whatever the shell hands down, not a guess at the viewport
+   minus a nav whose height is set by its content. */
+.pd-page { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.pd-rail {
+    width: 300px; flex: 0 0 300px; border-right: 1px solid var(--sub-1);
+    background: var(--surface); display: flex; flex-direction: column; min-height: 0;
+}
+.pd-rail .pd-search { margin: 12px; width: auto; align-self: stretch; }
+.pd-rail-body { flex: 1; overflow: auto; padding: 0 8px 8px; }
+.pd-grp { padding: 14px 8px 6px; }
+.pd-row {
+    position: relative; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+    border: 1px solid transparent;
+}
+.pd-row:hover { background: var(--surface-2, var(--surface)); }
+.pd-row.on { border-color: var(--accent-solid); background: var(--surface-2, var(--surface)); }
+.pd-row .n { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.pd-row .s { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.pd-row .more {
+    margin-left: auto; color: var(--text-muted); opacity: 0; padding: 0 4px;
+    background: none; border: 0; cursor: pointer; font: inherit;
+}
+.pd-row:hover .more, .pd-row.on .more { opacity: 1; }
+.pd-railfoot { border-top: 1px solid var(--sub-1); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.pd-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Title and sub line on the left, the three actions right-aligned beside them,
+   on ONE row that does not wrap. */
+.pd-head { display: flex; align-items: center; gap: 16px; padding: 18px 24px 10px; flex-wrap: nowrap; }
+/* The title block gives way before the actions do: the three buttons are the
+   controls, the sub line is a caption. */
+.pd-head .t { min-width: 0; overflow: hidden; }
+.pd-head h1, .pd-head .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.pd-head .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+/* F4: the running TAG sits on the sub line and must not be the thing that
+   ellipsises — the line before it gives way first. */
+.pd-head .sub { display: flex; align-items: center; gap: 8px; }
+.pd-head .sub .pd-tag { flex: none; }
+.pd-head .act { margin-left: auto; display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
+/* The picture's frame, and the reference's. The page script sets the viewBox
+   to this height and the column's real width, so the drawing is 1:1 and a card
+   is its own size rather than whatever preserveAspectRatio makes of it.
+
+   IT IS THE THING THAT GIVES WAY. `flex: 0 1 430px` with a floor: on a short
+   screen the picture loses height before the positions table loses rows and
+   before the bar leaves the viewport, because the bar is where the save lives
+   and a table with no rows answers no question. The script re-measures and
+   re-lays-out at whatever height it ends up with, so the cards stay 1:1. */
+.pd-pic { position: relative; flex: 0 1 430px; min-height: 240px; margin: 0 24px; }
+.pd-pic svg { width: 100%; height: 100%; display: block; }
+.pd-legend {
+    position: absolute; right: 8px; top: 4px; display: flex; gap: 14px;
+    font-size: 12px; color: var(--text-muted);
+}
+.pd-legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.pd-legend i.r1 { background: var(--robot-1); }
+.pd-legend i.r2 { background: var(--robot-2); }
+
+/* ── D1 · positions table ─────────────────────────────────────────────── */
+/* P3 · THE POSITIONS BOX IS THREE PARTS: a label, a scroller, and a footer
+   that never scrolls. The box is what grows and shrinks with the window (T2's
+   rule: the picture gives way first); only the middle part scrolls. */
+/* THE BOX HAS A FLOOR, AND THE PICTURE GIVES WAY TO IT (T2's rule). Without
+   one the picture took its resting 430 px and left the box 82: a label, a
+   header row and 30 px of scroller, which is half of one position row.
+
+   The ruling is that the box holds its label, its header, TWO position rows
+   and its footer at 900 high, so the floor is those things ADDED UP FROM WHAT
+   THEY MEASURE, not from what the table's `td` rule says —
+
+     label 18 + header 43 + two rows 98 (49 each) + footer 33 = 192,
+     + 16 so the next row shows as the partial one that says there is more
+
+   = 208. A row is 49 px and not the 32 its `td` declares, because the chips
+   inside it are 26-28 px tall and carry their own padding; a floor computed
+   from 32 left the second row clipped through the middle of its chips while
+   every assertion passed. The numbers come from data-desktop-fit at 1440x900.
+
+   The picture's own min-height (240) is its floor, and 208 + 240 fits the
+   ~568 px this column has at 900 with room over. */
+.pd-posbox { display: flex; flex-direction: column; flex: 1; min-height: 208px; margin: 8px 24px 0; }
+.pd-postbl { overflow: auto; flex: 1; min-height: 0; }
+/* The add row, as the box's footer. It reads as the last row of the table —
+   same dim size, same rule above it — and is always on screen, because it is
+   the only control that adds a position and an engineer cannot be expected to
+   discover it by scrolling a box with no visible scrollbar. */
+.pd-posfoot {
+    flex: 0 0 auto; padding: 7px 4px; border-top: 1px solid var(--sub-1);
+    color: var(--text-muted); font-size: 12px; cursor: pointer;
+}
+.pd-posfoot:hover { color: var(--text); }
+.pd-posfoot span { color: var(--text-muted); margin-left: 8px; }
+.pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.pd-postbl table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.pd-postbl th {
+    text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--sub-1);
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+}
+.pd-postbl td { padding: 5px 4px; border-bottom: 1px solid var(--sub-1); height: 32px; vertical-align: middle; }
+.pd-postbl tr.selrow td { background: var(--accent-wash, transparent); }
+.pd-postbl tr.selrow td:first-child { box-shadow: inset 3px 0 0 var(--accent-solid); }
+.pd-postbl td.pos { font-weight: 600; }
+.pd-postbl td.pos small { display: block; color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.pd-postbl tr.paired td { color: var(--text-muted); font-size: 12px; }
+
+/* A CHIP NEVER WRAPS. Two lines of chip is a row that has stopped being
+   scannable, and the reference's widest label — "Supermarket Empty Totes" —
+   has to fit on one line at 1440. So the chip is a single line that ellipsises
+   with its full text in a title, and the columns below are sized so it does
+   not have to. */
+.pd-postbl .pd-sel, .pd-postbl .pd-adv { white-space: nowrap; }
+/* Tighter chrome INSIDE THE TABLE ONLY. Nine columns share 1059 px at 1440 and
+   a chip spends 30 of them on padding, gap and caret before it draws a
+   character; the sheets, which have one field per row, keep the roomy one. */
+.pd-postbl .pd-sel { padding: 0 6px; gap: 5px; }
+.pd-postbl .pd-sel .car { margin-left: 0; }
+.pd-postbl .pd-adv { padding: 0 6px; gap: 5px; }
+.pd-postbl .pd-sel { overflow: hidden; }
+/* The chip's label box. text-overflow needs a box of its own — on the flex
+   container it does nothing, and a chip too wide for its column clipped
+   mid-word with nothing to say it had been cut. The full name is in the
+   button's title either way. */
+.pd-sel .t { display: inline-flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; }
+.pd-postbl .pd-sel .t { text-overflow: ellipsis; white-space: nowrap; display: block; }
+.pd-postbl td { white-space: nowrap; }
+/* THE TABLE FITS THE COLUMN AT 1440, AND DOES NOT SCROLL SIDEWAYS. A primary
+   table that scrolls sideways is not a table that fits — the last three
+   columns were off the right edge. It fits because an empty optional field is
+   a dash rather than a chip (see columnCell), which is the same reason the
+   reference's eight fit, and because the widths below are percentages of
+   whatever the column has rather than a fixed sum wider than it.
+
+   The two dock columns are the widest, because they carry group names:
+   "Supermarket Empty Totes" is the reference's widest chip and 17.5% of the
+   1107 px the main column has at 1440 is 194 px, which holds it. */
+.pd-postbl table { width: 100%; table-layout: fixed; }
+.pd-postbl col.c-pos { width: 6.5%; }
+.pd-postbl col.c-mode { width: 14%; }
+.pd-postbl col.c-part { width: 7%; }
+.pd-postbl col.c-partner { width: 13%; }
+.pd-postbl col.c-staging { width: 12.5%; }
+.pd-postbl col.c-src { width: 16%; }
+.pd-postbl col.c-via { width: 8%; }
+.pd-postbl col.c-dst { width: 16%; }
+.pd-postbl col.c-adv { width: 7%; }
+/* The nine add to 100. They have to be WRITTEN as nine: leaving Advanced to
+   "whatever is left" left it nothing, because the other eight already summed
+   to 100, and its badge then spilled 75 px past the table's right edge. */
+
+/* AND A CELL CLIPS. table-layout: fixed sets the table's width; it does not
+   stop a nowrap chip from painting outside its cell, which is the other half
+   of what "the table fits" has to mean. The chip's own max-width then binds
+   and it ellipsises, with the full name still in its title (style guide: a
+   chip never wraps). */
+.pd-postbl td, .pd-postbl th { overflow: hidden; }
+/* A column header wraps rather than spills — ROBOT DRIVES VIA does not fit an
+   8% column on one line, and a header painted over its neighbour is the same
+   defect as a chip painted over one. */
+.pd-postbl th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
+
+/* The dim placeholder an empty optional field draws instead of a chip. It is
+   still a button — clicking it draws the chip and opens its picker — but it
+   carries none of the chip's chrome, so a row of them reads as a row of
+   nothing-to-see rather than a row of controls. */
+.pd-blank {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 2px;
+    border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 13px;
+    cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pd-blank:hover { color: var(--text); }
+.pd-blank .k { color: var(--text-muted); font-size: 11px; }
+/* Two fields in one cell stack, because side by side they cannot both fit a
+   node name in 14% of the column. */
+.pd-cellsep { display: block; height: 2px; }
+
+/* The route: chips in order, with the arrows that move one and an add at the
+   end. The separator is drawn, not typed, so it never lands inside a chip. */
+.pd-via { display: inline-flex; align-items: center; }
+.pd-viasep { color: var(--text-muted); font-style: normal; margin: 0 2px; }
+.pd-mv {
+    border: 0; background: none; color: var(--text-muted); cursor: pointer;
+    font: inherit; font-size: 13px; line-height: 1; padding: 0 2px;
+}
+.pd-mv:hover { color: var(--text); }
+
+/* A picker is a chip that opens a popover list — never a native <select>
+ * (style guide: never use native dialogs; a menu is one). */
+.pd-sel {
+    display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px;
+    border: 1px solid var(--sub-2); border-radius: 8px; background: var(--surface);
+    color: var(--text); font: inherit; font-size: 13px; cursor: pointer; max-width: 100%;
+}
+.pd-sel:hover { border-color: var(--sub-3); }
+.pd-sel .car { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid var(--sub-4); margin-left: 2px; flex: 0 0 auto; }
+.pd-sel.part { color: var(--chip-ink-ok); border-color: var(--viz-green); }
+.pd-sel.bad { border-color: var(--viz-coral); }
+.pd-sel .k { color: var(--text-muted); font-size: 11px; }
+.pd-sel .gl { flex: 0 0 auto; width: 22px; height: 22px; }
+.pd-adv {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px;
+    border: 1px solid var(--sub-2); border-radius: 8px; background: none;
+    color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.pd-adv.set { color: var(--accent); border-color: var(--accent); }
+
+/* ── D1 · bottom bar ──────────────────────────────────────────────────── */
+.pd-bar {
+    border-top: 1px solid var(--sub-1); background: var(--elev-header, var(--surface));
+    padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex: 0 0 auto;
+}
+.pd-bar .h { font-size: 14px; font-weight: 600; }
+.pd-bar .h.bad { color: var(--chip-ink-below); }
+.pd-bar .d { font-size: 12px; color: var(--text-muted); }
+.pd-bar .prov { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+.pd-bar .prov.dirty { color: var(--chip-ink-near); }
+
+/* ── popover picker ───────────────────────────────────────────────────── */
+.pd-pop {
+    position: absolute; min-width: 220px; max-width: 340px; max-height: 320px; overflow: auto;
+    background: var(--surface); border: 1px solid var(--sub-3); border-radius: 12px;
+    padding: 6px; z-index: var(--z-dropdown);
+    box-shadow: var(--shadow-lg);
+}
+.pd-pop[hidden] { display: none; }
+.pd-pop button {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    padding: 8px 10px; border-radius: 8px; border: 0; background: none;
+    color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.pd-pop button:hover { background: var(--surface-2, var(--surface)); }
+.pd-pop button.on { color: var(--accent); }
+.pd-pop .pd-lbl { padding: 8px 10px 4px; display: block; }
+.pd-pop .none { color: var(--text-muted); padding: 8px 10px; font-size: 12px; }
+
+/* ── D2 · the Advanced sheet ──────────────────────────────────────────────
+   600 wide over a scrim, from the row's gear. It is the only place the twelve
+   non-flow columns appear, so it is deliberately plain: a label column, a
+   value column, and a section rule. Nothing here is an accent but the section
+   counts and the primary button (P13). */
+/* THE SCRIM IS .modal-overlay, drawn by shingoedge.css. This file used to
+   redeclare it — position:fixed/inset:0/var(--scrim)/flex-centre/z-modal, the
+   same declarations under a second name, switched by [hidden] instead of
+   .active. #pd-scrim carries the base class now and this rule is gone; what
+   stays below is the CARD, which is this page's own. */
+.pd-modal {
+    position: relative; width: 600px; max-width: calc(100vw - 48px); max-height: calc(100vh - 64px);
+    background: var(--surface); border: 1px solid var(--sub-2); border-radius: 16px;
+    display: flex; flex-direction: column;
+    box-shadow: var(--shadow-lg);
+    animation: pd-modal-in 160ms ease-out;
+}
+@keyframes pd-modal-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .pd-modal { animation: none; } }
+.pd-modal .mh { padding: 20px 24px 12px; border-bottom: 1px solid var(--sub-1); }
+.pd-modal .mh h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.pd-modal .mh p { margin: 4px 0 0; color: var(--text-muted); font-size: 12.5px; }
+.pd-modal .mb { padding: 6px 24px 10px; overflow: auto; }
+.pd-modal .mf {
+    padding: 14px 24px; border-top: 1px solid var(--sub-1);
+    display: flex; align-items: center; gap: 10px;
+}
+.pd-modal .mf .st { color: var(--text-muted); font-size: 12.5px; margin-right: auto; }
+.pd-sec { padding: 10px 0 4px; }
+.pd-sec .pd-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pd-sec .pd-lbl .cnt {
+    text-transform: none; letter-spacing: 0; font-weight: 600;
+    color: var(--accent); font-size: 11px;
+}
+.pd-fld {
+    display: grid; grid-template-columns: 230px 1fr; align-items: center;
+    gap: 6px 14px; padding: 3px 0;
+}
+.pd-fld label { font-size: 13px; }
+.pd-fld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
+.pd-fld .v { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pd-inp {
+    height: 32px; min-width: 96px; padding: 0 10px; border: 1px solid var(--sub-2);
+    border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
+    font-variant-numeric: tabular-nums;
+}
+.pd-inp.dflt { color: var(--text-muted); }
+.pd-src {
+    font-size: 10.5px; font-weight: 600; letter-spacing: .04em; padding: 2px 7px;
+    border-radius: 999px; border: 1px solid var(--sub-3); color: var(--text-muted);
+}
+.pd-note { color: var(--text-muted); font-size: 12px; }
+.pd-chk {
+    width: 34px; height: 20px; border-radius: 10px; background: var(--sub-2);
+    position: relative; border: 0; padding: 0; cursor: pointer; flex: 0 0 auto;
+}
+.pd-chk::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+    border-radius: 7px; background: var(--sub-5); transition: left 120ms ease;
+}
+.pd-chk.on { background: var(--accent-solid); }
+.pd-chk.on::after { left: 17px; background: var(--on-accent-solid); }
+@media (prefers-reduced-motion: reduce) { .pd-chk::after { transition: none; } }
+.pd-chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+    border-radius: 999px; border: 1px solid var(--sub-2); background: none;
+    color: var(--text-muted); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.pd-chip.set { border-color: var(--accent); color: var(--text); }
+.pd-chip.set i { font-style: normal; color: var(--text-muted); }
+.pd-chip.add { border-style: dashed; color: var(--accent); }
+.pd-sel.dflt { color: var(--text-muted); }
+
+/* ── D3 · the routing set on the map ──────────────────────────────────────
+   Map left, names right. The plant is the substrate ramp and nothing on it is
+   saturated except the two robot paths and the accent waypoints — the same
+   rule the cell picture follows, at plant scale. */
+/* Fills the shell, like every other tab. It used to guess at the viewport
+   minus 210 px with a 620 px floor, which is the same hardcoded-chrome
+   arithmetic the Flows tab's `calc(100vh - 56px)` was, and it grew the page
+   whenever the guess was short. */
+.pd-rs { display: flex; flex: 1 1 auto; min-height: 0; }
+.pd-map { flex: 1; position: relative; background: var(--bg); overflow: hidden; }
+.pd-map svg { width: 100%; height: 100%; display: block; }
+.pd-map .cap {
+    position: absolute; left: 20px; bottom: 16px; color: var(--text-muted);
+    font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
+}
+.pd-map .zoom { position: absolute; right: 16px; top: 14px; display: flex; gap: 6px; }
+.pd-map .zoom button {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--sub-2);
+    background: var(--surface); color: var(--text-muted); font: inherit; font-weight: 600; cursor: pointer;
+}
+.pd-nomap { padding: 40px; color: var(--text-muted); font-size: 13px; max-width: 46ch; }
+
+.pd-rsp {
+    width: 400px; flex: 0 0 400px; border-left: 1px solid var(--sub-1);
+    display: flex; flex-direction: column; background: var(--elev-header, var(--surface));
+}
+.pd-rsp .hd { padding: 18px 20px 10px; }
+.pd-rsp .hd h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.pd-rsp .hd p { margin: 4px 0 0; color: var(--text-muted); font-size: 12.5px; }
+.pd-rsp .lst { padding: 0 12px 12px; overflow: auto; flex: 1; }
+.pd-rsp .ft { padding: 12px 20px; border-top: 1px solid var(--sub-1); color: var(--text-muted); font-size: 12px; }
+.pd-rgrp { padding: 14px 8px 6px; display: block; }
+.pd-rrow { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; }
+.pd-rrow:hover { background: var(--surface); }
+.pd-rrow.add { cursor: pointer; }
+.pd-rrow.flash { background: var(--surface-2, var(--surface)); outline: 1px solid var(--accent); }
+.pd-rrow .sq { width: 12px; height: 12px; border-radius: 3px; background: var(--station); flex: 0 0 auto; }
+.pd-rrow .sq.grp { width: 14px; height: 14px; border: 1.5px solid var(--station); background: none; }
+.pd-rrow .sq.grp.dash { border-style: dashed; opacity: .6; }
+.pd-rrow .sq.pos { background: none; border: 1.5px solid var(--sub-5); }
+.pd-rrow .sq.lm { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); margin: 0 2px; }
+.pd-rrow .nm { font-weight: 600; font-size: 13.5px; }
+.pd-rrow .nm.accent { color: var(--accent); }
+/* The row's whole explanation is this sub-line: where the name came from, and
+   the evidence. NO ORIGIN PILL — "backfill" in a pill is a word from the
+   implementation, and an engineer reading it learns that something put the
+   name there rather than which of their own flows did. A name still waiting
+   for a decision says so in amber; once the switch is on, the same sentence
+   goes quiet. */
+.pd-rrow .nm small { display: block; font-weight: 400; color: var(--text-muted); font-size: 11.5px; }
+.pd-rrow .nm small.bf { color: var(--chip-ink-near); }
+/* A group's members, under the provenance line rather than instead of it. */
+.pd-rrow .nm small.mem { color: var(--sub-5); }
+.pd-rrow .sp { flex: 1; }
+.pd-refusal {
+    margin: 0 12px 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
+    color: var(--chip-ink-below); border: 1px solid var(--viz-coral);
+}
+
+/* The map's marks. Structure recedes: every edge is one substrate stroke and
+   the only saturated things are the two robot paths and the waypoints. */
+.mp-edge { stroke: var(--sub-1); stroke-width: 1; fill: none; }
+.mp-pos { fill: var(--surface); stroke: var(--sub-5); stroke-width: 1.2; }
+.mp-pos.on { stroke: var(--station); stroke-width: 1.5; }
+.mp-post { font-size: 9px; font-weight: 600; fill: var(--text); }
+.mp-smn { fill: var(--station); }
+.mp-grp { fill: none; stroke: var(--station); stroke-width: 1; stroke-dasharray: 3 3; opacity: .6; }
+.mp-grpt { font-size: 10.5px; font-weight: 600; fill: var(--text); }
+.mp-route { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+/* Robot 1's path is wide and under; Robot 2's is thin and over, so a shared
+   aisle shows both instead of one hiding the other. */
+.mp-route.r1 { stroke: var(--robot-1); stroke-width: 7; opacity: .55; }
+.mp-route.r2 { stroke: var(--robot-2); stroke-width: 2.5; }
+.mp-key { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
+.mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
+
+/* ── Generate variants (Q2) ───────────────────────────────────────────────
+   The same modal shell as the Advanced sheet, one size wider, because its body
+   is a grid whose column count is the base style's produce claims rather than
+   a fixed two. Everything inside it — the chips, the section rule, the field
+   shape, the footer — is the sheet's, so the desktop still has one modal. */
+.pd-modal.pd-wide { width: 920px; }
+.pd-gentbl { width: 100%; border-collapse: collapse; }
+.pd-gentbl th {
+    text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--sub-1);
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+    white-space: nowrap;
+}
+.pd-gentbl td { padding: 4px 8px; border-bottom: 1px solid var(--sub-1); white-space: nowrap; }
+.pd-geninput {
+    height: 30px; min-width: 15rem; padding: 0 9px; background: var(--surface);
+    border: 1px solid var(--sub-2); border-radius: 8px; color: var(--text); font: inherit; font-size: 13px;
+}
+.pd-gentbl + .pd-chip.add { margin-top: 10px; }
+
+/* ── D4 · Operator screens, D5 · Settings ─────────────────────────────────
+   One sheet shape for both: a section rule, a 230 px label column and the
+   value beside it — the same grid the Advanced modal uses, so the desktop has
+   one field shape and not three. */
+.pd-sheet { padding: 12px 32px 20px; }
+/* Settings is a FORM and reads best at a form's width; operator screens is a
+   TABLE and gets the page. The reference draws them that way (D4 full-bleed,
+   D5 ending near 1008 px), and one cap on both made D4's table stop two-thirds
+   of the way across an otherwise empty screen. */
+.pd-sheet.pd-settings { max-width: 1040px; }
+/* THE RHYTHM IS THE REFERENCE'S. Five sections at 18/10 padding, fields at
+   3 px and a note at 6 px pushed Styles and Danger below the fold at 900 —
+   D5's whole point is that the dangerous thing is visible from the same place
+   as the safe ones. The reference's spacing is tighter: 12 above a section
+   rule, 6 below it, and a field row that is its control's height plus two. */
+.pd-sect {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 10px 0 4px; border-top: 1px solid var(--sub-1);
+}
+.pd-sheet > .pd-sect:first-child { border-top: 0; padding-top: 0; }
+.pd-sect h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.pd-sect.danger h2 { color: var(--chip-ink-below); }
+.pd-sect .pd-spacer { flex: 1; }
+.pd-sfld {
+    display: grid; grid-template-columns: 300px 1fr; align-items: center;
+    gap: 4px 14px; padding: 1px 0;
+}
+.pd-sfld label { font-size: 13px; }
+.pd-sfld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
+.pd-sfld .v { display: flex; align-items: center; gap: 10px; }
+.pd-inp.wide { min-width: 420px; }
+.pd-note { margin: 2px 0 2px 314px; color: var(--text-muted); font-size: 12.5px; line-height: 1.35; max-width: 68ch; }
+.pd-modal .pd-note { margin-left: 0; }
+.pd-seg { display: inline-flex; border: 1px solid var(--sub-2); border-radius: 10px; overflow: hidden; }
+.pd-seg button {
+    height: 34px; padding: 0 14px; border: 0; border-right: 1px solid var(--sub-2);
+    background: none; color: var(--text-muted); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.pd-seg button:last-child { border-right: 0; }
+.pd-seg button.on { background: var(--surface-2, var(--surface)); color: var(--text); }
+.pd-btn.danger { border-color: var(--viz-coral); color: var(--chip-ink-below); }
+.pd-savebar {
+    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+    padding: 12px 0 0; margin-top: 8px; border-top: 1px solid var(--sub-1);
+}
+.pd-savebar .prov { margin-right: auto; color: var(--text-muted); font-size: 12px; }
+.pd-savebar .prov.dirty { color: var(--chip-ink-near); }
+.pd-nchip {
+    display: inline-block; margin: 0 6px 0 0; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--sub-2); font-size: 12px; color: var(--text-muted);
+}
+.pd-acts { text-align: right; white-space: nowrap; }
+.pd-acts .pd-dimlink { margin-left: 14px; }
+.pd-modal .mf .st.bad { color: var(--chip-ink-below); }
+.pd-pop button.bad { color: var(--chip-ink-below); }
+
+/* ── D6 · Presets (U10) ───────────────────────────────────────────────────
+   No reference PNG for this tab. Every rule here is one of two things: the
+   grouped list table P0 and D4 already use, or the Advanced sheet's modal at
+   a different width. Nothing invents a size.
+
+   DRIFT IS THE WARNING HUE AND NEVER THE ACCENT. --chip-ink-near is the token
+   the rest of the surface warns with (D3's backfilled routing row, the bar's
+   `Unsaved changes`), and indigo on this page means "the thing you are working
+   on". A drifted member is the second kind of thing, not the first. */
+.pd-warn { color: var(--chip-ink-near); font-size: 12px; }
+
+/* `v3` beside a name: the version is part of the identity — two versions share
+   a name — so it reads at the name's size, dim rather than boxed. A tag border
+   here would compete with the state tags P0 draws in the same column position. */
+.pd-vtag { color: var(--text-muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+
+/* THE NAME IS ONE LINE. It is the column an engineer scans down, and a preset
+   named from a shape carries the mode word and its positions, so it is long by
+   construction: left to wrap it broke after the positions and orphaned `v1` on
+   a second line. Ellipsised, with the full name in the cell's own title. */
+.pd-presettbl td.pn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The Shape column. CHIPS NEVER WRAP (SPEC §2): a shape over six positions
+   ellipsises its list instead of growing the row, because a table whose row
+   height depends on its content stops being scannable down the column that
+   matters. */
+.pd-shape { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.pd-shape .gl, .pd-shape svg { flex: 0 0 auto; width: 22px; height: 22px; }
+.pd-shape .w { font-size: 13px; white-space: nowrap; }
+.pd-shape .ns {
+    color: var(--text-muted); font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+
+/* The expanded member list. It is a row of the table rather than a panel
+   beside it, so the parts that run a shape read directly under the shape's own
+   name and the eye does not travel. */
+.pd-presettbl tbody tr.pd-memrow td { padding: 2px 14px 12px; border-bottom: 1px solid var(--sub-1); }
+.pd-presettbl tbody tr.pd-memrow:hover td { background: none; }
+.pd-mem {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 10px; border-radius: 8px; font-size: 13px;
+}
+.pd-mem:hover { background: var(--surface-2, var(--surface)); }
+.pd-mem .nm { font-weight: 500; }
+.pd-mem .sp { flex: 1; }
+.pd-candtbl tbody tr { cursor: default; }
+
+/* ── the two modals ───────────────────────────────────────────────────────
+   The Advanced sheet's shell at two more widths. 480 for the naming modal —
+   one field and a sentence, and a 600 box around one field reads as a box with
+   something missing. 640 for the apply modal, whose body is a list of parts
+   with a diff under each: the diff lines are the widest thing on it and 600
+   wrapped them. */
+.pd-modal.pd-narrow { width: 480px; }
+.pd-modal.pd-apply { width: 640px; }
+
+/* The apply checklist. NONE PRE-TICKED is the ruling (explicit re-apply), so
+   the empty tick is the resting state of every row and has to read as a
+   control rather than as a disabled one — hence the same border the chips use,
+   and the accent only once it is on. */
+.pd-alist { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.pd-arow { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; border-radius: 10px; }
+.pd-arow:hover { background: var(--surface-2, var(--surface)); }
+.pd-arow.off { opacity: .6; }
+.pd-arow .b { min-width: 0; flex: 1; }
+.pd-arow .nm { font-size: 13.5px; font-weight: 600; }
+.pd-tick {
+    width: 16px; height: 16px; margin-top: 2px; flex: 0 0 auto; cursor: pointer;
+    border: 1px solid var(--sub-3); border-radius: 5px; background: var(--surface);
+    position: relative;
+}
+.pd-tick.on { background: var(--accent-solid); border-color: var(--accent-solid); }
+.pd-tick.on::after {
+    content: ''; position: absolute; left: 4px; top: 1px;
+    width: 5px; height: 9px; border: solid var(--on-accent-solid);
+    border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.pd-tick.off { cursor: default; opacity: .4; }
+
+/* The previewed diff. One line per field that would change, the old value dim
+   and the new one at text weight, because the new value is the thing being
+   agreed to. */
+/* F1 · THE ONE QUESTION A PRESET CANNOT ANSWER. A position the applied shape
+   brings in with no part on it is asked about, inline on the row, rather than
+   drawn as a warning over a save that would be refused. The prompt is a chip
+   in the warning hue — it is the thing standing between the engineer and the
+   save — and its options open under it. */
+.pd-aneed { margin-top: 4px; }
+.pd-chip.need { border-style: dashed; color: var(--chip-ink-near); border-color: var(--viz-amber); }
+.pd-apick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px 0; }
+
+.pd-diff { margin: 3px 0 2px; font-size: 12px; line-height: 1.6; }
+.pd-diff b { font-weight: 600; }
