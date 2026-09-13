@@ -79,7 +79,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: stationID},
 		Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"},
 	}
-	svc.HandleNodeListRequest(env)
+	svc.HandleNodeListRequest(env, &protocol.NodeListRequest{})
 
 	if len(resp.replies) != 1 {
 		t.Fatalf("expected 1 reply, got %d", len(resp.replies))
@@ -147,7 +147,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.unknown"},
 		Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"},
 	}
-	svc.HandleNodeListRequest(env)
+	svc.HandleNodeListRequest(env, &protocol.NodeListRequest{})
 
 	var nodeListResp protocol.NodeListResponse
 	payloadBytes, _ := json.Marshal(resp.replies[0].payload)
@@ -201,7 +201,7 @@ func TestNodeListResponse_LoaderBuildFailure_SendsNothing(t *testing.T) {
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.unknown"},
 		Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"},
 	}
-	svc.HandleNodeListRequest(env)
+	svc.HandleNodeListRequest(env, &protocol.NodeListRequest{})
 
 	if len(resp.replies) != 0 {
 		t.Fatalf("expected 0 replies on loader build failure, got %d", len(resp.replies))

@@ -49,7 +49,7 @@ func buildSubjectRouter(svc *messaging.CoreDataService) (*router.SubjectRouter, 
 	r := router.NewSubject()
 	router.RegisterSubject(r, protocol.SubjectEdgeRegister, svc.HandleEdgeRegister)
 	router.RegisterSubject(r, protocol.SubjectEdgeHeartbeat, svc.HandleEdgeHeartbeat)
-	router.RegisterSubjectBare(r, protocol.SubjectNodeListRequest, svc.HandleNodeListRequest)
+	router.RegisterSubject(r, protocol.SubjectNodeListRequest, svc.HandleNodeListRequest)
 	router.RegisterSubject(r, protocol.SubjectProductionReport, svc.HandleProductionReport)
 	router.RegisterSubject(r, protocol.SubjectTagVerifyRequest, svc.HandleTagVerifyRequest)
 	router.RegisterSubjectBare(r, protocol.SubjectCatalogPayloadsRequest, svc.HandleCatalogPayloadsRequest)

@@ -69,6 +69,8 @@ CREATE TABLE style_node_claims (
   inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '',
   outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '',
   outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader',
+  source TEXT NOT NULL DEFAULT 'admin', called_by TEXT NOT NULL DEFAULT '',
+  updated_at TEXT, retired_at TEXT, source_preset_id INTEGER, source_preset_version INTEGER,
   UNIQUE(style_id, core_node_name));
 CREATE TABLE reporting_points (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
