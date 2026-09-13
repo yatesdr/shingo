@@ -112,7 +112,7 @@ sim:
   # mean order life, so travel is ~18% of an order and the other 82% is the
   # pipeline. Naming travel as the cost pointed tuning at the one leg that was
   # already correct. The real wall-bound remainder is the pipeline cadence above,
-  # classified site by site in docs/dev-env/sim-timer-census.md.
+  # and the sim-vs-wall rule for it is in docs/dev-env/sim.md.
   #
   # MUST MATCH shingocore.dev.yaml AND every edge, and must be changed HERE rather
   # than through POST /api/sim/speed: a live SetSpeed re-anchors per process and

@@ -178,7 +178,7 @@ func (e *Engine) stagedBinSweepLoop() {
 	// MISMATCH. store/bins releases a staged bin when staged_expires_at <
 	// clock.Now() — simulated time — while this sweep, the thing that clears
 	// them, ran at wall rate. At Nx the world produced expiries N times faster
-	// than the loop draining them. Bucket (i) in docs/dev-env/sim-timer-census.md.
+	// than the loop draining them. The rule is in docs/dev-env/sim.md.
 	ticker := clock.Default().NewTicker(interval)
 	defer ticker.Stop()
 	for {

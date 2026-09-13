@@ -90,7 +90,7 @@ func simWarlinkClient(cfg *config.Config) plc.WarlinkClient {
 			"      at N x that is 5N SIMULATED seconds of backstop latency per hop. Dropping it to\n"+
 			"      500ms took 10x from 4.65 to 34.50/wall-min - measured - but the same interval is\n"+
 			"      also the dead-letter budget (MaxRetries x interval), so lowering it divides a REAL\n"+
-			"      broker's recovery window by the same factor. docs/dev-env/sim-speed-ceiling.md.",
+			"      broker's recovery window by the same factor. docs/dev-env/sim.md.",
 			clk.RequestedSpeed(), clk.Speed())
 	}
 	clock.SetDefault(clk) // wire the global now-provider so all clock.Now() use sim time

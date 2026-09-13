@@ -209,7 +209,7 @@ func TestBuildSimClock_TwoBinariesAgree(t *testing.T) {
 		t.Fatalf("builder produced drifting clocks: core=%v edge=%v", core.Now(), edge.Now())
 	}
 	// Derived from the cap rather than hardcoded: the cap is a MEASURED number
-	// (docs/dev-env/sim-speed-ceiling.md) and will move again when the outbox
+	// (docs/dev-env/sim.md) and will move again when the outbox
 	// drain's cadence is split from its dead-letter budget. What this test is
 	// actually guarding is that both binaries clamp identically, not what the
 	// clamp happens to be today.

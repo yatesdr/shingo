@@ -43,8 +43,8 @@ test:
 # docker-tagged run starts testcontainers/ryuk:0.13.0 alongside its postgres
 # and reaps BOTH — 25s after a clean exit, and within 40s after the run was
 # killed mid-test. The old sentence is recorded rather than deleted because it
-# was load-bearing: docs/coverage-map.md justified `-p 1` with the opposite
-# assumption, and each wrong claim made the other look reasonable.
+# was load-bearing: a since-removed coverage map justified `-p 1` with the
+# opposite assumption, and each wrong claim made the other look reasonable.
 #
 # What is actually true is the shape both were reaching for: cleanup here has
 # exactly ONE mechanism and that mechanism lives in a container. Off,

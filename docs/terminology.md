@@ -268,6 +268,10 @@ A node whose destination gates deliberately stand down — reserved by nothing, 
 
 The workflow for switching a production line from one job style to another. Progresses through a fixed sequence: stopping, counting out, storing, delivering, counting in, and ready.
 
+### Paired Position
+
+The node named by a claim's `paired_core_node`. The field means two different things depending on the swap mode: at a **sequential** (A/B) cell it is the partner position the line draws from while this one is swapped; at a **press-index** cell it is the back press position in a queue. One field, two meanings — read the mode before reading the field.
+
 ### Departed
 
 A swap leg that has finished with its **cell** but is not finished as an order: the fleet has confirmed the last step of the leg's plan whose node belongs to the cell, and the robot is now carrying a bin away from it.

@@ -255,7 +255,7 @@ type NotificationsConfig struct {
 
 // SimConfig configures the local-dev fleet simulator (core side). Sim code is
 // behind //go:build sim AND requires SHINGO_ALLOW_SIM=1 at runtime; this struct
-// only carries the knobs. See implementation-brief.md / docs/dev-env-api-gaps.md.
+// only carries the knobs. See docs/dev-env/sim.md.
 type SimConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	Seed        int64         `yaml:"seed"`         // PRNG seed; 0 = derive from time and log it

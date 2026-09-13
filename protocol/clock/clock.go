@@ -93,7 +93,7 @@ func Now() time.Time {
 // work is real (an SSE keepalive to an actual browser, a Kafka reconnect
 // backoff, retention over real files) keeps calling the standard library
 // directly. That distinction is not a judgement call to be re-made per site:
-// it is recorded, site by site, in docs/dev-env/sim-timer-census.md.
+// the rule, and the kinds that stay wall, are in docs/dev-env/sim.md.
 //
 // Production-identical: with no SimClock installed this IS realClock, so
 // Default().NewTicker(d) is time.NewTicker(d) with one indirection.

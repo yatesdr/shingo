@@ -88,6 +88,19 @@ same daily ticker), and the edge's `counter_snapshots` at 14 days. None of
 those windows help a soak that fast-forwards weeks of production in hours —
 `make dev-reset` periodically.
 
+## Tests and coverage
+
+`make gate` runs everything CI enforces except the docker suites. For a coverage
+number, ask the toolchain rather than a checked-in map — a map is only true on
+the day it was captured:
+
+```sh
+go test -tags=docker -coverprofile=cover.out ./... && go tool cover -func=cover.out
+```
+
+(Drop `-tags=docker` to skip the suites that need containers; the number falls
+accordingly. `go tool cover -html=cover.out` for the per-line view.)
+
 ## Troubleshooting
 
 | Symptom | Likely cause / fix |
@@ -101,8 +114,9 @@ those windows help a soak that fast-forwards weeks of production in hours —
 
 ## Internals
 
-- Architecture, phase-by-phase build notes, and the engine-API gap log live in
-  `docs/dev-env-api-gaps.md` and the dev-env working docs.
+- Architecture and the rest of the sim reference live in `docs/dev-env/sim.md`
+  (what is built, the speed ceiling, which loops scale with sim time) and
+  `docs/dev-env/plant-model.md` (the plant it runs).
 - Sim seams: `shingo-core/fleet/simulator` (driver), `shingo-edge/plc/simwarlink`
   (fake PLC), `shingo-edge/engine/sim_operator.go` (auto operator),
   `shingo-core/plantspec` + `shingo-core/cmd/seeddev` (plant spec + seeder).

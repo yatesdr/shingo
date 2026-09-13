@@ -171,6 +171,43 @@ free robot and the driver tracks utilization. It is off by default, so the demo
 runs as the legacy infinite fleet (one robot per active order). A live dev-mode
 top-strip is on the roadmap.
 
+### The speed ceiling is 5×
+
+`clock.DefaultSimMaxSpeed` (`protocol/clock/sim_clock.go:170`) refuses more, and
+Core and Edge cap at the same const so their fast-forward clocks cannot drift.
+The binding constraint is not CPU — it is the Edge outbox drain, a **wall**-time
+backstop (`protocol/outbox/drainer.go:170`, `outbox_drain_interval: 5s`), so at
+N× it costs `5N` *simulated* seconds per Edge→Core hop. It is not simply lowered
+because that interval is three policies at once — drain cadence, wake-settle
+coalescing, and (as `MaxRetries × interval`) the dead-letter budget a real broker
+gets to come back. Above 5× the simulated world outruns the choreography and
+sim-time release/abandon timeouts misfire.
+
+To measure a speed change, take rates per **wall** minute after three minutes of
+settle — per *sim* minute flatters a starving rig, reporting less work as if it
+were more.
+
+### Which loops scale with sim time
+
+A periodic loop takes its cadence from `clock.Default()` when the work it paces
+is **simulated**, and calls `time` directly when the work is **real**. Read the
+clock at call time, never cached into a struct field at construction — sim
+startup installs the SimClock during boot, and a clock captured before that is
+the real one forever.
+
+Wall-time loops stay wall by *kind*, not by exception: SSE keepalives to a live
+browser, Kafka reconnect backoff, retention and rotation, HTTP to real external
+systems (SEER RDS, CMS), panic-restart and rebind supervision, debounce
+protecting something real, and anything paired with a SQL `NOW()` or a wall stamp
+written elsewhere. **A wall stamp and a sim stamp must never be differenced** —
+converting one half of such a pair is the defect, not the fix.
+
+The same split runs one layer down, in Postgres: a column is on sim time if the
+Go insert passes `clock.Now()` and on wall time if it lets the DDL's `DEFAULT
+now()` fire. That is invisible on a plant, where both clocks are wall, and bites
+only on the rig — `bin_uop_ledger.applied_at` against `orders.created_at`
+returns clock drift, not a duration.
+
 ---
 
 ## Use cases

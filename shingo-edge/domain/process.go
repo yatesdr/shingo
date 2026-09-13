@@ -306,7 +306,21 @@ type NodeClaim struct {
 	AutoRequestPayload   string     `json:"auto_request_payload"`
 	KeepStaged           bool       `json:"keep_staged"`
 	EvacuateOnChangeover bool       `json:"evacuate_on_changeover"`
-	PairedCoreNode       string     `json:"paired_core_node"`
+	// PairedCoreNode is ONE FIELD CARRYING TWO MEANINGS, and which one you are
+	// reading depends entirely on the swap mode:
+	//
+	//   - at a sequential (A/B) cell it is the PARTNER POSITION — the side the
+	//     line draws from while this one is swapped, and vice versa after a
+	//     cutover. The two are peers; neither is "behind" the other.
+	//   - at a press-index cell it is the BACK PRESS POSITION — a place in a
+	//     queue, not a peer. (With SecondPairedCoreNode set the layout is
+	//     C → B → A and this field is the middle one.)
+	//
+	// Nothing in the name says which, so read the mode before reading the
+	// field. claim_validation.go refuses the one case that is wrong under both
+	// readings — a pair whose two positions are the same node — but every other
+	// site carries the overload silently. See docs/terminology.md.
+	PairedCoreNode string `json:"paired_core_node"`
 	// SecondPairedCoreNode is the optional third (back-most) position for
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
 	// final dropoff goes to C instead of B. Empty = legacy 2-position.

@@ -165,8 +165,8 @@ func NewRunningClock(speed float64) *SimClock {
 //
 // The cap is the fastest speed actually observed to work, not the fastest that
 // might. 6x through 9x are untested and therefore not permitted: an honest 5x
-// beats a lying 10x. See docs/dev-env/sim-speed-ceiling.md for the per-leg
-// profile and what raising it would cost.
+// beats a lying 10x. See docs/dev-env/sim.md for the ceiling and the
+// binding leg; what raising it would cost is a designed change, not a knob.
 const DefaultSimMaxSpeed = 5.0
 
 // SimMode is which kind of clock BuildSimClock constructed, returned so the caller
