@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/domain/flowspec"
 )
 
 // Process is one production process at the edge — typically a line or
@@ -58,8 +59,12 @@ type Process struct {
 	// GroupID is the optional process_groups row this process belongs to.
 	// nil = "Ungrouped" on the Processes admin page. Pure UI taxonomy —
 	// nothing in the runtime reads this column.
-	GroupID   *int64    `json:"group_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	GroupID *int64 `json:"group_id,omitempty"`
+	// FlowComposerEnabled gates the HMI flow composer for this process. Off
+	// until the engineer has reviewed the routing set (process_routing_nodes);
+	// the routing backfill re-derives only while it is off.
+	FlowComposerEnabled bool      `json:"flow_composer_enabled"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.
@@ -437,6 +442,46 @@ type NodeClaim struct {
 	// this comment used to name was deleted 2026-08.
 	AutoPush  bool      `json:"auto_push"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// ── ATTRIBUTION ────────────────────────────────────────────────────
+	// Who wrote this row and from where. The flow composer makes the claim
+	// table fully open — the floor writes the same rows the desktop does —
+	// so every row says. All SERVER-STAMPED: a client never sends these.
+	//
+	// Source is one of ClaimSourceAdmin / HMI / Generated / Cloned; rows that
+	// predate attribution read admin, because the desktop editor was the only
+	// writer there was.
+	Source string `json:"source"`
+	// CalledBy is the session user (admin) or the station (hmi).
+	CalledBy string `json:"called_by"`
+	// UpdatedAt is set on every upsert. Nil on rows never touched since
+	// attribution landed.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	// RetiredAt marks a claim that was deleted while changeover history still
+	// pointed at it. The row stays so the history label resolves; list reads
+	// skip it; re-adding the same (style, node) claim revives it.
+	RetiredAt *time.Time `json:"retired_at,omitempty"`
+	// SourcePresetID / SourcePresetVersion are PROVENANCE: which flow preset
+	// (and version) this claim was expanded from. Never a drift oracle.
+	SourcePresetID      *int64 `json:"source_preset_id,omitempty"`
+	SourcePresetVersion *int   `json:"source_preset_version,omitempty"`
+}
+
+// Claim sources — the writers a style_node_claims row can name.
+const (
+	ClaimSourceAdmin     = "admin"     // the desktop claim editor
+	ClaimSourceHMI       = "hmi"       // the station's flow composer
+	ClaimSourceGenerated = "generated" // GenerateStyles
+	ClaimSourceCloned    = "cloned"    // CloneStyle
+)
+
+// IsClaimSource reports whether s is one of the four writers.
+func IsClaimSource(s string) bool {
+	switch s {
+	case ClaimSourceAdmin, ClaimSourceHMI, ClaimSourceGenerated, ClaimSourceCloned:
+		return true
+	}
+	return false
 }
 
 // SwapModePressPosition marks a per-position claim synthesized from a
@@ -449,7 +494,11 @@ type NodeClaim struct {
 // NEVER PERSISTED. store/processes.UpsertClaim rejects it (it is absent from
 // protocol.ConfigurableSwapModes), so style_node_claims never holds this
 // value. A position carrying it exists only for the life of one changeover.
-const SwapModePressPosition protocol.SwapMode = "press_position"
+//
+// DEFINED IN flowspec, aliased here. The changeover table has an arm for it
+// and flowspec cannot import this package back (this package consults it), so
+// the constant lives where the table is. One definition, two names.
+const SwapModePressPosition = flowspec.SwapModePressPosition
 
 // SynthesizePositionClaim builds a per-position claim from a parent
 // press-index claim. CoreNodeName becomes the position's own name; SwapMode
@@ -949,22 +998,29 @@ func OptValue[T any](p *T) T {
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
-	StyleID              int64              `json:"style_id"`
-	CoreNodeName         string             `json:"core_node_name"`
-	Role                 protocol.ClaimRole `json:"role"`
-	SwapMode             protocol.SwapMode  `json:"swap_mode"`
-	PayloadCode          string             `json:"payload_code"`
-	UOPCapacity          int                `json:"uop_capacity"`
-	ReorderPoint         int                `json:"reorder_point"`
-	InboundStaging       string             `json:"inbound_staging"`
-	OutboundStaging      string             `json:"outbound_staging"`
-	InboundSource        string             `json:"inbound_source"`
-	OutboundDestination  string             `json:"outbound_destination"`
-	AllowedPayloadCodes  []string           `json:"allowed_payload_codes"`
-	AutoRequestPayload   string             `json:"auto_request_payload"`
-	EvacuateOnChangeover bool               `json:"evacuate_on_changeover"`
-	PairedCoreNode       string             `json:"paired_core_node"`
-	SecondPairedCoreNode string             `json:"second_paired_core_node"`
+	StyleID      int64              `json:"style_id"`
+	CoreNodeName string             `json:"core_node_name"`
+	Role         protocol.ClaimRole `json:"role"`
+	SwapMode     protocol.SwapMode  `json:"swap_mode"`
+	PayloadCode  string             `json:"payload_code"`
+	// UOPCapacity IS NOT A WRITE. The store never writes the column: the
+	// value is resolved from the payload catalog on every read, keyed on the
+	// payload code above. It stays on the decode shape so the API can REFUSE
+	// a body that carries one — deleting the field would have json silently
+	// drop the key, which is the same silence in different clothes — and
+	// Expand and InputFromClaim no longer echo it, because echoing a number
+	// nothing reads is how a dead column looks alive.
+	UOPCapacity          int      `json:"uop_capacity"`
+	ReorderPoint         int      `json:"reorder_point"`
+	InboundStaging       string   `json:"inbound_staging"`
+	OutboundStaging      string   `json:"outbound_staging"`
+	InboundSource        string   `json:"inbound_source"`
+	OutboundDestination  string   `json:"outbound_destination"`
+	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
+	AutoRequestPayload   string   `json:"auto_request_payload"`
+	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
+	PairedCoreNode       string   `json:"paired_core_node"`
+	SecondPairedCoreNode string   `json:"second_paired_core_node"`
 	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.
 	// See the contract block below, and the same-named fields on NodeClaim for
 	// what each one means.
@@ -1011,6 +1067,20 @@ type NodeClaimInput struct {
 	AutoReorder        *bool   `json:"auto_reorder,omitempty"`
 	KeepStaged         *bool   `json:"keep_staged,omitempty"`
 	Sequence           *int    `json:"sequence,omitempty"`
+
+	// ── ATTRIBUTION: SERVER-STAMPED, NEVER DECODED FROM A BODY ─────────
+	// json:"-" on all four: a client cannot set them, whatever it sends. The
+	// handler that owns the write stamps Source and CalledBy after decoding
+	// (the admin editor: 'admin' + session user; the station: 'hmi' + station).
+	// An empty Source reads as admin at the store, so internal callers that
+	// say nothing get the same answer a legacy row does.
+	//
+	// SourcePresetID / SourcePresetVersion follow the absent-means-untouched
+	// contract of the pointer fields above: nil leaves stored provenance alone.
+	Source              string `json:"-"`
+	CalledBy            string `json:"-"`
+	SourcePresetID      *int64 `json:"-"`
+	SourcePresetVersion *int   `json:"-"`
 }
 
 // IsLoaderNode reports whether the claim being submitted describes a

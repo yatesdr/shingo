@@ -1,11 +1,13 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"shingo/protocol"
+	"shingoedge/domain/flowspec"
 )
 
 // FieldError is one validation finding tagged with the request field it is
@@ -66,6 +68,113 @@ type ClaimNodeContext struct {
 	KnownScenePoints map[string]bool
 }
 
+// ErrRunningPositionMove refuses the one mid-run edit the runtime cannot
+// follow: a position appearing on, or leaving, the style the press is
+// RUNNING.
+//
+// IN domain BECAUSE THE STORE RAISES IT AND THREE LAYERS MATCH ON IT. Every
+// runtime reader of the running flow resolves its claim by (active_style_id,
+// core_node_name) and none of them caches — so a changed source, destination
+// or key route is simply what the next trip uses, and that is the flexibility
+// owner ruling R3 asked for. A POSITION is different: move the running style
+// off PLN_01 and the bin physically standing there has no live claim, so the
+// level sweep never refills it, the PLC tick stops counting the parts made off
+// it, and every delivered/completed handler looks past it.
+var ErrRunningPositionMove = errors.New("that position is running")
+
+// ClaimContextSet is ONE process's claim context, resolved once and then
+// answered per cell.
+//
+// THERE USED TO BE TWO BUILDERS. engine.flowClaimContext said in its own
+// comment that it mirrored www's claimNodeContext, and the two had already
+// drifted: the empty-plant-map log fired at one door and not the other, so
+// whether an unverifiable key route left a trace depended on which screen the
+// engineer had used. A single validator with two ways of being told what it
+// is validating against is a validator that answers two questions.
+//
+// RESOLVED ONCE PER REQUEST, ANSWERED PER CELL. ForNode is a map lookup; the
+// engine's version walked every process_node on the Edge for every cell of
+// every save.
+//
+// Checked stays FALSE on any lookup failure, and that is the load-bearing
+// part: "this node is not on your process" and "I could not find out" are
+// different sentences, and only one of them belongs in front of an engineer.
+type ClaimContextSet struct {
+	checked        bool
+	styleProcessID int64
+	// nodeProcessIDs is core node name -> the processes with a process_node
+	// row for it.
+	nodeProcessIDs map[string][]int64
+	knownCore      map[string]bool
+	scenePoints    map[string]bool
+}
+
+// ClaimContextInput is what NewClaimContextSet needs, as the caller already
+// has it. Every field is optional in the could-not-look sense described on
+// ClaimNodeContext: an empty Core node set or point set degrades the
+// validator to a warning rather than refusing a write.
+type ClaimContextInput struct {
+	// StyleProcessID is the process whose flow is being validated.
+	StyleProcessID int64
+	// Nodes is every process_node on the Edge, as (core node name, process).
+	Nodes []ClaimContextNode
+	// KnownCoreNodes is Core's synced node set; KnownScenePoints is the
+	// vendor map's point set.
+	KnownCoreNodes   map[string]bool
+	KnownScenePoints map[string]bool
+}
+
+// ClaimContextNode is one process_node, reduced to the two fields the
+// membership check reads. A struct rather than the store's row so domain
+// keeps no dependency on the store.
+type ClaimContextNode struct {
+	CoreNodeName string
+	ProcessID    int64
+}
+
+// NewClaimContextSet indexes one process's context. A zero StyleProcessID
+// leaves the set unchecked, which is the same "could not look" answer both
+// doors gave before.
+func NewClaimContextSet(in ClaimContextInput) ClaimContextSet {
+	if in.StyleProcessID == 0 {
+		return ClaimContextSet{}
+	}
+	byName := make(map[string][]int64, len(in.Nodes))
+	for _, n := range in.Nodes {
+		byName[n.CoreNodeName] = append(byName[n.CoreNodeName], n.ProcessID)
+	}
+	return ClaimContextSet{
+		checked:        true,
+		styleProcessID: in.StyleProcessID,
+		nodeProcessIDs: byName,
+		knownCore:      in.KnownCoreNodes,
+		scenePoints:    in.KnownScenePoints,
+	}
+}
+
+// Checked reports whether the set resolved. Callers log the empty-plant-map
+// case off this plus KnownScenePoints.
+func (s ClaimContextSet) Checked() bool { return s.checked }
+
+// KnownScenePoints is the vendor map's point set, so a caller can say when it
+// was empty — the one thing worth a line, because a key route saved against
+// no map is saved unverified.
+func (s ClaimContextSet) KnownScenePoints() map[string]bool { return s.scenePoints }
+
+// ForNode is the per-cell context ValidateNodeClaim takes.
+func (s ClaimContextSet) ForNode(coreNodeName string) ClaimNodeContext {
+	if !s.checked || coreNodeName == "" {
+		return ClaimNodeContext{}
+	}
+	return ClaimNodeContext{
+		Checked:          true,
+		StyleProcessID:   s.styleProcessID,
+		NodeProcessIDs:   s.nodeProcessIDs[coreNodeName],
+		KnownCoreNodes:   s.knownCore,
+		KnownScenePoints: s.scenePoints,
+	}
+}
+
 // validateKeyRoute is the Routing fieldset's half of ValidateNodeClaim, lifted
 // out because it is a self-contained set of rules about one field pair and the
 // parent had grown past the length the linter allows. It returns findings
@@ -82,7 +191,11 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 		out = append(out, FieldError{Field: field, Message: msg, Severity: SeverityError})
 	}
 	route := OptValue(in.KeyRoute)
-	if len(route) > 0 && in.IsLoaderNode() {
+	// THE TABLE IS THE AUTHORITY, not a second copy of the mode check. This read
+	// `in.IsLoaderNode()`, and KeyRoute is Forbidden for manual_swap and for
+	// nothing else — so the two say the same thing today and the table is the
+	// one that keeps saying it when a mode is added.
+	if len(route) > 0 && flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeyRoute] == flowspec.Forbidden {
 		add("key_route", "Key route applies to robot-served claims; a manual_swap loader does not drive")
 	}
 	seenPoint := map[string]bool{}
@@ -173,7 +286,9 @@ const KeepStagedWithheld = "inbound-staging option not available yet"
 // decides what to do with each severity via HasErrors.
 func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError {
 	var out []FieldError
+	reported := map[string]bool{}
 	add := func(field, msg string) {
+		reported[field] = true
 		out = append(out, FieldError{Field: field, Message: msg, Severity: SeverityError})
 	}
 
@@ -206,15 +321,29 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		add("sequence", "Board order cannot be negative")
 	}
 
+	// THE PER-MODE HALF READS ONE TABLE. Which fields this claim's mode
+	// requires and which it must not carry is flowspec.Steady's answer, shared
+	// with the store's guards, the changeover planner and the editor; this
+	// function chooses the wording and nothing else. An unknown mode has
+	// already been refused above and answers here as the retired "simple" row
+	// does, so the findings beside that refusal keep their shape.
+	spec := flowspec.Steady(in.Role, in.SwapMode)
+
 	// manual_swap loaders carry no edge-side payload: Core owns the loader's
 	// payload set from the loader board. Every other mode needs a primary.
-	if !in.IsLoaderNode() &&
-		(in.Role == protocol.ClaimRoleConsume || in.Role == protocol.ClaimRoleProduce) &&
-		in.PayloadCode == "" {
+	// The role guard is the historical one: a claim with no role at all is not
+	// told to pick a payload (the store defaults its role to consume).
+	//
+	// The loader guard that used to sit here (`!in.IsLoaderNode()`) is the table
+	// now: PayloadCode is Forbidden for manual_swap, so it is never Required for
+	// a loader and the Required test already excludes one. Core owns a loader's
+	// payload set, which is the reason behind both spellings.
+	if (in.Role == protocol.ClaimRoleConsume || in.Role == protocol.ClaimRoleProduce) &&
+		spec[flowspec.PayloadCode] == flowspec.Required && !ClaimInputHas(in, flowspec.PayloadCode) {
 		add("payload_code", "Select a payload")
 	}
 
-	validateSwapModeRouting(in, add)
+	validateSwapModeRouting(in, spec, add)
 
 	// A MARKED NODE MUST BE ONE THIS CLAIM OCCUPIES.
 	//
@@ -230,7 +359,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// the direction every other gate in this file goes.
 	marked := OptValue(in.ChangeoverEvacNodes)
 	if len(marked) > 0 {
-		if in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		if spec[flowspec.ChangeoverEvacNodes] == flowspec.Forbidden {
 			add("changeover_evac_nodes",
 				"Per-node changeover clearance applies to a cell whose claim names several nodes; use Evacuate on changeover for a single-node claim")
 		} else {
@@ -269,10 +398,23 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 
 	// The flip is press-index choreography; nothing else has two robots to
 	// swap between.
-	if in.IndexRobotSupplies != nil && *in.IndexRobotSupplies &&
-		in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+	if ClaimInputHas(in, flowspec.IndexRobotSupplies) && spec[flowspec.IndexRobotSupplies] == flowspec.Forbidden {
 		add("index_robot_supplies",
 			"Index robot fetches the replacement applies to 2-Robot Press Index only")
+	}
+
+	// STRICT MODES REFUSE EVERY FIELD THEY DO NOT USE (D4). The four rules
+	// above are the ones the server always had; for a strict mode the rest of
+	// the row's Forbidden entries are refused too, so a populated value the
+	// editor would have cleared is refused when it arrives any other way. The
+	// store reads the same answer through the same function, which is what
+	// makes the two write paths agree. A field a rule above already reported
+	// is not reported twice.
+	for _, v := range SteadyViolations(in) {
+		if v.Need != flowspec.Forbidden || reported[string(v.Field)] {
+			continue
+		}
+		add(string(v.Field), fmt.Sprintf("%s does not use %s; clear it", swapModeLabel(in.SwapMode), flowspec.Label(v.Field)))
 	}
 
 	out = append(out, validateKeyRoute(in, nodeCtx)...)
@@ -352,72 +494,91 @@ func describeProcessIDs(ids []int64) string {
 	}
 }
 
+// routingRequiredMessages is the wording of each routing refusal, per mode.
+//
+// WHICH fields a mode requires is flowspec.Steady's answer, not this map's:
+// the map only says how to phrase it, in the words the editor has always
+// shown. An entry with no wording still refuses — validateSwapModeRouting
+// falls back to the field's label — so a table change cannot be silenced by
+// forgetting a sentence here; TestRoutingRequiredMessagesAreTotal says when
+// one is missing.
+//
+// The sequential arm is the reason this map exists at all. Every other mode's
+// routing was refused here, at save time, by the person who can fix it, and
+// sequential fell straight through the switch: a claim with no partner, no
+// destination or no source saved clean and failed much later as an EMPTY
+// DISPATCH — the builder returned a zero ChangeoverDispatch, the planner
+// turned that into a generic "cannot build swap steps for node X", and the
+// node task landed in error naming a builder instead of a field. The three
+// fields are the ones the per-node builder actually reads, and they are the
+// same three requiredChangeoverFields demands at plan time.
+var routingRequiredMessages = map[protocol.SwapMode]map[flowspec.Field]string{
+	protocol.SwapModeSingleRobot: {
+		// One robot does the whole swap, so it needs somewhere to park the
+		// incoming bin AND somewhere to put the outgoing one.
+		flowspec.InboundStaging:      "Single-robot swap requires inbound staging",
+		flowspec.OutboundStaging:     "Single-robot swap requires outbound staging",
+		flowspec.OutboundDestination: "Single-robot swap requires an outbound destination",
+	},
+	protocol.SwapModeTwoRobot: {
+		// Robot A waits at the staging node until Robot B clears the line.
+		// Without it BuildTwoRobotSwapSteps returns nil silently and the
+		// operator's RELEASE click does nothing.
+		flowspec.InboundStaging:      "Two-robot swap requires inbound staging",
+		flowspec.OutboundDestination: "Two-robot swap requires an outbound destination",
+	},
+	protocol.SwapModeManualSwap: {
+		// Without it the post-swap bin has nowhere to go and the node
+		// deadlocks.
+		flowspec.OutboundDestination: "Loader/unloader claims require an outbound destination",
+	},
+	protocol.SwapModeTwoRobotPressIndex: {
+		flowspec.PairedCoreNode:      "2-Robot Press Index requires a Back Press Node",
+		flowspec.OutboundDestination: "2-Robot Press Index requires an Outbound Destination",
+	},
+	protocol.SwapModeSequential: {
+		flowspec.PairedCoreNode:      "Sequential A/B requires a Paired Position",
+		flowspec.OutboundDestination: "Sequential A/B requires an Outbound Destination",
+		flowspec.InboundSource:       "Sequential A/B requires an Inbound Source",
+	},
+}
+
+// swapModeLabel is the mode's name as the editor's messages say it.
+func swapModeLabel(mode protocol.SwapMode) string {
+	switch mode {
+	case protocol.SwapModeSingleRobot:
+		return "Single-robot swap"
+	case protocol.SwapModeTwoRobot:
+		return "Two-robot swap"
+	case protocol.SwapModeTwoRobotPressIndex:
+		return "2-Robot Press Index"
+	case protocol.SwapModeSequential:
+		return "Sequential A/B"
+	case protocol.SwapModeManualSwap:
+		return "Loader/unloader claims"
+	}
+	return string(mode)
+}
+
 // validateSwapModeRouting refuses a claim whose ROUTING does not match the
-// choreography its swap mode will run. One arm per mode, and a mode with no arm
-// is a mode whose missing fields are only discovered mid-changeover — which is
-// how sequential went for as long as it had none.
+// choreography its swap mode will run. It consults flowspec.Steady for the
+// mode's Required routing fields — the same table the planner reads at plan
+// time — and reports them in flowspec.RoutingFields order, which is the order
+// the per-mode switch this replaced used to report them in.
 //
 // Split out of ValidateNodeClaim for length, and it is the right seam anyway:
 // everything left there is invariant over every claim (a style, a node, a legal
 // mode, a non-negative board order), while this is the per-mode half. It takes
 // the caller's `add` so findings keep their original order.
-func validateSwapModeRouting(in NodeClaimInput, add func(field, msg string)) {
-	switch in.SwapMode {
-	case protocol.SwapModeSingleRobot:
-		// One robot does the whole swap, so it needs somewhere to park the
-		// incoming bin AND somewhere to put the outgoing one.
-		if in.InboundStaging == "" {
-			add("inbound_staging", "Single-robot swap requires inbound staging")
+func validateSwapModeRouting(in NodeClaimInput, spec map[flowspec.Field]flowspec.Need, add func(field, msg string)) {
+	for _, f := range flowspec.RoutingFields() {
+		if spec[f] != flowspec.Required || ClaimInputHas(in, f) {
+			continue
 		}
-		if in.OutboundStaging == "" {
-			add("outbound_staging", "Single-robot swap requires outbound staging")
+		msg, ok := routingRequiredMessages[in.SwapMode][f]
+		if !ok {
+			msg = fmt.Sprintf("%s requires %s", in.SwapMode, flowspec.Label(f))
 		}
-	case protocol.SwapModeTwoRobot:
-		// Robot A waits at the staging node until Robot B clears the line.
-		// Without it BuildTwoRobotSwapSteps returns nil silently and the
-		// operator's RELEASE click does nothing.
-		if in.InboundStaging == "" {
-			add("inbound_staging", "Two-robot swap requires inbound staging")
-		}
-	case protocol.SwapModeManualSwap:
-		// Without it the post-swap bin has nowhere to go and the node
-		// deadlocks.
-		if in.OutboundDestination == "" {
-			add("outbound_destination", "Loader/unloader claims require an outbound destination")
-		}
-	case protocol.SwapModeTwoRobotPressIndex:
-		if in.PairedCoreNode == "" {
-			add("paired_core_node", "2-Robot Press Index requires a Back Press Node")
-		}
-		if in.OutboundDestination == "" {
-			add("outbound_destination", "2-Robot Press Index requires an Outbound Destination")
-		}
-	case protocol.SwapModeSequential:
-		// ── THIS ARM DID NOT EXIST, AND SEQUENTIAL IS THE MODE THAT NEEDS
-		//    IT MOST ──
-		//
-		// Every other mode's routing is refused here, at save time, by the
-		// person who can fix it. Sequential fell straight through the switch:
-		// a claim with no partner, no destination or no source saved clean and
-		// failed much later as an EMPTY DISPATCH — the builder returns a zero
-		// ChangeoverDispatch, the planner turns that into a generic "cannot
-		// build swap steps for node X", and the node task lands in error
-		// naming a builder instead of a field. The operator is told the
-		// changeover failed, not which box to fill in.
-		//
-		// The three fields are the ones the per-node builder actually reads:
-		// the partner position (A/B is two positions by definition), where the
-		// old bin goes, and where the new carrier comes from. They are the same
-		// three requiredChangeoverFields already demands at plan time — this
-		// arm moves the discovery from mid-changeover to the save button.
-		if in.PairedCoreNode == "" {
-			add("paired_core_node", "Sequential A/B requires a Paired Position")
-		}
-		if in.OutboundDestination == "" {
-			add("outbound_destination", "Sequential A/B requires an Outbound Destination")
-		}
-		if in.InboundSource == "" {
-			add("inbound_source", "Sequential A/B requires an Inbound Source")
-		}
+		add(string(f), msg)
 	}
 }

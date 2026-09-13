@@ -222,4 +222,18 @@ type OperatorStationView struct {
 	ActiveChangeover *Changeover       `json:"active_changeover,omitempty"`
 	StationTask      *StationTask      `json:"station_task,omitempty"`
 	Nodes            []StationNodeView `json:"nodes"`
+	// Cell is the read-only picture of this station's cell — the press
+	// positions in their true arrangement with the running style's
+	// choreography on them. Built by BuildView from the process nodes, the
+	// active claims and the scene cache; see cell_picture.go. Present for
+	// every station (a cell with no positions is an empty picture, not a
+	// missing one).
+	Cell *CellPicture `json:"cell,omitempty"`
+	// Composer is everything U8's Flow Composer reads — the picker's rows, the
+	// routing set, the presets and the travel graph. One block rather than seven
+	// loose fields; see domain/composer_view.go. Present on every station,
+	// because the picker and the set-up card are on every station: the
+	// flow_composer_enabled gate on Process decides whether the operator may
+	// also CHANGE a flow, not whether they get the screen.
+	Composer *ComposerData `json:"composer,omitempty"`
 }

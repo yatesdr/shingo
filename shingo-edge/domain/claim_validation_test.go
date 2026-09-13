@@ -1,10 +1,13 @@
 package domain
 
 import (
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain/flowspec"
 )
 
 // validClaim is a claim with nothing wrong with it. Each test breaks exactly
@@ -448,5 +451,215 @@ func TestValidateNodeClaim_KeepStagedIsWithheld(t *testing.T) {
 		if hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "keep_staged") {
 			t.Errorf("keep_staged=%v produced a finding; only asking for it is refused", v)
 		}
+	}
+}
+
+// completeClaimFor is a claim that satisfies every Required entry of
+// Steady(role, mode) and nothing else, so a finding can only be about the one
+// thing a test then changes.
+func completeClaimFor(role protocol.ClaimRole, mode protocol.SwapMode) NodeClaimInput {
+	in := NodeClaimInput{StyleID: 1, CoreNodeName: "NODE", Role: role, SwapMode: mode}
+	for _, f := range flowspec.RequiredFields(flowspec.Steady(role, mode)) {
+		populateClaimInputField(&in, f)
+	}
+	return in
+}
+
+// errorFieldSet is the set of fields ValidateNodeClaim refused, restricted to
+// the ones flowspec knows, sorted.
+func errorFieldSet(findings []FieldError) []string {
+	known := map[string]bool{}
+	for _, f := range flowspec.Fields() {
+		known[string(f)] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range findings {
+		if f.Severity == SeverityError && known[f.Field] && !seen[f.Field] {
+			seen[f.Field] = true
+			out = append(out, f.Field)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// serverEnforcedForbids are the Forbidden entries ValidateNodeClaim refuses
+// when populated IN EVERY MODE. For the strict modes (StrictSteadyModes:
+// single_robot and sequential, D4) every Forbidden entry is refused. For the
+// other modes every remaining Forbidden entry is the EDITOR's answer only: the
+// admin page clears the value at save and the server accepts it if it arrives
+// another way. That gap is pinned below as D7, mode by mode; a mode joins
+// StrictSteadyModes in the commit that gives the server the rule.
+var serverEnforcedForbids = map[flowspec.Field]bool{
+	flowspec.ChangeoverEvacNodes:            true,
+	flowspec.IndexRobotSupplies:             true,
+	flowspec.KeyRoute:                       true,
+	flowspec.ChangeoverCarryoverDisposition: true,
+}
+
+func serverEnforcesForbid(mode protocol.SwapMode, f flowspec.Field) bool {
+	if serverEnforcedForbids[f] {
+		return true
+	}
+	for _, m := range StrictSteadyModes() {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFlowspecMatchesValidateNodeClaim: the save-time validator and
+// flowspec.Steady agree, modulo the pinned disagreements.
+//
+// Required: a claim with every field blank is refused on exactly Steady's
+// Required fields, for every (role, configurable mode). No exceptions at U1 —
+// D1 and D2 are disagreements between Steady and Changeover, not between
+// Steady and this validator.
+//
+// Forbidden: a complete claim with one Forbidden field populated is refused on
+// that field when the server has the rule (serverEnforcedForbids) and ACCEPTED
+// otherwise (D7, the editor-only forbids). A case moving from the second list
+// to the first is a behaviour change and must be named in its commit.
+func TestFlowspecMatchesValidateNodeClaim(t *testing.T) {
+	t.Parallel()
+	for _, role := range flowspec.Roles() {
+		for _, mode := range protocol.ConfigurableSwapModes() {
+			spec := flowspec.Steady(role, mode)
+			blank := NodeClaimInput{StyleID: 1, CoreNodeName: "NODE", Role: role, SwapMode: mode}
+			got := errorFieldSet(ValidateNodeClaim(blank, ClaimNodeContext{}))
+			var want []string
+			for _, f := range flowspec.RequiredFields(spec) {
+				want = append(want, string(f))
+			}
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("Required(%s, %s): validator refuses %v, Steady requires %v", role, mode, got, want)
+			}
+
+			complete := completeClaimFor(role, mode)
+			if got := errorFieldSet(ValidateNodeClaim(complete, ClaimNodeContext{})); len(got) != 0 {
+				t.Errorf("complete(%s, %s) still refused on %v", role, mode, got)
+				continue
+			}
+			for _, f := range flowspec.Fields() {
+				if spec[f] != flowspec.Forbidden {
+					continue
+				}
+				in := complete
+				populateClaimInputField(&in, f)
+				refused := hasField(ValidateNodeClaim(in, ClaimNodeContext{}), string(f))
+				if serverEnforcesForbid(mode, f) && !refused {
+					t.Errorf("Forbidden(%s, %s, %s): server has the rule and did not refuse", role, mode, f)
+				}
+				if !serverEnforcesForbid(mode, f) && refused {
+					t.Errorf("D7 resolved for (%s, %s, %s): the server now refuses what only the editor cleared — add the mode to StrictSteadyModes or the field to serverEnforcedForbids in the commit that did it", role, mode, f)
+				}
+			}
+		}
+	}
+}
+
+// TestRoutingRequiredMessagesAreTotal: every Required routing entry in Steady
+// has wording, for every configurable mode, and no wording exists for an entry
+// the table does not require. The fallback in validateSwapModeRouting keeps
+// the refusal if this drifts; this keeps the sentence.
+func TestRoutingRequiredMessagesAreTotal(t *testing.T) {
+	t.Parallel()
+	for _, mode := range protocol.ConfigurableSwapModes() {
+		spec := flowspec.Steady(protocol.ClaimRoleConsume, mode)
+		for _, f := range flowspec.RoutingFields() {
+			_, worded := routingRequiredMessages[mode][f]
+			if spec[f] == flowspec.Required && !worded {
+				t.Errorf("%s requires %s and routingRequiredMessages has no sentence for it", mode, f)
+			}
+			if spec[f] != flowspec.Required && worded {
+				t.Errorf("routingRequiredMessages words %s for %s, which Steady does not require", f, mode)
+			}
+		}
+	}
+}
+
+// TestValidateNodeClaim_SingleRobotRequiresOutboundDestination — D1 resolved.
+// The single_robot builder sends the old bin to the outgoing claim's outbound
+// destination and the planner has always refused a blank one; until this the
+// save path did not, so the refusal arrived after the operator pressed START.
+func TestValidateNodeClaim_SingleRobotRequiresOutboundDestination(t *testing.T) {
+	t.Parallel()
+	c := NodeClaimInput{
+		StyleID: 1, CoreNodeName: "LINE", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART",
+		InboundStaging: "IN", OutboundStaging: "OUT",
+	}
+	got := ValidateNodeClaim(c, ClaimNodeContext{})
+	if !hasField(got, "outbound_destination") {
+		t.Fatalf("single_robot with no outbound destination was accepted: %+v", got)
+	}
+	for _, f := range got {
+		if f.Field == "outbound_destination" && !strings.Contains(f.Message, "outbound destination") {
+			t.Errorf("message does not name the field: %q", f.Message)
+		}
+	}
+	c.OutboundDestination = "SMN"
+	if got := ValidateNodeClaim(c, ClaimNodeContext{}); len(got) != 0 {
+		t.Fatalf("complete single_robot claim refused: %+v", got)
+	}
+}
+
+// TestValidateNodeClaim_TwoRobotRequiresOutboundDestination — D2 resolved.
+// Robot B takes the old bin straight to the outgoing claim's outbound
+// destination; the planner refused a blank one and the dispatcher refuses to
+// build the leg, both after START. The save path refuses it now, on the field.
+func TestValidateNodeClaim_TwoRobotRequiresOutboundDestination(t *testing.T) {
+	t.Parallel()
+	c := NodeClaimInput{
+		StyleID: 1, CoreNodeName: "LINE", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART",
+		InboundStaging: "IN",
+	}
+	got := ValidateNodeClaim(c, ClaimNodeContext{})
+	if !hasField(got, "outbound_destination") {
+		t.Fatalf("two_robot with no outbound destination was accepted: %+v", got)
+	}
+	c.OutboundDestination = "SMN"
+	if got := ValidateNodeClaim(c, ClaimNodeContext{}); len(got) != 0 {
+		t.Fatalf("complete two_robot claim refused: %+v", got)
+	}
+}
+
+// TestValidateNodeClaim_StrictModesRefuseFieldsTheyDoNotUse — D4 resolved
+// at the API for single_robot: every field the table calls Forbidden is
+// refused when populated, not only the four the server always had rules for;
+// the store reads the same answer, so the two cannot drift.
+func TestValidateNodeClaim_StrictModesRefuseFieldsTheyDoNotUse(t *testing.T) {
+	t.Parallel()
+	sr := completeClaimFor(protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot)
+	sr.PairedCoreNode = "B"
+	if got := ValidateNodeClaim(sr, ClaimNodeContext{}); !hasField(got, "paired_core_node") {
+		t.Errorf("single_robot with a paired node accepted: %+v", got)
+	}
+	// The wording names the mode and the field, and the finding is an error.
+	for _, f := range ValidateNodeClaim(sr, ClaimNodeContext{}) {
+		if f.Field == "paired_core_node" {
+			if f.Severity != SeverityError || !strings.Contains(f.Message, "Paired Core Node") {
+				t.Errorf("finding = %+v", f)
+			}
+		}
+	}
+	// sequential was meant to be strict too and is held (see
+	// StrictSteadyModes); populated staging on one is still accepted here, and
+	// that is D7 for sequential, pinned above.
+	sq := completeClaimFor(protocol.ClaimRoleConsume, protocol.SwapModeSequential)
+	sq.InboundStaging = "IN"
+	if got := ValidateNodeClaim(sq, ClaimNodeContext{}); hasField(got, "inbound_staging") {
+		t.Errorf("sequential is not strict (held); inbound staging refused: %+v", got)
+	}
+	// A two_robot claim carrying outbound staging is NOT refused: two_robot is
+	// not a strict mode, and that is D7 for it, pinned above.
+	tr := completeClaimFor(protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot)
+	tr.OutboundStaging = "OUT"
+	if got := ValidateNodeClaim(tr, ClaimNodeContext{}); hasField(got, "outbound_staging") {
+		t.Errorf("two_robot is not strict yet; outbound staging refused: %+v", got)
 	}
 }
