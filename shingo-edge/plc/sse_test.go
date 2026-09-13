@@ -545,23 +545,40 @@ func TestSSE_StallReconnects(t *testing.T) {
 
 	emitter.waitFor(t, "warlink_connected", 2*time.Second)
 
-	// The stall must produce a second connection, not a dead loop.
-	testutil.EventuallyWithInterval(t, 50*time.Millisecond, 5*time.Second, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return connectCount >= 2
-	})
-
-	// After the reconnect the manager must still consider itself connected
-	// AND still be running — i.e. the loop survived its own recovery.
+	// THE TWO HALVES ARE WAITED ON TOGETHER, and that is the whole of this
+	// test's flakiness history. The guarantee is "a stall reconnects and comes
+	// back UP", so the wait is for the reconnected-and-connected state, not
+	// for a second connection and then a read of a flag that is not set yet.
 	//
-	// WAIT FOR IT; DO NOT READ IT ONCE. The server counts a connection the
-	// moment its stream opens, but sseConnect marks the manager connected only
-	// after the REST bootstrap that follows (warlinkSync). A single read raced
-	// that round trip, and under load it landed inside it and saw false.
-	if !testutil.AssertEventually(t, 20*time.Millisecond, 5*time.Second, m.IsWarLinkConnected) {
-		t.Fatal("after stall-reconnect, warlinkConnected is still false 5s after the second " +
-			"connection opened — the loop died instead of reconnecting")
+	// Split, it is a race the test loses under load (3/100 locally, 7/100 at
+	// the premerge tip, and a red houseserver gate run). connectCount++ is the
+	// FIRST statement of the server's handler; the client sets
+	// warlinkConnected only after sseConnect's REST bootstrap
+	// (warlinkSync(false), sse.go:151) has been there and back. So between the
+	// two there is a whole round-trip in which the old assertion read false
+	// and called a live loop dead.
+	//
+	// Waiting on the conjunction still fails the Springfield wedge: a loop
+	// that exited on its own stall-cancel never reaches a second connection at
+	// all, so connectCount stays at 1 and the deadline passes. The sentence
+	// below says which half was missing, which is the diagnostic this test
+	// exists to print.
+	reconnected := testutil.AssertEventually(t, 50*time.Millisecond, 5*time.Second, func() bool {
+		mu.Lock()
+		n := connectCount
+		mu.Unlock()
+		return n >= 2 && m.IsWarLinkConnected()
+	})
+	if !reconnected {
+		mu.Lock()
+		n := connectCount
+		mu.Unlock()
+		if n < 2 {
+			t.Fatalf("connectCount = %d after the stall — the loop treated its own "+
+				"stall-cancel as a shutdown and exited instead of reconnecting", n)
+		}
+		t.Fatal("reconnected, but warlinkConnected never came back true — the second " +
+			"connection is not being promoted to connected")
 	}
 	// A third connection would prove the loop is cycling on stalls; its
 	// absence after a generous window proves the second stream (with
