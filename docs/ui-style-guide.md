@@ -163,6 +163,11 @@ names.
   --danger: #dc3545;
   --warning: #ffc107;
   --info: #0dcaf0;  /* must remain distinct from --primary in all themes */
+  /* Robot identity hues (U8) — see "Robot identity hues" below. An identity,
+   * like a chart series; never the accent, never a status. */
+  --robot-1: #22c9ae;
+  --robot-2: #8a7bff;
+  --station: #f2f5f8;
   /* Elevation steps (cards read one shade lighter than their background). */
   --elev-canvas: #eceef2; --elev-base: #f4f6f8; --elev-surface: #ffffff; --elev-raised: #ffffff;
   /* Geometry */
@@ -280,6 +285,97 @@ which is the property that makes them the same ramp rather than two ramps that
 happen to share a hue. Steps 4 and 5 clear 3:1 in **both** themes.
 
 **If a step moves, re-derive it the same way — never eyeball a light value.**
+
+### Robot identity hues (U8/U9)
+
+**A robot's colour is an identity, not a status and not the accent.**
+
+Three tokens, theme-invariant, in `:root`:
+
+| Token | Value | What it is |
+|---|---|---|
+| `--robot-1` | `#22c9ae` | Robot 1 — its legs on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
+| `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
+| `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph |
+
+The operator station keeps its own copies — `--os-r1`, `--os-r2`,
+`--os-station` — for the reason the z-layer and substrate copies exist:
+`operator-display.html` links only `operator.css`, so a `var(--robot-1)` there
+resolves to nothing and a robot's leg silently disappears. Both copies move
+together, and `TestOperatorStationRobotColoursMatchShared` /
+`TestOperatorStationStationHueMatchesShared` fail if one moves alone.
+
+**How this sits with P13 (indigo is the accent, never a status).** A robot hue
+is neither. It is an **identity**, in exactly the sense a chart series is one
+(P19): the mark means "this one, not that one", and it carries no judgement
+about whether anything is good, bad or late. So it gets its own token rather
+than borrowing the accent's or a status dot's, and the rules that follow are:
+
+- **Never `--accent` for a robot, and never a robot hue for a control.** Where a
+  robot line and an accent selection share a screen — the desktop composer's D1
+  is exactly that — **the accent is the border and the button, the robot is the
+  line.** Selecting a card outlines it in indigo; the leg leaving that card
+  stays teal.
+- **Never a robot hue for a status.** Status lives in `--status-*-dot` and the
+  `.badge-*` classes, as always.
+- **`--status-staged-dot` (teal) and `--robot-1` (teal) never share a surface
+  element.** They are close enough to be confused and mean entirely different
+  things — one says a bin is waiting, the other says which robot is moving. A
+  chip that carries both is a chip that says neither; put the state in the chip
+  and the robot on the line.
+
+Robot 2's indigo is close to `--accent`, and deliberately so: it is the second
+identity in a two-identity set, and the set was chosen for separation from each
+other first. The separation from the accent is carried by ROLE, not by hue —
+an accent mark is a border or a filled control, a robot mark is a stroked path
+or a chevron, and no element is both.
+
+### The ink on a fill, and the scrim (U9)
+
+**Two tokens that did not exist, so every component wrote the literal instead.**
+
+| Token | Value | What it is |
+|---|---|---|
+| `--on-accent-solid` | `#ffffff` | the ink that sits ON an `--accent-solid` fill — `.btn-primary`, a filled badge, the knob of an on switch |
+| `--scrim` | `rgba(0, 0, 0, .5)` light / `rgba(4, 6, 9, .62)` dark | the backdrop behind any modal: `.modal-overlay` on both admin surfaces, and the desktop composer's own sheet |
+
+`--accent-solid` was chosen for 6.14:1 against white and is theme-invariant, so
+its ink is one value in both themes and is **not** overridden in the dark block
+— the same reasoning as an identity hue, from the other end. The scrim *is*
+overridden, because the page it darkens changes: neutral black over
+`--elev-canvas` reads as a flat grey wash rather than a recess, so dark gets a
+deeper, cooler value.
+
+The light scrim is `.modal-overlay`'s own `rgba(0,0,0,.5)`, kept verbatim so
+nothing moved when the literal became a token. Core's overlay had been
+`rgba(0,0,0,.45)` — two scrims nobody had decided were different — and now
+matches Edge's.
+
+Rule 3 above ("if you need a new colour, add a token first") is the rule these
+two were added under, and the drift test is what makes it stick:
+`shared/identity_hue_drift_test.go` holds each token's value against this table
+**and** asserts that `shingoedge.css`, Core's `style.css` and
+`processes-desktop.css` reference the token rather than spelling the colour
+out. A token nothing references is a token the next literal ignores.
+
+**There is no exception any more.** `flow-picture.css` used to carry literal
+colours in four declarations, moved verbatim out of `operator.css` by U9a's
+extraction, and the reason was that `operator-display.html` linked no shared
+stylesheet — so a `var(--scrim)` there resolved to nothing. It links
+`shared/tokens.css` now (and pins `data-theme="dark"`, the kiosk convention),
+which was the stated condition for retiring them. Two of the five values were
+`--text-strong`'s **dark** value spelled out, so on a light Processes page the
+position name rendered near-white on a white card.
+
+The same drift test survives inverted: `flow-picture.css` must carry **no**
+literal colour. A literal creeping back into the one stylesheet two surfaces
+share is worth catching in either direction.
+
+The station's hand-copied `--os-*` ramp went with it. `operator.css` declared
+its own copies of the substrate steps, the robot hues, the station hue and the
+accent, with a drift test holding each copy to the master in both directions;
+the copies are aliases now (`--os-sub-3: var(--sub-3)`), kept only because the
+locked swap-mode glyph file reads those names, and an alias cannot drift.
 
 ### Type scale
 
@@ -1171,6 +1267,41 @@ component sections and inform tokens, tables, tiles, meters, and animation
 everywhere. Where a component rule and a principle disagree, the principle is
 the intent; fix the component rule.
 
+Three more came out of the flow-composer stream (U8/U9/U10). They are
+narrower — they are about what a screen is FOR — but they settled a dozen
+arguments each, so they are written down beside the three:
+
+**The gate removes a button, not a screen.** When a permission is off, the
+person still sees everything; what they lose is the one control that would
+change it. The flow composer's gate is the worked example: gated off, the
+operator still opens the picker, still reads the picture, still sees which
+parts a style runs and where its bins come from — the "Change how it flows"
+button is simply not there, and the screen says so in a sentence. The
+alternative, hiding the screen, teaches people the system has a second half
+they are not allowed to understand, and that is how a floor stops trusting a
+tool. A permission is about acting, not about knowing.
+
+**The desktop verb is Save, the HMI verb is Start.** The same picture, drawn
+from the same model, over the same data, ends in two different words because
+the surfaces answer different questions. An engineer says "this is how this
+part should run" and saves it; an operator says "run this now" and starts it.
+Nothing on the desktop dispatches a robot, and nothing on the HMI edits a part
+the press is not about to run. When a screen grows a verb from the other side,
+that is the signal it has taken on the other side's job.
+
+**A preset is a shape, never a part.** A saved thing is worth reusing exactly
+as far as it is the same for everybody who reuses it. A flow's SHAPE — which
+positions, how they swap, where bins come from and go — is the same for every
+part that runs it; the part is what differs, which is why it is the one field a
+preset does not carry. Applying a preset therefore replaces the shape and
+carries the parts across, and a position the new shape drops releases its part
+rather than keeping it somewhere nothing can see. The test of the line is what
+a compare reports: a preset that carried the part would report every member as
+drifted the moment a second part used it, which is the whole reason to have
+presets. Generalizes past flows — whenever a screen offers to save "this
+setup" for reuse, the thing to save is what is common and the thing to leave
+out is what identifies this one.
+
 ### Structure recedes, state glows
 
 Static structure carries no saturated color. The floor plan, table chrome, node
@@ -1280,6 +1411,78 @@ shared detector `shared.IsEmoji` draws the line: the supplementary emoji planes
 and any VS16-qualified symbol are rejected; the monochrome geometric glyphs the
 surfaces use as affordances (arrows, chevrons, bullets, `✓`/`✗`, the bare `⚠`)
 are allowed. First catch: a lock emoji in `bins.js`.
+
+## Glyphs: slots, bins and streams
+
+**A glyph is a picture of the press, not an icon.** Icons are monochrome
+affordances that take `currentColor` and live in the Lucide sprite (see Icons
+above). A swap-mode glyph is the opposite of all three: it carries colour **by
+rule**, it depicts a specific machine doing a specific thing, and it is never
+in the sprite. If you are tempted to add one to `shared/icons.svg`, the thing
+you have is not a glyph.
+
+Source: `operator-station/composer-glyphs.js` — `glyph(mode, size, {rest})`
+returns an inline SVG string and is the **only** renderer. The sprite form
+(`composer-glyphs.svg`) and the classes (`composer-glyphs.css`) ship with it.
+Locked 2026-09-10; the port files are the geometry's source of truth.
+
+### The four parts
+
+A glyph is a 28×28 picture drawn from four parts and nothing else:
+
+- **Slot** — a position. A thin rounded outline (stroke 0.75), always in the
+  same place for that press.
+- **Bin** — solid. **White is the new bin, grey is the old one.** A bin sits in
+  its slot or rides its stream, and **the old bin is never drawn twice**.
+- **Stream** — one robot move is **one pair** of slender chevrons (stroke 0.95)
+  in that robot's colour, centred in the gap it crosses. Count the pairs and you
+  have counted the moves; count the colours and you have counted the robots.
+  Orthogonal wherever the layout allows.
+- **Bar** — the line side of the press (stroke 1.6, round caps), always at the
+  top.
+
+**One grid, one gap.** Slot 6.6, bin 4, and **one gap of 6 between any two
+things** — slot to slot, slot to bin, bin to chevrons. Nothing touches an
+outline. The 1-robot triangle is equilateral so its three gaps match.
+
+### Colour is the robot, not the direction
+
+`--robot-1` teal for Robot 1, `--robot-2` indigo for Robot 2, `--station` white
+for slots, the bar and the new bin, `--sub-5` for the old bin. A stream does
+not change colour because it points a different way; it changes colour because
+a different robot is driving it.
+
+In an unselected control (`rest`) the streams drop to 45% and the structure
+falls back to the substrate ramp: **the chosen choreography is the one that
+glows**, which is "structure recedes, state glows" applied inside a 28-pixel
+square.
+
+### The four, as drawn
+
+| mode | picture |
+|---|---|
+| `two_robot_press_index` | press slot over an on-deck slot; a white tote on deck and the next white one riding in from the left on Robot 1; Robot 2 indexes up into the press and carries the grey one out to the right |
+| `two_robot` | one press slot; white bin straight up into it on Robot 1, grey bin straight out to the right on Robot 2 |
+| `single_robot` | three slots on an equilateral triangle — press (grey bin in it), park (white bin in it), empty park — and three Robot 1 legs round it |
+| `sequential` | A holds the bin the line pulls from; B is where Robot 1 works — new bin up into B from below, empty out of B to the right |
+
+There is a fifth symbol, `#swap-empty`: the slot and the bar with nothing in
+them. It is what a cell with no choreography draws, and it is why a retired
+mode does not need a hidden option anywhere — an unrecognised mode draws the
+empty glyph and its name reads through beside it.
+
+### Sizes, and where they appear
+
+| Size | Where |
+|---|---|
+| 32 px | preset cards, picker rows |
+| 26 px | the HMI's HOW IT SWAPS segmented control (`rest` on the unselected three) |
+| 24 px | position cards on the cell picture, top-left, never overlapping the in/out corner glyphs |
+| 22 px | the desktop positions table's Swaps column |
+
+**Never below 16 px, never recoloured, never animated.** Below 16 the chevron
+pairs merge and the glyph stops being countable, which is the one property it
+has that a label does not.
 
 ## Modals
 
@@ -1523,44 +1726,244 @@ async function save(state) {
 
 ### Worked example
 
-The canonical example is `shingo-edge/www/static/js/pages/processes.js`'s
-claim editor. Concretely, the file demonstrates each convention piece:
+The claim editor that used to be the canonical example here —
+`shingo-edge/www/static/js/pages/processes.js` — was **deleted in U9d**, and
+the reason it was is worth more than the example was. It demonstrated the
+conventions perfectly and was still the wrong shape: one state object, a pure
+`claimFieldVisibility(role, swap)` returning element-id → boolean, a pure
+validator, single-direction snapshot functions, one DOM-mutation entry point,
+and 528 characterization assertions holding all of it. What it could not fix is
+that it was **thirty fields on one modal**, and no amount of state discipline
+makes thirty fields answerable.
 
-- **One state object.** `claimState` is the only place form values live
-  between user input and POST. `_payloadCatalog`, `_claimsStyleID`, and
-  `_currentClaims` are module-scoped caches, not form state.
-- **Pure `claimFieldVisibility(role, swap)`.** Returns a map of
-  fieldset/group element ID → boolean. The lookup table is the source
-  of truth for what shows when; the prior version's 31 scattered
-  `style.display` assignments collapse to one function plus one table.
-- **Pure `validateClaimState(state)`.** Returns `{ ok, errors }`. No
-  DOM reads, no toasts. The caller (`saveClaim`) translates errors
-  into UI feedback; validate doesn't know about UI.
-- **`readClaimStateFromForm()` / `writeClaimStateToForm(state)`.**
-  Single-direction snapshot functions. `readClaimStateFromForm` is
-  pure DOM → state; `writeClaimStateToForm` is state → DOM.
-- **`renderClaimForm()` as the single DOM mutation entry point.**
-  Reads role/swap from inputs, applies the visibility map, sets
-  disabled/labels for the special cases. Replaces the prior
-  `toggleClaimsAddPayload + validateClaimStaging` pair (the old names
-  survive as thin shims because inline `onchange` handlers in the
-  template still reference them).
-- **`saveClaim()` is the read→validate→POST pipeline.** Form-shape
-  side effects (NGRP bulk-expansion, manual_swap's allowed-codes →
-  payload_code coercion) are clearly named branches in saveClaim, not
-  mixed into the payload assembly.
+What replaced it keeps every convention and moves the question. The desktop
+composer splits those thirty by whether the PICTURE DRAWS THEM: the fields a
+picture can show are edited on the picture and in a table under it, and the
+twelve it cannot are in one sheet per position that says, in its own footer,
+that nothing in it changes the flow. The state object is
+`operator-station/composer-model.js` — pure, no DOM, `reduce(state, action)`,
+shared unchanged with the operator HMI. The visibility table is gone entirely:
+`advancedShows()` asks **flowspec**, which is the same table the server
+validates against, so a control cannot be offered for a value the save would
+refuse.
 
-Characterization tests pin the (role × swap_mode) visibility matrix
-and `saveClaim` payload shape at CI time. See
-`shingo-edge/www/static/js/pages/processes.characterization.test.js`
-(202 assertions across 10 cells + three payload-shape cases). The
-test harness loads `processes.js` in a Node `vm.runInContext` with a
-hand-rolled DOM stub — no jsdom dependency, no npm install.
+Copy from it:
+
+- **One state object, shared between surfaces.** `composer-model.js` is the
+  draft for the HMI and the desktop both. Two screens over one model is what
+  makes "an engineer and an operator see the same flow" true rather than
+  aspirational.
+- **The oracle is the server's own table, not a hand-written map.** flowspec is
+  exported from Go and embedded as `flowspec-data.js` under a drift test. A
+  visibility map maintained by hand is a second opinion about what the server
+  accepts, and it is always the stale one.
+- **A pure `toCells(state)` is the wire.** The characterization test compares
+  its output to bytes generated by Go's own `domain.Collapse`, so a shape change
+  on the server fails the JS the same day.
+- **Pointer semantics for "no opinion".** A draft that has never been touched
+  says nothing about a column, and the server's carry-through keeps what is
+  stored. A form that sends every field it knows about flattens the fields it
+  does not show.
+- **`composer-fields.characterization.test.js`** pins the same (role ×
+  swap_mode) matrix the old suite did — 689 assertions, and its runner refuses
+  to pass below the 528 the retired suite reported. When a form is replaced,
+  port the suite before deleting the code, and make the replacement's floor the
+  original's count.
 
 The conventions above are the parts to copy when a new form needs
 this treatment. Two-field "save three values" modals don't need the
 full machinery — apply the convention when conditional visibility or
 multi-step validation enter the picture.
+
+## Desktop composer patterns (U9)
+
+The Edge Processes page is the engineer's half of the flow composer, and it
+introduced seven patterns worth reusing; U10's Presets tab added seven more at
+the end of the section. Reference shots:
+`hmi-flow-composer-design-2026-09-02/desktop/reference/P0,D1–D5.png` at
+1440×900. Each is one paragraph because each is one idea.
+
+**The app-bar status pill.** A read-only pill on the right of the app bar
+states a setting that is decided elsewhere — `Operators may change flows` /
+`Operators run flows as set up` — followed by a quiet `Settings ›` link to
+where it *is* decided. It is a pill and not a switch on purpose: the same
+decision drawn twice is a decision made in two places, and the second one is
+always the one somebody changes by accident. Use this wherever a screen needs
+to show a setting it is not the owner of. Reference: `D1-flows-selected.png`.
+
+**The grouped list table.** One table per group with an 11 px letter-spaced
+group label and a count above it, the ungrouped bucket last, and a whole row
+as the click target. Columns are facts, never controls — no inline editing on
+a list — because a list is for finding the thing, and a row that edits is a row
+you cannot click. Reference: `P0-processes.png`.
+
+**The positions table with chip pickers.** A row per position, and every cell
+that can change is a chip that opens a popover list — never a native `<select>`
+(see "Never use native dialogs"; a select's dropdown is the browser drawing its
+own chrome over ours, and it cannot carry a glyph). Every pick applies
+immediately to the draft and redraws the picture; nothing is written until the
+page's one save button. Reference: `D1-flows-selected.png`.
+
+**The per-row `N set` count.** A row that opens a sheet of settings says how
+many of them carry a value, in the accent, and reads `defaults` when none do.
+The count is computed from the SAME predicate the server uses for "has a
+value", so a badge and a save cannot disagree; a second spelling of it would
+put an indigo count on a row the server reads as untouched.
+
+**The Advanced sheet's field shape.** 600 wide over the scrim; a section per
+group of fields with an 11 px label and its own `N set`; each field a 230–300 px
+label column carrying a **one-line, plain-language sub-label** and a value
+column beside it. The sub-label is not optional — these are the fields nobody
+can name from memory, and the sheet exists precisely because they had no home.
+Footer states what the sheet does NOT do (`Nothing here changes the flow or the
+picture`) before the two buttons. Reference: `D2-advanced.png`.
+
+**The settings section with a live indicator in its title.** `Production
+counter · counting · last tick 4 s ago`. The live state goes in the TITLE, not
+beside the Enabled switch: "is this counting right now" is a fact about the
+section and the switch is a setting, and putting a moving dot next to a control
+makes people think the control did it. Reference: `D5-settings.png`.
+
+**The danger section.** Last, its own rule, heading in `--status-alarm`, one
+outlined destructive button, and a sub-label saying what else goes with it.
+Not a red-filled button: a filled destructive control competes with the primary
+action for the eye, and the primary action on that page is `Save settings`.
+
+**Presets: two sections, and the second one is an offer (U10).** A screen that
+names reusable shapes has two lists on it and they are different kinds of
+thing. `PRESETS · N` is what somebody named — name, shape, how many parts use
+it, whether any have drifted, who saved it and when. `FOUND IN YOUR FLOWS · N
+shapes` is one row per distinct shape the press already runs that nobody has
+named, with a suggested name and a `Name it…`; it applies nothing, ever, and
+the section disappears when every shape has a name. The second one is why the
+first is usable on arrival: an engineer meeting a press with ninety parts over
+two shapes is offered two rows, not ninety, and that is the difference between
+an offer and a list. A part already under a preset is not on offer even when it
+has drifted away from it — drift is reported on the preset's own row and its
+control is `Apply to parts…`, and offering it twice once produced a suggested
+name identical to the preset it had drifted from. **Drift is in the warning
+hue, never the accent**: on that page the accent means "the thing you are
+working on" and the warning hue means "this needs you", and a drifted member is
+the second. Expanding a row lists EVERY member, in step and drifted alike,
+because "which parts run this shape" is the question the row was clicked to
+answer. **The positions belong to the shape, not to the name**: a preset is
+called whatever the engineer typed — the suggestion is the choreography's word
+alone, `2‑robot index` — so every card and every row draws the shape's own
+positions beside it (`PLN_01 / PLN_04 · used by 7 parts`), and two presets a
+word apart are still told apart at a glance. **Naming a shape is not declaring
+which parts run it**: `Save as preset…` on one part's flow stamps nobody and
+the card reads `not used yet` until it is applied, while naming a shape the
+press ALREADY runs stamps the parts that run it — that is the migration offer
+recording a fact, not a rename carrying one. **An apply moves `updated_at` and
+a provenance stamp does not**: the apply goes through the flow save and really
+does change the flow, while recording where a shape came from changes nothing
+an operator can see, and that column is the set-up card's "Flow saved 09‑12"
+sentence. **A rename moves every version of a name and nothing else**, because
+a name is not a property of a version and a lineage split across two names is
+two presets that mean one shape. There is no PNG for this tab; it is built from
+the grouped list table and the Advanced sheet's modal shell at two more widths.
+
+**The previewed-diff apply modal (U10).** A modal that writes to many rows
+shows what each write would change before it offers to save: a checklist with
+**nothing pre-ticked**, and ticking a row previews it and draws the diff in the
+words the table heads its columns with (`PLN_04 · outbound destination: Supermarket Area
+→ Empty Tote Return`; a whole row arriving or leaving is one line worded as the
+event). `Save to N parts` then saves the previews that are on screen, one at a
+time, reporting per row, and a stale one re-previews and says so. Nothing
+pre-ticked is the load-bearing half — a modal that opened with eight rows
+ticked would be one click from eight writes nobody read — and "never a save
+without its preview on screen" is what makes the count in the button a promise
+rather than an estimate. A row the server will refuse stays tickable and shows
+the server's refusal BY NAME; a client-side block is the page guessing at a
+rule the server owns, and it hides the one sentence that says what happened.
+**A write that leaves something unfinished still saves, and says what it left**:
+an apply whose shape does not name a position releases whatever part was on it,
+and the row adds `PIA09, PIA10 will need a position` to its diff rather than
+refusing. What is blocked is the next irreversible step — here, starting a
+changeover the robots could not serve — and it is blocked by a finding on the
+flow, on every screen that shows one. **But a modal never offers a save the
+server would refuse (F1)**: where the write is missing something the modal
+itself can ask for, it asks — inline, on the row, one control per missing
+answer — rather than drawing a warning over an enabled button. A row with a
+question outstanding keeps the tick the engineer gave it and is not in the
+button's count, and findings replace the order count on it, because a row that
+cannot be saved must not also advertise what it would fire. The test of the
+rule: if the only way to finish is to leave the screen you are on, the screen
+has sent you away from the job it exists to do.
+
+**The order sentence: `Robot · from → to` (U10).** Every row that
+describes a move a robot will make has one shape, and it names BOTH ends.
+`Robot 1 · Supermarket Empty Totes → PLN_02 · PIA27`. The robot's hue goes
+on the NAME and nothing else on the line — the hue is an identity here, and a
+whole line in it reads as a warning. The row ends with the PART when a part is
+what is moving and stops when it is not: an evacuation takes out whatever is in
+there, so `Robot 2 · PLN_03 → Supermarket Area` is the whole sentence.
+**No row for a move nobody drives:**
+a two-robot press index advances its own bin from the back position to the line
+and no robot is dispatched for it, so under a heading that says ORDERS there is
+no row for it. It stays on the picture, where the heading is the press. What
+this replaced named one end per move (`brings the new bin to PLN_02`), and the
+missing half was the one that says whether the right supermarket was picked.
+
+**No word for what a bin is (U10, owner ruling R2).** Screens that describe
+material name the PART and the PLACE, never the container. `totes`/`bins` was
+resolved per style from the payload-to-bin-type catalog and appended in six
+places — the strip card's second line, the dock notes, the index card line, the
+order rows, the set-up card — and every one of them was a screen telling an
+operator standing in front of the bin what the bin is. It also could not be
+right on a card drawn per PRESS while the word is per STYLE, which is why it
+was appended in the render layer rather than sent by the server: the same card
+read `· totes` beside one part and `· bins` beside another. What survives is
+the fixed heading (`OLD BINS TO` is a column, not a word about this bin) and
+node names the plant gave its own lanes (`Supermarket Empty Totes`). The rule
+generalizes: when a screen would name a category the person reading it can see,
+it is spending a line on nothing.
+
+**A field is called what the claim calls it; invent no second name (U10, owner
+ruling F3).** Where the thing on screen has a name in the data, that name is the
+label — `Inbound source`, `Outbound destination`, `Inbound staging`, `Outbound
+staging`, `Key route`, `Paired position`. D1's positions table headed those
+columns `New bins from`, `Old bins to`, `Robot drives via` and `Partner`; the
+station's panel called them `New bin comes from`, `Old bin goes to`, `Stage the
+new bin at`, `A/B partner`; the compare table and the apply modal then had to
+pick one of the two sets. Every second name is a second thing to learn and a
+thing to get wrong: an engineer who reads `outbound_destination` in a refusal
+and `old bins to` in a column has to work out they are the same field, and a
+screen that renames a field cannot be searched for the field. The exceptions are
+words the FLOOR owns and uses consistently — `part` for `payload_code` is the
+plant's word on every surface from the picker to the finding pill — and they are
+exceptions by being consistent everywhere, not by being nicer in one place.
+
+**No count of robots a preview cannot know (U10, owner ruling R1).** The
+composer's bar read `Preview OK · 6 orders · 2 robots`, counting the ROLES the
+choreography uses. A preview knows how many orders it would fire, because it
+planned them; it does not know how many AMRs the fleet will send, because that
+is the dispatcher's and the fleet's at the moment they run. Name roles where a
+role is the subject — the picture's legend, `Robot 1 · …` on an order row — and
+count only what the screen computed.
+
+**The scroll fade (U10).** A panel that scrolls its own content carries a 12 px
+fade at the scrolling edge, over the panel's OWN surface token, present only
+while there is more to scroll. A label cut in half by a hard edge reads as a
+rendering bug; a label fading under one reads as "there is more below". Use a
+sticky pseudo-element painting the panel's colour, **not** `mask-image` — a
+mask fades the element, so the panel's own border and corners dissolve with the
+content and the panel looks like it is failing to paint. It needs no z-index:
+being the last positioned child is what puts it over its siblings, and the
+page's z-scale is for page layers. The fade comes OFF at the end of the scroll;
+one that never leaves is a panel that always looks unfinished.
+
+### The map is a screen, not a widget
+
+D3 puts the routing set on the plant. Two rules came out of it that generalize:
+the projection is **always** `shared/scene-geom.js` (Core's map, the station's
+cell picture and this screen project the same plant with the same function, so
+a route weighed on one surface is the route drawn on the others), and the
+orientation decision is made over the **whole plant**, never over the region
+being framed — a region that happens to be tall must not flip the map under the
+person reading it. Fit margins are in screen pixels, not as a fraction of the
+region: a label is drawn 11 px outside its mark whatever the plant measures.
+Reference: `D3-routing-set.png`.
 
 ## JavaScript primitives
 
@@ -1887,7 +2290,7 @@ reconcile** at the end of this section.
 | **Process** | A production sequence configured for a cell (e.g. "Front Rail"). Has one ActiveStyleID and many Styles. Owns the production counter config. **One Process is active per cell at a time** (Process has `ActiveStyleID`; cell switches active style via changeover) | `shingo-edge/domain/process.go:32` `type Process struct` |
 | **Style** | A variant produced under a Process (e.g. "Style A", "Style B"). Belongs to one Process via `ProcessID`. The active Style drives which NodeClaims are in effect. Also written **"Job Style"** in UI labels and changeover docs — both names are acceptable; `Style` is the code identifier, "Job Style" is fine in operator-facing text | `shingo-edge/domain/process.go:41` `type Style struct` |
 | **NodeClaim** | A per-Style binding to a Core Node — declares the payload, capacity, reorder behaviour, swap mode, staging. The active Style's NodeClaims drive material orders. **One Claim type exists** (the verb "claims" is used in unrelated relationships — see Claim disambiguation below) | `shingo-edge/domain/process.go:116` `type NodeClaim struct` |
-| **Claim Role** | What a node does for a payload under a NodeClaim. Two live values: `consume` (node consumes upstream material), `produce` (node produces material for downstream). **Deprecated:** `changeover` — present in `protocol/types.go:235` and referenced in `engine/changeover.go`, `operator_node_changeover.go`, and `processes.js`, but does **not** reflect how changeovers actually work. Actual changeover mechanic: operator selects a new Style → active NodeClaims change → each claim's `swap_mode` drives add/drop commands per node. No separate "changeover role" needed. Slated for removal — see deprecations tracker | `protocol/types.go:230-235` |
+| **Claim Role** | What a node does for a payload under a NodeClaim. Two live values: `consume` (node consumes upstream material), `produce` (node produces material for downstream). **Deprecated:** `changeover` — present in `protocol/types.go:235` and referenced in `engine/changeover.go` and `operator_node_changeover.go`, but does **not** reflect how changeovers actually work (its third reference, the admin page's `processes.js`, went with the claim editor in U9d). Actual changeover mechanic: operator selects a new Style → active NodeClaims change → each claim's `swap_mode` drives add/drop commands per node. No separate "changeover role" needed. Slated for removal — see deprecations tracker | `protocol/types.go:230-235` |
 | **Swap Mode** | How a node's bin gets replaced. Active values: `sequential`, `single_robot`, `two_robot`, `two_robot_press_index`, `manual_swap`. **Deprecated:** `simple` (hidden in UI, legacy data still has it — see deprecations tracker) | `protocol/swap_mode.go:17-22` |
 
 ### Node concepts
@@ -2033,6 +2436,20 @@ Extend this pattern to:
 5. **No emoji** (shipped) — `TestNoEmojiInTemplatesAndPageJS` in both
    `www` packages fails on any emoji in a template or page-JS file, via
    `shared.IsEmoji`. See the Icons section.
+6. **Swap-mode WORDS** (shipped, U10) — `TestSwapModeWordsMatchTheModel` in
+   `shingo-edge/domain` pins Go's `SwapModeWord` to `composer-model.js`'s
+   `MODES` block, which is the authority because both surfaces draw their
+   chips and cards from it. Note these are not the validator's words:
+   `2-Robot Press Index` is what a refusal says and `2-robot index` is what a
+   control says, and a suggested preset name is a control.
+7. **Shape-field words** (shipped, U10) — `TestShapeFieldWordsMatchTheModel`
+   pins `domain.shapeFields` to `composer-model.js`'s `SHAPE_FIELDS`: the same
+   eleven fields, the same words, the same order. The server words a drifted
+   member's field list on a row and the desktop words an apply's diff in the
+   modal one click away, and two spellings would read as two different fields
+   describing one change. The words are D1's column headings, which is what
+   makes them worth pinning — a column heading is a decision about what an
+   engineer is looking at, and it is made here rather than in either file.
 
 Each test is ~30-50 LOC of Go reading source files literally with a regex.
 Don't introduce a code generator; the test pattern is sufficient for the

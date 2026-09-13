@@ -75,12 +75,24 @@ var loaderModeReaders = map[string]modeReader{
 
 	"shingo-core/cmd/simcalc/main.go": {1, "shape", "fleetMovesPerSwap costs each step-list shape in " +
 		"floor crossings and robots. It switches over every mode because the shape is the question"},
-	"shingo-edge/domain/claim_validation.go": {1, "shape", "the per-mode required-field registry. The " +
-		"OTHER arms are shape-of-swap questions; THIS one is not — a loader has no shape of swap, and " +
-		"the arm only says a loader claim needs an outbound_destination. It is a node-kind arm sitting " +
-		"in a switch over the mode, which is the honest description and the reason it is a `shape` " +
-		"entry only by adjacency. Rewriting the switch to ask IsLoaderNode for this one arm is a " +
-		"change to a validated input path, not a comment fix, so it is left alone deliberately"},
+	"shingo-edge/domain/claim_validation.go": {2, "shape", "TWO reads, of two kinds, in one file. " +
+		"(1) the per-mode required-field registry — now a map keyed by mode rather than a switch. The " +
+		"OTHER entries are shape-of-swap questions; THIS one is not — a loader has no shape of swap, and " +
+		"the entry only says a loader claim needs an outbound_destination. It is a node-kind entry sitting " +
+		"in a table over the mode, which is the honest description and the reason it is a `shape` " +
+		"entry only by adjacency. Rewriting it to ask IsLoaderNode for this one entry is a " +
+		"change to a validated input path, not a comment fix, so it is left alone deliberately. " +
+		"(2) swapModeLabel, a `label` read: the mode's STRING as the editor's messages say it " +
+		"(\"Loader/unloader claims\"), one arm of a table that names all five. Same case as " +
+		"completion_table.go below — the string IS the subject, and there is no node to ask"},
+
+	"shingo-edge/domain/flowspec/flowspec.go": {3, "shape", "THE per-mode registry itself: the table " +
+		"that says, for every (role, mode), which claim fields a reader Requires, Uses, leaves Unused " +
+		"or Forbids. Naming every mode is what the file IS — it is swap_mode.go's downstream half, and " +
+		"asking IsLoaderNode here would be asking a derived question to build the table the derivation " +
+		"is answered from. The three reads are the manual_swap steady row's key, the produce override " +
+		"that forbids auto-push on one, and the changeover registry's arm saying a loader has no " +
+		"changeover at all"},
 
 	"shingo-edge/engine/completion_table.go": {1, "label", "the mode's STRING as a completion-case row " +
 		"name, for the log. The predicate behind the row is matchManualSwap, which asks IsLoaderNode"},
