@@ -5,6 +5,7 @@ package engine
 import (
 	"database/sql"
 
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -53,13 +54,25 @@ import (
 // staged, partial or not, which is what a person standing at a dead cell does —
 // they do not wait for a count that has stopped moving.
 //
+// CAPACITY IS RESOLVED, NOT READ. style_node_claims.uop_capacity is a dead
+// column — a claim's capacity comes from the payload catalog on every read
+// (store/internal/capacity) — so selecting it here would gate `produce` nodes
+// on a zero and never call an output bin full.
+//
+// A RETIRED CLAIM DOES NOT GATE THE MACHINE. `retired_at` is the flow
+// composer's soft delete: a claim a changeover's history still points at is
+// kept rather than dropped (store/processes/claims.go's liveClaims), and every
+// other read path filters it. Without the filter here a retired produce claim
+// at capacity would hold the counter down on a node the style no longer runs.
+//
 // Fail-OPEN on any error. A rig that stops swapping is worse than one that swaps
 // a carrier early, and a DB blip must not stop the line.
 func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 	rows, err := db.Query(`
-		SELECT c.role, c.swap_mode, c.uop_capacity, r.active_bin_id, r.remaining_uop_cached, r.active_pull
+		SELECT c.role, c.swap_mode, `+store.ClaimCapacitySQL("c")+`, r.active_bin_id, r.remaining_uop_cached, r.active_pull
 		FROM process_nodes pn
 		JOIN style_node_claims c ON c.style_id = ? AND c.core_node_name = pn.core_node_name
+			AND c.retired_at IS NULL
 		JOIN process_node_runtime_states r ON r.process_node_id = pn.id
 		WHERE pn.process_id = ?`, styleID, processID)
 	if err != nil {

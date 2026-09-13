@@ -629,10 +629,14 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 				UOPCapacity:    capacity,
 				InboundSource:  "REL-MODE-SOURCE",
 				InboundStaging: "REL-MODE-STAGING",
+				// The store reads flowspec for single_robot now: both staging
+				// nodes and a destination, or the seed is refused. The orders
+				// under test are staged by hand below, not built from these.
+				OutboundStaging:     "REL-MODE-OUT-STAGING",
+				OutboundDestination: "REL-MODE-OUTBOUND",
 			}
 			if tc.setup.swapMode == "two_robot_press_index" {
 				claimInput.PairedCoreNode = coreNode + "-PAIR"
-				claimInput.OutboundDestination = "REL-MODE-OUTBOUND"
 			}
 			claimID, err := upsertClaimRetiredMode(db, claimInput)
 			if err != nil {

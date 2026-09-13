@@ -360,8 +360,8 @@ func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
 // ApplyReuseCompatibleBinsShortcut
 // ---------------------------------------------------------------------------
 
-// Press-index Swap with matching payload + reuse flag set + DRAINED bin →
-// Unchanged (skip the swap entirely).
+// Press-index PRODUCE Swap with matching payload + DRAINED bin → Unchanged
+// (skip the swap entirely).
 //
 // DRAINED, NOT EMPTY: the accessor reads an Edge counter (RemainingUOPCached ==
 // 0) on a bin that still carries its payload and its manifest. Core's "empty"
@@ -369,42 +369,27 @@ func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
 // different thing. See binDrainedAtCoreNode.
 func TestApplyReuseCompatibleBinsShortcut_SkipsWhenAllConditionsMet(t *testing.T) {
 	t.Parallel()
-	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
-	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) bool { return true })
+	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return Drained })
 
 	if out[0].Situation != SituationUnchanged {
 		t.Errorf("situation = %q, want Unchanged", out[0].Situation)
 	}
 }
 
-// Reuse flag false → no shortcut, Swap stays Swap.
-func TestApplyReuseCompatibleBinsShortcut_FlagFalseStillSwaps(t *testing.T) {
-	t.Parallel()
-	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: false}
-	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
-	diffs := []ChangeoverNodeDiff{
-		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
-	}
-	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) bool { return true })
-
-	if out[0].Situation != SituationSwap {
-		t.Errorf("situation = %q, want Swap (reuse flag off)", out[0].Situation)
-	}
-}
-
 // Bin not drained → no shortcut.
 func TestApplyReuseCompatibleBinsShortcut_BinNotDrainedStillSwaps(t *testing.T) {
 	t.Parallel()
-	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
-	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) bool { return false })
+	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return NotDrained })
 
 	if out[0].Situation != SituationSwap {
 		t.Errorf("situation = %q, want Swap (bin not empty)", out[0].Situation)
@@ -414,38 +399,38 @@ func TestApplyReuseCompatibleBinsShortcut_BinNotDrainedStillSwaps(t *testing.T) 
 // Non press-index mode → never shortcuts.
 func TestApplyReuseCompatibleBinsShortcut_NonPressIndexIgnored(t *testing.T) {
 	t.Parallel()
-	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot", ReuseCompatibleBins: true}
-	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot"}
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot"}
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) bool { return true })
+	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return Drained })
 
 	if out[0].Situation != SituationSwap {
 		t.Errorf("situation = %q, want Swap (non press-index ignored)", out[0].Situation)
 	}
 }
 
-// Different payloads → never shortcuts even with flag set + empty bin.
+// Different payloads → never shortcuts even with a drained bin.
 func TestApplyReuseCompatibleBinsShortcut_DifferentPayloadStillSwaps(t *testing.T) {
 	t.Parallel()
-	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
-	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume", SwapMode: "two_robot_press_index"}
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "produce", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
-	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) bool { return true })
+	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return Drained })
 
 	if out[0].Situation != SituationSwap {
 		t.Errorf("situation = %q, want Swap (payload differs)", out[0].Situation)
 	}
 }
 
-// nil isDrained accessor → defensive default, no shortcut applied.
+// nil drainState accessor → defensive default, no shortcut applied.
 func TestApplyReuseCompatibleBinsShortcut_NilAccessorPreservesSwap(t *testing.T) {
 	t.Parallel()
-	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
-	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
@@ -1123,5 +1108,70 @@ func TestFanOutCrossMode_SharedFrontNode_DifferentBinType_NoDoubleEmit(t *testin
 	}
 	if n != 1 {
 		t.Fatalf("PLN_02 got %d diffs, want exactly 1 (same-mode pass owns it)", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The shortcut, baked in — and the predicate that has to be fail-safe first
+// ---------------------------------------------------------------------------
+
+// The plant's part counters are trusted, so the per-claim opt-in goes and a
+// press-index produce position whose bin is drained and whose next style makes
+// the same part is simply not swapped.
+func TestApplyReuseCompatibleBinsShortcut_SkipsWithoutAnOptIn(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	diffs := []ChangeoverNodeDiff{
+		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+	}
+	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return Drained })
+
+	if out[0].Situation != SituationUnchanged {
+		t.Errorf("situation = %q, want Unchanged — the shortcut no longer waits for a per-claim flag", out[0].Situation)
+	}
+}
+
+// CONSUME NEVER SKIPS. Empty is the desired state at a produce position — the
+// press fills it — but at a consume position the line needs parts, and the
+// changeover swap is what puts a full bin there for the start of the new style.
+// Nothing automatic would catch it: auto_reorder is 0 on every live claim at
+// both plants and Hopkinsville sets no reorder point at all. Same ruling the
+// owner made for the sequential reuse-skip on 2026-08-28.
+func TestApplyReuseCompatibleBinsShortcut_ConsumeNeverSkips(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
+	diffs := []ChangeoverNodeDiff{
+		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+	}
+	out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return Drained })
+
+	if out[0].Situation != SituationSwap {
+		t.Errorf("situation = %q, want Swap — a drained consume position is a starved line, not a bin to reuse", out[0].Situation)
+	}
+}
+
+// UNKNOWN IS NOT DRAINED. The predicate used to answer a bool, so "the counter
+// says zero" and "there is no counter" were the same answer, and at a press
+// whose counter is not wired that answer was "drained" at every position.
+func TestApplyReuseCompatibleBinsShortcut_UnknownDrainStateNeverSkips(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce", SwapMode: "two_robot_press_index"}
+	for _, state := range []DrainState{DrainUnknown, NotDrained} {
+		diffs := []ChangeoverNodeDiff{
+			{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+		}
+		out := ApplyReuseCompatibleBinsShortcut(diffs, func(string) DrainState { return state })
+		if out[0].Situation != SituationSwap {
+			t.Errorf("drain state %v: situation = %q, want Swap", state, out[0].Situation)
+		}
+	}
+	// And the zero value of DrainState must be the safe one, so a closure that
+	// forgets a case cannot skip a swap.
+	var zero DrainState
+	if zero != DrainUnknown {
+		t.Errorf("the zero DrainState is %v, want DrainUnknown — an unset answer must never skip a swap", zero)
 	}
 }

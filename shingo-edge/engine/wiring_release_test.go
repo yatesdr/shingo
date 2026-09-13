@@ -204,14 +204,15 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 	// Promote the claim to two_robot.
 	claim, _ := db.GetStyleNodeClaimByNode(activeStyleForNode(t, db, nodeID), "REL-SUPPLY-SUPP-NODE")
 	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID:        claim.StyleID,
-		CoreNodeName:   claim.CoreNodeName,
-		Role:           claim.Role,
-		SwapMode:       "two_robot",
-		PayloadCode:    claim.PayloadCode,
-		UOPCapacity:    claim.UOPCapacity,
-		InboundSource:  "TR-SOURCE",
-		InboundStaging: "TR-STAGING",
+		StyleID:             claim.StyleID,
+		CoreNodeName:        claim.CoreNodeName,
+		Role:                claim.Role,
+		SwapMode:            "two_robot",
+		PayloadCode:         claim.PayloadCode,
+		UOPCapacity:         claim.UOPCapacity,
+		InboundSource:       "TR-SOURCE",
+		InboundStaging:      "TR-STAGING",
+		OutboundDestination: "TR-DEST",
 	}); err != nil {
 		t.Fatalf("promote claim: %v", err)
 	}

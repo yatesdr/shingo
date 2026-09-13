@@ -242,14 +242,15 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 		t.Fatal("claim lookup returned nil — seed contract changed")
 	}
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID:        claim.StyleID,
-		CoreNodeName:   claim.CoreNodeName,
-		Role:           claim.Role,
-		SwapMode:       "two_robot",
-		PayloadCode:    claim.PayloadCode,
-		UOPCapacity:    claim.UOPCapacity,
-		InboundSource:  "TR-SOURCE",
-		InboundStaging: "TR-STAGING",
+		StyleID:             claim.StyleID,
+		CoreNodeName:        claim.CoreNodeName,
+		Role:                claim.Role,
+		SwapMode:            "two_robot",
+		PayloadCode:         claim.PayloadCode,
+		UOPCapacity:         claim.UOPCapacity,
+		InboundSource:       "TR-SOURCE",
+		InboundStaging:      "TR-STAGING",
+		OutboundDestination: "TR-DEST",
 	}); err != nil {
 		t.Fatalf("promote claim to two_robot: %v", err)
 	}

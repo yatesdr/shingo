@@ -114,15 +114,14 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
+// vacuumInto writes the consistent copy. THROUGH SnapshotTo, which opens its
+// own connection: the store is pinned to one, and a whole-database copy onto
+// an SD card is not something every station's poll should be queued behind.
 func vacuumInto(db *store.DB, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
 	}
-	escaped := strings.ReplaceAll(dest, "'", "''")
-	if _, err := db.Exec("VACUUM INTO '" + escaped + "'"); err != nil {
-		return fmt.Errorf("sqlite vacuum into: %w", err)
-	}
-	return nil
+	return db.SnapshotTo(dest)
 }
 
 func fileSHA256(path string) (string, error) {

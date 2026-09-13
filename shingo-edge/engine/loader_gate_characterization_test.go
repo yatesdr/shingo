@@ -85,6 +85,9 @@ func seedClaimWithSwapMode(
 		UOPCapacity:         100,
 		OutboundDestination: outbound,
 		InboundStaging:      prefix + "-STAGE",
+		// Required at save for single_robot since flowspec D1; this seed is
+		// about the loader GATE, so it satisfies whichever mode it is given.
+		OutboundStaging: prefix + "-PARK",
 	}); err != nil {
 		t.Fatalf("upsert %s claim: %v", mode, err)
 	}

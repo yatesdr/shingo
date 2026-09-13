@@ -105,3 +105,136 @@ func (p Plan) OrderCount() int {
 	}
 	return n
 }
+
+// PreviewAction is the wire shape of one NodeAction: what the desktop's
+// changeover preview and the flow composer's preview both return. It mirrors
+// NodeAction but turns the error into a string and flattens the OrderSpec
+// union so a UI can render it without a discriminator dance.
+//
+// NodeName is the Edge display name (process_nodes.name, free text);
+// CoreNodeName is the identity every routing decision and the composer's
+// picture are keyed by. Both travel.
+type PreviewAction struct {
+	NodeID       int64        `json:"node_id"`
+	NodeName     string       `json:"node_name"`
+	CoreNodeName string       `json:"core_node_name"`
+	Situation    string       `json:"situation"`
+	SupplyOrder  *PreviewSpec `json:"supply_order,omitempty"`
+	EvacOrder    *PreviewSpec `json:"evac_order,omitempty"`
+	NextState    string       `json:"next_state,omitempty"`
+	LogTag       string       `json:"log_tag,omitempty"`
+	Error        string       `json:"error,omitempty"`
+}
+
+// PreviewSpec is one order of a PreviewAction, flattened.
+type PreviewSpec struct {
+	Kind         string `json:"kind"` // "complex" or "retrieve"
+	DeliveryNode string `json:"delivery_node,omitempty"`
+	StagingNode  string `json:"staging_node,omitempty"`
+	// From / To are the order's REAL first pickup and last drop-off — where a
+	// bin is fetched and where it ends up (U10 P1).
+	//
+	// ADDED FOR THE ORDERS SENTENCE, and it could not be built without them.
+	// Both S9s read `Robot · from → to · what`, and DeliveryNode alone answers
+	// half of that: a supply order's delivery node is where the bin GOES, and
+	// the sentence also has to say where it came from. A complex order's ends
+	// live inside Steps, which the wire carried only as a COUNT
+	// (`step_count: 3`), so the UI had the shape of the order and neither end
+	// of it — which is why S9 said "brings the new bin to PLN_02" and could
+	// not say from where.
+	//
+	// Read off the plan rather than guessed from the claim: a complex order's
+	// steps are what the robot is actually told to do, and the claim's
+	// inbound_source is what an engineer asked for. When a decorator rewrites
+	// a leg, these follow and the claim does not.
+	//
+	// Additive on an EDGE DTO. Nothing under protocol/ moves for a sentence.
+	From        string `json:"from,omitempty"`
+	To          string `json:"to,omitempty"`
+	StepCount   int    `json:"step_count,omitempty"`
+	PayloadCode string `json:"payload_code,omitempty"`
+	AutoConfirm bool   `json:"auto_confirm"`
+}
+
+// ToPreviewAction flattens one planned action for the wire.
+func ToPreviewAction(a NodeAction) PreviewAction {
+	out := PreviewAction{
+		NodeID:       a.NodeID,
+		NodeName:     a.NodeName,
+		CoreNodeName: a.CoreNodeName,
+		Situation:    a.Situation,
+		SupplyOrder:  ToPreviewSpec(a.SupplyOrder),
+		EvacOrder:    ToPreviewSpec(a.EvacOrder),
+		NextState:    string(a.NextState),
+		LogTag:       a.LogTag,
+	}
+	if a.Err != nil {
+		out.Error = a.Err.Error()
+	}
+	return out
+}
+
+// ToPreviewSpec flattens one OrderSpec; nil stays nil.
+func ToPreviewSpec(spec *OrderSpec) *PreviewSpec {
+	if spec == nil {
+		return nil
+	}
+	if spec.Complex != nil {
+		from, to := stepEnds(spec.Complex.Steps)
+		if to == "" {
+			// A complex order with no dropoff step still ends somewhere, and
+			// the delivery node is where.
+			to = spec.Complex.DeliveryNode
+		}
+		return &PreviewSpec{
+			Kind:         "complex",
+			DeliveryNode: spec.Complex.DeliveryNode,
+			StepCount:    len(spec.Complex.Steps),
+			AutoConfirm:  spec.Complex.AutoConfirm,
+			From:         from,
+			To:           to,
+		}
+	}
+	if spec.Retrieve != nil {
+		// A retrieve fetches from SourceNode — the supermarket group the claim
+		// named — and lands at the staging node when there is one, because
+		// that is where the robot actually stops. The delivery node is where
+		// the bin is FOR, and on a two-robot swap the two are different nodes.
+		to := spec.Retrieve.StagingNode
+		if to == "" {
+			to = spec.Retrieve.DeliveryNode
+		}
+		return &PreviewSpec{
+			Kind:         "retrieve",
+			DeliveryNode: spec.Retrieve.DeliveryNode,
+			StagingNode:  spec.Retrieve.StagingNode,
+			PayloadCode:  spec.Retrieve.PayloadCode,
+			AutoConfirm:  spec.Retrieve.AutoConfirm,
+			From:         spec.Retrieve.SourceNode,
+			To:           to,
+		}
+	}
+	return nil
+}
+
+// stepEnds is a complex order's first pickup and last dropoff.
+//
+// FIRST AND LAST, not first and second: a quarter-child-cart sequence picks up
+// once and drops off two or three times, and the sentence is about where the
+// bin ends up rather than about every stop on the way. A `wait` step is not an
+// end of anything.
+func stepEnds(steps []protocol.ComplexOrderStep) (from, to string) {
+	for _, st := range steps {
+		switch st.Action {
+		case "pickup":
+			if from == "" {
+				from = st.Node
+			}
+		case "dropoff":
+			if st.Node != "" {
+				to = st.Node
+			}
+		}
+	}
+	return from, to
+}

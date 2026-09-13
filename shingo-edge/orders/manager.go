@@ -87,12 +87,12 @@ func (m *Manager) resolveClaimForNode(processNodeID *int64) *processes.NodeClaim
 	return claim
 }
 
-// lookupRouting returns the claim's SEER routing hints for an order at this
-// node: keyRoute (ordered via-points) and keyTask ("load"/"unload").
+// lookupRouting returns the claim's SEER routing hint for an order at this
+// node: keyRoute, the ordered via-points.
 //
 // THE CLAIM IS THE SEAM, NOT A PARAMETER. Routing is a per-claim geometry
 // fact, and the create constructors already take ten positional arguments;
-// threading two more through every one of them (and through SwapDispatch, and
+// threading one more through every one of them (and through SwapDispatch, and
 // through the changeover OrderSpec) would spread one fact across a dozen
 // signatures. The manager already derives per-claim facts from processNodeID
 // — that is exactly what lookupPayloadMeta does — so routing is read the same
@@ -101,12 +101,25 @@ func (m *Manager) resolveClaimForNode(processNodeID *int64) *processes.NodeClaim
 // Consequence worth knowing: an order with no processNodeID (a manual API
 // order) carries no routing, which is correct — there is no claim to speak
 // for it, and empty means SEER auto-picks, today's behaviour everywhere.
-func (m *Manager) lookupRouting(processNodeID *int64) (keyRoute []string, keyTask string) {
+//
+// KEY TASK USED TO COME BACK FROM HERE TOO, and does not (owner ruling
+// 2026-09-10: "remove key task completely"). It was SEER's sibling-selection
+// hint — "load"/"unload", preferring a robot already doing that kind of task —
+// and nothing set it: style_node_claims.key_task is empty on every live claim
+// at both plants, its own schema comment says so, and it never had an editor
+// on either composer surface. What the read did was forward a value from a
+// column with no writer into protocol.ComplexOrderRequest, through Core, to
+// rds.SetOrderRequest.KeyTask, where `omitempty` dropped it and SEER
+// auto-picked — which is the behaviour with the forward removed. The column,
+// the protocol field and Core's conduit all stay: a dead column is not a
+// column drop, and the four tests that pin the conduit still pin it. What is
+// gone is Edge claiming to be its source.
+func (m *Manager) lookupRouting(processNodeID *int64) (keyRoute []string) {
 	claim := m.resolveClaimForNode(processNodeID)
 	if claim == nil {
-		return nil, ""
+		return nil
 	}
-	return claim.KeyRoute, claim.KeyTask
+	return claim.KeyRoute
 }
 
 func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {

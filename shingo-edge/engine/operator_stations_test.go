@@ -52,6 +52,36 @@ func buildEngineDBTemplate() error {
 
 func testEngineDB(t *testing.T) *store.DB {
 	t.Helper()
+	// OpenMigrated, not Open: the copy already carries the template's schema,
+	// and re-running the migration chain per test was the cost this pool exists
+	// to remove. verifySchema still runs inside, so a bad template fails loudly.
+	db, err := store.OpenMigrated(copyEngineDBTemplate(t))
+	if err != nil {
+		t.Fatalf("open copied db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// testEngineDBCounting is testEngineDB with every statement counted, for the
+// tests that pin a path to a constant number of queries. It pays one
+// migration pass on the copy (OpenCounting mirrors Open, which migrates); the
+// counter is reset after the open, so the fixture's own statements are not in
+// the caller's count.
+func testEngineDBCounting(t *testing.T) (*store.DB, *store.QueryCounter) {
+	t.Helper()
+	db, counter, err := store.OpenCounting(copyEngineDBTemplate(t))
+	if err != nil {
+		t.Fatalf("open counting db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db, counter
+}
+
+// copyEngineDBTemplate copies the pre-migrated template into the test's temp
+// dir and returns the copy's path.
+func copyEngineDBTemplate(t *testing.T) string {
+	t.Helper()
 	engineDBTemplateOnce.Do(func() { engineDBTemplateErr = buildEngineDBTemplate() })
 	if engineDBTemplateErr != nil {
 		t.Fatalf("build db template: %v", engineDBTemplateErr)
@@ -64,15 +94,7 @@ func testEngineDB(t *testing.T) *store.DB {
 	if err := os.WriteFile(dst, src, 0o600); err != nil {
 		t.Fatalf("copy db template: %v", err)
 	}
-	// OpenMigrated, not Open: the copy already carries the template's schema,
-	// and re-running the migration chain per test was the cost this pool exists
-	// to remove. verifySchema still runs inside, so a bad template fails loudly.
-	db, err := store.OpenMigrated(dst)
-	if err != nil {
-		t.Fatalf("open copied db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return dst
 }
 
 // seedProcessNode creates a minimal process + node for testing.

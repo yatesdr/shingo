@@ -8,6 +8,7 @@ package engine
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -16,6 +17,18 @@ import (
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
+)
+
+// The two refusals a caller can act on by name. Their WORDS are the ones
+// planChangeover has always returned — the desktop preview and every test
+// match on the text — and the identity is what the flow composer's endpoints
+// map to 409: a draft previewed against the running style is refused the same
+// way a saved one is, and the station shows the same sentence.
+var (
+	// ErrStyleAlreadyRunning is returned as "process is already running style N".
+	ErrStyleAlreadyRunning = errors.New("process is already running style")
+	// ErrChangeoverActive is returned verbatim.
+	ErrChangeoverActive = errors.New("process already has an active changeover")
 )
 
 // changeoverPlan holds all pre-computed data needed to start a changeover.
@@ -85,16 +98,54 @@ func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeC
 // first changeover plans exactly like the second. Preview passes false and gets
 // the same positions as UNSAVED nodes — the operator must see the work the
 // changeover will do, and a preview that writes rows is not a preview.
+//
+// This door reads the two styles' claims from the database and hands them to
+// planChangeoverFrom, which is the planner. Nothing else lives here: the gates,
+// the post-processors and the tooling decoration all belong to the seam so a
+// draft previewed through it is judged exactly like a saved style.
 func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions bool) (*changeoverPlan, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
 	}
+	var fromClaims, toClaims []processes.NodeClaim
+	if process.ActiveStyleID != nil {
+		fromClaims, err = e.db.ListStyleNodeClaims(*process.ActiveStyleID)
+		if err != nil {
+			return nil, fmt.Errorf("list from-style claims: %w", err)
+		}
+	}
+	toClaims, err = e.db.ListStyleNodeClaims(toStyleID)
+	if err != nil {
+		return nil, fmt.Errorf("list to-style claims: %w", err)
+	}
+	return e.planChangeoverFrom(processID, toStyleID, fromClaims, toClaims, materializePositions)
+}
+
+// planChangeoverFrom is the planner seam: everything planChangeover does, with
+// the two styles' claims supplied by the caller instead of read here.
+//
+// It exists so the flow composer can plan a DRAFT — claims that exist only in
+// a request body — before anything is written. Save-as-you-go was killed
+// because a half-built style reaches Core's sourceability feed and every
+// station's picker flaps NO PARTS; the alternative is a planner that takes
+// claims. The GATES run here too, not in the reading door: a draft previewed
+// against the running style, or while a changeover is active, must be refused
+// in the same words as a saved one.
+//
+// fromClaims are the ACTIVE style's claims (nil when no style runs); toClaims
+// are the target's. TestPlanChangeoverFrom_AgreesWithPlanChangeover pins that
+// this and planChangeover build reflect.DeepEqual plans over the same rows.
+func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toClaims []processes.NodeClaim, materializePositions bool) (*changeoverPlan, error) {
+	process, err := e.db.GetProcess(processID)
+	if err != nil {
+		return nil, err
+	}
 	if process.ActiveStyleID != nil && *process.ActiveStyleID == toStyleID {
-		return nil, fmt.Errorf("process is already running style %d", toStyleID)
+		return nil, fmt.Errorf("%w %d", ErrStyleAlreadyRunning, toStyleID)
 	}
 	if _, err := e.db.GetActiveProcessChangeover(processID); err == nil {
-		return nil, fmt.Errorf("process already has an active changeover")
+		return nil, ErrChangeoverActive
 	} else if err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -110,17 +161,6 @@ func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions
 	stations, err := e.db.ListOperatorStationsByProcess(processID)
 	if err != nil {
 		return nil, err
-	}
-	var fromClaims, toClaims []processes.NodeClaim
-	if process.ActiveStyleID != nil {
-		fromClaims, err = e.db.ListStyleNodeClaims(*process.ActiveStyleID)
-		if err != nil {
-			return nil, fmt.Errorf("list from-style claims: %w", err)
-		}
-	}
-	toClaims, err = e.db.ListStyleNodeClaims(toStyleID)
-	if err != nil {
-		return nil, fmt.Errorf("list to-style claims: %w", err)
 	}
 	// The tooling changeover parks the incoming style's bins at InboundStaging
 	// until tooling-done. Refuse to arm without one, LOUDLY and by name: the

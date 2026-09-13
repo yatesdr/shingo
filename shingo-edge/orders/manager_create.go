@@ -253,7 +253,7 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 	// Routing comes from the claim, resolved the same way and at the same
 	// moment as the payload — see lookupRouting for why this is not a
 	// parameter.
-	keyRoute, keyTask := m.lookupRouting(processNodeID)
+	keyRoute := m.lookupRouting(processNodeID)
 
 	env, envErr := m.sender.build(protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{
 		OrderUUID:        orderUUID,
@@ -264,7 +264,6 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		Steps:            steps,
 		SiblingOrderUUID: siblingUUID,
 		KeyRoute:         keyRoute,
-		KeyTask:          keyTask,
 		OriginID:         origin.ID,
 		OriginClass:      origin.Class,
 	})

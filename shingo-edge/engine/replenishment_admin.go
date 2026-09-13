@@ -24,52 +24,7 @@ import (
 	"fmt"
 
 	"shingoedge/domain"
-	"shingoedge/store/processes"
 )
-
-// processClaimToInput maps a persisted NodeClaim back to its NodeClaimInput
-// shape — needed because the admin replenishment edits touch only a subset of
-// claim fields but UpsertStyleNodeClaim writes every column the editor owns.
-//
-// The absent-means-untouched columns are left NIL rather than echoed.
-//
-// This used to echo the four that existed at the time, on the argument that the
-// path reads the whole claim and therefore has an opinion. The argument is
-// sound and the practice is not: five more such columns arrived, nobody added
-// them here, and a reorder-point edit wiped a press's evacuation positions, its
-// evacuation destination, its loader card and its key route. An echo is correct
-// only for the fields someone remembered, and it fails silently for the rest.
-//
-// Saying nothing is correct for all of them, including any added tomorrow: this
-// path edits reorder_point, reorder_point_source and auto_reorder, and has no
-// opinion about anything else.
-func processClaimToInput(c *processes.NodeClaim) domain.NodeClaimInput {
-	return domain.NodeClaimInput{
-		StyleID:               c.StyleID,
-		CoreNodeName:          c.CoreNodeName,
-		Role:                  c.Role,
-		SwapMode:              c.SwapMode,
-		PayloadCode:           c.PayloadCode,
-		UOPCapacity:           c.UOPCapacity,
-		ReorderPoint:          c.ReorderPoint,
-		ReorderPointSource:    &c.ReorderPointSource,
-		AutoReorder:           &c.AutoReorder,
-		InboundStaging:        c.InboundStaging,
-		OutboundStaging:       c.OutboundStaging,
-		InboundSource:         c.InboundSource,
-		OutboundDestination:   c.OutboundDestination,
-		AllowedPayloadCodes:   c.AllowedPayloadCodes,
-		AutoRequestPayload:    c.AutoRequestPayload,
-		EvacuateOnChangeover:  c.EvacuateOnChangeover,
-		PairedCoreNode:        c.PairedCoreNode,
-		SecondPairedCoreNode:  c.SecondPairedCoreNode,
-		AutoConfirm:           c.AutoConfirm,
-		Sequence:              &c.Sequence,
-		LinesideSoftThreshold: c.LinesideSoftThreshold,
-		ReuseCompatibleBins:   c.ReuseCompatibleBins,
-		AutoPush:              c.AutoPush,
-	}
-}
 
 // CellReorderInput is the write shape for the cell-side reorder_point
 // + reorder_point_source pair.
@@ -78,6 +33,13 @@ type CellReorderInput struct {
 	ReorderPoint int
 	Source       string
 	AutoReorder  bool
+	// CalledBy is the desktop session's user. THE HANDLER'S, never the body's,
+	// exactly as flow/save decides it (owner ruling R1): this is the third
+	// door that writes a claim, and it used to stamp none — which
+	// MaterializeClaim reads as ClaimSourceAdmin with no caller, so a flow
+	// saved from a station read "the desktop" on the set-up card after an
+	// engineer nudged a reorder point.
+	CalledBy string
 }
 
 // UpdateCellReorder modifies the reorder_point + source + AutoReorder
@@ -99,12 +61,17 @@ func (e *Engine) UpdateCellReorder(in CellReorderInput) error {
 	if source == "" {
 		source = "manual"
 	}
-	// Build NodeClaimInput from existing claim so we don't clobber
-	// fields outside this admin path's concern.
-	upd := processClaimToInput(current)
+	// The stored claim as a write, with every absent-means-untouched column
+	// left absent: this path edits three columns and has no opinion about the
+	// rest. See domain.InputFromClaimUngated for why the echo cannot be a
+	// hand-kept list.
+	upd := domain.InputFromClaimUngated(*current)
 	upd.ReorderPoint = in.ReorderPoint
 	upd.ReorderPointSource = &source
 	upd.AutoReorder = &in.AutoReorder
+	// This IS a claim write from the desktop, so it says so — with the person
+	// who made it, like the other two doors.
+	upd.Source, upd.CalledBy = domain.ClaimSourceAdmin, in.CalledBy
 	if _, err := e.db.UpsertStyleNodeClaim(upd); err != nil {
 		return fmt.Errorf("cell reorder: upsert: %w", err)
 	}

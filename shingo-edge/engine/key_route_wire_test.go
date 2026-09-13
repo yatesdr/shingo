@@ -79,8 +79,14 @@ func TestComplexOrder_CarriesTheClaimsKeyRoute(t *testing.T) {
 		if len(r.KeyRoute) != 2 || r.KeyRoute[0] != "AISLE_B" || r.KeyRoute[1] != "AISLE_A" {
 			t.Errorf("leg %d KeyRoute = %v, want [AISLE_B AISLE_A] in that order", i, r.KeyRoute)
 		}
-		if r.KeyTask != "load" {
-			t.Errorf("leg %d KeyTask = %q, want \"load\"", i, r.KeyTask)
+		// AND KEY TASK IS NEVER SENT, whatever the claim holds. It is the
+		// sibling hint this Edge stopped forwarding (owner ruling 2026-09-10,
+		// "remove key task completely"): the claim column is dead, and a
+		// forward of a value nobody sets is a conduit with no source. The
+		// claim seeded above still sets it, deliberately — this asserts the
+		// forward is gone, not that the column is.
+		if r.KeyTask != "" {
+			t.Errorf("leg %d sent KeyTask %q; Edge no longer forwards the sibling hint", i, r.KeyTask)
 		}
 	}
 }

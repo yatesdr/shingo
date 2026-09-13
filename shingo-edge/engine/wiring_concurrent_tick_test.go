@@ -362,7 +362,7 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 		StyleID: claim.StyleID, CoreNodeName: claim.CoreNodeName,
 		Role: claim.Role, SwapMode: "two_robot",
 		PayloadCode: claim.PayloadCode, UOPCapacity: claim.UOPCapacity,
-		InboundSource: "TR-SOURCE", InboundStaging: "TR-STAGING",
+		InboundSource: "TR-SOURCE", InboundStaging: "TR-STAGING", OutboundDestination: "TR-DEST",
 	}); err != nil {
 		t.Fatalf("promote: %v", err)
 	}

@@ -152,16 +152,20 @@ func seedPhase3SwapScenarioMode(t *testing.T, db *store.DB, mode protocol.SwapMo
 		t.Fatalf("upsert from claim: %v", err)
 	}
 
-	// To-claim: full staging config
+	// To-claim: full staging config. OutboundDestination is Required at save
+	// for single_robot and two_robot since flowspec D1/D2 — where the outgoing
+	// bin goes is not optional — so the seed says it on both sides.
 	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID:        toStyleID,
-		CoreNodeName:   "P3-NODE",
-		Role:           "consume",
-		SwapMode:       mode,
-		PayloadCode:    "PART-NEW",
-		UOPCapacity:    200,
-		InboundSource:  "SOURCE-NEW",
-		InboundStaging: "IN-STAGING",
+		StyleID:             toStyleID,
+		CoreNodeName:        "P3-NODE",
+		Role:                "consume",
+		SwapMode:            mode,
+		PayloadCode:         "PART-NEW",
+		UOPCapacity:         200,
+		InboundSource:       "SOURCE-NEW",
+		InboundStaging:      "IN-STAGING",
+		OutboundStaging:     "OUT-STAGING",
+		OutboundDestination: "DEST-NEW",
 	})
 	if err != nil {
 		t.Fatalf("upsert to claim: %v", err)

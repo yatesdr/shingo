@@ -55,12 +55,15 @@ func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 	// Claim exists ONLY on to-style — mirrors the add-node topology
 	// where the new node didn't exist under from-style.
 	toClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID:      toStyleID,
-		CoreNodeName: "ADD-NEW-NODE",
-		Role:         protocol.ClaimRoleConsume,
-		SwapMode:     protocol.SwapModeSingleRobot,
-		PayloadCode:  "PART-ADD",
-		UOPCapacity:  3600,
+		StyleID:             toStyleID,
+		CoreNodeName:        "ADD-NEW-NODE",
+		Role:                protocol.ClaimRoleConsume,
+		SwapMode:            protocol.SwapModeSingleRobot,
+		InboundStaging:      "STG-IN",
+		OutboundStaging:     "STG-OUT",
+		OutboundDestination: "STG-DEST",
+		PayloadCode:         "PART-ADD",
+		UOPCapacity:         3600,
 	})
 	if err != nil {
 		t.Fatalf("upsert to-style claim: %v", err)
@@ -105,11 +108,11 @@ func TestFindActiveClaim_PrefersActiveOverTarget(t *testing.T) {
 	})
 	fromClaimID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PREF-NODE", Role: protocol.ClaimRoleConsume,
-		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-OLD", UOPCapacity: 100,
+		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-OLD", UOPCapacity: 100, InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	toClaimID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PREF-NODE", Role: protocol.ClaimRoleConsume,
-		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-NEW", UOPCapacity: 200,
+		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-NEW", UOPCapacity: 200, InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 
 	node, _ := db.GetProcessNode(nodeID)

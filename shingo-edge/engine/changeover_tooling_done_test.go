@@ -59,7 +59,7 @@ func TestToolingDoneReleasesEveryStagedLeg(t *testing.T) {
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "tooling done")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestReleaseStagedOrdersAcceptsASingleLegPosition(t *testing.T) {
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "single leg")
 	if err != nil {

@@ -76,6 +76,25 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 	return processID, nodeID, styleID, claimID
 }
 
+// testCoreURL is the base URL for a CoreClient that must look configured and
+// must never answer.
+//
+// A LITERAL IP, NOT A HOSTNAME. Several tests set a CoreClient purely so
+// Available() is true (it reads only "baseURL is not empty" —
+// core_client.go:69-71), and then the paths under test make real calls:
+// operator_changeover_plan.go:378 fetches a payload manifest per claim. This
+// used to be "http://test-core", a bare name with no record, and on Windows
+// each attempt walks DNS -> LLMNR -> NetBIOS before failing:
+// TestPreviewFlow_PreflightStates spent 20.96 of 21.9s inside GetAddrInfoW,
+// and TestFlowPreview_DraftEqualsSavedPreview 33.7s, against 0.13-0.34s for
+// their siblings without a client.
+//
+// 127.0.0.1:1 never reaches a resolver and refuses immediately on every OS,
+// which is the behaviour these tests actually want: Core is configured and
+// unreachable. ".invalid" would also work on most stacks but still goes
+// through name resolution, and some of them answer it slowly.
+const testCoreURL = "http://127.0.0.1:1"
+
 // testEngine creates a minimal Engine with a real order manager backed by the
 // given SQLite DB. The engine is suitable for testing RequestProduceSwap and
 // wiring handlers. No PLC manager or network services are created.

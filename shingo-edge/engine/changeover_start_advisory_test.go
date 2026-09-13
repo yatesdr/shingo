@@ -34,7 +34,7 @@ func TestStartChangeover_MissingStock_StartsWithAdvisory(t *testing.T) {
 
 	// Wire a preflight that reports the to-style payload as not-in-stock, and
 	// a non-empty core client so the gate actually runs (Available() == true).
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 	eng.preflightChecker = service.NewPreflightChecker(db, fakePreflightPoster{}, "test.station")
 
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "missing-stock advisory")

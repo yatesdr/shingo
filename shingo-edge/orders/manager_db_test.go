@@ -109,11 +109,14 @@ func seedProcessStyleNode(t *testing.T, db *store.DB, procName, styleName, coreN
 func seedClaim(t *testing.T, db *store.DB, styleID int64, coreNode, payloadCode string) int64 {
 	t.Helper()
 	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID:      styleID,
-		CoreNodeName: coreNode,
-		Role:         "consume",
-		SwapMode:     "single_robot",
-		PayloadCode:  payloadCode,
+		StyleID:             styleID,
+		CoreNodeName:        coreNode,
+		Role:                "consume",
+		SwapMode:            "single_robot",
+		InboundStaging:      "STG-IN",
+		OutboundStaging:     "STG-OUT",
+		OutboundDestination: "STG-DEST",
+		PayloadCode:         payloadCode,
 	})
 	if err != nil {
 		t.Fatalf("UpsertStyleNodeClaim: %v", err)

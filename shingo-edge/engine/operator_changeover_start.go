@@ -453,33 +453,57 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 // exactly on it: it decides, from an Edge count, whether to skip moving a
 // physical carrier Core is tracking.
 //
-// THE ADJACENT CAVEAT, WHICH IS LIVE AND IS NOT ABOUT THE NAME. A press counter
-// that is not wired reads RemainingUOPCached == 0 ALWAYS — that is the case at
-// Springfield today, and produce_plan.go's prime branch is ordered around it. So
-// this predicate answers "drained" for every position at such a press. It gates
-// nothing there yet, because ReuseCompatibleBins has no plantspec key at all and
-// no fixture sets it: it takes an operator flipping the Edge column AND running
-// a changeover. If that flag is ever enabled at a press whose counter is not
-// wired, this closure will report every position drained and the shortcut will
-// skip swaps that need to happen. Wire the counter before enabling the flag.
-func (e *Engine) binDrainedAtCoreNode(processID int64) func(coreNodeName string) bool {
+// THE ADJACENT CAVEAT WAS LIVE, AND IS WHY THIS ANSWERS THREE WAYS. A press
+// counter that is not wired reads RemainingUOPCached == 0 ALWAYS — that is the
+// case at Springfield today, and produce_plan.go's prime branch is ordered
+// around it. Asked as a bool, this predicate answered "drained" for every
+// position at such a press, and the only thing keeping that theoretical was the
+// per-claim ReuseCompatibleBins opt-in, which no plantspec key and no fixture
+// ever set. The opt-in is gone (2026-09-09), so the predicate carries its own
+// caveat instead: an unwired counter answers DrainUnknown, and unknown never
+// skips a swap.
+func (e *Engine) binDrainedAtCoreNode(processID int64) func(coreNodeName string) DrainState {
+	// IS THERE A COUNTER AT ALL. Asked once, for the process, because that is
+	// where the counter is configured: SyncProcessCounter creates no reporting
+	// point unless both names are set, and leaves it disabled unless the
+	// checkbox is on, so any of the three missing means nothing is polling and
+	// RemainingUOPCached is 0 for want of a tick rather than for want of parts.
+	//
+	// This is the strongest signal Edge has, and it is not perfect: the
+	// reporting-point checkbox is decoupled from what actually polls, so a
+	// process whose tag is wrong still reads as counting. What it does do is
+	// separate the case that exists at a plant today — a press with no counter
+	// tag at all — from a genuine zero, which a bool could not do.
+	process, err := e.db.GetProcess(processID)
+	if err != nil || process == nil ||
+		process.CounterPLCName == "" || process.CounterTagName == "" || !process.CounterEnabled {
+		return func(string) DrainState { return DrainUnknown }
+	}
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
-		return func(string) bool { return false }
+		return func(string) DrainState { return DrainUnknown }
 	}
 	idByName := make(map[string]int64, len(nodes))
 	for _, n := range nodes {
 		idByName[n.CoreNodeName] = n.ID
 	}
-	return func(name string) bool {
+	return func(name string) DrainState {
 		id, ok := idByName[name]
 		if !ok {
-			return false
+			return DrainUnknown
 		}
 		rt, err := e.db.GetProcessNodeRuntime(id)
 		if err != nil || rt == nil {
-			return false
+			return DrainUnknown
 		}
-		return rt.RemainingUOPCached == 0
+		if rt.ActiveBinID == nil {
+			// No bin at the position, so "is the bin drained" has no subject.
+			// Not the same as an empty one, and not a bin to reuse.
+			return DrainUnknown
+		}
+		if rt.RemainingUOPCached == 0 {
+			return Drained
+		}
+		return NotDrained
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
@@ -32,13 +33,33 @@ import (
 // planner with SwapMode = "press_position" and route through the
 // dedicated case in BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps.
 func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool, tooling toolingChangeover) changeover.Plan {
+	plan, _ := BuildChangeoverPlanReporting(diffs, nodes, fallbackAutoConfirm, activePullByCoreNode, tooling)
+	return plan
+}
+
+// BuildChangeoverPlanReporting is BuildChangeoverPlan with its one silence
+// spoken: the second return names, in diff order, every CHANGED node the plan
+// dropped because it has no process_nodes row. Such a node gets no action and
+// no order however well it was planned — the flow composer's preview lists
+// these as unresolved beside the participants assertParticipantsResolve
+// names, so the operator sees the work that will not happen before pressing
+// START.
+//
+// A sibling rather than a change to BuildChangeoverPlan's return, because
+// that function's two callers (the desktop preview and Start) consume the
+// plan and nothing else; widening their contract for a third caller's need
+// is what this repo's interface tripwires exist to catch. The plan returned
+// here IS the plan BuildChangeoverPlan returns.
+func BuildChangeoverPlanReporting(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool, tooling toolingChangeover) (changeover.Plan, []string) {
 	var actions []changeover.NodeAction
+	var skipped []string
 	for _, diff := range diffs {
 		if diff.Situation == SituationUnchanged {
 			continue
 		}
 		node := findNodeByCoreName(nodes, diff.CoreNodeName)
 		if node == nil {
+			skipped = append(skipped, diff.CoreNodeName)
 			continue
 		}
 		action := planNodeAction(diff, node, fallbackAutoConfirm, activePullByCoreNode)
@@ -48,7 +69,7 @@ func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fal
 	// planner: it edits legs the passes above produced rather than competing
 	// with them for the press. See changeover_tooling.go for why that placement
 	// is the fix and not merely a tidier arrangement.
-	return applyToolingChangeover(changeover.Plan{Actions: actions}, nodes, tooling, fallbackAutoConfirm)
+	return applyToolingChangeover(changeover.Plan{Actions: actions}, nodes, tooling, fallbackAutoConfirm), skipped
 }
 
 // directTripChangeoverMode reports whether a SwapMode dispatches a
@@ -325,17 +346,21 @@ func formatMissingFields(missing []missingField) string {
 	return strings.Join(parts, ", ")
 }
 
-// requiredChangeoverFields is the per-mode validation registry. Returns
-// the list of fields that are missing on the from/to claim pair for the
-// selected SwapMode. Empty slice means all required fields are
-// populated and the builder will succeed.
+// requiredChangeoverFields returns the fields missing on the from/to claim
+// pair for the OUTGOING claim's SwapMode — the ones the per-mode changeover
+// builder will read. Empty slice means the builder will succeed.
 //
-// The registry mirrors what each per-mode builder actually consumes —
-// not steady-state required fields. Steady-state validation lives in
-// store/processes/claims.go.UpsertClaim and is independent.
+// THE REGISTRY IS flowspec.Changeover, and this is its one consult in the
+// engine. It used to be a switch here, mirroring what each builder consumed
+// and independent of the steady-state rules in the store; the two disagreed
+// (single_robot and two_robot required an outbound destination here and not
+// at save), which is how a claim that saved clean was refused after the
+// operator pressed START. The table records both answers now; this function
+// only walks it. The diagnostic order is flowspec.ChangeoverOrder, which
+// reproduces the order the switch reported in.
 //
-// The function is pure: no DB access, no engine state. Callable from
-// unit tests with constructed claims.
+// The function is pure: no DB access, no engine state. Callable from unit
+// tests with constructed claims.
 func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missingField {
 	if fromClaim == nil || toClaim == nil {
 		return nil
@@ -349,85 +374,17 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		return nil
 	}
 	var missing []missingField
-	switch fromClaim.SwapMode {
-	case protocol.SwapModeSingleRobot:
-		// buildSingleRobotChangeoverSwap: stage + line-side swap.
-		// Needs InboundStaging on to-claim (stage destination),
-		// OutboundStaging on from-claim (mid-swap park), and
-		// OutboundDestination on from-claim (final old-bin home).
-		if toClaim.InboundStaging == "" {
-			missing = append(missing, missingField{Side: "to", Name: "Inbound Staging"})
+	spec := flowspec.Changeover(fromClaim.SwapMode)
+	for _, sf := range flowspec.ChangeoverOrder() {
+		if spec[sf] != flowspec.Required {
+			continue
 		}
-		if fromClaim.OutboundStaging == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Staging"})
+		claim := fromClaim
+		if sf.Side == flowspec.SideTo {
+			claim = toClaim
 		}
-		if fromClaim.OutboundDestination == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
-		}
-	case protocol.SwapModeTwoRobot:
-		// buildTwoRobotChangeoverSwap: pre-stage + ready wait +
-		// deliver / evac to destination. Same fields as single_robot
-		// minus OutboundStaging (Order B goes straight to destination).
-		if toClaim.InboundStaging == "" {
-			missing = append(missing, missingField{Side: "to", Name: "Inbound Staging"})
-		}
-		if fromClaim.OutboundDestination == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
-		}
-	case protocol.SwapModeTwoRobotPressIndex:
-		// Same-bin-type press-index needs PairedCoreNode and
-		// OutboundDestination. The different-bin-type case fans out
-		// to per-position "press_position" claims before this
-		// validation runs, so only same-bin-type press-index reaches
-		// here. SecondPairedCoreNode is optional (3-pos vs 2-pos
-		// signal).
-		if fromClaim.PairedCoreNode == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Paired Core Node"})
-		}
-		if fromClaim.OutboundDestination == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
-		}
-	case pressPositionSwapMode:
-		// Synthesized per-position claim from the press-index different-
-		// bin-type fan-out. Each position's order is either a full swap
-		// or one half (evac-only or refill-only) routed via
-		// SituationDrop/Add. The full-swap case needs OutboundDestination
-		// (where the old bin goes) and InboundSource (where the new bin
-		// comes from); the half cases delegate to the existing
-		// SituationDrop / SituationAdd builders which validate their
-		// own fields. Validate here against the full-swap shape since
-		// SituationSwap reaches this case.
-		if fromClaim.OutboundDestination == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
-		}
-		if toClaim.InboundSource == "" {
-			missing = append(missing, missingField{Side: "to", Name: "Inbound Source"})
-		}
-	case protocol.SwapModeSequential:
-		// Direct trips, no staging hop. Needs PairedCoreNode (A/B
-		// paired model), OutboundDestination (where evacuated bins
-		// go), and InboundSource on to-claim (where new bins come
-		// from).
-		if fromClaim.PairedCoreNode == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Paired Core Node"})
-		}
-		if fromClaim.OutboundDestination == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
-		}
-		if toClaim.InboundSource == "" {
-			missing = append(missing, missingField{Side: "to", Name: "Inbound Source"})
-		}
-	default:
-		// "simple" or unrecognized — fall through to single_robot
-		// pattern per existing dispatcher; share its required fields.
-		if toClaim.InboundStaging == "" {
-			missing = append(missing, missingField{Side: "to", Name: "Inbound Staging"})
-		}
-		if fromClaim.OutboundStaging == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Staging"})
-		}
-		if fromClaim.OutboundDestination == "" {
-			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
+		if !domain.ClaimHas(claim, sf.Field) {
+			missing = append(missing, missingField{Side: string(sf.Side), Name: flowspec.Label(sf.Field)})
 		}
 	}
 	return missing

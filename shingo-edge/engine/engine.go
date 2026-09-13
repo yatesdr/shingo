@@ -28,6 +28,7 @@ import (
 	"shingo/protocol/debuglog"
 	"shingo/protocol/types"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/service"
@@ -105,20 +106,30 @@ type Engine struct {
 	catalogService    *service.CatalogService
 	orderService      *service.OrderService
 
-	coreClient        *CoreClient
-	coreNodes         map[string]protocol.NodeInfo
-	coreNodesMu       sync.RWMutex
+	coreClient  *CoreClient
+	coreNodes   map[string]protocol.NodeInfo
+	coreNodesMu sync.RWMutex
+	// coreNodeGroups is NGRP name → bare member names, retained from the
+	// "Group.Child" form Core qualifies group children with before
+	// SetCoreNodes strips it (see there). Rebuilt on every sync; read by the
+	// cell picture's dock strip. Guarded by coreNodesMu.
+	coreNodeGroups    map[string][]string
 	payloadBinTypes   []protocol.PayloadBinTypeInfo
 	payloadBinTypesMu sync.RWMutex
 	// The vendor map's own universe — see scene_graph.go. In-memory only and
 	// re-delivered on every node-list sync, like the catalog above.
-	scenePoints   []protocol.ScenePointInfo
-	sceneEdges    []protocol.SceneEdgeInfo
-	sceneGraphMu  sync.RWMutex
-	nodeSyncFn    func()
-	catalogSyncFn func()
-	sendFn        func(*protocol.Envelope) error
-	kafkaReconnFn func() error
+	scenePoints  []protocol.ScenePointInfo
+	sceneEdges   []protocol.SceneEdgeInfo
+	sceneGraphMu sync.RWMutex
+	// The map's geometry — see scene_geometry.go. Replaced only by a complete
+	// response, unlike the two slices above; its own lock because the two
+	// caches change on different responses.
+	sceneGeometry   *domain.SceneGeometry
+	sceneGeometryMu sync.RWMutex
+	nodeSyncFn      func()
+	catalogSyncFn   func()
+	sendFn          func(*protocol.Envelope) error
+	kafkaReconnFn   func() error
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
@@ -310,6 +321,11 @@ func New(c Config) *Engine {
 	// Core does not have configures a row that resolves to nothing. Give the
 	// service the live name set to check against.
 	e.stationService.SetCoreNodeResolver(e.coreNodeNameSet)
+	// The cell picture draws from the scene cache and lists dock members from
+	// the group membership the node list carried — both engine state, both
+	// handed to the view through resolvers so the service stays DB-only.
+	e.stationService.SetSceneGeometryResolver(e.SceneGeometry)
+	e.stationService.SetCoreNodeGroupResolver(e.CoreNodeGroups)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
@@ -356,6 +372,10 @@ func (e *Engine) Start() {
 		e.orderMgr.DebugLog = orders.DebugLogFunc(e.debugLogger.Func("orders"))
 	}
 	e.hourlyTracker = NewHourlyTracker(e.db)
+
+	// The map the station draws from, as of the last full sync. Before the
+	// event chain so nothing that fires during wiring sees a blank picture.
+	e.loadSceneGeometry()
 
 	// Wire the event chain
 	e.wireEventHandlers()
@@ -578,11 +598,21 @@ func (e *Engine) OrderService() *service.OrderService           { return e.order
 // stores the identity the runtime matches. Collision-safe: if two qualified
 // names reduce to the same bare name, the later keeps its qualified form so no
 // node is silently dropped.
+//
+// The qualified form is not thrown away, though: the prefix IS the group
+// membership Core knows and nothing else on this Edge carries — the dock
+// strip of the cell picture lists a group's members from it. It is kept in
+// coreNodeGroups, rebuilt on every sync so a child that left its group leaves
+// the list, and the node map itself is unchanged.
 func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
 	e.coreNodesMu.Lock()
 	e.coreNodes = make(map[string]protocol.NodeInfo, len(nodes))
+	e.coreNodeGroups = make(map[string][]string)
 	normalized := make([]protocol.NodeInfo, 0, len(nodes))
 	for _, n := range nodes {
+		if i := strings.LastIndex(n.Name, "."); i >= 0 {
+			e.coreNodeGroups[n.Name[:i]] = append(e.coreNodeGroups[n.Name[:i]], n.Name[i+1:])
+		}
 		if bare := bareNodeName(n.Name); bare != n.Name {
 			if _, taken := e.coreNodes[bare]; !taken {
 				n.Name = bare
@@ -624,6 +654,18 @@ func (e *Engine) coreNodeNameSet() map[string]bool {
 		out[name] = true
 	}
 	return out
+}
+
+// CoreNodeGroups returns a copy of the group membership retained from the
+// last node list: NGRP name → bare member names. Empty before the first sync.
+func (e *Engine) CoreNodeGroups() map[string][]string {
+	e.coreNodesMu.RLock()
+	defer e.coreNodesMu.RUnlock()
+	cp := make(map[string][]string, len(e.coreNodeGroups))
+	for k, v := range e.coreNodeGroups {
+		cp[k] = append([]string(nil), v...)
+	}
+	return cp
 }
 
 // CoreNodes returns a copy of the core node set.

@@ -94,7 +94,7 @@ func TestToolingFirstChangeoverPreviewsEveryPosition(t *testing.T) {
 	db := testEngineDB(t)
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	plan, err := eng.PreviewChangeoverPlan(processID, toStyleID)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestToolingFirstChangeoverGivesEveryPositionAnOrder(t *testing.T) {
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "first changeover")
 	if err != nil {
@@ -171,7 +171,7 @@ func TestToolingPositionsMaterializeOnceIsIdempotent(t *testing.T) {
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	if _, err := eng.PreviewChangeoverPlan(processID, toStyleID); err != nil {
 		t.Fatalf("preview: %v", err)
@@ -221,7 +221,7 @@ func TestDeliverMaterialForPositionDeliversSomething(t *testing.T) {
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "remedy hole")
 	if err != nil {
@@ -335,7 +335,7 @@ func TestDisjointChangeoverGivesEveryTouchedNodeAnOrder(t *testing.T) {
 	processID, toStyleID := seedDisjointPressScenario(t, db)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient("http://test-core")
+	eng.coreClient = NewCoreClient(testCoreURL)
 
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "disjoint")
 	if err != nil {

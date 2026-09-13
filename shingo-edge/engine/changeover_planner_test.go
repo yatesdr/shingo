@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
@@ -1219,5 +1221,115 @@ func TestSequentialReuseSkip_PlansExactlyOneOrder(t *testing.T) {
 				"contributes one leaves the episode waiting forever for an order nobody creates.",
 				tc.role, got, tc.want)
 		}
+	}
+}
+
+// TestFlowspecMatchesRequiredChangeoverFields: for every outgoing mode the
+// planner knows — and for the modes it does not, which take its fallback arm —
+// the missingField list on a pair of blank claims is exactly the Required
+// entries of flowspec.Changeover(mode), side for side, label for label, in
+// order; and a pair with every field populated is missing nothing.
+func TestFlowspecMatchesRequiredChangeoverFields(t *testing.T) {
+	t.Parallel()
+	modes := append(flowspec.ChangeoverModes(), "", "typo")
+	for _, mode := range modes {
+		from := processes.NodeClaim{SwapMode: mode}
+		to := processes.NodeClaim{}
+		got := requiredChangeoverFields(&from, &to)
+		var want []missingField
+		for _, sf := range flowspec.RequiredSideFields(flowspec.Changeover(mode)) {
+			want = append(want, missingField{Side: string(sf.Side), Name: flowspec.Label(sf.Field)})
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("mode %q: planner reports %v, flowspec.Changeover requires %v", mode, got, want)
+		}
+		full := processes.NodeClaim{SwapMode: mode}
+		for _, f := range flowspec.Fields() {
+			setClaimFieldForTest(&full, f)
+		}
+		fullTo := full
+		if got := requiredChangeoverFields(&full, &fullTo); len(got) != 0 {
+			t.Errorf("mode %q: a fully populated pair is still missing %v", mode, got)
+		}
+		// SIDES ARE LOAD-BEARING. Two blank claims cannot tell a planner that
+		// reads the wrong side from one that reads the right one, so each side
+		// is blanked on its own: a full outgoing claim against a blank incoming
+		// one must be missing exactly the to-side entries, and vice versa.
+		var wantTo, wantFrom []missingField
+		for _, sf := range flowspec.RequiredSideFields(flowspec.Changeover(mode)) {
+			m := missingField{Side: string(sf.Side), Name: flowspec.Label(sf.Field)}
+			if sf.Side == flowspec.SideTo {
+				wantTo = append(wantTo, m)
+			} else {
+				wantFrom = append(wantFrom, m)
+			}
+		}
+		if got := requiredChangeoverFields(&full, &to); !reflect.DeepEqual(got, wantTo) {
+			t.Errorf("mode %q: full from + blank to reports %v, want the to-side entries %v", mode, got, wantTo)
+		}
+		if got := requiredChangeoverFields(&from, &fullTo); !reflect.DeepEqual(got, wantFrom) {
+			t.Errorf("mode %q: blank from + full to reports %v, want the from-side entries %v", mode, got, wantFrom)
+		}
+	}
+	if got := requiredChangeoverFields(nil, &processes.NodeClaim{}); got != nil {
+		t.Errorf("nil from-claim: got %v, want nil", got)
+	}
+}
+
+// setClaimFieldForTest populates one flowspec field on a stored claim with a
+// distinct non-zero value.
+func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
+	v := "X-" + string(f)
+	switch f {
+	case flowspec.InboundStaging:
+		c.InboundStaging = v
+	case flowspec.OutboundStaging:
+		c.OutboundStaging = v
+	case flowspec.PairedCoreNode:
+		c.PairedCoreNode = v
+	case flowspec.OutboundDestination:
+		c.OutboundDestination = v
+	case flowspec.InboundSource:
+		c.InboundSource = v
+	case flowspec.SecondPairedCoreNode:
+		c.SecondPairedCoreNode = v
+	case flowspec.PayloadCode:
+		c.PayloadCode = v
+	case flowspec.AllowedPayloadCodes:
+		c.AllowedPayloadCodes = []string{v}
+	case flowspec.UOPCapacity:
+		c.UOPCapacity = 7
+	case flowspec.ReorderPoint:
+		c.ReorderPoint = 7
+	case flowspec.AutoReorder:
+		c.AutoReorder = true
+	case flowspec.LinesideSoftThreshold:
+		c.LinesideSoftThreshold = 7
+	case flowspec.Sequence:
+		c.Sequence = 7
+	case flowspec.KeepStaged:
+		c.KeepStaged = true
+	case flowspec.EvacuateOnChangeover:
+		c.EvacuateOnChangeover = true
+	case flowspec.ChangeoverEvacNodes:
+		c.ChangeoverEvacNodes = []string{v}
+	case flowspec.ChangeoverEvacDestination:
+		c.ChangeoverEvacDestination = v
+	case flowspec.ChangeoverCarryoverDisposition:
+		c.ChangeoverCarryoverDisposition = domain.CarryoverKeepLineside
+	case flowspec.ReuseCompatibleBins:
+		c.ReuseCompatibleBins = true
+	case flowspec.IndexRobotSupplies:
+		c.IndexRobotSupplies = true
+	case flowspec.AutoConfirm:
+		c.AutoConfirm = true
+	case flowspec.AutoRequestPayload:
+		c.AutoRequestPayload = v
+	case flowspec.AutoPush:
+		c.AutoPush = true
+	case flowspec.KeyRoute:
+		c.KeyRoute = []string{v}
+	case flowspec.KeyTask:
+		c.KeyTask = "load"
 	}
 }

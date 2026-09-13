@@ -50,8 +50,19 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 		nodeSet[name] = true
 	}
 
-	var diffs []ChangeoverNodeDiff
+	// Sorted, for the same reason the fan-out below sorts its positions: a
+	// plan built twice over the same rows must read the same — the seam's
+	// agreement pin compares two plans whole, and the composer's preview is
+	// compared byte for byte against the preview of the saved style. Map order
+	// was never a contract any caller could hold.
+	names := make([]string, 0, len(nodeSet))
 	for name := range nodeSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var diffs []ChangeoverNodeDiff
+	for _, name := range names {
 		from := fromMap[name]
 		to := toMap[name]
 
@@ -542,27 +553,75 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]s
 	return append(diffs, added...)
 }
 
+// DrainState is what the runtime can say about the bin at a position, and it
+// has THREE answers rather than two.
+//
+// The predicate behind it used to be a bool, so "the counter says no parts
+// remain" and "there is no counter to ask" were the same answer — and at a
+// press whose counter is not wired, RemainingUOPCached reads 0 forever, so that
+// answer was "drained" at every position of that press. The shortcut below
+// would then skip every same-part swap there and leave a partly-full bin at the
+// line, silently. The opt-in flag was what stopped that from happening in
+// practice, which made a per-claim policy switch the only thing standing
+// between an unwired counter and a missed swap.
+//
+// DrainUnknown IS THE ZERO VALUE, deliberately: a closure that falls through a
+// case, or a caller that has not wired one, answers "I do not know", and the
+// shortcut never skips on that.
+type DrainState int
+
+const (
+	// DrainUnknown: there is no counter reading to trust — no counter wired on
+	// the process, no process_nodes row, no runtime row, or no bin bound at the
+	// position, so "is the bin drained" has no answer.
+	DrainUnknown DrainState = iota
+	// Drained: a wired counter says no parts remain in the bin at this position.
+	Drained
+	// NotDrained: a wired counter says parts remain.
+	NotDrained
+)
+
+func (d DrainState) String() string {
+	switch d {
+	case Drained:
+		return "drained"
+	case NotDrained:
+		return "not drained"
+	default:
+		return "unknown"
+	}
+}
+
 // ApplyReuseCompatibleBinsShortcut rewrites Swap / Evacuate diffs to
-// Unchanged when the from-claim is press-index, the to-claim shares the
-// same payload, the from-claim opted in via ReuseCompatibleBins, AND the
-// physical bin at the node has been DRAINED (per the runtime check).
+// Unchanged when the from-claim is press-index, both claims are PRODUCE, the
+// to-claim shares the same payload, AND the physical bin at the node is
+// DRAINED (per the runtime check).
 //
 // Press-index hardware can keep the same bin between styles when the
 // next style produces the same payload — no robot trip needed. Lives
 // as a post-processor over DiffStyleClaims so the planner stays pure
 // (no runtime-state dependency leaking into pure step builders).
 //
-// isDrained is a runtime accessor: given a CoreNodeName, returns true when the
-// bin at the slot has no parts left to count. nil isDrained short-circuits to
-// "not drained" → no shortcut applied (defensive default).
+// THERE IS NO PER-CLAIM OPT-IN. It used to also require the from-claim's
+// ReuseCompatibleBins flag. Ruled 2026-09-09: the plant's part counters are
+// trusted, so the shortcut is the behaviour rather than a switch. The seven
+// live Hopkinsville claims that had it set are all produce positions on P400's
+// PLN_01, and Springfield had none, so no cell at either plant loses a skip —
+// what changes is that the other same-part press-index changeovers stop making
+// a robot trip that takes a drained bin out and puts an equivalent one back.
+//
+// What the flag was really standing in front of is guarded properly now.
+// drainState answers three ways, not two: an unwired press counter reads zero
+// forever and used to be indistinguishable from a genuinely drained bin, so
+// removing the opt-in without that would have skipped every same-part swap at
+// such a press, silently. Unknown never skips, and a nil drainState
+// short-circuits to no shortcut at all.
 //
 // DRAINED IS NOT EMPTY. Core's "empty" means a carrier with no payload code;
 // this reads an Edge counter on a bin that still carries its payload and its
-// manifest. See binDrainedAtCoreNode, which also records the live caveat: an
-// unwired press counter reads zero always, so at such a press this predicate
-// answers "drained" everywhere.
-func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, isDrained func(coreNodeName string) bool) []ChangeoverNodeDiff {
-	if isDrained == nil {
+// manifest. See binDrainedAtCoreNode.
+func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, drainState func(coreNodeName string) DrainState) []ChangeoverNodeDiff {
+	if drainState == nil {
 		return diffs
 	}
 	for i := range diffs {
@@ -576,13 +635,21 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, isDrained func
 		if d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 			continue
 		}
-		if !d.FromClaim.ReuseCompatibleBins {
+		// PRODUCE ONLY. Empty is the desired state at a produce position — the
+		// press is what fills it — so a drained bin there is one the next style
+		// can go on filling. At a CONSUME position a drained bin is a starved
+		// line: the changeover swap is what puts a full bin there for the start
+		// of the new style, and nothing automatic would catch the miss
+		// (auto_reorder is 0 on every live claim at both plants, and
+		// Hopkinsville sets no reorder point at all). Ruled 2026-09-09, the same
+		// answer the owner gave for the sequential reuse-skip on 2026-08-28.
+		if d.FromClaim.Role != protocol.ClaimRoleProduce || d.ToClaim.Role != protocol.ClaimRoleProduce {
 			continue
 		}
 		if d.FromClaim.PayloadCode != d.ToClaim.PayloadCode {
 			continue
 		}
-		if !isDrained(d.CoreNodeName) {
+		if drainState(d.CoreNodeName) != Drained {
 			continue
 		}
 		d.Situation = SituationUnchanged

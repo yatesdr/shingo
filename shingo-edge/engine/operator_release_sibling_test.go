@@ -66,10 +66,13 @@ func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, s
 		UOPCapacity:    claim.UOPCapacity,
 		InboundSource:  "TR-SOURCE",
 		InboundStaging: "TR-STAGING",
+		// Every two-robot mode's row requires the destination at the store
+		// now (flowspec D2/D4); the orders below are staged by hand, not
+		// built from it.
+		OutboundDestination: "TR-OUTBOUND",
 	}
 	if swapMode == "two_robot_press_index" {
 		in.PairedCoreNode = node.CoreNodeName + "-PAIR"
-		in.OutboundDestination = "TR-OUTBOUND"
 	}
 	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
 		t.Fatalf("promote claim to %s: %v", swapMode, err)
@@ -217,14 +220,15 @@ func TestRegression_SupplyGuardSkipsForOrderWithoutSibling(t *testing.T) {
 	})
 	// Promote claim to two_robot to exercise the swap-mode predicate.
 	in := processes.NodeClaimInput{
-		StyleID:        claimToStyleID(t, db, claimID),
-		CoreNodeName:   "SIB-NOLINK-NODE",
-		Role:           "consume",
-		SwapMode:       "two_robot",
-		PayloadCode:    "PART-NL",
-		UOPCapacity:    1200,
-		InboundSource:  "TR-SOURCE",
-		InboundStaging: "TR-STAGING",
+		StyleID:             claimToStyleID(t, db, claimID),
+		CoreNodeName:        "SIB-NOLINK-NODE",
+		Role:                "consume",
+		SwapMode:            "two_robot",
+		PayloadCode:         "PART-NL",
+		UOPCapacity:         1200,
+		InboundSource:       "TR-SOURCE",
+		InboundStaging:      "TR-STAGING",
+		OutboundDestination: "TR-DEST",
 	}
 	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
 		t.Fatalf("promote claim: %v", err)

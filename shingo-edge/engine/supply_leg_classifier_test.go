@@ -25,6 +25,14 @@ func seedSwapClaim(t *testing.T, db *store.DB, swapMode protocol.SwapMode, secon
 	styleID, err := db.CreateStyle("SUP-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
+	// A paired back position for every mode that pairs. single_robot does
+	// not: flowspec's row forbids paired_core_node there and the store
+	// refuses it (D4), so the seed leaves it blank for that mode — nothing a
+	// single_robot leg builds reads the pairing.
+	paired := "INDEX-B"
+	if swapMode == protocol.SwapModeSingleRobot {
+		paired = ""
+	}
 	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:              styleID,
 		CoreNodeName:         "PRESS",
@@ -36,7 +44,7 @@ func seedSwapClaim(t *testing.T, db *store.DB, swapMode protocol.SwapMode, secon
 		InboundStaging:       "IN-STAGING",
 		OutboundStaging:      "OUT-STAGING",
 		OutboundDestination:  "MARKET",
-		PairedCoreNode:       "INDEX-B",
+		PairedCoreNode:       paired,
 		SecondPairedCoreNode: secondPaired,
 	})
 	testutil.MustNoErr(t, err, "upsert claim")

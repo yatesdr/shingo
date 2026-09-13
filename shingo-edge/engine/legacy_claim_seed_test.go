@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"database/sql"
+
 	"shingo/protocol"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -36,7 +38,13 @@ import (
 // A SEED HERE IS NOT A CLAIM THAT A PLANT HAS ONE. Neither retired mode can be
 // written through the production path any more; a row that reaches these tables
 // is a legacy row or a fixture. The seam exists so that stays visible.
+//
+// It is also where a seed's capacity lands, for the same "one seam" reason —
+// see seedClaimCapacity.
 func upsertClaimRetiredMode(db *store.DB, in processes.NodeClaimInput) (int64, error) {
+	if err := seedClaimCapacity(db, in); err != nil {
+		return 0, err
+	}
 	retired := in.SwapMode == protocol.SwapModeSimple || in.SwapMode == protocol.SwapModeManualSwap
 	if !retired {
 		return db.UpsertStyleNodeClaim(in)
@@ -72,4 +80,36 @@ func upsertClaimRetiredMode(db *store.DB, in processes.NodeClaimInput) (int64, e
 // composition here is exactly what it was plus the mode it just lost.
 func withManualSwap(modes []protocol.SwapMode) []protocol.SwapMode {
 	return append(modes, protocol.SwapModeManualSwap)
+}
+
+// seedClaimCapacity puts the capacity a seed asks for where the claim now
+// reads it.
+//
+// UOPCapacity on the input used to be persisted on the claim row, so a seed
+// that set it got it back. It is a dead column now — capacity is resolved from
+// payload_catalog on every read, keyed on payload_code — so the same seed would
+// read back 0 and every test about a full bin would be testing an empty one.
+// Rather than make each of the twenty-odd engine seeds say the same thing, the
+// one seam they all route through writes the catalog row the claim will resolve
+// against.
+//
+// Nothing to do for a seed that names no payload or asks for no capacity: a
+// zero capacity is what an unknown payload resolves to anyway.
+func seedClaimCapacity(db *store.DB, in processes.NodeClaimInput) error {
+	if in.PayloadCode == "" || in.UOPCapacity == 0 {
+		return nil
+	}
+	var id int64
+	err := db.DB.QueryRow(`SELECT id FROM payload_catalog WHERE code=?`, in.PayloadCode).Scan(&id)
+	switch {
+	case err == sql.ErrNoRows:
+		_, err = db.DB.Exec(`INSERT INTO payload_catalog (id, name, code, uop_capacity, updated_at)
+			VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM payload_catalog), ?, ?, ?, datetime('now'))`,
+			in.PayloadCode, in.PayloadCode, in.UOPCapacity)
+		return err
+	case err != nil:
+		return err
+	}
+	_, err = db.DB.Exec(`UPDATE payload_catalog SET uop_capacity=? WHERE id=?`, in.UOPCapacity, id)
+	return err
 }
