@@ -55,7 +55,11 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 //
 //   - inventory.lineside_level_report carries every consuming node.
 //   - plant.claims PublishAll carries every process, and Core replaces its
-//     mirror per process on each message.
+//     mirror per process on each message. Only the full snapshot (boot,
+//     re-register, the hourly timer) comes through here: a single-process
+//     edit (PublishChanged) is complete for ONE process, not the plant, and
+//     superseding through it would delete a pending snapshot's other
+//     processes — so it uses plain Enqueue.
 //
 // Everything else must NOT be here, and the reasons differ:
 // bin_uop_delta and lineside_bucket_delta are sequenced INCREMENTS — dropping

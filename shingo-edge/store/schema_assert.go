@@ -64,6 +64,20 @@ var requiredTables = []string{
 	// schema.Apply never created it would 500 the whole admin page at runtime
 	// instead of failing startup here.
 	"process_groups",
+	// process_routing_nodes is asserted because the boot-time backfill and the
+	// Processes page's Routing panel both read and write it unconditionally.
+	"process_routing_nodes",
+	// flow_presets is created by the DDL only (no ALTER road); the preset
+	// store reads and writes it unconditionally.
+	"flow_presets",
+	// The scene geometry cache is read at every boot (engine.loadSceneGeometry)
+	// and written by every full node-list sync. A stale binary whose
+	// schema.Apply never created these would fail the boot read and answer
+	// every sync with a rollback — a picture that never appears and a
+	// heartbeater that never quotes a revision, with nothing saying why.
+	"scene_geometry_points",
+	"scene_geometry_edges",
+	"scene_geometry_meta",
 }
 
 // requiredColumn is one (table, column) pair added by an unconditional
@@ -88,6 +102,13 @@ var requiredColumns = []requiredColumn{
 	{"style_node_claims", "reuse_compatible_bins"},
 	{"style_node_claims", "auto_push"},
 	{"style_node_claims", "reorder_point_source"},
+	// Claim attribution (v40): every claim read scans all six.
+	{"style_node_claims", "source"},
+	{"style_node_claims", "called_by"},
+	{"style_node_claims", "updated_at"},
+	{"style_node_claims", "retired_at"},
+	{"style_node_claims", "source_preset_id"},
+	{"style_node_claims", "source_preset_version"},
 	{"styles", "expected_catid"},
 	{"processes", "auto_cutover_enabled"},
 	{"processes", "changeover_auto_arm"},
@@ -108,6 +129,8 @@ var requiredColumns = []requiredColumn{
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.
 	{"processes", "group_id"},
+	// flow_composer_enabled is scanned by every process List/Get, like group_id.
+	{"processes", "flow_composer_enabled"},
 }
 
 // verifySchema reports every required table and column that is missing. It

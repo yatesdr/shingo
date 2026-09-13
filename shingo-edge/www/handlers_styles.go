@@ -183,7 +183,8 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	newID, err := h.engine.StyleService().Clone(id, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description))
+	calledBy, _ := h.sessions.getUser(r)
+	newID, err := h.engine.StyleService().Clone(id, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), calledBy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -216,7 +217,8 @@ func (h *Handlers) apiGenerateStyles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "at least one variant is required")
 		return
 	}
-	ids, err := h.engine.StyleService().GenerateVariants(baseID, req.Variants)
+	calledBy, _ := h.sessions.getUser(r)
+	ids, err := h.engine.StyleService().GenerateVariants(baseID, req.Variants, calledBy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

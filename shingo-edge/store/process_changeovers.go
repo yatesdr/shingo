@@ -29,6 +29,12 @@ func (db *DB) ListProcessChangeovers(processID int64) ([]processes.Changeover, e
 	return processes.ListChangeovers(db.DB, processID)
 }
 
+// ListRecentProcessChangeovers returns the newest `limit` changeovers for a
+// process. See processes.ListRecentChangeovers for why the bound exists.
+func (db *DB) ListRecentProcessChangeovers(processID int64, limit int) ([]processes.Changeover, error) {
+	return processes.ListRecentChangeovers(db.DB, processID, limit)
+}
+
 // GetActiveProcessChangeover returns the active (non-completed,
 // non-cancelled) changeover for a process, if any.
 func (db *DB) GetActiveProcessChangeover(processID int64) (*processes.Changeover, error) {

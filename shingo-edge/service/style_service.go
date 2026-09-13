@@ -77,15 +77,19 @@ func (s *StyleService) DeleteImpact(id int64) (*processes.StyleImpact, error) {
 // style_node_claim row. The new style starts inactive; the caller sets it
 // active separately. Operators use this to scaffold a per-payload variant of
 // a style that shares robot choreography.
-func (s *StyleService) Clone(srcID int64, name, description string) (int64, error) {
-	return s.db.CloneStyle(srcID, name, description)
+//
+// calledBy is stamped on every copied claim (source='cloned').
+func (s *StyleService) Clone(srcID int64, name, description, calledBy string) (int64, error) {
+	return s.db.CloneStyle(srcID, name, description, calledBy)
 }
 
 // GenerateVariants scaffolds a family of styles from one base style, each a
 // clone of the base with its per-claim payload overrides applied, in a single
 // atomic batch. Returns the new style ids in variant order.
-func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVariant) ([]int64, error) {
-	return s.db.GenerateStyles(baseID, variants)
+//
+// calledBy is stamped on every generated claim (source='generated').
+func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
+	return s.db.GenerateStyles(baseID, variants, calledBy)
 }
 
 // ── Style/node claims ─────────────────────────────────────────────

@@ -262,6 +262,12 @@ CREATE TABLE style_node_claims (
     key_route               TEXT NOT NULL DEFAULT '',
     key_task                TEXT NOT NULL DEFAULT '',
     changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
+    source                  TEXT NOT NULL DEFAULT 'admin',
+    called_by               TEXT NOT NULL DEFAULT '',
+    updated_at              TEXT,
+    retired_at              TEXT,
+    source_preset_id        INTEGER,
+    source_preset_version   INTEGER,
     UNIQUE(style_id, core_node_name)
 );
 INSERT INTO style_node_claims (
@@ -274,7 +280,8 @@ INSERT INTO style_node_claims (
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
     outbound_source, mode, second_paired_core_node,
     changeover_evac_nodes, changeover_evac_destination, index_robot_supplies,
-    key_route, key_task, changeover_carryover_disposition
+    key_route, key_task, changeover_carryover_disposition,
+    source, called_by, updated_at, retired_at, source_preset_id, source_preset_version
 )
 SELECT
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
@@ -286,7 +293,8 @@ SELECT
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
     outbound_source, mode, second_paired_core_node,
     changeover_evac_nodes, changeover_evac_destination, index_robot_supplies,
-    key_route, key_task, changeover_carryover_disposition
+    key_route, key_task, changeover_carryover_disposition,
+    source, called_by, updated_at, retired_at, source_preset_id, source_preset_version
 FROM style_node_claims_legacy;
 DROP TABLE style_node_claims_legacy;
 `

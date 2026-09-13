@@ -242,7 +242,7 @@ func PayloadsForManualSwapNodes(db *sql.DB) (map[string]map[protocol.ClaimRole]P
 		return nil, fmt.Errorf("manual-swap payloads: active styles: %w", err)
 	}
 
-	claimRows, err := db.Query(`SELECT ` + claimSelect + ` FROM style_node_claims`)
+	claimRows, err := db.Query(`SELECT ` + claimSelect + ` FROM style_node_claims WHERE` + liveClaims)
 	if err != nil {
 		return nil, fmt.Errorf("manual-swap payloads: claims: %w", err)
 	}

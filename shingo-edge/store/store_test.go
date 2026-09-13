@@ -12,6 +12,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
 	"shingoedge/store/catalog"
 	"shingoedge/store/counters"
 	"shingoedge/store/orders"
@@ -1421,7 +1422,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 
 	// Insert with an explicit configurable mode (role blank → "consume").
 	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL-1",
+		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL-1", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	if err != nil {
 		t.Fatalf("upsert insert: %v", err)
@@ -1436,7 +1437,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 
 	// Second insert on a different node — sequence auto-increments.
 	id2, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N2", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-2",
+		StyleID: sid, CoreNodeName: "N2", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-2", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	got2, _ := db.GetStyleNodeClaim(id2)
 	if got2.Sequence != 2 {
@@ -1445,7 +1446,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 
 	// Upsert on existing (styleID + coreNodeName match) — returns same id, updates fields.
 	id3, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-1-v2",
+		StyleID: sid, CoreNodeName: "N1", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-1-v2", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 		AllowedPayloadCodes: []string{"PL-1-v2", "PL-FALLBACK"},
 	})
 	if err != nil {
@@ -1594,7 +1595,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 
 	// Default (unset) persists as 0.
 	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL",
+		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	if err != nil {
 		t.Fatalf("insert default: %v", err)
@@ -1606,7 +1607,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 
 	// Explicit value on update survives.
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL",
+		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 		LinesideSoftThreshold: 12,
 	}); err != nil {
 		t.Fatalf("update with threshold: %v", err)
@@ -1624,7 +1625,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 
 	// Explicit value on fresh insert (different node) also survives.
 	id2, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N2", SwapMode: "single_robot", PayloadCode: "PL2",
+		StyleID: sid, CoreNodeName: "N2", SwapMode: "single_robot", PayloadCode: "PL2", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 		LinesideSoftThreshold: 5,
 	})
 	if err != nil {
@@ -1641,7 +1642,7 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	id, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "N", SwapMode: "single_robot", PayloadCode: "PL",
+		StyleID: sid, CoreNodeName: "N", SwapMode: "single_robot", PayloadCode: "PL", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	testutil.MustNoErr(t, db.DeleteStyleNodeClaim(id), "delete")
 	if _, err := db.GetStyleNodeClaim(id); err == nil {
@@ -1659,6 +1660,117 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 // (db *DB).CreateChangeover method was retired in favor of
 // ChangeoverService.Create.
 
+// TestUpsertClaim_EnforcesFlowspec — D4 resolved for single_robot. The store
+// used to have arms for manual_swap, two_robot and two_robot_press_index
+// only, so a non-API writer could store a single_robot claim with no staging,
+// or one carrying the index-robot flip the API refuses, and the store said
+// nothing. It now reads flowspec.Steady through domain.SteadyViolations,
+// exactly as ValidateNodeClaim does: every Required entry refused blank and
+// every Forbidden entry refused populated. The two_robot case is D2 at the
+// store: the API required the destination first, and a store that did not
+// would still let an import write the claim the planner refuses. The
+// sequential half of D4 is held — see TestStoreStillAcceptsWhatFlowspecRefuses.
+//
+// The cases that used to be "accepted today" pins are the same inputs; the
+// expectation flipped in the commit that gave the store the rule.
+func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "D4", "D4")
+	flip := true
+	refused := []struct {
+		name  string
+		in    processes.NodeClaimInput
+		field flowspec.Field
+	}{
+		{
+			name:  "single_robot_blank_staging",
+			in:    processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SR-BLANK", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL"},
+			field: flowspec.InboundStaging,
+		},
+		{
+			name: "single_robot_blank_outbound_destination",
+			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SR-NO-OD", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL",
+				InboundStaging: "IN", OutboundStaging: "OUT"},
+			field: flowspec.OutboundDestination,
+		},
+		{
+			name: "single_robot_index_robot_flip",
+			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SR-FLIP", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL",
+				InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD", IndexRobotSupplies: &flip},
+			field: flowspec.IndexRobotSupplies,
+		},
+		{
+			name: "single_robot_paired_node",
+			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SR-PAIR", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL",
+				InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD", PairedCoreNode: "B"},
+			field: flowspec.PairedCoreNode,
+		},
+		{
+			name: "two_robot_blank_outbound_destination",
+			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "TR-NO-OD", SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PL",
+				InboundStaging: "IN"},
+			field: flowspec.OutboundDestination,
+		},
+	}
+	for _, tc := range refused {
+		t.Run("refuses_"+tc.name, func(t *testing.T) {
+			_, err := db.UpsertStyleNodeClaim(tc.in)
+			if err == nil {
+				t.Fatalf("stored a %s claim the table refuses on %s", tc.in.SwapMode, tc.field)
+			}
+			if !strings.Contains(err.Error(), string(tc.field)) {
+				t.Errorf("refusal does not name %s: %v", tc.field, err)
+			}
+		})
+	}
+	// The positive controls: a complete single_robot claim and a two_robot
+	// claim with its destination both store.
+	accepted := []processes.NodeClaimInput{
+		{StyleID: sid, CoreNodeName: "SR-OK", SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PL",
+			InboundStaging: "IN", OutboundStaging: "OUT", OutboundDestination: "OD"},
+		{StyleID: sid, CoreNodeName: "TR-OK", SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PL",
+			InboundStaging: "IN", OutboundDestination: "OD"},
+	}
+	for _, in := range accepted {
+		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+			t.Errorf("complete %s claim refused: %v", in.SwapMode, err)
+		}
+	}
+}
+
+// TestStoreStillAcceptsWhatFlowspecRefuses pins the half of D4 that is HELD: the
+// store has no sequential arm.
+//
+// NAMED APART FROM domain/flowspec's TestFlowspecPinsKnownDisagreements. The two
+// used to share a name across packages, which reads like one test duplicated and
+// is two halves: that one pins what the TABLE says, this one pins what the STORE
+// does about it. flowspec.Steady requires a paired position, a
+// destination and a source for a sequential claim and forbids staging on one;
+// the API refuses accordingly; the store accepts. The measurement behind the
+// hold is on domain.StrictSteadyModes. Each case MUST GO RED when the store
+// gains the arm — that commit flips it into TestUpsertClaim_EnforcesFlowspec.
+func TestStoreStillAcceptsWhatFlowspecRefuses(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "D4SQ", "D4SQ")
+	if flowspec.Steady(protocol.ClaimRoleConsume, protocol.SwapModeSequential)[flowspec.PairedCoreNode] != flowspec.Required {
+		t.Fatal("table changed under the pin: sequential no longer requires a paired position")
+	}
+	if flowspec.Steady(protocol.ClaimRoleConsume, protocol.SwapModeSequential)[flowspec.InboundStaging] != flowspec.Forbidden {
+		t.Fatal("table changed under the pin: sequential no longer forbids inbound staging")
+	}
+	for _, in := range []processes.NodeClaimInput{
+		{StyleID: sid, CoreNodeName: "SQ-BLANK", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL"},
+		{StyleID: sid, CoreNodeName: "SQ-STAGE", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL",
+			PairedCoreNode: "B", OutboundDestination: "OD", InboundSource: "SRC", InboundStaging: "IN"},
+	} {
+		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+			t.Errorf("D4 (sequential) resolved at the store: %s refused (%v) — flip this case in the commit that did it", in.CoreNodeName, err)
+		}
+	}
+}
+
 // ============================================================================
 // styles.go — CloneStyle / GenerateStyles
 // ============================================================================
@@ -1669,20 +1781,24 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 	pid, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
 
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: baseID, CoreNodeName: "IN", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100,
+		StyleID: baseID, CoreNodeName: "IN", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100, InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	}); err != nil {
 		t.Fatalf("seed consume claim: %v", err)
 	}
 	// Press-index produce claim exercises the choreography fields that must
-	// survive the copy (paired node + outbound destination).
+	// survive the copy (paired node + outbound destination), and the cell's
+	// carry-over answer — the column the clone list silently dropped until
+	// U0, so every clone of a keep_lineside press came back as replace.
+	keep := domain.CarryoverKeepLineside
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: baseID, CoreNodeName: "OUT_L", Role: "produce", SwapMode: "two_robot_press_index",
 		PayloadCode: "FIN-1L", UOPCapacity: 40, PairedCoreNode: "OUT_L_B", OutboundDestination: "SMN",
+		ChangeoverCarryoverDisposition: &keep,
 	}); err != nil {
 		t.Fatalf("seed produce claim: %v", err)
 	}
 
-	newID, err := db.CloneStyle(baseID, "CLONE", "cloned")
+	newID, err := db.CloneStyle(baseID, "CLONE", "cloned", "tester")
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -1710,8 +1826,14 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 	if out.SwapMode != "two_robot_press_index" || out.PairedCoreNode != "OUT_L_B" || out.OutboundDestination != "SMN" {
 		t.Errorf("press-index choreography not copied verbatim: %+v", out)
 	}
-	if out.PayloadCode != "FIN-1L" || out.UOPCapacity != 40 {
-		t.Errorf("payload/capacity not copied: %+v", out)
+	// Capacity is not among the copied columns any more: it is resolved from
+	// the payload catalog, so it follows the payload the clone did copy.
+	if out.PayloadCode != "FIN-1L" {
+		t.Errorf("payload not copied: %+v", out)
+	}
+	if out.ChangeoverCarryoverDisposition != domain.CarryoverKeepLineside {
+		t.Errorf("changeover_carryover_disposition not copied: got %q, want %q (clone reset the cell's carry-over to the column default)",
+			out.ChangeoverCarryoverDisposition, domain.CarryoverKeepLineside)
 	}
 }
 
@@ -1729,6 +1851,9 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 
 	lineID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: baseID, CoreNodeName: "LINE", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100,
+		// Required at save since flowspec D1/D2 — the seed satisfies the mode
+		// so the copy is the only thing under test.
+		InboundStaging: "LINE-IN", OutboundStaging: "LINE-OUT", OutboundDestination: "LINE-DEST",
 	})
 	if err != nil {
 		t.Fatalf("seed line claim: %v", err)
@@ -1746,7 +1871,7 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 		t.Fatalf("seed loader claim: %v", err)
 	}
 
-	newID, err := db.CloneStyle(baseID, "CLONE", "cloned")
+	newID, err := db.CloneStyle(baseID, "CLONE", "cloned", "tester")
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -1777,9 +1902,15 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
+	// A press-index cell: the one mode whose row lets a claim carry a
+	// carry-over disposition (single_robot is strict and refuses it at the
+	// store since flowspec D4).
+	keep := domain.CarryoverKeepLineside
 	for _, n := range []string{"OUT_L", "OUT_R"} {
 		if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-			StyleID: baseID, CoreNodeName: n, Role: "produce", SwapMode: "single_robot", PayloadCode: "BASE-" + n, UOPCapacity: 1,
+			StyleID: baseID, CoreNodeName: n, Role: "produce", SwapMode: "two_robot_press_index", PayloadCode: "BASE-" + n, UOPCapacity: 1,
+			PairedCoreNode: n + "_B", OutboundDestination: "SMN",
+			ChangeoverCarryoverDisposition: &keep,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", n, err)
 		}
@@ -1795,7 +1926,7 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 			{CoreNodeName: "OUT_R", PayloadCode: "2002", UOPCapacity: 60},
 		}},
 	}
-	ids, err := db.GenerateStyles(baseID, variants)
+	ids, err := db.GenerateStyles(baseID, variants, "tester")
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -1804,7 +1935,7 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 	}
 
 	l, _ := db.GetStyleNodeClaimByNode(ids[0], "OUT_L")
-	if l.PayloadCode != "2001-L" || l.UOPCapacity != 40 {
+	if l.PayloadCode != "2001-L" {
 		t.Errorf("2001 OUT_L override not applied: %+v", l)
 	}
 	if len(l.AllowedPayloadCodes) != 1 || l.AllowedPayloadCodes[0] != "2001-L" {
@@ -1813,6 +1944,16 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 	r, _ := db.GetStyleNodeClaimByNode(ids[0], "OUT_R")
 	if r.PayloadCode != "2001-R" {
 		t.Errorf("2001 OUT_R override not applied: %+v", r)
+	}
+	// The choreography the override does not touch is cloned whole — including
+	// the carry-over disposition, on every variant, not only the first.
+	for _, id := range ids {
+		c, err := db.GetStyleNodeClaimByNode(id, "OUT_L")
+		testutil.MustNoErr(t, err, "db.GetStyleNodeClaimByNode")
+		if c == nil || c.ChangeoverCarryoverDisposition != domain.CarryoverKeepLineside {
+			t.Errorf("variant %d: changeover_carryover_disposition = %q, want %q (generate reset the cell's carry-over)",
+				id, c.ChangeoverCarryoverDisposition, domain.CarryoverKeepLineside)
+		}
 	}
 	// Base style must be untouched by generation.
 	bl, _ := db.GetStyleNodeClaimByNode(baseID, "OUT_L")
@@ -1832,7 +1973,7 @@ func TestGenerateStyles_DuplicateNameRollsBackBatch(t *testing.T) {
 		{Name: "OK-1"},
 		{Name: "BASE"},
 	}
-	if _, err := db.GenerateStyles(baseID, variants); err == nil {
+	if _, err := db.GenerateStyles(baseID, variants, "tester"); err == nil {
 		t.Fatal("expected duplicate-name error, got nil")
 	}
 	styles, _ := db.ListStylesByProcess(pid)

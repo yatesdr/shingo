@@ -47,3 +47,38 @@ func (db *DB) UpsertStyleNodeClaim(in processes.NodeClaimInput) (int64, error) {
 func (db *DB) DeleteStyleNodeClaim(id int64) error {
 	return processes.DeleteClaim(db.DB, id)
 }
+
+// ListBackPositionNames is every position any of a process's live styles
+// names as a partner slot — paired, second paired, inbound or outbound
+// staging — in one query. The cell picture captions an unused position
+// "back position" from this set, because a press's back slots are back
+// slots under every style, not only the one running.
+//
+// LIVE CLAIMS, not just live styles. The style filter was here from the
+// start and the claim filter was not, so a position a flow used to stage
+// through kept its "back position" caption after the save that dropped it —
+// a caption sourced from a row the flow no longer has.
+func (db *DB) ListBackPositionNames(processID int64) (map[string]bool, error) {
+	rows, err := db.Query(`
+		SELECT c.paired_core_node, c.second_paired_core_node, c.inbound_staging, c.outbound_staging
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL`, processID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var names [4]string
+		if err := rows.Scan(&names[0], &names[1], &names[2], &names[3]); err != nil {
+			return nil, err
+		}
+		for _, n := range names {
+			if n != "" {
+				out[n] = true
+			}
+		}
+	}
+	return out, rows.Err()
+}

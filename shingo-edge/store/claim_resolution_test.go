@@ -43,6 +43,9 @@ func TestResolveNodeClaim_Precedence(t *testing.T) {
 		if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: "PREC-NODE", Role: "consume",
 			SwapMode: protocol.SwapModeSingleRobot, PayloadCode: payload, UOPCapacity: 100,
+			// Required at save since flowspec D1/D2; this test is about which
+			// claim RESOLVES, so the seed satisfies the mode.
+			InboundStaging: "PREC-IN", OutboundStaging: "PREC-OUT", OutboundDestination: "PREC-DEST",
 		}); err != nil {
 			t.Fatalf("upsert claim %s: %v", payload, err)
 		}
@@ -90,6 +93,7 @@ func TestResolveNodeClaim_FallbackOnlyWhenTheFirstChoiceIsSilent(t *testing.T) {
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: targetStyle, CoreNodeName: "PREC2-NODE", Role: "consume",
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-ONLY-TARGET", UOPCapacity: 100,
+		InboundStaging: "PREC2-IN", OutboundStaging: "PREC2-OUT", OutboundDestination: "PREC2-DEST",
 	}); err != nil {
 		t.Fatalf("upsert target claim: %v", err)
 	}

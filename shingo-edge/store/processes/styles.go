@@ -128,7 +128,7 @@ func GetStyleByName(db *sql.DB, name string) (*Style, error) {
 // is asking "what is this", not "what may I pick". Filtering here would turn a
 // retired style into a nil and reintroduce the blank-name rendering that soft
 // delete exists to fix. Callers that need liveness check DeletedAt.
-func GetStyle(db *sql.DB, id int64) (*Style, error) {
+func GetStyle(db DBTX, id int64) (*Style, error) {
 	s, err := scanStyle(db.QueryRow(`SELECT `+styleSelectColumns+` FROM styles WHERE id = ?`, id))
 	if err != nil {
 		return nil, err
@@ -214,20 +214,32 @@ func RestoreStyle(db *sql.DB, id int64) error {
 // keep_staged, on purpose: a clone takes that column's default, off, because the
 // option is withheld (see cloneStyleTx). Kept as a single const so the SELECT and
 // INSERT lists can't drift apart from each other.
+//
+// Attribution is the other deliberate exception: source, called_by and
+// updated_at are NOT copied — the clone is its own write and stamps its own
+// (see cloneStyleTx) — and retired_at is not copied because only live claims
+// are cloned. source_preset_id / _version ARE copied: a clone of a
+// preset-built flow is still that preset's shape.
+//
+// uop_capacity is NOT here, and is not a drop: the column is dead, resolved
+// from the payload catalog on read rather than stored (capacity.SQL).
+// A clone that copied it would copy a number nothing reads.
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
-	uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
+	reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,
-	index_robot_supplies, key_route, key_task`
+	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+	source_preset_id, source_preset_version`
 
-// cloneStyleTx inserts a new style in src's process and copies src's
-// style_node_claims verbatim, less what the write gate refuses (below), within
-// the caller's transaction. Returns the new style id. Used by both CloneStyle
-// (single) and GenerateStyles (batch) so the copy logic lives in exactly one
-// place.
-func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, error) {
+// cloneStyleTx inserts a new style in src's process and copies every one of
+// src's LIVE style_node_claims verbatim, less what the write gate refuses
+// (below), within the caller's transaction, stamping the copies with the given
+// source ('cloned' / 'generated') and caller. Returns the new style id. Used by
+// both CloneStyle (single) and GenerateStyles (batch) so the copy logic lives in
+// exactly one place.
+func cloneStyleTx(tx *sql.Tx, src *Style, name, description, source, calledBy string) (int64, error) {
 	res, err := tx.Exec(
 		`INSERT INTO styles (name, description, process_id) VALUES (?, ?, ?)`,
 		name, description, src.ProcessID)
@@ -254,11 +266,19 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, erro
 	//     and copied in that window it would be a second authority for loader
 	//     configuration Core owns, on a style the quarantine has never seen. Those
 	//     rows are not selected.
+	//   - a RETIRED claim. `liveClaims` is the flow composer's soft delete: a
+	//     claim a changeover's history still points at is kept rather than
+	//     dropped, and every live read skips it. Cloning one would revive a
+	//     deleted claim onto a brand-new style.
 	//
 	// Pinned by TestCloneStyle_LeavesWithheldConfigurationBehind (store).
-	_, err = tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
-		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ? AND swap_mode != ?`,
-		newID, src.ID, string(protocol.SwapModeManualSwap))
+	//
+	// The copies are ATTRIBUTED to this write rather than carrying src's: a
+	// clone is its own act, by whoever asked for it.
+	_, err = tx.Exec(`INSERT INTO style_node_claims (style_id, source, called_by, updated_at, `+cloneClaimColumns+`)
+		SELECT ?, ?, ?, datetime('now'), `+cloneClaimColumns+` FROM style_node_claims
+		WHERE style_id = ? AND swap_mode != ? AND`+liveClaims,
+		newID, source, calledBy, src.ID, string(protocol.SwapModeManualSwap))
 	if err != nil {
 		return 0, err
 	}
@@ -270,8 +290,9 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description string) (int64, erro
 // cloneStyleTx). Returns the new style id. The new style
 // starts inactive — cloning is a config-time scaffold, not a changeover
 // trigger. Operators use this to add a style whose robot choreography matches
-// an existing one, then edit only the per-payload fields on the result.
-func CloneStyle(db *sql.DB, srcID int64, name, description string) (int64, error) {
+// an existing one, then edit only the per-payload fields on the result. The
+// copies are attributed source='cloned', called_by=calledBy.
+func CloneStyle(db *sql.DB, srcID int64, name, description, calledBy string) (int64, error) {
 	src, err := GetStyle(db, srcID)
 	if err != nil {
 		return 0, err
@@ -284,7 +305,7 @@ func CloneStyle(db *sql.DB, srcID int64, name, description string) (int64, error
 		return 0, err
 	}
 	defer tx.Rollback()
-	newID, err := cloneStyleTx(tx, src, name, description)
+	newID, err := cloneStyleTx(tx, src, name, description, domain.ClaimSourceCloned, calledBy)
 	if err != nil {
 		return 0, err
 	}
@@ -301,13 +322,17 @@ func CloneStyle(db *sql.DB, srcID int64, name, description string) (int64, error
 // operator never ends up with a half-generated family. Returns the new style
 // ids in variant order.
 //
-// Only payload-shaped fields are overridden (payload_code, uop_capacity,
+// Only payload-shaped fields are overridden (payload_code,
 // allowed_payload_codes); the cloned choreography is left untouched, so the
 // override can never violate a swap-mode invariant the base already satisfied.
+// The capacity that used to be overridden alongside them follows the payload
+// by itself now — it is resolved from the catalog, not stored.
 // An override whose core_node_name matches no cloned claim updates zero rows
 // and is silently skipped — generation is for setting payloads on the base's
 // existing claims, not for adding new nodes.
-func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant) ([]int64, error) {
+//
+// The copies are attributed source='generated', called_by=calledBy.
+func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
 	base, err := GetStyle(db, baseID)
 	if err != nil {
 		return nil, err
@@ -327,7 +352,7 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant) ([
 		if name == "" {
 			return nil, fmt.Errorf("variant name is required")
 		}
-		newID, err := cloneStyleTx(tx, base, name, strings.TrimSpace(v.Description))
+		newID, err := cloneStyleTx(tx, base, name, strings.TrimSpace(v.Description), domain.ClaimSourceGenerated, calledBy)
 		if err != nil {
 			return nil, fmt.Errorf("clone variant %q: %w", name, err)
 		}
@@ -338,9 +363,9 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant) ([
 			}
 			allowedJSON := marshalAllowedPayloads(o.AllowedPayloadCodes)
 			if _, err := tx.Exec(`UPDATE style_node_claims
-				SET payload_code=?, uop_capacity=?, allowed_payload_codes=?
+				SET payload_code=?, allowed_payload_codes=?
 				WHERE style_id=? AND core_node_name=?`,
-				o.PayloadCode, o.UOPCapacity, allowedJSON, newID, coreNode); err != nil {
+				o.PayloadCode, allowedJSON, newID, coreNode); err != nil {
 				return nil, fmt.Errorf("override %s on variant %q: %w", coreNode, name, err)
 			}
 		}
@@ -412,7 +437,7 @@ func StyleDeleteImpact(db *sql.DB, styleID int64) (*StyleImpact, error) {
 		dst *int
 		sql string
 	}{
-		{&imp.Claims, `SELECT count(*) FROM style_node_claims WHERE style_id = ?`},
+		{&imp.Claims, `SELECT count(*) FROM style_node_claims WHERE style_id = ? AND retired_at IS NULL`},
 		{&imp.ReportingPoints, `SELECT count(*) FROM reporting_points WHERE style_id = ?`},
 		{&imp.Snapshots, `SELECT count(*) FROM counter_snapshots
 			WHERE reporting_point_id IN (SELECT id FROM reporting_points WHERE style_id = ?)`},

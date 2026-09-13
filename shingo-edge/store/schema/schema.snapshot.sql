@@ -1,4 +1,4 @@
-CREATE INDEX idx_changeovers_process_id ON process_changeovers(process_id);
+CREATE INDEX idx_changeovers_process_started ON process_changeovers(process_id, started_at DESC);
 
 CREATE INDEX idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
 
@@ -39,6 +39,8 @@ CREATE UNIQUE INDEX idx_process_nodes_process_code_live
 CREATE UNIQUE INDEX idx_process_nodes_process_core_name
 				ON process_nodes(process_id, core_node_name)
 				WHERE core_node_name <> '' AND deleted_at IS NULL;
+
+CREATE INDEX idx_process_routing_nodes_process ON process_routing_nodes(process_id);
 
 CREATE UNIQUE INDEX idx_styles_process_name_live
 			ON styles(process_id, name) WHERE deleted_at IS NULL;
@@ -189,6 +191,18 @@ CREATE TABLE demand_origins_open (
     rerequest_count INTEGER NOT NULL DEFAULT 0,
     discretionary   INTEGER NOT NULL DEFAULT 0,
     opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE flow_presets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id  INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    flow_json   TEXT NOT NULL,
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    archived_at TEXT,
+    UNIQUE(process_id, name, version)
 );
 
 CREATE TABLE hourly_counts (
@@ -510,6 +524,20 @@ CREATE TABLE process_nodes (
     deleted_at          TEXT
 );
 
+CREATE TABLE process_routing_nodes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id     INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    core_node_name TEXT NOT NULL,
+    role           TEXT NOT NULL CHECK(role IN ('source','staging','destination')),
+    label          TEXT NOT NULL DEFAULT '',
+    sequence       INTEGER NOT NULL DEFAULT 0,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    origin         TEXT NOT NULL DEFAULT 'engineer' CHECK(origin IN ('engineer','backfill')),
+    called_by      TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_id, core_node_name, role)
+);
+
 CREATE TABLE processes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT NOT NULL UNIQUE,
@@ -523,6 +551,11 @@ CREATE TABLE processes (
     auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
     group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,
+    -- flow_composer_enabled gates the HMI flow composer for this process. OFF
+    -- until the engineer has reviewed the routing set derived into
+    -- process_routing_nodes below; the backfill re-derives only while it is
+    -- off, so a reviewed set is never silently re-seeded.
+    flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -536,6 +569,35 @@ CREATE TABLE reporting_points (
     enabled         INTEGER NOT NULL DEFAULT 1,
     warlink_managed INTEGER NOT NULL DEFAULT 0,
     UNIQUE(plc_name, tag_name)
+);
+
+CREATE TABLE scene_geometry_edges (
+    from_name TEXT NOT NULL,
+    to_name   TEXT NOT NULL,
+    from_x    REAL NOT NULL,
+    from_y    REAL NOT NULL,
+    to_x      REAL NOT NULL,
+    to_y      REAL NOT NULL,
+    ctrl1_x   REAL,
+    ctrl1_y   REAL,
+    ctrl2_x   REAL,
+    ctrl2_y   REAL,
+    PRIMARY KEY (from_name, to_name)
+);
+
+CREATE TABLE scene_geometry_meta (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    revision  TEXT NOT NULL DEFAULT '',
+    synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE scene_geometry_points (
+    instance_name TEXT NOT NULL,
+    class_name    TEXT NOT NULL DEFAULT '',
+    pos_x         REAL NOT NULL,
+    pos_y         REAL NOT NULL,
+    dir           REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (instance_name)
 );
 
 CREATE TABLE shifts (
@@ -565,6 +627,13 @@ CREATE TABLE style_node_claims (
     role                    TEXT NOT NULL DEFAULT 'consume',
     swap_mode               TEXT NOT NULL,
     payload_code            TEXT NOT NULL DEFAULT '',
+    -- DEAD. Capacity is Core's fact, resolved from payload_catalog on every
+    -- claim read (capacity.SQL) and keyed on payload_code above.
+    -- Nothing reads or writes this column; it holds whatever it held when the
+    -- copies stopped, and it goes on the next rebuildStyleNodeClaims(). It is
+    -- not dropped here because a column rebuild is its own change with its own
+    -- risk, and because the old numbers are the only record of how far the
+    -- copies had drifted.
     uop_capacity            INTEGER NOT NULL DEFAULT 0,
     reorder_point           INTEGER NOT NULL DEFAULT 0,
     -- Cell auto-reorder is opt-IN: a claim must not arm itself. Was DEFAULT 1,
@@ -590,6 +659,12 @@ CREATE TABLE style_node_claims (
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
+    -- DEAD AS A SWITCH. It armed the no-swap shortcut for a press-index cell
+    -- whose next style makes the same part; that shortcut is baked in
+    -- (ApplyReuseCompatibleBinsShortcut, 2026-09-09) and reads this column no
+    -- more. Kept, and flowspec marks it Unused rather than Forbidden, so the
+    -- seven Hopkinsville rows that carry it keep their value instead of being
+    -- cleared by the next save.
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
     -- Which core NODES hold bins that block the tooling change, as a JSON array
     -- of node names ("PLN_001"/"PLN_002"). Same shape and same reasoning as
@@ -646,6 +721,35 @@ CREATE TABLE style_node_claims (
     -- episode itself is keyed per PROCESS and lives in demand_origins_open — see
     -- O8 in demand-origin-design-2026-07-25.md.
     below_reorder_since     TEXT,
+    -- ── ATTRIBUTION ──────────────────────────────────────────────────────
+    -- Every claim row says who wrote it and from where, because the HMI flow
+    -- composer makes the claim table fully open: an operator on the floor
+    -- writes the same rows an engineer writes on the desktop. All of these
+    -- are SERVER-STAMPED — the client never sends them.
+    --
+    -- source is the writer: 'admin' (the desktop claim editor), 'hmi' (the
+    -- station's flow composer), 'generated' (GenerateStyles), 'cloned'
+    -- (CloneStyle). DEFAULT 'admin' is right for every row that already
+    -- exists: the desktop was the only writer there was.
+    source                  TEXT NOT NULL DEFAULT 'admin',
+    -- called_by is the session user (admin) or the station (hmi); '' on
+    -- rows that predate attribution and on generated/cloned rows made by
+    -- a caller with no session.
+    called_by               TEXT NOT NULL DEFAULT '',
+    -- updated_at is set on every upsert. NULL means never touched since
+    -- attribution landed; it cannot carry a datetime('now') default because
+    -- an ALTER cannot add a non-constant default to a populated table.
+    updated_at              TEXT,
+    -- retired_at replaces DELETE for a claim that changeover history still
+    -- references (changeover_node_tasks.from_claim_id / to_claim_id): the row
+    -- stays so the history label never renders blank, and list reads skip
+    -- it. Re-adding the same (style, node) claim revives the row.
+    retired_at              TEXT,
+    -- source_preset_id / _version are PROVENANCE: which flow_presets row and
+    -- version this claim was expanded from, when it was. Never a drift
+    -- oracle — drift is computed from the rows themselves.
+    source_preset_id        INTEGER,
+    source_preset_version   INTEGER,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')), staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '', inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader', second_paired_core_node TEXT NOT NULL DEFAULT '',
     UNIQUE(style_id, core_node_name)
 );
@@ -682,6 +786,12 @@ CREATE TABLE style_node_claims_quarantine(
   auto_push INT,
   reorder_point_source TEXT,
   below_reorder_since TEXT,
+  source TEXT,
+  called_by TEXT,
+  updated_at TEXT,
+  retired_at TEXT,
+  source_preset_id INT,
+  source_preset_version INT,
   created_at TEXT,
   staging_node TEXT,
   release_node TEXT,

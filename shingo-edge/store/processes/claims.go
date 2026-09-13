@@ -11,6 +11,7 @@ package processes
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -18,6 +19,8 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
+	"shingoedge/store/internal/capacity"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -58,28 +61,54 @@ type (
 	NodeClaimInput = domain.NodeClaimInput
 )
 
-const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
-	uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
+// claimSelect names the claim columns in scan order. uop_capacity is NOT among
+// them: the column is dead and the value is resolved from the payload catalog
+// on every read — see capacity.SQL for why it is resolved here rather
+// than by each of the readers.
+var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
+	` + capacity.SQL("style_node_claims") + `, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
 	changeover_evac_nodes, changeover_evac_destination,
-	index_robot_supplies, key_route, key_task, changeover_carryover_disposition`
+	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+	source, called_by, updated_at, retired_at, source_preset_id, source_preset_version`
+
+// liveClaims is the WHERE fragment for "claims that still drive anything":
+// every LIST and by-(style, node) read applies it, so a retired claim reads
+// as absent exactly the way a deleted one did. GetClaim (by id) deliberately
+// does not — it resolves an id somebody already holds, which is how a
+// changeover's history label keeps rendering after the claim is gone.
+const liveClaims = ` retired_at IS NULL`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
+	var resolvedCapacity int
 	var createdAt, allowedJSON, evacNodesJSON, keyRouteJSON string
-	var belowSince sql.NullString
+	var belowSince, updatedAt, retiredAt sql.NullString
+	var presetID, presetVersion sql.NullInt64
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
-		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
+		&resolvedCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
 		&evacNodesJSON, &c.ChangeoverEvacDestination,
-		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition); err != nil {
+		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition,
+		&c.Source, &c.CalledBy, &updatedAt, &retiredAt, &presetID, &presetVersion); err != nil {
 		return c, err
+	}
+	c.UOPCapacity = capacity.Resolved(resolvedCapacity, c.PayloadCode)
+	c.UpdatedAt = helpers.ScanTimePtr(updatedAt)
+	c.RetiredAt = helpers.ScanTimePtr(retiredAt)
+	if presetID.Valid {
+		v := presetID.Int64
+		c.SourcePresetID = &v
+	}
+	if presetVersion.Valid {
+		v := int(presetVersion.Int64)
+		c.SourcePresetVersion = &v
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
 	// read as an episode that opened at the epoch.
@@ -102,9 +131,50 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 }
 
 // ListClaims returns every claim for a style.
-func ListClaims(db *sql.DB, styleID int64) ([]NodeClaim, error) {
+func ListClaims(db DBTX, styleID int64) ([]NodeClaim, error) {
 	rows, err := db.Query(`SELECT `+claimSelect+`
-		FROM style_node_claims WHERE style_id=? ORDER BY sequence, core_node_name`, styleID)
+		FROM style_node_claims WHERE style_id=? AND`+liveClaims+` ORDER BY sequence, core_node_name`, styleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeClaim
+	for rows.Next() {
+		c, err := scanNodeClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListLiveClaimsByProcess returns every claim on every LIVE style of one
+// process in ONE query, ordered by style then (sequence, core_node_name) —
+// the same per-style order ListClaims gives, so a caller grouping by StyleID
+// sees each style's claims exactly as ListClaims would have listed them.
+//
+// It exists so a per-process reader (the plant-claims publisher) does not
+// issue one ListClaims per style. On a store pinned to one connection that
+// loop was 1 + styles queries per process, and Press 4 and Press 6 at
+// Springfield are headed for 40-90 styles each. Same shape as
+// PayloadsForManualSwapNodes in walk.go, which replaced a per-style walk
+// after a 44-second board build.
+//
+// The style filter is a semi-join rather than a JOIN so claimSelect and
+// scanNodeClaim are reused verbatim: both tables carry id and created_at, and
+// a hand-qualified copy of the column list is exactly the drift walk.go's
+// comment warns about. The subquery applies liveStyles — a retired style's
+// claims must not reach Core, exactly as ListStylesByProcess would not have
+// visited them — and the outer WHERE applies liveClaims, so a retired claim
+// (one changeover history still points at) reads as absent here exactly as
+// it does in ListClaims.
+func ListLiveClaimsByProcess(db *sql.DB, processID int64) ([]NodeClaim, error) {
+	rows, err := db.Query(`SELECT `+claimSelect+`
+		FROM style_node_claims
+		WHERE style_id IN (SELECT id FROM styles WHERE process_id = ? AND`+liveStyles+`)
+		  AND`+liveClaims+`
+		ORDER BY style_id, sequence, core_node_name`, processID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,12 +208,20 @@ func GetClaim(db *sql.DB, id int64) (*NodeClaim, error) {
 // payload does not have one home for it, and guessing between them would put a
 // carrier somewhere plausible and wrong. Blank payload returns nothing: an
 // empty carrier's destination is not a payload question.
+//
+// LIVE CLAIMS ONLY. A retired row is a claim the flow no longer has, and a
+// composer save retires rows routinely — every replace_all that drops a
+// position does. Without the predicate a retired claim could be the "exactly
+// one match" that answers where a bin belongs, and the evacuation resolver
+// would send a carrier to a position the current flow does not use. Worse, a
+// live claim and its own retired predecessor at the same node would count as
+// two matches and the resolver would answer nothing at all.
 func ClaimForLinesidePayload(db *sql.DB, coreNodeName, payloadCode string) (*NodeClaim, error) {
 	if coreNodeName == "" || payloadCode == "" {
 		return nil, nil
 	}
 	rows, err := db.Query(`SELECT `+claimSelect+`
-		FROM style_node_claims WHERE core_node_name=? AND payload_code=?`, coreNodeName, payloadCode)
+		FROM style_node_claims WHERE core_node_name=? AND payload_code=? AND`+liveClaims, coreNodeName, payloadCode)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +246,7 @@ func ClaimForLinesidePayload(db *sql.DB, coreNodeName, payloadCode string) (*Nod
 // GetClaimByNode returns a claim by its (style_id, core_node_name) pair.
 func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, error) {
 	c, err := scanNodeClaim(db.QueryRow(`SELECT `+claimSelect+`
-		FROM style_node_claims WHERE style_id=? AND core_node_name=?`, styleID, coreNodeName))
+		FROM style_node_claims WHERE style_id=? AND core_node_name=? AND`+liveClaims, styleID, coreNodeName))
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +278,7 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 			JOIN styles s ON c.style_id = s.id
 			WHERE s.process_id = ?
 			  AND s.deleted_at IS NULL
+			  AND c.retired_at IS NULL
 			  AND (c.paired_core_node = ? OR c.second_paired_core_node = ?)
 		)`, processID, name, name).Scan(&exists)
 	if err != nil {
@@ -211,7 +290,7 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 // UpsertClaim inserts or updates a claim and returns the row id. Validates
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
 // must declare an outbound destination).
-func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
+func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	// Defense-in-depth: API ingress (apiUpsertStyleNodeClaim) trims
 	// these. Trim again here so a non-API caller can't bypass it.
 	// Internal write path; silent trim, no warning log.
@@ -276,41 +355,18 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		}
 		in.AutoConfirm = true
 	}
-	// two_robot claims require InboundStaging. Robot A drops the new bin
-	// at the staging node and waits there with a wait-with-node step until
-	// Robot B clears the production node. Without InboundStaging the
-	// dispatcher has no hand-off point and BuildTwoRobotSwapSteps returns
-	// (nil, nil) silently — the operator's RELEASE click does nothing and
-	// the failure mode is invisible. Validating at config time means the
-	// runtime no-op at material_orders.go BuildTwoRobotSwapSteps becomes
-	// unreachable defensive code (kept as an assert, not a real branch).
-	// Phase 2 #9 of 2026-04-27 v2 direction doc.
-	if in.SwapMode == protocol.SwapModeTwoRobot && in.InboundStaging == "" {
-		return 0, fmt.Errorf("two_robot claims require inbound_staging to be set")
+	// Attribution: an empty Source is an internal caller with nothing to say
+	// and reads as admin, the same answer a legacy row gives. Anything else
+	// must be one of the four writers.
+	if in.Source == "" {
+		in.Source = domain.ClaimSourceAdmin
 	}
-	// two_robot_press_index claims need PairedCoreNode (back position B) and
-	// OutboundDestination. R1's multi-step ComplexOrder carries the full bin
-	// from A → outbound and the replacement from inbound → B (or C in the
-	// 3-position layout); R2 indexes B → A (and C → B in 3-position).
-	// Without PairedCoreNode or OutboundDestination, BuildTwoRobotPressIndexSwapSteps
-	// returns nil and the operator's RELEASE silently no-ops.
-	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		if in.PairedCoreNode == "" {
-			return 0, fmt.Errorf("two_robot_press_index claims require paired_core_node (back position) to be set")
-		}
-		if in.OutboundDestination == "" {
-			return 0, fmt.Errorf("two_robot_press_index claims require outbound_destination to be set")
-		}
-		// Optional 3-position: SecondPairedCoreNode must be distinct from
-		// the front and the back to avoid a step with pickup == dropoff.
-		if in.SecondPairedCoreNode != "" {
-			if in.SecondPairedCoreNode == in.CoreNodeName {
-				return 0, fmt.Errorf("second_paired_core_node must differ from core_node_name (front position)")
-			}
-			if in.SecondPairedCoreNode == in.PairedCoreNode {
-				return 0, fmt.Errorf("second_paired_core_node must differ from paired_core_node (back position)")
-			}
-		}
+	if !domain.IsClaimSource(in.Source) {
+		return 0, fmt.Errorf("claim source must be admin, hmi, generated or cloned, got %q", in.Source)
+	}
+	// The per-mode arms, one refusal, naming one field — see modeArmViolation.
+	if err := modeArmViolation(in); err != nil {
+		return 0, err
 	}
 	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach
 	// the supermarket from that press. Two styles on one press disagreeing
@@ -336,6 +392,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if err == nil {
 		return existingID, updateClaim(db, existingID, in)
 	}
+
 	// INSERT takes the documented defaults for the absent-means-untouched
 	// columns: a claim has to have a board position, a provenance and two
 	// flag values from the moment it exists. Only UPDATE can leave a column
@@ -363,22 +420,25 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		source = *in.ReorderPointSource
 	}
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
-		uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
+		reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes, changeover_evac_destination,
-		index_robot_supplies, key_route, key_task, changeover_carryover_disposition)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
+		source, called_by, updated_at, source_preset_id, source_preset_version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
-		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
+		in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
 		domain.OptValue(in.ChangeoverEvacDestination),
 		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
-		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition))
+		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition),
+		in.Source, in.CalledBy, in.SourcePresetID, in.SourcePresetVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -406,6 +466,76 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 // in. The replenishment admin page is also a writer, and a reorder-point edit
 // wiped a press's evacuation positions, its evacuation destination, the loader
 // card and the key route.
+// modeArmViolation is the per-mode arm of UpsertClaim: the fields a swap mode
+// needs present or absent before a row may be written, refused one at a
+// time with the first violation named. two_robot and two_robot_press_index
+// keep their hand-written arms; the strict modes read flowspec.Steady through
+// domain.SteadyViolations. Split out of UpsertClaim when the attribution,
+// D2 and D4 guards landed together and pushed it past the funlen ceiling;
+// behaviour is unchanged — every refusal here was a refusal there.
+func modeArmViolation(in NodeClaimInput) error {
+	// two_robot claims require InboundStaging. Robot A drops the new bin
+	// at the staging node and waits there with a wait-with-node step until
+	// Robot B clears the production node. Without InboundStaging the
+	// dispatcher has no hand-off point and BuildTwoRobotSwapSteps returns
+	// (nil, nil) silently — the operator's RELEASE click does nothing and
+	// the failure mode is invisible. Validating at config time means the
+	// runtime no-op at material_orders.go BuildTwoRobotSwapSteps becomes
+	// unreachable defensive code (kept as an assert, not a real branch).
+	// Phase 2 #9 of 2026-04-27 v2 direction doc.
+	if in.SwapMode == protocol.SwapModeTwoRobot && in.InboundStaging == "" {
+		return fmt.Errorf("two_robot claims require inbound_staging to be set")
+	}
+	// ...and OutboundDestination: robot B takes the old bin straight there,
+	// the planner refuses a pair without one, and the API refuses the claim
+	// (flowspec D2). A store that did not would still let an import write it.
+	if in.SwapMode == protocol.SwapModeTwoRobot && in.OutboundDestination == "" {
+		return fmt.Errorf("two_robot claims require outbound_destination to be set")
+	}
+	// two_robot_press_index claims need PairedCoreNode (back position B) and
+	// OutboundDestination. R1's multi-step ComplexOrder carries the full bin
+	// from A → outbound and the replacement from inbound → B (or C in the
+	// 3-position layout); R2 indexes B → A (and C → B in 3-position).
+	// Without PairedCoreNode or OutboundDestination, BuildTwoRobotPressIndexSwapSteps
+	// returns nil and the operator's RELEASE silently no-ops.
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+		if in.PairedCoreNode == "" {
+			return fmt.Errorf("two_robot_press_index claims require paired_core_node (back position) to be set")
+		}
+		if in.OutboundDestination == "" {
+			return fmt.Errorf("two_robot_press_index claims require outbound_destination to be set")
+		}
+		// Optional 3-position: SecondPairedCoreNode must be distinct from
+		// the front and the back to avoid a step with pickup == dropoff.
+		if in.SecondPairedCoreNode != "" {
+			if in.SecondPairedCoreNode == in.CoreNodeName {
+				return fmt.Errorf("second_paired_core_node must differ from core_node_name (front position)")
+			}
+			if in.SecondPairedCoreNode == in.PairedCoreNode {
+				return fmt.Errorf("second_paired_core_node must differ from paired_core_node (back position)")
+			}
+		}
+	}
+	// THE STRICT MODES READ ONE TABLE (D4). single_robot had no arm here at
+	// all; it now takes its whole row from flowspec.Steady through
+	// domain.SteadyViolations, exactly as ValidateNodeClaim reads it — every
+	// Required field refused blank, every Forbidden field refused populated —
+	// so a non-API writer meets the answer the API gives: an import cannot
+	// store a single_robot claim with no staging or no destination that the
+	// planner would refuse after START. sequential was meant to join it and is
+	// held; see domain.StrictSteadyModes for the measurement.
+	// The first violation is the refusal, as with every arm above: one error,
+	// naming one field, in the row's canonical order.
+	if violations := domain.SteadyViolations(in); len(violations) > 0 {
+		v := violations[0]
+		if v.Need == flowspec.Required {
+			return fmt.Errorf("%s claims require %s to be set", in.SwapMode, v.Field)
+		}
+		return fmt.Errorf("%s claims do not use %s; clear it", in.SwapMode, v.Field)
+	}
+	return nil
+}
+
 // warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
 // same press disagreeing about which robot fetches the replacement.
 //
@@ -415,7 +545,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 // Silent on a caller with no opinion (nil) — an import or the compare grid is
 // not asserting anything about the hardware and must not be reported as if it
 // were.
-func warnIndexRobotSuppliesDrift(db *sql.DB, in NodeClaimInput) {
+func warnIndexRobotSuppliesDrift(db DBTX, in NodeClaimInput) {
 	if in.IndexRobotSupplies == nil || in.CoreNodeName == "" {
 		return
 	}
@@ -427,6 +557,7 @@ func warnIndexRobotSuppliesDrift(db *sql.DB, in NodeClaimInput) {
 		WHERE c.core_node_name = ?
 		  AND c.style_id != ?
 		  AND s.deleted_at IS NULL
+		  AND c.retired_at IS NULL
 		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)`,
 		in.CoreNodeName, in.StyleID, in.StyleID)
 	if err != nil {
@@ -456,22 +587,34 @@ func warnIndexRobotSuppliesDrift(db *sql.DB, in NodeClaimInput) {
 	}
 }
 
-func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
+func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 
+	// Attribution is always written: the row says who LAST wrote it, and
+	// updated_at is when. retired_at is cleared — an upsert onto a retired
+	// (style, node) is the same claim coming back, under the same id, so the
+	// history that points at it keeps pointing at a real row.
 	sets := []string{
-		`role=?`, `swap_mode=?`, `payload_code=?`, `uop_capacity=?`, `reorder_point=?`,
+		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
 		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
+		`source=?`, `called_by=?`, `updated_at=datetime('now')`, `retired_at=NULL`,
 	}
 	args := []any{
-		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
+		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
 		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
+		in.Source, in.CalledBy,
+	}
+	if in.SourcePresetID != nil {
+		sets, args = append(sets, `source_preset_id=?`), append(args, *in.SourcePresetID)
+	}
+	if in.SourcePresetVersion != nil {
+		sets, args = append(sets, `source_preset_version=?`), append(args, *in.SourcePresetVersion)
 	}
 
 	if in.ReorderPointSource != nil {
@@ -540,10 +683,74 @@ func marshalAllowedPayloads(codes []string) string {
 	return string(data)
 }
 
-// DeleteClaim removes a claim row by id.
-func DeleteClaim(db *sql.DB, id int64) error {
+// DeleteClaim removes a claim row by id — unless changeover history still
+// points at it, in which case the row is RETIRED instead.
+//
+// changeover_node_tasks.from_claim_id / to_claim_id are how a past
+// changeover's "from part X to part Y" label resolves. Edge runs with foreign
+// keys OFF, so a hard DELETE here left those pointers dangling and the label
+// blank. A retired row keeps the label readable; every list read skips it
+// (liveClaims), and re-adding the same (style, node) claim revives it under
+// the same id.
+func DeleteClaim(db DBTX, id int64) error {
+	// THE FLOOR EVERY DOOR STANDS ON. SaveFlow refuses a position move on the
+	// running style, but it was the only door that did — the legacy
+	// POST/DELETE /api/style-node-claims and the replenishment page's write
+	// walked straight past it.
+	//
+	// GATED ON THE BIN, NOT ON "IS THIS STYLE RUNNING". The hazard is a
+	// CARRIER stranded: take PLN_01 off the running flow while a bin stands on
+	// it and the level sweep never refills it, the PLC tick stops counting the
+	// parts made off it, and every delivered/completed handler looks past it —
+	// all of them resolve by (active_style_id, core_node_name). With no bin
+	// there is no carrier to strand, and refusing anyway would forbid ordinary
+	// setup: creating a process, setting its active style and then editing its
+	// positions is what every seeder, the sim and 500-odd tests do.
+	//
+	// The composer's own guard stays and stays STRICTER — it sees the whole
+	// flow, so it can refuse the move before anything is written and say
+	// "PLN_01 is running, move it to PLN_03 after the next changeover". This
+	// one sees a row, and it is the half that cannot be bypassed.
+	if err := refuseStrandingARunningBin(db, id); err != nil {
+		return err
+	}
+	var refs int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM changeover_node_tasks
+		WHERE from_claim_id = ?1 OR to_claim_id = ?1`, id).Scan(&refs); err != nil {
+		return fmt.Errorf("claim %d: count history references: %w", id, err)
+	}
+	if refs > 0 {
+		_, err := db.Exec(`UPDATE style_node_claims
+			SET retired_at = datetime('now'), updated_at = datetime('now')
+			WHERE id = ? AND retired_at IS NULL`, id)
+		return err
+	}
 	_, err := db.Exec(`DELETE FROM style_node_claims WHERE id=?`, id)
 	return err
+}
+
+// refuseStrandingARunningBin refuses deleting a claim whose position is (a) on
+// the style its process is RUNNING and (b) physically holding a carrier.
+//
+// One statement on the delete path. The read paths never ask.
+func refuseStrandingARunningBin(db DBTX, id int64) error {
+	var node string
+	err := db.QueryRow(`
+		SELECT c.core_node_name
+		FROM style_node_claims c
+		JOIN processes p ON p.active_style_id = c.style_id
+		JOIN process_nodes pn ON pn.process_id = p.id
+		     AND pn.core_node_name = c.core_node_name AND pn.deleted_at IS NULL
+		JOIN process_node_runtime_states r ON r.process_node_id = pn.id
+		WHERE c.id = ? AND c.retired_at IS NULL AND r.active_bin_id IS NOT NULL`, id).Scan(&node)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil // not running, or nothing standing on it
+	case err != nil:
+		return fmt.Errorf("claim %d: running-bin check: %w", id, err)
+	}
+	return fmt.Errorf("%w: %s is on the style this press is running and has a bin on it — take it off the flow after the next changeover",
+		domain.ErrRunningPositionMove, node)
 }
 
 // carryoverOrDefault writes 'replace' when the caller said nothing, matching
@@ -555,4 +762,41 @@ func carryoverOrDefault(d *domain.CarryoverDisposition) string {
 		return string(domain.CarryoverReplace)
 	}
 	return string(*d)
+}
+
+// StampClaimPresetProvenance writes source_preset_id and source_preset_version
+// on the live claims of one style, and NOTHING else.
+//
+// A DEDICATED NARROW UPDATE, because updateClaim is not the tool for this.
+// updateClaim writes eighteen columns unconditionally (claims.go's own
+// boundary note), so putting provenance through it means a caller who wanted
+// to record where a flow came from has to first reproduce the flow exactly or
+// silently rewrite it. Naming a migration candidate stamps rows an engineer
+// has not looked at; the one thing it may not do is move a column.
+//
+// TWO COLUMNS, AND NOT updated_at. It moved it — the trigger-free convention
+// every other write here follows — and that told the floor something untrue.
+//
+// updated_at has exactly one reader on this path: flowProvenance
+// (service/station_composer.go), which turns it into the operator's set-up card
+// sentence `Flow saved 09-12 from the desktop`. Naming one migration candidate
+// stamps every style that already runs that shape, so on a press with ninety
+// parts it would have moved ninety of those dates to today — telling an
+// operator that an engineer changed the flow, on a day nobody touched a flow.
+// Recording where a shape came from is not a change to the shape.
+//
+// Between the column's literal meaning ("this row was written") and the
+// sentence an operator reads, the sentence wins. If something later needs "when
+// was this row last touched at all", that is a different question and deserves
+// its own column rather than this one's second meaning.
+//
+// Live claims only: a retired row's provenance is history.
+func StampClaimPresetProvenance(db *sql.DB, styleID, presetID int64, version int) (int64, error) {
+	res, err := db.Exec(`UPDATE style_node_claims
+		SET source_preset_id = ?, source_preset_version = ?
+		WHERE style_id = ? AND retired_at IS NULL`, presetID, version, styleID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

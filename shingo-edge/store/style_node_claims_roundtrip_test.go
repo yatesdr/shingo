@@ -10,10 +10,15 @@ import (
 	"shingoedge/store/processes"
 )
 
-// claimEditorBody is the request body the claims editor actually sends: every
-// field the modal owns a control for, and nothing else. It is the shape of
-// processes.js's claimBody / claimToBody, expressed in Go so the round-trip is
-// testable without a browser.
+// claimEditorBody is the request body the claim editor sent: every field the
+// modal owned a control for, and nothing else — processes.js's claimBody /
+// claimToBody, expressed in Go so the round-trip is testable without a browser.
+//
+// THE EDITOR IS GONE (U9d took the three-tab page and processes.js with it).
+// What survives it is the SHAPE: this is still what the legacy
+// /api/style-node-claims routes accept, those routes are still mounted and
+// guarded (www/router.go), and the body a caller sends them is this one. So the
+// round-trip below is about the door, not about a page.
 //
 // The four columns it does NOT carry — sequence, reorder_point_source,
 // keep_staged, auto_reorder — are the point. The editor has no control for any
@@ -218,6 +223,10 @@ func TestUpsertStyleNodeClaim_KeepStagedIsRefused(t *testing.T) {
 		StyleID: styleID, CoreNodeName: "KSR-NODE", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-KSR",
 		InboundStaging: "KSR-IN", OutboundStaging: "KSR-OUT",
+		// Required at save since flowspec D1: a single_robot claim's outgoing
+		// bin has to have somewhere to go. The seed says so, so the only thing
+		// this test can be refused for is the flag it is about.
+		OutboundDestination: "KSR-DEST",
 	}
 
 	withFlag := in
@@ -246,16 +255,21 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	testutil.MustNoErr(t, err, "create style")
 
 	base := processes.NodeClaimInput{
-		StyleID:            styleID,
-		CoreNodeName:       "RT2-NODE",
-		Role:               protocol.ClaimRoleConsume,
-		SwapMode:           protocol.SwapModeSingleRobot,
-		PayloadCode:        "PART-RT2",
-		InboundStaging:     "RT2-IN",
-		OutboundStaging:    "RT2-OUT",
-		Sequence:           domain.Ptr(3),
-		ReorderPointSource: domain.Ptr("calculated"),
-		AutoReorder:        domain.Ptr(true),
+		StyleID:      styleID,
+		CoreNodeName: "RT2-NODE",
+		Role:         protocol.ClaimRoleConsume,
+		// A press-index cell: its row USES the index-robot flip this test
+		// writes explicitly below; single_robot's row refuses it at the store
+		// since flowspec D4.
+		SwapMode:            protocol.SwapModeTwoRobotPressIndex,
+		PairedCoreNode:      "RT2-B",
+		PayloadCode:         "PART-RT2",
+		InboundStaging:      "RT2-IN",
+		OutboundStaging:     "RT2-OUT",
+		OutboundDestination: "RT2-DEST",
+		Sequence:            domain.Ptr(3),
+		ReorderPointSource:  domain.Ptr("calculated"),
+		AutoReorder:         domain.Ptr(true),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(base)
 	testutil.MustNoErr(t, err, "seed claim")
@@ -372,13 +386,14 @@ func TestUpsertStyleNodeClaim_InsertDefaultsForAbsentOptionals(t *testing.T) {
 
 	mk := func(node string) int64 {
 		id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-			StyleID:         styleID,
-			CoreNodeName:    node,
-			Role:            protocol.ClaimRoleConsume,
-			SwapMode:        protocol.SwapModeSingleRobot,
-			PayloadCode:     "PART-RT3",
-			InboundStaging:  "RT3-IN",
-			OutboundStaging: "RT3-OUT",
+			StyleID:             styleID,
+			CoreNodeName:        node,
+			Role:                protocol.ClaimRoleConsume,
+			SwapMode:            protocol.SwapModeSingleRobot,
+			PayloadCode:         "PART-RT3",
+			InboundStaging:      "RT3-IN",
+			OutboundStaging:     "RT3-OUT",
+			OutboundDestination: "RT3-DEST",
 		})
 		testutil.MustNoErr(t, err, "create claim "+node)
 		return id

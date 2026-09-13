@@ -71,6 +71,11 @@ func (db *DB) SetProcessGroupID(processID int64, groupID *int64) error {
 	return processes.SetGroupID(db.DB, processID, groupID)
 }
 
+// SetFlowComposerEnabled opens or closes the HMI flow composer for a process.
+func (db *DB) SetFlowComposerEnabled(processID int64, enabled bool) error {
+	return processes.SetFlowComposerEnabled(db.DB, processID, enabled)
+}
+
 // ── Process groups ──────────────────────────────────────────────────
 
 // ListProcessGroups returns every process_groups row, ordered by name.

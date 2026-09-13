@@ -8,7 +8,10 @@ package store
 // unchanged.) This file preserves the *store.DB method surface so
 // external callers do not need to change.
 
-import "shingoedge/store/catalog"
+import (
+	"shingoedge/store/catalog"
+	"shingoedge/store/internal/capacity"
+)
 
 // UpsertPayloadCatalog inserts or updates a payload_catalog row.
 func (db *DB) UpsertPayloadCatalog(entry *catalog.CatalogEntry) error {
@@ -50,3 +53,13 @@ func (db *DB) SetPayloadCatalogCycleSeconds(code string, seconds float64) error 
 func (db *DB) DeleteStalePayloadCatalogEntries(activeIDs []int64) error {
 	return catalog.DeleteStaleCatalogEntries(db.DB, activeIDs)
 }
+
+// ClaimCapacitySQL is capacity.SQL re-exported at the outer store level.
+//
+// A claim's UOP capacity is resolved from payload_catalog on read rather than
+// stored on the claim (see store/internal/capacity). The claim reads in
+// store/processes use the primitive directly; the sim's machine-readiness query
+// (engine.SimMachineReady) builds its own SELECT over style_node_claims and
+// lives outside store/, which cannot reach an internal package — so it comes
+// through here.
+func ClaimCapacitySQL(table string) string { return capacity.SQL(table) }

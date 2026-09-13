@@ -635,6 +635,19 @@ func (db *DB) migrate() error {
 			WHERE state = 'active'`)
 	}
 
+	// Two indexes the canonical schema stopped declaring, dropped by name so
+	// a migrated database does not keep maintaining a b-tree nothing plans
+	// against. Both are pure index changes: no column moves, no data.
+	//
+	// idx_changeovers_process_id is superseded by
+	// idx_changeovers_process_started (process_id, started_at DESC), whose
+	// leading column serves everything the single-column index served.
+	//
+	// idx_flow_presets_process duplicates the autoindex behind
+	// UNIQUE(process_id, name, version), which already leads with process_id.
+	db.Exec("DROP INDEX IF EXISTS idx_changeovers_process_id")
+	db.Exec("DROP INDEX IF EXISTS idx_flow_presets_process")
+
 	// inventory_delta_seq PK extends from (scope_kind, scope_key) to
 	// (scope_kind, scope_key, epoch). SQLite can't ALTER PRIMARY KEY in
 	// place, so add the column and rebuild the table. Old rows land at
@@ -706,6 +719,16 @@ func (db *DB) migrate() error {
 	// COLUMN. NOTE: migration version numbers are per-branch — renumber on merge if
 	// this collides.
 	db.Exec("ALTER TABLE processes ADD COLUMN changeover_auto_arm TEXT NOT NULL DEFAULT 'auto'")
+
+	// v39 (2026-09-03, flow composer): the per-process gate for the HMI flow
+	// composer. DEFAULT 0 is correct for every existing process — nothing has
+	// reviewed its routing set yet, and the composer must stay off until an
+	// engineer has (see process_routing_nodes in sqlite_ddl.go). Guarded on
+	// TableHasColumn rather than run ignored-error, so a genuine ALTER failure
+	// is reported instead of surfacing later as a missing-column 500.
+	if err := db.addColumnIfMissing("ALTER TABLE processes ADD COLUMN flow_composer_enabled INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// v31 (2026-07-24, post-cutover CATID verification): the live PLC part id
 	// observed disagreeing with the new active style shortly after a cutover
@@ -800,6 +823,28 @@ func (db *DB) migrate() error {
 	// CREATE; 'replace' is today's behaviour, so every existing mark is
 	// unchanged by the column arriving.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace'")
+
+	// v40 (2026-09-03, claim attribution): who wrote each claim row and from
+	// where, because the HMI flow composer makes the table fully open. Same
+	// definitions as the baseline CREATE, and written as full literal
+	// statements so TestAlterPassMatchesBaselineCreate can see them. DEFAULT
+	// 'admin' is correct for every existing row — the desktop editor was the
+	// only writer there was — and the rest are empty / NULL, the honest value
+	// for "not recorded". Guarded rather than ignored-error so a genuine
+	// failure is reported. They sit in this block, BEFORE the rebuild, for the
+	// reason the block header gives: the rebuild's INSERT ... SELECT names them.
+	for _, stmt := range []string{
+		"ALTER TABLE style_node_claims ADD COLUMN source TEXT NOT NULL DEFAULT 'admin'",
+		"ALTER TABLE style_node_claims ADD COLUMN called_by TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE style_node_claims ADD COLUMN updated_at TEXT",
+		"ALTER TABLE style_node_claims ADD COLUMN retired_at TEXT",
+		"ALTER TABLE style_node_claims ADD COLUMN source_preset_id INTEGER",
+		"ALTER TABLE style_node_claims ADD COLUMN source_preset_version INTEGER",
+	} {
+		if err := db.addColumnIfMissing(stmt); err != nil {
+			return err
+		}
+	}
 
 	if err := db.rebuildStyleNodeClaims(); err != nil {
 		return err
@@ -1930,6 +1975,36 @@ func scanBucketLosses(rows *sql.Rows, qErr error) ([]bucketLoss, error) {
 }
 
 // ── Compatibility wrappers (kept for migration_test.go) ─────────────
+
+// addColumnIfMissing runs one "ALTER TABLE <t> ADD COLUMN <c> ..." statement
+// only when the column is absent, and REPORTS a failure.
+//
+// The plain db.Exec(ALTER ...) pattern above discards its error on purpose
+// (see the note at v27), and the cost is that a genuine failure looks like the
+// idempotent no-op. Checking pragma_table_info first removes the ambiguity:
+// if the column is missing and the ADD fails, that is a real failure and
+// migrate() can say so. The statement is passed as the full literal so
+// TestAlterPassMatchesBaselineCreate — which finds ALTERs by regex over this
+// file's source — still holds the definition to the baseline CREATE's.
+func (db *DB) addColumnIfMissing(stmt string) error {
+	f := strings.Fields(stmt)
+	// ALTER TABLE <table> ADD COLUMN <column> ...
+	if len(f) < 6 || !strings.EqualFold(f[0], "ALTER") || !strings.EqualFold(f[3], "ADD") {
+		return fmt.Errorf("addColumnIfMissing: not an ALTER TABLE ... ADD COLUMN statement: %q", stmt)
+	}
+	table, column := f[2], f[5]
+	has, err := schema.TableHasColumn(db.DB, table, column)
+	if err != nil {
+		return fmt.Errorf("check %s.%s: %w", table, column, err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(stmt); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
+	}
+	return nil
+}
 
 // tableHasColumn delegates to schema.TableHasColumn so existing
 // migration_test.go call sites compile unchanged. Phase 6.4 may

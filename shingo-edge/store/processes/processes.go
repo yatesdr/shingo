@@ -40,7 +40,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
 	var groupID sql.NullInt64
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &createdAt); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
@@ -55,7 +55,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 // (the Changeover_Active tag was never wired at any plant). The column stays on
 // disk — dropping it means a SQLite table rebuild, and a rebuild is what
 // generates the dangling REFERENCES clauses the FK repair exists to fix.
-const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, created_at`
+const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -76,7 +76,7 @@ func List(db *sql.DB) ([]Process, error) {
 }
 
 // Get returns one process by id.
-func Get(db *sql.DB, id int64) (*Process, error) {
+func Get(db DBTX, id int64) (*Process, error) {
 	l, err := scanProcess(db.QueryRow(`SELECT `+processSelect+` FROM processes WHERE id = ?`, id))
 	if err != nil {
 		return nil, err
@@ -243,6 +243,15 @@ func SetChangeoverAutoArm(db *sql.DB, processID int64, mode string) error {
 // to "Ungrouped". Pure UI taxonomy — the runtime never reads group_id.
 func SetGroupID(db *sql.DB, processID int64, groupID *int64) error {
 	_, err := db.Exec(`UPDATE processes SET group_id=? WHERE id=?`, groupID, processID)
+	return err
+}
+
+// SetFlowComposerEnabled opens or closes the HMI flow composer for a process.
+// A focused setter, like SetChangeoverAutoArm, so the gate threads through
+// without churning every process-CRUD call site; it is flipped from its own
+// control on the Processes page, never alongside a name edit.
+func SetFlowComposerEnabled(db *sql.DB, processID int64, enabled bool) error {
+	_, err := db.Exec(`UPDATE processes SET flow_composer_enabled=? WHERE id=?`, enabled, processID)
 	return err
 }
 
@@ -938,6 +947,19 @@ func SetRuntimeUOPClearPending(db *sql.DB, processNodeID int64, remainingUOPCach
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=?, pending_uop_delta=0, updated_at=datetime('now') WHERE process_node_id=?`,
 		remainingUOPCached, processNodeID)
 	return err
+}
+
+// DBTX is what a reader or writer in this package needs from database/sql,
+// and both *sql.DB and *sql.Tx satisfy it. The claim, style, process,
+// changeover and routing readers and writers the flow composer's save uses
+// take it so the save can run in ONE transaction and check its fingerprint
+// inside it: on a store pinned to a single SQLite connection the tx holds
+// that connection, so a call on *sql.DB from inside would wait on itself.
+// Callers without a tx pass *sql.DB and get autocommit behaviour, as before.
+type DBTX interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // activePullExecer is the minimal write-only interface satisfied by

@@ -247,6 +247,7 @@ func (db *DB) CellLevelStillBreached(processName, payloadCode, role string) (boo
 		  FROM style_node_claims c
 		  JOIN processes p ON p.active_style_id = c.style_id
 		 WHERE p.name = ? AND c.payload_code = ? AND c.role = ?
+		   AND c.retired_at IS NULL
 		   AND c.below_reorder_since IS NOT NULL
 		   AND c.below_reorder_since != ''`,
 		processName, payloadCode, role).Scan(&n); err != nil {
@@ -271,7 +272,8 @@ func (db *DB) CellPayloadStillClaimed(processName, payloadCode, role string) (bo
 		SELECT COUNT(*)
 		  FROM style_node_claims c
 		  JOIN processes p ON p.active_style_id = c.style_id
-		 WHERE p.name = ? AND c.payload_code = ? AND c.role = ?`,
+		 WHERE p.name = ? AND c.payload_code = ? AND c.role = ?
+		   AND c.retired_at IS NULL`,
 		processName, payloadCode, role).Scan(&n); err != nil {
 		return false, fmt.Errorf("cell payload still claimed process=%q payload=%q role=%q: %w",
 			processName, payloadCode, role, err)

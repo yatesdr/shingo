@@ -65,6 +65,12 @@ type LinesideLevel struct {
 // to "slightly less accurate"; it mints an authoritative row under a payload
 // nobody established, and Core stores it keyed on that name.
 //
+// A RETIRED CLAIM IS NOT A LIVE ONE. `retired_at` is the flow composer's soft
+// delete — a claim a changeover's history still points at is kept rather than
+// dropped (store/processes/claims.go's liveClaims) — and the style+node join
+// above would otherwise match one and mint a lineside row for a slot the style
+// no longer claims.
+//
 // The bucket term matches on payload_code so a bucket belonging to another
 // payload is not summed under this one. Losing sight of it costs an adjustment
 // Core's ledger still covers; attributing it costs a wrong authoritative row.
@@ -81,6 +87,7 @@ func (db *DB) ListLinesideLevels() ([]LinesideLevel, error) {
 		JOIN processes p ON p.id = pn.process_id
 		JOIN style_node_claims c
 		  ON c.style_id = p.active_style_id AND c.core_node_name = pn.core_node_name
+		 AND c.retired_at IS NULL
 		LEFT JOIN (
 			SELECT node_id, payload_code, SUM(qty) AS qty
 			FROM node_lineside_bucket

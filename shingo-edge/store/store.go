@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,6 +24,22 @@ import (
 // GitHub root, OUTSIDE this repo — it was never committed in-tree).
 type DB struct {
 	*sql.DB
+	// path is the file this DB was opened from, so a caller that needs its
+	// OWN connection to the same database can get one. SnapshotTo is the
+	// reason it exists; see there.
+	path string
+}
+
+// dsnFor is the ONE DSN this module opens databases with.
+//
+// It was written out at each open, which is exactly the kind of copy that
+// drifts: a counting store opened with different pragmas measures something
+// other than production, and that is the one thing a measurement must not do.
+//
+// The foreign_keys pragma is deliberately absent — see Open's comment, which
+// is the decision and not an oversight.
+func dsnFor(path string) string {
+	return fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
 }
 
 // Transaction runs fn inside a single SQLite transaction. Commits if
@@ -160,14 +177,13 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 // assertion in open_pragmas_test.go is where that decision gets made in the
 // open, and it carries its own reason so changing it cannot be a silent edit.
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path) // + "&_pragma=foreign_keys(1)" — see open_pragmas_test.go before adding
-	sqlDB, err := sql.Open("sqlite", dsn)
+	sqlDB, err := sql.Open("sqlite", dsnFor(path))
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	db := &DB{sqlDB}
+	db := &DB{DB: sqlDB, path: path}
 	if err := db.migrate(); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -191,19 +207,53 @@ func Open(path string) (*DB, error) {
 // test pool — where the migration chain's ~120 statements per open were the
 // package's dominant cost. Production opens must use Open.
 func OpenMigrated(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
-	sqlDB, err := sql.Open("sqlite", dsn)
+	sqlDB, err := sql.Open("sqlite", dsnFor(path))
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	db := &DB{sqlDB}
+	db := &DB{DB: sqlDB, path: path}
 	if err := db.verifySchema(); err != nil {
 		sqlDB.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+// SnapshotTo writes a consistent copy of the database to dest, on ITS OWN
+// CONNECTION.
+//
+// WHY NOT db.Exec. This module pins the pool to ONE connection, so running
+// VACUUM INTO on it means a whole-database copy — onto an SD card, on a Pi —
+// holds the connection every station poll queues behind. The backup is
+// debounced, but a debounce only controls how OFTEN it happens, not what it
+// blocks while it does: boards burst-poll at 500 ms behind busy_timeout(5000),
+// so a snapshot that runs long enough turns into SQLITE_BUSY and error toasts
+// on healthy stations.
+//
+// WAL is what makes the second connection correct: a reader sees a consistent
+// snapshot without blocking writers, and VACUUM INTO is a reader. Same file,
+// same DSN, its own pool of one, closed when the copy is done.
+//
+// An empty path means this DB was not opened from one (a test fixture built
+// by hand); the caller falls back to the shared connection, which is the old
+// behaviour and correct, just not concurrent.
+func (db *DB) SnapshotTo(dest string) error {
+	if db.path == "" {
+		_, err := db.Exec("VACUUM INTO '" + strings.ReplaceAll(dest, "'", "''") + "'")
+		return err
+	}
+	side, err := sql.Open("sqlite", dsnFor(db.path))
+	if err != nil {
+		return fmt.Errorf("open snapshot connection: %w", err)
+	}
+	defer side.Close()
+	side.SetMaxOpenConns(1)
+	if _, err := side.Exec("VACUUM INTO '" + strings.ReplaceAll(dest, "'", "''") + "'"); err != nil {
+		return fmt.Errorf("sqlite vacuum into: %w", err)
+	}
+	return nil
 }
 
 // CheckpointWAL runs PRAGMA wal_checkpoint(TRUNCATE) to flush the
