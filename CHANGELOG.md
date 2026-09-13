@@ -3,6 +3,87 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-13 — The flow composer: one model, two screens, a per-press switch
+
+- An operator edits the press flow at the station; an engineer composes the same flow on the desktop
+  Processes page, and both screens run one shared state object
+- `flowspec` is the single table of what a swap mode uses — the server validates against it and the
+  client asks it what to show, so a control is never offered for a value the save would refuse
+- A flow is previewed through the same derivation that saves it, and a fingerprint says whether the
+  floor is running what was drawn
+- A preset is a shape, not a copy: drift is computed from it, and an apply names every refusal
+- Scene geometry is on the wire, so both surfaces draw the press from one source
+- Swap-mode glyphs say what a mode does in 28 pixels, from tokens both surfaces declare
+- A claim records where it came from and who asked for it
+- Per-process switch `flow_composer_enabled` — off, the button is not there and nothing else changes
+- The composer's CSS and JS load on first open, not at boot
+- The desktop read has a byte budget and the station read a query budget, both pinned
+- Plant fixtures are synthetic, derived by a seeded script from a pull held outside the repo
+- A gate test refuses two classic scripts on one page declaring the same top-level name — the failure
+  that had quietly killed every write button on the Processes page
+- Every `/static` asset the pages name must answer with bytes and arrive gzipped
+- About 40 seconds off the edge test suite: one hostname, one fixture built once instead of ten times
+
+## 2026-09-13 — `docs/` is reference again
+
+- Reports are out of `docs/` — censuses, a coverage map, seven test-case ledgers — with their durable
+  sentences folded back into the reference docs first
+- The rule: a doc that records a measurement at one commit is a report; a doc that says how the
+  system works is reference
+- Three surfaces taught operators a changeover state machine the code never had
+- `material-flow.md` said three swap modes; there are four configurable
+- `wire-protocol.md` documented an order status that does not exist
+- `rds-api-reference.md` had carried corrupt bytes since the commit it arrived in; every symbol in it
+  re-derived from source
+- Twelve reference files across the Core and Edge doc trees checked against the code
+- Dangling links removed, and nine code comments citing moved docs repointed
+- `docs/` is 28% smaller, and what is left is true
+
+## 2026-09-11 — A dig stops parking on its own delivery
+
+- `planUnbury` excludes the requesting order's own destination, which had wedged held-bin orders in
+  `reshuffling`
+- The dropoff count reads holders rather than statuses, and the comments that argued safety from the
+  old count now name what actually protects it
+- A fleet-demoted order re-competes at recovery
+- A cloned style no longer carries the `keep_staged` and `manual_swap` values the write gate refuses
+- A reserve miss says which miss it was
+- Three test binaries stop leaving databases in the temp dir
+
+## 2026-09-10 — One coordinated swap, and the last dispatch-time gate goes
+
+- A coordinated swap dispatches both legs in one pass or neither
+- One position takes one inbound carrier at a sequential changeover — the double supply is gone
+- A pair whose partner is digging, missing or refused is held, and a pair released as one shows as
+  one wait
+- A node is judged as the plan will find it at each step
+- The evac anti-strand hold, the peer-terminal arms and the last dispatch-time swap gate are deleted
+- `keep_staged` is withheld from plant configuration
+- An unannounced line rebind raises a recovery action
+- `changeover_auto_cutover` and `cutover_delay` deleted — two settings nothing read
+
+## 2026-09-09 — The loader question is asked by name
+
+- A swap mode names a step-list shape, not a node kind
+- `manual_swap` is retired as a persisted swap mode; stored loader claims are quarantined
+- One precedence for the loader facts Core owns, and one place that answers which nodes a claim
+  occupies
+- `migrateloaders` and the Edge copy of the loader layout fact are deleted
+- A supply parked on a dry source survives its evac's death
+- A comment's `file:line` citation must now resolve in CI
+
+## 2026-09-08 — One plant clock, and the Hopkinsville CMS feed
+
+- A plant's clock is set once on Core rather than per box, and five pages stop rendering times on the
+  viewer's clock
+- Hourly counts bucket in UTC; the daily rollup, which had no caller and no content, is deleted
+- The Hopkinsville CMS feed posts — field contracts, emission, one row per movement
+- The unloader's clear books a CMS departure
+- A board whose module graph fails to link heals itself, and every shipped `.js` must parse in CI
+- A stray brace in `openReleasePrompt` had broken every operator board
+- RELEASE FULL said the bin was empty and a changeover believed it
+- soakstat measures residence in visits, and overlapping residence at one node is an invariant
+
 ## 2026-09-07 — The acceptance families fixed: a held emission, a bounded witness
 
 - A simulator resolver miss holds the transition instead of dropping it — parity
