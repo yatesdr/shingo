@@ -113,7 +113,9 @@ nothing.
 The uid being re-issuable is the whole reason Core mints it rather than the Pi:
 replace the hardware for an existing station and Core hands the new box the
 EXISTING uid, so the station's history does not move because its identity did
-not move. See [edge-identity-rollout.md](edge-identity-rollout.md).
+not move. Enrollment is a deliberate act on Core — `POST /api/edges/enroll`
+(`shingo-core/www/router.go:415`) — and the registration message it gates is
+[EdgeRegister](wire-protocol.md#edgeregister).
 
 ### Process
 
@@ -266,7 +268,7 @@ A node whose destination gates deliberately stand down — reserved by nothing, 
 
 ### Changeover
 
-The workflow for switching a production line from one job style to another. Progresses through a fixed sequence: stopping, counting out, storing, delivering, counting in, and ready.
+The workflow for switching a production line from one job style to another. The changeover **row** has three states — `active`, `completed`, `cancelled` — and moves once, to one of the two terminal ones. The sequencing is per **node task**, not per changeover: `swap_required → staging_requested → staged → empty_requested → line_cleared → release_requested → released`, plus `unchanged`, `switched` and the dispositions `error` / `capacity_blocked` / `awaiting_material` / `abandoned` / `cancelled`. Cutover is gated on all of them being terminal.
 
 ### Paired Position
 

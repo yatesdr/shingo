@@ -64,10 +64,10 @@ it was still owed.
 | `EntryNumber` | `cms_transactions.id` | The ROW ID, globally unique. It was a 1-based index, which with `TicketNumber` pinned to `1` made every single-row post send the pair `(1, 1)` — and nobody has confirmed what that pair means to CMS. The array is sorted by this same id, so a given set of rows still serialises identically, which is what makes `body_sha` meaningful. |
 | `PartNumber` | `cms_transactions.cat_id` | A `payload_manifest.part_number`. **Not** a payload code — see [Quantity derivation](#quantity-derivation). |
 | `StockLocation` | `cms_transactions.storeroom` | The boundary's `cms_storeroom` value, stamped at build time. |
-| `Bin` | `cms_transactions.bin_label` | CMS's own bin concept; shingo's carrier label is what fills it. |
+| `Bin` | `cms.bin` (config) | **Not from the transaction row.** It is the site's configured CMS bin code — master data CMS owns, taken from yaml rather than from anything shingo knows about the node (`cms/wire/wire.go:161`). `location_node_name` on the row records where the material was in shingo's own vocabulary; the two are different systems' names for one place. |
 | `Quantity` | `abs(cms_transactions.delta)` | **Unsigned.** Direction lives in `TransactionType`. |
 | `TransactionType` | `cms.increase_type` / `cms.decrease_type` | Chosen by the sign of `delta`. |
-| `Resource` | `cms_transactions.robot_id` | Blank for an operator drag — no robot moved it, and an invented resource would be a claim about the plant that is not true. |
+| `Resource` | `cms_transactions.robot_id`, hyphens stripped | `resourceFor` removes every `-` before sending (`AMR-07` → `AMR07`, `cms/wire/wire.go:194-196`). Blank for an operator drag — no robot moved it, and an invented resource would be a claim about the plant that is not true. |
 | `ReasonCode` | `cms.reason_code` | |
 | `UnitOfMeasure` | `cms.unit_of_measure` | |
 | `UserId` | `cms.user_id` | |
@@ -479,6 +479,8 @@ failures in a table nobody is watching, and looks healthy.
 | `user_id` | `SHINGO` | Vocabulary. |
 | `department` | `""` | Vocabulary; blank in the vendor's sample. |
 | `operation` | `""` | Vocabulary; blank in the vendor's sample. |
+| `bin` | `""` | The site's CMS bin code, master data CMS owns. Empty ships an empty `Bin`, which the middleware refuses; no site in this repository sets one. |
+| `insecure_skip_verify` | `false` | Disables TLS certificate verification on the CMS calls. |
 
 Every vocabulary value is a yaml edit rather than a release. That is a promise
 made to SCO and it is why `department` and `operation` are config rather than

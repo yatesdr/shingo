@@ -30,11 +30,16 @@ Returns all registered nodes.
   {
     "id": 1,
     "name": "STG-001",
-    "fleet_location": "BIN-001",
-    "node_type_id": 1,
+    "is_synthetic": false,
     "zone": "warehouse-a",
-    "capacity": 1,
-    "enabled": true
+    "enabled": true,
+    "depth": 0,
+    "created_at": "2026-03-04T10:00:00Z",
+    "updated_at": "2026-03-04T10:00:00Z",
+    "node_type_id": 1,
+    "parent_id": 7,
+    "node_type_code": "STG",
+    "parent_name": "SMKT-A"
   }
 ]
 ```
@@ -46,9 +51,10 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 ```json
 [
   {
+    "location_id": "BIN-001",
     "node_name": "STG-001",
     "fleet_occupied": true,
-    "shingo_occupied": true,
+    "in_shingo": true,
     "discrepancy": ""
   }
 ]
@@ -59,7 +65,8 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/orders` | List orders (supports `?status=<STATUS>` filter) |
-| `GET` | `/api/orders/detail?id=<ID>` | Single order with history |
+| `GET` | `/api/orders/detail?id=<ID>` | Single order — the bare row, no history |
+| `GET` | `/api/orders/enriched?id=<ID>` | The order plus its history |
 
 #### GET /api/orders
 
@@ -70,7 +77,7 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
     "edge_uuid": "a1b2c3d4-...",
     "station_id": "plant-a.line-1",
     "order_type": "retrieve",
-    "payload_type_code": "BIN-A",
+    "payload_code": "BIN-A",
     "source_node": "STG-007",
     "delivery_node": "LSL-001",
     "status": "in_transit",
@@ -90,16 +97,28 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 
 #### GET /api/robots
 
+`fleet.RobotStatus` (`shingo-core/fleet/optional.go:131`) carries **no JSON tags**, so it serializes
+with Go's default PascalCase field names — not snake_case like the rest of this API. Callers must
+match the case exactly.
+
 ```json
 [
   {
-    "vehicle_id": "AMR-003",
-    "connected": true,
-    "available": true,
-    "busy": true,
-    "battery": 85,
-    "current_station": "STG-007",
-    "last_station": "LSL-001"
+    "VehicleID": "AMR-003",
+    "Connected": true,
+    "Available": true,
+    "Busy": true,
+    "Emergency": false,
+    "Blocked": false,
+    "IsError": false,
+    "BatteryLevel": 85.0,
+    "Charging": false,
+    "CurrentMap": "plant-map-1",
+    "Model": "<vendor model>",
+    "IP": "192.0.2.10",
+    "X": 12.5,
+    "Y": 3.2,
+    "Angle": 1.57
   }
 ]
 ```
@@ -111,7 +130,7 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 | `GET` | `/api/payloads` | List all payload templates |
 | `GET` | `/api/payloads/detail?id=<ID>` | Single payload with details |
 | `GET` | `/api/payloads/manifest?id=<ID>` | Template manifest items for a payload |
-| `GET` | `/api/payloads/bin-types?id=<ID>` | Compatible bin types for a payload |
+| `GET` | `/api/payloads/templates/bin-types?id=<ID>` | Compatible bin types for a payload |
 
 #### GET /api/payloads
 
@@ -130,15 +149,18 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/bins/by-node?node_id=<ID>` | Bins at a specific node |
+| `GET` | `/api/bins/by-node?id=<ID>` | Bins at a specific node. The param is `id`, not `node_id` |
 | `GET` | `/api/bins/available` | List available (unoccupied) bins |
 
-### Demands
+### Demand episodes
+
+The `/api/demands` CRUD surface is gone — the quota table went at migration v106
+(`shingo-core/www/router.go:158-159`). The demand grain is now the **episode**:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/demands` | List demand entries |
-| `GET` | `/api/demands/<ID>/log` | Demand fulfillment log |
+| `GET` | `/demand-episodes` | Open and recent demand episodes |
+| `GET` | `/demand-episodes/{originID}` | One episode and every order it spawned |
 
 ### Health
 
@@ -171,14 +193,6 @@ Authentication required (session cookie).
 | `POST` | `/nodes/sync-fleet` | Sync nodes from fleet scene data |
 | `POST` | `/nodes/sync-scene` | Sync zones from fleet areas |
 
-### Node Type Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/node-types/create` | Create node type (form post) |
-| `POST` | `/node-types/update` | Update node type (form post) |
-| `POST` | `/node-types/delete` | Delete node type (form post) |
-
 ### Node Properties
 
 | Method | Endpoint | Body | Description |
@@ -195,16 +209,18 @@ Authentication required (session cookie).
 | `POST` | `/payloads/delete` | Delete payload (form post) |
 | `POST` | `/api/payloads/create` | Create payload (JSON) |
 | `POST` | `/api/payloads/update` | Update payload (JSON) |
-| `POST` | `/api/payloads/manifest` | Save payload template manifest (JSON) |
-| `POST` | `/api/payloads/bin-types` | Set compatible bin types (JSON) |
+| `POST` | `/api/payloads/manifest/create` | Add a template manifest item (JSON) |
+| `POST` | `/api/payloads/manifest/update` | Update a template manifest item (JSON) |
+| `POST` | `/api/payloads/manifest/delete` | Delete a template manifest item (JSON) |
+| `POST` | `/api/payloads/confirm-manifest` | Confirm a bin's manifest (JSON) |
+| `POST` | `/api/payloads/templates/bin-types` | Set compatible bin types (JSON) |
 
 ### Bin Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/bins/create` | Create bin (form post) |
-| `POST` | `/bins/update` | Update bin (form post) |
-| `POST` | `/bins/delete` | Delete bin (form post) |
+| `POST` | `/bins/retire` | Retire a bin (form post). There is no bin delete — a bin is retired, not removed |
 | `POST` | `/bin-types/create` | Create bin type (form post) |
 | `POST` | `/bin-types/update` | Update bin type (form post) |
 | `POST` | `/bin-types/delete` | Delete bin type (form post) |
@@ -256,7 +272,6 @@ Authentication required (session cookie).
 | `POST` | `/api/test-orders/receipt` | Send delivery receipt |
 | `GET` | `/api/test-orders/robots` | Available robots for testing |
 | `GET` | `/api/test-orders/scene-points` | Scene points for testing |
-| `POST` | `/api/nodes/test-order` | Quick test order from node page |
 
 ### Test Orders (Direct to Fleet)
 
@@ -279,31 +294,25 @@ Authentication required (session cookie).
 |--------|----------|------|-------------|
 | `POST` | `/api/fleet/proxy` | `{"method": "GET", "path": "/robots"}` | Proxy request to fleet backend |
 
-### Demand Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/demands` | Create demand entry |
-| `PUT` | `/api/demands/<ID>` | Update demand entry |
-| `PUT` | `/api/demands/<ID>/apply` | Apply single demand (generate order) |
-| `DELETE` | `/api/demands/<ID>` | Delete demand entry |
-| `POST` | `/api/demands/apply-all` | Apply all pending demands |
-| `PUT` | `/api/demands/<ID>/produced` | Set produced quantity |
-| `POST` | `/api/demands/<ID>/clear` | Clear produced quantity |
-| `POST` | `/api/demands/clear-all` | Clear all produced quantities |
-
 ## SSE Events
 
 **Endpoint:** `GET /events`
 
 Server-sent events for real-time browser updates. No authentication required.
 
+`order-update` is one event name carrying several shapes, discriminated by `type`. The order key is
+`order_id`, not `id` (`shingo-core/www/sse.go:250-257`); `node-update` uses `node_id`
+(`sse.go:343`).
+
 ```
 event: order-update
-data: {"id": 42, "status": "delivered"}
+data: {"type": "status_changed", "order_id": 42, "new_status": "delivered"}
+
+event: order-update
+data: {"type": "dispatched", "order_id": 42, "vendor_order_id": "sg-42-abc123"}
 
 event: node-update
-data: {"id": 5, "action": "updated"}
+data: {"node_id": 5, "action": "updated"}
 
 event: debug-log
 data: {"timestamp": "...", "subsystem": "dispatch", "message": "..."}

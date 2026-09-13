@@ -1,6 +1,6 @@
 # Configuration Reference
 
-ShinGo Core stores its configuration in a YAML file (default: `shingocore.yaml`). A default config is generated automatically on first run.
+ShinGo Core stores its configuration in a YAML file (default: `shingocore.yaml`). **No config file is written on first run.** If the file is absent, `config.Load` returns the in-memory defaults and creates nothing (`shingo-core/config/config.go:693-701`); the file appears only when someone saves from the web UI config page (`www/handlers_config.go:58`).
 
 > **The YAML file is application-managed and should not be edited by hand during normal operation.** Use the web UI config page (`/config`) to change runtime settings. The only exception is the initial database connection, which must be set before first launch — see [Initial Setup](#initial-setup). The YAML format is subject to change between versions.
 
@@ -29,6 +29,7 @@ All other settings have sensible defaults and can be adjusted through the web UI
 | `--version` | Print version and exit |
 | `--help` | Print usage and exit |
 | `--log-debug[=FILTER]` | Enable debug logging. Optional comma-separated filter of subsystems. |
+| `--reset-db` | Wipe the database before starting. Requires interactive confirmation |
 
 ### Debug Subsystems
 
@@ -42,7 +43,7 @@ Use `--log-debug=subsystem1,subsystem2` to filter debug output:
 | `protocol` | Wire protocol encode/decode |
 | `outbox` | Outbox drain cycles |
 | `core_handler` | Inbound message handling |
-| `nodestate` | Node state cache operations |
+| `inbox_dedup` | Inbound envelope dedup decisions |
 | `engine` | Engine lifecycle events |
 
 Without a filter (`--log-debug`), all subsystems are logged.
@@ -92,7 +93,7 @@ Fleet backend (Seer RDS) connection settings. Configurable via web UI.
 |-------|------|---------|-------------|
 | `host` | string | `0.0.0.0` | Web server listen address |
 | `port` | int | `8083` | Web server port |
-| `session_secret` | string | _(auto-generated)_ | Cookie signing key |
+| `session_secret` | string | `change-me-in-production` | Cookie signing key. **Nothing is auto-generated** — the default is that literal (`config/config.go:598`), and an empty value falls back to a second literal in `www/auth.go:20`. Set it on every deployment |
 
 ### messaging
 

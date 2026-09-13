@@ -43,7 +43,7 @@ The edge does not require ShinGo Core application involvement in the backup proc
 
 ## Enabling Automatic Backups
 
-Open the Edge web UI and go to `/setup`, then open the `Backups` section.
+Open the Edge web UI and go to `/config`, then scroll to the **Backups** card. There is no `/setup` page (`shingo-edge/www/router.go:231`, `www/templates/config.html:142`).
 
 Configure:
 
@@ -78,7 +78,7 @@ Important notes:
 
 ## Manual Backup
 
-From the `Backups` section in `/setup`:
+From the **Backups** card on `/config`:
 
 1. Click `Backup Now`.
 2. Wait for the operation status to show success.
@@ -100,7 +100,7 @@ When automatic backups are enabled, ShinGo Edge creates backups:
 
 Only one backup runs at a time.
 
-The backup status area in `/setup` shows:
+The backup status area on `/config` shows:
 
 - whether automatic backups are enabled
 - whether a backup is currently running
@@ -141,8 +141,8 @@ This is appropriate when the edge machine is still available and you intentional
 
 Procedure:
 
-1. Open `/setup`.
-2. Open the `Backups` section.
+1. Open `/config`.
+2. Scroll to the **Backups** card.
 3. Review the available backups for the station.
 4. Select the desired backup.
 5. Confirm the station ID when prompted.
@@ -153,6 +153,7 @@ Important:
 
 - The restore is staged first and applied on next startup.
 - The running process is not hot-swapped while online.
+- **Staging writes next to the config file**, not to a state directory of its own: `StageRestoreArchive` puts `pending-restore.tar.gz` in `<dir of config>/.shingoedge-backup/` (`shingo-edge/backup/restore.go:308-313`). On a deployed station the config lives under `/etc/shingo/`, which is root-owned, so the Edge process cannot create that directory and "Restore On Restart" fails to stage. Until the state directory moves, use the CLI restore below on a deployed station — it runs as whoever invokes it.
 
 ## Restore A Failed Edge Machine To Replacement Hardware
 

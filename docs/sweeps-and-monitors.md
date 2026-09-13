@@ -1,12 +1,14 @@
 # Sweeps, monitors and re-evaluation paths
 
-Every recurring or event-driven thing that can cause replenishment to be
-re-evaluated, or that sweeps state on a timer. Compiled 2026-08-02 because the
-count had grown across several eras and nobody could say what the whole set was.
+The inventory of every recurring or event-driven thing that can cause
+replenishment to be re-evaluated, or that sweeps state on a timer. This is the
+canonical list: `[[terminology]]` defines what a floor is and points here for the
+passes, `[[lanes]]` points here for their order, and
+`[[uop-threshold-replenishment]]` points here for what re-evaluates a threshold.
 
 Tickers unrelated to replenishment (SSE keepalives, reconnect jitter, partition
-maintenance, PLC polling, backups, retention) are deliberately out of scope; they
-were enumerated during the audit and none couples to this machinery.
+maintenance, PLC polling, backups, retention) are out of scope; none couples to
+this machinery.
 
 ## Core — threshold decision
 
@@ -45,9 +47,10 @@ were enumerated during the audit and none couples to this machinery.
 
 ### The lane liveness floor — three passes, one tick
 
-`laneLivenessFloorLoop` (started at `engine_lifecycle.go:117`) runs three passes
-on every tick, and **the order is load-bearing** — each one re-drives machinery
-the next would otherwise misread:
+`laneLivenessFloorLoop` (defined in `engine/engine_background.go`, started by
+`Engine.Start` in `engine/engine_lifecycle.go`) runs three passes on every tick,
+and **the order is load-bearing** — each one re-drives machinery the next would
+otherwise misread:
 
 | # | Pass | Where | Acts or reports |
 |---|------|-------|-----------------|
@@ -99,56 +102,6 @@ none of them will notice a problem on their own if the path is never taken.
 | `restoreChangeoverState` | `engine/changeover_restore.go` | Start | boot once |
 | `applyHoldAndReplay` | `engine/wiring_counter_delta.go` | counter delta with no bound bin | per tick |
 | `StartupReconcile` | `engine/reconciliation.go` | boot + reconnect | per connect |
-
-## Redundant pairs — candidates, not rulings
-
-Listed so the merge/delete decision is made deliberately. Each still needs the
-earn-the-abstraction test applied before anything is removed.
-
-1. **`SweepPushUnloaders` vs `MaybePushUnloader`** — identical bodies; both call
-   `pushUnloadersViaSeam()`. The sweep is the other plus a re-entrancy latch.
-2. **`SweepPushLoaders` vs `MaybePushLoader`** — same walk; the sweep adds a warn
-   and a count log.
-3. **`OnBinUOPDelta` / `OnBucketApplied` / `handleBinUpdated`** — three
-   subscriptions into one funnel. A single bin move trips at least two. The 15s
-   debounce is what hides it, and the monitor's own comment says so.
-4. **`Resync` vs `startupSweep`** — the same work under a different trigger.
-5. **`stagedBinSweepLoop`'s orphan-claim release vs `ReapOrphanedReservations`** —
-   two loops, overlapping cleanup, both off `Staging.SweepInterval`.
-6. **`AdvanceStuckReshuffleParents`** runs at boot and on every tick.
-7. **fulfillment ticker vs its five event triggers** — self-described safety net;
-   pure redundancy when healthy.
-8. **`manual_swap_recheck` vs `handleBinUpdated`** — an operator swap is evaluated
-   twice inside one debounce window.
-
-## Died with the Edge threshold path — DONE
-
-Deleted when Core took over the decision. They existed only to service the
-below-threshold signal arriving at Edge:
-
-`HandleLoopBelowThreshold` · `parkThresholdSignalIfCold` and its
-`pendingThreshold` / `loaderCacheWarmed` state · `warmLoaderCacheAndReplay` and
-its call site in `core_loaders.go` · the threshold origin-id seam ·
-`fireThresholdL1` and the `L1LoopThreshold` source · the wire subject and its
-registration · the Edge's copy of the sizing arithmetic (both transcriptions)
-and the parity sweep that compared it against Core's.
-
-**`MisconfiguredThreshold` was on this list and should not have been.** It is
-called from `SweepPushLoaders`, which the section below correctly marks as
-surviving — so this document contradicted itself. It also shares its predicate
-with the check that gates the entire operator push: the second half of that gate
-*is* this function. It survives.
-
-**Survives the deletion — do not remove alongside:** the push sweeps
-(`SweepPushLoaders` / `SweepPushUnloaders` / `MaybePush*`) are the operator-staging
-path and independent of thresholds; `recordL1Burst` is path-agnostic and also
-fires on the unloader side; the stranded monitor, the Edge demand reconciler, and
-the lineside reporter all stand alone. The reporter becomes *more* load-bearing,
-since in `edge_reports` mode it is Core's only Edge-truth input.
-
-**Core is unaffected** by the Edge deletion: the monitor, the sweep, the gate, all
-four reason strings and the episode machinery are Core-side and change only at
-the emit boundary.
 
 ## Retired — do not go looking
 

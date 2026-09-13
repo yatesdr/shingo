@@ -38,10 +38,10 @@ separate `protocol/` module at the repo root and is imported by both core and ed
 The `main()` function in `cmd/shingocore/main.go` initializes components in this order:
 
 ```
-1. Load YAML config
-2. Open database (auto-migrate schema)
-3. Initialize node state manager
-4. Connect to Seer RDS fleet backend
+1. Parse flags, open the debug log
+2. Load YAML config
+3. Open database (auto-migrate schema)
+4. Connect to the fleet backend
 5. Connect to Kafka
 6. Create engine (wires all components)
 7. Start engine (starts event bus, fleet poller, periodic tasks)
@@ -199,7 +199,7 @@ engine.Events.Emit(Event{
 })
 ```
 
-Event types: `OrderDispatched`, `OrderStatusChanged`, `OrderFailed`, `OrderCompleted`, `OrderCancelled`, `OrderReceived`, `PayloadChanged`, `NodeUpdated`
+Event types are the `Event*` constants in `engine/events.go:13-32` — `EventOrderReceived`, `EventOrderDispatched`, `EventOrderStatusChanged`, `EventOrderCompleted`, `EventOrderFailed`, `EventOrderSkipped`, `EventOrderCancelled`, `EventOrderQueued`, `EventBinUpdated`, `EventNodeUpdated`, the four connectivity pairs, `EventRobotsUpdated`, `EventCMSTransaction`, `EventBlockCompleted`, `EventBinEnteredTransit` and the rest. Read the file rather than this list — it is the one that compiles.
 
 Event handlers are wired in `engine/wiring.go`.
 
@@ -209,13 +209,15 @@ The `fleet.Backend` interface abstracts over vendor-specific fleet management sy
 
 ```go
 type Backend interface {
-    CreateOrder(req OrderRequest) (string, error)  // returns vendor order ID
-    CancelOrder(vendorID string) error
-    GetOrderStatus(vendorID string) (string, error)
-    ListRobots() ([]RobotStatus, error)
+    CreateOrder(req CreateOrderRequest) (TransportOrderResult, error)
+    CancelOrder(vendorOrderID string) error
+    SetOrderPriority(vendorOrderID string, priority int) error
+    Ping() error
+    Name() string
     MapState(vendorState string) string            // vendor state -> shingo status
     IsTerminalState(vendorState string) bool
-    // ... additional methods
+    ReleaseOrder(vendorOrderID string, blocks []OrderBlock, complete bool) error
+    Reconfigure(cfg ReconfigureParams)
 }
 ```
 
@@ -233,7 +235,7 @@ fleet.Backend     -- used by dispatch, engine
 
 ### Database
 
-The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. Schema is defined in `schema_postgres.go`. Migrations run automatically on startup.
+The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. Schema is defined in `store/schema/postgres_ddl.go` (it lived at `store/schema_postgres.go` until Phase 6.0a). Migrations run automatically on startup.
 
 ### sendToEdge Helper
 
@@ -264,9 +266,9 @@ This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used
 | `payload_manifest` | Template manifest items per payload |
 | `orders` | Transport orders with full lifecycle state |
 | `order_history` | Status change log per order |
-| `corrections` | Historical only — the code that wrote it was removed; the table is kept for browsing old rows and is scheduled for a drop |
 | `cms_transactions` | Material movement transaction log |
-| `demands` | Material demand planning entries |
+| `demand_registry` | Per-node demand entries (the old `demands` table went at v106) |
+| `demand_origins` | Demand-episode attribution for orders. Declared in migration v59 only, never in the baseline DDL |
 | `outbox` | Message queue for Kafka delivery |
 | `audit_log` | System-wide audit trail |
 | `admin_users` | Web UI authentication |
@@ -346,8 +348,7 @@ first line. Without the tag:
   back in via `internal/testdb` and `testcontainers-go`.
 
 The gated packages are `dispatch/`, `engine/`, `messaging/`, `service/`,
-`store/`, `www/`, and `shingo-edge/store/outbox_test.go`. Any new test file
-that opens a Postgres connection — directly or transitively through
+`store/` and `www/`. Any new test file that opens a Postgres connection — directly or transitively through
 `internal/testdb` — must carry the same tag, otherwise the default
 `go test ./...` build breaks.
 

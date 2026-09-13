@@ -1,7 +1,7 @@
 # When code may be promoted to a shared layer
 
-Owner decision D10 (2026-08-19), from the structural-refactor review. This is
-the strict version, and it was chosen over a looser one deliberately.
+The rule for moving code into `protocol/` or `shared/`. It is deliberately the
+strict version: a shared layer is far cheaper to decline than to reverse.
 
 ## The criterion
 
@@ -67,17 +67,14 @@ For what "correctly shared" looks like on the adapter side, see
 so the local names and types survive) and both `messaging/outbox.go` files
 (module-local adapters over one `protocol/outbox` drainer).
 
-## The worked example, and one non-example
+## The worked example
 
-The wire-vocabulary consolidation (D9, 2026-08-19) is the worked example: the
-eight loader values, the two inventory-delta scope kinds and the outbox retry
-cap all crossed the wire, both sides spelled them independently, and a rename on
-one side alone would have changed a loader's behavior at a plant or stopped
-inventory-delta deduplication silently. Clause 1 is met with a floor consequence
-named. The drift guard shipped with it.
-
-`outage_log` was the other promotion candidate from that review and it is moot:
-both copies live in `countgroup/`, which D1 retires outright.
+The wire-vocabulary consolidation is the worked example: the eight loader
+values, the two inventory-delta scope kinds and the outbox retry cap all crossed
+the wire, both sides spelled them independently, and a rename on one side alone
+would have changed a loader's behavior at a plant or stopped inventory-delta
+deduplication silently. Clause 1 is met with a floor consequence named, and the
+drift guard (`protocol/wire_vocabulary_drift_test.go`) shipped with it.
 
 ## What `shared/` is not
 

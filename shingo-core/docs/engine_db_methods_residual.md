@@ -1,31 +1,21 @@
 # engine_db_methods.go — Residual passthroughs
 
-**Count:** 0
+**Count: 0**, and it is pinned — `frozenPassthroughCount = 0` in
+`engine/engine_db_methods_freeze_test.go`, with equality the only passing
+state. `engine/engine_db_methods.go` holds nothing but its header comment.
 
-Phase 3a (PR 3a.6) drove the `func (e *Engine)` passthrough surface on
-`engine/engine_db_methods.go` all the way to zero. Every www-facing DB
-operation now reaches `*store.DB` exclusively through a dedicated
-service under `service/`:
+Every www-facing DB operation reaches `*store.DB` through a dedicated service
+under `service/`. **The list of those services is `engine/engine_accessors.go`,
+not this file** — each is one `func (e *Engine) XService() *service.X` accessor.
+A table here would be a second copy of that list with nothing to keep it honest,
+which is how the version of this section that named a `service.DemandService`
+survived the rename to `DemandEpisodeService`.
 
-| Service                              | Responsibility                                             |
-|--------------------------------------|------------------------------------------------------------|
-| `service.BinService`                 | Bin CRUD, movement, lock / unlock, manifest loading, notes |
-| `service.BinManifestService`         | Manifest edits (items, overrides, confirm / unconfirm)     |
-| `service.OrderService`               | Order CRUD / queries, vendor + priority mutations, claims  |
-| `service.NodeService`                | Node CRUD, group / lane / slot layout, scene + state reads |
-| `service.DemandService`              | Demand registry CRUD + produced counters                   |
-| `service.PayloadService`             | Payload templates, manifest items, bin-type + node links   |
-| `service.MissionService`             | Mission telemetry / events / stats                         |
-| `service.TestCommandService`         | Test-order command workflow                                 |
-| `service.CMSTransactionService`      | CMS transaction listings                                    |
-| `service.AuditService`               | Generic audit append + lookup                               |
-| `service.InventoryService`           | Aggregated inventory view                                   |
-| `service.AdminService`               | Admin-user login lookup                                     |
-| `service.HealthService`              | Database ping                                               |
-
-Handlers reach each service via the accessor methods on `*engine.Engine`
-declared in `engine/engine_accessors.go` and surfaced through the
-`EngineAccess` interface in `www/engine_iface.go`.
+Handlers take those accessors through `ServiceAccess` (CRUD) or
+`EngineOrchestration` (orchestration verbs) in `www/engine_iface.go`. The single
+`EngineAccess` interface this document was written against was split into those
+two on 2026-04-25 (Phase 6.5), and their widths are pinned by
+`www/engine_iface_width_test.go`.
 
 ## Retained passthroughs
 

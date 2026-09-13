@@ -31,9 +31,11 @@ messaging:
       - 192.168.1.10:9092
 ```
 
-The station identity is derived as `{namespace}.{line_id}` (e.g., `plant-a.line-1`). This identity is used for all communication with Shingo Core and must be unique per edge instance.
+**The station identity is `station_uid`, and Core mints it at enrollment** (`config/config.go:17-36`). It is opaque, it never changes, and it is the value that travels as `protocol.Address.Station`. An operator copies it into the YAML by hand, once — that step is what distinguishes a new station (enroll, take a fresh uid) from replacement hardware for an existing one (do not enroll; copy the existing uid onto the new box and the station's history stays attached). Empty means unenrolled, and startup **refuses** rather than deriving one.
 
-All other settings — PLC connection, web server port, counter thresholds — can be adjusted through the web UI setup page at `/setup`. The YAML file is application-managed and should not be edited by hand during normal operation.
+It used to be composed as `{namespace}.{line_id}` (e.g. `plant-a.line-1`). Since v66 those two are **labels only** — no defaults, no role in identity (`config/config.go:38-43`).
+
+All other settings — PLC connection, web server port, counter thresholds — are adjusted through the web UI. The YAML file is application-managed and should not be edited by hand during normal operation.
 
 ### First Login
 
@@ -96,8 +98,17 @@ Shingo Edge provides a browser-based interface for production line operators and
 
 | Page | Route | Description |
 |------|-------|-------------|
-| Setup | `/setup` | Production lines, job styles, payloads, PLC reporting points |
+| Processes | `/processes` | Production lines |
+| Styles | `/styles` | Job styles and their node claims |
+| Payload catalog | `/payload-catalog` | Payload templates for this station |
+| Reporting points | `/reporting-points` | PLC counter tags bound to job styles |
+| PLCs | `/plcs` | Discovered PLCs, WarLink connection, tag reads |
+| Shifts | `/shifts` | Shift windows for production bucketing |
+| Operator stations | `/operator-stations` | Station definitions and node assignment |
+| Config | `/config` | App config, Kafka, and **Backups** |
 | Diagnostics | `/diagnostics` | System health, Kafka and PLC connectivity |
+
+There is no `/setup` page — configuration is these separate pages.
 
 See [UI Guide](docs/ui-guide.md) for detailed page descriptions and operator workflows.
 
@@ -128,13 +139,27 @@ Orders can be cancelled from any non-terminal state.
 
 ### Changeover
 
-The changeover feature tracks the workflow when switching a production line from one job style to another. The operator advances through a linear sequence of states:
+The changeover feature tracks the workflow when switching a production line from one job style to another. The changeover row itself has three states and moves exactly once:
 
 ```
-running -> stopping -> counting_out -> storing -> delivering -> counting_in -> ready -> running
+active -> completed   (Complete Cutover, or the auto-completion path)
+active -> cancelled   (Cancel Changeover)
 ```
 
-Each state transition is logged with the operator name and timestamp. An in-progress changeover can be cancelled at any intermediate state, returning directly to `running`.
+Both are terminal (`domain/changeover_state.go:19-21`). The row is inserted `active` (`service/changeover_service.go:61`); nothing advances it step by step.
+
+The sequencing lives one level down, on the **node tasks** the changeover creates — one per node that has to change. Each walks its own ladder, driven by the operator and by order events:
+
+```
+swap_required -> staging_requested -> staged -> empty_requested
+              -> line_cleared -> release_requested -> released
+```
+
+with `unchanged` for a node that needs no work, `switched` for an operator skip, and the off-ladder dispositions `error`, `capacity_blocked`, `awaiting_material`, `abandoned` and `cancelled` (`domain/changeover_node_state.go:19-71`). Cutover is gated on every node task reaching a terminal state *and* every order those tasks reference reaching a terminal status (`engine/operator_changeover_cutover.go:29-36`); there is no override.
+
+While a changeover is active the owning process sits in `production_state = 'changeover_active'`, returning to `active_production` on either cutover or cancel.
+
+See [UI Guide](docs/ui-guide.md) for what the operator sees at each node-task state.
 
 ### Auto-Reorder
 

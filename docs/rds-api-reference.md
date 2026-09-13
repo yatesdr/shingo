@@ -261,7 +261,7 @@ Appends blocks to an existing incremental order (one created with complete: fals
 
 POST /markComplete
 
-Marks an incremental order as complete � no more blocks can be added.
+Marks an incremental order as complete — no more blocks can be added.
 
 **Request:** { "id": "staged-001" }
 
@@ -569,7 +569,7 @@ Downloads the complete scene as raw binary.
 
 POST /uploadScene
 
-Uploads a new scene configuration. Content-Type: pplication/octet-stream.
+Uploads a new scene configuration. Content-Type: application/octet-stream.
 
 ### Sync Scene
 
@@ -785,11 +785,9 @@ Returns current license information.
 
 Shingo integrates with RDS through the shingo-core/rds client package and the shingo-core/fleet/seerrds adapter:
 
-- **
-ds.Client** � Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
-- **seerrds.Adapter** � Implements Shingo's leet.TrackingBackend, leet.RobotLister, leet.NodeOccupancyProvider, and leet.VendorProxy interfaces
-- **
-ds.Poller** � Periodically polls active orders for state transitions and emits events through the engine pipeline
+- **rds.Client** — Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
+- **seerrds.Adapter** — Implements Shingo's fleet.TrackingBackend, fleet.RobotLister, fleet.NodeOccupancyProvider, and fleet.VendorProxy interfaces
+- **rds.Poller** — Periodically polls active orders for state transitions and emits events through the engine pipeline
 
 ### Key patterns
 
@@ -802,5 +800,10 @@ ds.Poller** � Periodically polls active orders for state transitions and emits
 
 ### Source PDFs
 
-- RDSCore _HTTP API_AIVISON .pdf � Full RDS Core HTTP API documentation (in repo root)
-- RDS UserManual-EN_AIVISON .pdf � RDS user manual (in repo root)
+This reference was derived from two vendor PDFs. **Neither is in the repo** — reference PDFs are
+deliberately kept out of version control (see the "Planning docs and reference PDFs" block in
+`.gitignore`), and `git ls-files '*.pdf'` returns nothing on any branch. Ask for them rather than
+looking for them in a checkout.
+
+- `RDSCore _HTTP API_AIVISON .pdf` — full RDS Core HTTP API documentation
+- `RDS UserManual-EN_AIVISON .pdf` — RDS user manual

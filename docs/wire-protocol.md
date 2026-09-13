@@ -370,8 +370,9 @@ Sent by an edge node on startup and on every reconnect via `data` message with s
 **It is no longer an upsert.** Core resolves the station by `station_uid` and
 UPDATEs it; a uid Core has never enrolled is REFUSED and writes nothing. An edge
 cannot bring a station into existence by asserting a name — enrollment is a
-separate, deliberate act on Core (`POST /api/edges/enroll`). See
-[edge-identity-rollout.md](edge-identity-rollout.md).
+separate, deliberate act on Core (`POST /api/edges/enroll`,
+`shingo-core/www/router.go:415`). For the three-way split of station identity
+that this rests on, see [terminology.md § Station](terminology.md#station).
 
 ```json
 {
@@ -1163,49 +1164,48 @@ The `error_code` field in `order.error` messages uses the following values:
 
 ## Order Lifecycle
 
-### Edge-Side State Machine
+**There is one status vocabulary, not two.** Core and Edge share the full set, and the canonical state machine is one table: `validTransitions` in `protocol/types.go:460-509`. Edge mirrors Core's vocabulary because `orders.ApplyCoreStatus` (`shingo-edge/orders/lifecycle_service.go:84`) writes Core's status onto the Edge row, so the operator sees the truth of whichever machine owns the order (`protocol/types.go:451-454`). The statuses below are the fifteen constants in `protocol/status.go:58-79`.
+
+**There is no `completed` status.** Terminal completion is `confirmed`. Terminal is *derived*, never hand-maintained — a status is terminal iff it has no outgoing edges in `validTransitions` (`protocol.IsTerminal`, `protocol/types.go:515-518`). That makes exactly four terminal statuses: `confirmed`, `failed`, `cancelled`, `skipped`.
+
+See [order-lifecycle.md](order-lifecycle.md) for the per-status table of scope, writer and operator-facing meaning. What follows is the wire view: which message drives which transition.
+
+### The spine
+
+The full graph is `validTransitions`; this is the path an order normally walks.
 
 ```
-queued -> submitted -> acknowledged -> in_transit -> delivered -> confirmed
-                                  \                /
-                                   +-> staged ----+
-                                       (wait for release)
-                                             cancelled <-- (from any non-terminal)
+  intake            resolution          transport              receipt
+  ------            ----------          ---------              -------
+  pending  ──▶  sourcing ──▶ queued ──▶ dispatched ──▶ in_transit ──▶ delivered ──▶ confirmed
+      └──▶ submitted ──▶ acknowledged ──┘                 └─▶ staged ─┘
+                                                        (dwelling at a wait step)
+
+  off the spine:
+    faulted      from acknowledged / dispatched / in_transit / staged — RECOVERABLE
+    reshuffling  from pending / sourcing / queued — a compound digs the source out, then resumes
+    skipped      from pending / sourcing / submitted / queued — terminal
+    failed       from any active state — terminal
+    cancelled    from any active state — terminal
 ```
 
-| State | Meaning | Triggered By |
-|---|---|---|
-| `queued` | Created locally, not yet sent | Edge: operator submits order |
-| `submitted` | Sent to core via messaging | Edge: outbox drainer publishes `order.request` |
-| `acknowledged` | Core accepted, source located | Core sends `order.ack` |
-| `in_transit` | Robot dispatched and moving | Core sends `order.waybill` |
-| `staged` | Robot dwelling at node, awaiting release | Core sends `order.staged` |
-| `delivered` | Fleet reports delivery complete | Core sends `order.delivered` |
-| `confirmed` | Operator confirmed receipt | Edge sends `order.receipt` |
-| `cancelled` | Order cancelled | Edge sends `order.cancel` or core sends `order.cancelled` |
-
-### Core-Side State Machine
-
-```
-pending -> sourcing -> dispatched -> in_transit -> delivered -> confirmed -> completed
-                                \                /
-                                 +-> staged ----+
-                                     (dwelling / wait step)
-                                              failed / cancelled <-- (from active states)
-```
-
-| State | Meaning |
-|---|---|
-| `pending` | Order received from edge |
-| `sourcing` | Locating source material / validating nodes |
-| `dispatched` | Transport order created with fleet backend |
-| `in_transit` | Robot is moving (fleet poller updates) |
-| `staged` | Robot dwelling at a node, waiting for operator release (complex orders with `wait` steps) |
-| `delivered` | Fleet reports delivery complete |
-| `confirmed` | Edge sent delivery receipt |
-| `completed` | Order fully completed |
-| `failed` | Order processing failed (error sent to edge) |
-| `cancelled` | Order cancelled |
+| State | Terminal | Meaning | Driven by |
+|---|---|---|---|
+| `pending` | no | Order received / created, not yet resolved | Edge: operator submits. Core: intake INSERT |
+| `sourcing` | no | Locating source material, validating nodes | Core, internal |
+| `queued` | no | Resolution parked — see the `queue_code` on the update | Core sends `order.update` with `queue_code` |
+| `submitted` | no | Published to Kafka, not yet acknowledged | Edge: outbox drainer publishes `order.request` |
+| `acknowledged` | no | Core accepted, source located | Core sends `order.ack` |
+| `dispatched` | no | Transport order created with the fleet backend | Core, internal |
+| `in_transit` | no | Robot assigned and moving | Core sends `order.waybill` |
+| `staged` | no | Robot dwelling at a node, awaiting release (complex orders with `wait` steps) | Core sends `order.staged`; Edge sends `order.release` to resume |
+| `delivered` | no | Fleet reports delivery complete | Core sends `order.delivered` |
+| `reshuffling` | no | Source bin is buried; a compound is clearing the lane | Core, internal |
+| `faulted` | no | Fleet reported a transient failure. A grace period, not an outcome: recovers to `in_transit`, is finished manually to `delivered`, or expires to `failed` / `cancelled` | Core, from the fleet poller |
+| `confirmed` | **yes** | Receipt acknowledged. **This is completion** | Edge sends `order.receipt` |
+| `failed` | **yes** | Order processing failed; the error is sent to Edge | Core sends `order.error` |
+| `cancelled` | **yes** | Order cancelled | Edge sends `order.cancel`, or Core sends `order.cancelled` |
+| `skipped` | **yes** | The work turned out not to be needed — e.g. zero bins at every pickup node | Core sends `order.skipped` |
 
 ### Message Flow: Successful Retrieve Order
 
@@ -1223,7 +1223,7 @@ Edge                          Broker                         Core
  |                              |                              |
  | (operator confirms receipt)  |                              |
  |-- order.receipt ----------->|-- shingo.orders ------------>|
- |                              |                              | (mark confirmed -> completed)
+ |                              |                              | (mark confirmed — terminal)
 ```
 
 ### Message Flow: Complex Order with Wait Step
@@ -1249,7 +1249,7 @@ Edge                          Broker                         Core
  |                              |                              |
  | (operator confirms receipt) |                              |
  |-- order.receipt ----------->|-- shingo.orders ------------>|
- |                              |                              | (mark confirmed -> completed)
+ |                              |                              | (mark confirmed — terminal)
 ```
 
 ---

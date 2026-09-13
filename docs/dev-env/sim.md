@@ -242,7 +242,21 @@ returns clock drift, not a duration.
 
 The sim *infrastructure* (above) is built and verified end-to-end on a real Docker
 host. The **demo plant** is being rebuilt from a sterile, jam-prone fixture into a
-realistic, sustained, metric-rich plant — that work, plus the data features
-(downtime / changeover / quality / customer-demand), the `sim.speed` knob, and the
-sub-line → main-line WIP hierarchy, is documented in
-[`plant-model.md`](plant-model.md) as it lands.
+realistic, sustained, metric-rich plant.
+
+**`sim.speed` is live**, not pending — `SimConfig.Speed` at
+`shingo-core/config/config.go:262`, set to `5.0` in both dev configs
+(`shingocore.dev.yaml:166`, `shingoedge.dev.yaml:73`), with the 5× ceiling
+described under *The speed ceiling* above. **Downtime is live too** —
+`SimDowntimeConfig` at `shingo-edge/config/config.go:271`, configured at
+`shingoedge.dev.yaml:202`.
+
+Still pending, and documented in [`plant-model.md`](plant-model.md) as it lands:
+the remaining data features (quality, customer-demand) and the sub-line →
+main-line WIP hierarchy.
+
+**Changeover is not on that list, and will not be.** Nothing in the sim cuts a
+changeover over; a changeover in a sim run is driven from outside, by pressing
+the button (`POST /api/processes/{id}/changeover/cutover`). The config keys that
+once implied otherwise — `operators.changeover_auto_cutover` and its companions —
+are gone. See the header of `shingo-edge/engine/sim_operator.go:33-39`.

@@ -44,10 +44,10 @@ UOP state mutations route through dedicated packages on each side. The packages 
 
 The Edge-side mutator. Holds:
 
-- `Mutator` — the public type with sixteen intent verbs across six concerns (Ticker, SlotWriter, Capturer, Pickup, Boundary, Backfiller).
+- `Mutator` — the public type carrying the intent verbs, grouped by concern into the interfaces in `interfaces.go` (Ticker, SlotWriter, Capturer, Pickup, Boundary, Backfiller). Read `interfaces.go` for the roster rather than a count here; a number in prose is the first thing to rot, and this line has already carried a wrong one.
 - `accumulator` (unexported) — per-bin and per-bucket signed-delta accumulation, periodic flush to outbox, restore-on-failure.
 - Narrow store interfaces (`runtimeWriter`, `bucketStore`, `nodeStore`) so the package never imports engine. `*store.DB` satisfies all three at the composition root.
-- Verb implementations split by concern across `tick.go` (Consumed/Produced/Fallthrough), `slot.go` (Bind*/Clear*/Prepare*/SetClaim*/OnDelivered/ManualLoad), `capture.go` (CaptureToLineside), `pickup.go` (OnBinPickedUp), `boundary.go` (MarkAttributionBoundary), `backfill.go` (Backfill), `admin.go` (AdjustBucket), `release.go` (ReleaseDisposition + pure functions).
+- The files are `mutator.go` (most verbs — `BindActiveBin`, `ClearActiveBin`, `ClearActiveAndReset`, `SetClaimAndCount`, `SetClaimCountAndEpoch`, `OnDelivered`, `ManualLoad`, `OnBinPickedUp`, `MarkAttributionBoundary`, `AdjustBucket`, plus `RecordBin` / `RecordBucket` and the lifecycle methods), `tick.go` (`Consumed` / `Produced` / `Fallthrough`), `capture.go` (`CaptureToLineside`), `backfill.go` (`Backfill`), `release.go` (`ReleaseDisposition` + pure functions), and `accumulator.go`. There is no `slot.go`, `pickup.go`, `boundary.go` or `admin.go` — that split was proposed and never made.
 - `archtest_test.go` — CI test that fails if any production file outside `uop/` calls `RecordBin` or `RecordBucket` directly. Every delta emission must route through a named verb.
 
 ### `shingo-core/uop/`
@@ -212,27 +212,36 @@ The conservative behavior protects the overpack scenario. A bin nominal 100, phy
 Every mutation of `bins.uop_remaining` writes a row to `bin_uop_ledger`:
 
 ```sql
-CREATE TABLE bin_uop_ledger (
+CREATE TABLE bin_uop_ledger (            -- created as bin_uop_audit; renamed at v95
   id              BIGSERIAL PRIMARY KEY,
   bin_id          BIGINT NOT NULL,
-  before_uop      INT,
-  suggested_uop   INT NULL,           -- system's suggested value at operator action; NULL for non-operator paths
-  after_uop       INT NOT NULL,       -- can be negative (signed bin values)
+  before_uop      INTEGER,             -- on an OVERRIDE row this carries the SUGGESTED value
+  after_uop       INTEGER NOT NULL,    -- can be negative (signed bin values)
   op              TEXT NOT NULL,
-  source          TEXT NOT NULL,      -- file:line of caller
+  source          TEXT NOT NULL DEFAULT '',   -- file:line of caller
   order_id        BIGINT,
-  payload_code    TEXT,
-  actor           TEXT,               -- station / operator / system
-  metadata        JSONB,              -- per-part diff context for multi-part overrides
-  applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  payload_code    TEXT NOT NULL DEFAULT '',
+  actor           TEXT NOT NULL DEFAULT '',   -- station / operator / system
+  metadata        JSONB,               -- per-part diff context, written by the override path
+  applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- added later, by migration:
+  node_id         BIGINT,
+  station         TEXT NOT NULL DEFAULT '',
+  detail          JSONB,               -- context written by the ordinary append path
+  loader_id       BIGINT
 );
 ```
 
+**There is no `suggested_uop` column** — the doc carried one for a while and the
+table never had it. The base DDL is `store/migrations.go:1753-1765`; `node_id`,
+`station` and `detail` were added at `:869-871`, `loader_id` at `:1067`, and the
+v95 rename is at `:5997`.
+
 The audit table is written from two paths today: `shingo-core/uop/applier.go.ApplyBinUOPDelta` (one row per applied delta) and `shingo-core/service/bin_manifest.go` (manifest-imprint, manifest-clear, partial-back UOP sync, release override). The `audit` package (`shingo-core/store/audit/`) is shared infrastructure; both UOP delta apply and manifest operations call `audit.AppendBinUOP` directly inside their transactions. Consolidating ownership of the audit boundary is a deferred follow-up.
 
-The `suggested_uop` column is the system's expected value at the time of an operator action. Populated for `release_partial`, `release_capture`, `cycle_count`, `manual_clear`. Null for automated paths (`delta_consume`, `delta_produce`, etc.) where there is no operator suggestion to compare against. Op tags distinguish operator-driven mutations from automated ones; the distinction enables forensics like "operators who frequently override the system" or "stations where the system is consistently wrong."
+**The system's suggested value at an operator action lives in `before_uop`**, not in a column of its own: `AppendBinUOPOverride` writes `suggestedUOP` into `before_uop` and the operator's entry into `after_uop` (`shingo-core/store/audit/bin_uop.go:455-468`). On an ordinary `AppendBinUOP` row (`:256-258`) `before_uop` is the plain prior value. The `op` tag is what tells the two apart. Op tags distinguish operator-driven mutations from automated ones; the distinction enables forensics like "operators who frequently override the system" or "stations where the system is consistently wrong."
 
-For multi-part captures, the aggregate lands in `suggested_uop`/`after_uop`; per-part diff context goes in `metadata` (preserved by `BinManifestService.AuditReleaseOverride`).
+For multi-part captures, the aggregate lands in `before_uop`/`after_uop`; per-part diff context goes in `metadata` (preserved by `BinManifestService.AuditReleaseOverride`).
 
 ## Operational characteristics
 
@@ -306,12 +315,21 @@ Reconciler-related config (`reconcile_interval`, `tolerance.*`) was removed in c
 
 ### HTTP endpoints
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/inventory/invariant` | Plant-wide invariant probe (signed bin sum + bucket sum) |
-| GET | `/api/audit/bin/:id` | Per-bin audit timeline |
-| GET | `/api/audit/operator/:name` | Per-operator activity |
-| GET | `/api/audit/station/:station` | Per-station drift report |
-| POST | `/api/admin/uop/backfill?station=X[&force=true]` | Manual bucket backfill trigger |
+| Side | Method | Path | Purpose |
+|---|---|---|---|
+| Core | GET | `/api/inventory/invariant` | Plant-wide invariant probe (signed bin sum + bucket sum) |
+| Core | GET | `/api/audit/bin/{id}` | Per-bin audit timeline |
+| Core | GET | `/api/audit/discrepancies` | Discrepancy report |
+| **Edge** | POST | `/api/admin/uop/backfill[?force=true]` | Manual bucket backfill trigger |
+
+Routes: `shingo-core/www/router.go:379,386-387` and `shingo-edge/www/router.go:370`.
 
 `/api/reconciliation/uop` was removed alongside the reconciler.
+`/api/audit/operator/{name}` and `/api/audit/station/{station}` were removed on
+2026-08-22 — both had zero callers and were the only queries filtering the audit
+table on an unindexed `actor` column (`shingo-core/store/audit/bin_uop.go:390-398`).
+
+**The backfill trigger is an Edge endpoint, not a Core one**, and it takes no
+`station` parameter — an edge instance is one station by construction. `force`
+is the only query parameter it reads
+(`shingo-edge/www/handlers_api_admin_uop.go:25-26`).

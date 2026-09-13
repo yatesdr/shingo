@@ -59,8 +59,8 @@ When ShinGo Core connects to an empty database, it:
 
 1. Creates all tables (`CREATE TABLE IF NOT EXISTS`)
 2. Creates indexes
-3. Seeds default node types (STG, LSL, SUP, OFL, STN, CHG)
-4. Creates a default admin user (`admin` / `admin`)
+3. Seeds the synthetic node types `LANE` and `NGRP` (`store/migrations.go:1298-1306`). The older codes this document used to list are gone: `SUP`→`SMKT`→`NGRP`, `LAN`→`LANE`, `SHF`→`SHUF`, `CHG`→`CHRG`, `OFL`→`OVFL`, `STN`→`STAG` were renamed, and `STG` was deleted outright (`migrations.go:1280-1294`)
+4. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin`, `www/auth.go:77-89`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
 
 On subsequent startups, migrations are idempotent and safe to re-run.
 

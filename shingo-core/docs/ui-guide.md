@@ -2,6 +2,12 @@
 
 ShinGo Core provides a web-based management interface at `http://<host>:8083`. All pages support light and dark mode via the theme toggle in the navigation bar.
 
+This guide covers the pages an operator or engineer reaches from the nav. It is
+not the full route list — `shingo-core/www/router.go` registers around forty-six
+`GET` pages, including narrower diagnostic surfaces (`/orphans`,
+`/reconciliation`, `/cms-health`, `/buckets`, `/footprint`, `/cycle-time`,
+`/material-flags`, …). The router is the roster; this is the tour.
+
 ## Public Pages
 
 These pages are accessible without authentication.
@@ -30,8 +36,10 @@ Lists all registered nodes (physical locations) with their type, zone, capacity,
 
 Admin actions (authenticated):
 - Create, edit, and delete nodes
-- Sync nodes from fleet scene data
-- Sync zones from fleet areas
+- **Sync from Fleet** — the one button on the page (`www/templates/nodes.html:9`), posting to `/nodes/sync-fleet`
+
+The zone-from-areas sync (`POST /nodes/sync-scene`, `www/router.go:568`) exists in the
+backend but has no UI trigger — no template or page script references it.
 
 <!-- screenshot:nodes -->
 ![Nodes](screenshots/nodes.png)
@@ -114,15 +122,15 @@ Admin actions (authenticated):
 ![Robots](screenshots/robots.png)
 <!-- /screenshot -->
 
-### Demand
+### Demand episodes
 
-**Route:** `/demand`
+**Route:** `/demand-episodes`, and `/demand-episodes/{originID}` for one episode
 
-Material demand planning interface. Create demand entries specifying what payload types are needed at which nodes and in what quantities. Demands can be applied individually or in bulk to generate transport orders.
-
-<!-- screenshot:demand -->
-![Demand](screenshots/demand.png)
-<!-- /screenshot -->
+There is no `/demand` page. The quota interface it described went with its table
+at migration v106 (`shingo-core/www/router.go:158-159`). The demand grain is now
+the **episode**: `/demand-episodes` lists open and recent episodes, and
+`/demand-episodes/{originID}` is the origin-indexed forensic view — one demand
+and every order it spawned, each linking to its `/missions/{orderID}` detail.
 
 ### Missions
 
@@ -144,7 +152,7 @@ The card is generic — whichever plant runs it, its own skew shows.
 
 ## Protected Pages
 
-These pages require authentication. Log in at `/login` (default credentials: `admin` / `admin`).
+These pages require authentication. Log in at `/login`. A fresh install seeds `admin` / `admin` (`www/auth.go:77-89`) — **change it before the station goes live.**
 
 ### Payloads
 
@@ -168,7 +176,7 @@ Actions:
 Manage physical containers. View all bins with their type, status, location, and payload assignment. Assign payloads to bins, confirm manifests, and manage bin lifecycle.
 
 Actions:
-- Create, edit, and delete bins
+- Create and retire bins. **There is no bin delete** — retire is the terminal action
 - Manage bin types (create/edit/delete)
 - Assign payload to bin (sets payload code, populates manifest from template)
 - Confirm manifest (marks bin as loaded, sets FIFO timestamp)
@@ -214,9 +222,13 @@ System diagnostics page showing:
 
 Edit runtime configuration directly from the browser. Changes are saved to `shingocore.yaml` and hot-reloaded without restarting.
 
-Configurable sections:
-- **Fleet** — RDS base URL, poll interval, timeout
-- **Messaging** — Kafka brokers, consumer group, topics
+Five sections (`www/templates/config.html:11,70,99,141,173`; the handler switches on them at `www/handlers_config.go:40-46`):
+
+- **Database** — Postgres host, port, database, user, password, sslmode
+- **General** — web host and port, session secret, debug options
+- **Services** — fleet (RDS base URL, poll interval, timeout) and messaging (Kafka brokers, consumer group, topics)
+- **Fire Alarm** — fire-alarm integration
+- **Notifications** — notification targets
 
 <!-- screenshot:config -->
 ![Configuration](screenshots/config.png)
@@ -236,11 +248,13 @@ Pre-populated with common RDS endpoints (robots, orders, bins, scene, etc.).
 
 ## Adding Screenshots
 
-To add screenshots to this guide:
+**None of the twelve images referenced above exist yet.** `docs/screenshots/`
+holds only a `.gitkeep`, so every `![...](screenshots/*.png)` renders broken.
+To fill them in:
 
-1. Create a `docs/screenshots/` directory
-2. Take screenshots of each page and save them with the filenames shown above
-3. The `<!-- screenshot:name -->` markers indicate where each screenshot belongs
+1. Take a screenshot of each page and save it into `docs/screenshots/` under the
+   filename the reference above already uses
+2. The `<!-- screenshot:name -->` markers show where each one belongs
 
 Recommended screenshot dimensions: 1200px wide, captured in both light and dark mode if desired.
 
@@ -250,10 +264,16 @@ Most pages receive live updates via Server-Sent Events (SSE). The SSE endpoint i
 
 | Event | Description |
 |-------|-------------|
-| `order-update` | Order status changed |
+| `order-update` | Order status changed. One name, several shapes, discriminated by a `type` field |
 | `node-update` | Node state changed |
-| `payload-update` | Payload moved or modified |
+| `bin-update` | A bin moved or was modified. **There is no `payload-update`** |
 | `robot-update` | Robot status changed |
 | `debug-log` | New debug log entry |
+| `cell-heartbeat` | Cell production heartbeat |
+| `cms-transaction` | A CMS transaction landed |
+| `fire-alarm` | Fire-alarm state changed |
+| `mission-event` | Mission telemetry event |
+| `sourcing-update` | A sourceability verdict moved (not a plain recompute) |
+| `system-status` | Connectivity / health change |
 
 The browser automatically reconnects if the SSE connection drops.
