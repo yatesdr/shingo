@@ -3,6 +3,8 @@ import { formatClock, serverNow } from '/static/shared/utils.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
+import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
+import { ensureComposer } from './composer-boot.js';
 
 const grid = document.getElementById('os-grid');
 const headerInfo = document.getElementById('os-header-info');
@@ -39,12 +41,20 @@ export function renderHeader() {
     // can see which style is running. During changeover shows "current → target".
     const styleName = view.current_style ? view.current_style.name : 'No Style';
     const targetName = view.target_style ? view.target_style.name : null;
-    const styleChip = el('div', { className: 'os-header-style' + (targetName ? ' changing' : '') });
+    // The chip that names the running style is also the door to the picture
+    // of its flow (operator-flow.js): a tap opens the read-only cell picture
+    // over the board, its Board button comes back. No new button on the
+    // board for it.
+    const styleChip = el('div', { className: 'os-header-style os-header-style--tap' + (targetName ? ' changing' : ''), role: 'button', tabIndex: 0 });
+    styleChip.setAttribute('aria-label', 'Show the flow of ' + styleName);
     styleChip.appendChild(el('span', { className: 'os-header-style-label', textContent: 'STYLE' }));
     const styleValue = el('span', { className: 'os-header-style-value' });
     styleValue.textContent = targetName ? styleName + ' \u2192 ' + targetName : styleName;
     styleChip.appendChild(styleValue);
+    styleChip.addEventListener('click', openFlowPanel);
     headerActions.appendChild(styleChip);
+    mountFlowPanel();
+    syncFlowPanel(view);
 
     // Bin-loader board mode (single manual_swap claim) is operated by a
     // forklift driver — strip the changeover/cutover buttons. Those flows
@@ -85,7 +95,7 @@ export function renderHeader() {
             // confirmation modal because the action is destructive.
             headerActions.appendChild(headerBtn('CANCEL', 'cancel-changeover', confirmCancelChangeover));
         } else {
-            headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openChangeoverPicker));
+            headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openComposerPicker));
         }
     }
 
@@ -188,6 +198,22 @@ function openChangeoverPicker() {
     overlay.appendChild(panel);
     overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
+}
+
+// THE ONE BOARD CHANGE (brief §3.2). CHANGEOVER opens the Flow Composer's
+// picker sheet on every station — today's flat list is replaced, not kept
+// behind the gate, because the gate removes a BUTTON and not a screen (brief
+// R7): with flow_composer_enabled off the operator still gets the picker and
+// the set-up card, and only `Change the flow` is missing.
+//
+// openChangeoverPicker below is left in place and unreferenced by the header:
+// it is the cancel/confirm overlay's sibling and still reachable from there.
+// The composer's own JS and CSS are not in the boot payload; the first tap
+// fetches them and every tap after that is synchronous. See composer-boot.js.
+async function openComposerPicker() {
+    const ui = await ensureComposer();
+    if (ui) ui.openPicker(getView());
+    else openChangeoverPicker();
 }
 
 async function startChangeover(toStyleID, styleName) {

@@ -44,6 +44,10 @@ export function el(tag, props, children) {
     return e;
 }
 
+// TEXT ONLY, like shared/utils.js's escapeHtml: DOM-based, so `"` comes
+// through unescaped. A caller building an attribute by concatenation wants
+// shared/esc.js. Left as it is for the same reason — its callers are escaping
+// text between tags.
 export function esc(s) {
     if (!s) return '';
     const d = document.createElement('div');

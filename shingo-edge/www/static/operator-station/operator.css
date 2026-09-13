@@ -50,6 +50,49 @@
     --z-modal-over: 60;
     --z-popover: 70;
     --z-toast: 80;
+
+    /* Substrate ramp and robot colours — VERBATIM copies of shared/tokens.css
+     * (the DARK --sub-* block, and :root's --robot-*), copied for the same
+     * reason the layer scale above is: this stylesheet stands alone, so a
+     * var(--sub-3) here would resolve to nothing and a card would draw no
+     * border. The station is dark and single-theme, so the dark ramp is the
+     * only one it needs. Structure recedes, state glows: the ramp draws every
+     * static line of the cell picture (hairlines, card borders, dashed
+     * outlines, dots); the two robot hues draw only the legs, the in/out
+     * glyphs and the dock notes.
+     *
+     * THE COPIES ARE GONE. They existed because this page linked only
+     * operator.css, so var(--sub-1) resolved to nothing and a card border
+     * silently disappeared — and a drift test held the copy to the original in
+     * both directions. The page links shared/tokens.css now, so the ramp and
+     * the robot hues are read from it directly and there is nothing left to
+     * drift. */
+    --os-station: var(--station);
+    /* The swap-mode glyphs ship as their own file and are copied in verbatim
+     * (GLYPHS-swap-mode-LOCKED-2026-09-10); their CSS reads --os-robot-1/-2,
+     * --os-station and --os-sub-3/-4/-5. ALIASED, not copied: editing the
+     * glyph file to say --sub-4 would fork a file whose whole point is that it
+     * is the one drawing of these four choreographies, and leaving the glyphs
+     * on their built-in literal fallbacks would mean the tokens did not
+     * actually drive them. An alias cannot drift; the values it points at are
+     * shared/tokens.css's. */
+    --os-robot-1: var(--robot-1);
+    --os-robot-2: var(--robot-2);
+    --os-sub-3: var(--sub-3);
+    --os-sub-4: var(--sub-4);
+    --os-sub-5: var(--sub-5);
+    /* THE ONE SATURATED STRUCTURAL ELEMENT ON SCREEN IS THE PRIMARY BUTTON
+     * (SPEC-composer-ux §0.5), so the accent is a token rather than a colour
+     * anyone picks per surface. ALIASES, like the ramp above: --accent-solid is
+     * theme-invariant and --accent resolves to its dark value here because this
+     * page pins data-theme=dark. They were literal copies with a drift test
+     * holding them to the master; the master is loaded now. */
+    --os-accent-solid: var(--accent-solid);
+    --os-accent-solid-hover: var(--accent-solid-hover);
+    --os-accent: var(--accent);
+    /* SPEC §0.11: touch targets never smaller than this. A size, not a hue —
+     * shared/tokens.css carries no master for it. */
+    --os-touch-min: 56px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1471,3 +1514,74 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
   color: #889;
   margin-top: 2px;
 }
+
+/* ===== Cell picture (the read-only flow panel, U4) =====
+   A port of the flow-composer reference's press view, SPEC-composer-ux §2 S4
+   minus every control. Structure is the substrate ramp; only the two robot
+   hues, the part chips and the bin-state colours are saturated. One panel
+   over the board, opened from the header's style chip, closed by its own
+   Board button. Sentence case on the control; uppercase only on the 10/11 px
+   letter-spaced labels. */
+.os-flow {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--os-bg);
+    z-index: var(--z-chrome);
+    font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+}
+.os-flow[hidden] { display: none; }
+.os-flow-hdr {
+    height: 64px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    background: var(--os-header-bg);
+    border-bottom: 1px solid var(--sub-1);
+}
+.os-flow-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; color: #e6edf3; }
+.os-flow-sub { color: var(--os-text-muted); font-size: 14px; }
+.os-flow-sp { flex: 1; }
+.os-flow-close {
+    min-height: 56px;
+    padding: 0 22px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--os-text-muted);
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.os-flow-close:active { opacity: .8; }
+.os-flow-legend {
+    position: absolute;
+    right: 20px;
+    top: 78px;
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--os-text-muted);
+}
+.os-flow-legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.os-flow-legend i.r1 { background: var(--robot-1); }
+.os-flow-legend i.r2 { background: var(--robot-2); }
+.os-flow-stage { flex: 1; position: relative; min-height: 0; }
+.os-flow-stage svg { width: 100%; height: 100%; display: block; }
+/* The header's style chip is the door to the picture. */
+.os-header-style.os-header-style--tap { cursor: pointer; touch-action: manipulation; }
+.os-header-style.os-header-style--tap:active { opacity: .8; }
+
+/* svg — the reference's classes, on the station's tokens */
+
+/* THE COMPOSER'S STATES ON THE SAME DRAWING. U4 opens this picture read-only, so
+ * until U8 it had one card appearance. These four are what editing adds — the
+ * tapped card, a card carrying a finding, the siblings that dim behind a
+ * selection (SPEC §0.9), and the red pill that takes the part chip's slot. They
+ * live here rather than in composer.css because they style the SAME element the
+ * rules above do, and splitting one element's appearance across two files is how
+ * the next person ends up with two drawings again. */

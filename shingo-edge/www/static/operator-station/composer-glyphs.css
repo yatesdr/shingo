@@ -1,0 +1,14 @@
+/* composer-glyphs.css — slots, bins and streams. Pair with composer-glyphs.js.
+ * A slot is a position (a thin outline). A bin is a bin (solid): white = the new one, grey = the old one.
+ * A slender chevron in the robot's colour is one step. The bar is the line side of the press.
+ * Tokens proposed for operator.css: --os-robot-1: #22c9ae  --os-robot-2: #8a7bff  --os-station: #f2f5f8 */
+.gl{display:inline-block;vertical-align:middle;overflow:visible}
+.gl .slot{fill:none;stroke:var(--os-station,#f2f5f8);stroke-width:0.75}
+.gl .bin{fill:var(--os-station,#f2f5f8)}
+.gl .bin.old{fill:var(--os-sub-5,#7a8ba6)}
+.gl .press{stroke:var(--os-station,#f2f5f8);stroke-width:1.6;stroke-linecap:round;fill:none}
+.gl .sc{fill:none;stroke-width:0.95;stroke-linecap:round;stroke-linejoin:round}
+.gl .sc.r1{stroke:var(--os-robot-1,#22c9ae)} .gl .sc.r2{stroke:var(--os-robot-2,#8a7bff)}
+/* unselected segments: the chosen choreography is the one that glows */
+.gl.rest .sc{opacity:.45} .gl.rest .slot,.gl.rest .press{stroke:var(--os-sub-4,#66768f)}
+.gl.rest .bin{fill:var(--os-sub-4,#66768f)} .gl.rest .bin.old{fill:var(--os-sub-3,#45566e)}

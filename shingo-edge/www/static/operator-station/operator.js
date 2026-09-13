@@ -125,6 +125,12 @@ async function doLoadView() {
         if (text === getLastViewJSON()) return;
         setLastViewJSON(text);
         setView(JSON.parse(text));
+        // The composer holds its own copy of the view for the screens stacked
+        // over the board. Handing it the new one keeps an OPEN picker's rows
+        // live — a style whose flow was set up from the desktop while the
+        // sheet was open stops reading "Set up from the desktop" — and costs
+        // nothing when the composer is closed.
+        if (window.ComposerUI) window.ComposerUI.setView(getView());
         renderAll();
     } catch (err) {
         console.error('loadView', err);
@@ -227,9 +233,33 @@ function removePostCutoverBanner() {
     if (b) b.remove();
 }
 
+// ONLY WHEN THE CHANGEOVER STATE MOVED. This is an HTTP request, and it used
+// to run on every CHANGED view — which was fine while views changed on
+// changeovers and deliveries, and stopped being fine once a flow save changed
+// one too: a preset applied to forty parts is forty view changes, so forty
+// requests per board for a flag that can only have been set by a cutover.
+//
+// The key is the only state that can change the answer: which style is
+// running, and which changeover (and in what state) is on the press. A confirm
+// clears it so the next view re-asks.
+let lastPostCutoverKey = null;
+
+function postCutoverKey(view) {
+    const co = view.active_changeover;
+    return [
+        view.process ? view.process.id : 0,
+        view.process ? view.process.active_style_id : 0,
+        co ? co.id : 0,
+        co ? co.state : '',
+    ].join(':');
+}
+
 async function checkPostCutoverFlag() {
     const view = getView();
-    if (!view || !view.process) { removePostCutoverBanner(); return; }
+    if (!view || !view.process) { removePostCutoverBanner(); lastPostCutoverKey = null; return; }
+    const key = postCutoverKey(view);
+    if (key === lastPostCutoverKey) return;
+    lastPostCutoverKey = key;
     const pid = view.process.id;
     try {
         const res = await fetch('/api/processes/' + pid + '/post-cutover-flag');
@@ -281,7 +311,12 @@ function renderPostCutoverFlag(pid, flag) {
     confirmBtn.addEventListener('click', async () => {
         confirmBtn.disabled = true;
         const ok = await postAction('/api/processes/' + pid + '/post-cutover-flag/confirm', {}, loadView);
-        if (ok) removePostCutoverBanner();
+        if (ok) {
+            removePostCutoverBanner();
+            // The flag moved without the changeover state moving, so the key
+            // has to be cleared or the next view would skip the re-check.
+            lastPostCutoverKey = null;
+        }
     });
     actions.appendChild(confirmBtn);
 

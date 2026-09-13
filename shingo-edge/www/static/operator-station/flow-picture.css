@@ -1,0 +1,66 @@
+/* flow-picture.css — how the press picture is drawn, for every surface that
+ * draws it.
+ *
+ * These rules used to sit in operator.css, which is the STATION's stylesheet.
+ * That was fine while the station was the only caller; the desktop Processes
+ * page draws the same renderFlowPicture and does not load operator.css, so the
+ * cards came out as correctly-shaped black rectangles with no border, no title
+ * and no text — the same failure U8 hit when the rules were scoped to an element
+ * id instead of a class, one level up.
+ *
+ * One drawing of the press, one stylesheet for it, and BOTH SURFACES LOAD
+ * shared/tokens.css — the station does now too, which is what the whole
+ * --os-*-with-a-shared-fallback dance was working around. The substrate ramp
+ * and the robot hues are read by their shared names here; a colour keeps the
+ * two-name form only where the station's value genuinely differs from the
+ * page's (its surface, its muted text, its alarm red), because those are the
+ * station's own palette and not a copy of anything.
+ *
+ * AND THE LITERALS ARE GONE. Five values in four declarations were spelled
+ * out: the card title and the dock value in the same near-white, the part chip
+ * green, and two tints of that green. The near-white is --text-strong's DARK
+ * value, so on a LIGHT Processes page the position name was near-white on a
+ * white card — a defect no screenshot caught, because every desktop shot was
+ * taken in dark. There is no literal colour in this file now, and
+ * shared/identity_hue_drift_test.go holds it that way.
+ *
+ * AND THE FALLBACK HAS TO BE A TOKEN THAT EXISTS. The alarm rules fell back to
+ * --status-alarm, which shared/tokens.css has never declared, so the whole
+ * chain resolved to nothing on the desktop: a position with a finding drew no
+ * red outline and its needs-pill no fill, while the station -- where --os-red
+ * covers it -- looked right. The fallback is --viz-coral, the shared mark red.
+ * shingo-edge/www/css_dead_token_test.go is what finds the next one. */
+
+.os-flow-picture .leg { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.os-flow-picture .leg.r1 { stroke: var(--robot-1); }
+.os-flow-picture .leg.r2 { stroke: var(--robot-2); }
+.os-flow-picture .leg.thin { stroke-width: 2.5; }
+.os-flow-picture .legdot.r1 { fill: var(--robot-1); }
+.os-flow-picture .legdot.r2 { fill: var(--robot-2); }
+.os-flow-picture .legring { fill: var(--os-bg, var(--surface)); stroke-width: 2; }
+.os-flow-picture .legring.r1 { stroke: var(--robot-1); }
+.os-flow-picture .legring.r2 { stroke: var(--robot-2); }
+.os-flow-picture .leg-lbl { font-size: 11px; font-weight: 600; letter-spacing: .03em; }
+.os-flow-picture .leg-lbl.r1 { fill: var(--robot-1); }
+.os-flow-picture .leg-lbl.r2 { fill: var(--robot-2); }
+.os-flow-picture .node rect.box { fill: var(--os-surface, var(--surface)); stroke: var(--sub-3); stroke-width: 1.5; }
+.os-flow-picture .node text { fill: var(--text-strong); font-size: 15px; font-weight: 600; }
+.os-flow-picture .node text.ln { fill: var(--os-text-muted, var(--text-muted)); font-size: 12px; font-weight: 500; }
+.os-flow-picture .node.off text.ln { fill: var(--os-text-dim, var(--text-dim)); }
+.os-flow-picture .node.off rect.box { stroke-dasharray: 5 5; }
+.os-flow-picture .node.off text.nm { fill: var(--os-text-muted, var(--text-muted)); }
+.os-flow-picture .node.on rect.box { stroke: var(--sub-4); stroke-width: 1.5; }
+.os-flow-picture .node .iot { font-size: 10px; fill: currentColor; letter-spacing: .04em; }
+.os-flow-picture .node .partbg { fill: color-mix(in srgb, var(--viz-green) 14%, transparent); stroke: color-mix(in srgb, var(--viz-green) 40%, transparent); }
+.os-flow-picture .node .partlbl { fill: var(--viz-green); font-size: 11px; font-weight: 600; }
+.os-flow-picture .mlbl { fill: var(--os-text-muted, var(--text-muted)); font-size: 10px; }
+.os-flow-picture .dock line { stroke: var(--sub-2); stroke-width: 1; }
+.os-flow-picture .dock text.k { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.os-flow-picture .dock text.v { fill: var(--text-strong); font-size: 15px; font-weight: 600; }
+.os-flow-picture .dock text.s { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; }
+.os-flow-picture .node.sel rect.box { stroke: var(--os-accent, var(--accent)); stroke-width: 2.5; }
+.os-flow-picture .node.bad rect.box { stroke: var(--os-red, var(--viz-coral)); stroke-width: 2.5; }
+.os-flow-picture .node.dim { opacity: .35; }
+.os-flow-picture .node .needbg { fill: var(--os-red, var(--viz-coral)); fill-opacity: .12; stroke: var(--os-red, var(--viz-coral)); }
+.os-flow-picture .node .needlbl { fill: var(--os-red, var(--viz-coral)); font-size: 11px; font-weight: 600; }
+.os-flow-picture .half { cursor: pointer; }

@@ -98,6 +98,21 @@
    * Foreground accent (text / links / focus / active) stays --accent. */
   --accent-solid: #4f4fd6;
   --accent-solid-hover: #3e3ec0;
+  /* The ink that sits ON that fill. It is white on both themes, because the
+   * fill is theme-invariant and was chosen for 6.14:1 against white; the token
+   * exists so no component has to write the literal to say so, and so the one
+   * place to look when the fill moves is here. Every `color: #fff` on an
+   * --accent-solid background is this token. */
+  --on-accent-solid: #ffffff;
+
+  /* The modal backdrop. One scrim for every surface: admin's .modal-overlay,
+   * the desktop composer's sheet, and anything else that darkens the page
+   * behind a dialog. The light value is .modal-overlay's own rgba(0,0,0,.5),
+   * kept verbatim so nothing moved when the literal became a token (Core's
+   * overlay was .45 and now matches Edge's). Dark is deeper and cooler,
+   * because a neutral black scrim over --elev-canvas reads as a flat grey
+   * wash rather than a recess. */
+  --scrim: rgba(0, 0, 0, .5);
 
   /* Semantic */
   --primary: var(--accent);
@@ -287,6 +302,24 @@
   --map-robot-idle:  #8b949e;   /* idle-moving robot, neutral grey */
   --map-dock-charge: #e3b341;   /* occupied charge point, amber */
   --map-dock-park:   #d98c4a;   /* occupied park point, clay */
+  /* The two robots of a press choreography — Robot 1 brings, Robot 2 takes
+   * (SPEC-composer-ux §1). STATE hues, not structure: they colour the legs
+   * drawn between press positions, the in/out glyphs and the dock notes, and
+   * nothing static. Theme-invariant, defined once, because the surfaces that
+   * draw a choreography are dark by construction (the station) or pin dark
+   * (the map). The operator station copies them as --os-r1/--os-r2 — it
+   * loads only operator.css — and TestOperatorStationRobotColoursMatchShared
+   * in shingo-edge/www holds the copy to these.
+   *
+   * Locked 2026-09-10 with the swap-mode glyphs (GLYPHS-swap-mode-LOCKED): the
+   * draft cyan/periwinkle went teal/indigo so the two robots stay apart at a
+   * glyph's stroke width (0.95) as well as at a leg's, and --station is the
+   * white the glyphs use for a slot, the press bar and the NEW bin — the one
+   * structural hue that is not on the substrate ramp, because a bin the robot
+   * is bringing has to read as the subject of the picture. */
+  --robot-1: #22c9ae;
+  --robot-2: #8a7bff;
+  --station: #f2f5f8;
   /* Node-class categorical colours (were CLASS_PALETTE in dashboard-map.js). */
   --map-class-1: #6cb0ff;
   --map-class-2: #56d364;
@@ -484,6 +517,11 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.4);
+
+  /* --on-accent-solid is NOT overridden here: the fill it sits on is
+   * theme-invariant, so its ink is too. The scrim is, because the page it
+   * darkens is. */
+  --scrim: rgba(4, 6, 9, .62);
 }
 
 /* Reduced-motion, by law ("motion means motion"). Zeroing the motion
