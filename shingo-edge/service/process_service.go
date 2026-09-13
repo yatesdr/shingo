@@ -1,6 +1,7 @@
 package service
 
 import (
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/lineside"
 	"shingoedge/store/process_groups"
@@ -77,6 +78,72 @@ func (s *ProcessService) SetChangeoverAutoArm(processID int64, mode string) erro
 // back to "Ungrouped". Pure UI taxonomy.
 func (s *ProcessService) SetGroupID(processID int64, groupID *int64) error {
 	return s.db.SetProcessGroupID(processID, groupID)
+}
+
+// SetFlowComposerEnabled opens or closes the HMI flow composer for a
+// process. Off until the engineer has reviewed the routing set.
+func (s *ProcessService) SetFlowComposerEnabled(processID int64, enabled bool) error {
+	return s.db.SetFlowComposerEnabled(processID, enabled)
+}
+
+// ── Routing set ─────────────────────────────────────────────────────
+//
+// The nodes a process may route material through that are not its own
+// positions (domain/routing_set.go). The store's refusals are re-exported
+// here, like ErrProcessHasStock, so www can classify them without importing
+// the store package.
+
+var (
+	ErrRoutingNodeInUse      = processes.ErrRoutingNodeInUse
+	ErrRoutingNodeIsPosition = processes.ErrRoutingNodeIsPosition
+	ErrInvalidRoutingRole    = processes.ErrInvalidRoutingRole
+	ErrRoutingNodeNotFound   = processes.ErrRoutingNodeNotFound
+)
+
+// ListRoutingNodes returns a process's routing set in source / staging /
+// destination order, with the per-role style counts the Routing panel shows
+// as evidence under a backfilled name.
+//
+// THE COUNTING VARIANT IS THIS ONE because this method has exactly one
+// caller, the panel's GET. Everything else on this path — the composer block,
+// the preview, the save — goes to the store's plain read.
+func (s *ProcessService) ListRoutingNodes(processID int64) ([]domain.RoutingNode, error) {
+	return s.db.ListRoutingNodesWithCounts(processID)
+}
+
+// UpsertRoutingNode inserts or updates one (process, node, role) row.
+func (s *ProcessService) UpsertRoutingNode(in domain.RoutingNodeInput) (int64, error) {
+	return s.db.UpsertRoutingNode(in)
+}
+
+// SetRoutingNodeEnabled flips one row's enabled flag; adopting a backfilled
+// name is enabled=true.
+func (s *ProcessService) SetRoutingNodeEnabled(processID, id int64, enabled bool, calledBy string) error {
+	return s.db.SetRoutingNodeEnabled(processID, id, enabled, calledBy)
+}
+
+// DeleteRoutingNode removes one row, refusing with ErrRoutingNodeInUse while
+// a live claim still routes through the node.
+func (s *ProcessService) DeleteRoutingNode(processID, id int64) error {
+	return s.db.DeleteRoutingNode(processID, id)
+}
+
+// DeriveRoutingNodes re-derives one process's routing set from its live
+// claims — a no-op, reported as Skipped, once the flow composer is enabled.
+// isUnknown may be nil when Core's node list is not available.
+func (s *ProcessService) DeriveRoutingNodes(processID int64, isUnknown func(name string) bool) (domain.RoutingDeriveReport, error) {
+	return s.db.DeriveRoutingNodesForProcess(processID, isUnknown)
+}
+
+// RoutingSetReport counts the set as it stands, without deriving.
+func (s *ProcessService) RoutingSetReport(processID int64, isUnknown func(name string) bool) (domain.RoutingDeriveReport, error) {
+	return s.db.RoutingSetReport(processID, isUnknown)
+}
+
+// RoutingSet is the report and the rows it describes, from one pass. The
+// Routing tab's GET wants both and they are one read of one table.
+func (s *ProcessService) RoutingSet(processID int64, isUnknown func(name string) bool) (domain.RoutingDeriveReport, []domain.RoutingNode, error) {
+	return s.db.RoutingSet(processID, isUnknown)
 }
 
 // ── Process groups ──────────────────────────────────────────────────

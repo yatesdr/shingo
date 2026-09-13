@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/stations"
 )
@@ -167,5 +168,56 @@ func TestStation_SetNodes_AdoptsOrphanInsteadOfDuplicating(t *testing.T) {
 	}
 	if !bNodes[0].Enabled {
 		t.Errorf("adopted node should be re-enabled")
+	}
+}
+
+// TestStation_SetNodes_LeavesRoutingRowsUntouched pins the boundary the
+// routing set was put in its own table for. SetNodes re-points, re-sequences,
+// disables and deletes process_nodes rows with no role concept; a routing
+// row that lived on process_nodes would die on an unrelated board edit. So
+// the routing set must survive every SetNodes pass byte-for-byte — including
+// the pass that adds one of ITS names as a station position, which is a
+// cleanup the engineer makes, never a side effect.
+func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewStationService(db)
+
+	pid, err := db.CreateProcess("P", "", "", "", "", false)
+	testutil.MustNoErr(t, err, "db.CreateProcess")
+	stID, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
+	testutil.MustNoErr(t, err, "db.CreateOperatorStation")
+	for _, in := range []domain.RoutingNodeInput{
+		{ProcessID: pid, CoreNodeName: "SMN_BUF_100", Role: domain.RoutingRoleSource, Sequence: 1, Enabled: true, Origin: domain.RoutingOriginEngineer, CalledBy: "eng"},
+		{ProcessID: pid, CoreNodeName: "STG_01", Role: domain.RoutingRoleStaging, Sequence: 2, Enabled: false, Origin: domain.RoutingOriginBackfill},
+		{ProcessID: pid, CoreNodeName: "Supermarket Area", Role: domain.RoutingRoleDestination, Sequence: 3, Enabled: true, Origin: domain.RoutingOriginEngineer, CalledBy: "eng"},
+	} {
+		if _, err := db.UpsertRoutingNode(in); err != nil {
+			t.Fatalf("seed routing row %s: %v", in.CoreNodeName, err)
+		}
+	}
+	before, err := db.ListRoutingNodes(pid)
+	if err != nil {
+		t.Fatalf("list routing before: %v", err)
+	}
+
+	testutil.MustNoErr(t, svc.SetNodes(stID, []string{"N1", "N2"}), "set 1")
+	testutil.MustNoErr(t, svc.SetNodes(stID, []string{"N2"}), "set 2 (deletes N1)")
+	// A routing name becoming a station position: SetNodes still leaves the
+	// routing row alone.
+	testutil.MustNoErr(t, svc.SetNodes(stID, []string{"N2", "STG_01"}), "set 3 (adds a routing name)")
+	testutil.MustNoErr(t, svc.SetNodes(stID, nil), "set 4 (clears the station)")
+
+	after, err := db.ListRoutingNodes(pid)
+	if err != nil {
+		t.Fatalf("list routing after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("routing rows: %d before SetNodes, %d after", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("routing row %d changed under SetNodes:\n before %+v\n after  %+v", i, before[i], after[i])
+		}
 	}
 }

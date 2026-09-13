@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // PreflightCorePoster is the narrow interface PreflightChecker requires
@@ -66,6 +67,11 @@ func NewPreflightChecker(db *store.DB, coreClient PreflightCorePoster, station s
 // If Core is unavailable the call returns an error rather than degrading
 // to "all available" — a preflight that silently passes when the source
 // of truth is unreachable defeats the gate.
+//
+// "Collect the style's codes, then PreflightPayloads": the Core half is on its
+// own below so a draft flow — claims that exist only in a request body — can be
+// checked without a style row. The two must agree on a saved style, and
+// TestChangeoverPreflight_PayloadsAgreeWithStyleCheck says so.
 func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleID int64) ([]string, error) {
 	if p.coreClient == nil || !p.coreClient.Available() {
 		return nil, fmt.Errorf("preflight: core API not configured")
@@ -74,10 +80,26 @@ func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleI
 	if err != nil {
 		return nil, fmt.Errorf("preflight: list claims: %w", err)
 	}
-	seen := make(map[string]struct{}, len(claims))
-	payloads := make([]string, 0, len(claims))
+	return p.PreflightPayloads(ctx, PayloadCodesOf(claims))
+}
+
+// PayloadCodesOf is the payload list a set of claims needs checked: each
+// claim's PayloadCode, in claim order, without the empty-bin sentinel and
+// without repeats. Pure; the dedup lives here so both gates apply it once.
+func PayloadCodesOf(claims []processes.NodeClaim) []string {
+	codes := make([]string, 0, len(claims))
 	for _, c := range claims {
-		code := c.PayloadCode
+		codes = append(codes, c.PayloadCode)
+	}
+	return dedupPayloadCodes(codes)
+}
+
+// dedupPayloadCodes drops blanks, the "__empty__" sentinel and repeats,
+// keeping first-seen order.
+func dedupPayloadCodes(codes []string) []string {
+	seen := make(map[string]struct{}, len(codes))
+	out := make([]string, 0, len(codes))
+	for _, code := range codes {
 		if code == "" || code == "__empty__" {
 			continue
 		}
@@ -85,8 +107,24 @@ func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleI
 			continue
 		}
 		seen[code] = struct{}{}
-		payloads = append(payloads, code)
+		out = append(out, code)
 	}
+	return out
+}
+
+// PreflightPayloads asks Core whether each payload code has at least one
+// available bin in the supermarket, and returns the missing subset. The
+// sentinel and duplicates are skipped exactly as PreflightInventoryCheck skips
+// them, and an empty list asks Core nothing.
+//
+// Core unavailable is an ERROR, never "all available" — the caller decides
+// what an unchecked answer looks like (the composer's preview says
+// "unchecked"; a start refuses), the gate does not pretend it looked.
+func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) ([]string, error) {
+	if p.coreClient == nil || !p.coreClient.Available() {
+		return nil, fmt.Errorf("preflight: core API not configured")
+	}
+	payloads := dedupPayloadCodes(codes)
 	if len(payloads) == 0 {
 		return nil, nil
 	}

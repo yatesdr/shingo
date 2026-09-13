@@ -162,6 +162,20 @@ type StationService struct {
 	// unknownCoreNodes for why an unwired or empty resolver must accept
 	// everything.
 	coreNodes func() map[string]bool
+	// sceneGeometry hands the view the scene cache for the cell picture.
+	// Optional: nil, or a resolver answering nil, draws the schematic.
+	sceneGeometry func() *domain.SceneGeometry
+	// coreNodeGroups hands the view the NGRP membership for the dock strip.
+	// Optional: nil lists no members under a group.
+	coreNodeGroups func() map[string][]string
+
+	// sceneMemo is composerScene's derived adjacency, computed once per
+	// geometry cache rather than per request; sceneMemoFor is the cache it
+	// was derived from. Guarded because one service serves every board's
+	// poll. See composerScene.
+	sceneMu      sync.Mutex
+	sceneMemoFor *domain.SceneGeometry
+	sceneMemo    *domain.ComposerScene
 
 	// touched throttles the liveness write — see Touch.
 	touchMu sync.Mutex
@@ -199,6 +213,16 @@ func (s *StationService) SetBinTypeResolver(r func(payloadCode string) string) {
 // SetCoreNodeResolver injects the set of Core node names this edge knows, used
 // to refuse a station node list that names something Core does not have.
 func (s *StationService) SetCoreNodeResolver(r func() map[string]bool) { s.coreNodes = r }
+
+// SetSceneGeometryResolver injects the scene cache the cell picture places
+// its positions from. Optional; unset or nil-answering draws the schematic.
+func (s *StationService) SetSceneGeometryResolver(r func() *domain.SceneGeometry) {
+	s.sceneGeometry = r
+}
+
+// SetCoreNodeGroupResolver injects the NGRP membership the cell picture's
+// dock strip lists. Optional; unset lists no members.
+func (s *StationService) SetCoreNodeGroupResolver(r func() map[string][]string) { s.coreNodeGroups = r }
 
 // ErrUnknownCoreNodes rejects a station node list naming something that is not a
 // Core node.
@@ -463,8 +487,34 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	}
 
 	s.applyLoaderLineside(view)
+	view.Cell = s.buildCellPicture(stationID, process, b)
 
 	return view, nil
+}
+
+// buildCellPicture assembles the station's read-only cell picture from the
+// whole process's node list (partner positions are stationless rows the
+// board's own list never returns), the active claims the board already
+// read, and the engine-held scene cache and group map. One extra query per
+// board, not per tile. Fail-open like every other enrichment: a node-list
+// read error yields an empty picture, never no board.
+func (s *StationService) buildCellPicture(stationID int64, process *processes.Process, b *boardData) *domain.CellPicture {
+	allNodes, err := s.db.ListProcessNodesByProcess(process.ID)
+	if err != nil {
+		log.Printf("station view: list process nodes for cell picture: %v", err)
+	}
+	backPositions, err := s.db.ListBackPositionNames(process.ID)
+	if err != nil {
+		log.Printf("station view: list back positions for cell picture: %v", err)
+	}
+	in := domain.CellPictureInput{StationID: stationID, Nodes: allNodes, Claims: b.activeClaims, BackPositions: backPositions}
+	if s.sceneGeometry != nil {
+		in.Geometry = s.sceneGeometry()
+	}
+	if s.coreNodeGroups != nil {
+		in.Groups = s.coreNodeGroups()
+	}
+	return domain.BuildCellPicture(in)
 }
 
 // THE QUARTER-BIN HEURISTIC USED TO LIVE HERE and is deleted, not disabled.
@@ -667,6 +717,15 @@ func (s *StationService) newStationView(stationID int64) (*store.OperatorStation
 		}
 	}
 	view.AvailableStyles, _ = s.db.ListStylesByProcess(process.ID)
+	// THE PICKER'S SHAPE, NOT THE COMPOSER'S (S8). The board polls this at
+	// 500 ms while events flow and reads the composer half of it once, on a
+	// tap; everything past the picker rows is fetched by
+	// GET /api/operator-stations/{id}/composer when the composer opens.
+	//
+	// AvailableStyles is passed in rather than re-read: the line above just
+	// listed the same styles.
+	view.Composer = s.buildComposerData(process.ID, view.AvailableStyles,
+		s.liveClaimsByStyle(process.ID), composerPicker)
 	if co, err := s.db.GetActiveProcessChangeover(process.ID); err == nil {
 		view.ActiveChangeover = co
 		if stationTask, err := s.db.GetChangeoverStationTaskByStation(co.ID, stationID); err == nil {

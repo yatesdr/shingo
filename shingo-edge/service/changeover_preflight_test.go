@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"shingo/protocol"
@@ -46,9 +47,9 @@ func seedPreflightStyle(t *testing.T, db *store.DB) int64 {
 	}
 	styleID, _ := res.LastInsertId()
 	for _, c := range []processes.NodeClaimInput{
-		{StyleID: styleID, CoreNodeName: "NODE-1", PayloadCode: "PART-A", Role: protocol.ClaimRoleConsume, SwapMode: "single_robot", InboundStaging: "ISTG-1", OutboundStaging: "OSTG-1"},
-		{StyleID: styleID, CoreNodeName: "NODE-2", PayloadCode: "PART-Z", Role: protocol.ClaimRoleConsume, SwapMode: "single_robot", InboundStaging: "ISTG-2", OutboundStaging: "OSTG-2"},
-		{StyleID: styleID, CoreNodeName: "NODE-3", PayloadCode: "__empty__", Role: protocol.ClaimRoleProduce, SwapMode: "single_robot", InboundStaging: "ISTG-3", OutboundStaging: "OSTG-3"},
+		{StyleID: styleID, CoreNodeName: "NODE-1", PayloadCode: "PART-A", Role: protocol.ClaimRoleConsume, SwapMode: "single_robot", InboundStaging: "ISTG-1", OutboundStaging: "OSTG-1", OutboundDestination: "DEST-1"},
+		{StyleID: styleID, CoreNodeName: "NODE-2", PayloadCode: "PART-Z", Role: protocol.ClaimRoleConsume, SwapMode: "single_robot", InboundStaging: "ISTG-2", OutboundStaging: "OSTG-2", OutboundDestination: "DEST-2"},
+		{StyleID: styleID, CoreNodeName: "NODE-3", PayloadCode: "__empty__", Role: protocol.ClaimRoleProduce, SwapMode: "single_robot", InboundStaging: "ISTG-3", OutboundStaging: "OSTG-3", OutboundDestination: "DEST-3"},
 	} {
 		if _, err := db.UpsertStyleNodeClaim(c); err != nil {
 			t.Fatalf("upsert claim %s: %v", c.CoreNodeName, err)
@@ -152,5 +153,100 @@ func TestChangeoverPreflight_NoCoreClient(t *testing.T) {
 	_, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
 	if err == nil {
 		t.Fatal("expected error when core client is unavailable")
+	}
+}
+
+// ── PreflightPayloads: the Core call without a style id ─────────────────────
+//
+// The flow composer previews a DRAFT whose claims exist only in memory, so its
+// payload codes have to be checkable without a style row. PreflightPayloads is
+// the Core half of PreflightInventoryCheck on its own; the style check is
+// "collect the style's codes, then PreflightPayloads", and the two must agree.
+
+// TestChangeoverPreflight_PayloadsAgreeWithStyleCheck: on the seeded style,
+// the by-style gate and the by-codes gate send Core the same list and hand
+// back the same missing set.
+func TestChangeoverPreflight_PayloadsAgreeWithStyleCheck(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	toStyleID := seedPreflightStyle(t, db)
+
+	core := &fakeCorePoster{
+		available: true,
+		respond: func(payloads []string) (*PreflightCoreResult, error) {
+			return &PreflightCoreResult{Missing: []string{"PART-Z"}}, nil
+		},
+	}
+	checker := NewPreflightChecker(db, core, "station-1")
+
+	byStyle, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
+	if err != nil {
+		t.Fatalf("PreflightInventoryCheck: %v", err)
+	}
+	askedByStyle := append([]string(nil), core.queriedPayloads...)
+
+	claims, err := db.ListStyleNodeClaims(toStyleID)
+	if err != nil {
+		t.Fatalf("list claims: %v", err)
+	}
+	byCodes, err := checker.PreflightPayloads(context.Background(), PayloadCodesOf(claims))
+	if err != nil {
+		t.Fatalf("PreflightPayloads: %v", err)
+	}
+	askedByCodes := append([]string(nil), core.queriedPayloads...)
+
+	if !reflect.DeepEqual(askedByStyle, askedByCodes) {
+		t.Errorf("Core was asked %v by style and %v by codes; the two gates must send the same list", askedByStyle, askedByCodes)
+	}
+	if !reflect.DeepEqual(byStyle, byCodes) {
+		t.Errorf("missing by style = %v, by codes = %v; want the same answer", byStyle, byCodes)
+	}
+	if !reflect.DeepEqual(askedByCodes, []string{"PART-A", "PART-Z"}) {
+		t.Errorf("Core was asked %v, want [PART-A PART-Z] — deduped, sentinel skipped, claim order kept", askedByCodes)
+	}
+}
+
+// TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates: the same skip
+// and dedup rules as the style path, applied to a raw code list; and an empty
+// list asks Core nothing.
+func TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	core := &fakeCorePoster{available: true}
+	checker := NewPreflightChecker(db, core, "station-1")
+
+	missing, err := checker.PreflightPayloads(context.Background(), []string{"PART-A", "__empty__", "PART-A", "", "PART-B"})
+	if err != nil {
+		t.Fatalf("PreflightPayloads: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("missing = %v, want nil", missing)
+	}
+	if !reflect.DeepEqual(core.queriedPayloads, []string{"PART-A", "PART-B"}) {
+		t.Errorf("Core was asked %v, want [PART-A PART-B]", core.queriedPayloads)
+	}
+
+	core.queriedPayloads = nil
+	if _, err := checker.PreflightPayloads(context.Background(), []string{"__empty__", ""}); err != nil {
+		t.Fatalf("PreflightPayloads with nothing to check: %v", err)
+	}
+	if core.queriedPayloads != nil {
+		t.Errorf("Core was asked %v for a list with nothing to check; want no call", core.queriedPayloads)
+	}
+}
+
+// TestChangeoverPreflight_PayloadsCoreUnavailableIsAnError: Core unreachable
+// is an error, never "all available" — the caller decides what an unchecked
+// draft looks like, the gate does not pretend.
+func TestChangeoverPreflight_PayloadsCoreUnavailableIsAnError(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	checker := NewPreflightChecker(db, &fakeCorePoster{available: false}, "station-1")
+	if _, err := checker.PreflightPayloads(context.Background(), []string{"PART-A"}); err == nil {
+		t.Fatal("expected an error with Core unavailable, got nil")
+	}
+	unwired := NewPreflightChecker(db, nil, "station-1")
+	if _, err := unwired.PreflightPayloads(context.Background(), []string{"PART-A"}); err == nil {
+		t.Fatal("expected an error with no Core client, got nil")
 	}
 }

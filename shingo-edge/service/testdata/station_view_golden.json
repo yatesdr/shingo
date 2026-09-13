@@ -25,6 +25,7 @@
     "counter_tag_name": "",
     "counter_enabled": false,
     "changeover_auto_arm": "auto",
+    "flow_composer_enabled": false,
     "created_at": "<ts>"
   },
   "active_changeover": {
@@ -176,5 +177,26 @@
       "releases_as_pair": false,
       "child_of_node": "Press G1"
     }
-  ]
+  ],
+  "cell": {
+    "positions": [
+      {
+        "core_node_name": "PLN_G1",
+        "sequence": 1,
+        "kind": "front"
+      },
+      {
+        "core_node_name": "WLN_G3",
+        "sequence": 3,
+        "kind": "front"
+      }
+    ],
+    "geometry": false
+  },
+  "composer": {
+    "styles": null,
+    "recent_targets": [
+      1
+    ]
+  }
 }
