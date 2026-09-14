@@ -14,12 +14,19 @@ import (
 // eligibility_golden_test.go — a photograph of every "may this bin be sourced?"
 // predicate, one fixture set run through all of them, recorded as a golden file.
 //
-// WHY THIS EXISTS. The question is implemented independently in nine places and
-// the implementations do not agree. Three of those are pure predicates and are
-// covered here; the SQL-backed six are covered by the docker half (see
-// eligibility_golden_docker_test.go). The count reached nine only after several
-// sweeps missed readers, which is the argument for recording the answers rather
-// than trying to hold them in your head.
+// WHY THIS EXISTS. The question is implemented independently in THIRTEEN places
+// and the implementations do not agree. Three are pure predicates and are
+// covered here; eight are SQL-backed and are covered by the docker half
+// (eligibility_golden_docker_test.go). The remaining two are the staged-at-line
+// complement (onLinePoolByProcess, OnLineBreakdownByProcess), which answer
+// "is it already there" rather than "can it be fetched" and are disjoint by
+// construction.
+//
+// THE COUNT SAID NINE UNTIL A CENSUS WAS TAKEN, and the header also said the
+// SQL half was covered by a file that did not exist. Both are worth keeping in
+// view: a count held in a comment drifts the moment a reader is added, which is
+// the argument for recording the answers rather than trying to hold them in
+// your head.
 //
 // It deliberately does NOT assert the predicates agree — today they do not, and a
 // test that pretended otherwise could not be written. It records what each one
@@ -54,8 +61,9 @@ type eligFixture struct {
 // differs are the "wrong part" arm.
 const wantPayload = "PART-A"
 
-// eligFixtures spans the axes the nine predicates disagree on. Each axis has at
-// least one row that exposes a known divergence; see the brief section noted.
+// eligFixtures spans the axes the predicates disagree on. Each axis has at least
+// one row that exposes a known divergence. The docker half runs this same set,
+// so a row added here is photographed in both languages.
 var eligFixtures = []eligFixture{
 	// --- baseline ---
 	{Name: "full_of_X_confirmed", Payload: wantPayload, UOP: 1000, Cap: 1000, Status: domain.BinStatusAvailable, Confirmed: true},
@@ -73,7 +81,7 @@ var eligFixtures = []eligFixture{
 	{Name: "unconfirmed_full", Payload: wantPayload, UOP: 1000, Cap: 1000, Status: domain.BinStatusAvailable},
 	{Name: "unconfirmed_partial", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusAvailable},
 
-	// --- status: three different rules across the nine ---
+	// --- status: three different rules across the family ---
 	{Name: "status_staged", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusStaged, Confirmed: true},
 	{Name: "status_flagged", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusFlagged, Confirmed: true},
 	{Name: "status_maintenance", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusMaintenance, Confirmed: true},
