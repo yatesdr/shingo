@@ -3,6 +3,7 @@
 package uop_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -1220,5 +1221,72 @@ func TestInventoryDelta_AppliedDeltaRecordsItsEpoch(t *testing.T) {
 		t.Errorf("wire_epoch/bin_epoch = %d/%d, want 4/4 — without these the ledger "+
 			"cannot say which generation an applied delta belonged to",
 			m.WireEpoch, m.BinEpoch)
+	}
+}
+
+// TestApplyBinUOPDelta_StampsTheBinsNodeOnTheLedgerRow pins the node stamp on
+// the applied-delta row.
+//
+// The stamp is what makes a consumption rate computable per node. Without it
+// the rate can only be grained plant-wide per payload, and that plant-wide
+// figure then gets divided into a SINGLE node's UOP to produce a time-to-empty
+// — so with N cells drawing one payload every cell reads roughly N times short.
+//
+// It cannot be recovered later. Joining bins after the fact returns where the
+// bin is NOW, not where it was when the tick landed, so the only rows that will
+// ever carry an honest node are the ones written from here on.
+func TestApplyBinUOPDelta_StampsTheBinsNodeOnTheLedgerRow(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-NODE-STAMP", "PART-A", 100)
+
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -4, 1, protocol.ReasonConsumeTick)), "apply consume_tick")
+
+	var node sql.NullInt64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT node_id FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='bin_uop_delta'`, bin.ID).Scan(&node), "read applied ledger row")
+
+	if !node.Valid {
+		t.Fatalf("node_id is NULL on the applied delta for a bin standing at node %d — "+
+			"the row cannot say where the count changed, and no later join can tell it",
+			sd.StorageNode.ID)
+	}
+	if node.Int64 != sd.StorageNode.ID {
+		t.Errorf("node_id = %d, want %d (the node the bin was at when the delta landed)",
+			node.Int64, sd.StorageNode.ID)
+	}
+}
+
+// TestApplyBinUOPDelta_NoNodeStampsNull pins the other half: a carrier standing
+// nowhere writes NULL and the delta still applies.
+//
+// NULL is the correct value here, not a gap to be filled. There is no node to
+// name, and inventing one — the bin's last node, its next — would put a place
+// on a count that did not happen there.
+func TestApplyBinUOPDelta_NoNodeStampsNull(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-NODE-STAMP-NULL", "PART-A", 100)
+	_, err := db.Exec(`UPDATE bins SET node_id=NULL WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "unplace the carrier")
+
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, makeBinDelta(bin.ID, "PART-A", -4, 1, protocol.ReasonConsumeTick)), "apply consume_tick to an unplaced carrier")
+
+	var node sql.NullInt64
+	var after int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT node_id, after_uop FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='bin_uop_delta'`, bin.ID).Scan(&node, &after), "read applied ledger row")
+
+	if node.Valid {
+		t.Errorf("node_id = %d for a carrier at no node, want NULL", node.Int64)
+	}
+	if after != 96 {
+		t.Errorf("after_uop = %d, want 96 — the absent node must not cost the count", after)
 	}
 }

@@ -52,67 +52,73 @@ func TestCycleOpMatchesTheApplier(t *testing.T) {
 	}
 }
 
-// TestAppliedDeltaStillCarriesNoNode pins the reason this surface is grained on
-// (station, payload, direction) rather than on (node, payload).
+// TestCycleSurfaceAwaitsTheNodeRegrain pins the two halves of a grain that is
+// mid-move: the applier now records the node, and this surface has not yet
+// followed it.
 //
-// THE STYLE GUIDE ASSIGNS 5.10 A DISTRIBUTION PER (NODE, PAYLOAD). It cannot be
-// built: the applied-delta INSERT names
-// (bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata) and
-// passes the Edge station as ACTOR, so node_id is NULL and the station column is
-// empty on every row this op has ever written.
+// THE STYLE GUIDE ASSIGNS 5.10 A DISTRIBUTION PER (NODE, PAYLOAD). Until the
+// node stamp landed it could not be built at all — the applied-delta INSERT
+// recorded neither node_id nor station, so the node was absent from the truth
+// path and no join could put it back (a bin's node is where it is NOW, not
+// where it was when the tick landed). The INSERT now stamps node_id from the
+// bins row its transaction already holds, so the grain has become reachable.
 //
-// This test fails the day someone fixes that — which is the point. A page grained
-// on the station while the writer has started recording the node would be
-// throwing away the better grain and nothing would say so. The failure message
-// is the handover note.
+// It is not yet usable, and that is why this test guards rather than
+// celebrates. Every row written before the stamp carries node_id NULL, and
+// there is no honest backfill for them. A surface re-grained onto the column
+// today would render one nameless key for its whole history and a few real
+// nodes at the tail — worse than the station grain it has now. The re-grain
+// waits on the column accumulating, not on anybody's permission.
 //
-// VERIFIED RED BY: adding node_id to the applier's INSERT column list — the test
-// fired and said to re-grain the surface.
-func TestAppliedDeltaStillCarriesNoNode(t *testing.T) {
+// So the assertions below are a ratchet in both directions: the stamp must not
+// regress (that would strand the re-grain indefinitely, and nothing else
+// watches it), and the station must keep arriving in the actor slot
+// ListCycleEvents actually reads for as long as the surface is grained on it.
+//
+// VERIFIED RED BY: dropping node_id from the applier's INSERT column list (the
+// first half), and by moving station out of the actor position (the second).
+func TestCycleSurfaceAwaitsTheNodeRegrain(t *testing.T) {
 	src := applierSource(t)
 
 	// The INSERT that writes an APPLIED delta. Located by its op literal so this
 	// does not match the observation-row inserts (stale-epoch, payload-mismatch),
 	// which are a different shape and are not cycles.
 	re := regexp.MustCompile(`(?s)INSERT INTO bin_uop_ledger\s*\n?\s*\(([^)]*)\)[^;]*?'` + OpBinUOPDelta + `'`)
-	m := re.FindStringSubmatch(src)
-	if m == nil {
+	loc := re.FindStringSubmatchIndex(src)
+	if loc == nil {
 		t.Fatalf("could not locate the applied-delta INSERT in uop/applier.go — the pattern " +
 			"is stale, and a silent miss here would leave this guard passing on nothing " +
 			"while the grain question went unwatched")
 	}
-	cols := m[1]
+	cols := src[loc[2]:loc[3]]
 
-	for _, col := range []string{"node_id", "station"} {
-		if regexp.MustCompile(`\b` + col + `\b`).MatchString(cols) {
-			t.Errorf("the applied-delta INSERT now writes %s.\n\n"+
-				"THIS IS GOOD NEWS AND IT NEEDS FOLLOWING UP. The cycle-time surface (5.10) "+
-				"is grained on (station, payload, direction) ONLY because node was not "+
-				"recoverable from this row — the style guide assigns it a distribution per "+
-				"(node, payload). Re-grain domain.CycleKey and ListCycleEvents onto the "+
-				"column that is now populated, and delete this test.\n\n"+
-				"Columns written: %s", col, strings.Join(strings.Fields(cols), " "))
-		}
+	if !regexp.MustCompile(`\bnode_id\b`).MatchString(cols) {
+		t.Errorf("the applied-delta INSERT no longer writes node_id.\n\n"+
+			"That column is the only record of WHERE a count changed, and it cannot be "+
+			"recovered afterwards. Dropping it does not postpone the (node, payload) "+
+			"grain, it forecloses it for every row written while the stamp is gone.\n\n"+
+			"Columns written: %s", strings.Join(strings.Fields(cols), " "))
 	}
 
-	// And the positive half: the station really is arriving as the actor, which is
-	// the column ListCycleEvents reads. Without this, "no node_id" would be
-	// consistent with a query that reads nothing at all.
+	// And the half that is still load-bearing today: the station really is
+	// arriving as the actor, which is the column ListCycleEvents reads. Without
+	// this, a present node_id would be consistent with a surface that had
+	// quietly lost the grain it is actually still serving.
 	//
-	// THE TOKEN CHANGED FROM `d.Station` TO `station` AND THE ASSERTION IS
-	// STRONGER FOR IT. The station is no longer a field on the delta payload —
-	// it was carried twice in one envelope, once by the transport and once by
-	// the sender, and the handler's `if station == "" { … }` reconciliation was
-	// a rule with two possible answers. It is now the applier's first argument,
-	// taken from Envelope.Src.Station. So `d.Station` cannot appear here, and
-	// looking for a bare `station` would match almost anything in this file.
-	//
-	// Matching the ARGUMENT PAIR pins the position, not just the presence: this
-	// is the actor slot of the applied-delta INSERT specifically, immediately
-	// after payload_code. A future edit that keeps the variable but moves it out
-	// of the actor position still fails here, which a substring check on the
-	// identifier alone would not.
-	if !strings.Contains(src, "d.PayloadCode, station,") {
+	// SCOPED TO THIS CALL'S OWN ARGUMENTS, which the predecessor of this test
+	// was not. It matched the token pair against the whole file behind a comment
+	// claiming it pinned the actor slot "specifically" — but `d.PayloadCode,
+	// station,` appears at seven other call sites in applier.go, so moving the
+	// station out of the actor position here left it green. Narrowing to the
+	// window between this INSERT's op literal and its `); err != nil` is what
+	// makes the claim true: the pair has to be in THIS argument list. The token
+	// is `station` and not `d.Station` because the station moved off the delta
+	// payload onto the envelope — it is the applier's first argument now.
+	argsEnd := len(src)
+	if n := strings.Index(src[loc[1]:], "); err != nil"); n >= 0 {
+		argsEnd = loc[1] + n
+	}
+	if !strings.Contains(src[loc[1]:argsEnd], "d.PayloadCode, station,") {
 		t.Error("the applier no longer passes the envelope station into the audit INSERT's " +
 			"actor position — ListCycleEvents reads the actor column for the station and " +
 			"would now return one nameless key for the whole site")

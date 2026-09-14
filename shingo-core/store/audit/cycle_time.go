@@ -51,17 +51,24 @@ const OpBinUOPDelta = "bin_uop_delta"
 // ── THE STATION COMES OUT OF actor, AND THAT IS NOT A TYPO ───────────────────
 //
 // bin_uop_ledger has both a station column and a node_id column, and the applied
-// delta INSERT populates NEITHER: it names
-// (bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata) and
-// passes the Edge station as actor. So on this op the station column is empty
-// and node_id is NULL for every row ever written, historical and future.
-// Reading the station column here would return an empty string for all of them
-// and the page would render one nameless key.
+// delta INSERT populates only the second: it names
+// (bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id)
+// and passes the Edge station as actor. So on this op the station column is
+// empty for every row ever written. Reading it here would return an empty
+// string for all of them and the page would render one nameless key.
 //
 // The consequence for 5.10 is worth stating plainly: the style guide assigns
-// this surface a distribution per (NODE, payload), and node is not recoverable
-// from the truth path. Joining bins to get one would be worse than not having it
-// — a bin's node is where it is NOW, not where it was when the tick landed.
+// this surface a distribution per (NODE, payload), and until the node stamp
+// landed that was unbuildable — node was absent from the truth path, and
+// joining bins to recover one would have been worse than not having it, since
+// a bin's node is where it is NOW, not where it was when the tick landed.
+//
+// The stamp has since closed that gap going forward, but this query is not
+// re-grained yet and should not be: node_id is NULL on every row written
+// before it, with no honest backfill, so grouping on the column today would
+// bucket the entire history under one null key. The re-grain is owed once the
+// column has accumulated a window's worth of rows, and
+// TestCycleSurfaceAwaitsTheNodeRegrain holds both ends of that until it does.
 //
 // ── THE CAP NARROWS THE WINDOW, IT DOES NOT PUNCH HOLES ──────────────────────
 //

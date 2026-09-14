@@ -462,6 +462,12 @@ func AppendBinUOPOverride(execer BinUOPExecer, binID int64, suggestedUOP, operat
 	if len(metadata) > 0 {
 		meta = metadata
 	}
+	// node_id stays NULL. It is not a parameter here and the callers are split:
+	// the applier's observation rows have the node in scope, the release paths
+	// do not. No reader grains override observations by node, so widening the
+	// signature would be cost without a consumer, and a read to recover the node
+	// would be worse — it would return where the bin is now, not where this
+	// happened.
 	if _, err := execer.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,

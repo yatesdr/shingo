@@ -354,9 +354,10 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		havePayloadCode string
 		valueBefore     int
 		anomalyFlagged  bool
+		binNodeID       sql.NullInt64
 	)
-	err = tx.QueryRow(`SELECT payload_code, uop_remaining, anomaly_at IS NOT NULL FROM bins WHERE id=$1`,
-		d.BinID).Scan(&havePayloadCode, &valueBefore, &anomalyFlagged)
+	err = tx.QueryRow(`SELECT payload_code, uop_remaining, anomaly_at IS NOT NULL, node_id FROM bins WHERE id=$1`,
+		d.BinID).Scan(&havePayloadCode, &valueBefore, &anomalyFlagged, &binNodeID)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("BinUOPDelta target bin %d does not exist", d.BinID)
 	}
@@ -487,11 +488,18 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	if err != nil {
 		return fmt.Errorf("marshal BinUOPDelta audit metadata bin=%d: %w", d.BinID, err)
 	}
+	// node_id is the bin's node as of this delta, taken from the bins row this
+	// tx already read — the grain a per-node consumption rate needs, and the
+	// only chance to record it: a later join reports where the bin is NOW, not
+	// where it was when the tick landed. A carrier standing nowhere writes
+	// NULL, which is the honest value rather than a gap; there is no node to
+	// name, and its last or next one would put a place on a count that did not
+	// happen there.
 	if _, err := tx.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata)
-		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6)`,
+		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id)
+		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6, $7)`,
 		d.BinID, valueBefore, valueBefore+d.Delta,
-		d.PayloadCode, station, string(metadata),
+		d.PayloadCode, station, string(metadata), binNodeID,
 	); err != nil {
 		return fmt.Errorf("audit BinUOPDelta bin=%d: %w", d.BinID, err)
 	}
