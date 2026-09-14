@@ -247,7 +247,7 @@ func (s *BinService) Unlock(binID int64) error {
 // BinManifestService.SetFromTemplate so the operator load-payload action
 // audits via bin_uop_ledger.
 //
-// Compat semantics mirror PayloadBinTypeAdvisoryClause used by FindSourceFIFO
+// Compat semantics mirror PayloadBinTypeRuleArm used by FindSourceFIFO
 // / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
 // populated, ignored when empty.
 //

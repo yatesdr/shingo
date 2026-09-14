@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"shingocore/store/internal/helpers"
 	"shingocore/store/plantclaims"
-	"shingocore/store/reservations"
 )
 
 // Extra reads for the Core sourcing PAGE's drill-in. The page's verdicts come
@@ -14,8 +14,9 @@ import (
 // are pure reads.
 
 // PoolBreakdown is a payload's pool split: Free is the count dispatch could
-// source now (the FindSourceFIFO predicate — unclaimed, unreserved, healthy);
-// Held is the rest of the manifest-confirmed pool (claimed, reserved, or locked).
+// source now — the one sourcing predicate, helpers.BinSourceableSQL, the same
+// one FindSourceFIFO asks; Held is the rest of that pool (claimed, reserved or
+// locked).
 //
 // FreeByNode names WHERE the free bins physically are, most-first. Free is the
 // sum of its counts. The page renders this so an operator reading "Free 4" also
@@ -47,25 +48,22 @@ func LoadClaims(db *sql.DB) (map[plantclaims.ProcessKey][]plantclaims.ClaimRow, 
 func PoolBreakdownByPayload(db *sql.DB) (map[string]PoolBreakdown, error) {
 	// One row per (payload, node): the free count at that node and the pool
 	// total there. Grouping by node — not just payload — is what lets the page
-	// say WHERE the free bins are. The predicates are unchanged and still
-	// identical to the computation's FindSourceFIFO filter, so a "free" here
-	// always agrees with the verdict; the extra grouping key does not touch that.
+	// say WHERE the free bins are.
+	//
+	// The pool is helpers.BinSourceableSQL taken in its two halves: membership is
+	// the stock/placement/bin-type half, and the FILTER is the holds half, so
+	// "free" is the whole predicate and "held" is the rest of that same pool.
+	// A free bin here is therefore a bin FindSourceFIFO would pick.
 	rows, err := db.Query(`
 		SELECT b.payload_code,
 		       n.name AS node,
 		       COUNT(*) AS total,
-		       COUNT(*) FILTER (
-		         WHERE b.claimed_by IS NULL
-		           AND b.locked = false
-		           AND NOT ` + reservations.BinSpokenForSQL + `
-		       ) AS free
+		       COUNT(*) FILTER (WHERE ` + helpers.BinUnheldSQL + `) AS free
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code <> ''
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND b.manifest_confirmed = true
-		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
+		  AND ` + helpers.BinCarriesSourceableStockSQL + `
+		  AND ` + helpers.BinAtLiveNodeSQL + helpers.PayloadBinTypeRuleArm("b.payload_code") + `
 		GROUP BY b.payload_code, n.name
 		ORDER BY b.payload_code, free DESC, n.name`)
 	if err != nil {
@@ -115,13 +113,10 @@ func OnLineBreakdownByProcess(db *sql.DB) (map[string]map[string][]NodeCount, er
 		JOIN nodes n ON n.id = b.node_id
 		JOIN style_claims sc ON sc.core_node_name = n.name
 		WHERE b.payload_code <> ''
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
+		  AND ` + helpers.BinAtLiveNodeSQL + `
+		  AND ` + helpers.BinUnheldSQL + `
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'staged'
-		  AND NOT ` + reservations.BinSpokenForSQL + `
 		GROUP BY sc.process_id, b.payload_code, n.name
 		ORDER BY sc.process_id, b.payload_code, n.name`)
 	if err != nil {

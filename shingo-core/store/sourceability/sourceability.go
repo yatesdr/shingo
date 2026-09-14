@@ -5,9 +5,9 @@
 //
 // The whole package is a pure READ. It counts what is available and what is
 // held; it never acquires, reserves, or moves anything. "Available" is exactly
-// what dispatch could source today (the FindSourceFIFO predicate): a bin that is
-// unclaimed, unreserved (no pending reservation), manifest-confirmed, unlocked,
-// healthy, on a real enabled node.
+// what dispatch could source today, because it is counted through the one
+// sourcing predicate — helpers.BinSourceableSQL, the same one FindSourceFIFO
+// asks. This package holds no spelling of it.
 //
 // Compute (this file) is pure — no database, no clock — so it is fixture-tested
 // directly. The DB reads that build its Inputs live in read.go.
@@ -99,8 +99,9 @@ type Inputs struct {
 	Styles []plantclaims.ProcessKey
 	// Claims are the sourceability claims grouped by (process, style).
 	Claims map[plantclaims.ProcessKey][]plantclaims.ClaimRow
-	// Pool is the count of AVAILABLE bins per payload code (the FindSourceFIFO
-	// predicate — unclaimed, unreserved, manifest-confirmed, healthy).
+	// Pool is the count of AVAILABLE bins per payload code, counted through
+	// bins.BinSourceableSQL — the one sourcing predicate, so this figure and
+	// what FindSourceFIFO would actually pick cannot disagree.
 	Pool map[string]int
 	// OnLine is the count of bins ALREADY INSIDE a process carrying what it needs
 	// but which dispatch cannot fetch (status='staged'), keyed process → payload.

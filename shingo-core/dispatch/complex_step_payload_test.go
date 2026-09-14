@@ -13,7 +13,7 @@ import (
 // opening pickup finds nothing) and fetches the incoming style's carrier on the
 // same trip. `Empty` drops the full-bin content match; it does NOT drop
 // bin-type compatibility, which resolves against the payload that reaches
-// PayloadBinTypeAdvisoryClause. So the refill fetched a carrier of the type the
+// PayloadBinTypeRuleArm. So the refill fetched a carrier of the type the
 // press was LEAVING — wrong carrier one direction, and in the other an
 // unsatisfiable wait for a type the plant had none of, which parked two supply
 // legs on the sim until an operator abandoned them.

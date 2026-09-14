@@ -10,7 +10,7 @@ import (
 	"context"
 	"fmt"
 
-	"shingocore/store/reservations"
+	"shingocore/store/bins"
 )
 
 // PayloadAvailability is the per-payload count returned by PreflightAvailability.
@@ -40,19 +40,12 @@ type PreflightResult struct {
 	Available []PayloadAvailability `json:"available"`
 }
 
-// PreflightAvailability counts manifest-confirmed, unclaimed bins per
-// payload at enabled storage nodes — the same eligibility filter
-// FindSourceFIFO uses to pick a source bin. The station argument is
-// reserved for future per-station scoping (e.g. zone-restricted
-// supermarkets); currently it is plant-wide.
-//
-// The query mirrors FindSourceFIFO's WHERE clause minus the FIFO ordering
-// and limit:
-//   - manifest_confirmed = true
-//   - claimed_by IS NULL
-//   - locked = false
-//   - status NOT IN staged/maintenance/flagged/retired/quality_hold
-//   - enabled, non-synthetic node
+// PreflightAvailability counts the bins per payload that dispatch could source
+// right now. It composes bins.BinSourceableSQL — the one sourcing predicate —
+// so what this promises an operator at changeover is what FindSourceFIFO will
+// actually pick, minus the FIFO ordering and limit. The station argument is
+// reserved for future per-station scoping (e.g. zone-restricted supermarkets);
+// currently it is plant-wide.
 func (s *InventoryService) PreflightAvailability(ctx context.Context, station string, payloads []string) (PreflightResult, error) {
 	_ = station // reserved for future per-station scoping
 	result := PreflightResult{
@@ -92,13 +85,7 @@ func (s *InventoryService) PreflightAvailability(ctx context.Context, station st
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code IN (` + string(placeholders) + `)
-		  AND b.manifest_confirmed = true
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND NOT ` + reservations.BinSpokenForSQL + `
+		  AND ` + bins.BinSourceableSQL("b.payload_code") + `
 		GROUP BY b.payload_code`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -143,8 +130,14 @@ func (s *InventoryService) PreflightAvailability(ctx context.Context, station st
 
 // presentCounts counts the bins of each payload that exist as stock at all —
 // free, reserved, claimed, locked or staged, and wherever they stand, a robot
-// included. Only bins out of service (maintenance, flagged, retired, quality
-// hold) and bins on disabled nodes are left out. Zero here is Absent.
+// included. Only bins out of service and bins on disabled nodes are left out.
+// Zero here is Absent.
+//
+// NOT a sourcing reader, and it must not become one: it deliberately keeps the
+// claimed, locked, reserved and staged bins the sourcing predicate refuses,
+// because stock that exists is stock a REQUEST can wait for. It shares only the
+// status rule — bins.SourceableStatusSQL, in place of the fourth hand-spelled
+// reject-list, which admitted any off-spec status by default.
 //
 // It drops every "free right now" filter the query above applies, and the
 // synthetic-node one with them: a claimed bin riding to its destination stands
@@ -155,8 +148,8 @@ func (s *InventoryService) presentCounts(ctx context.Context, placeholders strin
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code IN (`+placeholders+`)
-		  AND b.status NOT IN ('maintenance', 'flagged', 'retired', 'quality_hold')
-		  AND n.enabled = true
+		  AND `+bins.SourceableStatusSQL+`
+		  AND `+bins.NodeEnabledSQL+`
 		GROUP BY b.payload_code`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: presence query: %w", err)

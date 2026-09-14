@@ -400,21 +400,16 @@ func (db *DB) LaneAcceptsInbound(laneID int64) (bool, error) {
 // lane matching the given payload code. Cross-aggregate composition
 // (bins ↔ nodes).
 //
-// The is_synthetic = false guard is defense-in-depth: today _TRANSIT
-// has no parent_id so it can't be a lane child, but if a future
-// migration adds a synthetic ghost-slot under a lane, this filter
-// prevents the lane reader from claiming an in-flight bin.
+// A sourcing reader: the eligibility question is bins.BinSourceableSQL and this
+// adds only the lane scope and reachability. The synthetic half of that
+// predicate is defense-in-depth here — today _TRANSIT has no parent_id so it
+// cannot be a lane child, but a future migration adding a synthetic ghost-slot
+// under a lane must not let this reader claim an in-flight bin.
 func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error) {
 	query := fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
-		  AND COALESCE(n.is_synthetic, false) = false
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.manifest_confirmed = true
-		  AND `+bins.SourceableStatusSQL+`
-		  AND b.status <> 'staged'
+		  AND `+bins.BinSourceableSQL("b.payload_code")+`
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND NOT `+reservations.BinSpokenForSQL+`
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
 		LIMIT 1`, bins.BinJoinQuery, helpers.ReachableSQL("n"))
@@ -449,10 +444,13 @@ func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 // loaded_at/created_at timestamp. Unlike FindBuriedBin (which returns the
 // shallowest buried bin for cheapest reshuffle), this returns the oldest
 // buried bin for strict FIFO correctness. Cross-aggregate composition.
+//
+// A DIG READER, NOT A SOURCING READER — see FindBuriedBin for why the two keep
+// their own spelling and stay reservation-blind.
 func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
-		  AND COALESCE(n.is_synthetic, false) = false
+		  AND `+bins.BinAtLiveNodeSQL+`
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
@@ -475,10 +473,19 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 
 // FindBuriedBin finds a bin that exists in a lane but is blocked by
 // shallower bins. Cross-aggregate composition (bins ↔ nodes).
+//
+// A DIG READER, NOT A SOURCING READER. "Which buried bin do I dig" is a
+// different question from "may this bin be sourced", so this does not compose
+// bins.BinSourceableSQL: it is deliberately reservation-blind, because a
+// reservation on a buried bin is the reason it needs digging rather than a
+// reason to leave it. It takes exactly one rule from the sourcing side —
+// BinAtLiveNodeSQL, because a disabled node is dead to automation and digs are
+// automation (2026-09-14 ruling). Its verdicts are photographed in
+// dispatch/binresolver/testdata/golden/dig_readers.json.
 func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
-		  AND COALESCE(n.is_synthetic, false) = false
+		  AND `+bins.BinAtLiveNodeSQL+`
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true

@@ -106,10 +106,6 @@ type eligSQLRow struct {
 	// store.FindSourceBinInLane — the lane-scoped accessible picker.
 	LaneAccessible string `json:"lane_accessible"`
 
-	// store.FindBuriedBin / store.FindOldestBuriedBin — the two buried readers.
-	LaneBuried       string `json:"lane_buried"`
-	LaneBuriedOldest string `json:"lane_buried_oldest"`
-
 	// sourceability availablePoolByPayload, reached through BuildInputs.
 	SourceabilityPool string `json:"sourceability_pool"`
 
@@ -118,6 +114,12 @@ type eligSQLRow struct {
 
 	// service.InventoryService.PreflightAvailability — the changeover preflight.
 	InventoryPreflight string `json:"inventory_preflight"`
+
+	// presentCounts, the same call's Absent signal. Not a sourcing reader — it
+	// counts stock that EXISTS anywhere, claimed and staged and riding a robot
+	// included — but it spelled the status rule a fourth way, so the arm the
+	// 2026-09-14 ruling replaces is watched here.
+	InventoryPreflightPresent string `json:"inventory_preflight_present"`
 
 	// bins.EmptyCarrierWhere — the empty-carrier predicate every FindEmpty*
 	// composes from.
@@ -377,12 +379,6 @@ func eligSQLVerdicts(ctx context.Context, t *testing.T, db *store.DB,
 	laneBin, err := db.FindSourceBinInLane(f.LaneID, f.LaneAsk)
 	row.LaneAccessible = eligVerdict(err == nil && laneBin != nil && laneBin.ID == f.LaneBinID)
 
-	buried, _, err := db.FindBuriedBin(f.BuriedLane, f.BuriedAsk)
-	row.LaneBuried = eligVerdict(err == nil && buried != nil)
-
-	oldest, _, err := db.FindOldestBuriedBin(f.BuriedLane, f.BuriedAsk)
-	row.LaneBuriedOldest = eligVerdict(err == nil && oldest != nil)
-
 	in, err := sourceability.BuildInputs(db.DB, time.Hour)
 	if err != nil {
 		t.Fatalf("%s: BuildInputs: %v", f.Name, err)
@@ -406,6 +402,16 @@ func eligSQLVerdicts(ctx context.Context, t *testing.T, db *store.DB,
 		}
 	}
 	row.InventoryPreflight = eligVerdict(preTaken)
+
+	// Absent is the complement of presentCounts: a payload lands there exactly
+	// when that query counted nothing.
+	present := true
+	for _, a := range pre.Absent {
+		if a == f.FlatAsk {
+			present = false
+		}
+	}
+	row.InventoryPreflightPresent = eligVerdict(present)
 
 	// The empty-carrier predicate is an exported fragment, not a function, so
 	// the fragment itself is interpolated — the same way the status pair is

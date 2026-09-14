@@ -384,14 +384,11 @@ func NotFencedArm() string {
 // It opens the WHERE. Arms append to it; nothing composes in front of it.
 const EmptyCarrierWhere = `
 	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
-	  AND b.claimed_by IS NULL
-	  AND b.locked = false
+	  AND ` + BinUnheldSQL + `
 	  AND b.node_id IS NOT NULL
-	  AND n.enabled = true
-	  AND n.is_synthetic = false
+	  AND ` + BinAtLiveNodeSQL + `
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
-	  AND NOT ` + reservations.BinSpokenForSQL
+	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)`
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
 //
@@ -520,35 +517,30 @@ var EmptyOfTypeInGroupWhere = EmptyCarrierWhere +
 //
 //	SourceableStatusSQL + ` AND b.status <> 'staged'`
 //
-// Assumes the bins table is aliased `b`, as BinJoinQuery establishes.
-const SourceableStatusSQL = `b.status IN ('available','staged')`
+// The sourcing predicate is defined once, in store/internal/helpers — the one
+// package every store aggregate may import (depguard's store-sub-pkg-isolation
+// bars store/sourceability from reaching store/bins, and Go's internal rule
+// bars service/ from reaching store/internal). These are that definition's
+// names for callers outside store/, not second copies: the SQL text exists in
+// exactly one place. See helpers/bin_sourceable.go for the rule and the
+// 2026-09-14 rulings behind it.
+const (
+	SourceableStatusSQL          = helpers.SourceableStatusSQL
+	NodeEnabledSQL               = helpers.NodeEnabledSQL
+	BinAtLiveNodeSQL             = helpers.BinAtLiveNodeSQL
+	BinUnheldSQL                 = helpers.BinUnheldSQL
+	BinCarriesSourceableStockSQL = helpers.BinCarriesSourceableStockSQL
+)
 
-// PayloadBinTypeAdvisoryClause enforces payload_bin_types as an advisory
-// allow-list: when the table has rules for the payload, only matching bin
-// types are eligible; when no rules exist for the payload, any bin type
-// is eligible. Used by FindEmptyCompatible (empty-bin retrieve) and
-// FindSourceFIFO (full-bin retrieve) so the two readers stay coherent.
-//
-// Both branches reference $1 (payloadCode) — callers must place
-// payloadCode at parameter position $1.
-//
-// Rationale: the allow-list table is sparsely populated in practice. A
-// pre-2026-04-27 hard INNER JOIN on this table starved orders for
-// payloads with no rules even when compatible empty bins existed. Every
-// other reader (FindSourceFIFO, SetManifest writes) ignores the
-// table entirely. Advisory enforcement matches that prior practice while
-// preserving the constraint for plants that DO populate the table.
-const PayloadBinTypeAdvisoryClause = `
-	  AND (
-	    b.bin_type_id IN (
-	      SELECT pbt.bin_type_id FROM payload_bin_types pbt
-	      JOIN payloads p ON p.id = pbt.payload_id WHERE p.code = $1
-	    )
-	    OR NOT EXISTS (
-	      SELECT 1 FROM payload_bin_types pbt
-	      JOIN payloads p ON p.id = pbt.payload_id WHERE p.code = $1
-	    )
-	  )`
+// PayloadBinTypeRuleArm — see helpers.PayloadBinTypeRuleArm.
+func PayloadBinTypeRuleArm(payloadExpr string) string {
+	return helpers.PayloadBinTypeRuleArm(payloadExpr)
+}
+
+// BinSourceableSQL — see helpers.BinSourceableSQL.
+func BinSourceableSQL(payloadExpr string) string {
+	return helpers.BinSourceableSQL(payloadExpr)
+}
 
 // AccessibleEmptyOrder ranks compatible empty-bin candidates by least-work-to-
 // grab and is the trailing ORDER BY / LIMIT for every empty-source query.
@@ -1025,22 +1017,21 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // happen on every arrival path. Plant test 2026-04-27 (order #462 stuck
 // on 'awaiting inventory' with empties at SMN_002 / SMN_003 visible).
 //
-// Compatibility enforcement (post-2026-04-27 v2 fix): advisory.
-// payload_bin_types is treated as an allow-list — rows say "this payload IS
-// allowed in this bin type." Absence of rows for a payload means "no
-// restrictions configured" → any bin works. This matches how every other
-// reader treats the table (FindSourceFIFO, SetManifest both ignore it) and
-// how the admin UI populates it. The previous form used
-// hard INNER JOINs to payload_bin_types/payloads which eliminated all
-// candidates when no rules existed — the cause of the 2026-04-27 starvation.
+// Compatibility enforcement: the payload_bin_types rule, via
+// PayloadBinTypeRuleArm. Rows say "this payload IS allowed in this bin type",
+// and where a payload has rows the rule is HARD — carriers are not flexed
+// (2026-09-14 ruling). Absence of rows means the payload has not been described
+// yet, not that anything goes: the fallback exists because the previous form
+// used hard INNER JOINs that eliminated every candidate when no rules existed,
+// which caused the 2026-04-27 starvation. Since 2026-09-14 every sourcing
+// reader composes this rule; it is no longer one reader's private check.
 // FindEmptyCompatibleInGroup is FindEmptyCompatible scoped to descendants of
 // a synthetic group node (NGRP / LANE). Used by planRetrieveEmpty when the
 // edge sends a source-group constraint, so an empty-bin retrieve picks from
 // the configured supermarket instead of any compatible empty in the system.
 //
-// Mirrors FindEmptyCompatible's availability gates (status='available',
-// claimed_by IS NULL, locked=false, n.enabled, non-synthetic node, empty
-// payload_code, payload-bin-type advisory) but adds a recursive descendant
+// Mirrors FindEmptyCompatible's availability gates (EmptyCarrierWhere plus the
+// payload_bin_types rule) but adds a recursive descendant
 // filter rooted at groupNodeID. excludeNodeID > 0 skips bins at that node
 // (typically the destination — same-node retrieve guard).
 //
@@ -1215,7 +1206,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 		EmptyCarrierWhere + InGroupArm() + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner)) +
-		PayloadBinTypeAdvisoryClause + AccessibleEmptyOrder
+		PayloadBinTypeRuleArm("$1") + AccessibleEmptyOrder
 	return ScanBin(db.QueryRow(q, a.vals...))
 }
 
@@ -1224,8 +1215,8 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 
 	build := func(withZone bool) (string, []any) {
 		a := &emptyQueryArgs{}
-		// $1 is the payload for PayloadBinTypeAdvisoryClause, which names it
-		// explicitly — so it is added first whether or not the zone arm follows.
+		// The bin-type rule names the payload by parameter; adding it first keeps
+		// the position stable whether or not the zone arm follows.
 		payloadP := a.add(payloadCode)
 		where := EmptyCarrierWhere
 		if withZone {
@@ -1239,8 +1230,8 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		}
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
-		_ = payloadP
-		return cte + BinJoinQuery + where + PayloadBinTypeAdvisoryClause + AccessibleEmptyOrder, a.vals
+		return cte + BinJoinQuery + where +
+			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + AccessibleEmptyOrder, a.vals
 	}
 
 	if preferZone != "" {

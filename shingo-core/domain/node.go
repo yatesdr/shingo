@@ -5,10 +5,10 @@ import "time"
 // TransitNodeName is the well-known name of the synthetic node that
 // holds bins while they are physically in transit between their source
 // and destination. Created by migration v15. Bins occupying this node
-// have `is_synthetic=true` on the node row, which the existing
-// is-synthetic-false filters in FindSourceFIFO, FindEmptyCompatible,
-// and lane finders auto-exclude — so in-flight bins never get re-claimed
-// by another order.
+// have `is_synthetic=true` on the node row, which the synthetic half of the
+// shared sourcing predicate (helpers.BinAtLiveNodeSQL) excludes for every
+// reader that composes it — so in-flight bins never get re-claimed by
+// another order.
 const TransitNodeName = "_TRANSIT"
 
 // Node is any addressable location in the facility graph — physical

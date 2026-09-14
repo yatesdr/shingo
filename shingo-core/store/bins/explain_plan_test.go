@@ -128,7 +128,7 @@ func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
 
 	// any-zone branch query — same shape as the post-2026-04-27
 	// FindEmptyCompatible. Reuses the exported BinJoinQuery and
-	// PayloadBinTypeAdvisoryClause constants so any future drift in
+	// PayloadBinTypeRuleArm constants so any future drift in
 	// the production query is reflected here automatically.
 	anyZoneQuery := fmt.Sprintf(`
 		%s
@@ -143,7 +143,7 @@ func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
 		  %s
 		ORDER BY b.id ASC
 		LIMIT 1
-	`, bins.BinJoinQuery, bins.PayloadBinTypeAdvisoryClause)
+	`, bins.BinJoinQuery, bins.PayloadBinTypeRuleArm("$1"))
 
 	runExplain := func(label, payloadCode, query string, args ...any) {
 		t.Run(label, func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
 		  %s
 		ORDER BY b.loaded_at ASC NULLS LAST, b.id ASC
 		LIMIT 1
-	`, bins.BinJoinQuery, bins.PayloadBinTypeAdvisoryClause)
+	`, bins.BinJoinQuery, bins.PayloadBinTypeRuleArm("$1"))
 
 	// Pick a payload code that has loaded bins in the seeded data.
 	// EXP-PL-7 is in the rules-enforced 1..50 range and gets 70%

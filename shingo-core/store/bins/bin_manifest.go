@@ -8,7 +8,6 @@ import (
 
 	"shingo/protocol/clock"
 	"shingocore/domain"
-	"shingocore/store/reservations"
 )
 
 // ManifestEntry is the bin-manifest line-item domain type — one CatID
@@ -117,33 +116,29 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 // that node. Pass the order's destination node so a same-node retrieve is
 // impossible. See SHINGO_TODO.md "Same-node retrieve" entry.
 //
-// Compatibility enforcement (post-2026-04-27 v2 fix): advisory.
-// Uses PayloadBinTypeAdvisoryClause to keep this reader coherent with
-// FindEmptyCompatible — when payload_bin_types has rules for the payload,
-// only matching bin types are returned; when no rules exist, any bin
-// matching payload_code is returned. Pre-fix this function ignored the
-// table entirely, producing an asymmetry where the empty-bin retrieve
-// rejected types the full-bin retrieve happily returned. The plant
-// starvation symptom was the empty-bin side; aligning here prevents the
-// inverse footgun (full bin loaded into a type the rules say is forbidden,
-// then sourceable as that incompatible type forever).
-// ── THE ONE SITE IN THE STATUS SWEEP WHERE BEHAVIOUR ACTUALLY CHANGED ─────
+// The whole eligibility question is bins.BinSourceableSQL; this reader adds
+// only FIFO order and the same-node exclusion. It has no private spelling of
+// status, holds, node liveness or the bin-type rule, and must not grow one.
 //
-// Recorded where it happened rather than only in a commit message. This query's
-// status clause was a REJECT-LIST — `status NOT IN ('staged','maintenance',
-// 'flagged','retired','quality_hold')` — which answers TRUE for any value it does
-// not name. The status column carries no CHECK constraint (domain.BinStatus says
-// so, and write-time validation is deferred on purpose so operators can set
-// off-spec states during incident recovery), so a hand-corrected row, or a
-// seventh status added to the enum and not to this list, was SOURCEABLE by
-// default here. It is now refused by default.
+// ── THE OFF-SPEC STATUS WARNING NOW APPLIES PLANT-WIDE ────────────────────
 //
-// `644e2d50`'s message says "Equivalent for every declared status". That is true
-// and it is not the whole claim: the six declared statuses behave identically and
-// only an undeclared one moves. The direction is deliberate — fail-closed is the
-// right default for "should a robot drive to this bin" — but it means a plant
-// carrying off-spec status values will see those bins stop being sourced, which
-// presents as a material shortage rather than as a rejection. Worth a
+// This query once carried a REJECT-LIST — `status NOT IN ('staged',
+// 'maintenance','flagged','retired','quality_hold')` — which answers TRUE for
+// any value it does not name. The status column carries no CHECK constraint
+// (domain.BinStatus says so, and write-time validation is deferred on purpose
+// so operators can set off-spec states during incident recovery), so a
+// hand-corrected row, or a seventh status added to the enum and not to the
+// list, was SOURCEABLE by default. It was converted to the allow-list first,
+// and for a while this was the only site where that changed behaviour.
+//
+// It is not any more. On 2026-09-14 the remaining four hand-spelled
+// reject-lists — the sourceability pool, the pool breakdown, the changeover
+// preflight and its presence count — were deleted in favour of the same
+// allow-list. Off-spec statuses now fail closed everywhere, which is the
+// intended direction: fail-closed is right for "should a robot drive to this
+// bin". But it means a plant carrying off-spec status values sees those bins
+// stop being sourced AND stop being counted, and it presents as a material
+// shortage rather than as a rejection. Worth a
 // `SELECT status, count(*) FROM bins GROUP BY 1` before deploying to a site.
 func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, error) {
 	// Empty payloadCode is always a bug here. After the bin-as-truth
@@ -157,16 +152,9 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 	}
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.payload_code = $1
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.manifest_confirmed = true
-		  AND `+SourceableStatusSQL+`
-		  AND b.status <> 'staged'
+		  AND %s
 		  AND ($2 = 0 OR b.node_id != $2)
-		  AND NOT `+reservations.BinSpokenForSQL+`%s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
-		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
+		LIMIT 1`, BinJoinQuery, BinSourceableSQL("$1")), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }

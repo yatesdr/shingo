@@ -179,7 +179,7 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // opening pickup has to find the bin physically on the line, while the carrier
 // it fetches has to suit the style arriving. Marking the leg Empty drops the
 // full-bin content match but not bin-type compatibility, which resolves against
-// whatever payload reaches PayloadBinTypeAdvisoryClause — so before the step
+// whatever payload reaches PayloadBinTypeRuleArm — so before the step
 // could say, the press was handed a carrier of the type it was leaving
 // (sim 2026-08-24, N1-c).
 //

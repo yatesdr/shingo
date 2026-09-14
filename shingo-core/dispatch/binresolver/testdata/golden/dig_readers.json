@@ -1,0 +1,112 @@
+[
+  {
+    "fixture": "full_of_X_confirmed",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "partial_of_X_confirmed",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "empty_carrier",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "wrong_part",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "zero_uop_still_labelled",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "negative_uop_labelled",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "over_capacity",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "cap_unknown_zero",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "unconfirmed_full",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "unconfirmed_partial",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "status_staged",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "status_flagged",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "status_maintenance",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "status_quality_hold",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "status_retired",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "status_off_spec",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "claimed",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "locked",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "reserved_pending",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  },
+  {
+    "fixture": "node_disabled",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "node_synthetic",
+    "lane_buried": "rejected",
+    "lane_buried_oldest": "rejected"
+  },
+  {
+    "fixture": "bin_type_rule_excludes",
+    "lane_buried": "",
+    "lane_buried_oldest": ""
+  }
+]

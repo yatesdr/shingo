@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"shingocore/store/internal/helpers"
 	"shingocore/store/plantclaims"
-	"shingocore/store/reservations"
 )
 
 // BuildInputs assembles the plant snapshot Compute consumes: the mirrored styles
@@ -89,23 +89,16 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 }
 
 // availablePoolByPayload counts, per payload, the bins dispatch could source
-// right now. The predicate is exactly FindSourceFIFO's (bin_manifest.go): a bin
-// that is unclaimed, unlocked, manifest-confirmed, healthy-status, on a real
-// enabled non-synthetic node, with no pending reservation. This is a pure count
-// — it holds nothing.
+// right now. It composes helpers.BinSourceableSQL — the one sourcing predicate,
+// the same one FindSourceFIFO asks — so this count and that pick cannot
+// disagree. This is a pure count; it holds nothing.
 func availablePoolByPayload(db *sql.DB) (map[string]int, error) {
 	rows, err := db.Query(`
 		SELECT b.payload_code, COUNT(*)
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code <> ''
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.manifest_confirmed = true
-		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
-		  AND NOT ` + reservations.BinSpokenForSQL + `
+		  AND ` + helpers.BinSourceableSQL("b.payload_code") + `
 		GROUP BY b.payload_code`)
 	if err != nil {
 		return nil, fmt.Errorf("sourceability: available pool: %w", err)
@@ -161,13 +154,10 @@ func onLinePoolByProcess(db *sql.DB) (map[string]map[string]int, error) {
 		JOIN nodes n ON n.id = b.node_id
 		JOIN style_claims sc ON sc.core_node_name = n.name
 		WHERE b.payload_code <> ''
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
+		  AND ` + helpers.BinAtLiveNodeSQL + `
+		  AND ` + helpers.BinUnheldSQL + `
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'staged'
-		  AND NOT ` + reservations.BinSpokenForSQL + `
 		GROUP BY sc.process_id, b.payload_code`)
 	if err != nil {
 		return nil, fmt.Errorf("sourceability: on-line pool: %w", err)
