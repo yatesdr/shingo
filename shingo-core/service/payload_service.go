@@ -43,14 +43,92 @@ func (s *PayloadService) GetByCode(code string) (*payloads.Payload, error) {
 	return s.db.GetPayloadByCode(code)
 }
 
-// Update persists field changes on a payload template.
+// Update persists field changes on a payload template, refusing a CODE change
+// while bins still carry the old one. Every other field is freely editable.
 func (s *PayloadService) Update(p *payloads.Payload) error {
+	if before, err := s.db.GetPayload(p.ID); err == nil && before != nil && before.Code != p.Code {
+		if err := s.refuseIfBinsCarry(before.Code, "change the code for"); err != nil {
+			return err
+		}
+	}
 	return s.db.UpdatePayload(p)
 }
 
-// Delete removes a payload template.
+// Delete removes a payload template, refusing while bins still carry its code.
 func (s *PayloadService) Delete(id int64) error {
+	p, err := s.db.GetPayload(id)
+	if err != nil {
+		return err
+	}
+	if p != nil {
+		if err := s.refuseIfBinsCarry(p.Code, "delete payload template"); err != nil {
+			return err
+		}
+	}
 	return s.db.DeletePayload(id)
+}
+
+// refuseIfBinsCarry blocks a rename or delete that would orphan live bins.
+//
+// ── THE COLUMN THAT SKIPPED ITS FOREIGN KEY ──────────────────────────────────
+//
+// bins.payload_code is a bare TEXT column. Two columns above it in the same
+// table, bin_type_id is NOT NULL REFERENCES bin_types(id) — so the database
+// itself refuses to delete a carrier type that bins are using, while a payload
+// template could be renamed or deleted out from under every bin that names it.
+//
+// Those bins then resolve no template. The robot group degrades to "" — the
+// vendor default, any robot — because a config lookup must never stall material
+// flow, and that degradation is correct for a lookup that failed. What is not
+// correct is reaching it by an ordinary config action: a full heavy bin becomes
+// eligible for a 600kg robot, for as long as those bins hold that payload, with
+// no error anywhere. The order dispatches normally.
+//
+// ── REFUSE, DO NOT CASCADE ───────────────────────────────────────────────────
+//
+// Rewriting the bins would also have to rewrite orders.payload_code, which
+// carries the same denormalised string — so fixing a typo would mean editing
+// completed historical orders. And a bin whose code changes mid-flight can
+// strand an order already sourcing against the old one. A foreign key refuses;
+// it does not cascade, and this is that protection applied by hand to the
+// column that never got one.
+//
+// If the friction proves real, a cascade can be added later with the
+// in-flight-order check it would need. It is not the place to start.
+//
+// EXISTING orphans are unaffected: this prevents new ones and changes nothing
+// about how a bin already carrying a dead code dispatches.
+func (s *PayloadService) refuseIfBinsCarry(code, action string) error {
+	if code == "" {
+		return nil
+	}
+	// Enough labels to go find them, not so many that the message is a wall.
+	labels, total, err := s.db.BinLabelsByPayloadCode(code, 5)
+	if err != nil {
+		// A failed read must not become a silent allow: the whole point is that
+		// the unguarded path is invisible.
+		return fmt.Errorf("cannot verify which bins carry %q: %w", code, err)
+	}
+	if total == 0 {
+		return nil
+	}
+	msg := fmt.Sprintf("cannot %s %q — %s still carrying it. Clear or reassign those bins first",
+		action, code, pluralBins(total))
+	if len(labels) > 0 {
+		shown := strings.Join(labels, ", ")
+		if total > len(labels) {
+			shown += fmt.Sprintf(", and %d more", total-len(labels))
+		}
+		msg += " (" + shown + ")"
+	}
+	return errors.New(msg)
+}
+
+func pluralBins(n int) string {
+	if n == 1 {
+		return "1 bin is"
+	}
+	return fmt.Sprintf("%d bins are", n)
 }
 
 // List returns every payload template.

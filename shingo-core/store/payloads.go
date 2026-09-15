@@ -73,3 +73,9 @@ func (db *DB) ListPayloadBinTypeMappings() ([][2]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// BinLabelsByPayloadCode reports which bins currently carry a payload code, for
+// the rename/delete guard in service.PayloadService.
+func (db *DB) BinLabelsByPayloadCode(code string, limit int) ([]string, int, error) {
+	return bins.LabelsByPayloadCode(db.DB, code, limit)
+}
