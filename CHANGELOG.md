@@ -3,6 +3,26 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-15 — A drained bin may go to a smaller robot than a full one
+
+- A payload names a second robot group and a fill threshold; at or below it, the bin dispatches to
+  that group instead — so a 600kg robot can answer a heavy bin that is nearly empty
+- A carrier type names the group required to move it, which refuses the relaxation and never applies
+  to a loaded bin: an empty FG rack stays on the big robots whatever its payloads permit
+- The decision is one pure function over a bin row, and every fact it needs was already on the join
+- The threshold is cross-multiplied, never divided — integer division truncates to 0 for every
+  partially-drained bin, which would have relaxed the whole plant
+- A negative count is not a drain signal: it cannot bound the remaining fraction either way, so it
+  dispatches on the payload's own group and says so in the log
+- All three fleet-order builders resolve the group through one site and record which rule decided;
+  only the plain path logged it before, so a wrong-robot report on a complex or gated leg could not
+  be chased
+- An empty-carrier fetch ignores the payload tag the carrier is still wearing from its last life
+- `dispatchGated` loses a parameter that existed only to feed the old helper
+- Renaming or deleting a payload template is refused while bins still carry its code — `payload_code`
+  is the column that skipped its foreign key, and an orphaned bin silently dispatches to any robot
+- Unconfigured plants dispatch byte-identically: every new column defaults to off
+
 ## 2026-09-13 — The flow composer: one model, two screens, a per-press switch
 
 - An operator edits the press flow at the station; an engineer composes the same flow on the desktop
