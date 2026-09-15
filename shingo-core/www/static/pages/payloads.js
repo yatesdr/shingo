@@ -250,6 +250,40 @@ function setSelectedBinTypes(hostId, ids) {
   });
 }
 
+// refreshNearEmptyHint turns the near-empty percentage into the unit count an
+// operator can actually check against the bin in front of them.
+//
+// THE THRESHOLD IS STORED AS A PERCENTAGE but capacities across one plant span
+// three orders of magnitude (24 to 12000 at Hopkinsville), so "20%" on its own
+// tells a person nothing about how drained the bin has to be. The read-out is
+// what makes the number mean something at the moment it is typed.
+//
+// It also says what 0 does, because 0 reads like an off switch and is not one:
+// the checkbox is the off switch, and 0 relaxes only an exactly-empty bin.
+function refreshNearEmptyHint(prefix) {
+  // The create and edit modals disagree about their own id prefixes ('plc-uop'
+  // vs 'pl-edit-uop'); everything else is uniform.
+  var uopId = prefix === 'plc' ? 'plc-uop' : 'pl-edit-uop';
+  var hint = document.getElementById(prefix + '-near-empty-hint');
+  if (!hint) { return; }
+  var on = document.getElementById(prefix + '-near-empty-on');
+  if (on && !on.checked) {
+    hint.textContent = 'Off - every move uses the Robot Group above.';
+    return;
+  }
+  var cap = parseInt((document.getElementById(uopId) || {}).value) || 0;
+  var pct = parseInt((document.getElementById(prefix + '-near-empty-pct') || {}).value) || 0;
+  if (pct === 0) {
+    hint.textContent = 'Only an empty bin relaxes. Raise the percentage to include partly-drained bins.';
+    return;
+  }
+  if (cap <= 0) {
+    hint.textContent = 'Set a UoP capacity above - without one there is no fraction to compare and every bin stays on the Robot Group above.';
+    return;
+  }
+  hint.textContent = 'Relaxes at or below ' + Math.floor(cap * pct / 100) + ' of ' + cap + ' units.';
+}
+
 /* --- Payload modals --- */
 // loadRobotGroups fills the shared <datalist> with robot-group suggestions from
 // the live fleet scene. Best-effort: on an RDS outage or the sim backend
@@ -378,6 +412,9 @@ function submitPLCreate(el, evt) {
     description: document.getElementById('plc-notes').value,
     uop_capacity: parseInt(document.getElementById('plc-uop').value) || 0,
     robot_group: document.getElementById('plc-robot-group').value.trim(),
+    near_empty_enabled: document.getElementById('plc-near-empty-on').checked,
+    near_empty_robot_group: document.getElementById('plc-near-empty-group').value.trim(),
+    near_empty_threshold_pct: parseInt(document.getElementById('plc-near-empty-pct').value) || 0,
     advanced_load_sequence: document.getElementById('plc-load-sequence').value,
     bin_type_ids: getSelectedBinTypes('plc-bin-types'),
     manifest: manifest.items
@@ -407,6 +444,10 @@ function openEditPayloadModal(btn) {
   // Pre-fill from the saved value (server-rendered data attribute), NOT from
   // RDS — so editing works and the group is preserved even if RDS is down.
   document.getElementById('pl-edit-robot-group').value = d.robotGroup || '';
+  document.getElementById('ple-near-empty-on').checked = d.nearEmptyOn === '1';
+  document.getElementById('ple-near-empty-group').value = d.nearEmptyGroup || '';
+  document.getElementById('ple-near-empty-pct').value = d.nearEmptyPct || '0';
+  refreshNearEmptyHint('ple');
   loadLoadSequences('pl-edit-load-sequence', d.loadSequence || '');
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   // Clear any stale bin-type selection synchronously so the modal opens with
@@ -465,6 +506,9 @@ function submitPLEdit(el, evt) {
     description: document.getElementById('pl-edit-notes').value,
     uop_capacity: parseInt(document.getElementById('pl-edit-uop').value) || 0,
     robot_group: document.getElementById('pl-edit-robot-group').value.trim(),
+    near_empty_enabled: document.getElementById('ple-near-empty-on').checked,
+    near_empty_robot_group: document.getElementById('ple-near-empty-group').value.trim(),
+    near_empty_threshold_pct: parseInt(document.getElementById('ple-near-empty-pct').value) || 0,
     advanced_load_sequence: document.getElementById('pl-edit-load-sequence').value,
     bin_type_ids: getSelectedBinTypes('ple-bin-types'),
     manifest: manifest.items
@@ -603,6 +647,7 @@ delegateActions(document.body, {
     openEditPayloadModal,
     openPayloadImport,
     refreshFullBinCells,
+    refreshNearEmptyHint,
     removeParentElement,
     syncCodeFromPart,
     submitPLCreate,

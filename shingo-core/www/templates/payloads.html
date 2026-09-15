@@ -66,7 +66,7 @@
         <td>{{.ID}}</td>
         <td><code>{{.Code}}</code></td>
         <td>{{.UOPCapacity}}</td>
-        <td class="text-muted" style="font-size:0.8rem">{{if .RobotGroup}}{{.RobotGroup}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td class="text-muted" style="font-size:0.8rem">{{if .RobotGroup}}{{.RobotGroup}}{{else}}<span class="text-muted">-</span>{{end}}{{if .NearEmptyEnabled}}<br><span title="near-empty relaxation">&rarr; {{if .NearEmptyRobotGroup}}{{.NearEmptyRobotGroup}}{{else}}any robot{{end}} @ &le;{{.NearEmptyThresholdPct}}%</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.PayloadBinTypes .ID}}{{range $i, $bt := .}}{{if $i}}, {{end}}{{$bt}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
@@ -78,6 +78,9 @@
             data-notes="{{.Description}}"
             data-uop="{{.UOPCapacity}}"
             data-robot-group="{{.RobotGroup}}"
+            data-near-empty-on="{{if .NearEmptyEnabled}}1{{end}}"
+            data-near-empty-group="{{.NearEmptyRobotGroup}}"
+            data-near-empty-pct="{{.NearEmptyThresholdPct}}"
             data-load-sequence="{{.AdvancedLoadSequence}}">Edit</button>
           <form method="POST" action="/payloads/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete this payload?">
             <input type="hidden" name="id" value="{{.ID}}">
@@ -142,6 +145,20 @@
       <div class="form-group mb-1">
         <label>Robot Group <span class="tooltip-trigger" title="SEER robot-dispatch group for this payload's moves (e.g. a 1500kg group). Blank = vendor default. Suggestions come from the live fleet scene.">?</span></label>
         <input type="text" name="robot_group" id="plc-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
+      </div>
+      <div class="form-group mb-1">
+        <label>Near-Empty Robot Group <span class="tooltip-trigger" title="When the bin is empty or at/below the threshold, dispatch it to this group instead (e.g. let the 600kg robots answer a drained heavy bin). The box below is the switch: unticked keeps every move on the Robot Group above. A BLANK group here is meaningful - it means the vendor default, any robot.">?</span></label>
+        <label style="font-weight:normal;display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem">
+          <input type="checkbox" name="near_empty_enabled" id="plc-near-empty-on" value="1" data-action-change="refreshNearEmptyHint:plc">
+          Allow another robot group to respond when the bin is empty or near empty
+        </label>
+        <div style="display:flex;gap:0.4rem;align-items:center">
+          <input type="text" name="near_empty_robot_group" id="plc-near-empty-group" list="robot-groups-list" placeholder="(any robot - vendor default)" autocomplete="off" style="flex:1">
+          <label style="font-weight:normal;white-space:nowrap">at or below</label>
+          <input type="number" name="near_empty_threshold_pct" id="plc-near-empty-pct" value="0" min="0" max="100" style="width:5rem" data-action-input="refreshNearEmptyHint:plc">
+          <span style="white-space:nowrap">% full</span>
+        </div>
+        <div class="text-muted" style="font-size:0.8rem;margin-top:0.25rem" id="plc-near-empty-hint"></div>
       </div>
       <div class="form-group mb-1">
         <label>Advanced Load Sequence <span class="tooltip-trigger" title="Expands this payload's LOAD leg into a named binTask sequence at the load location (e.g. child-cart interlock). Blank = today's single load block. The named tasks must be configured in RDS at the payload's load locations — use Check to verify.">?</span></label>
@@ -216,6 +233,20 @@
       <div class="form-group mb-1">
         <label>Robot Group <span class="tooltip-trigger" title="SEER robot-dispatch group for this payload's moves. Blank = vendor default. Suggestions come from the live fleet scene.">?</span></label>
         <input type="text" name="robot_group" id="pl-edit-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
+      </div>
+      <div class="form-group mb-1">
+        <label>Near-Empty Robot Group <span class="tooltip-trigger" title="When the bin is empty or at/below the threshold, dispatch it to this group instead (e.g. let the 600kg robots answer a drained heavy bin). The box below is the switch: unticked keeps every move on the Robot Group above. A BLANK group here is meaningful - it means the vendor default, any robot.">?</span></label>
+        <label style="font-weight:normal;display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem">
+          <input type="checkbox" name="near_empty_enabled" id="ple-near-empty-on" value="1" data-action-change="refreshNearEmptyHint:ple">
+          Allow another robot group to respond when the bin is empty or near empty
+        </label>
+        <div style="display:flex;gap:0.4rem;align-items:center">
+          <input type="text" name="near_empty_robot_group" id="ple-near-empty-group" list="robot-groups-list" placeholder="(any robot - vendor default)" autocomplete="off" style="flex:1">
+          <label style="font-weight:normal;white-space:nowrap">at or below</label>
+          <input type="number" name="near_empty_threshold_pct" id="ple-near-empty-pct" value="0" min="0" max="100" style="width:5rem" data-action-input="refreshNearEmptyHint:ple">
+          <span style="white-space:nowrap">% full</span>
+        </div>
+        <div class="text-muted" style="font-size:0.8rem;margin-top:0.25rem" id="ple-near-empty-hint"></div>
       </div>
       <div class="form-group mb-1">
         <label>Advanced Load Sequence <span class="tooltip-trigger" title="Expands this payload's LOAD leg into a named binTask sequence at the load location (e.g. child-cart interlock). Blank = today's single load block. The named tasks must be configured in RDS at the payload's load locations — use Check to verify.">?</span></label>

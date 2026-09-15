@@ -747,7 +747,34 @@ function uopBar(remaining, template) {
 }
 
 // ===== BIN TYPE MODALS =====
-function openCreateBTModal() { showModal('bt-create-modal'); }
+function openCreateBTModal() { loadRobotGroupSuggestions(); showModal('bt-create-modal'); }
+
+// loadRobotGroupSuggestions fills the shared <datalist> from the live fleet
+// scene so the required-robot-group box is typo-proof by construction.
+//
+// Best-effort, the same contract the payloads page uses: on an RDS outage the
+// datalist is left empty, the input stays free text, and the value already
+// saved on the carrier is submitted regardless. A carrier restriction must
+// survive the fleet manager being down - it is the reason the restriction
+// exists.
+function loadRobotGroupSuggestions() {
+  var dl = document.getElementById('robot-groups-list');
+  if (!dl) return;
+  fetch('/api/fleet/robot-groups')
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      var data = (resp && resp.data) || resp || {};
+      var groups = data.groups || [];
+      dl.innerHTML = '';
+      groups.forEach(function(g) {
+        var opt = document.createElement('option');
+        opt.value = g.name;
+        if (g.desc) opt.label = g.desc;
+        dl.appendChild(opt);
+      });
+    })
+    .catch(function() { /* no suggestions; free-text entry still works */ });
+}
 function closeBTCreateModal() { hideModal('bt-create-modal'); }
 
 function openEditBTModal(btn) {
@@ -758,6 +785,8 @@ function openEditBTModal(btn) {
   document.getElementById('bt-edit-w').value = d.width && d.width !== '0' ? d.width : '';
   document.getElementById('bt-edit-h').value = d.height && d.height !== '0' ? d.height : '';
   document.getElementById('bt-edit-l').value = d.length && d.length !== '0' ? d.length : '';
+  document.getElementById('bt-edit-robot-group').value = d.robotGroup || '';
+  loadRobotGroupSuggestions();
   showModal('bt-edit-modal');
 }
 function closeBTEditModal() { hideModal('bt-edit-modal'); }

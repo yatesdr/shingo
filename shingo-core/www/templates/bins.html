@@ -39,7 +39,8 @@
                 data-desc="{{.Description}}"
                 data-width="{{.WidthIn}}"
                 data-height="{{.HeightIn}}"
-                data-length="{{.LengthIn}}">Edit</button>
+                data-length="{{.LengthIn}}"
+                data-robot-group="{{.RequiredRobotGroup}}">Edit</button>
               <form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
                 <input type="hidden" name="id" value="{{.ID}}">
                 <button type="submit" class="btn btn-danger btn-sm">Delete</button>
@@ -208,11 +209,17 @@
           <input type="number" name="length_in" placeholder="L" step="0.1" style="flex:1">
         </div>
       </div>
+      <div class="form-group">
+        <label>Required Robot Group <span class="tooltip-trigger" title="The SEER robot group required to move this carrier. Blank = no restriction (any robot), which is how every carrier behaves today. Set it for a carrier that is heavy in its own right - an FG rack stays on the big robots even when empty, whatever its payloads allow. It never applies to a loaded bin: a full bin follows its payload's own group.">?</span></label>
+        <input type="text" name="required_robot_group" list="robot-groups-list" placeholder="(no restriction - any robot)" autocomplete="off">
+      </div>
       <button type="submit" class="btn btn-primary">Create</button>
       <button type="button" class="btn ml-05" data-action="closeBTCreateModal">Cancel</button>
     </form>
   </div>
 </div>
+
+<datalist id="robot-groups-list"></datalist>
 
 <!-- Edit Bin Type Modal -->
 <div id="bt-edit-modal" class="modal-overlay" data-backdrop-close>
@@ -240,6 +247,10 @@
           <input type="number" name="height_in" id="bt-edit-h" placeholder="H" step="0.1" style="flex:1">
           <input type="number" name="length_in" id="bt-edit-l" placeholder="L" step="0.1" style="flex:1">
         </div>
+      </div>
+      <div class="form-group">
+        <label>Required Robot Group <span class="tooltip-trigger" title="The SEER robot group required to move this carrier. Blank = no restriction (any robot), which is how every carrier behaves today. Set it for a carrier that is heavy in its own right - an FG rack stays on the big robots even when empty, whatever its payloads allow. It never applies to a loaded bin: a full bin follows its payload's own group.">?</span></label>
+        <input type="text" name="required_robot_group" id="bt-edit-robot-group" list="robot-groups-list" placeholder="(no restriction - any robot)" autocomplete="off">
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
       <button type="button" class="btn ml-05" data-action="closeBTEditModal">Cancel</button>

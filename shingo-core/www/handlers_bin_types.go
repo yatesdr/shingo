@@ -35,6 +35,10 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		WidthIn:     widthIn,
 		HeightIn:    heightIn,
 		LengthIn:    lengthIn,
+		// Free text, not validated against the live scene: the group must stay
+		// configurable while RDS is down, and the datalist on the form is the
+		// typo guard. Same treatment payloads.robot_group already gets.
+		RequiredRobotGroup: r.FormValue("required_robot_group"),
 	}
 
 	if err := h.engine.BinService().CreateBinType(bt); err != nil {
@@ -75,6 +79,7 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 	if l, err := strconv.ParseFloat(r.FormValue("length_in"), 64); err == nil || r.FormValue("length_in") == "" {
 		bt.LengthIn = l
 	}
+	bt.RequiredRobotGroup = r.FormValue("required_robot_group")
 
 	if err := svc.UpdateBinType(bt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

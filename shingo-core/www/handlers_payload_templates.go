@@ -43,6 +43,10 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		RobotGroup:           r.FormValue("robot_group"),
 		AdvancedLoadSequence: r.FormValue("advanced_load_sequence"),
 	}
+	p.NearEmptyEnabled = r.FormValue("near_empty_enabled") != ""
+	p.NearEmptyRobotGroup = r.FormValue("near_empty_robot_group")
+	nePct, _ := strconv.Atoi(r.FormValue("near_empty_threshold_pct"))
+	p.NearEmptyThresholdPct = clampPct(nePct)
 
 	if _, err := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -79,6 +83,10 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	p.Description = r.FormValue("description")
 	p.UOPCapacity, _ = strconv.Atoi(r.FormValue("uop_capacity"))
 	p.RobotGroup = r.FormValue("robot_group")
+	p.NearEmptyEnabled = r.FormValue("near_empty_enabled") != ""
+	p.NearEmptyRobotGroup = r.FormValue("near_empty_robot_group")
+	neUpd, _ := strconv.Atoi(r.FormValue("near_empty_threshold_pct"))
+	p.NearEmptyThresholdPct = clampPct(neUpd)
 	p.AdvancedLoadSequence = r.FormValue("advanced_load_sequence")
 
 	if _, err := h.engine.ValidateAdvancedLoadSequence(p.ID, p.AdvancedLoadSequence); err != nil {
@@ -109,12 +117,32 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
+// clampPct holds a configured percentage inside 0-100.
+//
+// Config-save validation rather than a CHECK constraint, which is the house
+// pattern: the DDL stays declarative and the message reaches the person typing.
+// Above 100 is meaningless (no bin is fuller than full) and below 0 would make
+// the near-empty test relax everything, so both ends are pulled in rather than
+// rejected — a typo in this box should not lose the rest of the form.
+func clampPct(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
 func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code                 string  `json:"code"`
 		Description          string  `json:"description"`
 		UOPCapacity          int     `json:"uop_capacity"`
 		RobotGroup           string  `json:"robot_group"`
+		NearEmptyEnabled     bool    `json:"near_empty_enabled"`
+		NearEmptyRobotGroup  string  `json:"near_empty_robot_group"`
+		NearEmptyThreshold   int     `json:"near_empty_threshold_pct"`
 		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
 		BinTypeIDs           []int64 `json:"bin_type_ids"`
 		Manifest             []struct {
@@ -148,6 +176,10 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		UOPCapacity:          req.UOPCapacity,
 		RobotGroup:           req.RobotGroup,
 		AdvancedLoadSequence: req.AdvancedLoadSequence,
+
+		NearEmptyEnabled:      req.NearEmptyEnabled,
+		NearEmptyRobotGroup:   req.NearEmptyRobotGroup,
+		NearEmptyThresholdPct: clampPct(req.NearEmptyThreshold),
 	}
 	// Config-time validation (fail loud on a real missing key, warn-and-save when
 	// unverifiable). A new payload has no assigned nodes yet, so this rejects only
@@ -191,6 +223,9 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		Description          string  `json:"description"`
 		UOPCapacity          int     `json:"uop_capacity"`
 		RobotGroup           string  `json:"robot_group"`
+		NearEmptyEnabled     bool    `json:"near_empty_enabled"`
+		NearEmptyRobotGroup  string  `json:"near_empty_robot_group"`
+		NearEmptyThreshold   int     `json:"near_empty_threshold_pct"`
 		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
 		BinTypeIDs           []int64 `json:"bin_type_ids"`
 		Manifest             []struct {
@@ -220,6 +255,9 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	p.Description = req.Description
 	p.UOPCapacity = req.UOPCapacity
 	p.RobotGroup = req.RobotGroup
+	p.NearEmptyEnabled = req.NearEmptyEnabled
+	p.NearEmptyRobotGroup = req.NearEmptyRobotGroup
+	p.NearEmptyThresholdPct = clampPct(req.NearEmptyThreshold)
 	p.AdvancedLoadSequence = req.AdvancedLoadSequence
 
 	// Validate the (possibly new) sequence against this payload's assigned node
