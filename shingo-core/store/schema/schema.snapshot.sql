@@ -119,6 +119,7 @@ CREATE TABLE public.bin_types (
     width_in double precision DEFAULT 0 NOT NULL,
     height_in double precision DEFAULT 0 NOT NULL,
     length_in double precision DEFAULT 0 NOT NULL,
+    required_robot_group text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -886,6 +887,9 @@ CREATE TABLE public.payloads (
     uop_capacity integer DEFAULT 0 NOT NULL,
     robot_group text DEFAULT ''::text NOT NULL,
     advanced_load_sequence text DEFAULT ''::text NOT NULL,
+    near_empty_enabled boolean DEFAULT false NOT NULL,
+    near_empty_robot_group text DEFAULT ''::text NOT NULL,
+    near_empty_threshold_pct integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );

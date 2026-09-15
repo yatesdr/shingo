@@ -219,6 +219,27 @@ func (d *Dispatcher) robotGroupForOrder(order *orders.Order) string {
 		allowNearEmpty: bin.PayloadNearEmptyEnabled,
 		thresholdPct:   bin.PayloadNearEmptyPct,
 	}
+
+	// AN EMPTY-INTENT FETCH IS CARRYING NOTHING, whatever tag the row still
+	// holds. The order says the bin is wanted AS an empty carrier, and a bin
+	// picked as an empty can still carry a stale payload_code — the manifest is
+	// cleared when the bin is released, not when somebody decides to come and
+	// get it. Reading that leftover tag would ask for the robot group of the
+	// part the carrier used to hold.
+	//
+	// It is the same carve-out payloadForDispatch has always made for this
+	// intent, and it has to be made here too now that the group is resolved from
+	// the bin rather than from the order. Blanking the code drops it to
+	// ruleNoPayload, which is what an empty carrier is.
+	//
+	// The CARRIER's own requirement is deliberately left standing: a bare FG
+	// rack is exactly the case that must not be relaxed, and it is the reason
+	// bin_types.required_robot_group exists.
+	if order.SourceIntent == SourceIntentEmpty {
+		facts.payloadCode = ""
+		facts.payloadGroup, facts.nearEmptyGroup = "", ""
+		facts.allowNearEmpty, facts.thresholdPct = false, 0
+	}
 	group, r := decideRobotGroup(facts)
 
 	d.dbg("robot group: order=%d bin=%s payload=%q remaining=%d/%d pct=%d rule=%s group=%q",
