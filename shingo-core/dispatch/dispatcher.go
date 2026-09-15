@@ -488,10 +488,17 @@ func pinnedVehicleFor(order *orders.Order) string {
 	return order.RobotID
 }
 
-// robotGroupForPayload resolves the SEER robot-dispatch group configured on the
-// order's payload template (→ rds.SetOrderRequest.Group). An empty code, an
-// unknown payload, or a lookup error degrades to "" (the vendor's default robot
+// robotGroupForPayload resolves the SEER robot-dispatch group configured on a
+// payload template (→ rds.SetOrderRequest.Group). An empty code, an unknown
+// payload, or a lookup error degrades to "" (the vendor's default robot
 // assignment) — a robot-group lookup must never block material flow.
+//
+// THIS IS NO LONGER THE CAPABILITY DECISION. robotGroupForOrder
+// (dispatch/robot_group.go) is, and it reads the BIN, because how full the bin
+// is decides which robots can carry it. This function is what remains for the
+// one case where there is no bin to read: the order's payload, and nothing
+// else, exactly as every dispatch resolved it before the near-empty
+// relaxation existed. Call robotGroupForOrder, not this.
 func (d *Dispatcher) robotGroupForPayload(payloadCode string) string {
 	if payloadCode == "" {
 		return ""
@@ -625,7 +632,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		return "", rErr
 	}
 	if gated {
-		return d.dispatchGated(order, target, spliced, payloadCode, d.loadSequenceForPayload(payloadCode))
+		return d.dispatchGated(order, target, spliced, d.loadSequenceForPayload(payloadCode))
 	}
 
 	vendorOrderID := mintVendorOrderID(order.ID)
@@ -642,7 +649,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   priority,
-		RobotGroup: d.robotGroupForPayload(payloadCode),
+		RobotGroup: d.robotGroupForOrder(order),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.
@@ -651,12 +658,17 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		Complete: true, // no-wait: the fleet completes the order once its 2 blocks finish
 	}
 
-	// payload= and robot_group= are on this line because together they are the
-	// capability decision: which part the job carries, and therefore which robots
-	// may take it. A blank group is the vendor default — any robot — which is the
-	// right answer for an unrestricted part and the wrong one for a heavy part
-	// whose payload never made it onto the order. Distinguishable only if both
-	// are recorded.
+	// payload= and robot_group= stay on this line because together they name what
+	// the job carries and which robots may take it. A blank group is the vendor
+	// default — any robot — which is the right answer for an unrestricted part
+	// and the wrong one for a heavy part whose payload never made it onto the
+	// order. Distinguishable only if both are recorded.
+	//
+	// WHY the group came out this way is a separate line, emitted by
+	// robotGroupForOrder at the moment it decides: the bin, its count, and the
+	// rule that fired. It lives there rather than here because this line exists
+	// on the plain path only, and the complex and gated paths need the same
+	// answer recorded.
 	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d payload=%q robot_group=%q",
 		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, priority,
 		payloadCode, req.RobotGroup)

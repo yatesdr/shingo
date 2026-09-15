@@ -663,7 +663,7 @@ func IsGateStaged(order *orders.Order) bool {
 // than propagated. Retrying an append that may have landed would risk duplicate
 // block ids (SEER's one contract on them is uniqueness), so the retry belongs in
 // the evaluator, which re-derives the segment from durable state.
-func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, payloadCode string, loadSeq []string) (string, error) {
+func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string) (string, error) {
 	vendorOrderID := mintVendorOrderID(order.ID)
 
 	stepsJSON, err := json.Marshal(plan)
@@ -693,7 +693,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForPayload(payloadCode),
+		RobotGroup: d.robotGroupForOrder(order),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.

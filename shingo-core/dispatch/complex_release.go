@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
 
@@ -120,8 +121,8 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		var binIDForAudit int64
 		if order.BinID != nil {
 			binIDForAudit = *order.BinID
-		} else if id, ok := d.findFallbackBinAtSource(order); ok {
-			binIDForAudit = id
+		} else if b, ok := d.findFallbackBinAtSource(order); ok {
+			binIDForAudit = b.ID
 		}
 		if binIDForAudit != 0 {
 			if err := d.binManifest.AuditReleaseOverride(binIDForAudit, order.ID, p.Disposition, p.CalledBy); err != nil {
@@ -160,7 +161,7 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		fallbackLookup = order.SourceNode
 	}
 
-	binID, ok := d.findFallbackBinAtSource(order)
+	fallbackBin, ok := d.findFallbackBinAtSource(order)
 	if !ok {
 		log.Printf("dispatch: release for order %d had nil BinID and no fallback bin at %s — manifest will not clear",
 			order.ID, fallbackLookup)
@@ -168,10 +169,10 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 	}
 
 	log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at %s",
-		order.ID, binID, fallbackLookup)
+		order.ID, fallbackBin.ID, fallbackLookup)
 
-	if err := d.binManifest.SyncOrClearForReleasedNoOwner(binID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
-		log.Printf("dispatch: fallback manifest sync on release for order %d (bin %d): %v", order.ID, binID, err)
+	if err := d.binManifest.SyncOrClearForReleasedNoOwner(fallbackBin.ID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
+		log.Printf("dispatch: fallback manifest sync on release for order %d (bin %d): %v", order.ID, fallbackBin.ID, err)
 		d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 		return err
 	}
@@ -542,7 +543,16 @@ func (d *Dispatcher) releaseReachedInTransit(order *orders.Order, err error, wha
 	return true
 }
 
-// findFallbackBinAtSource locates a bin to manifest-sync when the
+// findFallbackBinAtSource locates the bin an order MEANS when its bin_id is
+// nil. Two callers now, and the second is why it returns the bin rather than
+// its id: release (manifest-sync, below) and dispatch's capability decision
+// (robotGroupForOrder), which needs the row's count and joined payload facts.
+//
+// Keeping one definition matters more here than the extra field: a second
+// "which bin is this order about" lookup written against the node alone would
+// disagree with this one whenever a claim exists or two bins sit at the line.
+//
+// Originally: locates a bin to manifest-sync when the
 // caller's order.BinID is nil at release time. Returns (binID, true)
 // on success.
 //
@@ -566,7 +576,7 @@ func (d *Dispatcher) releaseReachedInTransit(order *orders.Order, err error, wha
 // the complex claim HAD claimed but UpdateOrderBinID failed to persist
 // (DB-write race), and miss any in-transit bin during the rare case
 // where release fires after pickup has already happened.
-func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) {
+func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (*bins.Bin, bool) {
 	// 1) Claim-first.
 	claimed, err := d.db.ListBinsByClaim(order.ID)
 	if err == nil && len(claimed) > 0 {
@@ -577,12 +587,12 @@ func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) 
 			if procNode, perr := d.db.GetNodeByDotName(order.ProcessNode); perr == nil && procNode != nil {
 				for _, b := range claimed {
 					if b.NodeID != nil && *b.NodeID == procNode.ID {
-						return b.ID, true
+						return b, true
 					}
 				}
 			}
 		}
-		return claimed[0].ID, true
+		return claimed[0], true
 	}
 
 	// 2) Node fallback — only reached when no bin is claimed by this
@@ -594,27 +604,27 @@ func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) 
 	}
 	srcNode, err := d.db.GetNodeByDotName(lookupNode)
 	if err != nil || srcNode == nil {
-		return 0, false
+		return nil, false
 	}
-	bins, err := d.db.ListBinsByNode(srcNode.ID)
-	if err != nil || len(bins) == 0 {
-		return 0, false
+	atNode, err := d.db.ListBinsByNode(srcNode.ID)
+	if err != nil || len(atNode) == 0 {
+		return nil, false
 	}
 	// Prefer a payload-matching bin (correct in the multi-bin storage case).
 	if order.PayloadCode != "" {
-		for _, b := range bins {
+		for _, b := range atNode {
 			if b.PayloadCode == order.PayloadCode {
-				return b.ID, true
+				return b, true
 			}
 		}
 	}
 	// No payload match — fall back to the first bin with a non-empty
 	// manifest. Skip already-cleared bins to avoid double-clearing a
 	// stale empty.
-	for _, b := range bins {
+	for _, b := range atNode {
 		if b.PayloadCode != "" {
-			return b.ID, true
+			return b, true
 		}
 	}
-	return 0, false
+	return nil, false
 }

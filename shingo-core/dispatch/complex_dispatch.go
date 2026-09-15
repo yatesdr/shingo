@@ -606,7 +606,7 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	if gated {
 		// One valve, shared with the plain path. nil load sequence: F4c is scoped
 		// to the simple transport path and complex has never been expanded.
-		if _, gErr := d.dispatchGated(order, target, spliced, order.PayloadCode, nil); gErr != nil {
+		if _, gErr := d.dispatchGated(order, target, spliced, nil); gErr != nil {
 			d.failOrderInternal(order, "fleet_failed", gErr.Error())
 			return gErr
 		}
@@ -632,7 +632,7 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
+		RobotGroup: d.robotGroupForOrder(order),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.
