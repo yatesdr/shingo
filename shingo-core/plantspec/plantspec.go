@@ -26,21 +26,27 @@ import (
 
 // Plant is the whole declarative spec for one demo plant.
 type Plant struct {
-	Namespace        string           `yaml:"namespace"`
-	LineID           string           `yaml:"line_id"`
-	BinTypes         []string         `yaml:"bin_types"`
-	Payloads         []Payload        `yaml:"payloads"`
-	Zones            []Zone           `yaml:"zones"`
-	Stations         []Station        `yaml:"stations"`
-	Bins             []Bin            `yaml:"bins"`
-	Processes        []Process        `yaml:"processes"`
-	Styles           []Style          `yaml:"styles"`
-	OperatorStations []string         `yaml:"operator_stations"`
-	Claims           []Claim          `yaml:"claims"`
-	Demands          []Demand         `yaml:"demands"`
-	ReportingPoints  []ReportingPoint `yaml:"reporting_points"`
-	CellConfigs      []CellConfig     `yaml:"cell_configs"`
-	LinesideBuckets  []LinesideBucket `yaml:"lineside_buckets"`
+	Namespace string   `yaml:"namespace"`
+	LineID    string   `yaml:"line_id"`
+	BinTypes  []string `yaml:"bin_types"`
+	// CarrierRobotGroups maps a bin-type code to the robot group REQUIRED to
+	// move that carrier (→ bin_types.required_robot_group). Absent = no
+	// restriction, which is every carrier unless a spec names one. It refuses
+	// the near-empty relaxation rather than overriding a loaded bin's group, so
+	// a spec can stage the heavy-rack case: empty, and still not a small robot.
+	CarrierRobotGroups map[string]string `yaml:"carrier_robot_groups,omitempty"`
+	Payloads           []Payload         `yaml:"payloads"`
+	Zones              []Zone            `yaml:"zones"`
+	Stations           []Station         `yaml:"stations"`
+	Bins               []Bin             `yaml:"bins"`
+	Processes          []Process         `yaml:"processes"`
+	Styles             []Style           `yaml:"styles"`
+	OperatorStations   []string          `yaml:"operator_stations"`
+	Claims             []Claim           `yaml:"claims"`
+	Demands            []Demand          `yaml:"demands"`
+	ReportingPoints    []ReportingPoint  `yaml:"reporting_points"`
+	CellConfigs        []CellConfig      `yaml:"cell_configs"`
+	LinesideBuckets    []LinesideBucket  `yaml:"lineside_buckets"`
 	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
 	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
 	// Headroom is the storage-slack rule the census at birth asserts (§R.78).
@@ -104,6 +110,20 @@ type Payload struct {
 	// so the one thing that goes wrong when an order carries the wrong payload was
 	// the one thing the sim could not show.
 	RobotGroup string `yaml:"robot_group,omitempty"`
+	// NearEmpty* let a spec exercise the near-empty relaxation: a part that
+	// needs RobotGroup while loaded but may go to NearEmptyRobotGroup once the
+	// bin is at or below NearEmptyThresholdPct percent of capacity.
+	//
+	// Same reason RobotGroup is here. A simulated plant that cannot drain a bin
+	// past a threshold and watch the requested group change cannot show the one
+	// thing this feature does, and a sim run would pass whether or not dispatch
+	// ever consulted the count.
+	//
+	// NearEmptyEnabled is separate from the group being set because a BLANK
+	// group is meaningful — relax to the vendor default, any robot.
+	NearEmptyEnabled      bool   `yaml:"near_empty_enabled,omitempty"`
+	NearEmptyRobotGroup   string `yaml:"near_empty_robot_group,omitempty"`
+	NearEmptyThresholdPct int    `yaml:"near_empty_threshold_pct,omitempty"`
 }
 
 // Zone is an NGRP storage zone. RetrieveAlgorithm (e.g. FIFO) and

@@ -50,7 +50,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// --- bin types + payloads (+ payload→bin-type links) ---
 	binTypeIDs := make(map[string]int64)
 	for _, bt := range p.BinTypes {
-		id, err := ensureBinType(db, bt)
+		id, err := ensureBinType(db, bt, p.CarrierRobotGroups[bt])
 		if err != nil {
 			return err
 		}
@@ -709,11 +709,21 @@ func ensureNode(db *store.DB, name string, typeID, parentID *int64, zone string,
 	return n.ID, nil
 }
 
-func ensureBinType(db *store.DB, code string) (int64, error) {
+func ensureBinType(db *store.DB, code, requiredRobotGroup string) (int64, error) {
 	if bt, err := db.GetBinTypeByCode(code); err == nil && bt != nil {
+		// Re-seed onto an existing plant, same reasoning as ensurePayload: the
+		// yaml is the source of truth for the carrier restriction, and a plant
+		// seeded before the spec carried one would otherwise keep dispatching
+		// its empties unrestricted while the spec says they are held back.
+		if bt.RequiredRobotGroup != requiredRobotGroup {
+			bt.RequiredRobotGroup = requiredRobotGroup
+			if err := db.UpdateBinType(bt); err != nil {
+				return 0, fmt.Errorf("update required robot group on bin type %s: %w", code, err)
+			}
+		}
 		return bt.ID, nil
 	}
-	bt := &bins.BinType{Code: code, Description: code + " (dev)"}
+	bt := &bins.BinType{Code: code, Description: code + " (dev)", RequiredRobotGroup: requiredRobotGroup}
 	if err := db.CreateBinType(bt); err != nil {
 		return 0, fmt.Errorf("create bin type %s: %w", code, err)
 	}
@@ -727,8 +737,14 @@ func ensurePayload(db *store.DB, pl plantspec.Payload) (int64, error) {
 		// robot groups keeps dispatching every part to the vendor default, and
 		// the reason would be invisible — the yaml says one thing and the
 		// database another.
-		if p.RobotGroup != pl.RobotGroup {
+		if p.RobotGroup != pl.RobotGroup ||
+			p.NearEmptyEnabled != pl.NearEmptyEnabled ||
+			p.NearEmptyRobotGroup != pl.NearEmptyRobotGroup ||
+			p.NearEmptyThresholdPct != pl.NearEmptyThresholdPct {
 			p.RobotGroup = pl.RobotGroup
+			p.NearEmptyEnabled = pl.NearEmptyEnabled
+			p.NearEmptyRobotGroup = pl.NearEmptyRobotGroup
+			p.NearEmptyThresholdPct = pl.NearEmptyThresholdPct
 			if err := db.UpdatePayload(p); err != nil {
 				return 0, fmt.Errorf("update robot group on payload %s: %w", pl.Code, err)
 			}
@@ -740,6 +756,10 @@ func ensurePayload(db *store.DB, pl plantspec.Payload) (int64, error) {
 		UOPCapacity: int(pl.UOPCapacity),
 		Description: pl.Code + " (dev)",
 		RobotGroup:  pl.RobotGroup,
+
+		NearEmptyEnabled:      pl.NearEmptyEnabled,
+		NearEmptyRobotGroup:   pl.NearEmptyRobotGroup,
+		NearEmptyThresholdPct: pl.NearEmptyThresholdPct,
 	}
 	if err := db.CreatePayload(p); err != nil {
 		return 0, fmt.Errorf("create payload %s: %w", pl.Code, err)

@@ -55,6 +55,15 @@ line_id: line1
 # and most of this plant is STANDARD.
 bin_types: [STANDARD, STANDARD-SM]
 
+# carrier_robot_groups names the group REQUIRED to move a carrier, which refuses
+# the near-empty relaxation below rather than overriding a loaded bin's group.
+# STANDARD-SM is the heavy-rack stand-in here: PANEL-B relaxes to SMALL-600 when
+# it drains, and this is what stops that relaxation reaching this carrier. Empty
+# or full, STANDARD-SM stays on the heavy group — which is the one behaviour a
+# payload setting must not be able to undo.
+carrier_robot_groups:
+  STANDARD-SM: HEAVY-1500
+
 # robot_group is a CAPABILITY constraint, not a label: it names the SEER
 # robot-dispatch group allowed to carry the part, and an empty value means the
 # vendor's default — any robot. The finished panels and assemblies are the heavy
@@ -67,8 +76,18 @@ bin_types: [STANDARD, STANDARD-SM]
 # the one thing that goes wrong when an order carries the wrong payload was the
 # one thing a sim run could not surface.
 payloads:
-  - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
-  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500}
+  # PANEL-A is the feature: heavy while loaded, and once it is drained to 20% or
+  # less a small robot may answer it. Its carrier (STANDARD) names no required
+  # group, so nothing refuses the relaxation and the requested group really does
+  # change mid-run as the line consumes.
+  - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500,
+     near_empty_enabled: true, near_empty_robot_group: SMALL-600, near_empty_threshold_pct: 20}
+  # PANEL-B relaxes on exactly the same terms but rides STANDARD-SM, whose
+  # carrier restriction refuses it. A run where PANEL-A relaxes and PANEL-B does
+  # not is the proof the refusal is doing something — one of them alone proves
+  # nothing about the other.
+  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500,
+     near_empty_enabled: true, near_empty_robot_group: SMALL-600, near_empty_threshold_pct: 20}
   # PANEL-C is PRESS-1's ALTERNATE style, and it deliberately rides the OTHER
   # carrier type from PANEL-A. A PRESS-1 changeover therefore changes WHICH TYPE
   # the press asks the maintained group for — which is the whole wrong-type and
