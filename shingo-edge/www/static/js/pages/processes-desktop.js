@@ -1992,7 +1992,7 @@ function drawScreens() {
             '<td class="pd-dim">' + (gateOn ? 'may change flows' : 'run as set up') + '</td>' +
             '<td class="pd-acts">' +
             '<button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
-            '<a class="pd-dimlink" href="/operator?station=' + st.id + '">Open</a></td></tr>';
+            '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></td></tr>';
     }).join('');
 
     root().innerHTML = appbar() + '<div class="pd-sheet">' +
