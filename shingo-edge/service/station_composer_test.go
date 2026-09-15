@@ -236,7 +236,8 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	}
 	// AND THEN ADOPTED. The backfill inserts every derived name DISABLED — it
 	// is a suggestion, and an engineer adopts it (store/processes:
-	// SetRoutingNodeEnabled, "the origin stays 'backfill'"). Until that
+	// SetRoutingNodeEnabled, "switching on stamps origin='engineer'; switching
+	// off does not flip it back"). Until that
 	// happens the position panel offers nothing, which is right: a name Core
 	// may not know is not an option to put in front of an operator. This test
 	// walks the whole path — derive, adopt, open the gate — because that is

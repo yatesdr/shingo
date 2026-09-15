@@ -18,7 +18,11 @@
                 <option value="">-- Select --</option>
                 {{range .Styles}}
                 {{$src := index $.SourcingByStyle .Name}}
+                {{if eq .Name $.CurrentStyle}}
+                <option value="{{.ID}}" disabled>{{.Name}} · running</option>
+                {{else}}
                 <option value="{{.ID}}"{{if $src.Blocked}} disabled{{end}}>{{.Name}}{{if $src.Status}} · {{$src.Status}}{{if $src.Note}} ({{$src.Note}}){{end}}{{end}}</option>
+                {{end}}
                 {{end}}
             </select>
         </div>

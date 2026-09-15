@@ -247,7 +247,9 @@ func TestRoutingNodes_UpsertListAndEnable(t *testing.T) {
 //
 // Switching one OFF does not flip the origin back. Where a name came from is
 // history, and a row an engineer approved and then withdrew is still a row an
-// engineer touched; re-deriving is what restores a backfill origin.
+// engineer touched. Nothing restores a backfill origin afterwards, and that
+// is load-bearing: the derive runs at every boot, so rewriting origin there
+// would un-approve every adopted name on every Edge restart.
 func TestRoutingNodes_EnablingABackfillIsTheApproval(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

@@ -42,8 +42,74 @@ import (
 // pageLinkRe reads navigation targets out of source. The capture stops at a
 // quote, so the JS concatenation case yields the literal prefix
 // ("/operator/station/") rather than a path with an expression glued into it.
+// window.location = (assignment, not the .href member) and window.open( are
+// the remaining JS navigation forms; action= is the form-POST half of the
+// same class — a form can 404 just as a link can.
+//
+// THE TRAILING \s* IS HOISTED OUT OF THE ALTERNATION so it applies to every
+// form. Inside it, only the branch that carried it was space-tolerant: with
+// the \s* attached to window.location alone, `location.href = "/x"` stopped
+// matching, because the space after = was left for ["']? to eat and it
+// cannot. TestPageLinkRe_ReadsEveryNavigationForm/location.href_member is
+// that case, and it goes red if the \s* is pushed back inside.
 var pageLinkRe = regexp.MustCompile(
-	`(?:href=|location\.(?:href|assign|replace)\s*[=(]\s*)["']?(/[^"'` + "`" + `\s>]*)`)
+	`(?:href=|action=|window\.open\(|location\.(?:href|assign|replace)\s*[=(]|window\.location\s*=)\s*["']?(/[^"'` + "`" + `\s>]*)`)
+
+// TestPageLinkRe_ReadsEveryNavigationForm pins the scan itself, because the
+// test below CANNOT.
+//
+// The tree's window.location and action= targets (shingoedge.js:503 →
+// /orders, login.html:10 → /login) are both also reached by an href
+// elsewhere, so every form after href= could stop matching tomorrow and the
+// route check would stay green on the same 12 distinct paths. A scan that
+// silently narrows is the failure this file exists to catch, so the forms are
+// pinned here on fixed input rather than on whatever the tree happens to
+// contain.
+//
+// The data-action negative is the reason action= is safe to scan for at all:
+// this codebase is full of data-action="someHandlerName", and every one of
+// them contains the literal `action="`. They are excluded by the capture
+// requiring a leading slash, not by the alternation — so if the capture is
+// ever loosened, this is the case that goes red.
+func TestPageLinkRe_ReadsEveryNavigationForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		form string
+		src  string
+		want string
+	}{
+		{"href double-quoted", `<a href="/orders">`, "/orders"},
+		{"href single-quoted", `<a href='/orders'>`, "/orders"},
+		{"href JS concatenation", `'<a href="/operator/station/' + st.id + '">'`, "/operator/station/"},
+		{"form action", `<form method="post" action="/login">`, "/login"},
+		{"window.location assignment", `window.location = '/orders';`, "/orders"},
+		{"window.location no spaces", `window.location='/orders';`, "/orders"},
+		{"location.href member", `location.href = "/production";`, "/production"},
+		{"location.assign", `location.assign('/config');`, "/config"},
+		{"location.replace", `location.replace('/login');`, "/login"},
+		{"window.open", `window.open('/diagnostics');`, "/diagnostics"},
+	} {
+		t.Run(tc.form, func(t *testing.T) {
+			m := pageLinkRe.FindStringSubmatch(tc.src)
+			if m == nil {
+				t.Fatalf("%s: no match in %q — this navigation form is invisible to the scan", tc.form, tc.src)
+			}
+			if got := normalizeLinkPath(m[1]); got != tc.want {
+				t.Errorf("%s: got %q, want %q", tc.form, got, tc.want)
+			}
+		})
+	}
+
+	// data-action handler names are not paths and must not be scanned as one.
+	for _, src := range []string{
+		`<button data-action="cancelProcessChangeover">`,
+		`<select data-action-change="navigateToProcess">`,
+	} {
+		if m := pageLinkRe.FindStringSubmatch(src); m != nil {
+			t.Errorf("data-action false positive: %q captured %q", src, m[1])
+		}
+	}
+}
 
 func TestPageLinks_EveryLinkTheFrontEndNamesHasARoute(t *testing.T) {
 	db := testdb.Open(t)

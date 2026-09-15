@@ -207,7 +207,24 @@ func UpsertRoutingNode(db *sql.DB, in RoutingNodeInput) (int64, error) {
 //
 // SWITCHING ONE OFF DOES NOT FLIP IT BACK. Where a name came from is history,
 // and a row an engineer approved and then withdrew is still a row an engineer
-// touched; re-deriving is what puts a backfill origin back.
+// touched. Re-deriving does NOT put a backfill origin back: the backfill is
+// INSERT OR IGNORE and skips any row that already exists, so origin is never
+// rewritten by it — and that is load-bearing, not an oversight.
+// DeriveRoutingNodes runs at every Edge boot (cmd/shingoedge/main.go), so if it
+// reset origin, every approval on the box would be silently un-approved on
+// every restart, since the switch IS the approval.
+//
+// Nor does deleting and re-deriving: DeleteRoutingNode refuses while a live
+// claim still names the node in the row's role field, and derivation reads
+// THAT SAME predicate, so every row the backfill created is a row the delete
+// guard must refuse for as long as the claim lives. The two paths are exact
+// complements, which is why the dead end is total and not a gap to plug.
+//
+// UpsertRoutingNode is the one writer that CAN set backfill — its validation
+// accepts the value — but its only non-test caller stamps engineer
+// unconditionally (www: apiUpsertRoutingNode), so nothing user-reachable
+// reaches it. That is a policy line, not a structural block: anyone relaxing
+// it should know it is the last door.
 //
 // The row must belong to processID.
 func SetRoutingNodeEnabled(db *sql.DB, processID, id int64, enabled bool, calledBy string) error {
