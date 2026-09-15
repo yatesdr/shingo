@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS bin_types (
     width_in    DOUBLE PRECISION NOT NULL DEFAULT 0,
     height_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
     length_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    required_robot_group TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -44,6 +45,9 @@ CREATE TABLE IF NOT EXISTS payloads (
     uop_capacity            INTEGER NOT NULL DEFAULT 0,
     robot_group             TEXT NOT NULL DEFAULT '',
     advanced_load_sequence  TEXT NOT NULL DEFAULT '',
+    near_empty_enabled       BOOLEAN NOT NULL DEFAULT false,
+    near_empty_robot_group   TEXT    NOT NULL DEFAULT '',
+    near_empty_threshold_pct INTEGER NOT NULL DEFAULT 0,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -7,7 +7,7 @@ import (
 )
 
 // Bin is a physical container that holds a payload at a node. Its
-// fields mirror the bins table plus two joined columns (BinTypeCode,
+// fields mirror the bins table plus the joined columns (BinTypeCode,
 // NodeName) that every read-path SELECT in store/bins pulls through a
 // JOIN — they ride along with the struct so callers don't have to look
 // them up separately.
@@ -49,6 +49,18 @@ type Bin struct {
 	BinTypeCode string `json:"bin_type_code"`
 	NodeName    string `json:"node_name"`
 	UOPCapacity int    `json:"uop_capacity,omitempty"` // JOIN from payloads.uop_capacity
+	// The robot-group facts, joined so the dispatch capability decision is a
+	// pure function over one scanned row rather than three follow-up reads.
+	// Both source columns are named robot_group in their own tables and they
+	// mean DIFFERENT things, so they are named apart here on purpose:
+	// CarrierRequiredRobotGroup is bin_types.required_robot_group, a refusal;
+	// PayloadRobotGroup is payloads.robot_group, the group for a loaded bin.
+	// See dispatch/robot_group.go for how they combine.
+	CarrierRequiredRobotGroup string `json:"carrier_required_robot_group,omitempty"` // JOIN from bin_types.required_robot_group
+	PayloadRobotGroup         string `json:"payload_robot_group,omitempty"`          // JOIN from payloads.robot_group
+	PayloadNearEmptyEnabled   bool   `json:"payload_near_empty_enabled,omitempty"`   // JOIN from payloads.near_empty_enabled
+	PayloadNearEmptyGroup     string `json:"payload_near_empty_group,omitempty"`     // JOIN from payloads.near_empty_robot_group
+	PayloadNearEmptyPct       int    `json:"payload_near_empty_pct,omitempty"`       // JOIN from payloads.near_empty_threshold_pct
 	// HasPendingReservation is populated by BinJoinQuery from the reservations
 	// table. True when ANY order holds a pending (pre-claim) reservation on this
 	// bin — owner-blind, so it may be this order's own hold (the reserve reconcile

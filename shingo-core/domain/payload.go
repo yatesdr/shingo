@@ -25,7 +25,28 @@ type Payload struct {
 	// quarter-child-cart interlock). The name IS the switch — there is no separate
 	// enable flag. Validated at config-save against the RDS binTask keys of the
 	// payload's assigned node locations (see engine.ValidateAdvancedLoadSequence).
-	AdvancedLoadSequence string    `json:"advanced_load_sequence"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	AdvancedLoadSequence string `json:"advanced_load_sequence"`
+	// NearEmptyEnabled turns on the relaxation below: a bin at or under
+	// NearEmptyThresholdPct percent of capacity dispatches to
+	// NearEmptyRobotGroup instead of RobotGroup. A full bin is unaffected.
+	//
+	// IT IS A REAL COLUMN AND NOT NearEmptyRobotGroup != "", which is the
+	// AdvancedLoadSequence precedent above ("the name IS the switch"). That
+	// precedent does not hold here: a BLANK NearEmptyRobotGroup is a meaningful
+	// value — it means "relax to the vendor-default pool", i.e. any robot,
+	// which is frequently what a plant wants — and name-is-the-switch cannot
+	// tell that apart from "unconfigured". This flag is what separates them.
+	// Do not delete it in a simplification pass.
+	NearEmptyEnabled bool `json:"near_empty_enabled"`
+	// NearEmptyRobotGroup is the group that carries this payload's bins once
+	// they are empty or near empty. Empty string is legitimate and means the
+	// vendor default (any robot) — see NearEmptyEnabled.
+	NearEmptyRobotGroup string `json:"near_empty_robot_group"`
+	// NearEmptyThresholdPct is the fill percentage at or below which the bin
+	// counts as near empty. 0 is not "off" — the off switch is
+	// NearEmptyEnabled. 0 relaxes only an exactly-empty bin, which the rule
+	// table already decides before the threshold is consulted.
+	NearEmptyThresholdPct int       `json:"near_empty_threshold_pct"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }

@@ -4221,7 +4221,49 @@ func migrationList() []migration {
 		{115, "order_intake_refusals — the pair legs Core refused at intake, so the partner naming one fails with its reason",
 			v115OrderIntakeRefusals,
 			func(q schema.Querier) bool { return schema.TableExists(q, "order_intake_refusals") }},
+
+		{116, "near-empty robot group — a drained bin may go to a different robot group than a full one, and a carrier may refuse that",
+			v116NearEmptyRobotGroup,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "payloads", "near_empty_enabled") &&
+					schema.ColumnExists(q, "payloads", "near_empty_robot_group") &&
+					schema.ColumnExists(q, "payloads", "near_empty_threshold_pct") &&
+					schema.ColumnExists(q, "bin_types", "required_robot_group")
+			}},
 	}
+}
+
+// v116NearEmptyRobotGroup adds the near-empty relaxation to payload templates
+// and the carrier-level refusal to bin types.
+//
+// A heavy payload is pinned to one robot group for its whole life, so a 600kg
+// robot is excluded from a bin that is nearly drained and well inside its
+// capacity. These three payload columns let an engineer name a second group
+// that applies below a fill threshold; unset (the defaults here) resolves the
+// payload's own group exactly as before.
+//
+// BOTH TABLES IN ONE MIGRATION, deliberately: each migration is its own
+// transaction, and these four columns are one feature. Split across two
+// versions, a failure between them leaves a half-configured schema in which
+// payloads can relax but no carrier can refuse — which is the one combination
+// that is unsafe. All four are additive with defaults, so an older binary that
+// never reads them is unaffected.
+//
+// bin_types.required_robot_group is NOT a twin of payloads.robot_group. The
+// payload column is the group for a loaded bin; this one is a REFUSAL, read
+// only where the bin would otherwise be relaxed. See dispatch/robot_group.go.
+func v116NearEmptyRobotGroup(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE payloads
+		ADD COLUMN IF NOT EXISTS near_empty_enabled       BOOLEAN NOT NULL DEFAULT false,
+		ADD COLUMN IF NOT EXISTS near_empty_robot_group   TEXT    NOT NULL DEFAULT '',
+		ADD COLUMN IF NOT EXISTS near_empty_threshold_pct INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("v116 payloads near-empty columns: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE bin_types
+		ADD COLUMN IF NOT EXISTS required_robot_group TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v116 bin_types.required_robot_group: %w", err)
+	}
+	return nil
 }
 
 // v115OrderIntakeRefusals records the pair legs Core refused at intake.

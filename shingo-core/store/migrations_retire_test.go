@@ -91,6 +91,11 @@ import (
 // v115 ADDS order_intake_refusals — a new table only the pair rule reads. Inert
 // to a pre-v115 binary, which never looks at it, and empty at birth.
 //
+// v116 ADDS three payloads columns and bin_types.required_robot_group — the
+// near-empty robot group relaxation. All additive with false/”/0 defaults, so
+// a pre-v116 binary reads the same group it always did and there is no backfill
+// to lose.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -102,8 +107,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 115 {
-		t.Errorf("head migration = %d, want 115", got)
+	if got := store.LatestMigrationVersion(); got != 116 {
+		t.Errorf("head migration = %d, want 116", got)
 	}
 }
 

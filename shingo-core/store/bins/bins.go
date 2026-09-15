@@ -42,6 +42,48 @@ type Bin = domain.Bin
 // claimed_by (structural, since the one-tx claim+confirm moves them together),
 // which b.claimed_by already covers — so this projector never needs to see 'confirmed'.
 //
+// LabelsByPayloadCode returns the labels of bins currently carrying a payload
+// code, capped at limit (0 = no cap), plus the total count.
+//
+// It exists for the config guard on renaming or deleting a payload template.
+// bins.payload_code is a bare TEXT column with no foreign key — bin_type_id two
+// columns over is NOT NULL REFERENCES bin_types(id), so the database refuses to
+// delete a carrier type in use, while a payload template can be renamed or
+// deleted out from under every bin that names it. Those bins then resolve no
+// template, the robot group degrades to the vendor default, and a 600kg robot
+// becomes eligible for a full heavy bin with nothing said anywhere.
+//
+// Labels and not just a count because the operator has to go find them.
+func LabelsByPayloadCode(db *sql.DB, code string, limit int) ([]string, int, error) {
+	var total int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bins WHERE payload_code = $1`, code).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count bins for payload %q: %w", code, err)
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	q := `SELECT label FROM bins WHERE payload_code = $1 ORDER BY label`
+	args := []any{code}
+	if limit > 0 {
+		q += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, total, fmt.Errorf("list bins for payload %q: %w", code, err)
+	}
+	defer rows.Close()
+	var labels []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, total, err
+		}
+		labels = append(labels, l)
+	}
+	return labels, total, rows.Err()
+}
+
 // ── THE SEAM ──────────────────────────────────────────────────────────────────
 //
 // The column is reservations.BinSpokenForSQL, the same fragment every bin
@@ -56,6 +98,9 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, COALESCE(b.anomaly_note, ''), b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
+	bt.required_robot_group, COALESCE(p.robot_group, ''),
+	COALESCE(p.near_empty_enabled, false), COALESCE(p.near_empty_robot_group, ''),
+	COALESCE(p.near_empty_threshold_pct, 0),
 	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation
 	` + BinFromClause
 
@@ -555,6 +600,8 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
+		&b.CarrierRequiredRobotGroup, &b.PayloadRobotGroup,
+		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
 		&b.HasPendingReservation)
 	if err != nil {
 		return nil, err
