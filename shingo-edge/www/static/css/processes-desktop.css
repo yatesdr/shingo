@@ -134,7 +134,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border: 1px solid var(--sub-3); color: var(--text-muted);
 }
 .pd-pill.on { color: var(--chip-ink-ok); border-color: var(--viz-green); }
+/* A LINK THAT DOES SOMETHING GETS A HOVER. .pd-dimlink carries P0's row
+   actions, D4's Edit and Open and D6's row menu, and it had no :hover at all —
+   so on a row whose other columns are literally .pd-dim, the only two controls
+   rendered exactly like the read-only text beside them. Same ruling as .pd-back
+   and the positions footer: if it acts, it looks like it acts. */
 .pd-dimlink { color: var(--text-muted); font-size: 12px; margin-left: 8px; background: none; border: 0; cursor: pointer; font: inherit; }
+.pd-dimlink:hover { color: var(--text); text-decoration: underline; }
 
 /* ── buttons ──────────────────────────────────────────────────────────── */
 .pd-btn {

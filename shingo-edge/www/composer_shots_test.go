@@ -169,6 +169,16 @@ func TestComposerShots(t *testing.T) {
 		_, _ = w.Write([]byte(clickAddProcessDriver(
 			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
 	})
+	// D1's style row menu and its add-a-position chooser. See clickMenuDriver.
+	mux.HandleFunc("/__shots/menus", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(clickMenuDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
+	})
+	// D4's screen sheet, saved without touching the positions. See clickScreenDriver.
+	mux.HandleFunc("/__shots/screen-note", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(clickScreenDriver(r.URL.Query().Get("process"), r.URL.Query().Get("station"))))
+	})
 	// The picture's re-fit on a style click, counted. See pulseDriver.
 	mux.HandleFunc("/__shots/pulse", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1107,6 +1117,56 @@ func TestComposerShots(t *testing.T) {
 	desktopDOM("D1 add-position footer", d1, `class="pd-posfoot"`)
 	checkDesktopFits("D1 flows", d1)
 
+	// ── THE MENUS OPEN, AND ADDING A POSITION ADDS A ROW ────────────────
+	//
+	// Two defects found by the audit, both invisible to every shot here.
+	// The style row's ⋯ opened #pd-pop during the bubble through #pd-root and
+	// the document listener hid it again before paint, so Rename, Expected
+	// CATID, Clone, Mark as running and Delete had no door at all. And
+	// "+ Add a position" dispatched addPosition with no mode, which turns the
+	// cell on and draws nothing — the position stayed in the free list while
+	// the bar went red naming it.
+	{
+		profile := t.TempDir()
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom",
+			fmt.Sprintf("%s/__shots/menus?process=%d&style=%d", srv.URL, seeded.ProcessID, seeded.Styles[idx]))
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom menus: %v", err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("D1 menus: %q (step %q, menu open %q with %q items, chooser %q)",
+				got, attr("step"), attr("menuopen"), attr("menuitems"), attr("addopen"))
+		} else {
+			t.Logf("D1 menus: style ⋯ open=%s with %s items; add-position chooser=%s, rows added=%s",
+				attr("menuopen"), attr("menuitems"), attr("addopen"), attr("rowsadded"))
+			if attr("menuopen") != "yes" {
+				t.Error("the style row's ⋯ menu is not open a frame after it was clicked — " +
+					"every verb a style has (rename, CATID, clone, mark as running, delete) " +
+					"lives in it and has no other door")
+			}
+			if attr("menuitems") == "0" {
+				t.Error("the style menu opened empty")
+			}
+			if attr("rowsadded") != "" && attr("rowsadded") != "1" {
+				t.Errorf("+ Add a position added %q rows; a cell turned on with no mode is drawn "+
+					"nowhere, stays in the free list, and blocks Save from a finding about a "+
+					"position that is not on screen", attr("rowsadded"))
+			}
+		}
+	}
+
 	// ── THE PICTURE DOES NOT RE-FIT AFTER THE FIRST PAINT ───────────────
 	//
 	// Selecting a style drew the picture, then the preview redrew it 400 ms
@@ -1254,6 +1314,72 @@ func TestComposerShots(t *testing.T) {
 	desktopShot("D4-operator-screens.png", d4)
 	desktopShot("D5-settings.png", d5)
 	desktopDOM("D4 operator screens", d4, `data-act="screen-add"`)
+
+	// ── EDITING A SCREEN'S NOTE DOES NOT DELETE ITS POSITIONS ───────────
+	//
+	// The worst defect of the day. S.stationNodes ships with the page and
+	// covers ONE process — the `?process=` one — and this is a single-page
+	// app, so every process reached by a click had an empty map. The screen
+	// sheet opened its positions picker on nothing, and Save PUT that empty
+	// list to claimed-nodes, which is a SET-TO: SetNodes deletes every
+	// process_node the station owns that is not in it. Fixing a typo in a
+	// note deleted every position the screen claimed and left the HMI with
+	// nothing to work.
+	//
+	// Driven, because only a real click reaches it, and read back from the
+	// STORE, because a page that redrew from its own state would pass the
+	// browser half alone.
+	{
+		before, err := db.ListProcessNodesByStation(stationID)
+		if err != nil {
+			t.Fatalf("read the station's positions: %v", err)
+		}
+		if len(before) == 0 {
+			t.Fatal("the fixture's screen claims no positions; this check cannot see the bug " +
+				"it was written for")
+		}
+		profile := t.TempDir()
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom",
+			fmt.Sprintf("%s/__shots/screen-note?process=%d&station=%d", srv.URL, seeded.ProcessID, stationID))
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom screen-note: %v", err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("D4 screen note: %q (step %q)", got, attr("step"))
+		} else {
+			after, err := db.ListProcessNodesByStation(stationID)
+			if err != nil {
+				t.Fatalf("read the positions back: %v", err)
+			}
+			t.Logf("D4 screen note: %d positions before, %d after; D4 drew %s chips, the sheet opened on %s",
+				len(before), len(after), attr("chipsontab"), attr("sheetchips"))
+			if len(after) != len(before) {
+				t.Errorf("editing the NOTE changed the screen's positions: %d before, %d after. "+
+					"claimed-nodes is a set-to, so a sheet that opens on an empty picker deletes "+
+					"every position the screen owns.", len(before), len(after))
+			}
+			if attr("sheetchips") == "0" {
+				t.Error("the screen sheet opened with an empty positions picker — that is the " +
+					"loaded gun, whether or not this save happened to pull the trigger")
+			}
+			if attr("chipsontab") == "0" {
+				t.Error("D4 drew no claimed-position chips; it reads S.stationNodes, which covers " +
+					"only the process the page was loaded for")
+			}
+		}
+	}
 	desktopDOM("D5 settings", d5, `class="pd-seg"`)
 	// D3 · THE ROUTING SET, WHICH IS NOW A SECTION OF D5 rather than a tab of
 	// its own (owner ruling 2026-09-16). Reviewing the set is Settings' job and
@@ -2153,6 +2279,192 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
 </script>`
 }
 
+// clickMenuDriver opens the style row's ⋯ menu and the add-a-position chooser
+// and reports whether they are still open a moment later.
+//
+// BOTH WERE OPENED AND IMMEDIATELY CLOSED AGAIN. onClick is bound to #pd-root
+// and boot() puts a listener on the DOCUMENT that closes #pd-pop on any click
+// outside it — and the button that OPENS the menu is, by that test, outside
+// it. So the menu was created during the bubble through #pd-root and hidden
+// one listener later, before paint. `pick` stopped propagation; ⋯,
+// add-a-position and the presets menu did not.
+//
+// That made Rename, Expected CATID, Clone, Mark as running and Delete
+// unreachable — every verb a style has. Nothing caught it because the harness
+// reaches those through styleAction directly and a screenshot never clicks.
+func clickMenuDriver(processID, styleID string) string {
+	return `<!doctype html><meta charset="utf-8"><title>menus</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0"
+        src="/processes?process=` + template.HTMLEscapeString(processID) +
+		`#style=` + template.HTMLEscapeString(styleID) + `"></iframe>
+<script>
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+const settle = () => new Promise(r => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; r(); } };
+    requestAnimationFrame(() => requestAnimationFrame(fin));
+    setTimeout(fin, 500);
+});
+(async () => {
+  try {
+    const d = await until('the flows tab draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('.pd-rail .pd-row') ? doc : null;
+    });
+    const threw = () => { if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError); };
+    threw();
+
+    // ── the style row's menu ──
+    out.dataset.step = 'open the style menu';
+    const more = d.querySelector('.pd-rail .pd-row .more[data-act="style-menu"]');
+    if (!more) return fail('find the style menu button', 'no .more in the rail');
+    more.click();
+    await settle();
+    threw();
+    const pop = d.querySelector('#pd-pop');
+    out.dataset.menuopen = pop && !pop.hidden ? 'yes' : 'no';
+    out.dataset.menuitems = pop ? String(pop.querySelectorAll('button[data-act]').length) : '0';
+
+    // ── the add-a-position chooser ──
+    // Close the menu the way an engineer would, then open the other popover.
+    d.body.click();
+    await settle();
+    out.dataset.step = 'open the add-position chooser';
+    const foot = d.querySelector('#pd-posfoot [data-act="add-position"]');
+    out.dataset.freecount = String(d.querySelectorAll('#pd-posfoot span').length);
+    if (!foot) {
+        // Every position is already in the flow — nothing to choose. Say so
+        // rather than reporting a failure about a control that is correctly
+        // not drawn.
+        out.dataset.addopen = 'n/a';
+    } else {
+        const rowsBefore = d.querySelectorAll('.pd-postbl tbody tr[data-row]').length;
+        foot.click();
+        await settle();
+        threw();
+        const pop2 = d.querySelector('#pd-pop');
+        const choosing = pop2 && !pop2.hidden && pop2.querySelector('[data-freepos]');
+        out.dataset.addopen = choosing ? 'yes' : 'no';
+        if (choosing) {
+            pop2.querySelector('[data-freepos]').click();
+        }
+        // Either path (one free position, or a pick from the chooser) must end
+        // with a ROW for it: a cell turned on with no mode is drawn nowhere,
+        // still listed as free, and turns the bar red naming a position that
+        // is not on screen.
+        await until('the position becomes a row', () => {
+            threw();
+            return d.querySelectorAll('.pd-postbl tbody tr[data-row]').length > rowsBefore;
+        }, 4000);
+        out.dataset.rowsadded = String(
+            d.querySelectorAll('.pd-postbl tbody tr[data-row]').length - rowsBefore);
+    }
+
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
+// clickScreenDriver edits an operator screen's NOTE and saves, then reports
+// what the sheet had in its positions picker.
+//
+// THE WORST DEFECT OF THE DAY. S.stationNodes ships with the page and covers
+// exactly one process — the `?process=` one — and this is a single-page app,
+// so every process reached by a click had an empty map. The sheet opened its
+// positions picker on nothing and Save PUT that empty list to claimed-nodes,
+// which is a SET-TO: SetNodes deletes every process_node the station owns that
+// is not in the list. Fixing a typo in a screen's note deleted every position
+// it claimed and left the HMI with nothing to work.
+//
+// The driver opens the sheet WITHOUT touching the positions, which is the
+// case that destroyed them, and the Go side reads the rows back.
+func clickScreenDriver(processID, stationID string) string {
+	return `<!doctype html><meta charset="utf-8"><title>screen-note</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0"
+        src="/processes?process=` + template.HTMLEscapeString(processID) + `#tab=screens"></iframe>
+<script>
+const STATION = "` + template.JSEscapeString(stationID) + `";
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the screens tab draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('[data-act="screen-edit"]') ? doc : null;
+    });
+    const threw = () => { if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError); };
+    threw();
+
+    // D4 must already be showing the claims — it read them for one process
+    // only, so every screen on every other process said "nothing claimed".
+    const row = d.querySelector('[data-act="screen-edit"][data-station="' + STATION + '"]');
+    if (!row) return fail('find the screen row', 'no Edit for station ' + STATION);
+    out.dataset.chipsontab = String(d.querySelectorAll('.pd-tbl .pd-nchip').length);
+
+    out.dataset.step = 'open the screen sheet';
+    row.click();
+    const sheet = await until('the sheet opens', () => {
+        threw();
+        return d.querySelector('.pd-modal [data-f="note"]') ? d.querySelector('.pd-modal') : null;
+    });
+    // The picker has to open on what the screen actually claims. Empty here is
+    // the loaded gun.
+    await until('the positions picker fills', () => {
+        threw();
+        return sheet.querySelector('#npk-positions .chips .pd-nchip, #npk-positions .chips .pd-dim');
+    });
+    out.dataset.sheetchips = String(sheet.querySelectorAll('#npk-positions .chips .pd-nchip').length);
+
+    // Change ONLY the note, exactly as an engineer fixing a typo would.
+    const note = sheet.querySelector('[data-f="note"]');
+    note.value = 'edited by the shots driver';
+    note.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+
+    out.dataset.step = 'save';
+    sheet.querySelector('[data-act="sheet-ok"]').click();
+    await until('the sheet closes', () => {
+        const st = d.querySelector('.pd-modal .mf .st');
+        if (st && st.classList.contains('bad')) throw new Error('refused: ' + st.textContent);
+        threw();
+        return !d.querySelector('.pd-modal');
+    }, 12000);
+
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
 // pulseDriver clicks a style in the rail and counts what the picture does
 // afterwards.
 //
@@ -2207,7 +2519,18 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
     // THE FIRST PAINT. Two frames: one for the click's synchronous work to
     // finish, one for the browser to have laid out and painted it. What the
     // engineer sees first is what the viewBox says here.
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    //
+    // WITH A FLOOR UNDER IT. A --dump-dom run can go idle before a second
+    // frame is ever served, and a wait with no timeout leaves the driver
+    // neither finished nor failed — which reports an empty result and says
+    // nothing at all about the page. 500 ms is well past a frame.
+    await new Promise(r => {
+        let done = false;
+        const fin = () => { if (!done) { done = true; r(); } };
+        requestAnimationFrame(() => requestAnimationFrame(fin));
+        setTimeout(fin, 500);
+    });
+    if (d.body.dataset.pdError) return fail('first paint', 'the page threw: ' + d.body.dataset.pdError);
     const svg = d.querySelector('#pd-svg');
     if (!svg) return fail('first paint', 'the picture is gone after the click');
     const first = svg.getAttribute('viewBox');

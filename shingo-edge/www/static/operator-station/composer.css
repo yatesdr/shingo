@@ -172,15 +172,26 @@
     margin-left: 12px; cursor: pointer; }
 
 /* ── S5/S6 popover ─────────────────────────────────────────────────────── */
-/* 720, NOT 420 (owner, Amendment A 2026-09-16). At 420 the mode row was a 2x2
- * grid of ~195 px cells and the description under it wrapped to three lines, so
- * the control an operator is reading and the sentence explaining it both fought
- * the box. Four modes is one decision and it reads as one row.
+/* 520, NOT 420 AND NOT 720 (owner, Amendment A 2026-09-16, corrected).
  *
- * The panel still may not leave the picture or cross the bar (SPEC S5) —
- * placePop enforces that and composer_shots_test's checkPanelFits proves it at
- * 1280x800, which is the screen this is for. */
-.os-comp-pop { position: absolute; width: 720px; background: var(--os-surface);
+ * The ask was that the mode row fit four buttons without the labels shrinking
+ * and that the description stop wrapping to three lines. 720 with a 4-across
+ * row achieved neither: four columns of 686 px content gives 165 px a button
+ * and about 113 px of label, which is NARROWER than the 137 px the 2x2 at 420
+ * had. It also made the panel wider than it may ever be — placePop puts the
+ * panel to one side of the card it was opened from, and at 720 on a 1280 stage
+ * there is a ~390 px band of card positions where NEITHER side fits, so the
+ * clamp drops the panel on top of its own anchor. The operator taps a position
+ * and the position disappears under the panel editing it.
+ *
+ * 520 keeps the 2x2 and gives each button 243 px — a label box of ~187 px,
+ * half again what it had — and the description two lines instead of three. The
+ * panel can never cover its anchor while it is 524 px or narrower, which is
+ * the constraint a one-row-of-four cannot satisfy at any readable label size.
+ *
+ * SPEC S5 still holds: never off-screen, never over the bar. placePop enforces
+ * it and composer_shots_test's checkPanelFits proves it at 1280x800. */
+.os-comp-pop { position: absolute; width: 520px; background: var(--os-surface);
     border: 1px solid var(--sub-3); border-radius: 14px; padding: 16px;
     display: flex; flex-direction: column; gap: 12px; z-index: var(--z-popover);
     box-shadow: 0 20px 50px rgba(0, 0, 0, .45);
@@ -237,7 +248,7 @@
 .os-comp-none { font-size: 13px; line-height: 1.45; color: var(--os-text-muted); max-width: 60ch; }
 .os-comp-row-l { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .os-comp-row-l .os-lbl { width: 100%; }
-.os-comp-seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.os-comp-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 /* 48 px, SPEC S5 — and height:48 rather than min-height:48, because the label is
  * what broke it: "2-robot index" wrapping to two lines took the button to ~100 px,
  * four of those took the panel past the bar and over the dock, and the shot showed
@@ -260,9 +271,13 @@
  * flow. A quiet button: bordered, padded, its own width rather than the card's,
  * and the red only on the press, because a red line sitting under every panel
  * would be a warning nobody reads by the end of a shift. */
+/* --os-touch-min, because this is a touch screen and this is the one control
+ * that takes a position out of the flow. The redesign that made it look like a
+ * button left it 39 px tall, under the 56 px floor operator.css sets and every
+ * other primary control on the station respects. */
 .os-comp-rm { border: 1px solid var(--os-gray-light); background: none; color: var(--os-text-muted);
     font: inherit; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer;
-    align-self: flex-start; padding: 10px 14px; border-radius: 10px; }
+    align-self: flex-start; min-height: var(--os-touch-min, 56px); padding: 0 18px; border-radius: 10px; }
 .os-comp-rm:hover { color: var(--os-text); }
 .os-comp-rm:active { border-color: var(--os-red); color: var(--os-red); }
 

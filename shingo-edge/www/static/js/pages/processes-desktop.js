@@ -274,6 +274,15 @@ async function openProcess(id) {
     // THIS process's rows, and one left behind would post another press's name
     // into this one.
     S.pickers = {};
+    // AND SO DOES THE SETTINGS DRAFT. openSettings is `S.settings ||
+    // settingsDraft()`, so a draft left behind was shown against the process
+    // just opened — its name, description, PLC, tag, counter and group, with
+    // the bar already claiming "Unsaved changes" on a process nobody had
+    // touched. Saving that renamed THIS process to the last one and took its
+    // counter config and group with it, because the PUT writes every field it
+    // decodes. Found by the audit; the door the tab click uses never reset it.
+    S.settings = null;
+    S.settingsError = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
     const res = await fetch('/api/processes/' + id + '/composer');
     if (!res.ok) {
@@ -281,6 +290,11 @@ async function openProcess(id) {
         return;
     }
     takeComposer(await res.json());
+    // S.stationNodes covers only the process the PAGE was loaded for, and this
+    // is a single-page app — so every process reached by a click had an empty
+    // map, and D4 drew "nothing claimed" against every HMI that had claims.
+    // Read them for the process being opened.
+    await refreshProcessStationNodes();
     const p = process();
     const h = hashOpts();
     const first = Number(h.style) || (p && p.active_style_id) ||
@@ -1398,10 +1412,22 @@ function membersOfGroup(name) {
 // The region the view is fitted to: the press's positions and the members of
 // every group in the routing set. The rest of the plant is drawn behind it and
 // runs off the edges, which is what "the rest of the plant faint" means.
+// The rows the set actually HAS. A disabled row is a decision nobody has made
+// — it is not in the set, the composer is not offered it, and the map must not
+// draw it or fit itself around it. Both readers below took `S.routing` whole,
+// so every backfilled-but-unadopted name on a migrated press was drawn as a
+// dashed group and pulled the view out to include it, while its chip was
+// (correctly) absent — and clicking that box called flashRoutingRow, which
+// found no chip and did nothing. The section's own comment says the map is the
+// read-back; this is what makes that true.
+function enabledRouting() {
+    return (S.routing || []).filter(r => r.enabled);
+}
+
 function fitRegion(m) {
     const names = [];
     for (const p of S.composer.cell.positions) names.push(p.core_node_name);
-    for (const r of S.routing || []) {
+    for (const r of enabledRouting()) {
         names.push(r.core_node_name);
         for (const mem of membersOfGroup(r.core_node_name)) names.push(mem);
     }
@@ -1483,7 +1509,7 @@ function drawMap(w, h) {
     }
 
     // The groups the set names, as a dashed rectangle around their members.
-    for (const r of S.routing || []) {
+    for (const r of enabledRouting()) {
         const mem = membersOfGroup(r.core_node_name).map(Tp).filter(Boolean);
         if (!mem.length) continue;
         const gx = mem.map(p => p[0]), gy = mem.map(p => p[1]);
@@ -2231,7 +2257,7 @@ function onAdvClick(e) {
     if (act && act.dataset.act === 'adv-apply') { applyAdvanced(); return; }
     // The confirm/edit sheets share this scrim, so their two buttons answer here.
     if (act && act.dataset.act === 'sheet-cancel') { closeSheet(); return; }
-    if (act && act.dataset.act === 'sheet-ok') { if (S.sheet && S.sheet.run) S.sheet.run(); return; }
+    if (act && act.dataset.act === 'sheet-ok') { runSheet(); return; }
     // And so does the Generate-variants dialog.
     if (act && act.dataset.act === 'gen-cancel') { closeGenerate(); return; }
     if (act && act.dataset.act === 'gen-run') { runGenerate(); return; }
@@ -2446,6 +2472,11 @@ function drawSettings() {
         stField('Delete this process', 'its styles, flows, routing set and screens go with it',
             '<button class="pd-btn danger" data-act="st-delete">Delete ' + esc(S.settings.name) + '…</button>');
 
+    // WHERE THE ENGINEER WAS SURVIVES THE REDRAW. .pd-sheet is the scroller and
+    // drawSettings replaces it wholesale, so every switch flip, auto-arm pick
+    // and map zoom threw the routing set and the map — both at the foot of a
+    // sheet twice the viewport — back off the top of the screen.
+    const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
         general + counter + changeover + hmi + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
@@ -2464,6 +2495,10 @@ function drawSettings() {
         });
     }
     bindPickers();
+    if (wasAt) {
+        const box = root().querySelector('.pd-sheet');
+        if (box) box.scrollTop = wasAt;
+    }
 }
 
 // The save bar alone, so typing a name does not redraw the field under the
@@ -2510,20 +2545,29 @@ async function reloadProcesses() {
     const res = await fetch('/api/processes');
     if (!res.ok) return;
     const rows = await res.json();
-    if (Array.isArray(rows)) S.processes = rows;
+    // A NIL GO SLICE MARSHALS TO null, AND null MEANS EMPTY. Guarding with
+    // Array.isArray avoided the crash and made null a no-op instead, so
+    // deleting the last process left it on the list.
+    S.processes = Array.isArray(rows) ? rows : [];
 }
 
 async function reloadStations() {
     const res = await fetch('/api/operator-stations');
     if (!res.ok) return;
     const rows = await res.json();
-    if (Array.isArray(rows)) S.stations = rows;
+    S.stations = Array.isArray(rows) ? rows : [];
 }
 
 // The positions one screen claims, re-read from the server rather than assumed
 // from what was just sent. S.stationNodes arrives with the page and nothing
 // refreshes it, so a screen whose positions were set here went on reporting
 // "nothing claimed" on D4 until the page was reloaded.
+// Every screen of the current process, so D4 and the screen sheet both draw
+// what the server actually holds rather than what the page happened to ship.
+async function refreshProcessStationNodes() {
+    await Promise.all(stationsOf(S.processID).map(st => refreshStationNodes(st.id)));
+}
+
 async function refreshStationNodes(stationID) {
     const res = await fetch('/api/operator-stations/' + stationID + '/claimed-nodes');
     if (!res.ok) return;
@@ -2770,6 +2814,12 @@ function onPickerClick(el) {
         if (at < 0) return;
         p.sel.splice(at, 1);
     } else if (p.onPick) {
+        // A name already in the set is TAKEN OUT by clicking it, the way every
+        // other multi-select on this page behaves and the way the `on` class
+        // drawn on that row implies. It used to re-call onPick, which is a
+        // no-op PATCH enabling an already-enabled row: the engineer clicked
+        // the highlighted name to remove it and nothing happened at all.
+        if (p.onDrop && p.sel.indexOf(name) >= 0) { p.onDrop(name); return; }
         p.onPick(name);
         return;
     } else {
@@ -2818,6 +2868,25 @@ function sheetStatus(text, bad) {
     if (!st) return;
     st.textContent = text;
     st.className = 'st' + (bad ? ' bad' : '');
+}
+
+// ONE RUN PER PRESS. sheet-ok re-invoked the sheet's action on every click,
+// so a double-click on Create started two interleaved write chains, and
+// pressing it again after a chain refused halfway re-ran it from the top —
+// which hits the UNIQUE constraint on processes.name and overwrites the status
+// line that was the only record of what had already been made.
+async function runSheet() {
+    if (!S.sheet || !S.sheet.run || S.sheet.running) return;
+    S.sheet.running = true;
+    const ok = $('pd-scrim').querySelector('[data-act="sheet-ok"]');
+    if (ok) ok.disabled = true;
+    try {
+        await S.sheet.run();
+    } finally {
+        if (S.sheet) S.sheet.running = false;
+        const btn = $('pd-scrim').querySelector('[data-act="sheet-ok"]');
+        if (btn) btn.disabled = false;
+    }
 }
 
 function closeSheet() {
@@ -2973,9 +3042,11 @@ async function refreshProcess() {
     const styles = await fetch('/api/processes/' + S.processID + '/styles');
     if (styles.ok) {
         const rows = await styles.json();
-        if (Array.isArray(rows)) {
-            S.styles = S.styles.filter(s => s.process_id !== S.processID).concat(rows);
-        }
+        // null is this process having no styles left — which is exactly the
+        // state deleting the last one produces, and the state in which the old
+        // guard kept it on screen.
+        S.styles = S.styles.filter(s => s.process_id !== S.processID)
+            .concat(Array.isArray(rows) ? rows : []);
     }
     S.settings = settingsDraft();
     if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
@@ -3037,10 +3108,36 @@ function openNewGroup() {
 // the press already has, in the draft, and nothing is written until Save flow.
 // One free position is the whole decision, so it is made without a dialog;
 // more than one and the engineer says which.
+// THE MODE COMES WITH IT, because on this screen a cell without one does not
+// exist. reduce's addPosition leaves `mode` null unless the action carries one,
+// and positionsTable draws a row only for `on && mode` — so "+ Add a position"
+// turned the cell on, drew nothing, left the name in the free list, and turned
+// the bar red naming a position that was nowhere on screen with "tap the
+// position and pick a choreography" against a row that did not exist. Save was
+// disabled by the finding, so the only way out was Discard.
+//
+// The station gets away with passing no mode because tapping a card opens the
+// panel that asks for one; the desktop's editor IS the row. So the row arrives
+// with a mode and the engineer changes it from the row's own Swaps picker.
+//
+// WHICH MODE: the one this style already uses. A press runs one choreography
+// on almost every position, so the common case is right and the odd one out is
+// one click. Falling back to the first mode flowspec offers keeps it defined
+// for a style that has no cells yet.
+function defaultModeFor() {
+    const seen = {};
+    for (const n of Object.keys(S.model.cells)) {
+        const c = S.model.cells[n];
+        if (c.on && c.mode) seen[c.mode] = (seen[c.mode] || 0) + 1;
+    }
+    const best = Object.keys(seen).sort((a, b) => seen[b] - seen[a])[0];
+    return best || Object.keys(M().modeLabels())[0] || '';
+}
+
 function addFreePosition(btn) {
     const free = freePositions();
     if (!free.length) return;
-    if (free.length === 1) { apply({ type: 'addPosition', node: free[0] }); return; }
+    if (free.length === 1) { apply({ type: 'addPosition', node: free[0], mode: defaultModeFor() }); return; }
     const pop = $('pd-pop');
     if (!pop) return;
     pop.innerHTML = '<div class="pd-lbl">Turn on a position</div>' +
@@ -3055,7 +3152,7 @@ function addFreePosition(btn) {
     pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', () => {
         const node = b.dataset.freepos;
         closePop();
-        apply({ type: 'addPosition', node: node });
+        apply({ type: 'addPosition', node: node, mode: defaultModeFor() });
     }));
 }
 
@@ -3222,16 +3319,35 @@ function stationBody(st, editing, change) {
 // TWO WRITES, IN ORDER, because they are two endpoints: the station row, then
 // the list of nodes it claims. A refusal on the second leaves the first, and
 // the status line says so rather than closing on a half-done edit.
-function openScreenSheet(stationID) {
+// THE BASELINE IS READ FROM THE SERVER, NOT FROM THE PAGE BLOCK.
+//
+// S.stationNodes arrives with the page and covers exactly ONE process — the
+// `?process=` one (handlers_admin_pages.go builds StationNodeMap from
+// activeProcess alone). This page is a single-page app: every other process is
+// reached by openProcess without a reload, so for those the map is EMPTY.
+//
+// That made this sheet destructive. The picker opened with nothing selected
+// because the map had nothing to give, and Save PUT that empty list to
+// claimed-nodes, which is a SET-TO: StationService.SetNodes deletes every
+// process_node the station owns that is not in the list. Editing a screen's
+// NOTE deleted every position it claimed, and the HMI was left with nothing to
+// work. Found by the audit the same day it shipped.
+//
+// So the sheet asks the server what this screen claims, and opens on the
+// answer. The write is also skipped when the engineer did not touch the list —
+// a note edit has no business calling a set-to endpoint at all.
+async function openScreenSheet(stationID) {
     const st = stationsOf(S.processID).find(s => s.id === Number(stationID)) || {};
     const editing = !!st.id;
+    if (editing) await refreshStationNodes(st.id);
+    const baseline = editing ? (S.stationNodes[String(st.id)] || []).slice() : [];
     const claimedElsewhere = {};
     for (const other of stationsOf(S.processID)) {
         if (other.id === st.id) continue;
         for (const n of S.stationNodes[String(other.id)] || []) claimedElsewhere[n] = other.name;
     }
     pickerInit('positions', {
-        selected: editing ? (S.stationNodes[String(st.id)] || []) : [],
+        selected: baseline,
         // A position claimed by a sibling screen is NOT hidden and not refused:
         // SetNodes moves it, deliberately, because one Core node has exactly one
         // process_node row per process. The engineer is told whose it is before
@@ -3252,12 +3368,22 @@ function openScreenSheet(stationID) {
                 stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }));
             if (!wrote.ok) { sheetStatus(wrote.error, true); return; }
             const id = editing ? st.id : Number(wrote.body.id);
-            const nodes = await postJSON('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
-                B().stationNodes(sheetValue('positions')));
-            if (!nodes.ok) {
-                sheetStatus('The screen was saved; its positions were refused: ' + nodes.error, true);
-                await reloadStations();
-                return;
+            // UNTOUCHED MEANS UNWRITTEN. claimed-nodes is a set-to, so sending
+            // the list again when nobody changed it is a delete-and-recreate of
+            // every position — and sending it when the baseline failed to load
+            // is the data loss this guard exists for. A new screen with no
+            // positions picked has nothing to set either.
+            const want = B().stationNodes(sheetValue('positions')).nodes;
+            const same = want.length === baseline.length &&
+                want.every((n, i) => n === baseline[i]);
+            if (!same) {
+                const nodes = await postJSON('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
+                    { nodes: want });
+                if (!nodes.ok) {
+                    sheetStatus('The screen was saved; its positions were refused: ' + nodes.error, true);
+                    await reloadStations();
+                    return;
+                }
             }
             closeSheet();
             await reloadStations();
@@ -3740,7 +3866,14 @@ function drawPresets() {
             '<thead><tr><th>Shape</th><th>Used by</th><th></th></tr></thead><tbody>' +
             cands.map(candidateRow).join('') + '</tbody></table>';
     }
-    root().innerHTML = appbar() + '<div class="pd-sheet">' + h + '</div>';
+    // THE ROW MENU NEEDS A POPOVER TO OPEN INTO. #pd-pop is rendered by main(),
+    // which is the FLOWS tab — so on Presets openPresetMenu found nothing and
+    // returned, and the ⋯ on every row was silent. Apply, Rename and Archive
+    // have no other door, so the whole apply flow was unreachable by mouse.
+    // The shots harness reaches the modal through its `;apply=` hash, which is
+    // why three rounds of screenshots never noticed.
+    root().innerHTML = appbar() + '<div class="pd-sheet">' + h +
+        '<div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
 
 function presetByID(id) { return (presetsView() ? presetsView().presets : []).find(p => p.id === id) || null; }
@@ -4194,6 +4327,9 @@ async function runPresetApply() {
 }
 
 // ── events ───────────────────────────────────────────────────────────────────
+// The acts that open #pd-pop. See the note in onClick.
+const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1 };
+
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
     const tab = e.target.closest && e.target.closest('[data-tab]');
@@ -4204,7 +4340,18 @@ function onClick(e) {
 
     const npk = e.target.closest && e.target.closest('[data-npk]');
     if (npk) { onPickerClick(npk); return; }
-    if (btn && btn.dataset.act === 'pick') { e.stopPropagation(); openPicker(btn); return; }
+    // EVERY ACT THAT OPENS #pd-pop HAS TO STOP THE EVENT. onClick is bound to
+    // #pd-root and boot() puts a listener on the DOCUMENT that closes the
+    // popover on any click outside it — and a click on the button that opens
+    // one is, by that test, outside it. So the menu opened during the bubble
+    // through #pd-root and was hidden again before paint, one listener later.
+    //
+    // `pick` had the stopPropagation and the three others did not, which is
+    // why the style row's ⋯ — the only door to Rename, Expected CATID, Clone,
+    // Mark as running and Delete — has never opened, and why the
+    // add-a-position chooser does nothing whenever more than one is free.
+    if (btn && POPOVER_ACTS[btn.dataset.act]) e.stopPropagation();
+    if (btn && btn.dataset.act === 'pick') { openPicker(btn); return; }
     if (btn) {
         switch (btn.dataset.act) {
             case 'list': drawList(); return;
@@ -4246,8 +4393,8 @@ function onClick(e) {
             case 'st-generate': openGenerate(); return;
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
-            case 'screen-add': openScreenSheet(0); return;
-            case 'screen-edit': openScreenSheet(btn.dataset.station); return;
+            case 'screen-add': void openScreenSheet(0); return;
+            case 'screen-edit': void openScreenSheet(btn.dataset.station); return;
             case 'style-menu': openStyleMenu(btn); return;
             // D6's own actions.
             case 'preset-menu': openPresetMenu(btn); return;
@@ -4303,7 +4450,7 @@ function onClick(e) {
                 styleAction(btn.dataset.act.slice('style-'.length), Number(btn.dataset.style));
                 return;
             case 'sheet-cancel': closeSheet(); return;
-            case 'sheet-ok': if (S.sheet && S.sheet.run) S.sheet.run(); return;
+            case 'sheet-ok': runSheet(); return;
             case 'rs-zoom': {
                 const z = btn.dataset.z;
                 S.mapZoom = z === 'in' ? Math.min(4, S.mapZoom * 1.4)
