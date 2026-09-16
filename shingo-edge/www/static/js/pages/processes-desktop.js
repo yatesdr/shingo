@@ -3488,7 +3488,10 @@ async function openEditProcessFor(p) {
         positions: positions.slice(),
         roles: {},
     };
-    S.add = { groupID: p.group_id || 0, editing: p.id, screen: one };
+    // ONLY THE GROUP. The sheet's other two facts — which process and which
+    // screen — are arguments to submitEditProcess, so parking copies of them
+    // here made two records of one thing and nothing read the second.
+    S.add = { groupID: p.group_id || 0 };
 
     pickerInit('positions', {
         selected: positions,

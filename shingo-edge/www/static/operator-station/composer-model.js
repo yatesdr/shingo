@@ -88,30 +88,33 @@ function fieldWord(state, field) {
 // says `Robot 1 supplies PLN_05`. The verb is what the operator needs — which
 // robot does the far trip — and the thing it carries is drawn on the card
 // below it, named by its part.
-// A CARD SAYS WHERE, NOT JUST WHO (owner, 2026-09-16). These named the robots
-// and, for two of the four modes, one of the places — so a position that parks
-// its old bin somewhere said nothing about where, and an engineer building a
-// flow had to open the row to find out. "Anything to help the operators or
-// someone visualise the flow when they create it."
+// A CARD SAYS WHERE, NOT JUST WHO (owner, 2026-09-16). single_robot named
+// neither of its two parking spots — "One robot, parks and swaps" is the
+// choreography, which the Swaps chip beside it already carries — so the one
+// mode with BOTH an inbound and an outbound staging spot was the one mode that
+// named neither. It names them in the words the desktop's staging cell already
+// uses, `Inbound PLN_02 · Outbound —`, and falls back to the reference
+// sentence when the flow has not set either yet.
 //
-// ADDITIVE, AND ONLY WHEN THE FIELD IS SET. The first line of each is the
-// reference's, unchanged, and a mode whose staging is still blank reads exactly
-// as it did — so this adds information and never rewrites a sentence that was
-// already right.
+// ONLY THE FIELDS THE MODE HAS, which is the correction this went through.
+// The first pass appended the outbound staging to two_robot and to
+// two_robot_press_index as well, and ROW_FIELDS above says plainly that
+// neither has it: a press index has `paired_core_node` and nothing else, and
+// two_robot has `inbound_staging` alone. Printing `outbound_staging` there
+// would have named a place off a stale column that the choreography never
+// reads — telling an operator a bin goes somewhere it does not.
 //
 // TWO LINES IS THE CEILING, and it is a hard one: the lines sit at y=43 and
 // y=57 and the part chip is a rect from y=64, so a third would be drawn
-// through it. Each ' · ' is a line break, which is why the additions hang off
-// the second segment rather than making a third. At 12 px in a 188 px card
-// that is about 27 characters a line, which `Robot 2 pulls old → SLN_010`
-// just fits.
+// through it. Each ' · ' is a line break, which is why a mode gets two
+// segments and never three. At 12 px in a 188 px card that is about 27
+// characters a line.
 const CARDLINE = {
-    two_robot_press_index: c => 'Robot 1 supplies ' + (c.paired || '?') +
-        ' · Robot 2 indexes' + (c.parkOld ? ' → ' + c.parkOld : ''),
-    two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') +
-        ' · Robot 2 pulls old' + (c.parkOld ? ' → ' + c.parkOld : ''),
-    single_robot: c => (c.staging ? 'New parks at ' + c.staging : 'One robot, parks and swaps') +
-        (c.parkOld ? ' · Old out to ' + c.parkOld : ''),
+    two_robot_press_index: c => 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
+    two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
+    single_robot: c => ((c.staging || c.parkOld)
+        ? 'Inbound ' + (c.staging || '—') + ' · Outbound ' + (c.parkOld || '—')
+        : 'One robot, parks and swaps'),
     sequential: c => 'One robot, A/B flip' + (c.paired ? ' · with ' + c.paired : ''),
 };
 
