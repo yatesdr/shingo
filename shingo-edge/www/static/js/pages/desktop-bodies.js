@@ -136,6 +136,31 @@ function styleWrite(style, processID, change) {
     return Object.assign(base, change || {});
 }
 
+// styleCreate — POST /api/styles, the rail's "+ New part flow".
+//
+// process_id is REFUSED WHEN ZERO by apiCreateStyle, so it is an argument
+// rather than something a caller may forget, and expected_catid rides along
+// because the handler has its own setter for it and a style named without one
+// is a style the PLC can never match to a scan. description is named for the
+// same reason every other builder names it: the handler decodes it.
+function styleCreate(name, processID, catid) {
+    return {
+        name: name || '',
+        description: '',
+        process_id: Number(processID) || 0,
+        expected_catid: catid || '',
+    };
+}
+
+// processGroupCreate — POST /api/process-groups, P0's "Add group".
+//
+// A group is pure taxonomy for the list — nothing reads it — so the two fields
+// the handler decodes are the whole of it. A duplicate name comes back 409 by
+// name, which is why the sheet shows the refusal instead of guarding.
+function processGroupCreate(name, description) {
+    return { name: name || '', description: description || '' };
+}
+
 // styleClone — POST /api/styles/{id}/clone. The handler takes the new name and
 // copies the rest from the source, so the name is the whole body.
 function styleClone(name) {
@@ -323,7 +348,8 @@ function saveOutcome(status, body) {
 // again.
 (function () {
     const api = {
-        processCreate, processSettings, processGate, styleWrite, styleClone,
+        processCreate, processSettings, processGate, processGroupCreate,
+        styleCreate, styleWrite, styleClone,
         processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
         flowPresetCreate, flowPresetApplySave,
         applyOrder, applyOutcome, saveOutcome,

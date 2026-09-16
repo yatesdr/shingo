@@ -433,6 +433,9 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 
 			r.Get("/styles", h.apiListStyles)
 			r.Post("/styles", h.apiCreateStyle)
+			// P0's Add group, whose body this router had no door for.
+			r.Get("/process-groups", h.apiListProcessGroups)
+			r.Post("/process-groups", h.apiCreateProcessGroup)
 			r.Put("/styles/{id}", h.apiUpdateStyle)
 			r.Delete("/styles/{id}", h.apiDeleteStyle)
 			r.Post("/styles/{id}/clone", h.apiCloneStyle)

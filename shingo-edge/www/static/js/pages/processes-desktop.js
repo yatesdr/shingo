@@ -578,7 +578,15 @@ function main() {
         '</div></div>' +
         '<div class="act">' +
         '<button class="pd-btn quiet" data-act="discard">Discard changes</button>' +
-        '<button class="pd-btn" data-act="copy-to">Copy to another part…</button>' +
+        // COPY TO ANOTHER PART IS NOT WIRED, and it says so rather than
+        // answering a click with nothing. It is a FLOW copy from this style to
+        // another style on this press — the server path is flow/preview then
+        // flow/save against the target, which is what the preset-apply modal
+        // already walks — and whether it reuses that modal's preview-then-apply
+        // shape or is a plain confirm is an owner call, not a builder's.
+        '<button class="pd-btn" data-act="copy-to" disabled title="Not wired yet. ' +
+        'Copying a flow onto another part goes through preview and save, and which of those ' +
+        'two shapes it takes has not been ruled on.">Copy to another part…</button>' +
         // SAVE AS PRESET IS MADE FROM THE SAVED FLOW, so it is disabled while
         // the draft is dirty: a preset named from an unsaved draft would be a
         // shape the station does not run, under a name that claims it does.
@@ -591,8 +599,12 @@ function main() {
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
 
-function positionsTable() {
-    const rows = [];
+// A position is USED when it has a row of its own, or when it is somebody
+// else's partner or staging — those are drawn on the row that names them and
+// have no row of their own. What is left is free, and free is what "+ Add a
+// position" adds. Its own function because the footer names the free ones and
+// the click that follows has to add one of exactly those.
+function usedPositions() {
     const used = new Set();
     for (const pos of S.model.positions) {
         const n = pos.core_node_name;
@@ -602,6 +614,23 @@ function positionsTable() {
         for (const col of ['partner', 'staging']) {
             for (const chip of M().rowColumns(S.model, n, col)) if (chip.value) used.add(chip.value);
         }
+    }
+    return used;
+}
+
+function freePositions() {
+    if (!S.model) return [];
+    const used = usedPositions();
+    return S.model.positions.map(p => p.core_node_name).filter(n => !used.has(n));
+}
+
+function positionsTable() {
+    const rows = [];
+    const used = usedPositions();
+    for (const pos of S.model.positions) {
+        const n = pos.core_node_name;
+        const c = S.model.cells[n];
+        if (!c || !c.on || !c.mode) continue;
         const advSet = advancedCount(n);
         rows.push('<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
             '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + '</small></td>' +
@@ -617,7 +646,7 @@ function positionsTable() {
     }
     const paired = S.model.positions.map(p => p.core_node_name)
         .filter(n => used.has(n) && !(S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode));
-    const free = S.model.positions.map(p => p.core_node_name).filter(n => !used.has(n));
+    const free = freePositions();
     let tail = '';
     if (paired.length) {
         tail += '<tr class="paired"><td colspan="9">' + esc(paired.join(', ')) +
@@ -2750,6 +2779,81 @@ async function refreshProcess() {
     else await openSettings();
 }
 
+// ── the rail's and the list's own creates ────────────────────────────────────
+
+// "+ New part flow": a part this press runs, with the CATID the PLC calls it.
+// The flow itself is drawn afterwards on D1 — a style arrives with no claims
+// and the rail marks it `build`, which is the state the picture is for.
+function openNewStyle() {
+    openSheet('New part flow', 'a part this press runs. Its flow is drawn next, on this screen.',
+        sheetField('Name', 'what this part is called here', 'name', '') +
+        sheetField('Expected CATID', 'what the PLC calls it — blank means shingo never matches it to a scan',
+            'catid', '') +
+        '<p class="pd-note">A confirmed change to the CATID is what arms a changeover cutover, so a ' +
+        'part with none can be run but never recognised. It can be set later from the part’s own ' +
+        'row menu.</p>',
+        'Create', async () => {
+            const name = String(sheetValue('name') || '').trim();
+            if (!name) { sheetStatus('A part needs a name.', true); return; }
+            const made = await postJSON('POST', '/api/styles',
+                B().styleCreate(name, S.processID, sheetValue('catid')));
+            if (!made.ok) { sheetStatus(made.error, true); return; }
+            closeSheet();
+            // Selected, because the reason to make one is to draw its flow.
+            // refreshProcess keeps the id when the re-read still has it.
+            S.styleID = Number(made.body.id) || S.styleID;
+            await refreshProcess();
+        }, false, 'pd-narrow');
+}
+
+// P0's "Add group". Taxonomy for the list and nothing else reads it, which the
+// sheet says so nobody goes looking for what it does.
+function openNewGroup() {
+    openSheet('Add group', 'how the process list is grouped. Nothing else reads it.',
+        sheetField('Name', 'what this group of presses is called', 'name', '') +
+        sheetField('Description', '', 'description', ''),
+        'Add', async () => {
+            const name = String(sheetValue('name') || '').trim();
+            if (!name) { sheetStatus('A group needs a name.', true); return; }
+            const made = await postJSON('POST', '/api/process-groups',
+                B().processGroupCreate(name, sheetValue('description')));
+            if (!made.ok) { sheetStatus(made.error, true); return; }
+            closeSheet();
+            const res = await fetch('/api/process-groups');
+            if (res.ok) {
+                const rows = await res.json();
+                if (Array.isArray(rows)) S.groups = rows;
+            }
+            drawList();
+        }, false, 'pd-narrow');
+}
+
+// "+ Add a position" is a MODEL OP, not a server write: it turns on a position
+// the press already has, in the draft, and nothing is written until Save flow.
+// One free position is the whole decision, so it is made without a dialog;
+// more than one and the engineer says which.
+function addFreePosition(btn) {
+    const free = freePositions();
+    if (!free.length) return;
+    if (free.length === 1) { apply({ type: 'addPosition', node: free[0] }); return; }
+    const pop = $('pd-pop');
+    if (!pop) return;
+    pop.innerHTML = '<div class="pd-lbl">Turn on a position</div>' +
+        free.map(n => '<button data-freepos="' + esc(n) + '">' + esc(n) + '</button>').join('');
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect();
+    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
+    pop.style.left = Math.min(host.width - 200, Math.max(8, r.left - host.left)) + 'px';
+    // The footer sits at the foot of the page, so its list opens UPWARDS —
+    // below it is off the screen.
+    pop.style.top = Math.max(8, r.top - host.top - pop.offsetHeight - 6) + 'px';
+    pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', () => {
+        const node = b.dataset.freepos;
+        closePop();
+        apply({ type: 'addPosition', node: node });
+    }));
+}
+
 // ── Add process, end to end ──────────────────────────────────────────────────
 //
 // THE WHOLE CHAIN, IN ONE SHEET. The flow-composer wave left `add-process`
@@ -4008,9 +4112,9 @@ function onClick(e) {
                 return;
             }
             case 'add-process': openAddProcess(); return;
-            case 'add-position': case 'copy-to': case 'new-style':
-            case 'add-group':
-                return;   // U10
+            case 'add-group': openNewGroup(); return;
+            case 'new-style': openNewStyle(); return;
+            case 'add-position': addFreePosition(btn); return;
             default: break;
         }
     }

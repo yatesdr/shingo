@@ -81,6 +81,8 @@ process.stdout.write(JSON.stringify({
   'gate':                B.processGate(true),
   'rename':              B.styleWrite(f.style, f.processID, { name: 'Renamed here' }),
   'expected catid':      B.styleWrite(f.style, f.processID, { expected_catid: 'CAT-NEW' }),
+  'new style':           B.styleCreate('Made here', f.processID, 'CAT-MADE'),
+  'new group':           B.processGroupCreate('Group made here', 'a group'),
   'clone':               B.styleClone('Cloned here'),
   'mark as running':     B.processActiveStyle(f.style.id),
   'operator-screen edit': B.stationWrite(f.station, f.processID, true, { name: 'Renamed screen', note: 'a note' }),
@@ -106,8 +108,8 @@ process.stdout.write(JSON.stringify({
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode bodies (%s): %v", raw, err)
 	}
-	if len(out) != 16 {
-		t.Fatalf("the harness emitted %d bodies, want 16 — a write lost its builder", len(out))
+	if len(out) != 18 {
+		t.Fatalf("the harness emitted %d bodies, want 18 — a write lost its builder", len(out))
 	}
 	return out
 }
@@ -389,6 +391,55 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		}
 		if got.Description != style.Description || got.ProcessID != pid {
 			t.Errorf("a column nobody edited moved: %+v", got)
+		}
+	})
+
+	// ── the two creates the rail and the list make ───────────────────────────
+	t.Run("a new style lands on this process with its CATID", func(t *testing.T) {
+		resp := doRequest(t, router, "POST", "/api/styles", bodies["new style"], cookie)
+		assertStatus(t, resp, http.StatusOK)
+		rows, err := testDB.ListStylesByProcess(pid)
+		if err != nil {
+			t.Fatalf("list styles: %v", err)
+		}
+		var made *processes.Style
+		for i := range rows {
+			if rows[i].Name == "Made here" {
+				made = &rows[i]
+			}
+		}
+		if made == nil {
+			t.Fatalf("no style named %q after the create: %+v", "Made here", rows)
+		}
+		// A zero process_id is a 400 from this handler, and the CATID has its
+		// own setter — a body that named neither would have created an
+		// orphan the PLC can never match.
+		if made.ProcessID != pid {
+			t.Errorf("process_id = %d, want %d", made.ProcessID, pid)
+		}
+		if made.ExpectedCATID != "CAT-MADE" {
+			t.Errorf("expected_catid = %q, want CAT-MADE", made.ExpectedCATID)
+		}
+	})
+
+	t.Run("a new group takes its name and description", func(t *testing.T) {
+		resp := doRequest(t, router, "POST", "/api/process-groups", bodies["new group"], cookie)
+		assertStatus(t, resp, http.StatusOK)
+		groups, err := testDB.ListProcessGroups()
+		if err != nil {
+			t.Fatalf("list groups: %v", err)
+		}
+		var made *domain.ProcessGroup
+		for i := range groups {
+			if groups[i].Name == "Group made here" {
+				made = &groups[i]
+			}
+		}
+		if made == nil {
+			t.Fatalf("no group named %q: %+v", "Group made here", groups)
+		}
+		if made.Description != "a group" {
+			t.Errorf("description = %q, want %q", made.Description, "a group")
 		}
 	})
 
