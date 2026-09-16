@@ -88,11 +88,31 @@ function fieldWord(state, field) {
 // says `Robot 1 supplies PLN_05`. The verb is what the operator needs — which
 // robot does the far trip — and the thing it carries is drawn on the card
 // below it, named by its part.
+// A CARD SAYS WHERE, NOT JUST WHO (owner, 2026-09-16). These named the robots
+// and, for two of the four modes, one of the places — so a position that parks
+// its old bin somewhere said nothing about where, and an engineer building a
+// flow had to open the row to find out. "Anything to help the operators or
+// someone visualise the flow when they create it."
+//
+// ADDITIVE, AND ONLY WHEN THE FIELD IS SET. The first line of each is the
+// reference's, unchanged, and a mode whose staging is still blank reads exactly
+// as it did — so this adds information and never rewrites a sentence that was
+// already right.
+//
+// TWO LINES IS THE CEILING, and it is a hard one: the lines sit at y=43 and
+// y=57 and the part chip is a rect from y=64, so a third would be drawn
+// through it. Each ' · ' is a line break, which is why the additions hang off
+// the second segment rather than making a third. At 12 px in a 188 px card
+// that is about 27 characters a line, which `Robot 2 pulls old → SLN_010`
+// just fits.
 const CARDLINE = {
-    two_robot_press_index: c => 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
-    two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
-    single_robot: () => 'One robot, parks and swaps',
-    sequential: () => 'One robot, A/B flip',
+    two_robot_press_index: c => 'Robot 1 supplies ' + (c.paired || '?') +
+        ' · Robot 2 indexes' + (c.parkOld ? ' → ' + c.parkOld : ''),
+    two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') +
+        ' · Robot 2 pulls old' + (c.parkOld ? ' → ' + c.parkOld : ''),
+    single_robot: c => (c.staging ? 'New parks at ' + c.staging : 'One robot, parks and swaps') +
+        (c.parkOld ? ' · Old out to ' + c.parkOld : ''),
+    sequential: c => 'One robot, A/B flip' + (c.paired ? ' · with ' + c.paired : ''),
 };
 
 const MODEHELP = {
@@ -1048,12 +1068,28 @@ function cardLines(state, node) {
     const c = state.cells[node];
     if (!c) return [];
     if (c.on && c.mode) return CARDLINE[c.mode](c).split(' · ');
-    // a back position doing somebody's work says whose
+    // A BACK POSITION DOING SOMEBODY'S WORK SAYS WHOSE — and now says WHICH
+    // work. "PLN_05 is feeding PLN_06 — should it show PLN_05 with inbound
+    // staging or whatever? Same for outbound staging if applicable." It said
+    // "staging for PLN_06" for both, so the card could not tell an engineer
+    // whether that slot takes the new bin in or the old one out, which is the
+    // difference between the two trips drawn on the picture around it.
+    //
+    // THE SAME TWO WORDS THE PANEL'S ROW USES, but written out rather than
+    // taken from fieldWord — which is the opposite of what F3 usually asks,
+    // and the reason is this surface. operator-display.html deliberately does
+    // NOT load flowspec-data.js (it says so, and why), so on the read-only
+    // picture an operator actually reads, fieldWord has no labels and falls
+    // back to the field's own name. `outbound_staging` is the documented
+    // fallback and it is right in a refusal — on a shop-floor card it is worse
+    // than the "staging for PLN_03" it would be replacing. F3 forbids a SECOND
+    // NAME for a field; this is the same name, in sentence case.
     for (const p of state.positions) {
         const o = state.cells[p.core_node_name];
         if (!o || !o.on || !o.mode) continue;
         if (o.paired === node) return ['on deck for ' + p.core_node_name];
-        if (o.staging === node || o.parkOld === node) return ['staging for ' + p.core_node_name];
+        if (o.staging === node) return ['Inbound staging', 'for ' + p.core_node_name];
+        if (o.parkOld === node) return ['Outbound staging', 'for ' + p.core_node_name];
     }
     const pos = state.positions.find(p => p.core_node_name === node);
     return [(pos && pos.kind === 'back') ? 'back position' : 'front position'];
@@ -1488,20 +1524,75 @@ const FIELD_ROLE = {
 
 function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 
+// ── the one field that is not a routing role, and its own two empties ────────
+//
+// PAIRED IS EMPTY FOR A DIFFERENT REASON AND NEEDS A DIFFERENT SENTENCE
+// (2026-09-16). Amendment A gave every routing role a sentence and left
+// paired_core_node silent on purpose, because its options are the press's OWN
+// POSITIONS and "add them in Settings › Routing" would be false about them. The
+// silence was worse than the wrong words.
+//
+// At Hopkinsville the 4x2's five positions are ALL kind `front` — a position
+// becomes `back` only when some live claim of the process names it as a pair or
+// a staging slot (store.ListBackPositionNames), and nothing on that press ever
+// has — so composer-render's optionsFor offers a 2-robot index NO back
+// position, while flowspec marks paired_core_node REQUIRED for that mode. The
+// operator picked the choreography and got the heading of the one field that
+// blocks the save, with nothing under it, no sentence and no fix-it.
+//
+// TWO CHOREOGRAPHIES PAIR AND THEY PAIR WITH DIFFERENT THINGS, so they get
+// different sentences: a press index pairs with a BACK position (which is why
+// addPosition defaults its pair to freeBackPosition), and Sequential A/B flips
+// between two positions of any kind.
+//
+// THE NEXT ACTION IS THE DESKTOP, and it is real: the desktop's Flows picker
+// offers the backs AND the other positions for a pair (processes-desktop's
+// optionsFor, its `partnering` branch), so the first pair on a press with no
+// back position is made there, and the station offers it from the next save on.
+// That is the same shape as the routing sentences' "Settings › Routing" — the
+// fact, then somewhere to go.
+const PAIRED_NOTE = {
+    two_robot_press_index: 'No back position on this press — a ' + MODES.two_robot_press_index +
+        ' pairs with one, and a position becomes a back position only when a flow names it. ' +
+        'Pair this one from the desktop’s Flows, or pick another choreography.',
+    sequential: 'Only one position on this press — ' + MODES.sequential +
+        ' fills one side while the other runs, so it needs a second position to flip to.',
+};
+
+// pairedNote reads the choreography off the cell the card is open on. `node` is
+// the position the panel passes; state.selected is the fallback, and it is the
+// same node — the panel selects a position before it draws a row for it.
+function pairedNote(state, node) {
+    const c = ((state && state.cells) || {})[node || (state && state.selected)] || {};
+    // A mode nobody has written words for still never draws a heading over
+    // nothing. ROW_FIELDS gives paired_core_node to exactly the two above; a
+    // third would arrive here before anyone noticed it had no sentence.
+    return PAIRED_NOTE[c.mode] || 'Nothing on this press to pair this position with.';
+}
+
 // routingNote is the line under an empty row, or '' when the row has options.
 //
 // `offered` is how many the SCREEN can offer, which for staging is the routing
 // rows plus the process's own back positions — a press that parks on its own
 // back slot has staging without a routing row, and telling its operator the set
 // is empty would be false.
+//
+// `node` is the position the row belongs to, and only paired_core_node reads
+// it; the dock panel and the desktop's pickers have no position and pass none.
+
 // How many switched-off names the sentence spells out before it counts the
 // rest. Three fits the card's width and is enough to recognise a role by: an
 // engineer who sees SLN_09 knows instantly whether the staging role holds
 // staging lanes or, as they feared, supermarket slots.
 const ROUTING_NOTE_NAMES = 3;
 
-function routingNote(state, field, offered) {
+function routingNote(state, field, offered, node) {
     if (offered) return '';
+    // The one card row whose options are positions rather than routing rows —
+    // see PAIRED_NOTE. It is still not a routing role (routingRoleOf answers ''
+    // for it) and the sentence must never send anyone to Settings › Routing to
+    // look for a press position.
+    if (field === 'paired_core_node') return pairedNote(state, node);
     const role = routingRoleOf(field);
     if (!role) return '';
     const word = ROLE_WORD[role] || role;

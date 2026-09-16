@@ -74,8 +74,18 @@
     border-radius: 18px; padding: 28px 32px 30px; display: flex; flex-direction: column; gap: 0; }
 .os-comp-card .top { display: flex; align-items: flex-start; gap: 16px; }
 .os-comp-card .top > div { min-width: 0; }
+/* --os-touch-min, BOTH WAYS. This is the only way back to the part list from the
+ * set-up card, and 6x10 px of padding around a 15 px ✕ made it 31x27 — half the
+ * 56 px floor operator.css sets (§0.11, "touch targets never smaller than
+ * this"), on a glove-and-touchscreen surface, for the control an operator
+ * reaches for when they picked the wrong part. The box grows; the glyph does
+ * not, so the card looks the same and the target is the size it claims to be.
+ * inline-flex centres the glyph in it — a button's default centring is the UA's
+ * and differs between them. */
 .os-comp-card .top .x {
     margin-left: auto; flex: 0 0 auto; background: none; border: 0; padding: 6px 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: var(--os-touch-min, 56px); min-height: var(--os-touch-min, 56px);
     color: var(--os-text-muted); font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
 }
 .os-comp-card h2 { margin: 6px 0 4px; font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
@@ -90,9 +100,15 @@
 /* NOT an .os-btn: the quiet path is a line of text, not a second button
    shape. Given .os-btn it inherited the border and read as an equal choice
    under the primary, which is the thing putting it underneath was meant to
-   stop. */
+   stop.
+   QUIET IS NOT SMALL. `Edit the flow first` is the ONLY door into the composer
+   from S3, and 12 px of padding around a 15 px line came to ~42 px — under the
+   56 px floor (--os-touch-min). It keeps the borderless look and gets the height
+   every other control on the station has; the padding stays for the case where
+   the text ever wraps. */
 .os-comp-quiet {
     display: block; width: 100%; margin-top: 12px; padding: 12px; background: none; border: 0;
+    min-height: var(--os-touch-min, 56px);
     color: var(--os-text-muted); font: inherit; font-weight: 600; font-size: 15px; text-align: center; cursor: pointer;
 }
 /* R8: a part with no position, on the set-up card. Amber, centred under the
@@ -120,6 +136,12 @@
 .os-chip.part.free { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
 .os-chip.add { color: var(--os-accent); border-style: dashed; cursor: pointer; font: inherit; font-size: 14px; }
 .os-chip.need { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
+/* A DISABLED CHIP HAS TO LOOK DISABLED. Both `+ Add a part` buttons are drawn
+ * with their reason in the title and no palette behind them (composer-render's
+ * ADDPART_TITLE); left at full strength with a pointer cursor they would be the
+ * same live-looking control that answered a tap with nothing. The values are the
+ * ones the disabled primary already uses below. */
+.os-chip[disabled] { opacity: .45; cursor: default; }
 
 /* ── S4 the picture ────────────────────────────────────────────────────── */
 .os-comp-full { position: absolute; inset: 0; background: var(--os-bg); display: flex; flex-direction: column; }
@@ -167,7 +189,10 @@
 .os-comp-bar .l1.bad { color: var(--os-red); }
 .os-comp-bar .l2 { font-size: 13px; color: var(--os-text-muted); max-width: 620px; }
 .os-comp-bar .os-btn-primary { min-width: 300px; min-height: 60px; font-size: 19px; }
-.os-comp-fix { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 0;
+/* --os-touch-min: the fix-it is the bar's ACTION — the one tap that repairs the
+ * thing blocking the save — and it was 44 px beside a 60 px primary in an 84 px
+ * bar that has the room. */
+.os-comp-fix { min-height: var(--os-touch-min, 56px); padding: 0 16px; border-radius: 10px; border: 0;
     background: var(--os-accent-solid); color: var(--os-text); font-weight: 600; font-size: 14px;
     margin-left: 12px; cursor: pointer; }
 
@@ -246,6 +271,23 @@
 /* A ROLE WITH NOTHING TO OFFER, in the row where its chips would have been.
  * Never a heading over nothing — see composer-model's routingNote. */
 .os-comp-none { font-size: 13px; line-height: 1.45; color: var(--os-text-muted); max-width: 60ch; }
+/* EVERY CHIP IN THIS PANEL IS A CONTROL, AT THE FLOOR (--os-touch-min).
+ * .os-chip is the reference's 38 px mouse-sized pill, and on S5/S6 that is every
+ * part, pair, staging, source, destination and via option — most of the tapping
+ * this screen asks of an operator wearing gloves, 18 px under the floor
+ * operator.css sets for the whole station.
+ *
+ * SCOPED TO THE PANEL, not put on .os-chip itself: the strip's part chips and
+ * the set-up card's are <span>s saying what the style runs, and a 56 px pill
+ * around a label is a control that is not there. The `need` chip ("pick one")
+ * comes along because it shares the row with the buttons and a 38 px gap in a
+ * row of 56s reads as a broken chip.
+ *
+ * `height: auto` first, or the 38 px above stays the used height. The panel gets
+ * taller and SCROLLS — placePop caps it at the picture's height and the width is
+ * untouched at 520, so nothing about where the panel can be placed changes
+ * (SPEC S5, measured by reportPanelFit). */
+.os-comp-pop .os-chip { height: auto; min-height: var(--os-touch-min, 56px); }
 .os-comp-row-l { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .os-comp-row-l .os-lbl { width: 100%; }
 .os-comp-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -299,6 +341,13 @@
 .os-comp-confirm td.r1 { color: var(--robot-1); }
 .os-comp-confirm td.r2 { color: var(--robot-2); }
 .os-comp-confirm .foot { font-size: 14px; color: var(--os-text-muted); }
+/* THE START'S REFUSAL, ON THE SHEET THAT ASKED FOR IT. The start used to treat
+ * every non-409 as success and draw the green tick over a refused changeover;
+ * it now shows the server's own sentence here, between the foot and the
+ * buttons. Red and at the bar's weight, because it is the same thing the bar's
+ * `.l1.bad` says when a refusal lands there — one voice for a refusal on this
+ * surface. See composer-render's showStartRefusal. */
+.os-comp-confirm .os-comp-refusal { color: var(--os-red); font-size: 15px; font-weight: 600; }
 .os-comp-confirm .acts { display: flex; justify-content: flex-end; gap: 12px; }
 /* Back is a BOXED quiet button the same height as Start changeover, not a text
  * link floating beside a 72 px primary. */

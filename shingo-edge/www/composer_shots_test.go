@@ -174,6 +174,11 @@ func TestComposerShots(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(clickMenuDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
 	})
+	// P0's Edit-process sheet, saved with one field changed. See clickEditDriver.
+	mux.HandleFunc("/__shots/edit-process", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(clickEditDriver(r.URL.Query().Get("process"), r.URL.Query().Get("name"))))
+	})
 	// D4's screen sheet, saved without touching the positions. See clickScreenDriver.
 	mux.HandleFunc("/__shots/screen-note", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1101,6 +1106,94 @@ func TestComposerShots(t *testing.T) {
 	d2 := fmt.Sprintf("/processes?process=%d#style=%d;adv=PLN_01", seeded.ProcessID, seeded.Styles[idx])
 	desktopShot("D2-advanced.png", d2)
 	desktopDOM("P0 processes", "/processes", `class="pd-tbl"`)
+
+	// ── EDIT PROCESS CHANGES ONE FIELD AND NOTHING ELSE ─────────────────
+	//
+	// The sheet applies a diff across three endpoints, each destructive in its
+	// own way, so the case worth driving is the ordinary one: change the
+	// description, save, and nothing else moves. It also has to OPEN on what
+	// is there — a sheet that opens on blanks and then saves a diff deletes
+	// whatever it failed to read, which is exactly how the screen sheet
+	// shipped this morning.
+	{
+		beforeProc, err := db.GetProcess(seeded.ProcessID)
+		if err != nil {
+			t.Fatalf("read the process: %v", err)
+		}
+		beforeNodes, err := db.ListProcessNodesByStation(stationID)
+		if err != nil {
+			t.Fatalf("read the screen's positions: %v", err)
+		}
+		beforeRouting, err := db.ListRoutingNodes(seeded.ProcessID)
+		if err != nil {
+			t.Fatalf("read the routing set: %v", err)
+		}
+
+		const want = "edited by the shots driver"
+		profile := t.TempDir()
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom",
+			fmt.Sprintf("%s/__shots/edit-process?process=%d&name=%s", srv.URL,
+				seeded.ProcessID, url.QueryEscape(want)))
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom edit-process: %v", err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("Edit process: %q (step %q)", got, attr("step"))
+		} else {
+			t.Logf("Edit process: sheet opened on name %q, %s positions, %s sources, %s destinations",
+				attr("name"), attr("positions"), attr("sources"), attr("dests"))
+			if attr("name") != beforeProc.Name {
+				t.Errorf("the sheet opened on name %q, want %q — it must open on what is there",
+					attr("name"), beforeProc.Name)
+			}
+			if attr("positions") == "0" {
+				t.Error("the sheet opened with an empty positions picker; saving a diff from that " +
+					"deletes every position the screen claims")
+			}
+			afterProc, err := db.GetProcess(seeded.ProcessID)
+			if err != nil {
+				t.Fatalf("read the process back: %v", err)
+			}
+			if afterProc.Description != want {
+				t.Errorf("description = %q, want %q — the edit did not land", afterProc.Description, want)
+			}
+			if afterProc.Name != beforeProc.Name || afterProc.ProductionState != beforeProc.ProductionState ||
+				afterProc.CounterPLCName != beforeProc.CounterPLCName ||
+				afterProc.CounterTagName != beforeProc.CounterTagName ||
+				afterProc.CounterEnabled != beforeProc.CounterEnabled {
+				t.Errorf("editing the description moved another column: before %+v after %+v",
+					beforeProc, afterProc)
+			}
+			afterNodes, err := db.ListProcessNodesByStation(stationID)
+			if err != nil {
+				t.Fatalf("read the positions back: %v", err)
+			}
+			if len(afterNodes) != len(beforeNodes) {
+				t.Errorf("editing the description changed the screen's positions: %d -> %d",
+					len(beforeNodes), len(afterNodes))
+			}
+			afterRouting, err := db.ListRoutingNodes(seeded.ProcessID)
+			if err != nil {
+				t.Fatalf("read the routing set back: %v", err)
+			}
+			if len(afterRouting) != len(beforeRouting) {
+				t.Errorf("editing the description changed the routing set: %d -> %d rows",
+					len(beforeRouting), len(afterRouting))
+			}
+		}
+	}
 	desktopDOM("D1 flows", d1, `class="pd-postbl"`)
 	// THE PICTURE IS DRAWN AT THE COLUMN'S OWN SIZE — asserted inside
 	// checkDesktopFits now, as the RELATION it is, rather than by looking for
@@ -2371,6 +2464,86 @@ const settle = () => new Promise(r => {
         out.dataset.rowsadded = String(
             d.querySelectorAll('.pd-postbl tbody tr[data-row]').length - rowsBefore);
     }
+
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
+// clickEditDriver opens the Edit-process sheet from the LIST, changes the
+// description, and saves.
+//
+// THE SHEET APPLIES A DIFF, which is the whole of its risk. Each endpoint
+// behind it is destructive in its own way — the process PUT writes every
+// column it decodes, claimed-nodes is a set-to that deletes what it is not
+// sent, and a routing delete is refused while a live flow routes through the
+// name. So the case worth driving is the one where the engineer changes ONE
+// field: nothing else may move. The Go side reads the row, the screen's
+// positions and the routing set back.
+func clickEditDriver(processID, want string) string {
+	return `<!doctype html><meta charset="utf-8"><title>edit-process</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0" src="/processes"></iframe>
+<script>
+const PID = "` + template.JSEscapeString(processID) + `", WANT = "` + template.JSEscapeString(want) + `";
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the list draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('[data-act="edit-process"]') ? doc : null;
+    });
+    const threw = () => { if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError); };
+    threw();
+
+    const btn = d.querySelector('[data-act="edit-process"][data-process="' + PID + '"]');
+    if (!btn) return fail('find Edit', 'no Edit link for process ' + PID);
+    out.dataset.step = 'open the sheet';
+    btn.click();
+
+    const sheet = await until('the sheet opens', () => {
+        threw();
+        return d.querySelector('.pd-modal [data-f="description"]') ? d.querySelector('.pd-modal') : null;
+    });
+    // It has to OPEN ON WHAT IS THERE. A sheet that opens on blanks and then
+    // saves a diff is a sheet that deletes whatever it failed to read — the
+    // exact shape the screen sheet shipped with this morning.
+    await until('the pickers fill', () => {
+        threw();
+        return sheet.querySelector('#npk-positions .chips .pd-nchip, #npk-positions .chips .pd-dim');
+    });
+    out.dataset.name = (sheet.querySelector('[data-f="name"]') || {}).value || '';
+    out.dataset.positions = String(sheet.querySelectorAll('#npk-positions .chips .pd-nchip').length);
+    out.dataset.sources = String(sheet.querySelectorAll('#npk-rs_source .chips .pd-nchip').length);
+    out.dataset.dests = String(sheet.querySelectorAll('#npk-rs_destination .chips .pd-nchip').length);
+
+    const desc = sheet.querySelector('[data-f="description"]');
+    desc.value = WANT;
+    desc.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+
+    out.dataset.step = 'save';
+    sheet.querySelector('[data-act="sheet-ok"]').click();
+    await until('the sheet closes', () => {
+        const st = d.querySelector('.pd-modal .mf .st');
+        if (st && st.classList.contains('bad')) throw new Error('refused: ' + st.textContent);
+        threw();
+        return !d.querySelector('.pd-modal');
+    }, 12000);
 
     out.dataset.step = 'done';
     out.dataset.result = 'OK';

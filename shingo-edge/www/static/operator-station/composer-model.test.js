@@ -1292,12 +1292,83 @@ test('one switched-off row is singular, and so is what to do about it', () => {
     assert.ok(/Turn it on/.test(note), '"turn them on" over a count of one reads as a second thing: ' + note);
 });
 
-// A field whose options are the process's OWN POSITIONS is not a routing role,
-// and an empty one is a press with nothing to pair to — a different sentence
-// that this function must not invent.
-test('a field that is not a routing role gets no sentence', () => {
-    const s = initWithRouting([], {});
-    assert.strictEqual(M.routingNote(s, 'paired_core_node', 0), '');
+// ═══ 9b. paired_core_node — the one empty that is not a routing empty ════════
+//
+// THIS BLOCK USED TO PIN THE SILENCE. It read
+// `routingNote(s, 'paired_core_node', 0) === ''`, on Amendment A's reasoning
+// that a field whose options are the press's OWN POSITIONS must not borrow the
+// routing sentence — "add them in Settings › Routing" cannot add a press
+// position. That half still holds and is still pinned at the bottom. The other
+// half — that no sentence was therefore owed — is what changed on 2026-09-16.
+//
+// At Hopkinsville the 4x2's five positions are ALL kind `front`: a position
+// becomes `back` only when some live claim of the process names it as a pair or
+// a staging slot, and nothing on that press ever has. So the station offers a
+// 2-robot index NO back position, while flowspec marks paired_core_node
+// REQUIRED for that mode — the operator picked the choreography and got the
+// heading of the one field blocking the save, with nothing under it, no
+// sentence and no fix-it. The field has its own words now and the pin is on
+// them.
+const FLAT_POSITIONS = [
+    { core_node_name: 'PLN_01', kind: 'front', sequence: 1 },
+    { core_node_name: 'PLN_03', kind: 'front', sequence: 3 },
+];
+
+function initFlatPress(positions) {
+    return M.init({
+        styleId: 7, positions: positions || FLAT_POSITIONS, routing: ROUTING, routingOff: {},
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, scene: SCENE,
+    });
+}
+
+// The panel's two taps: put the position in the flow, then pick how it swaps.
+function pressAt(node, mode, positions) {
+    let s = initFlatPress(positions);
+    s = M.reduce(s, { type: 'addPosition', node: node });
+    return M.reduce(s, { type: 'setMode', node: node, mode: mode });
+}
+
+test('a press with no back position says what a 2-robot index needs', () => {
+    const s = pressAt('PLN_01', 'two_robot_press_index');
+    const note = M.routingNote(s, 'paired_core_node', 0, 'PLN_01');
+    assert.ok(/back position/.test(note), 'names what this press has none of: ' + note);
+    assert.ok(note.indexOf(M.modeLabels().two_robot_press_index) >= 0,
+        'names the choreography that needs one: ' + note);
+    assert.ok(!/Settings/.test(note),
+        'Settings › Routing cannot add a press position, so the sentence must not send anyone there: ' + note);
+});
+
+// The panel selects a position before it draws a row for it, so the note is the
+// same whether or not the caller names the node — which is what lets the
+// desktop's pickers go on calling routingNote with three arguments.
+test('the paired sentence falls back to the selected position', () => {
+    const s = pressAt('PLN_01', 'two_robot_press_index');
+    assert.strictEqual(s.selected, 'PLN_01', 'addPosition selects the position it adds');
+    assert.strictEqual(M.routingNote(s, 'paired_core_node', 0),
+        M.routingNote(s, 'paired_core_node', 0, 'PLN_01'));
+});
+
+// TWO CHOREOGRAPHIES PAIR AND THEY PAIR WITH DIFFERENT THINGS. An index pairs
+// with a BACK position; Sequential A/B flips between two positions of any kind,
+// so its empty is a press with one position and its sentence says so.
+test('a one-position press says what Sequential A/B needs', () => {
+    const s = pressAt('PLN_01', 'sequential', [FLAT_POSITIONS[0]]);
+    const note = M.routingNote(s, 'paired_core_node', 0, 'PLN_01');
+    assert.ok(note.indexOf(M.modeLabels().sequential) >= 0, 'names the choreography: ' + note);
+    assert.ok(/second position/.test(note), 'says what it needs: ' + note);
+    assert.ok(!/back position/.test(note),
+        'a back position is what the INDEX pairs with; this mode takes any: ' + note);
+});
+
+test('a paired row with options gets no sentence, like every other row', () => {
+    const s = pressAt('PLN_01', 'two_robot_press_index');
+    assert.strictEqual(M.routingNote(s, 'paired_core_node', 2), '',
+        'a row with chips in it must not also carry a sentence about being empty');
+});
+
+// STILL NOT A ROUTING ROLE. The sentence is its own; the role table is what
+// keeps "add them in Settings › Routing" off a field about press positions.
+test('paired_core_node is not a routing role', () => {
     assert.strictEqual(M.routingRoleOf('paired_core_node'), '');
 });
 

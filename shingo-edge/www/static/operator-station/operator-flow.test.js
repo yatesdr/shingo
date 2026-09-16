@@ -157,7 +157,16 @@ console.log('style 11 — PART 68644-WSL97.20, two staging moves');
         (svg.match(/(Inbound source|Outbound destination)[^<]*/g) || []).join(' | '));
     check('no bin word survives on the picture', !/tote|Tote/.test(svg.replace(/Supermarket Empty Totes/g, '')),
         (svg.match(/[^<>]*[Tt]ote[^<>]*/g) || []).join(' | '));
-    check('staging cards say whose', svg.includes('>staging for PLN_03<') && svg.includes('>staging for PLN_06<'));
+    // WHICH STAGING, NOT JUST WHOSE (owner, 2026-09-16). Both directions read
+    // "staging for PLN_03", so the card could not tell an engineer whether that
+    // slot takes the new bin in or the old one out — the difference between the
+    // two trips drawn on the picture around it. The word is the claim's own
+    // label (F3, via fieldWord), so the card and the control that set it are
+    // one name for one field.
+    check('staging cards say which staging, and whose',
+        svg.includes('>Inbound staging<') && svg.includes('>for PLN_03<') &&
+        svg.includes('>for PLN_06<'),
+        (svg.match(/>(Inbound|Outbound) staging<|>for PLN_[0-9]+</g) || []).join(' | '));
     check('PLN_03 card line', svg.includes('>Robot 1 stages at PLN_02<') && svg.includes('>Robot 2 pulls old<'));
     check('unused PLN_01/PLN_04 are still front positions (the press did not change shape)', count(svg, />front position</g) === 2 && count(svg, />back position</g) === 0,
         (svg.match(/>(front|back) position</g) || []).join(' '));

@@ -453,6 +453,23 @@ function drawComposer() {
     drawBar();
 }
 
+// THE PART PALETTE HAS NO DOOR ON THIS SURFACE, AND THE BUTTON SAYS SO rather
+// than answering a tap with nothing — the desktop's `Copy to another part…` is
+// disabled with its reason in the title for exactly this reason, and this is
+// that pattern.
+//
+// `+ Add a part` (the strip) and `+ another part` (the S5 part row) are the same
+// control drawn twice, and both were live-looking buttons wired to
+// `case 'addpart': break;`. An operator tapped one, nothing happened, and the
+// screen gave them no way to tell a dead control from a slow one.
+//
+// A part reaches a flow by being CLAIMED on a position, so adding one means
+// picking a payload this style does not run yet — and there is nowhere on this
+// station to pick it from. U10 owns the palette; until it exists the honest
+// control is a disabled one that names what is missing.
+const ADDPART_TITLE = 'Not wired yet. A part joins a flow by being claimed on a position, ' +
+    'so adding one means picking a payload this style does not run yet — and there is no part palette on this surface.';
+
 function drawStrip() {
     const presets = flow().presets || [];
     let h = '<span class="os-lbl">Flow</span>';
@@ -497,7 +514,7 @@ function drawStrip() {
         h += '<span class="os-chip part' + (used ? '' : ' free') + '">' + esc(M().shortPart(p)) +
             (used ? '' : ' · unplaced') + '</span>';
     }
-    h += '<button class="os-chip add" data-act="addpart">+ Add a part</button>';
+    h += '<button class="os-chip add" data-act="addpart" disabled title="' + esc(ADDPART_TITLE) + '">+ Add a part</button>';
     const strip = $('os-comp-strip');
     if (strip) strip.innerHTML = h;
     reportStripFit();
@@ -641,7 +658,7 @@ function openPositionPanel(node) {
         '<button class="os-chip btn ' + (cc.part === p ? 'on' : '') + '" data-act="part" data-part="' + esc(p) + '">' +
         esc(M().shortPart(p)) + '</button>').join('') +
         (cc.part ? '' : '<span class="os-chip need">pick one</span>') +
-        '<button class="os-chip btn" data-act="addpart">+ another part</button>';
+        '<button class="os-chip btn" data-act="addpart" disabled title="' + esc(ADDPART_TITLE) + '">+ another part</button>';
 
     const backs = model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
     // The view already filtered to ENABLED members (a retired lane is not an
@@ -678,11 +695,14 @@ function openPositionPanel(node) {
     const modeRow = ((M().rowFields()[cc.mode]) || []).map(field => {
         const o = optionsFor(field);
         const inner = chips(o.list, o.act, o.cur, 'val');
-        // paired_core_node is not a routing role — its options are the
-        // process's own positions — so routingRow passes it straight through.
-        return M().routingRoleOf(field)
-            ? routingRow(field, o.list, inner)
-            : row(M().fieldLabel(model, field), inner);
+        // EVERY ROW ANSWERS ITS OWN EMPTY, paired_core_node included. This
+        // asked routingRoleOf first and drew paired_core_node as a plain row,
+        // because Amendment A wrote sentences only for the routing roles — so
+        // on Hopkinsville's 4x2, where all five positions are kind `front` and
+        // `backs` is therefore empty, picking "2-robot index" drew the heading
+        // of the one REQUIRED field with nothing under it. The MODEL decides
+        // which fields have a sentence and what it says; see routingNote.
+        return routingRow(field, o.list, inner, node);
     }).join('');
     const via = M().viaWaypoints(model, node);
     const viaRow = cc.mode ? row(M().fieldLabel(model, 'key_route'),
@@ -731,8 +751,16 @@ function row(label, inner) {
 // an empty space, and an engineer at Hopkinsville read four of those as the
 // derivation being broken. The sentence is the model's — the desktop's pickers
 // say the same thing in the same words — and it names the next action.
-function routingRow(field, list, inner) {
-    const note = M().routingNote(model, field, list.length);
+//
+// STILL NAMED FOR THE ROUTING ROLES, no longer only theirs. paired_core_node's
+// options are the press's own positions and its empty has its own sentence
+// (composer-model's PAIRED_NOTE, reached through the same routingNote), so it
+// comes through here too: "never a heading over nothing" is one rule and this
+// is the one place that keeps it. `node` is the position the panel is open on,
+// which is what tells the model which choreography is asking; the dock panel
+// has no position and passes none.
+function routingRow(field, list, inner, node) {
+    const note = M().routingNote(model, field, list.length, node);
     return row(M().fieldLabel(model, field),
         note ? '<span class="os-comp-none">' + esc(note) + '</span>' : inner);
 }
@@ -904,8 +932,23 @@ async function openConfirm(runAsIs) {
     // that shows Core's answer about the parts.
     await runPreview({ preflight: true });
     const pv = model.preview;
-    // F1: nothing to start is not something to confirm.
-    if (!pv || pv.error || pv.orderCount === 0) { screen = 'S4'; drawComposer(); return; }
+    // F1: NOTHING TO START IS NOT SOMETHING TO CONFIRM, and there are four ways
+    // to have nothing: no preview at all, a preview that refused, a plan that
+    // fires no orders, and the RUNNING style.
+    //
+    // THE RUNNING STYLE WALKED STRAIGHT PAST THIS GUARD. Its preview is
+    // validated and fingerprinted and never planned (engine.PreviewFlow's R3
+    // branch), so it carries `running: true` and NO order_count — and
+    // applyPreview stores that absence as null, which `orderCount === 0` does
+    // not catch. The sheet then drew "Orders that fire now" over a changeover
+    // the engine refuses outright (ErrStyleAlreadyRunning), two taps from the
+    // set-up card, whose primary stays enabled on the running part.
+    //
+    // `running` rather than the missing count, because a preview that failed to
+    // plan would also be missing one (engine.FlowPreview.Running says exactly
+    // this). It goes to S4, where the bar's own running heading — "saved changes
+    // take effect on the next trip" — says why nothing is starting.
+    if (!pv || pv.error || pv.running || !pv.orderCount) { screen = 'S4'; drawComposer(); return; }
     screen = 'S9';
     const cells = M().toCells(model);
     const labels = M().modeLabels();
@@ -991,7 +1034,52 @@ async function start(runAsIs) {
     });
     const json = await res.json().catch(() => ({}));
     if (res.status === 409) { onStale(json); return; }
+    // ANYTHING THAT IS NOT A 409 IS NOT A STARTED CHANGEOVER.
+    //
+    // apiStartProcessChangeover answers exactly ONE refusal with 409 — the
+    // stale fingerprint it checks itself — and EVERY engine refusal with 400:
+    // ErrStyleAlreadyRunning, ErrChangeoverActive, a plan that would not build.
+    // This tested `status === 409` and called the whole rest of the response
+    // space success, so a REFUSED changeover drew the green tick, said
+    // "Changeover started", and took the operator back to the board in four
+    // seconds. The robots never moved and the operator walked away believing
+    // they had; the next thing to notice would have been a line running dry.
+    //
+    // res.ok is the success test, and the refusal is shown BY NAME on the sheet
+    // the operator is standing on — same shape as desktop-bodies' saveOutcome:
+    // the server's own sentence, or the status when it sent none.
+    if (!res.ok) { showStartRefusal(json, res.status, !runAsIs); return; }
     openStarted(runAsIs);
+}
+
+// showStartRefusal puts the server's sentence on the confirm sheet, above the
+// buttons that asked for it.
+//
+// NOT onStale(). That one is for the stale fingerprint: it throws the held flow
+// payload away, drops to S4 and heads the bar "The flow changed since you
+// previewed — check it and try again", which over "process is already running
+// style 11" sends the operator to re-check a flow that is fine and says nothing
+// about the press already running the part they picked. A refusal they cannot
+// act on from here belongs where they are looking, beside Back.
+//
+// THE SAVE HAS ALREADY LANDED when the flow was edited: start() writes first and
+// starts second, so a refusal after a successful save leaves a saved flow and no
+// changeover. The sentence says so, because the alternative is an operator
+// saving it again to be sure.
+function showStartRefusal(json, status, saved) {
+    const sheet = root().querySelector('.os-comp-confirm');
+    // No sheet means the hash entry rather than a tap — nothing on screen to
+    // write on, so the bar takes it, which is where every other refusal lands.
+    if (!sheet) { onStale(json); return; }
+    let el = sheet.querySelector('.os-comp-refusal');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'os-comp-refusal';
+        sheet.insertBefore(el, sheet.querySelector('.acts'));
+    }
+    // textContent, so the server's sentence needs no escaping to be safe here.
+    el.textContent = (saved ? 'The flow was saved. ' : '') +
+        ((json && json.error) || ('The changeover was refused (' + status + ')'));
 }
 
 // ── S10 · started ────────────────────────────────────────────────────────────
@@ -1003,14 +1091,26 @@ async function openStarted(runAsIs, hold) {
     // from the hash entry (the shot) there is not, and the screen used to read
     // "0 orders" over a changeover that had six.
     if (!model.preview) await runPreview();
-    const pv = model.preview || { orderCount: 0 };
+    const pv = model.preview || {};
     // THE SAME WORDS THE SET-UP CARD USED two screens ago. This said
     // "2 robots" and the card said "Robot 1 and Robot 2" — one fact, two
     // spellings, and SPEC §0.7 has only one of them.
     const robots = M().robotWords(model);
+    // NO COUNT IS NOT A COUNT. applyPreview stores orderCount NULL when the
+    // server sent none — the running style's preview is never planned, so
+    // `order_count` is absent from its body — and this line concatenated it:
+    // `Running the saved flow · null orders · Robot 1 and Robot 2.` under a
+    // green tick. When there is no count the clause is left out; the rest of
+    // the sentence is still true.
+    //
+    // And the count agrees in number. `1 orders` is the same class of defect on
+    // the same line, and the set-up card's provenance line already spells it the
+    // other way (setupProvenance).
+    const orders = typeof pv.orderCount === 'number'
+        ? ' · ' + pv.orderCount + ' order' + (pv.orderCount === 1 ? '' : 's') : '';
     const line = runAsIs
-        ? 'Running the saved flow · ' + pv.orderCount + ' orders · ' + robots + '.'
-        : 'Flow saved to ' + model.styleName + ' · ' + pv.orderCount + ' orders · ' + robots +
+        ? 'Running the saved flow' + orders + ' · ' + robots + '.'
+        : 'Flow saved to ' + model.styleName + orders + ' · ' + robots +
         '. Next time this part is picked it runs as is.';
     show().innerHTML =
         '<div class="os-comp-started on"><div class="ring">✓</div>' +
@@ -1074,7 +1174,11 @@ function onClick(e) {
         case 'runasis': runAsIs(); break;
         // Still on the picture's strip and the position panel; it left the
         // set-up card, where the position a part lands on is not visible.
-        case 'addpart': break;   // U10 - the part palette's own door
+        // U10 - the part palette's own door. Both buttons that carry this action
+        // are rendered DISABLED (see ADDPART_TITLE) and a disabled button
+        // dispatches no click, so this arm is the seam the palette gets wired
+        // to rather than a handler that runs and does nothing.
+        case 'addpart': break;
         case 'compose': openComposer(model.styleId, false); break;
         case 'blank': send({ type: 'startBlank' }); break;
         case 'preset': {
