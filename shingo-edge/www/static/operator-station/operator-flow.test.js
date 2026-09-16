@@ -110,7 +110,24 @@ console.log('style 7 — PART 40421-RVJ56.37, two index pairs');
     check('unused PLN_03/PLN_06 are front positions', count(svg, />front position</g) === 2 && count(svg, />back position</g) === 0);
     check('part chips', svg.includes('>55544-DWC33.21<') && svg.includes('>61477-ATD38.66<'));
     check('no R1/R2 abbreviation anywhere an operator reads', !/>[^<]*\bR[12]\b[^<]*</.test(svg));
-    check('no arrowheads', !svg.includes('marker'));
+    // THIS PIN READ "no arrowheads" AND THE PICTURE HAS THEM NOW (owner,
+    // 2026-09-16: the legs "show flows with the purple or teal arrows, it might
+    // help if they were like live, showing the arrows going in or out"). The
+    // half of it worth keeping is the `marker` half, so it is spelled out
+    // rather than deleted: a <marker> is referenced by url(#id) and resolves
+    // over the whole DOCUMENT, and the composer draws a second copy of this
+    // picture beside the first — two markers of one name is one marker,
+    // whichever rendered last, and one picture's arrowheads would take the
+    // other's hue. legsFor places and rotates a plain path instead.
+    check('one direction chevron per leg, and not one of them a marker',
+        count(svg, /class="legtip r[12]"/g) === 2 && !svg.includes('marker'),
+        count(svg, /class="legtip r[12]"/g) + ' chevrons');
+    // And the travelling dashes are a SECOND path over each leg rather than a
+    // dash pattern on the leg, which is what keeps the leg's own width, hue and
+    // z-order out of the animation's hands — and what lets reduced motion
+    // switch the whole thing off by hiding one element.
+    check('the flow dashes are an overlay, not the leg itself',
+        count(svg, /class="legflow r[12]"/g) === 2, String(count(svg, /class="legflow r[12]"/g)));
     const cards = noCollisions('style 7', svg);
     const p1 = cards.find(c => c.name === 'PLN_01'), p2 = cards.find(c => c.name === 'PLN_02'), p5 = cards.find(c => c.name === 'PLN_05');
     // True relative spacing at the reference's 120 px/m: PLN_01 to PLN_02 is

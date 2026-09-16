@@ -322,7 +322,27 @@ function ortho(pts, r) {
 // legsFor DRAWS the choreography the model decided on: an index pair is a
 // straight Robot 2 line between the paired cards, a staging move a rounded
 // Robot 1 path from the staging card into the front card. Dot at the start,
-// ring at the end, no arrowheads.
+// ring at the end, and one chevron on the run saying which way the bins go.
+//
+// THE DOT AND THE RING WERE THE DIRECTION, AND NOBODY READ THEM. A leg has
+// always been drawn FROM its source TO its destination — that is what `a` and
+// `z` are, and the path's own point order is the travel order — but the only
+// thing on screen saying so was a filled circle at one end and a hollow one at
+// the other. That is a convention, not a picture: an engineer looking at a
+// still shot of a Robot 1 leg into a front position and a Robot 2 leg out of
+// one saw two lines in two hues and had to already know which hue meant which
+// way. `tip` is the same fact drawn as an arrowhead, which nobody has to be
+// told how to read.
+//
+// THE ANGLE IS COMPUTED HERE, NOT LEFT TO AN SVG <marker orient="auto">, for
+// two reasons and only the second is about taste. A marker is referenced by
+// url(#id) and resolves over the WHOLE DOCUMENT: the composer draws this same
+// function into its own <svg> beside another one, and two <marker id="legtip">
+// in one document is one marker — whichever rendered last — so the hue of one
+// picture's arrowheads would follow the other picture. And a marker sits at a
+// path VERTEX, which on these legs is either the end (under the ring) or a
+// rounded corner. The place a direction cue belongs is the middle of the long
+// straight run, and this function is the only thing that knows where that is.
 //
 // IT TAKES THE LEGS RATHER THAN FINDING THEM. Which legs exist is a fact about
 // the flow — composer-model.js's legs(state) answers it, in one place, and its
@@ -340,18 +360,45 @@ export function legsFor(modelLegs, boxes) {
         const cls = L.robot === 2 ? 'r2' : 'r1';
         if (L.kind === 'index' && Math.abs(pcy - cy) < CARD_H / 2) {
             const dir = pcx < cx ? 1 : -1;
-            legs.push({ cls: cls, d: 'M' + (pcx + dir * CARD_W / 2) + ' ' + pcy + ' L' + (cx - dir * CARD_W / 2) + ' ' + cy,
-                a: [pcx + dir * CARD_W / 2, pcy], z: [cx - dir * CARD_W / 2, cy], lbl: L.label, lx: (pcx + cx) / 2, ly: b.y + b.h + 18 });
+            const a = [pcx + dir * CARD_W / 2, pcy], z = [cx - dir * CARD_W / 2, cy];
+            // An index leg is the daylight between two neighbouring cards and
+            // nothing more — 24.6 units for the Hopkinsville pair the test
+            // measures — so the chevron takes the midpoint and the dot and the
+            // ring keep the ends. That is why it is a SMALL chevron: on the
+            // shortest leg the picture draws there is about 16 units of line
+            // between the two circles, and an arrowhead that needed more than
+            // that would be an arrowhead that only fits on the long legs.
+            legs.push({ cls: cls, d: 'M' + a[0] + ' ' + a[1] + ' L' + z[0] + ' ' + z[1],
+                a: a, z: z, tip: [(a[0] + z[0]) / 2, (a[1] + z[1]) / 2, degOf(a, z)],
+                lbl: L.label, lx: (pcx + cx) / 2, ly: b.y + b.h + 18 });
             continue;
         }
         const below = L.kind === 'index' ? pcy > cy : pb.y > b.y;
         const from = below ? [pcx, pb.y] : [pcx, pb.y + pb.h];
         const to = below ? [cx, b.y + b.h] : [cx, b.y];
         const mid = (from[1] + to[1]) / 2;
-        legs.push({ cls: cls, d: ortho([from, [from[0], mid], [to[0], mid], to]), a: from, z: to,
+        // A rounded leg is a vertical, a horizontal run at `mid`, and another
+        // vertical. The chevron goes on the RUN, where the line is straight and
+        // long: ortho() eats 16 units at each end of it for the corner radius,
+        // so a run shorter than 40 has no straight middle left to stand on and
+        // the leg reads as a vertical drop anyway — that is the second branch,
+        // which points the chevron the way the drop goes.
+        const run = to[0] - from[0];
+        const tip = Math.abs(run) >= 40
+            ? [from[0] + run / 2, mid, run > 0 ? 0 : 180]
+            : [(from[0] + to[0]) / 2, mid, to[1] > from[1] ? 90 : -90];
+        legs.push({ cls: cls, d: ortho([from, [from[0], mid], [to[0], mid], to]), a: from, z: to, tip: tip,
             lbl: L.label, lx: (pcx + cx) / 2, ly: mid - 8 });
     }
     return legs;
+}
+
+// degOf is the tangent of a straight leg in degrees, rounded so the markup
+// carries 65.2 rather than 65.19999999999999. operator-flow.test.js reads this
+// drawing back as TEXT — every check in it is a regex over the markup — and a
+// float tail is a diff nobody can read for no accuracy anyone can see.
+function degOf(a, z) {
+    return Math.round(Math.atan2(z[1] - a[1], z[0] - a[0]) * 1800 / Math.PI) / 10;
 }
 
 // ── dock ───────────────────────────────────────────────────────────────
@@ -444,9 +491,25 @@ export function renderFlowPicture(view, opts) {
     s += '<text class="mlbl" x="' + g.LEFT + '" y="' + capY + '" style="fill:var(--os-text-dim, var(--text-muted))">' + esc(stationName.toUpperCase()) +
         (toScale ? ' · positions at true spacing' : ' · positions not to scale') + '</text>';
 
+    // THE LEG ITSELF IS UNTOUCHED, AND THAT IS THE POINT. .legflow is a SECOND
+    // path with the same `d` carrying the travelling dashes, rather than a dash
+    // pattern put on .leg — so the line an operator has been looking at for a
+    // year keeps its hue, its width and its place in the stack, and everything
+    // the animation does can be switched off by hiding one element. Under
+    // prefers-reduced-motion flow-picture.css does exactly that, and what is
+    // left on screen is the picture as it was plus the chevron.
+    //
+    // TIP AFTER THE RING, RING AFTER THE DOT: within one leg's group the marks
+    // are drawn in the order they must not be hidden in, and the groups
+    // themselves are still emitted in the model's leg order, so which robot's
+    // leg is over which is unchanged.
     for (const L of legsFor(sentences.legs, boxes)) {
-        s += '<g class="legg"><path class="leg thin ' + L.cls + '" d="' + L.d + '"/><circle class="legdot ' + L.cls + '" cx="' + L.a[0] + '" cy="' + L.a[1] + '" r="4"/>' +
-            '<circle class="legring ' + L.cls + '" cx="' + L.z[0] + '" cy="' + L.z[1] + '" r="4"/><text class="leg-lbl ' + L.cls + '" x="' + L.lx + '" y="' + L.ly + '" text-anchor="middle">' + L.lbl + '</text></g>';
+        s += '<g class="legg"><path class="leg thin ' + L.cls + '" d="' + L.d + '"/>' +
+            '<path class="legflow ' + L.cls + '" d="' + L.d + '"/>' +
+            '<circle class="legdot ' + L.cls + '" cx="' + L.a[0] + '" cy="' + L.a[1] + '" r="4"/>' +
+            '<circle class="legring ' + L.cls + '" cx="' + L.z[0] + '" cy="' + L.z[1] + '" r="4"/>' +
+            '<path class="legtip ' + L.cls + '" d="M-4 -3.6L4 0L-4 3.6Z" transform="translate(' + L.tip[0] + ',' + L.tip[1] + ') rotate(' + L.tip[2] + ')"/>' +
+            '<text class="leg-lbl ' + L.cls + '" x="' + L.lx + '" y="' + L.ly + '" text-anchor="middle">' + L.lbl + '</text></g>';
     }
 
     const sel = opts.selected || null;

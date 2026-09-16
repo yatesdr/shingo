@@ -43,6 +43,65 @@
 .os-flow-picture .leg-lbl { font-size: 11px; font-weight: 600; letter-spacing: .03em; }
 .os-flow-picture .leg-lbl.r1 { fill: var(--robot-1); }
 .os-flow-picture .leg-lbl.r2 { fill: var(--robot-2); }
+
+/* WHICH WAY THE MATERIAL GOES — two marks, doing two different jobs.
+ *
+ * The legs said which robot and which two positions and nothing whatever about
+ * direction. A Robot 1 leg arriving at a front position and a Robot 2 leg
+ * leaving one are the same line in two hues, and the only thing distinguishing
+ * them was the convention that teal comes in and indigo goes out — which the
+ * person who drew the picture knows and the person reading a screenshot of it
+ * a month later does not.
+ *
+ * .legtip IS THE ANSWER ON PAPER, and it has to be, because these pictures are
+ * a HANDOFF ARTEFACT: scripts/composer-shots.sh photographs this drawing and
+ * the PNGs are what gets read in a review. A cue that only exists while
+ * something is moving is a cue that is not in the shot. The chevron is a plain
+ * filled path in the leg's own hue — no new colour enters the picture — placed
+ * and rotated by operator-flow.js's legsFor, which explains there why it is not
+ * an SVG <marker>.
+ *
+ * .legflow IS THE ANSWER WHILE YOU WATCH IT: short dashes drifting from the dot
+ * towards the ring, so a glance at the board says the leg is a flow and not a
+ * pipe. It is a SECOND path over the leg, never a dash pattern on the leg
+ * itself, so the leg keeps its width, its hue and its z-order and the whole
+ * animation switches off by hiding one element.
+ *
+ * WHY THIS IS CHEAP ENOUGH FOR A KIOSK THAT IS ON ALL SHIFT. It is one
+ * declarative CSS animation over two to four short paths, and stroke-dashoffset
+ * is the one thing being interpolated — no JS timer, no requestAnimationFrame,
+ * nothing that re-serialises the SVG. The browser owns the clock, which is what
+ * buys the properties a hand-rolled loop does not have: the animation does not
+ * run at all while the flow panel is hidden (the station's normal state — the
+ * panel is display:none until the style chip is tapped), it is throttled to
+ * nothing when the tab is backgrounded, and it stops for the media query below
+ * without any code having to ask. A setInterval keeps ticking through every one
+ * of those.
+ *
+ * -28 IS THE PATTERN, NOT A DISTANCE. The dash period is 5 + 23, so one cycle
+ * of the offset is one whole pattern and the loop is seamless whatever length
+ * the leg happens to be. The pattern is kept short and the drift slow on
+ * purpose: the station rebuilds this markup on every view refresh, a fresh
+ * element restarts its animation from zero, and at 28 units per 1.2 s the worst
+ * a refresh can do is set the dashes back one pattern — a drift, not a jump. */
+.os-flow-picture .legtip.r1 { fill: var(--robot-1); }
+.os-flow-picture .legtip.r2 { fill: var(--robot-2); }
+.os-flow-picture .legflow {
+    fill: none; stroke-width: 5; stroke-linecap: round;
+    stroke-dasharray: 5 23; animation: os-leg-flow 1.2s linear infinite;
+}
+.os-flow-picture .legflow.r1 { stroke: var(--robot-1); }
+.os-flow-picture .legflow.r2 { stroke: var(--robot-2); }
+@keyframes os-leg-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -28; } }
+
+/* Reduced motion means NO motion, not a slower one. The dashes are hidden
+ * rather than frozen: a stopped dash train says nothing the chevron is not
+ * already saying, and leaving it on screen would be decoration a reader who
+ * asked for stillness has to look past. What is left is exactly the picture as
+ * it was drawn before, with the direction cue on it. */
+@media (prefers-reduced-motion: reduce) {
+    .os-flow-picture .legflow { display: none; }
+}
 .os-flow-picture .node rect.box { fill: var(--os-surface, var(--surface)); stroke: var(--sub-3); stroke-width: 1.5; }
 .os-flow-picture .node text { fill: var(--text-strong); font-size: 15px; font-weight: 600; }
 .os-flow-picture .node text.ln { fill: var(--os-text-muted, var(--text-muted)); font-size: 12px; font-weight: 500; }
