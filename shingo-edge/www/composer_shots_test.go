@@ -169,6 +169,11 @@ func TestComposerShots(t *testing.T) {
 		_, _ = w.Write([]byte(clickAddProcessDriver(
 			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
 	})
+	// The station's preset strip, tapped. See clickPresetDriver.
+	mux.HandleFunc("/__shots/tap-preset", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(clickPresetDriver(r.URL.Query().Get("station"), r.URL.Query().Get("compose"))))
+	})
 	// The apply modal's pickers, answered by clicking. See clickApplyDriver.
 	mux.HandleFunc("/__shots/click-apply", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -550,6 +555,44 @@ func TestComposerShots(t *testing.T) {
 						fit.WhereText, clippedWord(fit.WhereClipped), fit.UseText, clippedWord(fit.UseClipped))
 				}
 			}
+		}
+	}
+	// ── THE STRIP IS TAPPED, not only measured ──────────────────────────
+	//
+	// The check above proves a preset CARD renders and fits. Whether tapping
+	// one applies its shape was covered at both ends and nowhere in between:
+	// composerPresets builds the cards (station_composer_test.go) and
+	// applyPreset lands either payload shape (composer-model.test.js, four
+	// tests), with one line of composer-render.js between them that nothing
+	// had ever pressed. That is precisely where the apply modal's dead
+	// controls lived for three rounds — every shot came out right, and a
+	// screenshot never clicks.
+	{
+		profile := t.TempDir()
+		u := fmt.Sprintf("%s/__shots/tap-preset?station=%d&compose=%d", srv.URL, stationID, seeded.Styles[idx])
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1280,800",
+			"--virtual-time-budget=30000", "--dump-dom", u)
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom tap-preset: %v", err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("04 tap a preset: %q (step %q, card %q over %q; %s cards drawn, live before %q, after %q).\n"+
+				"  The operator can see the card. This is whether tapping it lands the flow.",
+				got, attr("step"), attr("name"), attr("where"), attr("drawn"), attr("before"), attr("live"))
+		} else {
+			t.Logf("04 tap a preset: %s cards on the strip; tapped %q and the picture drew %s (its %s)",
+				attr("cards"), attr("name"), attr("live"), attr("where"))
 		}
 	}
 	runFrom(idx)
@@ -1726,6 +1769,101 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
     // contents without navigating, so location never moves and reporting it
     // reported an empty string.
     out.dataset.opened = d.querySelector('.pd-crumb b').textContent;
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
+// clickPresetDriver taps a preset card on the STATION's flow strip.
+//
+// THE HALF NOTHING WAS CHECKING. composerPresets builds the cards (service),
+// and applyPreset lands the shape from either payload shape (composer-model's
+// own suite, four tests). Between them sits one line of composer-render.js —
+// the card's data-act="preset", looked up against flow().presets and sent to
+// the reducer — and nothing had ever pressed it. That is the exact gap the
+// apply modal's controls sat in for three rounds while every shot came out
+// looking right, and this file's own rule for it is that a screenshot never
+// clicks.
+//
+// WHAT IT ASSERTS IS THAT THE FLOW MOVED, not that a handler ran: the strip is
+// tapped and the PICTURE is read back — a card per position with the shape's
+// choreography on it. Applying a preset is local to the draft (the desktop and
+// the station both save separately), so nothing is written and the fixture is
+// left as it was found.
+func clickPresetDriver(stationID, compose string) string {
+	return `<!doctype html><meta charset="utf-8"><title>tap-preset</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1280px;height:800px;border:0"
+        src="/operator/station/` + template.HTMLEscapeString(stationID) +
+		`#compose=` + template.HTMLEscapeString(compose) + `;state=S4"></iframe>
+<script>
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the composer opens on its strip', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('#os-comp-strip .os-comp-preset[data-preset]') ? doc : null;
+    });
+    const threw = () => {
+        if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError);
+    };
+    threw();
+
+    const cards = [...d.querySelectorAll('#os-comp-strip .os-comp-preset[data-preset]')];
+    out.dataset.cards = String(cards.length);
+    // BY ID, NOT BY REFERENCE. Every tap on the strip redraws it — drawStrip
+    // replaces #os-comp-strip's innerHTML — so a card held across a click is a
+    // detached element, and clicking one of those does nothing at all. Which
+    // is exactly what this driver reported on its first run.
+    const presetID = cards[0].dataset.preset;
+    const cardNow = () => d.querySelector('#os-comp-strip .os-comp-preset[data-preset="' + presetID + '"]');
+    out.dataset.name = (cards[0].querySelector('.nm') || {}).textContent || '';
+    out.dataset.where = (cards[0].querySelector('.where') || {}).textContent || '';
+    const live = () => [...d.querySelectorAll('#os-comp-svg g.node.on[data-pos]')].map(el => el.dataset.pos);
+    // Both counts, so a failure says whether the picture is empty or missing.
+    out.dataset.drawn = String(d.querySelectorAll('#os-comp-svg g.node[data-pos]').length);
+    out.dataset.before = live().join(' ');
+
+    // START BLANK FIRST, so what the picture shows afterwards is the preset's
+    // doing and not the style's own saved flow.
+    out.dataset.step = 'start blank';
+    const blank = d.querySelector('#os-comp-strip [data-act="blank"]');
+    if (!blank) return fail('find Start blank', 'the strip has no blank card');
+    blank.click();
+    await until('the picture empties', () => { threw(); return live().length === 0; });
+
+    out.dataset.step = 'tap the preset';
+    const card = cardNow();
+    if (!card) return fail('tap the preset', 'the strip lost card ' + presetID + ' after Start blank');
+    card.click();
+
+    // THE SHAPE LANDED: the card names its positions, and after the tap those
+    // positions are the ones the picture draws as live. Reading the model's
+    // own state would be reading the thing under test; the drawing is what an
+    // operator sees.
+    const want = out.dataset.where.split(/[^A-Za-z0-9_]+/).filter(Boolean);
+    await until('the picture draws the preset\u2019s positions', () => {
+        threw();
+        const now = live();
+        out.dataset.live = now.join(' ');
+        return want.length > 0 && want.every(n => now.indexOf(n) >= 0);
+    });
+
     out.dataset.step = 'done';
     out.dataset.result = 'OK';
   } catch (e) {
