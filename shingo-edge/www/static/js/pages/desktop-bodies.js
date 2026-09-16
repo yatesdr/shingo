@@ -211,8 +211,22 @@ function routingEnable(enabled) {
 
 // routingAdd — POST /api/processes/{id}/routing-nodes. origin and called_by are
 // server-stamped and the input type does not accept them from a body.
-function routingAdd(name, role) {
-    return { core_node_name: name, role: role, label: name, enabled: true };
+//
+// SEQUENCE IS NOT DECORATION. composer-model's defaultRouting picks a cell's
+// default source and destination by LOWEST SEQUENCE within the role, so it is
+// the mechanism that decides which name a new position opens on. Every row
+// this page wrote sent nothing and got 0, and the backfill inserts 0 too, so
+// every row in every role tied at zero and the documented ordering was inert —
+// the default fell out of whatever order SQLite returned.
+//
+// `after` is how many rows the role already has, so a name lands at the end of
+// its role and the first one added stays the default. It is an argument rather
+// than page state, like every other input in this file.
+function routingAdd(name, role, after) {
+    return {
+        core_node_name: name, role: role, label: name, enabled: true,
+        sequence: Number(after) > 0 ? Number(after) + 1 : 1,
+    };
 }
 
 // flowPresetCreate — POST /api/processes/{id}/presets, the naming modal.

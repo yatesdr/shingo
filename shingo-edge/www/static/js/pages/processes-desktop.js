@@ -67,6 +67,7 @@ const S = {
     graph: null,         // the travel graph, built once per map
     settings: null,      // D5's draft; nothing is written until Save settings
     settingsError: '',
+    settingsNotice: '',   // a success, which is not a refusal and is not drawn as one
     sheet: null,         // the open confirm/edit sheet: {run}
     gen: null,           // the Generate-variants dialog: {baseID, cols, rows, error}
     mapZoom: 1,
@@ -178,6 +179,7 @@ function drawList() {
             // and they are the same pair D4's screens table already carries.
             '<td class="pd-acts">' +
             '<button class="pd-dimlink" data-act="open-flows" data-process="' + p.id + '">Flows</button>' +
+            '<button class="pd-dimlink" data-act="edit-process" data-process="' + p.id + '">Edit</button>' +
             '<button class="pd-dimlink" data-act="open-settings" data-process="' + p.id + '">Settings</button>' +
             '</td></tr>';
     };
@@ -211,6 +213,13 @@ function drawList() {
 
 function filterList(text) {
     const needle = String(text || '').trim().toLowerCase();
+    // THE HEADINGS GO WITH THEIR ROWS. Only the <tr>s were hidden, so a group
+    // whose every process was filtered out still drew its name and its
+    // pre-filter count — "Presses · 6 processes" over nothing.
+    for (const tbl of root().querySelectorAll('.pd-tbl')) {
+        const grp = tbl.previousElementSibling;
+        if (grp && grp.classList.contains('pd-lgrp')) grp.dataset.forTable = '1';
+    }
     for (const tr of root().querySelectorAll('.pd-tbl tbody tr')) {
         // THE ACTIONS CELL IS NOT SEARCHABLE TEXT. Every row carries the words
         // "Flows" and "Settings" now, and a row's own buttons matching the
@@ -218,6 +227,16 @@ function filterList(text) {
         const cells = [...tr.children].filter(td => !td.classList.contains('pd-acts'));
         const hay = cells.map(td => td.textContent).join(' ').toLowerCase();
         tr.hidden = !!needle && hay.indexOf(needle) < 0;
+    }
+    for (const tbl of root().querySelectorAll('.pd-tbl')) {
+        const shown = [...tbl.querySelectorAll('tbody tr')].filter(tr => !tr.hidden).length;
+        const grp = tbl.previousElementSibling;
+        tbl.hidden = shown === 0;
+        if (grp && grp.classList.contains('pd-lgrp')) {
+            grp.hidden = shown === 0;
+            const count = grp.querySelector('.pd-dim');
+            if (count) count.textContent = shown + ' process' + (shown === 1 ? '' : 'es');
+        }
     }
 }
 
@@ -283,6 +302,7 @@ async function openProcess(id) {
     // decodes. Found by the audit; the door the tab click uses never reset it.
     S.settings = null;
     S.settingsError = '';
+    S.settingsNotice = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
     const res = await fetch('/api/processes/' + id + '/composer');
     if (!res.ok) {
@@ -1057,6 +1077,14 @@ async function runPreview() {
     if (!S.model) return;
     if (S.previewAbort) S.previewAbort.abort();
     S.previewAbort = new AbortController();
+    // WHOSE PREVIEW THIS IS. schedulePreview clears the timer but not an
+    // in-flight fetch, and the abort only happens when the NEXT run starts —
+    // so a response for the style just left could land on the style just
+    // opened. Its bar, its order count and its per-node findings were then the
+    // other style's for up to 400 ms, and saveFlow posted that style's
+    // fingerprint under this one's id, which comes back 409 "the flow changed
+    // since you previewed" on a flow nobody had changed.
+    const forStyle = S.model.styleId;
     try {
         const res = await fetch('/api/processes/' + S.processID + '/flow/preview', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1066,6 +1094,7 @@ async function runPreview() {
             signal: S.previewAbort.signal,
         });
         const json = await res.json().catch(() => ({}));
+        if (!S.model || S.model.styleId !== forStyle) return;
         S.model = M().applyPreview(S.model, json);
     } catch (e) {
         if (e && e.name === 'AbortError') return;
@@ -1285,6 +1314,12 @@ function openPicker(btn) {
 function closePop() {
     const pop = $('pd-pop');
     if (pop) { pop.hidden = true; pop.innerHTML = ''; }
+    // SETTINGS' GROUP LIST IS A POPOVER TOO. It draws into #pd-stpop and
+    // nothing ever hid it: click Group, change your mind, click elsewhere, and
+    // the list stayed open and then floated over the form as the sheet
+    // scrolled, until a group was picked or the tab redrew.
+    const stpop = $('pd-stpop');
+    if (stpop) { stpop.hidden = true; stpop.innerHTML = ''; }
     // The placeholder that was clicked goes back to being a dash, unless the
     // pick gave it a value — `apply` redraws the whole tab and clears this
     // either way.
@@ -1743,6 +1778,10 @@ function routingRowsFor(role) {
     return (S.routing || []).filter(r => r.role === role && r.enabled);
 }
 
+// Whether the set was actually read. null is "the read failed" — see
+// loadRouting — and the section says so instead of drawing three empty roles.
+function routingUnread() { return S.routing === null; }
+
 // The press's own back positions are staging and are NOT routing rows: the
 // derive reads inbound_staging / outbound_staging, and a press-index cell
 // parks on its PAIRED position instead, deliberately, because a paired
@@ -1807,6 +1846,14 @@ function routingRole(g) {
 }
 
 function routingSection() {
+    // A SET THAT COULD NOT BE READ IS NOT AN EMPTY SET, and drawing three
+    // empty roles over a failed read invites an engineer to re-add names the
+    // process already has. See loadRouting.
+    if (routingUnread()) {
+        return '<div class="pd-sect"><h2>Routing set</h2></div>' +
+            '<div class="pd-refusal">' + esc(S.routingError ||
+                'The routing set could not be read.') + '</div>';
+    }
     routingPickersReady();
     const way = waypointNames();
     const m = mapOf();
@@ -1863,8 +1910,11 @@ async function setRoutingNode(role, name, on) {
         out = await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + have.id,
             B().routingEnable(true));
     } else {
+        // At the end of its role, so the first name added to a role stays the
+        // one a new position defaults to (composer-model's defaultRouting
+        // takes the lowest sequence).
         out = await postJSON('POST', '/api/processes/' + S.processID + '/routing-nodes',
-            B().routingAdd(name, role));
+            B().routingAdd(name, role, routingRowsFor(role).length));
     }
     S.routingError = out.ok ? '' : out.error;
     await loadRouting();
@@ -1878,9 +1928,26 @@ async function setRoutingNode(role, name, on) {
 
 async function loadRouting() {
     const res = await fetch('/api/processes/' + S.processID + '/routing-nodes');
-    const view = res.ok ? await res.json() : {};
-    let rows = Array.isArray(view) ? view : (view.rows || view.routing_nodes || []);
+    // A READ THAT FAILED IS NOT AN EMPTY SET. This swallowed !res.ok into {},
+    // so a 500 or a dropped connection drew three roles of "nothing picked
+    // yet", an empty summary and a map with only the press — indistinguishable
+    // from a process that genuinely has no routing set, and permanently so,
+    // because S.routing was then [] rather than null and openSettings never
+    // retried. An engineer could have "re-added" names that were already
+    // there. Say what happened and leave the set unread so the next open asks
+    // again.
+    if (!res.ok) {
+        let why = 'Could not read this process’s routing set (' + res.status + ').';
+        try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
+        S.routingError = why + ' Nothing below is the set — it is what could not be read.';
+        S.routing = null;
+        S.routingSummary = '';
+        return;
+    }
+    const view = await res.json();
+    const rows = Array.isArray(view) ? view : (view.rows || view.routing_nodes || []);
     S.routing = rows;
+    S.routingError = '';
     // THE SUMMARY IS THE SERVER'S SENTENCE. The panel used to build its own
     // from the rows — "derived from N claims" counted the claim_count on the
     // styles block — and the derivation's own numbers are not on this page:
@@ -2353,19 +2420,66 @@ function drawScreens() {
             : '<p class="pd-dim">No screen works this process yet. An operator cannot reach it until one does.</p>') +
         '<div class="pd-sect"><h2>Loader windows</h2>' +
         '<span class="pd-dim">Core loaders with no screen on this edge</span></div>' +
-        '<p class="pd-dim">' + esc(loaderBindingSentence()) + '</p>' +
+        '<p class="pd-dim">' + esc(loaderBindingSentence()) + '</p>' + loaderGapRows() +
+        (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
+        (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '') +
         '</div>';
 }
 
 // The binding table appears when there is something to bind. The Edge learns
 // about a loader from Core's aggregate; one with no operator screen anywhere
 // here has nobody to work it, and that is the only case worth a row.
+function loaderKeyOf(g) { return g.loader_key || g.core_node_name || g.name || String(g); }
+
 function loaderBindingSentence() {
     const gaps = S.loaderGaps || [];
     if (!gaps.length) return 'Every loader Core knows about has a screen. Nothing to bind.';
-    const names = gaps.map(g => g.loader_key || g.core_node_name || g.name || String(g));
+    const names = gaps.map(loaderKeyOf);
     return names.length + ' loader' + (names.length === 1 ? '' : 's') + ' Core knows about have no screen ' +
         'on this edge: ' + names.join(', ') + '.';
+}
+
+// AND THE THING TO DO ABOUT IT. This section named the gaps and offered
+// nothing — POST /api/loader-boards exists, makes the screen and binds the
+// loader's windows to it in one action, and its own handler comment says "the
+// screen that offers the button is where it gets made". There was no button,
+// and no caller anywhere in www/static. So D4 told an engineer that three
+// loaders had nobody to work them and left them there.
+//
+// WHICH PROCESS OWNS IT IS THE HUMAN DECISION the handler refuses to infer —
+// Core sends every loader to every edge — so the button is on the process the
+// engineer is looking at, and says so.
+function loaderGapRows() {
+    const gaps = S.loaderGaps || [];
+    if (!gaps.length) return '';
+    const p = process();
+    return gaps.map(g => {
+        const key = loaderKeyOf(g);
+        return '<div class="pd-rrow"><span class="sq grp"></span><span class="nm">' + esc(key) +
+            '<small>no screen on this edge works it</small></span><span class="sp"></span>' +
+            '<button class="pd-btn" data-act="bind-loader" data-loader="' + esc(key) + '">' +
+            'Make a screen on ' + esc(p ? p.name : 'this process') + '</button></div>';
+    }).join('');
+}
+
+// The screen and the window bindings in one write, which is what the endpoint
+// does. A refusal names the window Core does not have.
+async function bindLoaderBoard(key) {
+    const out = await postJSON('POST', '/api/loader-boards',
+        { loader_key: key, process_id: S.processID });
+    if (!out.ok) {
+        S.settingsError = 'Could not make a screen for ' + key + ': ' + out.error;
+        S.settingsNotice = '';
+    } else {
+        S.settingsNotice = key + ' now has a screen on this process, with its windows bound to it.';
+        S.settingsError = '';
+        // The gap list arrives with the page and there is no endpoint to
+        // re-read it from. A loader that now has a screen is no longer a gap,
+        // which the page can say for itself without inventing a route.
+        S.loaderGaps = (S.loaderGaps || []).filter(g => loaderKeyOf(g) !== key);
+    }
+    await reloadStations();
+    await refreshProcess();
 }
 
 // ── D5 · Settings (SPEC §2 D5) ───────────────────────────────────────────────
@@ -2387,8 +2501,12 @@ const AUTO_ARM_NOTE = 'Cut over automatically finishes a changeover the operator
     'the press is confirmed stamping the new part. It never starts one — starting moves robots, and only ' +
     'a person knows the material is there.';
 
-function settingsDraft() {
-    const p = process() || {};
+function settingsDraft() { return settingsDraftFor(process() || {}); }
+
+// The same draft for a process that is not the one open — the Edit sheet works
+// on a row from the list without navigating to it first.
+function settingsDraftFor(p) {
+    p = p || {};
     return {
         name: p.name || '',
         description: p.description || '',
@@ -2497,6 +2615,7 @@ function drawSettings() {
         '<button class="pd-btn primary" data-act="st-save"' + (settingsDirty() ? '' : ' disabled') +
         '>Save settings</button></div>' +
         (S.settingsError ? '<div class="pd-refusal">' + esc(S.settingsError) + '</div>' : '') +
+        (S.settingsNotice ? '<div class="pd-notice">' + esc(S.settingsNotice) + '</div>' : '') +
         '<div class="pd-pop" id="pd-stpop" hidden></div></div>';
 
     for (const el of root().querySelectorAll('[data-st]')) {
@@ -2537,6 +2656,7 @@ async function saveSettings() {
         S.settingsError = why;
     };
     S.settingsError = '';
+    S.settingsNotice = '';
     const res = await fetch('/api/processes/' + S.processID, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
@@ -2652,9 +2772,20 @@ function hideSheet() {
 function loadCoreNodes() {
     if (!S.coreNodesReq) {
         S.coreNodesReq = fetch('/api/core-nodes')
-            .then(res => (res.ok ? res.json() : []))
+            .then(res => {
+                if (!res.ok) throw new Error('core nodes: ' + res.status);
+                return res.json();
+            })
             .then(rows => { S.coreNodes = Array.isArray(rows) ? rows : []; })
-            .catch(() => { S.coreNodes = []; });
+            // A FAILED READ IS NOT AN EMPTY PLANT, and it must not be cached as
+            // one. This swallowed the failure into `S.coreNodes = []` and kept
+            // the resolved promise forever, so after one transient error every
+            // picker for the rest of the session said "No node Core knows
+            // about is called that. The list is the fleet's" — blaming the
+            // fleet for a fetch. Dropping the promise lets the next picker ask
+            // again; leaving S.coreNodes null keeps it on "reading" rather
+            // than on a false answer.
+            .catch(() => { S.coreNodesReq = null; });
     }
     return S.coreNodesReq;
 }
@@ -3248,6 +3379,176 @@ function openAddProcess() {
         body, 'Create', submitAddProcess, false, 'pd-wide');
 }
 
+// ── Edit process, the same sheet backwards ───────────────────────────────────
+//
+// "Why can't I edit a process similar to add process, where I select what nodes
+// or other basic information it has?" — because everything Add asks in one
+// place was, afterwards, spread across two tabs and a row menu: the name and
+// group in Settings, the positions in Operator screens › Edit, the routing set
+// further down Settings. Making a press and changing a press are the same
+// three questions, so they are the same three sections.
+//
+// IT APPLIES A DIFF, WHICH IS THE ONE WAY IT DIFFERS FROM ADD. Add creates and
+// every write is an insert; this one has to compare against what is already
+// there and touch only what moved, because each of these endpoints is
+// destructive in its own way — the process PUT writes every column it decodes,
+// claimed-nodes is a set-to that deletes what it is not sent, and a routing
+// delete is refused while a live flow still routes through the name.
+//
+// Counter, changeover and the danger zone stay in Settings. They are not what
+// a press IS, they are how it is wired and what happens to it, and a sheet
+// that asked everything would be the Settings tab with a Cancel button.
+function openEditProcess(processID) {
+    const p = S.processes.find(x => x.id === Number(processID));
+    if (!p) return;
+    void openEditProcessFor(p);
+}
+
+async function openEditProcessFor(p) {
+    // The screen this process is worked from. A press has one in every case
+    // this page has met; more than one means the positions question belongs to
+    // whichever screen, and this sheet says so rather than guessing.
+    const screens = S.stations.filter(st => st.process_id === p.id);
+    const one = screens.length === 1 ? screens[0] : null;
+    if (one) await refreshStationNodes(one.id);
+    if (!S.routing || S.processID !== p.id) {
+        S.processID = p.id;
+        await loadRouting();
+    }
+    const positions = one ? (S.stationNodes[String(one.id)] || []).slice() : [];
+    const before = {
+        positions: positions.slice(),
+        roles: {},
+    };
+    S.add = { groupID: p.group_id || 0, editing: p.id, screen: one };
+
+    pickerInit('positions', {
+        selected: positions,
+        onChange: () => {
+            for (const g of ROUTING_GROUPS) {
+                const key = routingPickerKey(g[0]);
+                const pk = S.pickers[key];
+                if (!pk) continue;
+                pk.sel = pk.sel.filter(n => pickerValue('positions').indexOf(n) < 0);
+                redrawPicker(key);
+            }
+        },
+    });
+    for (const g of ROUTING_GROUPS) {
+        const mine = (S.routing || []).filter(r => r.role === g[0] && r.enabled)
+            .map(r => r.core_node_name);
+        before.roles[g[0]] = mine.slice();
+        pickerInit(routingPickerKey(g[0]), {
+            selected: mine,
+            exclude: n => (pickerValue('positions').indexOf(n) >= 0
+                ? 'a position of this process — available to every flow on it already'
+                : ''),
+        });
+    }
+
+    const screenField = one
+        ? pickerField('positions', 'Positions',
+            'what ' + one.name + ' claims — a flow can only use a position its screen owns')
+        : '<div class="pd-fld"><label>Positions<small>which screen claims what</small></label>' +
+        '<div class="v"><span class="pd-dim">' +
+        esc(screens.length ? 'This process has ' + screens.length + ' screens, so a position ' +
+            'belongs to one of them — set those on Operator screens › Edit.'
+            : 'No screen works this process yet. Add one on Operator screens, then its ' +
+            'positions can be set here.') + '</span></div></div>';
+
+    openSheet('Edit ' + p.name, 'what this process is, what works it, and where its bins come from and go.',
+        '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
+        sheetField('Name', 'what this process is called here', 'name', p.name) +
+        sheetField('Description', '', 'description', p.description) +
+        '<div class="pd-fld"><label>Group<small>pure taxonomy for the list — nothing reads it</small></label>' +
+        '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
+        esc((S.groups.find(g => g.id === (p.group_id || 0)) || {}).name || 'Ungrouped') +
+        '<i class="car"></i></button></div></div>' +
+
+        '<div class="pd-sec"><div class="pd-lbl">The operator screen</div></div>' +
+        screenField +
+
+        '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
+        ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
+        '<p class="pd-note">Only what you change is written. Taking a name out of a role is ' +
+        'refused while a live flow still routes through it, and the refusal says which part. ' +
+        'The counter, the changeover rule and deleting this process are on Settings.</p>',
+        'Save', () => submitEditProcess(p, before, one), false, 'pd-wide');
+}
+
+async function submitEditProcess(p, before, screen) {
+    const name = String(sheetValue('name') || '').trim();
+    if (!name) { sheetStatus('A process needs a name.', true); return; }
+
+    const done = [];
+    const stop = (what, why) => sheetStatus(
+        (done.length ? done.join('; ') + '. ' : '') + what + ' was refused: ' + why, true);
+
+    // THE PROCESS ROW, and only when something on it moved. processSettings
+    // carries production_state and the counter through untouched — the fields
+    // this sheet does not ask about must survive it, which is the whole reason
+    // that builder exists.
+    const draft = Object.assign(settingsDraftFor(p), {
+        name: name,
+        description: sheetValue('description'),
+        group_id: S.add.groupID,
+    });
+    if (JSON.stringify(draft) !== JSON.stringify(settingsDraftFor(p))) {
+        sheetStatus('Saving…');
+        const out = await postJSON('PUT', '/api/processes/' + p.id, B().processSettings(p, draft));
+        if (!out.ok) { stop('The process', out.error); return; }
+        done.push('The process was saved');
+    }
+
+    // THE POSITIONS, and only when the list moved — claimed-nodes is a set-to
+    // and re-sending an unchanged list is a delete-and-recreate of every one.
+    if (screen) {
+        const want = B().stationNodes(sheetValue('positions')).nodes;
+        const same = want.length === before.positions.length &&
+            want.every((n, i) => n === before.positions[i]);
+        if (!same) {
+            const out = await postJSON('PUT', '/api/operator-stations/' + screen.id + '/claimed-nodes',
+                { nodes: want });
+            if (!out.ok) { stop('Its positions', out.error); return; }
+            done.push('its positions set');
+        }
+    }
+
+    // THE ROUTING SET, as a diff. Added names are POSTed; removed ones are
+    // DELETEd, which the server refuses while a live claim still routes
+    // through them — and that refusal is the answer, not an obstacle.
+    for (const g of ROUTING_GROUPS) {
+        const was = before.roles[g[0]] || [];
+        const now = pickerValue(routingPickerKey(g[0]));
+        for (const nm of now) {
+            if (was.indexOf(nm) >= 0) continue;
+            const have = (S.routing || []).find(r => r.core_node_name === nm && r.role === g[0]);
+            const out = have
+                ? await postJSON('PATCH', '/api/processes/' + p.id + '/routing-nodes/' + have.id,
+                    B().routingEnable(true))
+                : await postJSON('POST', '/api/processes/' + p.id + '/routing-nodes',
+                    B().routingAdd(nm, g[0], now.indexOf(nm)));
+            if (!out.ok) { stop(nm + ' as a ' + g[0], out.error); return; }
+        }
+        for (const nm of was) {
+            if (now.indexOf(nm) >= 0) continue;
+            const have = (S.routing || []).find(r => r.core_node_name === nm && r.role === g[0]);
+            if (!have) continue;
+            const out = await postJSON('DELETE',
+                '/api/processes/' + p.id + '/routing-nodes/' + have.id, null);
+            if (!out.ok) { stop('Taking ' + nm + ' out of ' + g[0], out.error); return; }
+        }
+    }
+
+    closeSheet();
+    await reloadProcesses();
+    await reloadStations();
+    if (screen) await refreshStationNodes(screen.id);
+    await loadRouting();
+    if (S.processID === p.id) await refreshProcess();
+    else drawList();
+}
+
 async function submitAddProcess() {
     const name = String(sheetValue('name') || '').trim();
     if (!name) { sheetStatus('A process needs a name.', true); return; }
@@ -3286,9 +3587,12 @@ async function submitAddProcess() {
     // list can, and did.
     let routed = 0;
     for (const g of ROUTING_GROUPS) {
-        for (const node of pickerValue(routingPickerKey(g[0]))) {
+        const picked = pickerValue(routingPickerKey(g[0]));
+        for (const node of picked) {
+            // In the order the engineer picked them, so the first one is the
+            // default a new position opens on.
             const row = await postJSON('POST', '/api/processes/' + processID + '/routing-nodes',
-                B().routingAdd(node, g[0]));
+                B().routingAdd(node, g[0], picked.indexOf(node)));
             if (!row.ok) { stop(node + ' as a ' + g[0], row.error); return; }
             routed++;
         }
@@ -3670,17 +3974,27 @@ async function runGenerate() {
     const n = variants.length;
     closeGenerate();
     await reloadProcesses();
-    S.settingsError = 'Generated ' + n + ' style' + (n === 1 ? '' : 's') + '. They are in the Flows rail, with no flow until you build one.';
+    // A SUCCESS IS NOT A REFUSAL. This and the catalog sync below reported
+    // themselves through S.settingsError, which renders in .pd-refusal — a
+    // coral border in the warning ink. "Generated 3 styles" arrived looking
+    // like something had gone wrong.
+    S.settingsNotice = 'Generated ' + n + ' style' + (n === 1 ? '' : 's') + '. They are in the Flows rail, with no flow until you build one.';
+    // AND THE RAIL HAS TO ACTUALLY HAVE THEM. This reloaded the process list
+    // alone, so S.styles and S.composer.styles kept their pre-generate
+    // contents: the Styles count on this very section, and the Flows rail the
+    // sentence points at, both stayed stale until the process was re-opened.
+    await refreshProcess();
     drawSettings();
 }
 
 async function syncCatalog() {
     S.settingsError = '';
+    S.settingsNotice = '';
     const res = await fetch('/api/payload-catalog/sync', { method: 'POST' });
     if (!res.ok) {
         S.settingsError = 'The catalog sync failed (' + res.status + '). Core may be unreachable.';
     } else {
-        S.settingsError = 'Catalog synced from Core.';
+        S.settingsNotice = 'Catalog synced from Core.';
     }
     drawSettings();
 }
@@ -4190,9 +4504,24 @@ function drawPresetApply() {
 // this model and the row previews again — so the state the modal edits is a
 // composer model like any other, and `applyPreset` then `setPart` comes out the
 // same as a hand-placed cell.
+// THE TICK IS A TOGGLE; RE-PREVIEWING IS NOT. They were one function, and the
+// 409 retry called it on a row that is ticked by definition (applyRowReady
+// requires it) — so the retry's first act was to DELETE the row it was about
+// to rebuild. Everything after that read undefined: the fresh row was missing,
+// the else arm recorded a failure, and the refusal was written onto an object
+// no longer in S.papply.rows, where nothing renders it. On a 409 the row's tick
+// silently cleared itself and the footer said "1 to look at" with no row
+// saying which or why — and the retry the code advertises never happened.
 async function tickApplyRow(styleID) {
     const r = S.papply.rows[styleID] || {};
     if (r.ticked) { delete S.papply.rows[styleID]; drawPresetApply(); return; }
+    return buildApplyRow(styleID);
+}
+
+// Build (or rebuild) one row's model, diff and preview. The tick calls it to
+// turn a row on; the retry calls it to get a fingerprint that is true again.
+async function buildApplyRow(styleID) {
+    if (!S.papply) return;
     const st = composerStyle(styleID);
     const p = presetByID(S.papply.id);
     if (!st || !p) return;
@@ -4233,6 +4562,7 @@ async function pickApplyPart(styleID, node, code) {
 // one row is two ways for the cells on screen and the cells in the save to
 // drift apart.
 async function previewApplyRow(styleID) {
+    if (!S.papply) return;
     const row = S.papply.rows[styleID];
     if (!row || !row.model) return;
     row.cells = M().toCells(row.model);
@@ -4290,6 +4620,12 @@ async function runPresetApply() {
 
     let saved = 0, failed = 0;
     for (const st of applyStyles()) {
+        // CANCEL STOPS THE LOOP. closeSheet sets S.papply to null and the
+        // modal's Cancel is live while this runs, so every read after an await
+        // was a TypeError waiting to happen — and the loop would have carried
+        // on writing parts into a modal that is gone, with no report of which
+        // ones landed. The engineer's cancel means stop.
+        if (!S.papply) return;
         const row = S.papply.rows[st.id];
         // THE SAME TEST THE BUTTON COUNTED (F1). Two answers to "can this row
         // be saved" is one of them being wrong, and the wrong one here is a
@@ -4310,7 +4646,8 @@ async function runPresetApply() {
             // and so the retry carries the fingerprint that preview returned.
             row.result = { ok: false, text: out.text };
             drawPresetApply();
-            await tickApplyRow(st.id);
+            await buildApplyRow(st.id);
+            if (!S.papply) return;   // cancelled while the preview was in flight
             const fresh = S.papply.rows[st.id];
             if (fresh && applyRowReady(fresh)) {
                 const again = await fetch('/api/processes/' + S.processID + '/flow/save', {
@@ -4324,17 +4661,27 @@ async function runPresetApply() {
                 out = { ok: false, text: out.text };
             }
         }
+        if (!S.papply) return;
         const target = S.papply.rows[st.id] || row;
         target.result = { ok: !!out.ok, text: out.text };
         if (out.ok) { saved++; } else { failed++; }
         drawPresetApply();
     }
+    if (!S.papply) return;
     S.papply.running = false;
     S.papply.status = saved + ' saved' + (failed ? ', ' + failed + ' to look at' : '');
     drawPresetApply();
-    // The tab's drift figures are computed from truth, so they are only true
-    // after a re-read.
+    // THE TAB'S DRIFT FIGURES ARE COMPUTED FROM TRUTH, and so is every other
+    // screen this page holds. refreshPresets alone re-read /presets and left
+    // S.composer's claims at their PRE-apply state — so clicking Flows drew
+    // the old flow for every part just changed, over "No unsaved changes",
+    // and reopening the modal re-ticked to the same full diff for parts that
+    // were already in step. Worse, an edit made on that stale draft and saved
+    // would have written the whole cell list back and silently reverted the
+    // apply. refreshProcess is the one path that re-reads the composer and the
+    // styles, and every other write on this page already goes through it.
     await refreshPresets();
+    await refreshProcess();
     if (S.papply) drawPresetApply();
 }
 
@@ -4405,6 +4752,7 @@ function onClick(e) {
             case 'st-generate': openGenerate(); return;
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
+            case 'bind-loader': bindLoaderBoard(btn.dataset.loader); return;
             case 'screen-add': void openScreenSheet(0); return;
             case 'screen-edit': void openScreenSheet(btn.dataset.station); return;
             case 'style-menu': openStyleMenu(btn); return;
@@ -4471,6 +4819,7 @@ function onClick(e) {
                 return;
             }
             case 'open-flows': openProcess(Number(btn.dataset.process)); return;
+            case 'edit-process': openEditProcess(btn.dataset.process); return;
             case 'open-settings': openProcessAt(Number(btn.dataset.process), 'settings'); return;
             case 'add-process': openAddProcess(); return;
             case 'add-group': openNewGroup(); return;
