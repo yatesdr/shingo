@@ -257,7 +257,7 @@ async function openProcess(id) {
         root().innerHTML = appbar() + '<div class="pd-list"><p class="pd-dim">Could not read this process.</p></div>';
         return;
     }
-    S.composer = await res.json();
+    takeComposer(await res.json());
     const p = process();
     const h = hashOpts();
     const first = Number(h.style) || (p && p.active_style_id) ||
@@ -297,21 +297,40 @@ function hashOpts() {
     return out;
 }
 
-function composerStyle(id) { return (S.composer.styles || []).find(s => s.id === id) || null; }
+// A NIL GO SLICE MARSHALS TO null, NOT []. ComposerData.Styles has no
+// omitempty, so a process with no parts — which is exactly the state an Add
+// process lands in — answers `"styles": null`, and `S.composer.styles[0]` on
+// that is the page throwing on the first screen after a create. Half the reads
+// on this page already wrote `|| []` by hand; the other half indexed straight
+// in, and which half a field fell into was down to who wrote it.
+//
+// So the read is normalised ONCE, here, and the page may then index. The two
+// nested lists inside Cell get the same treatment for the same reason.
+function takeComposer(data) {
+    S.composer = data || {};
+    S.composer.styles = S.composer.styles || [];
+    S.composer.routing = S.composer.routing || [];
+    S.composer.presets = S.composer.presets || [];
+    S.composer.cell = S.composer.cell || {};
+    S.composer.cell.positions = S.composer.cell.positions || [];
+    S.composer.cell.groups = S.composer.cell.groups || {};
+}
+
+function composerStyle(id) { return S.composer.styles.find(s => s.id === id) || null; }
 
 // ONE INIT, EVERY STYLE THIS PAGE OPENS. D1 edits one style and the Presets
 // tab's apply modal previews many, and a second init would be a second answer
 // to "what is this style's flow" — which is the thing the shared model exists
 // to prevent.
 function initModel(st) {
-    const cell = S.composer.cell || { positions: [] };
+    const cell = S.composer.cell;
     return M().init({
         styleId: st.id,
         styleName: st.name,
         positions: (cell.positions || []).map(p => ({
             core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence,
         })),
-        routing: S.composer.routing || [],
+        routing: S.composer.routing,
         // The travel network for the key-route walk. The desktop's half of it
         // is Map, whose edges carry the same lengths Scene does.
         scene: S.composer.map || null,
@@ -320,7 +339,7 @@ function initModel(st) {
         lastRun: st.last_run || null,
         flowspec: window.FLOWSPEC || null,
         groups: cell.groups || {},
-        processClaims: (S.composer.styles || []).reduce((all, x) => all.concat(x.claims || []), []),
+        processClaims: S.composer.styles.reduce((all, x) => all.concat(x.claims || []), []),
         // What the Advanced modal opens on. Read-only in the model: the draft's
         // own copy appears on a cell only once an engineer presses Apply.
         advanced: st.advanced || {},
@@ -469,7 +488,7 @@ function styleRow(st, isRunning) {
 function rail() {
     const p = process();
     const running = p ? p.active_style_id : 0;
-    const all = S.composer.styles || [];
+    const all = S.composer.styles;
     const run = all.find(s => s.id === running);
     const rest = all.filter(s => s.id !== running);
     return '<div class="pd-rail">' + searchBox('pd-railq', 'find a part, CATID or flow') +
@@ -483,7 +502,7 @@ function rail() {
 
 // The model's own cell shape, in the shape renderFlowPicture draws — the same
 // adapter the station uses, from the same place.
-function cellFromModel() { return M().pictureCells(S.model, S.composer.cell || { positions: [] }); }
+function cellFromModel() { return M().pictureCells(S.model, S.composer.cell); }
 
 // PICTURE_H is the frame's height at rest, and the reference's: a 430 px band
 // between the header and the positions table. It is a fallback here only —
@@ -963,7 +982,7 @@ function stationIDForSave() {
 // ── pickers ──────────────────────────────────────────────────────────────────
 function optionsFor(node, kind) {
     const c = S.model.cells[node];
-    const routing = S.composer.routing || [];
+    const routing = S.composer.routing;
     const backs = S.model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
     // A kind may carry arguments: "col:staging:parkOld", "via:1".
     const parts = String(kind).split(':');
@@ -1201,7 +1220,7 @@ function route(a, b) {
 // scene geometry anyway — CellPicture.Groups is the one copy, and both
 // surfaces already have the picture.
 function membersOfGroup(name) {
-    const g = (S.composer.cell && S.composer.cell.groups) || {};
+    const g = S.composer.cell.groups;
     return g[name] || [];
 }
 
@@ -1210,7 +1229,7 @@ function membersOfGroup(name) {
 // runs off the edges, which is what "the rest of the plant faint" means.
 function fitRegion(m) {
     const names = [];
-    for (const p of (S.composer.cell && S.composer.cell.positions) || []) names.push(p.core_node_name);
+    for (const p of S.composer.cell.positions) names.push(p.core_node_name);
     for (const r of S.routing || []) {
         names.push(r.core_node_name);
         for (const mem of membersOfGroup(r.core_node_name)) names.push(mem);
@@ -1326,7 +1345,7 @@ function drawMap(w, h) {
     // label already placed. It is a few marks on one press — the quadratic cost
     // is nothing, and it is the only rule that keeps working whichever way the
     // map is turned.
-    const positions = (S.composer.cell && S.composer.cell.positions) || [];
+    const positions = S.composer.cell.positions;
     const live = {};
     if (S.model) for (const n of Object.keys(S.model.cells)) if (S.model.cells[n].on) live[n] = true;
     for (const lab of placeMapLabels(positions, Tp)) {
@@ -1444,8 +1463,7 @@ const ROUTING_GROUPS = [
 ];
 
 function isPositionRow(name) {
-    return ((S.composer.cell && S.composer.cell.positions) || [])
-        .some(p => p.core_node_name === name);
+    return S.composer.cell.positions.some(p => p.core_node_name === name);
 }
 
 // WHAT BACKFILL MEANS, IN WORDS, ON THE ROW (owner ruling 2026-09-10, Q5).
@@ -1573,7 +1591,7 @@ function routingRowsFor(role) {
     if (role !== 'staging') return mine;
     const named = {};
     for (const r of mine) named[r.core_node_name] = true;
-    for (const pos of (S.composer.cell && S.composer.cell.positions) || []) {
+    for (const pos of S.composer.cell.positions) {
         if (pos.kind !== 'back' || named[pos.core_node_name]) continue;
         mine = mine.concat([{
             id: 0, core_node_name: pos.core_node_name, role: 'staging',
@@ -1915,7 +1933,7 @@ function applyAdvanced() {
 
 function advOptions(key) {
     const c = S.model.cells[S.adv.node];
-    const routing = S.composer.routing || [];
+    const routing = S.composer.routing;
     switch (key) {
         case 'allowed_payload_codes': {
             const have = new Set(S.adv.a.allowed_payload_codes);
@@ -2487,7 +2505,11 @@ function pickerChips(key) {
 function pickerOptions(key) {
     const p = S.pickers[key];
     if (!p || !p.open) return '';
-    if (!S.coreNodes) return '<div class="none">Reading Core’s node list…</div>';
+    // NOT YET READ IS NOT THE SAME ANSWER AS NO SUCH NODE, and they are not
+    // the same element: `.loading` is what says so to anything reading this
+    // list rather than looking at it — which is how the shots driver knows to
+    // wait rather than to report the fixture missing a name it does have.
+    if (!S.coreNodes) return '<div class="none loading">Reading Core’s node list…</div>';
     const needle = p.q.trim().toLowerCase();
     const hits = coreNodeList().filter(n => !needle || String(n.name).toLowerCase().indexOf(needle) >= 0);
     if (!hits.length) {
@@ -2762,7 +2784,7 @@ async function refreshProcess() {
     await reloadProcesses();
     const res = await fetch('/api/processes/' + S.processID + '/composer');
     if (res.ok) {
-        S.composer = await res.json();
+        takeComposer(await res.json());
         S.graph = null;
     }
     const styles = await fetch('/api/processes/' + S.processID + '/styles');
@@ -3631,7 +3653,7 @@ function applyStyles() {
     //
     // THE RUNNING STYLE GOES LAST — see B().applyOrder, which is where that
     // rule lives and is tested.
-    return B().applyOrder(S.composer.styles || [], process() ? process().active_style_id : 0);
+    return B().applyOrder(S.composer.styles, process() ? process().active_style_id : 0);
 }
 
 // WHY A STYLE MIGHT NOT BE APPLYABLE, in the words the rest of the page uses.

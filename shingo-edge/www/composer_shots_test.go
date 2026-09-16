@@ -163,6 +163,12 @@ func TestComposerShots(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(clickD5Driver(r.URL.Query().Get("process"))))
 	})
+	// The Add-process sheet, driven end to end. See clickAddProcessDriver.
+	mux.HandleFunc("/__shots/click-add", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(clickAddProcessDriver(
+			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
+	})
 	// The apply modal's pickers, answered by clicking. See clickApplyDriver.
 	mux.HandleFunc("/__shots/click-apply", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1060,6 +1066,137 @@ func TestComposerShots(t *testing.T) {
 		t.Fatalf("restore the gate after the click: %v", err)
 	}
 
+	// ── THE SECOND REAL CLICK: Add process, end to end ──────────────────
+	//
+	// U10 gave this page back the ability to create a process, and that
+	// ability is FIVE WRITES IN ORDER — process, operator screen, the
+	// positions it claims, the routing set, the gate — each posted from a
+	// desktop-bodies.js body against an id the write before it returned.
+	// Every shot above renders; none of them writes. A page whose
+	// window.DesktopBodies is undefined draws this sheet perfectly and
+	// creates nothing, which is the failure the D5 driver exists for, one
+	// screen along and four writes deeper.
+	//
+	// So it is driven: a real click on Add process, real typing into the
+	// sheet, a real filter and a real click in the node picker, a real
+	// Create — and then the STORE is read, because a page that redrew from
+	// its own optimistic state would satisfy the browser half alone.
+	//
+	// TWICE, because the gate is a decision and not a side effect: a set with
+	// a source in it opens the flow composer (the engineer just reviewed the
+	// set — they wrote it), and one with no routing rows leaves it shut.
+	for _, tc := range []struct {
+		name     string
+		process  string
+		position string
+		source   string
+		wantGate bool
+	}{
+		{"with a routing set", "Press Made A", "SMN_011", "Supermarket Empty Totes", true},
+		{"with none", "Press Made B", "SMN_012", "", false},
+	} {
+		profile := t.TempDir()
+		u := fmt.Sprintf("%s/__shots/click-add?name=%s&position=%s&source=%s", srv.URL,
+			url.QueryEscape(tc.process), url.QueryEscape(tc.position), url.QueryEscape(tc.source))
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom", u)
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom click-add (%s): %v", tc.name, err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("Add process %s: %q (step %q).\n"+
+				"  This is the check that presses the button. Every other one renders, and a page "+
+				"whose write bodies are undefined renders the sheet and creates nothing.", tc.name, got, attr("step"))
+			continue
+		}
+		t.Logf("Add process %s: created and opened %s", tc.name, attr("opened"))
+
+		// ── the store's half ────────────────────────────────────────────
+		rows, err := db.ListProcesses()
+		if err != nil {
+			t.Fatalf("list processes: %v", err)
+		}
+		madeID := int64(0)
+		for _, r := range rows {
+			if r.Name == tc.process {
+				madeID = r.ID
+			}
+		}
+		if madeID == 0 {
+			t.Errorf("Add process %s: the page said OK and no process is named %q", tc.name, tc.process)
+			continue
+		}
+		made, err := db.GetProcess(madeID)
+		if err != nil {
+			t.Fatalf("read the created process: %v", err)
+		}
+		if made.FlowComposerEnabled != tc.wantGate {
+			t.Errorf("Add process %s: flow_composer_enabled = %v, want %v — the gate opens on a "+
+				"routing set the engineer wrote and on nothing else",
+				tc.name, made.FlowComposerEnabled, tc.wantGate)
+		}
+		stations, err := db.ListOperatorStationsByProcess(made.ID)
+		if err != nil {
+			t.Fatalf("list stations: %v", err)
+		}
+		if len(stations) != 1 || stations[0].Name != tc.process+" Screen" {
+			t.Errorf("Add process %s: screens = %+v, want one named %q", tc.name, stations, tc.process+" Screen")
+			continue
+		}
+		// THE POSITIONS ARE THE HALF THAT HAD NO CALLER AT ALL. SetNodes is
+		// what mints process_nodes, and PUT .../claimed-nodes had no caller in
+		// www/static before U10 — so a process created any other way had no
+		// positions and no way to get them.
+		nodes, err := db.ListProcessNodesByStation(stations[0].ID)
+		if err != nil {
+			t.Fatalf("list process nodes: %v", err)
+		}
+		if len(nodes) != 1 || nodes[0].CoreNodeName != tc.position {
+			names := make([]string, 0, len(nodes))
+			for _, n := range nodes {
+				names = append(names, n.CoreNodeName)
+			}
+			t.Errorf("Add process %s: positions = %v, want [%s]", tc.name, names, tc.position)
+		}
+		routing, err := db.ListRoutingNodes(made.ID)
+		if err != nil {
+			t.Fatalf("list routing nodes: %v", err)
+		}
+		if tc.source == "" {
+			if len(routing) != 0 {
+				t.Errorf("Add process %s: routing set = %+v, want none", tc.name, routing)
+			}
+			continue
+		}
+		if len(routing) != 1 {
+			t.Errorf("Add process %s: routing set = %+v, want one row", tc.name, routing)
+			continue
+		}
+		// ONE PICK, ONE ROW, IN THE ROLE THE LIST NAMES. pickOnMap posted a
+		// group as both a source and a destination because a click cannot say
+		// which was meant; the list can, and the row proves it did.
+		r := routing[0]
+		if r.CoreNodeName != tc.source || r.Role != domain.RoutingRoleSource || !r.Enabled {
+			t.Errorf("Add process %s: routing row = %+v, want %s as an enabled source",
+				tc.name, r, tc.source)
+		}
+		if r.Origin != domain.RoutingOriginEngineer {
+			t.Errorf("Add process %s: origin = %q, want %q — the server stamps the author",
+				tc.name, r.Origin, domain.RoutingOriginEngineer)
+		}
+	}
+
 	// ── U10: D6 · Presets at 1440x900 ────────────────────────────────────
 	//
 	// THE TAB NEEDS SOMETHING TO SHOW, and what it shows is computed from
@@ -1459,6 +1596,140 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
     out.dataset.result = 'OK';
   } catch (e) {
     fail('driver', String(e));
+  }
+})();
+</script>`
+}
+
+// clickAddProcessDriver drives the Add-process sheet the way an engineer does:
+// open the list, press Add process, type a name and a screen name, filter a
+// node picker and click a name in it, twice, then press Create.
+//
+// THIS IS THE ONE THING A SHOT CANNOT CHECK. The chain is five writes in
+// dependency order — process, screen, claimed nodes, routing rows, gate — and
+// every one of them is posted from a body built by desktop-bodies.js against
+// an id the write before it returned. A page whose window.DesktopBodies is
+// undefined renders this sheet perfectly and writes nothing, which is exactly
+// the failure the D5 driver exists for, one screen along.
+//
+// The node picker is driven by its own two parts: type into [data-npkq] and
+// dispatch an input event (the page listens for `input`, not for a value
+// assignment), then click the [data-npk=add] row for the wanted name. If it is
+// not offered the driver says so by name rather than timing out on a click it
+// never made.
+//
+// `source` is put in the SOURCES list, so the routing set is non-empty and the
+// gate should come out open. The Go side reads all five rows back.
+func clickAddProcessDriver(name, position, source string) string {
+	q := func(v string) string { return template.JSEscapeString(v) }
+	return `<!doctype html><meta charset="utf-8"><title>click-add</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0" src="/processes"></iframe>
+<script>
+const NAME = "` + q(name) + `", POSITION = "` + q(position) + `", SOURCE = "` + q(source) + `";
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the process list draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('.pd-list') ? doc : null;
+    });
+    const threw = () => {
+        if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError);
+    };
+    threw();
+
+    const add = d.querySelector('[data-act="add-process"]');
+    if (!add) return fail('find Add process', 'no [data-act=add-process] on the list');
+    out.dataset.step = 'sheet';
+    add.click();
+
+    const sheet = await until('the Add-process sheet opens',
+        () => { threw(); return d.querySelector('.pd-modal [data-f="name"]') ? d.querySelector('.pd-modal') : null; });
+
+    const type = (sel, value) => {
+        const el = sheet.querySelector(sel);
+        if (!el) throw new Error('no ' + sel + ' on the sheet');
+        el.value = value;
+        // The page listens for input events, not for an assignment — the same
+        // reason a real engineer typing is the only thing that drives it.
+        el.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+        return el;
+    };
+    type('[data-f="name"]', NAME);
+    type('[data-f="screen"]', NAME + ' Screen');
+
+    // ONE PICKER AT A TIME, which is the component's own rule: focusing a
+    // field closes the list that was open. So each pick is filter, wait for
+    // the row, click it.
+    const pick = async (key, node) => {
+        out.dataset.step = 'pick ' + node;
+        const box = sheet.querySelector('#npk-' + key);
+        if (!box) throw new Error('no picker #npk-' + key + ' on the sheet');
+        type('#npk-' + key + ' [data-npkq]', node);
+        const row = await until('the picker offers ' + node, () => {
+            threw();
+            const hit = box.querySelector('[data-npk="add"][data-npkname="' + node + '"]');
+            if (hit) return hit;
+            // A name Core does not have is a fixture problem, and saying so
+            // beats eight seconds of silence.
+            const off = box.querySelector('.opts button.off');
+            // .none.loading is the list still being read, which is a reason
+            // to keep polling; .none on its own is Core answering that it has
+            // no such name, which is a finding.
+            const none = box.querySelector('.opts .none:not(.loading)');
+            if (none) throw new Error(node + ' is not in Core\u2019s list: ' + none.textContent.trim());
+            if (off && off.textContent.indexOf(node) === 0) throw new Error(node + ' is excluded: ' + off.textContent.trim());
+            return null;
+        });
+        row.click();
+        await until(node + ' becomes a chip', () => {
+            threw();
+            return [...box.querySelectorAll('.chips .pd-nchip')].some(c => c.textContent.indexOf(node) === 0);
+        });
+    };
+    await pick('positions', POSITION);
+    // NO SOURCE IS A CASE, not a missing argument: a process created with an
+    // empty routing set must come out with the flow-composer gate SHUT, and
+    // that is only checkable by making one.
+    if (SOURCE) await pick('rs_source', SOURCE);
+
+    out.dataset.step = 'create';
+    const ok = sheet.querySelector('[data-act="sheet-ok"]');
+    if (!ok) return fail('find Create', 'no [data-act=sheet-ok] on the sheet');
+    ok.click();
+
+    // THE PAGE LANDS ON THE NEW PROCESS, which is the whole chain having
+    // landed: openProcess only runs after the last write returned. A refusal
+    // stops in the sheet with its sentence in the status line, and that is the
+    // report worth having.
+    await until('the page opens the new process', () => {
+        const st = sheet.querySelector('.mf .st');
+        if (st && st.classList.contains('bad')) throw new Error('the sheet refused: ' + st.textContent);
+        threw();
+        const crumb = d.querySelector('.pd-crumb b');
+        return !!crumb && crumb.textContent.indexOf(NAME) === 0;
+    }, 15000);
+
+    // WHAT THE PAGE IS SHOWING, not its URL: openProcess swaps the page's
+    // contents without navigating, so location never moves and reporting it
+    // reported an empty string.
+    out.dataset.opened = d.querySelector('.pd-crumb b').textContent;
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
   }
 })();
 </script>`
