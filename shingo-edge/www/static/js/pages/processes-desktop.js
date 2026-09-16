@@ -556,8 +556,8 @@ function drawPicture() {
 // already in the rail beside it.
 function noStyleYet() {
     return '<div class="pd-main"><div class="pd-head"><div class="t"><h1>No part yet</h1>' +
-        '<div class="sub">this press runs nothing until one of its parts has a flow</div></div></div>' +
-        '<div class="pd-empty"><p>A flow is drawn for a part: which positions the press works, ' +
+        '<div class="sub">this process runs nothing until one of its parts has a flow</div></div></div>' +
+        '<div class="pd-empty"><p>A flow is drawn for a part: which positions the process works, ' +
         'how each one swaps, and where its bins come from and go. Add the first part from ' +
         '<b>+ New part flow</b> in the rail, or stamp out a family of them from ' +
         'Settings › Generate variants.</p>' +
@@ -1532,7 +1532,7 @@ function routingRow(r) {
 function mapSubject() {
     const p = process();
     const st = p ? stationsOf(p.id)[0] : null;
-    return (st && st.name) || (p && p.name) || 'this press';
+    return (st && st.name) || (p && p.name) || 'this process';
 }
 
 // ── the routing set, in Settings (owner ruling 2026-09-16) ───────────────────
@@ -1566,7 +1566,7 @@ function routingPickersReady() {
             // the server before the list redraws.
             onPick: name => addRoutingNode(g[0], name),
             exclude: n => (isPositionRow(n)
-                ? 'a position of this press — available to every flow on it already'
+                ? 'a position of this process — available to every flow on it already'
                 : ''),
             annotate: n => {
                 const have = (S.routing || []).find(r => r.core_node_name === n && r.role === g[0]);
@@ -1605,7 +1605,7 @@ function routingRole(g) {
     const rows = routingRowsFor(g[0]);
     const body = rows.length
         ? rows.map(routingRow).join('')
-        : '<div class="pd-dim">nothing yet — this press can draw on nothing under this heading</div>';
+        : '<div class="pd-dim">nothing yet — this process can draw on nothing under this heading</div>';
     return stBlock(g[1], g[2] + ' · ' + ROUTING_ADD_SUB,
         body + pickerBox(routingPickerKey(g[0])));
 }
@@ -1621,7 +1621,7 @@ function routingSection() {
     const m = mapOf();
     return '<div class="pd-sect"><h2>Routing set</h2>' +
         '<span class="pd-dim">' + esc(S.routingSummary ||
-            'where this press may draw bins from, stage them, and send them') + '</span></div>' +
+            'where this process may draw bins from, stage them, and send them') + '</span></div>' +
         ROUTING_GROUPS.map(routingRole).join('') +
         waypoints +
         (S.routingError ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
@@ -2237,7 +2237,7 @@ function drawSettings() {
         stField('PLC', '', stText('counter_plc_name')) +
         stField('Tag', '', stText('counter_tag_name')) +
         stField('Enabled',
-            'a press that counts can skip a same-part swap at changeover; an unwired one never does',
+            'a process that counts can skip a same-part swap at changeover; an unwired one never does',
             stToggle('counter_enabled'));
 
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
@@ -2252,11 +2252,11 @@ function drawSettings() {
             'off: the operator picks a part and runs it as set up · on: they may also change how it flows',
             stToggle('flow_composer_enabled')) +
         '<p class="pd-note">Turn this on once the routing set below has been reviewed — it is the ' +
-        'list an operator would be choosing from. Off is right for a press whose flows are hammered ' +
+        'list an operator would be choosing from. Off is right for a process whose flows are hammered ' +
         'out.</p>';
 
     const stylesSect = '<div class="pd-sect"><h2>Styles</h2><span class="pd-dim">' + styles +
-        ' live · every part this press runs</span><span class="pd-spacer"></span>' +
+        ' live · every part this process runs</span><span class="pd-spacer"></span>' +
         // GENERATE VARIANTS, PORTED. The dialog is not new design: the retired
         // admin page had one (base style, a column per produce claim, a row
         // per variant, Generate) and the owner ruled it is the same dialog
@@ -2769,7 +2769,7 @@ function styleAction(act, id) {
             return;
         case 'delete':
             openSheet('Delete ' + st.name + '?', 'its flow goes with it.',
-                '<p class="pd-note">A style the press has run is part of its history. Deleting it removes ' +
+                '<p class="pd-note">A style the process has run is part of its history. Deleting it removes ' +
                 'the flow an operator would pick, not what already ran.</p>',
                 'Delete', () => sheetSubmit('DELETE', '/api/styles/' + id, null, refreshProcess), true);
             return;
@@ -2807,7 +2807,7 @@ async function refreshProcess() {
 // The flow itself is drawn afterwards on D1 — a style arrives with no claims
 // and the rail marks it `build`, which is the state the picture is for.
 function openNewStyle() {
-    openSheet('New part flow', 'a part this press runs. Its flow is drawn next, on this screen.',
+    openSheet('New part flow', 'a part this process runs. Its flow is drawn next, on this screen.',
         sheetField('Name', 'what this part is called here', 'name', '') +
         sheetField('Expected CATID', 'what the PLC calls it — blank means shingo never matches it to a scan',
             'catid', '') +
@@ -2832,7 +2832,7 @@ function openNewStyle() {
 // sheet says so nobody goes looking for what it does.
 function openNewGroup() {
     openSheet('Add group', 'how the process list is grouped. Nothing else reads it.',
-        sheetField('Name', 'what this group of presses is called', 'name', '') +
+        sheetField('Name', 'what this group of processes is called', 'name', '') +
         sheetField('Description', '', 'description', ''),
         'Add', async () => {
             const name = String(sheetValue('name') || '').trim();
@@ -2927,14 +2927,14 @@ function openAddProcess() {
             // and the engineer said which role by which list they put it in —
             // so the three do not exclude each other.
             exclude: n => (positions().indexOf(n) >= 0
-                ? 'a position of this press — available to every flow on it already'
+                ? 'a position of this process — available to every flow on it already'
                 : ''),
         });
     }
 
     const body =
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
-        sheetField('Name', 'what this press is called here', 'name', '') +
+        sheetField('Name', 'what this process is called here', 'name', '') +
         sheetField('Description', '', 'description', '') +
         '<div class="pd-fld"><label>Group<small>pure taxonomy for the list — nothing reads it</small></label>' +
         '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
@@ -2943,16 +2943,16 @@ function openAddProcess() {
         '<div class="pd-sec"><div class="pd-lbl">The operator screen</div></div>' +
         sheetField('Screen name', 'what the screen is called on the floor', 'screen', '') +
         pickerField('positions', 'Positions',
-            'the press positions this screen claims — a flow can only use a position its screen owns') +
+            'the positions this screen claims — a flow can only use a position its screen owns') +
 
         '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
         ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
-        '<p class="pd-note">A name in one of these three lists is a place this press may route ' +
+        '<p class="pd-note">A name in one of these three lists is a place this process may route ' +
         'material through. Operators are offered these and never the plant. Fill them in and the ' +
-        'flow composer opens on this press, because reviewing the set is exactly what that gate ' +
+        'flow composer opens on this process, because reviewing the set is exactly what that gate ' +
         'is waiting for; leave them empty and it stays shut until Settings says otherwise.</p>';
 
-    openSheet('Add process', 'a press, the screen that works it, and where its bins come from and go.',
+    openSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false, 'pd-wide');
 }
 
@@ -2962,7 +2962,7 @@ async function submitAddProcess() {
     const screen = String(sheetValue('screen') || '').trim();
     // A press with no HMI cannot be run by anybody, so the screen is required
     // here rather than left to be noticed on D4 later.
-    if (!screen) { sheetStatus('Name the operator screen — a press with no HMI cannot be run.', true); return; }
+    if (!screen) { sheetStatus('Name the operator screen — a process with no HMI cannot be run.', true); return; }
 
     sheetStatus('Creating…');
     const made = await postJSON('POST', '/api/processes',
@@ -3061,7 +3061,7 @@ function openScreenSheet(stationID) {
         sheetField('Name', 'what the screen is called on the floor', 'name', st.name) +
         sheetField('Note', 'anything the next engineer should know about it', 'note', st.note) +
         pickerField('positions', 'Positions',
-            'the press positions this screen claims — a flow can only use a position its screen owns'),
+            'the positions this screen claims — a flow can only use a position its screen owns'),
         editing ? 'Save' : 'Add',
         async () => {
             const wrote = await postJSON(editing ? 'PUT' : 'POST',
@@ -3156,7 +3156,7 @@ function openDeleteProcess() {
 async function openGenerate() {
     const all = stylesOf(S.processID);
     if (!all.length) {
-        S.settingsError = 'This press has no style to generate a family from yet. Add one from Flows first.';
+        S.settingsError = 'This process has no style to generate a family from yet. Add one from Flows first.';
         drawSettings();
         return;
     }
@@ -3403,7 +3403,7 @@ async function loadPresets() {
     try {
         const res = await fetch('/api/processes/' + S.processID + '/presets');
         if (!res.ok) {
-            let why = 'Could not read the presets for this press (' + res.status + ').';
+            let why = 'Could not read the presets for this process (' + res.status + ').';
             try { const j = await res.json(); why = j.error || why; } catch (_) { /* status only */ }
             S.presets.error = why;
             return;
@@ -3523,7 +3523,7 @@ function drawPresets() {
     const flows = v.styles_with_flow || 0;
     let h = '<div class="pd-sect"><h2>Presets</h2><span class="pd-lbl"><span class="cnt">' +
         presets.length + '</span></span>' +
-        '<span class="pd-dim">named shapes this press can apply to a part</span></div>';
+        '<span class="pd-dim">named shapes this process can apply to a part</span></div>';
     // THE COLUMNS ARE SIZED, the way D1's positions table is, and for the same
     // reason: left to itself the browser gave Name a third of what its content
     // needs and Shape less than its position list, so the one thing an
@@ -3545,7 +3545,7 @@ function drawPresets() {
         h += '<div class="pd-sect"><h2>Found in your flows</h2><span class="pd-lbl"><span class="cnt">' +
             cands.length + '</span></span>' +
             '<span class="pd-dim">shape' + (cands.length === 1 ? '' : 's') +
-            ' this press already runs, over ' + flows + ' flow' + (flows === 1 ? '' : 's') +
+            ' this process already runs, over ' + flows + ' flow' + (flows === 1 ? '' : 's') +
             ', that nobody has named</span></div>' +
             // THREE COLUMNS, NOT FOUR. Section 1c asks for "glyph + suggested
             // name, used by N parts, Name it…", and a suggested name IS the
@@ -3613,7 +3613,7 @@ function suggestedPresetName() {
 // invites an engineer to expect the parts to come along.
 function openPresetNaming(title, prefill, from) {
     openSheet(title, '',
-        sheetField('Name', 'what this shape is called on this press', 'name', prefill) +
+        sheetField('Name', 'what this shape is called on this process', 'name', prefill) +
         '<p class="pd-note">A preset is the shape of a flow — which positions, how they swap, ' +
         'where bins come from and go. Parts are never part of it.</p>',
         'Save preset',
@@ -4096,7 +4096,7 @@ function onClick(e) {
                 // across two names is two presets that mean one shape.
                 openSheet('Rename ' + p.name,
                     'every version of this name is renamed; nothing else changes.',
-                    sheetField('Name', 'what this shape is called on this press', 'name', p.name) +
+                    sheetField('Name', 'what this shape is called on this process', 'name', p.name) +
                     '<p class="pd-note">A preset is named once and read for months. The shape, its ' +
                     'versions and the parts that came from it are untouched — a member points at a ' +
                     'version by id, and the id does not move.</p>',
