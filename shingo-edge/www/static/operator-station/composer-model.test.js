@@ -1240,7 +1240,7 @@ function initWithRouting(routing, off) {
 }
 
 test('a role with options gets no sentence, whatever is switched off', () => {
-    const s = initWithRouting(ROUTING, { source: 4 });
+    const s = initWithRouting(ROUTING, { source: ['SMN_015', 'SMN_016'] });
     assert.strictEqual(M.routingNote(s, 'inbound_source', 3), '',
         'a row with chips in it must not also carry a sentence about being empty');
 });
@@ -1257,18 +1257,39 @@ test('an empty role with nothing switched off says the set is empty', () => {
 // were found from the flows and never adopted needs a SWITCH, not new names,
 // and that is invisible from the card without the count.
 test('an empty role with rows switched off says how many, and to turn them on', () => {
-    const s = initWithRouting([], { staging: 2 });
+    const s = initWithRouting([], { staging: ['SLN_09', 'SLN_010'] });
     const note = M.routingNote(s, 'outbound_staging', 0);
     assert.ok(/2 staging nodes/.test(note), 'says how many: ' + note);
     assert.ok(/switched off/.test(note), 'says what is wrong with them: ' + note);
-    assert.ok(/turn them on/.test(note), 'says the action: ' + note);
+    assert.ok(/Turn them on/.test(note), 'says the action: ' + note);
+});
+
+// A COUNT IS NOT CHECKABLE. Hopkinsville's 4x2 said "7 staging nodes ...
+// switched off" while the engineer was looking at supermarket slots, and the
+// card gave them no way to see that the seven were SLN lanes and that the SMNs
+// in front of them were the source and destination rows — a different seven.
+test('the sentence names the nodes, and counts the ones it does not name', () => {
+    const s = initWithRouting([], {
+        staging: ['SLN_09', 'SLN_010', 'SLN_011', 'SLN_012', 'SLN_013', 'SLN-14', 'SLN-015'],
+    });
+    const note = M.routingNote(s, 'inbound_staging', 0);
+    assert.ok(/SLN_09, SLN_010, SLN_011/.test(note), 'names the first few: ' + note);
+    assert.ok(/and 4 more/.test(note), 'counts the rest rather than listing seven: ' + note);
+    assert.ok(!/SLN_013/.test(note), 'does not spell out all seven on one card line: ' + note);
+});
+
+test('a role with no more names than it spells out counts none extra', () => {
+    const s = initWithRouting([], { destination: ['Supermarket Area'] });
+    const note = M.routingNote(s, 'outbound_destination', 0);
+    assert.ok(/Supermarket Area/.test(note), 'names it: ' + note);
+    assert.ok(!/ more/.test(note), 'a fully-named list must not say "and 0 more": ' + note);
 });
 
 test('one switched-off row is singular, and so is what to do about it', () => {
-    const s = initWithRouting([], { source: 1 });
+    const s = initWithRouting([], { source: ['Supermarket Empty Totes'] });
     const note = M.routingNote(s, 'inbound_source', 0);
     assert.ok(/1 inbound source node /.test(note), 'a count of one must not say "nodes": ' + note);
-    assert.ok(/turn it on/.test(note), '"turn them on" over a count of one reads as a second thing: ' + note);
+    assert.ok(/Turn it on/.test(note), '"turn them on" over a count of one reads as a second thing: ' + note);
 });
 
 // A field whose options are the process's OWN POSITIONS is not a routing role,

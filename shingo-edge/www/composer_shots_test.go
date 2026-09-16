@@ -169,6 +169,17 @@ func TestComposerShots(t *testing.T) {
 		_, _ = w.Write([]byte(clickAddProcessDriver(
 			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
 	})
+	// Settings' own scrolling, measured. See scrollDriver.
+	mux.HandleFunc("/__shots/scroll", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(scrollDriver(r.URL.Query().Get("path"))))
+	})
+	// D1's staging picker, opened. See clickStagingDriver.
+	mux.HandleFunc("/__shots/open-staging", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(clickStagingDriver(r.URL.Query().Get("process"),
+			r.URL.Query().Get("style"), r.URL.Query().Get("node"))))
+	})
 	// The station's preset strip, tapped. See clickPresetDriver.
 	mux.HandleFunc("/__shots/tap-preset", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1081,6 +1092,93 @@ func TestComposerShots(t *testing.T) {
 	// P3: the add row is the box's footer, not a row of the table.
 	desktopDOM("D1 add-position footer", d1, `class="pd-posfoot"`)
 	checkDesktopFits("D1 flows", d1)
+
+	// ── D1's STAGING PICKER OFFERS STAGING, NOT POSITIONS ────────────────
+	//
+	// optionsFor built ONE list for all four mode-dependent chips — the back
+	// positions plus every other position of the process — and used it for
+	// `paired` (right: a press pairs with its own slots) AND for `staging` and
+	// `parkOld` (wrong: the STATION offers those the routing set's staging
+	// rows plus the backs). One field with two answers depending on which
+	// screen you asked, which is the thing this page exists to stop.
+	//
+	// Found on the Hopkinsville floor the day it shipped: the 4x2's five
+	// positions are all `front`, so `backs` was empty and D1 offered the other
+	// four ALNs as places to park a bin while the seven real staging rows sat
+	// switched off in the routing set.
+	//
+	// THE EXPECTED SET IS COMPUTED, not written down: whatever the fixture's
+	// backs and enabled staging rows are, those and nothing else.
+	{
+		view, err := eng.StationService().ComposerForProcess(seeded.ProcessID)
+		if err != nil || view == nil {
+			t.Fatalf("read the composer for the staging check: %v", err)
+		}
+		allowed := map[string]bool{}
+		var backs []string
+		for _, pos := range view.Cell.Positions {
+			if pos.Kind == "back" {
+				allowed[pos.CoreNodeName] = true
+				backs = append(backs, pos.CoreNodeName)
+			}
+		}
+		for _, r := range view.Routing {
+			if r.Role == domain.RoutingRoleStaging {
+				allowed[r.CoreNodeName] = true
+			}
+		}
+		// A position that is NOT a back and NOT a staging row is exactly what
+		// the bug offered, so the check needs one to exist to be meaningful.
+		var offlimits []string
+		for _, pos := range view.Cell.Positions {
+			if !allowed[pos.CoreNodeName] {
+				offlimits = append(offlimits, pos.CoreNodeName)
+			}
+		}
+		if len(offlimits) == 0 {
+			t.Fatal("every position of plant A's press is a back or a staging row; this check " +
+				"cannot see the bug it was written for")
+		}
+
+		profile := t.TempDir()
+		u := fmt.Sprintf("%s/__shots/open-staging?process=%d&style=%d&node=%s", srv.URL,
+			seeded.ProcessID, seeded.Styles[idx], url.QueryEscape("PLN_01"))
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom", u)
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom open-staging: %v", err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("D1 staging picker: %q (step %q)", got, attr("step"))
+		} else {
+			offered := strings.Fields(attr("offered"))
+			t.Logf("D1 staging picker (%s): offers %v; backs %v; note %q",
+				attr("kind"), offered, backs, attr("note"))
+			for _, name := range offered {
+				if name == "none" {
+					continue // every optional chip carries its own clear
+				}
+				if !allowed[name] {
+					t.Errorf("D1 staging picker offers %q, which is neither a back position nor a "+
+						"staging row of the routing set.\n"+
+						"  Staging is a ROUTING ROLE. The station offers this field the routing "+
+						"set's staging rows plus the backs; offering a front position here is one "+
+						"field with two answers.\n  offered=%v allowed=%v", name, offered, allowed)
+				}
+			}
+		}
+	}
 	desktopDOM("D2 advanced", d2, `class="pd-modal"`)
 	d4 := fmt.Sprintf("/processes?process=%d#tab=screens", seeded.ProcessID)
 	d5 := fmt.Sprintf("/processes?process=%d#tab=settings", seeded.ProcessID)
@@ -1094,7 +1192,62 @@ func TestComposerShots(t *testing.T) {
 	// the Add-process sheet's. So the shot is of Settings, and everything this
 	// checked about the panel is checked there.
 	desktopShot("D3-routing-set.png", d5)
-	desktopDOM("D3 routing rows", d5, `class="pd-rrow`)
+	// THE CHIPS ARE THE SET. The role lists were rows with a per-row on/off
+	// switch, a provenance line and a members line each; the owner's verdict on
+	// that was "a bit of a mess" and "over-engineering" — putting a name in the
+	// set IS the intent to use it, and the whole-set switch is the flow-composer
+	// gate in the section above. So a role is one picker box and its chips are
+	// the set (2026-09-16, second pass).
+	desktopDOM("D3 routing chips", d5, `class="pd-nchip"`)
+	desktopRefuteDOM("no per-row routing switches", d5, `data-act="rs-toggle"`)
+	// EVERY TAB HAS TO REACH ITS OWN END. The page cannot grow (body.pd-body is
+	// 100vh/hidden), so a tab taller than the shell has to scroll INSIDE it —
+	// and a tab that does not is content an engineer simply cannot get to.
+	// Reported from the floor as "there's no scroll on the edge process desktop
+	// page", which named no tab, so all four are measured.
+	for _, tab := range []struct{ label, path string }{
+		{"P0 list", "/processes"},
+		{"D1 flows", d1},
+		{"D4 screens", d4},
+		{"D5 settings", d5},
+		{"D6 presets", fmt.Sprintf("/processes?process=%d#tab=presets", seeded.ProcessID)},
+	} {
+		profile := t.TempDir()
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom",
+			fmt.Sprintf("%s/__shots/scroll?path=%s", srv.URL, url.QueryEscape(tab.path)))
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom scroll %s: %v", tab.label, err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("%s scroll: %q (step %q)", tab.label, got, attr("step"))
+			continue
+		}
+		t.Logf("%s scroll: content %s in a %s box (overflows=%s), scrolled to %s; body %s in %s",
+			tab.label, attr("scrollh"), attr("clienth"), attr("overflows"),
+			attr("scrolledto"), attr("bodyscrollh"), attr("bodyclienth"))
+		if attr("overflows") == "yes" && attr("scrolledto") == "0" {
+			t.Errorf("%s has content below the fold and will not scroll to it — the tab's body is "+
+				"being clipped by the shell instead of scrolling inside it", tab.label)
+		}
+		if attr("bodyscrollh") != "" && attr("bodyclienth") != "" &&
+			attr("bodyscrollh") != attr("bodyclienth") {
+			t.Errorf("%s grew the shell (body scrollHeight %s vs viewport %s) — the app shape is "+
+				"that the page never scrolls and each tab scrolls inside it",
+				tab.label, attr("bodyscrollh"), attr("bodyclienth"))
+		}
+	}
 	// The three lists are three ROLES, because composer-model picks a cell's
 	// source and destination by lowest sequence PER ROLE. One list of nodes
 	// could not answer any of the three questions.
@@ -1922,6 +2075,160 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
         return want.length > 0 && want.every(n => now.indexOf(n) >= 0);
     });
 
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
+// scrollDriver reports whether a tab's body can actually be scrolled to its
+// end.
+//
+// THE PAGE ITSELF NEVER SCROLLS — body.pd-body is `height: 100vh; overflow:
+// hidden` so the app cannot grow — and each tab's own body is expected to
+// scroll inside that. Settings grew a routing section and a map this round,
+// which is exactly the change that turns "tall enough to fit" into "taller
+// than the shell", and a tab that overflows a hidden body is content an
+// engineer simply cannot reach. Reported from the floor as "there's no scroll
+// on the edge process desktop page".
+//
+// What it measures is the property, not a number: the scroller's content is
+// taller than its box (there IS something below the fold), and setting
+// scrollTop to the end actually moves it (it CAN be reached).
+func scrollDriver(path string) string {
+	return `<!doctype html><meta charset="utf-8"><title>scroll</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0" src="` + template.HTMLEscapeString(path) + `"></iframe>
+<script>
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the tab draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('.pd-sheet, .pd-list, #pd-postbl') ? doc : null;
+    });
+    if (d.body.dataset.pdError) return fail('load', 'the page threw: ' + d.body.dataset.pdError);
+    // Flows is the one tab whose BODY is not the scroller: .pd-page holds a
+    // rail and a main column that each scroll inside themselves, which is
+    // the app shape the tab was built to. Measuring .pd-page would report
+    // "does not scroll" about a thing that is not supposed to.
+    //
+    // RE-QUERIED AFTER THE WAIT, NOT BEFORE IT. Settings renders twice — the
+    // tab draws, then loadRouting returns and drawSettings replaces the whole
+    // sheet — so a reference taken first is a DETACHED node by the time it is
+    // measured, and a detached node reports 0 in a 0 box. Which is exactly
+    // what this reported for D5: a clean pass over a measurement of nothing.
+    // Same trap the preset driver hit on the strip.
+    const find = () => d.querySelector('.pd-sheet') || d.querySelector('.pd-list') ||
+        d.querySelector('#pd-postbl');
+    // Let the map and the fonts land before measuring; a height read mid-load
+    // is a height nobody sees.
+    await new Promise(r => setTimeout(r, 1500));
+    const box = find();
+    if (!box || !box.isConnected) return fail('measure', 'the scroller is not in the document');
+    if (!box.clientHeight) return fail('measure', 'the scroller measured 0 tall — nothing was measured');
+    const sh = box.scrollHeight, ch = box.clientHeight;
+    out.dataset.scrollh = String(sh);
+    out.dataset.clienth = String(ch);
+    out.dataset.overflows = sh > ch + 1 ? 'yes' : 'no';
+    box.scrollTop = sh;
+    await new Promise(r => setTimeout(r, 120));
+    out.dataset.scrolledto = String(Math.round(box.scrollTop));
+    // The shell must not have grown instead: the whole point of the app shape
+    // is that the body is the viewport and the tab scrolls inside it.
+    out.dataset.bodyscrollh = String(d.body.scrollHeight);
+    out.dataset.bodyclienth = String(d.documentElement.clientHeight);
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
+// clickStagingDriver opens D1's Inbound staging picker and reports what it
+// offers.
+//
+// STAGING IS A ROUTING ROLE, NOT A POSITION, and the desktop offered positions.
+// optionsFor built ONE list for all four mode-dependent chips — the back
+// positions plus every other position of the process — which is right for
+// `paired` and wrong for `staging` and `parkOld`: the STATION offers those two
+// the routing set's staging rows plus the backs. One field, two answers,
+// depending on which screen you asked.
+//
+// At Hopkinsville the 4x2's five positions are all `front`, so `backs` was
+// empty and the picker offered the other four ALNs as places to park a bin,
+// while the seven real staging rows sat switched off in the routing set. Found
+// on the floor (2026-09-16), the day it shipped.
+//
+// THE SAME SHAPE AS THE via-PICKER BUG THIS FILE ALREADY CARRIES A COMMENT
+// ABOUT — it filtered the routing set for a role the schema forbids, so the
+// desktop's whole key-route authoring was inert and every shot looked right.
+// A picker's option list is invisible to a screenshot until someone opens it.
+func clickStagingDriver(processID, styleID, node string) string {
+	return `<!doctype html><meta charset="utf-8"><title>open-staging</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0"
+        src="/processes?process=` + template.HTMLEscapeString(processID) +
+		`#style=` + template.HTMLEscapeString(styleID) + `"></iframe>
+<script>
+const NODE = "` + template.JSEscapeString(node) + `";
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the flows tab draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('.pd-postbl tbody tr[data-row]') ? doc : null;
+    });
+    if (d.body.dataset.pdError) return fail('load', 'the page threw: ' + d.body.dataset.pdError);
+
+    // The staging cell of the row for NODE. It may be a chip or the dim
+    // placeholder; both carry data-act="pick" once opened, and the placeholder
+    // turns into the chip on the first click, which is the page's own
+    // behaviour and not a harness step.
+    const cellSel = 'tr[data-row="' + NODE + '"] [data-act="pick"][data-kind^="col:staging:"]';
+    const cell = await until('the row has a staging cell', () => {
+        if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError);
+        return d.querySelector(cellSel);
+    });
+    out.dataset.kind = cell.dataset.kind;
+    out.dataset.step = 'open the picker';
+    cell.click();
+
+    const pop = await until('the picker opens', () => {
+        if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError);
+        const p = d.querySelector('#pd-pop');
+        return p && !p.hidden && (p.querySelector('[data-opt]') || p.querySelector('.none')) ? p : null;
+    });
+    out.dataset.offered = [...pop.querySelectorAll('[data-opt]')].map(b => b.textContent.trim()).join(' ');
+    const none = pop.querySelector('.none');
+    out.dataset.note = none ? none.textContent.trim() : '';
     out.dataset.step = 'done';
     out.dataset.result = 'OK';
   } catch (e) {

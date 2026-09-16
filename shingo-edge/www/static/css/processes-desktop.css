@@ -104,8 +104,18 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-bottom: 1px solid var(--sub-1);
     display: flex; align-items: center; padding: 0 24px; gap: 28px;
 }
-.pd-crumb { color: var(--text-muted); font-size: 13px; }
+/* The crumb is a WAY BACK and a title, and the way back is a control. It was
+   a dim link reading "Processes" before a › — the same value as the separator
+   next to it — so the one thing that returns an engineer to the list was the
+   quietest mark on the bar. */
+.pd-crumb { display: flex; align-items: center; gap: 12px; font-size: 13px; }
 .pd-crumb b { color: var(--text); font-weight: 600; font-size: 15px; }
+.pd-back {
+    height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--sub-2);
+    background: none; color: var(--text-muted); font: inherit; font-weight: 600;
+    font-size: 12.5px; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
+}
+.pd-back:hover { color: var(--text); border-color: var(--sub-3); }
 .pd-tabs { display: flex; gap: 4px; margin-left: 8px; }
 .pd-tabs button {
     height: 36px; padding: 0 14px; border-radius: 9px; border: 0; background: none;
@@ -281,12 +291,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    same dim size, same rule above it — and is always on screen, because it is
    the only control that adds a position and an engineer cannot be expected to
    discover it by scrolling a box with no visible scrollbar. */
+/* The footer is a CONTROL and a caption, not one dim line that is secretly
+   both. It was 12 px --text-muted with a cursor on it, which is the value of
+   the hint above the table and of the free-name list beside it — so the only
+   way to put a position into a flow was drawn as the quietest thing in the
+   box. The button is the page's own .pd-btn; the free names keep the muted
+   value, because they are what the button is offering. */
 .pd-posfoot {
-    flex: 0 0 auto; padding: 7px 4px; border-top: 1px solid var(--sub-1);
-    color: var(--text-muted); font-size: 12px; cursor: pointer;
+    flex: 0 0 auto; padding: 8px 4px; border-top: 1px solid var(--sub-1);
+    display: flex; align-items: center; gap: 10px;
 }
-.pd-posfoot:hover { color: var(--text); }
-.pd-posfoot span { color: var(--text-muted); margin-left: 8px; }
+.pd-posfoot span { color: var(--text-muted); font-size: 12px; }
 .pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-postbl table { width: 100%; border-collapse: collapse; margin-top: 6px; }
 .pd-postbl th {
@@ -520,30 +535,11 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-nomap { padding: 40px; color: var(--text-muted); font-size: 13px; max-width: 46ch; }
 
-/* The rows themselves outlive the rail they used to sit in: they are the
-   routing set's one row shape, drawn now as a settings field's value. The
-   rail, its header and footer, its group heading and the dashed "add" row went
-   with the tab — the three role lists are labelled by the field's own label
-   column and added to by a picker. */
-.pd-rrow { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; }
-.pd-rrow:hover { background: var(--surface); }
-.pd-rrow.flash { background: var(--surface-2, var(--surface)); outline: 1px solid var(--accent); }
-.pd-rrow .sq { width: 12px; height: 12px; border-radius: 3px; background: var(--station); flex: 0 0 auto; }
-.pd-rrow .sq.grp { width: 14px; height: 14px; border: 1.5px solid var(--station); background: none; }
-.pd-rrow .sq.pos { background: none; border: 1.5px solid var(--sub-5); }
-.pd-rrow .sq.lm { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); margin: 0 2px; }
-.pd-rrow .nm { font-weight: 600; font-size: 13.5px; }
-/* The row's whole explanation is this sub-line: where the name came from, and
-   the evidence. NO ORIGIN PILL — "backfill" in a pill is a word from the
-   implementation, and an engineer reading it learns that something put the
-   name there rather than which of their own flows did. A name still waiting
-   for a decision says so in amber; once the switch is on, the same sentence
-   goes quiet. */
-.pd-rrow .nm small { display: block; font-weight: 400; color: var(--text-muted); font-size: 11.5px; }
-.pd-rrow .nm small.bf { color: var(--chip-ink-near); }
-/* A group's members, under the provenance line rather than instead of it. */
-.pd-rrow .nm small.mem { color: var(--sub-5); }
-.pd-rrow .sp { flex: 1; }
+/* The routing set's ROW shape is gone with the per-row switches (owner,
+   2026-09-16 second pass): a role is a picker box and its chips are the set,
+   so there is no row, no swatch, no provenance line and no switch to draw.
+   What the map still needs is a way to point at a name, and that is the chip. */
+.pd-npk .pd-nchip.flash { border-color: var(--accent); color: var(--text); }
 .pd-refusal {
     margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
     color: var(--chip-ink-below); border: 1px solid var(--viz-coral);
@@ -789,7 +785,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the
    gate it is the precondition for. Nothing here is a new shape — the rows are
-   D3's .pd-rrow, the label column is the settings field's, and the map is the
+   the node picker's, the label column is the settings field's, and the map is the
    same .pd-map at a height instead of a flex share. */
 .pd-sfld .v.col { flex-direction: column; align-items: stretch; gap: 2px; }
 .pd-sfld .v.col .pd-npk { margin-top: 6px; }

@@ -26,8 +26,17 @@ type ComposerData struct {
 	// here rather than in the JS: a retired lane is not an option the operator
 	// should have to know not to pick.
 	Routing []ComposerRoutingNode `json:"routing,omitempty"`
-	// RoutingOff is how many rows of each role the process HAS and has not
-	// switched on — role name to count, and absent when every row is enabled.
+	// RoutingOff is the rows of each role the process HAS and has not switched
+	// on — role name to node names, and absent when every row is enabled.
+	//
+	// THE NAMES, NOT A COUNT, and the count was not enough. It shipped as one
+	// and the first question off the floor was which nodes it meant: the 4x2's
+	// card said "7 staging nodes … switched off" while the engineer was
+	// looking at supermarket locations, and could not tell from the card that
+	// the seven were SLN lanes and that the SMNs they had in mind were the
+	// source and destination rows — a different seven. A count says a role is
+	// empty; the names say whether the roles are right, which is the decision
+	// the sentence is asking them to go and make.
 	//
 	// WHY A COUNT TRAVELS WHEN THE ROWS DO NOT. Routing above is filtered to
 	// the enabled rows, deliberately: a retired lane is not an option the
@@ -39,10 +48,11 @@ type ComposerData struct {
 	// from your flows and nobody has switched them on" is the difference
 	// between two different next actions.
 	//
-	// The COUNT and not the rows, because the rows are still not offerable and
-	// a card that could name them would be a card that could be clicked into
-	// offering them. The screens say how many and where to go.
-	RoutingOff map[string]int `json:"routing_off,omitempty"`
+	// NAMES, STILL NOT ROWS. These are not offerable and must not become
+	// selectable by being listed: a disabled row is a decision somebody has
+	// not made, and the screens say which names are waiting and where to go
+	// and make it — they do not let it be made from here.
+	RoutingOff map[string][]string `json:"routing_off,omitempty"`
 	// Presets are this process's flow presets, newest version of each name.
 	// The S4 strip renders a card per preset; empty means the strip carries
 	// FLOW · Start blank · PARTS and nothing more.

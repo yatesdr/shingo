@@ -1475,19 +1475,35 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 // rows plus the process's own back positions — a press that parks on its own
 // back slot has staging without a routing row, and telling its operator the set
 // is empty would be false.
+// How many switched-off names the sentence spells out before it counts the
+// rest. Three fits the card's width and is enough to recognise a role by: an
+// engineer who sees SLN_09 knows instantly whether the staging role holds
+// staging lanes or, as they feared, supermarket slots.
+const ROUTING_NOTE_NAMES = 3;
+
 function routingNote(state, field, offered) {
     if (offered) return '';
     const role = routingRoleOf(field);
     if (!role) return '';
     const word = ROLE_WORD[role] || role;
-    const off = (state.routingOff || {})[role] || 0;
-    if (off) {
+    const off = ((state.routingOff || {})[role] || []).slice();
+    if (off.length) {
+        // THE NAMES, BECAUSE A COUNT IS NOT CHECKABLE. This said "7 staging
+        // nodes … switched off" and the first question off the floor was which
+        // seven — the engineer was looking at supermarket locations and had no
+        // way to tell from the card that the staging seven were SLN lanes and
+        // the SMNs in front of them were the source and destination rows, a
+        // different seven. Naming a few turns the sentence into something that
+        // can be agreed with or disputed without leaving the screen.
+        const shown = off.slice(0, ROUTING_NOTE_NAMES).join(', ');
+        const rest = off.length - Math.min(off.length, ROUTING_NOTE_NAMES);
         // AGREEING IN NUMBER MATTERS ON A SHOP-FLOOR SCREEN: "turn them on"
         // over a count of one reads as a second thing the operator has not
         // found yet.
-        return off + ' ' + word + ' node' + (off === 1 ? '' : 's') +
-            ' found from your flows, switched off — turn ' + (off === 1 ? 'it' : 'them') +
-            ' on in Settings › Routing';
+        return off.length + ' ' + word + ' node' + (off.length === 1 ? '' : 's') +
+            ' found from your flows, switched off — ' + shown +
+            (rest ? ' and ' + rest + ' more' : '') +
+            '. Turn ' + (off.length === 1 ? 'it' : 'them') + ' on in Settings › Routing';
     }
     return 'No ' + word + ' nodes in this process’s routing set — add them in Settings › Routing';
 }

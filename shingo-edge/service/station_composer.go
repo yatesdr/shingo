@@ -192,9 +192,9 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 			// every row is switched off draws a heading over nothing and the
 			// screens have to be able to say which of the two empties it is.
 			if out.RoutingOff == nil {
-				out.RoutingOff = map[string]int{}
+				out.RoutingOff = map[string][]string{}
 			}
-			out.RoutingOff[r.Role]++
+			out.RoutingOff[r.Role] = append(out.RoutingOff[r.Role], r.CoreNodeName)
 			continue
 		}
 		// Sequence travels; Label does not. composer-model.js's
