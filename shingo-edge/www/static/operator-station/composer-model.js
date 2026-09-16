@@ -1227,10 +1227,29 @@ function bar(state) {
     // no order count, and the bar says both halves of that rather than
     // borrowing the blocked arm's `0 orders` - which would be the composer
     // refusing a save the engine allows.
+    // ON THE NEXT TRIP, NOT AT THE NEXT CHANGEOVER. This said changeover, and
+    // the comment directly above it already said otherwise — "the runtime
+    // reads them on its next trip" — so the bar was contradicting its own
+    // reason on screen. The engine's ruling is explicit (flow_compose.go,
+    // refuseRunningPositionMove): "SOURCES, DESTINATIONS AND ROUTES SAVE
+    // FREELY MID-RUN, and take effect on the next trip. Every runtime reader
+    // of the running style's flow resolves its claim at the moment it needs
+    // one ... None of them caches."
+    //
+    // THE SWAP MODE IS ONE OF THOSE FIELDS. The produce tick, the release tap
+    // and the request-empty path all read claim.SwapMode off a claim they
+    // loaded for that operation (operator_produce.go's loadActiveNode,
+    // operator_release.go, operator_bin_ops.go), so changing how a position
+    // swaps changes how the next swap runs. Telling an engineer it waits for a
+    // changeover is telling them to start one they do not need.
+    //
+    // The ONE edit that must wait is moving a position on or off the running
+    // style, and that is refused outright with its own sentence naming the
+    // position — so this heading never covered it either.
     if (pv && pv.running) {
         return {
-            heading: 'running — saved changes apply at the next changeover',
-            detail: 'orders not previewed while running',
+            heading: 'running — saved changes take effect on the next trip',
+            detail: 'not previewed while running · an order already on its way finishes as planned',
             tone: 'ok', fixIt: null,
             button: { label: 'Save flow', enabled: !state.previewStale },
         };

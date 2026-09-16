@@ -546,7 +546,8 @@ function cellFromModel() { return M().pictureCells(S.model, S.composer.cell); }
 const PICTURE_H = 430;
 const PICTURE_W_FALLBACK = 1084;   // the main column at the spec's 1440, for a frame not laid out yet
 
-function drawPicture() {
+// pass is the re-measure guard — see the note at the foot of this function.
+function drawPicture(pass) {
     const svg = $('pd-svg');
     if (!svg || !S.model) return;
     // THE PICTURE IS DRAWN AT THE COLUMN'S OWN SIZE. The renderer lays out in
@@ -591,13 +592,69 @@ function drawPicture() {
     // So the render is idempotent at the DOM: build the markup, compare, and
     // only write when it actually differs. A preview that DOES bring a finding
     // still redraws — once, because it changed something.
+    // THE CACHE BELONGS TO THE ELEMENT, NOT TO THE PAGE, and holding it on S
+    // was a blank picture waiting to happen — which is what it did.
+    //
+    // drawFlows rebuilds the whole tab, so the #pd-svg that drawPicture writes
+    // into is a BRAND NEW, EMPTY element. Selecting a card the page already has
+    // selected redraws the tab and produces the same markup as last time, so a
+    // cache kept on S said "unchanged, skip" and left the new element empty:
+    // click a position once and it outlines, click it again and the picture
+    // vanishes. Reported from the floor as "clicked again, whole screen blank".
+    //
+    // Hung off the node, a fresh element simply has no cache and is always
+    // written; only a redraw of the SAME element with the same bytes is
+    // skipped, which is the case this is for.
     const viewBox = '0 0 ' + w + ' ' + h;
     if (svg.getAttribute('viewBox') !== viewBox) svg.setAttribute('viewBox', viewBox);
-    if (markup !== S.picMarkup) {
+    if (markup !== svg.pdMarkup) {
         svg.innerHTML = markup;
-        S.picMarkup = markup;
+        svg.pdMarkup = markup;
     }
     if (rowsMoved) redrawPositionsTable();
+
+    // THE TABLE'S HEIGHT IS THE PICTURE'S HEIGHT, and that is the rest of the
+    // pulse.
+    //
+    // `.pd-pic` is `flex: 0 1 430px` and gives way to the positions box (T2's
+    // rule), so the frame this was measured at is only correct while the table
+    // below it stays the height it was. redrawPositionsTable, three lines up,
+    // is exactly what changes it: the front/back sub-label comes from picRows,
+    // which comes from the frame. The draw therefore happened at a frame that
+    // no longer exists, and the NEXT draw — the preview's, 400 ms later —
+    // measured the real one and re-scaled the whole drawing in front of the
+    // engineer. Skipping the redundant WRITE (above) stopped the flicker and
+    // could not stop this, because this one is a genuinely different picture.
+    //
+    // So the second measurement happens HERE, in the same task, before the
+    // browser has painted anything: re-measure, and if the frame moved, draw
+    // once more at the size that is actually there. `pass` bounds it to one —
+    // the table's content is a function of the frame and converges in one step,
+    // and a loop that trusted convergence would be a loop.
+    if (!pass) {
+        // ON THE NEXT FRAME, NOT IN THIS TASK. Measuring again here reads the
+        // same number, because the number is not wrong-because-stale — it is
+        // the flex BASIS. `.pd-pic` is `flex: 0 1 430px` and gives way to the
+        // positions box, and the shrink to its real height is resolved by the
+        // browser's layout pass, not by the reflow a clientHeight read forces
+        // mid-task. So the first draw laid out at 430 into a box that paints
+        // 391, preserveAspectRatio scaled the whole drawing to 0.91, and the
+        // preview's redraw 400 ms later measured 391 and snapped it back to
+        // 1:1 — "zooms out and then refits", exactly.
+        //
+        // requestAnimationFrame runs AFTER layout and BEFORE paint, so the
+        // corrected viewBox lands in the very frame the engineer first sees:
+        // no zoom, no snap. `pass` bounds it to one correction.
+        requestAnimationFrame(() => {
+            // The tab may have been redrawn out from under this frame, and
+            // writing into a detached element would be drawing on nothing.
+            const el = $('pd-svg');
+            if (!el || el !== svg) return;
+            const w2 = Math.round(el.clientWidth || w);
+            const h2 = Math.round(el.clientHeight || h);
+            if (w2 !== w || h2 !== h) drawPicture(1);
+        });
+    }
     reportDesktopFit();
 }
 

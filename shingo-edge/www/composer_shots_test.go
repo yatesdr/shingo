@@ -169,6 +169,11 @@ func TestComposerShots(t *testing.T) {
 		_, _ = w.Write([]byte(clickAddProcessDriver(
 			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
 	})
+	// The picture's re-fit on a style click, counted. See pulseDriver.
+	mux.HandleFunc("/__shots/pulse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(pulseDriver(r.URL.Query().Get("process"), r.URL.Query().Get("style"))))
+	})
 	// Settings' own scrolling, measured. See scrollDriver.
 	mux.HandleFunc("/__shots/scroll", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1041,12 +1046,21 @@ func TestComposerShots(t *testing.T) {
 	desktopShotIn("D1-flows-selected-light.png", d1, 1)
 	d1run := fmt.Sprintf("/processes?process=%d#style=%d", seeded.ProcessID, seeded.Styles[swap])
 	desktopShot("D1-flows-running.png", d1run)
+	// THE NEXT TRIP, NOT THE NEXT CHANGEOVER (2026-09-16, asked from the
+	// floor: "what if I change the robot swap style — does that really not
+	// change until changeover?"). It does not wait: flow_compose.go's own
+	// ruling says every runtime reader resolves the claim when it needs one and
+	// none of them caches, and the swap mode is read that way by the produce
+	// tick, the release tap and the request-empty path. The bar had been
+	// saying changeover directly under a comment that said next trip.
 	for _, want := range []string{
-		"running — saved changes apply at the next changeover",
-		"orders not previewed while running",
+		"running — saved changes take effect on the next trip",
+		"an order already on its way finishes as planned",
 	} {
 		desktopDOM("D1 running bar", d1run, want)
 	}
+	desktopRefuteDOM("the running bar does not send them to a changeover", d1run,
+		"apply at the next changeover")
 	// F4 (2026-09-12): RUNNING IS A STATE, NOT A SENTENCE. The header's sub
 	// line carried the whole sentence and was not wide enough for it — the shot
 	// read `…applies at the next cha…`, a sentence that stops before the half
@@ -1092,6 +1106,61 @@ func TestComposerShots(t *testing.T) {
 	// P3: the add row is the box's footer, not a row of the table.
 	desktopDOM("D1 add-position footer", d1, `class="pd-posfoot"`)
 	checkDesktopFits("D1 flows", d1)
+
+	// ── THE PICTURE DOES NOT RE-FIT AFTER THE FIRST PAINT ───────────────
+	//
+	// Selecting a style drew the picture, then the preview redrew it 400 ms
+	// later; and because redrawPositionsTable changes the table's height, and
+	// `.pd-pic` gives way to the table, the second draw measured a DIFFERENT
+	// frame and re-scaled the whole drawing on screen. Reported twice from the
+	// floor — "pulsing the images", "zooms out and then refits" — and invisible
+	// to every shot in this file, which is how the first fix shipped still
+	// broken.
+	{
+		profile := t.TempDir()
+		cmd := exec.Command(chrome,
+			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+			"--user-data-dir="+profile, "--window-size=1440,900",
+			"--virtual-time-budget=30000", "--dump-dom",
+			fmt.Sprintf("%s/__shots/pulse?process=%d&style=%d", srv.URL, seeded.ProcessID, seeded.Styles[swap]))
+		cmd.Dir = out
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("chrome --dump-dom pulse: %v", err)
+		}
+		attr := func(name string) string {
+			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
+			if m == nil {
+				return ""
+			}
+			return html.UnescapeString(m[1])
+		}
+		if got := attr("result"); got != "OK" {
+			t.Errorf("D1 style click: %q (step %q)", got, attr("step"))
+		} else {
+			t.Logf("D1 style click: viewBox %q at first paint, %q after 1.5s; %s redraws, %s viewBox changes",
+				attr("first"), attr("last"), attr("swaps"), attr("boxes"))
+			t.Logf("D1 style click heights bar/posbox/pic/head: %s -> %s",
+				attr("sizesfirst"), attr("sizeslast"))
+			if attr("first") != attr("last") {
+				t.Errorf("the picture re-fitted after the engineer saw it: viewBox %q at first paint, "+
+					"%q 1.5s later.\n  That is the \"zooms out and then refits\" report: the frame is "+
+					"measured before redrawPositionsTable changes the table's height, and .pd-pic gives "+
+					"way to the table.", attr("first"), attr("last"))
+			}
+			if attr("boxes") != "0" {
+				t.Errorf("the viewBox was rewritten %s time(s) after the first paint — every one of "+
+					"those re-scales the whole drawing", attr("boxes"))
+			}
+			// The preview lands in this window and must not redraw an
+			// identical picture: that is the flicker half.
+			if attr("swaps") != "0" {
+				t.Errorf("the picture's contents were replaced %s time(s) after the first paint; the "+
+					"preview only sets model.preview, so an unchanged drawing must not be written again",
+					attr("swaps"))
+			}
+		}
+	}
 
 	// ── D1's STAGING PICKER OFFERS STAGING, NOT POSITIONS ────────────────
 	//
@@ -2075,6 +2144,103 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
         return want.length > 0 && want.every(n => now.indexOf(n) >= 0);
     });
 
+    out.dataset.step = 'done';
+    out.dataset.result = 'OK';
+  } catch (e) {
+    fail(out.dataset.step || 'driver', String(e));
+  }
+})();
+</script>`
+}
+
+// pulseDriver clicks a style in the rail and counts what the picture does
+// afterwards.
+//
+// REPORTED FROM THE FLOOR TWICE: "when i click different styles the page keeps
+// like reloading and pulsing the images", "like zooms out and then refits".
+// Both halves are measurable and neither is visible to a screenshot, which is
+// why the first attempt at this was shipped on reasoning and came back still
+// broken.
+//
+// TWO THINGS ARE COUNTED. The SVG's child list being replaced is the flicker —
+// every node in the drawing swapped for an identical one. The viewBox changing
+// AFTER the first paint is the re-fit — the drawing laid out at one size and
+// then at another, in front of the engineer. The second is the one that reads
+// as "zooms out and then refits", and it survived the first fix because it is
+// a genuinely different picture rather than a redundant write of the same one.
+//
+// The window is deliberately past the 400 ms preview debounce, because the
+// preview's redraw is where the second layout was landing.
+func pulseDriver(processID, styleID string) string {
+	return `<!doctype html><meta charset="utf-8"><title>pulse</title>
+<body data-step="starting" data-result="">
+<iframe id="f" style="width:1440px;height:900px;border:0"
+        src="/processes?process=` + template.HTMLEscapeString(processID) + `"></iframe>
+<script>
+const STYLE = "` + template.JSEscapeString(styleID) + `";
+const out = document.body;
+const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
+const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll() {
+        let v = null;
+        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
+        setTimeout(poll, 50);
+    })();
+});
+(async () => {
+  try {
+    const d = await until('the flows tab draws', () => {
+        const doc = document.getElementById('f').contentDocument;
+        return doc && doc.querySelector('#pd-svg > *') ? doc : null;
+    });
+    if (d.body.dataset.pdError) return fail('load', 'the page threw: ' + d.body.dataset.pdError);
+
+    const row = d.querySelector('.pd-rail [data-style="' + STYLE + '"]');
+    if (!row) return fail('find the style row', 'no rail row for style ' + STYLE);
+
+    out.dataset.step = 'click the style';
+    row.click();
+
+    // THE FIRST PAINT. Two frames: one for the click's synchronous work to
+    // finish, one for the browser to have laid out and painted it. What the
+    // engineer sees first is what the viewBox says here.
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const svg = d.querySelector('#pd-svg');
+    if (!svg) return fail('first paint', 'the picture is gone after the click');
+    const first = svg.getAttribute('viewBox');
+    out.dataset.first = first || '';
+    // WHAT GROWS is the question, not just that something did: .pd-pic gives
+    // way to whatever else in the main column needs room, so the culprit is
+    // whichever of these is a different height 1.5s later.
+    const hOf = sel => { const e = d.querySelector(sel); return e ? Math.round(e.getBoundingClientRect().height) : -1; };
+    const sizes = () => ['#pd-bar', '#pd-posbox', '.pd-pic', '.pd-head'].map(hOf).join('/');
+    out.dataset.sizesfirst = sizes();
+
+    // Count what happens from here on: child-list swaps and viewBox writes.
+    let swaps = 0, boxes = 0, last = first;
+    const obs = new d.defaultView.MutationObserver(records => {
+        for (const rec of records) {
+            if (rec.type === 'childList' && rec.addedNodes.length) swaps++;
+            if (rec.type === 'attributes' && rec.attributeName === 'viewBox') {
+                const now = svg.getAttribute('viewBox');
+                if (now !== last) { boxes++; last = now; }
+            }
+        }
+    });
+    obs.observe(svg, { childList: true, attributes: true, attributeFilter: ['viewBox'] });
+
+    // Well past the 400 ms preview debounce, which is where the second layout
+    // used to land.
+    await new Promise(r => setTimeout(r, 1500));
+    obs.disconnect();
+
+    out.dataset.sizeslast = sizes();
+    out.dataset.swaps = String(swaps);
+    out.dataset.boxes = String(boxes);
+    out.dataset.last = svg.getAttribute('viewBox') || '';
     out.dataset.step = 'done';
     out.dataset.result = 'OK';
   } catch (e) {
