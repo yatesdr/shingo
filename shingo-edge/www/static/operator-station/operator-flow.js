@@ -369,7 +369,7 @@ export function legsFor(modelLegs, boxes) {
             // between the two circles, and an arrowhead that needed more than
             // that would be an arrowhead that only fits on the long legs.
             legs.push({ cls: cls, d: 'M' + a[0] + ' ' + a[1] + ' L' + z[0] + ' ' + z[1],
-                a: a, z: z, tip: [(a[0] + z[0]) / 2, (a[1] + z[1]) / 2, degOf(a, z)],
+                a: a, z: z, tip: [a[0] + (z[0] - a[0]) * TIP_AT, a[1] + (z[1] - a[1]) * TIP_AT, degOf(a, z)],
                 lbl: L.label, lx: (pcx + cx) / 2, ly: b.y + b.h + 18 });
             continue;
         }
@@ -385,7 +385,7 @@ export function legsFor(modelLegs, boxes) {
         // which points the chevron the way the drop goes.
         const run = to[0] - from[0];
         const tip = Math.abs(run) >= 40
-            ? [from[0] + run / 2, mid, run > 0 ? 0 : 180]
+            ? [from[0] + run * TIP_AT, mid, run > 0 ? 0 : 180]
             : [(from[0] + to[0]) / 2, mid, to[1] > from[1] ? 90 : -90];
         legs.push({ cls: cls, d: ortho([from, [from[0], mid], [to[0], mid], to]), a: from, z: to, tip: tip,
             lbl: L.label, lx: (pcx + cx) / 2, ly: mid - 8 });
@@ -397,6 +397,18 @@ export function legsFor(modelLegs, boxes) {
 // carries 65.2 rather than 65.19999999999999. operator-flow.test.js reads this
 // drawing back as TEXT — every check in it is a regex over the markup — and a
 // float tail is a diff nobody can read for no accuracy anyone can see.
+// WHERE THE CHEVRON SITS ALONG ITS LEG. It was the midpoint, which is the
+// obvious place and the wrong one: on a press-index pair the leg is about 25
+// units long, so a chevron in the middle sits equidistant between the dot and
+// the ring and reads as decoration on a line rather than as the line going
+// somewhere. Two thirds along points AT the card receiving the bin, which is
+// the fact an engineer is looking for — "I was thinking inbound staging would
+// show up on that node flowing into the core node".
+//
+// Not at the very end: that is where the ring is, and an arrowhead under a
+// ring is a smudge.
+const TIP_AT = 0.68;
+
 function degOf(a, z) {
     return Math.round(Math.atan2(z[1] - a[1], z[0] - a[0]) * 1800 / Math.PI) / 10;
 }
@@ -508,7 +520,7 @@ export function renderFlowPicture(view, opts) {
             '<path class="legflow ' + L.cls + '" d="' + L.d + '"/>' +
             '<circle class="legdot ' + L.cls + '" cx="' + L.a[0] + '" cy="' + L.a[1] + '" r="4"/>' +
             '<circle class="legring ' + L.cls + '" cx="' + L.z[0] + '" cy="' + L.z[1] + '" r="4"/>' +
-            '<path class="legtip ' + L.cls + '" d="M-4 -3.6L4 0L-4 3.6Z" transform="translate(' + L.tip[0] + ',' + L.tip[1] + ') rotate(' + L.tip[2] + ')"/>' +
+            '<path class="legtip ' + L.cls + '" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' + L.tip[0] + ',' + L.tip[1] + ') rotate(' + L.tip[2] + ')"/>' +
             '<text class="leg-lbl ' + L.cls + '" x="' + L.lx + '" y="' + L.ly + '" text-anchor="middle">' + L.lbl + '</text></g>';
     }
 

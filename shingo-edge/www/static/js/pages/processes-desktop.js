@@ -1265,6 +1265,43 @@ function pickerEmptyWord(kind) {
     return note || 'Nothing to choose here yet.';
 }
 
+// placePopover puts a popover under the control that opened it — or over it,
+// and never off the bottom of the screen.
+//
+// EVERY POPOVER ON THIS PAGE DID THIS ITSELF, seven times, and all seven did
+// the same two things: clamp `left` into the host, and set `top` to the
+// anchor's bottom. None of them looked at how much room was actually below.
+// `.pd-pop` is 320 px tall at most and the app shell is `height: 100vh;
+// overflow: hidden` — so a picker opened from a row near the foot of the page
+// ran off the bottom with no way to reach the rest, and the only way to read
+// your own options was to zoom the browser out or make the window taller.
+// Reported from the floor on the inbound source, outbound destination and
+// staging pickers, which are the ones lowest on the positions table.
+//
+// The rule is the station's, which has had it all along (composer-render's
+// placePop): measure the room above and below the anchor in the VIEWPORT, open
+// on the side with room, and cap the height to what is there so the list
+// scrolls inside the screen rather than past it.
+function placePopover(pop, btn) {
+    const GAP = 6, EDGE = 8, MIN = 120;
+    const r = btn.getBoundingClientRect();
+    const host = pop.offsetParent
+        ? pop.offsetParent.getBoundingClientRect()
+        : { left: 0, top: 0, width: window.innerWidth };
+    const below = window.innerHeight - r.bottom - GAP - EDGE;
+    const above = r.top - GAP - EDGE;
+    // Flip only when going up genuinely helps: a short list that fits below
+    // stays below, which is where the eye expects it.
+    const flip = below < MIN && above > below;
+    const room = Math.max(MIN, flip ? above : below);
+    pop.style.maxHeight = room + 'px';
+    const w = pop.offsetWidth || 240;
+    pop.style.left = Math.max(EDGE, Math.min(host.width - w - EDGE, r.left - host.left)) + 'px';
+    pop.style.top = flip
+        ? Math.max(EDGE, r.top - host.top - Math.min(pop.offsetHeight, room) - GAP) + 'px'
+        : (r.bottom - host.top + GAP) + 'px';
+}
+
 // A popover list, never a native <select> — the style guide's "never use native
 // dialogs" is about the browser drawing its own chrome over ours, and a select's
 // dropdown is exactly that.
@@ -1301,10 +1338,7 @@ function openPicker(btn) {
             (o.icon || '') + esc(o.label) + '</button>').join('') +
         (note ? '<div class="none">' + esc(note) + '</div>' : '');
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
-    pop.style.left = Math.min(host.width - pop.offsetWidth - 8, Math.max(8, r.left - host.left)) + 'px';
-    pop.style.top = (r.bottom - host.top + 6) + 'px';
+    placePopover(pop, btn);
     pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => {
         apply(opts[Number(b.dataset.opt)].action);
         closePop();
@@ -1543,20 +1577,60 @@ function drawMap(w, h) {
             '<text class="mp-keyt" x="' + (p[0] + 7) + '" y="' + (p[1] - 5) + '">' + esc(n) + '</text>';
     }
 
-    // The groups the set names, as a dashed rectangle around their members.
+    // EVERY NAME IN THE SET IS ON THE MAP, and until now most of them were not.
+    //
+    // This loop drew a dashed rectangle around a GROUP's members and did
+    // `if (!mem.length) continue` for everything else — so a routing row that
+    // is a plain node rather than an NGRP group was drawn NOWHERE. At
+    // Hopkinsville the 4x2's whole routing set is plain nodes (SMN_015..021 as
+    // source and destination, SLN_09..013 as staging), so the map showed its
+    // five ALN positions and nothing at all besides: "I do not see the nodes
+    // marked as inbound staging", and "I still don't see the sourcing nodes
+    // flowing to the nodes above it". Both were this line.
+    //
+    // ONE MARK PER NAME, NOT PER ROW. A buffer is legitimately both a source
+    // and a destination (domain/routing_set.go) and at that press seven names
+    // are exactly that — two rows at one point would be two marks on top of
+    // each other, so the roles are collected and the mark says all of them.
+    const ROLE_SHORT = { source: 'in', staging: 'stage', destination: 'out' };
+    const roles = {};
     for (const r of enabledRouting()) {
-        const mem = membersOfGroup(r.core_node_name).map(Tp).filter(Boolean);
-        if (!mem.length) continue;
-        const gx = mem.map(p => p[0]), gy = mem.map(p => p[1]);
-        const x0 = Math.min.apply(null, gx) - 14, y0 = Math.min.apply(null, gy) - 14;
-        const x1 = Math.max.apply(null, gx) + 14, y1 = Math.max.apply(null, gy) + 14;
-        s += '<rect class="mp-grp" x="' + x0 + '" y="' + y0 + '" width="' + (x1 - x0) +
-            '" height="' + (y1 - y0) + '" rx="8" data-mapname="' + esc(r.core_node_name) + '"/>' +
-            '<text class="mp-grpt" x="' + x0 + '" y="' + (y0 - 8) + '">' +
-            esc(r.label || r.core_node_name) + '</text>';
-        for (const p of mem) {
-            s += '<rect class="mp-smn" x="' + (p[0] - 5) + '" y="' + (p[1] - 5) + '" width="10" height="10" rx="2"/>';
+        if (!roles[r.core_node_name]) roles[r.core_node_name] = [];
+        if (roles[r.core_node_name].indexOf(r.role) < 0) roles[r.core_node_name].push(r.role);
+    }
+    for (const name of Object.keys(roles)) {
+        // The order material moves, whatever order the rows arrived in, so a
+        // name in two roles always reads "in/out" and never "out/in".
+        const mine = ROUTING_GROUPS.map(g => g[0]).filter(role => roles[name].indexOf(role) >= 0);
+        const word = mine.map(role => ROLE_SHORT[role] || role).join('/');
+        // A group is its members' bounding box; a plain node is its own point.
+        const mem = membersOfGroup(name).map(Tp).filter(Boolean);
+        const cls = 'mp-rt ' + mine.join(' ');
+        if (mem.length) {
+            const gx = mem.map(p => p[0]), gy = mem.map(p => p[1]);
+            const x0 = Math.min.apply(null, gx) - 14, y0 = Math.min.apply(null, gy) - 14;
+            const x1 = Math.max.apply(null, gx) + 14, y1 = Math.max.apply(null, gy) + 14;
+            s += '<rect class="mp-grp ' + mine.join(' ') + '" x="' + x0 + '" y="' + y0 +
+                '" width="' + (x1 - x0) + '" height="' + (y1 - y0) + '" rx="8" data-mapname="' + esc(name) + '"/>' +
+                '<text class="mp-grpt" x="' + x0 + '" y="' + (y0 - 8) + '">' +
+                esc(name) + ' · ' + esc(word) + '</text>';
+            for (const p of mem) {
+                s += '<rect class="mp-smn" x="' + (p[0] - 5) + '" y="' + (p[1] - 5) + '" width="10" height="10" rx="2"/>';
+            }
+            continue;
         }
+        const pt = Tp(name);
+        if (!pt) continue;   // a name Core's map has no point for — see the derive's report
+        // A CIRCLE, because the press's own positions are squares. The shape
+        // says "this is somewhere material comes from or goes to"; the colour
+        // says which, and the word under it says it in letters for anyone who
+        // cannot separate the two hues.
+        s += '<circle class="' + cls + '" cx="' + pt[0] + '" cy="' + pt[1] + '" r="6" ' +
+            'data-mapname="' + esc(name) + '"/>' +
+            '<text class="mp-rtt" x="' + pt[0] + '" y="' + (pt[1] - 11) + '" text-anchor="middle">' +
+            esc(name) + '</text>' +
+            '<text class="mp-rtr" x="' + pt[0] + '" y="' + (pt[1] + 18) + '" text-anchor="middle">' +
+            esc(word) + '</text>';
     }
 
     // THE PRESS, AND ITS LABELS OFF EACH OTHER.
@@ -1876,7 +1950,8 @@ function routingSection() {
         '<div class="pd-map pd-rsmap">' + drawMap(1040, 420) +
         '<div class="cap">' + esc(mapSubject()) + ' · ' +
         esc(m ? 'plant map from Core · revision ' + m.revision : 'no plant map cached') +
-        ' · teal = Robot 1 supply path · indigo = Robot 2 return</div>' +
+        ' · teal = Robot 1 supply path · indigo = Robot 2 return' +
+        ' · circles are the routing set, squares are this process\u2019s own positions</div>' +
         '<div class="zoom"><button data-act="rs-zoom" data-z="in">+</button>' +
         '<button data-act="rs-zoom" data-z="out">&minus;</button>' +
         '<button data-act="rs-zoom" data-z="home">&#8962;</button></div></div>';
@@ -2265,10 +2340,7 @@ function openAdvPicker(btn) {
         ? opts.map((o, i) => '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + esc(o.label) + '</button>').join('')
         : '<div class="none">Nothing to choose here yet.</div>';
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent.getBoundingClientRect();
-    pop.style.left = Math.min(host.width - pop.offsetWidth - 8, Math.max(8, r.left - host.left)) + 'px';
-    pop.style.top = (r.bottom - host.top + 6) + 'px';
+    placePopover(pop, btn);
     pop.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', ev => {
         ev.stopPropagation();
         const o = opts[Number(b.dataset.opt)];
@@ -3112,10 +3184,7 @@ function openStyleMenu(btn) {
     pop.innerHTML = STYLE_MENU.map(m => '<button data-act="style-' + m[0] + '" data-style="' + id + '"' +
         (m[0] === 'delete' ? ' class="bad"' : '') + '>' + esc(m[1]) + '</button>').join('');
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
-    pop.style.left = Math.min(host.width - 200, Math.max(8, r.left - host.left)) + 'px';
-    pop.style.top = (r.bottom - host.top + 6) + 'px';
+    placePopover(pop, btn);
 }
 
 function styleByID(id) { return S.styles.find(s => s.id === id) || composerStyle(id) || { id: id, name: '' }; }
@@ -3286,12 +3355,11 @@ function addFreePosition(btn) {
     pop.innerHTML = '<div class="pd-lbl">Turn on a position</div>' +
         free.map(n => '<button data-freepos="' + esc(n) + '">' + esc(n) + '</button>').join('');
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
-    pop.style.left = Math.min(host.width - 200, Math.max(8, r.left - host.left)) + 'px';
-    // The footer sits at the foot of the page, so its list opens UPWARDS —
-    // below it is off the screen.
-    pop.style.top = Math.max(8, r.top - host.top - pop.offsetHeight - 6) + 'px';
+    // The footer sits at the foot of the page, so this one always opens
+    // upwards — placePopover reaches the same answer from the room it
+    // measures, and caps the height so a press with many free positions still
+    // fits on the screen.
+    placePopover(pop, btn);
     pop.querySelectorAll('[data-freepos]').forEach(b => b.addEventListener('click', () => {
         const node = b.dataset.freepos;
         closePop();
@@ -3730,10 +3798,7 @@ function openGroupPicker(btn, onPick) {
     pop.innerHTML = opts.map(g => '<button data-grpopt="' + g.id + '" class="' +
         (current === g.id ? 'on' : '') + '">' + esc(g.name) + '</button>').join('');
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
-    pop.style.left = Math.max(8, r.left - host.left) + 'px';
-    pop.style.top = (r.bottom - host.top + 6) + 'px';
+    placePopover(pop, btn);
     pop.querySelectorAll('[data-grpopt]').forEach(b => b.addEventListener('click', ev => {
         ev.stopPropagation();
         pop.hidden = true;
@@ -3913,10 +3978,7 @@ function openGenPicker(btn) {
         ? opts.map((o, i) => '<button data-genopt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + esc(o.label) + '</button>').join('')
         : '<div class="none">Nothing to choose here yet.</div>';
     pop.hidden = false;
-    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
-    const r = btn.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(host.width - pop.offsetWidth - 8, r.left - host.left)) + 'px';
-    pop.style.top = (r.bottom - host.top + 6) + 'px';
+    placePopover(pop, btn);
     pop.querySelectorAll('[data-genopt]').forEach(b => b.addEventListener('click', () => {
         pop.hidden = true;
         pop.innerHTML = '';
@@ -4225,10 +4287,7 @@ function openPresetMenu(btn) {
     pop.innerHTML = PRESET_MENU.map(m => '<button data-act="preset-' + m[0] + '" data-preset="' + id + '">' +
         esc(m[1]) + '</button>').join('');
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
-    pop.style.left = Math.min(host.width - 200, Math.max(8, r.left - host.left)) + 'px';
-    pop.style.top = (r.bottom - host.top + 6) + 'px';
+    placePopover(pop, btn);
 }
 
 // suggestedPresetName prefills the naming modal from D1's own draft, the way

@@ -1488,6 +1488,39 @@ func TestComposerShots(t *testing.T) {
 	// the set (2026-09-16, second pass).
 	desktopDOM("D3 routing chips", d5, `class="pd-nchip"`)
 	desktopRefuteDOM("no per-row routing switches", d5, `data-act="rs-toggle"`)
+
+	// ── A PLAIN ROUTING NODE IS ON THE MAP ──────────────────────────────
+	//
+	// The map's row loop drew a dashed box around an NGRP group's members and
+	// did `if (!mem.length) continue` for everything else, so a routing row
+	// that is a PLAIN NODE was drawn nowhere at all. Hopkinsville's 4x2 is
+	// entirely plain nodes — SMN_015..021 source and destination, SLN_09..013
+	// staging — so its map showed five positions and nothing else: "I do not
+	// see the nodes marked as inbound staging", "I still don't see the sourcing
+	// nodes flowing to the nodes above it".
+	//
+	// Plant A's set is two GROUPS, which is the case that always worked, so the
+	// case that did not has to be MADE here — a plain node the fixture's map
+	// has a point for, added, read, and taken away again.
+	{
+		const plain = "SMN_011"
+		rowID, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+			ProcessID: seeded.ProcessID, CoreNodeName: plain, Role: domain.RoutingRoleStaging,
+			Origin: domain.RoutingOriginEngineer, Enabled: true, CalledBy: "shots",
+		})
+		if err != nil {
+			t.Fatalf("add a plain routing node: %v", err)
+		}
+		// A press whose whole set is plain nodes had a map of its own positions
+		// and nothing else; the mark, the name and the ROLE all have to be on
+		// it — a hue alone is not an answer for everyone reading this screen.
+		desktopDOM("D3 plain routing node", d5, `class="mp-rt`)
+		desktopDOM("D3 names it", d5, ">"+plain+"<")
+		desktopDOM("D3 says which role", d5, ">stage<")
+		if err := db.DeleteRoutingNode(seeded.ProcessID, rowID); err != nil {
+			t.Fatalf("remove the plain routing node: %v", err)
+		}
+	}
 	// EVERY TAB HAS TO REACH ITS OWN END. The page cannot grow (body.pd-body is
 	// 100vh/hidden), so a tab taller than the shell has to scroll INSIDE it —
 	// and a tab that does not is content an engineer simply cannot get to.

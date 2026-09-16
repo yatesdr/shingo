@@ -573,6 +573,22 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    aisle shows both instead of one hiding the other. */
 .mp-route.r1 { stroke: var(--robot-1); stroke-width: 7; opacity: .55; }
 .mp-route.r2 { stroke: var(--robot-2); stroke-width: 2.5; }
+/* THE ROUTING SET'S OWN MARKS. A plain routing node used to be drawn nowhere
+   at all — only NGRP groups got a box — so a press whose whole set is plain
+   nodes had a map of its own positions and nothing else. A circle, because the
+   positions are squares; the hue says which role, and a word under it says the
+   same thing in letters, because a hue alone is not an answer for everyone. */
+.mp-rt { stroke: var(--bg); stroke-width: 1.5; fill: var(--sub-5); }
+.mp-rt.source { fill: var(--robot-1); }
+.mp-rt.destination { fill: var(--robot-2); }
+.mp-rt.staging { fill: var(--accent); }
+/* In both roles, which is the ordinary case for a supermarket buffer: the
+   inbound hue with the outbound ring around it, rather than a third colour
+   nothing else on the map uses. */
+.mp-rt.source.destination { fill: var(--robot-1); stroke: var(--robot-2); stroke-width: 2.5; }
+.mp-rtt { font-size: 9px; font-weight: 600; fill: var(--text); }
+.mp-rtr { font-size: 8.5px; font-weight: 600; fill: var(--text-muted); letter-spacing: .04em; }
+.mp-grp.staging { stroke: var(--accent); }
 .mp-key { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
 .mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
 
