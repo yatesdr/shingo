@@ -767,6 +767,177 @@
   color: var(--text-muted);
 }
 
+/* ── THE TOP BAR, ONCE ───────────────────────────────────────────────────
+ *
+ * Core and Edge drew the same bar twice, in two sheets, under two sets of
+ * names — `nav .container` against `.navbar > .nav-inner`, `nav .brand`
+ * against `.nav-brand a`, bare `nav a` against `.nav-links a` — and the two
+ * copies had drifted, which is how this came to be written: Core's links sit
+ * 1.5rem apart with no padding and Edge's sat 0.25rem apart with 0.5rem of
+ * padding each, so Edge's hit boxes very nearly touched and its dropdown
+ * toggles, which carry another 1rem of padding-bottom, sat differently again
+ * from the plain links beside them. The owner read it as Core looking smooth
+ * and Edge looking "off a bit", which is exactly what it was.
+ *
+ * WHY THIS ONE IS SAFE TO MOVE when the note above says the unit of
+ * unification is the COMPONENT and most of the duplicates were half of one.
+ * The bar is whole: every rule it needs is here, neither app had a piece the
+ * other lacked, and the only real difference was spacing. The dropdown was
+ * already byte-identical in both sheets apart from a 0.4rem/6px radius.
+ *
+ * CORE'S SPACING WINS, on the owner's call — it is the one that reads well,
+ * and "make Edge the same" was the ask. Edge keeps the one thing it had that
+ * Core did not: `.nav-dropdown::after`, an invisible strip bridging the gap
+ * between a toggle and its menu so the menu does not close while the pointer
+ * crosses it.
+ *
+ * THE MARKUP IS PART OF THE CONTRACT. Both templates now write:
+ *
+ *   <nav><div class="nav-inner">
+ *     <div class="nav-brand">…</div>
+ *     <div class="nav-links">…</div>
+ *     <div class="nav-user">…</div>
+ *   </div></nav>
+ *
+ * Named groups rather than Core's `.container flex-center` plus inline
+ * `style="gap:…"`: a bar whose spacing lives in three inline attributes is a
+ * bar nobody can restyle from a sheet.
+ *
+ * Both app sheets still load after this file, so either can override — but
+ * neither does now, and css_collision_drift_test fails the moment one
+ * re-declares a selector from here.
+ */
+nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0;
+}
+
+.nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nav-brand a {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+/* 1.5rem and NO PADDING, which is the whole of the fix. Padded links at a
+   0.25rem gap read as a row of buttons that have been squeezed together; the
+   text spacing is what the eye follows. */
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.nav-links a {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.nav-links a:hover,
+.nav-links a.active {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.nav-sep {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.nav-user a {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.nav-user a:hover {
+  color: var(--primary);
+}
+
+/* ── the dropdowns ───────────────────────────────────────────────────── */
+.nav-dropdown { position: relative; }
+
+/* The bridge, from Edge. The menu opens 0.75rem below the toggle, and without
+   something under the pointer in that gap it closes as you reach for it. */
+.nav-dropdown::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 0.75rem;
+}
+
+.nav-dropdown-toggle { cursor: pointer; padding-bottom: 1rem; margin-bottom: -1rem; }
+.nav-dropdown-toggle::after { content: ' \25BE'; font-size: 0.7em; }
+
+.nav-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.75rem);
+  left: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem 0;
+  min-width: 150px;
+  z-index: var(--z-dropdown);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+
+.nav-dropdown-menu a {
+  display: block;
+  padding: 0.4rem 1rem;
+  color: var(--text);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.nav-dropdown-menu a:hover { background: var(--bg); text-decoration: none; }
+.nav-dropdown-menu a.active { color: var(--primary); font-weight: 600; }
+
+/* The bar wraps before it squeezes: the links drop to their own full-width
+   row rather than the brand and the user block being crushed. */
+@media (max-width: 768px) {
+  .nav-inner { flex-wrap: wrap; }
+  .nav-links {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+}
+
 /* ── The utilities both apps had, written twice ──────────────────────────
  *
  * Each of these was defined byte-identically in shingoedge.css AND in Core's

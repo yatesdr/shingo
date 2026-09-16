@@ -9,12 +9,9 @@ a:hover { text-decoration: underline; }
 
 
 /* Nav */
-nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 0; }
-nav .container { display: flex; align-items: center; gap: 1.5rem; }
-nav .brand { font-weight: 700; font-size: 1.1rem; color: var(--text); white-space: nowrap; }
-nav a { color: var(--text-muted); font-size: 0.9rem; }
-nav a:hover, nav a.active { color: var(--primary); text-decoration: none; }
-nav .nav-sep { width: 1px; height: 1.2rem; background: var(--border); flex-shrink: 0; }
+/* The top bar lives in shared/components.css now — one bar, one set of
+   names, both apps. css_collision_drift_test fails if it is re-declared
+   here. */
 
 /* Cards */
 /* P8b: borderless — depth comes from the surface being one step lighter than
@@ -928,33 +925,6 @@ textarea { resize: vertical; min-height: 60px; }
 .mission-row { cursor:pointer; transition:background .1s; }
 .mission-row:hover { background:color-mix(in srgb, var(--primary) 6%, var(--surface)); }
 
-/* Nav dropdowns */
-.nav-dropdown { position: relative; }
-.nav-dropdown-toggle { cursor: pointer; padding-bottom: 1rem; margin-bottom: -1rem; }
-.nav-dropdown-toggle::after { content: ' \25BE'; font-size: 0.7em; }
-.nav-dropdown-menu {
-  display: none;
-  position: absolute;
-  top: calc(100% + 0.75rem);
-  left: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  padding: 0.3rem 0;
-  min-width: 150px;
-  z-index: var(--z-dropdown);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-.nav-dropdown:hover .nav-dropdown-menu { display: block; }
-.nav-dropdown-menu a {
-  display: block;
-  padding: 0.4rem 1rem;
-  color: var(--text);
-  font-size: 0.85rem;
-  white-space: nowrap;
-}
-.nav-dropdown-menu a:hover { background: var(--bg); text-decoration: none; }
-.nav-dropdown-menu a.active { color: var(--primary); font-weight: 600; }
 
 /* Loading spinner */
 .spinner { display: inline-block; width: 1.2rem; height: 1.2rem; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.6s linear infinite; }

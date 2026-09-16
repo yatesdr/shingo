@@ -18,9 +18,18 @@
 <body>
   {{/* Vendored Lucide icon sprite, inlined once so <use href="#icon-…"> resolves same-document. */}}
   {{iconSprite}}
+  {{/* THE BAR'S SHAPE IS SHARED (2026-09-16). It was `.container flex-center`
+       with the gap in an inline style and the links as bare children; Edge drew
+       the same bar from `.navbar > .nav-inner` with named groups. One bar drawn
+       twice under two sets of names had drifted — Edge's links had ended up
+       0.25rem apart with padding where these sit 1.5rem apart with none — so
+       both templates now write the same three groups and shared/components.css
+       styles them once. The named groups are Edge's; the spacing is this
+       file's, which is the half the owner asked to keep. */}}
   <nav>
-    <div class="container flex-center" style="gap:1.5rem;">
-      <a href="/" class="brand">Shingo Core</a>{{ simBadge }}
+    <div class="nav-inner">
+      <div class="nav-brand"><a href="/">Shingo Core</a>{{ simBadge }}</div>
+      <div class="nav-links">
       <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Dashboard</a>
       <a href="/overview"{{if eq .Page "overview"}} class="active"{{end}}>Overview</a>
       <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
@@ -100,12 +109,14 @@
           <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
         </div>
       </div>
-      <div class="ml-auto flex-center" style="gap:0.75rem;">
+      </div>
+      <div class="nav-user">
         <a href="/logout">Logout</a>
         <button class="theme-toggle" data-action="toggleTheme" title="Toggle theme"></button>
       </div>
       {{else}}
-      <div class="ml-auto flex-center" style="gap:0.75rem;">
+      </div>
+      <div class="nav-user">
         <a href="/login">Login</a>
         <button class="theme-toggle" data-action="toggleTheme" title="Toggle theme"></button>
       </div>
