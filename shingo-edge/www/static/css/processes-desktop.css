@@ -792,3 +792,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-npk .opts button.off:hover { background: none; }
 .pd-npk .opts button small { color: var(--text-muted); font-size: 11.5px; margin-left: 10px; }
 .pd-npk .opts .none { color: var(--text-muted); padding: 8px; font-size: 12.5px; line-height: 1.4; }
+
+/* A process with no part yet — the state an Add process lands in. Prose at the
+   note's colour and the field grid's measure; it is a sentence, not a panel. */
+.pd-empty { padding: 28px 4px; max-width: 64ch; }
+.pd-empty p { margin: 0 0 10px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.pd-empty b { color: var(--text); font-weight: 600; }

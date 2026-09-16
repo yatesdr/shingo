@@ -323,7 +323,19 @@ function initModel(st) {
 
 function selectStyle(id) {
     const st = composerStyle(id);
-    if (!st) { drawFlows(); return; }
+    if (!st) {
+        // NO SUCH STYLE, so no draft — and the last process's draft has to go
+        // with it. openProcess clears the graph and the routing set for the
+        // same reason; leaving the model behind drew one press's positions
+        // under another press's name, which only became reachable once a
+        // process could be created with no parts at all.
+        S.styleID = 0;
+        S.model = null;
+        S.baseline = '';
+        S.selected = null;
+        drawFlows();
+        return;
+    }
     S.styleID = id;
     S.selected = null;
     S.model = initModel(st);
@@ -509,7 +521,27 @@ function drawPicture() {
     reportDesktopFit();
 }
 
+// A PROCESS WITH NO PART IS THE STATE A CREATE LANDS IN, and until U10 there
+// was no way to reach it, so nothing drew it: selectStyle(0) fell through to
+// drawFlows and positionsTable read S.model.positions off a null model. The
+// page threw on the first screen an engineer saw after making a press.
+//
+// The empty state says the one thing that is true — a press runs parts, and
+// this one has none yet — and points at the button that adds one, which is
+// already in the rail beside it.
+function noStyleYet() {
+    return '<div class="pd-main"><div class="pd-head"><div class="t"><h1>No part yet</h1>' +
+        '<div class="sub">this press runs nothing until one of its parts has a flow</div></div></div>' +
+        '<div class="pd-empty"><p>A flow is drawn for a part: which positions the press works, ' +
+        'how each one swaps, and where its bins come from and go. Add the first part from ' +
+        '<b>+ New part flow</b> in the rail, or stamp out a family of them from ' +
+        'Settings › Generate variants.</p>' +
+        '<p class="pd-dim">Positions come from the operator screen that claims them — ' +
+        'Operator screens › Edit.</p></div></div>';
+}
+
 function main() {
+    if (!S.model) return noStyleYet();
     const st = composerStyle(S.styleID) || { name: '', claim_count: 0 };
     const p = process();
     const isRunning = !!(p && p.active_style_id === S.styleID);
@@ -1367,10 +1399,13 @@ function waypointNames() {
 // F3 reaches D3's sub-lines too: each one said in other words what the role
 // beside it already names, and the evidence line under a backfilled row was
 // already saying `inbound source on 10 styles`.
+// THREE PARTS, because the heading and the sentence under it are read in two
+// places now: as one line over a list of rows, and as a label and its sub-line
+// over the picker that adds to that role.
 const ROUTING_GROUPS = [
-    ['source', "Sources · a flow's inbound source"],
-    ['staging', "Staging · a flow's inbound or outbound staging"],
-    ['destination', "Destinations · a flow's outbound destination"],
+    ['source', 'Sources', "a flow's inbound source"],
+    ['staging', 'Staging', "a flow's inbound or outbound staging"],
+    ['destination', 'Destinations', "a flow's outbound destination"],
 ];
 
 function isPositionRow(name) {
@@ -1474,7 +1509,7 @@ function routingPanel() {
             }
         }
         if (!mine.length) continue;
-        body += '<div class="pd-lbl pd-rgrp">' + esc(g[1]) + '</div>' + mine.map(routingRow).join('');
+        body += '<div class="pd-lbl pd-rgrp">' + esc(g[1] + ' · ' + g[2]) + '</div>' + mine.map(routingRow).join('');
     }
     const way = waypointNames();
     if (way.length) {
@@ -1897,7 +1932,28 @@ function onAdvClick(e) {
     // controls do: the scrim is outside #pd-root and onClick never sees it.
     const npk = e.target.closest && e.target.closest('[data-npk]');
     if (npk) { e.stopPropagation(); onPickerClick(npk); return; }
+    // A POPOVER OPENED FROM A SHEET CLOSES ON THE NEXT CLICK OUTSIDE IT, which
+    // is what #pd-pop's own document listener does for the page. The option
+    // rows are inside .pd-pop and so are not "outside" — they run their own
+    // handler and close it themselves.
+    const spop = $('pd-advpop');
+    if (spop && !spop.hidden && !(e.target.closest && e.target.closest('.pd-pop'))) {
+        spop.hidden = true;
+        spop.innerHTML = '';
+    }
     const act = e.target.closest && e.target.closest('[data-act]');
+    if (act && act.dataset.act === 'add-pickgroup') {
+        e.stopPropagation();
+        openGroupPicker(act, id => {
+            S.add.groupID = id;
+            const g = S.groups.find(x => x.id === id);
+            // The button alone, not the sheet: a redraw here would take away
+            // the name the engineer has half-typed two fields above.
+            const btn = $('pd-addgroup');
+            if (btn) btn.innerHTML = esc(g ? g.name : 'Ungrouped') + '<i class="car"></i>';
+        });
+        return;
+    }
     // THE APPLY MODAL'S OWN CONTROLS, and they answer HERE because the modal
     // draws into #pd-scrim, which processes.html puts outside #pd-root — and
     // onClick, which has these three cases, is bound to #pd-root. So a tick, a
@@ -2201,6 +2257,24 @@ async function reloadProcesses() {
     if (Array.isArray(rows)) S.processes = rows;
 }
 
+async function reloadStations() {
+    const res = await fetch('/api/operator-stations');
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (Array.isArray(rows)) S.stations = rows;
+}
+
+// The positions one screen claims, re-read from the server rather than assumed
+// from what was just sent. S.stationNodes arrives with the page and nothing
+// refreshes it, so a screen whose positions were set here went on reporting
+// "nothing claimed" on D4 until the page was reloaded.
+async function refreshStationNodes(stationID) {
+    const res = await fetch('/api/operator-stations/' + stationID + '/claimed-nodes');
+    if (!res.ok) return;
+    const names = await res.json();
+    S.stationNodes[String(stationID)] = Array.isArray(names) ? names : [];
+}
+
 // ── one scrim, the edge's own ─────────────────────────────────────
 //
 // #pd-scrim IS a .modal-overlay. It was a second one: .pd-scrim's rule was
@@ -2285,6 +2359,10 @@ function coreNodeList() {
 //
 //   selected  the names it opens with
 //   exclude   name -> reason, or '' — a name that may not be picked, and why
+//   annotate  name -> note, or '' — a name that MAY be picked and comes with a
+//             consequence. Drawn the same way as a reason and live, because
+//             the difference between "you cannot" and "you can, and here is
+//             what happens" is the whole of it
 //   onPick    given, the picker WRITES THROUGH: a click calls this and the
 //             picker holds no selection of its own. That is Settings' three
 //             routing lists, where the rows above the picker are the
@@ -2299,6 +2377,7 @@ function pickerInit(key, opts) {
         q: '',
         open: false,
         exclude: o.exclude || (() => ''),
+        annotate: o.annotate || (() => ''),
         onPick: o.onPick || null,
         onChange: o.onChange || null,
     };
@@ -2359,8 +2438,10 @@ function pickerOptions(key) {
             continue;
         }
         const on = p.sel.indexOf(n.name) >= 0;
+        const note = p.annotate(n.name);
         out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
-            '" data-npkname="' + esc(n.name) + '">' + esc(n.name) + '</button>';
+            '" data-npkname="' + esc(n.name) + '">' + esc(n.name) +
+            (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
     }
     return out;
 }
@@ -2500,20 +2581,29 @@ function sheetField(label, sub, name, value) {
         '" value="' + esc(value || '') + '"></div></div>';
 }
 
-// A write that goes through a sheet, with the server's refusal shown BY NAME
-// rather than swallowed into "could not save".
-async function sheetSubmit(method, url, body, after) {
+// ONE READ OF A WRITE'S ANSWER: what came back when it landed, and the
+// server's refusal BY NAME when it did not. Every write on this page wants the
+// same three lines — "PLN_02 is used by PART 40421-RVJ56.37" is an answer and
+// "could not save" is not — and the Add-process chain wants the answer as well,
+// because step 2 is posted against the id step 1 returned.
+async function postJSON(method, url, body) {
     const res = await fetch(url, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
         body: body === null ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) {
-        let why = 'The server refused that (' + res.status + ').';
-        try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
-        sheetStatus(why, true);
-        return false;
-    }
+    let parsed = null;
+    try { parsed = await res.json(); } catch (_) { /* a write may answer with nothing */ }
+    if (res.ok) return { ok: true, body: parsed || {} };
+    const named = parsed && (parsed.error || parsed.message);
+    return { ok: false, status: res.status, error: named || ('the server refused it (' + res.status + ')') };
+}
+
+// A write that goes through a sheet, with the server's refusal shown BY NAME
+// rather than swallowed into "could not save".
+async function sheetSubmit(method, url, body, after) {
+    const out = await postJSON(method, url, body);
+    if (!out.ok) { sheetStatus(out.error, true); return false; }
     closeSheet();
     if (after) await after();
     return true;
@@ -2624,6 +2714,149 @@ async function refreshProcess() {
     else drawSettings();
 }
 
+// ── Add process, end to end ──────────────────────────────────────────────────
+//
+// THE WHOLE CHAIN, IN ONE SHEET. The flow-composer wave left `add-process`
+// returning without doing anything, and it was not the only half missing:
+// nothing on the desktop set a station's claimed nodes either, and
+// StationService.SetNodes is what mints process_nodes rows. So a process made
+// any other way had no positions and no way to get them. An engineer at
+// Hopkinsville could neither create a press nor give one places to put bins.
+//
+// THREE SECTIONS, because a press is three things at once and an engineer
+// making one knows all three: what it is called, the screen an operator works
+// it from, and where it may draw bins from and send them. Creation is not
+// review — the routing set's own tab was built for reading backfilled rows on
+// a migrated process, and this is a minute's typing.
+//
+// NOTHING IS WRITTEN UNTIL OK, and then the writes go in dependency order and
+// stop at the first refusal. There is NO ROLLBACK: a delete on failure is a
+// second write path with its own failures, and an engineer told exactly what
+// exists is better off than one whose half-made press was cleaned up by a
+// guess. The status line names what landed and what did not.
+
+// The three routing pickers, by role. Keyed apart from the positions picker
+// because sheetValue reads a picker by its key.
+function routingPickerKey(role) { return 'rs_' + role; }
+
+function openAddProcess() {
+    S.add = { groupID: 0 };
+    const positions = () => pickerValue('positions');
+    pickerInit('positions', {
+        onChange: () => {
+            // A name that has just become a position cannot also be a routing
+            // row: process_routing_nodes refuses one (ErrRoutingNodeIsPosition)
+            // because a node in both halves would be offered twice. So it
+            // leaves the role lists here, rather than sitting in one until the
+            // server says so three writes later.
+            for (const g of ROUTING_GROUPS) {
+                const key = routingPickerKey(g[0]);
+                const p = S.pickers[key];
+                if (!p) continue;
+                p.sel = p.sel.filter(n => positions().indexOf(n) < 0);
+                redrawPicker(key);
+            }
+        },
+    });
+    for (const g of ROUTING_GROUPS) {
+        pickerInit(routingPickerKey(g[0]), {
+            // A POSITION IS EXCLUDED; THE OTHER TWO ROLES ARE NOT. A buffer is
+            // legitimately both a source and a destination (domain/routing_set.go),
+            // and the engineer said which role by which list they put it in —
+            // so the three do not exclude each other.
+            exclude: n => (positions().indexOf(n) >= 0
+                ? 'a position of this press — available to every flow on it already'
+                : ''),
+        });
+    }
+
+    const body =
+        '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
+        sheetField('Name', 'what this press is called here', 'name', '') +
+        sheetField('Description', '', 'description', '') +
+        '<div class="pd-fld"><label>Group<small>pure taxonomy for the list — nothing reads it</small></label>' +
+        '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
+        'Ungrouped<i class="car"></i></button></div></div>' +
+
+        '<div class="pd-sec"><div class="pd-lbl">The operator screen</div></div>' +
+        sheetField('Screen name', 'what the screen is called on the floor', 'screen', '') +
+        pickerField('positions', 'Positions',
+            'the press positions this screen claims — a flow can only use a position its screen owns') +
+
+        '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
+        ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
+        '<p class="pd-note">A name in one of these three lists is a place this press may route ' +
+        'material through. Operators are offered these and never the plant. Fill them in and the ' +
+        'flow composer opens on this press, because reviewing the set is exactly what that gate ' +
+        'is waiting for; leave them empty and it stays shut until Settings says otherwise.</p>';
+
+    openSheet('Add process', 'a press, the screen that works it, and where its bins come from and go.',
+        body, 'Create', submitAddProcess, false, 'pd-wide');
+}
+
+async function submitAddProcess() {
+    const name = String(sheetValue('name') || '').trim();
+    if (!name) { sheetStatus('A process needs a name.', true); return; }
+    const screen = String(sheetValue('screen') || '').trim();
+    // A press with no HMI cannot be run by anybody, so the screen is required
+    // here rather than left to be noticed on D4 later.
+    if (!screen) { sheetStatus('Name the operator screen — a press with no HMI cannot be run.', true); return; }
+
+    sheetStatus('Creating…');
+    const made = await postJSON('POST', '/api/processes',
+        B().processCreate({ name: name, description: sheetValue('description'), group_id: S.add.groupID }));
+    if (!made.ok) { sheetStatus(made.error, true); return; }
+    const processID = Number(made.body.id);
+
+    // What already exists, so a refusal halfway through says so rather than
+    // leaving the engineer to find out from the list.
+    const done = ['The process was created'];
+    const stop = (what, why) => sheetStatus(done.join('; ') + '. ' + what + ' was refused: ' + why, true);
+
+    const st = await postJSON('POST', '/api/operator-stations',
+        B().stationWrite(null, processID, false, { name: screen, note: '' }));
+    if (!st.ok) { stop('Its operator screen', st.error); return; }
+    const stationID = Number(st.body.id);
+    done.push('its screen added');
+
+    const claimed = pickerValue('positions');
+    if (claimed.length) {
+        const nodes = await postJSON('PUT', '/api/operator-stations/' + stationID + '/claimed-nodes',
+            B().stationNodes(claimed));
+        if (!nodes.ok) { stop('Its positions', nodes.error); return; }
+        done.push('its positions claimed');
+    }
+
+    // ONE PICK, ONE ROW. pickOnMap posted a group as both a source and a
+    // destination because a click on the map cannot say which was meant; a
+    // list can, and did.
+    let routed = 0;
+    for (const g of ROUTING_GROUPS) {
+        for (const node of pickerValue(routingPickerKey(g[0]))) {
+            const row = await postJSON('POST', '/api/processes/' + processID + '/routing-nodes',
+                B().routingAdd(node, g[0]));
+            if (!row.ok) { stop(node + ' as a ' + g[0], row.error); return; }
+            routed++;
+        }
+    }
+
+    // THE GATE OPENS ON A REVIEWED ROUTING SET, and the engineer just reviewed
+    // one — they wrote it. The flag exists to wait for that (domain/process.go,
+    // and D5's own note says so); a process created with none stays shut, and
+    // Settings turns it either way afterwards.
+    if (routed) {
+        done.push('its routing set written');
+        const gate = await postJSON('PATCH', '/api/processes/' + processID, B().processGate(true));
+        if (!gate.ok) { stop('The flow-composer gate', gate.error); return; }
+    }
+
+    closeSheet();
+    await reloadProcesses();
+    await reloadStations();
+    if (claimed.length) await refreshStationNodes(stationID);
+    await openProcess(processID);
+}
+
 // ── D4's screen sheet, D5's group picker and its danger ──────────────────────
 // Both station handlers decode the WHOLE StationInput and write every field.
 // A body with only a name and a note would blank the screen's code, area,
@@ -2636,38 +2869,93 @@ function stationBody(st, editing, change) {
     return B().stationWrite(st, S.processID, editing, change);
 }
 
+// THE POSITIONS ARE PART OF THE SCREEN, and this sheet is where they are set.
+// D4 showed them read-only and the edit sheet took a name and a note, so the
+// only door onto PUT .../claimed-nodes was one nothing on this page opened —
+// which is why a screen created here had nothing to work.
+//
+// TWO WRITES, IN ORDER, because they are two endpoints: the station row, then
+// the list of nodes it claims. A refusal on the second leaves the first, and
+// the status line says so rather than closing on a half-done edit.
 function openScreenSheet(stationID) {
     const st = stationsOf(S.processID).find(s => s.id === Number(stationID)) || {};
     const editing = !!st.id;
+    const claimedElsewhere = {};
+    for (const other of stationsOf(S.processID)) {
+        if (other.id === st.id) continue;
+        for (const n of S.stationNodes[String(other.id)] || []) claimedElsewhere[n] = other.name;
+    }
+    pickerInit('positions', {
+        selected: editing ? (S.stationNodes[String(st.id)] || []) : [],
+        // A position claimed by a sibling screen is NOT hidden and not refused:
+        // SetNodes moves it, deliberately, because one Core node has exactly one
+        // process_node row per process. The engineer is told whose it is before
+        // they take it.
+        exclude: () => '',
+        annotate: n => (claimedElsewhere[n] ? 'claimed by ' + claimedElsewhere[n] : ''),
+    });
     openSheet(editing ? 'Edit ' + st.name : 'Add operator screen',
         'the HMI an operator works this process from.',
         sheetField('Name', 'what the screen is called on the floor', 'name', st.name) +
-        sheetField('Note', 'anything the next engineer should know about it', 'note', st.note),
+        sheetField('Note', 'anything the next engineer should know about it', 'note', st.note) +
+        pickerField('positions', 'Positions',
+            'the press positions this screen claims — a flow can only use a position its screen owns'),
         editing ? 'Save' : 'Add',
-        () => sheetSubmit(editing ? 'PUT' : 'POST',
-            editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
-            stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }),
-            async () => {
-                const res = await fetch('/api/operator-stations');
-                if (res.ok) {
-                    const rows = await res.json();
-                    if (Array.isArray(rows)) S.stations = rows;
-                }
-                drawScreens();
-            }));
+        async () => {
+            const wrote = await postJSON(editing ? 'PUT' : 'POST',
+                editing ? '/api/operator-stations/' + st.id : '/api/operator-stations',
+                stationBody(st, editing, { name: sheetValue('name'), note: sheetValue('note') }));
+            if (!wrote.ok) { sheetStatus(wrote.error, true); return; }
+            const id = editing ? st.id : Number(wrote.body.id);
+            const nodes = await postJSON('PUT', '/api/operator-stations/' + id + '/claimed-nodes',
+                B().stationNodes(sheetValue('positions')));
+            if (!nodes.ok) {
+                sheetStatus('The screen was saved; its positions were refused: ' + nodes.error, true);
+                await reloadStations();
+                return;
+            }
+            closeSheet();
+            await reloadStations();
+            await refreshStationNodes(id);
+            await refreshProcess();
+        },
+        false, 'pd-wide');
 }
 
-function openGroupPicker(btn) {
-    const pop = $('pd-stpop');
+// ONE GROUP LIST, TWO HOSTS. Settings picks a group into its draft and the
+// Add-process sheet into its own; the list, its order and the Ungrouped row in
+// front of it are the same, so they are one function.
+//
+// THE POPOVER IS RESOLVED FROM THE BUTTON, for the reason openGenPicker's is:
+// #pd-stpop lives on the Settings page, which the scrim covers, so a list
+// opened from a sheet has to draw on the sheet's own popover or it draws
+// behind the modal.
+//
+// Its options carry their handler directly rather than a data-act, like every
+// other popover on this page — a second act for "the same list, written
+// somewhere else" is the kind of near-duplicate this page keeps collapsing.
+function openGroupPicker(btn, onPick) {
+    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
+    const pop = inSheet ? $('pd-advpop') : $('pd-stpop');
     if (!pop) return;
+    const current = onPick ? (S.add ? S.add.groupID : 0) : S.settings.group_id;
     const opts = [{ id: 0, name: 'Ungrouped' }].concat(S.groups);
-    pop.innerHTML = opts.map(g => '<button data-act="st-setgroup" data-group="' + g.id + '" class="' +
-        (S.settings.group_id === g.id ? 'on' : '') + '">' + esc(g.name) + '</button>').join('');
+    pop.innerHTML = opts.map(g => '<button data-grpopt="' + g.id + '" class="' +
+        (current === g.id ? 'on' : '') + '">' + esc(g.name) + '</button>').join('');
     pop.hidden = false;
     const r = btn.getBoundingClientRect();
-    const host = pop.offsetParent.getBoundingClientRect();
+    const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
     pop.style.left = Math.max(8, r.left - host.left) + 'px';
     pop.style.top = (r.bottom - host.top + 6) + 'px';
+    pop.querySelectorAll('[data-grpopt]').forEach(b => b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        pop.hidden = true;
+        pop.innerHTML = '';
+        const id = Number(b.dataset.grpopt);
+        if (onPick) { onPick(id); return; }
+        S.settings.group_id = id;
+        drawSettings();
+    }));
 }
 
 function openDeleteProcess() {
@@ -3615,10 +3903,6 @@ function onClick(e) {
             case 'st-group': openGroupPicker(btn); return;
             case 'st-discard': S.settings = settingsDraft(); S.settingsError = ''; drawSettings(); return;
             case 'st-save': saveSettings(); return;
-            case 'st-setgroup':
-                S.settings.group_id = Number(btn.dataset.group);
-                drawSettings();
-                return;
             case 'st-generate': openGenerate(); return;
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
@@ -3687,8 +3971,9 @@ function onClick(e) {
                 drawRouting();
                 return;
             }
+            case 'add-process': openAddProcess(); return;
             case 'add-position': case 'copy-to': case 'new-style':
-            case 'add-group': case 'add-process':
+            case 'add-group':
                 return;   // U10
             default: break;
         }

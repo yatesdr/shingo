@@ -63,6 +63,55 @@ function processSettings(process, draft) {
     };
 }
 
+// processCreate — POST /api/processes, the Add-process sheet's first write.
+//
+// EVERY FIELD THE HANDLER DECODES, and here that is a choice rather than the
+// rescue it is on the PUT: an INSERT with a field left out gets the column's
+// zero, which for a brand-new process is the right value anyway. Spelling them
+// is what makes the defaults READABLE — an empty counter and an unset auto-arm
+// are decisions this sheet is deliberately not asking about (they belong in
+// Settings, beside the press that is already running), not fields nobody
+// thought of.
+//
+// production_state is 'active_production' because that is the only state a new
+// process can be in: store's Create coerces an empty one to it
+// (store/processes/processes.go:89), the other value in the tree is
+// 'changeover_active', and a changeover owns that transition. The retired Add
+// Process modal sent the same.
+//
+// group_id is null for Ungrouped — the handler's own spelling, and the reason
+// sending nothing ungrouped every process that was saved.
+function processCreate(draft) {
+    return {
+        name: (draft && draft.name) || '',
+        description: (draft && draft.description) || '',
+        production_state: 'active_production',
+        counter_plc_name: '',
+        counter_tag_name: '',
+        counter_enabled: false,
+        changeover_auto_arm: 'auto',
+        group_id: (draft && draft.group_id) || null,
+    };
+}
+
+// stationNodes — PUT /api/operator-stations/{id}/claimed-nodes.
+//
+// THE WHOLE LIST, because SetNodes is a set-to: a name left out is a position
+// DETACHED from this station, which is the correct semantics for an edit and
+// the reason this body is never a delta.
+//
+// Trimmed and deduplicated here as well as in the service, so the body says
+// exactly what the engineer picked rather than leaving the page and the store
+// with two ideas of it.
+function stationNodes(names) {
+    const out = [];
+    for (const raw of names || []) {
+        const name = String(raw || '').trim();
+        if (name && out.indexOf(name) < 0) out.push(name);
+    }
+    return { nodes: out };
+}
+
 // processGate — PATCH /api/processes/{id}. The only PATCHable field, flipped on
 // its own after a review of the routing set and never as a side effect of a
 // save (see apiPatchProcess).
@@ -274,8 +323,8 @@ function saveOutcome(status, body) {
 // again.
 (function () {
     const api = {
-        processSettings, processGate, styleWrite, styleClone,
-        processActiveStyle, stationWrite, routingEnable, routingAdd,
+        processCreate, processSettings, processGate, styleWrite, styleClone,
+        processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
         flowPresetCreate, flowPresetApplySave,
         applyOrder, applyOutcome, saveOutcome,
     };

@@ -449,6 +449,10 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Post("/operator-stations", h.apiCreateOperatorStation)
 			r.Put("/operator-stations/{id}", h.apiUpdateOperatorStation)
 			r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
+			// The positions a screen claims. This is what mints process_nodes
+			// rows, and until U10 nothing on the desktop called it.
+			r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
+			r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
 
 			// Sync (core nodes, payload catalog)
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)

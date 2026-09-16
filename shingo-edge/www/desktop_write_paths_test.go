@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -74,6 +76,7 @@ func buildDesktopBodies(t *testing.T, fixture map[string]any) desktopBodies {
 const B = require(%q);
 const f = require(%q);
 process.stdout.write(JSON.stringify({
+  'process create':      B.processCreate({ name: 'Made here', description: 'a press', group_id: f.groupID }),
   'settings save':       B.processSettings(f.process, f.draft),
   'gate':                B.processGate(true),
   'rename':              B.styleWrite(f.style, f.processID, { name: 'Renamed here' }),
@@ -82,6 +85,7 @@ process.stdout.write(JSON.stringify({
   'mark as running':     B.processActiveStyle(f.style.id),
   'operator-screen edit': B.stationWrite(f.station, f.processID, true, { name: 'Renamed screen', note: 'a note' }),
   'operator-screen add':  B.stationWrite(null, f.processID, false, { name: 'Added screen', note: '' }),
+  'claimed nodes':       B.stationNodes(f.claimedNodes),
   'adopt':               B.routingEnable(true),
   'add-to-set':          B.routingAdd('Supermarket Area', 'destination'),
   'name a flow':         B.flowPresetCreate('Two up, index', { styleID: f.style.id }),
@@ -102,8 +106,8 @@ process.stdout.write(JSON.stringify({
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode bodies (%s): %v", raw, err)
 	}
-	if len(out) != 14 {
-		t.Fatalf("the harness emitted %d bodies, want 14 — a write lost its builder", len(out))
+	if len(out) != 16 {
+		t.Fatalf("the harness emitted %d bodies, want 16 — a write lost its builder", len(out))
 	}
 	return out
 }
@@ -197,6 +201,77 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		// pinned below against the real preview's own fingerprint.
 		"shapeKey": "SHAPE-KEY",
 		"cells":    []any{},
+		// U10: the Add-process sheet's own two inputs — the group it picked,
+		// and the positions its operator screen claims. The blank and the
+		// duplicate are deliberate: the builder is what keeps the body saying
+		// exactly what the engineer picked.
+		"groupID":      groupID,
+		"claimedNodes": []any{"WP-POS-1", " WP-POS-2 ", "WP-POS-1", ""},
+	})
+
+	// ── Add process ──────────────────────────────────────────────────────────
+	//
+	// The first write of the chain the page lost in the flow-composer wave.
+	// The counter and the auto-arm are not on the sheet, and this is what
+	// "left to Settings" has to MEAN in the row: empty, off, and 'auto' —
+	// not whatever the last INSERT happened to leave.
+	t.Run("a created process arrives grouped, in production, with no counter", func(t *testing.T) {
+		resp := doRequest(t, router, "POST", "/api/processes", bodies["process create"], cookie)
+		assertStatus(t, resp, http.StatusOK)
+		rows, err := testDB.ListProcesses()
+		if err != nil {
+			t.Fatalf("list processes: %v", err)
+		}
+		var made *processes.Process
+		for i := range rows {
+			if rows[i].Name == "Made here" {
+				made = &rows[i]
+			}
+		}
+		if made == nil {
+			t.Fatalf("no process named %q after the create: %+v", "Made here", rows)
+		}
+		if made.ProductionState != "active_production" {
+			t.Errorf("production_state = %q, want active_production", made.ProductionState)
+		}
+		if made.GroupID == nil || *made.GroupID != groupID {
+			t.Errorf("group_id = %v, want %d — the sheet's group did not land", made.GroupID, groupID)
+		}
+		if made.CounterPLCName != "" || made.CounterTagName != "" || made.CounterEnabled {
+			t.Errorf("a new process arrived wired to a counter the sheet never asked about: %+v", made)
+		}
+		if made.ChangeoverAutoArm != "auto" {
+			t.Errorf("changeover_auto_arm = %q, want auto", made.ChangeoverAutoArm)
+		}
+		if made.FlowComposerEnabled {
+			t.Error("a new process arrived with the flow-composer gate open — it opens on a reviewed routing set, not on a create")
+		}
+	})
+
+	// ── the positions a screen claims ────────────────────────────────────────
+	//
+	// StationService.SetNodes is what mints process_nodes rows, and NOTHING on
+	// the desktop called it: a process created any other way had no positions
+	// and no way to get them. The body is the whole list because the endpoint
+	// is a set-to, and the blank and the duplicate in the fixture are what
+	// that list looks like coming off a picker.
+	t.Run("claimed nodes mint the process's positions, trimmed and deduplicated", func(t *testing.T) {
+		resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(stationID)+"/claimed-nodes",
+			bodies["claimed nodes"], cookie)
+		assertStatus(t, resp, http.StatusOK)
+		nodes, err := testDB.ListProcessNodesByStation(stationID)
+		if err != nil {
+			t.Fatalf("list process nodes: %v", err)
+		}
+		got := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			got = append(got, n.CoreNodeName)
+		}
+		sort.Strings(got)
+		want := []string{"WP-POS-1", "WP-POS-2"}
+		if !slices.Equal(got, want) {
+			t.Errorf("positions = %v, want %v — a blank or a repeat reached the store", got, want)
+		}
 	})
 
 	// ── settings save ────────────────────────────────────────────────────────
