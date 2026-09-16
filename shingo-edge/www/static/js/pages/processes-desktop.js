@@ -1818,9 +1818,10 @@ function routingSection() {
             '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
         (S.routingError ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
         '<p class="pd-note">A name in one of these lists is a place this process may route material ' +
-        'through, and operators are offered these and never the plant. Taking one out switches it ' +
-        'off rather than deleting it — its history stays, and it can be picked again. Whether ' +
-        'operators may change flows at all is the HMI switch above.</p>' +
+        'through, and operators are offered these and never the plant. There is nothing to switch ' +
+        'on: a name in the list is set up. Taking one out is refused while a live flow still routes ' +
+        'through it, and the refusal says which part. Whether operators may change flows at all is ' +
+        'the HMI switch above.</p>' +
         // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
         // press, and a click on a name flashes that name's chip. It is not an
         // input: a click on a dot could only guess at the role, and the three
@@ -1834,26 +1835,37 @@ function routingSection() {
         '<button data-act="rs-zoom" data-z="home">&#8962;</button></div></div>';
 }
 
-// PUTTING A NAME IN A ROLE AND TAKING IT OUT ARE ONE WRITE, because they are
-// one fact: whether this process routes through this name in this role.
+// PUTTING A NAME IN A ROLE AND TAKING IT OUT, and there is no third state.
 //
-// A name with no row yet is POSTed; one that already has a row is PATCHed, in
-// both directions. The PATCH is the documented adopt path and the store stamps
-// origin='engineer' and the session user on it, so adopting a backfilled name
-// keeps its created_at and its history rather than minting a second record of
-// the same decision.
+// THE ENGINEER DOES NOT FLIP SWITCHES (owner ruling 2026-09-16). `enabled` is
+// about what OPERATORS are offered, not about whether this screen has finished
+// setting a name up — "the engineer should be able to set up as is; it is kind
+// of stupid he has to switch it on, that's for the HMI". So a name is in the
+// set or it is not, and every row this screen writes is on.
 //
-// TAKING ONE OUT DISABLES IT. The DELETE endpoint is refused while a live
-// claim still routes through the name (ErrRoutingNodeInUse), so a chip's ×
-// wired to it would be a control that sometimes fails and sometimes destroys
-// provenance. Disabling always works and is reversible from the same picker.
+// TAKING ONE OUT DELETES IT, which it did not before. Disabling was chosen
+// because DELETE is refused while a live claim still routes through the name —
+// but that refusal is the RIGHT answer, not an obstacle: you cannot take away
+// a place your running flows are sending material to, and the server says
+// which style. Disabling instead left a row the desktop no longer showed and
+// the HMI no longer offered, invisible to both and undoable from neither.
 async function setRoutingNode(role, name, on) {
     const have = (S.routing || []).find(r => r.core_node_name === name && r.role === role);
-    const out = have
-        ? await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + have.id,
-            B().routingEnable(on))
-        : await postJSON('POST', '/api/processes/' + S.processID + '/routing-nodes',
+    let out;
+    if (!on) {
+        if (!have) return;
+        out = await postJSON('DELETE', '/api/processes/' + S.processID + '/routing-nodes/' + have.id, null);
+    } else if (have) {
+        // Already a row — an old one the backfill left switched off. The PATCH
+        // is the documented adopt path and the store stamps origin='engineer'
+        // and the session user, so it keeps its created_at and its history
+        // rather than minting a second record of the same decision.
+        out = await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + have.id,
+            B().routingEnable(true));
+    } else {
+        out = await postJSON('POST', '/api/processes/' + S.processID + '/routing-nodes',
             B().routingAdd(name, role));
+    }
     S.routingError = out.ok ? '' : out.error;
     await loadRouting();
     drawSettings();

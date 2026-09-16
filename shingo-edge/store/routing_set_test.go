@@ -487,9 +487,22 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	if got := routingKeys(rows); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("derived set = %v, want %v (PLN_02 is a position and must drop; OLD_* belong to a retired style)", got, want)
 	}
+	// BACKFILLED AND ENABLED (owner ruling 2026-09-16, reversing Q5).
+	//
+	// These names come off LIVE claims — the press is already routing material
+	// through every one of them. Landing them switched off never stopped that;
+	// it only stopped the flow composer OFFERING them, so a press drawing from
+	// a node could not offer that node to the operator working it. The switch
+	// is about what operators are shown, not about whether the engineer has
+	// finished: "the engineer should be able to set up as is; it is kind of
+	// stupid he has to switch it on, that's for the HMI."
+	//
+	// The ORIGIN still says backfill, because who put the name there is a fact
+	// and is what the picker annotates with.
 	for _, r := range rows {
-		if r.Origin != domain.RoutingOriginBackfill || r.Enabled {
-			t.Errorf("%s: origin=%q enabled=%v, want backfill and DISABLED until adopted", r.CoreNodeName, r.Origin, r.Enabled)
+		if r.Origin != domain.RoutingOriginBackfill || !r.Enabled {
+			t.Errorf("%s: origin=%q enabled=%v, want backfill and IN the set: a name read off a "+
+				"live claim is one the press already routes through", r.CoreNodeName, r.Origin, r.Enabled)
 		}
 	}
 	if rep.FlowComposerEnabled || rep.Nodes != 3 || rep.Claims != 1 || rep.NeedDecision != 0 {

@@ -327,8 +327,10 @@ func TestRoutingBackfill_PlantA(t *testing.T) {
 		t.Fatalf("P400 routing set = %v, want %v\n(PLN_02 and PLN_05 are staging on the claims AND positions of the process; they must be derived and then dropped)", got, want)
 	}
 	for _, r := range rows {
-		if r.Origin != domain.RoutingOriginBackfill || r.Enabled {
-			t.Errorf("%s: origin=%q enabled=%v, want backfill and disabled", r.CoreNodeName, r.Origin, r.Enabled)
+		// Enabled: the derive reads live claims, so every name it finds is one
+		// the press already routes through (owner ruling 2026-09-16).
+		if r.Origin != domain.RoutingOriginBackfill || !r.Enabled {
+			t.Errorf("%s: origin=%q enabled=%v, want backfill and in the set", r.CoreNodeName, r.Origin, r.Enabled)
 		}
 	}
 	if p400.Nodes != 2 || p400.NeedDecision != 0 {
@@ -419,8 +421,8 @@ func TestRoutingBackfill_PlantB(t *testing.T) {
 			t.Errorf("process %d: derived %v, want %v", pid, sortedKeys(setOf(got)), sortedKeys(exp))
 		}
 		for _, r := range got {
-			if r.Origin != domain.RoutingOriginBackfill || r.Enabled {
-				t.Errorf("process %d %s: origin=%q enabled=%v, want backfill and disabled", pid, r.CoreNodeName, r.Origin, r.Enabled)
+			if r.Origin != domain.RoutingOriginBackfill || !r.Enabled {
+				t.Errorf("process %d %s: origin=%q enabled=%v, want backfill and in the set", pid, r.CoreNodeName, r.Origin, r.Enabled)
 			}
 		}
 	}

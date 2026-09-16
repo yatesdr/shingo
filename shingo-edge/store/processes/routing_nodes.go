@@ -344,9 +344,24 @@ func DeriveRoutingNodesForProcess(db *sql.DB, processID int64, isUnknown func(na
 func deriveRoutingNodes(db *sql.DB, p Process, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
 	if !p.FlowComposerEnabled {
 		for _, st := range routingDeriveStatements {
+			// ENABLED, NOT DISABLED (owner ruling 2026-09-16, reversing Q5).
+			//
+			// These names are read off LIVE claims: the press is already
+			// routing material through every one of them, right now. Landing
+			// them switched off never stopped that — the claim still names the
+			// node and the runtime reads the claim — it only stopped the flow
+			// composer OFFERING them, so a press demonstrably drawing from
+			// SMN_015 could not offer SMN_015 to the operator working it.
+			//
+			// "The engineer should be able to set up as is; it is kind of
+			// stupid he has to switch it on — that's for the HMI." The switch
+			// is about what OPERATORS are offered, and a name the flows
+			// already use is not a question anybody needs to answer twice. At
+			// Hopkinsville this left all 21 rows off across four processes and
+			// the composer with nothing to offer on any of them.
 			if _, err := db.Exec(`INSERT OR IGNORE INTO process_routing_nodes
 				(process_id, core_node_name, role, origin, enabled)
-				SELECT DISTINCT s.process_id, TRIM(c.`+st.field+`), ?, ?, 0
+				SELECT DISTINCT s.process_id, TRIM(c.`+st.field+`), ?, ?, 1
 				FROM style_node_claims c JOIN styles s ON s.id = c.style_id
 				WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL AND TRIM(c.`+st.field+`) != ''`,
 				st.role, domain.RoutingOriginBackfill, p.ID); err != nil {

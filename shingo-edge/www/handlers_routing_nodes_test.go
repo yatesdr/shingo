@@ -68,13 +68,17 @@ func TestRoutingNodes_DeriveReportsAgainstCore(t *testing.T) {
 	// THE COUNT IS IN THE SENTENCE, which is the one the panel prints. The
 	// raw report used to ship beside it and nothing read it; WHICH names need
 	// a decision is pinned where the derivation lives
-	// (store/routing_set_test.go, and the plant fixtures beside it), and on
-	// this screen it is the ROWS that say so — backfill origin, switched off.
+	// (store/routing_set_test.go, and the plant fixtures beside it).
+	//
+	// The rows arrive backfilled and IN THE SET (owner ruling 2026-09-16,
+	// reversing Q5): they are read off live claims, so the press is already
+	// routing through them, and the switch is about what operators are offered
+	// rather than about whether the engineer is finished.
 	keys := make([]string, 0, len(got.Rows))
 	for _, r := range got.Rows {
 		keys = append(keys, r.CoreNodeName+":"+r.Role)
-		if r.Origin != domain.RoutingOriginBackfill || r.Enabled {
-			t.Errorf("%s: origin=%q enabled=%v, want backfill/disabled", r.CoreNodeName, r.Origin, r.Enabled)
+		if r.Origin != domain.RoutingOriginBackfill || !r.Enabled {
+			t.Errorf("%s: origin=%q enabled=%v, want backfill and in the set", r.CoreNodeName, r.Origin, r.Enabled)
 		}
 	}
 	if strings.Join(keys, ",") != "SMN_BUF_100:source,RT_STG_01:staging,Supermarket Area:destination" {
