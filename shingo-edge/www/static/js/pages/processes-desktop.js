@@ -72,6 +72,10 @@ const S = {
     mapZoom: 1,
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
+    coreNodes: null,     // Core's node list, [{name, node_type}] — the node picker's source
+    coreNodesReq: null,  // the in-flight read of it, so four pickers share one request
+    pickers: {},         // every open node picker, by key — see pickerInit
+    add: null,           // the Add-process sheet's own non-text draft: {groupID}
 };
 
 function root() { return $('pd-root'); }
@@ -1889,6 +1893,10 @@ function openAdvPicker(btn) {
 }
 
 function onAdvClick(e) {
+    // A NODE PICKER IN A SHEET ANSWERS HERE, for the reason the apply modal's
+    // controls do: the scrim is outside #pd-root and onClick never sees it.
+    const npk = e.target.closest && e.target.closest('[data-npk]');
+    if (npk) { e.stopPropagation(); onPickerClick(npk); return; }
     const act = e.target.closest && e.target.closest('[data-act]');
     // THE APPLY MODAL'S OWN CONTROLS, and they answer HERE because the modal
     // draws into #pd-scrim, which processes.html puts outside #pd-root — and
@@ -2231,14 +2239,211 @@ function hideSheet() {
     scrim.innerHTML = '';
 }
 
+// ── the node picker ──────────────────────────────────────────────────────────
+//
+// NODES ARE PICKED FROM LISTS, BY NAME (owner ruling 2026-09-16). An engineer
+// identifies a node by its name — SMN_029, PLK_H1 — because that is how the
+// fleet, the PLC and the floor refer to it. Finding that name as a dot on a
+// 383-point plant is the wrong way round, and it is why the routing set was
+// hard to author. Every place this page asks for nodes is this one component;
+// the map beside it is a read-back and not an input.
+//
+// ONE COMPONENT, EVERY HOST: the Add-process sheet's four lists, the operator
+// screen's positions, and Settings' three role lists. A picker in a sheet and
+// a picker on a page are the same object — only the handler that reaches its
+// clicks differs, because #pd-scrim is outside #pd-root.
+//
+// EXCLUDED NAMES ARE SHOWN, DIMMED, WITH THE REASON. Hiding them makes the
+// engineer think the node does not exist, and the reason — "already a position
+// of this press" — is the sentence they actually need.
+//
+// No native <select>, for the reason the rest of this page has none: the
+// browser draws its own chrome over ours.
+
+// The node list, once per page load, held as the PROMISE rather than as the
+// rows alone — four pickers opening in one sheet share one request instead of
+// racing four.
+function loadCoreNodes() {
+    if (!S.coreNodesReq) {
+        S.coreNodesReq = fetch('/api/core-nodes')
+            .then(res => (res.ok ? res.json() : []))
+            .then(rows => { S.coreNodes = Array.isArray(rows) ? rows : []; })
+            .catch(() => { S.coreNodes = []; });
+    }
+    return S.coreNodesReq;
+}
+
+// Core answers from a map, so the order it sends is that map's iteration order.
+// Grouped by type and alphabetical inside it is the order a list is read in.
+function coreNodeList() {
+    return (S.coreNodes || []).slice().sort((a, b) =>
+        String(a.node_type || '').localeCompare(String(b.node_type || '')) ||
+        String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+// pickerInit declares one picker before it is drawn.
+//
+//   selected  the names it opens with
+//   exclude   name -> reason, or '' — a name that may not be picked, and why
+//   onPick    given, the picker WRITES THROUGH: a click calls this and the
+//             picker holds no selection of its own. That is Settings' three
+//             routing lists, where the rows above the picker are the
+//             selection. Without it the picker accumulates, which is every
+//             sheet.
+//   onChange  after the selection moved, for a picker whose choice changes
+//             what another picker may offer.
+function pickerInit(key, opts) {
+    const o = opts || {};
+    S.pickers[key] = {
+        sel: (o.selected || []).slice(),
+        q: '',
+        open: false,
+        exclude: o.exclude || (() => ''),
+        onPick: o.onPick || null,
+        onChange: o.onChange || null,
+    };
+}
+
+function pickerValue(key) {
+    const p = S.pickers[key];
+    return p ? p.sel.slice() : [];
+}
+
+// pickerBox is the component's markup. THE INPUT IS NOT REDRAWN — the chips
+// and the option list are their own elements, so a keystroke replaces neither
+// the field under the caret nor the caret in it. Same reason markSettingsBar
+// exists.
+function pickerBox(key) {
+    return '<div class="pd-npk" data-npkbox="' + key + '" id="npk-' + key + '">' +
+        '<div class="chips" data-npkpart="chips">' + pickerChips(key) + '</div>' +
+        '<input class="pd-npkq" type="text" autocomplete="off" data-npkq="' + key +
+        '" placeholder="find a node by name">' +
+        '<div class="opts" data-npkpart="opts">' + pickerOptions(key) + '</div></div>';
+}
+
+// The same component inside a sheet's field grid, so a picker sits under a
+// label like every other control on the sheet.
+function pickerField(key, label, sub) {
+    return '<div class="pd-fld"><label>' + esc(label) +
+        (sub ? '<small>' + esc(sub) + '</small>' : '') + '</label>' +
+        '<div class="v">' + pickerBox(key) + '</div></div>';
+}
+
+function pickerChips(key) {
+    const p = S.pickers[key];
+    // A write-through picker has no chips: what it wrote is the list above it.
+    if (!p || p.onPick) return '';
+    if (!p.sel.length) return '<span class="pd-dim">nothing picked yet</span>';
+    return p.sel.map(n => '<span class="pd-nchip">' + esc(n) +
+        '<button data-npk="drop" data-npkkey="' + key + '" data-npkname="' + esc(n) +
+        '" aria-label="remove ' + esc(n) + '">&times;</button></span>').join('');
+}
+
+function pickerOptions(key) {
+    const p = S.pickers[key];
+    if (!p || !p.open) return '';
+    if (!S.coreNodes) return '<div class="none">Reading Core’s node list…</div>';
+    const needle = p.q.trim().toLowerCase();
+    const hits = coreNodeList().filter(n => !needle || String(n.name).toLowerCase().indexOf(needle) >= 0);
+    if (!hits.length) {
+        return '<div class="none">No node Core knows about is called that. The list is the ' +
+            'fleet’s — shingo mirrors it and cannot add to it.</div>';
+    }
+    let out = '', group = null;
+    for (const n of hits) {
+        const type = n.node_type || 'other';
+        if (type !== group) { group = type; out += '<div class="pd-lbl">' + esc(type) + '</div>'; }
+        const why = p.exclude(n.name);
+        if (why) {
+            out += '<button class="off" disabled>' + esc(n.name) + '<small>' + esc(why) + '</small></button>';
+            continue;
+        }
+        const on = p.sel.indexOf(n.name) >= 0;
+        out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
+            '" data-npkname="' + esc(n.name) + '">' + esc(n.name) + '</button>';
+    }
+    return out;
+}
+
+function redrawPicker(key) {
+    const box = $('npk-' + key);
+    if (!box) return;
+    const chips = box.querySelector('[data-npkpart="chips"]');
+    const opts = box.querySelector('[data-npkpart="opts"]');
+    if (chips) chips.innerHTML = pickerChips(key);
+    if (opts) opts.innerHTML = pickerOptions(key);
+}
+
+// Every picker now in the document, bound and filled. The node list is read
+// once here rather than once per picker, and a picker drawn before it lands
+// says so and fills itself when it does.
+function bindPickers() {
+    for (const box of document.querySelectorAll('.pd-npk')) {
+        const key = box.dataset.npkbox;
+        const input = box.querySelector('[data-npkq]');
+        if (!key || !input || !S.pickers[key]) continue;
+        input.value = S.pickers[key].q;
+        input.addEventListener('input', () => {
+            S.pickers[key].q = input.value;
+            openOnlyPicker(key);
+        });
+        input.addEventListener('focus', () => openOnlyPicker(key));
+    }
+    loadCoreNodes().then(() => {
+        for (const box of document.querySelectorAll('.pd-npk')) redrawPicker(box.dataset.npkbox);
+    });
+}
+
+// ONE LIST OPEN AT A TIME. The Add-process sheet carries four pickers over the
+// whole plant, and four open lists is fifteen hundred buttons in one modal
+// while the engineer is typing into one of them.
+function openOnlyPicker(key) {
+    for (const k of Object.keys(S.pickers)) {
+        if (k === key || !S.pickers[k].open) continue;
+        S.pickers[k].open = false;
+        redrawPicker(k);
+    }
+    S.pickers[key].open = true;
+    redrawPicker(key);
+}
+
+// The picker's clicks, from either handler: one drawn in a sheet is reached by
+// onAdvClick and one drawn on a page by onClick, and this is what both call.
+function onPickerClick(el) {
+    const key = el.dataset.npkkey, name = el.dataset.npkname;
+    const p = S.pickers[key];
+    if (!p) return;
+    if (el.dataset.npk === 'drop') {
+        const at = p.sel.indexOf(name);
+        if (at < 0) return;
+        p.sel.splice(at, 1);
+    } else if (p.onPick) {
+        p.onPick(name);
+        return;
+    } else {
+        // A name already picked is unpicked, which is what clicking a chosen
+        // row of a multi-select means everywhere else.
+        const at = p.sel.indexOf(name);
+        if (at >= 0) p.sel.splice(at, 1); else p.sel.push(name);
+    }
+    redrawPicker(key);
+    if (p.onChange) p.onChange();
+}
+
 // ── the sheets D4 and D5 open ────────────────────────────────────────────────
 //
 // One shell, the Advanced sheet's, because they are the same object: a small
 // modal over a scrim with a header, a body of labelled fields and two buttons.
 // A second modal shape would be a second set of paddings to keep in step.
 // cls is an optional width class — pd-narrow (480) for a one-field modal,
-// pd-wide (920) for Generate variants. The shell, the paddings and the footer
-// are the same in every case, because they are the same object.
+// pd-wide (920) for Generate variants and Add process. The shell, the paddings
+// and the footer are the same in every case, because they are the same object.
+//
+// #pd-advpop RIDES ON THE SHELL rather than on the sheets that want a popover.
+// It is the Advanced sheet's answer to #pd-pop living inside #pd-root, which
+// the scrim covers; a list opened from a sheet against the page's popover
+// draws behind the modal. One per scrim, whichever sheet is open — and the
+// sheets that never open one pay an empty div.
 function openSheet(title, sub, body, confirm, run, danger, cls) {
     S.sheet = { run: run };
     showSheet('<div class="pd-modal ' + (cls || '') + '" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
@@ -2247,12 +2452,31 @@ function openSheet(title, sub, body, confirm, run, danger, cls) {
         '<div class="mf"><span class="st"></span>' +
         '<button class="pd-btn" data-act="sheet-cancel">Cancel</button>' +
         '<button class="pd-btn ' + (danger ? 'danger' : 'primary') + '" data-act="sheet-ok">' +
-        esc(confirm) + '</button></div></div>');
+        esc(confirm) + '</button></div>' +
+        '<div class="pd-pop" id="pd-advpop" hidden></div></div>');
+    bindPickers();
+}
+
+// sheetStatus is the sheet's one line of feedback, and every refusal on this
+// page reaches the engineer through it. It was written out by hand at three
+// call sites; a fourth (the Add-process chain, which reports a refusal midway
+// through a sequence of writes) made that a fourth copy.
+function sheetStatus(text, bad) {
+    const st = $('pd-scrim').querySelector('.mf .st');
+    if (!st) return;
+    st.textContent = text;
+    st.className = 'st' + (bad ? ' bad' : '');
 }
 
 function closeSheet() {
     hideSheet();
     S.sheet = null;
+    // A PICKER'S STATE BELONGS TO THE RENDER THAT DREW IT. The scrim is empty
+    // now, so every picker whose box went with it is dead state — and a dead
+    // picker with a selection is what would put last time's nodes in front of
+    // the engineer when this sheet is opened again. Settings' own pickers are
+    // in #pd-root and stay.
+    for (const k of Object.keys(S.pickers)) if (!$('npk-' + k)) delete S.pickers[k];
     // The apply modal's ticks and previews go with it: reopening it must start
     // from nothing ticked (explicit re-apply), not from what was ticked last
     // time and previewed against a flow that has since been saved.
@@ -2260,6 +2484,11 @@ function closeSheet() {
 }
 
 function sheetValue(name) {
+    // A PICKER IS READ BY THE SAME ACCESSOR AS A TEXT FIELD. It is the sheet's
+    // value for that name, and a second read path would be a second answer to
+    // "what did the engineer put in this field" — which is how a sheet ends up
+    // writing one thing and reporting another.
+    if (S.pickers[name]) return pickerValue(name);
     const el = $('pd-scrim').querySelector('[data-f="' + name + '"]');
     if (!el) return '';
     return el.type === 'checkbox' ? el.checked : el.value;
@@ -2282,8 +2511,7 @@ async function sheetSubmit(method, url, body, after) {
     if (!res.ok) {
         let why = 'The server refused that (' + res.status + ').';
         try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
-        const st = $('pd-scrim').querySelector('.mf .st');
-        if (st) { st.textContent = why; st.className = 'st bad'; }
+        sheetStatus(why, true);
         return false;
     }
     closeSheet();
@@ -2449,8 +2677,7 @@ function openDeleteProcess() {
         sheetField('Process name', '', 'confirm', ''),
         'Delete ' + p.name, () => {
             if (sheetValue('confirm') !== p.name) {
-                const st = $('pd-scrim').querySelector('.mf .st');
-                if (st) { st.textContent = 'That is not the name.'; st.className = 'st bad'; }
+                sheetStatus('That is not the name.', true);
                 return Promise.resolve(false);
             }
             return sheetSubmit('DELETE', '/api/processes/' + S.processID, null, async () => {
@@ -3342,6 +3569,8 @@ function onClick(e) {
     const card = e.target.closest && e.target.closest('#pd-svg [data-pos]');
     const row = e.target.closest && e.target.closest('[data-row]');
 
+    const npk = e.target.closest && e.target.closest('[data-npk]');
+    if (npk) { onPickerClick(npk); return; }
     if (btn && btn.dataset.act === 'pick') { e.stopPropagation(); openPicker(btn); return; }
     if (btn) {
         switch (btn.dataset.act) {

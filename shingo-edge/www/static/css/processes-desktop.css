@@ -748,3 +748,47 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
 .pd-diff { margin: 3px 0 2px; font-size: 12px; line-height: 1.6; }
 .pd-diff b { font-weight: 600; }
+
+/* ── the node picker (U10) ────────────────────────────────────────────────
+   Nodes are picked from LISTS, by name — the owner's ruling, and the reason
+   this component exists at all. Chips over a filter field over a grouped
+   list: the same three parts wherever it is drawn, in a sheet's field grid or
+   under a heading on Settings.
+
+   Nothing here is a new size. The chip is .pd-nchip, the headings are .pd-lbl
+   and the option rows are the popover's rows at the popover's padding, because
+   the list this draws IS a popover that does not float. */
+.pd-npk { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; }
+.pd-npk .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 22px; }
+.pd-npk .pd-nchip { margin: 0; display: inline-flex; align-items: center; gap: 7px; color: var(--text); }
+.pd-npk .pd-nchip button {
+    border: 0; background: none; padding: 0; cursor: pointer; font: inherit;
+    font-size: 13px; line-height: 1; color: var(--text-muted);
+}
+.pd-npk .pd-nchip button:hover { color: var(--chip-ink-below); }
+.pd-npkq {
+    height: 32px; width: 100%; padding: 0 10px; border: 1px solid var(--sub-2);
+    border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
+}
+/* The list is only drawn while this picker is the open one, so an empty box
+   must take no room — four pickers in one sheet would otherwise stack four
+   empty frames between their fields. */
+.pd-npk .opts:empty { display: none; }
+.pd-npk .opts {
+    max-height: 220px; overflow: auto; padding: 4px;
+    border: 1px solid var(--sub-2); border-radius: 10px; background: var(--bg);
+}
+.pd-npk .opts .pd-lbl { display: block; padding: 8px 8px 4px; }
+.pd-npk .opts button {
+    display: block; width: 100%; text-align: left; border: 0; background: none;
+    color: var(--text); font: inherit; font-size: 13px; padding: 6px 8px;
+    border-radius: 8px; cursor: pointer;
+}
+.pd-npk .opts button:hover { background: var(--surface-2, var(--surface)); }
+.pd-npk .opts button.on { color: var(--accent); }
+/* An excluded name is DRAWN, dim, with the reason beside it. Hiding it is what
+   makes an engineer conclude the node does not exist. */
+.pd-npk .opts button.off { color: var(--text-muted); cursor: default; }
+.pd-npk .opts button.off:hover { background: none; }
+.pd-npk .opts button small { color: var(--text-muted); font-size: 11.5px; margin-left: 10px; }
+.pd-npk .opts .none { color: var(--text-muted); padding: 8px; font-size: 12.5px; line-height: 1.4; }
