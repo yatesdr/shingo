@@ -26,6 +26,23 @@ type ComposerData struct {
 	// here rather than in the JS: a retired lane is not an option the operator
 	// should have to know not to pick.
 	Routing []ComposerRoutingNode `json:"routing,omitempty"`
+	// RoutingOff is how many rows of each role the process HAS and has not
+	// switched on — role name to count, and absent when every row is enabled.
+	//
+	// WHY A COUNT TRAVELS WHEN THE ROWS DO NOT. Routing above is filtered to
+	// the enabled rows, deliberately: a retired lane is not an option the
+	// operator should have to know not to pick. But a role with NO enabled
+	// rows draws a heading over nothing, and an engineer at Hopkinsville read
+	// that as the derivation being broken (owner, Amendment A 2026-09-16). It
+	// is not broken — the set is empty — and the difference between "nobody
+	// has put staging nodes in this process's routing set" and "two were found
+	// from your flows and nobody has switched them on" is the difference
+	// between two different next actions.
+	//
+	// The COUNT and not the rows, because the rows are still not offerable and
+	// a card that could name them would be a card that could be clicked into
+	// offering them. The screens say how many and where to go.
+	RoutingOff map[string]int `json:"routing_off,omitempty"`
 	// Presets are this process's flow presets, newest version of each name.
 	// The S4 strip renders a card per preset; empty means the strip carries
 	// FLOW · Start blank · PARTS and nothing more.

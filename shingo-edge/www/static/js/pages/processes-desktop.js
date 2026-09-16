@@ -331,6 +331,10 @@ function initModel(st) {
             core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence,
         })),
         routing: S.composer.routing,
+        // Same count the station's card reads, so both surfaces say the same
+        // sentence about an empty role rather than one saying it and one
+        // drawing a heading over nothing.
+        routingOff: S.composer.routing_off || {},
         // The travel network for the key-route walk. The desktop's half of it
         // is Map, whose edges carry the same lengths Scene does.
         scene: S.composer.map || null,
@@ -1064,6 +1068,24 @@ function optionsFor(node, kind) {
     }
 }
 
+// routingFieldOf maps a picker kind to the claim field whose options it offers,
+// for the two that come from the routing set. `col:staging:*` is the
+// mode-dependent cell, whose key names the field.
+function routingFieldOf(kind) {
+    const parts = String(kind).split(':');
+    if (parts[0] === 'source') return 'inbound_source';
+    if (parts[0] === 'dest') return 'outbound_destination';
+    if (parts[0] === 'col' && parts[1] === 'staging') {
+        return parts[2] === 'parkOld' ? 'outbound_staging' : 'inbound_staging';
+    }
+    return '';
+}
+
+function pickerEmptyWord(kind) {
+    const note = S.model ? M().routingNote(S.model, routingFieldOf(kind), 0) : '';
+    return note || 'Nothing to choose here yet.';
+}
+
 // A popover list, never a native <select> — the style guide's "never use native
 // dialogs" is about the browser drawing its own chrome over ours, and a select's
 // dropdown is exactly that.
@@ -1085,7 +1107,13 @@ function openPicker(btn) {
     pop.innerHTML = opts.length
         ? opts.map((o, i) => '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' +
             (o.icon || '') + esc(o.label) + '</button>').join('')
-        : '<div class="none">Nothing to choose here yet.</div>';
+        // NEVER AN EMPTY LIST WITH NO REASON (owner ruling, Amendment A). A
+        // source or destination picker with nothing in it is a routing set
+        // with nothing in that role, and "Nothing to choose here yet" said
+        // the symptom while the cause and the next action sat one tab away.
+        // The sentence is composer-model's — the station's cell card says the
+        // same words — and the roles it does not know about keep the old line.
+        : '<div class="none">' + esc(pickerEmptyWord(kind)) + '</div>';
     pop.hidden = false;
     const r = btn.getBoundingClientRect();
     const host = pop.offsetParent ? pop.offsetParent.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };

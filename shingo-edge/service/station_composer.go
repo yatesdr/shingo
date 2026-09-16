@@ -187,7 +187,15 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 
 	for _, r := range s.routingNodes(processID) {
 		if !r.Enabled {
-			continue // a retired lane is not an option the operator should know not to pick
+			// A retired lane is not an option the operator should know not to
+			// pick — but it is COUNTED on the way past, because a role whose
+			// every row is switched off draws a heading over nothing and the
+			// screens have to be able to say which of the two empties it is.
+			if out.RoutingOff == nil {
+				out.RoutingOff = map[string]int{}
+			}
+			out.RoutingOff[r.Role]++
+			continue
 		}
 		// Sequence travels; Label does not. composer-model.js's
 		// defaultRouting picks a cell's default source and destination by

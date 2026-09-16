@@ -1220,6 +1220,72 @@ for (const id of ['7', '11']) {
     });
 }
 
+// ═══ 9. a role with nothing to offer (Amendment A) ═══════════════════════════
+//
+// NEVER A HEADING OVER NOTHING. The composer offers a process only its routing
+// set, so a role with no enabled rows draws its heading and no chips — and an
+// engineer at Hopkinsville read four of those as the derivation being broken.
+// It was not: the set was empty, and the card said nothing, which from where
+// they stood is the same thing.
+//
+// THE SENTENCE IS PINNED HERE because both surfaces render it: the station's
+// cell card and the desktop's Flows pickers. One voice, one place.
+
+// A model with no routing at all, and a count of rows that exist switched off.
+function initWithRouting(routing, off) {
+    return M.init({
+        styleId: 7, positions: POSITIONS, routing: routing, routingOff: off,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, scene: SCENE,
+    });
+}
+
+test('a role with options gets no sentence, whatever is switched off', () => {
+    const s = initWithRouting(ROUTING, { source: 4 });
+    assert.strictEqual(M.routingNote(s, 'inbound_source', 3), '',
+        'a row with chips in it must not also carry a sentence about being empty');
+});
+
+test('an empty role with nothing switched off says the set is empty', () => {
+    const s = initWithRouting([], {});
+    const note = M.routingNote(s, 'inbound_staging', 0);
+    assert.ok(/no staging nodes/i.test(note), 'names the role: ' + note);
+    assert.ok(/Settings/.test(note), 'names where to go: ' + note);
+});
+
+// THE TWO EMPTIES ARE TWO DIFFERENT NEXT ACTIONS, which is the whole reason
+// the view carries a count of the rows it filtered out. A role whose names
+// were found from the flows and never adopted needs a SWITCH, not new names,
+// and that is invisible from the card without the count.
+test('an empty role with rows switched off says how many, and to turn them on', () => {
+    const s = initWithRouting([], { staging: 2 });
+    const note = M.routingNote(s, 'outbound_staging', 0);
+    assert.ok(/2 staging nodes/.test(note), 'says how many: ' + note);
+    assert.ok(/switched off/.test(note), 'says what is wrong with them: ' + note);
+    assert.ok(/turn them on/.test(note), 'says the action: ' + note);
+});
+
+test('one switched-off row is singular, and so is what to do about it', () => {
+    const s = initWithRouting([], { source: 1 });
+    const note = M.routingNote(s, 'inbound_source', 0);
+    assert.ok(/1 inbound source node /.test(note), 'a count of one must not say "nodes": ' + note);
+    assert.ok(/turn it on/.test(note), '"turn them on" over a count of one reads as a second thing: ' + note);
+});
+
+// A field whose options are the process's OWN POSITIONS is not a routing role,
+// and an empty one is a press with nothing to pair to — a different sentence
+// that this function must not invent.
+test('a field that is not a routing role gets no sentence', () => {
+    const s = initWithRouting([], {});
+    assert.strictEqual(M.routingNote(s, 'paired_core_node', 0), '');
+    assert.strictEqual(M.routingRoleOf('paired_core_node'), '');
+});
+
+test('every routing role maps from at least one card field', () => {
+    const roles = ['inbound_source', 'inbound_staging', 'outbound_staging', 'outbound_destination']
+        .map(M.routingRoleOf);
+    assert.deepStrictEqual([...new Set(roles)].sort(), ['destination', 'source', 'staging']);
+});
+
 // ── report ───────────────────────────────────────────────────────────────────
 if (failures) {
     console.error('\n' + failures + ' failed, ' + checks + ' passed');

@@ -105,8 +105,17 @@
 .os-chip { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px;
     border-radius: 999px; border: 1px solid var(--sub-2); font-size: 14px;
     color: var(--os-text); white-space: nowrap; background: none; }
-.os-chip.btn { cursor: pointer; font: inherit; font-size: 14px; }
-.os-chip.btn.on { border-color: var(--os-accent-solid); color: var(--os-text); }
+/* AN UNSELECTED CHIP IS STILL A CONTROL (owner, Amendment A). It was text in a
+ * --sub-2 outline over the panel's own surface — the same value as the heading
+ * above it — so a row of options read as a row of labels. The fill is the
+ * page's ground rather than the panel's, which is what an inset control looks
+ * like, and the border is a step brighter. The selected chip keeps its accent
+ * ring and gains the inset stroke the mode buttons already use, so "chosen" is
+ * still the loudest thing in the row. */
+.os-chip.btn { cursor: pointer; font: inherit; font-size: 14px;
+    background: var(--os-bg); border-color: var(--os-gray-light); }
+.os-chip.btn.on { border-color: var(--os-accent-solid); color: var(--os-text);
+    box-shadow: inset 0 0 0 1px var(--os-accent-solid); }
 .os-chip.part { border-color: var(--os-green); color: var(--os-green); }
 .os-chip.part.free { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
 .os-chip.add { color: var(--os-accent); border-style: dashed; cursor: pointer; font: inherit; font-size: 14px; }
@@ -163,7 +172,15 @@
     margin-left: 12px; cursor: pointer; }
 
 /* ── S5/S6 popover ─────────────────────────────────────────────────────── */
-.os-comp-pop { position: absolute; width: 420px; background: var(--os-surface);
+/* 720, NOT 420 (owner, Amendment A 2026-09-16). At 420 the mode row was a 2x2
+ * grid of ~195 px cells and the description under it wrapped to three lines, so
+ * the control an operator is reading and the sentence explaining it both fought
+ * the box. Four modes is one decision and it reads as one row.
+ *
+ * The panel still may not leave the picture or cross the bar (SPEC S5) —
+ * placePop enforces that and composer_shots_test's checkPanelFits proves it at
+ * 1280x800, which is the screen this is for. */
+.os-comp-pop { position: absolute; width: 720px; background: var(--os-surface);
     border: 1px solid var(--sub-3); border-radius: 14px; padding: 16px;
     display: flex; flex-direction: column; gap: 12px; z-index: var(--z-popover);
     box-shadow: 0 20px 50px rgba(0, 0, 0, .45);
@@ -209,9 +226,18 @@
 .os-comp-pop h3 { margin: 0; font-size: 17px; font-weight: 600; display: flex; flex-direction: column; gap: 2px; }
 .os-comp-pop h3 span { font-size: 12px; font-weight: 500; color: var(--os-text-muted); }
 .os-comp-pop .help { font-size: 12px; color: var(--os-text-muted); }
+/* A FULL STEP ABOVE THE HELPER TEXT (owner, Amendment A). The section headings
+ * are how an operator navigates this card, and at --os-text-muted they were the
+ * same value as the sentences under them and within a step of the panel — the
+ * quietest thing on a card they are supposed to lead. The helper text keeps the
+ * muted token, which is what makes this a step and not a wash. */
+.os-comp-pop .os-lbl { color: var(--os-text); }
+/* A ROLE WITH NOTHING TO OFFER, in the row where its chips would have been.
+ * Never a heading over nothing — see composer-model's routingNote. */
+.os-comp-none { font-size: 13px; line-height: 1.45; color: var(--os-text-muted); max-width: 60ch; }
 .os-comp-row-l { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .os-comp-row-l .os-lbl { width: 100%; }
-.os-comp-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.os-comp-seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 /* 48 px, SPEC S5 — and height:48 rather than min-height:48, because the label is
  * what broke it: "2-robot index" wrapping to two lines took the button to ~100 px,
  * four of those took the panel past the bar and over the dock, and the shot showed
@@ -228,8 +254,17 @@
 /* 26 px and not a pixel more (R6, GLYPHS-swap-mode-LOCKED "Where they appear"). */
 .os-comp-seg .gl { flex: 0 0 auto; width: 26px; height: 26px; }
 .os-comp-seg button.on { border-color: var(--os-accent-solid); box-shadow: inset 0 0 0 1px var(--os-accent-solid); }
-.os-comp-rm { border: 0; background: none; color: var(--os-text-muted); font: inherit;
-    font-size: 14px; text-align: left; cursor: pointer; padding: 6px 0; }
+/* REMOVE IS A DESTRUCTIVE ACTION AND READS AS ONE (owner, Amendment A). It was
+ * a borderless dim link at the foot of the card — the same shape as the helper
+ * sentences around it — for the one control that takes a position out of the
+ * flow. A quiet button: bordered, padded, its own width rather than the card's,
+ * and the red only on the press, because a red line sitting under every panel
+ * would be a warning nobody reads by the end of a shift. */
+.os-comp-rm { border: 1px solid var(--os-gray-light); background: none; color: var(--os-text-muted);
+    font: inherit; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer;
+    align-self: flex-start; padding: 10px 14px; border-radius: 10px; }
+.os-comp-rm:hover { color: var(--os-text); }
+.os-comp-rm:active { border-color: var(--os-red); color: var(--os-red); }
 
 /* ── S9 confirm ────────────────────────────────────────────────────────── */
 .os-comp-confirm { position: absolute; left: 0; right: 0; bottom: 0; background: var(--os-bg);

@@ -638,6 +638,64 @@ func TestComposerShots(t *testing.T) {
 	}
 	composerShot("07-dock-panel.png", idx, "S6", "")
 	checkPanelFits("07 dock panel", fmt.Sprintf("#compose=%d;state=S6", seeded.Styles[idx]))
+
+	// ── A ROLE WITH NOTHING TO OFFER SAYS WHY ───────────────────────────
+	//
+	// Amendment A, from Hopkinsville. The composer offers a process only its
+	// routing set, so a role with no enabled rows drew its heading and no
+	// chips — and the engineer looking at four of those read it as the
+	// derivation being broken. It was not broken; the set was empty, and the
+	// card said nothing, which from where they stood is the same thing.
+	//
+	// The state is MADE rather than waited for: plant A's press has both roles
+	// filled, which is why nothing here had ever drawn the empty. Every source
+	// row is switched off, the card is read, and the rows go back — the shots
+	// after this one are taken against the fixture as it was.
+	{
+		rows, err := db.ListRoutingNodes(seeded.ProcessID)
+		if err != nil {
+			t.Fatalf("read the routing set: %v", err)
+		}
+		var turnedOff []int64
+		for _, r := range rows {
+			if r.Role != domain.RoutingRoleSource || !r.Enabled {
+				continue
+			}
+			if err := db.SetRoutingNodeEnabled(seeded.ProcessID, r.ID, false, "shots"); err != nil {
+				t.Fatalf("switch off %s: %v", r.CoreNodeName, err)
+			}
+			turnedOff = append(turnedOff, r.ID)
+		}
+		if len(turnedOff) == 0 {
+			t.Fatal("plant A's press has no enabled source rows; this check was written against the two it has")
+		}
+		dom := dumpDOM(fmt.Sprintf("#compose=%d;state=S5;node=PLN_01", seeded.Styles[idx]))
+		// THE COUNT IS WHY THE VIEW CARRIES ONE. These rows exist and are
+		// switched off, so the sentence is the one about a switch — not the
+		// one about an empty set, which would send the engineer to add names
+		// they already have.
+		want := fmt.Sprintf("%d inbound source node", len(turnedOff))
+		if !strings.Contains(dom, want) {
+			t.Errorf("S5 with no enabled source: the card does not say %q.\n"+
+				"  A heading over nothing is what an engineer reads as a broken derivation.", want)
+		}
+		if !strings.Contains(dom, "switched off") || !strings.Contains(dom, "Settings") {
+			t.Error("S5 with no enabled source: the sentence does not say what is wrong or where to go")
+		}
+		// And the heading is still drawn — the row is not hidden, it is
+		// answered. A hidden row is a field an engineer concludes does not
+		// exist.
+		if !strings.Contains(dom, flowspec.Label(flowspec.InboundSource)) {
+			t.Errorf("S5 with no enabled source: the %q heading went away; the row is answered, not removed",
+				flowspec.Label(flowspec.InboundSource))
+		}
+		for _, id := range turnedOff {
+			if err := db.SetRoutingNodeEnabled(seeded.ProcessID, id, true, "shots"); err != nil {
+				t.Fatalf("switch %d back on: %v", id, err)
+			}
+		}
+		t.Logf("S5 with no enabled source: the card names the %d switched-off row(s) and where to turn them on", len(turnedOff))
+	}
 	composerShot("08-new-part-blank.png", idx, "S7", "")
 	// S8 is S7 with a position added and no choreography chosen — the finding
 	// the server cannot raise before a preview, on the card AND in the bar.

@@ -399,6 +399,10 @@ function buildModel(s) {
             core_node_name: p.core_node_name, kind: p.kind, sequence: p.sequence,
         })),
         routing: routing(),
+        // The rows that are switched off, by role — a count, not rows. It is
+        // what lets an empty row say which of the two empties it is; see
+        // composer-model's routingNote.
+        routingOff: (flow() && flow().routing_off) || {},
         // The travel network, for the "Robot drives via" walk. Indexed once
         // by the model rather than rebuilt on every panel open.
         scene: flow().scene || null,
@@ -673,7 +677,12 @@ function openPositionPanel(node) {
     };
     const modeRow = ((M().rowFields()[cc.mode]) || []).map(field => {
         const o = optionsFor(field);
-        return row(M().fieldLabel(model, field), chips(o.list, o.act, o.cur, 'val'));
+        const inner = chips(o.list, o.act, o.cur, 'val');
+        // paired_core_node is not a routing role — its options are the
+        // process's own positions — so routingRow passes it straight through.
+        return M().routingRoleOf(field)
+            ? routingRow(field, o.list, inner)
+            : row(M().fieldLabel(model, field), inner);
     }).join('');
     const via = M().viaWaypoints(model, node);
     const viaRow = cc.mode ? row(M().fieldLabel(model, 'key_route'),
@@ -689,8 +698,8 @@ function openPositionPanel(node) {
         // stays — `part` is the floor's word for payload_code and every surface
         // already uses it, from the PARTS strip to the finding pill.
         row('Part on this position', partChips) + modeRow +
-        row(M().fieldLabel(model, 'inbound_source'), chips(srcs, 'src', cc.source, 'val')) + viaRow +
-        row(M().fieldLabel(model, 'outbound_destination'), chips(dests, 'dest', cc.dest, 'val')) +
+        routingRow('inbound_source', srcs, chips(srcs, 'src', cc.source, 'val')) + viaRow +
+        routingRow('outbound_destination', dests, chips(dests, 'dest', cc.dest, 'val')) +
         '<button class="os-comp-rm" data-act="remove">Remove ' + esc(node) + ' from the flow</button>');
 }
 
@@ -717,18 +726,32 @@ function row(label, inner) {
     return '<div class="os-comp-row-l"><span class="os-lbl">' + esc(label) + '</span>' + inner + '</div>';
 }
 
+// NEVER A HEADING OVER NOTHING (owner ruling, Amendment A 2026-09-16). A row
+// whose options come from the routing set and has none draws its heading and
+// an empty space, and an engineer at Hopkinsville read four of those as the
+// derivation being broken. The sentence is the model's — the desktop's pickers
+// say the same thing in the same words — and it names the next action.
+function routingRow(field, list, inner) {
+    const note = M().routingNote(model, field, list.length);
+    return row(M().fieldLabel(model, field),
+        note ? '<span class="os-comp-none">' + esc(note) + '</span>' : inner);
+}
+
 function openDockPanel(half) {
     panelFor = { kind: 'dock', half: half };
     const opts = routing().filter(r => r.role === (half === 'in' ? 'source' : 'destination'));
     const act = model.positions.map(p => model.cells[p.core_node_name]).filter(c => c.on && c.mode);
     const cur = [...new Set(act.map(c => half === 'in' ? c.source : c.dest))];
+    const dockNote = M().routingNote(model, half === 'in' ? 'inbound_source' : 'outbound_destination', opts.length);
     showPop('[data-dock="' + half + '"]',
         '<h3>' + (half === 'in' ? 'Inbound source' : 'Outbound destination') +
         '<span>applies to every position in this flow</span></h3>' +
-        '<div class="os-comp-row-l">' + opts.map(o =>
-            '<button class="os-chip btn ' + (cur.length === 1 && cur[0] === o.core_node_name ? 'on' : '') +
-            '" data-act="dock" data-half="' + half + '" data-val="' + esc(o.core_node_name) + '">' +
-            esc(o.label || o.core_node_name) + '</button>').join('') + '</div>' +
+        '<div class="os-comp-row-l">' + (dockNote
+            ? '<span class="os-comp-none">' + esc(dockNote) + '</span>'
+            : opts.map(o =>
+                '<button class="os-chip btn ' + (cur.length === 1 && cur[0] === o.core_node_name ? 'on' : '') +
+                '" data-act="dock" data-half="' + half + '" data-val="' + esc(o.core_node_name) + '">' +
+                esc(o.label || o.core_node_name) + '</button>').join('')) + '</div>' +
         '<div class="help">Set one position differently from its own panel — it shows there, not here.</div>');
 }
 

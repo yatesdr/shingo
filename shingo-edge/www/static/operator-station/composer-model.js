@@ -468,6 +468,11 @@ function init(opts) {
         styleName: opts.styleName || '',
         positions: positions,
         routing: opts.routing || [],
+        // How many rows of each role the process has and has NOT switched on.
+        // The rows themselves are deliberately absent (the view filters them);
+        // the count is what lets a role with nothing to offer say which of the
+        // two empties it is. See routingNote.
+        routingOff: opts.routingOff || {},
         parts: (opts.parts || []).slice(),
         lastRun: opts.lastRun || null,
         flowspec: opts.flowspec || null,
@@ -1427,6 +1432,66 @@ function shapeDiff(state, preset) {
     return out;
 }
 
+// ── a role with nothing to offer says why ────────────────────────────────────
+//
+// NEVER A HEADING OVER NOTHING (owner ruling, Amendment A 2026-09-16).
+//
+// The composer offers a process only its routing set, so a process with no
+// enabled rows in a role gets a heading and no chips. An engineer at
+// Hopkinsville read four of those — inbound staging, outbound staging, inbound
+// source, outbound destination — as the derivation being broken. It was not:
+// the set was empty, and the card said nothing, which from where they stood is
+// the same thing.
+//
+// TWO EMPTIES, TWO SENTENCES, because they have two different next actions. A
+// role nobody has put names in needs names. A role whose names were found from
+// the flows and never switched on needs a switch — and the second one is
+// invisible from the card without the count the view now carries, which is why
+// it carries it.
+//
+// HERE, AND NOT IN EITHER RENDERER. The station's cell card and the desktop's
+// Flows pickers draw from the same composer response and would otherwise say
+// this in two voices, or — as happened — in one and none.
+const ROLE_WORD = {
+    source: 'inbound source',
+    staging: 'staging',
+    destination: 'outbound destination',
+};
+
+// FIELD_ROLE maps a card row to the routing role its options come from. The
+// two staging fields share one role, because the routing set has one.
+const FIELD_ROLE = {
+    inbound_source: 'source',
+    outbound_destination: 'destination',
+    inbound_staging: 'staging',
+    outbound_staging: 'staging',
+};
+
+function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
+
+// routingNote is the line under an empty row, or '' when the row has options.
+//
+// `offered` is how many the SCREEN can offer, which for staging is the routing
+// rows plus the process's own back positions — a press that parks on its own
+// back slot has staging without a routing row, and telling its operator the set
+// is empty would be false.
+function routingNote(state, field, offered) {
+    if (offered) return '';
+    const role = routingRoleOf(field);
+    if (!role) return '';
+    const word = ROLE_WORD[role] || role;
+    const off = (state.routingOff || {})[role] || 0;
+    if (off) {
+        // AGREEING IN NUMBER MATTERS ON A SHOP-FLOOR SCREEN: "turn them on"
+        // over a count of one reads as a second thing the operator has not
+        // found yet.
+        return off + ' ' + word + ' node' + (off === 1 ? '' : 's') +
+            ' found from your flows, switched off — turn ' + (off === 1 ? 'it' : 'them') +
+            ' on in Settings › Routing';
+    }
+    return 'No ' + word + ' nodes in this process’s routing set — add them in Settings › Routing';
+}
+
 // ── exported constants the render layer needs (it invents no copy) ───────────
 function modeLabels() { return Object.assign({}, MODES); }
 function modeHelp() { return Object.assign({}, MODEHELP); }
@@ -1450,6 +1515,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
         legs, dockNotes, cardLines, pictureCells, bar,
         findings, findingShort, fixItFor,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
+        routingNote, routingRoleOf,
         presetCells, shapeDiff, orderSentences, orderSentence, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, advancedDefaults,
     };
