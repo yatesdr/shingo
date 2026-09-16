@@ -224,7 +224,10 @@ function appbar() {
     return '<div class="pd-app">' +
         '<div class="pd-crumb"><button class="pd-dimlink" data-act="list">Processes</button> › <b>' +
         esc(p ? p.name : '') + (p && stationsOf(p.id)[0] ? ' · ' + esc(stationsOf(p.id)[0].name) : '') + '</b></div>' +
-        '<div class="pd-tabs">' + tab('flows', 'Flows') + tab('routing', 'Routing set') +
+        // NO ROUTING TAB. The routing set is REVIEWED, and review is Settings'
+        // job — it sits there beside the gate it is the precondition for
+        // (owner ruling 2026-09-16). Creation is the Add-process sheet's.
+        '<div class="pd-tabs">' + tab('flows', 'Flows') +
         tab('screens', 'Operator screens') + tab('settings', 'Settings') +
         tab('presets', 'Presets') + '</div>' +
         '<div class="pd-spacer"></div>' +
@@ -244,6 +247,10 @@ async function openProcess(id) {
     S.routing = null;
     S.routingError = '';
     S.mapZoom = 1;
+    // The routing pickers go with the routing set: they are write-through onto
+    // THIS process's rows, and one left behind would post another press's name
+    // into this one.
+    S.pickers = {};
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
     const res = await fetch('/api/processes/' + id + '/composer');
     if (!res.ok) {
@@ -257,8 +264,7 @@ async function openProcess(id) {
         (S.composer.styles[0] && S.composer.styles[0].id) || 0;
     selectStyle(first);
     if (h.adv) openAdvanced(h.adv);
-    if (h.tab === 'routing') { S.tab = 'routing'; openRouting(); }
-    else if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
+    if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
     else if (h.tab === 'presets') {
         await openPresets();
         // #tab=presets;preset=<id> opens the tab with that row's member list
@@ -275,7 +281,7 @@ async function openProcess(id) {
             if (h.tick) await tickApplyRow(Number(h.tick));
         }
     }
-    else if (h.tab === 'settings') { S.tab = 'settings'; S.settings = settingsDraft(); drawSettings(); }
+    else if (h.tab === 'settings') { S.tab = 'settings'; S.settings = settingsDraft(); await openSettings(); }
 }
 
 // #style=<id>;adv=<position>;tab=routing opens a particular flow, a particular
@@ -1482,73 +1488,111 @@ function mapSubject() {
     return (st && st.name) || (p && p.name) || 'this press';
 }
 
-function routingPanel() {
-    const rows = S.routing || [];
-    const claims = (S.composer.styles || []).reduce((n, s) => n + (s.claim_count || 0), 0);
-    const waiting = rows.filter(r => r.origin === 'backfill' && !r.enabled).length;
-    let body = '';
-    for (const g of ROUTING_GROUPS) {
-        let mine = rows.filter(r => r.role === g[0]);
-        // THE PRESS'S OWN BACK POSITIONS ARE STAGING, and they are not routing
-        // rows. The derive reads inbound_staging / outbound_staging, and a
-        // press-index cell parks on its PAIRED position instead — deliberately,
-        // because a paired position is choreography and not a routing choice.
-        // They still belong under this heading: an engineer reading "where
-        // Robot 1 parks a bin" and seeing nothing would conclude the press has
-        // nowhere to park. So they are listed from the picture, with no switch,
-        // which is what "always available" means.
-        if (g[0] === 'staging') {
-            const named = {};
-            for (const r of mine) named[r.core_node_name] = true;
-            for (const pos of (S.composer.cell && S.composer.cell.positions) || []) {
-                if (pos.kind !== 'back' || named[pos.core_node_name]) continue;
-                mine = mine.concat([{
-                    id: 0, core_node_name: pos.core_node_name, role: 'staging',
-                    label: pos.core_node_name, origin: 'position', enabled: true, style_count: 0,
-                }]);
-            }
-        }
-        if (!mine.length) continue;
-        body += '<div class="pd-lbl pd-rgrp">' + esc(g[1] + ' · ' + g[2]) + '</div>' + mine.map(routingRow).join('');
-    }
-    const way = waypointNames();
-    if (way.length) {
-        body += '<div class="pd-lbl pd-rgrp">Waypoints the composer offers · from the map</div>' +
-            // No tag: the heading already says these come from the map, and
-            // the origin pills left the rows with Q5.
-            way.map(n => '<div class="pd-rrow"><span class="sq lm"></span><span class="nm">' + esc(n) +
-                '<small>on the shortest supply path</small></span><span class="sp"></span></div>').join('');
-    }
-    body += '<div class="pd-lbl pd-rgrp">Add to the set</div>' +
-        '<div class="pd-rrow add" data-act="rs-add"><span class="sq grp dash"></span>' +
-        '<span class="nm accent">Pick a group or node on the map…</span></div>';
+// ── the routing set, in Settings (owner ruling 2026-09-16) ───────────────────
+//
+// THE ROUTING SET HAD A TAB, AND CREATION IS NOT REVIEW. That tab was built to
+// read backfilled rows on a migrated process — the derive endpoint, the amber
+// switch, the evidence line under a name — and every one of those is a REVIEW,
+// which is what Settings is for. Making a routing set is three short lists on
+// the Add-process sheet and is over in a minute. So the review lives here,
+// beside the gate it is the precondition for, and the map beside it is a
+// read-back rather than the only way in.
+//
+// THREE LISTS, NOT ONE, because composer-model's defaultRouting picks a cell's
+// source and destination by lowest sequence PER ROLE: source, staging and
+// destination are different questions and a single list of nodes could not
+// answer any of them.
 
-    const head = 'Where this press may draw bins from, stage them, and send them. ' +
-        (S.routingSummary || '');
-    return '<div class="pd-rsp"><div class="hd"><h2>Routing set</h2><p>' + esc(head) + '</p></div>' +
-        '<div class="lst">' + body + '</div>' +
-        (S.routingError ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
-        '<div class="ft">A name a live flow uses cannot be removed. A name the backfill found ' +
-        'arrives switched off, in amber: switching it on is what lets operators pick it.</div></div>';
+const ROUTING_ADD_SUB = 'add by name — the picker is Core’s own list';
+
+function routingPickersReady() {
+    for (const g of ROUTING_GROUPS) {
+        const key = routingPickerKey(g[0]);
+        // THE PICKER'S STATE BELONGS TO THE TAB, NOT TO A REDRAW. drawSettings
+        // runs on every switch flip and after every save, and re-initialising
+        // here would clear the half-typed filter under the engineer's hands.
+        // openProcess drops them when the process changes.
+        if (S.pickers[key] && S.pickers[key].onPick) continue;
+        pickerInit(key, {
+            // WRITE-THROUGH: the rows above the picker are the selection, so
+            // the picker holds none of its own. A name picked here is a row on
+            // the server before the list redraws.
+            onPick: name => addRoutingNode(g[0], name),
+            exclude: n => (isPositionRow(n)
+                ? 'a position of this press — available to every flow on it already'
+                : ''),
+            annotate: n => {
+                const have = (S.routing || []).find(r => r.core_node_name === n && r.role === g[0]);
+                return have ? (have.enabled ? 'already in this list' : 'in this list, switched off') : '';
+            },
+        });
+    }
 }
 
-function drawRouting() {
+// The rows of one role, with the press's own back positions folded into
+// staging — see the note in routingRole.
+function routingRowsFor(role) {
+    let mine = (S.routing || []).filter(r => r.role === role);
+    // THE PRESS'S OWN BACK POSITIONS ARE STAGING, and they are not routing
+    // rows. The derive reads inbound_staging / outbound_staging, and a
+    // press-index cell parks on its PAIRED position instead — deliberately,
+    // because a paired position is choreography and not a routing choice.
+    // They still belong under this heading: an engineer reading "where Robot 1
+    // parks a bin" and seeing nothing would conclude the press has nowhere to
+    // park. So they are listed from the picture, with no switch, which is what
+    // "always available" means.
+    if (role !== 'staging') return mine;
+    const named = {};
+    for (const r of mine) named[r.core_node_name] = true;
+    for (const pos of (S.composer.cell && S.composer.cell.positions) || []) {
+        if (pos.kind !== 'back' || named[pos.core_node_name]) continue;
+        mine = mine.concat([{
+            id: 0, core_node_name: pos.core_node_name, role: 'staging',
+            label: pos.core_node_name, origin: 'position', enabled: true, style_count: 0,
+        }]);
+    }
+    return mine;
+}
+
+function routingRole(g) {
+    const rows = routingRowsFor(g[0]);
+    const body = rows.length
+        ? rows.map(routingRow).join('')
+        : '<div class="pd-dim">nothing yet — this press can draw on nothing under this heading</div>';
+    return stBlock(g[1], g[2] + ' · ' + ROUTING_ADD_SUB,
+        body + pickerBox(routingPickerKey(g[0])));
+}
+
+function routingSection() {
+    routingPickersReady();
+    const way = waypointNames();
+    const waypoints = way.length
+        ? stBlock('Waypoints', 'the points the composer offers on the shortest supply path · from the map',
+            way.map(n => '<div class="pd-rrow"><span class="sq lm"></span><span class="nm">' + esc(n) +
+                '<small>on the shortest supply path</small></span><span class="sp"></span></div>').join(''))
+        : '';
     const m = mapOf();
-    root().innerHTML = appbar() + '<div class="pd-rs"><div class="pd-map">' + drawMap(1040, 780) +
-        // THE CAPTION NAMES THE SUBJECT FIRST, then where the drawing came
-        // from. It read "plant map from Core · revision <rev>", which says
-        // what kind of picture it is and which pull, and never which press the
-        // map is centred on — so the revision stood where a name belongs.
-        // Edge stores no plant or site name (there is no such column or config
-        // field on this tree), so the name is the press's: the station's when
-        // there is one, the process's otherwise.
+    return '<div class="pd-sect"><h2>Routing set</h2>' +
+        '<span class="pd-dim">' + esc(S.routingSummary ||
+            'where this press may draw bins from, stage them, and send them') + '</span></div>' +
+        ROUTING_GROUPS.map(routingRole).join('') +
+        waypoints +
+        (S.routingError ? '<div class="pd-refusal">' + esc(S.routingError) + '</div>' : '') +
+        '<p class="pd-note">Operators are offered these names and never the plant. A name a live ' +
+        'flow uses cannot be removed. A name the backfill found arrives switched off, in amber: ' +
+        'switching it on is what lets operators pick it — and the flow composer below stays shut ' +
+        'until this list has been read.</p>' +
+        // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
+        // press, and a click on a name flashes that name's row. It is not an
+        // input any more: a click on a dot could only guess at the role, and
+        // the three lists above are the engineer saying it.
+        '<div class="pd-map pd-rsmap">' + drawMap(1040, 520) +
         '<div class="cap">' + esc(mapSubject()) + ' · ' +
         esc(m ? 'plant map from Core · revision ' + m.revision : 'no plant map cached') +
         ' · teal = Robot 1 supply path · indigo = Robot 2 return</div>' +
         '<div class="zoom"><button data-act="rs-zoom" data-z="in">+</button>' +
         '<button data-act="rs-zoom" data-z="out">&minus;</button>' +
-        '<button data-act="rs-zoom" data-z="home">&#8962;</button></div></div>' +
-        routingPanel() + '</div>';
+        '<button data-act="rs-zoom" data-z="home">&#8962;</button></div></div>';
 }
 
 // The writes this screen makes are U5's, and a refusal comes back BY NAME —
@@ -1556,20 +1600,25 @@ function drawRouting() {
 // switch: "PLN_02 is used by PART 40421-RVJ56.37" is an answer, "cannot
 // disable" is not.
 async function routingPatch(id, body) {
-    const res = await fetch('/api/processes/' + S.processID + '/routing-nodes/' + id, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    });
-    if (res.ok) {
-        S.routingError = '';
-    } else {
-        let why = 'The server refused that change (' + res.status + ').';
-        try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* the status is all there is */ }
-        S.routingError = why;
-    }
+    const out = await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + id, body);
+    S.routingError = out.ok ? '' : out.error;
     await loadRouting();
-    drawRouting();
+    drawSettings();
+}
+
+// A name picked in one of the three lists, posted in THAT role. origin and the
+// author are the server's to stamp.
+async function addRoutingNode(role, name) {
+    const out = await postJSON('POST', '/api/processes/' + S.processID + '/routing-nodes',
+        B().routingAdd(name, role));
+    S.routingError = out.ok ? '' : out.error;
+    await loadRouting();
+    drawSettings();
+    // Back into the field the name was typed into: the engineer adding one
+    // name is usually adding three.
+    const box = $('npk-' + routingPickerKey(role));
+    const input = box && box.querySelector('[data-npkq]');
+    if (input) input.focus();
 }
 
 async function loadRouting() {
@@ -1586,50 +1635,28 @@ async function loadRouting() {
     S.routingSummary = view.summary || '';
 }
 
-// Clicking a name on the map: a row it already has scrolls into view and
-// flashes; a name it does not have is added, in the role the map implies —
-// a press position stages, a group of supermarket slots sources and receives.
-// SPEC: "clicking a map group or node adds it".
-async function pickOnMap(name) {
-    const have = (S.routing || []).find(r => r.core_node_name === name);
-    if (have) {
-        const row = root().querySelector('[data-rsname="' + CSS.escape(name) + '"]');
-        if (row) {
-            row.scrollIntoView({ block: 'nearest' });
-            row.classList.add('flash');
-        }
-        return;
-    }
-    if (isPositionRow(name)) {
-        // A press position is already available to its own flows; adding it as
-        // a routing row would be a second record of the same fact.
-        S.routingError = name + ' is a position of this press. It is available to ' +
-            'every flow on it already, and does not need a routing row.';
-        drawRouting();
-        return;
-    }
-    const roles = membersOfGroup(name).length ? ['source', 'destination'] : ['source'];
-    for (const role of roles) {
-        const res = await fetch('/api/processes/' + S.processID + '/routing-nodes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(B().routingAdd(name, role)),
-        });
-        if (!res.ok) {
-            let why = 'The server refused ' + name + ' (' + res.status + ').';
-            try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
-            S.routingError = why;
-            break;
-        }
-        S.routingError = '';
-    }
-    await loadRouting();
-    drawRouting();
+// Clicking a name on the map FLASHES ITS ROW, and that is the whole of it.
+//
+// It used to ADD the name, in the role the map implied — a group sources and
+// receives, a press position stages — and that implication is a guess the
+// engineer can make better than the drawing can: they say the role by which of
+// the three lists they put the name in. SPEC's "clicking a map group or node
+// adds it" is superseded (owner ruling 2026-09-16).
+//
+// A name with no row — a front position, or any of the plant drawn faint
+// behind the press — flashes nothing. The map is most of a plant this press
+// has no business in, and a sentence for every faint dot is noise.
+function flashRoutingRow(name) {
+    const row = root().querySelector('[data-rsname="' + CSS.escape(name) + '"]');
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest' });
+    row.classList.add('flash');
 }
 
-async function openRouting() {
+async function openSettings() {
+    S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
-    drawRouting();
+    drawSettings();
 }
 
 // ── D2 · Advanced (SPEC §2 D2) ───────────────────────────────────────────────
@@ -2126,6 +2153,14 @@ function stField(label, sub, control) {
         (sub ? '<small>' + esc(sub) + '</small>' : '') + '</label><div class="v">' + control + '</div></div>';
 }
 
+// A settings field whose control is a COLUMN — a list of rows and the picker
+// under it — rather than one control on a line. Same grid, same label column;
+// only the value box stacks.
+function stBlock(label, sub, inner) {
+    return '<div class="pd-sfld"><label>' + esc(label) +
+        (sub ? '<small>' + esc(sub) + '</small>' : '') + '</label><div class="v col">' + inner + '</div></div>';
+}
+
 function stText(key, wide) {
     return '<input class="pd-inp' + (wide ? ' wide' : '') + '" type="text" data-st="' + key +
         '" value="' + esc(S.settings[key]) + '">';
@@ -2169,8 +2204,9 @@ function drawSettings() {
         stField('Operators may change the flow on the HMI',
             'off: the operator picks a part and runs it as set up · on: they may also change how it flows',
             stToggle('flow_composer_enabled')) +
-        '<p class="pd-note">Turn this on once the routing set has been reviewed. Off is right for a press ' +
-        'whose flows are hammered out.</p>';
+        '<p class="pd-note">Turn this on once the routing set below has been reviewed — it is the ' +
+        'list an operator would be choosing from. Off is right for a press whose flows are hammered ' +
+        'out.</p>';
 
     const stylesSect = '<div class="pd-sect"><h2>Styles</h2><span class="pd-dim">' + styles +
         ' live · every part this press runs</span><span class="pd-spacer"></span>' +
@@ -2192,7 +2228,7 @@ function drawSettings() {
             '<button class="pd-btn danger" data-act="st-delete">Delete ' + esc(S.settings.name) + '…</button>');
 
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + changeover + hmi + stylesSect + danger +
+        general + counter + changeover + hmi + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -2208,6 +2244,7 @@ function drawSettings() {
             markSettingsBar();
         });
     }
+    bindPickers();
 }
 
 // The save bar alone, so typing a name does not redraw the field under the
@@ -2708,10 +2745,9 @@ async function refreshProcess() {
     }
     S.settings = settingsDraft();
     if (S.tab === 'flows') selectStyle(composerStyle(S.styleID) ? S.styleID : ((S.composer.styles[0] || {}).id || 0));
-    else if (S.tab === 'routing') { await loadRouting(); drawRouting(); }
     else if (S.tab === 'screens') drawScreens();
     else if (S.tab === 'presets') await refreshPresets();
-    else drawSettings();
+    else await openSettings();
 }
 
 // ── Add process, end to end ──────────────────────────────────────────────────
@@ -3968,7 +4004,7 @@ function onClick(e) {
                 const z = btn.dataset.z;
                 S.mapZoom = z === 'in' ? Math.min(4, S.mapZoom * 1.4)
                     : z === 'out' ? Math.max(0.4, S.mapZoom / 1.4) : 1;
-                drawRouting();
+                drawSettings();
                 return;
             }
             case 'add-process': openAddProcess(); return;
@@ -3979,14 +4015,13 @@ function onClick(e) {
         }
     }
     const mapEl = e.target.closest && e.target.closest('[data-mapname]');
-    if (mapEl && S.tab === 'routing') { pickOnMap(mapEl.dataset.mapname); return; }
+    if (mapEl && S.tab === 'settings') { flashRoutingRow(mapEl.dataset.mapname); return; }
     if (tab) {
         S.tab = tab.dataset.tab;
         if (S.tab === 'flows') drawFlows();
-        else if (S.tab === 'routing') openRouting();
         else if (S.tab === 'screens') drawScreens();
         else if (S.tab === 'presets') openPresets();
-        else if (S.tab === 'settings') { S.settings = S.settings || settingsDraft(); drawSettings(); }
+        else if (S.tab === 'settings') openSettings();
         return;
     }
     // A preset row expands its member list; a second click closes it.

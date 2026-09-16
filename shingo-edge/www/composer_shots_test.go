@@ -975,20 +975,37 @@ func TestComposerShots(t *testing.T) {
 	desktopDOM("D1 add-position footer", d1, `class="pd-posfoot"`)
 	checkDesktopFits("D1 flows", d1)
 	desktopDOM("D2 advanced", d2, `class="pd-modal"`)
-	d3 := fmt.Sprintf("/processes?process=%d#tab=routing", seeded.ProcessID)
-	desktopShot("D3-routing-set.png", d3)
-	desktopDOM("D3 routing set", d3, `class="pd-rsp"`)
-	// The map is the screen. A routing panel over an empty frame is the shape
-	// of D3 with none of its content, and that is exactly what a missing
-	// geometry cache or a bad projection would leave behind.
-	desktopDOM("D3 map", d3, `class="mp-pos`)
-	desktopDOM("D3 supply path", d3, `class="mp-route r1"`)
 	d4 := fmt.Sprintf("/processes?process=%d#tab=screens", seeded.ProcessID)
 	d5 := fmt.Sprintf("/processes?process=%d#tab=settings", seeded.ProcessID)
 	desktopShot("D4-operator-screens.png", d4)
 	desktopShot("D5-settings.png", d5)
 	desktopDOM("D4 operator screens", d4, `data-act="screen-add"`)
 	desktopDOM("D5 settings", d5, `class="pd-seg"`)
+	// D3 · THE ROUTING SET, WHICH IS NOW A SECTION OF D5 rather than a tab of
+	// its own (owner ruling 2026-09-16). Reviewing the set is Settings' job and
+	// it belongs beside the gate it is the precondition for; creating one is
+	// the Add-process sheet's. So the shot is of Settings, and everything this
+	// checked about the panel is checked there.
+	desktopShot("D3-routing-set.png", d5)
+	desktopDOM("D3 routing rows", d5, `class="pd-rrow`)
+	// The three lists are three ROLES, because composer-model picks a cell's
+	// source and destination by lowest sequence PER ROLE. One list of nodes
+	// could not answer any of the three questions.
+	for _, role := range []string{"Sources", "Staging", "Destinations"} {
+		desktopDOM("D3 "+role, d5, ">"+role+"<")
+	}
+	// Every role list carries the picker that adds to it — the one node input
+	// this page has, and the reason a plant whose map has not reached the edge
+	// is no longer a plant with no way to author a routing set at all.
+	desktopDOM("D3 node picker", d5, `class="pd-npk"`)
+	// The map is still the screen's read-back. A routing section over an empty
+	// frame is the shape of D3 with none of its content, and that is exactly
+	// what a missing geometry cache or a bad projection would leave behind.
+	desktopDOM("D3 map", d5, `class="mp-pos`)
+	desktopDOM("D3 supply path", d5, `class="mp-route r1"`)
+	// THE TAB IS GONE, and a page still drawing it is a page with two doors
+	// onto one decision — the thing this screen exists to stop.
+	desktopRefuteDOM("no routing tab", d5, `data-tab="routing"`)
 
 	// ── THE ONE REAL CLICK ──────────────────────────────────────────────
 	//

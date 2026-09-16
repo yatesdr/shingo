@@ -507,11 +507,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    Map left, names right. The plant is the substrate ramp and nothing on it is
    saturated except the two robot paths and the accent waypoints — the same
    rule the cell picture follows, at plant scale. */
-/* Fills the shell, like every other tab. It used to guess at the viewport
-   minus 210 px with a 620 px floor, which is the same hardcoded-chrome
-   arithmetic the Flows tab's `calc(100vh - 56px)` was, and it grew the page
-   whenever the guess was short. */
-.pd-rs { display: flex; flex: 1 1 auto; min-height: 0; }
 .pd-map { flex: 1; position: relative; background: var(--bg); overflow: hidden; }
 .pd-map svg { width: 100%; height: 100%; display: block; }
 .pd-map .cap {
@@ -525,27 +520,19 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-nomap { padding: 40px; color: var(--text-muted); font-size: 13px; max-width: 46ch; }
 
-.pd-rsp {
-    width: 400px; flex: 0 0 400px; border-left: 1px solid var(--sub-1);
-    display: flex; flex-direction: column; background: var(--elev-header, var(--surface));
-}
-.pd-rsp .hd { padding: 18px 20px 10px; }
-.pd-rsp .hd h2 { margin: 0; font-size: 17px; font-weight: 600; }
-.pd-rsp .hd p { margin: 4px 0 0; color: var(--text-muted); font-size: 12.5px; }
-.pd-rsp .lst { padding: 0 12px 12px; overflow: auto; flex: 1; }
-.pd-rsp .ft { padding: 12px 20px; border-top: 1px solid var(--sub-1); color: var(--text-muted); font-size: 12px; }
-.pd-rgrp { padding: 14px 8px 6px; display: block; }
-.pd-rrow { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; }
+/* The rows themselves outlive the rail they used to sit in: they are the
+   routing set's one row shape, drawn now as a settings field's value. The
+   rail, its header and footer, its group heading and the dashed "add" row went
+   with the tab — the three role lists are labelled by the field's own label
+   column and added to by a picker. */
+.pd-rrow { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; }
 .pd-rrow:hover { background: var(--surface); }
-.pd-rrow.add { cursor: pointer; }
 .pd-rrow.flash { background: var(--surface-2, var(--surface)); outline: 1px solid var(--accent); }
 .pd-rrow .sq { width: 12px; height: 12px; border-radius: 3px; background: var(--station); flex: 0 0 auto; }
 .pd-rrow .sq.grp { width: 14px; height: 14px; border: 1.5px solid var(--station); background: none; }
-.pd-rrow .sq.grp.dash { border-style: dashed; opacity: .6; }
 .pd-rrow .sq.pos { background: none; border: 1.5px solid var(--sub-5); }
 .pd-rrow .sq.lm { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); margin: 0 2px; }
 .pd-rrow .nm { font-weight: 600; font-size: 13.5px; }
-.pd-rrow .nm.accent { color: var(--accent); }
 /* The row's whole explanation is this sub-line: where the name came from, and
    the evidence. NO ORIGIN PILL — "backfill" in a pill is a word from the
    implementation, and an engineer reading it learns that something put the
@@ -558,7 +545,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-rrow .nm small.mem { color: var(--sub-5); }
 .pd-rrow .sp { flex: 1; }
 .pd-refusal {
-    margin: 0 12px 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
+    margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
     color: var(--chip-ink-below); border: 1px solid var(--viz-coral);
 }
 
@@ -798,3 +785,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-empty { padding: 28px 4px; max-width: 64ch; }
 .pd-empty p { margin: 0 0 10px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
 .pd-empty b { color: var(--text); font-weight: 600; }
+
+/* ── the routing set in Settings (U10) ────────────────────────────────────
+   The tab is gone: reviewing the set is Settings' job and it sits beside the
+   gate it is the precondition for. Nothing here is a new shape — the rows are
+   D3's .pd-rrow, the label column is the settings field's, and the map is the
+   same .pd-map at a height instead of a flex share. */
+.pd-sfld .v.col { flex-direction: column; align-items: stretch; gap: 2px; }
+.pd-sfld .v.col .pd-npk { margin-top: 6px; }
+.pd-settings .pd-rsmap {
+    flex: none; height: 520px; margin: 10px 0 4px;
+    border: 1px solid var(--sub-2); border-radius: 12px;
+}
