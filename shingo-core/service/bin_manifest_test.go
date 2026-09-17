@@ -86,7 +86,7 @@ func TestBinManifestService_ClearForReuse(t *testing.T) {
 	}
 
 	// Clear the bin
-	if _, err := svc.ClearForReuse(bin.ID, nil); err != nil {
+	if _, err := svc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("ClearForReuse"+": %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	}
 
 	// Clear the bin
-	if _, err := svc.ClearForReuse(bin.ID, nil); err != nil {
+	if _, err := svc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("ClearForReuse"+": %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestBinManifestService_ClearForReuse_SetsBinTypeID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get bin pre-clear: %v", err)
 	}
-	newEpoch, err := svc.ClearForReuse(bin.ID, &dunnage.ID)
+	newEpoch, err := svc.ClearForReuse(bin.ID, &dunnage.ID, protocol.DeclaredByLifecycle)
 	if err != nil {
 		t.Fatalf("ClearForReuse with binTypeID: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestBinManifestService_ClearForReuse_NilLeavesTypeUnchanged(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DUNNAGE-2", "PART-B", 50)
 	wantTypeID := bin.BinTypeID
 
-	if _, err := svc.ClearForReuse(bin.ID, nil); err != nil {
+	if _, err := svc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("ClearForReuse(nil): %v", err)
 	}
 
@@ -449,7 +449,7 @@ func TestBinManifestService_SetForProduction(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SFP-1", "", 0)
 
 	manifest := `{"items":[{"catid":"WIDGET","qty":50}]}`
-	if _, err := svc.SetForProduction(bin.ID, manifest, "WIDGET-X", 200); err != nil {
+	if _, err := svc.SetForProduction(bin.ID, manifest, "WIDGET-X", 200, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("SetForProduction"+": %v", err)
 	}
 
@@ -1158,7 +1158,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TMPL-1", "INITIAL", 0)
 
 	// Apply the template — nil uopOverride falls back to template's UOPCapacity.
-	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, nil); err != nil {
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("SetFromTemplate"+": %v", err)
 	}
 
@@ -1184,7 +1184,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 
 	// Override uopOverride.
 	fifty := 50
-	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &fifty); err != nil {
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &fifty, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("SetFromTemplate override"+": %v", err)
 	}
 	got2, _ := db.GetBin(bin.ID)
@@ -1196,7 +1196,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	// fall-back-to-capacity sentinel (HK 2026-07-16: the int-zero sentinel
 	// forced hand-labeled empties to phantom full-capacity counts).
 	zero := 0
-	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &zero); err != nil {
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &zero, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("SetFromTemplate explicit zero: %v", err)
 	}
 	got3, _ := db.GetBin(bin.ID)
@@ -1206,7 +1206,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 
 	// Negative overrides are rejected.
 	neg := -1
-	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &neg); err == nil {
+	if _, err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, &neg, protocol.DeclaredByLifecycle); err == nil {
 		t.Error("SetFromTemplate with negative override: want error, got nil")
 	}
 }

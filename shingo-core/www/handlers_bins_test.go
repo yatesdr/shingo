@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	"shingo/protocol/testutil"
 	"shingocore/config"
@@ -353,6 +354,149 @@ func TestExecuteBinAction_LoadPayload(t *testing.T) {
 		t.Errorf("payload_code: got %q, want %q", got.PayloadCode, sd.Payload.Code)
 	}
 	requireAudit(t, db, cleanBin.ID, "loaded", "", sd.Payload.Code, "ui")
+}
+
+// adjustmentsForBin drains the outbox and returns every UOPAdjustment naming
+// this bin. It returns them ALL rather than the one the caller wants, because
+// the count is half of what these tests assert: this door announced twice for
+// one load until the declarer landed, and a helper that filtered would have
+// hidden that.
+func adjustmentsForBin(t *testing.T, db *store.DB, binID int64) []protocol.UOPAdjustment {
+	t.Helper()
+	msgs, err := db.ListPendingOutbox(20)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	var out []protocol.UOPAdjustment
+	for _, m := range msgs {
+		if m.MsgType != "data."+protocol.SubjectUOPAdjustment {
+			continue
+		}
+		var env protocol.Envelope
+		if err := json.Unmarshal(m.Payload, &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v", err)
+		}
+		var d protocol.Data
+		if err := json.Unmarshal(env.Payload, &d); err != nil {
+			t.Fatalf("unmarshal data wrapper: %v", err)
+		}
+		var a protocol.UOPAdjustment
+		if err := json.Unmarshal(d.Body, &a); err != nil {
+			t.Fatalf("unmarshal uop adjustment: %v", err)
+		}
+		if a.BinID == binID {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// The load must tell Edge what the tile now holds, ONCE, from inside the load's
+// own transaction.
+//
+// Load Payload is Core-only — no OrderDelivered envelope ever names the bin,
+// because nothing was delivered — so without a message the station will bind
+// from, active_bin_id stays unset and PLC ticks pile into pending_uop_delta
+// against no bin (SPR 2026-09-17: two admin loads sat unbound ~7 h).
+//
+// The message is the epoch bump's own announcement, declared by a person. It
+// used to be a second broadcast sent after the transaction committed, beside a
+// first one the bump sent as a machine that the station deliberately ignores —
+// so this door announced twice and the durable one carried the wrong answer.
+// The in-tx half is held by
+// TestSetForProduction_AnnouncementRollsBackWithTheReset in the service
+// package; what this test adds is the door, the count and the number of them.
+func TestExecuteBinAction_LoadPayload_AnnouncesOnceAsAPerson(t *testing.T) {
+	t.Parallel()
+	h, db, sd, _ := setupBinForAction(t)
+
+	btRaw, err := db.GetBinTypeByCode("DEFAULT")
+	bt := testutil.Must(t, btRaw, err, `db.GetBinTypeByCode("DEFAULT")`)
+	nodeID := sd.StorageNode.ID
+	cleanBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-LOAD-BIND-1", NodeID: &nodeID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(cleanBin), "create clean bin")
+	freshRaw, err := db.GetBin(cleanBin.ID)
+	cleanBin = testutil.Must(t, freshRaw, err, "db.GetBin(cleanBin.ID)")
+
+	params := mustJSON(t, map[string]any{
+		"payload_code": sd.Payload.Code,
+		"uop_override": 50,
+	})
+	testutil.MustNoErr(t, h.executeBinAction(cleanBin, "load_payload", params), "load_payload")
+
+	loadedRaw, err := db.GetBin(cleanBin.ID)
+	loaded := testutil.Must(t, loadedRaw, err, "db.GetBin after the load")
+	adjs := adjustmentsForBin(t, db, cleanBin.ID)
+	if len(adjs) != 1 {
+		t.Fatalf("load enqueued %d UOPAdjustments for bin %d, want exactly 1 — zero means the "+
+			"station never binds it and the bin sits not counting; more than one means the door "+
+			"is announcing beside the bump again, and the extra one is the copy that is not in "+
+			"the load's transaction", len(adjs), cleanBin.ID)
+	}
+	adj := adjs[0]
+	if protocol.IsLifecycleActor(adj.Actor) {
+		t.Errorf("Actor = %q, which the station reads as machine and will not bind an empty "+
+			"slot from — the load would announce itself and change nothing", adj.Actor)
+	}
+	if adj.CoreNodeName != loaded.NodeName {
+		t.Errorf("CoreNodeName: got %q, want %q (the bin's node)", adj.CoreNodeName, loaded.NodeName)
+	}
+	if adj.NewRemaining != 50 {
+		t.Errorf("NewRemaining: got %d, want 50 (the override)", adj.NewRemaining)
+	}
+	if adj.Epoch != loaded.DeltaEpoch {
+		t.Errorf("Epoch: got %d, want %d (the bin's delta_epoch) — a bind seeded with the wrong "+
+			"generation emits deltas Core drops, re-detaching the stream this repairs",
+			adj.Epoch, loaded.DeltaEpoch)
+	}
+	if adj.Bound {
+		t.Error("Bound = true, want false — a person's declaration rides the repair path with its " +
+			"mid-swap guards, not the blind bind")
+	}
+	if adj.Released {
+		t.Error("Released = true, want false — the bin did not leave the node")
+	}
+}
+
+// The mirror on the opposite edge of the lifecycle. Clear had the same two
+// announcements for the same reason, and the count-of-zero it declares is what
+// binds a staged carrier the station never bound (HK 2026-07-28, see binClear).
+func TestExecuteBinAction_Clear_AnnouncesOnceAsAPerson(t *testing.T) {
+	t.Parallel()
+	h, db, sd, _ := setupBinForAction(t)
+
+	btRaw, err := db.GetBinTypeByCode("DEFAULT")
+	bt := testutil.Must(t, btRaw, err, `db.GetBinTypeByCode("DEFAULT")`)
+	nodeID := sd.StorageNode.ID
+	loadedBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-CLEAR-ONCE-1", NodeID: &nodeID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(loadedBin), "create bin")
+	madeRaw, err := db.GetBin(loadedBin.ID)
+	loadedBin = testutil.Must(t, madeRaw, err, "db.GetBin(loadedBin.ID)")
+	params := mustJSON(t, map[string]any{"payload_code": sd.Payload.Code, "uop_override": 12})
+	testutil.MustNoErr(t, h.executeBinAction(loadedBin, "load_payload", params), "load_payload")
+
+	afterLoadRaw, err := db.GetBin(loadedBin.ID)
+	loadedBin = testutil.Must(t, afterLoadRaw, err, "db.GetBin after the load")
+	before := len(adjustmentsForBin(t, db, loadedBin.ID))
+	testutil.MustNoErr(t, h.executeBinAction(loadedBin, "clear", nil), "clear")
+
+	adjs := adjustmentsForBin(t, db, loadedBin.ID)
+	if len(adjs) != before+1 {
+		t.Fatalf("clear enqueued %d UOPAdjustments (total %d, was %d), want exactly 1 more",
+			len(adjs)-before, len(adjs), before)
+	}
+	adj := adjs[len(adjs)-1]
+	if protocol.IsLifecycleActor(adj.Actor) {
+		t.Errorf("Actor = %q, which the station reads as machine — an already-unbound slot would "+
+			"stay unbound, which is the trap where the operator's instinctive fix guaranteed no "+
+			"recovery", adj.Actor)
+	}
+	if adj.NewRemaining != 0 {
+		t.Errorf("NewRemaining: got %d, want 0 — a clear declares the carrier empty", adj.NewRemaining)
+	}
+	if adj.Released {
+		t.Error("Released = true, want false — a clear moves nothing; the carrier is still on the node")
+	}
 }
 
 func TestExecuteBinAction_LoadPayload_MissingCode(t *testing.T) {

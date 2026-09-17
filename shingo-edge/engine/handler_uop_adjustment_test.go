@@ -214,7 +214,20 @@ func TestHandleUOPAdjustment_StagedUnboundBinBindsOnCorrection(t *testing.T) {
 		CoreNodeName: "ALN_006",
 		NewRemaining: 150,
 		Epoch:        5,
-		Actor:        "admin",
+		// THE VALUE CORE ACTUALLY SENDS, and the only field in this message
+		// that decides whether the bind below happens at all. It read "admin",
+		// which no Core door stamps — every human door resolves through
+		// www.resolveActor, which substitutes AuditActorUI. Both strings are
+		// non-lifecycle so the test passed either way, which is precisely the
+		// problem: it pinned the branch under a value nothing produces, and
+		// would have gone on passing if Core's side of the contract changed.
+		//
+		// The sibling tests in this file keep "admin" deliberately. Their
+		// branches are selected before the actor is consulted (Bound short-
+		// circuits, Released short-circuits, a bound or mismatched slot never
+		// reaches the lifecycle guard), so the string is scenery there and
+		// changing it would say this value mattered to them.
+		Actor: protocol.AuditActorUI,
 	})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)

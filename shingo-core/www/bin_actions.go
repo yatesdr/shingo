@@ -162,12 +162,22 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	// Epoch return discarded — admin "Load Payload" lands directly on
-	// Core via the bin detail modal, with no Edge response carrying the
-	// new value. The station is told anyway: the bump announces itself.
-	// This used to say the Edge picked it up "on its next bin-state
-	// refresh", which never existed.
-	if _, err := h.engine.BinService().LoadPayload(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
+	// A PERSON AT THIS DOOR DECLARED WHAT THE CARRIER HOLDS, and the epoch bump
+	// inside the load says so on the wire. That is what lets the station bind an
+	// empty slot to it: a Load Payload is Core-only — no OrderDelivered envelope
+	// ever names this bin, because nothing was delivered — so without a message
+	// the station will bind from, active_bin_id stays unset and every PLC tick
+	// after the load piles into pending_uop_delta against no bin. SPR
+	// 2026-09-17: two admin loads sat unbound for ~7 h and "weren't counting"
+	// until someone cycle-counted them.
+	//
+	// The announcement rides the bump's own outbox row, inside the load's
+	// transaction (service.bumpEpoch), so it cannot be lost to a crash between
+	// the commit and the send. That row carries the epoch, the count and the
+	// node, all three read from the statement that wrote them — which is why
+	// LoadPayload hands back no epoch for this handler to forward.
+	if err := h.engine.BinService().LoadPayload(b.ID, p.PayloadCode, p.UOPOverride,
+		protocol.DeclaredByPerson); err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "loaded", "", p.PayloadCode, protocol.AuditActorUI)
@@ -181,40 +191,32 @@ func (h *Handlers) binLoadPayload(b *domain.Bin, params json.RawMessage) error {
 
 func (h *Handlers) binClear(b *domain.Bin, _ json.RawMessage) error {
 	oldCode := b.PayloadCode
-	epoch, err := h.engine.BinService().Manifest().ClearForReuse(b.ID, nil)
-	if err != nil {
-		return err
-	}
-	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", protocol.AuditActorUI)
-	h.emitBinUpdate(b, engine.BinActionCleared, "")
-	// Tell Edge the bin at this node is now EMPTY — not that it left.
+	// A person at the admin door declaring this carrier is now empty; the epoch
+	// bump announces it as one, in the clear's own transaction. See binLoadPayload
+	// for why the declarer and not a second broadcast.
 	//
-	// This used to send Released=true, borrowed from binMove. Released means "the
-	// bin was moved OFF this node", so Edge unbinds active_bin_id and stops
-	// attributing PLC ticks to it. Clear moves nothing: the carrier is still
-	// physically on the node, it is merely empty now. Unbinding it stranded the
-	// slot — ticks piled into pending_uop_delta against no bin — and on a node
+	// WHAT THE STATION IS TOLD IS A COUNT OF ZERO, NOT A RELEASE, and the
+	// distinction is the whole reason this door announces at all. Released means
+	// "the bin was moved OFF this node", so the station unbinds active_bin_id and
+	// stops attributing PLC ticks to it. A clear moves nothing: the carrier is
+	// still physically on the node, it is merely empty now. Unbinding it stranded
+	// the slot — ticks piled into pending_uop_delta against no bin — and on a node
 	// that was ALREADY unbound the correction was rejected outright ("bin N not
 	// active at node X — bound elsewhere, ignoring"), so Clear could not even
 	// repair what it had broken. That is the trap behind HK 2026-07-28: the
 	// operator's instinctive fix was the one action that guaranteed no recovery.
 	//
-	// A plain count correction to 0 is right in both states: a bound node keeps
-	// its binding and zeroes the tile, and an unbound node BINDS the staged
-	// carrier through the count-correction repair path. Released stays in use by
-	// binMove, where the bin genuinely did leave.
-	if b.NodeName != "" {
-		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
-			BinID:        b.ID,
-			CoreNodeName: b.NodeName,
-			NewRemaining: 0,
-			Epoch:        epoch,
-			Actor:        protocol.AuditActorUI,
-			AdjustedAt:   time.Now().UTC(),
-		}); err != nil {
-			log.Printf("bin_clear: zero-count broadcast bin %d (node %s): %v", b.ID, b.NodeName, err)
-		}
+	// A plain count correction to zero is right in both states: a bound node keeps
+	// its binding and zeroes the tile, and an unbound node BINDS the staged carrier
+	// through the repair path, which is what DeclaredByPerson buys. bumpEpoch reads
+	// uop_remaining from the statement that just wrote it, so the zero is the
+	// clear's own. Released stays in use by binMove, where the bin genuinely left.
+	_, err := h.engine.BinService().Manifest().ClearForReuse(b.ID, nil, protocol.DeclaredByPerson)
+	if err != nil {
+		return err
 	}
+	h.engine.AuditService().Append("bin", b.ID, "cleared", oldCode, "", protocol.AuditActorUI)
+	h.emitBinUpdate(b, engine.BinActionCleared, "")
 	return nil
 }
 

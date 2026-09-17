@@ -5,6 +5,7 @@ package engine
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -270,7 +271,7 @@ func TestCMSClearEndToEnd_TheServiceClearStaysSilent(t *testing.T) {
 	// used. Under the engine's door this exact fixture posts 240.
 	bin, _ := clearBoundaryBin(t, db, "E2E-UIDOOR-PAYLOAD", 24, 10)
 
-	if _, err := eng.BinManifest().ClearForReuse(bin.ID, nil); err != nil {
+	if _, err := eng.BinManifest().ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("service ClearForReuse: %v", err)
 	}
 

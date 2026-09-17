@@ -251,24 +251,38 @@ func (s *BinService) Unlock(binID int64) error {
 // / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
 // populated, ignored when empty.
 //
-// Returns the new delta_epoch from SetFromTemplate so handlers shipping
-// the bin row back to Edge can include it on the wire (Edge needs the
-// fresh epoch before its next BinUOPDelta — see protocol/payloads.go).
-func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride *int) (int64, error) {
+// NO EPOCH RETURN, and its absence is deliberate. It returned the new
+// delta_epoch "so handlers shipping the bin row back to Edge can include it on
+// the wire", and no handler ever did: one production caller and five tests,
+// every one of them discarding it. The doc described a reader that was never
+// written, which is worse than no doc — it invites the next person to keep a
+// value for a purpose nothing has.
+//
+// What the station needs is not a number in a response it never reads. It is
+// the announcement the epoch bump enqueues inside this load's transaction,
+// carrying the epoch, the count and the node together (service.bumpEpoch).
+//
+// THIS IS NOT A GUARD AGAINST THE BUG IT FOLLOWS. A second, after-commit
+// announcement was once built at the www door using this return, and removing
+// it would not have stopped that: domain.Bin carries DeltaEpoch, and the handler
+// had a freshly read bin in hand. What stops it is the declarer and the count
+// pinned by TestExecuteBinAction_LoadPayload_AnnouncesOnceAsAPerson. This is
+// only the dead value going.
+func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride *int, by protocol.Declarer) error {
 	if payloadCode == "" {
-		return 0, fmt.Errorf("payload_code is required")
+		return fmt.Errorf("payload_code is required")
 	}
 	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil {
-		return 0, fmt.Errorf("payload template %q not found", payloadCode)
+		return fmt.Errorf("payload template %q not found", payloadCode)
 	}
 	b, err := s.db.GetBin(binID)
 	if err != nil {
-		return 0, fmt.Errorf("bin not found")
+		return fmt.Errorf("bin not found")
 	}
 	compat, err := s.db.ListBinTypesForPayload(p.ID)
 	if err != nil {
-		return 0, fmt.Errorf("check payload bin-type compat: %w", err)
+		return fmt.Errorf("check payload bin-type compat: %w", err)
 	}
 	if len(compat) > 0 {
 		ok := false
@@ -283,10 +297,11 @@ func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride *i
 			for i, bt := range compat {
 				codes[i] = bt.Code
 			}
-			return 0, fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)", payloadCode, b.BinTypeCode, codes)
+			return fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)", payloadCode, b.BinTypeCode, codes)
 		}
 	}
-	return s.manifest.SetFromTemplate(binID, payloadCode, uopOverride)
+	_, err = s.manifest.SetFromTemplate(binID, payloadCode, uopOverride, by)
+	return err
 }
 
 // --- Movement -------------------------------------------------------------

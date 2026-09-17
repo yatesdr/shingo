@@ -245,7 +245,7 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	}
 
 	// ── Load: stamp the manifest. delta_epoch advances to the load epoch. ──
-	loadEpoch, err := manifest.SetForProduction(bin.ID, `{"items":[{"catid":"`+sd.Payload.Code+`","qty":100}]}`, sd.Payload.Code, 100)
+	loadEpoch, err := manifest.SetForProduction(bin.ID, `{"items":[{"catid":"`+sd.Payload.Code+`","qty":100}]}`, sd.Payload.Code, 100, protocol.DeclaredByLifecycle)
 	if err != nil {
 		t.Fatalf("load (SetForProduction): %v", err)
 	}
@@ -322,7 +322,7 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	}
 
 	// ── Reload and consume on the new epoch: applies again. ──
-	reloadEpoch, err := manifest.SetForProduction(bin.ID, `{"items":[{"catid":"`+sd.Payload.Code+`","qty":100}]}`, sd.Payload.Code, 100)
+	reloadEpoch, err := manifest.SetForProduction(bin.ID, `{"items":[{"catid":"`+sd.Payload.Code+`","qty":100}]}`, sd.Payload.Code, 100, protocol.DeclaredByLifecycle)
 	if err != nil {
 		t.Fatalf("reload (SetForProduction): %v", err)
 	}

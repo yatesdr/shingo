@@ -71,7 +71,7 @@ func TestSetForProduction_AnnouncesTheNewGenerationOnce(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-1", "", 0)
 
-	epoch, err := svc.SetForProduction(bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40)
+	epoch, err := svc.SetForProduction(bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40, protocol.DeclaredByLifecycle)
 	if err != nil {
 		t.Fatalf("SetForProduction: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestSetForProduction_AnnouncementRollsBackWithTheReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := svc.setForProductionTx(tx, bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40); err != nil {
+	if _, err := svc.setForProductionTx(tx, bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40, protocol.DeclaredByLifecycle); err != nil {
 		tx.Rollback()
 		t.Fatalf("setForProductionTx: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestClearForReuse_AnnouncesTheNewGeneration(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-3", "PART-A", 100)
 
-	epoch, err := svc.ClearForReuse(bin.ID, nil)
+	epoch, err := svc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle)
 	if err != nil {
 		t.Fatalf("ClearForReuse: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestBumpWithNoNodeAnnouncesNothing(t *testing.T) {
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-ANN-4", Status: "available"} // NodeID nil: nowhere
 	testutil.MustNoErr(t, db.CreateBin(bin), "create unplaced bin")
 
-	if _, err := svc.SetForProduction(bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40); err != nil {
+	if _, err := svc.SetForProduction(bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("SetForProduction: %v", err)
 	}
 	if msgs := outboxAdjustments(t, db, bin.ID); len(msgs) != 0 {

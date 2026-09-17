@@ -155,10 +155,10 @@ func TestExceptionLedger_BoundaryWrittenForEveryBumpOp(t *testing.T) {
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-EXC-BOUND", "", 0)
 
-	if _, err := mSvc.SetFromTemplate(bin.ID, sd.Payload.Code, nil); err != nil {
+	if _, err := mSvc.SetFromTemplate(bin.ID, sd.Payload.Code, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("set for production: %v", err)
 	}
-	if _, err := mSvc.ClearForReuse(bin.ID, nil); err != nil {
+	if _, err := mSvc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {
 		t.Fatalf("clear for reuse: %v", err)
 	}
 

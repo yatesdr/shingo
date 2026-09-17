@@ -87,9 +87,22 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 
 	if rt.ActiveBinID == nil && !adj.Released && protocol.IsLifecycleActor(adj.Actor) {
 		// AN EMPTY SLOT IS NOT AN INVITATION. Core generated this from a carrier's
-		// own lifecycle — load, clear, release, or a press finishing one — and the
-		// bind below is not for that. It is a repair built for a person
+		// own lifecycle — a release, a dispatch claim, or a press finishing one —
+		// and the bind below is not for that. It is a repair built for a person
 		// deliberately correcting a count on a carrier the Edge never bound.
+		//
+		// The admin Load Payload and Clear used to land here too, and that was
+		// the defect rather than the design: both are somebody at the bin saying
+		// what it now holds, and refusing them left the carrier unbound and not
+		// counting (SPR 2026-09-17). A Core that carries the declarer sends those
+		// two as a person, and they take the repair below instead.
+		// PIN: TestExecuteBinAction_LoadPayload_AnnouncesOnceAsAPerson
+		//
+		// AGAINST AN OLDER CORE THEY STILL ARRIVE HERE. The two deploy
+		// separately and a plant can run either side behind, so a load that does
+		// not bind is a Core predating the declarer — not this guard misfiring.
+		// The log line below names the actor, which is how the two are told
+		// apart from a station's logs alone.
 		//
 		// Produce finalize is the frequent case and the dangerous one. It fires
 		// once per press cycle, and its announcement is enqueued when the press

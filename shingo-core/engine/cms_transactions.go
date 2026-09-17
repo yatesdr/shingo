@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/protocol"
+
 	"shingocore/material"
 	"shingocore/store/audit"
 	"shingocore/store/cms"
@@ -124,7 +126,7 @@ func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *i
 		// untagged clear is invisible to CMS and that is correct); the bin is
 		// drained or bare; or the build FAILED, which buildClearDeparture has
 		// already counted and named.
-		return e.binManifest.ClearForReuse(binID, binTypeID)
+		return e.binManifest.ClearForReuse(binID, binTypeID, protocol.DeclaredByLifecycle)
 	}
 
 	tx, err := e.db.Begin()
@@ -137,7 +139,7 @@ func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *i
 			"because clearing the bin destroys the counts these rows carry", binID, err)
 	}
 	epoch, err := e.binManifest.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse,
-		"engine/cms_transactions.go:ClearForReuseAndBookDeparture")
+		"engine/cms_transactions.go:ClearForReuseAndBookDeparture", protocol.DeclaredByLifecycle)
 	if err != nil {
 		return 0, err
 	}

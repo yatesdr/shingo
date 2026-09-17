@@ -118,7 +118,14 @@ func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName
 // this carrier now holds this many, and a declaration always carries its
 // number. (The repair message in the other direction carries no count, because
 // nobody declared anything there — see protocol.BinEpochRefresh.)
-func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
+//
+// by says whether a person declared this reset or Core's own bookkeeping did.
+// It is REQUIRED, not defaulted, because it decides whether the station binds
+// an empty slot to the carrier this names, and the two reset paths a person
+// drives are indistinguishable here from the two a machine drives. Passing it
+// is the call site being asked the question; see protocol.Declarer for why it
+// is not the audit actor.
+func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Declarer) (int64, error) {
 	epoch, remaining, nodeName, err := bumpEpochRaw(tx, binID)
 	if err != nil {
 		return 0, err
@@ -141,7 +148,7 @@ func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
 		CoreNodeName: nodeName,
 		NewRemaining: remaining,
 		Epoch:        epoch,
-		Actor:        protocol.ActorCoreLifecycle,
+		Actor:        by.Actor(),
 		AdjustedAt:   time.Now().UTC(),
 	}); err != nil {
 		return 0, fmt.Errorf("announce epoch %d for bin %d: %w", epoch, binID, err)
@@ -193,14 +200,14 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 // a floating carrier's dunnage identity is always consistent with its
 // empty state. Callers that don't set dunnage (UOP-applier auto-clear,
 // admin clear) pass nil.
-func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64) (int64, error) {
+func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64, by protocol.Declarer) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	epoch, err := s.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse")
+	epoch, err := s.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse", by)
 	if err != nil {
 		return 0, err
 	}
@@ -236,7 +243,7 @@ func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64) (int64
 //
 // binTypeID is optional (nil = preserve existing bin_type_id). When
 // non-nil, bin_type_id is updated atomically with the manifest clear.
-func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID *int64, op, source string) (int64, error) {
+func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID *int64, op, source string, by protocol.Declarer) (int64, error) {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return 0, err
@@ -257,7 +264,7 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 		WHERE id=$1`, binID, binTypeID); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
 	}
-	newEpoch, err := s.bumpEpoch(tx, binID)
+	newEpoch, err := s.bumpEpoch(tx, binID, by)
 	if err != nil {
 		return 0, err
 	}
@@ -309,12 +316,12 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 // Returns the new delta_epoch from the underlying SetForProduction
 // call so handlers that ship the bin's row to Edge can include it in
 // their response.
-func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride *int) (int64, error) {
+func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride *int, by protocol.Declarer) (int64, error) {
 	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
 	if err != nil {
 		return 0, err
 	}
-	return s.SetForProduction(binID, manifestJSON, payloadCode, uop)
+	return s.SetForProduction(binID, manifestJSON, payloadCode, uop, by)
 }
 
 // resolveTemplateManifest resolves a payload template into a marshalled manifest
@@ -358,14 +365,14 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 // node finalizes a bin or a manual_swap node loads a bin. Returns the
 // new delta_epoch so callers can ship it to Edge in the response that
 // triggered the load (typically the BinLoad handler).
-func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int) (int64, error) {
+func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	newEpoch, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop)
+	newEpoch, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop, by)
 	if err != nil {
 		return 0, err
 	}
@@ -379,7 +386,7 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 // the manifest write can commit in the SAME transaction as the confirm (see
 // RecordProducedBin). Writes the OpSetForProduction audit row and bumps the
 // delta_epoch; returns the new epoch.
-func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int) (int64, error) {
+func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return 0, err
@@ -390,7 +397,7 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 		payloadCode, manifestJSON, uop, binID); err != nil {
 		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
 	}
-	newEpoch, err := s.bumpEpoch(tx, binID)
+	newEpoch, err := s.bumpEpoch(tx, binID, by)
 	if err != nil {
 		return 0, err
 	}
@@ -465,7 +472,10 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop); err != nil {
+	// A press finishing a carrier. This announcement is the one that routinely
+	// lands after a robot has already lifted what it names, so it must never
+	// invite a bind.
+	if _, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle); err != nil {
 		return err
 	}
 	if err := s.confirmTx(tx, binID, producedAt); err != nil {
@@ -537,7 +547,10 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
-	if _, err := s.bumpEpoch(tx, binID); err != nil {
+	// Dispatch claiming a carrier for an order. No person declared a count —
+	// the clear is a consequence of the claim — so the station must not bind an
+	// empty slot to it.
+	if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
 		return err
 	}
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
@@ -876,7 +889,14 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		if n == 0 {
 			return notFoundErr
 		}
-		if _, err := s.bumpEpoch(tx, binID); err != nil {
+		// LIFECYCLE, THOUGH THIS FUNCTION HOLDS A PERSON'S NAME. `actor` above
+		// is a real operator screen and goes in the audit row, and it is the
+		// wrong answer for the wire: a release is a carrier LEAVING the node.
+		// Announcing it as a person's declaration would invite the station to
+		// bind an empty slot to a carrier on its way out, which is the
+		// departed-carrier misattribution the Edge guard exists to prevent.
+		// Two questions, two values — see protocol.Declarer.
+		if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
 			return err
 		}
 		op := audit.OpReleasedEmpty
@@ -977,7 +997,9 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if n == 0 {
 		return notFoundErr
 	}
-	if _, err := s.bumpEpoch(tx, binID); err != nil {
+	// The partial-release branch of the same departure; lifecycle for the
+	// reason given at the empty branch above.
+	if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
 		return err
 	}
 	op := audit.OpReleasedPartial

@@ -14,6 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"shingo/protocol"
+
 	"shingocore/domain"
 	"shingocore/service"
 )
@@ -342,7 +344,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		uop = int64(p.UOPCapacity)
 	}
 
-	newEpoch, err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop))
+	newEpoch, err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop), protocol.DeclaredByLifecycle)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

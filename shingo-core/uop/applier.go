@@ -74,7 +74,7 @@ type ManifestClearer interface {
 	//
 	// binTypeID is always nil on this path (auto-clear on UOP zero);
 	// the parameter exists so the interface matches BinManifestService.
-	ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID *int64, op, source string) (int64, error)
+	ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID *int64, op, source string, by protocol.Declarer) (int64, error)
 }
 
 // InventoryDeltaService applies BinUOPDelta and LinesideBucketDelta
@@ -542,9 +542,13 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		// measured it — half of one plant's production counts; and there
 		// were two transports, one of which the enclosing function is
 		// already holding open.
+		// A delta stream reaching zero clears the carrier. Nobody declared
+		// anything — the applier concluded it — so the station must not bind an
+		// empty slot to it.
 		if _, err := s.binManifest.ClearForReuseTx(tx, d.BinID, nil,
 			audit.OpReleasedCaptureEmpty,
-			"service/inventory_delta_service.go:ApplyBinUOPDelta"); err != nil {
+			"service/inventory_delta_service.go:ApplyBinUOPDelta",
+			protocol.DeclaredByLifecycle); err != nil {
 			return fmt.Errorf("clear manifest on capture_reduction zero bin=%d: %w", d.BinID, err)
 		}
 	}
