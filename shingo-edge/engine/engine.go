@@ -126,6 +126,10 @@ type Engine struct {
 	// caches change on different responses.
 	sceneGeometry   *domain.SceneGeometry
 	sceneGeometryMu sync.RWMutex
+	// plantGeneration changes whenever a node-list response replaces the scene
+	// geometry or the NGRP membership. Read on every station poll to build the
+	// cell picture's version; see scene_geometry.go's PlantGeneration.
+	plantGeneration atomic.Uint64
 	nodeSyncFn      func()
 	catalogSyncFn   func()
 	sendFn          func(*protocol.Envelope) error
@@ -302,6 +306,11 @@ func New(c Config) *Engine {
 		Events:        NewEventBus(),
 		stopChan:      make(chan struct{}),
 	}
+	// SEEDED FROM THE CLOCK, not from zero: this counter lives in memory and a
+	// browser outlives a restart of this process. Starting every run at a fresh
+	// value keeps a version computed before a restart from ever matching one
+	// computed after it. See PlantGeneration.
+	e.plantGeneration.Store(uint64(clock.Now().UnixNano()))
 	e.coreClient = NewCoreClient(c.AppConfig.CoreAPI)
 	e.reconciliation = newReconciliationService(e.db)
 	e.coreSync = newCoreSyncService(e)
@@ -326,6 +335,7 @@ func New(c Config) *Engine {
 	// handed to the view through resolvers so the service stays DB-only.
 	e.stationService.SetSceneGeometryResolver(e.SceneGeometry)
 	e.stationService.SetCoreNodeGroupResolver(e.CoreNodeGroups)
+	e.stationService.SetPlantGenerationResolver(e.PlantGeneration)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
@@ -622,6 +632,9 @@ func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
 		normalized = append(normalized, n)
 	}
 	e.coreNodesMu.Unlock()
+	// The group map above is one of the cell picture's two plant-side inputs,
+	// and a station poll must be able to see it move without deep-copying it.
+	e.bumpPlantGeneration()
 
 	e.Events.Emit(Event{
 		Type:      EventCoreNodesUpdated,

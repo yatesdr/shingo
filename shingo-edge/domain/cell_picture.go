@@ -21,6 +21,17 @@ import (
 type CellPicture struct {
 	Positions []CellPosition `json:"positions"`
 	Geometry  bool           `json:"geometry"`
+	// Version is the token the station POLL carries in place of this whole
+	// structure, stamped on the picture so the page can compare the two
+	// directly: the picture it holds is current exactly while its Version
+	// equals the one on the last view. See cell_picture_version.go.
+	//
+	// STAMPED ON THE PICTURE AND NOT ONLY ON THE VIEW, because the fetch and
+	// the poll are separate reads and the picture may be built from facts
+	// NEWER than the version that sent the page to fetch it. Storing the
+	// picture's own version rather than the one asked for makes that
+	// self-correcting: the next poll already matches, and nothing refetches.
+	Version string `json:"version,omitempty"`
 	// NO SceneRevision. It shipped on every picture — the station's, on every
 	// poll, and the desktop's — so a screen could say "is this the map Core
 	// has now", and no screen ever did. The desktop's map caption asks that
@@ -29,6 +40,14 @@ type CellPicture struct {
 	//
 	// Groups is NGRP name → member node names, for the dock strip's member
 	// line under each group. Empty when the node list has not arrived.
+	//
+	// FILTERED TO THE GROUPS THIS PICTURE NAMES, and that is the whole of P3.
+	// The input is the plant's entire NGRP map, deep-copied out of the engine
+	// under the core-node lock; the one reader of this field is the dock
+	// strip's member line (composer-model.js's membersOf), which indexes at
+	// most TWO entries — the inbound source and the outbound destination the
+	// picture's claims carry. The rest was the whole plant's group membership
+	// serialised into every poll of every board for nobody.
 	Groups map[string][]string `json:"groups,omitempty"`
 }
 
@@ -93,8 +112,48 @@ type CellPictureInput struct {
 	BackPositions map[string]bool
 	// Geometry is the scene cache, nil before the first full sync.
 	Geometry *SceneGeometry
-	// Groups is NGRP name → members, as the engine retained them.
+	// Groups is NGRP name → members, as the engine retained them. The whole
+	// plant's; the builder keeps the entries this picture's claims name and
+	// drops the rest. See CellPicture.Groups.
 	Groups map[string][]string
+	// Version is the token the poll compares against, stamped onto the
+	// picture. Built by CellPictureVersion from the same facts.
+	Version string
+}
+
+// groupsNamedBy keeps the NGRP entries the picture's own claims reach for: the
+// dock strip draws a member line under the inbound source and the outbound
+// destination, and under nothing else.
+//
+// Nil rather than an empty map when nothing is named, so `omitempty` takes the
+// field off the wire entirely: a picture with no claims has no dock groups to
+// draw, and `"groups":{}` is two bytes saying so on a payload that exists to be
+// small.
+func groupsNamedBy(all map[string][]string, positions []CellPosition) map[string][]string {
+	if len(all) == 0 {
+		return nil
+	}
+	var out map[string][]string
+	for i := range positions {
+		c := positions[i].Claim
+		if c == nil {
+			continue
+		}
+		for _, name := range []string{c.InboundSource, c.OutboundDestination} {
+			if name == "" {
+				continue
+			}
+			members, known := all[name]
+			if !known {
+				continue
+			}
+			if out == nil {
+				out = make(map[string][]string, 2)
+			}
+			out[name] = members
+		}
+	}
+	return out
 }
 
 // LocateCellPosition is THE JOIN RULE: a core node name is placed at the
@@ -179,7 +238,7 @@ func cellPositionNames(stationID int64, nodes []Node, claims map[string]NodeClai
 // BuildCellPicture assembles the picture. Pure: it reads its input and
 // returns a value, so the join and the roles are tested without a database.
 func BuildCellPicture(in CellPictureInput) *CellPicture {
-	pic := &CellPicture{Groups: in.Groups}
+	pic := &CellPicture{Version: in.Version}
 	names := cellPositionNames(in.StationID, in.Nodes, in.Claims, in.BackPositions)
 
 	// Partner roles first, so a back position knows whose it is.
@@ -233,6 +292,7 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 		}
 		pic.Positions = append(pic.Positions, pos)
 	}
+	pic.Groups = groupsNamedBy(in.Groups, pic.Positions)
 	sort.SliceStable(pic.Positions, func(i, j int) bool {
 		a, b := pic.Positions[i], pic.Positions[j]
 		if a.Sequence != b.Sequence {

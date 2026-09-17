@@ -51,6 +51,7 @@ func (e *Engine) SetSceneGeometry(revision string, points []protocol.ScenePointI
 	e.sceneGeometryMu.Lock()
 	e.sceneGeometry = g
 	e.sceneGeometryMu.Unlock()
+	e.bumpPlantGeneration()
 	log.Printf("scene geometry: cached revision %s (%d points, %d edges)", g.Revision, len(g.Points), len(g.Edges))
 }
 
@@ -74,6 +75,7 @@ func (e *Engine) loadSceneGeometry() {
 	e.sceneGeometryMu.Lock()
 	e.sceneGeometry = g
 	e.sceneGeometryMu.Unlock()
+	e.bumpPlantGeneration()
 	log.Printf("scene geometry: loaded revision %s from the cache (%d points, %d edges)", g.Revision, len(g.Points), len(g.Edges))
 }
 
@@ -95,3 +97,21 @@ func (e *Engine) SceneRevision() string {
 	}
 	return ""
 }
+
+// ── the plant generation ─────────────────────────────────────────────────────
+//
+// PlantGeneration is how a station poll tells that the cell picture's two
+// plant-side inputs have moved — the scene geometry above and the NGRP
+// membership SetCoreNodes retains — without reading either.
+//
+// ONE COUNTER FOR BOTH, because they are replaced by the same event: a
+// node-list response from Core carries the node set and (when the Edge's
+// revision is stale) the scene, and both caches are all-or-nothing swaps made
+// while handling it. Two counters would be two names for one fact.
+//
+// SEEDED FROM THE CLOCK for the reason store/processes.NodeGeneration is: the
+// counter is in memory, and a restart taking it back to zero could hand a
+// browser a version it had already seen.
+func (e *Engine) PlantGeneration() uint64 { return e.plantGeneration.Load() }
+
+func (e *Engine) bumpPlantGeneration() { e.plantGeneration.Add(1) }

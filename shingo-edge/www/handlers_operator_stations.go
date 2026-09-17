@@ -177,3 +177,32 @@ func (h *Handlers) apiMoveOperatorStation(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
+
+// apiStationCellPicture is the cell picture's own door, and the reason the
+// station VIEW no longer carries one.
+//
+// The picture rode every poll — two queries and a deep copy of the plant's
+// NGRP map, at 500 ms a board while events flow, on a Pi with one SQLite
+// connection — for a drawing that changes when an engineer edits a cell. The
+// view carries a VERSION now (domain.CellPictureVersion) and the page comes
+// here when the version it is holding stops matching.
+//
+// SHOP FLOOR, like the station's composer fetch beside it: a station has no
+// login, and this is the picture an operator is looking at.
+func (h *Handlers) apiStationCellPicture(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid station id")
+		return
+	}
+	pic, err := h.engine.StationService().CellPictureForStation(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if pic == nil {
+		writeError(w, http.StatusNotFound, "no such station")
+		return
+	}
+	writeJSON(w, pic)
+}

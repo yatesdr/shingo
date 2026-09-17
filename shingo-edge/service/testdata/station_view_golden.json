@@ -178,21 +178,7 @@
       "child_of_node": "Press G1"
     }
   ],
-  "cell": {
-    "positions": [
-      {
-        "core_node_name": "PLN_G1",
-        "sequence": 1,
-        "kind": "front"
-      },
-      {
-        "core_node_name": "WLN_G3",
-        "sequence": 3,
-        "kind": "front"
-      }
-    ],
-    "geometry": false
-  },
+  "cell_version": "<version>",
   "composer": {
     "styles": null,
     "recent_targets": [

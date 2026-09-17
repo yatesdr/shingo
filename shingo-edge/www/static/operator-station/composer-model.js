@@ -1629,7 +1629,7 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 //
 // At Hopkinsville the 4x2's five positions are ALL kind `front` — a position
 // becomes `back` only when some live claim of the process names it as a pair or
-// a staging slot (store.ListBackPositionNames), and nothing on that press ever
+// a staging slot (domain.BackPositionNames), and nothing on that cell ever
 // has — so composer-render's optionsFor offers a 2-robot index NO back
 // position, while flowspec marks paired_core_node REQUIRED for that mode. The
 // operator picked the choreography and got the heading of the one field that

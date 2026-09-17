@@ -52,6 +52,22 @@ var updateGolden = os.Getenv("UPDATE_GOLDEN") != "" ||
 // several layers it does not own, so scrubbing is the honest boundary.
 var rfc3339 = regexp.MustCompile(`"(\d{4}-\d{2}-\d{2}T[^"]*)"`)
 
+// THE CELL PICTURE'S VERSION IS SCRUBBED FOR THE SAME REASON, and it is worth
+// saying why rather than leaving it beside the timestamps as if it were one.
+//
+// The version is a hash over the picture's inputs, and two of those inputs are
+// generation counters SEEDED FROM THE CLOCK at process start
+// (store/processes.NodeGeneration, engine.PlantGeneration) — deliberately, so
+// a browser holding a version cannot be handed a repeat of it across a
+// restart. That makes the string different on every run by design, which a
+// golden cannot pin and should not try to.
+//
+// What holds the version instead: domain/cell_picture_version_test.go (it
+// moves on every door, and not on claim order) and composer_budget_pins_test.go
+// (the poll carries one, and carries no picture). What the golden still holds
+// here is that the FIELD is present and the picture is not.
+var cellVersionField = regexp.MustCompile(`"cell_version": "[^"]*"`)
+
 // goldenScenario is deliberately awkward. Each element is here because it
 // exercises a field the per-field tests miss:
 //
@@ -170,6 +186,15 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 func TestBuildView_Golden(t *testing.T) {
 	db, stationID := goldenScenario(t)
 	svc := NewStationService(db)
+	// A SCENE AND A GROUP MAP, WIRED (P4). They reach nothing on the view
+	// today — the cell picture left it — and that is exactly why they are
+	// here: the golden's blind spot was a fixture with no scene, so anything
+	// derived from one could grow onto the poll unobserved. Wired, the golden
+	// fails the day something scene-shaped comes back.
+	svc.SetSceneGeometryResolver(func() *domain.SceneGeometry { return goldenGeometry(t) })
+	svc.SetCoreNodeGroupResolver(func() map[string][]string {
+		return map[string][]string{"SMN_01": {"SMN_01_A", "SMN_01_B"}}
+	})
 
 	view, err := svc.BuildView(context.Background(), stationID)
 	if err != nil {
@@ -181,6 +206,7 @@ func TestBuildView_Golden(t *testing.T) {
 		t.Fatalf("marshal view: %v", err)
 	}
 	got = rfc3339.ReplaceAll(got, []byte(`"<ts>"`))
+	got = cellVersionField.ReplaceAll(got, []byte(`"cell_version": "<version>"`))
 	got = append(got, '\n')
 
 	path := filepath.Join("testdata", "station_view_golden.json")
@@ -241,4 +267,22 @@ func TestBuildView_StagedReleaseErrorReachesItsTile(t *testing.T) {
 				n.Node.CoreNodeName, n.LastReleaseError)
 		}
 	}
+}
+
+// goldenGeometry is a small scene placing the golden's positions, so the
+// fixture is one a picture COULD be drawn to scale from. See the wiring in
+// TestBuildView_Golden for why a fixture with no scene was the problem.
+func goldenGeometry(t *testing.T) *domain.SceneGeometry {
+	t.Helper()
+	at := func(v float64) *float64 { return &v }
+	g, err := domain.NewSceneGeometry("golden-scene",
+		[]protocol.ScenePointInfo{
+			{InstanceName: "PLN_G1", ClassName: "GeneralLocation", PosX: at(1), PosY: at(1)},
+			{InstanceName: "PLN_G2", ClassName: "GeneralLocation", PosX: at(2), PosY: at(1)},
+			{InstanceName: "WLN_G3", ClassName: "GeneralLocation", PosX: at(3), PosY: at(1)},
+		}, nil)
+	if err != nil {
+		t.Fatalf("golden scene: %v", err)
+	}
+	return g
 }

@@ -168,6 +168,14 @@ type StationService struct {
 	// coreNodeGroups hands the view the NGRP membership for the dock strip.
 	// Optional: nil lists no members under a group.
 	coreNodeGroups func() map[string][]string
+	// plantGeneration is the engine's counter for the two caches a node-list
+	// response replaces — the scene geometry and the NGRP membership — and is
+	// how a station poll can say "the plant moved" WITHOUT calling either
+	// resolver. That matters: CoreNodeGroups deep-copies the whole plant's
+	// group map under the core-node lock, which is precisely the cost the
+	// picture leaving the poll exists to remove, so the version must not pay
+	// it. Optional; unset reads as 0, which is stable and therefore safe.
+	plantGeneration func() uint64
 
 	// sceneMemo is composerScene's derived adjacency, computed once per
 	// geometry cache rather than per request; sceneMemoFor is the cache it
@@ -223,6 +231,25 @@ func (s *StationService) SetSceneGeometryResolver(r func() *domain.SceneGeometry
 // SetCoreNodeGroupResolver injects the NGRP membership the cell picture's
 // dock strip lists. Optional; unset lists no members.
 func (s *StationService) SetCoreNodeGroupResolver(r func() map[string][]string) { s.coreNodeGroups = r }
+
+// SetPlantGenerationResolver injects the counter that says the geometry cache
+// or the NGRP map has been replaced — the cell picture's two plant-side
+// inputs, both replaced only by a node-list response. Read on every poll to
+// build the picture's version; see domain.CellPictureVersion.
+func (s *StationService) SetPlantGenerationResolver(r func() uint64) { s.plantGeneration = r }
+
+// plantGen is the counter, or 0 when nothing wired one.
+//
+// ZERO IS SAFE BECAUSE IT IS CONSTANT: an unwired resolver means an edge with
+// no engine behind it (every service test), where the geometry and the group
+// map do not change either. A version that never moves on an input that never
+// moves is right.
+func (s *StationService) plantGen() uint64 {
+	if s.plantGeneration == nil {
+		return 0
+	}
+	return s.plantGeneration()
+}
 
 // ErrUnknownCoreNodes rejects a station node list naming something that is not a
 // Core node.
@@ -308,6 +335,14 @@ func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string)
 // moved the body in from the (now-deleted) outer
 // store/station_nodes.go::SetStationNodes.
 func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
+	// EVERY EXIT PUBLISHES, INCLUDING THE FAILED ONES. This function writes
+	// process_nodes row by row rather than in one transaction, so a refusal
+	// half way through leaves rows already moved — and a board holding a cell
+	// picture from before them would go on drawing the old shape with nothing
+	// saying so. The over-invalidating direction is one extra picture fetch;
+	// the other direction is a wrong picture. See processes.BumpNodeGeneration.
+	defer processes.BumpNodeGeneration()
+
 	station, err := s.db.GetOperatorStation(stationID)
 	if err != nil {
 		return err
@@ -487,34 +522,106 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	}
 
 	s.applyLoaderLineside(view)
-	view.Cell = s.buildCellPicture(stationID, process, b)
 
 	return view, nil
 }
 
-// buildCellPicture assembles the station's read-only cell picture from the
-// whole process's node list (partner positions are stationless rows the
-// board's own list never returns), the active claims the board already
-// read, and the engine-held scene cache and group map. One extra query per
-// board, not per tile. Fail-open like every other enrichment: a node-list
-// read error yields an empty picture, never no board.
-func (s *StationService) buildCellPicture(stationID int64, process *processes.Process, b *boardData) *domain.CellPicture {
-	allNodes, err := s.db.ListProcessNodesByProcess(process.ID)
+// CellPictureForStation builds one station's cell picture. THE FETCH, made by
+// the page when the version on its last poll stopped matching the version on
+// the picture it holds — not the poll, which carries the version alone.
+//
+// WHAT THE POLL USED TO PAY. This is two queries and a deep copy of the
+// plant's NGRP map, and it rode every station view: at 500 ms a board while
+// events flow, on a Pi with one SQLite connection, for a drawing that changes
+// when an engineer edits a cell. It is now read when it changes.
+//
+// ONE CLAIMS READ FOR BOTH HALVES. The running style's claims (what the
+// picture draws) and the process's back positions (what an unused card is
+// captioned) are two questions over the same rows, and this reads them once —
+// where the old shape read style_node_claims twice, once through
+// ListBackPositionNames's own JOIN.
+//
+// Fail-open, like every other enrichment: a failed read draws less of the
+// picture, never no picture.
+func (s *StationService) CellPictureForStation(stationID int64) (*domain.CellPicture, error) {
+	station, err := s.db.GetOperatorStation(stationID)
 	if err != nil {
-		log.Printf("station view: list process nodes for cell picture: %v", err)
+		return nil, err
 	}
-	backPositions, err := s.db.ListBackPositionNames(process.ID)
+	if station == nil {
+		return nil, nil
+	}
+	process, err := s.db.GetProcess(station.ProcessID)
 	if err != nil {
-		log.Printf("station view: list back positions for cell picture: %v", err)
+		return nil, err
 	}
-	in := domain.CellPictureInput{StationID: stationID, Nodes: allNodes, Claims: b.activeClaims, BackPositions: backPositions}
+	if process == nil {
+		return nil, nil
+	}
+	live := s.liveClaims(process.ID)
+	active := map[string]domain.NodeClaim{}
+	if process.ActiveStyleID != nil {
+		for _, c := range live {
+			if c.StyleID == *process.ActiveStyleID {
+				active[c.CoreNodeName] = c
+			}
+		}
+	}
+	return s.cellPicture(stationID, process, active, live, nil), nil
+}
+
+// cellPicture is the builder both scopes go through: the station's fetch above
+// and the desktop composer's process-wide read (processCellPicture). `nodes`
+// is the process's node list when the caller already has it — the desktop read
+// does, and reading it twice is what P2 removes — and nil to read it here.
+func (s *StationService) cellPicture(stationID int64, process *processes.Process,
+	active map[string]domain.NodeClaim, live []processes.NodeClaim, nodes []processes.Node) *domain.CellPicture {
+
+	if nodes == nil {
+		var err error
+		nodes, err = s.db.ListProcessNodesByProcess(process.ID)
+		if err != nil {
+			log.Printf("cell picture: list process nodes for %d: %v", process.ID, err)
+		}
+	}
+	in := domain.CellPictureInput{
+		StationID: stationID, Nodes: nodes, Claims: active,
+		// DERIVED, NOT QUERIED. store.ListBackPositionNames read the same rows
+		// this caller already has, with its own JOIN. See
+		// domain.BackPositionNames.
+		BackPositions: domain.BackPositionNames(live),
+	}
+	var activeStyleID int64
+	if process.ActiveStyleID != nil {
+		activeStyleID = *process.ActiveStyleID
+	}
 	if s.sceneGeometry != nil {
 		in.Geometry = s.sceneGeometry()
 	}
 	if s.coreNodeGroups != nil {
 		in.Groups = s.coreNodeGroups()
 	}
+	// THE PICTURE CARRIES ITS OWN VERSION, built from the same facts the poll
+	// builds it from — so a picture assembled from rows NEWER than the version
+	// that sent the page here comes back stamped with the newer one, and the
+	// next poll matches instead of asking again.
+	in.Version = domain.CellPictureVersion(domain.CellPictureVersionInput{
+		StationID: stationID, ProcessID: process.ID, ActiveStyleID: activeStyleID,
+		NodeGeneration: processes.NodeGeneration(), PlantGeneration: s.plantGen(),
+		Claims: live,
+	})
 	return domain.BuildCellPicture(in)
+}
+
+// liveClaims is every live claim of a process as one flat list — the shape the
+// picture's two derivations want. liveClaimsByStyle's map is the picker's.
+func (s *StationService) liveClaims(processID int64) []processes.NodeClaim {
+	rows, err := processes.ListLiveClaimsByProcess(s.db.DB, processID)
+	if err != nil {
+		log.Printf("cell picture: list live claims for process %d: %v", processID, err)
+		return nil
+	}
+	return rows
 }
 
 // THE QUARTER-BIN HEURISTIC USED TO LIVE HERE and is deleted, not disabled.
@@ -724,8 +831,35 @@ func (s *StationService) newStationView(stationID int64) (*store.OperatorStation
 	//
 	// AvailableStyles is passed in rather than re-read: the line above just
 	// listed the same styles.
-	view.Composer = s.buildComposerData(process.ID, view.AvailableStyles,
-		s.liveClaimsByStyle(process.ID), composerPicker)
+	claimsByStyle := s.liveClaimsByStyle(process.ID)
+	// nil for the node list: the picker scope returns before anything could
+	// call it, and handing the poll a closure that CAN read process_nodes is
+	// how a node-list query finds its way back onto it.
+	view.Composer = s.buildComposerData(process.ID, view.AvailableStyles, claimsByStyle, composerPicker, nil)
+	// THE CELL PICTURE'S VERSION, AND NOT THE PICTURE (owner ruling 4,
+	// 2026-09-17). The picture cost this poll two queries and a deep copy of
+	// the plant's NGRP map, every 500 ms, per board, for a drawing that changes
+	// when an engineer edits a cell. The page fetches it from
+	// GET /api/operator-stations/{id}/cell when this string stops matching the
+	// one on the picture it holds.
+	//
+	// ZERO NEW QUERIES: every input is already in hand. The claims are the ones
+	// the picker block was just built from — flattened here rather than re-read
+	// — and the two generations are in-memory counters published by the writers
+	// that change what they stand for.
+	var activeStyleID int64
+	if process.ActiveStyleID != nil {
+		activeStyleID = *process.ActiveStyleID
+	}
+	flat := make([]processes.NodeClaim, 0, 32)
+	for _, rows := range claimsByStyle {
+		flat = append(flat, rows...)
+	}
+	view.CellVersion = domain.CellPictureVersion(domain.CellPictureVersionInput{
+		StationID: stationID, ProcessID: process.ID, ActiveStyleID: activeStyleID,
+		NodeGeneration: processes.NodeGeneration(), PlantGeneration: s.plantGen(),
+		Claims: flat,
+	})
 	if co, err := s.db.GetActiveProcessChangeover(process.ID); err == nil {
 		view.ActiveChangeover = co
 		if stationTask, err := s.db.GetChangeoverStationTaskByStation(co.ID, stationID); err == nil {

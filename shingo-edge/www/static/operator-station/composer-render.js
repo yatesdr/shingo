@@ -662,14 +662,26 @@ function reportStripFit() {
 // adapter is composer-model.js's; this names the base picture it draws over.
 function cellFromModel() { return M().pictureCells(model, (view && view.cell) || { positions: [] }); }
 
+// WHICH ROW EACH POSITION LANDED IN, COMPUTED WITH THE DRAWING (P6).
+//
+// rowWord needs one label per panel open and used to get it by calling
+// pictureRows(cellFromModel()) — which re-runs layoutPositions: the projection,
+// the pairwise collision scan over every position, the row clustering. The
+// whole layout, on a touch screen, to read one word that the drawing standing
+// on screen had just computed. drawPicture is the one place the layout is
+// decided, so it is the one place that records it.
+let pictureRowOf = {};
+
 function drawPicture() {
     const svg = $('os-comp-svg');
     if (!svg) return;
     const fs = M().findings(model);
     const byNode = {};
     for (const f of fs) if (f.node && !byNode[f.node]) byNode[f.node] = f.short;
+    const cell = cellFromModel();
+    pictureRowOf = pictureRows(cell);
     svg.innerHTML = renderFlowPicture(
-        { cell: cellFromModel(), station: view && view.station },
+        { cell: cell, station: view && view.station },
         {
             selected: model.selected, findings: byNode, editable: true,
             sentences: sentencesFromModel(model),
@@ -854,9 +866,12 @@ function openPositionPanel(node) {
 // The station draws its picture in the default frame, so the row lookup uses
 // it too; a middle row and a picture with only one row get no word, which is
 // the renderer declining to guess rather than a gap.
+//
+// READ FROM THE LAYOUT ALREADY COMPUTED (P6), not computed again: see
+// pictureRowOf. openPositionPanel draws the picture before it asks, so the
+// answer is always the one on screen.
 function rowWord(node) {
-    const cell = cellFromModel();
-    return pictureRows(cell)[node] || '';
+    return pictureRowOf[node] || '';
 }
 
 function row(label, inner) {
@@ -1431,10 +1446,22 @@ function bootFromHash() {
     if (!m) return;
     fetch('/api/operator-stations/' + m[1] + '/view')
         .then(r => r.json())
+        // THE CELL PICTURE TOO. The view carries a version and no picture, and
+        // on the live path operator.js has already fetched one and attached it
+        // before the composer is ever opened. A shot loads cold at a hash, so
+        // nothing has — and without this every composer state photographs an
+        // empty stage.
+        .then(v => {
+            view = v;
+            return fetch('/api/operator-stations/' + m[1] + '/cell')
+                .then(r => (r.ok ? r.json() : null))
+                .then(pic => { if (pic) view.cell = pic; })
+                .catch(() => { /* the schematic caption says there is nothing to draw */ });
+        })
         // The composer's own read too: a shot opens straight into S3 or later,
         // which the live path only reaches through a tap that has already
         // fetched it.
-        .then(v => { view = v; return ensureFlow(); })
+        .then(() => ensureFlow())
         .then(() => { openFromHash(); })
         .catch(() => { /* no view, no composer — the board still renders */ });
 }

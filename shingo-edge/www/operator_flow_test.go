@@ -50,7 +50,22 @@ func TestOperatorFlowRendersAWholePlantCell(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildView %s: %v", name, err)
 		}
-		raw, err := json.Marshal(view)
+		// THE PICTURE IS FETCHED AND ATTACHED, exactly as the page does it.
+		//
+		// The station view carries a cell VERSION and no picture (owner ruling
+		// 4, 2026-09-17); operator.js fetches .../cell when that version stops
+		// matching the one it holds and hangs the answer on `view.cell`, which
+		// is the shape every renderer reads. This harness hands the JS a view,
+		// so it has to hand it the same view the browser has — otherwise the
+		// renderer is being tested against a payload no browser ever sees.
+		pic, err := svc.CellPictureForStation(stationID)
+		if err != nil {
+			t.Fatalf("CellPictureForStation %s: %v", name, err)
+		}
+		raw, err := json.Marshal(struct {
+			*domain.OperatorStationView
+			Cell *domain.CellPicture `json:"cell,omitempty"`
+		}{OperatorStationView: view, Cell: pic})
 		if err != nil {
 			t.Fatalf("marshal %s: %v", name, err)
 		}

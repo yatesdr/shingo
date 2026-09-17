@@ -88,8 +88,15 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 		return nil, err
 	}
 	claims := s.liveClaimsByStyle(processID)
-	out := s.buildComposerData(processID, styles, claims, composerDesktop)
-	out.Cell = s.processCellPicture(process, claims)
+	// ONE ListProcessNodesByProcess FOR THIS READ, and it used to be two: the
+	// picture read the node list, and pressOrder read it again for the preset
+	// cards' position order. Read once here and handed to both (P2).
+	nodes, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		log.Printf("composer: list process nodes for %d: %v", processID, err)
+	}
+	out := s.buildComposerData(processID, styles, claims, composerDesktop, func() []processes.Node { return nodes })
+	out.Cell = s.processCellPicture(process, claims, nodes)
 	out.Map = s.composerMap()
 	return out, nil
 }
@@ -109,7 +116,20 @@ func (s *StationService) ComposerForStation(processID int64) (*domain.ComposerDa
 	if err != nil {
 		return nil, err
 	}
-	return s.buildComposerData(processID, styles, s.liveClaimsByStyle(processID), composerStation), nil
+	// LAZY, not read: the node list is wanted only for the preset cards' position
+	// order, and a cell with no presets must not pay a query for a value nothing
+	// reads. See composerPresets.
+	return s.buildComposerData(processID, styles, s.liveClaimsByStyle(processID), composerStation,
+		func() []processes.Node { return s.processNodes(processID) }), nil
+}
+
+// processNodes is the node list, fail-open with a line.
+func (s *StationService) processNodes(processID int64) []processes.Node {
+	nodes, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		log.Printf("composer: list process nodes for %d: %v", processID, err)
+	}
+	return nodes
 }
 
 // liveClaimsByStyle is THE claims read for a composer build: one query for
@@ -131,7 +151,8 @@ func (s *StationService) liveClaimsByStyle(processID int64) map[int64][]processe
 // buildComposerData assembles one of the three shapes from rows already read.
 // It issues no per-style query.
 func (s *StationService) buildComposerData(processID int64, styles []processes.Style,
-	claims map[int64][]processes.NodeClaim, scope composerScope) *domain.ComposerData {
+	claims map[int64][]processes.NodeClaim, scope composerScope,
+	nodes func() []processes.Node) *domain.ComposerData {
 	out := &domain.ComposerData{}
 
 	lastRun, recent := s.changeoverHistory(processID)
@@ -214,7 +235,7 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 		})
 	}
 
-	out.Presets = s.composerPresets(processID, claims, s.pressOrder(processID))
+	out.Presets = s.composerPresets(processID, claims, nodes)
 	// SCENE OR MAP, NEVER BOTH — they are the same network. The desktop gets
 	// Map (whose edges carry Len) in ComposerForProcess; the station gets the
 	// collapsed form here.
@@ -316,34 +337,25 @@ func (s *StationService) composerMap() *domain.ComposerMap {
 	return m
 }
 
-// processCellPicture draws the press for the whole process — stationID 0, the
-// scope cellPositionNames documents. The running style's claims come from the
-// rows the caller already read.
-func (s *StationService) processCellPicture(process *processes.Process, byStyle map[int64][]processes.NodeClaim) *domain.CellPicture {
-	allNodes, err := s.db.ListProcessNodesByProcess(process.ID)
-	if err != nil {
-		log.Printf("composer: list process nodes for %d: %v", process.ID, err)
-	}
-	backPositions, err := s.db.ListBackPositionNames(process.ID)
-	if err != nil {
-		log.Printf("composer: list back positions for %d: %v", process.ID, err)
-	}
-	claims := map[string]domain.NodeClaim{}
-	if process.ActiveStyleID != nil {
-		for _, c := range byStyle[*process.ActiveStyleID] {
-			claims[c.CoreNodeName] = c
+// processCellPicture draws the cell for the whole process — stationID 0, the
+// scope cellPositionNames documents. Every input is one the caller already
+// has: the claims it read for the style blocks, and the node list it read for
+// the preset order.
+func (s *StationService) processCellPicture(process *processes.Process,
+	byStyle map[int64][]processes.NodeClaim, nodes []processes.Node) *domain.CellPicture {
+
+	active := map[string]domain.NodeClaim{}
+	live := make([]processes.NodeClaim, 0, 32)
+	for styleID, rows := range byStyle {
+		live = append(live, rows...)
+		if process.ActiveStyleID != nil && styleID == *process.ActiveStyleID {
+			for _, c := range rows {
+				active[c.CoreNodeName] = c
+			}
 		}
 	}
-	in := domain.CellPictureInput{
-		Nodes: allNodes, Claims: claims, BackPositions: backPositions,
-	}
-	if s.sceneGeometry != nil {
-		in.Geometry = s.sceneGeometry()
-	}
-	if s.coreNodeGroups != nil {
-		in.Groups = s.coreNodeGroups()
-	}
-	return domain.BuildCellPicture(in)
+	// stationID 0 — every station of this process, the desktop's scope.
+	return s.cellPicture(0, process, active, live, nodes)
 }
 
 // flowProvenance is where a style's flow came from and when, for the set-up
@@ -411,6 +423,20 @@ func (s *StationService) processPalette(processID int64) []string {
 	return codes
 }
 
+// cellOrder is the process's position names in the order the cell has them,
+// which is the order every surface prints a shape's positions in. See
+// domain.PresetShapeNodes.
+//
+// NAMED FOR THE CELL, not for a press (owner, 2026-09-17): a 4x2 is a weld
+// cell, and the order of its positions is not a fact about presses.
+func cellOrder(nodes []processes.Node) []string {
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, n.CoreNodeName)
+	}
+	return out
+}
+
 // composerPresets turns stored presets into strip cards. The card's glyph needs
 // ONE mode; a preset whose cells disagree leaves it blank and draws the empty
 // glyph rather than electing one of them to stand for the rest.
@@ -422,30 +448,24 @@ func (s *StationService) processPalette(processID int64) []string {
 // cards at all. U8 left this code unexercised (R9), and until U10 stored a
 // preset and asked the composer block for its card, nothing was red.
 // TestComposerPresets_AStoredPresetRendersACard is that test.
-// pressOrder is the process's position names in the order the press has them,
-// which is the order every surface prints a shape's positions in. See
-// domain.PresetShapeNodes.
-func (s *StationService) pressOrder(processID int64) []string {
-	nodes, err := s.db.ListProcessNodesByProcess(processID)
-	if err != nil {
-		log.Printf("composer: press order for %d: %v", processID, err)
-		return nil
-	}
-	out := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, n.CoreNodeName)
-	}
-	return out
-}
+//
+// THE NODE LIST ARRIVES AS A FUNCTION, and that is P2's second half. It used
+// to be READ by the caller and handed in, so a cell with ZERO presets paid a
+// node-list query for a value the early return below then discarded — one line
+// from where exactly this was fixed for the member counts, and invisible to the
+// budget pin because the pin read it before it started counting. Called after
+// the return, so the query happens when there is a card to order.
+func (s *StationService) composerPresets(processID int64, claims map[int64][]processes.NodeClaim,
+	nodes func() []processes.Node) []domain.ComposerPreset {
 
-func (s *StationService) composerPresets(processID int64, claims map[int64][]processes.NodeClaim, pressOrder []string) []domain.ComposerPreset {
 	rows, err := s.db.ListFlowPresets(processID, false)
 	if err != nil || len(rows) == 0 {
-		// NO PRESETS, NO MEMBER COUNT. Every process starts here and most
-		// stay here: counting members for an empty card list was 41 of the
-		// poll's 86 queries, building a map nothing then indexed.
+		// NO PRESETS, NO MEMBER COUNT AND NO NODE LIST. Every process starts
+		// here and most stay here: counting members for an empty card list was
+		// 41 of the poll's 86 queries, building a map nothing then indexed.
 		return nil
 	}
+	pressOrder := cellOrder(nodes())
 	members := presetMemberCounts(claims)
 	var out []domain.ComposerPreset
 	for _, p := range rows {

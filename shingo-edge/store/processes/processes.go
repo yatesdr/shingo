@@ -197,7 +197,13 @@ func Delete(db *sql.DB, id int64) error {
 			return fmt.Errorf("process %d delete: %w", id, err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Deleting a process retires every one of its nodes (the process_nodes
+	// step above), so every board of it has a picture that is now empty.
+	BumpNodeGeneration()
+	return nil
 }
 
 // SetActiveStyle changes the active_style_id on a process.
@@ -454,6 +460,7 @@ func CreateNode(db *sql.DB, in NodeInput) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	BumpNodeGeneration()
 	return res.LastInsertId()
 }
 
@@ -485,6 +492,9 @@ func UpdateNode(db *sql.DB, id int64, in NodeInput) error {
 		in.ProcessID, in.OperatorStationID, in.CoreNodeName, in.Code, in.Name,
 		in.Sequence, in.Enabled, id,
 	)
+	if err == nil {
+		BumpNodeGeneration()
+	}
 	return err
 }
 
@@ -515,7 +525,11 @@ func DeleteNode(db *sql.DB, id int64) error {
 	if _, err := tx.Exec(`DELETE FROM process_node_runtime_states WHERE process_node_id = ?`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	BumpNodeGeneration()
+	return nil
 }
 
 // RestoreNode un-retires a process_node. The runtime state row is NOT restored
@@ -524,6 +538,9 @@ func DeleteNode(db *sql.DB, id int64) error {
 func RestoreNode(db *sql.DB, id int64) error {
 	_, err := db.Exec(`UPDATE process_nodes SET deleted_at = NULL, updated_at = datetime('now')
 		WHERE id=? AND deleted_at IS NOT NULL`, id)
+	if err == nil {
+		BumpNodeGeneration()
+	}
 	return err
 }
 

@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"shingoedge/store/processes"
 )
 
 // composer_budget_pins_test.go — the S0 budgets as assertions.
@@ -103,7 +106,7 @@ func TestStationView_QueryCountAndBytes(t *testing.T) {
 		t.Fatalf("list styles: %v", err)
 	}
 	fx.counter.Reset()
-	block := fx.svc.buildComposerData(fx.processID, styles, fx.svc.liveClaimsByStyle(fx.processID), composerPicker)
+	block := fx.svc.buildComposerData(fx.processID, styles, fx.svc.liveClaimsByStyle(fx.processID), composerPicker, nil)
 	queries := fx.counter.Count()
 	if queries > composerBlockQueryBudget {
 		t.Errorf("the composer block costs the poll %d queries, budget %d — a per-style read has come back",
@@ -197,15 +200,20 @@ func TestComposerBlock_PresetMemberCountsShortCircuit(t *testing.T) {
 	}
 
 	claims := fx.svc.liveClaimsByStyle(fx.processID)
-	// Read before the count: the press order is the CALLER's, read once per
-	// composer build and handed in, not part of what the strip costs.
-	order := fx.svc.pressOrder(fx.processID)
 
+	// THE NODE LIST IS INSIDE THE COUNT NOW, and that is the point of P2. It
+	// used to be read by this test BEFORE the counter was reset and handed in
+	// as a value — so a cell with zero presets paid a node-list query for an
+	// order nothing would print, and the pin could not see it. The lazy form
+	// is passed in here exactly as the service passes it, and the budget is
+	// the one read that is genuinely needed: the preset list itself.
 	fx.counter.Reset()
-	withPresets := fx.svc.composerPresets(fx.processID, claims, order)
+	withPresets := fx.svc.composerPresets(fx.processID, claims,
+		func() []processes.Node { return fx.svc.processNodes(fx.processID) })
 	if n := fx.counter.Count(); n > 1 {
 		t.Errorf("a process with no presets issues %d queries building its (empty) strip, want 1 — "+
-			"the list read itself and nothing else", n)
+			"the list read itself and nothing else. A node list read for the card ORDER, on a "+
+			"process with no cards, is the one this pin exists to catch", n)
 	}
 	if withPresets != nil {
 		t.Errorf("a process with no live presets offered %d cards", len(withPresets))
@@ -216,9 +224,7 @@ func TestComposerBlock_PresetMemberCountsShortCircuit(t *testing.T) {
 // anywhere on the poll path shows up even if the composer block itself is
 // still inside its budget.
 func TestStationView_BuildsInOnePass(t *testing.T) {
-	// main built this view in 31 queries at this fixture's size; the composer
-	// is allowed three more.
-	const budget = 31 + composerBlockQueryBudget
+	const budget = stationPollQueryBudget
 	fx := seedBudgetFixture(t)
 
 	fx.counter.Reset()
@@ -227,5 +233,93 @@ func TestStationView_BuildsInOnePass(t *testing.T) {
 	}
 	if n := fx.counter.Count(); n > budget {
 		t.Errorf("a station poll issues %d queries, budget %d", n, budget)
+	} else {
+		t.Logf("station poll: %d queries, budget %d", n, budget)
+	}
+}
+
+// stationPollQueryBudget is what one station poll costs at the budget
+// fixture's plant: the board's own reads, plus the composer PICKER block's
+// three, and no cell picture.
+//
+// 33 BEFORE, 31 NOW. The two that left are the cell picture's — the process's
+// whole node list, and the partner-slot scan over every live claim
+// (ListBackPositionNames) — which rode every poll of every board at 500 ms on
+// a Pi with one SQLite connection, for a drawing that changes when an engineer
+// edits a cell (owner ruling 4, 2026-09-17). They are not saved somewhere
+// else: the picture is read by its own endpoint, when its version moves.
+//
+// The ceiling here was 34 while the actual was 33, which is one query of slack
+// nobody meant to leave. The exact-equality pin below is what closes that.
+const stationPollQueryBudget = 31
+
+// stationViewByteBudget is the WHOLE view's serialised size, pre-gzip, at the
+// budget fixture's plant.
+//
+// P4 — SYNTH-round3 §2.10 asked for this and it never landed, so the only byte
+// pin on the poll path covered the composer BLOCK. Everything else on the view
+// could grow unobserved, and the cell picture — which is what did grow — was
+// not in the block.
+//
+// The number is a CEILING with headroom reported, like the desktop read's, not
+// a golden: the view carries a tile per position and the fixture's board is
+// what it is. What it catches is a field arriving on the poll.
+const stationViewByteBudget = 40 * 1024
+
+// TestStationView_ByteBudget is P4, and TestStationView_CarriesNoCellPicture
+// below is the specific thing it exists to keep off.
+func TestStationView_ByteBudget(t *testing.T) {
+	fx := seedBudgetFixture(t)
+
+	view, err := fx.svc.BuildView(context.Background(), fx.stationID)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	n := len(mustJSON(t, view))
+	if n > stationViewByteBudget {
+		t.Errorf("the station view serialises to %d bytes, budget %d (%d over).\n"+
+			"  Pre-gzip, and per board every 500 ms while events flow: what the Pi pays is "+
+			"the marshalling and what the HMI pays is the parse.", n, stationViewByteBudget, n-stationViewByteBudget)
+	}
+	t.Logf("station view: %d bytes, budget %d, headroom %d (%.1f%%)",
+		n, stationViewByteBudget, stationViewByteBudget-n,
+		100*float64(stationViewByteBudget-n)/float64(stationViewByteBudget))
+}
+
+// TestStationView_CarriesAVersionAndNoPicture is the budget's other half, and
+// the one that says what the rule IS rather than what the number is.
+//
+// AN IDLE POLL CARRIES A PICTURE VERSION AND NO PICTURE, and runs neither of
+// the two queries the picture used to cost. A byte budget alone would pass on
+// a picture that merely got smaller.
+func TestStationView_CarriesAVersionAndNoPicture(t *testing.T) {
+	fx := seedBudgetFixture(t)
+
+	fx.counter.Reset()
+	view, err := fx.svc.BuildView(context.Background(), fx.stationID)
+	if err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	if view.CellVersion == "" {
+		t.Error("the poll carries no cell-picture version; the page has nothing to compare and " +
+			"would either never fetch the picture or fetch it on every poll")
+	}
+	raw := string(mustJSON(t, view))
+	if strings.Contains(raw, `"cell":`) {
+		t.Error(`the view carries a "cell" object again — the picture is back on the poll`)
+	}
+	// AND NEITHER QUERY, held as an EXACT count rather than a ceiling.
+	//
+	// The counter counts statements; it does not name them, and a second
+	// instrument that did would be the "two ways to count" store/query_count.go
+	// says not to add. Exact equality is the strong form available: the two
+	// reads the picture cost are gone, so one coming back fails here even if
+	// something else was removed in the same diff to keep a ceiling satisfied.
+	if n := fx.counter.Count(); n != stationPollQueryBudget {
+		t.Errorf("a station poll issues %d queries, want exactly %d.\n"+
+			"  Two left this path with the cell picture: the process's node list, and the "+
+			"partner-slot scan over every live claim (ListBackPositionNames).\n"+
+			"  If you REMOVED one, lower stationPollQueryBudget and say so. If you added "+
+			"one, it is on every poll of every board at 500 ms.", n, stationPollQueryBudget)
 	}
 }

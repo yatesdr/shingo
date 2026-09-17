@@ -287,6 +287,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// has no login; station-shaped, because the admin read carries
 			// the plant map and every style's policy block.
 			r.Get("/operator-stations/{id}/composer", h.apiStationComposer)
+			// The cell picture, fetched when the version on the view stops
+			// matching the one the page holds. See apiStationCellPicture.
+			r.Get("/operator-stations/{id}/cell", h.apiStationCellPicture)
 
 			// Process node operations (material request, release, produce, bin ops)
 			r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)

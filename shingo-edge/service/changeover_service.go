@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -56,6 +57,10 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 	}
 	defer tx.Rollback()
 
+	// Set when the loop below auto-creates a position for a claimed node, and
+	// read after the commit: see the note at that site.
+	mintedNodes := false
+
 	now := clock.Now().UTC().Format("2006-01-02 15:04:05")
 	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes, started_at)
 		VALUES (?, ?, ?, 'active', ?, ?, ?)`, processID, fromStyleID, toStyleID, calledBy, notes, now)
@@ -107,6 +112,13 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 			}
 			id, _ := res.LastInsertId()
 			processNodeID = &id
+			// A STARTED CHANGEOVER CAN MINT POSITIONS, which is why the cell
+			// picture's version has to move on this door. Recorded and
+			// published after the COMMIT below, not here: this row does not
+			// exist for any reader until the transaction lands, and a version
+			// bumped over a rollback would send every board to fetch a picture
+			// that had not changed.
+			mintedNodes = true
 		}
 
 		res, err := tx.Exec(`INSERT INTO changeover_node_tasks (
@@ -124,14 +136,39 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 		}
 	}
 
-	// Participants — the nodes this changeover physically touches, frozen at
-	// plan time. Written in THIS transaction, after the tasks, so owning_task_id
-	// can reference real ids and so a changeover can never exist with tasks but
-	// no participants (or the reverse).
-	//
-	// process_node_id is looked up, not required: a press-index extension
-	// position may have no process_nodes row, and it stays representable by name
-	// so the plan-time assertion can report it instead of it vanishing here.
+	if err := writeParticipants(tx, changeoverID, participants, existingNodes,
+		nodeIDByNode, taskIDByNode); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if mintedNodes {
+		processes.BumpNodeGeneration()
+	}
+	return changeoverID, nil
+}
+
+// writeParticipants records the nodes this changeover physically touches,
+// frozen at plan time.
+//
+// IN THE CALLER'S TRANSACTION, after the tasks, so owning_task_id can reference
+// real ids and so a changeover can never exist with tasks but no participants
+// (or the reverse).
+//
+// process_node_id is looked up, not required: a press-index extension position
+// may have no process_nodes row, and it stays representable by name so the
+// plan-time assertion can report it instead of it vanishing here.
+//
+// ITS OWN FUNCTION because Create outgrew funlen's 60 statements when the cell
+// picture's generation counter arrived (a node auto-created here changes what
+// every board of this process draws, so the write has to publish). This block
+// was the one part of Create that reads nothing Create computes after it and
+// writes nothing Create reads — it takes its four maps and goes.
+func writeParticipants(tx *sql.Tx, changeoverID int64, participants []domain.ParticipantInput,
+	existingNodes []processes.Node, nodeIDByNode, taskIDByNode map[string]int64) error {
+
 	for _, pt := range participants {
 		coreNodeName := strings.TrimSpace(pt.CoreNodeName)
 		if coreNodeName == "" {
@@ -160,14 +197,10 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO changeover_participants (
 			process_changeover_id, core_node_name, process_node_id, role, owning_task_id
 		) VALUES (?, ?, ?, ?, ?)`, changeoverID, coreNodeName, processNodeID, pt.Role, owningTaskID); err != nil {
-			return 0, fmt.Errorf("write participant %s: %w", coreNodeName, err)
+			return fmt.Errorf("write participant %s: %w", coreNodeName, err)
 		}
 	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return changeoverID, nil
+	return nil
 }
 
 // GetActive returns the active (non-completed, non-cancelled)

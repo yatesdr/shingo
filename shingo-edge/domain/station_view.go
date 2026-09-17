@@ -222,13 +222,21 @@ type OperatorStationView struct {
 	ActiveChangeover *Changeover       `json:"active_changeover,omitempty"`
 	StationTask      *StationTask      `json:"station_task,omitempty"`
 	Nodes            []StationNodeView `json:"nodes"`
-	// Cell is the read-only picture of this station's cell — the press
-	// positions in their true arrangement with the running style's
-	// choreography on them. Built by BuildView from the process nodes, the
-	// active claims and the scene cache; see cell_picture.go. Present for
-	// every station (a cell with no positions is an empty picture, not a
-	// missing one).
-	Cell *CellPicture `json:"cell,omitempty"`
+	// CellVersion is the cell picture's version, and the picture itself is NOT
+	// here (owner ruling 4, 2026-09-17: "maps don't change often, especially
+	// near process nodes… why is this info flying over the wire so much?").
+	//
+	// The picture rode this view: two queries and a deep copy of the plant's
+	// NGRP map, rebuilt at 500 ms a board while events flow, on a Pi with one
+	// SQLite connection, for a drawing that changes when an engineer edits a
+	// cell. The page fetches it from GET …/cell when this string stops matching
+	// the version on the picture it is holding, and never otherwise.
+	//
+	// Derived rather than announced: see domain.CellPictureVersion for why an
+	// announcement-only scheme was rejected (the event stream has stalled in
+	// production) and for the four inputs, every one of which the poll already
+	// holds.
+	CellVersion string `json:"cell_version,omitempty"`
 	// Composer is everything U8's Flow Composer reads — the picker's rows, the
 	// routing set, the presets and the travel graph. One block rather than seven
 	// loose fields; see domain/composer_view.go. Present on every station,

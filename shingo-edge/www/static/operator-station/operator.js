@@ -7,6 +7,7 @@ import {
     getView, setView, getSelectedNodeID,
     getLastViewJSON, setLastViewJSON,
     findNodeByID,
+    getCellPicture, setCellPicture, getCellPictureVersion,
 } from './operator-state.js';
 import {
     renderHeader, renderGrid, renderFooter, setRenderRefs,
@@ -125,6 +126,16 @@ async function doLoadView() {
         if (text === getLastViewJSON()) return;
         setLastViewJSON(text);
         setView(JSON.parse(text));
+        // THE CELL PICTURE, FETCHED ONLY WHEN ITS VERSION MOVED. The view
+        // carries `cell_version` and no picture; this puts one back on the
+        // object every renderer reads, from a copy held across polls. On the
+        // ordinary poll it is an assignment and nothing else.
+        //
+        // AWAITED, so the picture is on the view before renderAll draws it.
+        // The wait happens on the poll that changed the version and on the
+        // first poll of the session, which is the load the operator is already
+        // watching, and never again.
+        await ensureCellPicture(getView());
         // The composer holds its own copy of the view for the screens stacked
         // over the board. Handing it the new one keeps an OPEN picker's rows
         // live — a style whose flow was set up from the desktop while the
@@ -136,6 +147,41 @@ async function doLoadView() {
         console.error('loadView', err);
         showToast('Network error', 'error');
     }
+}
+
+// ensureCellPicture attaches the held picture to this view, fetching a new one
+// first when the view's version no longer matches the one the held picture
+// carries.
+//
+// A FAILED FETCH KEEPS THE OLD PICTURE rather than blanking it. The station
+// board draws a cell an operator is standing in front of; a picture that is one
+// edit out of date is better than no picture, and the next poll tries again
+// because the version still will not match.
+//
+// A VIEW WITH NO VERSION AT ALL is an edge older than this feature answering a
+// newer page (or the other way round). Nothing is fetched and nothing is
+// attached, which draws the "No positions on this station yet" caption — the
+// same thing a station with no positions shows, and better than a request loop
+// against a door that is not there.
+let cellPictureFetch = null;
+
+async function ensureCellPicture(view) {
+    if (!view) return;
+    const want = view.cell_version || '';
+    if (want && want !== getCellPictureVersion()) {
+        // ONE FETCH IN FLIGHT. loadView is single-flight, but a post-action
+        // refresh can land while this await is open; two fetches of the same
+        // picture is two builds on the one SQLite connection.
+        if (!cellPictureFetch) {
+            cellPictureFetch = fetchWithTimeout('/api/operator-stations/' + stationID + '/cell', undefined, 30000)
+                .then(r => (r.ok ? r.json() : null))
+                .then(pic => { if (pic) setCellPicture(pic); })
+                .catch(err => { console.error('cell picture', err); })
+                .finally(() => { cellPictureFetch = null; });
+        }
+        await cellPictureFetch;
+    }
+    view.cell = getCellPicture();
 }
 
 function renderAll() {
