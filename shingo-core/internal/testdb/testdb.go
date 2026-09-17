@@ -150,11 +150,11 @@ func noteDockerDown(t testing.TB, err error) {
 // way to work, key this name on the schema rather than adding a convention
 // about when to drop the database by hand.
 //
-// NOT KEYED ON store.LatestMigrationVersion(), which reads as the obvious
-// answer and is a trap: that value is a side effect of running migrations
-// (migrations.go sets it inside runVersionedMigrations), so in exactly the
-// processes that matter here — the ones that cloned a ready template and never
-// migrated anything — it is 0.
+// NOT KEYED ON store.LatestMigrationVersion(). The version itself is now an
+// init-time constant (it used to be a side effect of running migrations), so
+// keying on it would work — but the template DB NAME still must not encode
+// the schema: a name change per version drops and rebuilds every template on
+// every migration bump, which is exactly the churn the fixed name avoids.
 func templateName() string {
 	if n := os.Getenv(envSharedTemplate); n != "" {
 		return sanitizeIdent(n, templateDBName)

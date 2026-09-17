@@ -192,15 +192,24 @@ type migration struct {
 // so PostgreSQL itself enforces apply-once idempotency, not a Go-side
 // schema.ColumnExists check that can lie under connection-pool /
 // search_path edge cases.
-// latestMigrationVersion is the highest migration version, captured from the
-// migration list when it is built in runVersionedMigrations.
+// latestMigrationVersion is the highest migration version, derived from the
+// migration list at package init — one write, before any goroutine that could
+// race it exists. This used to be assigned inside runVersionedMigrations,
+// which made it a side effect of migrating: concurrent store.Opens (two
+// parallel tests, schemadump 2026-09-17) raced the write, and a process that
+// cloned a ready template and migrated nothing read 0 — a trap two callers
+// had comments working around.
 var latestMigrationVersion int
+
+func init() {
+	if ms := migrationList(); len(ms) > 0 {
+		latestMigrationVersion = ms[len(ms)-1].version
+	}
+}
 
 // LatestMigrationVersion returns the highest schema migration version this
 // build defines. It is derived from the migration list (not a hand-maintained
-// constant), so it can never drift from the migrations themselves. Populated
-// when migrations are built/run; callers that compare against a live DB run
-// migrations first.
+// constant), so it can never drift from the migrations themselves.
 func LatestMigrationVersion() int { return latestMigrationVersion }
 
 func (db *DB) runVersionedMigrations() error {
@@ -212,12 +221,6 @@ func (db *DB) runVersionedMigrations() error {
 	}
 
 	migrations := migrationList()
-
-	// Record the head version for LatestMigrationVersion, derived from the list
-	// itself — adding a migration above updates it with no separate bookkeeping.
-	if n := len(migrations); n > 0 {
-		latestMigrationVersion = migrations[n-1].version
-	}
 
 	for _, m := range migrations {
 		var applied bool

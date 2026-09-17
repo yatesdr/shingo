@@ -20,21 +20,12 @@ import (
 // migration the build defines. A mismatch means the template skipped a
 // migration (a stale template build).
 //
-// THE EXPECTATION HAS TO BE FORCED INTO EXISTENCE FIRST, and that is not a
-// detail — it is the reason this test can now catch a whole class it could not
-// catch before. store.LatestMigrationVersion() is populated as a SIDE EFFECT of
-// running migrations (migrations.go assigns it inside runVersionedMigrations),
-// so it reads 0 in a process that never ran any. That used to be impossible:
-// every process built its own template and therefore migrated. Once a template
-// is shared across processes (see testdb.go's $SHINGO_TEST_PG path) the common
-// case is a process that cloned a ready template and migrated nothing, where
-// the bare comparison is 76 against 0 — and it would have been comparing 0
-// against 0 in a run where the template was genuinely stale.
-//
-// So: re-open the clone through the production migrate path. Against an
-// already-migrated database that is a no-op per migration (each checks
-// schema_migrations and skips), but it builds the migration list, which is what
-// publishes the head version.
+// store.LatestMigrationVersion() is published at package init (it used to be
+// a side effect of running migrations, which read 0 in a process that cloned
+// a ready template and migrated nothing — the reason this test re-opened the
+// clone through the migrate path first). The re-open is kept anyway: it also
+// exercises the schema_migrations skip path against an already-migrated
+// database, which is exactly what every template-cloning process does.
 func TestTemplateDB_HasAllSchema(t *testing.T) {
 	db, cfg := OpenWithConfig(t)
 
