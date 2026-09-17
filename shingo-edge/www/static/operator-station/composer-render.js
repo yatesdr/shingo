@@ -226,7 +226,13 @@ function sourcingFor(styleName) {
 }
 
 function verdict(s) {
-    if (!s.claim_count) return { cls: 'build', text: gate() ? 'Build' : 'Set up from the desktop' };
+    // A STYLE WITH NO FLOW SAYS SO, WHICHEVER WAY THE GATE IS SET. It read "Set
+    // up from the desktop" with the gate off, which was a verdict about
+    // permission on a column of verdicts about PARTS — and it is not even true
+    // any more: a first flow may be applied here from a preset (R3). What the
+    // row now says is the fact, and the card behind it says what can be done
+    // about it.
+    if (!s.claim_count) return { cls: 'build', text: 'No flow yet' };
     const src = sourcingFor(s.name);
     switch (src && src.code) {
         case 'green': return { cls: 'ok', text: 'Parts available' };
@@ -243,11 +249,19 @@ function verdict(s) {
 function pickerRow(row) {
     const s = row.s;
     const v = verdict(s);
-    // R7: with the gate off a zero-claim style is rendered but not tappable —
-    // there is nothing on this station that can build it.
-    const dead = !s.claim_count && !gate();
+    // R7 SAID THIS ROW WAS DEAD, AND IT IS NOT (U10 §3 C1). With the gate off a
+    // style nobody had set up rendered `disabled` and labelled "Set up from the
+    // desktop" — true about BUILDING a flow and false about the thing the
+    // operator was standing there to do. The cell already runs this shape for
+    // eight other parts; a preset an engineer named is exactly that shape, and
+    // applying one to a part with no flow is the one write R3 opens the gate
+    // for (engine.gateRefusal).
+    //
+    // So the row is tappable and what it opens says what is possible: the
+    // set-up card's no-flow variant, with the preset cards at full size and
+    // "Start blank" only where the gate allows one.
     const last = s.last_run ? ' · ran ' + esc(s.last_run) : '';
-    return '<button class="os-comp-row' + (dead ? ' dead' : '') + '"' + (dead ? ' disabled' : '') +
+    return '<button class="os-comp-row"' +
         ' data-act="pick" data-style="' + s.id + '">' +
         '<span class="id">' + esc(s.name) + '</span>' +
         '<span class="meta"><b>' + esc(row.summary) + '</b>' + last + '</span>' +
@@ -314,7 +328,14 @@ function openSetup(styleID) {
     // cells — the same read the primary button makes, run early so the card
     // can say how many orders the change will fire. READ-ONLY: flow/preview
     // writes nothing, and R8's "never a save from S3" is untouched.
-    runPreview().then(() => { if (screen === 'S3') drawSetup(s); });
+    //
+    // A STYLE WITH NO FLOW IS NOT PREVIEWED. There are no cells to plan, the
+    // no-flow card has no provenance line to fill, and the round trip would
+    // come back saying the flow fires no orders — which is true and is not news
+    // to anybody looking at a card that says "No flow yet".
+    if (s.claim_count || (s.claims || []).length) {
+        runPreview().then(() => { if (screen === 'S3') drawSetup(s); });
+    }
 }
 
 // The dim line under the chips: where the flow came from, when, and what it
@@ -341,7 +362,50 @@ function setupProvenance(s) {
     return parts.join(' · ');
 }
 
+// THE SET-UP CARD WITH NO FLOW TO SET UP (§3 C1).
+//
+// The card's ordinary job is "here is what will happen, press Start". A style
+// nobody has configured has nothing to start, so the same card becomes the
+// place a flow is CHOSEN: the cell's named shapes, full size, one tap each.
+//
+// "START BLANK" ONLY WITH THE GATE ON. Applying a named shape to a part with no
+// flow is the one write R3 opens a gated-off cell for; authoring one from
+// nothing is not, and an operator offered a button the server will refuse is
+// an operator sent to find out the hard way.
+//
+// AN EMPTY STRIP SAYS WHO MAKES THESE. A cell with no presets and the gate off
+// has nothing on this card at all, and a card with nothing on it is the dead
+// end the disabled row used to be — one sentence further in.
+function drawSetupNoFlow(s) {
+    const presets = flow().presets || [];
+    const cards = presets.map(p =>
+        '<button class="os-comp-preset lg" data-act="preset-apply" data-preset="' + esc(p.id) + '"' +
+        ' title="' + esc(p.name) + (p.where ? ' · ' + esc(p.where) : '') + '">' +
+        gl(p.mode, 40, {}) +
+        '<span><span class="nm">' + esc(p.name) + '</span>' +
+        (p.where ? '<span class="where">' + esc(p.where) + '</span>' : '') +
+        '<span class="use">' + esc(p.use || '') + '</span></span></button>').join('');
+    const blank = gate()
+        ? '<button class="os-comp-quiet" data-act="compose-blank">Start blank</button>'
+        : '';
+    const empty = presets.length ? ''
+        : '<div class="os-comp-note">This cell has no named shapes yet. An engineer names one on the ' +
+          'desktop — Processes › Presets — from a flow that already runs here, and it appears on this card.</div>';
+    show().innerHTML =
+        '<div class="os-comp-scrim on"></div>' +
+        '<div class="os-comp-setup on"><div class="os-comp-card">' +
+        '<div class="top"><div>' +
+        '<span class="os-lbl">Change over to</span>' +
+        '<h2>' + esc(s.name) + '</h2>' +
+        '<div class="desc">' + esc('No flow yet · pick the shape this part runs') + '</div>' +
+        '</div><button class="x" data-act="topick" aria-label="Back to the part list">&#10005;</button></div>' +
+        '<div class="os-comp-presets-lg">' + cards + '</div>' +
+        empty +
+        '<div class="actions">' + blank + '</div></div></div>';
+}
+
 function drawSetup(s) {
+    if (!(s.claim_count || (s.claims || []).length)) { drawSetupNoFlow(s); return; }
     const running = s.id === activeStyleID();
     const parts = (s.parts || []).map(p =>
         '<span class="os-chip part">' + esc(M().shortPart(p.payload_code || p)) +
@@ -457,6 +521,9 @@ function buildModel(s) {
         processClaims: (flow().styles || []).reduce((all, st) => all.concat(st.claims || []), []),
     });
     savedFingerprint = '';
+    // A fresh model is a fresh session with this style; the self-opening panel
+    // is armed again for the first apply made in it. See openFirstUnanswered.
+    firstUnansweredArmed = true;
 }
 
 function openComposer(styleID, blank) {
@@ -1080,6 +1147,27 @@ function reportPanelFit(pop) {
     }
 }
 
+// THE PANEL OPENS ITSELF ONCE, AFTER A SHAPE IS APPLIED (owner ruling 3,
+// 2026-09-17: "it directs them to what's important").
+//
+// A preset carries a shape and no part, by construction — so the moment after
+// an apply, every position in the new flow is asking the same question and the
+// operator has no way of knowing which one to tap first. This opens the first
+// one that has not been answered.
+//
+// ONCE, AND ONLY AFTER AN APPLY. It is not a mode: answering it closes it and
+// nothing opens itself again, because a panel that reappears is a panel
+// fighting the operator. `armed` is reset when the composer is built, which is
+// once per style per session.
+let firstUnansweredArmed = true;
+
+function openFirstUnanswered() {
+    if (!firstUnansweredArmed || !model) return;
+    firstUnansweredArmed = false;
+    const f = M().findings(model).find(x => x.node);
+    if (f) openPositionPanel(f.node);
+}
+
 function closePop() {
     const pop = $('os-comp-pop');
     if (pop) { pop.hidden = true; pop.innerHTML = ''; }
@@ -1191,7 +1279,17 @@ async function start(runAsIs) {
         const json = await res.json().catch(() => ({}));
         if (res.status === 409) { onStale(json); return; }
         if (res.status === 422) { model = M().applyPreview(model, json); screen = 'S4'; drawComposer(); return; }
-        if (!res.ok) { onStale(json); return; }
+        // A REFUSED SAVE IS NOT A STALE FLOW, and until R3 there was no way to
+        // tell them apart because only one of them was reachable. Every non-OK
+        // status went to onStale, which throws the held payload away and heads
+        // the bar "The flow changed since you previewed" — advice that is wrong
+        // about a 403 and sends the operator to re-check a flow that is fine.
+        //
+        // R3 makes the 403 reachable for the first time (a gated-off cell
+        // refuses anything but a first flow from a preset), so the refusal is
+        // shown BY NAME, on the sheet the operator is standing on, in the same
+        // shape a refused START already uses.
+        if (!res.ok) { showStartRefusal(json, res.status, false); return; }
         fingerprint = json.fingerprint || fingerprint;
         savedFingerprint = fingerprint;
     }
@@ -1337,10 +1435,7 @@ function onClick(e) {
             // poll. The tap is already a screen change, so the wait is where
             // a wait is expected; the SCAN, which must never wait, has
             // already done its filtering by here.
-            ensureFlow().then(() => {
-                if (!s.claim_count) { if (gate()) { buildModel(styleFor(id)); openComposer(id, true); } }
-                else openSetup(id);
-            });
+            ensureFlow().then(() => openSetup(id));
             break;
         }
         case 'topick': openPicker(); break;
@@ -1377,9 +1472,21 @@ function onClick(e) {
         case 'blank': send({ type: 'startBlank' }); break;
         case 'preset': {
             const p = (flow().presets || []).find(x => x.id === btn.dataset.preset);
-            if (p) send({ type: 'applyPreset', preset: p });
+            if (p) { send({ type: 'applyPreset', preset: p }); openFirstUnanswered(); }
             break;
         }
+        // From the no-flow card: apply the shape, then open the composer on it.
+        // The card is the only screen the operator has seen, so the shape has
+        // to arrive somewhere they can look at it before anything is saved.
+        case 'preset-apply': {
+            const p = (flow().presets || []).find(x => x.id === btn.dataset.preset);
+            if (!p) break;
+            openComposer(model ? model.styleId : 0, false);
+            send({ type: 'applyPreset', preset: p });
+            openFirstUnanswered();
+            break;
+        }
+        case 'compose-blank': openComposer(model ? model.styleId : 0, true); break;
         case 'mode': sendQuiet({ type: 'setMode', node: node, mode: btn.dataset.mode }); openPositionPanel(node); break;
         case 'part': sendQuiet({ type: 'setPart', node: node, payloadCode: btn.dataset.part }); openPositionPanel(node); break;
         case 'pair': sendQuiet({ type: 'setPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;

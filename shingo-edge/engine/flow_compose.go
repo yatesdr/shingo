@@ -611,10 +611,54 @@ func refuseRunningPositionMove(styleName string, stored []processes.NodeClaim, d
 	}
 }
 
+// gateRefusal is the flow-composer gate, and the one carve-out R3 makes in it.
+//
+// THE GATE IS OPERATORS-ONLY (owner, 2026-09-13). flow_composer_enabled is the
+// switch that opens this cell TO THE FLOOR, and its refusal sentence says so.
+// Applying it to the desktop as well made the rollout impossible — set the
+// flows up on the desktop, then open the gate — and gave an engineer a 403
+// about operators on a screen whose Save button was enabled.
+//
+// R3, 2026-09-17: A CELL WITH NO FLOW AT ALL MAY BE GIVEN ONE FROM A PRESET,
+// gate or no gate. The case is the one the whole unit is about: a part nobody
+// has set up, on a cell an engineer has not opened to the floor yet, and an
+// operator who can see the shape that every other part on it runs. Refusing
+// that leaves them standing at a cell that cannot be started, with the answer
+// on screen and no way to press it.
+//
+// TWO CONDITIONS, AND BOTH ARE NECESSARY:
+//
+//   - len(stored) == 0. This is a flow being BORN, not one being edited. With
+//     this condition alone an operator could re-shape an existing flow from a
+//     preset on a gated-off cell, which is the edit the gate exists to refuse.
+//   - a source_preset_id. The operator is applying a shape an ENGINEER named,
+//     not building one. Without this the carve-out would be "the floor may
+//     author any first flow", which is a different and much larger ruling.
+//
+// (argent's version was the carve without the first condition. It was rejected
+// for exactly the case above.)
+//
+// INSIDE THE TRANSACTION, and that is the point of moving it: `stored` is the
+// fingerprint pass's own read of the to-side claims, taken under the same hold
+// that decides the save. Checked outside, "this style has no flow" would be a
+// read that another save could invalidate between the check and the write —
+// and the window it opens is precisely the one where a gated-off cell gets its
+// first flow. It costs ZERO queries: the rows are already in hand.
+func gateRefusal(process *processes.Process, req FlowSaveRequest, stored []processes.NodeClaim) error {
+	if req.Source != domain.ClaimSourceHMI || process.FlowComposerEnabled {
+		return nil
+	}
+	if len(stored) == 0 && req.SourcePresetID != nil {
+		return nil
+	}
+	return ErrFlowComposerDisabled
+}
+
 // SaveFlow writes a flow to the target style in ONE transaction.
 //
-// Refused before anything is written: the process's flow composer is off
-// (ErrFlowComposerDisabled), a changeover is active (the seam's words), the
+// Refused before anything is written: a changeover is active (the seam's
+// words), the process's flow composer is off and this is not a first flow
+// arriving from a preset (ErrFlowComposerDisabled — see gateRefusal), the
 // target is the RUNNING style and the draft moves a position
 // (ErrRunningPositionMove — see refuseRunningPositionMove for the readers that
 // makes it unsafe), the recomputed fingerprint — re-read inside the
@@ -641,16 +685,8 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 	if err != nil {
 		return nil, err
 	}
-	// THE GATE IS OPERATORS-ONLY (owner, 2026-09-13). flow_composer_enabled is
-	// the switch that opens this press TO THE FLOOR, and its refusal sentence
-	// says so. Applying it to the desktop as well made the PLAN's own rollout
-	// impossible — set the flows up on the desktop, then open the gate — and
-	// gave an engineer a 403 about operators on a screen whose Save button was
-	// enabled. The desktop had unrestricted claim writes on main; this route
-	// is not where that changes.
-	if req.Source == domain.ClaimSourceHMI && !process.FlowComposerEnabled {
-		return nil, ErrFlowComposerDisabled
-	}
+	// THE GATE IS CHECKED INSIDE THE TRANSACTION NOW — see gateRefusal below
+	// for what it costs and what it buys.
 	if _, err := e.db.GetActiveProcessChangeover(processID); err == nil {
 		return nil, ErrChangeoverActive
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -695,6 +731,9 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 		}
 		if current != req.Fingerprint {
 			return ErrFlowStale
+		}
+		if err := gateRefusal(process, req, stored); err != nil {
+			return err
 		}
 		draft := draftFlow(req.ToStyleID, stored, req.Cells, req.Source, req.CalledBy,
 			req.SourcePresetID, req.SourcePresetVersion)

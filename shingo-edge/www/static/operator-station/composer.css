@@ -377,3 +377,18 @@
 .os-comp-root .os-lbl { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--os-text-muted); font-weight: 600; }
 .os-comp-root :focus-visible { outline: 2px solid var(--os-accent); outline-offset: 2px; }
+
+/* ── the set-up card with no flow to set up (U10 §3 C1) ────────────────────
+ *
+ * The preset cards are FULL SIZE here, and that is the difference from the
+ * strip. On the strip a card is one of several things on a toolbar, locked at
+ * 200x56; on this card it IS the screen — the operator has nothing else to do
+ * with this part until one is picked — so it gets a touch target the size of
+ * the decision. */
+.os-comp-presets-lg { display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0 6px; }
+.os-comp-presets-lg .os-comp-preset.lg {
+    width: 300px; height: 84px; gap: 14px; padding: 0 16px;
+}
+.os-comp-presets-lg .os-comp-preset.lg .nm { font-size: 16px; }
+.os-comp-presets-lg .os-comp-preset.lg .where,
+.os-comp-presets-lg .os-comp-preset.lg .use { font-size: 12px; }

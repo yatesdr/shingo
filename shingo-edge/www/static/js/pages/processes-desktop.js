@@ -764,6 +764,19 @@ function main() {
         // shape the station does not run, under a name that claims it does.
         // drawBar() enables it on the same measurement that disables Save flow.
         '<button class="pd-btn" data-act="save-preset" disabled>Save as preset…</button>' +
+        // USE A PRESET, ON THE SCREEN THAT EDITS A FLOW (owner: "is presets
+        // pickable on both"). The HMI's strip has offered the cell's named
+        // shapes since U10 and the desktop had them only on the Presets tab,
+        // behind a row's ⋯ menu, as "Apply to parts…" — which is the same act
+        // approached from the other end (pick a shape, then tick the parts).
+        // An engineer with one style open wanted the near end.
+        //
+        // A THIRD CALLER, NOT A THIRD IMPLEMENTATION. It applies through the
+        // model's own applyPreset and shows the model's own shapeDiff — the
+        // same reducer the HMI dispatches and the same diff the apply modal
+        // draws. A second reducer would be a second answer to "what does this
+        // shape do to this flow".
+        '<button class="pd-btn" data-act="use-preset">Use a preset ▾</button>' +
         '<button class="pd-btn primary" data-act="save" disabled>Save flow</button></div></div>' +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture" viewBox="0 0 1280 560"></svg>' +
         '<div class="pd-legend"><span><i class="r1"></i>Robot 1</span><span><i class="r2"></i>Robot 2</span></div></div>' +
@@ -2788,7 +2801,7 @@ function drawSettings() {
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
         '" data-act="st-arm" data-arm="' + m[0] + '">' + esc(m[1]) + '</button>').join('');
     const changeover = '<div class="pd-sect"><h2>Changeover</h2></div>' +
-        stField('On a confirmed part (CATID) change', 'the PLC says a new part is stamping',
+        stField('On a confirmed part (CATID) change', 'the PLC says a new part is running',
             '<div class="pd-seg">' + seg + '</div>') +
         '<p class="pd-note">' + esc(AUTO_ARM_NOTE) + '</p>';
 
@@ -4550,7 +4563,16 @@ function presetRow(p) {
             ? '<span class="pd-warn">' + drifted + ' drifted</span>'
             : '<span class="pd-dim">in step</span>') + '</td>' +
         '<td class="pd-dim">' + esc(savedWord(p)) + '</td>' +
-        '<td class="pd-acts"><button class="pd-dimlink" data-act="preset-menu" data-preset="' +
+        // APPLY IS A BUTTON, NOT A MENU ITEM (§3 C5). It is the only thing on
+        // this row anybody comes here to DO — Rename and Archive are
+        // housekeeping, which is what a ⋯ is for. A control that is the point
+        // of the row belongs on the row: this one was a menu item for long
+        // enough that a round where the menu itself did not open left the whole
+        // apply flow unreachable by mouse (see PRESET_MENU's note), and a
+        // discoverable control cannot fail that way.
+        '<td class="pd-acts"><button class="pd-btn quiet" data-act="preset-apply" data-preset="' +
+        p.id + '">Apply to parts…</button>' +
+        '<button class="pd-dimlink" data-act="preset-menu" data-preset="' +
         p.id + '">⋯</button></td></tr>';
     if (!open) return head;
 
@@ -4611,8 +4633,12 @@ function drawPresets() {
     // needs and Shape less than its position list, so the one thing an
     // engineer scans down wrapped onto two lines with `v1` orphaned on the
     // second, while `PLN_01 / PLN_04` ellipsised beside acres of empty Saved.
-    const presetCols = '<colgroup><col style="width:26%"><col style="width:27%">' +
-        '<col style="width:10%"><col style="width:15%"><col style="width:16%"><col style="width:6%"></colgroup>';
+    // THE ACTIONS COLUMN HOLDS A BUTTON NOW, not just a ⋯, so it gets the room
+    // for one. At 6 % the `Apply to parts…` button was clipped mid-word and
+    // pushed the ⋯ off the row entirely — the table is `table-layout: fixed`,
+    // so a cell does not grow to its contents, it cuts them.
+    const presetCols = '<colgroup><col style="width:20%"><col style="width:24%">' +
+        '<col style="width:9%"><col style="width:11%"><col style="width:18%"><col style="width:18%"></colgroup>';
     h += presets.length
         ? '<table class="pd-tbl pd-presettbl">' + presetCols +
         '<thead><tr><th>Name</th><th>Shape</th><th>Used by</th>' +
@@ -4649,18 +4675,68 @@ function drawPresets() {
         '<div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
 
+// openUsePreset lists this cell's named shapes for the style currently open.
+//
+// FROM THE COMPOSER BLOCK, not the Presets tab's read: S.composer.presets is
+// already loaded (the picture, the routing set and the strip cards come from
+// it), and asking the other endpoint would be a second list of the same shapes
+// that could disagree about which versions are live.
+function openUsePreset(btn) {
+    const pop = $('pd-pop');
+    if (!pop || !S.model) return;
+    const presets = S.composer.presets || [];
+    if (!presets.length) {
+        pop.innerHTML = '<div class="none">This cell has no named shapes yet. Name one from a flow ' +
+            'that already runs here — Save as preset… — or from the Presets tab.</div>';
+    } else {
+        pop.innerHTML = presets.map(p =>
+            '<button data-act="use-preset-pick" data-preset="' + esc(p.id) + '">' +
+            esc(p.name) + (p.where ? '<small>' + esc(p.where) + '</small>' : '') + '</button>').join('');
+    }
+    pop.hidden = false;
+    placePopover(pop, btn);
+}
+
+// usePreset applies a shape to the OPEN draft, after showing what it would
+// change — the same preview-before-write the apply modal gives, on one style
+// instead of a ticked list.
+//
+// NOTHING IS WRITTEN HERE. It changes the draft, exactly as every picker on
+// this page does, and Save flow is still the only door onto the server. That
+// is what makes this a third CALLER rather than a third apply: the write path
+// is unchanged, so the provenance the apply modal stamps is stamped by the
+// same save.
+function usePreset(id) {
+    const p = (S.composer.presets || []).find(x => String(x.id) === String(id));
+    if (!p || !S.model) return;
+    const diff = M().shapeDiff(S.model, p);
+    const lines = diff.length
+        ? diff.map(d => '<div class="pd-diffrow"><b>' + esc(d.node) + '</b> · ' + esc(d.label) +
+            (d.whole ? '' : ': ' + esc(d.from) + ' → ' + esc(d.to)) + '</div>').join('')
+        : '<p class="pd-note">This flow already has that shape — applying it changes nothing.</p>';
+    openSheet('Use “' + p.name + '” on this part?',
+        'the shape only — a preset carries no parts, and the parts you have placed stay where they are.',
+        lines, 'Apply to the draft', () => {
+            apply({ type: 'applyPreset', preset: p });
+            closeSheet();
+        });
+}
+
 function presetByID(id) { return (presetsView() ? presetsView().presets : []).find(p => p.id === id) || null; }
 function candidateByKey(k) { return (presetsView() ? presetsView().candidates : []).find(c => c.shape_key === k) || null; }
 
-// THREE ITEMS. Rename was absent until owner ruling R6 (2026-09-12) settled
-// what it means: PATCH the name on every version of it and nothing else, so a
-// lineage keeps one name and a member's source_preset_id keeps pointing at the
-// same version of the same shape. Both ways of faking it were worse than the
-// absence — re-creating under the new name and archiving the old row aims
-// every member's provenance at an archived preset, and a version n+1 under a
-// new name leaves the old name live on a different shape.
+// TWO ITEMS. `Apply to parts…` left this menu for the row itself (§3 C5): it is
+// the only thing on the row anybody comes to do. What is left is housekeeping,
+// which is what a ⋯ is for.
+//
+// Rename was absent until owner ruling R6 (2026-09-12) settled what it means:
+// PATCH the name on every version of it and nothing else, so a lineage keeps
+// one name and a member's source_preset_id keeps pointing at the same version
+// of the same shape. Both ways of faking it were worse than the absence —
+// re-creating under the new name and archiving the old row aims every member's
+// provenance at an archived preset, and a version n+1 under a new name leaves
+// the old name live on a different shape.
 const PRESET_MENU = [
-    ['apply', 'Apply to parts…'],
     ['rename', 'Rename'],
     ['archive', 'Archive'],
 ];
@@ -5202,6 +5278,8 @@ function onClick(e) {
             case 'style-menu': openStyleMenu(btn); return;
             // D6's own actions.
             case 'preset-menu': openPresetMenu(btn); return;
+            case 'use-preset': openUsePreset(btn); return;
+            case 'use-preset-pick': closePop(); usePreset(btn.dataset.preset); return;
             case 'preset-apply': closePop(); openPresetApply(Number(btn.dataset.preset)); return;
             case 'preset-archive': {
                 closePop();

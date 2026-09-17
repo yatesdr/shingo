@@ -1125,3 +1125,118 @@ func TestPreviewFlow_EveryOrderNamesBothEnds(t *testing.T) {
 	}
 	t.Logf("%d previewed orders, every one naming both ends", orders)
 }
+
+// ── R3: a cell with no flow may be given one from a preset ───────────────────
+//
+// THE CASE THE RULING IS ABOUT. A part nobody has set up, on a cell an engineer
+// has not opened to the floor yet, and an operator who can see on screen the
+// shape every other part on that cell runs. Refusing that leaves them standing
+// at a cell that cannot be started with the answer in front of them.
+//
+// TWO CONDITIONS AND BOTH ARE LOAD-BEARING: no stored flow (this is a flow
+// being BORN, not one being edited) and a source_preset_id (the shape is one an
+// ENGINEER named, not one the floor authored). The table walks all four
+// corners, because the carve is only right in one of them.
+func TestSaveFlow_R3_TheGateOffDoorIsAFirstFlowFromAPreset(t *testing.T) {
+	t.Parallel()
+
+	presetID := int64(7)
+	presetVer := 1
+
+	for _, tc := range []struct {
+		name       string
+		hasStored  bool
+		fromPreset bool
+		wantErr    bool
+	}{
+		{"a first flow from a preset — the door", false, true, false},
+		{"a first flow the operator authored", false, false, true},
+		{"an EXISTING flow re-shaped from a preset", true, true, true},
+		{"an existing flow edited by hand", true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			processID, _, toStyleID := seedFlowScenario(t, db)
+			eng := testEngine(t, db)
+
+			// seedFlowScenario gives the target a stored flow; the "no stored
+			// flow" corners start from a style that has none.
+			styleID := toStyleID
+			cells := cellsOf(t, db, toStyleID)
+			if !tc.hasStored {
+				fresh, err := db.CreateStyle("R3-FRESH-"+tc.name, "", processID)
+				testutil.MustNoErr(t, err, "CreateStyle")
+				styleID = fresh
+			}
+
+			fp, err := eng.FlowFingerprint(processID, styleID)
+			testutil.MustNoErr(t, err, "fingerprint")
+
+			req := FlowSaveRequest{
+				Source: domain.ClaimSourceHMI, ToStyleID: styleID, Cells: cells,
+				Fingerprint: fp, CalledBy: "Press 400",
+			}
+			if tc.fromPreset {
+				req.SourcePresetID, req.SourcePresetVersion = &presetID, &presetVer
+			}
+
+			_, err = eng.SaveFlow(processID, req)
+			gated := errors.Is(err, ErrFlowComposerDisabled)
+			if gated != tc.wantErr {
+				t.Fatalf("err = %v; gate refusal = %v, want %v", err, gated, tc.wantErr)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("the door refused for another reason: %v", err)
+			}
+		})
+	}
+}
+
+// THE ORDER OF THE REFUSALS, and it is the order an operator meets them in.
+//
+// The gate check moved INSIDE the transaction (it reads `stored`, which is the
+// fingerprint pass's own rows), so it now sits after two guards it used to sit
+// before. Both of those are still first, and both still say what they say:
+//
+//   - an ACTIVE CHANGEOVER is refused before anything, gate or no gate,
+//     because a save during one is a different problem and its own sentence;
+//   - a STALE FINGERPRINT is refused before the gate, because a save whose
+//     rows moved under it is not a save whose gate anybody should be reasoning
+//     about — and the operator's next action is to re-check the flow either
+//     way.
+func TestSaveFlow_R3_RefusalOrder(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, toStyleID := seedFlowScenario(t, db)
+	eng := testEngine(t, db)
+	cells := cellsOf(t, db, toStyleID)
+	presetID, presetVer := int64(7), 1
+
+	// A STALE SAVE ON A GATED-OFF CELL IS STALE, not gated. Both are true; the
+	// one the operator is told is the one they can act on.
+	_, err := eng.SaveFlow(processID, FlowSaveRequest{
+		Source: domain.ClaimSourceHMI, ToStyleID: toStyleID, Cells: cells,
+		Fingerprint: "stale", CalledBy: "Press 400",
+		SourcePresetID: &presetID, SourcePresetVersion: &presetVer,
+	})
+	if !errors.Is(err, ErrFlowStale) {
+		t.Errorf("stale + gate off: err = %v, want ErrFlowStale", err)
+	}
+
+	// AN ACTIVE CHANGEOVER IS REFUSED BEFORE THE TRANSACTION OPENS, so it
+	// reaches the caller ahead of the gate and ahead of the fingerprint.
+	if _, err := db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state, called_by)
+		VALUES (?, ?, 'active', 'test')`, processID, toStyleID); err != nil {
+		t.Fatalf("insert changeover: %v", err)
+	}
+	fp, err := eng.FlowFingerprint(processID, toStyleID)
+	testutil.MustNoErr(t, err, "fingerprint")
+	_, err = eng.SaveFlow(processID, FlowSaveRequest{
+		Source: domain.ClaimSourceHMI, ToStyleID: toStyleID, Cells: cells,
+		Fingerprint: fp, CalledBy: "Press 400",
+	})
+	if !errors.Is(err, ErrChangeoverActive) {
+		t.Errorf("changeover active + gate off: err = %v, want ErrChangeoverActive", err)
+	}
+}

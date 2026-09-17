@@ -844,3 +844,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-fld-wide { grid-column: 1 / -1; }
 .pd-sheetmap { max-width: 100%; }
 .pd-sheetmap svg { width: 100%; height: auto; display: block; }
+
+/* The preset row's Apply button sits beside the ⋯ rather than wrapping under
+ * it: two controls, one line, and the cell is sized for both (presetCols). */
+.pd-presettbl .pd-acts .pd-btn { padding: 4px 10px; font-size: 12px; }
