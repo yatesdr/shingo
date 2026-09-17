@@ -114,13 +114,21 @@ type styleFlow struct {
 
 // PresetsFor is the Presets tab's read.
 //
-// COST. One styles query, one claims query per style, one presets query: the
-// same shape as the composer block's own read, which already lists claims per
-// style for the picker. Springfield's biggest process carries ~90 styles, so
-// this is ~92 indexed queries against a local SQLite file for a screen an
-// engineer opens deliberately — measured in the report. No cache, because a
-// cached drift figure is a stored drift oracle by another name, and the round
-// was explicit that drift comes from truth every time it is asked.
+// COST: FOUR QUERIES, AND FLAT IN THE STYLE COUNT. styleFlows below reads the
+// styles once and ListLiveClaimsByProcess once, then buckets the claims by
+// style in memory; this adds the presets list and the position order. Four at
+// 40 styles, four at 400. TestPresetsFor_QueryCount is the pin and prints the
+// number on every run.
+//
+// This said "one claims query per style … ~92 indexed queries" and named a
+// measurement in a report to back it. It was never true of this function —
+// styleFlows was a per-process read the day it was written — and the pin that
+// would have caught it was a bare `n > 6` that printed nothing, so a passing
+// run gave nobody a number to check the prose against. It prints one now.
+//
+// No cache, because a cached drift figure is a stored drift oracle by another
+// name, and the round was explicit that drift comes from truth every time it
+// is asked.
 func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 	flows, err := s.styleFlows(processID)
 	if err != nil {

@@ -24,7 +24,7 @@ import (
 func fullClaim(mode protocol.SwapMode, role protocol.ClaimRole) NodeClaim {
 	return NodeClaim{
 		ID: 41, StyleID: 7, CoreNodeName: "PLN_01", Role: role, SwapMode: mode,
-		PayloadCode: "55544-DWC33.21", PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
+		PayloadCode: "SYN-A-P002", PairedCoreNode: "PLN_02", SecondPairedCoreNode: "PLN_03",
 		InboundSource: "Supermarket Empty Totes", InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
 		OutboundDestination: "Supermarket Area", ChangeoverEvacDestination: "Supermarket Area",
 		ChangeoverEvacNodes: []string{"PLN_01", "PLN_02"}, KeyRoute: []string{"LM314", "LM315"},

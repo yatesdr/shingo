@@ -156,8 +156,24 @@ type CellPictureInput struct {
 	// this cell when it is bound to this station, or when the running style
 	// names it as a partner (see cellPositionNames).
 	StationID int64
-	// Nodes is EVERY process node of the process, deleted ones included; the
-	// builder filters. Partner positions are usually stationless rows.
+	// Nodes is EVERY process node of the process, not only this station's:
+	// partner and staging positions are usually stationless rows, so a list
+	// scoped to the station would leave the picture with the front cards and
+	// none of the cards they trade bins with.
+	//
+	// THE LIVE ROWS, as both callers supply it. This said "deleted ones
+	// included; the builder filters", which is false about the input: the
+	// station read and the composer read both fill it from
+	// ListProcessNodesByProcess, whose SQL is `WHERE n.process_id=? AND
+	// n.deleted_at IS NULL` (store/processes.ListNodesByProcess), so no deleted
+	// row has ever reached this field in production.
+	//
+	// cellPositionNames drops deleted and disabled rows anyway, and that guard
+	// stays: this is a pure function with exported input, its unit tests hand
+	// it rows the query would not (cell_picture_test.go marks one deleted by
+	// hand and pins that it draws no card), and a caller that one day reads the
+	// nodes some other way should not silently gain a deleted position. What
+	// the guard is NOT is the reason the field can be filled carelessly.
 	Nodes []Node
 	// Claims is the running style's claims by core node name. Nil when no
 	// style is running.

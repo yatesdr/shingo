@@ -119,8 +119,8 @@ func TestFlowPreset_RefusesAPayload(t *testing.T) {
 	db := testDB(t)
 	pid := seedPresetProcess(t, db)
 	for _, flow := range []string{
-		`{"cells":[{"core_node_name":"PLN_01","payload":"89451-KSB21.96"}]}`,
-		`{"cells":[{"core_node_name":"PLN_01","payload_code":"89451-KSB21.96"}]}`,
+		`{"cells":[{"core_node_name":"PLN_01","payload":"SYN-A-P001"}]}`,
+		`{"cells":[{"core_node_name":"PLN_01","payload_code":"SYN-A-P001"}]}`,
 		`{"cells":[{"core_node_name":"PLN_01","payload":{"code":"X"}}]}`,
 	} {
 		_, err := db.CreateFlowPreset(domain.FlowPresetInput{ProcessID: pid, Name: "with part", FlowJSON: flow})

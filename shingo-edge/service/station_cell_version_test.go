@@ -72,7 +72,7 @@ func TestCellVersion_MovesOnEveryDoorThroughTheRealPath(t *testing.T) {
 		return now
 	}
 
-	styleID := seeded.Styles["PART 40421-RVJ56.37"]
+	styleID := seeded.Styles["PART SYN-A-S003"]
 	if styleID == 0 {
 		t.Fatal("the fixture's press-index style is not seeded")
 	}

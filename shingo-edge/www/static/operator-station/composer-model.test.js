@@ -195,7 +195,7 @@ test('removePosition clears the partner role, and the partner is not left in the
 test('reduce never mutates the state it is given', () => {
     const s = initStyle(7);
     const before = JSON.stringify(s);
-    M.reduce(s, { type: 'setPart', node: 'PLN_01', payloadCode: '61477-ATD38.66' });
+    M.reduce(s, { type: 'setPart', node: 'PLN_01', payloadCode: 'SYN-A-P003' });
     assert.strictEqual(JSON.stringify(s), before);
 });
 
@@ -210,8 +210,8 @@ test('a part is on at most one position per cell', () => {
 test('addPart adds to this style’s parts and never pre-places', () => {
     let s = initStyle(7);
     const before = Object.keys(s.cells).filter(n => s.cells[n].part).length;
-    s = M.reduce(s, { type: 'addPart', payloadCode: '55544-DWC33.30' });
-    assert.ok(s.parts.includes('55544-DWC33.30'));
+    s = M.reduce(s, { type: 'addPart', payloadCode: 'SYN-PART-NEW' });
+    assert.ok(s.parts.includes('SYN-PART-NEW'));
     const after = Object.keys(s.cells).filter(n => s.cells[n].part).length;
     assert.strictEqual(after, before, 'a new part is unplaced');
 });
@@ -814,7 +814,7 @@ test('the server copy of the unplaced-part finding is not counted twice', () => 
         order_count: 2, unresolved: [], actions: [], fingerprint: 'fp',
         preflight: { state: 'ok', missing: [] },
         findings: [{ core_node_name: '', side: 'to', field: 'payload_code', severity: 'error',
-            message: '1 part needs a position: 55544-DWC33.21' }],
+            message: '1 part needs a position: SYN-A-P002' }],
     });
     const loose = M.findings(s).filter(f => f.field === 'unplaced_part' ||
         (!f.node && f.field === 'payload_code'));
@@ -1187,9 +1187,9 @@ test('the two-robot swap names the supermarket at both ends, and the part on the
     const got = M.orderSentences(s).map(M.orderSentence);
     assert.deepStrictEqual(got, [
         'Robot 2 · PLN_01 → Supermarket Area',
-        'Robot 1 · Supermarket Empty Totes → PLN_03 · 70310-TVF51.71',
+        'Robot 1 · Supermarket Empty Totes → PLN_03 · SYN-A-P010',
         'Robot 2 · PLN_04 → Supermarket Area',
-        'Robot 1 · Supermarket Empty Totes → PLN_06 · 66059-MCH30.49',
+        'Robot 1 · Supermarket Empty Totes → PLN_06 · SYN-A-P011',
         'Robot 2 · PLN_02 → Supermarket Area',
         'Robot 2 · PLN_05 → Supermarket Area',
     ]);

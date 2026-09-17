@@ -150,12 +150,16 @@ func TestFlowspecRoleMovesExactlyTwoEntries(t *testing.T) {
 // D4 (UpsertClaim has no single_robot / sequential arm) is a store fact and is
 // pinned in store/store_test.go as TestStoreStillAcceptsWhatFlowspecRefuses.
 //
-// D5: press-index staging. The planner reads the incoming claim's inbound
-// staging for a staged tooling changeover and the editor SHOWS the fieldset,
-// while claimForbiddenFields CLEARS both staging fields at save. Steady says
-// Used; the editor's drop is pinned by this name in
+// D5 (RESOLVED BY DELETION): press-index staging. The planner reads the
+// incoming claim's inbound staging for a staged tooling changeover and the
+// composer draws both columns; Steady says Used. The disagreement was the claim
+// modal's claimForbiddenFields, which cleared both at save whatever the table
+// said — and U9d deleted that modal. Its replacement derives the wipe from
+// Steady (composer-model.js clearForbidden), so a Used column is kept by
+// construction, and the suite that pins it —
 // www/static/js/pages/composer-fields.characterization.test.js, which replaced
-// processes.js's suite when U9d retired the claim modal.
+// processes.js's — asks Steady for the expectation rather than listing fields.
+// The assertion below stays: it is what keeps the two columns Used.
 //
 // D6: manual_swap outbound destination. Required by the store and the
 // validator, HIDDEN by the editor (the loader board owns it); the stored value
@@ -216,7 +220,7 @@ func TestFlowspecPinsKnownDisagreements(t *testing.T) {
 	t.Run("D5_press_index_staging_used_by_planner_shown_by_editor", func(t *testing.T) {
 		row := flowspec.Steady(protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex)
 		if row[flowspec.InboundStaging] != flowspec.Used || row[flowspec.OutboundStaging] != flowspec.Used {
-			t.Errorf("Steady(press_index) staging = %v/%v, want Used/Used (the editor still clears both at save — see composer-fields.characterization.test.js D5)",
+			t.Errorf("Steady(press_index) staging = %v/%v, want Used/Used — the planner reads to-claim inbound staging (planKeepStagedAction) and the composer's wipe follows this row (composer-fields.characterization.test.js section 3)",
 				row[flowspec.InboundStaging], row[flowspec.OutboundStaging])
 		}
 		if got := flowspec.Changeover(protocol.SwapModeTwoRobotPressIndex)[flowspec.SideField{Side: flowspec.SideTo, Field: flowspec.InboundStaging}]; got != flowspec.Used {

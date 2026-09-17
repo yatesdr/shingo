@@ -136,7 +136,7 @@ function need(role, swap, field) {
 
 function stateFor(role, swap, node) {
     let s = M.init({
-        styleId: 1, styleName: 'PART 40421-RVJ56.37',
+        styleId: 1, styleName: 'PART SYN-A-S003',
         positions: POSITIONS, routing: ROUTING, parts: ['PIA26', 'PIA27'],
         claims: [], flowspec: FLOWSPEC, groups: {},
         processClaims: [{ core_node_name: node, role: role }],
@@ -168,7 +168,8 @@ function runAdvancedVisibility() {
 
 // ── 2. WHAT A MODE CHANGE CLEARS ─────────────────────────────────────────────
 //
-// claimForbiddenFields' drop list, in the model. Forbidden is cleared — a
+// The drop list the deleted claim modal's claimForbiddenFields held by hand,
+// now derived in the model from the same flowspec row. Forbidden is cleared — a
 // value left behind is a 422 the engineer did not ask for. UNUSED IS NOT: a
 // column cleared at save because a screen stopped drawing it is a data change
 // made by a UI decision, which is the argument flowspec.go makes about

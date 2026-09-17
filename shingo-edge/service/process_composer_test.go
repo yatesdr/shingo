@@ -29,7 +29,7 @@ func TestComposerForProcess_IsTheWholePress(t *testing.T) {
 	svc.SetCoreNodeGroupResolver(func() map[string][]string { return testdb.GroupsOf(fx) })
 	geom := testdb.SceneGeometryOf(fx)
 	svc.SetSceneGeometryResolver(func() *domain.SceneGeometry { return geom })
-	eleven := seeded.Styles["PART 68644-WSL97.20"]
+	eleven := seeded.Styles["PART SYN-A-S007"]
 	if err := db.SetActiveStyle(seeded.ProcessID, &eleven); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}

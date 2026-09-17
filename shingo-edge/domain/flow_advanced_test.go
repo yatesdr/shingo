@@ -33,10 +33,10 @@ import (
 // lose and a save that uses it has something to overwrite.
 func advancedPrior() NodeClaim {
 	c := fullClaim(protocol.SwapModeTwoRobotPressIndex, protocol.ClaimRoleProduce)
-	c.AllowedPayloadCodes = []string{"55544-DWC33.21", "61477-ATD38.66"}
+	c.AllowedPayloadCodes = []string{"SYN-A-P002", "SYN-A-P003"}
 	c.ReorderPoint, c.ReorderPointSource, c.AutoReorder = 60, "manual", true
 	c.LinesideSoftThreshold = 7
-	c.AutoRequestPayload = "55544-DWC33.21"
+	c.AutoRequestPayload = "SYN-A-P002"
 	c.AutoPush = true
 	c.EvacuateOnChangeover = true
 	c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
@@ -75,7 +75,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 	row := MaterializeClaim(got, &prior)
 	if !reflect.DeepEqual(row.AllowedPayloadCodes, prior.AllowedPayloadCodes) ||
 		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
-		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "55544-DWC33.21" || !row.AutoPush ||
+		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
 		!row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
 		!row.KeepStaged || !row.IndexRobotSupplies || !row.AutoConfirm {
 		t.Errorf("a column the modal owns was flattened by a save that never opened it: %+v", row)
@@ -89,7 +89,7 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	prior := advancedPrior()
 	cell := Collapse(prior)
 	cell.Advanced = &FlowAdvanced{
-		AllowedPayloadCodes:   []string{"66059-MCH30.49"},
+		AllowedPayloadCodes:   []string{"SYN-A-P011"},
 		ReorderPoint:          12,
 		ReorderPointSource:    "calculated",
 		AutoReorder:           false,
@@ -104,7 +104,7 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	in := Expand(cell, &prior, ClaimSourceAdmin, "engineer")
 	row := MaterializeClaim(in, &prior)
 
-	if !reflect.DeepEqual(row.AllowedPayloadCodes, []string{"66059-MCH30.49"}) {
+	if !reflect.DeepEqual(row.AllowedPayloadCodes, []string{"SYN-A-P011"}) {
 		t.Errorf("allowed list = %v, want the modal's", row.AllowedPayloadCodes)
 	}
 	if row.ReorderPoint != 12 || row.ReorderPointSource != "calculated" || row.AutoReorder {

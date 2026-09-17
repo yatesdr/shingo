@@ -64,7 +64,7 @@ func TestFixturesCarryTheRecordedPlantFacts(t *testing.T) {
 	}
 	// The join is payload_bin_types -> payloads -> code, and the wire carries
 	// the code. One payload, one bin type: the shape the resolver reads.
-	if got := len(A().PayloadBinTypeCodes()["55544-DWC33.21"]); got != 1 {
-		t.Errorf("A 55544-DWC33.21 resolves to %d bin types, want 1 (TOTE-2415)", got)
+	if got := len(A().PayloadBinTypeCodes()["SYN-A-P002"]); got != 1 {
+		t.Errorf("A SYN-A-P002 resolves to %d bin types, want 1 (TOTE-2415)", got)
 	}
 }

@@ -3376,7 +3376,7 @@ function sheetField(label, sub, name, value) {
 
 // ONE READ OF A WRITE'S ANSWER: what came back when it landed, and the
 // server's refusal BY NAME when it did not. Every write on this page wants the
-// same three lines — "PLN_02 is used by PART 40421-RVJ56.37" is an answer and
+// same three lines — "PLN_02 is used by PART SYN-A-S003" is an answer and
 // "could not save" is not — and the Add-process chain wants the answer as well,
 // because step 2 is posted against the id step 1 returned.
 async function postJSON(method, url, body) {
@@ -4322,7 +4322,7 @@ function drawGenerate() {
         S.gen.cols.map(c => '<th>' + esc(c.node) + '</th>').join('') + '<th></th></tr></thead><tbody>' +
         S.gen.rows.map((r, i) =>
             '<tr><td><input class="pd-geninput" data-genrow="' + i + '" type="text" autocomplete="off" ' +
-            'placeholder="e.g. 55544-DWC33.31" value="' + esc(r.name) + '"></td>' +
+            'placeholder="e.g. SYN-PART-01" value="' + esc(r.name) + '"></td>' +
             S.gen.cols.map((c, j) => '<td>' + picker('', 'gen:' + i + ':' + j,
                 esc(M().shortPart(r.payloads[j]) || 'inherit'), r.payloads[j] ? '' : 'dflt',
                 r.payloads[j] || 'the base payload') + '</td>').join('') +

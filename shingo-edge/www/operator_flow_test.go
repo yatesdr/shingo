@@ -75,9 +75,9 @@ func TestOperatorFlowRendersAWholePlantCell(t *testing.T) {
 		}
 		return p
 	}
-	style7 := write("style7", "PART 40421-RVJ56.37", geom)
-	style11 := write("style11", "PART 68644-WSL97.20", geom)
-	schematic := write("schematic", "PART 40421-RVJ56.37", nil)
+	style7 := write("style7", "PART SYN-A-S003", geom)
+	style11 := write("style11", "PART SYN-A-S007", geom)
+	schematic := write("schematic", "PART SYN-A-S003", nil)
 
 	script := filepath.Join("static", "operator-station", "operator-flow.test.js")
 	out, err := exec.Command(nodePath, script, style7, style11, schematic).CombinedOutput()

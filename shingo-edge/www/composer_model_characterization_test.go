@@ -105,8 +105,8 @@ func TestComposerModelCharacterization(t *testing.T) {
 
 	// The two styles §3.1 names: press-index (7) and two-robot (11).
 	for key, styleName := range map[string]string{
-		"7":  "PART 40421-RVJ56.37",
-		"11": "PART 68644-WSL97.20",
+		"7":  "PART SYN-A-S003",
+		"11": "PART SYN-A-S007",
 	} {
 		styleID, ok := seeded.Styles[styleName]
 		if !ok {

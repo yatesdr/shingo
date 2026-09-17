@@ -411,10 +411,10 @@ func TestComposerShots(t *testing.T) {
 	// The schematic first, while no scene is cached — the state a fresh Edge
 	// is in — then the scene arrives and the two choreographies are drawn to
 	// scale.
-	shot("u4-schematic.png", "PART 40421-RVJ56.37")
+	shot("u4-schematic.png", "PART SYN-A-S003")
 	eng.SetSceneGeometry("shots-a", points, edges)
-	shot("u4-press-index.png", "PART 40421-RVJ56.37")
-	shot("u4-two-robot-swap.png", "PART 68644-WSL97.20")
+	shot("u4-press-index.png", "PART SYN-A-S003")
+	shot("u4-two-robot-swap.png", "PART SYN-A-S007")
 
 	// THE GATE IS OPEN FOR THE SHOTS, and it has to be: S4-S8 are unreachable
 	// with flow_composer_enabled off (brief R7), so a run without this would
@@ -526,7 +526,7 @@ func TestComposerShots(t *testing.T) {
 		}
 	}
 
-	const idx, swap = "PART 40421-RVJ56.37", "PART 68644-WSL97.20"
+	const idx, swap = "PART SYN-A-S003", "PART SYN-A-S007"
 	// A CHANGEOVER IS FROM ONE STYLE TO ANOTHER, and the seam refuses a preview
 	// of the style already on the press ("process is already running style N").
 	// So each composer shot runs with the OTHER style active: from-something, and

@@ -193,7 +193,7 @@ func TestCellPicture_PlantAStyle7IsTwoIndexPairs(t *testing.T) {
 		}
 	}
 	if f := positionByName(pic, "PLN_01"); f != nil && f.Claim != nil {
-		if f.Claim.PayloadCode != "55544-DWC33.21" {
+		if f.Claim.PayloadCode != "SYN-A-P002" {
 			t.Errorf("PLN_01 claim = %+v, want the style's front payload", f.Claim)
 		}
 		if f.Claim.InboundSource != "Supermarket Empty Totes" || f.Claim.OutboundDestination != "Supermarket Area" {

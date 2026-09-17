@@ -270,7 +270,7 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	// Style 7: press-index on PLN_01/PLN_04, two parts.
 	var seven *domain.ComposerStyle
 	for i := range c.Styles {
-		if c.Styles[i].Name == "PART 40421-RVJ56.37" {
+		if c.Styles[i].Name == "PART SYN-A-S003" {
 			seven = &c.Styles[i]
 		}
 	}
@@ -313,7 +313,7 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	}
 	var sevenFlow *domain.ComposerStyle
 	for i := range stn.Styles {
-		if stn.Styles[i].Name == "PART 40421-RVJ56.37" {
+		if stn.Styles[i].Name == "PART SYN-A-S003" {
 			sevenFlow = &stn.Styles[i]
 		}
 	}

@@ -91,7 +91,7 @@ function noCollisions(label, svg) {
     return cards;
 }
 
-console.log('style 7 — PART 40421-RVJ56.37, two index pairs');
+console.log('style 7 — PART SYN-A-S003, two index pairs');
 {
     const svg = m.renderFlowPicture(view7);
     check('two Robot 2 index legs', count(svg, /class="leg thin r2"/g) === 2, String(count(svg, /class="leg thin r2"/g)));
@@ -108,7 +108,7 @@ console.log('style 7 — PART 40421-RVJ56.37, two index pairs');
     check('PLN_01 card line', svg.includes('>Robot 1 supplies PLN_02<') && count(svg, /class="ln"[^>]*>Robot 2 indexes</g) === 2);
     check('PLN_02 on deck', svg.includes('>on deck for PLN_01<') && svg.includes('>on deck for PLN_04<'));
     check('unused PLN_03/PLN_06 are front positions', count(svg, />front position</g) === 2 && count(svg, />back position</g) === 0);
-    check('part chips', svg.includes('>55544-DWC33.21<') && svg.includes('>61477-ATD38.66<'));
+    check('part chips', svg.includes('>SYN-A-P002<') && svg.includes('>SYN-A-P003<'));
     check('no R1/R2 abbreviation anywhere an operator reads', !/>[^<]*\bR[12]\b[^<]*</.test(svg));
     // THIS PIN READ "no arrowheads" AND THE PICTURE HAS THEM NOW (owner,
     // 2026-09-16: the legs "show flows with the purple or teal arrows, it might
@@ -142,7 +142,7 @@ console.log('style 7 — PART 40421-RVJ56.37, two index pairs');
     check('PLN_05 is at one end of the row', p5 && (cards.every(c => c.x >= p5.x) || cards.every(c => c.x <= p5.x)));
 }
 
-console.log('style 11 — PART 68644-WSL97.20, two staging moves');
+console.log('style 11 — PART SYN-A-S007, two staging moves');
 {
     const svg = m.renderFlowPicture(view11);
     check('two Robot 1 staging legs', count(svg, /class="leg thin r1"/g) === 2, String(count(svg, /class="leg thin r1"/g)));

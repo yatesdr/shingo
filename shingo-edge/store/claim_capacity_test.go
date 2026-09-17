@@ -81,8 +81,8 @@ func capacityCensusOf(t *testing.T, plant string) capacityCensus {
 func TestClaimCapacity_ResolvesFromCatalogNotTheStoredCopy(t *testing.T) {
 	a := capacityCensusOf(t, "a")
 	want := []string{
-		"PLN_01 style 10 payload 89111-ECL93.15: stored 10560, resolved 2500",
-		"PLN_04 style 10 payload 80432-JXL01.21: stored 10560, resolved 2500",
+		"PLN_01 style 10 payload SYN-A-P008: stored 10560, resolved 2500",
+		"PLN_04 style 10 payload SYN-A-P009: stored 10560, resolved 2500",
 	}
 	if strings.Join(a.differ, "\n") != strings.Join(want, "\n") {
 		t.Errorf("a: claims whose resolved capacity differs from the stored copy:\n got %v\nwant %v", a.differ, want)

@@ -8,6 +8,11 @@
 // the save-time validator and be refused by the planner minutes later, after
 // the operator had pressed START (the 2026-06-23 ALN_001 dropoff-to-nowhere).
 //
+// Three of those six are gone rather than reconciled: U9d deleted the admin
+// page's claim modal, and the composer that replaced it reads this package's
+// Document instead of carrying lists of its own. The JS readers named in
+// comments below are that one reader seen from four angles — see Document.
+//
 // TWO TABLES, NOT ONE, and the reason is a code fact: the planner switches on
 // the OUTGOING claim's mode and reads fields off both sides of the pair
 // (requiredChangeoverFields, changeover_planner.go). Readiness is therefore a
@@ -304,10 +309,20 @@ func noChoreography(m map[Field]Need) {
 //
 // EVERY ENTRY IS WHAT A READER DOES TODAY. Required entries come from
 // validateSwapModeRouting and ValidateNodeClaim's payload rule; Forbidden
-// entries from ValidateNodeClaim's three refusals and claimForbiddenFields'
-// drop list; Unused entries from the groups claimFieldVisibility hides without
-// the drop list clearing them. The divergences are marked D1..D6 and pinned in
-// the tests; nothing here resolves one.
+// entries from ValidateNodeClaim's three refusals and the mode-change wipe
+// (composer-model.js's clearForbidden and clearForbiddenAdvanced); Unused
+// entries from the fields the composer draws no control for (rowFields for the
+// positions table, advancedShows for the sheet) and does not wipe. The
+// divergences are marked D1..D6 and pinned in the tests; nothing here resolves
+// one.
+//
+// THOSE FOUR JS READERS ALL DERIVE FROM THIS TABLE, which is why the list above
+// reads as one rule rather than four. It used to name claimForbiddenFields and
+// claimFieldVisibility instead — hand-written lists on the admin page's claim
+// modal, a second copy of this table that could disagree with it. U9d deleted
+// that page (processes.js, docs/ui-style-guide.md's worked example) and the
+// composer asks Steady directly, so the shape of the D-list changed with it:
+// a divergence can now only be between this table and a GO reader.
 func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	rows := map[protocol.SwapMode]map[Field]Need{}
 
@@ -346,10 +361,17 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	// two_robot_press_index: the cell with positions. Everything the
 	// noChoreography profile forbids is this mode's to use.
 	//
-	// D5: InboundStaging / OutboundStaging are Used — the staged tooling
-	// changeover reads to-claim InboundStaging (planKeepStagedAction) and the
-	// editor shows the fieldset — while claimForbiddenFields still clears both
-	// at save. The table says Used; the editor's drop is pinned, not copied.
+	// D5 RESOLVED BY DELETION, and it is the only one on the list that no code
+	// change closed. InboundStaging / OutboundStaging are Used here — the
+	// staged tooling changeover reads to-claim InboundStaging
+	// (planKeepStagedAction) and the composer draws both columns. The
+	// disagreement was the claim modal's claimForbiddenFields, a hand-written
+	// drop list that cleared both at save whatever this table said. U9d deleted
+	// that modal; what replaced it wipes a field only where this table says
+	// Forbidden (composer-model.js clearForbidden), so a Used column is now
+	// kept by construction. Pinned in
+	// www/static/js/pages/composer-fields.characterization.test.js, which
+	// derives its expectation from Steady rather than listing fields.
 	pi := steadyBase()
 	pi[PayloadCode] = Required
 	pi[PairedCoreNode] = Required
@@ -560,10 +582,17 @@ func Changeover(fromMode protocol.SwapMode) map[SideField]Need {
 
 // ── Export ────────────────────────────────────────────────────────────
 
-// Document is the JSON shape of both tables, for the readers that are not Go:
-// the admin page derives claimFieldVisibility and claimForbiddenFields from it,
-// and the composer's model will take it as its oracle. Keys are wire names;
-// needs are their lower-case names.
+// Document is the JSON shape of both tables, for the readers that are not Go.
+//
+// ONE READER, AND IT IS THE COMPOSER'S MODEL. composer-model.js takes this as
+// its oracle: steadyRow looks a (role, mode) row up in it, and rowFields,
+// advancedShows, clearForbidden and clearForbiddenAdvanced are all that row
+// read four ways. This said the admin page derived claimFieldVisibility and
+// claimForbiddenFields from it and that the composer's model "will" — both
+// halves are now wrong in the same direction: U9d deleted the admin page's
+// claim modal and the model is the reader that arrived.
+//
+// Keys are wire names; needs are their lower-case names.
 type Document struct {
 	Fields        []Field                                                     `json:"fields"`
 	RoutingFields []Field                                                     `json:"routing_fields"`

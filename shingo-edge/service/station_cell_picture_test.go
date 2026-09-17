@@ -45,7 +45,7 @@ func TestBuildView_CellPictureFromAWholePlant(t *testing.T) {
 	t.Parallel()
 	fx := scenefixtures.A()
 	svc, stationID, seeded := plantAStation(t, fx)
-	styleID := seeded.Styles["PART 40421-RVJ56.37"]
+	styleID := seeded.Styles["PART SYN-A-S003"]
 	if err := svc.db.SetActiveStyle(seeded.ProcessID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}

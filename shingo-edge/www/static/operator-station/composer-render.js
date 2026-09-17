@@ -702,7 +702,7 @@ function drawPartRows(q) {
         for (const r of rows) {
             // THE FULL CODE ONLY WHEN IT SAYS SOMETHING THE SHORT ONE DOES NOT.
             // shortPart trims a known prefix and is a no-op on a plain part
-            // number, so a row for `19712-PKE05.56` printed that string twice,
+            // number, so a row for `SYN-A-P016` printed that string twice,
             // side by side, in two type sizes — which reads as two facts and is
             // one.
             const short = M().shortPart(r.code);

@@ -85,13 +85,6 @@ import math
 import sys
 from collections import OrderedDict
 
-# ── the shape of a made-up part number ───────────────────────────────────────
-#
-# Same shape as the real ones so the tests that care about shape still hold:
-# a code that is displayed, truncated and sorted has to be the same sort of
-# string. `shortPart` on the JS side takes the tail, so the tail has to vary.
-_LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ"  # no I, O, Q — same as a real part scheme
-
 # ── one rigid motion per plant tag ───────────────────────────────────────────
 #
 # (rotate degrees, mirror, translate x, translate y). Scale is 1 by
@@ -130,27 +123,42 @@ def _h(tag, kind, value, mod):
     return int.from_bytes(d[:8], "big") % mod
 
 
-def make_part_code(tag, src):
-    """An invented part number, stable per source code.
+def make_part_code(tag, kind, n):
+    """An invented part number: SYN-<tag>-<kind><n>, e.g. SYN-A-P007.
 
-    Shaped like the two formats the plants use — a five-digit block, a
-    five-character block, a two-digit suffix — without being either of them.
+    NOT SHAPED LIKE A REAL PART NUMBER, and it used to be. This returned the
+    plants' own format — a five-digit block, a dash, three letters, two digits,
+    a dot, two digits — on the reasoning that a fixture should exercise the
+    shapes the plants use. Two things were wrong with that. The lesser one is
+    that nothing downstream cares: the only code that inspects a part string is
+    composer-model's shortPart, which strips a `PIA<n>`/`Payload` suffix and is
+    a no-op on every other shape. The larger one is that it defeated the point
+    of the exercise. A committed fixture, a test literal and a handoff shot all
+    then read like a customer's part number, so nobody looking at one could tell
+    by looking whether it was invented, and the anonymiser's own leak scan had
+    to special-case the collisions it manufactured. A synthetic value that is
+    indistinguishable from the real thing is not anonymised, it is unlabelled.
+
+    SEQUENTIAL, NOT HASHED, for two reasons. Distinctness is guaranteed rather
+    than probable — the B fixture has 242 part codes, and 242 draws from a
+    four-digit hash collide better than half the time, which would silently
+    merge two of the plant's parts into one synthetic one. And the numbers are
+    then readable in a diff and in a shot. Stability is per RUN, which is all
+    anything needs: the Anonymiser's own dict holds one invented code per real
+    one for the whole document, and a new pull replaces the fixture wholesale.
     """
-    a = 10000 + _h(tag, "part-a", src, 90000)
-    b = "".join(_LETTERS[_h(tag, "part-b%d" % i, src, len(_LETTERS))] for i in range(3))
-    c = _h(tag, "part-c", src, 100)
-    d = _h(tag, "part-d", src, 90) + 10
-    return "%05d-%s%02d.%02d" % (a, b, c, d)
+    return "SYN-%s-%s%03d" % (tag, kind, n)
 
 
-def make_style_name(tag, src, idx):
-    """A style name. Real ones are part numbers or a word; both shapes survive."""
-    if not src:
-        return src
-    # A style whose name is not part-number-shaped is a word an engineer typed
-    # ("Press", "L Bracket"). Those carry nothing, but they are still the
-    # plant's words, so they become neutral ones of the same kind.
-    return "PART %s" % make_part_code(tag, "style:%s:%d" % (src, idx))
+def make_style_name(tag, n):
+    """A style name. Real ones are part numbers or a word; both become a code.
+
+    S AND P ARE SEPARATE NUMBER LINES so a style name and a payload code can
+    never read as the same thing. A style whose real name is a word an engineer
+    typed ("Press", "L Bracket") carries nothing, but it is still the plant's
+    word, so it becomes a neutral one of the same kind as the rest.
+    """
+    return "PART %s" % make_part_code(tag, "S", n)
 
 
 class Anonymiser:
@@ -174,14 +182,14 @@ class Anonymiser:
         if code.startswith("__") or code in ("Test-Payload", "Core_Test"):
             return code
         if code not in self.parts:
-            self.parts[code] = make_part_code(self.tag, code)
+            self.parts[code] = make_part_code(self.tag, "P", len(self.parts) + 1)
         return self.parts[code]
 
     def style(self, name):
         if name in (None, ""):
             return name
         if name not in self.styles:
-            self.styles[name] = make_style_name(self.tag, name, len(self.styles))
+            self.styles[name] = make_style_name(self.tag, len(self.styles) + 1)
         return self.styles[name]
 
     def label(self, kind, name):
@@ -448,10 +456,12 @@ _VOCABULARY_KEYS = {
 def leaked_values(out_doc, sensitive):
     """Sensitive source strings that survive as a WHOLE field value.
 
-    Whole values, not substrings: the synthetic part codes share the real ones'
-    shape, so "10139" (a real CATID) turns up inside an invented
-    "10139-KSB21.96" and "Press 4" inside an invented "Press 41". A substring
-    scan reports those and hides the ones that matter underneath them.
+    Whole values, not substrings. A substring scan reports every invented
+    "Press 41" that contains a real "Press 4" and hides the ones that matter
+    underneath them. It used to have the same trouble with part codes, which
+    were invented in the real ones' shape and so contained real CATIDs by
+    coincidence; make_part_code no longer does that, and the numbers it emits
+    are sequential, so a digit run inside one carries nothing from the plant.
     """
     hits = {}
 

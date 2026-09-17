@@ -812,7 +812,7 @@ func previewJSON(t *testing.T, p *FlowPreview) string {
 // path now, and it is the second one.
 func TestFlowPreview_DraftEqualsSavedPreview(t *testing.T) {
 	t.Parallel()
-	for _, styleName := range []string{"PART 40421-RVJ56.37", "PART 68644-WSL97.20"} {
+	for _, styleName := range []string{"PART SYN-A-S003", "PART SYN-A-S007"} {
 		{
 			t.Run(styleName, func(t *testing.T) {
 				t.Parallel()

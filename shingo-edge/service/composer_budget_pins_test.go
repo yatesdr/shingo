@@ -186,9 +186,16 @@ func TestPresetsFor_QueryCount(t *testing.T) {
 	if _, err := svc.PresetsFor(fx.processID); err != nil {
 		t.Fatalf("PresetsFor: %v", err)
 	}
-	if n := fx.counter.Count(); n > budget {
+	// SAYS THE NUMBER, for the same reason the byte budget does: a budget that
+	// reports nothing until the day it fails gives no warning that the margin
+	// has gone — and this one's comment was wrong about its own cost for
+	// exactly as long as nobody could read the count off a passing run.
+	n := fx.counter.Count()
+	if n > budget {
 		t.Errorf("PresetsFor issues %d queries at %d styles, budget %d — it is reading claims per style again",
 			n, budgetStyles, budget)
+	} else {
+		t.Logf("PresetsFor: %d queries at %d styles, budget %d", n, budgetStyles, budget)
 	}
 }
 
