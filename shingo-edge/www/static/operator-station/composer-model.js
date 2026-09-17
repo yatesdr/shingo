@@ -1179,6 +1179,55 @@ function activeCells(state) {
         .filter(([, c]) => c && c.on && c.mode);
 }
 
+// ── what a style block leaves out ───────────────────────────────────────────
+//
+// styleFacts is a style's parts and claim nodes, whichever scope the block came
+// from: present on the picker's rows, DERIVED from the cells everywhere else.
+//
+// WHY THEY ARE ABSENT ON THE COMPOSER READS (owner, 2026-09-17: carrying the
+// same data twice is not kept). `claim_nodes` is the core node of every claim
+// and `parts` is the distinct payloads with the first position that carries
+// each — which is what `claims` says, on the same object. The picker's rows
+// have no cells (a board polling at 500 ms must not collapse forty styles'
+// claims into cells it will not draw), so they keep both; the two composer
+// scopes carry the cells and drop them. 15,308 bytes of the desktop read,
+// measured.
+//
+// ONE HELPER, BOTH SURFACES. The HMI merges the picker block over the fetched
+// one and so usually has them already; the desktop reads only the composer
+// block and never does; and styleFor's own "no picker row for this style" arm
+// returns the fetched block bare. Three callers, one derivation — a second
+// would be a second answer to "which positions does this style run", which is
+// the drift this file exists to prevent.
+//
+// THE ORDER IS THE CELLS' ORDER, which is what the server sent: sequence then
+// name, out of ListLiveClaimsByProcess. A picker row reading `P01/P04` and a
+// derived one reading `P04/P01` would be the same flow summarised two ways.
+function styleFacts(style) {
+    const s = style || {};
+    const claims = s.claims || [];
+    if (!claims.length) {
+        return { parts: s.parts || [], nodes: s.claim_nodes || [] };
+    }
+    const nodes = s.claim_nodes || claims.map(c => c.core_node_name).filter(Boolean);
+    let parts = s.parts;
+    if (!parts) {
+        parts = [];
+        const seen = new Set();
+        for (const c of claims) {
+            const code = c.payload_code || '';
+            if (!code || seen.has(code)) continue;
+            seen.add(code);
+            // ONE POSITION PER PART — the FIRST that carries it, which is the
+            // rule the server's own builder used. A part on two positions is a
+            // flow nobody meant and the set-up card names one of them either
+            // way.
+            parts.push({ payload_code: code, node: c.core_node_name || '' });
+        }
+    }
+    return { parts: parts, nodes: nodes };
+}
+
 // ── the part picker's rows ───────────────────────────────────────────────────
 //
 // partOffers is the process's part set as the picker sheet draws it: one row
@@ -1870,7 +1919,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
         legs, dockNotes, cardLines, pictureCells, bar,
         findings, findingShort, fixItFor,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
-        partOffers, partAllowed,
+        partOffers, partAllowed, styleFacts,
         routingNote, routingRoleOf,
         presetCells, shapeDiff, orderSentences, orderSentence, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, advancedDefaults,

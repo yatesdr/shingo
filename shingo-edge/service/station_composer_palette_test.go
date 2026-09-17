@@ -7,6 +7,7 @@ import (
 
 	"shingo/shared/scenefixtures"
 	"shingoedge/internal/testdb"
+	"shingoedge/store/processes"
 )
 
 // station_composer_palette_test.go — the part set on the composer block.
@@ -104,5 +105,72 @@ func TestComposerPalette_CostsTheStationReadOneQuery(t *testing.T) {
 	if n := fx.counter.Count(); n != baseline {
 		t.Errorf("the station's composer read issues %d queries with 10 typed parts and %d with none — "+
 			"the palette is constant in the size of the part set or it is not one read", n, baseline)
+	}
+}
+
+// ── the duplicated style fields (owner, 2026-09-17) ──────────────────────────
+//
+// CARRYING THE SAME DATA TWICE IS NOT KEPT. ComposerStyle.Nodes is the
+// core_node_name of every claim and .Parts is the distinct payloads with the
+// first position that carries each — and on any scope that carries Claims,
+// both are already in Claims, on the same object, spelled out again. Measured
+// at the budget fixture: 2,290 and 13,018 bytes of a 201 kB read.
+//
+// THE WIDENING SEQUENCE FORKS, the way Scene and Map already do. The picker
+// scope has no Claims, so it keeps both; the two composer scopes drop them and
+// composer-model's styleFacts derives them from Claims — one helper, both
+// surfaces. This is the pin the invariant's comment names.
+func TestComposerStyleFields_TheDerivableOnesRideOnlyThePickerScope(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	seeded := testdb.SeedPlant(t, db, scenefixtures.A(), "Press A1")
+	svc := NewStationService(db)
+	styles, err := db.ListStylesByProcess(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("ListStylesByProcess: %v", err)
+	}
+	claims := svc.liveClaimsByStyle(seeded.ProcessID)
+
+	// THE PICKER SCOPE KEEPS THEM. It has no Claims — a board polling at
+	// 500 ms must not collapse forty styles' claims into cells it will not
+	// draw — so its rows would have nothing to build a flow summary from.
+	picker := svc.buildComposerData(seeded.ProcessID, styles, claims, composerPicker, nil)
+	withSummary := 0
+	for _, s := range picker.Styles {
+		if s.ClaimCount == 0 {
+			continue
+		}
+		if len(s.Nodes) == 0 || len(s.Parts) == 0 {
+			t.Errorf("picker row %q has claim_count %d and nodes=%d parts=%d; the summary and the "+
+				"set-up chips are built from these and the poll carries no cells",
+				s.Name, s.ClaimCount, len(s.Nodes), len(s.Parts))
+		}
+		withSummary++
+	}
+	if withSummary == 0 {
+		t.Fatal("the fixture seeded no style with claims; this test proves nothing")
+	}
+
+	// AND THE COMPOSER SCOPES DROP THEM, because they carry Claims.
+	for _, tc := range []struct {
+		name  string
+		scope composerScope
+	}{{"station", composerStation}, {"desktop", composerDesktop}} {
+		block := svc.buildComposerData(seeded.ProcessID, styles, claims, tc.scope,
+			func() []processes.Node { return nil })
+		carried := 0
+		for _, s := range block.Styles {
+			if len(s.Claims) == 0 {
+				continue
+			}
+			carried++
+			if s.Nodes != nil || s.Parts != nil {
+				t.Errorf("%s scope: style %q carries nodes=%v parts=%v beside %d cells that already "+
+					"say both", tc.name, s.Name, s.Nodes, s.Parts, len(s.Claims))
+			}
+		}
+		if carried == 0 {
+			t.Errorf("%s scope: no style carried cells, so the drop is untested", tc.name)
+		}
 	}
 }

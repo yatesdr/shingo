@@ -383,7 +383,18 @@ function takeComposer(data) {
     S.composer.cell.groups = S.composer.cell.groups || {};
 }
 
-function composerStyle(id) { return S.composer.styles.find(s => s.id === id) || null; }
+// composerStyle is one style of the open process, with the two derivable
+// summaries filled in.
+//
+// THE DESKTOP NEVER HAS THEM FROM THE SERVER. `parts` and `claim_nodes` ride
+// the picker scope, which is the station VIEW's block — this page reads the
+// composer block alone, which carries the cells instead. styleFacts is the one
+// derivation both surfaces use; without it `applyBlocker` reads every style as
+// "no parts placed" and the Flows model opens with an empty part list.
+function composerStyle(id) {
+    const st = S.composer.styles.find(s => s.id === id) || null;
+    return st ? Object.assign({}, st, M().styleFacts(st)) : null;
+}
 
 // ONE INIT, EVERY STYLE THIS PAGE OPENS. D1 edits one style and the Presets
 // tab's apply modal previews many, and a second init would be a second answer
@@ -564,7 +575,10 @@ function styleRow(st, isRunning) {
 function rail() {
     const p = process();
     const running = p ? p.active_style_id : 0;
-    const all = S.composer.styles;
+    // THROUGH styleFacts: the rail's sub-line is the flow summary, built from
+    // `claim_nodes`, which rides the picker scope and not this page's read.
+    // See composerStyle.
+    const all = S.composer.styles.map(st => Object.assign({}, st, M().styleFacts(st)));
     const run = all.find(s => s.id === running);
     const rest = all.filter(s => s.id !== running);
     return '<div class="pd-rail">' + searchBox('pd-railq', 'find a part, CATID or flow') +
@@ -3658,7 +3672,9 @@ function claimedPayloads(processID) {
     if (S.processID !== processID || !S.composer) return new Set();
     const out = new Set();
     for (const st of (S.composer.styles || [])) {
-        for (const p of (st.parts || [])) {
+        // styleFacts, not st.parts: on this page the block carries the cells
+        // and not the summary. See composerStyle.
+        for (const p of M().styleFacts(st).parts) {
             const code = p.payload_code || p;
             if (code) out.add(code);
         }
@@ -4815,7 +4831,10 @@ function applyStyles() {
     //
     // THE RUNNING STYLE GOES LAST — see B().applyOrder, which is where that
     // rule lives and is tested.
-    return B().applyOrder(S.composer.styles, process() ? process().active_style_id : 0);
+    // THROUGH styleFacts, because applyBlocker below reads `parts` and the
+    // composer block does not carry it — see composerStyle.
+    const withFacts = S.composer.styles.map(st => Object.assign({}, st, M().styleFacts(st)));
+    return B().applyOrder(withFacts, process() ? process().active_style_id : 0);
 }
 
 // WHY A STYLE MIGHT NOT BE APPLYABLE, in the words the rest of the page uses.

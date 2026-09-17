@@ -42,21 +42,32 @@ const composerBlockByteBudget = 22 * 1024
 // composerReadByteBudget is the DESKTOP composer read's serialised size,
 // pre-gzip, with the plant Map in it.
 //
-// 200 kB BY OWNER RULING 2026-09-13, up from the 150 kB S0 asked for. The
-// original number was set from a composition that measurement contradicts:
-// it read as though Map were the bulk of this payload, and at the pre-simplify
-// tip Map was 94.0 kB of a 324.4 kB read while the styles array was 192.3 kB.
+// 192 KiB, RE-RULED 2026-09-17 FROM THE MEASUREMENT, down from the 200 kB
+// owner ruling of 09-13. The history is worth keeping because every move of
+// this number has been duplication leaving, never minification:
 //
-// What closed the gap was duplication, and it is all gone: a map edge no
-// longer carries its endpoints' coordinates (Map 108.6 -> 77.2 kB) and an
-// Advanced block no longer spells out fourteen zero-valued fields (86.0 ->
-// 33.0 kB). 324.4 kB -> 193.6 kB, measured.
+//	324.4 kB  the pre-simplify tip
+//	193.6 kB  a map edge stopped carrying its endpoints' coordinates
+//	          (Map 108.6 -> 77.2) and an Advanced block stopped spelling out
+//	          fourteen zero-valued fields (86.0 -> 33.0)
+//	200.2 kB  the part set arrived (+4.5 kB at this fixture's 240 distinct
+//	          payloads) and the cell gained its staging band
+//	184.0 kB  ComposerStyle.Nodes and .Parts left the scopes that carry
+//	          Claims — 15.3 kB of the same strings twice on one object — and
+//	          the LM coordinate list went with the drawing that needed it
 //
-// What is left is not duplication — it is the map, and 240 cells. Getting
-// under 150 would take a columnar encoding of the map or a round trip per
-// style click, and this brief's standard is one copy, not minification, and
-// calls a round trip a stop. So the number moved and the payload did not.
-const composerReadByteBudget = 200 * 1024
+// WHY 192 AND NOT 180. The ceiling has to be tight enough that putting the
+// duplication back FAILS: restoring Nodes and Parts here is +16.3 kB, which
+// 192 catches and 200 did not. Above that it has to leave room for the two
+// things that legitimately grow — the palette with the plant's part set, and
+// the map with the plant — so it is not pinned to the measurement. 8.5 KiB of
+// headroom (6.4%) is the trade, and TestComposerRead_DesktopByteBudget prints
+// it on every run so the margin cannot quietly go.
+//
+// AND THE FIXTURE IS PESSIMISTIC ABOUT THE PALETTE, deliberately: 240 distinct
+// payload codes on one process, where Springfield's biggest runs 40-90. The
+// palette's real cost at a plant is nearer 0.8 kB than 4.5.
+const composerReadByteBudget = 192 * 1024
 
 // TestComposerRead_DesktopByteBudget holds it, and says what the headroom is
 // rather than only whether it passed: a budget that reports nothing until the

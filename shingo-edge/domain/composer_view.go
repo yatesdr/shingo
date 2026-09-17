@@ -180,10 +180,24 @@ type ComposerStyle struct {
 	// and with the gate off the row that reads "Set up from the desktop".
 	ClaimCount int `json:"claim_count"`
 	// Modes and Nodes build the row's flow summary ("2-robot index · P01/P04").
+	//
+	// NODES RIDES THE PICKER SCOPE ONLY (owner, 2026-09-17: carrying the same
+	// data twice is not kept). It is the core node of every claim, which is
+	// what Claims below says — so on the two composer scopes, which carry
+	// Claims, it was the same strings twice on one object. Modes stays
+	// everywhere: it is a deduplicated word or two per style rather than a
+	// per-claim list, so the copy costs almost nothing.
 	Modes []string `json:"claim_modes,omitempty"`
 	Nodes []string `json:"claim_nodes,omitempty"`
 	// Parts is the payloads this style runs, with the position each sits on
 	// when it has one. The set-up card's chips.
+	//
+	// THE PICKER SCOPE ONLY, for the same reason as Nodes and at six times the
+	// size: 13,018 bytes of the desktop read at the budget fixture, every byte
+	// of it a payload_code and a core_node_name that the cell beside it already
+	// carries. composer-model's styleFacts derives both from Claims for any
+	// surface that has them; see station_composer.go's composerScope for the
+	// rule and the pin.
 	Parts []ComposerPart `json:"parts,omitempty"`
 	// LastRun is the day this style was last changed over to, already
 	// formatted — the row says "ran 08-29" and nothing computes a date in JS.

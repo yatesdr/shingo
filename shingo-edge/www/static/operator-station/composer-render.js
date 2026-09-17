@@ -67,12 +67,21 @@ function routing() { return flow().routing || []; }
 function activeStyleID() { return view && view.process ? view.process.active_style_id : 0; }
 
 // styleFor is one style as every screen past the picker needs it: the view's
-// live picker facts with the fetched flow's cells and provenance over them.
+// live picker facts with the fetched flow's cells and provenance over them,
+// and the two derivable summaries filled in.
+//
+// THE FILL IS WHY THIS GOES THROUGH styleFacts. `parts` and `claim_nodes` ride
+// the PICKER scope only — on a composer scope they would be the same strings
+// the cells already carry — so a merged block has them from `base`, and the
+// arm below that returns the fetched block ALONE (no picker row for this
+// style, which is what a style created since the last poll looks like) has
+// neither. One helper answers both cases and the desktop's.
 function styleFor(id) {
     const base = styleByID(id);
     const f = (flow().styles || []).find(s => s.id === id);
-    if (!base) return f || null;
-    return f ? Object.assign({}, base, f) : base;
+    const merged = base ? (f ? Object.assign({}, base, f) : base) : f;
+    if (!merged) return null;
+    return Object.assign({}, merged, M().styleFacts(merged));
 }
 
 // ensureFlow fetches the composer payload once per process and holds it.

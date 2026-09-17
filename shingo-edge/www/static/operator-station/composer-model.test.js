@@ -1605,6 +1605,47 @@ test('a preset built for this cell raises no missing-position finding', () => {
         .filter(d => /skipped/.test(d.label || '')), []);
 });
 
+// ── the derivable style fields ───────────────────────────────────────────────
+//
+// `parts` and `claim_nodes` ride the PICKER scope only — on a composer scope
+// they are the same strings the cells already carry (owner, 2026-09-17:
+// carrying the same data twice is not kept). styleFacts is the one derivation,
+// and it has to agree with what the server's own builder sent on the picker
+// scope or the same flow reads two ways depending on which screen asked.
+test('styleFacts derives parts and nodes from the cells, agreeing with the server', () => {
+    const f = FIXTURES.styles['7'];
+    // The picker's shape: the summary, no cells. Taken from the Go fixture, so
+    // `want` is what the SERVER built, not what this test thinks it should be.
+    const picker = { id: 7, parts: f.parts.map((code, i) => ({
+        payload_code: code, node: f.claims.find(c => c.payload_code === code).core_node_name,
+    })), claim_nodes: f.claims.map(c => c.core_node_name) };
+    // The composer's shape: the cells, neither summary.
+    const composer = { id: 7, claims: f.claims };
+
+    const derived = M.styleFacts(composer);
+    assert.deepStrictEqual(derived.nodes, picker.claim_nodes,
+        'the derived node list is not the one the picker row shows');
+    assert.deepStrictEqual(derived.parts.map(p => p.payload_code),
+        picker.parts.map(p => p.payload_code),
+        'the derived parts are not the ones the picker row shows');
+    assert.deepStrictEqual(derived.parts.map(p => p.node), picker.parts.map(p => p.node),
+        'a derived part sits on a different position from the one the server named');
+
+    // A BLOCK THAT ALREADY HAS THEM IS LEFT ALONE — the HMI merges the picker
+    // block over the fetched one, so the common case is "already present".
+    const kept = M.styleFacts(Object.assign({}, composer, picker));
+    assert.deepStrictEqual(kept.parts, picker.parts);
+    assert.deepStrictEqual(kept.nodes, picker.claim_nodes);
+
+    // AND A STYLE WITH NEITHER CELLS NOR SUMMARY IS EMPTY, not undefined: a
+    // style nobody has set up is the row this whole unit is about, and every
+    // reader does `.length` on what comes back.
+    const bare = M.styleFacts({ id: 9 });
+    assert.deepStrictEqual(bare.parts, []);
+    assert.deepStrictEqual(bare.nodes, []);
+    assert.deepStrictEqual(M.styleFacts(null).parts, []);
+});
+
 // ── report ───────────────────────────────────────────────────────────────────
 if (failures) {
     console.error('\n' + failures + ' failed, ' + checks + ' passed');

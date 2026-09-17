@@ -34,9 +34,31 @@ import (
 // (the builder, presetMemberCounts, addAdvanced, and the presets service's
 // styleFlows), each issuing its own query per style.
 
-// composerScope says which of the three shapes to build. They are a widening
-// sequence — each carries everything the one before it does — so a field can
-// only ever move outward, never fork.
+// composerScope says which of the three shapes to build.
+//
+// A WIDENING SEQUENCE WITH TWO NAMED FORKS, and it used to claim it had none:
+// "each carries everything the one before it does — so a field can only ever
+// move outward, never fork." That was already untrue when it was written —
+// Scene rides the station read and Map the desktop's, never both, because they
+// are the same network and a payload carrying both carries it twice — and the
+// rule it was really keeping is the one below.
+//
+// THE RULE: what a surface already has decides what it is sent. Nothing is
+// carried twice on one payload.
+//
+// The two forks, and the pin for each:
+//
+//   - Scene (station) vs Map (desktop): the same network, one collapsed.
+//     TestComposerRead_DesktopByteBudget holds that the station read has no Map.
+//   - ComposerStyle.Nodes and .Parts ride the PICKER scope only. They are the
+//     core node of every claim and the distinct payloads with their positions
+//     — which is what Claims says, on the same object, and the composer scopes
+//     carry Claims. composer-model's styleFacts derives them for any surface
+//     that has cells and no summary.
+//     TestComposerStyleFields_TheDerivableOnesRideOnlyThePickerScope is the pin.
+//
+// What styleFor() then merges is still safe: the picker block is the only place
+// those two exist, so a merge cannot find two answers to one field.
 type composerScope int
 
 const (
@@ -227,6 +249,20 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 			if m != "" && !seenMode[m] {
 				seenMode[m] = true
 				cs.Modes = append(cs.Modes, m)
+			}
+			// NODES AND PARTS ARE THE PICKER'S, and only the picker's. On a
+			// scope that carries Claims they are the same strings twice on one
+			// object — 2,290 and 13,018 bytes of the desktop read, measured —
+			// and composer-model's styleFacts derives them from the cells for
+			// any surface that has them. See composerScope's forks.
+			//
+			// MODES STAYS ON EVERY SCOPE. It is a deduplicated handful per
+			// style (one or two words), it is what the picker row's glyph and
+			// the set-up card's meta line read, and unlike the other two it is
+			// not a per-claim list — so the copy costs almost nothing and
+			// deriving it would buy almost nothing.
+			if scope != composerPicker {
+				continue
 			}
 			cs.Nodes = append(cs.Nodes, c.CoreNodeName)
 			if c.PayloadCode != "" && !seenPart[c.PayloadCode] {
