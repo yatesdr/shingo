@@ -17,6 +17,35 @@ import (
 // complex_occupancy_collision_docker_test.go — the pair, proved from the fleet's
 // record rather than from the ledger under test.
 //
+// ── THE TESTS IN THIS FILE DO NOT RUN IN PARALLEL WITH EACH OTHER ──────────
+//
+// No t.Parallel() here, and that is not an oversight to tidy up.
+//
+// These tests are ABOUT contention: each builds two orders competing for one
+// corridor. They share one database per file (testDBShared), and
+// SetupStandardData is get-or-create by fixed name — so every test's bins land
+// at the same STORAGE-A1 under the same payload code. An allocator asked for
+// "an available bin at that node with that payload" can therefore reserve a bin
+// another test created one statement ago and is about to claim. The loser fails
+// inside its own setup with ErrReservationConflict ("another order already
+// holds an active reservation"), naming a bin id it never created. Harness
+// contention wearing the costume of the contention under test, which is the one
+// confusion these tests cannot afford. Red CI on 2026-09-17 — ClaimBinForTest
+// Acquire(bin=5 order=5) — green on every rerun and 3/3 in isolation.
+//
+// THE OTHER TWO EXITS ARE WORSE. A database per test (testDB, which
+// create_seam_char_test.go takes) installs the cleanup wedge sweep, and these
+// fixtures build order rows that are not plant states on purpose — so all five
+// would have to call DisableWedgeSweep, trading a real invariant check for a
+// flake fix. Namespacing harder does not reach it either: the lanes are already
+// per test (COLL-A / COLL-B) and so are the bin labels; the source node is
+// shared because it comes from the standard fixture, and that is the fixture
+// every other file wants.
+//
+// So: shared database, global allocator reads, one test in flight at a time.
+// The file costs about two seconds serialised, inside a package that takes
+// thirty.
+//
 // ── WHY THESE DO NOT READ OCCUPANCY ROWS ───────────────────────────────────
 //
 // The defect was a missing occupancy row. A test that asserts the fix by reading
@@ -95,7 +124,6 @@ func terminalStatusArray() []string {
 // two committed orders in one lane, which is the collision itself rather than a
 // proxy for it.
 func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *testing.T) {
-	t.Parallel()
 	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-A")
@@ -162,7 +190,6 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 // in different places. If a later change breaks the read half, the two failures
 // arrive together and the shape is obvious.
 func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T) {
-	t.Parallel()
 	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-B")
@@ -255,7 +282,6 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 // callers, and driving it through an arm would test the arm instead. The arms
 // are covered by the collision pair above.
 func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
-	t.Parallel()
 	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	_, mouth := seamLane(t, db, "SEAMGUARD")
@@ -323,7 +349,6 @@ func mouthLaneOf(t *testing.T, db *store.DB, slot *nodes.Node) int64 {
 // any route. Asserted on the fleet record, not the error — a guard that returns
 // an error after the create is a report.
 func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
-	t.Parallel()
 	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -381,7 +406,6 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 // Deliberately narrow: it asserts the guard did not fire, not that the commit
 // succeeded. Other arms refuse for their own reasons and have their own tests.
 func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
-	t.Parallel()
 	db := testDBShared(t)
 	srcNode, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
