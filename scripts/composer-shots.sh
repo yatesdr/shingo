@@ -21,7 +21,7 @@
 #   08-new-part-blank.png   09-finding-on-node-and-bar.png
 #   10-confirm-rows-and-orders.png   11-started-auto-return.png (;hold=1)
 #   12-part-picker.png (;addpart=1)  13-part-picker-on-position.png
-#   14-lm-path-with-key-route.png
+#   14-route-strip.png
 #
 # and the DESKTOP Processes page at 1440x900, which this header did not list
 # for three rounds while the harness took them:

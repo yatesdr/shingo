@@ -99,13 +99,6 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 	// THE ROUTING SET THE BLOCK JUST BUILT, not a second read of it: the
 	// picture's staging offers are the enabled staging rows, which is the same
 	// list out.Routing carries.
-	//
-	// AND NO LMs ON THIS ONE. The picture carries the cell's waypoints so the
-	// STATION can draw a robot's route without a plant map; the desktop read
-	// carries `Map`, which is every point in the plant including these, so the
-	// list here would be the same coordinates twice on one payload. Same reason
-	// Scene and Map never both ride a block, and the same axis: what a surface
-	// already has decides what it is sent.
 	out.Cell = s.processCellPicture(process, claims, nodes, routingFromBlock(out))
 	out.Map = s.composerMap()
 	return out, nil
@@ -165,7 +158,6 @@ func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerDa
 	}
 	out.Cell = s.cellPicture(stationID, process, active, live, nodes(), cellPictureOptions{
 		stagingOffers: stagingOffers(routingFromBlock(out)),
-		lmRegionPad:   cellLMRegionPad,
 	})
 	return out, nil
 }
@@ -419,7 +411,6 @@ func (s *StationService) processCellPicture(process *processes.Process,
 		}
 	}
 	// stationID 0 — every station of this process, the desktop's scope.
-	// lmRegionPad 0: the desktop already has the whole map. See the caller.
 	return s.cellPicture(0, process, active, live, nodes, cellPictureOptions{
 		stagingOffers: stagingOffers(routing),
 	})

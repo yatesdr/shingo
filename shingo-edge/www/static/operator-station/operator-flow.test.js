@@ -313,7 +313,7 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
               claim: { swap_mode: 'single_robot', payload_code: 'PART-A',
                        inbound_staging: 'SLN_07', outbound_staging: 'SLN_09',
                        inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT',
-                       key_route: ['LM_KEY'] } },
+                       key_route: ['LM_A', 'LM_B', 'LM_C'] } },
             { core_node_name: 'PLN_04', sequence: 2, kind: 'front', x: 2, y: 0 },
         ],
         staging: [
@@ -323,7 +323,10 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
               field: 'outbound_staging', x: 1.5, y: -1 },
             { core_node_name: 'SLN_OFFERED' },
         ],
-        lms: [{ name: 'LM_KEY', x: 1, y: 0.2 }, { name: 'LM_PLAIN', x: 1.2, y: 0.25 }],
+        // A COORDINATE LIST THE PICTURE MUST NOT READ. CellPicture.LMs is gone
+        // from the server; this stays in the fixture so the renderer is proved
+        // to ignore it rather than merely not to be given it.
+        lms: [{ name: 'LM_NOT_ON_ROUTE', x: 1, y: 0.2 }],
     };
     const svg = m.renderFlowPicture({ cell: cell, station: { name: 'SCREEN' } }, {});
 
@@ -342,18 +345,57 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
     check('legs: one says the robot moves in', svg.includes('>Robot 1 moves in<'));
     check('legs: one says the robot clears the old bin', svg.includes('>Robot 1 clears old<'));
 
-    // THE LM MARKS. The chosen key-route point is filled and NAMED; the plain
-    // one is a bead with no label; the route line joins the leg to the mark.
-    check('lm: the chosen key-route point is marked', /<g class="lm key /.test(svg), svg.match(/<g class="lm[^>]*/g));
-    check('lm: and it carries its name', svg.includes('>LM_KEY<'));
-    check('lm: a point nobody chose carries no name', !svg.includes('>LM_PLAIN<'));
-    check('lm: the route line is drawn from the leg', /<path class="lmroute /.test(svg));
+    // ── THE ROUTE STRIP (owner, 2026-09-17) ─────────────────────────────
+    //
+    // "The point of the LMs isn't to represent them to scale, it's to direct
+    // flow." So the picture draws no LM GEOGRAPHY at all: it draws the ORDER
+    // the robot is sent through, as a strip from the card the trip arrives at
+    // to the dock's IN side. Order and direction are the content; distance is
+    // not, and nothing on the strip pretends to be a coordinate.
+    check('route: the strip is drawn', /<g class="lmroute /.test(svg), svg.match(/<g class="lmroute[^>]*/g));
+    check('route: it is the trip’s robot colour', /<g class="lmroute r1"/.test(svg));
+    check('route: every chosen LM is on it, NAMED', svg.includes('>LM_A<') && svg.includes('>LM_B<') && svg.includes('>LM_C<'));
+    check('route: in driving order', (() => {
+        const i = ['LM_A', 'LM_B', 'LM_C'].map(n => svg.indexOf('>' + n + '<'));
+        return i[0] >= 0 && i[0] < i[1] && i[1] < i[2];
+    })(), svg.match(/>LM_[ABC]</g));
 
-    // AND NONE OF IT ON A PICTURE THAT CARRIES NO LMs, which is every board
-    // until an engineer names a key route.
-    const bare = m.renderFlowPicture(
-        { cell: Object.assign({}, cell, { lms: [] }), station: { name: 'SCREEN' } }, {});
-    check('lm: no marks without points', !/<g class="lm /.test(bare) && !/<path class="lmroute /.test(bare));
+    // EVENLY SPACED, which is the whole of "not to scale": three dots on one
+    // strip sit at equal intervals whatever the map says about the distances
+    // between them.
+    check('route: evenly spaced', (() => {
+        const xs = [...svg.matchAll(/<circle class="lmdot" cx="([-\d.]+)"/g)].map(mm => +mm[1]);
+        if (xs.length !== 3) return false;
+        const d1 = xs[1] - xs[0], d2 = xs[2] - xs[1];
+        return Math.abs(d1 - d2) < 0.5 && Math.abs(d1) > 1;
+    })(), [...svg.matchAll(/<circle class="lmdot" cx="([-\d.]+)"/g)].map(mm => mm[1]).join(','));
+
+    // A CHEVRON, POINTING AT THE CELL. The strip runs dock → card, so travel
+    // is toward the cell and the existing mark says so.
+    check('route: one chevron, toward the cell', count(svg, /<path class="lmtip"/g) === 1);
+
+    // NO GEOGRAPHY LEFT. The beads, the true-place marks and the coordinate
+    // list they were read from are all gone.
+    check('route: no unnamed beads', !/<g class="lm[ "]/.test(svg), svg.match(/<g class="lm[^r][^>]*/g));
+    check('route: nothing reads cell.lms', !svg.includes('LM_NOT_ON_ROUTE'));
+
+    // NO KEY ROUTE, NOTHING EXTRA — "shortest way", which is what the panel
+    // already calls it.
+    const noRoute = JSON.parse(JSON.stringify(cell));
+    noRoute.positions[0].claim.key_route = [];
+    const bare = m.renderFlowPicture({ cell: noRoute, station: { name: 'SCREEN' } }, {});
+    check('route: none drawn without a chosen route',
+        !/<g class="lmroute /.test(bare) && !/class="lmdot"/.test(bare));
+
+    // THE SAME STRIP ON THE SCHEMATIC. Nothing on it was ever to scale, so
+    // there is nothing for the schematic to fall back from.
+    const schematic = JSON.parse(JSON.stringify(cell));
+    schematic.geometry = false;
+    for (const p of schematic.positions) { delete p.x; delete p.y; }
+    const sch = m.renderFlowPicture({ cell: schematic, station: { name: 'SCREEN' } }, {});
+    check('route: the schematic draws the same strip',
+        /<g class="lmroute /.test(sch) && sch.includes('>LM_A<') && sch.includes('>LM_C<'));
+    check('route: and still one chevron on it', count(sch, /<path class="lmtip"/g) === 1);
 }
 
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }

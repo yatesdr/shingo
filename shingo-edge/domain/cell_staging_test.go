@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -177,6 +179,58 @@ func twoPointScene(t *testing.T) *SceneGeometry {
 	return g
 }
 
+// ── the claim's key route travels; its coordinates do not ───────────────────
+//
+// THE PICTURE USED TO CARRY THE VENDOR MAP'S LM POINTS for the region around
+// the cell, so the HMI could draw each one where the map puts it. Owner ruling,
+// 2026-09-17: "the point of the LMs isn't to represent them to scale, it's to
+// direct flow." The drawing is a route STRIP now — order and direction, from
+// the names on the claim — so the picture needs no geography and this read is
+// smaller by exactly one scan of the point set.
+//
+// WHAT STILL HAS TO TRAVEL is the claim's own key_route, because the strip is
+// drawn from it. That is asserted here rather than only in the JS, because the
+// JS can only draw what this hands it.
+func TestBuildCellPicture_CarriesTheKeyRouteAndNoCoordinates(t *testing.T) {
+	at := func(v float64) *float64 { return &v }
+	g, err := NewSceneGeometry("no-lm-scene", []protocol.ScenePointInfo{
+		{InstanceName: "PLN_01", ClassName: "GeneralLocation", PosX: at(10), PosY: at(10)},
+		{InstanceName: "LM_NEAR", ClassName: "LocationMark", PosX: at(11), PosY: at(11)},
+	}, []protocol.SceneEdgeInfo{
+		{From: "PLN_01", To: "LM_NEAR", FromX: at(10), FromY: at(10), ToX: at(11), ToY: at(11)},
+	})
+	if err != nil {
+		t.Fatalf("scene: %v", err)
+	}
+	pic := BuildCellPicture(CellPictureInput{
+		StationID: 5,
+		Nodes:     stagingNodes("PLN_01"),
+		Claims: map[string]NodeClaim{
+			"PLN_01": {CoreNodeName: "PLN_01", SwapMode: protocol.SwapModeTwoRobot,
+				InboundStaging: "SLN_07", KeyRoute: []string{"LM_A", "LM_B"}},
+		},
+		Geometry: g,
+	})
+	pos := cellPositionNamed(pic, "PLN_01")
+	if pos == nil || pos.Claim == nil {
+		t.Fatalf("PLN_01 = %+v", pos)
+	}
+	if got := pos.Claim.KeyRoute; len(got) != 2 || got[0] != "LM_A" || got[1] != "LM_B" {
+		t.Errorf("key route = %v, want [LM_A LM_B] IN ORDER — the order is the route", got)
+	}
+	// AND NOT A COORDINATE ANYWHERE. Asserted on the serialised form, because
+	// what matters is what crosses the wire to a Pi-served HMI.
+	raw, err := json.Marshal(pic)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, gone := range []string{`"lms"`, "LM_NEAR"} {
+		if strings.Contains(string(raw), gone) {
+			t.Errorf("the picture carries %s; LM geography belongs to the desktop's Map", gone)
+		}
+	}
+}
+
 // ── the LM points that ride the picture ──────────────────────────────────────
 //
 // THE STATION HAS NO PLANT MAP, and that is why these exist. The desktop's
@@ -184,41 +238,3 @@ func twoPointScene(t *testing.T) *SceneGeometry {
 // never opens, so without LMs on the picture the HMI could draw a robot's path
 // only as a straight line between two cards. They ride the PICTURE — once per
 // fetch, when its version moves — and never the poll.
-func TestBuildCellPicture_LMsAreBoundedToTheCellsOwnRegion(t *testing.T) {
-	at := func(v float64) *float64 { return &v }
-	g, err := NewSceneGeometry("lm-scene", []protocol.ScenePointInfo{
-		{InstanceName: "PLN_01", ClassName: "GeneralLocation", PosX: at(10), PosY: at(10)},
-		{InstanceName: "PLN_04", ClassName: "GeneralLocation", PosX: at(12), PosY: at(10)},
-		{InstanceName: "LM_NEAR", ClassName: "LocationMark", PosX: at(11), PosY: at(11)},
-		{InstanceName: "LM_FAR", ClassName: "LocationMark", PosX: at(90), PosY: at(90)},
-		{InstanceName: "SMN_01", ClassName: "GeneralLocation", PosX: at(11), PosY: at(11)},
-	}, []protocol.SceneEdgeInfo{
-		{From: "PLN_01", To: "LM_NEAR", FromX: at(10), FromY: at(10), ToX: at(11), ToY: at(11)},
-	})
-	if err != nil {
-		t.Fatalf("scene: %v", err)
-	}
-	in := CellPictureInput{
-		StationID:   5,
-		Nodes:       stagingNodes("PLN_01", "PLN_04"),
-		Geometry:    g,
-		LMRegionPad: 5,
-	}
-	pic := BuildCellPicture(in)
-	names := make([]string, 0, len(pic.LMs))
-	for _, lm := range pic.LMs {
-		names = append(names, lm.Name)
-	}
-	if len(names) != 1 || names[0] != "LM_NEAR" {
-		t.Errorf("LMs = %v, want just LM_NEAR — the far one is the plant, and a point that is not "+
-			"an LM is not a waypoint however close it sits", names)
-	}
-
-	// PAD ZERO IS NO LMs AT ALL, which is what the board's read asks for: the
-	// field is opt-in, so a caller that does not draw a path does not pay for
-	// the points.
-	in.LMRegionPad = 0
-	if bare := BuildCellPicture(in); len(bare.LMs) != 0 {
-		t.Errorf("a picture built with no LM region carries %d LMs", len(bare.LMs))
-	}
-}

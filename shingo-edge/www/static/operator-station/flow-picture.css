@@ -124,7 +124,7 @@
 .os-flow-picture .node .needlbl { fill: var(--os-red, var(--viz-coral)); font-size: 11px; font-weight: 600; }
 .os-flow-picture .half { cursor: pointer; }
 
-/* ── the staging band, and the LM path along a leg (2026-09-17) ─────────────
+/* ── the staging band, and the route strip (2026-09-17) ─────────────────────
  *
  * A STAGING CARD IS QUIETER AND SHORTER THAN A POSITION, deliberately. It is
  * not a position — it is where a bin RESTS during the swap — and the picture
@@ -146,28 +146,20 @@
 .os-flow-picture .stage.off text.ln { fill: var(--os-text-dim, var(--text-dim)); }
 .os-flow-picture .stage[data-tap] { cursor: pointer; }
 
-/* THE LM MARKS ARE THE LEG'S OWN HUE, because they say where THAT robot goes.
- * A third colour would be a third thing to learn on a picture whose whole
- * legend is two robots. The label is the smallest type on the drawing: it is
- * an answer to "which waypoint", asked by somebody already looking at the
- * line. */
-.os-flow-picture .lm circle { fill: var(--os-bg, var(--bg)); stroke-width: 1.2; opacity: .75; }
-.os-flow-picture .lm.key circle { stroke-width: 1.8; opacity: 1; }
-/* A CHOSEN key-route point is FILLED; the rest of the path is hollow. One
- * weight says "the robot passes here", the other says "somebody chose this",
- * and only the second carries a name. */
-.os-flow-picture .lm.key.r1 circle { fill: var(--robot-1); }
-.os-flow-picture .lm.key.r2 circle { fill: var(--robot-2); }
-.os-flow-picture .lm.r1 circle { stroke: var(--robot-1); }
-.os-flow-picture .lm.r2 circle { stroke: var(--robot-2); }
-.os-flow-picture .lm .lmlbl { font-size: 9px; letter-spacing: .02em; }
-.os-flow-picture .lm.r1 .lmlbl { fill: var(--robot-1); }
-.os-flow-picture .lm.r2 .lmlbl { fill: var(--robot-2); }
-
-/* THE ROUTE LINE IS THINNER AND DASHED, so it never competes with the leg. A
- * leg is what the robot DOES — it moves a bin from here to there — and the
- * route is how it gets there: the same fact at a lower resolution, and the
- * picture has to keep saying which is which. */
-.os-flow-picture .lmroute { fill: none; stroke-width: 1; stroke-dasharray: 3 4; opacity: .55; }
-.os-flow-picture .lmroute.r1 { stroke: var(--robot-1); }
-.os-flow-picture .lmroute.r2 { stroke: var(--robot-2); }
+/* THE ROUTE STRIP DIRECTS FLOW; IT IS NOT GEOGRAPHY (owner, 2026-09-17). It is
+ * the trip's robot hue, because it says where THAT robot is sent — a third
+ * colour would be a third thing to learn on a picture whose legend is two
+ * robots. Dashed and thinner than a leg: a leg is what the robot DOES, the
+ * strip is how it gets there, and the picture has to keep saying which is
+ * which. */
+.os-flow-picture .lmroute .lmline { fill: none; stroke-width: 1; stroke-dasharray: 3 4; opacity: .6; }
+.os-flow-picture .lmroute.r1 .lmline { stroke: var(--robot-1); }
+.os-flow-picture .lmroute.r2 .lmline { stroke: var(--robot-2); }
+.os-flow-picture .lmroute .lmdot { stroke-width: 1.4; }
+.os-flow-picture .lmroute.r1 .lmdot { fill: var(--robot-1); stroke: var(--robot-1); }
+.os-flow-picture .lmroute.r2 .lmdot { fill: var(--robot-2); stroke: var(--robot-2); }
+.os-flow-picture .lmroute .lmlbl { font-size: 9px; letter-spacing: .02em; }
+.os-flow-picture .lmroute.r1 .lmlbl { fill: var(--robot-1); }
+.os-flow-picture .lmroute.r2 .lmlbl { fill: var(--robot-2); }
+.os-flow-picture .lmroute.r1 .lmtip { fill: var(--robot-1); }
+.os-flow-picture .lmroute.r2 .lmtip { fill: var(--robot-2); }

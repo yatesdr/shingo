@@ -761,14 +761,13 @@ func TestComposerShots(t *testing.T) {
 	shotAt("13-part-picker-on-position.png",
 		fmt.Sprintf("#compose=%d;state=S5;node=PLN_01;addpart=1", seeded.Styles[idx]))
 
-	// ── the LM path, with and without a chosen key route ─────────────────
+	// ── the route strip ─────────────────────────────────────────────────
 	//
-	// THE OWNER'S EYE IS WHAT THIS IS FOR. The LM drawing is the one piece of
-	// new visual design in this work, and it has two halves: the PATH (every
-	// waypoint the robot passes, thinned to four unnamed beads) and the KEY
-	// ROUTE (the ordered points an engineer chose, filled and named). Every
-	// other shot shows the first half only, because no claim in this plant
-	// carries a key route — so this pair shows both, over the same cell.
+	// "THE POINT OF THE LMs ISN'T TO REPRESENT THEM TO SCALE, IT'S TO DIRECT
+	// FLOW" (owner, 2026-09-17). The picture draws the ORDER the robot is sent
+	// through, as a strip from the dock's IN side to the card the trip arrives
+	// at. No claim in this plant carries a key route, so without this shot the
+	// strip would be photographed nowhere.
 	//
 	// The route is written onto the RUNNING style's claims, which is what the
 	// board's own picture draws.
@@ -793,9 +792,14 @@ func TestComposerShots(t *testing.T) {
 		if len(claims) == 0 {
 			t.Fatalf("no two-robot claim with a staging slot on style %d; the key-route shot needs a leg", swapStyle)
 		}
-		lms := lmNamesNear(t, points, claims[0].CoreNodeName, 6)
+		// ANY TWO OF THE CELL'S OWN WAYPOINTS. The strip draws order and
+		// direction, not geography, so WHICH points they are does not change
+		// the drawing and their distance from the cell is irrelevant — the
+		// first version of this shot spent three rounds hunting points "near
+		// enough" to be inside a frame the strip does not live in.
+		lms := lmNamesNear(t, points, claims[0].CoreNodeName, 40)
 		if len(lms) < 2 {
-			t.Fatalf("the plant fixture has %d LM points within 6 m of %s; the key-route shot needs two",
+			t.Fatalf("the plant fixture has %d LM points within 40 m of %s; the key-route shot needs two",
 				len(lms), claims[0].CoreNodeName)
 		}
 		in := domain.InputFromClaim(claims[0])
@@ -808,7 +812,7 @@ func TestComposerShots(t *testing.T) {
 			t.Fatalf("set active style: %v", err)
 		}
 		t.Logf("LM proposal: key route %v on %s", in.KeyRoute, claims[0].CoreNodeName)
-		shotAt("14-lm-path-with-key-route.png", "#flow")
+		shotAt("14-route-strip.png", "#flow")
 	}
 
 	// ONE NAME GOES BACK TO WAITING, so D3 photographs the state Q5's whole

@@ -1,9 +1,7 @@
 package domain
 
 import (
-	"math"
 	"sort"
-	"strings"
 )
 
 // cell_picture.go — the data behind the station's read-only picture of its
@@ -69,16 +67,17 @@ type CellPicture struct {
 	// positions they have always been, captioned by the PartnerKind they
 	// already carried.
 	Staging []CellStaging `json:"staging,omitempty"`
-	// LMs are the vendor map's waypoints inside this picture's own region, for
-	// drawing the path a robot drives between the cards.
+	// NO LM COORDINATES (owner, 2026-09-17: "the point of the LMs isn't to
+	// represent them to scale, it's to direct flow"). This carried the vendor
+	// map's waypoints for the region around the cell so the HMI could draw each
+	// one at its true place. It drew nothing on a real cell — the picture frames
+	// the cell at 120 px/m and the aisle an engineer routes through is metres
+	// outside that frame — and the route strip that replaced it needs no
+	// coordinates at all: it says ORDER and DIRECTION, from the names
+	// CellClaim.KeyRoute already carries.
 	//
-	// THEY RIDE THE PICTURE, ONCE PER FETCH, and never the poll — which is the
-	// only reason they can exist at all: a station has no plant map (the
-	// desktop's ComposerMap is a hundred kilobytes of coordinates for a screen
-	// the station never opens), so without these the HMI could not draw an LM
-	// at its true place. Bounded to the region the picture covers, so this is
-	// the handful of points around one cell and not the plant's.
-	LMs []CellLM `json:"lms,omitempty"`
+	// Geography lives on the desktop's ComposerMap, which has the whole plant
+	// and draws the aisles. The station is not given one.
 }
 
 // CellStaging is one staging slot beside the cell.
@@ -98,19 +97,6 @@ type CellStaging struct {
 	PartnerOf   string `json:"partner_of,omitempty"`
 	PartnerKind string `json:"partner_kind,omitempty"`
 	Field       string `json:"field,omitempty"`
-}
-
-// CellLM is one vendor-map waypoint near this cell: a name and a place.
-//
-// NO CLASS, NO EDGES. The picture draws a path THROUGH these points along legs
-// it already knows; it does not walk the network (the station's ComposerScene
-// is what walks it, on the composer's own fetch) and it does not draw the
-// plant. A point's class decided nothing here, and shipping the edges would be
-// shipping the map.
-type CellLM struct {
-	Name string  `json:"name"`
-	X    float64 `json:"x"`
-	Y    float64 `json:"y"`
 }
 
 // CellPosition is one press position. X/Y are the bin location's scene
@@ -195,11 +181,6 @@ type CellPictureInput struct {
 	// the composer's read and empty on the board's, which draws the staging the
 	// running flow names and nothing it merely could name.
 	StagingOffers []string
-	// LMRegionPad is how far outside the drawn positions' bounding box an LM
-	// still counts as "near this cell", in scene metres. Zero leaves LMs off
-	// the picture entirely, which is what the board's read wants until the
-	// drawing is in.
-	LMRegionPad float64
 }
 
 // groupsNamedBy keeps the NGRP entries the picture's own claims reach for: the
@@ -389,7 +370,6 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 	// costs its own card a coordinate and nothing else.
 	pic.Geometry = len(pic.Positions) > 0 && placed == len(pic.Positions)
 	pic.Staging = stagingCards(in, pic.Positions)
-	pic.LMs = lmsNearPositions(in.Geometry, pic.Positions, in.LMRegionPad)
 	return pic
 }
 
@@ -438,47 +418,5 @@ func stagingCards(in CellPictureInput, positions []CellPosition) []CellStaging {
 		out = append(out, card)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CoreNodeName < out[j].CoreNodeName })
-	return out
-}
-
-// lmsNearPositions is the vendor map's LM points inside the region this
-// picture covers, padded by `pad` metres.
-//
-// A REGION, NOT THE PLANT. The picture draws a path between its own cards, so
-// the points it can possibly need are the ones around them. Handing the
-// station the whole LM set would be handing it the map, which is the hundred
-// kilobytes the station's composer read exists not to carry.
-//
-// PREFIX, NOT CLASS. An LM is named LM<n> by the vendor and that is the only
-// thing on this tree that identifies one — composer-model's viaWaypoints
-// filters the same way, on the same names, and a second rule here would be a
-// second answer to "is this a waypoint".
-func lmsNearPositions(g *SceneGeometry, positions []CellPosition, pad float64) []CellLM {
-	if g == nil || pad <= 0 {
-		return nil
-	}
-	minX, minY := math.Inf(1), math.Inf(1)
-	maxX, maxY := math.Inf(-1), math.Inf(-1)
-	for _, p := range positions {
-		if p.X == nil || p.Y == nil {
-			continue
-		}
-		minX, maxX = math.Min(minX, *p.X), math.Max(maxX, *p.X)
-		minY, maxY = math.Min(minY, *p.Y), math.Max(maxY, *p.Y)
-	}
-	if math.IsInf(minX, 1) {
-		return nil
-	}
-	var out []CellLM
-	for name, pt := range g.Points {
-		if !strings.HasPrefix(name, "LM") {
-			continue
-		}
-		if pt.X < minX-pad || pt.X > maxX+pad || pt.Y < minY-pad || pt.Y > maxY+pad {
-			continue
-		}
-		out = append(out, CellLM{Name: name, X: pt.X, Y: pt.Y})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }

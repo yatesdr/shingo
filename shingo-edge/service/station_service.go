@@ -568,12 +568,10 @@ func (s *StationService) CellPictureForStation(stationID int64) (*domain.CellPic
 		}
 	}
 	// THE BOARD'S PICTURE DRAWS WHAT THE RUNNING FLOW USES, and the composer's
-	// draws what the cell may use (§9.1 / R4). Both get the LM band: the path
-	// between the cards is drawn on both surfaces, and the station has no plant
-	// map to derive it from.
-	return s.cellPicture(stationID, process, active, live, nil, cellPictureOptions{
-		lmRegionPad: cellLMRegionPad,
-	}), nil
+	// draws what the cell may use (§9.1 / R4). Neither carries LM coordinates:
+	// the route strip is drawn from the names on the claim, so there is nothing
+	// geographic for either read to fetch.
+	return s.cellPicture(stationID, process, active, live, nil, cellPictureOptions{}), nil
 }
 
 // cellPictureOptions is what differs between the two pictures of one cell.
@@ -584,21 +582,7 @@ type cellPictureOptions struct {
 	// stagingOffers is the process's enabled staging-role routing nodes, on the
 	// composer's picture and not the board's.
 	stagingOffers []string
-	// lmRegionPad is how far outside the drawn positions an LM still counts as
-	// near this cell, in scene metres. Zero draws none.
-	lmRegionPad float64
 }
-
-// cellLMRegionPad is how far around a cell's positions the picture looks for
-// waypoints, in scene metres.
-//
-// TWENTY METRES, and the number is a shape rather than a measurement: a cell's
-// positions span a few metres, its staging lanes sit within a bay of it, and
-// the supermarket it draws from is across an aisle. Twenty reaches the aisle
-// the robots actually drive and stops well short of the next cell's. A path
-// that leaves this region ends at the dock strip, which is the "no long lines
-// to far supermarkets" ruling drawn rather than argued.
-const cellLMRegionPad = 20.0
 
 // cellPicture is the builder both scopes go through: the station's fetch above
 // and the desktop composer's process-wide read (processCellPicture). `nodes`
@@ -622,7 +606,6 @@ func (s *StationService) cellPicture(stationID int64, process *processes.Process
 		// domain.BackPositionNames.
 		BackPositions: domain.BackPositionNames(live),
 		StagingOffers: opts.stagingOffers,
-		LMRegionPad:   opts.lmRegionPad,
 	}
 	var activeStyleID int64
 	if process.ActiveStyleID != nil {

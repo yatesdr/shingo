@@ -665,7 +665,7 @@ export function renderFlowPicture(view, opts) {
             '<text class="ln" x="12" y="36">' + esc(word) + ' · ' + esc(line2) + '</text></g>';
     }
 
-    s += lmPath(cell, allBoxes, sentences.legs, g, toScale);
+    s += routeStrips(cell, allBoxes, sentences.legs, g);
 
     const d = sentences.dock;
     const tapIn = opts.editable ? ' data-tap="dock" data-dock="in"' : '';
@@ -678,187 +678,128 @@ export function renderFlowPicture(view, opts) {
     return s;
 }
 
-// ── the LM path (owner, 2026-09-17) ────────────────────────────────────────
+// ── the route strip (owner, 2026-09-17) ────────────────────────────────────
 //
-// FIRST CUT, FOR THE OWNER'S EYE. The brief calls this the one piece of new
-// visual design in the work and says to propose it with shots before polishing
-// it, so what is here is the mechanism drawn plainly: the waypoints a robot
-// passes on its way between two cards, marked along the leg that joins them.
-// Nothing about the marks' size, weight or labelling is settled.
+// "THE POINT OF THE LMs ISN'T TO REPRESENT THEM TO SCALE, IT'S TO DIRECT FLOW."
 //
-// WHY IT IS NOT THE ROUTE PLANNER. The station has no plant map — the desktop's
-// Map is a hundred kilobytes for a screen the station never opens — so the
-// picture cannot walk the network to find a path. What it has is the LM points
-// inside its own region (CellPicture.LMs, bounded to the cell) and the legs it
-// is already drawing. So the drawing is: the LMs that lie near a leg, in the
-// order they lie along it.
+// So this draws no LM geography at all. The desktop map is where geography
+// lives — it has the whole plant and draws the aisles — and the HMI says which
+// WAY the robot is sent: the ordered waypoints an engineer chose, as a strip
+// from the dock's IN side to the card the trip arrives at, evenly spaced, each
+// one named. Order and direction are the content; distance is not, and nothing
+// on the strip pretends to be a coordinate.
 //
-// TO SCALE, THE TRUE PLACES; SCHEMATIC, EVEN SPACING. When the picture is drawn
-// to scale the marks go where the map puts them, projected with the same
-// projector the cards use — an operator can point at one. When it is the
-// schematic there is no true place to go to, so they are spread evenly along
-// the leg in path order, which still says how many and in what sequence.
+// WHAT THIS REPLACED, AND WHY IT HAD TO GO. The first cut drew the points at
+// their true places along the leg. It was correct and it drew NOTHING on a real
+// cell: the picture frames the cell at 120 px/m, a swap leg is a 1.8 m move
+// between adjacent cards, and the aisle an engineer actually routes through is
+// 3 m out — 384 units below a picture whose floor is the dock's rule. Every
+// mark was computed and then discarded by the frame rule. A drawing that is
+// only ever right off-screen is not a drawing.
 //
-// A PATH THAT LEAVES THE FRAME ENDS AT THE DOCK STRIP. The "no long lines to
-// far supermarkets" ruling: a mark outside the picture's own inset is not
-// drawn, and the leg keeps its ordinary end.
-// TWO WEIGHTS, AND ONLY ONE OF THEM CARRIES A NAME.
+// EVENLY SPACED IS THE WHOLE OF "NOT TO SCALE". Three dots on one strip sit at
+// equal intervals whatever the map says about the gaps between them, and
+// operator-flow.test.js pins that as an equality on the rendered cx values —
+// so a later "improvement" that reintroduced distance would be red.
 //
-// THE PATH is every waypoint the robot passes, as small hollow beads: it says
-// "the robot goes this way, through there", which is a shape to glance at.
-// THE KEY ROUTE is the subset an engineer CHOSE — the ordered points SEER is
-// told to drive (claim.key_route) — drawn filled and labelled, because those
-// are the ones worth being able to name out loud on the floor.
-//
-// The first draft labelled every bead. On the two-robot fixture that is ten
-// labels along a 230-unit line: unreadable, and it turned the drawing into a
-// list. A name that nobody chose is not a name worth the ink.
-const LM_R = 2.5;          // the path's bead
-const LM_KEY_R = 4.5;      // a chosen key-route point
-const LM_NEAR = 42;        // how close to the leg's line an LM has to be, in viewBox units
+// NO "NOT TO SCALE" CAPTION. The cell's caption still says whether the CARDS
+// are at true spacing, which is a fact about the cards; the strip never
+// claimed to be scale, so it has nothing to disclaim.
+const STRIP_H = 26;        // how far above the dock's rule the strip runs
+const STRIP_DOT = 3.5;     // a named waypoint
+const STRIP_TIP_AT = 0.5;  // the chevron's place along the strip
+// How much room one 9 px waypoint name needs on its own baseline. Below this
+// the labels alternate above and below the line; see oneStrip.
+const STRIP_LABEL_ROOM = 38;
 
-// HOW MANY BEADS A LEG'S PATH SHOWS. The aisle beside a cell carries a
-// waypoint every metre or so, which on a 230-unit leg is eleven of them — and
-// eleven evenly spaced dots is not a path with waypoints on it, it is a dotted
-// line. Four says the same thing (the robot goes this way, through there) and
-// leaves the leg reading as a leg.
+// routeStrips draws one strip per trip that has a chosen key route.
 //
-// A CHOSEN KEY-ROUTE POINT IS NEVER THINNED OUT: it is the half of the drawing
-// that carries a name, and dropping one would be the picture hiding the thing
-// an engineer explicitly asked SEER to drive through.
-const LM_PATH_MAX = 4;
-
-function lmPath(cell, boxes, modelLegs, g, toScale) {
-    const lms = (cell && cell.lms) || [];
-    if (!lms.length) return '';
-    const placed = toScale && lms.every(l => isCoord(l.x) && isCoord(l.y));
-    const proj = makeProjector(false);
-    // The cards' own transform, recovered from a placed position: the picture
-    // scales and centres the scene, and an LM has to land in the same frame.
-    const anchor = placedAnchor(cell, boxes, proj);
-    const at = lm => {
-        const sp = proj(lm.x, lm.y);
-        return [sp[0] * anchor.scale + anchor.ox, sp[1] * anchor.scale + anchor.oy];
-    };
+// WHICH TRIP, AND THE ANSWER IS NOT THE ONE THE MODEL'S COMMENT IMPLIES.
+// composer-model's viaWaypoints computes its OFFER from the supply path, and
+// that is what an operator picks from. What the field GOVERNS at dispatch is
+// wider: orders/manager.go's lookupRouting resolves the claim by process node
+// and returns claim.KeyRoute for every COMPLEX order created there
+// (orders/manager_create.go, the complex path only) — which is the supply leg
+// when the planner makes it complex AND the evac leg when it makes that
+// complex, and neither when the leg is a plain retrieve.
+//
+// ONE STRIP, ON THE ARRIVING TRIP. It is drawn for the trip that brings the new
+// bin IN, because that is the trip the dock's IN side is about and the one an
+// operator is watching for. The evac leg's route is reported rather than drawn
+// — see the report; drawing a second strip is the owner's call, not mine.
+function routeStrips(cell, boxes, modelLegs, g) {
     let out = '';
-    for (const L of legsFor(modelLegs, boxes)) {
-        const chosen = L.keyRoute || [];
-        // A CHOSEN POINT IS ALWAYS DRAWN, wherever it is. It is the half of
-        // this drawing that carries a name, and the reason it cannot be found
-        // by the "lies along the leg" test is the shape of a real cell: a swap
-        // leg is a 1.8 m move between two adjacent cards, and the waypoints an
-        // engineer picks are on the AISLE the robot drives in from — metres
-        // away, and on no segment between two cards. A route the engineer
-        // chose that the picture declined to draw because of where it is would
-        // be the picture answering a different question.
-        if (placed && anchor && chosen.length) {
-            const marks = chosen
-                .map(name => lms.find(l => l.name === name))
-                .filter(Boolean)
-                .map(lm => { const p = at(lm); return { name: lm.name, x: p[0], y: p[1] }; })
-                // A PATH THAT LEAVES THE FRAME ENDS AT THE DOCK STRIP: a mark
-                // outside the picture's own inset is not drawn, and the leg
-                // keeps its ordinary end. That is the "no long lines to far
-                // supermarkets" ruling, drawn rather than argued.
-                .filter(m => m.x >= FIT_INSET && m.x <= g.w - FIT_INSET &&
-                             m.y >= FIT_INSET && m.y <= g.DOCK_Y);
-            if (marks.length) {
-                // The thin line from the leg's start THROUGH the chosen points,
-                // in the order SEER is told to drive them. It is the route, and
-                // the leg it joins is where the route ends.
-                let d = 'M' + L.a[0] + ' ' + L.a[1];
-                for (const m of marks) d += ' L' + m.x + ' ' + m.y;
-                out += '<path class="lmroute ' + L.cls + '" d="' + d + '"/>';
-                for (const m of marks) {
-                    out += '<g class="lm key ' + L.cls + '">' +
-                        '<circle cx="' + m.x + '" cy="' + m.y + '" r="' + LM_KEY_R + '"/>' +
-                        '<text class="lmlbl" x="' + m.x + '" y="' + (m.y - 9) + '" text-anchor="middle">' +
-                        esc(m.name) + '</text></g>';
-                }
-            }
-        }
-        // And the PATH: the waypoints the robot passes along this leg itself,
-        // thinned, unnamed. Empty on a cell whose swaps do not cross an aisle,
-        // which is most of them.
-        const along = thinPath(placed && anchor
-            ? lmsAlongLeg(lms, L, proj, anchor)
-            : lmsEvenly(lms, L), new Set(chosen));
-        for (const m of along) {
-            if (m.x < FIT_INSET || m.x > g.w - FIT_INSET || m.y < FIT_INSET || m.y > g.DOCK_Y) continue;
-            if (chosen.indexOf(m.name) >= 0) continue;   // already drawn, named
-            out += '<g class="lm ' + L.cls + '">' +
-                '<circle cx="' + m.x + '" cy="' + m.y + '" r="' + LM_R + '"/></g>';
-        }
+    for (const pos of (cell.positions || [])) {
+        const c = pos.claim;
+        const route = (c && c.key_route) || [];
+        if (!route.length) continue;
+        // THE CARD THE TRIP ARRIVES AT. When the choreography stages, the new
+        // bin lands on the staging card first and the strip ends there; when it
+        // does not, the trip arrives at the position itself. Same question
+        // legsFor asks, same answer, so the strip meets the leg it belongs to.
+        const arrival = arrivalCardOf(pos, cell, boxes, modelLegs);
+        if (!arrival) continue;
+        out += oneStrip(route, arrival.box, arrival.cls, g);
     }
     return out;
 }
 
-// placedAnchor recovers scene → screen from one position the layout placed:
-// a card's centre is its projected point scaled and offset, so two placed
-// cards give the scale and the offset back.
-function placedAnchor(cell, boxes, proj) {
-    const pts = [];
-    for (const p of (cell.positions || [])) {
-        const b = boxes[p.core_node_name];
-        if (!b || !isCoord(p.x) || !isCoord(p.y)) continue;
-        const sp = proj(p.x, p.y);
-        pts.push({ sx: sp[0], sy: sp[1], cx: b.x + b.w / 2, cy: b.y + b.h / 2 });
-        if (pts.length === 2) break;
+// arrivalCardOf is the box the inbound trip ends on, and the robot whose colour
+// it is. It reads the legs the model already decided rather than re-deriving
+// them from the claim: which trips exist is the model's answer, and a second
+// one here is the drift operator-flow.js has already lost twice.
+function arrivalCardOf(pos, cell, boxes, modelLegs) {
+    const n = pos.core_node_name;
+    for (const L of (modelLegs || [])) {
+        // The inbound leg of this position: it ENDS here and started somewhere
+        // else. `kind: 'park'` runs the other way and is not an arrival.
+        if (L.to !== n || L.from === n) continue;
+        const b = boxes[L.from];
+        if (b) return { box: b, cls: L.robot === 2 ? 'r2' : 'r1' };
     }
-    if (pts.length < 2) return null;
-    const dsx = pts[1].sx - pts[0].sx, dsy = pts[1].sy - pts[0].sy;
-    const dcx = pts[1].cx - pts[0].cx, dcy = pts[1].cy - pts[0].cy;
-    const span = Math.hypot(dsx, dsy);
-    if (span < 1e-9) return null;
-    const scale = Math.hypot(dcx, dcy) / span;
-    return { scale: scale, ox: pts[0].cx - pts[0].sx * scale, oy: pts[0].cy - pts[0].sy * scale };
+    // No staging leg — the bin arrives at the position itself, on Robot 1: the
+    // dock's IN side is Robot 1's in every mode (renderFlowPicture's dock).
+    const own = boxes[n];
+    return own ? { box: own, cls: 'r1' } : null;
 }
 
-// thinPath keeps every CHOSEN point and evenly samples the rest down to
-// LM_PATH_MAX, preserving the order they lie in along the leg.
-function thinPath(along, chosen) {
-    const rest = along.filter(m => !chosen.has(m.name));
-    if (rest.length <= LM_PATH_MAX) return along;
-    const step = rest.length / LM_PATH_MAX;
-    const keep = new Set();
-    for (let i = 0; i < LM_PATH_MAX; i++) keep.add(rest[Math.floor(i * step)]);
-    return along.filter(m => chosen.has(m.name) || keep.has(m));
-}
-
-// lmsAlongLeg is the LMs lying near this leg's straight run, at their true
-// screen places, ordered from the leg's start to its end.
-//
-// USUALLY EMPTY ON A REAL CELL, and that is not a defect. A swap leg is a 1.8 m
-// move between two adjacent cards; the aisle a robot drives in along is metres
-// off it. What this finds is the case where a leg DOES cross a waypoint — a
-// wide cell, a staging lane across a gangway — and there the beads say so.
-function lmsAlongLeg(lms, L, proj, anchor) {
-    const ax = L.a[0], ay = L.a[1], zx = L.z[0], zy = L.z[1];
-    const dx = zx - ax, dy = zy - ay;
-    const len2 = dx * dx + dy * dy;
-    if (len2 < 1e-9) return [];
-    const out = [];
-    for (const lm of lms) {
-        const sp = proj(lm.x, lm.y);
-        const x = sp[0] * anchor.scale + anchor.ox, y = sp[1] * anchor.scale + anchor.oy;
-        const t = ((x - ax) * dx + (y - ay) * dy) / len2;
-        if (t < 0 || t > 1) continue;
-        const px = ax + dx * t, py = ay + dy * t;
-        if (Math.hypot(x - px, y - py) > LM_NEAR) continue;
-        out.push({ name: lm.name, x: x, y: y, t: t });
-    }
-    return out.sort((p, q) => p.t - q.t);
-}
-
-// lmsEvenly is the schematic's answer: the same marks, spread along the leg in
-// name order, because a picture that is not to scale has no true place to put
-// them and pretending otherwise is the drawing lying about the floor.
-function lmsEvenly(lms, L) {
-    const picked = lms.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).slice(0, 3);
-    return picked.map((lm, i) => {
-        const t = (i + 1) / (picked.length + 1);
-        return { name: lm.name, x: L.a[0] + (L.z[0] - L.a[0]) * t, y: L.a[1] + (L.z[1] - L.a[1]) * t };
+// oneStrip is the drawing: a dashed run at a fixed height above the dock's
+// rule, from the IN side across to under the arriving card, with the waypoints
+// on it in driving order and a chevron pointing the way the bin travels.
+function oneStrip(route, box, cls, g) {
+    const y = g.DOCK_Y - STRIP_H;
+    // FROM THE DOCK'S IN SIDE. The IN half is drawn at g.LEFT, so the strip
+    // starts over its glyph and ends under the card — which is the direction of
+    // travel, dock to cell.
+    const x0 = g.LEFT + 16;
+    const x1 = Math.max(x0 + 40, box.x + box.w / 2);
+    let out = '<g class="lmroute ' + cls + '">' +
+        '<path class="lmline" d="M' + x0 + ' ' + y + ' L' + x1 + ' ' + y + '"/>';
+    // EVENLY SPACED, in driving order. n dots across the run at 1/(n+1)
+    // intervals: no dot sits on either end, where it would read as the dock or
+    // the card rather than as a waypoint between them.
+    //
+    // STAGGERED WHEN THE RUN IS TIGHT, which on a real cell it usually is: the
+    // dock's IN side and the arriving card can be 70 units apart, and two 9 px
+    // names on one baseline 23 units apart render as `LM10LM11` — which is
+    // exactly what the first shot of this showed. The ENDPOINTS are the ruling
+    // (dock IN to the arriving card) so they do not move; the labels alternate
+    // above and below the line instead, which keeps the order readable without
+    // pretending the geometry is something it is not.
+    const step = (x1 - x0) / (route.length + 1);
+    const stagger = step < STRIP_LABEL_ROOM;
+    route.forEach((name, i) => {
+        const x = x0 + step * (i + 1);
+        const below = stagger && i % 2 === 1;
+        out += '<circle class="lmdot" cx="' + x + '" cy="' + y + '" r="' + STRIP_DOT + '"/>' +
+            '<text class="lmlbl" x="' + x + '" y="' + (below ? y + 14 : y - 8) + '" text-anchor="middle">' +
+            esc(name) + '</text>';
     });
+    // The same chevron the legs use, so direction reads the same way on both.
+    const tx = x0 + (x1 - x0) * STRIP_TIP_AT;
+    out += '<path class="lmtip" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' +
+        tx + ',' + y + ') rotate(' + (x1 >= x0 ? 0 : 180) + ')"/></g>';
+    return out;
 }
 
 // ── panel ──────────────────────────────────────────────────────────────
