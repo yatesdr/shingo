@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"math"
 	"sort"
+	"strings"
 )
 
 // cell_picture.go — the data behind the station's read-only picture of its
@@ -49,6 +51,66 @@ type CellPicture struct {
 	// picture's claims carry. The rest was the whole plant's group membership
 	// serialised into every poll of every board for nobody.
 	Groups map[string][]string `json:"groups,omitempty"`
+	// Staging is where a bin RESTS during this cell's swap: the lanes the
+	// running flow parks at, and — on the composer's picture — the ones the
+	// process's routing set offers it.
+	//
+	// THEIR OWN LIST, NOT A Kind IN Positions (SYNTH §3 B1). A member of
+	// Positions is a position an operator may claim, and nine sites act on
+	// that: the model mints a tappable cell per position, "+ Add a position"
+	// offers the free ones, the desktop's table gives each a row, partner
+	// pickers list them, placeEvenly puts them in the front row, rowKinds
+	// captions them. Each would need a guard, and one miss saves a supermarket
+	// lane as a cell position. A separate list makes "a staging node is not a
+	// position" true by construction.
+	//
+	// A STAGING NODE THAT IS A POSITION IS NOT IN HERE. Hopkinsville's P400
+	// parks on its own back slots, and PLN_02/PLN_05 stay exactly the
+	// positions they have always been, captioned by the PartnerKind they
+	// already carried.
+	Staging []CellStaging `json:"staging,omitempty"`
+	// LMs are the vendor map's waypoints inside this picture's own region, for
+	// drawing the path a robot drives between the cards.
+	//
+	// THEY RIDE THE PICTURE, ONCE PER FETCH, and never the poll — which is the
+	// only reason they can exist at all: a station has no plant map (the
+	// desktop's ComposerMap is a hundred kilobytes of coordinates for a screen
+	// the station never opens), so without these the HMI could not draw an LM
+	// at its true place. Bounded to the region the picture covers, so this is
+	// the handful of points around one cell and not the plant's.
+	LMs []CellLM `json:"lms,omitempty"`
+}
+
+// CellStaging is one staging slot beside the cell.
+//
+// THE CLAIM'S OWN FIELD NAMES (owner ruling F3). Field is `inbound_staging` or
+// `outbound_staging` — the column that named this lane — so the caption on the
+// card, the row in the position panel and a server refusal about it are one
+// word. A card nothing is using yet carries neither Field nor PartnerOf, which
+// is what "offered" means and needs no flag of its own.
+type CellStaging struct {
+	CoreNodeName string   `json:"core_node_name"`
+	X            *float64 `json:"x,omitempty"`
+	Y            *float64 `json:"y,omitempty"`
+	// PartnerOf is the position whose swap parks here, empty on an offered
+	// lane. PartnerKind is "staging" — the value CellPosition already uses for
+	// exactly this relationship, not a second word for it.
+	PartnerOf   string `json:"partner_of,omitempty"`
+	PartnerKind string `json:"partner_kind,omitempty"`
+	Field       string `json:"field,omitempty"`
+}
+
+// CellLM is one vendor-map waypoint near this cell: a name and a place.
+//
+// NO CLASS, NO EDGES. The picture draws a path THROUGH these points along legs
+// it already knows; it does not walk the network (the station's ComposerScene
+// is what walks it, on the composer's own fetch) and it does not draw the
+// plant. A point's class decided nothing here, and shipping the edges would be
+// shipping the map.
+type CellLM struct {
+	Name string  `json:"name"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
 }
 
 // CellPosition is one press position. X/Y are the bin location's scene
@@ -91,6 +153,15 @@ type CellClaim struct {
 	OutboundStaging      string `json:"outbound_staging,omitempty"`
 	InboundSource        string `json:"inbound_source,omitempty"`
 	OutboundDestination  string `json:"outbound_destination,omitempty"`
+	// KeyRoute is the ordered waypoints SEER is told to drive for this claim's
+	// supply trip, and the picture marks them on the leg (CellPicture.LMs).
+	//
+	// IT ARRIVED WITH THE DRAWING. The picture carried every other field it
+	// draws and not this one, so the board could place a robot's waypoints and
+	// had no way to know which of them anybody had CHOSEN — the half of the LM
+	// drawing that carries a name. It costs the poll nothing, because the poll
+	// no longer carries the picture.
+	KeyRoute []string `json:"key_route,omitempty"`
 }
 
 // CellPictureInput is everything BuildCellPicture reads.
@@ -119,6 +190,16 @@ type CellPictureInput struct {
 	// Version is the token the poll compares against, stamped onto the
 	// picture. Built by CellPictureVersion from the same facts.
 	Version string
+	// StagingOffers is the process's ENABLED staging-role routing nodes — what
+	// this cell may park at, whether or not the running flow does (R4). Set on
+	// the composer's read and empty on the board's, which draws the staging the
+	// running flow names and nothing it merely could name.
+	StagingOffers []string
+	// LMRegionPad is how far outside the drawn positions' bounding box an LM
+	// still counts as "near this cell", in scene metres. Zero leaves LMs off
+	// the picture entirely, which is what the board's read wants until the
+	// drawing is in.
+	LMRegionPad float64
 }
 
 // groupsNamedBy keeps the NGRP entries the picture's own claims reach for: the
@@ -285,6 +366,7 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 				PairedCoreNode: c.PairedCoreNode, SecondPairedCoreNode: c.SecondPairedCoreNode,
 				InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,
 				InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination,
+				KeyRoute: append([]string(nil), c.KeyRoute...),
 			}
 			pos.Claim = cc
 		} else if p, ok := partners[n.CoreNodeName]; ok {
@@ -300,6 +382,103 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 		}
 		return a.CoreNodeName < b.CoreNodeName
 	})
+	// GEOMETRY IS ABOUT THE POSITIONS, and the staging cards are built after
+	// it is decided for exactly that reason. A staging lane the map does not
+	// carry must not flip a cell whose every position IS placed into the
+	// schematic — the cards are laid in their own band, so an unplaced one
+	// costs its own card a coordinate and nothing else.
 	pic.Geometry = len(pic.Positions) > 0 && placed == len(pic.Positions)
+	pic.Staging = stagingCards(in, pic.Positions)
+	pic.LMs = lmsNearPositions(in.Geometry, pic.Positions, in.LMRegionPad)
 	return pic
+}
+
+// stagingCards is the staging list: the lanes the running claims park at, then
+// the ones the routing set offers, minus anything that is a position of this
+// cell.
+//
+// SORTED BY NAME, not by the order the claims happened to iterate in: the
+// claims arrive from a map, and a band of cards that reshuffled itself between
+// two draws of the same flow would be a picture that moves while nothing does.
+func stagingCards(in CellPictureInput, positions []CellPosition) []CellStaging {
+	isPosition := make(map[string]bool, len(positions))
+	for _, p := range positions {
+		isPosition[p.CoreNodeName] = true
+	}
+	byName := map[string]CellStaging{}
+	add := func(name, partnerOf, field string) {
+		if name == "" || isPosition[name] {
+			return
+		}
+		// FIRST CLAIM WINS, like the partner map above: two flows parking at one
+		// lane is one card, captioned for whichever position the picture met
+		// first, and a second card for the same lane would be the same place
+		// drawn twice.
+		if existing, taken := byName[name]; taken && existing.PartnerOf != "" {
+			return
+		}
+		card := CellStaging{CoreNodeName: name, PartnerOf: partnerOf, Field: field}
+		if partnerOf != "" {
+			card.PartnerKind = "staging"
+		}
+		if x, y, ok := LocateCellPosition(in.Geometry, name); ok {
+			card.X, card.Y = &x, &y
+		}
+		byName[name] = card
+	}
+	for front, c := range in.Claims {
+		add(c.InboundStaging, front, "inbound_staging")
+		add(c.OutboundStaging, front, "outbound_staging")
+	}
+	for _, name := range in.StagingOffers {
+		add(name, "", "")
+	}
+	out := make([]CellStaging, 0, len(byName))
+	for _, card := range byName {
+		out = append(out, card)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CoreNodeName < out[j].CoreNodeName })
+	return out
+}
+
+// lmsNearPositions is the vendor map's LM points inside the region this
+// picture covers, padded by `pad` metres.
+//
+// A REGION, NOT THE PLANT. The picture draws a path between its own cards, so
+// the points it can possibly need are the ones around them. Handing the
+// station the whole LM set would be handing it the map, which is the hundred
+// kilobytes the station's composer read exists not to carry.
+//
+// PREFIX, NOT CLASS. An LM is named LM<n> by the vendor and that is the only
+// thing on this tree that identifies one — composer-model's viaWaypoints
+// filters the same way, on the same names, and a second rule here would be a
+// second answer to "is this a waypoint".
+func lmsNearPositions(g *SceneGeometry, positions []CellPosition, pad float64) []CellLM {
+	if g == nil || pad <= 0 {
+		return nil
+	}
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, p := range positions {
+		if p.X == nil || p.Y == nil {
+			continue
+		}
+		minX, maxX = math.Min(minX, *p.X), math.Max(maxX, *p.X)
+		minY, maxY = math.Min(minY, *p.Y), math.Max(maxY, *p.Y)
+	}
+	if math.IsInf(minX, 1) {
+		return nil
+	}
+	var out []CellLM
+	for name, pt := range g.Points {
+		if !strings.HasPrefix(name, "LM") {
+			continue
+		}
+		if pt.X < minX-pad || pt.X > maxX+pad || pt.Y < minY-pad || pt.Y > maxY+pad {
+			continue
+		}
+		out = append(out, CellLM{Name: name, X: pt.X, Y: pt.Y})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

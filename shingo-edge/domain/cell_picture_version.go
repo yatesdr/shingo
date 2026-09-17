@@ -137,6 +137,15 @@ func claimFingerprint(c *NodeClaim) uint64 {
 	// SET is "bound to this station, or named by a claim", and a claim's role is
 	// what the composer derives a fresh cell's role from.
 	field(string(c.Role))
+	// The chosen waypoints, which the picture marks on the leg. Each is its own
+	// write for the same reason the columns are: joined into one string they
+	// would let ["LM1","LM13"] and ["LM11","L3"] hash alike. The ORDER is the
+	// route - LM167 then LM9 and LM9 then LM167 are different drives - so they
+	// are written in order, with the count behind them.
+	for _, lm := range c.KeyRoute {
+		field(lm)
+	}
+	writeUint(h, uint64(len(c.KeyRoute)))
 	return h.Sum64()
 }
 

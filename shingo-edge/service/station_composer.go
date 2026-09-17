@@ -96,7 +96,17 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 		log.Printf("composer: list process nodes for %d: %v", processID, err)
 	}
 	out := s.buildComposerData(processID, styles, claims, composerDesktop, func() []processes.Node { return nodes })
-	out.Cell = s.processCellPicture(process, claims, nodes)
+	// THE ROUTING SET THE BLOCK JUST BUILT, not a second read of it: the
+	// picture's staging offers are the enabled staging rows, which is the same
+	// list out.Routing carries.
+	//
+	// AND NO LMs ON THIS ONE. The picture carries the cell's waypoints so the
+	// STATION can draw a robot's route without a plant map; the desktop read
+	// carries `Map`, which is every point in the plant including these, so the
+	// list here would be the same coordinates twice on one payload. Same reason
+	// Scene and Map never both ride a block, and the same axis: what a surface
+	// already has decides what it is sent.
+	out.Cell = s.processCellPicture(process, claims, nodes, routingFromBlock(out))
 	out.Map = s.composerMap()
 	return out, nil
 }
@@ -104,7 +114,27 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 // ComposerForStation is the STATION's read, made once when the composer opens
 // and held for the session (S8). Station-shaped: the scene, no Map, no
 // Advanced blocks.
-func (s *StationService) ComposerForStation(processID int64) (*domain.ComposerData, error) {
+//
+// IT CARRIES ITS OWN PICTURE NOW, station-scoped (SYNTH §3 B2). The HMI's
+// composer used to draw the POLLED view's picture, which is the board's: the
+// staging the RUNNING flow parks at, and nothing the cell merely could park
+// at. So the composer — the one screen whose whole job is choosing where a bin
+// goes — was the surface with no staging options drawn on it, which is the
+// opposite of the complaint this work started from.
+//
+// The composer's picture is the positions plus the process's ENABLED
+// staging-role routing nodes (R4). +0 queries: the node list is the one this
+// read already takes for the preset order, and the back positions are a fold
+// over the claims in hand.
+func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerData, error) {
+	station, err := s.db.GetOperatorStation(stationID)
+	if err != nil {
+		return nil, err
+	}
+	if station == nil {
+		return nil, nil
+	}
+	processID := station.ProcessID
 	process, err := s.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -116,11 +146,44 @@ func (s *StationService) ComposerForStation(processID int64) (*domain.ComposerDa
 	if err != nil {
 		return nil, err
 	}
+	byStyle := s.liveClaimsByStyle(processID)
 	// LAZY, not read: the node list is wanted only for the preset cards' position
-	// order, and a cell with no presets must not pay a query for a value nothing
-	// reads. See composerPresets.
-	return s.buildComposerData(processID, styles, s.liveClaimsByStyle(processID), composerStation,
-		func() []processes.Node { return s.processNodes(processID) }), nil
+	// order and the picture, and a cell with no presets must not pay a query for
+	// a value nothing reads. memoNodes makes the two share one read when both
+	// want it. See composerPresets.
+	nodes := memoNodes(func() []processes.Node { return s.processNodes(processID) })
+	out := s.buildComposerData(processID, styles, byStyle, composerStation, nodes)
+	active := map[string]domain.NodeClaim{}
+	live := make([]processes.NodeClaim, 0, 32)
+	for styleID, rows := range byStyle {
+		live = append(live, rows...)
+		if process.ActiveStyleID != nil && styleID == *process.ActiveStyleID {
+			for _, c := range rows {
+				active[c.CoreNodeName] = c
+			}
+		}
+	}
+	out.Cell = s.cellPicture(stationID, process, active, live, nodes(), cellPictureOptions{
+		stagingOffers: stagingOffers(routingFromBlock(out)),
+		lmRegionPad:   cellLMRegionPad,
+	})
+	return out, nil
+}
+
+// memoNodes makes a node-list reader that reads at most once, however many
+// callers want it. The preset order and the picture both do on this read; only
+// the preset order does when the cell has presets and no picture is asked for.
+func memoNodes(read func() []processes.Node) func() []processes.Node {
+	var (
+		once  bool
+		cache []processes.Node
+	)
+	return func() []processes.Node {
+		if !once {
+			once, cache = true, read()
+		}
+		return cache
+	}
 }
 
 // processNodes is the node list, fail-open with a line.
@@ -342,7 +405,8 @@ func (s *StationService) composerMap() *domain.ComposerMap {
 // has: the claims it read for the style blocks, and the node list it read for
 // the preset order.
 func (s *StationService) processCellPicture(process *processes.Process,
-	byStyle map[int64][]processes.NodeClaim, nodes []processes.Node) *domain.CellPicture {
+	byStyle map[int64][]processes.NodeClaim, nodes []processes.Node,
+	routing []domain.RoutingNode) *domain.CellPicture {
 
 	active := map[string]domain.NodeClaim{}
 	live := make([]processes.NodeClaim, 0, 32)
@@ -355,7 +419,26 @@ func (s *StationService) processCellPicture(process *processes.Process,
 		}
 	}
 	// stationID 0 — every station of this process, the desktop's scope.
-	return s.cellPicture(0, process, active, live, nodes)
+	// lmRegionPad 0: the desktop already has the whole map. See the caller.
+	return s.cellPicture(0, process, active, live, nodes, cellPictureOptions{
+		stagingOffers: stagingOffers(routing),
+	})
+}
+
+// stagingOffers is the enabled staging-role members of a process's routing set
+// — what this cell MAY park at, drawn on the composer's picture whether or not
+// the running flow uses them (R4).
+//
+// ENABLED ONLY, like every other offer the composer makes: a retired lane is
+// not an option the operator should have to know not to pick.
+func stagingOffers(routing []domain.RoutingNode) []string {
+	var out []string
+	for _, r := range routing {
+		if r.Enabled && r.Role == domain.RoutingRoleStaging {
+			out = append(out, r.CoreNodeName)
+		}
+	}
+	return out
 }
 
 // flowProvenance is where a style's flow came from and when, for the set-up
@@ -403,9 +486,17 @@ func flowProvenance(claims []processes.NodeClaim) (from, on string) {
 	return from, on
 }
 
+// routingNodes is the process's routing set, fail-open WITH A LINE.
+//
+// It returned nil silently, which is the one shape that cannot be told apart
+// from a real answer: a process whose routing set could not be READ and one
+// that genuinely has no rows both reach the screens as "no options", and the
+// screens then say "add them in Settings › Routing" about a set that may be
+// full. Every sibling reader on this path logs; this one did not.
 func (s *StationService) routingNodes(processID int64) []domain.RoutingNode {
 	rows, err := s.db.ListRoutingNodes(processID)
 	if err != nil {
+		log.Printf("composer: list routing nodes for %d: %v", processID, err)
 		return nil
 	}
 	return rows
@@ -586,4 +677,22 @@ func (s *StationService) sceneDerived() (*domain.SceneGeometry, *domain.Composer
 		s.sceneMemoFor, s.sceneMemo = g, sc
 	}
 	return g, s.sceneMemo
+}
+
+// routingFromBlock reads the routing set back off the block that was just
+// built, so the picture's staging offers and the position panel's staging
+// options are one list read once.
+//
+// COMPOSER ROWS, NOT STORE ROWS: what reaches this point has already been
+// filtered to the enabled members (buildComposerData drops the rest into
+// RoutingOff), so `Enabled` is true by construction and is set here to say so
+// rather than left false for stagingOffers to mis-read.
+func routingFromBlock(out *domain.ComposerData) []domain.RoutingNode {
+	rows := make([]domain.RoutingNode, 0, len(out.Routing))
+	for _, r := range out.Routing {
+		rows = append(rows, domain.RoutingNode{
+			CoreNodeName: r.CoreNodeName, Role: r.Role, Sequence: r.Sequence, Enabled: true,
+		})
+	}
+	return rows
 }

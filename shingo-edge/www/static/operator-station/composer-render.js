@@ -404,8 +404,24 @@ function firstMode(s) {
 }
 
 // ── S4 · the picture ─────────────────────────────────────────────────────────
+// THE COMPOSER'S OWN PICTURE, NOT THE BOARD'S (SYNTH §3 B2).
+//
+// This read `view.cell` — the POLLED picture, which is the board's: the
+// staging the RUNNING flow parks at, and nothing the cell merely could park
+// at. So the composer, the one screen whose job is choosing where a bin goes,
+// was the surface with no staging options on it. The composer's own fetch
+// carries a station-scoped Cell that also holds the lanes the routing set
+// offers; the board's stays what it was.
+//
+// `|| view.cell` is the fallback and it is a real path, not defensiveness: the
+// hash entry can open a state before ensureFlow has resolved, and a picture
+// one field short beats a blank stage.
+function composerCell() {
+    return (flow() && flow().cell) || (view && view.cell) || { positions: [] };
+}
+
 function buildModel(s) {
-    const cell = (view && view.cell) || { positions: [] };
+    const cell = composerCell();
     model = M().init({
         styleId: s.id,
         styleName: s.name,
@@ -660,7 +676,7 @@ function reportStripFit() {
 
 // The composer's model state, in the shape renderFlowPicture draws. The
 // adapter is composer-model.js's; this names the base picture it draws over.
-function cellFromModel() { return M().pictureCells(model, (view && view.cell) || { positions: [] }); }
+function cellFromModel() { return M().pictureCells(model, composerCell()); }
 
 // WHICH ROW EACH POSITION LANDED IN, COMPUTED WITH THE DRAWING (P6).
 //
@@ -786,8 +802,15 @@ function openPositionPanel(node) {
     const backs = model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
     // The view already filtered to ENABLED members (a retired lane is not an
     // option to offer), so these read role alone.
+    //
+    // THE PICTURE'S OWN BAND IS IN THE LIST TOO, and it is the same set: the
+    // composer's Cell carries the enabled staging-role routing nodes as cards
+    // (domain.CellPicture.Staging), so a lane an operator can SEE in the band
+    // is a lane they can pick in the row. A card with no chip behind it is the
+    // shape this whole unit exists to remove.
+    const drawn = ((composerCell().staging) || []).map(st => st.core_node_name);
     const staging = [...new Set(routing()
-        .filter(r => r.role === 'staging').map(r => r.core_node_name).concat(backs))];
+        .filter(r => r.role === 'staging').map(r => r.core_node_name).concat(backs).concat(drawn))];
     const srcs = routing().filter(r => r.role === 'source');
     const dests = routing().filter(r => r.role === 'destination');
     const chips = (list, act, cur, attr) => list.map(o => {
@@ -812,10 +835,21 @@ function openPositionPanel(node) {
                 ? { list: model.positions.map(p => p.core_node_name).filter(n => n !== node), act: 'pair', cur: cc.paired }
                 : { list: backs, act: 'pair', cur: cc.paired };
         }
+        // THE THIRD POSITION, which arrived here the day the rows started
+        // coming from flowspec: `second_paired_core_node` is Used on a press
+        // index and the literal this replaced never listed it, so it would have
+        // fallen through to the staging arm and written a park into a pair.
+        // Its options are the back positions the pair does not already hold —
+        // the desktop's `partnering` branch, same question, same answer.
+        if (field === 'second_paired_core_node') {
+            return {
+                list: backs.filter(n => n !== cc.paired), act: 'pair2', cur: cc.secondPaired,
+            };
+        }
         if (field === 'outbound_staging') return { list: staging, act: 'parkold', cur: cc.parkOld };
         return { list: staging, act: 'stage', cur: cc.staging };
     };
-    const modeRow = ((M().rowFields()[cc.mode]) || []).map(field => {
+    const modeRow = M().rowFields(model, node).map(field => {
         const o = optionsFor(field);
         const inner = chips(o.list, o.act, o.cur, 'val');
         // EVERY ROW ANSWERS ITS OWN EMPTY, paired_core_node included. This
@@ -1270,7 +1304,10 @@ function onClick(e) {
     const btn = e.target.closest && e.target.closest('[data-act]');
     if (!btn && tap) {
         e.stopPropagation();
-        if (tap.dataset.tap === 'pos') openPositionPanel(tap.dataset.pos);
+        // A STAGING CARD CARRIES THE POSITION IT SERVES, and a tap on it opens
+        // that position's panel — the lane itself has no settings, and the row
+        // that chose it is on the panel of the position whose swap parks there.
+        if (tap.dataset.tap === 'pos' || tap.dataset.tap === 'staging') openPositionPanel(tap.dataset.pos);
         else if (tap.dataset.tap === 'dock') openDockPanel(tap.dataset.dock);
         return;
     }
@@ -1346,6 +1383,7 @@ function onClick(e) {
         case 'mode': sendQuiet({ type: 'setMode', node: node, mode: btn.dataset.mode }); openPositionPanel(node); break;
         case 'part': sendQuiet({ type: 'setPart', node: node, payloadCode: btn.dataset.part }); openPositionPanel(node); break;
         case 'pair': sendQuiet({ type: 'setPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;
+        case 'pair2': sendQuiet({ type: 'setSecondPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;
         case 'stage': sendQuiet({ type: 'setStaging', node: node, staging: btn.dataset.val }); openPositionPanel(node); break;
         case 'parkold': sendQuiet({ type: 'setParkOld', node: node, staging: btn.dataset.val }); openPositionPanel(node); break;
         case 'src': sendQuiet({ type: 'setSource', node: node, source: btn.dataset.val }); openPositionPanel(node); break;

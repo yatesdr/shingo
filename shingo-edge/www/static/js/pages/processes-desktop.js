@@ -1522,10 +1522,43 @@ function enabledRouting() {
     return (S.routing || []).filter(r => r.enabled);
 }
 
-function fitRegion(m) {
+// ── what the map is a map OF ────────────────────────────────────────────────
+//
+// THE PAGE'S SCOPE IS THE SAVED PROCESS; A SHEET'S IS THE SELECTION BEING MADE
+// (owner ruling 5, 2026-09-17: the map becomes the read-back inside Add
+// process). An engineer creating a cell has picked five positions and three
+// supermarkets and has nothing to look at but three lists of names — which is
+// the state the routing set's own tab was built to fix for a MIGRATED process
+// and never did for a new one.
+//
+// A SCOPE RATHER THAN A SECOND DRAWING, because the drawing is the thing worth
+// reusing: the aisles, the group boxes, the role marks, the label placement
+// and the two route legs are all already right, and a copy of them for the
+// sheet would be the second-renderer problem this file has fixed twice.
+function pageMapScope() {
+    return {
+        positions: S.composer.cell.positions.map(p => p.core_node_name),
+        routing: enabledRouting(),
+    };
+}
+
+// sheetMapScope reads the pickers, which are the only place the answer lives:
+// nothing has been written yet, and the whole point of the read-back is to show
+// the engineer what they have picked BEFORE it is.
+function sheetMapScope() {
+    const routing = [];
+    for (const g of ROUTING_GROUPS) {
+        for (const n of pickerValue(routingPickerKey(g[0]))) {
+            routing.push({ core_node_name: n, role: g[0], enabled: true });
+        }
+    }
+    return { positions: pickerValue('positions'), routing: routing };
+}
+
+function fitRegion(m, scope) {
     const names = [];
-    for (const p of S.composer.cell.positions) names.push(p.core_node_name);
-    for (const r of enabledRouting()) {
+    for (const n of scope.positions) names.push(n);
+    for (const r of scope.routing) {
         names.push(r.core_node_name);
         for (const mem of membersOfGroup(r.core_node_name)) names.push(mem);
     }
@@ -1550,14 +1583,15 @@ function plantProjector(m) {
         Math.min.apply(null, ys), Math.max.apply(null, ys)));
 }
 
-function drawMap(w, h) {
+function drawMap(w, h, scope) {
     const m = mapOf();
     if (!m) {
         return '<div class="pd-nomap">The plant map has not reached this edge yet. Core sends it ' +
             'with the node list; the routing set is still a list beside this.</div>';
     }
+    scope = scope || pageMapScope();
     const project = plantProjector(m);
-    const region = fitRegion(m);
+    const region = fitRegion(m, scope);
     const corners = region
         ? [project(region.x0, region.y0), project(region.x1, region.y0),
         project(region.x0, region.y1), project(region.x1, region.y1)]
@@ -1594,7 +1628,7 @@ function drawMap(w, h) {
 
     // The two trips the routing set implies: Robot 1 out with a new bin,
     // Robot 2 home with the old one.
-    const legs = routeLegs();
+    const legs = routeLegs(scope);
     const pathD = p => p.map(edgeD).join('');
     if (legs.supply) s += '<path class="mp-route r1" d="' + pathD(legs.supply) + '"/>';
     if (legs.back) s += '<path class="mp-route r2" d="' + pathD(legs.back) + '"/>';
@@ -1623,7 +1657,7 @@ function drawMap(w, h) {
     // each other, so the roles are collected and the mark says all of them.
     const ROLE_SHORT = { source: 'in', staging: 'stage', destination: 'out' };
     const roles = {};
-    for (const r of enabledRouting()) {
+    for (const r of scope.routing) {
         if (!roles[r.core_node_name]) roles[r.core_node_name] = [];
         if (roles[r.core_node_name].indexOf(r.role) < 0) roles[r.core_node_name].push(r.role);
     }
@@ -1680,7 +1714,7 @@ function drawMap(w, h) {
     // label already placed. It is a few marks on one press — the quadratic cost
     // is nothing, and it is the only rule that keeps working whichever way the
     // map is turned.
-    const positions = S.composer.cell.positions;
+    const positions = scope.positions.map(n => ({ core_node_name: n }));
     const live = {};
     if (S.model) for (const n of Object.keys(S.model.cells)) if (S.model.cells[n].on) live[n] = true;
     for (const lab of placeMapLabels(positions, Tp)) {
@@ -1757,16 +1791,40 @@ function placeMapLabels(positions, Tp) {
     return out;
 }
 
-function routeLegs() {
+function routeLegs(scope) {
     const out = { supply: null, back: null };
-    if (!S.model) return out;
-    const n = Object.keys(S.model.cells).find(k => S.model.cells[k].on && S.model.cells[k].mode);
-    if (!n) return out;
-    const c = S.model.cells[n];
     const oneOf = name => membersOfGroup(name)[0] || name;
-    const park = c.staging || c.paired || n;
-    out.supply = route(graphNodeFor(oneOf(c.source)), graphNodeFor(park));
-    out.back = route(graphNodeFor(n), graphNodeFor(oneOf(c.dest)));
+    // THE FLOW ON SCREEN, when there is one: the first live cell's source to
+    // where its new bin waits, and the position itself back out to where its
+    // old bin goes.
+    if (S.model) {
+        const n = Object.keys(S.model.cells).find(k => S.model.cells[k].on && S.model.cells[k].mode);
+        if (n) {
+            const c = S.model.cells[n];
+            const park = c.staging || c.paired || n;
+            out.supply = route(graphNodeFor(oneOf(c.source)), graphNodeFor(park));
+            out.back = route(graphNodeFor(n), graphNodeFor(oneOf(c.dest)));
+            return out;
+        }
+    }
+    // NO FLOW YET, WHICH IS THE ADD-PROCESS CASE AND THE WHOLE POINT OF THE
+    // READ-BACK. A cell being created has no claims to read a trip off, so the
+    // legs are drawn between what has been PICKED: the first source in to the
+    // first position, and that position back out to the first destination.
+    //
+    // THE FIRST OF EACH, because the first is the one that matters — the lowest
+    // sequence of a role is the default every new position opens on
+    // (composer-model's defaultRouting), so these two lines are the trips this
+    // cell will actually make unless somebody changes them.
+    if (!scope || !scope.positions.length) return out;
+    const roleFirst = role => {
+        const r = scope.routing.find(x => x.role === role);
+        return r ? r.core_node_name : '';
+    };
+    const src = roleFirst('source'), dst = roleFirst('destination');
+    const pos = scope.positions[0];
+    if (src) out.supply = route(graphNodeFor(oneOf(src)), graphNodeFor(pos));
+    if (dst) out.back = route(graphNodeFor(pos), graphNodeFor(oneOf(dst)));
     return out;
 }
 
@@ -1934,6 +1992,13 @@ function routingPickersReady() {
     }
 }
 
+// switchedOffIn is the rows of a role the process HAS and has not switched on
+// — the backfill's leftovers, which are invisible to the picker above (it
+// draws the enabled rows) and to the HMI (the composer filters to them).
+function switchedOffIn(role) {
+    return (S.routing || []).filter(r => r.role === role && !r.enabled);
+}
+
 function routingRole(g) {
     const key = routingPickerKey(g[0]);
     // The chips ARE the server's enabled rows. Re-read on every draw so a
@@ -1945,7 +2010,54 @@ function routingRole(g) {
         const backs = alwaysAvailableStaging();
         if (backs.length) sub += ' · ' + backs.join(', ') + ' are back positions and always available';
     }
-    return stBlock(g[1], sub, pickerBox(key));
+    // TURN ALL ON, PER ROLE (SYNTH §3 B6).
+    //
+    // The backfill lands a derived name DISABLED and is `INSERT OR IGNORE`, so
+    // it never runs again once the gate is open: a row nobody switched on stays
+    // off forever, and the only way back is one PATCH per row by hand. The 4x2
+    // arrived with seven staging names in exactly that state — the composer's
+    // own card said so, by name — and there was nowhere on this screen to say
+    // yes to all seven.
+    //
+    // NAMED, NOT COUNTED, and the button carries the count because the sentence
+    // beside it carries the names: an engineer agreeing to seven wants to know
+    // it is seven of the names they are looking at.
+    const off = switchedOffIn(g[0]);
+    let all = '';
+    if (off.length) {
+        all = '<div class="pd-rs-alloff"><span class="pd-dim">' +
+            esc(off.length + ' ' + (off.length === 1 ? 'name' : 'names') +
+                ' found from your flows, switched off — ' + off.map(r => r.core_node_name).join(', ')) +
+            '</span><button class="pd-btn quiet" data-act="rs-all-on" data-role="' + esc(g[0]) + '">' +
+            'Turn all ' + off.length + ' on</button></div>';
+    }
+    return stBlock(g[1], sub, pickerBox(key) + all);
+}
+
+// rsAllOn switches on every off row of one role.
+//
+// ONE PATCH PER ROW, IN ORDER, STOPPING AT THE FIRST REFUSAL — not a new
+// endpoint. The single-row PATCH is the door that already records authorship
+// (the server stamps origin='engineer' and the session user, which is the whole
+// meaning of the switch), and a bulk door would be a second place that decides
+// what adopting a name means. The rows are a handful, and the status line names
+// the one that refused.
+async function rsAllOn(role) {
+    const off = switchedOffIn(role);
+    if (!off.length) return;
+    for (const r of off) {
+        const out = await postJSON('PATCH', '/api/processes/' + S.processID + '/routing-nodes/' + r.id,
+            B().routingEnable(true));
+        if (!out.ok) {
+            S.routingError = 'Switching ' + r.core_node_name + ' on was refused: ' + out.error;
+            await loadRouting();
+            drawSettings();
+            return;
+        }
+    }
+    S.routingError = '';
+    await loadRouting();
+    await refreshProcess();
 }
 
 function routingSection() {
@@ -2598,8 +2710,12 @@ const AUTO_ARM = [
     ['off', 'Do nothing'],
 ];
 
+// THE WORD IS CELL (owner, 2026-09-17: "it could be a weld cell or some other
+// process"). The auto-arm setting is on every process, and a 4x2 weld cell is
+// not stamping anything — it is running the new part, which is the fact this
+// sentence is actually about.
 const AUTO_ARM_NOTE = 'Cut over automatically finishes a changeover the operator already started, once ' +
-    'the press is confirmed stamping the new part. It never starts one — starting moves robots, and only ' +
+    'the cell is confirmed running the new part. It never starts one — starting moves robots, and only ' +
     'a person knows the material is there.';
 
 function settingsDraft() { return settingsDraftFor(process() || {}); }
@@ -3317,10 +3433,10 @@ function styleAction(act, id) {
             return;
         // R4: "Set Active" is now "Mark as running", and the sentence says
         // exactly what it does — because the old verb read like an instruction
-        // to the press, and this one is an admin correction to shingo's record.
+        // to the cell, and this one is an admin correction to shingo's record.
         case 'running':
             openSheet('Mark ' + st.name + ' as running?',
-                'No robots move — this tells shingo what the press is already stamping.',
+                'No robots move — this tells shingo what the cell is already running.',
                 '<p class="pd-note">Use this when the plant changed parts without shingo. To change ' +
                 'parts WITH shingo, start a changeover from the operator screen.</p>',
                 'Mark as running', () => sheetSubmit('PUT', '/api/processes/' + S.processID + '/active-style',
@@ -3537,6 +3653,47 @@ function claimedPayloads(processID) {
     return out;
 }
 
+// ── the sheet's map read-back (owner ruling 5, 2026-09-17) ──────────────────
+//
+// THE PICTURE OF WHAT HAS BEEN PICKED, inside the sheet that picks it. An
+// engineer creating a cell chooses five positions and three supermarkets off
+// three lists of names and, until this, had nothing to check them against —
+// the routing set's own map tab is for a process that already exists. Same
+// drawing, scoped to the selection: the aisles, the group boxes, the role
+// marks, and the two route legs the first picks imply.
+//
+// IT IS A READ-BACK AND NOT A CONTROL. Nothing on it is clickable: the lists
+// are where a name is added or removed, and a second door onto the same
+// decision is how pickOnMap came to post one group as both a source and a
+// destination.
+const SHEET_MAP_ID = 'pd-sheetmap';
+
+function sheetMapField() {
+    return '<div class="pd-sec"><div class="pd-lbl">Where that is</div></div>' +
+        '<div class="pd-fld pd-fld-wide"><div class="v">' +
+        '<div class="pd-map pd-sheetmap" id="' + SHEET_MAP_ID + '">' + sheetMapSvg() + '</div>' +
+        '<p class="pd-note">The aisles Core knows, the names you have picked, and the two trips ' +
+        'the first of each role implies — a robot in from the first source, and back out to the ' +
+        'first destination. Nothing here is a control; the lists above are.</p>' +
+        '</div></div>';
+}
+
+function sheetMapSvg() {
+    const scope = sheetMapScope();
+    if (!scope.positions.length && !scope.routing.length) {
+        return '<div class="pd-nomap">Pick a position and a supermarket and they are drawn here.</div>';
+    }
+    return drawMap(900, 340, scope);
+}
+
+// Redrawn on every pick, in place: the sheet's fields are not rebuilt (the
+// pickers hold a caret and a scroll position), so this replaces one element's
+// contents the way redrawPicker does.
+function redrawSheetMap() {
+    const box = document.getElementById(SHEET_MAP_ID);
+    if (box) box.innerHTML = sheetMapSvg();
+}
+
 function partSetField() {
     return '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
         pickerField(PART_SET_PICKER, 'Parts this process runs',
@@ -3561,6 +3718,7 @@ function openAddProcess() {
                 p.sel = p.sel.filter(n => positions().indexOf(n) < 0);
                 redrawPicker(key);
             }
+            redrawSheetMap();
         },
     });
     for (const g of ROUTING_GROUPS) {
@@ -3572,6 +3730,7 @@ function openAddProcess() {
             exclude: n => (positions().indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
                 : ''),
+            onChange: redrawSheetMap,
         });
     }
     // THE PART SET, AS THE FOURTH PICKER. A cell made here has no claims, so
@@ -3601,7 +3760,8 @@ function openAddProcess() {
         'flow composer opens on this process, because reviewing the set is exactly what that gate ' +
         'is waiting for; leave them empty and it stays shut until Settings says otherwise.</p>' +
 
-        partSetField();
+        partSetField() +
+        sheetMapField();
 
     openSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false, 'pd-wide');
@@ -3663,6 +3823,7 @@ async function openEditProcessFor(p) {
                 pk.sel = pk.sel.filter(n => pickerValue('positions').indexOf(n) < 0);
                 redrawPicker(key);
             }
+            redrawSheetMap();
         },
     });
     for (const g of ROUTING_GROUPS) {
@@ -3674,6 +3835,7 @@ async function openEditProcessFor(p) {
             exclude: n => (pickerValue('positions').indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
                 : ''),
+            onChange: redrawSheetMap,
         });
     }
     // THE STORED HALF OF THE PART SET, which is the only half a write may
@@ -3728,7 +3890,8 @@ async function openEditProcessFor(p) {
         (before.parts === null
             ? '<p class="pd-note pd-warn">This cell’s part set could not be read, so it is left ' +
               'alone by Save. Reload the page to edit it.</p>'
-            : ''),
+            : '') +
+        sheetMapField(),
         'Save', () => submitEditProcess(p, before, one), false, 'pd-wide');
 }
 
@@ -5102,6 +5265,7 @@ function onClick(e) {
             case 'open-flows': openProcess(Number(btn.dataset.process)); return;
             case 'edit-process': openEditProcess(btn.dataset.process); return;
             case 'open-settings': openProcessAt(Number(btn.dataset.process), 'settings'); return;
+            case 'rs-all-on': void rsAllOn(btn.dataset.role); return;
             case 'add-process': openAddProcess(); return;
             case 'add-group': openNewGroup(); return;
             case 'new-style': openNewStyle(); return;

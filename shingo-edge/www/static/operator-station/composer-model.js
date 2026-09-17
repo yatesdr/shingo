@@ -136,10 +136,11 @@ const FINDING_SHORT = {
     inbound_staging: 'no inbound staging',
     outbound_destination: 'no outbound destination',
     unplaced_part: 'needs a position',
+    preset_position_missing: 'shape needs a position this cell lacks',
 };
 
-// ROW_FIELDS — which claim field each S5 row writes, per mode (§3.3), in the
-// order the rows are drawn.
+// ROW_FIELDS — which claim field each S5 row writes, in the order the rows are
+// drawn. THE ORDER IS HERE; WHICH ONES APPEAR COMES FROM FLOWSPEC.
 //
 // FIELDS, NO WORDS. Its keys used to be the row headings — `STAGE THE NEW BIN
 // AT`, `PARK OLD AT`, `A/B PARTNER`, `PAIRED BACK POSITION` — five names for
@@ -147,14 +148,40 @@ const FINDING_SHORT = {
 // desktop. And nothing read them: the panel had its own hardcoded list of
 // rows, so the two said the same thing twice and only a test read this one.
 //
-// The panel builds its rows from this now, and the word for each comes from
-// the flowspec labels like every other word on the screen.
-const ROW_FIELDS = {
-    two_robot_press_index: ['paired_core_node'],
-    two_robot: ['inbound_staging'],
-    single_robot: ['inbound_staging', 'outbound_staging'],
-    sequential: ['paired_core_node'],
-};
+// IT WAS A PER-MODE LITERAL, AND THE LITERAL DISAGREED WITH THE DESKTOP. A
+// comment beside it claimed "the two surfaces cannot disagree about what a
+// mode has"; they could and they did. `two_robot_press_index: ['paired']` gave
+// the HMI no staging row on a press index while the desktop's rowColumns —
+// which reads flowspec — drew a Staging chip there, because flowspec marks
+// `inbound_staging` USED on that row for keep-staged tooling. One field, two
+// answers, by which screen you asked from (SYNTH failure row 6, live at
+// Hopkinsville).
+//
+// So the list of CANDIDATE fields is fixed here, in drawing order, and
+// rowFieldsFor filters it through the same steadyRow the desktop reads. The
+// HMI offers what the desktop offers, by construction.
+const ROW_FIELD_ORDER = [
+    'paired_core_node',
+    'second_paired_core_node',
+    'inbound_staging',
+    'outbound_staging',
+];
+
+// rowFieldsFor is the S5 rows for one position: the candidates above that this
+// (role, mode) actually has, in drawing order.
+//
+// Forbidden and Unused are dropped for the same reason rowColumns drops them
+// on the desktop — a row whose value the validator refuses is a control the
+// operator finds out about at the preview — and a cell with no flowspec row at
+// all (no mode yet, or a legacy mode the spec has no row for) draws none,
+// because guessing is what the literal was doing.
+function rowFieldsFor(state, node) {
+    const cell = state.cells[node];
+    if (!cell || !cell.mode) return [];
+    const row = steadyRow(state, cell.role, cell.mode);
+    if (!row) return [];
+    return ROW_FIELD_ORDER.filter(f => row[f] !== 'forbidden' && row[f] !== 'unused');
+}
 
 // ROW_COLUMNS — the two mode-dependent columns the desktop's positions table
 // draws, and the fields each one owns. ONE ROW OF FLOWSPEC DECIDES BOTH.
@@ -533,6 +560,9 @@ function init(opts) {
         // only — the draft's copy lives on the cell and starts null.
         priorAdvanced: opts.advanced || {},
         roleSources: {},
+        // The positions the last applied preset named and this cell does not
+        // have. See applyPreset and findings.
+        presetDropped: [],
         selected: null,
         preview: null,
         previewStale: false,
@@ -728,6 +758,14 @@ function reduce(state, action) {
                     ? Object.assign(blankCell(), built[n], { on: true, part: part, role: role })
                     : Object.assign(blankCell(), { role: role });
             }
+            // A PRESET CELL THIS PICTURE HAS NO POSITION FOR IS A FINDING, NOT
+            // A SKIP (SYNTH §3 B4). The loop above walks the PICTURE's cells,
+            // so a shape naming PLN_09 on a cell that has no PLN_09 applies
+            // silently and short: the diff said the positions it could see, the
+            // save wrote them, and the shape the engineer thought they had
+            // applied was not the shape that landed. The names are recorded on
+            // the state and findings() reports them.
+            s.presetDropped = droppedPresetCells(s, built);
             s.selected = null;
             break;
         }
@@ -736,6 +774,7 @@ function reduce(state, action) {
             for (const n of Object.keys(s.cells)) {
                 s.cells[n] = Object.assign(blankCell(), { role: s.cells[n].role });
             }
+            s.presetDropped = [];
             s.selected = null;
             break;
         }
@@ -762,6 +801,14 @@ function reduce(state, action) {
     // Any structural change invalidates the last preview until a new one lands.
     if (action && action.type !== 'select') s.previewStale = true;
     return s;
+}
+
+// droppedPresetCells is the positions a shape names that this cell does not
+// have. Empty is the ordinary case, and an empty list is what clears a previous
+// apply's finding.
+function droppedPresetCells(state, built) {
+    const have = new Set(state.positions.map(p => p.core_node_name));
+    return Object.keys(built).filter(n => !have.has(n)).sort();
 }
 
 // An index position needs its structural partner; a fresh one takes the first
@@ -937,6 +984,21 @@ function findings(state) {
             detail: loose.map(shortPart).join(', ') + ' — drop each on a position, or take it off this flow.',
         });
     }
+    // A SHAPE THAT DID NOT FULLY APPLY SAYS SO. It is a local finding for the
+    // same reason the other three are: the server cannot raise it, because the
+    // cells it never received are cells it has no way to know were meant.
+    if ((state.presetDropped || []).length) {
+        const names = state.presetDropped;
+        out.push({
+            local: true, node: '', field: 'preset_position_missing', parts: names.slice(),
+            short: FINDING_SHORT.preset_position_missing,
+            message: names.length === 1
+                ? 'The shape names ' + names[0] + ', which this cell does not have'
+                : 'The shape names ' + names.length + ' positions this cell does not have',
+            detail: names.join(', ') + ' — the rest of the shape was applied. Pick a shape ' +
+                'built for this cell, or add the positions from the desktop.',
+        });
+    }
     const pv = state.preview;
     if (pv) {
         // ONE PROBLEM, ONE ROW. The local findings above and the server's
@@ -1017,19 +1079,78 @@ function shortPart(p) { return String(p || '').replace(/^.*?(PIA\d+|Payload)$/, 
 //
 // glyphs() sat here beside it and answered a third question nobody asked: it
 // had no reader on either surface, only its own test.
+// A PER-MODE TABLE, HELD AGAINST FLOWSPEC BY A TOTALITY TEST — not derived
+// from flowspec (SYNTH §2). flowspec says which FIELDS a choreography has; it
+// carries no robot and no direction, and a leg is both. It also cannot tell the
+// two staging fields apart in the way the picture needs: on a press index,
+// `inbound_staging` is `used` for keep-staged tooling and is not a swap leg at
+// all, so a table derived from "the field is present" would draw a trip no
+// robot makes.
+//
+// What the test holds (composer-model.test.js) is TOTALITY: every (role, mode)
+// row whose staging field flowspec marks Required must produce a leg when that
+// field is set. A mode that grows a required staging field and no line is a
+// bin an operator watches for and never sees move.
+const LEGS = {
+    two_robot_press_index: c => (c.paired
+        ? [{ robot: 2, kind: 'index', from: c.paired, label: 'Robot 2 indexes' }]
+        : []),
+    two_robot: c => (c.staging
+        ? [{ robot: 1, kind: 'move', from: c.staging, label: 'Robot 1 moves in' }]
+        : []),
+    // ONE ROBOT, TWO TRIPS, AND IT DREW NEITHER. single_robot is the one mode
+    // with both a parking spot for the new bin and one for the old, and the
+    // picture showed an operator neither of them — so the card said "One robot,
+    // parks and swaps" over a drawing with no line on it at all.
+    //
+    // IN, THEN OUT, and the directions are the claim's own: inbound_staging is
+    // where the new bin waits, so its leg runs INTO the position;
+    // outbound_staging is where the old one is cleared to, so its leg runs OUT.
+    single_robot: c => {
+        const out = [];
+        if (c.staging) out.push({ robot: 1, kind: 'move', from: c.staging, label: 'Robot 1 moves in' });
+        if (c.parkOld) out.push({ robot: 1, kind: 'park', to: c.parkOld, label: 'Robot 1 clears old' });
+        return out;
+    },
+    sequential: () => [],
+};
+
 function legs(state) {
     const out = [];
     for (const p of state.positions) {
         const n = p.core_node_name;
         const c = state.cells[n];
         if (!c || !c.on || !c.mode) continue;
-        if (c.mode === 'two_robot_press_index' && c.paired) {
-            out.push({ robot: 2, kind: 'index', from: c.paired, to: n, label: 'Robot 2 indexes' });
-        } else if (c.mode === 'two_robot' && c.staging) {
-            out.push({ robot: 1, kind: 'move', from: c.staging, to: n, label: 'Robot 1 moves in' });
+        const make = LEGS[c.mode];
+        if (!make) continue;
+        for (const leg of make(c)) {
+            // The position is one end of every leg; the table names the other,
+            // and which end it is says which way the bin goes.
+            //
+            // THE KEY ROUTE TRAVELS WITH THE LEG, because it is a fact about
+            // this cell's trip and the picture marks it ON the line: the
+            // waypoints an engineer CHOSE are the ones worth naming, and the
+            // rest of the path is just where the robot goes.
+            out.push(Object.assign({ from: n, to: n, keyRoute: (c.keyRoute || []).slice() }, leg));
         }
     }
     return out;
+}
+
+// legFields is which claim field each mode's legs read, for the totality test.
+// Derived from the table itself rather than restated, so a mode that grows a
+// leg cannot be missed by the test that checks the table is total.
+function legFields(mode) {
+    const probe = { staging: 'S', parkOld: 'P', paired: 'D' };
+    const named = (LEGS[mode] || (() => []))(probe);
+    const fields = [];
+    for (const leg of named) {
+        const end = leg.from || leg.to;
+        if (end === 'S') fields.push('inbound_staging');
+        if (end === 'P') fields.push('outbound_staging');
+        if (end === 'D') fields.push('paired_core_node');
+    }
+    return fields;
 }
 
 // WHICH ROBOTS THE CHOREOGRAPHY USES, not how many legs got drawn: an index
@@ -1563,6 +1684,14 @@ function shapeDiff(state, preset) {
         const live = state.cells[n] && state.cells[n].on;
         if (live || want[n]) names.push(n);
     }
+    // A POSITION THE SHAPE NAMES AND THIS CELL DOES NOT HAVE IS A LINE IN THE
+    // DIFF (SYNTH §3 B4). The loop above walks the PICTURE's positions, so such
+    // a cell was invisible here — the modal showed a tidy list of what would
+    // change and applied something smaller, with nothing saying which half was
+    // dropped. It is worded as the event, like the other whole-position lines.
+    for (const n of droppedPresetCells(state, want)) {
+        out.push({ node: n, label: 'not a position of this cell — it will be skipped', whole: true });
+    }
     for (const n of names) {
         const to = want[n];
         const from = (state.cells[n] && state.cells[n].on) ? state.cells[n] : null;
@@ -1665,7 +1794,7 @@ const PAIRED_NOTE = {
 function pairedNote(state, node) {
     const c = ((state && state.cells) || {})[node || (state && state.selected)] || {};
     // A mode nobody has written words for still never draws a heading over
-    // nothing. ROW_FIELDS gives paired_core_node to exactly the two above; a
+    // nothing. flowspec gives paired_core_node to exactly the two above; a
     // third would arrive here before anyone noticed it had no sentence.
     return PAIRED_NOTE[c.mode] || 'Nothing on this cell to pair this position with.';
 }
@@ -1721,7 +1850,7 @@ function routingNote(state, field, offered, node) {
 // ── exported constants the render layer needs (it invents no copy) ───────────
 function modeLabels() { return Object.assign({}, MODES); }
 function modeHelp() { return Object.assign({}, MODEHELP); }
-function rowFields() { return clone(ROW_FIELDS); }
+function rowFields(state, node) { return rowFieldsFor(state, node); }
 function fieldLabel(state, field) { return fieldWord(state, field); }
 
 function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }

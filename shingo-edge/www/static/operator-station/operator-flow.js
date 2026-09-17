@@ -74,6 +74,28 @@ const FIT_INSET = 20;   // the picture's own margins — the cards may reach the
 const DOCK_BAND = 74;
 const CAPTION_ROOM = 38;  // the station-name line under the last row of cards
 
+// ── the staging band ────────────────────────────────────────────────────────
+//
+// A STAGING CARD IS SHORTER THAN A POSITION, and that is the whole reason the
+// band fits. At the station's 560 frame the space between the caption under the
+// last row of cards and the dock's rule is about 77 units; a 92-tall position
+// card does not go in it and a 48-tall one does, with room for the rule to stay
+// where it is.
+//
+// It is also the right shape: a position card carries a name, two choreography
+// lines and a part chip, and a staging card carries a name and who it parks
+// for. Drawing it at a position's height would be claiming it is one.
+//
+// LAID IN ITS OWN BAND, NOT PLACED TO SCALE (SYNTH §3 B3). This is the RULE and
+// not a fallback: placeToScale takes the largest scale at which no pair of
+// cards collides, so one staging lane 40 m from the cell drives that scale to
+// nothing, returns null, and flips the whole cell to the schematic — P400's
+// 1.772 m spacing with it. The band is what keeps a far lane from moving a
+// near cell.
+export const STAGING_W = 150, STAGING_H = 48;
+const STAGING_GAP = 14;   // between two cards in the band
+const STAGING_LIFT = 14;  // between the band's floor and the dock's rule
+
 // frameOf derives one frame's geometry. The horizontals are INSETS from the
 // edges, because a gutter is a fixed amount of room for a label and does not
 // want to shrink with the frame; the verticals are PROPORTIONS of the station
@@ -269,6 +291,38 @@ function placeEvenly(positions, g) {
     return { boxes, rows: rowsOf(boxes), toScale: false };
 }
 
+// layoutStaging places the staging cards in the band above the dock's rule.
+//
+// LEFT TO RIGHT IN THE ORDER THE PLANT HAS THEM when the picture is to scale,
+// and by name when it is not. A band whose order had nothing to do with the
+// floor would be a row of names to read; ordered by true X it is a row an
+// operator can point along.
+//
+// CENTRED ON THE PICTURE, and narrowed to fit rather than allowed to run past
+// the gutters: six lanes at 150 wide do not fit 1280 at full pitch, and a card
+// drawn off the edge is a card nobody can tap.
+export function layoutStaging(cell, frame) {
+    const g = frameOf(frame);
+    const cards = (cell && cell.staging) || [];
+    if (!cards.length) return { boxes: {}, top: 0 };
+    const placed = cards.every(c => isCoord(c.x));
+    const order = cards.slice().sort((a, b) => (placed
+        ? a.x - b.x
+        : String(a.core_node_name).localeCompare(String(b.core_node_name))));
+    const top = g.DOCK_Y - STAGING_LIFT - STAGING_H;
+    const pitch = Math.min(STAGING_W + STAGING_GAP,
+        (g.FIT_RIGHT - g.FIT_LEFT) / Math.max(order.length, 1));
+    const width = pitch * (order.length - 1);
+    const boxes = {};
+    order.forEach((c, i) => {
+        boxes[c.core_node_name] = {
+            x: g.CENTER_X - width / 2 + pitch * i - STAGING_W / 2,
+            y: top, w: STAGING_W, h: STAGING_H,
+        };
+    });
+    return { boxes, top };
+}
+
 // pictureRows is which row of the DRAWING each position landed in: 'front' for
 // the line-side row, 'back' for the far one, '' for a middle row or a picture
 // with only one. Every caption beside the picture that says "front" or "back"
@@ -350,11 +404,30 @@ function ortho(pts, r) {
 // which is this file's business. This used to decide both, re-reading swap
 // modes and partner fields to reach the same two answers the model had already
 // reached, with the sentences spelled out a second time.
+// A LEG WITH NO CARD AT ONE END IS A DEFECT, NOT A SKIP (SYNTH §3 B4). This
+// was a bare `continue`: the model said a robot drives from A to B, the layout
+// had no card for one of them, and the picture silently drew one line fewer.
+// That is the failure the staging work is fixing — a bin that moves on the
+// floor and not on the screen — so it reports rather than hides. The reporter
+// is injected by the test harness; on a live screen it is a console line and
+// the picture still draws every leg it can.
+let onLegDropped = (leg, missing) => {
+    if (typeof console !== 'undefined' && console.error) {
+        console.error('flow picture: no card for ' + missing + ', so the ' +
+            (leg.label || 'leg') + ' between ' + leg.from + ' and ' + leg.to + ' is not drawn');
+    }
+};
+
+export function setLegDropReporter(fn) { onLegDropped = fn; }
+
 export function legsFor(modelLegs, boxes) {
     const legs = [];
     for (const L of modelLegs || []) {
         const b = boxes[L.to], pb = boxes[L.from];
-        if (!b || !pb) continue;
+        if (!b || !pb) {
+            onLegDropped(L, b ? L.from : L.to);
+            continue;
+        }
         const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
         const pcx = pb.x + pb.w / 2, pcy = pb.y + pb.h / 2;
         const cls = L.robot === 2 ? 'r2' : 'r1';
@@ -370,7 +443,7 @@ export function legsFor(modelLegs, boxes) {
             // that would be an arrowhead that only fits on the long legs.
             legs.push({ cls: cls, d: 'M' + a[0] + ' ' + a[1] + ' L' + z[0] + ' ' + z[1],
                 a: a, z: z, tip: [a[0] + (z[0] - a[0]) * TIP_AT, a[1] + (z[1] - a[1]) * TIP_AT, degOf(a, z)],
-                lbl: L.label, lx: (pcx + cx) / 2, ly: b.y + b.h + 18 });
+                lbl: L.label, lx: (pcx + cx) / 2, ly: b.y + b.h + 18, keyRoute: L.keyRoute || [] });
             continue;
         }
         const below = L.kind === 'index' ? pcy > cy : pb.y > b.y;
@@ -388,7 +461,7 @@ export function legsFor(modelLegs, boxes) {
             ? [from[0] + run * TIP_AT, mid, run > 0 ? 0 : 180]
             : [(from[0] + to[0]) / 2, mid, to[1] > from[1] ? 90 : -90];
         legs.push({ cls: cls, d: ortho([from, [from[0], mid], [to[0], mid], to]), a: from, z: to, tip: tip,
-            lbl: L.label, lx: (pcx + cx) / 2, ly: mid - 8 });
+            lbl: L.label, lx: (pcx + cx) / 2, ly: mid - 8, keyRoute: L.keyRoute || [] });
     }
     return legs;
 }
@@ -485,6 +558,13 @@ export function renderFlowPicture(view, opts) {
     cell.positions.forEach(p => { byName[p.core_node_name] = p; });
     const g = frameOf(opts.frame);
     const { boxes, rows, toScale } = layoutPositions(cell, opts.frame);
+    // THE STAGING BAND IS LAID APART AND THEN MERGED FOR THE LEGS. Apart,
+    // because a staging lane must never reach placeToScale's span, centroid or
+    // collision set — one lane 40 m out drives the scale to nothing and flips
+    // the whole cell to the schematic. Merged, because a leg ends on a card and
+    // does not care which list the card came from.
+    const staged = layoutStaging(cell, opts.frame);
+    const allBoxes = Object.assign({}, boxes, staged.boxes);
     let s = '';
     if (!cell.positions.length) {
         return '<text class="mlbl" x="' + g.CENTER_X + '" y="' + g.CENTER_Y + '" text-anchor="middle">No positions on this station yet</text>';
@@ -515,7 +595,7 @@ export function renderFlowPicture(view, opts) {
     // are drawn in the order they must not be hidden in, and the groups
     // themselves are still emitted in the model's leg order, so which robot's
     // leg is over which is unchanged.
-    for (const L of legsFor(sentences.legs, boxes)) {
+    for (const L of legsFor(sentences.legs, allBoxes)) {
         s += '<g class="legg"><path class="leg thin ' + L.cls + '" d="' + L.d + '"/>' +
             '<path class="legflow ' + L.cls + '" d="' + L.d + '"/>' +
             '<circle class="legdot ' + L.cls + '" cx="' + L.a[0] + '" cy="' + L.a[1] + '" r="4"/>' +
@@ -554,6 +634,39 @@ export function renderFlowPicture(view, opts) {
             '<text class="nm" x="14" y="26">' + esc(n) + '</text>' + lines + chip + glyphs + '</g>';
     }
 
+    // ── the staging band ────────────────────────────────────────────────
+    //
+    // A SHORTER CARD, AND IT SAYS WHICH DIRECTION IT IS. The two lines are the
+    // model's own words for a staging slot — `Inbound staging` / `for PLN_03` —
+    // the same pair cardLines already puts on a back position doing the same
+    // job, so the floor reads one sentence about staging and not two.
+    //
+    // AN OFFERED LANE IS DASHED AND SAYS SO. On the composer's picture the band
+    // carries every staging lane the cell MAY park at, and an operator has to be
+    // able to tell the one this flow uses from the ones it could.
+    for (const st of (cell.staging || [])) {
+        const b = staged.boxes[st.core_node_name];
+        if (!b) continue;
+        const inUse = !!st.partner_of;
+        const word = st.field === 'outbound_staging' ? 'Outbound staging'
+            : st.field === 'inbound_staging' ? 'Inbound staging' : 'Staging';
+        const line2 = inUse ? 'for ' + st.partner_of : 'not in this flow';
+        s += '<g class="stage ' + (inUse ? 'on' : 'off') + '" data-staging="' + esc(st.core_node_name) + '"' +
+            // A TAP GOES TO THE POSITION THIS LANE SERVES, which is the thing
+            // an operator can change — there is no panel for a lane itself, and
+            // an OFFERED lane serves nobody yet, so it is not tappable at all
+            // rather than tappable and inert.
+            (opts.editable && inUse
+                ? ' data-tap="staging" data-pos="' + esc(st.partner_of) + '"'
+                : '') +
+            ' transform="translate(' + b.x + ',' + b.y + ')">' +
+            '<rect class="box" width="' + b.w + '" height="' + b.h + '" rx="10"/>' +
+            '<text class="nm" x="12" y="20">' + esc(st.core_node_name) + '</text>' +
+            '<text class="ln" x="12" y="36">' + esc(word) + ' · ' + esc(line2) + '</text></g>';
+    }
+
+    s += lmPath(cell, allBoxes, sentences.legs, g, toScale);
+
     const d = sentences.dock;
     const tapIn = opts.editable ? ' data-tap="dock" data-dock="in"' : '';
     const tapOut = opts.editable ? ' data-tap="dock" data-dock="out"' : '';
@@ -563,6 +676,189 @@ export function renderFlowPicture(view, opts) {
         '<g class="half"' + tapOut + ' transform="translate(' + (g.CENTER_X + 10) + ',' + g.DOCK_Y + ')"><g transform="translate(16,26)" style="color:var(--os-r2, var(--robot-2))">' + OUT + '</g><text class="k" x="36" y="36">OUT</text>' +
         '<text class="v" x="80" y="30">' + esc(d.dsts.join(' · ') || '—') + '</text><text class="s" x="80" y="48" style="fill:var(--os-r2, var(--robot-2))">' + esc(d.outNote) + '</text><text class="s" x="80" y="64">' + esc(d.outMembers) + '</text></g></g>';
     return s;
+}
+
+// ── the LM path (owner, 2026-09-17) ────────────────────────────────────────
+//
+// FIRST CUT, FOR THE OWNER'S EYE. The brief calls this the one piece of new
+// visual design in the work and says to propose it with shots before polishing
+// it, so what is here is the mechanism drawn plainly: the waypoints a robot
+// passes on its way between two cards, marked along the leg that joins them.
+// Nothing about the marks' size, weight or labelling is settled.
+//
+// WHY IT IS NOT THE ROUTE PLANNER. The station has no plant map — the desktop's
+// Map is a hundred kilobytes for a screen the station never opens — so the
+// picture cannot walk the network to find a path. What it has is the LM points
+// inside its own region (CellPicture.LMs, bounded to the cell) and the legs it
+// is already drawing. So the drawing is: the LMs that lie near a leg, in the
+// order they lie along it.
+//
+// TO SCALE, THE TRUE PLACES; SCHEMATIC, EVEN SPACING. When the picture is drawn
+// to scale the marks go where the map puts them, projected with the same
+// projector the cards use — an operator can point at one. When it is the
+// schematic there is no true place to go to, so they are spread evenly along
+// the leg in path order, which still says how many and in what sequence.
+//
+// A PATH THAT LEAVES THE FRAME ENDS AT THE DOCK STRIP. The "no long lines to
+// far supermarkets" ruling: a mark outside the picture's own inset is not
+// drawn, and the leg keeps its ordinary end.
+// TWO WEIGHTS, AND ONLY ONE OF THEM CARRIES A NAME.
+//
+// THE PATH is every waypoint the robot passes, as small hollow beads: it says
+// "the robot goes this way, through there", which is a shape to glance at.
+// THE KEY ROUTE is the subset an engineer CHOSE — the ordered points SEER is
+// told to drive (claim.key_route) — drawn filled and labelled, because those
+// are the ones worth being able to name out loud on the floor.
+//
+// The first draft labelled every bead. On the two-robot fixture that is ten
+// labels along a 230-unit line: unreadable, and it turned the drawing into a
+// list. A name that nobody chose is not a name worth the ink.
+const LM_R = 2.5;          // the path's bead
+const LM_KEY_R = 4.5;      // a chosen key-route point
+const LM_NEAR = 42;        // how close to the leg's line an LM has to be, in viewBox units
+
+// HOW MANY BEADS A LEG'S PATH SHOWS. The aisle beside a cell carries a
+// waypoint every metre or so, which on a 230-unit leg is eleven of them — and
+// eleven evenly spaced dots is not a path with waypoints on it, it is a dotted
+// line. Four says the same thing (the robot goes this way, through there) and
+// leaves the leg reading as a leg.
+//
+// A CHOSEN KEY-ROUTE POINT IS NEVER THINNED OUT: it is the half of the drawing
+// that carries a name, and dropping one would be the picture hiding the thing
+// an engineer explicitly asked SEER to drive through.
+const LM_PATH_MAX = 4;
+
+function lmPath(cell, boxes, modelLegs, g, toScale) {
+    const lms = (cell && cell.lms) || [];
+    if (!lms.length) return '';
+    const placed = toScale && lms.every(l => isCoord(l.x) && isCoord(l.y));
+    const proj = makeProjector(false);
+    // The cards' own transform, recovered from a placed position: the picture
+    // scales and centres the scene, and an LM has to land in the same frame.
+    const anchor = placedAnchor(cell, boxes, proj);
+    const at = lm => {
+        const sp = proj(lm.x, lm.y);
+        return [sp[0] * anchor.scale + anchor.ox, sp[1] * anchor.scale + anchor.oy];
+    };
+    let out = '';
+    for (const L of legsFor(modelLegs, boxes)) {
+        const chosen = L.keyRoute || [];
+        // A CHOSEN POINT IS ALWAYS DRAWN, wherever it is. It is the half of
+        // this drawing that carries a name, and the reason it cannot be found
+        // by the "lies along the leg" test is the shape of a real cell: a swap
+        // leg is a 1.8 m move between two adjacent cards, and the waypoints an
+        // engineer picks are on the AISLE the robot drives in from — metres
+        // away, and on no segment between two cards. A route the engineer
+        // chose that the picture declined to draw because of where it is would
+        // be the picture answering a different question.
+        if (placed && anchor && chosen.length) {
+            const marks = chosen
+                .map(name => lms.find(l => l.name === name))
+                .filter(Boolean)
+                .map(lm => { const p = at(lm); return { name: lm.name, x: p[0], y: p[1] }; })
+                // A PATH THAT LEAVES THE FRAME ENDS AT THE DOCK STRIP: a mark
+                // outside the picture's own inset is not drawn, and the leg
+                // keeps its ordinary end. That is the "no long lines to far
+                // supermarkets" ruling, drawn rather than argued.
+                .filter(m => m.x >= FIT_INSET && m.x <= g.w - FIT_INSET &&
+                             m.y >= FIT_INSET && m.y <= g.DOCK_Y);
+            if (marks.length) {
+                // The thin line from the leg's start THROUGH the chosen points,
+                // in the order SEER is told to drive them. It is the route, and
+                // the leg it joins is where the route ends.
+                let d = 'M' + L.a[0] + ' ' + L.a[1];
+                for (const m of marks) d += ' L' + m.x + ' ' + m.y;
+                out += '<path class="lmroute ' + L.cls + '" d="' + d + '"/>';
+                for (const m of marks) {
+                    out += '<g class="lm key ' + L.cls + '">' +
+                        '<circle cx="' + m.x + '" cy="' + m.y + '" r="' + LM_KEY_R + '"/>' +
+                        '<text class="lmlbl" x="' + m.x + '" y="' + (m.y - 9) + '" text-anchor="middle">' +
+                        esc(m.name) + '</text></g>';
+                }
+            }
+        }
+        // And the PATH: the waypoints the robot passes along this leg itself,
+        // thinned, unnamed. Empty on a cell whose swaps do not cross an aisle,
+        // which is most of them.
+        const along = thinPath(placed && anchor
+            ? lmsAlongLeg(lms, L, proj, anchor)
+            : lmsEvenly(lms, L), new Set(chosen));
+        for (const m of along) {
+            if (m.x < FIT_INSET || m.x > g.w - FIT_INSET || m.y < FIT_INSET || m.y > g.DOCK_Y) continue;
+            if (chosen.indexOf(m.name) >= 0) continue;   // already drawn, named
+            out += '<g class="lm ' + L.cls + '">' +
+                '<circle cx="' + m.x + '" cy="' + m.y + '" r="' + LM_R + '"/></g>';
+        }
+    }
+    return out;
+}
+
+// placedAnchor recovers scene → screen from one position the layout placed:
+// a card's centre is its projected point scaled and offset, so two placed
+// cards give the scale and the offset back.
+function placedAnchor(cell, boxes, proj) {
+    const pts = [];
+    for (const p of (cell.positions || [])) {
+        const b = boxes[p.core_node_name];
+        if (!b || !isCoord(p.x) || !isCoord(p.y)) continue;
+        const sp = proj(p.x, p.y);
+        pts.push({ sx: sp[0], sy: sp[1], cx: b.x + b.w / 2, cy: b.y + b.h / 2 });
+        if (pts.length === 2) break;
+    }
+    if (pts.length < 2) return null;
+    const dsx = pts[1].sx - pts[0].sx, dsy = pts[1].sy - pts[0].sy;
+    const dcx = pts[1].cx - pts[0].cx, dcy = pts[1].cy - pts[0].cy;
+    const span = Math.hypot(dsx, dsy);
+    if (span < 1e-9) return null;
+    const scale = Math.hypot(dcx, dcy) / span;
+    return { scale: scale, ox: pts[0].cx - pts[0].sx * scale, oy: pts[0].cy - pts[0].sy * scale };
+}
+
+// thinPath keeps every CHOSEN point and evenly samples the rest down to
+// LM_PATH_MAX, preserving the order they lie in along the leg.
+function thinPath(along, chosen) {
+    const rest = along.filter(m => !chosen.has(m.name));
+    if (rest.length <= LM_PATH_MAX) return along;
+    const step = rest.length / LM_PATH_MAX;
+    const keep = new Set();
+    for (let i = 0; i < LM_PATH_MAX; i++) keep.add(rest[Math.floor(i * step)]);
+    return along.filter(m => chosen.has(m.name) || keep.has(m));
+}
+
+// lmsAlongLeg is the LMs lying near this leg's straight run, at their true
+// screen places, ordered from the leg's start to its end.
+//
+// USUALLY EMPTY ON A REAL CELL, and that is not a defect. A swap leg is a 1.8 m
+// move between two adjacent cards; the aisle a robot drives in along is metres
+// off it. What this finds is the case where a leg DOES cross a waypoint — a
+// wide cell, a staging lane across a gangway — and there the beads say so.
+function lmsAlongLeg(lms, L, proj, anchor) {
+    const ax = L.a[0], ay = L.a[1], zx = L.z[0], zy = L.z[1];
+    const dx = zx - ax, dy = zy - ay;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-9) return [];
+    const out = [];
+    for (const lm of lms) {
+        const sp = proj(lm.x, lm.y);
+        const x = sp[0] * anchor.scale + anchor.ox, y = sp[1] * anchor.scale + anchor.oy;
+        const t = ((x - ax) * dx + (y - ay) * dy) / len2;
+        if (t < 0 || t > 1) continue;
+        const px = ax + dx * t, py = ay + dy * t;
+        if (Math.hypot(x - px, y - py) > LM_NEAR) continue;
+        out.push({ name: lm.name, x: x, y: y, t: t });
+    }
+    return out.sort((p, q) => p.t - q.t);
+}
+
+// lmsEvenly is the schematic's answer: the same marks, spread along the leg in
+// name order, because a picture that is not to scale has no true place to put
+// them and pretending otherwise is the drawing lying about the floor.
+function lmsEvenly(lms, L) {
+    const picked = lms.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).slice(0, 3);
+    return picked.map((lm, i) => {
+        const t = (i + 1) / (picked.length + 1);
+        return { name: lm.name, x: L.a[0] + (L.z[0] - L.a[0]) * t, y: L.a[1] + (L.z[1] - L.a[1]) * t };
+    });
 }
 
 // ── panel ──────────────────────────────────────────────────────────────

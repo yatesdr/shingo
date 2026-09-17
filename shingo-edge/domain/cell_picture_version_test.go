@@ -200,3 +200,29 @@ func TestBuildCellPicture_CarriesOnlyTheGroupsItsClaimsName(t *testing.T) {
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+// THE KEY ROUTE IS DRAWN, SO IT IS VERSIONED. It arrived on the picture with
+// the LM marks (CellClaim.KeyRoute), and a column the picture draws that the
+// version cannot see is the one failure this whole mechanism has: the drawing
+// changes and every board goes on showing the old one.
+func TestCellPictureVersion_MovesWhenTheKeyRouteDoes(t *testing.T) {
+	base := versionInput()
+	base.Claims[0].KeyRoute = []string{"LM11", "LM13"}
+	before := CellPictureVersion(base)
+
+	for _, tc := range []struct {
+		door  string
+		route []string
+	}{
+		{"a waypoint was added", []string{"LM11", "LM13", "LM17"}},
+		{"a waypoint was dropped", []string{"LM11"}},
+		{"the route was REVERSED — a different drive", []string{"LM13", "LM11"}},
+		{"the route was cleared", nil},
+	} {
+		in := versionInput()
+		in.Claims[0].KeyRoute = tc.route
+		if got := CellPictureVersion(in); got == before {
+			t.Errorf("%s: the version did not move", tc.door)
+		}
+	}
+}

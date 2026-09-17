@@ -823,3 +823,24 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     flex: none; height: 520px; margin: 10px 0 4px;
     border: 1px solid var(--sub-2); border-radius: 12px;
 }
+
+/* THE SWITCHED-OFF ROWS OF A ROLE, AND THE ONE CONTROL THAT ANSWERS THEM ALL.
+ * The backfill lands a derived name disabled and never runs again once the gate
+ * is open, so a row nobody adopted stays off forever — seven of them on
+ * Hopkinsville's 4x2, invisible to the picker above (which draws the enabled
+ * rows) and to the HMI. The names sit beside the button because an engineer
+ * agreeing to seven wants to see which seven. */
+.pd-rs-alloff {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle, var(--sub-2));
+    font-size: 12px;
+}
+.pd-rs-alloff span { flex: 1; min-width: 0; }
+
+/* The sheet's map read-back. Narrower than the routing tab's — a sheet is a
+ * column, not a page — and it scrolls with the fields above it rather than
+ * pinning, because it is something to glance at while picking and not the
+ * thing being worked on. */
+.pd-fld-wide { grid-column: 1 / -1; }
+.pd-sheetmap { max-width: 100%; }
+.pd-sheetmap svg { width: 100%; height: auto; display: block; }

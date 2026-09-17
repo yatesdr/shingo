@@ -301,12 +301,7 @@ func (h *Handlers) apiStationComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	station, err := h.engine.StationService().Get(stationID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "no such station")
-		return
-	}
-	data, err := h.engine.StationService().ComposerForStation(station.ProcessID)
+	data, err := h.engine.StationService().ComposerForStation(stationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

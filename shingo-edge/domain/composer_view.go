@@ -83,11 +83,23 @@ type ComposerData struct {
 	// Set only from composerStation outward — never above the picker's early
 	// return, which is the poll.
 	Palette []string `json:"palette,omitempty"`
-	// Cell is the press itself — positions in their true arrangement with the
-	// running style's choreography on them, the same CellPicture the station
-	// draws. Set only on the desktop's process-scoped read; the station view
-	// carries its own (station-scoped) copy at the top level and would be
-	// carrying the picture twice.
+	// Cell is the cell itself — positions in their true arrangement with the
+	// running style's choreography on them, the staging lanes it parks at and
+	// the waypoints between them.
+	//
+	// ON BOTH COMPOSER READS, AND THE COMMENT HERE USED TO SAY OTHERWISE. It
+	// read "set only on the desktop's process-scoped read; the station view
+	// carries its own copy at the top level" — true when it was written, and
+	// the reason the HMI's composer drew the BOARD's picture: the staging the
+	// running flow parks at, and nothing the cell merely could park at. The one
+	// screen whose job is choosing where a bin goes was the one with no options
+	// drawn on it.
+	//
+	// The two are scoped differently and that is the point. The desktop's is
+	// process-wide (stationID 0, every position of the cell); the station's is
+	// its own screen's. Both carry the staging lanes the routing set offers,
+	// which the board's picture does not — the board draws what the flow IS,
+	// the composer draws what it could be.
 	Cell *CellPicture `json:"cell,omitempty"`
 	// Scene is the adjacency the "Robot drives via" row walks to find the LM
 	// waypoints along a position's supply path. Nil when the geometry cache has

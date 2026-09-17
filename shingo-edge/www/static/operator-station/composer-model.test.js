@@ -393,19 +393,41 @@ test('rowColumns draws exactly the fields flowspec marks used or required', () =
     }
 });
 
-test('every field S5 writes has a chip on the desktop, in one column or the other', () => {
-    const ROW_FIELD = M.rowFields();
+// ONE FIELD, ONE ANSWER, WHICHEVER SURFACE ASKS (SYNTH §3 B5).
+//
+// This used to compare the HMI's per-mode LITERAL against the desktop's
+// flowspec-derived columns, and it passed while the two disagreed: the literal
+// gave a press index `paired_core_node` and nothing else, so there was no
+// staging field to find a home for — and the desktop drew a Staging chip there
+// the whole time, because flowspec marks `inbound_staging` used on that row.
+// The set the test walked was the one the defect had already shrunk.
+//
+// Both sides read flowspec now, so this is an equality rather than a
+// containment, and it is the assertion that would have been red.
+test('the HMI offers exactly what the desktop offers, for every mode', () => {
     for (const mode of MODES) {
-        const s5 = ROW_FIELD[mode] || {};
         let s = initStyle(7);
         s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: mode });
-        const drawn = M.rowColumns(s, 'PLN_01', 'partner').concat(M.rowColumns(s, 'PLN_01', 'staging'))
-            .map(c => c.field);
-        for (const field of Object.values(s5)) {
-            assert.ok(drawn.indexOf(field) >= 0,
-                mode + ': the HMI writes ' + field + ' and the desktop has nowhere to put it');
-        }
+        const hmi = M.rowFields(s, 'PLN_01').slice().sort();
+        const desktop = M.rowColumns(s, 'PLN_01', 'partner')
+            .concat(M.rowColumns(s, 'PLN_01', 'staging'))
+            .map(c => c.field).sort();
+        assert.deepStrictEqual(hmi, desktop,
+            mode + ': the HMI writes ' + JSON.stringify(hmi) +
+            ' and the desktop draws ' + JSON.stringify(desktop));
     }
+});
+
+// THE ROWS OF A CELL WITH NO CHOREOGRAPHY ARE NONE. A mode the spec has no row
+// for — a legacy `simple`, a cell nobody has answered yet — draws no
+// mode-dependent row rather than guessing one, which is what the literal did.
+test('rowFields draws nothing where flowspec has no row', () => {
+    let s = initStyle(7);
+    s = M.reduce(s, { type: 'removePosition', node: 'PLN_01' });
+    assert.deepStrictEqual(M.rowFields(s, 'PLN_01'), []);
+    s = M.reduce(s, { type: 'addPosition', node: 'PLN_01', mode: 'simple' });
+    assert.deepStrictEqual(M.rowFields(s, 'PLN_01'), [],
+        'a legacy mode drew rows flowspec has no opinion about');
 });
 
 test('the press index carries a staging pair and a third position — the five that had no home', () => {
@@ -467,7 +489,6 @@ test('every other field is possible whether or not it is set', () => {
 // ═══ 3. flowspec: a forbidden field is never present ═════════════════════════
 
 test('changing mode clears every field Steady marks Forbidden — every mode, every field', () => {
-    const ROW_FIELD = M.rowFields();   // {mode: {rowName: cellField}} — the §3.3 mapping
     for (const mode of MODES) {
         let s = initStyle(7);
         // fill everything the composer can author, then switch mode
@@ -486,7 +507,7 @@ test('changing mode clears every field Steady marks Forbidden — every mode, ev
                 (Array.isArray(v) && v.length === 0);
             assert.ok(empty, mode + ': ' + field + ' is forbidden but the cell carries ' + JSON.stringify(v));
         }
-        assert.ok(ROW_FIELD[mode], 'rowFields() names the rows for ' + mode);
+        assert.ok(M.rowFields(s, 'PLN_01'), 'rowFields names the rows for ' + mode);
     }
 });
 
@@ -1217,7 +1238,6 @@ test('no preview means no sentences, and it does not throw', () => {
 });
 
 
-
 // ═══ robot drives via ════════════════════════════════════════════════════════
 
 // THE ONE KEY-ROUTE WALK. It was the station's, inside composer-render.js; the
@@ -1464,6 +1484,125 @@ test('every routing role maps from at least one card field', () => {
     const roles = ['inbound_source', 'inbound_staging', 'outbound_staging', 'outbound_destination']
         .map(M.routingRoleOf);
     assert.deepStrictEqual([...new Set(roles)].sort(), ['destination', 'source', 'staging']);
+});
+
+
+// ── legs ─────────────────────────────────────────────────────────────────────
+//
+// THE TABLE IS TOTAL AGAINST FLOWSPEC'S Required SET. legs() is a per-mode
+// table and not a derivation (flowspec has no robot and no direction, and on a
+// press index `inbound_staging` is keep-staged tooling rather than a swap leg),
+// so what holds the two together is this: a staging field the spec marks
+// REQUIRED for a (role, mode) must produce a line when it is set. A mode that
+// grows a required staging field and no leg is a bin an operator watches for
+// and never sees move.
+test('every REQUIRED staging field a mode has draws a leg', () => {
+    for (const role of Object.keys(FLOWSPEC.steady)) {
+        for (const mode of Object.keys(FLOWSPEC.steady[role])) {
+            const row = FLOWSPEC.steady[role][mode];
+            let s = M.init({
+                styleId: 7, positions: POSITIONS, routing: ROUTING,
+                claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, palette: [],
+            });
+            s = M.reduce(s, { type: 'addPosition', node: 'PLN_01', mode: mode });
+            s.cells.PLN_01.role = role;
+            s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: mode });
+            if (row.inbound_staging !== 'forbidden') {
+                s = M.reduce(s, { type: 'setStaging', node: 'PLN_01', staging: 'PLN_02' });
+            }
+            if (row.outbound_staging !== 'forbidden') {
+                s = M.reduce(s, { type: 'setParkOld', node: 'PLN_01', staging: 'PLN_05' });
+            }
+            const ends = M.legs(s).filter(l => l.from === 'PLN_01' || l.to === 'PLN_01')
+                .map(l => (l.from === 'PLN_01' ? l.to : l.from));
+            for (const [field, value] of [['inbound_staging', 'PLN_02'], ['outbound_staging', 'PLN_05']]) {
+                if (row[field] !== 'required') continue;
+                assert.ok(ends.indexOf(value) >= 0,
+                    role + '/' + mode + ': flowspec REQUIRES ' + field +
+                    ' and the picture draws no line to it — legs() = ' + JSON.stringify(M.legs(s)));
+            }
+        }
+    }
+});
+
+// SINGLE ROBOT HAS TWO TRIPS AND DREW NEITHER. It is the one mode with both a
+// spot for the new bin and one for the old, and the card said "One robot, parks
+// and swaps" over a picture with no line on it.
+test('single_robot draws the trip in and the trip out, in the claim\'s own directions', () => {
+    let s = initStyle(7);
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: 'single_robot' });
+    s = M.reduce(s, { type: 'setStaging', node: 'PLN_01', staging: 'PLN_02' });
+    s = M.reduce(s, { type: 'setParkOld', node: 'PLN_01', staging: 'PLN_05' });
+    const mine = M.legs(s).filter(l => l.from === 'PLN_01' || l.to === 'PLN_01');
+    assert.strictEqual(mine.length, 2, 'single_robot drew ' + mine.length + ' legs: ' + JSON.stringify(mine));
+    const inbound = mine.find(l => l.from === 'PLN_02');
+    const outbound = mine.find(l => l.to === 'PLN_05');
+    assert.ok(inbound && inbound.to === 'PLN_01',
+        'the inbound staging leg runs INTO the position: ' + JSON.stringify(inbound));
+    assert.ok(outbound && outbound.from === 'PLN_01',
+        'the outbound staging leg runs OUT of the position: ' + JSON.stringify(outbound));
+    assert.ok(mine.every(l => l.robot === 1), 'one robot makes both trips');
+});
+
+// A PRESS INDEX DRAWS NO STAGING LEG, deliberately: its `inbound_staging` is
+// keep-staged tooling, not a swap trip, so a line there would claim a robot
+// makes a journey nobody planned.
+test('a press index draws its index leg and no staging leg', () => {
+    let s = initStyle(7);
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: 'two_robot_press_index' });
+    s = M.reduce(s, { type: 'setStaging', node: 'PLN_01', staging: 'PLN_05' });
+    const mine = M.legs(s).filter(l => l.from === 'PLN_01' || l.to === 'PLN_01');
+    assert.strictEqual(mine.length, 1);
+    assert.strictEqual(mine[0].kind, 'index');
+    assert.strictEqual(mine[0].robot, 2);
+});
+
+
+// ── a shape that does not fit this cell ──────────────────────────────────────
+//
+// NOT A SILENT SKIP (SYNTH §3 B4). applyPreset walks the PICTURE's cells, so a
+// shape naming a position this cell does not have applied short and said
+// nothing: the diff listed the positions it could see, the save wrote them, and
+// the shape the engineer believed they had applied was not the one that landed.
+test('a preset naming a position this cell lacks is a finding, and a line in the diff', () => {
+    let s = initStyle(7);
+    const shape = { cells: {
+        PLN_01: { swap_mode: 'two_robot', inbound_staging: 'PLN_02' },
+        PLN_99: { swap_mode: 'two_robot', inbound_staging: 'PLN_02' },
+    } };
+
+    const diff = M.shapeDiff(s, shape);
+    const missing = diff.filter(d => d.node === 'PLN_99');
+    assert.strictEqual(missing.length, 1, 'the diff says nothing about PLN_99: ' + JSON.stringify(diff));
+    assert.ok(/skipped/.test(missing[0].label), missing[0].label);
+
+    s = M.reduce(s, { type: 'applyPreset', preset: shape });
+    const f = M.findings(s).find(x => x.field === 'preset_position_missing');
+    assert.ok(f, 'applying it raised no finding: ' + JSON.stringify(M.findings(s).map(x => x.field)));
+    assert.deepStrictEqual(f.parts, ['PLN_99']);
+    assert.ok(f.node === '', 'the finding names no position — the missing one is not one to tap');
+
+    // THE REST OF THE SHAPE STILL LANDED. The finding is about what was
+    // dropped, not a refusal: an engineer part way through is not helped by
+    // losing the half that fits.
+    assert.strictEqual(s.cells.PLN_01.mode, 'two_robot');
+
+    // AND STARTING BLANK CLEARS IT. The finding belongs to an apply, not to
+    // the flow.
+    s = M.reduce(s, { type: 'startBlank' });
+    assert.ok(!M.findings(s).some(x => x.field === 'preset_position_missing'));
+});
+
+// A SHAPE THAT FITS RAISES NOTHING, which is the ordinary case and the one a
+// finding must not appear in.
+test('a preset built for this cell raises no missing-position finding', () => {
+    let s = initStyle(7);
+    s = M.reduce(s, { type: 'applyPreset', preset: { cells: {
+        PLN_01: { swap_mode: 'two_robot', inbound_staging: 'PLN_02' },
+    } } });
+    assert.ok(!M.findings(s).some(x => x.field === 'preset_position_missing'));
+    assert.deepStrictEqual(M.shapeDiff(s, { cells: { PLN_01: { swap_mode: 'two_robot' } } })
+        .filter(d => /skipped/.test(d.label || '')), []);
 });
 
 // ── report ───────────────────────────────────────────────────────────────────

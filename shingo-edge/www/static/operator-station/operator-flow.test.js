@@ -298,5 +298,63 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
     check('desktop still labels both rows', count(desk, />FRONT · LINE SIDE</g) === 1 && count(desk, />BACK</g) === 1);
 }
 
+// ── the staging band, the legs it grew, and the LM marks ─────────────────────
+//
+// SYNTHETIC, not one of the three plant views. The three views above are the
+// Hopkinsville pull, where every staging slot IS a position of the cell
+// (PLN_02/PLN_05 park on their own back slots) and every LM sits on the aisle
+// rather than on a 1.8 m leg between two adjacent cards — so that plant shows
+// neither feature, correctly. This is the cell that does.
+{
+    const cell = {
+        geometry: true,
+        positions: [
+            { core_node_name: 'PLN_01', sequence: 1, kind: 'front', x: 0, y: 0,
+              claim: { swap_mode: 'single_robot', payload_code: 'PART-A',
+                       inbound_staging: 'SLN_07', outbound_staging: 'SLN_09',
+                       inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT',
+                       key_route: ['LM_KEY'] } },
+            { core_node_name: 'PLN_04', sequence: 2, kind: 'front', x: 2, y: 0 },
+        ],
+        staging: [
+            { core_node_name: 'SLN_07', partner_of: 'PLN_01', partner_kind: 'staging',
+              field: 'inbound_staging', x: 0.5, y: -1 },
+            { core_node_name: 'SLN_09', partner_of: 'PLN_01', partner_kind: 'staging',
+              field: 'outbound_staging', x: 1.5, y: -1 },
+            { core_node_name: 'SLN_OFFERED' },
+        ],
+        lms: [{ name: 'LM_KEY', x: 1, y: 0.2 }, { name: 'LM_PLAIN', x: 1.2, y: 0.25 }],
+    };
+    const svg = m.renderFlowPicture({ cell: cell, station: { name: 'SCREEN' } }, {});
+
+    // THE BAND. Three cards, and none of them is a position.
+    check('staging: three cards in the band', count(svg, /<g class="stage /g) === 3, svg.match(/<g class="stage [^>]*/g));
+    check('staging: an offered lane is drawn off', /class="stage off" data-staging="SLN_OFFERED"/.test(svg));
+    check('staging: a lane in the flow is drawn on', /class="stage on" data-staging="SLN_07"/.test(svg));
+    check('staging: the card says which direction it is',
+        svg.includes('Inbound staging · for PLN_01') && svg.includes('Outbound staging · for PLN_01'),
+        svg.match(/>(In|Out)bound staging[^<]*/g));
+    check('staging: a lane is never drawn as a position',
+        !/data-pos="SLN_/.test(svg), 'a staging lane reached the positions list');
+
+    // THE LEGS single_robot GREW. In from the inbound lane, out to the outbound one.
+    check('legs: single_robot draws two', count(svg, /<g class="legg">/g) === 2, String(count(svg, /<g class="legg">/g)));
+    check('legs: one says the robot moves in', svg.includes('>Robot 1 moves in<'));
+    check('legs: one says the robot clears the old bin', svg.includes('>Robot 1 clears old<'));
+
+    // THE LM MARKS. The chosen key-route point is filled and NAMED; the plain
+    // one is a bead with no label; the route line joins the leg to the mark.
+    check('lm: the chosen key-route point is marked', /<g class="lm key /.test(svg), svg.match(/<g class="lm[^>]*/g));
+    check('lm: and it carries its name', svg.includes('>LM_KEY<'));
+    check('lm: a point nobody chose carries no name', !svg.includes('>LM_PLAIN<'));
+    check('lm: the route line is drawn from the leg', /<path class="lmroute /.test(svg));
+
+    // AND NONE OF IT ON A PICTURE THAT CARRIES NO LMs, which is every board
+    // until an engineer names a key route.
+    const bare = m.renderFlowPicture(
+        { cell: Object.assign({}, cell, { lms: [] }), station: { name: 'SCREEN' } }, {});
+    check('lm: no marks without points', !/<g class="lm /.test(bare) && !/<path class="lmroute /.test(bare));
+}
+
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }
 console.log('operator-flow: all checks pass');

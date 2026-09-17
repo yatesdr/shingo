@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"html/template"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +31,7 @@ import (
 	"shingoedge/engine"
 	"shingoedge/internal/testdb"
 	"shingoedge/service"
+	"shingoedge/store/processes"
 )
 
 // composer_shots_test.go — the handoff gate for the cell picture, not CI.
@@ -757,6 +760,56 @@ func TestComposerShots(t *testing.T) {
 	shotAt("12-part-picker.png", fmt.Sprintf("#compose=%d;state=S4;addpart=1", seeded.Styles[idx]))
 	shotAt("13-part-picker-on-position.png",
 		fmt.Sprintf("#compose=%d;state=S5;node=PLN_01;addpart=1", seeded.Styles[idx]))
+
+	// ── the LM path, with and without a chosen key route ─────────────────
+	//
+	// THE OWNER'S EYE IS WHAT THIS IS FOR. The LM drawing is the one piece of
+	// new visual design in this work, and it has two halves: the PATH (every
+	// waypoint the robot passes, thinned to four unnamed beads) and the KEY
+	// ROUTE (the ordered points an engineer chose, filled and named). Every
+	// other shot shows the first half only, because no claim in this plant
+	// carries a key route — so this pair shows both, over the same cell.
+	//
+	// The route is written onto the RUNNING style's claims, which is what the
+	// board's own picture draws.
+	{
+		swapStyle := seeded.Styles[swap]
+		all, err := db.ListStyleNodeClaims(swapStyle)
+		if err != nil {
+			t.Fatalf("list claims for the key-route shot: %v", err)
+		}
+		// THE ROUTE GOES ON A CLAIM WHOSE POSITION DRAWS A LEG, and the first
+		// version of this did not: it took claims[0], which on this style is a
+		// BACK position with no leg of its own — so the route was written, the
+		// picture was right to draw nothing on it, and the proposal
+		// photographed empty twice. The marks are drawn ALONG a leg, so a claim
+		// with no leg has nowhere to put them.
+		var claims []processes.NodeClaim
+		for _, c := range all {
+			if c.SwapMode == protocol.SwapModeTwoRobot && c.InboundStaging != "" {
+				claims = append(claims, c)
+			}
+		}
+		if len(claims) == 0 {
+			t.Fatalf("no two-robot claim with a staging slot on style %d; the key-route shot needs a leg", swapStyle)
+		}
+		lms := lmNamesNear(t, points, claims[0].CoreNodeName, 6)
+		if len(lms) < 2 {
+			t.Fatalf("the plant fixture has %d LM points within 6 m of %s; the key-route shot needs two",
+				len(lms), claims[0].CoreNodeName)
+		}
+		in := domain.InputFromClaim(claims[0])
+		route := lms[:2]
+		in.KeyRoute = &route
+		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+			t.Fatalf("write the key route: %v", err)
+		}
+		if err := db.SetActiveStyle(seeded.ProcessID, &swapStyle); err != nil {
+			t.Fatalf("set active style: %v", err)
+		}
+		t.Logf("LM proposal: key route %v on %s", in.KeyRoute, claims[0].CoreNodeName)
+		shotAt("14-lm-path-with-key-route.png", "#flow")
+	}
 
 	// ONE NAME GOES BACK TO WAITING, so D3 photographs the state Q5's whole
 	// ruling is about: a backfilled name switched off, its sub-line amber with
@@ -3133,4 +3186,38 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
   }
 })();
 </script>`
+}
+
+// lmNamesNear is the LM points the fixture places NEAR the named position, so
+// the key-route shot marks waypoints that are actually on the picture.
+//
+// NEAR, AND THAT IS THE WHOLE POINT OF THE HELPER. The first version took the
+// first two LM names alphabetically out of all 249 in the plant — LM1 and LM10,
+// both of them across the building — so the shot wrote a key route the picture
+// correctly declined to draw, and three rounds of screenshots showed an empty
+// proposal. The picture bounds its LMs to the cell's own region, so a fixture
+// that does not has nothing to say.
+func lmNamesNear(t *testing.T, points []protocol.ScenePointInfo, at string, within float64) []string {
+	t.Helper()
+	var ax, ay float64
+	var found bool
+	for _, p := range points {
+		if p.InstanceName == at && p.PosX != nil && p.PosY != nil {
+			ax, ay, found = *p.PosX, *p.PosY, true
+		}
+	}
+	if !found {
+		t.Fatalf("the fixture does not place %s, so the key-route shot has nothing to measure from", at)
+	}
+	var out []string
+	for _, p := range points {
+		if !strings.HasPrefix(p.InstanceName, "LM") || p.PosX == nil || p.PosY == nil {
+			continue
+		}
+		if math.Hypot(*p.PosX-ax, *p.PosY-ay) <= within {
+			out = append(out, p.InstanceName)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
