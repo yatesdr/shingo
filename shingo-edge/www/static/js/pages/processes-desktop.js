@@ -377,6 +377,7 @@ function takeComposer(data) {
     S.composer.styles = S.composer.styles || [];
     S.composer.routing = S.composer.routing || [];
     S.composer.presets = S.composer.presets || [];
+    S.composer.palette = S.composer.palette || [];
     S.composer.cell = S.composer.cell || {};
     S.composer.cell.positions = S.composer.cell.positions || [];
     S.composer.cell.groups = S.composer.cell.groups || {};
@@ -406,6 +407,11 @@ function initModel(st) {
         scene: S.composer.map || null,
         claims: st.claims || [],
         parts: (st.parts || []).map(p => p.payload_code || p),
+        // The process's part set — what a part picker OFFERS. Different from
+        // `parts` above, which is what this style runs and what the
+        // unplaced-part finding reads.
+        palette: S.composer.palette || [],
+        catid: st.catid || '',
         lastRun: st.last_run || null,
         flowspec: window.FLOWSPEC || null,
         groups: cell.groups || {},
@@ -1158,10 +1164,24 @@ function optionsFor(node, kind) {
                 action: { type: 'setMode', node: node, mode: m },
             }));
         }
+        // THE PROCESS'S PART SET, NOT THE STYLE'S PARTS. This offered
+        // S.model.parts — what this style already claims — so a style with no
+        // flow yet offered NOTHING, and there was no way on any screen to give
+        // a new cell's first position a payload. The palette is the set the
+        // process may run (domain.ComposerData.Palette, a union of the typed
+        // rows and what its live claims name), which is the list a picker is
+        // for; `parts` stays what it is, the style's own, because it is what
+        // the unplaced-part finding reads.
+        //
+        // partOffers puts the CATID matches first and marks the ones already on
+        // this flow. Same rows the HMI's sheet draws, from the same function.
         case 'part':
-            return S.model.parts.map(p => ({
-                value: p, label: M().shortPart(p), on: c.part === p,
-                action: { type: 'setPart', node: node, payloadCode: p },
+            return M().partOffers(S.model).map(r => ({
+                value: r.code, label: M().shortPart(r.code), on: c.part === r.code,
+                action: [
+                    { type: 'addPart', payloadCode: r.code },
+                    { type: 'setPart', node: node, payloadCode: r.code },
+                ],
             }));
         // col:<column>:<cellKey> — one of the mode-dependent chips. The FIELD
         // comes from the model's own rowColumns, which reads flowspec, so a
@@ -1362,8 +1382,17 @@ function closePop() {
 
 // Every picker applies instantly to the DRAFT; nothing is written until Save
 // flow (SPEC §3).
+//
+// A LIST OF ACTIONS IS FOLDED, which is what a reducer is for and is not a new
+// protocol: the part picker sends `addPart` (the part joins this style) and
+// then `setPart` (it goes on this position), because those are two facts and
+// the model already has an action for each. Overloading either one to do both
+// would be the seam this pair exists to keep straight — addPart is the door
+// onto the part set, setPart is the placement.
 function apply(action) {
-    S.model = M().reduce(S.model, action);
+    for (const a of (Array.isArray(action) ? action : [action])) {
+        S.model = M().reduce(S.model, a);
+    }
     drawFlows();
     schedulePreview();
 }
@@ -2887,12 +2916,16 @@ function coreNodeList() {
 //             its two halves disagree about where the selection lives.
 //   onChange  after the selection moved, for a picker whose choice changes
 //             what another picker may offer.
+//   source    'core' (default) or 'payloads' — which universe the option list
+//             is drawn from. A part is not a place, and the part set's picker
+//             offers the payload catalog rather than Core's node list
 function pickerInit(key, opts) {
     const o = opts || {};
     S.pickers[key] = {
         sel: (o.selected || []).slice(),
         q: '',
         open: false,
+        source: o.source || 'core',
         exclude: o.exclude || (() => ''),
         annotate: o.annotate || (() => ''),
         onPick: o.onPick || null,
@@ -2940,9 +2973,19 @@ function pickerChips(key) {
         '" aria-label="remove ' + esc(n) + '">&times;</button></span>').join('');
 }
 
+// THE PART SET'S OPTIONS COME FROM THE PAYLOAD CATALOG, not from Core's node
+// list. Same component, same chips, same search field — a different universe,
+// because a part is not a place. The catalog is Core's too and shingo mirrors
+// it the same way, so the "cannot add to it" sentence is as true here.
+function payloadCatalogList() {
+    return (S.payloadCatalog || []).slice().sort((a, b) =>
+        String(a.code || a.name || '').localeCompare(String(b.code || b.name || '')));
+}
+
 function pickerOptions(key) {
     const p = S.pickers[key];
     if (!p || !p.open) return '';
+    if (p.source === 'payloads') return payloadPickerOptions(key, p);
     // NOT YET READ IS NOT THE SAME ANSWER AS NO SUCH NODE, and they are not
     // the same element: `.loading` is what says so to anything reading this
     // list rather than looking at it — which is how the shots driver knows to
@@ -2972,6 +3015,50 @@ function pickerOptions(key) {
     return out;
 }
 
+// The same three states as the node list above: not read yet, no match, and
+// the rows. A part ALREADY CLAIMED by one of this process's live flows is
+// annotated rather than excluded — it is in the palette either way (the union
+// is the server's, store/processes.ProcessPalette), and ticking it here is the
+// engineer saying the part set names it too, which is not wrong and not a
+// no-op the screen should hide.
+function payloadPickerOptions(key, p) {
+    if (!S.payloadCatalog) return '<div class="none loading">Reading the payload catalog…</div>';
+    const needle = p.q.trim().toLowerCase();
+    const hits = payloadCatalogList().filter(c => {
+        const code = String(c.code || c.name || '');
+        return !needle || code.toLowerCase().indexOf(needle) >= 0 ||
+            String(c.name || '').toLowerCase().indexOf(needle) >= 0;
+    });
+    if (!hits.length) {
+        return '<div class="none">No payload in the catalog is called that. The catalog is ' +
+            'Core’s — shingo mirrors it and cannot add to it.</div>';
+    }
+    let out = '';
+    for (const c of hits) {
+        const code = String(c.code || c.name || '');
+        if (!code) continue;
+        const on = p.sel.indexOf(code) >= 0;
+        const note = p.annotate(code);
+        out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
+            '" data-npkname="' + esc(code) + '">' + esc(code) +
+            (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
+    }
+    return out;
+}
+
+// loadPayloadCatalog reads Core's mirrored catalog once per page, the way
+// loadCoreNodes reads the node list. A failed read is not an empty catalog and
+// is not cached as one — same reasoning, same shape.
+function loadPayloadCatalog() {
+    if (!S.payloadCatalogReq) {
+        S.payloadCatalogReq = fetch('/api/payload-catalog')
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error('payload catalog: ' + r.status))))
+            .then(rows => { S.payloadCatalog = Array.isArray(rows) ? rows : []; })
+            .catch(() => { S.payloadCatalogReq = null; });
+    }
+    return S.payloadCatalogReq;
+}
+
 function redrawPicker(key) {
     const box = $('npk-' + key);
     if (!box) return;
@@ -2996,9 +3083,17 @@ function bindPickers() {
         });
         input.addEventListener('focus', () => openOnlyPicker(key));
     }
-    loadCoreNodes().then(() => {
+    // BOTH UNIVERSES, EACH READ ONCE. A sheet can carry pickers of both kinds
+    // — Add process carries four node pickers and one payload picker — and
+    // each read redraws every picker, so whichever arrives second fills the
+    // ones the first left saying "reading".
+    const fill = () => {
         for (const box of document.querySelectorAll('.pd-npk')) redrawPicker(box.dataset.npkbox);
-    });
+    };
+    loadCoreNodes().then(fill);
+    if (Object.keys(S.pickers).some(k => S.pickers[k].source === 'payloads')) {
+        loadPayloadCatalog().then(fill);
+    }
 }
 
 // ONE LIST OPEN AT A TIME. The Add-process sheet carries four pickers over the
@@ -3392,6 +3487,63 @@ function addFreePosition(btn) {
 // because sheetValue reads a picker by its key.
 function routingPickerKey(role) { return 'rs_' + role; }
 
+// The part set's picker. Its own key for the same reason, and its own constant
+// because both sheets and both submits name it.
+const PART_SET_PICKER = 'parts';
+
+// THE FOURTH SECTION, AND THE SAME WORDS ON BOTH SHEETS. Making a cell and
+// changing a cell ask the same four questions; a sentence written twice is a
+// sentence that will be edited once.
+const PART_SET_NOTE = 'The parts this process runs. Operators are offered these on a ' +
+    'position and never the whole catalog. A part already claimed by one of this process’s ' +
+    'flows is offered whether or not it is ticked here — this list is what makes a part ' +
+    'pickable BEFORE anything claims it, which is how a new part reaches a cell that has ' +
+    'never run one.';
+
+// loadProcessPayloads reads the STORED half of a process's part set — what
+// this sheet is about to replace. A failed read opens the picker empty, and
+// saving that would be an accidental wipe, so a failure is reported rather
+// than treated as "no parts": the caller opens on null and the sheet says so.
+async function loadProcessPayloads(processID) {
+    try {
+        const res = await fetch('/api/processes/' + processID + '/payloads');
+        if (!res.ok) return null;
+        const rows = await res.json();
+        return Array.isArray(rows) ? rows : [];
+    } catch (_) {
+        return null;
+    }
+}
+
+// claimedPayloads is the OTHER half of the palette — the parts this process's
+// live flows already run — so the picker can say that unticking one changes
+// nothing. Answerable only for the process whose composer block is loaded;
+// for any other row in the list the honest answer is silence.
+function claimedPayloads(processID) {
+    // S.processID IS SET BEFORE THE COMPOSER BLOCK IS READ. openEditProcessFor
+    // points it at the row being edited so loadRouting reads the right set, so
+    // "the open process" is true a moment before `S.composer` exists — and the
+    // Edit sheet is reachable from the LIST, for a process this page has never
+    // opened. Both halves are checked; the answer for either miss is silence,
+    // which is what a picker with no annotation shows.
+    if (S.processID !== processID || !S.composer) return new Set();
+    const out = new Set();
+    for (const st of (S.composer.styles || [])) {
+        for (const p of (st.parts || [])) {
+            const code = p.payload_code || p;
+            if (code) out.add(code);
+        }
+    }
+    return out;
+}
+
+function partSetField() {
+    return '<div class="pd-sec"><div class="pd-lbl">The part set</div></div>' +
+        pickerField(PART_SET_PICKER, 'Parts this process runs',
+            'what a position may be given — the catalog is Core’s') +
+        '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
+}
+
 function openAddProcess() {
     S.add = { groupID: 0 };
     const positions = () => pickerValue('positions');
@@ -3422,6 +3574,12 @@ function openAddProcess() {
                 : ''),
         });
     }
+    // THE PART SET, AS THE FOURTH PICKER. A cell made here has no claims, so
+    // nothing derives its parts and every part picker on both surfaces would
+    // open empty — which is the bug this sheet is the first half of the fix
+    // for. Nothing is REQUIRED: a cell may be created with no part set and one
+    // added later, and the flow composer's gate does not wait on this.
+    pickerInit(PART_SET_PICKER, { source: 'payloads' });
 
     const body =
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
@@ -3441,7 +3599,9 @@ function openAddProcess() {
         '<p class="pd-note">A name in one of these three lists is a place this process may route ' +
         'material through. Operators are offered these and never the plant. Fill them in and the ' +
         'flow composer opens on this process, because reviewing the set is exactly what that gate ' +
-        'is waiting for; leave them empty and it stays shut until Settings says otherwise.</p>';
+        'is waiting for; leave them empty and it stays shut until Settings says otherwise.</p>' +
+
+        partSetField();
 
     openSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
         body, 'Create', submitAddProcess, false, 'pd-wide');
@@ -3516,6 +3676,20 @@ async function openEditProcessFor(p) {
                 : ''),
         });
     }
+    // THE STORED HALF OF THE PART SET, which is the only half a write may
+    // touch. The composer read's `palette` is the union with what the process's
+    // live claims already run, and opening this picker on the union would let
+    // an engineer "untick" a part they cannot remove — the claim keeps it
+    // offered. So the sheet reads the typed rows and says what the other half
+    // is in its note.
+    before.parts = await loadProcessPayloads(p.id);
+    const claimed = claimedPayloads(p.id);
+    pickerInit(PART_SET_PICKER, {
+        source: 'payloads',
+        selected: (before.parts || []).slice(),
+        annotate: code => (claimed.has(code)
+            ? 'already claimed by a flow — offered either way' : ''),
+    });
 
     const screenField = one
         ? pickerField('positions', 'Positions',
@@ -3543,7 +3717,18 @@ async function openEditProcessFor(p) {
         ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
         '<p class="pd-note">Only what you change is written. Taking a name out of a role is ' +
         'refused while a live flow still routes through it, and the refusal says which part. ' +
-        'The counter, the changeover rule and deleting this process are on Settings.</p>',
+        'The counter, the changeover rule and deleting this process are on Settings.</p>' +
+
+        partSetField() +
+        // THE READ FAILED, SO THE PICKER IS NOT THE SET. Saving an empty picker
+        // over a part set nobody could read would be a wipe made by a fetch,
+        // which is the shape that made the screen sheet destructive (see
+        // openScreenSheet). submitEditProcess skips the write when this is the
+        // state; the sheet says so rather than leaving it to be found later.
+        (before.parts === null
+            ? '<p class="pd-note pd-warn">This cell’s part set could not be read, so it is left ' +
+              'alone by Save. Reload the page to edit it.</p>'
+            : ''),
         'Save', () => submitEditProcess(p, before, one), false, 'pd-wide');
 }
 
@@ -3611,6 +3796,22 @@ async function submitEditProcess(p, before, screen) {
         }
     }
 
+    // THE PART SET, and only when it moved — a set-to written on every Save is
+    // a delete-and-recreate of every row for an edit to the process's note.
+    // Skipped entirely when the baseline could not be read: an empty picker
+    // over an unread set is a wipe made by a fetch.
+    if (before.parts !== null) {
+        const want = pickerValue(PART_SET_PICKER);
+        const same = want.length === before.parts.length &&
+            want.every((n, i) => n === before.parts[i]);
+        if (!same) {
+            const out = await postJSON('PUT', '/api/processes/' + p.id + '/payloads',
+                B().processPayloads(want));
+            if (!out.ok) { stop('Its part set', out.error); return; }
+            done.push('its part set saved');
+        }
+    }
+
     closeSheet();
     await reloadProcesses();
     await reloadStations();
@@ -3653,20 +3854,38 @@ async function submitAddProcess() {
         done.push('its positions claimed');
     }
 
-    // ONE PICK, ONE ROW. pickOnMap posted a group as both a source and a
-    // destination because a click on the map cannot say which was meant; a
-    // list can, and did.
-    let routed = 0;
+    // ONE PICK, ONE ROW — and now ONE REQUEST for all of them.
+    //
+    // pickOnMap posted a group as both a source and a destination because a
+    // click on the map cannot say which was meant; a list can, and did. What
+    // the list did NOT fix was the round trips: this was a POST per name, so a
+    // cell with six routing names made six requests to a Pi with one SQLite
+    // connection, each its own transaction and each able to half-land. The
+    // whole set goes in one body, validated whole before any of it is written,
+    // and the ORDER inside each role is still the order the engineer picked —
+    // the lowest sequence of a role is the default a new position opens on.
+    const routingRows = [];
     for (const g of ROUTING_GROUPS) {
-        const picked = pickerValue(routingPickerKey(g[0]));
-        for (const node of picked) {
-            // In the order the engineer picked them, so the first one is the
-            // default a new position opens on.
-            const row = await postJSON('POST', '/api/processes/' + processID + '/routing-nodes',
-                B().routingAdd(node, g[0], picked.indexOf(node)));
-            if (!row.ok) { stop(node + ' as a ' + g[0], row.error); return; }
-            routed++;
+        for (const node of pickerValue(routingPickerKey(g[0]))) {
+            routingRows.push({ core_node_name: node, role: g[0] });
         }
+    }
+    if (routingRows.length) {
+        const rows = await postJSON('PUT', '/api/processes/' + processID + '/routing-nodes',
+            B().routingSet(routingRows));
+        if (!rows.ok) { stop('Its routing set', rows.error); return; }
+    }
+    const routed = routingRows.length;
+
+    // THE PART SET, the same shape and for the same reason. It goes before the
+    // gate for the same reason the routing set does: a cell the composer opens
+    // on should have both lists the composer's pickers read.
+    const partSet = pickerValue(PART_SET_PICKER);
+    if (partSet.length) {
+        const parts = await postJSON('PUT', '/api/processes/' + processID + '/payloads',
+            B().processPayloads(partSet));
+        if (!parts.ok) { stop('Its part set', parts.error); return; }
+        done.push('its part set written');
     }
 
     // THE GATE OPENS ON A REVIEWED ROUTING SET, and the engineer just reviewed

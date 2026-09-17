@@ -20,6 +20,7 @@
 #   05-composer-two-robot-swap.png   06-position-panel.png   07-dock-panel.png
 #   08-new-part-blank.png   09-finding-on-node-and-bar.png
 #   10-confirm-rows-and-orders.png   11-started-auto-return.png (;hold=1)
+#   12-part-picker.png (;addpart=1)  13-part-picker-on-position.png
 #
 # and the DESKTOP Processes page at 1440x900, which this header did not list
 # for three rounds while the harness took them:
@@ -30,7 +31,7 @@
 #   D6-presets-member-expanded.png   D6-apply-modal.png
 #   D6-apply-modal-answered.png
 #
-# 25 PNGs, and they are NOT committed — composer-shots/ is in .gitignore. They
+# 27 PNGs, and they are NOT committed — composer-shots/ is in .gitignore. They
 # are a handoff artefact, they weigh ~2 MB, and they carry the fixture on
 # screen. The copies that go with a report live beside it in the GitHub root.
 #
@@ -95,7 +96,7 @@ rm -f "$log"
 
 shot_count=$(ls -1 "$out"/*.png 2>/dev/null | wc -l)
 if [ "$shot_count" -lt 20 ]; then
-  echo "composer-shots: FAILED — only $shot_count PNG(s) in $out; the set is 25" >&2
+  echo "composer-shots: FAILED — only $shot_count PNG(s) in $out; the set is 27" >&2
   exit 1
 fi
 ls -l "$out"/*.png 2>/dev/null

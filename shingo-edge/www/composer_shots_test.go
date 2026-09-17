@@ -737,6 +737,27 @@ func TestComposerShots(t *testing.T) {
 	// before the 15 s virtual-time budget fires and the shot is of the board.
 	composerShotHeld("11-started-auto-return.png", idx, "S10")
 
+	// ── the part picker (Unit A) ─────────────────────────────────────────
+	//
+	// THE PART SET IS SEEDED HERE AND NOT IN THE FIXTURE. The palette is the
+	// UNION of the typed rows and what the process's live claims run, so a
+	// plant seed already fills it — which would photograph the case that
+	// needed no work. The rows below are the half an engineer types: parts
+	// this cell may run and no flow has claimed yet, which is exactly the
+	// state a new cell is in and the reason the table exists.
+	//
+	// SYNTHETIC CODES, not plant part numbers: nothing in a committed file
+	// carries a real one.
+	if err := db.ReplaceProcessPayloads(seeded.ProcessID,
+		[]string{"SHOT-PART-01", "SHOT-PART-02", "SHOT-PART-03"}); err != nil {
+		t.Fatalf("seed the part set: %v", err)
+	}
+	// Over the strip, where a part arrives loose, and over a position panel,
+	// where it lands on the position the picker was opened from.
+	shotAt("12-part-picker.png", fmt.Sprintf("#compose=%d;state=S4;addpart=1", seeded.Styles[idx]))
+	shotAt("13-part-picker-on-position.png",
+		fmt.Sprintf("#compose=%d;state=S5;node=PLN_01;addpart=1", seeded.Styles[idx]))
+
 	// ONE NAME GOES BACK TO WAITING, so D3 photographs the state Q5's whole
 	// ruling is about: a backfilled name switched off, its sub-line amber with
 	// the evidence, and the panel's summary counting it. Adopting every row

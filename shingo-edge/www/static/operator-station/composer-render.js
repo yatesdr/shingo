@@ -124,6 +124,20 @@ export function close() {
     r.hidden = true;
     r.innerHTML = '';
     screen = null; model = null; panelFor = null;
+    // THE HELD PAYLOAD GOES WITH THE SESSION IT WAS FETCHED FOR.
+    //
+    // ensureFlow caches for the PAGE's life, and an HMI runs for weeks: a part
+    // set an engineer edits on the desktop moves no fingerprint and fires no
+    // event this page listens to, so a station that opened the composer once on
+    // Monday would offer Monday's part list for the rest of the week and never
+    // know. Clearing it here makes the boundary the COMPOSER SESSION rather
+    // than the page — a few 7-query fetches a shift, on a read that only
+    // happens when an operator taps CHANGEOVER.
+    //
+    // onStale() clears it too, for the other reason: a 409 means the stored
+    // rows moved under this copy.
+    flowPayload = null;
+    flowPayloadFor = 0;
     if (countdown) { clearInterval(countdown); countdown = null; }
     if (previewAbort) { previewAbort.abort(); previewAbort = null; }
 }
@@ -408,6 +422,13 @@ function buildModel(s) {
         scene: flow().scene || null,
         claims: s.claims || [],
         parts: (s.parts || []).map(p => p.payload_code || p),
+        // THE PROCESS'S PART SET, which is a different list from the style's
+        // parts above: this is what the part picker OFFERS, and it is why a
+        // cell nobody has configured can be given a payload at all.
+        palette: flow().palette || [],
+        // For the picker's order alone — the part a scan just named goes to the
+        // top. See composer-model's partOffers.
+        catid: s.catid || '',
         lastRun: s.last_run || null,
         flowspec: window.FLOWSPEC || null,
         // The dock strip's third line is the routing group's members, and the
@@ -453,22 +474,20 @@ function drawComposer() {
     drawBar();
 }
 
-// THE PART PALETTE HAS NO DOOR ON THIS SURFACE, AND THE BUTTON SAYS SO rather
-// than answering a tap with nothing — the desktop's `Copy to another part…` is
-// disabled with its reason in the title for exactly this reason, and this is
-// that pattern.
+// THE PART PALETTE HAS ITS DOOR NOW, AND BOTH BUTTONS OPEN IT.
 //
-// `+ Add a part` (the strip) and `+ another part` (the S5 part row) are the same
-// control drawn twice, and both were live-looking buttons wired to
-// `case 'addpart': break;`. An operator tapped one, nothing happened, and the
-// screen gave them no way to tell a dead control from a slow one.
+// `+ Add a part` (the strip) and `+ another part` (the S5 part row) are the
+// same control drawn twice, and both used to be rendered DISABLED with their
+// reason in the title, because a part reaches a flow by being claimed on a
+// position and this surface had nowhere to pick a payload from. The process's
+// part set is that somewhere (domain.ComposerData.Palette), and the picker
+// sheet below is the pick.
 //
-// A part reaches a flow by being CLAIMED on a position, so adding one means
-// picking a payload this style does not run yet — and there is nowhere on this
-// station to pick it from. U10 owns the palette; until it exists the honest
-// control is a disabled one that names what is missing.
-const ADDPART_TITLE = 'Not wired yet. A part joins a flow by being claimed on a position, ' +
-    'so adding one means picking a payload this style does not run yet — and there is no part palette on this surface.';
+// THE BUTTON IS STILL DISABLED WHEN THE SET IS EMPTY, with a title that names
+// where the set is made. A live-looking button that opens an empty sheet is
+// the dead control this pattern exists to avoid, one screen further in.
+const ADDPART_EMPTY_TITLE = 'This process has no part set yet. An engineer adds one on the ' +
+    'desktop — Processes › Edit — and every part in it becomes pickable here.';
 
 function drawStrip() {
     const presets = flow().presets || [];
@@ -514,10 +533,102 @@ function drawStrip() {
         h += '<span class="os-chip part' + (used ? '' : ' free') + '">' + esc(M().shortPart(p)) +
             (used ? '' : ' · unplaced') + '</span>';
     }
-    h += '<button class="os-chip add" data-act="addpart" disabled title="' + esc(ADDPART_TITLE) + '">+ Add a part</button>';
+    h += addPartButton('os-chip add', '+ Add a part', '');
     const strip = $('os-comp-strip');
     if (strip) strip.innerHTML = h;
     reportStripFit();
+}
+
+// addPartButton is the one control, drawn in two places. `node` is the position
+// the picker should place the part on when it is opened from a position panel,
+// and empty from the strip, where a part arrives loose.
+function addPartButton(cls, label, node) {
+    const empty = !(model && model.palette && model.palette.length);
+    return '<button class="' + cls + '" data-act="addpart" data-node="' + esc(node || '') + '"' +
+        (empty ? ' disabled title="' + esc(ADDPART_EMPTY_TITLE) + '"' : '') +
+        '>' + esc(label) + '</button>';
+}
+
+// ── the part picker sheet ────────────────────────────────────────────────────
+//
+// THE PICKER SHEET, NOT A CHIP WALL. A process's part set is a dozen or two
+// names and each is 15+ characters; laid out as chips they wrap into a block an
+// operator has to read rather than scan. This is the shape S2 already uses for
+// the style list — scrolling rows over a search field that is the SCANNER's
+// target — so the gun works here for the same reason it works there, and an
+// operator who has used the picker once has used this.
+//
+// inputmode="none" for the same reason as S2: the field is scanned into, and an
+// on-screen keypad over the sheet hides the rows the scan is meant to filter.
+//
+// IT IS A SHEET OVER THE COMPOSER, appended rather than replacing the root, so
+// the picture and the strip stay visible behind it — the operator picking a
+// part can see the positions it is about to go on.
+let partPickerNode = '';
+
+function openPartPicker(node) {
+    if (!model) return;
+    partPickerNode = node || '';
+    const host = document.createElement('div');
+    host.className = 'os-comp-layer';
+    host.innerHTML =
+        '<div class="os-comp-scrim on"></div>' +
+        '<div class="os-comp-sheet on" role="dialog" aria-label="Add a part">' +
+        '<div class="os-comp-sheet-h"><h2>' +
+        (partPickerNode ? 'Add a part to ' + esc(partPickerNode) : 'Add a part to this flow') + '</h2>' +
+        '<label class="os-comp-search">' +
+        '<svg class="mag" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">' +
+        '<circle cx="7.5" cy="7.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+        '<path d="M11.5 11.5 L16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
+        '<input id="os-comp-partq" type="text" autocomplete="off" ' +
+        'placeholder="scan or type a part" inputmode="none"></label>' +
+        '<button class="os-btn os-btn-quiet" data-act="partcancel">Close</button></div>' +
+        '<div class="os-comp-sheet-b" id="os-comp-partpick"></div></div>';
+    const r = show();
+    const old = r.querySelector('.os-comp-layer');
+    if (old) old.remove();
+    r.appendChild(host);
+    drawPartRows('');
+    const q = $('os-comp-partq');
+    if (q) { q.addEventListener('input', () => drawPartRows(q.value)); q.focus(); }
+}
+
+// The rows are the MODEL's (partOffers): which parts exist, which this style
+// already runs, and the CATID order. This filters and draws them.
+function drawPartRows(q) {
+    const needle = String(q || '').trim().toLowerCase();
+    const rows = M().partOffers(model)
+        .filter(r => !needle || r.code.toLowerCase().indexOf(needle) >= 0);
+    let h = '';
+    if (!rows.length) {
+        h = '<div class="grp"><span class="os-lbl">No match</span>' +
+            '<span class="n">' + (needle ? 'nothing in this cell’s part set matches that'
+            : 'this process has no part set yet') + '</span></div>';
+    } else {
+        h += '<div class="grp"><span class="os-lbl">Parts</span><span class="n">' +
+            rows.length + ' in this cell’s part set</span></div>';
+        for (const r of rows) {
+            // THE FULL CODE ONLY WHEN IT SAYS SOMETHING THE SHORT ONE DOES NOT.
+            // shortPart trims a known prefix and is a no-op on a plain part
+            // number, so a row for `19712-PKE05.56` printed that string twice,
+            // side by side, in two type sizes — which reads as two facts and is
+            // one.
+            const short = M().shortPart(r.code);
+            h += '<button class="os-comp-row" data-act="partpick" data-part="' + esc(r.code) + '">' +
+                '<span class="id">' + esc(short) + '</span>' +
+                (short === r.code ? '' : '<span class="meta">' + esc(r.code) + '</span>') +
+                (r.onFlow ? '<span class="vd ok">already on this flow</span>' : '') +
+                '</button>';
+        }
+    }
+    const box = $('os-comp-partpick');
+    if (box) box.innerHTML = h;
+}
+
+function closePartPicker() {
+    const layer = root().querySelector('.os-comp-layer');
+    if (layer) layer.remove();
+    partPickerNode = '';
 }
 
 // THE CARD'S GEOMETRY, MEASURED AND PUBLISHED, like the position panel's
@@ -658,7 +769,7 @@ function openPositionPanel(node) {
         '<button class="os-chip btn ' + (cc.part === p ? 'on' : '') + '" data-act="part" data-part="' + esc(p) + '">' +
         esc(M().shortPart(p)) + '</button>').join('') +
         (cc.part ? '' : '<span class="os-chip need">pick one</span>') +
-        '<button class="os-chip btn" data-act="addpart" disabled title="' + esc(ADDPART_TITLE) + '">+ another part</button>';
+        addPartButton('os-chip btn', '+ another part', node);
 
     const backs = model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
     // The view already filtered to ENABLED members (a retired lane is not an
@@ -717,7 +828,13 @@ function openPositionPanel(node) {
         // F3: every row is the claim's own field name. `Part on this position`
         // stays — `part` is the floor's word for payload_code and every surface
         // already uses it, from the PARTS strip to the finding pill.
-        row('Part on this position', partChips) + modeRow +
+        //
+        // AND THE ROW IS DRAWN ONLY WHERE THE CHOREOGRAPHY HAS THE FIELD. A
+        // mode flowspec marks payload_code forbidden has no part to pick, and
+        // offering one there is a control whose value the validator refuses —
+        // the operator finds out at the preview rather than at the tap. Same
+        // rule as every mode-dependent row below it; see model.partAllowed.
+        (M().partAllowed(model, node) ? row('Part on this position', partChips) : '') + modeRow +
         routingRow('inbound_source', srcs, chips(srcs, 'src', cc.source, 'val')) + viaRow +
         routingRow('outbound_destination', dests, chips(dests, 'dest', cc.dest, 'val')) +
         '<button class="os-comp-rm" data-act="remove">Remove ' + esc(node) + ' from the flow</button>');
@@ -987,7 +1104,11 @@ async function openConfirm(runAsIs) {
         '<tr class="muted"><td colspan="4">— back positions, no row, paired</td></tr></table></div>' +
         '<div><div class="os-lbl">Orders that fire now</div>' +
         '<table><tr><th>Robot</th><th>From → to</th></tr>' + orders + '</table></div></div>' +
-        '<div class="foot">Robots wait at the press until you press Release.' +
+        // THE WORD IS CELL (owner, 2026-09-17). An operator reading this is
+        // standing at whatever this process is — a 4x2 weld cell as often as a
+        // press — and "the robots wait at the press" is wrong on the floor it
+        // is most often read on. The second "press" is the verb and stays.
+        '<div class="foot">Robots wait at the cell until you press Release.' +
         // Only the two things the preflight can actually say. "Inventory
         // checked." with no preflight at all was the sheet asserting a check
         // nobody ran.
@@ -1174,11 +1295,32 @@ function onClick(e) {
         case 'runasis': runAsIs(); break;
         // Still on the picture's strip and the position panel; it left the
         // set-up card, where the position a part lands on is not visible.
-        // U10 - the part palette's own door. Both buttons that carry this action
-        // are rendered DISABLED (see ADDPART_TITLE) and a disabled button
-        // dispatches no click, so this arm is the seam the palette gets wired
-        // to rather than a handler that runs and does nothing.
-        case 'addpart': break;
+        // From the STRIP the part arrives loose (data-node is empty); from a
+        // POSITION PANEL it lands on that position, because the operator
+        // opened the picker from the thing they want it on.
+        case 'addpart': openPartPicker(btn.dataset.node || ''); break;
+        case 'partcancel': closePartPicker(); break;
+        case 'partpick': {
+            const code = btn.dataset.part;
+            const on = partPickerNode;
+            closePartPicker();
+            if (!code) break;
+            // TWO ACTIONS, NOT ONE, AND BOTH ARE EXISTING ONES. addPart is the
+            // seam — it puts the payload on THIS STYLE's part list — and setPart
+            // is what a tap on a chip already does. A picker opened from a
+            // position sends both, because an operator who opened it from
+            // PLN_03 asked for the part to be on PLN_03; one opened from the
+            // strip sends only the first, and the part shows as an amber
+            // `· unplaced` chip until it is dropped somewhere.
+            sendQuiet({ type: 'addPart', payloadCode: code });
+            if (on) {
+                sendQuiet({ type: 'setPart', node: on, payloadCode: code });
+                openPositionPanel(on);
+            } else {
+                drawPicture();
+            }
+            break;
+        }
         case 'compose': openComposer(model.styleId, false); break;
         case 'blank': send({ type: 'startBlank' }); break;
         case 'preset': {
@@ -1248,6 +1390,12 @@ export function openFromHash() {
     else if (want === 'S6') openDockPanel('in');
     if (want === 'S9') openConfirm(false);
     if (want === 'S10') openStarted(false, hold);
+    // ;addpart=1 opens the part picker over whatever state was asked for — a
+    // SHEET rather than a state of its own, so it composes with `node` the way
+    // a tap does: with one it opens on that position, without one it opens on
+    // the flow. Local UI state, never a write, like every other hash modifier
+    // here.
+    if (/;addpart=1/.test(h)) openPartPicker(node || '');
     return true;
 }
 

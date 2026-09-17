@@ -207,13 +207,101 @@ test('a part is on at most one position per cell', () => {
     assert.strictEqual(s.cells.PLN_01.part, null, 'the part moved, it did not duplicate');
 });
 
-test('addPart adds to the palette and never pre-places', () => {
+test('addPart adds to this style’s parts and never pre-places', () => {
     let s = initStyle(7);
     const before = Object.keys(s.cells).filter(n => s.cells[n].part).length;
     s = M.reduce(s, { type: 'addPart', payloadCode: '55544-DWC33.30' });
     assert.ok(s.parts.includes('55544-DWC33.30'));
     const after = Object.keys(s.cells).filter(n => s.cells[n].part).length;
     assert.strictEqual(after, before, 'a new part is unplaced');
+});
+
+// ── the palette / parts split ────────────────────────────────────────────────
+//
+// THE SPLIT IS THE WHOLE OF UNIT A's FIRST RULE, and getting it backwards
+// blocks every changeover on every cell: `parts` feeds `unplaced_part`, which
+// turns the bar `blocked`, which disables Start on the HMI and Save on the
+// desktop. A cell with twelve parts in its SET and one on a position would
+// read "11 parts need a position" and refuse to run.
+test('the palette is an offer list and raises no finding', () => {
+    const f = FIXTURES.styles['7'];
+    const s = M.init({
+        styleId: 7, positions: POSITIONS, routing: ROUTING,
+        claims: f.claims, parts: f.parts, flowspec: FLOWSPEC, groups: GROUPS,
+        // Twelve parts the cell MAY run, of which this style runs two.
+        palette: f.parts.concat(['PAL-A', 'PAL-B', 'PAL-C', 'PAL-D', 'PAL-E',
+            'PAL-F', 'PAL-G', 'PAL-H', 'PAL-I', 'PAL-J']),
+    });
+    assert.strictEqual(s.palette.length, f.parts.length + 10);
+    const loose = M.findings(s).filter(x => x.field === 'unplaced_part');
+    assert.deepStrictEqual(loose, [],
+        'a part in the OFFER list is not a part this flow has failed to place');
+    assert.notStrictEqual(M.bar(s).tone, 'blocked',
+        'the palette blocked the bar — Start and Save are dead on every cell');
+});
+
+test('partOffers marks what this style runs and puts the CATID matches first', () => {
+    const s = M.init({
+        styleId: 7, positions: POSITIONS, routing: ROUTING,
+        claims: [], parts: ['ZZ-RUNNING'], flowspec: FLOWSPEC, groups: GROUPS,
+        palette: ['ZZ-RUNNING', 'AA-OTHER', 'MM-CAT77-PART'],
+        catid: 'cat77',
+    });
+    const rows = M.partOffers(s);
+    assert.strictEqual(rows.length, 3, 'every part is offered — CATID orders, it does not filter');
+    assert.strictEqual(rows[0].code, 'MM-CAT77-PART', 'the CATID match is first');
+    assert.ok(rows[0].match);
+    assert.deepStrictEqual(rows.slice(1).map(r => r.code), ['AA-OTHER', 'ZZ-RUNNING'],
+        'the rest stay in code order');
+    assert.ok(rows.find(r => r.code === 'ZZ-RUNNING').onFlow,
+        'a part this style already runs is marked, not hidden');
+    assert.ok(!rows.find(r => r.code === 'AA-OTHER').onFlow);
+});
+
+test('a blank CATID reorders nothing', () => {
+    const s = M.init({
+        styleId: 7, positions: POSITIONS, routing: ROUTING,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS,
+        palette: ['ZZ', 'AA'],
+    });
+    assert.deepStrictEqual(M.partOffers(s).map(r => r.code), ['AA', 'ZZ']);
+});
+
+// A MODE THAT FORBIDS payload_code HAS NO PART ROW. Every (role, mode) row of
+// the real flowspec is walked, so this cannot drift from the table the server
+// refuses a save with.
+test('partAllowed answers flowspec, for every (role, mode) the spec has', () => {
+    for (const role of Object.keys(FLOWSPEC.steady)) {
+        for (const mode of Object.keys(FLOWSPEC.steady[role])) {
+            let s = M.init({
+                styleId: 7, positions: POSITIONS, routing: ROUTING,
+                claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, palette: [],
+            });
+            s = M.reduce(s, { type: 'addPosition', node: 'PLN_01', mode: mode });
+            s.cells.PLN_01.role = role;
+            s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: mode });
+            const forbidden = FLOWSPEC.steady[role][mode].payload_code === 'forbidden';
+            assert.strictEqual(M.partAllowed(s, 'PLN_01'), !forbidden,
+                role + '/' + mode + ': the part row disagrees with flowspec');
+        }
+    }
+});
+
+// A LEGACY MODE IS A CARD, NOT A CRASH. style_node_claims carries `simple` and
+// `manual_swap` as well as the four MODES names, and CARDLINE[mode](cell) on
+// one of those threw — on the BOARD's own read-only flow panel, which draws
+// whatever the running style happens to carry. One throw there blanks it.
+test('cardLines survives a legacy swap mode', () => {
+    for (const mode of ['simple', 'manual_swap']) {
+        let s = M.init({
+            styleId: 7, positions: POSITIONS, routing: ROUTING,
+            claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, palette: [],
+        });
+        s = M.reduce(s, { type: 'addPosition', node: 'PLN_01', mode: mode });
+        const lines = M.cardLines(s, 'PLN_01');
+        assert.ok(Array.isArray(lines) && lines.length, mode + ': the card drew nothing');
+        assert.strictEqual(lines[0], mode, mode + ': the fallback names the mode it has');
+    }
 });
 
 test('the dock actions touch every active position and nothing else', () => {

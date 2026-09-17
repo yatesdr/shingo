@@ -418,6 +418,39 @@ CREATE TABLE IF NOT EXISTS process_routing_nodes (
 );
 CREATE INDEX IF NOT EXISTS idx_process_routing_nodes_process ON process_routing_nodes(process_id);
 
+-- process_payloads is a process's PART SET: the payloads its flows may put on
+-- a position. The composer's part pickers offer a process only these, never
+-- the 250-row plant catalog.
+--
+-- A TABLE, AND NOT DERIVED FROM THE CLAIMS. The obvious cheaper shape is
+-- "whatever this process's claims already name", and it fails on exactly the
+-- case that asked for this: a cell nobody has configured has no claims, so the
+-- derived set is empty and there is nothing to put on its first position. The
+-- HMI has no keyboard to search a catalog with, either.
+--
+-- THE OFFER LIST IS THE UNION of these rows and the payloads the process's
+-- live claims name — the same shape the routing set has. Only one half is
+-- writable, so it is not two sources of truth: a part claimed before this
+-- table existed still shows up, and nothing has to be backfilled into rows
+-- nobody switched on.
+--
+-- AN OFFER LIST, ENFORCED AT THE PICKER AND NOWHERE ELSE. There is no
+-- save-time check that a claim's payload is in here, deliberately: the flow
+-- save checks payload PRESENCE (domain/claim_validation.go) and a membership
+-- check added here would refuse a claim an engineer wrote from the other
+-- surface. Same rule as process_routing_nodes.
+--
+-- No separate process_id index: UNIQUE(process_id, payload_code) already
+-- builds one with process_id leading, and every read of this table filters by
+-- process — the precedent is written at flow_presets below.
+CREATE TABLE IF NOT EXISTS process_payloads (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    payload_code TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_id, payload_code)
+);
+
 -- flow_presets is a NAMED FLOW an engineer saves for a process: a set of cells
 -- (positions, choreography, sources, destinations) with the parts left blank,
 -- so the floor can pick "the two-position press-index flow" for a new part
@@ -429,7 +462,6 @@ CREATE INDEX IF NOT EXISTS idx_process_routing_nodes_process ON process_routing_
 -- (source_preset_id, source_preset_version) as provenance, and that reference
 -- has to keep meaning what it meant. archived_at hides a version from the
 -- chooser without breaking the reference. UNIQUE(process_id, name, version).
--- Store and validation only for now; no UI and no endpoints yet.
 CREATE TABLE IF NOT EXISTS flow_presets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id  INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,

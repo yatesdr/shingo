@@ -185,6 +185,11 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 		return out
 	}
 
+	// THE PART SET, BELOW THE EARLY RETURN. One union read on a fetch that
+	// happens when the composer opens — never on the poll, which is the line
+	// this return is.
+	out.Palette = s.processPalette(processID)
+
 	for _, r := range s.routingNodes(processID) {
 		if !r.Enabled {
 			// A retired lane is not an option the operator should know not to
@@ -392,6 +397,18 @@ func (s *StationService) routingNodes(processID int64) []domain.RoutingNode {
 		return nil
 	}
 	return rows
+}
+
+// processPalette is the part set every part picker offers. Fail-open with a
+// line, like its siblings: a composer that opens with no parts to choose from
+// is bad, and one that does not open at all is worse.
+func (s *StationService) processPalette(processID int64) []string {
+	codes, err := s.db.ProcessPalette(processID)
+	if err != nil {
+		log.Printf("composer: part set for process %d: %v", processID, err)
+		return nil
+	}
+	return codes
 }
 
 // composerPresets turns stored presets into strip cards. The card's glyph needs

@@ -70,6 +70,12 @@ var requiredTables = []string{
 	// flow_presets is created by the DDL only (no ALTER road); the preset
 	// store reads and writes it unconditionally.
 	"flow_presets",
+	// process_payloads is created by the DDL only, and ProcessPalette reads it
+	// on every composer fetch — the read that decides which parts a screen may
+	// offer. A stale binary whose schema.Apply never created it would answer
+	// every part picker with an error the fetch swallows, so the picker would
+	// come up empty on a cell that has parts.
+	"process_payloads",
 	// The scene geometry cache is read at every boot (engine.loadSceneGeometry)
 	// and written by every full node-list sync. A stale binary whose
 	// schema.Apply never created these would fail the boot read and answer

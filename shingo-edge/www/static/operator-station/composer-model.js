@@ -496,7 +496,23 @@ function init(opts) {
         // the count is what lets a role with nothing to offer say which of the
         // two empties it is. See routingNote.
         routingOff: opts.routingOff || {},
+        // TWO PART LISTS, AND CONFLATING THEM BLOCKS EVERY CHANGEOVER.
+        //
+        // `parts` is what THIS STYLE runs — its claimed payloads, plus whatever
+        // the operator has added to the flow — and every entry of it that is
+        // not on a position raises `unplaced_part`, which turns the bar
+        // `blocked`, which disables Start on the HMI and Save on the desktop.
+        //
+        // `palette` is what the PROCESS may run: the offer list the part picker
+        // draws (domain.ComposerData.Palette). It is a dozen or two names on a
+        // real cell, and it has nothing to do with whether this flow is ready —
+        // a cell with twelve parts in its set and one on a position would
+        // otherwise read "11 parts need a position" and refuse to change over.
         parts: (opts.parts || []).slice(),
+        palette: (opts.palette || []).slice(),
+        // The style's expected CATID, for the part picker's order alone. Not a
+        // rule: see partOffers.
+        catid: opts.catid || '',
         lastRun: opts.lastRun || null,
         flowspec: opts.flowspec || null,
         // groups is the routing group -> member nodes map the dock strip's third
@@ -613,9 +629,19 @@ function reduce(state, action) {
             break;
         }
 
+        // THE SEAM THE PART PICKER DISPATCHES. It adds the payload to THIS
+        // STYLE's parts — the list the strip draws chips for and the list
+        // `unplaced_part` reads — and it does NOT touch the palette, which is
+        // the process's offer list and is the server's to change.
+        //
+        // NEVER PRE-PLACED. The part arrives loose, as an amber `· unplaced`
+        // chip, and the operator drops it on a position. Choosing one for them
+        // would be the composer deciding a flow, and the finding's own detail
+        // ("drop each on a position, or take it off this flow") is the
+        // instruction that follows.
         case 'addPart': {
             if (action.payloadCode && s.parts.indexOf(action.payloadCode) < 0) {
-                s.parts.push(action.payloadCode);   // palette only — never pre-placed
+                s.parts.push(action.payloadCode);
             }
             break;
         }
@@ -1032,6 +1058,60 @@ function activeCells(state) {
         .filter(([, c]) => c && c.on && c.mode);
 }
 
+// ── the part picker's rows ───────────────────────────────────────────────────
+//
+// partOffers is the process's part set as the picker sheet draws it: one row
+// per payload, the ones this style is already running marked, and the ones
+// whose code carries the style's CATID first.
+//
+// HERE AND NOT IN EITHER RENDERER. The HMI's sheet and the desktop's chip
+// picker offer the same list, and the day one of them decided its own order
+// would be the day an operator and an engineer read two different part lists
+// for one cell. Both call this.
+//
+// THE CATID ORDER IS AN ORDER AND NOT A FILTER. A scan carries the part
+// identity, and on a cell with two dozen parts the one the operator just
+// scanned should be at the top — but a CATID that matches nothing must not
+// empty the sheet, because the operator may be setting up a part the PLC has
+// never seen. Every row is always offered; only the order moves.
+//
+// CONTAINMENT, BECAUSE THERE IS NO JOIN. Nothing on this tree relates a
+// payload code to a CATID except the characters they share — styles.
+// expected_catid is the value the PLC reports and payload_code is Core's part
+// code — so the test is "the code contains the CATID", which is checkable by
+// eye and wrong in no direction that costs anything: a false match sorts a row
+// up, and the row is still the row.
+function partOffers(state) {
+    const catid = String((state && state.catid) || '').trim().toUpperCase();
+    const running = new Set((state && state.parts) || []);
+    const rows = ((state && state.palette) || []).map(code => ({
+        code: code,
+        // Already on this flow: the sheet says so rather than offering it as
+        // new, and tapping it is still harmless (addPart is idempotent).
+        onFlow: running.has(code),
+        match: !!catid && String(code).toUpperCase().indexOf(catid) >= 0,
+    }));
+    rows.sort((a, b) => {
+        if (a.match !== b.match) return a.match ? -1 : 1;
+        return a.code < b.code ? -1 : (a.code > b.code ? 1 : 0);
+    });
+    return rows;
+}
+
+// partAllowed says whether this position may carry a part at all, from
+// flowspec — the same question advancedShows asks of an Advanced control.
+//
+// A CHOREOGRAPHY THAT FORBIDS payload_code HAS NO PART ROW. Drawing one there
+// is offering a control whose value the validator refuses, and the operator
+// finds out at the preview rather than at the tap. A cell with no mode yet
+// keeps its row: the part is how most operators start.
+function partAllowed(state, node) {
+    const cell = state.cells[node];
+    if (!cell || !cell.mode) return true;
+    const row = steadyRow(state, cell.role, cell.mode);
+    return !row || row.payload_code !== 'forbidden';
+}
+
 // membersOf names the routing group's nodes — SMN_05, SMN_06 — which is what
 // the strip's third line shows under the group name. The note above it already
 // names the POSITIONS, so repeating them here said the same thing twice and
@@ -1070,7 +1150,19 @@ function dockNotes(state) {
 function cardLines(state, node) {
     const c = state.cells[node];
     if (!c) return [];
-    if (c.on && c.mode) return CARDLINE[c.mode](c).split(' · ');
+    // A MODE WITH NO CARD LINE IS A CARD, NOT A CRASH. CARDLINE holds the four
+    // choreographies MODES names; style_node_claims also carries the legacy
+    // `simple` and `manual_swap` values, and `CARDLINE[c.mode](c)` on one of
+    // those threw a TypeError — on the BOARD's own read-only flow panel, which
+    // is drawn from whatever the running style happens to carry. One throw
+    // there takes the module down and the panel renders nothing.
+    //
+    // The fallback is the mode's own name, which is true and readable, rather
+    // than a guess at what the legacy row means.
+    if (c.on && c.mode) {
+        const line = CARDLINE[c.mode];
+        return line ? line(c).split(' · ') : [String(c.mode)];
+    }
     // A BACK POSITION DOING SOMEBODY'S WORK SAYS WHOSE — and now says WHICH
     // work. "PLN_05 is feeding PLN_06 — should it show PLN_05 with inbound
     // staging or whatever? Same for outbound staging if applicable." It said
@@ -1554,11 +1646,16 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 // back position is made there, and the station offers it from the next save on.
 // That is the same shape as the routing sentences' "Settings › Routing" — the
 // fact, then somewhere to go.
+// THE WORD IS CELL, NOT PRESS (owner, 2026-09-17: "it could be a weld cell or
+// some other process"). These three sentences are read by an operator standing
+// at a 4x2 weld cell as often as at a press, and the code's own name for the
+// thing they are about has always been CellPicture. The press-index mode keeps
+// its own words: that one really is about a press indexing.
 const PAIRED_NOTE = {
-    two_robot_press_index: 'No back position on this press — a ' + MODES.two_robot_press_index +
+    two_robot_press_index: 'No back position on this cell — a ' + MODES.two_robot_press_index +
         ' pairs with one, and a position becomes a back position only when a flow names it. ' +
         'Pair this one from the desktop’s Flows, or pick another choreography.',
-    sequential: 'Only one position on this press — ' + MODES.sequential +
+    sequential: 'Only one position on this cell — ' + MODES.sequential +
         ' fills one side while the other runs, so it needs a second position to flip to.',
 };
 
@@ -1570,7 +1667,7 @@ function pairedNote(state, node) {
     // A mode nobody has written words for still never draws a heading over
     // nothing. ROW_FIELDS gives paired_core_node to exactly the two above; a
     // third would arrive here before anyone noticed it had no sentence.
-    return PAIRED_NOTE[c.mode] || 'Nothing on this press to pair this position with.';
+    return PAIRED_NOTE[c.mode] || 'Nothing on this cell to pair this position with.';
 }
 
 // routingNote is the line under an empty row, or '' when the row has options.
@@ -1644,6 +1741,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
         legs, dockNotes, cardLines, pictureCells, bar,
         findings, findingShort, fixItFor,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
+        partOffers, partAllowed,
         routingNote, routingRoleOf,
         presetCells, shapeDiff, orderSentences, orderSentence, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, advancedDefaults,

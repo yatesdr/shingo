@@ -9,9 +9,17 @@ package domain
 // field to delete rather than one to wonder about — and it keeps the board's
 // own read of OperatorStationView exactly as it was.
 //
-// The composer makes NO read the spec §5 does not list. Everything below is
-// carried on the view the station already fetches, so opening the picker costs
-// no round trip and a scan never waits on one.
+// WHAT RIDES THE POLL AND WHAT DOES NOT, and the comment that used to sit here
+// said the opposite. It read "everything below is carried on the view the
+// station already fetches" — true when it was written, and untrue since S8 cut
+// the block in two: the station VIEW carries the picker's shape alone (Styles
+// and RecentTargets), and every field past that is the composer's own fetch,
+// made on a tap and held for the session. See station_composer.go's
+// composerScope, which is the thing that decides.
+//
+// So the scan still waits on nothing — the picker's rows are on the poll — and
+// opening the composer costs exactly one round trip, which is the tap the
+// operator already made.
 type ComposerData struct {
 	// Styles is the picker's rows and the set-up card's contents: every live
 	// style of this process with what the operator needs to choose between
@@ -57,6 +65,24 @@ type ComposerData struct {
 	// The S4 strip renders a card per preset; empty means the strip carries
 	// FLOW · Start blank · PARTS and nothing more.
 	Presets []ComposerPreset `json:"presets,omitempty"`
+	// Palette is the part set every part picker on both surfaces offers: the
+	// process's stored payload rows unioned with what its live claims already
+	// run (store/processes.ProcessPalette).
+	//
+	// NOT ComposerStyle.Parts, WHICH IS A DIFFERENT QUESTION. Parts is what ONE
+	// style runs and it feeds the unplaced-part finding — every entry of it not
+	// on a position blocks Start and Save. The palette is what a style COULD
+	// run, and putting the two in one field is what made a cell with twelve
+	// configured parts and one placed read "11 parts need a position" and
+	// refuse to change over.
+	//
+	// AND IT IS NOT ON ComposerStyle EITHER. The part set belongs to the
+	// process, so a copy per style would be the same list marshalled forty
+	// times on a read that already carries forty style blocks.
+	//
+	// Set only from composerStation outward — never above the picker's early
+	// return, which is the poll.
+	Palette []string `json:"palette,omitempty"`
 	// Cell is the press itself — positions in their true arrangement with the
 	// running style's choreography on them, the same CellPicture the station
 	// draws. Set only on the desktop's process-scoped read; the station view

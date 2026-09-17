@@ -447,9 +447,18 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 				r.Get("/processes/{id}/routing-nodes", h.apiListRoutingNodes)
 				r.Post("/processes/{id}/routing-nodes", h.apiUpsertRoutingNode)
+				// The WHOLE list in one trip, for the sheet that writes a
+				// routing set from scratch. The POST above stays: the Routing
+				// tab adds one name at a time and wants one refusal about it.
+				r.Put("/processes/{id}/routing-nodes", h.apiPutRoutingNodes)
 				r.Post("/processes/{id}/routing-nodes/derive", h.apiDeriveRoutingNodes)
 				r.Patch("/processes/{id}/routing-nodes/{rowID}", h.apiPatchRoutingNode)
 				r.Delete("/processes/{id}/routing-nodes/{rowID}", h.apiDeleteRoutingNode)
+
+				// The process's PART SET — which payloads its flows may put on
+				// a position. One list, one body; see handlers_process_payloads.go.
+				r.Get("/processes/{id}/payloads", h.apiListProcessPayloads)
+				r.Put("/processes/{id}/payloads", h.apiSetProcessPayloads)
 
 				// Process groups (UI taxonomy for the Processes admin sidebar)
 				r.Get("/process-groups", h.apiListProcessGroups)

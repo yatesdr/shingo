@@ -524,6 +524,14 @@ CREATE TABLE process_nodes (
     deleted_at          TEXT
 );
 
+CREATE TABLE process_payloads (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    payload_code TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_id, payload_code)
+);
+
 CREATE TABLE process_routing_nodes (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id     INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,

@@ -229,6 +229,44 @@ function routingAdd(name, role, after) {
     };
 }
 
+// routingSet — PUT /api/processes/{id}/routing-nodes, the WHOLE list.
+//
+// ONE BODY FOR A SHEET THAT WRITES A SET. routingAdd above is still the Routing
+// tab's, which adds one name and wants one refusal about it; this is Add
+// process, where six names was six requests to a Pi with one SQLite connection
+// — six transactions, any of which could be the one that fails after the
+// others landed.
+//
+// NO SEQUENCE FIELD, deliberately, and it is the difference that matters: the
+// ORDER OF THE LIST is the sequence, counted per role by the server
+// (service.PutRoutingNodes). A page that numbered the rows itself would be a
+// second implementation of "which name is a new position's default", beside
+// routingAdd's `after`, and they would disagree the first time one of them
+// learned that the roles are counted apart.
+//
+// origin, called_by and enabled are not here for the same reason they are not
+// on routingAdd: the server stamps authorship, and naming a row in this list
+// IS the switch.
+function routingSet(rows) {
+    return {
+        nodes: (rows || []).map(r => ({
+            core_node_name: String((r && r.core_node_name) || ''),
+            role: String((r && r.role) || ''),
+        })),
+    };
+}
+
+// processPayloads — PUT /api/processes/{id}/payloads, the part set.
+//
+// A SET-TO: the picker holds the whole list, so the body is the whole list and
+// an unticked part stops being offered. An EMPTY list is a real answer — "this
+// cell has no part set of its own" — and the server takes it, because the
+// palette an operator sees is still the union with what the cell's flows
+// already run.
+function processPayloads(codes) {
+    return { payloads: (codes || []).map(String) };
+}
+
 // flowPresetCreate — POST /api/processes/{id}/presets, the naming modal.
 //
 // EXACTLY ONE SOURCE, and the handler refuses both or neither: a shape comes
@@ -365,6 +403,7 @@ function saveOutcome(status, body) {
         processCreate, processSettings, processGate, processGroupCreate,
         styleCreate, styleWrite, styleClone,
         processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
+        routingSet, processPayloads,
         flowPresetCreate, flowPresetApplySave,
         applyOrder, applyOutcome, saveOutcome,
     };

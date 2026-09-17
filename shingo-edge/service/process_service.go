@@ -146,6 +146,57 @@ func (s *ProcessService) RoutingSet(processID int64, isUnknown func(name string)
 	return s.db.RoutingSet(processID, isUnknown)
 }
 
+// PutRoutingNodes writes a whole list of (name, role) rows in the order given,
+// adopting rows that already exist and NEVER deleting one the list omits.
+//
+// ADD-AND-ADOPT, NOT A SET-TO, and the reason is the delete guard. Taking a
+// routing name out is refused while a live claim still routes through it
+// (ErrRoutingNodeInUse) — a refusal an engineer is meant to see, by name, so
+// they can move the flow first. A set-to could only either fail the whole
+// write for a row nobody touched or drop a row a flow depends on. Add Process
+// only ever adds; the Edit sheet keeps its diff, where a removal is a DELETE.
+//
+// THE INDEX IS THE SEQUENCE. composer-model's defaultRouting opens a new
+// position on the LOWEST sequence of each role, so the order the engineer
+// picked names in is the order that decides their defaults.
+func (s *ProcessService) PutRoutingNodes(processID int64, rows []domain.RoutingNodeInput, calledBy string) error {
+	seq := map[string]int{}
+	for i := range rows {
+		rows[i].ProcessID = processID
+		rows[i].Origin = domain.RoutingOriginEngineer
+		rows[i].CalledBy = calledBy
+		rows[i].Enabled = true
+		rows[i].Sequence = seq[rows[i].Role]
+		seq[rows[i].Role]++
+	}
+	// NAMING A ROW IN THIS LIST IS ADOPTING IT, and the upsert already says so:
+	// its ON CONFLICT writes enabled, origin and called_by from the input, so a
+	// backfilled row named here comes back on, stamped 'engineer', with the
+	// session user on it — the same three columns SetRoutingNodeEnabled would
+	// have written, in the statement that is already running. A second write
+	// per row would be a second statement on the one SQLite connection for a
+	// value the first one just set.
+	for _, in := range rows {
+		if _, err := s.db.UpsertRoutingNode(in); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ── The process part set ────────────────────────────────────────────
+
+// ListProcessPayloads is the stored half of the part set — what the sheet that
+// edits the list shows, and the only half a write may touch.
+func (s *ProcessService) ListProcessPayloads(processID int64) ([]string, error) {
+	return s.db.ListProcessPayloads(processID)
+}
+
+// ReplaceProcessPayloads sets the stored half to exactly this list.
+func (s *ProcessService) ReplaceProcessPayloads(processID int64, codes []string) error {
+	return s.db.ReplaceProcessPayloads(processID, codes)
+}
+
 // ── Process groups ──────────────────────────────────────────────────
 
 // ListGroups returns all process_groups ordered by name.
