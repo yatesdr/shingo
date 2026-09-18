@@ -152,14 +152,27 @@
  * robots. Dashed and thinner than a leg: a leg is what the robot DOES, the
  * strip is how it gets there, and the picture has to keep saying which is
  * which. */
-.os-flow-picture .lmroute .lmline { fill: none; stroke-width: 1; stroke-dasharray: 3 4; opacity: .6; }
+/* The route strip hangs under the card its trip arrives at: a dashed line in
+   the trip's robot colour, the chosen waypoints on it as filled dots, each
+   named on its own baseline in the column to the right. The type is .leg-lbl's
+   — 11/600 — because these read as the picture's labels and not as a legend,
+   and because the strip is sized in operator-flow.js against exactly that:
+   shrinking it here would fit more rows than layout reserved room for. */
+.os-flow-picture .lmroute .lmline { fill: none; stroke-width: 1.4; stroke-dasharray: 4 4; opacity: .75; }
 .os-flow-picture .lmroute.r1 .lmline { stroke: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmline { stroke: var(--robot-2); }
 .os-flow-picture .lmroute .lmdot { stroke-width: 1.4; }
 .os-flow-picture .lmroute.r1 .lmdot { fill: var(--robot-1); stroke: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmdot { fill: var(--robot-2); stroke: var(--robot-2); }
-.os-flow-picture .lmroute .lmlbl { font-size: 9px; letter-spacing: .02em; }
+.os-flow-picture .lmroute .lmlbl { font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 .os-flow-picture .lmroute.r1 .lmlbl { fill: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmlbl { fill: var(--robot-2); }
+/* "+N" takes a waypoint's row rather than a smaller line of its own, so a
+   route too long for the frame is COUNTED in place rather than shortened. */
+.os-flow-picture .lmroute .lmmore { font-size: 11px; font-weight: 600; letter-spacing: .02em;
+    fill: var(--os-text-muted, var(--text-muted)); }
+/* Whose trip it is, in the picture's muted token — the same one the row labels
+   and the station caption use. The colour says it too; a colour is not a label. */
+.os-flow-picture .lmroute .lmvia { font-size: 10px; fill: var(--os-text-dim, var(--text-muted)); }
 .os-flow-picture .lmroute.r1 .lmtip { fill: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmtip { fill: var(--robot-2); }

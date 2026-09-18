@@ -185,11 +185,35 @@ export function layoutPositions(cell, frame) {
     const g = frameOf(frame);
     const positions = (cell && cell.positions) || [];
     if (!positions.length) return { boxes: {}, rows: [], toScale: false };
+    const need = floorRoom(cell);
     if (cell.geometry && positions.every(p => isCoord(p.x) && isCoord(p.y))) {
         const placed = placeToScale(positions, g);
-        if (placed) return liftAboveDock(placed, g);
+        if (placed) return liftAboveDock(placed, g, need);
     }
-    return liftAboveDock(placeEvenly(positions, g), g);
+    return liftAboveDock(placeEvenly(positions, g), g, need);
+}
+
+// floorRoom is how much clear space the drawing needs under its lowest row.
+//
+// THE CAPTION USED TO BE ALL OF IT, and it was the only thing that hung there.
+// A route strip hangs under the card its trip arrives at (see routeStrips), so
+// a cell with a key route needs the strip's height instead — otherwise the
+// cards sit where they always did and the strip has 14 units to draw four
+// waypoints in.
+//
+// THE BAND COUNTS WHEN THERE IS ONE. The arriving card can be a staging LANE
+// rather than a position, and then the strip hangs under the band, which itself
+// hangs above the dock's rule: cards, a gap, the band, the strip, the rule. This
+// reserves that whole stack whenever the cell has both a band and a route,
+// without asking WHICH card each trip arrives at — that answer needs the model's
+// legs, which layout does not have and should not grow. Over-reserving lifts the
+// cards a few units further than strictly needed; under-reserving would put a
+// strip through the dock.
+function floorRoom(cell) {
+    const room = routeRoom(cell);
+    if (!room) return CAPTION_ROOM;
+    const band = ((cell && cell.staging) || []).length ? STAGING_H + GAP + room : 0;
+    return Math.max(CAPTION_ROOM, room, band);
 }
 
 // liftAboveDock is the other half of V1: the DOCK is laid out from the frame's
@@ -206,7 +230,12 @@ export function layoutPositions(cell, frame) {
 // overlap, and no further than the picture's top inset. At the station frame
 // the overlap is zero and nothing moves — which is what keeps "the station
 // frame is untouched" true while the short frame stops colliding.
-function liftAboveDock(placed, g) {
+//
+// `need` is what has to fit under the lowest row: the caption alone on a cell
+// with no key route, and the route strip's height on one that has them. See
+// floorRoom. A cell with no route passes CAPTION_ROOM and nothing about this
+// function's behaviour changes, which is why the u4 shots do not move.
+function liftAboveDock(placed, g, need) {
     const names = Object.keys(placed.boxes);
     if (!names.length) return placed;
     let lowest = -Infinity, highest = Infinity;
@@ -216,9 +245,20 @@ function liftAboveDock(placed, g) {
     }
     // CAPTION_ROOM is the station-name line under the last row: one baseline
     // at +32 with its descenders, so the rule needs to sit below that.
-    const overlap = (lowest + CAPTION_ROOM) - g.DOCK_Y;
-    const slack = highest - FIT_INSET;
-    const lift = Math.min(Math.max(overlap, 0), Math.max(slack, 0));
+    const slack = Math.max(highest - FIT_INSET, 0);
+    const liftFor = w => Math.min(Math.max((lowest + w) - g.DOCK_Y, 0), slack);
+    const want = Math.max(need || 0, CAPTION_ROOM);
+    let lift = liftFor(want);
+    // A LIFT THAT DOES NOT BUY A STRIP IS NOT PAID FOR. The slack is bounded by
+    // the picture's top inset, so a frame short enough can take the whole lift
+    // and still leave less than one waypoint row — the desktop composer's
+    // picture box is exactly that. Moving the cards up for a strip that is then
+    // not drawn would change a layout nobody asked to change, so where the
+    // strip cannot be drawn the caption's own rule stands and the drawing is
+    // the one it has always been.
+    if (want > CAPTION_ROOM && (g.DOCK_Y - (lowest - lift)) < stripRoom(1) + STRIP_FLOOR) {
+        lift = liftFor(CAPTION_ROOM);
+    }
     if (lift <= 0) return placed;
     for (const n of names) placed.boxes[n].y -= lift;
     for (const r of placed.rows) { r.top -= lift; r.bottom -= lift; }
@@ -309,7 +349,7 @@ export function layoutStaging(cell, frame) {
     const order = cards.slice().sort((a, b) => (placed
         ? a.x - b.x
         : String(a.core_node_name).localeCompare(String(b.core_node_name))));
-    const top = g.DOCK_Y - STAGING_LIFT - STAGING_H;
+    const top = g.DOCK_Y - stagingLift(cell, g, frame) - STAGING_H;
     const pitch = Math.min(STAGING_W + STAGING_GAP,
         (g.FIT_RIGHT - g.FIT_LEFT) / Math.max(order.length, 1));
     const width = pitch * (order.length - 1);
@@ -321,6 +361,29 @@ export function layoutStaging(cell, frame) {
         };
     });
     return { boxes, top };
+}
+
+// stagingLift is how far the band's floor sits above the dock's rule.
+//
+// STAGING_LIFT IS A GAP, NOT A BUDGET: fourteen units of daylight so the band
+// does not read as part of the dock. When a trip arrives at a staging LANE its
+// route strip hangs under that lane's card, in exactly this space, so the band
+// has to rise by the strip's height to leave room for it.
+//
+// BOUNDED BY THE CARDS ABOVE, which is the only reason this can read the
+// positions' layout without risking a cycle: layoutPositions never asks about
+// the band. floorRoom has already reserved the whole stack under the cards when
+// there is one, so at the station and desktop frames the bound is slack; at a
+// frame too short for the stack it clamps back to the plain gap and the strip
+// finds no room and draws nothing, which is oneStrip's own rule.
+function stagingLift(cell, g, frame) {
+    const room = routeRoom(cell);
+    if (!room) return STAGING_LIFT;
+    const boxes = layoutPositions(cell, frame).boxes;
+    let lowest = -Infinity;
+    for (const n of Object.keys(boxes)) lowest = Math.max(lowest, boxes[n].y + boxes[n].h);
+    if (!isFinite(lowest)) return Math.max(STAGING_LIFT, room);
+    return Math.max(STAGING_LIFT, Math.min(room, g.DOCK_Y - STAGING_H - (lowest + GAP)));
 }
 
 // pictureRows is which row of the DRAWING each position landed in: 'front' for
@@ -575,11 +638,18 @@ export function renderFlowPicture(view, opts) {
         if (label) s += '<text class="mlbl" x="' + g.LEFT + '" y="' + (r.top - 12) + '" style="letter-spacing:.08em">' + label + '</text>';
     });
     const last = rows[rows.length - 1];
+    const strips = routeStrips(cell, allBoxes, sentences.legs, g);
     // The caption sits under the last row of cards, and above the dock's rule:
     // at a short frame the cards reach further down than the proportion
     // expected and a caption placed from them alone crosses the line it is
     // supposed to sit above.
-    const capY = Math.min(last.bottom + 32, g.DOCK_Y - 12);
+    //
+    // AND IT GOES TO THE RULE WHEN A ROUTE STRIP IS DRAWN, because the band
+    // under the last row is then the strip's. Both are left-anchored things in
+    // the same 30 px: the first shot of the strip had "SCREEN A4 · positions at
+    // true spacing" printed across a route's first two waypoints. The strip's
+    // own floor (STRIP_FLOOR) keeps a baseline clear above the rule for it.
+    const capY = strips ? g.DOCK_Y - 12 : Math.min(last.bottom + 32, g.DOCK_Y - 12);
     s += '<text class="mlbl" x="' + g.LEFT + '" y="' + capY + '" style="fill:var(--os-text-dim, var(--text-muted))">' + esc(stationName.toUpperCase()) +
         (toScale ? ' · positions at true spacing' : ' · positions not to scale') + '</text>';
 
@@ -665,7 +735,7 @@ export function renderFlowPicture(view, opts) {
             '<text class="ln" x="12" y="36">' + esc(word) + ' · ' + esc(line2) + '</text></g>';
     }
 
-    s += routeStrips(cell, allBoxes, sentences.legs, g);
+    s += strips;
 
     const d = sentences.dock;
     const tapIn = opts.editable ? ' data-tap="dock" data-dock="in"' : '';
@@ -684,121 +754,182 @@ export function renderFlowPicture(view, opts) {
 //
 // So this draws no LM geography at all. The desktop map is where geography
 // lives — it has the whole plant and draws the aisles — and the HMI says which
-// WAY the robot is sent: the ordered waypoints an engineer chose, as a strip
-// from the dock's IN side to the card the trip arrives at, evenly spaced, each
-// one named. Order and direction are the content; distance is not, and nothing
-// on the strip pretends to be a coordinate.
+// WAY the robot is sent: the ordered waypoints an engineer chose, hanging under
+// the card that trip arrives at, rising into the card's bottom edge with the
+// chevron pointing in. Order and direction are the content; distance is not,
+// and nothing on the strip pretends to be a coordinate.
 //
-// WHAT THIS REPLACED, AND WHY IT HAD TO GO. The first cut drew the points at
-// their true places along the leg. It was correct and it drew NOTHING on a real
-// cell: the picture frames the cell at 120 px/m, a swap leg is a 1.8 m move
-// between adjacent cards, and the aisle an engineer actually routes through is
-// 3 m out — 384 units below a picture whose floor is the dock's rule. Every
-// mark was computed and then discarded by the frame rule. A drawing that is
-// only ever right off-screen is not a drawing.
+// UNDER THE CARD, which is the second version of this and the one the owner
+// picked from a side-by-side. The first ran one horizontal strip from the dock's
+// IN glyph to the arriving card, and two things were wrong with it. A cell whose
+// staging card sits over the IN glyph — P400 — gave it a 66-unit run, so two
+// nine-pixel names had to alternate above and below the line to be legible at
+// all. And every strip started in the same place, so a second position's route
+// stacked into the first one's corner and the drawing stopped saying whose trip
+// it was. Hanging it under its own card fixes both by construction: the strip is
+// as long as it needs to be, and two positions can never share it.
 //
-// EVENLY SPACED IS THE WHOLE OF "NOT TO SCALE". Three dots on one strip sit at
-// equal intervals whatever the map says about the gaps between them, and
-// operator-flow.test.js pins that as an equality on the rendered cx values —
-// so a later "improvement" that reintroduced distance would be red.
+// WHAT CAME BEFORE THAT was the same points at their TRUE places along the leg.
+// It was correct and it drew NOTHING on a real cell: the picture frames the cell
+// at 120 px/m, a swap leg is a 1.8 m move between adjacent cards, and the aisle
+// an engineer actually routes through is 3 m out — 384 units below a picture
+// whose floor is the dock's rule. Every mark was computed and then discarded by
+// the frame rule. A drawing that is only ever right off-screen is not a drawing.
+//
+// EVENLY SPACED IS THE WHOLE OF "NOT TO SCALE". The dots sit at equal intervals
+// whatever the map says about the gaps between them, and operator-flow.test.js
+// pins that as an equality on the rendered cy values — so a later "improvement"
+// that reintroduced distance would be red.
 //
 // NO "NOT TO SCALE" CAPTION. The cell's caption still says whether the CARDS
-// are at true spacing, which is a fact about the cards; the strip never
-// claimed to be scale, so it has nothing to disclaim.
-const STRIP_H = 26;        // how far above the dock's rule the strip runs
-const STRIP_DOT = 3.5;     // a named waypoint
-const STRIP_TIP_AT = 0.5;  // the chevron's place along the strip
-// How much room one 9 px waypoint name needs on its own baseline. Below this
-// the labels alternate above and below the line; see oneStrip.
-const STRIP_LABEL_ROOM = 38;
+// are at true spacing, which is a fact about the cards; the strip never claimed
+// to be scale, so it has nothing to disclaim.
+//
+// READ-BACK, NOT AN EDITOR. Nothing on it is tappable: the key route is chosen
+// in the position's panel, and a second way to open that would be a second
+// answer to where a route is edited.
+const STRIP_SLOTS = 4;     // waypoint rows that must fit at the station frame
+const STRIP_HEAD = 28;     // the card's bottom edge down to the TOP row
+const STRIP_STEP = 21;     // one row to the next
+const STRIP_TAIL = 18;     // the bottom row down to the line's foot
+const STRIP_TIP = 16;      // the chevron's centre below the card's edge
+// The muted "Robot N comes in via", far enough under the first waypoint's own
+// baseline that a 10 px line and an 11 px one do not touch — at 13 they did,
+// which the synthetic-band shot showed before this.
+const STRIP_VIA = 17;
+const STRIP_DX = 11;       // the label column, right of the line
+const STRIP_DOT = 4;       // a waypoint, the same radius as a leg's dot
+// STRIP_FLOOR is the band under the strip's foot, and it is the STATION CAPTION
+// that makes it 26 rather than a few pixels of daylight. The caption is one
+// muted line under the last row of cards — and a strip hangs in exactly that
+// band, so the first shot of this drawing had "positions at true spacing"
+// printed across a route. The caption moves to the rule when strips are drawn
+// (see renderFlowPicture), which needs a baseline's worth of room kept clear
+// below every strip's foot rather than beside it.
+const STRIP_FLOOR = 26;
 
-// routeStrips draws one strip per trip that has a chosen key route.
+// stripRoom is the ink height of a strip with n rows, and stripFit is the
+// inverse: how many rows a given gap can hold. They are the sizing rule the
+// tokens above were chosen against — four rows inside the station frame's
+// lowest gap once floorRoom has reserved it.
+function stripRoom(n) { return STRIP_HEAD + (n - 1) * STRIP_STEP + STRIP_TAIL; }
+
+function stripFit(room) {
+    for (let n = STRIP_SLOTS; n >= 1; n--) {
+        if (stripRoom(n) + STRIP_FLOOR <= room) return n;
+    }
+    return 0;
+}
+
+// routeRoom is what the tallest strip in this cell will want, floor included,
+// or 0 when no position has a chosen route. Layout asks it; see floorRoom.
+function routeRoom(cell) {
+    let most = 0;
+    for (const pos of ((cell && cell.positions) || [])) {
+        const n = ((pos.claim && pos.claim.key_route) || []).length;
+        if (n > most) most = n;
+    }
+    return most ? stripRoom(Math.min(most, STRIP_SLOTS)) + STRIP_FLOOR : 0;
+}
+
+// routeStrips draws one strip per position that has a chosen key route, under
+// the card that position's inbound trip arrives at.
 //
 // WHICH TRIP, AND THE ANSWER IS NOT THE ONE THE MODEL'S COMMENT IMPLIES.
 // composer-model's viaWaypoints computes its OFFER from the supply path, and
 // that is what an operator picks from. What the field GOVERNS at dispatch is
-// wider: orders/manager.go's lookupRouting resolves the claim by process node
-// and returns claim.KeyRoute for every COMPLEX order created there
-// (orders/manager_create.go, the complex path only) — which is the supply leg
-// when the planner makes it complex AND the evac leg when it makes that
-// complex, and neither when the leg is a plain retrieve.
-//
-// ONE STRIP, ON THE ARRIVING TRIP. It is drawn for the trip that brings the new
-// bin IN, because that is the trip the dock's IN side is about and the one an
-// operator is watching for. The evac leg's route is reported rather than drawn
-// — see the report; drawing a second strip is the owner's call, not mine.
+// wider: orders/manager.go's lookupRouting resolves the claim by PROCESS NODE
+// and returns claim.KeyRoute for every complex order created there — the stage
+// leg, the staged delivery and the release, all three. What it SHOULD steer is
+// an open owner ruling, so the picture draws the arriving trip and the engine is
+// not touched for it.
 function routeStrips(cell, boxes, modelLegs, g) {
     let out = '';
     for (const pos of (cell.positions || [])) {
-        const c = pos.claim;
-        const route = (c && c.key_route) || [];
+        const route = (pos.claim && pos.claim.key_route) || [];
         if (!route.length) continue;
         // THE CARD THE TRIP ARRIVES AT. When the choreography stages, the new
-        // bin lands on the staging card first and the strip ends there; when it
-        // does not, the trip arrives at the position itself. Same question
-        // legsFor asks, same answer, so the strip meets the leg it belongs to.
-        const arrival = arrivalCardOf(pos, cell, boxes, modelLegs);
+        // bin lands on the staging card first and the strip hangs under that;
+        // when it does not, the trip arrives at the position itself.
+        const arrival = arrivalCardOf(pos, boxes, modelLegs);
         if (!arrival) continue;
-        out += oneStrip(route, arrival.box, arrival.cls, g);
+        out += oneStrip(route, arrival, g);
     }
     return out;
 }
 
 // arrivalCardOf is the box the inbound trip ends on, and the robot whose colour
 // it is. It reads the legs the model already decided rather than re-deriving
-// them from the claim: which trips exist is the model's answer, and a second
-// one here is the drift operator-flow.js has already lost twice.
-function arrivalCardOf(pos, cell, boxes, modelLegs) {
+// them from the claim: which trips exist is the model's answer, and a second one
+// here is the drift operator-flow.js has already lost twice.
+function arrivalCardOf(pos, boxes, modelLegs) {
     const n = pos.core_node_name;
     for (const L of (modelLegs || [])) {
         // The inbound leg of this position: it ENDS here and started somewhere
         // else. `kind: 'park'` runs the other way and is not an arrival.
         if (L.to !== n || L.from === n) continue;
         const b = boxes[L.from];
-        if (b) return { box: b, cls: L.robot === 2 ? 'r2' : 'r1' };
+        if (b) return { box: b, cls: L.robot === 2 ? 'r2' : 'r1', robot: L.robot === 2 ? 2 : 1 };
     }
     // No staging leg — the bin arrives at the position itself, on Robot 1: the
     // dock's IN side is Robot 1's in every mode (renderFlowPicture's dock).
     const own = boxes[n];
-    return own ? { box: own, cls: 'r1' } : null;
+    return own ? { box: own, cls: 'r1', robot: 1 } : null;
 }
 
-// oneStrip is the drawing: a dashed run at a fixed height above the dock's
-// rule, from the IN side across to under the arriving card, with the waypoints
-// on it in driving order and a chevron pointing the way the bin travels.
-function oneStrip(route, box, cls, g) {
-    const y = g.DOCK_Y - STRIP_H;
-    // FROM THE DOCK'S IN SIDE. The IN half is drawn at g.LEFT, so the strip
-    // starts over its glyph and ends under the card — which is the direction of
-    // travel, dock to cell.
-    const x0 = g.LEFT + 16;
-    const x1 = Math.max(x0 + 40, box.x + box.w / 2);
-    let out = '<g class="lmroute ' + cls + '">' +
-        '<path class="lmline" d="M' + x0 + ' ' + y + ' L' + x1 + ' ' + y + '"/>';
-    // EVENLY SPACED, in driving order. n dots across the run at 1/(n+1)
-    // intervals: no dot sits on either end, where it would read as the dock or
-    // the card rather than as a waypoint between them.
-    //
-    // STAGGERED WHEN THE RUN IS TIGHT, which on a real cell it usually is: the
-    // dock's IN side and the arriving card can be 70 units apart, and two 9 px
-    // names on one baseline 23 units apart render as `LM10LM11` — which is
-    // exactly what the first shot of this showed. The ENDPOINTS are the ruling
-    // (dock IN to the arriving card) so they do not move; the labels alternate
-    // above and below the line instead, which keeps the order readable without
-    // pretending the geometry is something it is not.
-    const step = (x1 - x0) / (route.length + 1);
-    const stagger = step < STRIP_LABEL_ROOM;
-    route.forEach((name, i) => {
-        const x = x0 + step * (i + 1);
-        const below = stagger && i % 2 === 1;
+// oneStrip is the drawing: a dashed line hanging from the card's bottom edge,
+// the waypoints on it numbered in driving order and read BOTTOM TO TOP, and the
+// chevron at the top pointing into the card.
+//
+// BOTTOM TO TOP because that is the order the trip happens in: the first point
+// the robot passes is furthest from the cell, the last is the one it arrives
+// from. Numbering them says it a second way, so an operator reading the strip
+// upside down from the other side of the cell still has the order.
+//
+// MORE THAN FITS IS COUNTED, NOT DROPPED. The top row becomes "+N" and the rows
+// under it are the first waypoints — never smaller type, and never a route
+// silently shortened to whatever the frame allowed. Where the band holds ONE
+// row — the desktop composer's 430 frame, whose cards are already against the
+// picture's top inset and cannot be lifted further — the count rides that row's
+// own label instead of taking the last slot, because a strip whose only row
+// said "+3" would name nothing at all.
+//
+// A BAND WITH NO ROOM FOR A ROW DRAWS NOTHING. That is the short 304 panel,
+// where the cards reach the rule before anything else is placed; a line across
+// the dock's rule would say something false, and the position's own panel still
+// lists the route.
+function oneStrip(route, arrival, g) {
+    const box = arrival.box;
+    const x = box.x + box.w / 2;
+    const top = box.y + box.h;
+    const slots = stripFit(g.DOCK_Y - top);
+    if (slots < 1) return '';
+    const inline = slots === 1 && route.length > 1;
+    const names = route.length <= slots ? route
+        : (inline ? route.slice(0, 1) : route.slice(0, slots - 1));
+    const more = route.length - names.length;
+    const rows = names.length + (more && !inline ? 1 : 0);
+    const rowY = i => top + STRIP_HEAD + i * STRIP_STEP;   // i counted from the top
+    const bottom = rowY(rows - 1);
+    const foot = bottom + STRIP_TAIL;
+    const lx = x + STRIP_DX;
+
+    let out = '<g class="lmroute ' + arrival.cls + '">' +
+        '<path class="lmline" d="M' + x + ' ' + foot + ' V' + top + '"/>' +
+        '<path class="lmtip" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' +
+        x + ',' + (top + STRIP_TIP) + ') rotate(-90)"/>';
+    names.forEach((name, k) => {
+        const y = rowY(rows - 1 - k);
+        const tail = inline && k === 0 ? ' +' + more : '';
         out += '<circle class="lmdot" cx="' + x + '" cy="' + y + '" r="' + STRIP_DOT + '"/>' +
-            '<text class="lmlbl" x="' + x + '" y="' + (below ? y + 14 : y - 8) + '" text-anchor="middle">' +
-            esc(name) + '</text>';
+            '<text class="lmlbl" x="' + lx + '" y="' + (y + 4) + '">' +
+            (k + 1) + ' · ' + esc(name) + tail + '</text>';
     });
-    // The same chevron the legs use, so direction reads the same way on both.
-    const tx = x0 + (x1 - x0) * STRIP_TIP_AT;
-    out += '<path class="lmtip" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' +
-        tx + ',' + y + ') rotate(' + (x1 >= x0 ? 0 : 180) + ')"/></g>';
+    if (more && !inline) {
+        out += '<text class="lmmore" x="' + lx + '" y="' + (rowY(0) + 4) + '">+' + more + '</text>';
+    }
+    out += '<text class="lmvia" x="' + lx + '" y="' + (bottom + STRIP_VIA) + '">Robot ' +
+        arrival.robot + ' comes in via</text></g>';
     return out;
 }
 

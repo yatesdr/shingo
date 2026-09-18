@@ -1384,6 +1384,13 @@ function pictureCells(state, base) {
                 paired_core_node: c.paired || '', inbound_staging: c.staging || '',
                 outbound_staging: c.parkOld || '', inbound_source: c.source || '',
                 outbound_destination: c.dest || '',
+                // THE ROUTE STRIP'S FIELD, and the picture reads it by the
+                // SERVER's name because the board's cells come off CellPicture
+                // and only these come off model state. It was missing here for
+                // a round: the strip drew on the board and on nothing the
+                // composer or the desktop showed, which are the two surfaces
+                // that draw a cell through this function.
+                key_route: (c.keyRoute || []).slice(),
             } : null,
         });
     });

@@ -68,6 +68,18 @@ import (
 //	09-finding-on-node-and-bar.png   S8, a position with no choreography
 //	10-confirm-rows-and-orders.png   S9, the confirm sheet
 //	11-started-auto-return.png       S10, the started screen
+//	12-part-picker.png               S4 with the part picker open
+//	13-part-picker-on-position.png   S5 with it opened from a position
+//
+// and the route strip, which needs a key route written onto a claim because no
+// claim in this plant carries one:
+//
+//	14-route-strip.png                 one position, to scale
+//	15-two-route-strips.png            two, each under its own card
+//	16-route-strip-schematic.png       the same strip with no scene cached
+//	17-route-strip-synthetic-band.png  under a staging BAND card (see
+//	                                   syntheticCellDriver: this plant has none)
+//	18-route-strip-composer.png        the same strip inside the composer
 //
 // Behind the `shots` tag because it needs a Chrome binary; run it through
 // scripts/composer-shots.sh, which sets the two environment variables:
@@ -171,6 +183,11 @@ func TestComposerShots(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(clickAddProcessDriver(
 			r.URL.Query().Get("name"), r.URL.Query().Get("position"), r.URL.Query().Get("source"))))
+	})
+	// A CELL THE PLANT FIXTURE CANNOT PRODUCE. See syntheticCellDriver.
+	mux.HandleFunc("/__shots/synthetic-cell", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(syntheticCellDriver()))
 	})
 	// D1's style row menu and its add-a-position chooser. See clickMenuDriver.
 	mux.HandleFunc("/__shots/menus", func(w http.ResponseWriter, r *http.Request) {
@@ -408,10 +425,76 @@ func TestComposerShots(t *testing.T) {
 		}
 		shotAt(file, fmt.Sprintf("#compose=%d;state=%s;hold=1", styleID, state))
 	}
+	// THE TWO STYLES EVERY SHOT NAMES: the index pair and the two-robot swap.
+	const idx, swap = "PART SYN-A-S003", "PART SYN-A-S007"
+
+	// ── the key route, which no claim in this plant carries ─────────────
+	//
+	// The route strip is drawn from the names on a claim, so without a written
+	// route it would be photographed nowhere. These two put one on and take it
+	// off again: the u4- shots are the read-only picture's references and stay
+	// the plain drawing, and the strip gets shots of its own.
+	//
+	// A CLAIM WHOSE POSITION HAS AN ARRIVING TRIP. The strip hangs under the
+	// card the trip arrives at, so a claim with no leg has no card to hang
+	// from — which is what made the first version of this shot photograph an
+	// empty picture twice.
+	routeClaims := func(styleName string) []processes.NodeClaim {
+		t.Helper()
+		all, err := db.ListStyleNodeClaims(seeded.Styles[styleName])
+		if err != nil {
+			t.Fatalf("list claims for the key-route shots: %v", err)
+		}
+		var out []processes.NodeClaim
+		for _, c := range all {
+			if c.SwapMode == protocol.SwapModeTwoRobot && c.InboundStaging != "" {
+				out = append(out, c)
+			}
+		}
+		if len(out) < 2 {
+			t.Fatalf("style %q has %d two-robot claims with a staging slot; the strip shots need two",
+				styleName, len(out))
+		}
+		return out
+	}
+	// ANY OF THE CELL'S OWN WAYPOINTS. The strip draws order and direction,
+	// not geography, so WHICH points they are does not change the drawing and
+	// their distance from the cell is irrelevant — the first version of this
+	// shot spent three rounds hunting points "near enough" to be inside a
+	// frame the strip does not live in.
+	setRoute := func(c processes.NodeClaim, n int) {
+		t.Helper()
+		route := []string{}
+		if n > 0 {
+			lms := lmNamesNear(t, points, c.CoreNodeName, 40)
+			if len(lms) < n {
+				t.Fatalf("the plant fixture has %d LM points within 40 m of %s; this shot needs %d",
+					len(lms), c.CoreNodeName, n)
+			}
+			route = lms[:n]
+		}
+		in := domain.InputFromClaim(c)
+		in.KeyRoute = &route
+		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+			t.Fatalf("write the key route on %s: %v", c.CoreNodeName, err)
+		}
+		t.Logf("key route %v on %s", route, c.CoreNodeName)
+	}
+
 	// The schematic first, while no scene is cached — the state a fresh Edge
 	// is in — then the scene arrives and the two choreographies are drawn to
 	// scale.
 	shot("u4-schematic.png", "PART SYN-A-S003")
+	// THE STRIP ON THE SCHEMATIC, taken here because this is the only moment
+	// the picture is one: the cache is filled on the next line and never
+	// emptied. The strip is drawn by a function that takes no scale parameter,
+	// so this and 14- are the same drawing on two layouts.
+	{
+		cs := routeClaims(swap)
+		setRoute(cs[0], 2)
+		shot("16-route-strip-schematic.png", swap)
+		setRoute(cs[0], 0)
+	}
 	eng.SetSceneGeometry("shots-a", points, edges)
 	shot("u4-press-index.png", "PART SYN-A-S003")
 	shot("u4-two-robot-swap.png", "PART SYN-A-S007")
@@ -526,7 +609,6 @@ func TestComposerShots(t *testing.T) {
 		}
 	}
 
-	const idx, swap = "PART SYN-A-S003", "PART SYN-A-S007"
 	// A CHANGEOVER IS FROM ONE STYLE TO ANOTHER, and the seam refuses a preview
 	// of the style already on the press ("process is already running style N").
 	// So each composer shot runs with the OTHER style active: from-something, and
@@ -765,54 +847,34 @@ func TestComposerShots(t *testing.T) {
 	//
 	// "THE POINT OF THE LMs ISN'T TO REPRESENT THEM TO SCALE, IT'S TO DIRECT
 	// FLOW" (owner, 2026-09-17). The picture draws the ORDER the robot is sent
-	// through, as a strip from the dock's IN side to the card the trip arrives
-	// at. No claim in this plant carries a key route, so without this shot the
-	// strip would be photographed nowhere.
+	// through, as a strip HANGING UNDER the card the trip arrives at.
 	//
-	// The route is written onto the RUNNING style's claims, which is what the
-	// board's own picture draws.
+	// ONE, THEN TWO. The second shot is the case the first drawing could not
+	// make at all: it ran every strip from the dock's IN glyph, so a second
+	// position's route stacked into the first one's corner. Hung under its own
+	// card each strip is unmistakably one position's, and the shot is the
+	// evidence.
+	//
+	// The routes are written onto the RUNNING style's claims, which is what the
+	// board's own picture draws, and they STAY — D1-flows-running.png is the
+	// same cell at the desktop's shorter frame, which is where the strip has
+	// the least room and the layout has to make some.
 	{
+		cs := routeClaims(swap)
 		swapStyle := seeded.Styles[swap]
-		all, err := db.ListStyleNodeClaims(swapStyle)
-		if err != nil {
-			t.Fatalf("list claims for the key-route shot: %v", err)
-		}
-		// THE ROUTE GOES ON A CLAIM WHOSE POSITION DRAWS A LEG, and the first
-		// version of this did not: it took claims[0], which on this style is a
-		// BACK position with no leg of its own — so the route was written, the
-		// picture was right to draw nothing on it, and the proposal
-		// photographed empty twice. The marks are drawn ALONG a leg, so a claim
-		// with no leg has nowhere to put them.
-		var claims []processes.NodeClaim
-		for _, c := range all {
-			if c.SwapMode == protocol.SwapModeTwoRobot && c.InboundStaging != "" {
-				claims = append(claims, c)
-			}
-		}
-		if len(claims) == 0 {
-			t.Fatalf("no two-robot claim with a staging slot on style %d; the key-route shot needs a leg", swapStyle)
-		}
-		// ANY TWO OF THE CELL'S OWN WAYPOINTS. The strip draws order and
-		// direction, not geography, so WHICH points they are does not change
-		// the drawing and their distance from the cell is irrelevant — the
-		// first version of this shot spent three rounds hunting points "near
-		// enough" to be inside a frame the strip does not live in.
-		lms := lmNamesNear(t, points, claims[0].CoreNodeName, 40)
-		if len(lms) < 2 {
-			t.Fatalf("the plant fixture has %d LM points within 40 m of %s; the key-route shot needs two",
-				len(lms), claims[0].CoreNodeName)
-		}
-		in := domain.InputFromClaim(claims[0])
-		route := lms[:2]
-		in.KeyRoute = &route
-		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
-			t.Fatalf("write the key route: %v", err)
-		}
 		if err := db.SetActiveStyle(seeded.ProcessID, &swapStyle); err != nil {
 			t.Fatalf("set active style: %v", err)
 		}
-		t.Logf("LM proposal: key route %v on %s", in.KeyRoute, claims[0].CoreNodeName)
+		setRoute(cs[0], 2)
 		shotAt("14-route-strip.png", "#flow")
+		setRoute(cs[1], 2)
+		shotAt("15-two-route-strips.png", "#flow")
+		// AND IN THE COMPOSER, which is the same picture with the strip and the
+		// bar around it (SPEC §0.1: one drawing of this cell on this station).
+		// The strip is read-back there too — the key route is chosen in the
+		// position's panel, and tapping the strip does nothing.
+		shotAt("18-route-strip-composer.png",
+			fmt.Sprintf("#compose=%d;state=S4", seeded.Styles[swap]))
 	}
 
 	// ONE NAME GOES BACK TO WAITING, so D3 photographs the state Q5's whole
@@ -897,6 +959,14 @@ func TestComposerShots(t *testing.T) {
 	// The dark scheme is what the reference screenshots are in, so it stays the
 	// default for the set.
 	desktopShot := func(file, path string) { t.Helper(); desktopShotIn(file, path, 0) }
+
+	// A STAGING BAND, WHICH THIS PLANT DOES NOT HAVE. Every staging slot at
+	// Hopkinsville is a position of its own cell (PLN_02 parks on its own back
+	// card), so the band — the row of lanes above the dock's rule — is drawn
+	// for no style here, and the strip that hangs under a BAND card has no
+	// plant state that produces it. The driver renders one directly. See
+	// syntheticCellDriver.
+	desktopShotIn("17-route-strip-synthetic-band.png", "/__shots/synthetic-cell", 0)
 	// A SHOT THAT CANNOT FAIL IS NOT A CHECK. The same lesson U8's
 	// checkPanelFits was written for: --screenshot writes a PNG of whatever
 	// rendered, including the screen behind the one asked for. So each desktop
@@ -2187,6 +2257,72 @@ func chromeBinary() string {
 // slow box. The driver gives up after its own budget and says which step it
 // was on, because "no result" and "the click did nothing" are different
 // findings.
+// syntheticCellDriver draws a cell the plant fixture cannot produce.
+//
+// EVERY OTHER SHOT IS THE PRODUCT'S OWN PAGE OVER SEEDED PLANT STATE, and that
+// is the rule this file keeps: a screen nobody can reach is a screen nobody has
+// to get right. This one is the exception the round earned. The route strip
+// hangs under the card the trip arrives at, and that card is a staging BAND
+// lane whenever the choreography stages somewhere that is not a position of the
+// cell — which at Hopkinsville is never, because every staging slot there is a
+// position with a card of its own. The band, and therefore the strip under it,
+// has no plant state in this fixture that draws it.
+//
+// The alternative was to invent plant rows until a band appeared, which is a
+// fixture that says a false thing about the plant to photograph a true thing
+// about the renderer. This says what it is instead: the REAL renderer, the real
+// stylesheet, the real model, over a cell object written here. It is the same
+// cell operator-flow.test.js pins, so the shot and the assertions cannot drift
+// apart without one of them failing.
+func syntheticCellDriver() string {
+	// data-theme=dark IS LOAD-BEARING, and the first shot of this page is why:
+	// shared/tokens.css hangs the palette off it (operator-display.html sets the
+	// same attribute and calls it the kiosk convention), so without it
+	// --text-strong resolves to nothing and every card title and dock heading
+	// renders in the default black on the dark ground — a picture with no names.
+	return `<!doctype html><html lang="en" data-theme="dark"><meta charset="utf-8"><title>synthetic cell</title>
+<link rel="stylesheet" href="/static/shared/tokens.css">
+<link rel="stylesheet" href="/static/operator-station/operator.css">
+<link rel="stylesheet" href="/static/operator-station/flow-picture.css">
+<style>
+  html,body { margin:0; background:var(--surface-1,#0f1217); }
+  .wrap { width:1280px; }
+  .cap { font: 500 13px/1.6 Inter,system-ui,sans-serif; color:var(--text-muted,#8b95a5); padding:14px 24px 0; }
+</style>
+<body>
+<div class="wrap">
+  <div class="cap">SYNTHETIC CELL &middot; a staging band, and a route strip hanging under a band card</div>
+  <svg id="pic" class="os-flow-picture" viewBox="0 0 1280 560" style="width:1280px;height:560px"></svg>
+</div>
+<script src="/static/operator-station/composer-model.js"></script>
+<script type="module">
+import { renderFlowPicture } from '/static/operator-station/operator-flow.js';
+// THE SAME CELL operator-flow.test.js asserts over. SLN_07 and SLN_09 are
+// staging LANES and not positions, so they are drawn in the band; PLN_01 stages
+// at SLN_07, so the strip hangs under that band card.
+const cell = {
+    geometry: true,
+    positions: [
+        { core_node_name: 'PLN_01', sequence: 1, kind: 'front', x: 0, y: 0,
+          claim: { swap_mode: 'single_robot', payload_code: 'SYN-A-P010',
+                   inbound_staging: 'SLN_07', outbound_staging: 'SLN_09',
+                   inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT',
+                   key_route: ['LM_A', 'LM_B', 'LM_C'] } },
+        { core_node_name: 'PLN_04', sequence: 2, kind: 'front', x: 2, y: 0 },
+    ],
+    staging: [
+        { core_node_name: 'SLN_07', partner_of: 'PLN_01', partner_kind: 'staging', field: 'inbound_staging', x: 0.5, y: -1 },
+        { core_node_name: 'SLN_09', partner_of: 'PLN_01', partner_kind: 'staging', field: 'outbound_staging', x: 1.5, y: -1 },
+        { core_node_name: 'SLN_OFFERED' },
+    ],
+};
+document.getElementById('pic').innerHTML =
+    renderFlowPicture({ cell: cell, station: { name: 'SCREEN A4' } }, {});
+document.body.dataset.drawn = '1';
+</script>
+</body></html>`
+}
+
 func clickD5Driver(processID string) string {
 	return `<!doctype html><meta charset="utf-8"><title>click-d5</title>
 <body data-step="starting" data-result="">

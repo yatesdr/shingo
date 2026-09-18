@@ -50,7 +50,7 @@ function load() {
     const raw = fs.readFileSync(path.join(__dirname, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
     if (src === raw) throw new Error('operator-flow.js no longer starts its imports/exports at line start; update load()');
-    vm.runInContext(src + '\n__out = { renderFlowPicture, layoutPositions, legsFor, sentencesFromView, sentencesFromModel, CARD_W, CARD_H };', ctx);
+    vm.runInContext(src + '\n__out = { renderFlowPicture, layoutPositions, layoutStaging, legsFor, sentencesFromView, sentencesFromModel, CARD_W, CARD_H };', ctx);
     return ctx.__out;
 }
 
@@ -298,6 +298,136 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
     check('desktop still labels both rows', count(desk, />FRONT · LINE SIDE</g) === 1 && count(desk, />BACK</g) === 1);
 }
 
+// ── two routes at once, the short frames, and more LMs than fit ─────────────
+//
+// SYNTHETIC. A two-row cell where BOTH front positions stage on a back card and
+// BOTH carry a key route — the case the first cut could not draw at all,
+// because it ran every strip from the dock's IN glyph and so stacked them in
+// one corner of the picture.
+{
+    const two = () => ({
+        geometry: true,
+        positions: [
+            { core_node_name: 'PLN_03', sequence: 1, kind: 'front', x: 0, y: 0,
+              claim: { swap_mode: 'two_robot', payload_code: 'SYN-A-P010', inbound_staging: 'PLN_02',
+                       inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT', key_route: ['LM10', 'LM11'] } },
+            { core_node_name: 'PLN_06', sequence: 2, kind: 'front', x: 3, y: 0,
+              claim: { swap_mode: 'two_robot', payload_code: 'SYN-A-P011', inbound_staging: 'PLN_05',
+                       inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT', key_route: ['LM20', 'LM21'] } },
+            { core_node_name: 'PLN_02', sequence: 3, kind: 'back', x: 0, y: -1.8 },
+            { core_node_name: 'PLN_05', sequence: 4, kind: 'back', x: 3, y: -1.8 },
+        ],
+        staging: [],
+    });
+    const svg = m.renderFlowPicture({ cell: two(), station: { name: 'SCREEN' } }, {});
+
+    check('two routes: two strips', count(svg, /<g class="lmroute /g) === 2,
+        String(count(svg, /<g class="lmroute /g)));
+    check('two routes: two chevrons', count(svg, /<path class="lmtip"/g) === 2);
+
+    // EACH UNDER ITS OWN CARD, and that is the whole reason the drawing moved:
+    // the two lines sit on the two arriving cards' centres, which are far apart,
+    // so neither strip can be read as the other's.
+    const boxes = m.layoutPositions(two(), undefined).boxes;
+    const lineXs = [...svg.matchAll(/<path class="lmline" d="M([-\d.]+) /g)].map(mm => +mm[1]).sort((a, b) => a - b);
+    const want = [boxes.PLN_02, boxes.PLN_05].map(b => b.x + b.w / 2).sort((a, b) => a - b);
+    check('two routes: one under each arriving card',
+        lineXs.length === 2 && lineXs.every((x, i) => Math.abs(x - want[i]) < 0.5),
+        JSON.stringify({ lineXs: lineXs, cardCentres: want }));
+    check('two routes: they do not share a corner', lineXs.length === 2 && Math.abs(lineXs[1] - lineXs[0]) > 100,
+        JSON.stringify(lineXs));
+    check('two routes: each names its own points',
+        svg.includes('>1 · LM10<') && svg.includes('>2 · LM11<') &&
+        svg.includes('>1 · LM20<') && svg.includes('>2 · LM21<'));
+
+    // ROOM IS MADE FOR IT. liftAboveDock reserves the strip's height under the
+    // lowest row the same way it reserves the caption's, so the strip never
+    // crosses the dock's rule and the cards never leave the frame.
+    const dockY = +svg.match(/<line x1="[\d.]+" y1="([\d.]+)"/)[1];
+    const feet = [...svg.matchAll(/<path class="lmline" d="M[-\d.]+ ([-\d.]+) V/g)].map(mm => +mm[1]);
+    check('two routes: every strip stops above the dock rule',
+        feet.length === 2 && feet.every(y => y < dockY), JSON.stringify({ feet: feet, dockY: dockY }));
+    // THE CAPTION IS NOT IN THE STRIP'S BAND. It is the other left-anchored
+    // line under the last row, and the first shot of this drawing had the two
+    // printed over each other.
+    check('two routes: the station caption clears every strip', (() => {
+        const cap = svg.match(/<text class="mlbl" x="[\d.]+" y="([\d.]+)"[^>]*>SCREEN/);
+        if (!cap) return false;
+        return feet.every(y => y < +cap[1] - 8);
+    })(), JSON.stringify({ feet: feet, caption: (svg.match(/<text class="mlbl" x="[\d.]+" y="([\d.]+)"[^>]*>SCREEN/) || [])[1] }));
+    check('two routes: no card is pushed out of the frame',
+        Object.keys(boxes).every(n => boxes[n].y >= 20), JSON.stringify(Object.keys(boxes).map(n => boxes[n].y)));
+
+    // FOUR MUST FIT AT THE STATION FRAME. That is the sizing rule the tokens
+    // were chosen against; a fifth is reported rather than drawn.
+    const four = two();
+    four.positions[0].claim.key_route = ['LM10', 'LM11', 'LM12', 'LM13'];
+    const svg4 = m.renderFlowPicture({ cell: four, station: { name: 'SCREEN' } }, {});
+    check('four LMs fit at the station frame',
+        ['1 · LM10', '2 · LM11', '3 · LM12', '4 · LM13'].every(t => svg4.includes('>' + t + '<')) &&
+        !/lmmore/.test(svg4),
+        svg4.match(/<text class="lmlbl"[^>]*>[^<]*/g));
+
+    // MORE THAN FITS: the first three, then "+N" in the last slot. Never
+    // smaller type, and never a silently shortened route.
+    const six = two();
+    six.positions[0].claim.key_route = ['LM10', 'LM11', 'LM12', 'LM13', 'LM14', 'LM15'];
+    const svg6 = m.renderFlowPicture({ cell: six, station: { name: 'SCREEN' } }, {});
+    check('overflow: the first three are named',
+        ['1 · LM10', '2 · LM11', '3 · LM12'].every(t => svg6.includes('>' + t + '<')));
+    check('overflow: the rest are counted, not dropped', /<text class="lmmore"[^>]*>\+3<\/text>/.test(svg6),
+        svg6.match(/<text class="lmmore"[^>]*>[^<]*/g));
+    check('overflow: nothing past the count is drawn',
+        !svg6.includes('LM13') && !svg6.includes('LM14') && !svg6.includes('LM15'));
+
+    // THE DESKTOP'S FRAMES. The composer draws the same picture in a shorter
+    // box, and liftAboveDock is what keeps the strip inside it.
+    // 430 IS THE PICTURE BOX'S CSS BASIS (.pd-pic is `flex: 0 1 430px`), which
+    // it gets when the page is tall enough to give it. The frame it actually
+    // measures at 1440x900 is shorter and is pinned below.
+    const desk = m.renderFlowPicture({ cell: two(), station: { name: 'SCREEN' } }, { frame: { w: 1084, h: 430 } });
+    const deskDock = +desk.match(/<line x1="[\d.]+" y1="([\d.]+)"/)[1];
+    const deskFeet = [...desk.matchAll(/<path class="lmline" d="M[-\d.]+ ([-\d.]+) V/g)].map(mm => +mm[1]);
+    check('desktop 430: both strips are drawn', count(desk, /<g class="lmroute /g) === 2,
+        String(count(desk, /<g class="lmroute /g)));
+    check('desktop 430: both stay above the dock rule',
+        deskFeet.length === 2 && deskFeet.every(y => y < deskDock), JSON.stringify({ deskFeet: deskFeet, deskDock: deskDock }));
+    // ONE ROW IS ALL 430 HOLDS, and the count rides it. The composer's frame
+    // puts its cards against the picture's top inset, so liftAboveDock has
+    // nothing left to give and the band under the last row takes one waypoint.
+    // Naming the first and counting the rest is the "+N" rule at its limit; a
+    // strip that silently showed one point of three would be the lie.
+    check('desktop 430: the first point is named and the rest counted',
+        /<text class="lmlbl"[^>]*>1 · LM10 \+1<\/text>/.test(desk),
+        desk.match(/<text class="lm(lbl|more)"[^>]*>[^<]*/g));
+
+    // THE DESKTOP'S OWN FRAME DRAWS NO STRIP, and 1074x304 is not a guess: it
+    // is what the Processes page measures at 1440x900, logged by the shot
+    // harness ("picture 1074x304"). At that height the dock band and two rows
+    // of cards take the picture between them — the cards are already against
+    // the top inset, so liftAboveDock has nothing to give and 14 units are left
+    // under the lowest row where one waypoint row needs 72.
+    //
+    // NOTHING, rather than a chevron with no waypoint under it or a line across
+    // the dock's rule. The desktop is also the surface that does not need it:
+    // its positions table carries a KEY ROUTE column, which the board has no
+    // room for and which is why the strip exists.
+    const desktopReal = m.renderFlowPicture({ cell: two(), station: { name: 'SCREEN' } }, { frame: { w: 1074, h: 304 } });
+    check('desktop 1074x304 (the measured frame): no strip rather than a broken one',
+        !/<g class="lmroute /.test(desktopReal) && !/class="lmdot"/.test(desktopReal) && !/class="lmtip"/.test(desktopReal),
+        desktopReal.match(/<g class="lmroute[^>]*/g));
+    // AND IT IS THE PICTURE IT ALWAYS WAS. Reserving room for a strip that then
+    // cannot be drawn would have moved the cards for nothing; liftAboveDock
+    // takes the caption's lift instead where the strip will not fit.
+    check('desktop 1074x304: the cards are where they were before the strip existed', (() => {
+        const withRoute = m.layoutPositions(two(), { w: 1074, h: 304 }).boxes;
+        const plain = two();
+        for (const p of plain.positions) { if (p.claim) p.claim.key_route = []; }
+        const without = m.layoutPositions(plain, { w: 1074, h: 304 }).boxes;
+        return Object.keys(withRoute).every(n => withRoute[n].y === without[n].y);
+    })());
+}
+
 // ── the staging band, the legs it grew, and the LM marks ─────────────────────
 //
 // SYNTHETIC, not one of the three plant views. The three views above are the
@@ -345,38 +475,89 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
     check('legs: one says the robot moves in', svg.includes('>Robot 1 moves in<'));
     check('legs: one says the robot clears the old bin', svg.includes('>Robot 1 clears old<'));
 
-    // ── THE ROUTE STRIP (owner, 2026-09-17) ─────────────────────────────
+    // ── THE ROUTE STRIP (owner, 2026-09-17; redrawn from the side-by-side) ──
     //
     // "The point of the LMs isn't to represent them to scale, it's to direct
-    // flow." So the picture draws no LM GEOGRAPHY at all: it draws the ORDER
-    // the robot is sent through, as a strip from the card the trip arrives at
-    // to the dock's IN side. Order and direction are the content; distance is
-    // not, and nothing on the strip pretends to be a coordinate.
-    check('route: the strip is drawn', /<g class="lmroute /.test(svg), svg.match(/<g class="lmroute[^>]*/g));
+    // flow." So the picture draws no LM GEOGRAPHY: it draws the ORDER the robot
+    // is sent through, as a strip HANGING UNDER the card that trip arrives at,
+    // rising into the card's bottom edge. Order and direction are the content.
+    //
+    // HERE THE ARRIVING CARD IS A BAND CARD. PLN_01 stages at SLN_07, which is
+    // a staging lane and not a position, so this block is also the pin that a
+    // strip under a band card is drawn the same way and given room to be.
+    const strip = svg.match(/<g class="lmroute [^]*?<\/g>/);
+    check('route: the strip is drawn', !!strip, svg.match(/<g class="lmroute[^>]*/g));
     check('route: it is the trip’s robot colour', /<g class="lmroute r1"/.test(svg));
-    check('route: every chosen LM is on it, NAMED', svg.includes('>LM_A<') && svg.includes('>LM_B<') && svg.includes('>LM_C<'));
-    check('route: in driving order', (() => {
-        const i = ['LM_A', 'LM_B', 'LM_C'].map(n => svg.indexOf('>' + n + '<'));
-        return i[0] >= 0 && i[0] < i[1] && i[1] < i[2];
-    })(), svg.match(/>LM_[ABC]</g));
 
-    // EVENLY SPACED, which is the whole of "not to scale": three dots on one
-    // strip sit at equal intervals whatever the map says about the distances
-    // between them.
+    // IT HANGS UNDER THE ARRIVING CARD: a vertical line on that card's centre,
+    // its top ON the card's bottom edge. Not a horizontal run somewhere else in
+    // the picture, which is what this replaced.
+    const stgBox = m.layoutStaging(cell, undefined).boxes.SLN_07;
+    const line = svg.match(/<path class="lmline" d="M([-\d.]+) ([-\d.]+) V([-\d.]+)"/);
+    check('route: the line is vertical, on the arriving card’s centre',
+        !!line && Math.abs(+line[1] - (stgBox.x + stgBox.w / 2)) < 0.5,
+        line && JSON.stringify({ lineX: line[1], cardCx: stgBox.x + stgBox.w / 2 }));
+    check('route: its top is the arriving card’s bottom edge',
+        !!line && Math.abs(+line[3] - (stgBox.y + stgBox.h)) < 0.5,
+        line && JSON.stringify({ top: line[3], cardBottom: stgBox.y + stgBox.h }));
+    check('route: it hangs DOWN from the card', !!line && +line[2] > +line[3],
+        line && JSON.stringify({ foot: line[2], top: line[3] }));
+
+    // THE CHEVRON POINTS INTO THE CARD, which is where the bin is going.
+    const tip = svg.match(/<path class="lmtip" d="[^"]*" transform="translate\(([-\d.]+),([-\d.]+)\) rotate\((-?[\d.]+)\)"/);
+    check('route: one chevron', count(svg, /<path class="lmtip"/g) === 1);
+    check('route: the chevron points INTO the card', !!tip && +tip[3] === -90, tip && tip[3]);
+    check('route: the chevron sits just under the card’s edge',
+        !!tip && !!line && +tip[2] > +line[3] && (+tip[2] - +line[3]) < 24,
+        tip && line && JSON.stringify({ tipY: tip[2], cardBottom: line[3] }));
+
+    // NUMBERED IN DRIVING ORDER, READ BOTTOM TO TOP. "1 · LM_A" is the first
+    // point the robot passes and sits FURTHEST from the card; the last one is
+    // nearest it, because that is the order the trip happens in.
+    const lbls = [...svg.matchAll(/<text class="lmlbl" x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]+)<\/text>/g)]
+        .map(mm => ({ x: +mm[1], y: +mm[2], t: mm[3] }));
+    check('route: every chosen LM is on it, NAMED and NUMBERED',
+        lbls.length === 3 && lbls.map(l => l.t).join('|') === '1 · LM_A|2 · LM_B|3 · LM_C',
+        JSON.stringify(lbls.map(l => l.t)));
+    check('route: driving order reads bottom to top',
+        lbls.length === 3 && lbls[0].y > lbls[1].y && lbls[1].y > lbls[2].y,
+        JSON.stringify(lbls.map(l => l.y)));
+
+    // ONE BASELINE EACH, TO THE RIGHT OF THE LINE. No stagger: the alternating
+    // above/below baselines the first cut needed are gone with the horizontal
+    // run that forced them.
+    check('route: names sit to the right of the line',
+        !!line && lbls.length === 3 && lbls.every(l => l.x > +line[1]),
+        line && JSON.stringify({ lineX: line[1], labelX: lbls.map(l => l.x) }));
+    check('route: one column, no stagger',
+        lbls.length === 3 && lbls.every(l => l.x === lbls[0].x),
+        JSON.stringify(lbls.map(l => l.x)));
+
+    // EVENLY SPACED, which is the whole of "not to scale": the dots sit at
+    // equal intervals whatever the map says about the distances between them.
     check('route: evenly spaced', (() => {
-        const xs = [...svg.matchAll(/<circle class="lmdot" cx="([-\d.]+)"/g)].map(mm => +mm[1]);
-        if (xs.length !== 3) return false;
-        const d1 = xs[1] - xs[0], d2 = xs[2] - xs[1];
-        return Math.abs(d1 - d2) < 0.5 && Math.abs(d1) > 1;
-    })(), [...svg.matchAll(/<circle class="lmdot" cx="([-\d.]+)"/g)].map(mm => mm[1]).join(','));
+        const ys = [...svg.matchAll(/<circle class="lmdot" cx="[-\d.]+" cy="([-\d.]+)"/g)].map(mm => +mm[1]);
+        if (ys.length !== 3) return false;
+        const d1 = ys[0] - ys[1], d2 = ys[1] - ys[2];
+        return Math.abs(d1 - d2) < 0.5 && d1 > 1;
+    })(), [...svg.matchAll(/<circle class="lmdot" cx="[-\d.]+" cy="([-\d.]+)"/g)].map(mm => mm[1]).join(','));
 
-    // A CHEVRON, POINTING AT THE CELL. The strip runs dock → card, so travel
-    // is toward the cell and the existing mark says so.
-    check('route: one chevron, toward the cell', count(svg, /<path class="lmtip"/g) === 1);
+    // WHOSE TRIP IT IS, in the picture's muted token. The strip's colour says
+    // it too, and a colour alone is not a label.
+    check('route: it says whose trip it is', /<text class="lmvia"[^>]*>Robot 1 comes in via<\/text>/.test(svg),
+        svg.match(/<text class="lmvia"[^>]*>[^<]*/g));
+
+    // IT DOES NOT REACH THE DOCK. The strip is read-back about one card, not a
+    // second leg drawn from the IN glyph — which is what the first cut was, and
+    // what put two positions' routes in the same corner of the picture.
+    check('route: the strip does not touch the dock rule', (() => {
+        const dock = svg.match(/<line x1="[\d.]+" y1="([\d.]+)"/);
+        return !!dock && !!line && +line[2] < +dock[1];
+    })(), JSON.stringify({ foot: line && line[2] }));
 
     // NO GEOGRAPHY LEFT. The beads, the true-place marks and the coordinate
     // list they were read from are all gone.
-    check('route: no unnamed beads', !/<g class="lm[ "]/.test(svg), svg.match(/<g class="lm[^r][^>]*/g));
+    check('route: no unnamed beads', !/<g class="lm[ "]/.test(svg), svg.match(/<g class="lm[^rv][^>]*/g));
     check('route: nothing reads cell.lms', !svg.includes('LM_NOT_ON_ROUTE'));
 
     // NO KEY ROUTE, NOTHING EXTRA — "shortest way", which is what the panel
@@ -394,7 +575,7 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
     for (const p of schematic.positions) { delete p.x; delete p.y; }
     const sch = m.renderFlowPicture({ cell: schematic, station: { name: 'SCREEN' } }, {});
     check('route: the schematic draws the same strip',
-        /<g class="lmroute /.test(sch) && sch.includes('>LM_A<') && sch.includes('>LM_C<'));
+        /<g class="lmroute /.test(sch) && sch.includes('>1 · LM_A<') && sch.includes('>3 · LM_C<'));
     check('route: and still one chevron on it', count(sch, /<path class="lmtip"/g) === 1);
 }
 

@@ -1646,6 +1646,35 @@ test('styleFacts derives parts and nodes from the cells, agreeing with the serve
     assert.deepStrictEqual(M.styleFacts(null).parts, []);
 });
 
+// ── the picture the composer draws ───────────────────────────────────────────
+//
+// pictureCells is model state in the shape renderFlowPicture wants, and the
+// composer's picture is the ONLY one built that way — the board's comes off the
+// server's CellPicture. So a claim field the picture draws has to be carried
+// here as well, and key_route was not: the route strip was drawn on the board
+// and was missing from the composer and the desktop, which draw the same cell
+// through this function. The shot of it is 18-route-strip-composer.png.
+test('pictureCells carries the chosen key route onto the drawn claim', () => {
+    let s = initStyle(7);
+    const node = Object.keys(s.cells).find(n => s.cells[n].on && s.cells[n].mode);
+    assert.ok(node, 'the fixture has a cell that is on');
+    s = M.reduce(s, { type: 'setVia', node: node, via: ['LM_A', 'LM_B'] });
+
+    const drawn = M.pictureCells(s, { positions: [{ core_node_name: node }] });
+    const claim = drawn.positions[0].claim;
+    assert.ok(claim, 'a cell that is on draws a claim');
+    // THE PICTURE'S OWN FIELD NAME, which is the server's: renderFlowPicture
+    // reads pos.claim.key_route whichever side built the cell, and a second
+    // spelling here would draw on one surface and not the other.
+    assert.deepStrictEqual(claim.key_route, ['LM_A', 'LM_B']);
+
+    // AND NOTHING WHERE NOTHING WAS CHOSEN. "No key route" is the shortest way,
+    // and the picture draws nothing extra for it.
+    const cleared = M.reduce(s, { type: 'setVia', node: node, via: [] });
+    const bare = M.pictureCells(cleared, { positions: [{ core_node_name: node }] });
+    assert.deepStrictEqual(bare.positions[0].claim.key_route, []);
+});
+
 // ── report ───────────────────────────────────────────────────────────────────
 if (failures) {
     console.error('\n' + failures + ' failed, ' + checks + ' passed');
