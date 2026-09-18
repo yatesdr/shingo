@@ -197,15 +197,15 @@ func TestCompute_HealthyLineNotAtRisk(t *testing.T) {
 // CARRIER-0010 sitting at ALN_007 holding the payload the claim named.
 
 func TestCompute_StagedStockInSameProcessSatisfies(t *testing.T) {
-	k := key("SNF4", "63181-6SA0B.95")
+	k := key("SNF4", "SYN-PART04B.95")
 	in := Inputs{
 		Styles: []plantclaims.ProcessKey{k},
 		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{
-			k: {claim("ALN_007", "63125-6TA0A.06", 0)},
+			k: {claim("ALN_007", "SYN-PART01E.06", 0)},
 		},
 		// Nothing fetchable anywhere — the only bin is staged at the claim's node.
 		Pool:   map[string]int{},
-		OnLine: map[string]map[string]int{"SNF4": {"63125-6TA0A.06": 1}},
+		OnLine: map[string]map[string]int{"SNF4": {"SYN-PART01E.06": 1}},
 	}
 	got := byKey(Compute(in, Config{}, now))[k]
 	if got.Status != StatusGreen {
@@ -216,20 +216,20 @@ func TestCompute_StagedStockInSameProcessSatisfies(t *testing.T) {
 // THE SCOPING RULE, and the one that fails dangerously: leak it and a staged bin
 // anywhere in the plant turns every process's claim for that payload green.
 func TestCompute_StagedStockInAnotherProcessDoesNotSatisfy(t *testing.T) {
-	k := key("SNF4", "63181-6SA0B.95")
+	k := key("SNF4", "SYN-PART04B.95")
 	in := Inputs{
 		Styles: []plantclaims.ProcessKey{k},
 		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{
-			k: {claim("ALN_007", "63125-6TA0A.06", 0)},
+			k: {claim("ALN_007", "SYN-PART01E.06", 0)},
 		},
 		Pool:   map[string]int{},
-		OnLine: map[string]map[string]int{"SNF2": {"63125-6TA0A.06": 1}},
+		OnLine: map[string]map[string]int{"SNF2": {"SYN-PART01E.06": 1}},
 	}
 	got := byKey(Compute(in, Config{}, now))[k]
 	if got.Status != StatusRed {
 		t.Fatalf("status = %q, want red — the staged bin belongs to another process", got.Status)
 	}
-	if !reflect.DeepEqual(got.Missing, []string{"63125-6TA0A.06"}) {
+	if !reflect.DeepEqual(got.Missing, []string{"SYN-PART01E.06"}) {
 		t.Errorf("missing = %v, want the unsatisfied payload", got.Missing)
 	}
 }

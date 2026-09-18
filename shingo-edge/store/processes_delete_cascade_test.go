@@ -146,7 +146,7 @@ func TestDeleteProcess_RefusesWhileStockIsBooked(t *testing.T) {
 	pid, sid, nid, _ := seedProcessWithChildren(t, db, "P-Stocked")
 
 	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, style_id, payload_code, qty)
-		VALUES (?, ?, '76682-6TA0A.06', 240)`, nid, sid); err != nil {
+		VALUES (?, ?, 'SYN-PART12E.06', 240)`, nid, sid); err != nil {
 		t.Fatalf("insert bucket: %v", err)
 	}
 

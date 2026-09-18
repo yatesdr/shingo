@@ -118,8 +118,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// (F4) Lane and Payload were passed by every caller and read by none.
 			name:   "storage rearranging names lane and payload",
 			code:   protocol.QueueStorageRearranging,
-			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06"},
-			want:   "Rearranging lane L12 to reach 74368-6SA0A.06",
+			params: QueueParams{Lane: "L12", Payload: "SYN-PART06A.06"},
+			want:   "Rearranging lane L12 to reach SYN-PART06A.06",
 		},
 		{
 			// The scanner's reshuffle-congestion site has no lane NAME available
@@ -127,8 +127,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// than printing a raw lane ID at an operator.
 			name:   "storage rearranging without a lane still names the payload",
 			code:   protocol.QueueStorageRearranging,
-			params: QueueParams{Payload: "74368-6SA0A.06"},
-			want:   "Rearranging storage to reach 74368-6SA0A.06",
+			params: QueueParams{Payload: "SYN-PART06A.06"},
+			want:   "Rearranging storage to reach SYN-PART06A.06",
 		},
 		{
 			name: "storage rearranging with neither stays generic",
@@ -145,9 +145,9 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// told and this row is the record of the change:
 			//
 			//	name:   "storage rearranging names the dig and what it is uncovering"
-			//	params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+			//	params: QueueParams{Lane: "L12", Payload: "SYN-PART06A.06",
 			//	            DigOrderID: 4471, DigTarget: "LSD_011"},
-			//	want:   "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is uncovering LSD_011"
+			//	want:   "Rearranging lane L12 to reach SYN-PART06A.06 — dig 4471 is uncovering LSD_011"
 			//
 			// It had already stopped being reachable in the field: DigTarget came
 			// from digTargetOf, reading a column whose only writer was deleted with
@@ -155,9 +155,9 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// test was the last place the long sentence still appeared to work.
 			name: "storage rearranging names the dig",
 			code: protocol.QueueStorageRearranging,
-			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+			params: QueueParams{Lane: "L12", Payload: "SYN-PART06A.06",
 				DigOrderID: 4471},
-			want: "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is working this lane",
+			want: "Rearranging lane L12 to reach SYN-PART06A.06 — dig 4471 is working this lane",
 		},
 		{
 			// The id is the join key, and it is the whole clause now.
@@ -173,8 +173,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// invented, and zero means "not known", never "none".
 			name:   "storage rearranging with no dig resolved is unchanged",
 			code:   protocol.QueueStorageRearranging,
-			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06"},
-			want:   "Rearranging lane L12 to reach 74368-6SA0A.06",
+			params: QueueParams{Lane: "L12", Payload: "SYN-PART06A.06"},
+			want:   "Rearranging lane L12 to reach SYN-PART06A.06",
 		},
 		{
 			// (F3) Sibling was passed at the swap-hold call site and never read.

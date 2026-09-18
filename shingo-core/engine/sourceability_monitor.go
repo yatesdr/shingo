@@ -230,7 +230,7 @@ type verdictChange struct {
 // This is the whole point of Phase 5: the diff has existed since the monitor
 // was written, has been broadcast to every Edge, and has never been persisted
 // — so the root physical condition of 2026-07-21 (zero system stock on
-// 74577-6SA0A.06) was known continuously and recorded nowhere.
+// SYN-PART07A.06) was known continuously and recorded nowhere.
 //
 // Edge-triggered, so steady state writes nothing. Best-effort: a failed write
 // is logged, never fatal — losing a history row must not stop the monitor

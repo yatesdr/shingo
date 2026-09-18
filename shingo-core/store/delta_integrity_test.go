@@ -110,21 +110,21 @@ func TestDeltaIntegrity_NetIsSignedTowardTheLedger(t *testing.T) {
 	db := testdb.Open(t)
 	base := time.Now().UTC().Add(-2 * time.Hour)
 
-	seedBinWithUOP(t, db, "DI-SPR", "74577-6SA0A.06", -443)
-	binID := seedBinWithUOP(t, db, "DI-SPR-2", "74577-6SA0A.06", 0)
+	seedBinWithUOP(t, db, "DI-SPR", "SYN-PART07A.06", -443)
+	binID := seedBinWithUOP(t, db, "DI-SPR-2", "SYN-PART07A.06", 0)
 
 	// Dropped credits: count never went up by these.
-	seedDrop(t, db, int(binID), 1, "stale_epoch_dropped", "74577-6SA0A.06", 300, 0, base)
-	seedDrop(t, db, int(binID), 2, "payload_mismatch_dropped", "74577-6SA0A.06", 200, 0, base)
+	seedDrop(t, db, int(binID), 1, "stale_epoch_dropped", "SYN-PART07A.06", 300, 0, base)
+	seedDrop(t, db, int(binID), 2, "payload_mismatch_dropped", "SYN-PART07A.06", 200, 0, base)
 	// A dropped consume pushes the other way: the count reads too HIGH by 57.
-	seedDrop(t, db, int(binID), 3, "stale_epoch_dropped", "74577-6SA0A.06", -57, 0, base)
+	seedDrop(t, db, int(binID), 3, "stale_epoch_dropped", "SYN-PART07A.06", -57, 0, base)
 
 	got, err := db.DeltaIntegrityByPayload(base.Add(-time.Hour))
 	testutil.MustNoErr(t, err, "DeltaIntegrityByPayload")
 
 	var row *domain.DeltaIntegrity
 	for i := range got {
-		if got[i].PayloadCode == "74577-6SA0A.06" {
+		if got[i].PayloadCode == "SYN-PART07A.06" {
 			row = &got[i]
 		}
 	}

@@ -43,7 +43,7 @@ func tableDDL(db *sql.DB, table string) string {
 // covers live rows.
 //
 // The index move is not cosmetic. As a table constraint the UNIQUE applies to
-// soft-deleted rows too, so retiring style "74368-6SA0A.95" and later
+// soft-deleted rows too, so retiring style "SYN-PART06A.95" and later
 // re-creating it under the same name in the same process would fail with a
 // constraint error the operator cannot act on. The partial index gives the
 // intended behaviour: names are unique among live styles, and a tombstone

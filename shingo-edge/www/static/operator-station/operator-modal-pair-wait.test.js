@@ -93,11 +93,11 @@ eq(pairWaitingLabel([{ status: 'faulted' }]), BASE + ' — faulted, recovering',
 // one dropped.
 const twoCauses = [
     { id: 3994, status: 'staged', queue_reason: 'Holding this leg until partner order 4023cd47 secures a bin' },
-    { id: 3993, status: 'sourcing', queue_reason: 'Waiting for material: 74577-6SA0A.06' },
+    { id: 3993, status: 'sourcing', queue_reason: 'Waiting for material: SYN-PART07A.06' },
 ];
 eq(pairWaitingLabel(twoCauses),
     BASE + ' — 1 of 2 parked; order 3993 sourcing'
-    + ' — Holding this leg until partner order 4023cd47 secures a bin; Waiting for material: 74577-6SA0A.06',
+    + ' — Holding this leg until partner order 4023cd47 secures a bin; Waiting for material: SYN-PART07A.06',
     'both causes reach the operator, with the position and the leg to watch');
 
 // ── One cause, twice: pooled, not doubled ──────────────────────────────
@@ -161,12 +161,12 @@ const digPair = [
     { id: 601, status: 'sourcing', sibling_order_id: 602,
         queue_reason: 'Waiting for partner order 4023cd47 to dig out its bin — the two legs go together' },
     { id: 602, status: 'reshuffling', sibling_order_id: 601,
-        queue_reason: 'Rearranging lane L12 to reach 74577-6SA0A.06' },
+        queue_reason: 'Rearranging lane L12 to reach SYN-PART07A.06' },
 ];
 
 // 18. two_robot: the card takes the PAIR arm, with the whole pair on it. The
 // in-flight arm beneath it shows one leg's cause.
-const TWO_ROBOT = { swap_mode: 'two_robot', role: 'consume', payload_code: '74577-6SA0A.06' };
+const TWO_ROBOT = { swap_mode: 'two_robot', role: 'consume', payload_code: 'SYN-PART07A.06' };
 eq(JSON.stringify(cardFor(digPair, true, TWO_ROBOT)), pairArm(digPair),
     'census 18: a held two_robot pair takes the pair arm — disabled, both causes on it');
 

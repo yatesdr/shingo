@@ -422,7 +422,7 @@ func causeForCapacity(k capacityKind, siteCause QueueCause) QueueCause {
 //
 // For capacityUnknown the payload is deliberately withheld. Classification is
 // substring matching over untyped resolver errors, so an unrecognised message is
-// a real possibility — and "Waiting for material: 74368-6SA0A.06" would be a
+// a real possibility — and "Waiting for material: SYN-PART06A.06" would be a
 // confident claim derived from an unclassified error. It renders "Waiting for
 // material" instead (F7).
 // payloadCode and deliveryNode come from the order at replay, or from the parsed

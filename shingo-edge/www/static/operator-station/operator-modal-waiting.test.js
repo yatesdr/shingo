@@ -86,8 +86,8 @@ eq(waitingLabel(undefined), BASE, 'undefined blocker → bare base');
 
 // queue_reason is Core's whole sentence and always wins over the status word.
 // These two are the literal strings observed on SPR ALN_003 2026-07-31.
-eq(waitingLabel({ status: 'acknowledged', queue_reason: 'Waiting for material: 74577-6SA0A.06' }),
-    BASE + ' — Waiting for material: 74577-6SA0A.06',
+eq(waitingLabel({ status: 'acknowledged', queue_reason: 'Waiting for material: SYN-PART07A.06' }),
+    BASE + ' — Waiting for material: SYN-PART07A.06',
     'queue_reason wins over status (SPR waiting_for_material)');
 eq(waitingLabel({ status: 'acknowledged', queue_reason: 'Holding this leg until partner order 4023cd47 secures a bin' }),
     BASE + ' — Holding this leg until partner order 4023cd47 secures a bin',

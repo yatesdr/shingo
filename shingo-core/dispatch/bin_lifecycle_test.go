@@ -36,7 +36,7 @@ func TestEvacBindsResidentOffStyleBin(t *testing.T) {
 	// The resident bin at the line is an OFF-STYLE leftover — its payload differs
 	// from bp.Code, which is the order's active-style tag. UOP 0 (consumed), like
 	// the real SPR bin.
-	const offStyle = "63144-6TA1A.10"
+	const offStyle = "SYN-PART02G.10"
 	residentBin := &bins.Bin{BinTypeID: 1, Label: "EVAC-RESIDENT", NodeID: &lineNode.ID, Status: "staged"}
 	testutil.MustNoErr(t, db.CreateBin(residentBin), "create resident bin")
 	testutil.MustNoErr(t, db.SetBinManifest(residentBin.ID, `{"items":[{"catid":"PART-OLD","qty":0}]}`, offStyle, 0), "set off-style manifest")

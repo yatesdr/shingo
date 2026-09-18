@@ -59,7 +59,7 @@ const build = ctx.build;
 {
     const html = build({
         bin_type_codes: ['TOTE-L'],
-        payload_codes: ['76683-6TA0A.06'],
+        payload_codes: ['SYN-PART13E.06'],
         for_nodes: ['PLN_002', 'PLN_004'],
         changeover_id: 12,
     }).innerHTML;
@@ -67,7 +67,7 @@ const build = ctx.build;
     ok(/TOTE-L/.test(html), 'the bin type is on the card', 'TOTE-L', html);
     ok(/CHANGEOVER/i.test(html), 'the card says why it is there', 'mentions CHANGEOVER', html);
     ok(/LOAD/i.test(html), 'the card states the action', 'mentions LOAD', html);
-    ok(/76683-6TA0A\.06/.test(html), 'the payload gives the "for what"', 'the payload code', html);
+    ok(/SYN-PART13E\.06/.test(html), 'the payload gives the "for what"', 'the payload code', html);
     ok(/PLN_002/.test(html) && /PLN_004/.test(html),
         'both waiting cells are named', 'PLN_002 and PLN_004', html);
 

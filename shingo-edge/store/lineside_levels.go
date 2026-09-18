@@ -15,8 +15,8 @@ import "fmt"
 // identity from style_node_claims.payload_code via active_claim_id — the
 // REQUESTED identity, which a changeover moves whether or not anything physical
 // moves with it. Between 2026-09-02 and 2026-09-05 that made ALN_007 report
-// 74871-6SA1A.06, a part of which zero existed plant-wide, against a carrier
-// holding 7032 of 63125-6TA0A.06. Because the payload is the join key on Core,
+// SYN-PART09D.06, a part of which zero existed plant-wide, against a carrier
+// holding 7032 of SYN-PART01E.06. Because the payload is the join key on Core,
 // the wrong name did two things at once: it suppressed replenishment of a part
 // that did not exist, and it silently removed the real part from the correction
 // this feed exists to make.

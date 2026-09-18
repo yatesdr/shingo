@@ -324,7 +324,7 @@ const FEED = {
     events: [
         // newest first, as the endpoint returns them
         { process_key: 'SNF2', style_id: 'A', status: 'green', missing_payload: '', reason: '', observed_at: '2026-07-26T09:41:00Z' },
-        { process_key: 'SNF2', style_id: 'A', status: 'red', missing_payload: '76683-6SA0B.06', reason: 'missing 76683-6SA0B.06, 74577-6SA0A.06', observed_at: '2026-07-26T09:14:00Z' },
+        { process_key: 'SNF2', style_id: 'A', status: 'red', missing_payload: 'SYN-PART13B.06', reason: 'missing SYN-PART13B.06, SYN-PART07A.06', observed_at: '2026-07-26T09:14:00Z' },
         { process_key: 'SNF2', style_id: 'A', status: 'green', missing_payload: '', reason: '', observed_at: '2026-07-26T09:13:30Z' },
     ],
 };
@@ -386,7 +386,7 @@ console.log('sourcing/history: not-applicable is not the same cell as no-data');
     // The column holds only the FIRST missing payload; the full list is in
     // reason, and the panel must say so rather than truncate silently.
     check('a multi-payload reason is flagged', html.indexOf('and more') >= 0, html);
-    check('the full list is in the title', html.indexOf('74577-6SA0A.06') >= 0, html);
+    check('the full list is in the title', html.indexOf('SYN-PART07A.06') >= 0, html);
 }
 
 console.log('sourcing/history: the count travels with its window');

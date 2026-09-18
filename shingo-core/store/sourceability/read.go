@@ -134,7 +134,7 @@ func availablePoolByPayload(db *sql.DB) (map[string]int, error) {
 // there. Excluding it lumped "the parts are at the line" together with "the parts
 // do not exist", and the page said "no available bin in Shingo" about a bin
 // sitting at ALN_007 holding 30 parts of the payload the claim named (SPR,
-// 2026-07-29, style 63181-6SA0B.95 — CARRIER-0010 staged there for ~50h).
+// 2026-07-29, style SYN-PART04B.95 — CARRIER-0010 staged there for ~50h).
 //
 // The codebase already treated that bin as present: lineUOPByNode below applies
 // NO status filter, so its UOP feeds the at-risk projection. One bin was counted

@@ -1655,7 +1655,7 @@ func TestHandleDelivered_FallbackCarriesThePayload(t *testing.T) {
 	mgr := NewManager(db, emitter, "edge.station")
 
 	binID := int64(7788)
-	payload := "63125-6TA0A.06"
+	payload := "SYN-PART01E.06"
 	err := mgr.HandleDeliveredWithExpiry("uuid-core-admin-no-edge-row", "", nil,
 		&binID, nil, &payload, 5, "ALN_007", "")
 	if err == nil {

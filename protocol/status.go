@@ -297,7 +297,7 @@ func ValidTermCode(c TermCode) bool {
 // The live terminal-code distribution at Springfield is two values,
 // no_source_bin and grace_timeout, so the code alone partitions a hundred
 // failures into two buckets and answers nothing. "no_source_bin" is a
-// category; "no_source_bin at PLN_01.R1 for 74577-6SA0A.06" is a job. The
+// category; "no_source_bin at PLN_01.R1 for SYN-PART07A.06" is a job. The
 // reference IS the resolution, which is why it is designed in from the start
 // rather than added when a bare code column turns out to age badly.
 //
@@ -342,7 +342,7 @@ func (r TermRef) Empty() bool {
 // String renders the reference the way the design writes it — the form that
 // belongs in a log line beside the code:
 //
-//	node=PLN_01.R1, payload=74577-6SA0A.06
+//	node=PLN_01.R1, payload=SYN-PART07A.06
 func (r TermRef) String() string {
 	parts := make([]string, 0, 6)
 	if r.Node != "" {

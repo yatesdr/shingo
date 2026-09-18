@@ -52,7 +52,7 @@ func TestRejectReasonCannotDriftFromEligible(t *testing.T) {
 
 // TestRejectReasonNamesTheFirstFailure pins the tags a diagnostic reader will
 // actually see, including the two that mattered at Springfield 2026-08-05:
-// a payload that is nearly right (`63144-6TA1A.06` vs `.10`) and a full bin that
+// a payload that is nearly right (`SYN-PART02G.06` vs `.10`) and a full bin that
 // was never confirmed — both of which look like a present, healthy bin on every
 // surface except this one.
 func TestRejectReasonNamesTheFirstFailure(t *testing.T) {

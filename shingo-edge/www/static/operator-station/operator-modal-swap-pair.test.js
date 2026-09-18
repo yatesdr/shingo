@@ -10,7 +10,7 @@
 // Two consumers read that list POSITIONALLY and both got the wrong answer:
 //   - the blocker label took the first non-staged order over a created_at-sorted
 //     list, so the OLDEST leftover won and the operator was told "Waiting for
-//     material: 76683-6TA0A.06" — the style the line was changing AWAY FROM —
+//     material: SYN-PART13E.06" — the style the line was changing AWAY FROM —
 //     during the changeover to 76682.
 //   - the >=2 count decided whether the disabled WAITING button appears at all.
 //     That count is the recovery surface: when one leg of a swap dies it should
@@ -74,7 +74,7 @@ eq(ids(swapPair([supply, evac])), '3994,3993', 'clean pair resolves, staged leg 
 const ghost = {
     id: 3980,
     status: 'delivered',
-    queue_reason: 'Waiting for material: 76683-6TA0A.06',
+    queue_reason: 'Waiting for material: SYN-PART13E.06',
     sibling_order_id: 3981,   // its own long-dead partner, not in the active list
 };
 

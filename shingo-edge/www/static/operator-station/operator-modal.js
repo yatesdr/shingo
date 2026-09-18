@@ -783,7 +783,7 @@ function cellCardAction(entry, claim, remaining) {
 // to 22:39. Two consumers read that list positionally and both got the wrong
 // answer from it: the blocker label (`find` first non-staged, over a list sorted
 // by created_at, so the OLDEST leftover won and the operator was shown a stale
-// "Waiting for material: 76683-6TA0A.06" naming the style they were changing
+// "Waiting for material: SYN-PART13E.06" naming the style they were changing
 // away from) and the >=2 count that decides whether the disabled WAITING button
 // appears at all.
 //
@@ -823,7 +823,7 @@ function swapPair(active) {
 // held it queued on `waiting_for_material` with no bin in the pool.
 //
 // queue_reason is preferred over the status word because it is a whole sentence
-// from Core ("Waiting for material: 74577-6SA0A.06") and because it survives
+// from Core ("Waiting for material: SYN-PART07A.06") and because it survives
 // the status-write path independently — SetOrderQueueReason bypasses the
 // transition validator, so the reason lands on the Edge row even in the window
 // where the status push itself was refused.

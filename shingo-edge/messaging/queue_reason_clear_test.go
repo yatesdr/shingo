@@ -16,7 +16,7 @@ import (
 // queues an order and clears its OWN copy on dispatch without ever pushing the
 // clear, so the Edge's copy survived forever. Springfield 2026-08-03 — Core's
 // queue_reason for order 4017 was empty while the Edge still read "Waiting for
-// material: 76683-6TA0A.06", and the operator-station modal displayed that
+// material: SYN-PART13E.06", and the operator-station modal displayed that
 // sentence 2½ hours later, during a changeover to a different style, naming the
 // style the line had already left.
 //
@@ -69,7 +69,7 @@ func seedQueuedWithReason(t *testing.T, h *EdgeHandler, db *store.DB, uuid strin
 	h.HandleOrderUpdate(nil, &protocol.OrderUpdate{
 		OrderUUID:   uuid,
 		Status:      string(protocol.StatusQueued),
-		QueueReason: "Waiting for material: 76683-6TA0A.06",
+		QueueReason: "Waiting for material: SYN-PART13E.06",
 		QueueCode:   "waiting_for_material",
 	})
 	o, _ := db.GetOrder(id)
@@ -138,7 +138,7 @@ func TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing(t *testing.T) {
 	h.HandleOrderUpdate(nil, &protocol.OrderUpdate{
 		OrderUUID:   "uuid-sourcing",
 		Status:      string(protocol.StatusSourcing),
-		QueueReason: "Waiting for material: 76683-6TA0A.06",
+		QueueReason: "Waiting for material: SYN-PART13E.06",
 		QueueCode:   "waiting_for_material",
 	})
 

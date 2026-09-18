@@ -336,8 +336,8 @@ func TestHandlePlantClaims_MirrorsTheRunningStyle(t *testing.T) {
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 1, []styleSpec{
-		{name: "74595-6SA0A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
-		{name: "76680-6TA0A.95", active: true, claims: []claimSpec{{node: "STOR-02", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
+		{name: "SYN-PART08A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+		{name: "SYN-PART11E.95", active: true, claims: []claimSpec{{node: "STOR-02", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
 		{name: "Default", claims: []claimSpec{{node: "STOR-03", payload: "BIN-C", allowed: []string{"BIN-C"}}}},
 	}))
 
@@ -345,8 +345,8 @@ func TestHandlePlantClaims_MirrorsTheRunningStyle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ActiveStyles: %v", err)
 	}
-	if got := active["SNF2"]; got != "76680-6TA0A.95" {
-		t.Fatalf("running style = %q, want 76680-6TA0A.95", got)
+	if got := active["SNF2"]; got != "SYN-PART11E.95" {
+		t.Fatalf("running style = %q, want SYN-PART11E.95", got)
 	}
 	if len(active) != 1 {
 		t.Fatalf("active styles = %v, want exactly one process marked", active)
@@ -363,8 +363,8 @@ func TestHandlePlantClaims_NoActiveStyleIsNotGuessed(t *testing.T) {
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 
 	svc.HandlePlantClaims(nil, plantClaimsReport("P47", 1, []styleSpec{
-		{name: "81220-6SA0A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
-		{name: "81220-6SA0B.95", claims: []claimSpec{{node: "STOR-02", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
+		{name: "SYN-PART14A.95", claims: []claimSpec{{node: "STOR-01", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+		{name: "SYN-PART14B.95", claims: []claimSpec{{node: "STOR-02", payload: "BIN-B", allowed: []string{"BIN-B"}}}},
 	}))
 
 	active, err := sourceability.ActiveStyles(db.DB)

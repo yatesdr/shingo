@@ -40,7 +40,7 @@ func TestMarkFaulted_RowCarriesTheFleetsReasonAndStaysUncoded(t *testing.T) {
 	ord := makeOrderAt(t, db, "fault-ref-1", StatusInTransit)
 
 	ref := protocol.TermRef{
-		Node: "ALN_003", Payload: "74577-6SA0A.06",
+		Node: "ALN_003", Payload: "SYN-PART07A.06",
 		VendorCode: 60011, VendorDesc: "cannot replan",
 	}
 	testutil.MustNoErr(t, lc.MarkFaulted(ord, "AMR-04", ref, "Replanning"), "MarkFaulted")
@@ -55,7 +55,7 @@ func TestMarkFaulted_RowCarriesTheFleetsReasonAndStaysUncoded(t *testing.T) {
 	// Where must survive alongside why. historyReason only defaults node and
 	// payload when the ref is EMPTY, so a ref carrying just a vendor code would
 	// record the reason and silently lose the location.
-	if h.Ref.Node != "ALN_003" || h.Ref.Payload != "74577-6SA0A.06" {
+	if h.Ref.Node != "ALN_003" || h.Ref.Payload != "SYN-PART07A.06" {
 		t.Errorf("faulted row lost where it happened: %+v", *h.Ref)
 	}
 	// code stays empty. "" is the documented value for uncoded, and one vendor

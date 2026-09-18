@@ -47,9 +47,9 @@ func TestLinesideCarrier_ZeroValueIsUnknown(t *testing.T) {
 
 func TestLinesideCarrier_CarriesItsPayload(t *testing.T) {
 	t.Parallel()
-	c := KnownCarrier("63145-6TA1B.10")
+	c := KnownCarrier("SYN-PART03H.10")
 	p, ok := c.Payload()
-	if !ok || p != "63145-6TA1B.10" {
+	if !ok || p != "SYN-PART03H.10" {
 		t.Errorf("Payload() = (%q, %v), want the payload and true", p, ok)
 	}
 	if c.IsEmpty() {

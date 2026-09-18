@@ -170,7 +170,7 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 	// 2026-07-21 re-arm churn (the monitor saw the cancel move the in-loop UOP,
 	// re-armed the changeover, the planner rebuilt the pair, the supply parked
 	// again, the evac died again — hundreds of doomed swaps per changeover,
-	// 74577-6SA0A.06, zero system stock).
+	// SYN-PART07A.06, zero system stock).
 	//
 	// Among legs that name each other there is no such thing as a half-dispatched
 	// pair now: both dispatch in one pass or neither does, and every Edge door

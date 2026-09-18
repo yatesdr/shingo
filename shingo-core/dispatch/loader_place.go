@@ -115,8 +115,8 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// PAYLOAD BEFORE CAPACITY, because both arms below only ever answer "is
 		// there room?" and room is not the question a pinned home asks.
 		//
-		// Springfield, 2026-09-03 01:40:40: a 74871-6SA0A.06 carrier parked on
-		// SMN_029, which is pinned 63145-6TA1B.10. Every check passed and each
+		// Springfield, 2026-09-03 01:40:40: a SYN-PART09A.06 carrier parked on
+		// SMN_029, which is pinned SYN-PART03H.10. Every check passed and each
 		// was right on its own terms — the home read CLEAR because the carrier
 		// standing on it was this swap's own supply bin, already being lifted by
 		// the sibling leg, so in-flight was 0 and nothing was physically there.

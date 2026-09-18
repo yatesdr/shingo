@@ -811,7 +811,7 @@ func TestBuildMovement_KitPostsOneRowPerPartNotPerPayload(t *testing.T) {
 	f := newFakeStore()
 	addBoundary(f, 1, "src", "SM01")
 	addBoundary(f, 2, "dst", "MAN")
-	const kit = "74343-6SA0A.06"
+	const kit = "SYN-PART05A.06"
 	f.setTemplate(100, kit, 1000, map[string]int64{"51015-LH": 1, "51015-RH": 1})
 	bin := &bins.Bin{ID: 10, Label: "B15", PayloadCode: kit, UOPRemaining: 1000}
 	setManifest(bin, []bins.ManifestEntry{{PartNumber: "51015-LH"}, {PartNumber: "51015-RH"}})

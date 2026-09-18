@@ -32,8 +32,8 @@ func TestEpisodeKeyFormats_ArePinned(t *testing.T) {
 	}{
 		{
 			name: "threshold is the plant-unique Core node and the payload — NO station",
-			got:  protocol.ThresholdEpisodeKey("SLN_002", "74577-6SA0A.06"),
-			want: "thr|SLN_002|74577-6SA0A.06",
+			got:  protocol.ThresholdEpisodeKey("SLN_002", "SYN-PART07A.06"),
+			want: "thr|SLN_002|SYN-PART07A.06",
 		},
 		{
 			// CHANGED DELIBERATELY, and this test is what required it to be
@@ -84,10 +84,10 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 	}{
 		{
 			name: "threshold",
-			key:  protocol.ThresholdEpisodeKey("SMN_001", "74577-6SA0A.06"),
+			key:  protocol.ThresholdEpisodeKey("SMN_001", "SYN-PART07A.06"),
 			want: protocol.ParsedEpisodeKey{
 				Kind:     protocol.EpisodeKindThreshold,
-				CoreNode: "SMN_001", Payload: "74577-6SA0A.06",
+				CoreNode: "SMN_001", Payload: "SYN-PART07A.06",
 			},
 		},
 		{
@@ -197,8 +197,8 @@ func TestCellEpisodeKey_ProcessGrainAndDirection(t *testing.T) {
 // blanket-migration mistake, committed inside one 180-line file.
 func TestEpisodeKeys_StationScopeByKind(t *testing.T) {
 	t.Run("threshold ignores the station — the node name is plant-unique", func(t *testing.T) {
-		a := protocol.ThresholdEpisodeKey("SLN_002", "74577-6SA0A.06")
-		b := protocol.ThresholdEpisodeKey("SLN_002", "74577-6SA0A.06")
+		a := protocol.ThresholdEpisodeKey("SLN_002", "SYN-PART07A.06")
+		b := protocol.ThresholdEpisodeKey("SLN_002", "SYN-PART07A.06")
 		if a != b {
 			t.Fatalf("one node+payload must be one episode: %q vs %q", a, b)
 		}
@@ -285,7 +285,7 @@ func TestParseEpisodeKey_RejectsMalformed(t *testing.T) {
 		"mnt||45x58x32",              // no group — names no place
 		"mnt|SYN_EMPTIES|",           // no type — cannot say what it is short OF
 		"mnt|SYN_EMPTIES|45x58|32",   // a type code carrying the separator
-		"thr||74577-6SA0A.06",        // no Core node — names no place
+		"thr||SYN-PART07A.06",        // no Core node — names no place
 		"co|line-1",                  // missing id
 		"threshold|SMN_001|P",        // the kind's NAME, not its prefix
 		"SMN_001|P",                  // a bare bindingKey with no kind
@@ -297,7 +297,7 @@ func TestParseEpisodeKey_RejectsMalformed(t *testing.T) {
 		// demand_origins is unshipped so no stored key has these shapes, but a
 		// mixed-version pair of services can still emit one.
 		"cell|plant-a.line-1|SNF2|PANEL-B|supply",
-		"thr|plant-a.line-1|SLN_002|74577-6SA0A.06",
+		"thr|plant-a.line-1|SLN_002|SYN-PART07A.06",
 	} {
 		if got, err := protocol.ParseEpisodeKey(bad); err == nil {
 			t.Errorf("ParseEpisodeKey(%q) accepted a malformed key as %+v", bad, got)

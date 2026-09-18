@@ -18,7 +18,7 @@ import (
 // changeover; the Edge stamped that node `abandoned` (terminal, deliberately —
 // see wiring_completion.go, it is the fix for the Hopkinsville 2026-07-28 wedge)
 // and the changeover completed 73 s later. The cell was then recorded as running
-// 63145-6TA1B.10 while a 74871-6SA0A.06 carrier still stood on it. Eighteen
+// SYN-PART03H.10 while a SYN-PART09A.06 carrier still stood on it. Eighteen
 // minutes after that an operator requested 63145, the Edge built an ordinary
 // same-style swap, and the evac leg took its destination from the REQUESTED
 // style's claim — 63145's dedicated home, SMN_029. A 74871 carrier was driven

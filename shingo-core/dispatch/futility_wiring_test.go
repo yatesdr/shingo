@@ -59,7 +59,7 @@ func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 3, clk)
 
-	key := FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "74577-6SA0A.06"}
+	key := FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "SYN-PART07A.06"}
 	for i := range 3 {
 		o := seedFutilityOrder(t, db, "fut-q-"+string(rune('a'+i)), key.ProcessNode, key.PayloadCode)
 		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})

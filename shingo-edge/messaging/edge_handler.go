@@ -89,7 +89,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	// written and never unwritten, because Core pushes a reason when it queues an
 	// order and clears its OWN copy on dispatch without ever pushing the clear.
 	// Springfield 2026-08-03: Core's queue_reason for order 4017 was empty while
-	// the Edge's still read "Waiting for material: 76683-6TA0A.06", and the
+	// the Edge's still read "Waiting for material: SYN-PART13E.06", and the
 	// operator-station modal displayed that sentence during the NEXT changeover,
 	// 2½ hours later, naming the style the line had already moved off.
 	//

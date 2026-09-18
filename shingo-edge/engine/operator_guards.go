@@ -46,7 +46,7 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 //
 // ── THIS IS THE SPRINGFIELD 2026-07-21 CHURN'S ACTUAL FIX ─────────────────
 //
-// 74577-6SA0A.06, zero system stock, hundreds of doomed swaps in one
+// SYN-PART07A.06, zero system stock, hundreds of doomed swaps in one
 // changeover. The loop: the evac leg died, Core's peer-terminal handler
 // cancelled the supply with it, the monitor saw that cancel move the in-loop
 // UOP, re-armed the changeover, the planner rebuilt the pair, the supply parked

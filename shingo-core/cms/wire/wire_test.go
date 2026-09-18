@@ -334,7 +334,7 @@ func TestBuild_JSONKeysAreTheVendorsNotOurs(t *testing.T) {
 func TestBuild_MultiLinePayloadIsNotPostedPerLine(t *testing.T) {
 	t.Parallel()
 
-	const payload = "74343-6SA0A.06"
+	const payload = "SYN-PART05A.06"
 	got := Build([]*cms.Transaction{
 		{ID: 1, PayloadCode: payload, CatID: "51015-LH",
 			Storeroom: "SM01", BinLabel: "SHG:0015", Delta: -1000, SourceType: "movement"},

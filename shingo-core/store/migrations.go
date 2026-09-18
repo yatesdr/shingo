@@ -1979,7 +1979,7 @@ func v57RenameDowntimePartitions(tx *sql.Tx) error {
 // The monitor recomputes per-(process, style) sourceability, already runs the
 // edge-triggered diff (wireChanged), broadcasts the result to Edge — and
 // stores nothing. The 2026-07-21 incident's root physical condition was zero
-// system stock on 74577-6SA0A.06. ShinGo knew, continuously, and did not write
+// system stock on SYN-PART07A.06. ShinGo knew, continuously, and did not write
 // it down.
 //
 // Column vocabulary follows bin_uop_audit (op / source / actor / metadata)

@@ -189,7 +189,7 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 //
 // The monitor has computed this diff every two minutes since it was written
 // and never wrote it down, so the root physical condition of 2026-07-21 —
-// zero system stock on 74577-6SA0A.06 — was known continuously and recorded
+// zero system stock on SYN-PART07A.06 — was known continuously and recorded
 // nowhere.
 //
 // ?since=<RFC3339> (default 7 days), ?process=, ?payload=, ?limit=.

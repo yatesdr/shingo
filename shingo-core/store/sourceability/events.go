@@ -5,7 +5,7 @@
 // result to every Edge — and writes nothing down.
 //
 // The 2026-07-21 incident's root physical condition was zero system stock on
-// 74577-6SA0A.06. ShinGo knew that, continuously, for the whole window, and
+// SYN-PART07A.06. ShinGo knew that, continuously, for the whole window, and
 // there is no record of it. This table is that record.
 //
 // What it buys: "SNF2 went unsourceable at 09:14 missing -6SA0B.06, recovered

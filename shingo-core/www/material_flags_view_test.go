@@ -57,13 +57,13 @@ func TestBindingSelectionIgnoresTheLedgerSign(t *testing.T) {
 	// Springfield bin 27: the LONGEST binding in the dump, 22.99 days, ledger
 	// −774 against a 4,500-unit capacity = 0.17 binloads. A depth filter never
 	// sees it. It must be a candidate, and its reading must be the mild one.
-	shallowAndOld := carrier(27, "63125-6TA0A.06", -774, 4500, 22*24*time.Hour+23*time.Hour)
+	shallowAndOld := carrier(27, "SYN-PART01E.06", -774, 4500, 22*24*time.Hour+23*time.Hour)
 
 	// Springfield bin 39: the DEEPEST ledger in the dump, −10,214 against a
 	// 1,000-unit capacity = 10.2 binloads, on a binding 1.6 HOURS old. A depth
 	// filter flags it. It must NOT be a candidate — nothing about ShinGo's
 	// knowledge of that carrier is stale.
-	deepAndNew := carrier(39, "74343-6SA0A.06", -10214, 1000, 96*time.Minute)
+	deepAndNew := carrier(39, "SYN-PART05A.06", -10214, 1000, 96*time.Minute)
 
 	rows, summary := BuildBindingRows(
 		[]domain.CarrierBinding{shallowAndOld, deepAndNew}, mfNow(), c)

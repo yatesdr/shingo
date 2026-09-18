@@ -40,7 +40,7 @@ import (
 // 82.2 days:
 //
 //   - THE SELECTOR MISSES. The longest binding in the dump — bin 27, 22.99 days
-//     on 63125-6TA0A.06 — carries a ledger of −774 against a 4,500-unit
+//     on SYN-PART01E.06 — carries a ledger of −774 against a 4,500-unit
 //     capacity: 0.17 of one binload, indistinguishable from an ordinary
 //     overpack. A depth filter never sees the stalest binding on the plant.
 //   - THE SELECTOR FIRES ANYWAY. The deepest ledger in the dump — bin 39,

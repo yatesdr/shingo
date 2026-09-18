@@ -49,7 +49,7 @@ vm.runInContext(utilSrc, ctx);
 const { withQueueCause, distinctQueueCauses } = ctx;
 
 const DASH = ' — ';
-const REASON = 'Waiting for material: 74577-6SA0A.06';
+const REASON = 'Waiting for material: SYN-PART07A.06';
 
 // ── withQueueCause ────────────────────────────────────────────────────────
 

@@ -24,7 +24,7 @@ func TestRecordChange_WritesTheVerdictAndTheMissingPayload(t *testing.T) {
 		ProcessID: "SNF2",
 		StyleID:   "STYLE-A",
 		Status:    sourceability.StatusRed,
-		Missing:   []string{"74577-6SA0B.06", "74577-6SA0C.06"},
+		Missing:   []string{"SYN-PART07B.06", "SYN-PART07C.06"},
 	}
 	testutil.MustNoErr(t, sourceability.RecordChange(db.DB, "SNF2", "STYLE-A", st, "green"), "record change")
 
@@ -42,7 +42,7 @@ func TestRecordChange_WritesTheVerdictAndTheMissingPayload(t *testing.T) {
 	}
 	// The FIRST missing payload is denormalised into its own indexed column —
 	// that is the one an operator is told to go stock.
-	if e.MissingPayload != "74577-6SA0B.06" {
+	if e.MissingPayload != "SYN-PART07B.06" {
 		t.Errorf("missing_payload = %q, want the first missing payload", e.MissingPayload)
 	}
 	// JSONB round-trips with its own whitespace, so match on the parsed value

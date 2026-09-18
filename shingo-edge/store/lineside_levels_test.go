@@ -10,9 +10,9 @@ import (
 // lineside_levels_test.go — the R1 report's three gates, one test each.
 //
 // SPRINGFIELD, 2026-09-02 TO 2026-09-05. Core's audit line printed once a
-// minute for three days: "payload=74871-6SA1A.06 … ledger total=0 would FIRE,
+// minute for three days: "payload=SYN-PART09D.06 … ledger total=0 would FIRE,
 // edge-adjusted total=7032 would hold; DECIDING OFF edge_reports". The carrier
-// at ALN_007 held 63125-6TA0A.06. Of 74871-6SA1A.06 there were zero plant-wide.
+// at ALN_007 held SYN-PART01E.06. Of SYN-PART09D.06 there were zero plant-wide.
 // Replenishment of the part that was actually running had been suppressed for
 // three days by a report naming a part that was not there.
 //
@@ -88,7 +88,7 @@ func TestListLinesideLevels_ReportsTheCarrierNotTheClaim(t *testing.T) {
 	db := coverageDB(t)
 	_, _, nodeID, claimID := linesideFixture(t, db, "ALN_007")
 	bindCarrier(t, db, nodeID, claimID, 15, 7032)
-	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "63125-6TA0A.06", true, "delivery"); err != nil {
+	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "SYN-PART01E.06", true, "delivery"); err != nil {
 		t.Fatalf("record carrier: %v", err)
 	}
 
@@ -96,8 +96,8 @@ func TestListLinesideLevels_ReportsTheCarrierNotTheClaim(t *testing.T) {
 	if got == nil {
 		t.Fatal("no row for ALN_007 — a bound carrier with an established identity must report")
 	}
-	if got.PayloadCode != "63125-6TA0A.06" {
-		t.Errorf("PayloadCode = %q, want 63125-6TA0A.06. REQUESTED-PART means the report went "+
+	if got.PayloadCode != "SYN-PART01E.06" {
+		t.Errorf("PayloadCode = %q, want SYN-PART01E.06. REQUESTED-PART means the report went "+
 			"back to reading the claim, which is the incident: a part number of which zero "+
 			"existed plant-wide, shipped against a carrier holding 7032 of something else.",
 			got.PayloadCode)

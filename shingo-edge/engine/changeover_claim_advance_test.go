@@ -42,7 +42,7 @@ func seedDirectChangeover(t *testing.T, db *store.DB) (processID, nodeID, toStyl
 
 	fromClaimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "ALN_007", Role: protocol.ClaimRoleConsume,
-		SwapMode: protocol.SwapModeSimple, PayloadCode: "74871-6SA1A.06", UOPCapacity: 4500,
+		SwapMode: protocol.SwapModeSimple, PayloadCode: "SYN-PART09D.06", UOPCapacity: 4500,
 		InboundSource: "SOURCE-OLD", OutboundDestination: "DEST-OLD",
 	})
 	testutil.MustNoErr(t, err, "upsert from claim")
@@ -51,7 +51,7 @@ func seedDirectChangeover(t *testing.T, db *store.DB) (processID, nodeID, toStyl
 	// puts its completion on changeover_release rather than staged_delivery.
 	toClaimID, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "ALN_007", Role: protocol.ClaimRoleConsume,
-		SwapMode: protocol.SwapModeSimple, PayloadCode: "63125-6TA0A.06", UOPCapacity: 4500,
+		SwapMode: protocol.SwapModeSimple, PayloadCode: "SYN-PART01E.06", UOPCapacity: 4500,
 		InboundSource: "SOURCE-NEW", OutboundDestination: "DEST-NEW",
 	})
 	testutil.MustNoErr(t, err, "upsert to claim")
@@ -106,7 +106,7 @@ func TestApplyChangeoverRelease_AdvancesTheClaimToTheIncomingStyle(t *testing.T)
 	}
 	if *rt.ActiveClaimID == fromClaimID {
 		t.Fatalf("claim still on the outgoing style (%d). This is ALN_007: the reporter joins on "+
-			"this pointer, and it named 74871-6SA1A.06 — of which zero existed plant-wide — for "+
+			"this pointer, and it named SYN-PART09D.06 — of which zero existed plant-wide — for "+
 			"two days and six hours.", fromClaimID)
 	}
 	if *rt.ActiveClaimID != toClaimID {
@@ -244,7 +244,7 @@ func TestClearBin_RecordsAKnownEmptyCarrier(t *testing.T) {
 	eng := testEngine(t, db)
 	_, nodeID, _, _, _ := seedDirectChangeover(t, db)
 
-	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("63125-6TA0A.06"), domain.CarrierFromDelivery)
+	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("SYN-PART01E.06"), domain.CarrierFromDelivery)
 	// ClearBin's Core round-trip is not what is under test; the doorway call it
 	// makes is. Assert the shape ClearBin writes.
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier(""), domain.CarrierFromOperator)
@@ -357,7 +357,7 @@ func TestFallbackDelivered_RecordsTheCarrier(t *testing.T) {
 	eng := testEngine(t, db)
 	_, nodeID, _, _, _ := seedDirectChangeover(t, db)
 
-	payload := "63125-6TA0A.06"
+	payload := "SYN-PART01E.06"
 	binID := int64(9001)
 	eng.handleFallbackDelivered(OrderDeliveredEvent{
 		BinID:          &binID,

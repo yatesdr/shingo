@@ -609,7 +609,7 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 		t.Fatalf("seed registry: %v", err)
 	}
 
-	// DB truth is deeply negative (the Springfield 74577-6SA0A.06 total): a bin
+	// DB truth is deeply negative (the Springfield SYN-PART07A.06 total): a bin
 	// carrying -443 makes SystemUOPForPayload return -443.
 	seedBinWithUOP(t, db, payload, -443)
 
@@ -822,7 +822,7 @@ func TestThresholdMonitor_StartupSweep_NegativeTotal_StillEmitsSignal(t *testing
 	}
 
 	// A bin carrying a deeply negative count is what makes the payload's
-	// in-loop total negative — the Springfield 74577-6SA0A.06 shape.
+	// in-loop total negative — the Springfield SYN-PART07A.06 shape.
 	seedBinWithUOP(t, db, payload, -443)
 
 	fires := captureThresholdFires(t, eng)

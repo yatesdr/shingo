@@ -47,7 +47,7 @@ func TestReportLinesideLevels_ShipsTheCarriersPart(t *testing.T) {
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
-	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("63125-6TA0A.06"), domain.CarrierFromDelivery)
+	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("SYN-PART01E.06"), domain.CarrierFromDelivery)
 
 	eng.reportLinesideLevels()
 
@@ -55,8 +55,8 @@ func TestReportLinesideLevels_ShipsTheCarriersPart(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("shipped %d entries, want 1: %+v", len(entries), entries)
 	}
-	if entries[0].PayloadCode != "63125-6TA0A.06" {
-		t.Errorf("PayloadCode = %q, want 63125-6TA0A.06. 74871-6SA1A.06 is the claim's, and it "+
+	if entries[0].PayloadCode != "SYN-PART01E.06" {
+		t.Errorf("PayloadCode = %q, want SYN-PART01E.06. SYN-PART09D.06 is the claim's, and it "+
 			"is what Springfield shipped once a minute for three days against a carrier holding "+
 			"7032 of the other one.", entries[0].PayloadCode)
 	}

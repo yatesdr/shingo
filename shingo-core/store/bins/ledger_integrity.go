@@ -260,7 +260,7 @@ LIMIT $3`
 // OpenNegativeBins lists bins currently below zero.
 //
 // This is the read that turns "the ledger is broken somewhere" into "SMN_02
-// reads -443 for 74577-6SA0A.06 and has done since 09:14" — the difference
+// reads -443 for SYN-PART07A.06 and has done since 09:14" — the difference
 // between a log line nobody joins and a supervisor-actionable sentence.
 //
 // Reads bins directly (the live truth) and dates the crossing from the

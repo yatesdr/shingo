@@ -2,7 +2,7 @@
 //
 // The failure class this watches for: a LEVEL trigger converts a bounded
 // physical condition into unbounded orchestration work. Springfield,
-// 2026-07-21 — zero system stock on 74577-6SA0A.06, the supply leg parked on a
+// 2026-07-21 — zero system stock on SYN-PART07A.06, the supply leg parked on a
 // dry source, the evac cancelled by the peer handler, and then the level fired
 // again on the next PLC tick. 484 doomed swaps in under two hours, not one of
 // which reached a robot. Every surface stayed green because every surface
@@ -18,7 +18,7 @@
 //   - The trigger was CELL AUTOREORDER, on the Edge — style_node_claims.
 //     auto_reorder + reorder_point, evaluated on EVERY PLC consume tick at
 //     wiring_counter_delta.go:211-240. Claim 31 (SNF3 / ALN_003 /
-//     74577-6SA0A.06) had reorder_point = 50, so every tick below 50 re-fired.
+//     SYN-PART07A.06) had reorder_point = 50, so every tick below 50 re-fired.
 //   - The planner was BuildConsumePlan / applyConsumePlan, which expands one
 //     RequestNodeMaterial call into a supply + evac pair — the shape that
 //     produced "242 skipped + 242 cancelled".
@@ -47,7 +47,7 @@
 //
 // Time separates them cleanly:
 //
-//	ALN_001/76683-6TA0A.06, 2026-06-23   26 futile terminals over 6.6h   ~4/h
+//	ALN_001/SYN-PART13E.06, 2026-06-23   26 futile terminals over 6.6h   ~4/h
 //	the 07-21 cascade                   484 futile terminals over <2h  ~242/h
 //
 // 60x. So the counter needed a clock, not a bigger number.

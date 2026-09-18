@@ -11,7 +11,7 @@ import "time"
 // DeltaIntegrity is one payload's delta-drop total over a window, set beside
 // that payload's current plant-wide ledger total.
 //
-// The comparison IS the panel. If 74577-6SA0A.06 reads -443 in-loop and shows
+// The comparison IS the panel. If SYN-PART07A.06 reads -443 in-loop and shows
 // ~443 UOP of dropped credits over the same window, the mechanism behind the
 // negative count is visible on sight rather than hypothesised.
 //

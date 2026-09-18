@@ -308,7 +308,7 @@ export function primeNoticeText(result) {
 // already on the row in front of the operator.
 //
 // It is preferred over the status word wherever both exist because it is a
-// whole sentence ("Waiting for material: 74577-6SA0A.06") and because it
+// whole sentence ("Waiting for material: SYN-PART07A.06") and because it
 // survives the status-write path independently: SetOrderQueueReason bypasses
 // the transition validator, so the reason lands even in the window where the
 // status push itself was refused.

@@ -534,7 +534,7 @@ A commented example block lives in `shingocore.dev.yaml`.
   missing or non-positive ratio is now refused at every entry point, so the
   question is closed going forward rather than only backwards.
 - **Two flagged template rows await SCO** (**F7**): HK's `Test-Payload` at 24,
-  and SPR `76292-6TA0C.06 / 33258` at 2.
+  and SPR `SYN-PART10F.06 / 33258` at 2.
 - **Historical `source_type='correction'` rows persist** and remain filterable.
   The code path that emitted them is deleted, and the `corrections` table was
   dropped (v104) once both plants confirmed zero rows in it and zero

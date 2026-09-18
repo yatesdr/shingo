@@ -15,8 +15,8 @@ func TestLoader_LoadablePayloadCodesAt_Dedicated(t *testing.T) {
 	t.Parallel()
 	l, err := NewDedicatedPositionsLoader("loader:7", "Supermarket Dedicated Locations",
 		RoleProduce, ReplenishmentOperator, []Position{
-			{Node: "SMN_014", Payload: "76683-6TA0A.06"},
-			{Node: "SMN_015", Payload: "76682-6TA0A.06"},
+			{Node: "SMN_014", Payload: "SYN-PART13E.06"},
+			{Node: "SMN_015", Payload: "SYN-PART12E.06"},
 			{Node: "SMN_018"}, // buffer / unpinned home — no payload
 		})
 	if err != nil {
@@ -30,8 +30,8 @@ func TestLoader_LoadablePayloadCodesAt_Dedicated(t *testing.T) {
 
 	// Per-position scoping: each home offers ONLY its pinned payload.
 	cases := map[NodeID][]string{
-		"SMN_014": {"76683-6TA0A.06"},
-		"SMN_015": {"76682-6TA0A.06"},
+		"SMN_014": {"SYN-PART13E.06"},
+		"SMN_015": {"SYN-PART12E.06"},
 		"SMN_018": nil, // buffer slot pins no payload → nothing loadable here
 	}
 	for node, want := range cases {
@@ -53,8 +53,8 @@ func TestLoader_LoadablePayloadCodesAt_Dedicated(t *testing.T) {
 	}
 
 	// PayloadAt mirrors the scoping.
-	if p, ok := l.PayloadAt("SMN_014"); !ok || p != "76683-6TA0A.06" {
-		t.Errorf("PayloadAt(SMN_014) = %q,%v, want 76683-6TA0A.06,true", p, ok)
+	if p, ok := l.PayloadAt("SMN_014"); !ok || p != "SYN-PART13E.06" {
+		t.Errorf("PayloadAt(SMN_014) = %q,%v, want SYN-PART13E.06,true", p, ok)
 	}
 	if _, ok := l.PayloadAt("SMN_018"); ok {
 		t.Error("PayloadAt(buffer) ok = true, want false (no payload pinned)")
@@ -69,8 +69,8 @@ func TestLoader_SynthClaim_DedicatedScopesPayload(t *testing.T) {
 	t.Parallel()
 	l, err := NewDedicatedPositionsLoader("loader:7", "Supermarket Dedicated Locations",
 		RoleProduce, ReplenishmentOperator, []Position{
-			{Node: "SMN_014", Payload: "76683-6TA0A.06"},
-			{Node: "SMN_015", Payload: "76682-6TA0A.06"},
+			{Node: "SMN_014", Payload: "SYN-PART13E.06"},
+			{Node: "SMN_015", Payload: "SYN-PART12E.06"},
 		})
 	if err != nil {
 		t.Fatalf("build loader: %v", err)
@@ -82,8 +82,8 @@ func TestLoader_SynthClaim_DedicatedScopesPayload(t *testing.T) {
 	if c.SwapMode != protocol.SwapModeManualSwap {
 		t.Errorf("SwapMode = %q, want manual_swap", c.SwapMode)
 	}
-	if len(c.AllowedPayloadCodes) != 1 || c.AllowedPayloadCodes[0] != "76683-6TA0A.06" {
-		t.Errorf("AllowedPayloadCodes = %v, want only the home's pinned payload [76683-6TA0A.06]",
+	if len(c.AllowedPayloadCodes) != 1 || c.AllowedPayloadCodes[0] != "SYN-PART13E.06" {
+		t.Errorf("AllowedPayloadCodes = %v, want only the home's pinned payload [SYN-PART13E.06]",
 			c.AllowedPayloadCodes)
 	}
 }

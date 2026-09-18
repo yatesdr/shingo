@@ -17,7 +17,7 @@ func TestWithResidentEvacDest(t *testing.T) {
 	base := &processes.NodeClaim{
 		ID:                  52,
 		CoreNodeName:        "ALN_006",
-		PayloadCode:         "63145-6TA1B.10",
+		PayloadCode:         "SYN-PART03H.10",
 		InboundSource:       "SMN_029",
 		OutboundDestination: "SMN_029",
 	}
@@ -81,7 +81,7 @@ func residentClaimFixture(t *testing.T, db *store.DB) (nodeID, oldClaimID, newCl
 		t.Fatalf("create incoming style: %v", err)
 	}
 
-	// Claim 44's shape: 74871-6SA0A.06 → SMN_031.
+	// Claim 44's shape: SYN-PART09A.06 → SMN_031.
 	oldClaimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: oldStyle, CoreNodeName: "TEST-NODE", Role: "consume",
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-OLD", UOPCapacity: 100,
@@ -91,7 +91,7 @@ func residentClaimFixture(t *testing.T, db *store.DB) (nodeID, oldClaimID, newCl
 	if err != nil {
 		t.Fatalf("upsert outgoing claim: %v", err)
 	}
-	// Claim 52's shape: 63145-6TA1B.10 → SMN_029.
+	// Claim 52's shape: SYN-PART03H.10 → SMN_029.
 	newClaimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: newStyle, CoreNodeName: "TEST-NODE", Role: "consume",
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-NEW", UOPCapacity: 100,

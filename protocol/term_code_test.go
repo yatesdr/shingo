@@ -54,8 +54,8 @@ func TestTermCodes_LiveValuesArePinned(t *testing.T) {
 // TermRef renders the way the design writes it, because that string goes in a
 // log line next to the code and someone reads it at 3am.
 func TestTermRef_String(t *testing.T) {
-	r := TermRef{Node: "PLN_01.R1", Payload: "74577-6SA0A.06"}
-	if got, want := r.String(), "node=PLN_01.R1, payload=74577-6SA0A.06"; got != want {
+	r := TermRef{Node: "PLN_01.R1", Payload: "SYN-PART07A.06"}
+	if got, want := r.String(), "node=PLN_01.R1, payload=SYN-PART07A.06"; got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 	if (TermRef{}).String() != "" {
@@ -94,12 +94,12 @@ func TestTermRef_Empty(t *testing.T) {
 // ref of {"node":"","payload":"","peer":0} would make ref->>'payload' return
 // "" instead of NULL and quietly join the empty string into every GROUP BY.
 func TestTermRef_JSONOmitsEmptyFields(t *testing.T) {
-	b, err := json.Marshal(TermRef{Payload: "74577-6SA0A.06"})
+	b, err := json.Marshal(TermRef{Payload: "SYN-PART07A.06"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	got := string(b)
-	if got != `{"payload":"74577-6SA0A.06"}` {
+	if got != `{"payload":"SYN-PART07A.06"}` {
 		t.Fatalf("marshal = %s, want only the set field", got)
 	}
 	for _, absent := range []string{"node", "peer", "detail", "vendor_code", "vendor_desc"} {
@@ -122,7 +122,7 @@ func TestTermRef_JSONOmitsEmptyFields(t *testing.T) {
 // Round-trip: the column is written by Core and read back by Core, so a
 // symmetric encode/decode is the whole contract.
 func TestTermRef_RoundTrip(t *testing.T) {
-	want := TermRef{Node: "ALN_003", Payload: "74577-6SA0A.06", Peer: 991,
+	want := TermRef{Node: "ALN_003", Payload: "SYN-PART07A.06", Peer: 991,
 		VendorCode: 60011, VendorDesc: "cannot replan", Detail: "evac sibling terminal"}
 	b, err := json.Marshal(want)
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 // The threshold these pin is set from plant history, not from taste. Over 120
 // days of real tuples with the incident window excluded, normal operation
 // produced futile runs of 5, 6, 8, 9 and one of 26 — no knee — while the rates
-// separate 60x: ~4/h for the worst legitimate case (ALN_001/76683-6TA0A.06,
+// separate 60x: ~4/h for the worst legitimate case (ALN_001/SYN-PART13E.06,
 // 2026-06-23, 26 terminals over 6.6h) against ~242/h for the 07-21 cascade
 // (484 terminals in under two hours).
 
@@ -68,7 +68,7 @@ func defaultCfg() FutilityConfig {
 	return FutilityConfig{Threshold: 20, Window: time.Hour, AlertThrottle: 15 * time.Minute}
 }
 
-var testKey = FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "74577-6SA0A.06"}
+var testKey = FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "SYN-PART07A.06"}
 
 // A config that describes no window to count over yields no detector. This is
 // the ONLY nil the constructor produces — the `enabled` flag it used to have is
@@ -223,7 +223,7 @@ func TestFutility_TuplesAreIndependent(t *testing.T) {
 	d, _, _ := testDetector(t, cfg)
 	d.SetClock(clk.Now)
 
-	other := FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_001", PayloadCode: "76683-6TA0A.06"}
+	other := FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_001", PayloadCode: "SYN-PART13E.06"}
 	for range 2 {
 		d.NoteFutileTerminal(testKey, 1, "skipped", "")
 		d.NoteFutileTerminal(other, 2, "skipped", "")
