@@ -338,6 +338,14 @@ func wireChanged(a, b sourceability.StyleState) bool {
 	if !equalStrings(a.Missing, b.Missing) {
 		return true
 	}
+	// THE FLAGGED PAYLOAD LIST, NOT THE COUNTS. Whether a missing payload has
+	// stock in an undeclared carrier changes the operator's ACTION, so it is an
+	// operator-visible change. How MANY such bins there are is magnitude — the
+	// same class as time-to-empty drift, which this function deliberately
+	// ignores — and the periodic snapshot carries the current number.
+	if !equalStrings(undeclaredPayloads(a), undeclaredPayloads(b)) {
+		return true
+	}
 	if len(a.AtRisk) != len(b.AtRisk) {
 		return true
 	}
@@ -347,6 +355,20 @@ func wireChanged(a, b sourceability.StyleState) bool {
 		}
 	}
 	return false
+}
+
+// undeclaredPayloads projects the flagged findings onto their payload codes.
+// Order is Compute's, which follows the sorted Missing list, so two equal sets
+// compare equal without a sort here.
+func undeclaredPayloads(s sourceability.StyleState) []string {
+	if len(s.UndeclaredCarriers) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.UndeclaredCarriers))
+	for _, f := range s.UndeclaredCarriers {
+		out = append(out, f.PayloadCode)
+	}
+	return out
 }
 
 func equalStrings(a, b []string) bool {
@@ -400,7 +422,15 @@ func reasonFor(s sourceability.StyleState) string {
 		// the system knows nothing about whether it could be sourced.
 		return "Not set up — no sourceability claims configured for this style."
 	case sourceability.StatusRed:
-		return "Cannot change over — missing " + strings.Join(s.Missing, ", ") + "."
+		// TWO FACTS, TWO SENTENCES. "There is no stock" and "the stock is in a
+		// carrier the part may not travel in" have different actions — make
+		// more, versus resolve the bin type — and an operator who reads them as
+		// one sentence takes the first action for the second problem. The
+		// payload stays in the missing list because it genuinely is missing:
+		// every sourcing reader refuses that carrier. The second sentence says
+		// why, and names the person who can fix it by naming the fix.
+		return "Cannot change over — missing " + strings.Join(s.Missing, ", ") + "." +
+			undeclaredCarrierSentence(s.UndeclaredCarriers)
 	case sourceability.StatusYellow:
 		payloads := make([]string, 0, len(s.AtRisk))
 		for _, r := range s.AtRisk {
@@ -410,6 +440,31 @@ func reasonFor(s sourceability.StyleState) string {
 	default:
 		return "Can change over."
 	}
+}
+
+// undeclaredCarrierSentence is the second half of a RED reason, and it is empty
+// on every plant where nothing is flagged — which is the ordinary state and
+// leaves the sentence byte-identical to what it was before this existed.
+//
+// It names the COUNT as well as the payload because "resolve bin type" is a
+// different-sized job against one carrier and against thirty, and it names the
+// action rather than a person: the fix is either moving the parts into a
+// declared carrier or declaring this one on the payload, and which of those is
+// right is not something Core knows.
+func undeclaredCarrierSentence(flagged []sourceability.PayloadCount) string {
+	if len(flagged) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(flagged))
+	for _, f := range flagged {
+		unit := "bins"
+		if f.Bins == 1 {
+			unit = "bin"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s of %s", f.Bins, unit, f.PayloadCode))
+	}
+	return " " + strings.Join(parts, ", ") +
+		" in undeclared carriers — not sourceable; resolve bin type."
 }
 
 // buildPayloadIndex derives payload → styles from the claim set: a claim

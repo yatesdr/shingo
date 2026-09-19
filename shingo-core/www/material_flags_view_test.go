@@ -496,3 +496,136 @@ func firstDurationField(v any) (string, bool) {
 	}
 	return "", false
 }
+
+// ── The carrier-rule half ───────────────────────────────────────────────────
+//
+// THE THIRD SECTION IS A THIRD SELECTOR OVER THE SAME READ. The binding half
+// asks whose count has had the longest to drift; this asks which carrier can
+// never be fetched at all. Sharing the population is what keeps the two from
+// disagreeing about how many carriers exist; sharing a SELECTOR would be the
+// merge the page header refuses.
+//
+// The selector is the STAMP (domain.CarrierBinding.UndeclaredCarrierAt), which
+// is what the write door decided and what /inventory counts. Re-deriving the
+// rule here would give this page a private opinion, and the day it differed
+// from the count on /inventory nobody would know which to believe.
+
+func undeclaredCarrier(id int64, label, payload, binType, declared string, flaggedAgo time.Duration, base time.Time) domain.CarrierBinding {
+	at := base.Add(-flaggedAgo)
+	return domain.CarrierBinding{
+		BinID:               id,
+		Label:               label,
+		PayloadCode:         payload,
+		NodeName:            "ALN_001",
+		BinTypeCode:         binType,
+		DeclaredBinTypes:    declared,
+		UndeclaredCarrierAt: &at,
+	}
+}
+
+// TestSelectUndeclaredCarriersTakesOnlyTheFlagged, and counts the whole
+// population as its denominator. "3 flagged" alone is a number with no scale.
+func TestSelectUndeclaredCarriersTakesOnlyTheFlagged(t *testing.T) {
+	base := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	rows, s := SelectUndeclaredCarriers([]domain.CarrierBinding{
+		undeclaredCarrier(1, "C-1", "PART-A", "BT-FOREIGN", "BT-FITS", 2*time.Hour, base),
+		{BinID: 2, Label: "C-2", PayloadCode: "PART-A"}, // declared carrier
+		{BinID: 3, Label: "C-3"},                        // empty carrier
+		{BinID: 4, Label: "C-4", PayloadCode: "PART-Z"}, // payload with no rule
+	}, base)
+
+	if len(rows) != 1 || rows[0].BinID != 1 {
+		t.Fatalf("rows = %+v, want exactly the flagged carrier", rows)
+	}
+	if s.Carriers != 4 {
+		t.Errorf("Carriers = %d, want 4 — the denominator is every carrier examined, "+
+			"the same population the binding half counts", s.Carriers)
+	}
+	if s.Flagged != 1 {
+		t.Errorf("Flagged = %d, want 1", s.Flagged)
+	}
+	// THE SPARSE ARM, PINNED QUIET ON THIS SURFACE. A payload with no declared
+	// carriers is never stamped, so it never reaches this selector — at
+	// Springfield that is 127 payloads of 128.
+	for _, r := range rows {
+		if r.Payload == "PART-Z" {
+			t.Error("a carrier holding a payload with no declared bin types was listed")
+		}
+	}
+}
+
+// TestSelectUndeclaredCarriersOrdersLongestStandingFirst. A finding that has
+// stood three weeks is a finding nobody has acted on, and it is the one to walk
+// to — the same "longest first" the episode half uses, and for the same reason.
+func TestSelectUndeclaredCarriersOrdersLongestStandingFirst(t *testing.T) {
+	base := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	rows, s := SelectUndeclaredCarriers([]domain.CarrierBinding{
+		undeclaredCarrier(1, "C-NEW", "PART-A", "BT-FOREIGN", "BT-FITS", time.Hour, base),
+		undeclaredCarrier(2, "C-OLD", "PART-A", "BT-FOREIGN", "BT-FITS", 21*24*time.Hour, base),
+	}, base)
+
+	if len(rows) != 2 || rows[0].Label != "C-OLD" {
+		t.Fatalf("order = %v, want the longest-standing finding first",
+			[]string{rows[0].Label, rows[1].Label})
+	}
+	if s.Longest.Kind != CellValue {
+		t.Errorf("Longest = %+v, want a measured value when something is flagged", s.Longest)
+	}
+}
+
+// TestUndeclaredCarrierSummaryHasNoLongestWhenNothingIsFlagged. The longest of
+// no findings is not "0 s", and 0 s is the most reassuring thing this tile
+// could print. Same rule as MaterialFlagSummary.Longest.
+func TestUndeclaredCarrierSummaryHasNoLongestWhenNothingIsFlagged(t *testing.T) {
+	rows, s := SelectUndeclaredCarriers([]domain.CarrierBinding{
+		{BinID: 1, Label: "C-1", PayloadCode: "PART-A"},
+	}, time.Now())
+	if len(rows) != 0 {
+		t.Fatalf("rows = %+v, want none", rows)
+	}
+	if s.Longest.Kind != CellNoData {
+		t.Errorf("Longest = %+v, want a stated absence — a quiet plant must not print "+
+			"a duration of zero for a finding that does not exist", s.Longest)
+	}
+	if s.Longest.Title == "" {
+		t.Error("the absence carries no reason; the style guide requires one")
+	}
+}
+
+// TestUndeclaredCarrierRowNamesTheFix. The row has to say what is RIGHT, not
+// only what is wrong: "CARRIER-12 is in BT-FOREIGN" without "declared for
+// BT-FITS" tells somebody to go and look at a bin and nothing more.
+func TestUndeclaredCarrierRowNamesTheFix(t *testing.T) {
+	base := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	rows, _ := SelectUndeclaredCarriers([]domain.CarrierBinding{
+		undeclaredCarrier(1, "C-1", "PART-A", "BT-FOREIGN", "BT-FITS, BT-TOTE", time.Hour, base),
+	}, base)
+	r := rows[0]
+	if r.BinType != "BT-FOREIGN" {
+		t.Errorf("BinType = %q, want the carrier it is IN", r.BinType)
+	}
+	if r.Declared.Kind != CellValue || r.Declared.Text != "BT-FITS, BT-TOTE" {
+		t.Errorf("Declared = %+v, want the carriers the payload IS declared for", r.Declared)
+	}
+	if r.FlaggedAt.Kind != CellValue {
+		t.Errorf("FlaggedAt = %+v, want the stamp printed beside the age so the reading "+
+			"is checkable rather than merely asserted", r.FlaggedAt)
+	}
+}
+
+// TestUndeclaredCarrierWithNoDeclaredSetStatesTheContradiction. Unreachable by
+// the rule — a flagged carrier's payload has declared carriers by definition —
+// and stated anyway, because printing the carrier it is in with no alternative
+// would read as "there is nowhere to put this".
+func TestUndeclaredCarrierWithNoDeclaredSetStatesTheContradiction(t *testing.T) {
+	base := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	rows, _ := SelectUndeclaredCarriers([]domain.CarrierBinding{
+		undeclaredCarrier(1, "C-1", "PART-A", "BT-FOREIGN", "", time.Hour, base),
+	}, base)
+	if rows[0].Declared.Kind != CellNoData {
+		t.Errorf("Declared = %+v, want a stated absence", rows[0].Declared)
+	}
+	if !strings.Contains(rows[0].Declared.Title, "should not") {
+		t.Errorf("the absence does not say the state is impossible: %q", rows[0].Declared.Title)
+	}
+}

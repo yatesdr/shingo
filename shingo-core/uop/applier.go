@@ -17,6 +17,7 @@ import (
 
 	"shingocore/store"
 	"shingocore/store/audit"
+	"shingocore/store/bins"
 	"shingocore/store/messaging"
 )
 
@@ -395,7 +396,9 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	if d.Reason == protocol.ReasonProduceTick && d.PayloadCode != "" &&
 		havePayloadCode != d.PayloadCode {
 		if valueBefore == 0 {
-			if _, err := tx.Exec(`UPDATE bins SET payload_code=$1 WHERE id=$2`, d.PayloadCode, d.BinID); err != nil {
+			if _, err := tx.Exec(`UPDATE bins b SET payload_code=$1,
+				undeclared_carrier_at = `+undeclaredCarrierStampSQL+`
+				WHERE b.id=$2`, d.PayloadCode, d.BinID); err != nil {
 				return fmt.Errorf("bind payload on first delta bin=%d: %w", d.BinID, err)
 			}
 			metadata, merr := json.Marshal(struct {
@@ -413,7 +416,10 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		} else {
 			// Anomaly write rides the rebind UPDATE — same tx, same row; a
 			// separate s.db write here would block on this tx's own row lock.
-			if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, anomaly_at=COALESCE(anomaly_at, NOW()) WHERE id=$2`,
+			if _, err := tx.Exec(`UPDATE bins b SET payload_code=$1,
+				anomaly_at=COALESCE(b.anomaly_at, NOW()),
+				undeclared_carrier_at = `+undeclaredCarrierStampSQL+`
+				WHERE b.id=$2`,
 				d.PayloadCode, d.BinID); err != nil {
 				return fmt.Errorf("rebind payload with inventory bin=%d: %w", d.BinID, err)
 			}
@@ -620,10 +626,28 @@ func (s *InventoryDeltaService) DroppedDeltaCounts() (staleEpoch, payloadMismatc
 	return atomic.LoadInt64(&s.droppedStaleEpoch), atomic.LoadInt64(&s.droppedPayloadMismatch)
 }
 
+// undeclaredCarrierStampSQL keeps bins.undeclared_carrier_at true to the
+// carrier rule on the two produce-tick payload writes below.
+//
+// A PRODUCE-TICK REBIND IS A PAYLOAD WRITE, and the finding is derived from the
+// payload. Without this the identity binding could move a carrier onto a part
+// its type is not declared to hold and leave the bin unflagged until its next
+// finalize — a window in which every sourcing reader refuses the bin and no
+// surface says why. It rides the UPDATE that is already here: zero added
+// statements on the delta path, which is the only reason it is affordable at
+// all (this runs under a produce tick).
+//
+// COALESCE, so a carrier already flagged keeps its original stamp, and the ELSE
+// arm clears the flag when a rebind moves the carrier onto something it may
+// hold. Judged against the NEW payload ($1) and the bin's unchanged type.
+var undeclaredCarrierStampSQL = `CASE WHEN ` +
+	bins.UndeclaredCarrierRuleSQL("$1", "b.bin_type_id") +
+	` THEN COALESCE(b.undeclared_carrier_at, NOW()) ELSE NULL END`
+
 // AnomalyDeltaSummary is the read-only rollup behind the inventory page's
-// "N rejected deltas · N stale staged bins" banner line (P2-C6). All four
-// fields are pure observability: the drop counters are process-lifetime tallies,
-// the two bin counts are live queries.
+// "N rejected deltas · N stale staged bins" banner line (P2-C6). Every field is
+// pure observability: the drop counters are process-lifetime tallies, the three
+// bin counts are live queries.
 type AnomalyDeltaSummary struct {
 	DroppedStaleEpoch      int64 `json:"dropped_stale_epoch"`
 	DroppedPayloadMismatch int64 `json:"dropped_payload_mismatch"`
@@ -634,6 +658,21 @@ type AnomalyDeltaSummary struct {
 	// staging TTL (staged_expires_at < NOW). Uses the bin's configured expiry,
 	// not a fixed age threshold; nil-TTL (permanent) staged bins are excluded.
 	StaleStagedBins int `json:"stale_staged_bins"`
+	// UndeclaredCarrierBins is the count of carriers holding a payload their
+	// type is not declared to carry — findings the produce door recorded rather
+	// than refusing, because the parts were already in the bin.
+	//
+	// THIS IS THE WATCHER FOR A RULE THAT NO LONGER REFUSES. Every one of these
+	// bins counts as stock and no sourcing reader will ever fetch it, so an
+	// unwatched flag would be the silent hole the refusal used to close. The
+	// same stamp is listed per carrier on /material-flags and named in the
+	// sourcing reason; this is the count, and it composes the one fragment all
+	// three share so they cannot disagree.
+	//
+	// NOT scoped to non-retired, unlike RejectedDeltaBins. A retired carrier
+	// carrying a payload is itself a finding, and the flag is cleared by the
+	// clear that retirement ought to involve.
+	UndeclaredCarrierBins int `json:"undeclared_carrier_bins"`
 }
 
 // AnomalySummary computes the read-only anomaly rollup for the inventory page.
@@ -648,10 +687,16 @@ func (s *InventoryDeltaService) AnomalySummary() (AnomalyDeltaSummary, error) {
 	// The sweep that acts on this column (bins.ReleaseExpiredStaged) already does;
 	// this page did not, so the two could tell an operator opposite things about
 	// the same bin the moment the domains diverge.
+	//
+	// The undeclared-carrier count is a THIRD SUBQUERY IN THE SAME ROUND TRIP,
+	// not a second call: this endpoint is polled by the inventory page and a
+	// watcher that costs a query per refresh is a watcher somebody eventually
+	// turns off.
 	if err := s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM bins WHERE anomaly_at IS NOT NULL AND status != 'retired'),
-		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < $1::timestamptz)
-	`, clock.Now().UTC()).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins); err != nil {
+		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < $1::timestamptz),
+		(SELECT COUNT(*) FROM bins b WHERE `+bins.BinInUndeclaredCarrierSQL+`)
+	`, clock.Now().UTC()).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins, &out.UndeclaredCarrierBins); err != nil {
 		return out, fmt.Errorf("anomaly summary counts: %w", err)
 	}
 	return out, nil

@@ -142,3 +142,64 @@ func TestPoolBreakdownByPayload_ByLocation(t *testing.T) {
 		t.Errorf("location counts sum to %d, but Free = %d", sum, pb.Free)
 	}
 }
+
+// TestBuildInputs_CarriesTheCarrierRuleFindingBesideThePool.
+//
+// A bin in a carrier its payload is not declared to travel in is refused by
+// BinSourceableSQL, so it contributes nothing to Pool and the style goes RED —
+// beside an inventory page saying the parts are there. "No stock" and "stock in
+// the wrong carrier" have different actions, so BuildInputs carries the second
+// count and Compute hands it to the operator sentence.
+//
+// IT RIDES THE POOL QUERY. This runs on every recompute; a second round trip
+// for a number that is zero on a good day would be a per-tick cost. The pool
+// term became a FILTER over the same rows and must answer identically, which is
+// what the green half of this test is for.
+//
+// THE SPARSE ARM IS PINNED QUIET. payload_bin_types has rows for one payload of
+// 128 at Springfield; a payload with none constrains nothing and is never
+// counted.
+func TestBuildInputs_CarriesTheCarrierRuleFindingBesideThePool(t *testing.T) {
+	t.Parallel()
+	sdb := testdb.Open(t)
+	db := sdb.DB
+	std := testdb.SetupStandardData(t, sdb)
+
+	// BIN-A is sourceable and unflagged; BIN-F is flagged (so out of the pool);
+	// BIN-S carries a payload nobody has described and is neither.
+	testdb.CreateBinAtNode(t, sdb, "BIN-A", std.StorageNode.ID, "src-a")
+	flagged := testdb.CreateBinAtNode(t, sdb, "BIN-F", std.StorageNode.ID, "src-f")
+	testdb.CreateBinAtNode(t, sdb, "BIN-S", std.StorageNode.ID, "src-s")
+	if _, err := db.Exec(
+		`UPDATE bins SET undeclared_carrier_at = NOW() WHERE id = $1`, flagged.ID); err != nil {
+		t.Fatalf("stamp the finding: %v", err)
+	}
+
+	in, err := sourceability.BuildInputs(db, time.Hour)
+	testutil.MustNoErr(t, err, "build inputs")
+
+	// THE POOL IS UNCHANGED BY THE SECOND AGGREGATE. Every one of these bins is
+	// ordinarily sourceable, so each contributes 1 — including the flagged one,
+	// because the STAMP gates nothing: the bin-type arm in BinSourceableSQL is
+	// what refuses it, and this fixture stamps the column without breaking the
+	// rule. That separation is deliberate and is the point of the assertion.
+	for _, p := range []string{"BIN-A", "BIN-F", "BIN-S"} {
+		if in.Pool[p] != 1 {
+			t.Errorf("Pool[%s] = %d, want 1 — the pool term moved from a WHERE to a "+
+				"FILTER over the same rows and must answer identically", p, in.Pool[p])
+		}
+	}
+
+	if in.UndeclaredCarrier["BIN-F"] != 1 {
+		t.Errorf("UndeclaredCarrier[BIN-F] = %d, want 1", in.UndeclaredCarrier["BIN-F"])
+	}
+	// ABSENT, NOT ZERO. Compute uses presence to decide whether the operator
+	// sentence has a second half at all, and "0 bins of BIN-A in undeclared
+	// carriers" is a sentence that would be printed to somebody.
+	for _, p := range []string{"BIN-A", "BIN-S"} {
+		if _, ok := in.UndeclaredCarrier[p]; ok {
+			t.Errorf("UndeclaredCarrier holds %s with no findings; a payload with none "+
+				"must be absent from the map, not present with a zero", p)
+		}
+	}
+}

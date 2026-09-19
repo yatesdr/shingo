@@ -15,9 +15,12 @@ import (
 //   - Payload "" marks an empty (the store normalizes a NULL/empty payload to "").
 //   - Claimed is derived from ClaimedBy.
 //   - LoadedAt stays a pointer so an empty's nil falls back to CreatedAt in the FIFO key.
+//   - BinTypeID rides along so the ranker can judge the carrier against the
+//     part's payload_bin_types rule, which arrives separately on the Want.
 func candFromBin(b *bins.Bin) binsource.Cand {
 	return binsource.Cand{
 		BinID:             b.ID,
+		BinTypeID:         b.BinTypeID,
 		Payload:           b.PayloadCode,
 		UOP:               b.UOPRemaining,
 		Cap:               b.UOPCapacity,

@@ -82,12 +82,37 @@ type StyleState struct {
 	Status    Status
 	// Missing is the distinct set of payloads that no available bin could
 	// satisfy (populated for RED). Sorted for a stable feed/display.
+	//
+	// A PAYLOAD WITH FLAGGED STOCK IS STILL MISSING. It is unsourceable — every
+	// sourcing reader refuses a carrier the payload does not declare — so it
+	// belongs here; UndeclaredCarriers below says WHY, and removing it from this
+	// list would make the missing set incomplete for every reader of the wire.
 	Missing []string
+
+	// UndeclaredCarriers names, for each MISSING payload that has any, how many
+	// bins are standing in a carrier that payload is not declared to travel in.
+	// Sorted by payload, and EMPTY on the ordinary plant.
+	//
+	// IT IS SCOPED TO THE MISSING SET on purpose. A payload with flagged stock
+	// that is nonetheless satisfiable has a shortage nobody is waiting on, and
+	// naming it in a changeover verdict would put a maintenance job in front of
+	// an operator who is trying to change over. The flagged carrier is still
+	// listed on /material-flags and counted on /inventory, which are the
+	// surfaces that belong to the person who fixes it.
+	UndeclaredCarriers []PayloadCount
 	// AtRisk is every line projecting empty within the horizon. It is part of
 	// the GATED output: populated only when the yellow tier is enabled, empty
 	// otherwise — so a dark plant emits GREEN with no at-risk anywhere.
 	AtRisk     []LineTTE
 	ComputedAt time.Time
+}
+
+// PayloadCount is a payload and a number of bins. Used for the undeclared-
+// carrier finding, where the payload alone is not actionable — "resolve the bin
+// type" reads very differently against one carrier and against thirty.
+type PayloadCount struct {
+	PayloadCode string
+	Bins        int
 }
 
 // Inputs is the plant snapshot the computation reads. All DB access happens in
@@ -103,6 +128,13 @@ type Inputs struct {
 	// bins.BinSourceableSQL — the one sourcing predicate, so this figure and
 	// what FindSourceFIFO would actually pick cannot disagree.
 	Pool map[string]int
+	// UndeclaredCarrier is the count of bins per payload standing in a carrier
+	// that payload is not declared to travel in — stock that EXISTS, counts on
+	// every inventory surface, and that no sourcing reader will ever fetch.
+	// Disjoint from Pool by construction: the bin-type arm refuses exactly these
+	// bins. A payload with no findings is ABSENT from the map rather than
+	// present with a zero.
+	UndeclaredCarrier map[string]int
 	// OnLine is the count of bins ALREADY INSIDE a process carrying what it needs
 	// but which dispatch cannot fetch (status='staged'), keyed process → payload.
 	// Disjoint from Pool by construction. A claim draws from here FIRST — a bin
@@ -195,6 +227,16 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 		if len(missing) > 0 {
 			st.Status = StatusRed
 			st.Missing = sortedKeys(missing)
+			// THE SECOND FACT, CARRIED SEPARATELY. For each missing payload that
+			// has stock standing in an undeclared carrier, say so — the operator's
+			// action is "resolve the bin type", not "go and make more parts", and
+			// those two must not arrive in one sentence.
+			for _, p := range st.Missing {
+				if n := in.UndeclaredCarrier[p]; n > 0 {
+					st.UndeclaredCarriers = append(st.UndeclaredCarriers,
+						PayloadCount{PayloadCode: p, Bins: n})
+				}
+			}
 			out = append(out, st)
 			continue
 		}

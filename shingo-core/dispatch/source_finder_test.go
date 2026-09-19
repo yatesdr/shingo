@@ -3,6 +3,7 @@ package dispatch
 import (
 	"database/sql"
 	"errors"
+	"shingocore/domain"
 	"testing"
 
 	"shingo/protocol"
@@ -73,6 +74,13 @@ type fakeFinderDB struct {
 	supportingGroupsErr error
 	nodeUnder           map[int64]int64
 	effectiveBinTypes   map[int64][]*bins.BinType
+
+	// binTypeRule is payload_bin_types by payload code — which carriers a PART
+	// may travel in, the mirror of effectiveBinTypes' "what fits at a node". An
+	// absent key is "no rows", which constrains nothing, so every case written
+	// before the rule landed keeps its original verdicts.
+	binTypeRule    map[string][]int64
+	binTypeRuleErr error
 	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
 	// "a read failure returns no type rather than guessing" arm is exercisable.
 	maintainedTypeErr error
@@ -225,6 +233,20 @@ func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence 
 // and must leave the choice alone.
 func (f *fakeFinderDB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
 	return f.effectiveBinTypes[nodeID], nil
+}
+
+// LoadBinTypeRule: unrestricted unless a test declares otherwise, which keeps
+// every existing finder case judging carriers exactly as it did before the rule
+// landed. binTypeRule is keyed by payload code; an absent entry is "no rows".
+func (f *fakeFinderDB) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error) {
+	if f.binTypeRuleErr != nil {
+		return domain.BinTypeRule{}, f.binTypeRuleErr
+	}
+	ids, ok := f.binTypeRule[payloadCode]
+	if !ok {
+		return domain.BinTypeRule{}, nil
+	}
+	return domain.NewBinTypeRule(ids), nil
 }
 
 func (f *fakeFinderDB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {

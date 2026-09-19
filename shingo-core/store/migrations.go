@@ -4233,6 +4233,12 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "payloads", "near_empty_threshold_pct") &&
 					schema.ColumnExists(q, "bin_types", "required_robot_group")
 			}},
+
+		{117, "bins.undeclared_carrier_at — the produce door records a finding instead of refusing a load that already happened",
+			v117BinsUndeclaredCarrierAt,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bins", "undeclared_carrier_at")
+			}},
 	}
 }
 
@@ -4265,6 +4271,54 @@ func v116NearEmptyRobotGroup(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE bin_types
 		ADD COLUMN IF NOT EXISTS required_robot_group TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("v116 bin_types.required_robot_group: %w", err)
+	}
+	return nil
+}
+
+// v117BinsUndeclaredCarrierAt gives the carrier rule somewhere to record a
+// finding at the produce door.
+//
+// THE RULE IS UNCHANGED AND SOURCING IS UNCHANGED. payload_bin_types still
+// binds every sourcing reader through helpers.BinSourceableSQL, and the
+// operator's Load Payload still refuses. What changed is the PRODUCE door:
+// refusing a finalize records a lie, because the parts are already in the bin
+// by the time the cell reports it. So the write lands and the bin carries a
+// finding (owner, 2026-09-20).
+//
+// A NULLABLE TIMESTAMP NEXT TO THE FACT, never a state value inside it — the
+// shape bins.anomaly_at and orders.orphan_aged_at already use, and the one
+// protocol/payloads.go's origin_class comment states as the house rule. The
+// payload, the bin type and the declared set are rows already; copying them
+// here would be a second, staler answer to a question the schema can answer.
+//
+// NO BACKFILL, AND THAT IS DELIBERATE. Every column starts NULL, so a plant
+// upgrading reports zero findings on day one even where bins in undeclared
+// carriers already stand — they are stamped at their next payload write, and
+// the census the B5 report asks for is the way to see today's population. A
+// backfill computed at migration time would be a number nobody watched arrive,
+// on a surface whose whole value is that it is quiet on a good day.
+//
+// Partial index: the flag is expected to select approximately nothing, which
+// is exactly the shape a partial index is for.
+//
+// ── IT WAS NUMBERED 116 AND IS NOT ANY MORE ───────────────────────────────
+//
+// This was written on a branch cut from a tree whose head was 115, while main
+// had already taken 116 for v116NearEmptyRobotGroup — and Hopkinsville applied
+// THAT 116 on 2026-09-15. Left as written, the runner at HK would see version
+// 116 already recorded and never create this column; every reader of it would
+// fail there, and the self-heal would then re-run whichever of the two the
+// binary happened to hold. Renumbered to 117 when the branch met main.
+func v117BinsUndeclaredCarrierAt(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bins ADD COLUMN IF NOT EXISTS undeclared_carrier_at TIMESTAMPTZ`,
+		`CREATE INDEX IF NOT EXISTS idx_bins_undeclared_carrier ON bins(id)
+			WHERE undeclared_carrier_at IS NOT NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v117 bins.undeclared_carrier_at: %w", err)
+		}
 	}
 	return nil
 }

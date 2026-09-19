@@ -25,6 +25,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"shingocore/domain"
 	"strings"
 
 	"shingo/protocol"
@@ -182,7 +183,16 @@ func (f *SourceFinder) explainEmptyPool(loaderID int64, anchor, payloadCode stri
 		pool = append(pool, fmt.Sprintf("%s[%s,%s,%s]", name, kind, payload, admitted))
 	}
 
-	want := binsource.Want{Payload: payloadCode, Intent: intent}
+	// The SAME want the selector was given, carrier rule included — a diagnostic
+	// built from a different rule than the decision would explain a rejection
+	// that never happened. A rule that will not load leaves the arm
+	// unrestricted here and says so, because this path's job is to explain an
+	// already-made refusal, never to make one.
+	binTypes, btErr := f.db.LoadBinTypeRule(payloadCode)
+	if btErr != nil {
+		f.debug("finder: loader %d pool diagnostic — carrier rule for %q unreadable: %v", loaderID, payloadCode, btErr)
+	}
+	want := binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes}
 	rejects := make([]string, 0, len(cands))
 	for i, c := range cands {
 		at := ""
@@ -553,8 +563,24 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			candidates = emptyBinsOnly(candidates)
 			claimPayload = ""
 		}
+		// The carrier rule for the part, read ONCE for this node's candidate
+		// list. An empty-intent fetch dropped its payload above and gets the
+		// zero rule with it. A read failure fails the source the same way the
+		// candidate read does — a rule that could not be read is not "no rule",
+		// and silently widening to every carrier is the shape MG3-1a closed.
+		//
+		// Skipped when there is nothing to judge: this is a per-tick path and a
+		// node holding no candidates is the ordinary case.
+		var binTypes domain.BinTypeRule
+		if len(candidates) > 0 {
+			var btErr error
+			if binTypes, btErr = f.db.LoadBinTypeRule(claimPayload); btErr != nil {
+				f.debug("finder: carrier rule for %q unreadable: %v", claimPayload, btErr)
+				return unreadableSource(nodeLocalKind(intent), payloadCode, need.SourceNode)
+			}
+		}
 		for _, b := range candidates {
-			if BinUnavailableReason(b, claimPayload) != "" {
+			if BinUnavailableReason(b, claimPayload, binTypes) != "" {
 				continue
 			}
 			bin, binNode = b, srcNode
@@ -844,7 +870,18 @@ func (f *SourceFinder) sourceFromDedicatedLoader(sourceNodeName, payloadCode str
 		byID[b.ID] = b
 	}
 
-	best, ok := binsource.Source(cands, binsource.Want{Payload: payloadCode, Intent: intent})
+	// The carrier rule for the part, read ONCE for the whole pool rather than
+	// per candidate slot. A read failure fails the source: an unreadable rule is
+	// not an absent one, and widening a loader pool to carriers the part may not
+	// travel in is the mis-source this door was given the rule to prevent.
+	var binTypes domain.BinTypeRule
+	if len(cands) > 0 {
+		var btErr error
+		if binTypes, btErr = f.db.LoadBinTypeRule(payloadCode); btErr != nil {
+			return nil, nil, true, fmt.Errorf("load bin-type rule for loader %d payload %q: %w", home.LoaderID, payloadCode, btErr)
+		}
+	}
+	best, ok := binsource.Source(cands, binsource.Want{Payload: payloadCode, Intent: intent, BinTypes: binTypes})
 	if !ok {
 		// The pool came up empty. Say WHY, in two halves, because "no eligible
 		// bin" has two different shapes and the bare message cannot tell them

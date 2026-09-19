@@ -5,6 +5,9 @@ package store
 // payloads and bins aggregates.
 
 import (
+	"fmt"
+
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
 )
@@ -42,6 +45,50 @@ func (db *DB) ListLoadSequenceNames() ([]string, error) {
 // so it's owned by bins/, but the entry point lives in the payloads delegate.
 func (db *DB) ListBinTypesForPayload(payloadID int64) ([]*bins.BinType, error) {
 	return bins.ListTypesForPayload(db.DB, payloadID)
+}
+
+// LoadBinTypeRule resolves payload_bin_types for ONE payload code into the value
+// the per-bin predicates judge candidates against.
+//
+// ONE QUERY, KEYED ON CODE, and both halves of that matter. On CODE because the
+// dispatch doors hold a payload code and nothing else — resolving the id first
+// would be a second round trip for a rule that is one join away — and keying on
+// code is what helpers.PayloadBinTypeRuleArm already does, so the SQL arm and
+// the Go arm read the same rows the same way. ONCE because the callers run this
+// per DOOR CALL and then judge every candidate bin against the result: reading
+// it inside the predicate would be an N+1 on the dispatch hot path.
+//
+// NO ROWS IS A NIL SET, NOT AN EMPTY ONE — domain.BinTypeRule reads the two
+// differently and the difference is the whole ruling. An unknown payload code
+// is also no rows: a code with no payload row has no bin-type rule to enforce,
+// and refusing every bin because a lookup missed would turn a naming slip into
+// a plant-wide stall.
+func (db *DB) LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error) {
+	if payloadCode == "" {
+		return domain.BinTypeRule{}, nil
+	}
+	rows, err := db.DB.Query(`
+		SELECT pbt.bin_type_id
+		FROM payload_bin_types pbt
+		JOIN payloads p ON p.id = pbt.payload_id
+		WHERE p.code = $1`, payloadCode)
+	if err != nil {
+		return domain.BinTypeRule{}, fmt.Errorf("load bin-type rule for payload %q: %w", payloadCode, err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return domain.BinTypeRule{}, fmt.Errorf("scan bin-type rule for payload %q: %w", payloadCode, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.BinTypeRule{}, fmt.Errorf("load bin-type rule for payload %q: %w", payloadCode, err)
+	}
+	return domain.NewBinTypeRule(ids), nil
 }
 
 // SetPayloadBinTypes replaces all bin type associations for a payload template.

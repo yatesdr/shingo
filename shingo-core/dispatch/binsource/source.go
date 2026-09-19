@@ -4,12 +4,17 @@
 // table-testable with plain values; the store-aware gather lives in the dispatch
 // package (loader_source.go).
 //
-// Two rules, nothing more:
+// Three rules, nothing more:
 //
 //   - Eligibility is payload-exact and intent-aware. A demand for part X is only
 //     ever satisfied by a bin of X — never a partial of another part Y. Drain
 //     (consume) wants a bin HOLDING X (full or partial); Fill (produce) wants a
 //     CONTAINER for X (a partial of X to top up, or a fungible empty).
+//
+//   - The carrier must be one X may travel in. payload_bin_types is hard where
+//     it has rows and silent where it has none, and the resolved set rides in on
+//     Want.BinTypes rather than being read here — the package is pure, and the
+//     rule is loaded once per call by the store-aware gather.
 //
 //   - Order is plain FIFO of part X — oldest COALESCE(loaded_at, created_at)
 //     first. A partial is not special; it is just an older bin of X (its
@@ -37,19 +42,29 @@ const (
 	Fill
 )
 
-// Want is a sourcing request: the part X and the direction.
+// Want is a sourcing request: the part X, the direction, and the carrier types
+// X is allowed to travel in.
+//
+// THE RULE RIDES ON THE WANT because it is a fact about the PAYLOAD, and the
+// payload is fixed for a call. The caller loads it once (dispatch/loader_source
+// .go) and every candidate is judged against the same value, so the package
+// stays pure and the pool scan stays one query. A zero BinTypes is
+// unrestricted, which is what a caller that has no payload_bin_types rows — or
+// no payload — passes.
 type Want struct {
-	Payload string
-	Intent  Intent
+	Payload  string
+	Intent   Intent
+	BinTypes domain.BinTypeRule
 }
 
 // Cand is one candidate bin, carrying exactly what the selector reads. Populated
 // by the caller from bins rows; in tests, constructed directly.
 type Cand struct {
-	BinID   int64
-	Payload string // "" marks an empty bin
-	UOP     int    // uop_remaining
-	Cap     int    // uop_capacity
+	BinID     int64
+	BinTypeID int64  // bins.bin_type_id — judged against Want.BinTypes
+	Payload   string // "" marks an empty bin
+	UOP       int    // uop_remaining
+	Cap       int    // uop_capacity
 
 	LoadedAt  *time.Time // nil for an empty; FIFO key is COALESCE(LoadedAt, CreatedAt)
 	CreatedAt time.Time
@@ -74,10 +89,12 @@ func isFullOf(c Cand, x string) bool { return c.Payload == x && c.UOP >= c.Cap }
 func isPartialOf(c Cand, x string) bool { return c.Payload == x && c.UOP > 0 && c.UOP < c.Cap }
 
 // eligible reports whether c can satisfy want: a bin of part X only (Payload == X
-// excludes empties and other parts up front), filtered by intent. A FULL must be
-// manifest-confirmed to be a ready source; a partial (a known-good returned bin)
-// need not be. The status reject-set is domain.BinStatus.BlocksPickup — the SAME
-// predicate binresolver.BinUnavailableReason uses, so the loader ranker and the
+// excludes empties and other parts up front), filtered by intent, in a carrier X
+// is allowed to travel in. A FULL must be manifest-confirmed to be a ready
+// source; a partial (a known-good returned bin) need not be. The status
+// reject-set is domain.BinStatus.BlocksPickup and the bin-type rule is
+// domain.BinTypeRule — the SAME two predicates
+// binresolver.BinUnavailableReason uses, so the loader ranker and the
 // concrete-node path can no longer drift ('staged'/'available' stay pickable).
 func eligible(c Cand, w Want) bool { return RejectReason(c, w) == "" }
 
@@ -113,10 +130,10 @@ func RejectReason(c Cand, w Want) string {
 		case isFullOf(c, w.Payload) && !c.ManifestConfirmed:
 			return "unconfirmed-full"
 		}
-		return ""
+		return binTypeReject(c, w)
 	case Fill:
 		if isPartialOf(c, w.Payload) || isEmpty(c) {
-			return ""
+			return binTypeReject(c, w)
 		}
 		if c.Payload == w.Payload {
 			return "full-not-a-container"
@@ -125,6 +142,27 @@ func RejectReason(c Cand, w Want) string {
 	default:
 		return "unknown-intent"
 	}
+}
+
+// binTypeReject is the carrier half of eligibility: this bin holds (or will
+// hold) part X, so its type must be one X is allowed to travel in.
+//
+// IT IS ASKED LAST, at the point each intent has otherwise accepted, and that
+// ordering is the reason RejectReason's tags stay readable. A bin of the wrong
+// part reports "payload:PART-B", not "bin-type" — the type of a bin nobody
+// wanted is not why it was skipped. Only a candidate that passed every other
+// rule can be refused for its carrier.
+//
+// IT BINDS BOTH INTENTS, empties included. A fungible empty picked to be FILLED
+// with X becomes a carrier of X the moment the produce leg lands, so a type X
+// may not travel in is not a container for X either — refusing it here is the
+// same rule the produce-finalize door (store/bins.binManifest) enforces at the
+// other end of that trip.
+func binTypeReject(c Cand, w Want) string {
+	if w.BinTypes.Permits(c.BinTypeID) {
+		return ""
+	}
+	return "bin-type"
 }
 
 // less reports whether a ranks ahead of b. Part-X bins: FIFO, oldest first. Fill

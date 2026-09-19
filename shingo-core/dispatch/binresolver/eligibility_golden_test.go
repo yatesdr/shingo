@@ -173,7 +173,7 @@ func TestGolden_Eligibility(t *testing.T) {
 			Fixture:      f.Name,
 			LoaderDrain:  binsource.RejectReason(c, binsource.Want{Payload: wantPayload, Intent: binsource.Drain}),
 			LoaderFill:   binsource.RejectReason(c, binsource.Want{Payload: wantPayload, Intent: binsource.Fill}),
-			ConcreteNode: BinUnavailableReason(b, wantPayload),
+			ConcreteNode: BinUnavailableReason(b, wantPayload, domain.BinTypeRule{}),
 			NGRPResolver: ngrp,
 		})
 	}

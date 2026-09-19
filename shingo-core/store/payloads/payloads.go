@@ -175,6 +175,21 @@ func List(db *sql.DB) ([]*Payload, error) {
 // DELETE/INSERT phases, and without it one transaction's INSERT trips over
 // the other's committed rows on payload_bin_types_pkey and the loser returns
 // an error for a write whose end state is exactly what it asked for.
+//
+// ── THE FINDINGS ARE RECOMPUTED IN THIS TRANSACTION ─────────────────────────
+//
+// bins.undeclared_carrier_at records "the payload this carrier holds is not
+// declared to travel in it" — a statement about THIS TABLE, so editing this
+// table is the moment it can stop being true in either direction. A bin that
+// now passes loses its flag in the same transaction that made it pass, and a
+// bin that no longer passes gains one, so the flag never disagrees with the
+// rule it is derived from. Without this, widening a rule would leave carriers
+// on an operator's list with nothing left to fix, which is the fastest way to
+// teach people to ignore a list.
+//
+// ONE UPDATE, over the bins carrying this payload only. This is an admin
+// action — somebody editing a payload template — not a tick, and the statement
+// costs nothing on a payload no bin carries.
 func SetBinTypes(db *sql.DB, payloadID int64, binTypeIDs []int64) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -190,5 +205,37 @@ func SetBinTypes(db *sql.DB, payloadID int64, binTypeIDs []int64) error {
 			return err
 		}
 	}
+	if err := recomputeUndeclaredCarriersTx(tx, payloadID); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// recomputeUndeclaredCarriersTx re-derives bins.undeclared_carrier_at for every
+// bin carrying the payload whose rule just changed.
+//
+// It runs AFTER the DELETE/INSERT so it judges the new rule, and it is scoped
+// by payload_code rather than sweeping the table: a rule edit can only change
+// the answer for bins carrying that payload.
+//
+// COALESCE preserves an existing stamp so a carrier that was already wrong is
+// not re-dated by an unrelated edit to the same payload's rule — the timestamp
+// answers "how long has this been wrong", and a bin whose rule was edited twice
+// has been wrong since the first time.
+//
+// A payload left with NO rows takes the ELSE arm for every one of its bins,
+// which is the sparse-table ruling arriving from the clearing side: coverage is
+// a gap in the data, so removing the last rule un-flags rather than flags.
+func recomputeUndeclaredCarriersTx(tx *sql.Tx, payloadID int64) error {
+	_, err := tx.Exec(`
+		UPDATE bins b SET undeclared_carrier_at = CASE
+		    WHEN `+helpers.UndeclaredCarrierRuleSQL("b.payload_code", "b.bin_type_id")+`
+		    THEN COALESCE(b.undeclared_carrier_at, NOW())
+		    ELSE NULL END
+		WHERE b.payload_code <> ''
+		  AND b.payload_code = (SELECT code FROM payloads WHERE id = $1)`, payloadID)
+	if err != nil {
+		return fmt.Errorf("recompute undeclared carriers for payload %d: %w", payloadID, err)
+	}
+	return nil
 }

@@ -95,9 +95,71 @@ func PayloadBinTypeRuleArm(payloadExpr string) string {
 	  )`
 }
 
+// ── THE OTHER SIDE OF THE SAME RULE: THE FINDING ────────────────────────────
+//
+// PayloadBinTypeRuleArm admits a bin. These two name the bins it REFUSES, and
+// they exist because the produce door stopped refusing them.
+//
+// The write end used to be symmetric with the read end: a finalize onto a
+// carrier payload_bin_types excludes was refused outright. That records a lie —
+// by the time a cell reports a finalize the parts are physically in the bin, so
+// a refusal says "this did not happen" about something that did, and leaves the
+// count wrong in the direction nobody can see. Owner, 2026-09-20: the produce
+// door ACCEPTS and records a finding; the operator's Load Payload, which is a
+// person typing an assignment before anything physical has happened, keeps
+// refusing. Sourcing is untouched either way — the bin is still unfetchable,
+// which is exactly what the finding is for.
+
+// UndeclaredCarrierRuleSQL is the strict complement of PayloadBinTypeRuleArm:
+// true for a bin whose payload HAS declared carriers and whose own type is not
+// among them.
+//
+// IT IS NOT `NOT PayloadBinTypeRuleArm(...)`, and the difference is the sparse
+// table. The admission arm is `IN (...) OR NOT EXISTS (...)`; negating it gives
+// `NOT IN (...) AND EXISTS (...)`, which is this — but written out, because the
+// `EXISTS` half is the whole ruling and a reader has to be able to see it. A
+// payload with NO rows constrains nothing and therefore flags nothing: at
+// Springfield one payload of 128 has rows, and a rule that flagged the other
+// 127 would bury the one case worth walking to.
+//
+// binTypeExpr names the carrier — a column (`b.bin_type_id`) or a placeholder,
+// so a recompute that writes a new type can judge the NEW value rather than the
+// row's old one.
+func UndeclaredCarrierRuleSQL(payloadExpr, binTypeExpr string) string {
+	return `(
+	    EXISTS (
+	      SELECT 1 FROM payload_bin_types pbt
+	      JOIN payloads p ON p.id = pbt.payload_id WHERE p.code = ` + payloadExpr + `
+	    )
+	    AND ` + binTypeExpr + ` NOT IN (
+	      SELECT pbt.bin_type_id FROM payload_bin_types pbt
+	      JOIN payloads p ON p.id = pbt.payload_id WHERE p.code = ` + payloadExpr + `
+	    )
+	  )`
+}
+
+// BinInUndeclaredCarrierSQL reads the STAMP, not the rule. Every surface that
+// counts or lists findings composes this one fragment, so the inventory page's
+// count, the /material-flags list and the sourcing reason cannot disagree about
+// how many there are.
+//
+// It reads the stamp rather than re-deriving the rule because the two must not
+// be able to differ: the stamp is what the write door decided, and a surface
+// that re-derived it would report a bin as fine the instant a rule changed,
+// before the recompute that clears the flag had run. The recompute is in the
+// same transaction as the rule change (payloads.SetBinTypes), so the stamp is
+// never stale — and if it ever were, the stamp is the number an operator was
+// shown and the one to reconcile against.
+const BinInUndeclaredCarrierSQL = `b.undeclared_carrier_at IS NOT NULL`
+
 // BinSourceableSQL is the whole question, for the payload named by payloadExpr.
 // Every sourcing reader composes this and adds only its own scope — a lane, a
 // node to avoid, a payload list.
+//
+// THE FINDING IS NOT IN HERE AND MUST NOT BE. A flagged bin is refused by the
+// bin-type arm already; adding the stamp would be a second spelling of one
+// rule, and the day the stamp lagged a rule change the two halves would
+// disagree about the same bin.
 func BinSourceableSQL(payloadExpr string) string {
 	return BinCarriesSourceableStockSQL + ` AND ` + BinAtLiveNodeSQL +
 		` AND ` + BinUnheldSQL + PayloadBinTypeRuleArm(payloadExpr)

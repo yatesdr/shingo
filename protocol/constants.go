@@ -105,6 +105,19 @@ func IsLifecycleActor(actor string) bool {
 // still gets the answer that leaves the slot alone, for the reason spelled out
 // on IsLifecycleActor. That is a floor, not a default — the parameter is
 // required at every call site so the compiler asks the question.
+//
+// ── A SECOND READER, AND IT IS NOT THE WIRE ───────────────────────────────
+//
+// service.judgeBinTypeCarriesPayload reads this too, to decide whether a
+// payload written into a carrier its payload_bin_types rows exclude is REFUSED
+// or ACCEPTED-AND-FLAGGED. A person declaring ahead of anything physical is
+// refused; Core's own bookkeeping recording what a cell already did is flagged,
+// because the parts are in the bin and a refusal would record that something
+// which happened did not. It briefly had its own two-valued enum for exactly
+// that split before the two were collapsed here.
+//
+// So a third value added to this type changes two things, not one: what goes on
+// the wire, and whether a write door refuses. Read both before adding one.
 type Declarer uint8
 
 const (

@@ -11,8 +11,10 @@
   contrast floors structurally (worst 2.89:1), so a classification is a printed
   name plus a ring, exactly as the duration band and the cause column already do.
 
-  THE TWO SECTIONS ARE NEVER COMBINED INTO ONE INDICATOR. There is no total, no
-  score and no shared count across them. That is the row's whole correction.
+  THE SECTIONS ARE NEVER COMBINED INTO ONE INDICATOR. There is no total, no
+  score and no shared count across them. That is the row's whole correction —
+  and it is why a third section could be added without disturbing the first two:
+  each one carries its own selector, its own owner and its own denominator.
 */}}
 <div>
   <div class="flex flex-between mb-2">
@@ -20,15 +22,16 @@
   </div>
 
   <p class="text-muted mb-2">
-    Two readings that look alike on a bad day and go to different people.
-    <strong>A place that has been asking for material</strong>, and
-    <strong>a carrier whose count ShinGo may no longer be entitled to.</strong>
+    Three readings that look alike on a bad day and go to different people.
+    <strong>A place that has been asking for material</strong>,
+    <strong>a carrier whose count ShinGo may no longer be entitled to</strong>, and
+    <strong>a carrier holding a part it is not declared to carry.</strong>
     They are selected on different columns, they are listed separately, and
     there is no combined number — reading them as one is what used to send every
     deep negative to the wrong owner.
   </p>
   <p class="mf-caveat mb-2">
-    <strong>Neither section attributes anything, and neither is a downtime
+    <strong>No section attributes anything, and none is a downtime
     figure.</strong> ShinGo records that a place asked for material and when it
     stopped asking. It does not record whether a line was stopped, whether
     anybody was waiting, or what it cost — so nothing here is a total of
@@ -309,6 +312,123 @@
       A measured result: every carrier holding a payload has been loaded,
       cleared or released more recently than that, and none has a binding whose
       age is unknown. The counts above say how many carriers were examined.
+    </div>
+  </div>
+  {{end}}
+
+  {{/* ══ SECTION THREE — a rule, not a reading ═══════════════════════════ */}}
+  {{/*
+    SHARES SECTION TWO'S READ AND NOTHING ELSE. Same carrier population, a
+    different selector: section two asks whose count has had the longest to
+    drift, this asks which carrier cannot be fetched at all. Different owner,
+    different action, no shared number.
+
+    It renders inside the binding half's {{else}} because there is ONE read
+    behind both and therefore one way for it to fail. A second error box for
+    the same failure would say two things went wrong.
+  */}}
+  <h2 class="mf-heading mf-heading--second">Carriers the part may not travel in</h2>
+  <p class="text-muted mf-lede">
+    One row per carrier holding a payload its <em>bin type</em> is not declared
+    to carry. <strong>Owner: whoever sets payload bin types &mdash; SCO or an
+    engineer.</strong> Move the parts into a declared carrier, or declare this
+    one on the payload.
+  </p>
+  <p class="mf-caveat mb-2">
+    <strong>These bins count as stock and no robot will ever fetch them.</strong>
+    Every sourcing reader refuses a carrier the payload does not declare, so the
+    parts are in the plant, on the books, and unreachable &mdash; which reads at
+    the line as &ldquo;no parts available&rdquo; while inventory says otherwise.
+    That is the whole reason the row exists.
+  </p>
+  <p class="mf-caveat mb-2">
+    <strong>The produce door records this, it does not refuse it.</strong> By
+    the time a cell reports a finalize the parts are already in the carrier, so
+    refusing would write down that something which happened did not. The
+    operator's Load Payload still refuses &mdash; nothing physical has happened
+    yet at that door. <strong>A payload with no declared carriers is never
+    listed here:</strong> the table is sparsely populated, and no declaration
+    means no rule, not a rule nobody satisfies.
+  </p>
+
+  {{with .UndeclaredSummary}}
+  <div class="card mb-2">
+    <div class="card-header-row">
+      <span class="kpi-label">Carrier rule</span>
+    </div>
+    <div class="de-summary">
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Carriers</div>
+        <div class="kpi-value tnum">{{.Carriers}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">In an undeclared carrier</div>
+        <div class="kpi-value tnum">{{.Flagged}}</div>
+      </div>
+      <div class="kpi-tile kpi-tile--mini">
+        <div class="kpi-label">Longest standing</div>
+        {{template "de-cell-value" .Longest}}
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  {{if .Undeclared}}
+  <table class="table de-table mf-table">
+    <thead>
+      <tr>
+        <th>Carrier</th>
+        <th>Payload</th>
+        <th>Is in</th>
+        <th>Declared for</th>
+        <th>At</th>
+        <th class="col-num">Flagged for</th>
+        <th>Flagged since</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Undeclared}}
+      {{/* NO RING ON THESE ROWS. The ledger half rings one reading of four
+           because three of them are ordinary; here every row in the table is
+           the finding, and marking all of them would mark none. The heading
+           and the empty-state card carry the emphasis instead. */}}
+      <tr class="mf-row">
+        {{/* /bins is where a carrier is actually worked on, and it takes no
+             deep-link parameter today — the same plain link the binding half
+             uses, for the same reason. */}}
+        <td><a href="/bins">{{if .Label}}{{.Label}}{{else}}#{{.BinID}}{{end}}</a></td>
+        <td>{{.Payload}}</td>
+        <td>{{.BinType}}</td>
+        <td>{{template "de-cell" .Declared}}</td>
+        <td>{{template "de-cell" .Node}}</td>
+        <td class="col-num tnum">{{template "de-cell" .SinceCell}}</td>
+        <td class="tnum de-sub">{{template "de-cell" .FlaggedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="de-note">
+    <strong>Two ways to clear a row, and they are not the same decision.</strong>
+    Moving the parts into a declared carrier is a floor action. Adding this bin
+    type to the payload is a change to what the plant declares &mdash; it clears
+    every flagged carrier of that payload in the same edit, and it is the right
+    answer only when the carrier really does hold the part safely.
+  </p>
+  <p class="de-note">
+    <strong>Confidence:</strong> the flag is recomputed at every payload write
+    on the carrier and at every edit to the payload's bin types, so a blank
+    column here means checked-and-fine, never not-checked. &ldquo;Flagged
+    for&rdquo; runs from when the carrier first became wrong, not from the last
+    time anybody looked.
+  </p>
+  {{else}}
+  <div class="card">
+    <strong>No carrier is holding a part it is not declared to carry.</strong>
+    <div class="text-muted mt-1">
+      A measured result: every carrier holding a payload is either in a bin type
+      that payload declares, or carries a payload with no declared bin types at
+      all &mdash; which constrains nothing. The counts above say how many
+      carriers were examined.
     </div>
   </div>
   {{end}}

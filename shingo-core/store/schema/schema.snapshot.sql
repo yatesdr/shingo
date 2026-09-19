@@ -225,7 +225,8 @@ CREATE TABLE public.bins (
     anomaly_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    anomaly_note text DEFAULT ''::text NOT NULL
+    anomaly_note text DEFAULT ''::text NOT NULL,
+    undeclared_carrier_at timestamp with time zone
 );
 
 CREATE SEQUENCE public.bins_id_seq
@@ -1669,6 +1670,8 @@ CREATE INDEX idx_bins_payload_code ON public.bins USING btree (payload_code);
 CREATE INDEX idx_bins_status ON public.bins USING btree (status);
 
 CREATE INDEX idx_bins_type ON public.bins USING btree (bin_type_id);
+
+CREATE INDEX idx_bins_undeclared_carrier ON public.bins USING btree (id) WHERE (undeclared_carrier_at IS NOT NULL);
 
 CREATE INDEX idx_cell_part_events_cell_time ON ONLY public.cell_part_events USING btree (cell_id, recorded_at);
 

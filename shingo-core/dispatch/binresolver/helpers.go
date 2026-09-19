@@ -65,8 +65,8 @@ func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
 //
 // This catches "wrong part parked at wrong station" while allowing the normal
 // post-completion state (cleared bin with empty payload_code) to pass through.
-func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string) bool {
-	return BinUnavailableReason(b, payloadCode) == ""
+func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string, binTypes domain.BinTypeRule) bool {
+	return BinUnavailableReason(b, payloadCode, binTypes) == ""
 }
 
 // BinUnavailableReason is the reason-returning sibling of IsAvailableAtConcreteNode.
@@ -88,7 +88,7 @@ func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string) bool {
 // (the claim guards locked=false, service/bin_manifest.go), so surfacing it here is
 // zero behaviour change — it just explains the skip instead of letting the claim
 // silently fail.
-func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
+func BinUnavailableReason(b *bins.Bin, payloadCode string, binTypes domain.BinTypeRule) string {
 	if b.ClaimedBy != nil {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
@@ -105,6 +105,26 @@ func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 	}
 	if payloadCode != "" && b.PayloadCode != "" && b.PayloadCode != payloadCode {
 		return fmt.Sprintf("payload %q does not match order payload %q", b.PayloadCode, payloadCode)
+	}
+	// THE CARRIER RULE, ASKED LAST and only when a part was named. A door
+	// fetching "whatever is resident" — a removal leg, an empty pickup that
+	// dropped its payload context — passes payloadCode "" and an unrestricted
+	// rule, and this is inert for it. Where a part IS named, the bin is being
+	// taken FOR that part, so it must be a carrier the part may travel in
+	// whether it already holds it or is an empty about to.
+	//
+	// Asked after the payload match so the reason stays the useful one: a bin of
+	// the wrong part reports the mismatch, not its type.
+	if payloadCode != "" && !binTypes.Permits(b.BinTypeID) {
+		// Named by CODE where the row carries one and by id otherwise. Callers
+		// reach this predicate through BinJoinQuery, which joins bin_types and
+		// fills the code — but not every construction of a bins.Bin does, and a
+		// reason that reads `bin type ""` names nothing an operator can act on.
+		what := b.BinTypeCode
+		if what == "" {
+			what = fmt.Sprintf("#%d", b.BinTypeID)
+		}
+		return fmt.Sprintf("bin type %q may not carry payload %q", what, payloadCode)
 	}
 	return ""
 }

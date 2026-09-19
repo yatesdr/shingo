@@ -254,6 +254,14 @@ function renderAlerts() {
   // and bins parked staged past their own TTL — the SNF3 stranding signals.
   const rejected = anomalySummary.rejected_delta_bins || 0;
   const staleStaged = anomalySummary.stale_staged_bins || 0;
+  // Carriers holding a payload their bin type is not declared to carry. These
+  // COUNT as stock above and no sourcing reader will ever fetch them, so the
+  // on-hand figure on this very page is money the plant cannot spend. The
+  // produce door records these rather than refusing them — by the time a cell
+  // reports a finalize the parts are already in the carrier — which is exactly
+  // why the count has to be here: an unwatched finding is worse than the
+  // refusal it replaced. /material-flags lists which carriers.
+  const undeclared = anomalySummary.undeclared_carrier_bins || 0;
   const parts = [];
   if (below) parts.push('<b>' + below + '</b> payload' + (below > 1 ? 's' : '') + ' below threshold');
   if (err) parts.push('<b>' + err + '</b> ledger error' + (err > 1 ? 's' : ''));
@@ -261,6 +269,14 @@ function renderAlerts() {
   // WHICH carriers are flagged (part, node, reason), not just a scroll.
   if (rejected) parts.push('<span data-action="showRejectedDeltas" style="text-decoration:underline;cursor:pointer"><b>' + rejected + '</b> rejected delta' + (rejected > 1 ? 's' : '') + '</span>');
   if (staleStaged) parts.push('<b>' + staleStaged + '</b> stale staged bin' + (staleStaged > 1 ? 's' : ''));
+  // A LINK, NOT A SCROLL TARGET: the carriers are listed on another page, and
+  // the fix (move the parts, or declare the bin type on the payload) is not
+  // something this page can do.
+  // data-action="stopPropagation" so the banner's own scrollTo handler does not
+  // also fire under the link — the built-in verb stops the bubble without
+  // preventDefault, so the navigation still happens.
+  if (undeclared) parts.push('<a href="/material-flags" data-action="stopPropagation"><b>'
+    + undeclared + '</b> bin' + (undeclared > 1 ? 's' : '') + ' in undeclared carriers</a>');
   if (stale) parts.push('<b>' + stale + '</b> stale bucket' + (stale > 1 ? 's' : ''));
   if (!parts.length) { el.innerHTML = ''; return; }
   el.innerHTML = '<div class="alerts-banner" data-action="scrollTo:' + (err || below ? 'rh' : 'buckets') + '">'

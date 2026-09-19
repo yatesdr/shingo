@@ -272,35 +272,27 @@ func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride *i
 	if payloadCode == "" {
 		return fmt.Errorf("payload_code is required")
 	}
-	p, err := s.db.GetPayloadByCode(payloadCode)
-	if err != nil {
+	// Both lookups stay as VALIDATION, their values now unused: they are what
+	// turn an unknown code or bin into this door's own plain sentence rather
+	// than a template-resolution error from two layers down.
+	if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {
 		return fmt.Errorf("payload template %q not found", payloadCode)
 	}
-	b, err := s.db.GetBin(binID)
-	if err != nil {
+	if _, err := s.db.GetBin(binID); err != nil {
 		return fmt.Errorf("bin not found")
 	}
-	compat, err := s.db.ListBinTypesForPayload(p.ID)
-	if err != nil {
-		return fmt.Errorf("check payload bin-type compat: %w", err)
-	}
-	if len(compat) > 0 {
-		ok := false
-		for _, bt := range compat {
-			if bt.ID == b.BinTypeID {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			codes := make([]string, len(compat))
-			for i, bt := range compat {
-				codes[i] = bt.Code
-			}
-			return fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)", payloadCode, b.BinTypeCode, codes)
-		}
-	}
-	_, err = s.manifest.SetFromTemplate(binID, payloadCode, uopOverride, by)
+	// THE CARRIER CHECK USED TO BE SPELLED OUT HERE and is not any more. It now
+	// lives under every door that writes a payload onto a bin
+	// (service.judgeBinTypeCarriesPayload, called from setForProductionTx), so
+	// produce finalize is held to the same rule this door always was. Keeping a
+	// copy here would be a second spelling of one question — the drift the
+	// 2026-09-14 sourcing collapse ended on the read side, arriving on the
+	// write side instead. The refusal message is unchanged.
+	//
+	// `by` is what makes the refusal survive the move: this door passes
+	// DeclaredByPerson, so the shared rule refuses rather than flags. See
+	// judgeBinTypeCarriesPayload for why the two answers are not the same.
+	_, err := s.manifest.SetFromTemplate(binID, payloadCode, uopOverride, by)
 	return err
 }
 

@@ -96,6 +96,14 @@ import (
 // a pre-v116 binary reads the same group it always did and there is no backfill
 // to lose.
 //
+// v117 ADDS bins.undeclared_carrier_at — the carrier-rule finding the produce
+// door records instead of refusing a load that already happened. Nullable, no
+// backfill, and inert to a pre-v117 binary: nothing older reads the column, and
+// a plant that rolls back simply stops recording findings rather than losing
+// any — the stamp is re-derived at the next payload write on each bin. It was
+// written as 116 on a branch cut from a 115 head and renumbered when that
+// branch met main, which had already shipped 116 to Hopkinsville.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -107,8 +115,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 116 {
-		t.Errorf("head migration = %d, want 116", got)
+	if got := store.LatestMigrationVersion(); got != 117 {
+		t.Errorf("head migration = %d, want 117", got)
 	}
 }
 

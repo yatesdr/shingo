@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"fmt"
+	"shingocore/domain"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
@@ -90,7 +91,13 @@ type PlannedBinClaim struct {
 // BinUnavailableReason returns "". A step with no usable candidate adds an
 // entry to plan.Skips with the same per-bin reject summary the inline path
 // produces.
-func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, payloadCode, processNode string) *ComplexPlan {
+//
+// binTypes is payload_bin_types for payloadCode, resolved by the caller because
+// this function is pure. It is read once per pickup step and judged against
+// every candidate at that step, so threading it in costs the caller one query
+// per plan rather than one per candidate bin. A zero value is unrestricted,
+// which is what a caller with no payload passes.
+func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, payloadCode, processNode string, binTypes domain.BinTypeRule) *ComplexPlan {
 	plan := &ComplexPlan{
 		ResolvedSteps: steps,
 	}
@@ -127,7 +134,13 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 				continue
 			}
 		}
-		claim, reject := selectClaim(candidates, claimPayload)
+		// An empty leg dropped its payload context, so it carries no carrier
+		// rule either — claimPayload "" and the zero rule travel together.
+		stepTypes := binTypes
+		if claimPayload == "" {
+			stepTypes = domain.BinTypeRule{}
+		}
+		claim, reject := selectClaim(candidates, claimPayload, stepTypes)
 		if claim == nil {
 			plan.Skips = append(plan.Skips, pickupSkip{
 				stepIndex: i,
@@ -162,10 +175,10 @@ func BuildComplexPlan(steps []resolvedStep, binsByNode map[string][]*bins.Bin, p
 // first eligible bin, or (nil, rejectReasons) if every candidate failed. The
 // reject reasons match the strings the live claim path emits so
 // log lines stay diff-stable across the refactor.
-func selectClaim(candidates []*bins.Bin, payloadCode string) (*bins.Bin, []string) {
+func selectClaim(candidates []*bins.Bin, payloadCode string, binTypes domain.BinTypeRule) (*bins.Bin, []string) {
 	var rejects []string
 	for _, b := range candidates {
-		if reason := binresolver.BinUnavailableReason(b, payloadCode); reason != "" {
+		if reason := binresolver.BinUnavailableReason(b, payloadCode, binTypes); reason != "" {
 			rejects = append(rejects, fmt.Sprintf("bin=%d (%s): %s", b.ID, b.Label, reason))
 			continue
 		}

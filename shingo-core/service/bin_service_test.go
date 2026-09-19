@@ -499,7 +499,15 @@ func TestBinService_LoadPayload_RejectsIncompatibleBinType(t *testing.T) {
 	testutil.MustNoErr(t, db.SetPayloadBinTypes(sd.Payload.ID, []int64{otherBT.ID}), "SetPayloadBinTypes")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-INCOMPAT", "", 0)
-	err := svc.LoadPayload(bin.ID, sd.Payload.Code, nil, protocol.DeclaredByLifecycle)
+	// DeclaredByPerson, which is what the one production caller passes
+	// (www/bin_actions.go) and what makes this a refusal rather than a finding.
+	// The carrier rule reads the declarer now: a person declaring ahead of
+	// anything physical is refused, Core's own bookkeeping recording what a cell
+	// already did is accepted and the carrier flagged. This line said Lifecycle
+	// while the declarer only steered the announcement, and the rule refused
+	// either way; it names the door's real declarer now. See
+	// service.judgeBinTypeCarriesPayload.
+	err := svc.LoadPayload(bin.ID, sd.Payload.Code, nil, protocol.DeclaredByPerson)
 	if err == nil {
 		t.Fatal("expected LoadPayload to reject payload not compatible with bin type")
 	}

@@ -475,7 +475,17 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	if processNode == "" {
 		processNode = order.SourceNode
 	}
-	plan := BuildComplexPlan(resolvedSteps, d.snapshotPickupBins(resolvedSteps), order.PayloadCode, processNode)
+	// The carrier rule for this order's part, read ONCE for the whole plan —
+	// BuildComplexPlan is pure and judges every candidate at every pickup step
+	// against this one value. A read failure is not an empty rule: an
+	// unreadable payload_bin_types would silently widen the plan to carriers
+	// the part may not travel in, so the order queues and the scanner retries.
+	binTypes, err := d.db.LoadBinTypeRule(order.PayloadCode)
+	if err != nil {
+		log.Printf("dispatch: complex order %d — carrier rule for %q unreadable: %v", order.ID, order.PayloadCode, err)
+		return dispatchStep{done: true, err: fmt.Errorf("complex order %d: load bin-type rule: %w", order.ID, err)}
+	}
+	plan := BuildComplexPlan(resolvedSteps, d.snapshotPickupBins(resolvedSteps), order.PayloadCode, processNode, binTypes)
 
 	// Reserve = reconcile held reservations against the distinct source needs and
 	// soft-hold the gaps (reserveComplexPlan). Runs AFTER the slot-claim loop above,

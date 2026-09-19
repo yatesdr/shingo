@@ -719,12 +719,40 @@ func (r *GroupResolver) noteClosedLanes(group *nodes.Node, closed []string) {
 		group.Name, len(closed), strings.Join(closed, ", "))
 }
 
-// binTypeAllowed checks whether a bin type is permitted at a node via effective bin types.
-// Returns true if no restrictions are set (nil = all allowed) or if the bin type is in the set.
+// binTypeAllowed checks whether a bin type is permitted at a node via effective
+// bin types. An empty set is "no restrictions declared" and allows everything;
+// a non-empty set allows only its members.
+//
+// A READ FAILURE REFUSES, and it used to allow. The two were spelled as one
+// condition — `if err != nil || len(bts) == 0` — which reads a list that could
+// not be READ as a list that is EMPTY, and those are different facts. An
+// unreadable node_bin_types would silently open every node to every carrier for
+// as long as the read kept failing, which is the direction that puts a bin
+// somewhere it physically does not fit. Refusing is recoverable: the store
+// resolver moves to the next candidate slot, and a group whose reads are all
+// failing parks under a cause instead of packing a lane wrong.
+//
+// THE REFUSAL IS LOGGED because it is indistinguishable, from the caller's side,
+// from an honest "this type is not allowed here" — and a silent refusal on a
+// database fault is how a transient read problem becomes an unexplained park.
+//
+// THE `bin_type_mode` PROPERTY IS DELIBERATELY NOT READ HERE, and this is not
+// the same question engine.binTypeRefusal answers. That one is the stranded-
+// transit inference path's "should this leg be refused", where a node set to
+// `specific` with nothing assigned accepts nothing. Dispatch's question is "may
+// this carrier go to this node", and the recorded decision on the difference
+// (engine/stranded_transit.go: "Nothing in dispatch changes") stands. Merging
+// the two would close every store slot at a node configured `specific` and left
+// unassigned — a ruling of its own, not a bug fix, and not taken here.
 func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID int64) bool {
 	bts, err := r.DB.GetEffectiveBinTypes(nodeID)
-	if err != nil || len(bts) == 0 {
-		return true // no restrictions
+	if err != nil {
+		log.Printf("store slot: node %d bin-type list unreadable (%v); refusing bin type %d "+
+			"— a list that could not be read is not an empty list", nodeID, err, binTypeID)
+		return false
+	}
+	if len(bts) == 0 {
+		return true // nothing declared = no restriction
 	}
 	for _, bt := range bts {
 		if bt.ID == binTypeID {

@@ -256,3 +256,83 @@ func TestCompute_StagedAndFetchableBothCountOnce(t *testing.T) {
 		t.Errorf("three claims / two bins: status = %q, want red", got[k3].Status)
 	}
 }
+
+// ── The carrier-rule finding ────────────────────────────────────────────────
+//
+// Bins standing in a carrier their payload is not declared to travel in COUNT
+// as stock and are refused by every sourcing reader, so they contribute nothing
+// to Pool and the style goes RED on a payload the plant is holding. Compute
+// carries the finding alongside Missing so the operator sentence can say which
+// of the two problems this is.
+
+// TestCompute_FindingIsScopedToTheMissingSet. A payload with flagged stock that
+// is nonetheless satisfiable has a shortage nobody is waiting on. Naming it in
+// a changeover verdict would put a maintenance job in front of an operator
+// trying to change over; /material-flags and /inventory own that reading.
+func TestCompute_FindingIsScopedToTheMissingSet(t *testing.T) {
+	k := key("SNF2", "A")
+	in := Inputs{
+		Styles: []plantclaims.ProcessKey{k},
+		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{
+			k: {claim("N1", "BIN-A", 0), claim("N2", "BIN-B", 1)},
+		},
+		// BIN-B is satisfiable and ALSO has a flagged carrier somewhere.
+		Pool:              map[string]int{"BIN-A": 0, "BIN-B": 2},
+		UndeclaredCarrier: map[string]int{"BIN-A": 3, "BIN-B": 1},
+	}
+	got := byKey(Compute(in, Config{}, now))[k]
+	if got.Status != StatusRed {
+		t.Fatalf("status = %q, want red", got.Status)
+	}
+	want := []PayloadCount{{PayloadCode: "BIN-A", Bins: 3}}
+	if !reflect.DeepEqual(got.UndeclaredCarriers, want) {
+		t.Errorf("UndeclaredCarriers = %+v, want %+v.\nBIN-B is satisfiable — its "+
+			"flagged carrier is a maintenance job, not a changeover blocker.",
+			got.UndeclaredCarriers, want)
+	}
+	// THE PAYLOAD STAYS MISSING. It is unsourceable; the finding says why, it
+	// does not excuse it, and Missing is what every reader of the wire indexes
+	// blocked changeovers by.
+	if len(got.Missing) != 1 || got.Missing[0] != "BIN-A" {
+		t.Errorf("missing = %v, want [BIN-A]", got.Missing)
+	}
+}
+
+// TestCompute_NoFindingsLeavesTheSliceNil is the quiet arm. payload_bin_types
+// is sparsely populated and the ordinary plant flags nothing; a slice that came
+// back empty-but-non-nil would still make wireChanged and the sentence treat
+// "nothing flagged" as a state worth reporting.
+func TestCompute_NoFindingsLeavesTheSliceNil(t *testing.T) {
+	k := key("SNF2", "A")
+	in := Inputs{
+		Styles: []plantclaims.ProcessKey{k},
+		Claims: map[plantclaims.ProcessKey][]plantclaims.ClaimRow{k: {claim("N1", "BIN-A", 0)}},
+		Pool:   map[string]int{"BIN-A": 0},
+	}
+	got := byKey(Compute(in, Config{}, now))[k]
+	if got.Status != StatusRed {
+		t.Fatalf("status = %q, want red", got.Status)
+	}
+	if got.UndeclaredCarriers != nil {
+		t.Errorf("UndeclaredCarriers = %+v on a plant with no findings, want nil",
+			got.UndeclaredCarriers)
+	}
+}
+
+// TestCompute_AZeroCountIsNotAFinding. availablePoolByPayload leaves a payload
+// OUT of the map rather than storing a zero, and this is the assertion that a
+// zero arriving by any other route still says nothing: "0 bins of BIN-A in
+// undeclared carriers" is a sentence that would be printed to an operator.
+func TestCompute_AZeroCountIsNotAFinding(t *testing.T) {
+	k := key("SNF2", "A")
+	in := Inputs{
+		Styles:            []plantclaims.ProcessKey{k},
+		Claims:            map[plantclaims.ProcessKey][]plantclaims.ClaimRow{k: {claim("N1", "BIN-A", 0)}},
+		Pool:              map[string]int{"BIN-A": 0},
+		UndeclaredCarrier: map[string]int{"BIN-A": 0},
+	}
+	got := byKey(Compute(in, Config{}, now))[k]
+	if len(got.UndeclaredCarriers) != 0 {
+		t.Errorf("UndeclaredCarriers = %+v for a zero count, want none", got.UndeclaredCarriers)
+	}
+}

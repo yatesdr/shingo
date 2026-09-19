@@ -8,6 +8,7 @@ package dispatch
 import (
 	"encoding/json"
 	"errors"
+	"shingocore/domain"
 	"strings"
 	"testing"
 
@@ -94,7 +95,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 	// Prior tick: the order already holds a PENDING reservation on A.
 	testdb.ReserveBin(t, db, order.ID, binA.ID)
 
-	planAB := BuildComplexPlan(stepsAB, d.snapshotPickupBins(stepsAB), bp.Code, nodeA.Name)
+	planAB := BuildComplexPlan(stepsAB, d.snapshotPickupBins(stepsAB), bp.Code, nodeA.Name, domain.BinTypeRule{})
 	_, outcome, err := d.allocator.reserveComplexPlan(order, planAB)
 	testutil.MustNoErr(t, err, "reserve AB")
 	if outcome != reserveComplete {
@@ -117,7 +118,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: nodeC.Name},
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
-	planC := BuildComplexPlan(stepsC, d.snapshotPickupBins(stepsC), bp.Code, nodeC.Name)
+	planC := BuildComplexPlan(stepsC, d.snapshotPickupBins(stepsC), bp.Code, nodeC.Name, domain.BinTypeRule{})
 	_, outcome2, err := d.allocator.reserveComplexPlan(order, planC)
 	testutil.MustNoErr(t, err, "reserve C")
 	if outcome2 != reserveComplete {
@@ -152,7 +153,7 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "partial-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name, domain.BinTypeRule{})
 
 	// Tick 1: only A available (B's node empty, and A is reserved so it's not moot).
 	_, outcome1, err := d.allocator.reserveComplexPlan(order, plan)
@@ -207,7 +208,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "confirm-zero-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name, domain.BinTypeRule{})
 
 	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
@@ -268,7 +269,7 @@ func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "heal-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name, domain.BinTypeRule{})
 
 	// Seed the wedge: a PENDING reservation on binA AND the bin already hard-claimed
 	// by the order (ClaimBin does not confirm the reservation) — claim committed,
@@ -336,7 +337,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "partialfail-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name, domain.BinTypeRule{})
 
 	// ── Tick 1: reserve all three, then force the confirm to fail on need #2. ──
 	assigned1, outcome1, err := d.allocator.reserveComplexPlan(order, plan)
@@ -420,7 +421,7 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "moot-1", empty.Name, empty.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, empty.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, empty.Name, domain.BinTypeRule{})
 
 	_, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
@@ -463,7 +464,7 @@ func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 	// index position. That is what makes it a filler rather than an evac, and it is
 	// read from the steps (legPlacesLineBin), not from the node names.
 	order := mkComplexOrder(t, db, "filler-1", index.Name, lineNode.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, lineNode.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, lineNode.Name, domain.BinTypeRule{})
 
 	_, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
@@ -505,7 +506,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "pbt-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, nodeA.Name, domain.BinTypeRule{})
 
 	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
@@ -545,7 +546,7 @@ func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "regrab-1", src.Name, src.Name, lineNode.Name, bp.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, src.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, src.Name, domain.BinTypeRule{})
 
 	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")
@@ -1142,7 +1143,7 @@ func TestReserveHonoursTheStepsOwnPayload(t *testing.T) {
 	// The ORDER carries the OUTGOING style, exactly as a changeover swap does.
 	order := mkComplexOrder(t, db, "step-payload-1", market.Name, lineNode.Name, lineNode.Name,
 		outgoing.Code, steps)
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), outgoing.Code, lineNode.Name)
+	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), outgoing.Code, lineNode.Name, domain.BinTypeRule{})
 
 	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
 	testutil.MustNoErr(t, err, "reserve")

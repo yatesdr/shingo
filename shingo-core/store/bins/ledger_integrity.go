@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // The row types live in shingocore/domain so www handlers can name them
@@ -118,6 +119,16 @@ func CarrierBindings(db *sql.DB, boundaryOps []string) ([]CarrierBinding, error)
 		args[i] = op
 	}
 
+	// THE CARRIER-RULE COLUMNS RIDE THIS QUERY, they are not a second read.
+	// /material-flags already reads every carrier here for the binding half, and
+	// the undeclared-carrier section is one row per carrier over the same
+	// population — a separate query would be a second definition of "every
+	// carrier ShinGo knows about" for one page.
+	//
+	// declared_types is inside a CASE gated on the flag, so on a good day —
+	// every carrier unflagged — the aggregate runs zero times. It names the
+	// carriers the payload IS declared for, which is the whole content of the
+	// fix: "put it in one of these".
 	q := `
 SELECT b.id, COALESCE(b.label,''), COALESCE(b.payload_code,''), COALESCE(n.name,''),
        b.uop_remaining,
@@ -125,9 +136,18 @@ SELECT b.id, COALESCE(b.label,''), COALESCE(b.payload_code,''), COALESCE(n.name,
        (SELECT MAX(a.applied_at) FROM bin_uop_ledger a
          WHERE a.bin_id = b.id AND a.op IN (` + strings.Join(ph, ",") + `)) AS bound_at,
        b.last_counted_at,
-       b.anomaly_at
+       b.anomaly_at,
+       COALESCE(bt.code, ''),
+       b.undeclared_carrier_at,
+       CASE WHEN ` + helpers.BinInUndeclaredCarrierSQL + ` THEN COALESCE((
+           SELECT string_agg(bt2.code, ', ' ORDER BY bt2.code)
+           FROM payload_bin_types pbt
+           JOIN payloads p2   ON p2.id  = pbt.payload_id
+           JOIN bin_types bt2 ON bt2.id = pbt.bin_type_id
+           WHERE p2.code = b.payload_code), '') ELSE '' END AS declared_types
 FROM bins b
 LEFT JOIN nodes n ON n.id = b.node_id
+LEFT JOIN bin_types bt ON bt.id = b.bin_type_id
 LEFT JOIN payloads p ON b.payload_code <> '' AND p.code = b.payload_code
 ORDER BY b.id`
 
@@ -145,9 +165,10 @@ ORDER BY b.id`
 		// mean "cannot size a negative", and both are carried as nil rather than
 		// as 0 — a 0 here would divide, and the quotient would render.
 		var capacity sql.NullInt64
-		var boundAt, counted, anomaly sql.NullTime
+		var boundAt, counted, anomaly, undeclared sql.NullTime
 		if err := rows.Scan(&c.BinID, &c.Label, &c.PayloadCode, &c.NodeName,
-			&c.UOPRemaining, &capacity, &boundAt, &counted, &anomaly); err != nil {
+			&c.UOPRemaining, &capacity, &boundAt, &counted, &anomaly,
+			&c.BinTypeCode, &undeclared, &c.DeclaredBinTypes); err != nil {
 			return nil, fmt.Errorf("scan carrier binding: %w", err)
 		}
 		if capacity.Valid && capacity.Int64 > 0 {
@@ -165,6 +186,10 @@ ORDER BY b.id`
 		if anomaly.Valid {
 			t := anomaly.Time
 			c.AnomalyAt = &t
+		}
+		if undeclared.Valid {
+			t := undeclared.Time
+			c.UndeclaredCarrierAt = &t
 		}
 		out = append(out, c)
 	}

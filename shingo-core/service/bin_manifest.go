@@ -258,8 +258,13 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 	// COALESCE($2, bin_type_id): when binTypeID is nil the column is
 	// left unchanged; when non-nil the dunnage type is re-stamped
 	// atomically with the manifest clear + epoch bump.
+	//
+	// undeclared_carrier_at GOES WITH THE PAYLOAD. The finding is a statement
+	// about a payload standing in a carrier that may not hold it; an empty
+	// carrier holds nothing, so the finding has no subject left. Clearing it in
+	// the same statement is how the flag stays true without a sweeper.
 	if _, err := tx.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
-		manifest_confirmed=false, loaded_at=NULL,
+		manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL,
 		bin_type_id=COALESCE($2, bin_type_id), updated_at=NOW()
 		WHERE id=$1`, binID, binTypeID); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
@@ -316,6 +321,12 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 // Returns the new delta_epoch from the underlying SetForProduction
 // call so handlers that ship the bin's row to Edge can include it in
 // their response.
+//
+// THE CARRIER RULE READS `by` HERE TOO. BinService.LoadPayload passes
+// DeclaredByPerson and is refused an undeclared carrier; the dispatch ingest
+// path named in the paragraph above reaches the bin through
+// RecordProducedBinFromTemplate with DeclaredByLifecycle, and is flagged rather
+// than refused. See judgeBinTypeCarriesPayload.
 func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride *int, by protocol.Declarer) (int64, error) {
 	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
 	if err != nil {
@@ -365,6 +376,12 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 // node finalizes a bin or a manual_swap node loads a bin. Returns the
 // new delta_epoch so callers can ship it to Edge in the response that
 // triggered the load (typically the BinLoad handler).
+//
+// `by` also decides what the CARRIER RULE does here — see
+// judgeBinTypeCarriesPayload. Its live caller is the telemetry bin-load
+// endpoint, which passes DeclaredByLifecycle because it is Edge reporting what
+// a cell physically put in the carrier; the operator's Load Payload reaches the
+// same write through SetFromTemplate with DeclaredByPerson and is refused.
 func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -387,14 +404,27 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 // RecordProducedBin). Writes the OpSetForProduction audit row and bumps the
 // delta_epoch; returns the new epoch.
 func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
+	undeclared, err := judgeBinTypeCarriesPayload(tx, binID, payloadCode, by)
+	if err != nil {
+		return 0, err
+	}
 	before, err := readBinUOPInTx(tx, binID)
 	if err != nil {
 		return 0, err
 	}
+	// THE FINDING RIDES THE WRITE. undeclared_carrier_at is set in the same
+	// statement that writes the payload, so a bin can never be loaded and
+	// unflagged for even an instant — and the ELSE arm is what clears a stale
+	// finding when a bin is relabelled onto something its carrier does hold.
+	// COALESCE keeps the FIRST stamp: a bin relabelled from one undeclared
+	// payload to another has been wrong continuously, and the question the
+	// timestamp answers is how long, not when it was last noticed. Same shape
+	// as bins.MarkAnomalyWithNote.
 	if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
-		manifest_confirmed=false, updated_at=NOW()
+		manifest_confirmed=false, updated_at=NOW(),
+		undeclared_carrier_at = CASE WHEN $5 THEN COALESCE(undeclared_carrier_at, NOW()) ELSE NULL END
 		WHERE id=$4`,
-		payloadCode, manifestJSON, uop, binID); err != nil {
+		payloadCode, manifestJSON, uop, binID, undeclared); err != nil {
 		return 0, fmt.Errorf("set manifest bin %d: %w", binID, err)
 	}
 	newEpoch, err := s.bumpEpoch(tx, binID, by)
@@ -411,6 +441,154 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 		return 0, err
 	}
 	return newEpoch, nil
+}
+
+// judgeBinTypeCarriesPayload is the bin-type rule at the WRITE end. It returns
+// whether the bin is in an UNDECLARED carrier for this payload, refusing
+// outright when a PERSON declared the load.
+//
+// ── THE VERDICT IS ONE RULE; THE CONSEQUENCE DEPENDS ON WHO DECLARED ──────
+//
+// The rule itself — a payload may only ride a carrier its payload_bin_types
+// rows allow — binds every reader and every writer, and nothing here softens
+// it. What differs is what a "no" MEANS at the place it is said:
+//
+//   - DeclaredByPerson is somebody at an admin door typing an assignment
+//     before anything physical has happened. Refusing costs nothing and stops
+//     the bad row being written at all.
+//   - DeclaredByLifecycle is Core's own bookkeeping recording what a cell,
+//     a tick or an ingest ALREADY DID. The parts are in the carrier by the
+//     time the message arrives. Refusing does not un-fill the bin; it writes
+//     down that a thing which happened did not happen, and the count is then
+//     wrong in the direction nothing downstream can detect. So the write lands
+//     and the carrier carries a finding (owner, 2026-09-20).
+//
+// ── AND IT IS protocol.Declarer, NOT A SECOND ENUM ────────────────────────
+//
+// This started as a private `payloadWriteDoor` with two values. It encoded
+// exactly the split Declarer already carries — every produce/tick/ingest call
+// site passes DeclaredByLifecycle and the one admin door passes
+// DeclaredByPerson — so it was a second enum whose values had to be kept in
+// lockstep with the first by hand, forever, with nothing checking. Two names
+// for one distinction is how the third value gets added to one of them.
+// Collapsed onto Declarer; protocol/constants.go names this reader so the next
+// person to touch that type sees both.
+//
+// Sourcing is untouched either way: an undeclared carrier stays unfetchable
+// through helpers.BinSourceableSQL, which is precisely why the finding has to
+// be visible — see the watcher on /material-flags and the inventory count.
+//
+// ── WHY IT IS HERE AND NOT AT THE DOORS ───────────────────────────────────
+//
+// setForProductionTx is the one statement that writes payload_code onto a bin,
+// and every door that loads a bin reaches it: the operator's Load Payload
+// (BinService.LoadPayload -> SetFromTemplate) and produce finalize
+// (RecordProducedBin, and RecordProducedBinFromTemplate through it, plus the
+// telemetry bin-load through SetForProduction). Only the operator door checked
+// before 523c6a3b. Produce wrote whatever Edge reported, so a cell finalizing a
+// bin of the wrong carrier for its part created exactly the row the sourcing
+// readers have refused to source since 493a8062 — a bin that counts as stock
+// and can never be fetched. It still creates that row; the difference is that
+// the row now says so.
+//
+// Judging under both doors rather than beside each of them is the same choice
+// the sourcing collapse made: one spelling, several doors, and the declarer as
+// a parameter rather than two near-copies that can drift apart on the rule
+// while differing only on the consequence.
+//
+// ── ONE QUERY, AND THE SAME TWO HALVES AS THE READ SIDE ───────────────────
+//
+// has_rules and permitted are computed together so the strict-vs-permissive
+// decision costs one round trip inside a transaction that is already open.
+// Where payload_bin_types has rows for the payload, only those types pass;
+// where it has none, everything does — coverage is a gap in the data, not a
+// licence, which is the reading helpers.PayloadBinTypeRuleArm renders as
+// `OR NOT EXISTS`, helpers.UndeclaredCarrierRuleSQL as its `EXISTS` half, and
+// domain.BinTypeRule carries as nil-vs-empty. A payload with no rows is
+// therefore never flagged at all: at Springfield one payload of 128 has rows,
+// and flagging the other 127 would bury the one case worth walking to.
+//
+// An empty payloadCode is a CLEAR, not a load: no rule to check, and no finding
+// to carry — the caller's UPDATE clears any standing stamp.
+func judgeBinTypeCarriesPayload(tx *sql.Tx, binID int64, payloadCode string, by protocol.Declarer) (bool, error) {
+	if payloadCode == "" {
+		return false, nil
+	}
+	var (
+		binTypeCode string
+		hasRules    bool
+		permitted   bool
+	)
+	err := tx.QueryRow(`
+		SELECT COALESCE(bt.code, ''),
+		       EXISTS (
+		         SELECT 1 FROM payload_bin_types pbt
+		         JOIN payloads p ON p.id = pbt.payload_id
+		         WHERE p.code = $2
+		       ),
+		       EXISTS (
+		         SELECT 1 FROM payload_bin_types pbt
+		         JOIN payloads p ON p.id = pbt.payload_id
+		         WHERE p.code = $2 AND pbt.bin_type_id = b.bin_type_id
+		       )
+		FROM bins b
+		LEFT JOIN bin_types bt ON bt.id = b.bin_type_id
+		WHERE b.id = $1`, binID, payloadCode).Scan(&binTypeCode, &hasRules, &permitted)
+	if err != nil {
+		// FAIL CLOSED, including on no-rows, AT BOTH DOORS. A bin that cannot be
+		// read is not a bin that passes, and a read failure is not a finding: a
+		// finding is a claim about the plant, and this path has learned nothing
+		// about the plant. Flagging on a failed read would put a carrier on the
+		// operator's list because the database hiccupped.
+		return false, fmt.Errorf("check bin %d carrier against payload %q: %w", binID, payloadCode, err)
+	}
+	if !hasRules || permitted {
+		return false, nil
+	}
+	if by != protocol.DeclaredByPerson {
+		// Core's own bookkeeping, recording something that already happened: the
+		// parts are in the bin. Land the write and let the carrier hold the
+		// finding; every sourcing reader still refuses it.
+		//
+		// Written as "not a person" rather than "== lifecycle" so a third
+		// Declarer value, if one is ever added, lands on the SAFE side here —
+		// flag and keep the record — instead of silently refusing a load that
+		// physically happened.
+		return true, nil
+	}
+
+	allowed, aErr := listPayloadBinTypeCodesTx(tx, payloadCode)
+	if aErr != nil {
+		return false, fmt.Errorf("payload %q may not be loaded into bin type %q", payloadCode, binTypeCode)
+	}
+	return false, fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)",
+		payloadCode, binTypeCode, allowed)
+}
+
+// listPayloadBinTypeCodesTx names the carriers a payload IS allowed in, for the
+// refusal message. Separate from the decision so a failure to build the
+// sentence can never change the verdict.
+func listPayloadBinTypeCodesTx(tx *sql.Tx, payloadCode string) ([]string, error) {
+	rows, err := tx.Query(`
+		SELECT bt.code
+		FROM payload_bin_types pbt
+		JOIN payloads p   ON p.id  = pbt.payload_id
+		JOIN bin_types bt ON bt.id = pbt.bin_type_id
+		WHERE p.code = $1
+		ORDER BY bt.code`, payloadCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var codes []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		codes = append(codes, c)
+	}
+	return codes, rows.Err()
 }
 
 // Confirm marks a bin's manifest as confirmed by an operator or automated
@@ -466,6 +644,11 @@ func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt strin
 // counted-but-unconfirmed bin — a stranded state, since manifest_confirmed is a
 // hard gate for a full bin to be a drain/retrieve source (kanban never sees an
 // unconfirmed bin).
+//
+// A CARRIER THE PAYLOAD DOES NOT DECLARE LANDS HERE AND IS FLAGGED, never
+// refused — the parts are in the bin by the time this message arrives. That is
+// the same DeclaredByLifecycle that keeps the announcement from inviting a
+// bind, reused: see judgeBinTypeCarriesPayload.
 func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -535,7 +718,7 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 	res, err := tx.Exec(`
 		UPDATE bins SET
 			payload_code='', manifest=NULL, uop_remaining=0,
-			manifest_confirmed=false, loaded_at=NULL,
+			manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL,
 			claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2),
@@ -873,7 +1056,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		clearSQL := `
 			UPDATE bins SET
 				payload_code='', manifest=NULL, uop_remaining=0,
-				manifest_confirmed=false, loaded_at=NULL,
+				manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL,
 				updated_at=NOW()
 			WHERE id=$1 AND locked=false`
 		var res sql.Result

@@ -99,6 +99,21 @@ func (h *Handlers) handleMaterialFlags(w http.ResponseWriter, r *http.Request) {
 		rows, summary := BuildBindingRows(carriers, now, c)
 		data["Bindings"] = rows
 		data["BindingSummary"] = summary
+
+		// ── The carrier-rule half ────────────────────────────────────────────
+		//
+		// THE SAME READ, A SECOND SELECTOR. One question is "whose count has had
+		// the longest to drift" and the other is "which carrier can never be
+		// fetched at all"; they are different findings with different owners, and
+		// they are selected from one population so the page cannot contradict
+		// itself about how many carriers exist.
+		//
+		// It shares BindingError for the same reason: there is one read, so there
+		// is one way for it to fail, and reporting it twice would suggest two
+		// things went wrong.
+		undeclared, undeclaredSummary := SelectUndeclaredCarriers(carriers, now)
+		data["Undeclared"] = undeclared
+		data["UndeclaredSummary"] = undeclaredSummary
 	}
 
 	h.render(w, r, "material-flags.html", data)

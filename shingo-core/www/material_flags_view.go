@@ -489,3 +489,161 @@ func sortBindings(rows []BindingRow) {
 		return a.Ledger < b.Ledger
 	})
 }
+
+// ── The carrier-rule half: findings the produce door recorded ────────────────
+//
+// A THIRD SECTION, AND IT EARNS ITS OWN HEADING THE SAME WAY THE OTHER TWO DO.
+// The rule against two grains under one heading is honoured by giving this its
+// own heading, its own selector and its own stated owner. It is on THIS page
+// rather than a fourth one because the question it answers is the question this
+// page exists for — "what should someone go and look at now" — and because its
+// row is a carrier, which is the grain the ledger half already established.
+//
+// It is NOT merged into the binding half, and that is the point. The binding
+// half selects on the AGE of a binding and says a count may have drifted; this
+// selects on a RULE and says a carrier cannot be fetched at all. Different
+// selector, different owner, different action. A combined "carrier problems"
+// score is exactly the artefact the page header refuses.
+//
+// ── WHY THERE IS ANYTHING TO LIST ────────────────────────────────────────────
+//
+// The carrier rule used to REFUSE a produce finalize onto an undeclared
+// carrier. That records a lie: by the time a cell reports a finalize, the parts
+// are in the bin, and a refusal writes down that something which happened did
+// not. So the produce door accepts and records a finding (owner, 2026-09-20) —
+// and a finding nobody sees is worse than the refusal was. This is where it is
+// seen.
+//
+// THE BIN IS UNFETCHABLE WHILE IT IS LISTED HERE. Every sourcing reader
+// composes helpers.BinSourceableSQL, whose bin-type arm refuses exactly this
+// carrier. So the stock counts and no robot will ever bring it — which is why
+// the row says what to do rather than merely what is true.
+
+// UndeclaredCarrierRow is one carrier holding a payload its type is not
+// declared to carry, fully rendered.
+type UndeclaredCarrierRow struct {
+	BinID   int64
+	Label   string
+	Payload string
+
+	// BinType is the carrier it is IN and Declared names the carriers it is
+	// allowed in. Both are values, never absences: a row is only here because
+	// the payload HAS declared carriers and this is not one of them, so the
+	// question "which ones then" always has an answer.
+	BinType  string
+	Declared Cell
+
+	// Node is where to walk to. NoData when the carrier is in transit or
+	// unplaced — the same absence the binding half states, for the same reason.
+	Node Cell
+
+	// Since is how long the finding has stood, and FlaggedAt is the stamp it is
+	// computed from, printed beside it so the reading is checkable.
+	Since     time.Duration
+	SinceCell Cell
+	FlaggedAt Cell
+}
+
+// UndeclaredCarrierSummary is the carrier-rule half's context strip.
+//
+// THE DENOMINATOR IS EVERY CARRIER, deliberately. "3 flagged" alone is a number
+// with no scale; "3 of 412 carriers" is a reading. Same shape as the binding
+// half's "Carriers examined".
+type UndeclaredCarrierSummary struct {
+	// Carriers is every carrier ShinGo knows about — the same population the
+	// binding half counts, because it is the same read.
+	Carriers int
+	// Flagged is how many carry a payload their type is not declared for. A
+	// measured count including zero.
+	Flagged int
+	// Longest is how long the oldest standing finding has been standing.
+	// NoData when nothing is flagged — the longest of no findings is not "0 s".
+	Longest Cell
+}
+
+// SelectUndeclaredCarriers returns the flagged carriers, longest-standing
+// first, plus the summary over the whole carrier population.
+//
+// TAKES THE SAME []domain.CarrierBinding THE BINDING HALF TAKES. One read, two
+// selectors — a second construction path for "every carrier" is how two
+// sections of one page start disagreeing about how many there are.
+//
+// THE SELECTOR IS THE STAMP, NOT A RE-DERIVATION. bins.undeclared_carrier_at is
+// what the write door decided and what the inventory count and the sourcing
+// reason both read (helpers.BinInUndeclaredCarrierSQL). Re-deriving the rule
+// here would give this page a private opinion, and the day it differed from the
+// count on /inventory nobody would know which to believe.
+//
+// A PAYLOAD WITH NO DECLARED CARRIERS IS NEVER HERE. payload_bin_types is
+// sparsely populated — one payload of 128 has rows at Springfield — and a
+// payload with none constrains nothing, so it is never flagged and never
+// counted. That arm is pinned quiet.
+func SelectUndeclaredCarriers(cs []domain.CarrierBinding, now time.Time) ([]UndeclaredCarrierRow, UndeclaredCarrierSummary) {
+	var s UndeclaredCarrierSummary
+	out := make([]UndeclaredCarrierRow, 0)
+	var longest time.Duration
+
+	for _, c := range cs {
+		s.Carriers++
+		if c.UndeclaredCarrierAt == nil {
+			continue
+		}
+		s.Flagged++
+		since := now.Sub(*c.UndeclaredCarrierAt)
+		if since < 0 {
+			// Clock skew between the writer and the reader. Clamp for arithmetic;
+			// the cell's title says the direction rather than the number lying
+			// about it.
+			since = 0
+		}
+		if since > longest {
+			longest = since
+		}
+		out = append(out, buildUndeclaredCarrierRow(c, since))
+	}
+
+	if s.Flagged > 0 {
+		s.Longest = Value(FormatDuration(longest))
+	} else {
+		s.Longest = NoData("no carrier is flagged, so there is no longest-standing " +
+			"finding — this is not a duration of zero")
+	}
+
+	// LONGEST-STANDING FIRST. A finding that has stood for three weeks is a
+	// finding nobody has acted on, and it is the one to walk to.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Since > out[j].Since })
+	return out, s
+}
+
+func buildUndeclaredCarrierRow(c domain.CarrierBinding, since time.Duration) UndeclaredCarrierRow {
+	r := UndeclaredCarrierRow{
+		BinID:     c.BinID,
+		Label:     c.Label,
+		Payload:   c.PayloadCode,
+		BinType:   c.BinTypeCode,
+		Since:     since,
+		SinceCell: Value(FormatDuration(since)),
+		FlaggedAt: Value(c.UndeclaredCarrierAt.In(plantLocation).Format("2006-01-02 15:04 MST")),
+	}
+
+	if c.DeclaredBinTypes != "" {
+		r.Declared = Value(c.DeclaredBinTypes)
+	} else {
+		// UNREACHABLE BY THE RULE, AND STATED ANYWAY. A flagged carrier's payload
+		// has declared carriers by definition — that is the EXISTS half of the
+		// rule. An empty set here means the flag and the table have parted (a
+		// rule edited outside payloads.SetBinTypes, which recomputes), and
+		// printing the carrier it is in with no alternative would read as "there
+		// is nowhere to put this".
+		r.Declared = NoData("the payload has no declared carriers, yet this carrier is " +
+			"flagged — the stamp and payload_bin_types have parted, which should not " +
+			"be possible; report it")
+	}
+
+	if c.NodeName != "" {
+		r.Node = Value(c.NodeName)
+	} else {
+		r.Node = NoData("no node recorded for this carrier — in transit, or never placed")
+	}
+	return r
+}

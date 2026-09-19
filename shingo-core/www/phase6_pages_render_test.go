@@ -160,8 +160,13 @@ func TestDemandEpisodesPageRendersTheCauseColumn(t *testing.T) {
 }
 
 // TestMaterialFlagsPageRenders is 5.11's page, and it holds the two things no
-// Go unit test can see: that both sections are on the page at once, and that the
+// Go unit test can see: that every section is on the page at once, and that the
 // copy makes no claim the data cannot support.
+//
+// THREE SECTIONS SINCE B5a. The carrier-rule half lists carriers holding a part
+// their bin type is not declared to carry — findings the produce door records
+// instead of refusing, because the parts are already in the bin by the time a
+// cell reports a finalize.
 func TestMaterialFlagsPageRenders(t *testing.T) {
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	c := disp()
@@ -205,6 +210,17 @@ func TestMaterialFlagsPageRenders(t *testing.T) {
 		{BinID: 4, Label: "CARRIER-0004"},
 	}, now, c)
 
+	// The carrier-rule half, over the SAME population the binding half just
+	// consumed plus one flagged carrier — one read, two selectors.
+	flaggedAt := now.Add(-5 * 24 * time.Hour)
+	undeclared, undeclaredSummary := SelectUndeclaredCarriers([]domain.CarrierBinding{
+		{BinID: 7, Label: "CARRIER-0007", PayloadCode: "PANEL-A", NodeName: "SMN_007",
+			BinTypeCode: "BT-FOREIGN", DeclaredBinTypes: "BT-FITS",
+			UndeclaredCarrierAt: &flaggedAt},
+		// A payload with no declared carriers is never stamped and never listed.
+		{BinID: 8, Label: "CARRIER-0008", PayloadCode: "PANEL-SPARSE", NodeName: "SMN_008"},
+	}, now)
+
 	out := renderPage(t, "material-flags.html", map[string]any{
 		"Page": "material-flags", "WorryAfter": FormatDuration(c.WorryAfter),
 		"ConcernAfter":      FormatDuration(c.ConcernAfter),
@@ -212,6 +228,7 @@ func TestMaterialFlagsPageRenders(t *testing.T) {
 		"OverpackBinloads":  FormatRatio(c.OverpackBinloads),
 		"Flags":             flags, "FlagSummary": flagSummary, "FlagLimit": 200,
 		"Bindings": bindings, "BindingSummary": bindingSummary,
+		"Undeclared": undeclared, "UndeclaredSummary": undeclaredSummary,
 	})
 
 	// ALL FOUR STATES IN ONE RENDERING. The unit tests hold them apart as values;
@@ -224,17 +241,27 @@ func TestMaterialFlagsPageRenders(t *testing.T) {
 		"mf-read-beyond",                                      // the one ledger reading that carries a ring
 		"Beyond one binload", "Within one binload", "Settled", // the printed names
 		"Cannot size",        // the unsizeable negative says so IN WORDS, not as a dash
-		"mf-heading--second", // BOTH sections rendered, not one
+		"mf-heading--second", // more than one section rendered, not just the first
+		// The carrier-rule half: its heading, the carrier, the type it is in and
+		// the type it should be in. A row that names the wrong carrier without
+		// naming a right one tells somebody to go and look at a bin, nothing more.
+		"Carriers the part may not travel in",
+		"CARRIER-0007", "BT-FOREIGN", "BT-FITS",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered /material-flags is missing %q", want)
 		}
 	}
 
-	// THE TWO OWNERS ARE NAMED, which is the disambiguation the row exists for. A
+	// EVERY OWNER IS NAMED, which is the disambiguation the row exists for. A
 	// reader who cannot tell which section is theirs is the reader the old
-	// "material downtime" wording misled.
-	for _, want := range []string{"Owner: whoever moves material", "Owner: whoever cycle counts"} {
+	// "material downtime" wording misled — and the carrier-rule half goes to a
+	// third person again, which is why it is a section and not extra columns.
+	for _, want := range []string{
+		"Owner: whoever moves material",
+		"Owner: whoever cycle counts",
+		"Owner: whoever sets payload bin types",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered /material-flags does not name an owner: missing %q", want)
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"shingocore/domain"
 
 	"shingo/protocol"
 	"shingocore/service"
@@ -653,8 +654,25 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 		candidates = emptyBinsOnly(bins)
 		claimPayload = ""
 	}
+	// The carrier rule for the part being fetched, read ONCE for this node's
+	// whole candidate list rather than per bin. claimPayload is "" on a removal
+	// or an empty leg — those fetch whatever is resident, name no part, and get
+	// the zero rule, which permits every type (LoadBinTypeRule short-circuits
+	// on the empty code and issues no query for it).
+	//
+	// Skipped entirely when there is nothing to judge. This runs per step per
+	// scanner tick and a node with no candidates is the ordinary case, so
+	// reading a rule no bin will be measured against would put a query on the
+	// hot path to answer a question nobody asked.
+	var binTypes domain.BinTypeRule
+	if len(candidates) > 0 {
+		var err error
+		if binTypes, err = a.db.LoadBinTypeRule(claimPayload); err != nil {
+			return nil, nodeHadBins, fmt.Errorf("load bin-type rule for %q at %s: %w", claimPayload, step.Node, err)
+		}
+	}
 	for _, b := range candidates {
-		if BinUnavailableReason(b, claimPayload) == "" {
+		if BinUnavailableReason(b, claimPayload, binTypes) == "" {
 			return b, nodeHadBins, nil
 		}
 	}

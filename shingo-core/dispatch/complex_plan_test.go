@@ -29,7 +29,7 @@ func TestBuildComplexPlan_SimpleRetrieve(t *testing.T) {
 		"storage.A1": {availBin(100, "B100", "PART-X")},
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-X", "line.L1")
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "line.L1", domain.BinTypeRule{})
 
 	if plan.SourceNode != "storage.A1" {
 		t.Errorf("SourceNode = %q, want storage.A1", plan.SourceNode)
@@ -70,7 +70,7 @@ func TestBuildComplexPlan_ProcessNodePickupFlagged(t *testing.T) {
 		"line.L1": {availBin(200, "B200", "PART-Y")},
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-Y", "line.L1")
+	plan := BuildComplexPlan(steps, candidates, "PART-Y", "line.L1", domain.BinTypeRule{})
 
 	if len(plan.BinClaims) != 1 {
 		t.Fatalf("BinClaims = %+v, want one entry", plan.BinClaims)
@@ -94,7 +94,7 @@ func TestBuildComplexPlan_WaitSplit(t *testing.T) {
 		"staging": {availBin(301, "B301", "PART-Z")}, // not actually picked at apply (in-flight bin), but test still records selection
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-Z", "")
+	plan := BuildComplexPlan(steps, candidates, "PART-Z", "", domain.BinTypeRule{})
 
 	if !plan.HasWait {
 		t.Errorf("HasWait = false, want true")
@@ -114,7 +114,7 @@ func TestBuildComplexPlan_NoBinsAtNode(t *testing.T) {
 		"storage.A1": {}, // resolved fine, just empty
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-X", "line.L1")
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "line.L1", domain.BinTypeRule{})
 
 	if len(plan.BinClaims) != 0 {
 		t.Errorf("BinClaims = %+v, want empty", plan.BinClaims)
@@ -139,7 +139,7 @@ func TestBuildComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		"press.P1": {availBin(400, "FULL", "PART-X"), availBin(401, "EMPTY", "")},
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-X", "press.P1")
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "press.P1", domain.BinTypeRule{})
 
 	if len(plan.BinClaims) != 1 {
 		t.Fatalf("BinClaims = %+v, want one entry", plan.BinClaims)
@@ -161,7 +161,7 @@ func TestBuildComplexPlan_EmptyLegNoCarrierSkips(t *testing.T) {
 		"press.P1": {availBin(400, "FULL", "PART-X")},
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-X", "press.P1")
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "press.P1", domain.BinTypeRule{})
 
 	if len(plan.BinClaims) != 0 {
 		t.Errorf("BinClaims = %+v, want empty (no empty carrier to claim)", plan.BinClaims)
@@ -189,7 +189,7 @@ func TestBuildComplexPlan_AllCandidatesRejected(t *testing.T) {
 		"storage.A1": {wrongPayload, claimed},
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-X", "line.L1")
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "line.L1", domain.BinTypeRule{})
 
 	if len(plan.BinClaims) != 0 {
 		t.Errorf("BinClaims = %+v, want empty", plan.BinClaims)
@@ -226,7 +226,7 @@ func TestBuildComplexPlan_MultiPickupFillsDestinations(t *testing.T) {
 		"outStaging": {availBin(102, "oldBin", "PART-X")},
 	}
 
-	plan := BuildComplexPlan(steps, candidates, "PART-X", "line")
+	plan := BuildComplexPlan(steps, candidates, "PART-X", "line", domain.BinTypeRule{})
 
 	// Two distinct bins should be recorded as primary claims (storage @ step 0,
 	// line @ step 3); the re-pickups at step 5 / 7 select bins again but the

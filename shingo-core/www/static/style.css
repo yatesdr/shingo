@@ -2493,10 +2493,10 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
  * under an mf- prefix. A second copy of the absence styling is how two surfaces
  * start disagreeing about what an em dash means — the same argument
  * partials/cells.html makes for the renderer. What is genuinely new is below,
- * and it is only the two-section chrome plus the ledger reading's ring.
+ * and it is only the section chrome plus the ledger reading's ring.
  */
 
-/* The section headings. This page carries TWO grains on purpose, so each one
+/* The section headings. This page carries THREE grains on purpose, so each one
  * has to read as its own section rather than as a continuation of the last —
  * the tick is what stops the second table looking like more rows of the first. */
 .mf-heading {

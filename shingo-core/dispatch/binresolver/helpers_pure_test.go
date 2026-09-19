@@ -11,7 +11,7 @@ import (
 func TestBinUnavailableReason_Available(t *testing.T) {
 	t.Parallel()
 	b := &bins.Bin{Status: domain.BinStatusAvailable}
-	if got := BinUnavailableReason(b, "PART-A"); got != "" {
+	if got := BinUnavailableReason(b, "PART-A", domain.BinTypeRule{}); got != "" {
 		t.Errorf("available bin: got %q, want empty", got)
 	}
 }
@@ -20,7 +20,7 @@ func TestBinUnavailableReason_Claimed(t *testing.T) {
 	t.Parallel()
 	claimedBy := int64(42)
 	b := &bins.Bin{Status: domain.BinStatusAvailable, ClaimedBy: &claimedBy}
-	got := BinUnavailableReason(b, "PART-A")
+	got := BinUnavailableReason(b, "PART-A", domain.BinTypeRule{})
 	if got == "" {
 		t.Error("claimed bin: got empty reason, want rejection")
 	}
@@ -33,7 +33,7 @@ func TestBinUnavailableReason_BadStatus(t *testing.T) {
 		domain.BinStatusRetired, domain.BinStatusQualityHold,
 	} {
 		b := &bins.Bin{Status: status}
-		got := BinUnavailableReason(b, "")
+		got := BinUnavailableReason(b, "", domain.BinTypeRule{})
 		if got == "" {
 			t.Errorf("status=%q: got empty reason, want rejection", status)
 		}
@@ -43,7 +43,7 @@ func TestBinUnavailableReason_BadStatus(t *testing.T) {
 func TestBinUnavailableReason_PayloadMismatch(t *testing.T) {
 	t.Parallel()
 	b := &bins.Bin{Status: domain.BinStatusAvailable, PayloadCode: "PART-B"}
-	got := BinUnavailableReason(b, "PART-A")
+	got := BinUnavailableReason(b, "PART-A", domain.BinTypeRule{})
 	if got == "" {
 		t.Error("payload mismatch: got empty reason, want rejection")
 	}
@@ -52,11 +52,11 @@ func TestBinUnavailableReason_PayloadMismatch(t *testing.T) {
 func TestBinUnavailableReason_EmptyPayloadCode_Passes(t *testing.T) {
 	t.Parallel()
 	b := &bins.Bin{Status: domain.BinStatusAvailable, PayloadCode: "PART-B"}
-	if got := BinUnavailableReason(b, ""); got != "" {
+	if got := BinUnavailableReason(b, "", domain.BinTypeRule{}); got != "" {
 		t.Errorf("empty order payload code should pass: got %q", got)
 	}
 	binEmpty := &bins.Bin{Status: domain.BinStatusAvailable, PayloadCode: ""}
-	if got := BinUnavailableReason(binEmpty, "PART-A"); got != "" {
+	if got := BinUnavailableReason(binEmpty, "PART-A", domain.BinTypeRule{}); got != "" {
 		t.Errorf("empty bin payload code should pass: got %q", got)
 	}
 }

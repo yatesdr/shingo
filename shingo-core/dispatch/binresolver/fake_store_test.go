@@ -37,6 +37,7 @@ type fakeStore struct {
 	laneSlots        map[int64][]*nodes.Node
 	laneBinCounts    map[int64]int
 	effPayloads      map[int64][]*payloads.Payload
+	effBinTypesErr   error // injected read failure; see TestBinTypeAllowed_ReadFailureRefuses
 	effBinTypes      map[int64][]*bins.BinType
 
 	// Lane query fixtures.
@@ -226,6 +227,9 @@ func (f *fakeStore) GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, err
 }
 
 func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
+	if f.effBinTypesErr != nil {
+		return nil, f.effBinTypesErr
+	}
 	return f.effBinTypes[nodeID], nil
 }
 

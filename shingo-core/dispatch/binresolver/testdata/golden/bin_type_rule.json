@@ -1,0 +1,68 @@
+[
+  {
+    "case": "full_no_rules_for_payload",
+    "concrete_node": "",
+    "loader_drain": "",
+    "loader_fill": "full-not-a-container"
+  },
+  {
+    "case": "full_type_is_allowed",
+    "concrete_node": "",
+    "loader_drain": "",
+    "loader_fill": "full-not-a-container"
+  },
+  {
+    "case": "full_type_is_not_allowed",
+    "concrete_node": "bin type \"FOREIGN\" may not carry payload \"PART-A\"",
+    "loader_drain": "bin-type",
+    "loader_fill": "full-not-a-container"
+  },
+  {
+    "case": "full_type_allowed_among_several",
+    "concrete_node": "",
+    "loader_drain": "",
+    "loader_fill": "full-not-a-container"
+  },
+  {
+    "case": "full_payload_allows_nothing",
+    "concrete_node": "bin type \"FITS\" may not carry payload \"PART-A\"",
+    "loader_drain": "bin-type",
+    "loader_fill": "full-not-a-container"
+  },
+  {
+    "case": "partial_no_rules_for_payload",
+    "concrete_node": "",
+    "loader_drain": "",
+    "loader_fill": ""
+  },
+  {
+    "case": "partial_type_is_allowed",
+    "concrete_node": "",
+    "loader_drain": "",
+    "loader_fill": ""
+  },
+  {
+    "case": "partial_type_is_not_allowed",
+    "concrete_node": "bin type \"FOREIGN\" may not carry payload \"PART-A\"",
+    "loader_drain": "bin-type",
+    "loader_fill": "bin-type"
+  },
+  {
+    "case": "empty_no_rules_for_payload",
+    "concrete_node": "",
+    "loader_drain": "empty-bin",
+    "loader_fill": ""
+  },
+  {
+    "case": "empty_type_is_allowed",
+    "concrete_node": "",
+    "loader_drain": "empty-bin",
+    "loader_fill": ""
+  },
+  {
+    "case": "empty_type_is_not_allowed",
+    "concrete_node": "bin type \"FOREIGN\" may not carry payload \"PART-A\"",
+    "loader_drain": "empty-bin",
+    "loader_fill": "bin-type"
+  }
+]

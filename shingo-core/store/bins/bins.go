@@ -530,11 +530,17 @@ const (
 	BinAtLiveNodeSQL             = helpers.BinAtLiveNodeSQL
 	BinUnheldSQL                 = helpers.BinUnheldSQL
 	BinCarriesSourceableStockSQL = helpers.BinCarriesSourceableStockSQL
+	BinInUndeclaredCarrierSQL    = helpers.BinInUndeclaredCarrierSQL
 )
 
 // PayloadBinTypeRuleArm — see helpers.PayloadBinTypeRuleArm.
 func PayloadBinTypeRuleArm(payloadExpr string) string {
 	return helpers.PayloadBinTypeRuleArm(payloadExpr)
+}
+
+// UndeclaredCarrierRuleSQL — see helpers.UndeclaredCarrierRuleSQL.
+func UndeclaredCarrierRuleSQL(payloadExpr, binTypeExpr string) string {
+	return helpers.UndeclaredCarrierRuleSQL(payloadExpr, binTypeExpr)
 }
 
 // BinSourceableSQL — see helpers.BinSourceableSQL.

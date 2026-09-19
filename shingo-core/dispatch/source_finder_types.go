@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
@@ -177,6 +178,10 @@ type FinderDB interface {
 	// resolved through the inherit chain. One type is a statement; zero or many
 	// leave the choice to the cascade's ordering.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
+	// LoadBinTypeRule is the other direction: which carrier types a PART may
+	// travel in (payload_bin_types), as opposed to which fit at a node. Read
+	// once per door call and judged against every candidate bin.
+	LoadBinTypeRule(payloadCode string) (domain.BinTypeRule, error)
 	MaintainedGroupsSupporting(processNode string) ([]int64, error)
 	NodeIsUnderAny(nodeID int64, roots []int64) (bool, error)
 

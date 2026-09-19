@@ -45,7 +45,7 @@ func TestIsAvailableAtConcreteNode_ClearedBinPasses(t *testing.T) {
 		ManifestConfirmed: false,
 		PayloadCode:       "",
 	}
-	if !IsAvailableAtConcreteNode(cleared, "PAYLOAD-X") {
+	if !IsAvailableAtConcreteNode(cleared, "PAYLOAD-X", domain.BinTypeRule{}) {
 		t.Error("cleared bin at concrete node should be available for lineside pickup")
 	}
 }
@@ -58,7 +58,7 @@ func TestIsAvailableAtConcreteNode_MatchingPayloadPasses(t *testing.T) {
 		ManifestConfirmed: true,
 		PayloadCode:       "PAYLOAD-X",
 	}
-	if !IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+	if !IsAvailableAtConcreteNode(bin, "PAYLOAD-X", domain.BinTypeRule{}) {
 		t.Error("bin with matching payload should be available")
 	}
 }
@@ -72,7 +72,7 @@ func TestIsAvailableAtConcreteNode_MismatchedPayloadRejected(t *testing.T) {
 		ManifestConfirmed: true,
 		PayloadCode:       "PAYLOAD-Y",
 	}
-	if IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+	if IsAvailableAtConcreteNode(bin, "PAYLOAD-X", domain.BinTypeRule{}) {
 		t.Error("bin with wrong payload at concrete node should be rejected")
 	}
 }
@@ -87,7 +87,7 @@ func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
 		PayloadCode:       "",
 		ClaimedBy:         &orderID,
 	}
-	if IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+	if IsAvailableAtConcreteNode(bin, "PAYLOAD-X", domain.BinTypeRule{}) {
 		t.Error("claimed bin should be rejected")
 	}
 }
@@ -101,7 +101,7 @@ func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
 			ManifestConfirmed: false,
 			PayloadCode:       "",
 		}
-		if IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+		if IsAvailableAtConcreteNode(bin, "PAYLOAD-X", domain.BinTypeRule{}) {
 			t.Errorf("bin with status %q should be rejected", status)
 		}
 	}
@@ -117,7 +117,7 @@ func TestIsAvailableAtConcreteNode_EmptyPayloadCodeAccepted(t *testing.T) {
 		ManifestConfirmed: false,
 		PayloadCode:       "",
 	}
-	if !IsAvailableAtConcreteNode(bin, "") {
+	if !IsAvailableAtConcreteNode(bin, "", domain.BinTypeRule{}) {
 		t.Error("bin with empty payload filter should pass")
 	}
 }

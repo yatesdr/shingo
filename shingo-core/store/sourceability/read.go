@@ -20,7 +20,7 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	pool, err := availablePoolByPayload(db)
+	pool, undeclared, err := availablePoolByPayload(db)
 	if err != nil {
 		return Inputs{}, err
 	}
@@ -36,7 +36,8 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	return Inputs{Styles: styles, Claims: claims, Pool: pool, OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate}, nil
+	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared,
+		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate}, nil
 }
 
 // loadStylesAndClaims reads the whole plant.claims mirror: every configured
@@ -92,30 +93,63 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 // right now. It composes helpers.BinSourceableSQL — the one sourcing predicate,
 // the same one FindSourceFIFO asks — so this count and that pick cannot
 // disagree. This is a pure count; it holds nothing.
-func availablePoolByPayload(db *sql.DB) (map[string]int, error) {
+//
+// ── IT RETURNS A SECOND COUNT, IN THE SAME STATEMENT ────────────────────────
+//
+// Bins standing in a carrier their payload does not declare are the exact
+// complement of the bin-type arm above: they COUNT as stock and this reader
+// refuses every one of them, so a style goes RED beside an inventory page that
+// says the parts are there. "No stock" and "stock in the wrong carrier" are two
+// facts with two different actions — go and make some, versus go and fix the
+// carrier — and the operator sentence has to be able to tell them apart.
+//
+// A SECOND AGGREGATE, NOT A SECOND QUERY. This runs on every recompute; a
+// second round trip here would be a per-tick cost for a number that is zero on
+// a good day. The pool term moves from the WHERE into a FILTER over the same
+// rows and answers identically.
+//
+// THE nodes JOIN BECOMES LEFT for the same reason, and it does not move the
+// pool: BinSourceableSQL requires `n.enabled = true`, which is NULL and
+// therefore false for a bin at no node, so those bins were already excluded and
+// still are. What the LEFT JOIN buys is the finding count — a flagged carrier
+// riding a robot or standing at no node is still a flagged carrier, and it is
+// the same population the inventory page counts.
+//
+// IT READS THE STAMP, not the rule (helpers.BinInUndeclaredCarrierSQL). Every
+// surface that counts findings reads that one fragment, so this sentence and
+// the inventory page cannot report different numbers.
+func availablePoolByPayload(db *sql.DB) (pool, undeclared map[string]int, err error) {
 	rows, err := db.Query(`
-		SELECT b.payload_code, COUNT(*)
+		SELECT b.payload_code,
+		       COUNT(*) FILTER (WHERE ` + helpers.BinSourceableSQL("b.payload_code") + `),
+		       COUNT(*) FILTER (WHERE ` + helpers.BinInUndeclaredCarrierSQL + `)
 		FROM bins b
-		JOIN nodes n ON n.id = b.node_id
+		LEFT JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code <> ''
-		  AND ` + helpers.BinSourceableSQL("b.payload_code") + `
 		GROUP BY b.payload_code`)
 	if err != nil {
-		return nil, fmt.Errorf("sourceability: available pool: %w", err)
+		return nil, nil, fmt.Errorf("sourceability: available pool: %w", err)
 	}
 	defer rows.Close()
-	pool := make(map[string]int)
+	pool = make(map[string]int)
+	undeclared = make(map[string]int)
 	for rows.Next() {
 		var (
-			payload string
-			n       int
+			payload    string
+			n, flagged int
 		)
-		if err := rows.Scan(&payload, &n); err != nil {
-			return nil, fmt.Errorf("sourceability: scan pool: %w", err)
+		if err := rows.Scan(&payload, &n, &flagged); err != nil {
+			return nil, nil, fmt.Errorf("sourceability: scan pool: %w", err)
 		}
 		pool[payload] = n
+		// Absent, not zero: a payload with no findings must not seed the map,
+		// because Compute uses presence to decide whether the sentence has a
+		// second half at all.
+		if flagged > 0 {
+			undeclared[payload] = flagged
+		}
 	}
-	return pool, rows.Err()
+	return pool, undeclared, rows.Err()
 }
 
 // onLinePoolByProcess counts bins that are ALREADY INSIDE a process and carrying

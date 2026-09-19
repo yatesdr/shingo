@@ -189,6 +189,30 @@ type CarrierBinding struct {
 	// It gates nothing (see uop/applier.go) and it is shown here as corroboration
 	// only.
 	AnomalyAt *time.Time `json:"anomaly_at,omitempty"`
+
+	// BinTypeCode is the carrier's own type. Always present — bins.bin_type_id
+	// is NOT NULL and references bin_types — so an empty string here is a read
+	// fault, not an absence.
+	BinTypeCode string `json:"bin_type_code"`
+
+	// UndeclaredCarrierAt is the carrier rule's finding: this carrier holds a
+	// payload payload_bin_types does not declare it may carry. Nil is the
+	// ordinary state and a MEASURED one — the flag is recomputed at every
+	// payload write on the bin and at every edit to the payload's rule, so nil
+	// means "checked and fine", never "not checked".
+	//
+	// UNLIKE AnomalyAt, THIS ONE IS LOAD-BEARING: every sourcing reader refuses
+	// the bin through helpers.BinSourceableSQL. It does not gate anything
+	// ITSELF — the rule does — but a flagged carrier is stock that counts and
+	// can never be fetched, which is why it has a surface at all.
+	UndeclaredCarrierAt *time.Time `json:"undeclared_carrier_at,omitempty"`
+
+	// DeclaredBinTypes names the carriers the bound payload IS declared for,
+	// comma-separated, and is populated ONLY for a flagged carrier — it is the
+	// content of the fix ("put it in one of these"), and reading it for every
+	// unflagged carrier would be an aggregate per row for a column nothing
+	// renders.
+	DeclaredBinTypes string `json:"declared_bin_types,omitempty"`
 }
 
 // BindingAge returns how long the current binding has stood, and whether that is

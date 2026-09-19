@@ -11,6 +11,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
+	"shingocore/store/payloads"
 )
 
 // The ledger is allowed to go negative and the design says keep it that way:
@@ -292,5 +293,101 @@ func TestCarrierBindings_PreservesEveryAbsence(t *testing.T) {
 	}
 	if r := by[unknownPayload.ID]; r.UOPRemaining != -9 {
 		t.Errorf("uop_remaining = %d, want -9", r.UOPRemaining)
+	}
+}
+
+// TestCarrierBindings_CarriesTheCarrierRuleFinding is the /material-flags
+// carrier-rule section's read, and it rides this query rather than adding one:
+// the page already reads every carrier here for the binding half, and two
+// definitions of "every carrier" on one page is how two sections start
+// disagreeing about how many there are.
+//
+// THE DECLARED SET IS ONLY POPULATED FOR A FLAGGED CARRIER. It is the content
+// of the fix — "put it in one of these" — and computing it for every carrier
+// would be an aggregate per row for a column nothing renders. That guard is
+// asserted here because it is invisible from the page.
+func TestCarrierBindings_CarriesTheCarrierRuleFinding(t *testing.T) {
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	fits := &bins.BinType{Code: "CB-FITS"}
+	testutil.MustNoErr(t, db.CreateBinType(fits), "create CB-FITS")
+	foreign := &bins.BinType{Code: "CB-FOREIGN"}
+	testutil.MustNoErr(t, db.CreateBinType(foreign), "create CB-FOREIGN")
+
+	// One payload WITH declared carriers, one with none — the Springfield shape,
+	// where 127 payloads of 128 have no rows at all.
+	declared := &payloads.Payload{Code: "CB-DECLARED", UOPCapacity: 100}
+	testutil.MustNoErr(t, payloads.Create(db.DB, declared), "create declared payload")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(declared.ID, []int64{fits.ID}), "declare bin types")
+	sparse := &payloads.Payload{Code: "CB-SPARSE", UOPCapacity: 100}
+	testutil.MustNoErr(t, payloads.Create(db.DB, sparse), "create sparse payload")
+
+	flagged := &bins.Bin{BinTypeID: foreign.ID, Label: "CB-FLAGGED"}
+	testutil.MustNoErr(t, bins.Create(db.DB, flagged), "create flagged bin")
+	clean := &bins.Bin{BinTypeID: fits.ID, Label: "CB-CLEAN"}
+	testutil.MustNoErr(t, bins.Create(db.DB, clean), "create clean bin")
+	undescribed := &bins.Bin{BinTypeID: foreign.ID, Label: "CB-SPARSE-BIN"}
+	testutil.MustNoErr(t, bins.Create(db.DB, undescribed), "create sparse bin")
+
+	// BOUND EXPLICITLY, because bins.Create does not write payload_code — a
+	// struct field set and silently dropped would leave every assertion below
+	// passing over three EMPTY carriers, which is a green test about nothing.
+	// (Caught by neutering the declared-set gate and watching this stay green.)
+	for _, b := range []struct {
+		id      int64
+		payload string
+	}{{flagged.ID, declared.Code}, {clean.ID, declared.Code}, {undescribed.ID, sparse.Code}} {
+		_, err := db.DB.Exec(`UPDATE bins SET payload_code=$2 WHERE id=$1`, b.id, b.payload)
+		testutil.MustNoErr(t, err, "bind carrier")
+	}
+
+	// The finding is stamped the way the write door would. The door's own
+	// behaviour is pinned in service/bin_type_write_door_docker_test.go; what is
+	// under test here is the READ, and seeding the column directly keeps the two
+	// independent.
+	_, err := db.DB.Exec(`UPDATE bins SET undeclared_carrier_at=NOW() WHERE id=$1`, flagged.ID)
+	testutil.MustNoErr(t, err, "stamp the finding")
+	_ = sd
+
+	got, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
+	testutil.MustNoErr(t, err, "CarrierBindings")
+
+	byLabel := map[string]bins.CarrierBinding{}
+	for _, c := range got {
+		byLabel[c.Label] = c
+	}
+
+	f := byLabel["CB-FLAGGED"]
+	if f.UndeclaredCarrierAt == nil {
+		t.Error("the flagged carrier came back with no finding — /material-flags reads " +
+			"this field and would show an empty section over a bin nothing can fetch")
+	}
+	if f.BinTypeCode != "CB-FOREIGN" {
+		t.Errorf("BinTypeCode = %q, want CB-FOREIGN — the row has to name the carrier "+
+			"it is IN, not only the ones it should be in", f.BinTypeCode)
+	}
+	if f.DeclaredBinTypes != "CB-FITS" {
+		t.Errorf("DeclaredBinTypes = %q, want CB-FITS. That column is the whole content "+
+			"of the fix; without it the row says a carrier is wrong and not what is right.",
+			f.DeclaredBinTypes)
+	}
+
+	c := byLabel["CB-CLEAN"]
+	if c.UndeclaredCarrierAt != nil {
+		t.Error("a carrier in a DECLARED bin type came back flagged")
+	}
+	if c.DeclaredBinTypes != "" {
+		t.Errorf("DeclaredBinTypes = %q on an unflagged carrier. The aggregate is gated "+
+			"on the flag so it runs zero times on a good day; populating it here means "+
+			"the gate is gone and every page load pays for every carrier.", c.DeclaredBinTypes)
+	}
+
+	// THE SPARSE ARM, PINNED QUIET AT /material-flags. A payload with no declared
+	// carriers constrains nothing, so its bins are never flagged and never listed.
+	u := byLabel["CB-SPARSE-BIN"]
+	if u.UndeclaredCarrierAt != nil {
+		t.Error("a carrier holding a payload with NO declared bin types came back " +
+			"flagged. At Springfield that is nearly every carrier on the plant.")
 	}
 }
