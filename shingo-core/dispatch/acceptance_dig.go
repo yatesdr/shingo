@@ -216,9 +216,11 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 		// Congestion, each with its own live releaser, and the classifier's cause
 		// on the row already names the one that applies. Nothing to arrange.
 		d.dbg("lane gate: order %d cannot dig %s open yet (%v)", req.order.ID, lane.Name, res.outcome)
-	case laneClearNoGroup, laneClearSlotNotInLane, laneClearUnplannable:
-		// Geometry: the lane is in no group, the slot belongs to no lane, the plan
-		// could not be built. Same arm and same shape as the complex path's
+	case laneClearNoGroup, laneClearSlotNotInLane, laneClearBlockerAtDisabledNode, laneClearUnplannable:
+		// Geometry and configuration: the lane is in no group, the slot belongs to
+		// no lane, a bin in front of the target stands on a node the plant has
+		// switched off, or the plan could not be built. Same arm and same shape as
+		// the complex path's
 		// (complex_dispatch.go), for the same reason this is LOUD: nothing in the
 		// plant will clear any of these on its own — no bin moving anywhere changes
 		// which nodes exist — so the dweller's wait has no releaser, and a quiet

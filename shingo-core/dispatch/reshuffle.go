@@ -176,6 +176,37 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 		return nil, 0, err
 	}
 
+	// ── A BLOCKER AT A DEAD NODE IS NOT A BLOCKER THIS DIG MAY LIFT ──────
+	//
+	// A switched-off node is dead to automation: no sourcing, no parking, no
+	// digging, no delivering, no counting. Only an engineer touches a bin
+	// standing there. The excavation below emits one StepUnbury per blocker
+	// unconditionally, so without this the dig plans a ROBOT lifting a bin off
+	// a node the plant has switched off — the one thing the ruling reserves for
+	// a human.
+	//
+	// THE GEOMETRY IS NOT GATED ON enabled AND MUST NOT BE, which is why the
+	// refusal lives here rather than in the predicate that finds the blockers.
+	// helpers.LaneBlockerPredicate answers "is something physically in front of
+	// the target", and a disabled slot with a bin in it is still physically in
+	// the way. Gating it would make a walled lane read as REACHABLE, and that
+	// answer feeds helpers.ReachableSQL — bins.AccessibleEmptyOrder,
+	// carried_bin_slots, findStoreSlot — every one of which needs the physical
+	// truth. So the corridor keeps describing itself honestly and the PLANNER
+	// declines the job.
+	//
+	// The dig readers already refuse a dig TARGET at a dead node
+	// (BinAtLiveNodeSQL, store/lane_queries.go), and lane-grain disable means a
+	// lane and its slots switch together — so a mixed lane is not a state the
+	// node editor can produce any more. This is the belt-and-braces for the
+	// rows that predate the grain, and it names a cause the floor can act on
+	// instead of parking under a geometry error.
+	for _, b := range blockers {
+		if !b.slot.Enabled {
+			return nil, 0, fmt.Errorf("%w: %s holds bin %d", ErrBlockerAtDisabledNode, b.slot.Name, b.bin.ID)
+		}
+	}
+
 	// ── CAN THIS GROUP CLEAR THESE BLOCKERS? THAT IS THE WHOLE QUESTION ───
 	//
 	// A CLAIMS LEDGER STOOD HERE AND IS DELETED (§R.79 supersedes §R.75/§R.76
@@ -1114,11 +1145,23 @@ func shuffleSlotFree(db *store.DB, n *nodes.Node) bool {
 // had to wait for the scanner: once it can spawn reshuffles on replay, a buried
 // retrieve retries across ticks (waits for a slot) instead of one-shot-failing at
 // intake.
-// ErrSlotNotInLane is the ONE genuine configuration fault the excavation planner
-// can hit: a storage slot that is not a child of any lane, so there is no
-// corridor to dig and nowhere to park a blocker.
+// ErrSlotNotInLane and ErrBlockerAtDisabledNode are the two genuine
+// CONFIGURATION faults the excavation planner can hit — a state no amount of
+// waiting resolves, because nothing in dispatch can change it.
 //
-// It is a SENTINEL rather than a bare error because of what sits next to it.
+// (The comment here said "the ONE" until ErrBlockerAtDisabledNode joined it.
+// Both are the same kind of fault and take the same disposition, which is the
+// point of naming them together.)
+//
+// ErrSlotNotInLane: a storage slot that is not a child of any lane, so there is
+// no corridor to dig and nowhere to park a blocker.
+//
+// ErrBlockerAtDisabledNode: a bin in front of the target is standing on a node
+// the plant has switched off. Automation may not lift it — only an engineer
+// may — so the dig cannot be planned until a human moves the bin or re-enables
+// the node.
+//
+// They are SENTINELS rather than bare errors because of what sits next to them.
 // Every other way planUnbury can fail is a DATABASE READ — and the disposition
 // for those is now to WAIT (PLAN §R.45). Telling the two apart by readFailed()
 // alone does not work in this direction: a plain fmt.Errorf is non-nil and is not
@@ -1126,5 +1169,9 @@ func shuffleSlotFree(db *store.DB, n *nodes.Node) bool {
 // under a cause that never clears. The geometry has to name itself, and then
 // everything else is free to be treated as I/O.
 var ErrSlotNotInLane = errors.New("target slot is not in a lane")
+
+// ErrBlockerAtDisabledNode — see ErrSlotNotInLane above for why it is a
+// sentinel and how its disposition differs from a read failure.
+var ErrBlockerAtDisabledNode = errors.New("a bin in front of the target is at a disabled node; an engineer must move it")
 
 var ErrNoShuffleSlot = errors.New("no free shuffle slot")

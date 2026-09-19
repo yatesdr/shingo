@@ -163,6 +163,12 @@ const (
 	// no corridor to dig. A configuration fault: no bin moving anywhere will ever
 	// change it, so it fails loudly and names the slot.
 	laneClearSlotNotInLane
+	// laneClearBlockerAtDisabledNode — a bin in front of the target is standing
+	// on a node the plant has switched off. A configuration fault of the same
+	// kind as laneClearSlotNotInLane: automation may not lift that bin, so no
+	// amount of waiting clears it. An engineer moves the bin or re-enables the
+	// node. It names the slot and the bin so the floor knows which.
+	laneClearBlockerAtDisabledNode
 	// laneClearUnplannable — anything else out of the planner. Should now be
 	// empty: every remaining path is either a read or the geometry above. Kept
 	// fail-closed for whatever a future planner adds.
@@ -207,6 +213,11 @@ func classifyPlanError(err error) laneClearOutcome {
 		return laneClearNothingInTheWay
 	case errors.Is(err, ErrSlotNotInLane):
 		return laneClearSlotNotInLane
+	case errors.Is(err, ErrBlockerAtDisabledNode):
+		// Asked before readFailed for the reason ErrSlotNotInLane is: a plain
+		// fmt.Errorf is non-nil and is not sql.ErrNoRows, so a configuration
+		// fault left to the read arm would park under a cause that never clears.
+		return laneClearBlockerAtDisabledNode
 	case readFailed(err):
 		// The same predicate the layer above already uses for the lane read — ONE
 		// spelling of "the database did not answer", not a second (law 3).

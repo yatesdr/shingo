@@ -292,6 +292,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
 		  AND n.is_synthetic = false
+		  AND `+helpers.NodeEnabledSQL+`
 		  AND (n.claimed_by IS NULL OR n.claimed_by = $2)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
 		  AND NOT `+reservations.SlotSpokenForByStrangerSQL("r", "n.id", "$2")+`

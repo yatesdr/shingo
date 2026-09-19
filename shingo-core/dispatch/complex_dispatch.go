@@ -1090,7 +1090,7 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 		// by "one proposer, two reporting policies". The ranked take's promised
 		// refusal (§7) rides this same do-nothing arm for the same reason.
 		d.dbg("complex: no dig for %s yet on behalf of order %d (%v)", lane.Name, order.ID, res.err)
-	case laneClearNoGroup, laneClearSlotNotInLane, laneClearUnplannable:
+	case laneClearNoGroup, laneClearSlotNotInLane, laneClearBlockerAtDisabledNode, laneClearUnplannable:
 		// Geometry. The demand is NOT failed here: admission's refusal is about one
 		// lane on one tick, and the demand may still be re-planned onto another
 		// source. Loud, because nothing will clear it on its own.

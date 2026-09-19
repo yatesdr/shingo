@@ -13,8 +13,11 @@ package nodes
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+
+	"shingo/protocol"
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
@@ -171,10 +174,85 @@ func Update(db *sql.DB, n *Node) error {
 			return err
 		}
 	}
-	_, err := db.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
-		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID), n.ID)
+	tx, err := db.Begin()
 	if err != nil {
+		return fmt.Errorf("update node: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := checkEnabledIsLaneGrain(tx, n); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
+		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID), n.ID); err != nil {
 		return fmt.Errorf("update node: %w", err)
+	}
+	if err := cascadeEnabledToSlots(tx, n); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ErrSlotEnabledFollowsLane refuses to switch one slot of a lane on or off.
+//
+// DISABLE IS LANE-GRAIN (2026-09-19 ruling): one switch for a lane and
+// everything under it, and nobody can switch off slot 2 of 3. A lane is a
+// physical corridor — a robot reaches slot 3 by passing slots 1 and 2 — so a
+// single dead slot in the middle is not a state the plant can act on. Every
+// reader that honours `enabled` would route around a slot that is still
+// physically in the way, and the geometry readers that describe the corridor
+// (helpers.LaneBlockerPredicate and everything composed from it) deliberately
+// do NOT read enabled, because occupancy is physical whatever the switch says.
+//
+// Refusing the state is what keeps those two truths from having to be
+// reconciled: there is no mixed lane to reconcile.
+var ErrSlotEnabledFollowsLane = errors.New("a slot's enabled state follows its lane; disable the lane, not one slot in it")
+
+// checkEnabledIsLaneGrain refuses an enabled flip on a node that is a slot in a
+// lane. It compares against the STORED value rather than refusing outright, so
+// every ordinary edit of a slot — renaming it, re-zoning it, reordering depth —
+// still passes; only a change to `enabled` itself is refused.
+func checkEnabledIsLaneGrain(tx *sql.Tx, n *Node) error {
+	var (
+		parentIsLane  bool
+		storedEnabled bool
+	)
+	err := tx.QueryRow(`
+		SELECT COALESCE(pt.code, '') = $2, n.enabled
+		FROM nodes n
+		LEFT JOIN nodes p    ON p.id  = n.parent_id
+		LEFT JOIN node_types pt ON pt.id = p.node_type_id
+		WHERE n.id = $1`, n.ID, protocol.NodeClassLANE).Scan(&parentIsLane, &storedEnabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // a row that is not there is not a slot; the UPDATE will no-op
+	}
+	if err != nil {
+		return fmt.Errorf("update node %d: read lane grain: %w", n.ID, err)
+	}
+	if parentIsLane && n.Enabled != storedEnabled {
+		return fmt.Errorf("%w (node %d)", ErrSlotEnabledFollowsLane, n.ID)
+	}
+	return nil
+}
+
+// cascadeEnabledToSlots carries a LANE's enabled state to every slot under it.
+//
+// The toggle was a single-row UPDATE, so disabling a lane left its slots reading
+// enabled=true and every reader that honours the flag kept sourcing from,
+// digging in, delivering to and counting stock at them. The lane was off and
+// nothing under it was.
+//
+// It runs on every lane update, not only when the flag changed, because that is
+// what heals a plant that already has a mixed lane: slots that drifted before
+// the grain was enforced are brought back in line the next time the lane is
+// saved. Writing the value it already holds costs one statement and no rows.
+func cascadeEnabledToSlots(tx *sql.Tx, n *Node) error {
+	if n.NodeTypeCode != protocol.NodeClassLANE {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE nodes SET enabled = $1, updated_at = NOW()
+		WHERE parent_id = $2 AND enabled <> $1`, n.Enabled, n.ID); err != nil {
+		return fmt.Errorf("update node %d: cascade enabled to slots: %w", n.ID, err)
 	}
 	return nil
 }

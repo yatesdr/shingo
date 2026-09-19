@@ -218,12 +218,21 @@ func onLinePoolByProcess(db *sql.DB) (map[string]map[string]int, error) {
 // lineUOPByNode returns the UOP currently present at each node (the numerator of
 // a line's time-to-empty), keyed by node name. Bins with no content are
 // excluded; a node with nothing staged is simply absent from the map.
+//
+// A DISABLED NODE CONTRIBUTES NOTHING, which is the half this reader was
+// missing. helpers.NodeEnabledSQL's own comment already said it — "nothing
+// automated sources from one, digs one, or counts stock on one" — and this
+// counted it. The number feeds a line's time-to-empty, so stock standing at a
+// switched-off node made the line look supplied by material no automation will
+// ever fetch: the replenishment that should have been raised was not, and the
+// shortfall arrived at the line instead of in the ledger.
 func lineUOPByNode(db *sql.DB) (map[string]int, error) {
 	rows, err := db.Query(`
 		SELECT n.name, COALESCE(SUM(b.uop_remaining), 0)
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
 		WHERE b.uop_remaining > 0
+		  AND ` + helpers.NodeEnabledSQL + `
 		GROUP BY n.name`)
 	if err != nil {
 		return nil, fmt.Errorf("sourceability: line uop: %w", err)

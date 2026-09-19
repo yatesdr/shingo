@@ -191,7 +191,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		d.failOrderInternal(order, codeInvalidNode, fmt.Sprintf(
 			"config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name))
 
-	case laneClearSlotNotInLane, laneClearUnplannable:
+	case laneClearSlotNotInLane, laneClearBlockerAtDisabledNode, laneClearUnplannable:
 		// Only a person editing configuration can fix this, so no amount of waiting
 		// changes it (§R.45: "config error? yeah fail loudly so the engineer can fix").
 		d.failOrderInternal(order, "reshuffle_error",

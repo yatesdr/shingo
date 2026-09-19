@@ -277,8 +277,12 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		// straight through with no such restriction. 400, not 500: the form is
 		// well-formed and the operator fixes it by choosing a different parent,
 		// and the message already names the chain that makes it impossible.
+		// The lane-grain refusal arrives the same way and for the same reason:
+		// the form is well-formed and the operator fixes it by switching the
+		// LANE rather than one slot inside it. 400, not 500 — and the sentinel's
+		// own message already says which.
 		code := http.StatusInternalServerError
-		if service.IsParentCycle(err) {
+		if service.IsParentCycle(err) || service.IsSlotEnabledFollowsLane(err) {
 			code = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), code)
