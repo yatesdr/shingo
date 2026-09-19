@@ -62,7 +62,23 @@ const BinAtLiveNodeSQL = NodeEnabledSQL + ` AND COALESCE(n.is_synthetic, false) 
 
 // BinUnheldSQL — nobody else has this bin: no hard claim, no operator lock, no
 // pending reservation.
-const BinUnheldSQL = `b.claimed_by IS NULL AND b.locked = false AND NOT ` + reservations.BinSpokenForSQL
+//
+// IT IS SPLIT IN TWO BECAUSE THE DIG READERS NEED IT APART, and for the same
+// reason PoolBreakdownByPayload needs the membership half apart from the holds:
+// a reader that wants all but one arm should COMPOSE the arms it wants, not
+// re-spell the whole rule minus one line. FindOldestBuriedBin and FindBuriedBin
+// hand-wrote `claimed_by IS NULL AND locked = false` beside BinAtLiveNodeSQL —
+// a near-copy of this predicate, reservation-blind on purpose, and near-copies
+// are what the 2026-09-14 collapse was about. They compose the two halves now.
+const BinUnheldSQL = BinUnclaimedSQL + ` AND ` + BinNotReservedSQL
+
+// BinUnclaimedSQL — no hard claim and no operator lock. The half a DIG takes.
+const BinUnclaimedSQL = `b.claimed_by IS NULL AND b.locked = false`
+
+// BinNotReservedSQL — nobody holds a pending reservation on this bin. The half
+// a dig deliberately LEAVES, because a reservation on a buried bin is the
+// reason to dig it rather than a reason to leave it where it is.
+const BinNotReservedSQL = `NOT ` + reservations.BinSpokenForSQL
 
 // BinCarriesSourceableStockSQL — the carrier holds attested stock in a state
 // that may leave. 'staged' is excluded on top of the allow-list: a staged bin

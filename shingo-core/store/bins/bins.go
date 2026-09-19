@@ -529,6 +529,8 @@ const (
 	NodeEnabledSQL               = helpers.NodeEnabledSQL
 	BinAtLiveNodeSQL             = helpers.BinAtLiveNodeSQL
 	BinUnheldSQL                 = helpers.BinUnheldSQL
+	BinUnclaimedSQL              = helpers.BinUnclaimedSQL
+	BinNotReservedSQL            = helpers.BinNotReservedSQL
 	BinCarriesSourceableStockSQL = helpers.BinCarriesSourceableStockSQL
 	BinInUndeclaredCarrierSQL    = helpers.BinInUndeclaredCarrierSQL
 )

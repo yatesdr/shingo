@@ -445,17 +445,14 @@ func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 // shallowest buried bin for cheapest reshuffle), this returns the oldest
 // buried bin for strict FIFO correctness. Cross-aggregate composition.
 //
-// A DIG READER, NOT A SOURCING READER — see FindBuriedBin for why the two keep
-// their own spelling and stay reservation-blind.
+// A DIG READER, NOT A SOURCING READER — see FindBuriedBin for why the two stay
+// reservation-blind, and what they compose instead of spelling.
 func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND `+bins.BinAtLiveNodeSQL+`
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.manifest_confirmed = true
-		  AND `+bins.SourceableStatusSQL+`
-		  AND b.status <> 'staged'
+		  AND `+bins.BinUnclaimedSQL+`
+		  AND `+bins.BinCarriesSourceableStockSQL+`
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
@@ -478,19 +475,28 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 // different question from "may this bin be sourced", so this does not compose
 // bins.BinSourceableSQL: it is deliberately reservation-blind, because a
 // reservation on a buried bin is the reason it needs digging rather than a
-// reason to leave it. It takes exactly one rule from the sourcing side —
-// BinAtLiveNodeSQL, because a disabled node is dead to automation and digs are
-// automation (2026-09-14 ruling). Its verdicts are photographed in
-// dispatch/binresolver/testdata/golden/dig_readers.json.
+// reason to leave it.
+//
+// IT COMPOSES THE FRAGMENTS MINUS THE RESERVATION ARM rather than re-spelling
+// them. It used to hand-write `claimed_by IS NULL AND locked = false AND
+// manifest_confirmed = true AND ... AND status <> 'staged'` beside
+// BinAtLiveNodeSQL — which is BinUnclaimedSQL and BinCarriesSourceableStockSQL
+// written out longhand, a near-copy of the predicate differing in exactly one
+// arm. A near-copy is how the six spellings the 2026-09-14 collapse ended got
+// written in the first place, so the difference is now expressed by which
+// fragments it names: BinUnclaimedSQL and not BinNotReservedSQL. The one thing
+// it takes from the sourcing side unchanged is BinAtLiveNodeSQL, because a
+// disabled node is dead to automation and digs are automation.
+//
+// Its verdicts are photographed in
+// dispatch/binresolver/testdata/golden/dig_readers.json, and that file must not
+// move when the spelling does.
 func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND `+bins.BinAtLiveNodeSQL+`
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.manifest_confirmed = true
-		  AND `+bins.SourceableStatusSQL+`
-		  AND b.status <> 'staged'
+		  AND `+bins.BinUnclaimedSQL+`
+		  AND `+bins.BinCarriesSourceableStockSQL+`
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC

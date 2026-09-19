@@ -1,6 +1,7 @@
 package bins_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -122,32 +123,20 @@ func TestNoBinStatusRejectListSurvives(t *testing.T) {
 	rejectList := regexp.MustCompile(`status NOT IN \([^)]*'(maintenance|flagged|retired|quality_hold)'`)
 
 	var offenders []string
-	roots := []string{".", "../", "../sourceability", "../../service", "../../dispatch", "../../engine", "../../www"}
-	for _, root := range roots {
-		entries, err := os.ReadDir(filepath.FromSlash(root))
+	for _, path := range moduleGoFiles(t) {
+		if frozen[filepath.Base(path)] {
+			continue
+		}
+		b, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
+		for line := range strings.SplitSeq(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue // a comment recording the history is not a spelling
 			}
-			if frozen[name] {
-				continue
-			}
-			path := filepath.Join(filepath.FromSlash(root), name)
-			b, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			for line := range strings.SplitSeq(string(b), "\n") {
-				if strings.HasPrefix(strings.TrimSpace(line), "//") {
-					continue // a comment recording the history is not a spelling
-				}
-				if rejectList.MatchString(line) {
-					offenders = append(offenders, path+": "+strings.TrimSpace(line))
-				}
+			if rejectList.MatchString(line) {
+				offenders = append(offenders, path+": "+strings.TrimSpace(line))
 			}
 		}
 	}
@@ -158,5 +147,146 @@ func TestNoBinStatusRejectListSurvives(t *testing.T) {
 			"is deferred so off-spec values are representable — so the list is wrong "+
 			"the day anyone hand-corrects a row.",
 			strings.Join(offenders, "\n  "))
+	}
+}
+
+// moduleGoFiles walks the whole shingo-core module and returns every
+// non-test .go file in it.
+//
+// ── WHY A WALK AND NOT A LIST OF ROOTS ────────────────────────────────────
+//
+// This guard used to read seven named directories with os.ReadDir and `if
+// e.IsDir() { continue }`, which is not a recursion — it is a list of seven
+// directories, and nothing below any of them was ever looked at. Two things
+// were wrong with that.
+//
+// IT DID NOT COVER THE PREDICATE'S OWN HOME. store/internal/helpers is where
+// BinSourceableSQL lives, and it sat outside the guard that exists to protect
+// it. A reject-list written in the file next to the allow-list would have
+// passed.
+//
+// AND THE ROOTS WERE ALREADY LYING ABOUT THEIR REACH. "../../dispatch" reads
+// dispatch/ and not dispatch/binresolver, dispatch/binsource or
+// dispatch/loaders — which is most of the sourcing code by volume, and all of
+// the Go predicates the three dispatch doors run on.
+//
+// A walk cannot drift as the tree is reorganised, which is the property a
+// ratchet needs: the guard should not have to be edited every time a package
+// is split, because the edit that keeps it compiling is also the edit that
+// quietly narrows it.
+func moduleGoFiles(t *testing.T) []string {
+	t.Helper()
+
+	root, err := filepath.Abs(filepath.FromSlash("../.."))
+	if err != nil {
+		t.Fatalf("resolve module root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("module root %s has no go.mod (%v) — this guard walks the module "+
+			"from store/bins, so a move breaks its bearings; repoint it rather than "+
+			"deleting it", root, err)
+	}
+
+	var out []string
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// testdata holds golden fixtures, not code.
+			if d.Name() == "testdata" || d.Name() == "node_modules" || d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		out = append(out, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk module: %v", err)
+	}
+	if len(out) < 100 {
+		t.Fatalf("walked only %d .go files from %s — a guard that silently walks "+
+			"nothing passes on nothing", len(out), root)
+	}
+	return out
+}
+
+// goPredicates are the pure Go predicates the three dispatch doors run on —
+// tier-4 concrete-node pickup, the tier-2 dedicated-loader pool, and the
+// complex allocator. They are not SQL readers, so the clause list above cannot
+// speak about them; what they must not lose is the bin-type arm.
+//
+// THE RULE REACHED THEM LAST. Every SQL sourcing reader has enforced
+// payload_bin_types since 493a8062 and these two enforced nothing, because the
+// doors they serve list bins with ListBinsByNode and filter in Go. A bin loaded
+// with a part its carrier may not hold counts as stock and can never be
+// fetched, and that is the row the gap produced.
+var goPredicates = []struct{ file, fn, must string }{
+	{"../../dispatch/binresolver/helpers.go", "func BinUnavailableReason(", "binTypes.Permits"},
+	{"../../dispatch/binsource/source.go", "func RejectReason(", "binTypeReject"},
+}
+
+// TestGoPredicatesKeepTheBinTypeArm.
+//
+// VERIFIED RED BY: deleting the Permits call from BinUnavailableReason.
+func TestGoPredicatesKeepTheBinTypeArm(t *testing.T) {
+	t.Parallel()
+	for _, p := range goPredicates {
+		body := readBody(t, p.file, p.fn)
+		if !strings.Contains(body, p.must) {
+			t.Errorf("%s (%s) no longer consults the bin-type rule (looked for %q).\n\n"+
+				"payload_bin_types is hard where it has rows: a part may only travel in "+
+				"a carrier the plant declares for it. This predicate is one of the two "+
+				"the three dispatch doors reduce to, so dropping the arm re-opens the "+
+				"gap at all three at once — and the bins it admits are ones every SQL "+
+				"sourcing reader refuses, so they become stock nothing can fetch.",
+				p.fn, p.file, p.must)
+		}
+	}
+}
+
+// onLineComplement are the two readers that answer "is it already AT the line",
+// not "can it be fetched" — the staged-at-line complement of the sourcing
+// question, and disjoint from it by construction.
+//
+// THEY ARE ON THE DRIFT LIST RATHER THAN THE READER LIST, and the difference is
+// the `status = 'staged'` term. Every sourcing reader excludes staged, because
+// a staged bin is one an operator is working at; these two want ONLY staged,
+// which is what makes them the complement rather than a seventh spelling. Drop
+// that term and the reader silently becomes a sourcing reader that answers the
+// sourcing question wrongly — no compile error, no failing test, and a pool
+// count that now includes bins nothing may take.
+//
+// No logic of theirs changes here. They are watched, not collapsed.
+var onLineComplement = []struct{ file, fn string }{
+	{"../sourceability/read.go", "func onLinePoolByProcess("},
+	{"../sourceability/read_page.go", "func OnLineBreakdownByProcess("},
+}
+
+// TestOnLineComplementStaysTheComplement.
+//
+// VERIFIED RED BY: deleting the staged term from onLinePoolByProcess.
+func TestOnLineComplementStaysTheComplement(t *testing.T) {
+	t.Parallel()
+	for _, r := range onLineComplement {
+		body := readBody(t, r.file, r.fn)
+		if !strings.Contains(body, `b.status = 'staged'`) {
+			t.Errorf("%s (%s) lost its `status = 'staged'` term.\n\n"+
+				"That term is the ONLY thing separating this reader from a sourcing "+
+				"reader. Sourcing excludes staged; this counts only staged. Without it "+
+				"the two questions collide and this becomes a seventh spelling of "+
+				"'may this bin be sourced' that answers it wrongly.", r.fn, r.file)
+		}
+		// The disabled-node rule binds them too — a dead node holds no countable
+		// stock, which is the same ruling lineUOPByNode was corrected under.
+		if !strings.Contains(body, "BinAtLiveNodeSQL") {
+			t.Errorf("%s (%s) no longer composes BinAtLiveNodeSQL — a switched-off "+
+				"node is dead to automation, counting included", r.fn, r.file)
+		}
 	}
 }
