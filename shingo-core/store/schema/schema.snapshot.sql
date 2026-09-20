@@ -1313,6 +1313,29 @@ CREATE SEQUENCE public.test_commands_id_seq
 
 ALTER SEQUENCE public.test_commands_id_seq OWNED BY public.test_commands.id;
 
+CREATE TABLE public.tte_samples (
+    id bigint NOT NULL,
+    computed_at timestamp with time zone NOT NULL,
+    process_id text NOT NULL,
+    style_id text NOT NULL,
+    core_node_name text NOT NULL,
+    payload_code text NOT NULL,
+    uop_remaining integer NOT NULL,
+    rate_per_sec double precision NOT NULL,
+    tte_seconds double precision,
+    style_status text NOT NULL,
+    reorder_point integer DEFAULT 0 NOT NULL
+);
+
+CREATE SEQUENCE public.tte_samples_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.tte_samples_id_seq OWNED BY public.tte_samples.id;
+
 ALTER TABLE ONLY public.admin_users ALTER COLUMN id SET DEFAULT nextval('public.admin_users_id_seq'::regclass);
 
 ALTER TABLE ONLY public.audit_log ALTER COLUMN id SET DEFAULT nextval('public.audit_log_id_seq'::regclass);
@@ -1394,6 +1417,8 @@ ALTER TABLE ONLY public.sourceability_events ALTER COLUMN id SET DEFAULT nextval
 ALTER TABLE ONLY public.supply_refusals ALTER COLUMN id SET DEFAULT nextval('public.supply_refusals_id_seq'::regclass);
 
 ALTER TABLE ONLY public.test_commands ALTER COLUMN id SET DEFAULT nextval('public.test_commands_id_seq'::regclass);
+
+ALTER TABLE ONLY public.tte_samples ALTER COLUMN id SET DEFAULT nextval('public.tte_samples_id_seq'::regclass);
 
 ALTER TABLE ONLY public.admin_users
     ADD CONSTRAINT admin_users_pkey PRIMARY KEY (id);
@@ -1635,6 +1660,9 @@ ALTER TABLE ONLY public.supply_refusals
 ALTER TABLE ONLY public.test_commands
     ADD CONSTRAINT test_commands_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.tte_samples
+    ADD CONSTRAINT tte_samples_pkey PRIMARY KEY (id);
+
 CREATE INDEX cell_config_station_idx ON public.cell_config USING btree (station);
 
 CREATE UNIQUE INDEX edge_registry_station_uid_key ON public.edge_registry USING btree (station_uid) WHERE (station_uid <> ''::text);
@@ -1790,6 +1818,10 @@ CREATE INDEX idx_style_claims_process_style ON public.style_claims USING btree (
 CREATE UNIQUE INDEX idx_supply_refusals_open ON public.supply_refusals USING btree (loader_node, payload_code) WHERE (closed_at IS NULL);
 
 CREATE INDEX idx_supply_refusals_payload ON public.supply_refusals USING btree (payload_code, refused_at DESC);
+
+CREATE INDEX idx_tte_samples_place_time ON public.tte_samples USING btree (core_node_name, payload_code, computed_at DESC);
+
+CREATE INDEX idx_tte_samples_process_time ON public.tte_samples USING btree (process_id, payload_code, computed_at DESC);
 
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
 

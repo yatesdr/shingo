@@ -4239,6 +4239,10 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bins", "undeclared_carrier_at")
 			}},
+
+		{118, "tte_samples — the per-line time-to-empty the pass already computes, kept so it can be scored against the demand it predicted",
+			v118TTESamples,
+			func(q schema.Querier) bool { return schema.TableExists(q, "tte_samples") }},
 	}
 }
 
@@ -4319,6 +4323,71 @@ func v117BinsUndeclaredCarrierAt(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v117 bins.undeclared_carrier_at: %w", err)
 		}
+	}
+	return nil
+}
+
+// v118TTESamples keeps the per-line time-to-empty the sourceability pass has
+// always computed and always thrown away.
+//
+// THE NUMBER ALREADY EXISTS. lineTTE projects "at the current rate this line
+// runs dry in N seconds" for every claim, every full pass. Today it survives
+// only for GREEN/YELLOW styles and only when the yellow tier is enabled — which
+// it is at neither plant — so in production the projection is computed for a
+// subset and discarded entirely. This table is where it lands instead.
+//
+// RED ROWS ARE THE POINT, and they are the reason this is a table and not a
+// column on the verdict. Compute returns early for a RED style, before the TTE
+// block, so the obvious "write what Compute surfaced" would record samples for
+// exactly the lines that were already fine — a dataset that looks complete and
+// answers the opposite of the question. A line that ran dry is the case the
+// forecast has to be scored on, so the sample is taken before the verdict.
+//
+// tte_seconds IS NULLABLE and that is a fact, not a gap: a line with nothing
+// staged, or a payload with no consumption in the rate window, has NO
+// projection rather than a projection of zero. ScoreTTE counts those as blind
+// spots, which is a finding about coverage and must not be silently imputed.
+//
+// NO FOREIGN KEYS. A sample is an observation of a moment; a style, node or
+// payload later renamed or deleted must not delete the history of what was
+// predicted about it, and must not block the delete either.
+//
+// Retention is 45 days, applied by the writer on each pass rather than by a
+// sweep — one DELETE beside the INSERT, on the two-minute cadence that already
+// exists. Sized to cover several rate windows plus the slack to notice a bad
+// one; the table is traffic, not a ledger, and nothing downstream reads a
+// sample older than the window it is scoring.
+func v118TTESamples(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS tte_samples (
+		id             BIGSERIAL PRIMARY KEY,
+		computed_at    TIMESTAMPTZ NOT NULL,
+		process_id     TEXT NOT NULL,
+		style_id       TEXT NOT NULL,
+		core_node_name TEXT NOT NULL,
+		payload_code   TEXT NOT NULL,
+		uop_remaining  INTEGER NOT NULL,
+		rate_per_sec   DOUBLE PRECISION NOT NULL,
+		tte_seconds    DOUBLE PRECISION,
+		style_status   TEXT NOT NULL,
+		reorder_point  INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		return fmt.Errorf("v118 tte_samples: %w", err)
+	}
+	// The scoring join's access path: "the last sample before this episode
+	// opened, at this place". Place first, time descending last, so the lookup
+	// is one backward index scan per episode.
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_tte_samples_place_time
+		    ON tte_samples(core_node_name, payload_code, computed_at DESC)`); err != nil {
+		return fmt.Errorf("v118 tte_samples place index: %w", err)
+	}
+	// The cell arm joins on the process, not the node — a cell episode names a
+	// process and a payload and no node at all — so it needs its own path or it
+	// degrades to a scan of the retention window.
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_tte_samples_process_time
+		    ON tte_samples(process_id, payload_code, computed_at DESC)`); err != nil {
+		return fmt.Errorf("v118 tte_samples process index: %w", err)
 	}
 	return nil
 }

@@ -269,7 +269,27 @@ func (m *SourceabilityMonitor) recomputeAll() {
 		m.eng.logFn("sourceability: full recompute build inputs: %v", err)
 		return
 	}
-	states := sourceability.Compute(in, m.cfg, time.Now())
+	states, samples := sourceability.ComputeWithSamples(in, m.cfg, time.Now())
+
+	// KEEP THE PROJECTION THIS PASS ALREADY MADE. lineTTE has run on every full
+	// pass since the monitor was written and the number has been discarded every
+	// time — surfaced only for GREEN/YELLOW styles, and only with the yellow
+	// tier on, which it is at neither plant. So the forecast the near tier will
+	// be built on has never once been checked against what actually happened.
+	//
+	// ON THE FULL PASS ONLY. recomputeKeys is the 300 ms debounce, fired by bin
+	// movement: writing there would put a DB round trip on the path that reacts
+	// to a bin moving, at a cadence set by plant traffic, for samples that would
+	// be near-duplicates of each other. The two-minute pass is the right grain
+	// and it is already paid for.
+	//
+	// Best-effort, like persistChanges: a lost history row must not stop the
+	// monitor telling Edge what it can source.
+	if len(samples) > 0 {
+		if err := sourceability.RecordTTESamples(m.eng.db.DB, samples, sourceability.TTERetention); err != nil {
+			m.eng.logFn("sourceability: record tte samples: %v", err)
+		}
+	}
 
 	newState := make(map[plantclaims.ProcessKey]sourceability.StyleState, len(states))
 	for _, s := range states {

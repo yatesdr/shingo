@@ -147,6 +147,35 @@ type Inputs struct {
 	LineUOP map[string]int
 	// RatePerSec is the consumption velocity per payload (UOP/sec, positive).
 	RatePerSec map[string]float64
+	// ActiveStyles is the style each process is currently RUNNING, keyed by
+	// process ID — the same map ActiveStyles() returns. It scopes the kept TTE
+	// samples and nothing else: no verdict reads it, because every configured
+	// style still gets a verdict whether or not it is the one running.
+	//
+	// A process absent from the map contributes no samples. That is deliberate
+	// and matches ActiveStyles' own rule — Core must not guess at a running
+	// style — and it fails to the safe side: a missing sample is a visible blind
+	// spot in the score, where a guessed one is a wrong number nothing flags.
+	ActiveStyles map[string]string
+}
+
+// TTESample is one claim's time-to-empty projection at one pass, kept so the
+// forecast can later be scored against the demand it predicted.
+//
+// IT IS TAKEN BEFORE THE VERDICT, for every claim of the running style,
+// INCLUDING THE CLAIMS OF A RED ONE. Compute returns early for RED, so a sample
+// set built from what Compute surfaced would hold only the lines that were
+// already fine — precisely the lines whose forecast nobody needs to check. The
+// line that ran dry is the one the score exists to grade.
+//
+// StyleStatus is stamped afterwards with the verdict that same pass reached, so
+// a sample carries the state of the world it was taken in.
+type TTESample struct {
+	ProcessID    string
+	StyleID      string
+	Line         LineTTE
+	StyleStatus  Status
+	ReorderPoint int
 }
 
 // Compute nets the available pool against every style's claims and returns a
@@ -163,7 +192,27 @@ type Inputs struct {
 // second unsatisfiable. It is not a maximum matching across allowed-sets — a
 // richer allocator can replace drawOne later without changing the verdict shape.
 func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
+	states, _ := ComputeWithSamples(in, cfg, now)
+	return states
+}
+
+// ComputeWithSamples is Compute, plus the per-line time-to-empty projections it
+// computes on the way to the verdict.
+//
+// COMPUTE DELEGATES HERE rather than the two sharing a copied loop. There is one
+// netting pass in this package and one place a verdict is decided; a sibling
+// with its own copy would be a second spelling of the rule, free to drift from
+// the one every reader consumes, and the drift would show up as a score that
+// grades a forecast the plant never actually made.
+//
+// The samples are a SECOND RETURN and not a field on StyleState: they are a
+// different grain (one per claim, not per style), they are scoped to the running
+// style where the verdict covers every configured one, and StyleState is on the
+// wire — where nothing has asked for them and a new field would have to be
+// gated, versioned and explained to every reader.
+func ComputeWithSamples(in Inputs, cfg Config, now time.Time) ([]StyleState, []TTESample) {
 	out := make([]StyleState, 0, len(in.Styles))
+	var samples []TTESample
 	for _, key := range in.Styles {
 		claims := append([]plantclaims.ClaimRow(nil), in.Claims[key]...)
 		sort.SliceStable(claims, func(i, j int) bool { return claims[i].Seq < claims[j].Seq })
@@ -177,6 +226,33 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 			st.Status = StatusNotConfigured
 			out = append(out, st)
 			continue
+		}
+
+		// THE PROJECTION IS TAKEN HERE, above every exit from this loop, so the
+		// RED return below cannot skip it. Only the running style is sampled:
+		// in.Styles carries every configured style, and sampling all of them
+		// would multiply the rows by the styles-per-process without adding a
+		// line anyone is running dry on.
+		var pending []TTESample
+		if key.StyleID != "" && in.ActiveStyles[key.ProcessID] == key.StyleID {
+			pending = make([]TTESample, 0, len(claims))
+			for _, c := range claims {
+				pending = append(pending, TTESample{
+					ProcessID:    key.ProcessID,
+					StyleID:      key.StyleID,
+					Line:         lineTTE(c, in),
+					ReorderPoint: c.ReorderPoint,
+				})
+			}
+		}
+		// keep stamps the verdict this pass reached onto the style's samples and
+		// moves them to the output. Called at each verdict exit so the status a
+		// sample carries is the one the same pass published.
+		keep := func(status Status) {
+			for i := range pending {
+				pending[i].StyleStatus = status
+				samples = append(samples, pending[i])
+			}
 		}
 
 		// Working copy of the pool, seeded only with the payloads this style
@@ -237,6 +313,7 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 						PayloadCount{PayloadCode: p, Bins: n})
 				}
 			}
+			keep(StatusRed)
 			out = append(out, st)
 			continue
 		}
@@ -260,9 +337,10 @@ func Compute(in Inputs, cfg Config, now time.Time) []StyleState {
 		} else {
 			st.Status = StatusGreen
 		}
+		keep(st.Status)
 		out = append(out, st)
 	}
-	return out
+	return out, samples
 }
 
 // drawOne consumes one available bin for the claim: its primary payload first,

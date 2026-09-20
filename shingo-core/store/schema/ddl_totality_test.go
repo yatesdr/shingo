@@ -60,6 +60,7 @@ var migrationOnlyTables = map[string]string{
 	"area_confidence_daily":       "added by v82 — the per-ZONE roll-up. One reading can be in several zones (SEER areas overlap), so its samples column does not sum to the plant total",
 	"plant_confidence_daily":      "added by v82 — the plant-day record for counts that have no lane to hang on: orphans, unkeyable, unversioned, unattributed",
 	"sourceability_events":        "added by a numbered migration after the baseline was frozen",
+	"tte_samples":                 "added by v118 — the per-line time-to-empty the sourceability pass computes on every full pass and used to discard. Written only by the two-minute full recompute, self-pruning at 45 days",
 	"style_claims":                "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":             "added by a numbered migration after the baseline was frozen",
 	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_ledger that must run while the raw rows still exist",

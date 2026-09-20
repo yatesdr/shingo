@@ -104,6 +104,13 @@ import (
 // written as 116 on a branch cut from a 115 head and renumbered when that
 // branch met main, which had already shipped 116 to Hopkinsville.
 //
+// v118 ADDS tte_samples — the per-line time-to-empty the sourceability pass
+// already computes on every full pass and has always discarded. A new table
+// nothing older reads, empty at birth, written only by the two-minute full
+// recompute and self-pruning at 45 days. Inert to a pre-v118 binary, and a
+// plant that rolls back stops accumulating samples rather than losing any
+// verdict: no surface reads it, so nothing on the wire depends on it existing.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -115,8 +122,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 117 {
-		t.Errorf("head migration = %d, want 117", got)
+	if got := store.LatestMigrationVersion(); got != 118 {
+		t.Errorf("head migration = %d, want 118", got)
 	}
 }
 

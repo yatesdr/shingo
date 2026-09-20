@@ -36,8 +36,15 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
+	// The running style per process. It scopes the kept TTE samples only — no
+	// verdict reads it — so a plant whose mirror carries no active flag computes
+	// exactly the verdicts it did before and simply records no samples.
+	active, err := ActiveStyles(db)
+	if err != nil {
+		return Inputs{}, err
+	}
 	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared,
-		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate}, nil
+		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, ActiveStyles: active}, nil
 }
 
 // loadStylesAndClaims reads the whole plant.claims mirror: every configured
@@ -62,7 +69,7 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 	}
 
 	claimRows, err := db.Query(
-		`SELECT process_id, style_id, core_node_name, payload_code, allowed_payload_codes, seq
+		`SELECT process_id, style_id, core_node_name, payload_code, allowed_payload_codes, seq, reorder_point
 		 FROM style_claims`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sourceability: load claims: %w", err)
@@ -74,7 +81,7 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 			c           plantclaims.ClaimRow
 			allowedJSON string
 		)
-		if err := claimRows.Scan(&c.ProcessID, &c.StyleID, &c.CoreNodeName, &c.PayloadCode, &allowedJSON, &c.Seq); err != nil {
+		if err := claimRows.Scan(&c.ProcessID, &c.StyleID, &c.CoreNodeName, &c.PayloadCode, &allowedJSON, &c.Seq, &c.ReorderPoint); err != nil {
 			return nil, nil, fmt.Errorf("sourceability: scan claim: %w", err)
 		}
 		if allowedJSON != "" {
