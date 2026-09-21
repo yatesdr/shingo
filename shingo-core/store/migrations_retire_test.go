@@ -111,6 +111,12 @@ import (
 // plant that rolls back stops accumulating samples rather than losing any
 // verdict: no surface reads it, so nothing on the wire depends on it existing.
 //
+// v119 ADDS bin_uop_ledger.reason + tte_samples.rate_grain — two additive
+// columns with defaults, plus a one-time backfill of reason from the metadata
+// JSON key the applier already writes, bounded to 7 days. Inert to a pre-v119
+// binary; a rollback drops both columns and the backfill is never needed
+// again (metadata keeps the reason — one fact, two homes for one release).
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -122,8 +128,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 118 {
-		t.Errorf("head migration = %d, want 118", got)
+	if got := store.LatestMigrationVersion(); got != 119 {
+		t.Errorf("head migration = %d, want 119", got)
 	}
 }
 

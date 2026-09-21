@@ -189,7 +189,8 @@ CREATE TABLE public.bin_uop_ledger (
     node_id bigint,
     station text DEFAULT ''::text NOT NULL,
     detail jsonb,
-    loader_id bigint
+    loader_id bigint,
+    reason text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.bin_uop_ledger_id_seq
@@ -1324,7 +1325,8 @@ CREATE TABLE public.tte_samples (
     rate_per_sec double precision NOT NULL,
     tte_seconds double precision,
     style_status text NOT NULL,
-    reorder_point integer DEFAULT 0 NOT NULL
+    reorder_point integer DEFAULT 0 NOT NULL,
+    rate_grain text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.tte_samples_id_seq

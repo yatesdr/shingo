@@ -71,6 +71,16 @@ func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
 	if got != 95 {
 		t.Errorf("uop_remaining = %d, want 95 (100 - 3 - 2)", got)
 	}
+
+	// v119's read-back: the reason is stamped on the column the rate filters
+	// on, not only in the metadata JSON. Without this assertion the column
+	// could stay empty on every new row and no test would notice.
+	var reason string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT reason FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='bin_uop_delta' ORDER BY applied_at DESC LIMIT 1`, bin.ID).Scan(&reason), "read ledger reason")
+	if reason != string(protocol.ReasonConsumeTick) {
+		t.Errorf("ledger reason = %q, want %q", reason, protocol.ReasonConsumeTick)
+	}
 }
 
 // TestInventoryDelta_BinUOPDelta_DedupesReplay pins the at-most-once

@@ -501,11 +501,14 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// NULL, which is the honest value rather than a gap; there is no node to
 	// name, and its last or next one would put a place on a count that did not
 	// happen there.
+	// reason is a real column since v119 so the consumption rate can filter on
+	// it without a JSON path no index covers. metadata keeps the same key — it
+	// is the audit record; the column is what a WHERE clause sees.
 	if _, err := tx.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id)
-		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6, $7)`,
+		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id, reason)
+		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6, $7, $8)`,
 		d.BinID, valueBefore, valueBefore+d.Delta,
-		d.PayloadCode, station, string(metadata), binNodeID,
+		d.PayloadCode, station, string(metadata), binNodeID, string(d.Reason),
 	); err != nil {
 		return fmt.Errorf("audit BinUOPDelta bin=%d: %w", d.BinID, err)
 	}

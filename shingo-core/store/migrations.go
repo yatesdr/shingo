@@ -4243,6 +4243,13 @@ func migrationList() []migration {
 		{118, "tte_samples — the per-line time-to-empty the pass already computes, kept so it can be scored against the demand it predicted",
 			v118TTESamples,
 			func(q schema.Querier) bool { return schema.TableExists(q, "tte_samples") }},
+
+		{119, "bin_uop_ledger.reason + tte_samples.rate_grain — the rate can filter on what the delta was for, and the sample says which grain it used",
+			v119LedgerReasonAndSampleGrain,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bin_uop_ledger", "reason") &&
+					schema.ColumnExists(q, "tte_samples", "rate_grain")
+			}},
 	}
 }
 
@@ -4388,6 +4395,54 @@ func v118TTESamples(tx *sql.Tx) error {
 		CREATE INDEX IF NOT EXISTS idx_tte_samples_process_time
 		    ON tte_samples(process_id, payload_code, computed_at DESC)`); err != nil {
 		return fmt.Errorf("v118 tte_samples process index: %w", err)
+	}
+	return nil
+}
+
+// v119LedgerReasonAndSampleGrain promotes the delta's reason out of the
+// metadata JSON into a real column, and records which rate grain a TTE sample
+// used. Two additive columns, one feature: the consumption rate's reason
+// filter and the sample's grain stamp are the same brief (B7), and each
+// migration is its own transaction — a split would leave a window where the
+// rate filter ran against a column that did not exist on every database the
+// binary visits.
+//
+// THE REASON ALREADY LIVES IN TWO HOMES and keeps both: metadata JSON is the
+// audit record (v94's roll-up reads it there, and the daily job keeps reading
+// it there — one release of overlap is cheaper than migrating three readers),
+// while the column is what a WHERE clause can see. No index covers a JSON
+// path, which is why the rate query had to pool every negative delta — the
+// one −200 operator correction set a payload's velocity for a whole window.
+//
+// THE BACKFILL IS BOUNDED to 7 days deliberately: older rows keep the empty
+// default and sit outside every reader's window (the rate looks back 30
+// minutes; the roll-up reads metadata, not this column). At the demo plant's
+// shape (8 consume nodes × 6 PLC ticks/min) that is on the order of 500k
+// rows for the one-time UPDATE, served by the (op, applied_at) index prefix.
+//
+// rate_grain on tte_samples: 'node' when the projection used the per-node
+// rate, 'payload' when it fell back to the plant-wide one. A forecast scored
+// without knowing its grain cannot tell a stale plant-wide number from a
+// fresh per-node one, and the two need different scrutiny.
+//
+// ROLLBACK: additive columns with defaults; a pre-v119 binary ignores both
+// and every post-v119 reader treats an empty value as unlabelled, so roll
+// back with two ALTER TABLE ... DROP COLUMN and nothing else.
+func v119LedgerReasonAndSampleGrain(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE bin_uop_ledger ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT ''`,
+		`UPDATE bin_uop_ledger
+		   SET reason = COALESCE(metadata->>'reason', '')
+		 WHERE op = 'bin_uop_delta'
+		   AND reason = ''
+		   AND metadata IS NOT NULL
+		   AND applied_at >= NOW() - interval '7 days'`,
+		`ALTER TABLE tte_samples ADD COLUMN IF NOT EXISTS rate_grain TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v119 reason + grain: %w", err)
+		}
 	}
 	return nil
 }
