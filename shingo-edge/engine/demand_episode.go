@@ -233,13 +233,19 @@ func (e *Engine) openCellEpisode(
 		Kind:       protocol.EpisodeKindCell,
 		Direction:  claim.Role,
 		// TriggerKind, not Trigger: SQLite reserves TRIGGER as a keyword.
-		TriggerKind:    trigger,
-		TriggerRef:     claimTriggerRef(claim),
-		ProcessID:      name,
-		CoreNodeName:   claim.CoreNodeName,
-		PayloadCode:    string(claim.PayloadCode),
-		OpenedTotal:    openedTotal,
-		Threshold:      claim.ReorderPoint,
+		TriggerKind:  trigger,
+		TriggerRef:   claimTriggerRef(claim),
+		ProcessID:    name,
+		CoreNodeName: claim.CoreNodeName,
+		PayloadCode:  string(claim.PayloadCode),
+		OpenedTotal:  openedTotal,
+		// THE SAME DERIVATION THE DECISION USED. This stamped
+		// claim.ReorderPoint for both roles while the produce evaluator judged
+		// against capacity, so a produce episode recorded a threshold nothing
+		// had compared anything to — and on a produce claim with no reorder
+		// point, which is every deployed one, it recorded zero. DemandLevel is
+		// the only derivation now, so the row cannot disagree with the call.
+		Threshold:      claim.DemandLevel(),
 		ExpectedOrders: &expected,
 		Discretionary:  discretionary,
 		OpenedAt:       time.Now().UTC(),
@@ -393,13 +399,21 @@ func (e *Engine) closeEpisode(key, reason, closedBy string) error {
 // the plan it is about to run will create, and expected_orders is stamped from
 // that.
 func (e *Engine) evaluateCellLevel(claim *processes.NodeClaim, remainingUOP int) (below bool, shouldClose bool) {
-	if claim == nil || claim.ReorderPoint <= 0 {
+	// THE LEVEL COMES OFF THE CLAIM, not off a field named here. On a consume
+	// claim DemandLevel is the reorder point, including its zero — which is the
+	// documented opt-out, and the guard below is what keeps saying so.
+	//
+	// It also absorbs the nil claim this function used to check for: DemandLevel
+	// is nil-safe and answers 0, so a nil claim leaves here through the same
+	// door an opted-out one does and nothing below dereferences it.
+	level := claim.DemandLevel()
+	if level <= 0 {
 		return false, false
 	}
-	margin := e.cfg.HysteresisMargin(claim.ReorderPoint)
+	margin := e.cfg.HysteresisMargin(level)
 
 	switch {
-	case remainingUOP <= claim.ReorderPoint:
+	case remainingUOP <= level:
 		// Falling edge. Stamp it once; a claim already below stays below, and
 		// re-stamping would make every episode look as if it had just started.
 		if claim.BelowReorderSince == nil {
@@ -411,7 +425,7 @@ func (e *Engine) evaluateCellLevel(claim *processes.NodeClaim, remainingUOP int)
 		}
 		return true, false
 
-	case remainingUOP > claim.ReorderPoint+margin:
+	case remainingUOP > level+margin:
 		// Rising edge, and only ABOVE THE MARGIN. Closing at exactly the
 		// reorder point would mint a fresh episode every time a tick nudged the
 		// count across it — thousands of 20-second noise episodes, worst at a
@@ -421,15 +435,15 @@ func (e *Engine) evaluateCellLevel(claim *processes.NodeClaim, remainingUOP int)
 				e.logFn("demand_episode: clear falling edge claim=%d: %v", claim.ID, err)
 			}
 			claim.BelowReorderSince = nil
-			e.debugFn("demand_episode: claim=%d node=%s recovered to %d (> reorder %d + margin %d)",
-				claim.ID, claim.CoreNodeName, remainingUOP, claim.ReorderPoint, margin)
+			e.debugFn("demand_episode: claim=%d node=%s recovered to %d (> level %d + margin %d)",
+				claim.ID, claim.CoreNodeName, remainingUOP, level, margin)
 			return false, true
 		}
 		return false, false
 
 	default:
-		// Inside the hysteresis band: above the reorder point but not yet clear
-		// of the margin. Neither edge — deliberately, that is what the band is.
+		// Inside the hysteresis band: above the level but not yet clear of the
+		// margin. Neither edge — deliberately, that is what the band is.
 		return claim.BelowReorderSince != nil, false
 	}
 }
@@ -437,23 +451,34 @@ func (e *Engine) evaluateCellLevel(claim *processes.NodeClaim, remainingUOP int)
 // evaluateProduceLevel is evaluateCellLevel's mirror for the evacuate
 // direction.
 //
-// THE LEVEL RUNS THE OTHER WAY. A produce node FILLS toward UOPCapacity rather
-// than draining toward a reorder point, so the state that needs attention is a
-// HIGH reading, and recovery is the count dropping back down after the full bin
-// leaves. Everything else is identical — one crossing stamps the edge, the
-// margin absorbs the wobble, and the episode between the edges is one demand.
+// THE LEVEL RUNS THE OTHER WAY. A produce node FILLS toward its level rather
+// than draining toward it, so the state that needs attention is a HIGH reading,
+// and recovery is the count dropping back down after the full bin leaves.
+// Everything else is identical — one crossing stamps the edge, the margin
+// absorbs the wobble, and the episode between the edges is one demand.
+//
+// THE LEVEL IS NOT ALWAYS CAPACITY, and that is the part this function used to
+// get wrong by never asking. It read UOPCapacity directly, so the earliest a
+// press could ask for its empty was the moment the bin it was filling had no
+// room left — and it then waited out the whole delivery leg holding it. The
+// claim can say "ask this early" with a reorder point, and DemandLevel is what
+// decides whether this one does; capacity remains the answer whenever it does
+// not, which is every produce claim deployed at either plant.
 //
 // It shares below_reorder_since with the consume side, and that is not a
 // shortcut: a claim has exactly one role, so a single claim is only ever one
 // direction. The column means "since this claim's level was breached".
 func (e *Engine) evaluateProduceLevel(claim *processes.NodeClaim, remainingUOP int) (breached bool, shouldClose bool) {
-	if claim == nil || claim.UOPCapacity <= 0 {
+	// Nil-safe through DemandLevel, exactly as evaluateCellLevel is: a nil
+	// claim answers 0 and leaves through the no-level door.
+	level := claim.DemandLevel()
+	if level <= 0 {
 		return false, false
 	}
-	margin := e.cfg.HysteresisMargin(claim.UOPCapacity)
+	margin := e.cfg.HysteresisMargin(level)
 
 	switch {
-	case remainingUOP >= claim.UOPCapacity:
+	case remainingUOP >= level:
 		if claim.BelowReorderSince == nil {
 			now := time.Now().UTC()
 			if err := e.db.SetClaimBelowReorderSince(claim.ID, &now); err != nil {
@@ -463,20 +488,23 @@ func (e *Engine) evaluateProduceLevel(claim *processes.NodeClaim, remainingUOP i
 		}
 		return true, false
 
-	case remainingUOP < claim.UOPCapacity-margin:
+	case remainingUOP < level-margin:
 		if claim.BelowReorderSince != nil {
 			if err := e.db.SetClaimBelowReorderSince(claim.ID, nil); err != nil {
 				e.logFn("demand_episode: clear produce edge claim=%d: %v", claim.ID, err)
 			}
 			claim.BelowReorderSince = nil
-			e.debugFn("demand_episode: claim=%d node=%s relieved to %d (< capacity %d - margin %d)",
-				claim.ID, claim.CoreNodeName, remainingUOP, claim.UOPCapacity, margin)
+			e.debugFn("demand_episode: claim=%d node=%s relieved to %d (< level %d - margin %d)",
+				claim.ID, claim.CoreNodeName, remainingUOP, level, margin)
 			return false, true
 		}
 		return false, false
 
 	default:
-		// Inside the band: below capacity but not yet clear of the margin.
+		// Inside the band: below the level but not yet clear of the margin. The
+		// margin is taken from the level that was breached, not from capacity —
+		// a band measured off capacity under an earlier level would sit ABOVE
+		// the number the episode opened at and could never close.
 		return claim.BelowReorderSince != nil, false
 	}
 }

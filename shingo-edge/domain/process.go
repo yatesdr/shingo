@@ -273,16 +273,25 @@ type NodeClaim struct {
 	SwapMode     protocol.SwapMode  `json:"swap_mode"`
 	PayloadCode  string             `json:"payload_code"`
 	UOPCapacity  int                `json:"uop_capacity"`
-	// ReorderPoint has role-dependent semantics.
+	// ReorderPoint has role-dependent semantics, and DemandLevel below is
+	// the one place that resolves them. Read that method, not this field,
+	// for any "what level does this claim act on" question.
 	//
-	// Consume-role claim: UOP threshold for auto-reorder, "fire at or
-	// below" (≤) — wiring_counter_delta fires RequestNodeMaterial when
-	// remaining UOP drops to ≤ ReorderPoint.
+	// Consume-role claim: the UOP threshold for auto-reorder, "fire at or
+	// below" (≤). The level is evaluated by the sweep in
+	// engine/demand_reconciler.go — NOT by the counter tick. The tick's
+	// level blocks were removed when the sweep took the decision over, so
+	// a cell that stops consuming still has its level re-evaluated.
 	//
-	// Produce-role manual_swap claim (bin loader): NOT READ. Loader
-	// replenishment is Core-owned — operator push or UOP threshold — and
-	// no bin-count floor survives. Setting this on a loader claim does
-	// nothing.
+	// Produce-role claim: the count at which the cell asks for its empty,
+	// honoured when it is strictly between zero and UOPCapacity; capacity
+	// is the level otherwise. See DemandLevel for each case.
+	//
+	// manual_swap claim of either role (bin loader/unloader): NOT READ.
+	// Loader replenishment is Core-owned — operator push or UOP threshold
+	// — and no bin-count floor survives. The level sweep skips a loader
+	// node before it reads any level, so setting this on a loader claim
+	// does nothing.
 	ReorderPoint int `json:"reorder_point"`
 	// ReorderPointSource (UOP-threshold replenishment) records how
 	// ReorderPoint was set. 'legacy' = default, never edited (the
@@ -705,6 +714,70 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // nil check from every call site rather than moving it.
 func (c *NodeClaim) IsLoaderNode() bool {
 	return c != nil && c.SwapMode == protocol.SwapModeManualSwap
+}
+
+// DemandLevel is the UOP count this claim is judged against — the ONE
+// derivation of the number, for the decision and for the record it writes.
+//
+// ── WHY IT IS ONE FUNCTION AND NOT TWO NUMBERS READ IN PLACE ────────────────
+//
+// A claim carries two candidates, reorder_point and the payload's capacity, and
+// every site that needed the level picked one by hand. evaluateCellLevel read
+// reorder_point, evaluateProduceLevel read UOPCapacity and never looked at
+// reorder_point at all, and openCellEpisode stamped reorder_point onto the
+// episode for BOTH roles. So a produce cell's episode reported a threshold that
+// nothing had compared anything to, and on a produce claim with no reorder
+// point — which is every produce claim deployed at either plant — that
+// threshold was recorded as zero. With one derivation the record cannot name a
+// number the decision did not use.
+//
+// ── CONSUME: THE REORDER POINT, INCLUDING ITS ZERO ──────────────────────────
+//
+// reorder_point = 0 is the documented opt-out and the legacy default on every
+// claim nobody has edited. It means "this cell does not auto-order", not "this
+// cell is out of parts at zero", and returning the zero here is what lets the
+// callers' level <= 0 guards keep saying so.
+//
+// ── PRODUCE: THE REORDER POINT ONLY WHEN IT IS EARLIER THAN FULL ────────────
+//
+// A produce cell fills toward capacity, so its level is the count at which it
+// should ask for its empty. Capacity is the LATEST such count — ask then and
+// the press waits out the whole delivery leg holding a bin it can no longer add
+// to, which for Hopkinsville totes to a press is a p50 of 1135 s. A reorder
+// point strictly between zero and capacity is an engineer saying "ask this
+// early", and it is honoured.
+//
+// Outside that interval the reorder point is not a level and capacity is what
+// the claim decides at:
+//
+//   - 0 is the opt-out spelling, and a produce cell cannot opt out of noticing
+//     that its bin is full — the bin stops accepting parts whether or not
+//     anybody armed a threshold. So it falls back to capacity, which is what
+//     the produce evaluator has always done, and no deployed claim moves.
+//   - at or above capacity is unreachable: a bin cannot hold more than it
+//     holds, so honouring it literally would mean a cell that never asks at
+//     all. Falling back to capacity is strictly better than never asking, and
+//     store/processes logs the combination once per claim load so the
+//     configuration is visible rather than silently overridden.
+//   - a capacity of 0 means the payload catalog has no row for this payload
+//     yet (see store/internal/capacity), and the answer is 0 — no level. A
+//     reorder point cannot stand in for it: the callers would then order
+//     against a denominator nobody knows, which is a decision moving on a
+//     claim nobody configured.
+//
+// Nil-safe for the same reason IsLoaderNode is: the callers reach a claim
+// through lookups that can miss, and "there is no claim" is no level.
+func (c *NodeClaim) DemandLevel() int {
+	if c == nil {
+		return 0
+	}
+	if c.Role != protocol.ClaimRoleProduce {
+		return c.ReorderPoint
+	}
+	if c.ReorderPoint > 0 && c.ReorderPoint < c.UOPCapacity {
+		return c.ReorderPoint
+	}
+	return c.UOPCapacity
 }
 
 // Ptr returns a pointer to v. It exists for the absent-means-untouched fields

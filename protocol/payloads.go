@@ -1606,9 +1606,20 @@ type PlantClaim struct {
 	// UOPCapacity is the bin capacity (UOP) for the claim's payload — the
 	// denominator context for time-to-empty. Read by the at-risk tier.
 	UOPCapacity int `json:"uop_capacity"`
-	// ReorderPoint is the role-dependent replenishment trigger (consume:
-	// UOP threshold; produce: bin-count floor). Carried so the
-	// computation's fill-priority signal has the configured trigger.
+	// ReorderPoint is the role-dependent replenishment trigger, and BOTH
+	// roles read it as a UOP count. It said "produce: bin-count floor" and
+	// that semantics did not survive: the floor was the loader's, loader
+	// replenishment became Core-owned, and no reader of this field ever
+	// counted bins. On a produce cell the number is the UOP count at which
+	// the cell asks for its empty — honoured when it is strictly between
+	// zero and UOPCapacity, capacity otherwise. The single derivation is
+	// domain.NodeClaim.DemandLevel on Edge; nothing here reproduces it.
+	//
+	// MIRRORED, NOT YET READ. plantclaims.Replace inserts it into
+	// style_claims and no query on this side selects it back. It is carried
+	// for the fill-priority signal the computation is meant to grow, and
+	// until that reader exists the honest statement is that the column is a
+	// copy of Edge's value and nothing more.
 	ReorderPoint int `json:"reorder_point"`
 
 	// ── THE CLAIM'S LEGS ──────────────────────────────────────────────

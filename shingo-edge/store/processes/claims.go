@@ -127,7 +127,40 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	if keyRouteJSON != "" {
 		_ = json.Unmarshal([]byte(keyRouteJSON), &c.KeyRoute)
 	}
+	logUnreachableProduceReorderPoint(c)
 	return c, nil
+}
+
+// logUnreachableProduceReorderPoint says so when a produce claim's reorder
+// point is one the count can never reach.
+//
+// A produce cell fills toward its capacity, so a reorder point at or above
+// capacity names a count that cannot occur. domain.NodeClaim.DemandLevel falls
+// back to capacity for it — never asking at all would be strictly worse than
+// asking late — and this is the line that keeps the override from being silent.
+// An engineer who typed 120 on a bin that holds 100 gets told the cell is
+// deciding at 100; nothing refuses the save, because the number is only wrong
+// relative to a catalog capacity that Core can move underneath it.
+//
+// ONCE PER CLAIM LOAD, which is what this seam is: the scan is where a row
+// becomes a claim. It is deliberately not in the evaluators, which run several
+// times per load and would turn one misconfiguration into a line per pass.
+//
+// A capacity of 0 is excluded. It means the payload catalog has no row for this
+// payload yet rather than that the reorder point is too high, and
+// store/internal/capacity already logs that once per payload code — a second
+// line about a capacity nobody knows would be noise on top of the real one.
+func logUnreachableProduceReorderPoint(c NodeClaim) {
+	if c.Role != protocol.ClaimRoleProduce || c.UOPCapacity <= 0 {
+		return
+	}
+	if c.ReorderPoint <= 0 || c.ReorderPoint < c.UOPCapacity {
+		return
+	}
+	log.Printf("claim %d (%s): produce reorder_point=%d is at or above the payload's capacity %d, "+
+		"a count the bin can never reach — the cell decides at %d instead. Set a reorder point "+
+		"below capacity to have it ask earlier than full.",
+		c.ID, c.CoreNodeName, c.ReorderPoint, c.UOPCapacity, c.UOPCapacity)
 }
 
 // ListClaims returns every claim for a style.

@@ -211,21 +211,29 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	// held no record that a cell had ever run short — precisely the evidence it
 	// needs to decide whether it is ready to arm. The flag governs whether we
 	// ACT, not whether it happened.
+	// ONE LEVEL, READ ONCE, FOR BOTH THE EVALUATOR AND THE ORDER DECISION.
+	//
+	// The two used to be derived separately here — reorder_point for consume,
+	// UOPCapacity for produce — which is how a produce claim could breach in
+	// the evaluator and still not be asked for. Only the DIRECTION of the
+	// comparison is per role now; the number is the claim's own answer.
+	//
+	// A level of 0 is the opt-out on either side and returns before anything is
+	// evaluated: on a consume claim it is the legacy reorder_point default, and
+	// on a produce one it is a payload whose capacity the catalog does not know
+	// yet, which is a denominator we will not order against.
+	level := claim.DemandLevel()
+	if level <= 0 {
+		return
+	}
 	var breached bool
 	switch claim.Role {
 	case protocol.ClaimRoleConsume:
-		// reorder_point = 0 is the documented opt-out and the legacy default.
-		if claim.ReorderPoint <= 0 {
-			return
-		}
 		e.evaluateCellLevel(claim, remaining)
-		breached = remaining <= claim.ReorderPoint
+		breached = remaining <= level
 	case protocol.ClaimRoleProduce:
-		if claim.UOPCapacity <= 0 {
-			return
-		}
 		e.evaluateProduceLevel(claim, remaining)
-		breached = remaining >= claim.UOPCapacity
+		breached = remaining >= level
 	default:
 		return
 	}
