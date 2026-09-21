@@ -19,6 +19,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -172,30 +173,72 @@ func (sm *strandedMonitor) run() {
 	}
 }
 
+// tick scans every node on the Edge once.
+//
+// FOUR STATEMENTS, WHATEVER THE PLANT LOOKS LIKE. This loop used to resolve the
+// claim and read the runtime row inside evaluate, one node at a time, and
+// resolving the claim meant re-reading the node's PROCESS as well — three
+// statements per node per scan, on a store pinned to one SQLite connection on a
+// Pi. It walks the WHOLE Edge rather than one process, so the multiplier is the
+// plant's node count, not a cell's.
+//
+// The process list replaces the per-node process read: processes.List and
+// processes.Get apply the same predicate (neither filters), so a node whose
+// process_id names no row is absent from the map exactly as Get returned an
+// error for it — and NodeClaimSet.Resolve answers nil for a nil process, which
+// is what requestedClaimAtNode did with that error.
 func (sm *strandedMonitor) tick(now time.Time) {
-	nodes, err := sm.eng.db.ListProcessNodes()
+	e := sm.eng
+	nodes, err := e.db.ListProcessNodes()
+	if err != nil {
+		return
+	}
+	if len(nodes) == 0 {
+		return
+	}
+	procs, err := e.db.ListProcesses()
+	if err != nil {
+		return
+	}
+	byID := make(map[int64]*processes.Process, len(procs))
+	ptrs := make([]*processes.Process, 0, len(procs))
+	for i := range procs {
+		byID[procs[i].ID] = &procs[i]
+		ptrs = append(ptrs, &procs[i])
+	}
+	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(ptrs...))
+	if err != nil {
+		return
+	}
+	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
 	if err != nil {
 		return
 	}
 	for i := range nodes {
-		sm.evaluate(&nodes[i], now)
+		node := &nodes[i]
+		sm.evaluate(node,
+			claims.Resolve(byID[node.ProcessID], node, store.ActiveStyleFirst),
+			runtimes[node.ID], now)
 	}
 }
 
 // evaluate advances one node and publishes/clears its alarm.
-func (sm *strandedMonitor) evaluate(node *processes.Node, now time.Time) {
+//
+// The claim and the runtime row are passed in rather than read here: tick reads
+// both for the whole node set in one statement each. A nil claim is what the
+// per-node resolver answered for an unclaimed node, and a nil runtime is what a
+// node with no runtime row gave.
+func (sm *strandedMonitor) evaluate(node *processes.Node, claim *processes.NodeClaim, runtime *processes.RuntimeState, now time.Time) {
 	e := sm.eng
 	// Only consume cells count parts down against a bound bin; the "Record Count
 	// on the bin tab" fix and the consuming-active co-condition are consume-
 	// specific. Skip produce / manual_swap / unclaimed nodes and drop any state.
-	claim := requestedClaimAtNode(e.db, node)
 	if claim == nil || claim.Role != protocol.ClaimRoleConsume || claim.IsLoaderNode() {
 		delete(sm.states, node.ID)
 		sm.clear(node.CoreNodeName)
 		return
 	}
-	runtime, err := e.db.GetProcessNodeRuntime(node.ID)
-	if err != nil || runtime == nil {
+	if runtime == nil {
 		return
 	}
 	st := sm.states[node.ID]

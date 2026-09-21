@@ -109,9 +109,13 @@ func TestEvalStrandedGrowth_StallReArmsOnRenewedGrowth(t *testing.T) {
 	}
 }
 
-// TestStrandedMonitor_Evaluate_FiresNamedAlarm drives the live evaluate() over a
+// TestStrandedMonitor_Evaluate_FiresNamedAlarm drives the live scan over a
 // seeded consume node whose pending_uop_delta climbs while unbound, and asserts
 // the exact operator sentence lands in the engine's alarm map + on the bus.
+//
+// Through tick(), not evaluate(): the claim and the runtime row are read for
+// the whole node set at the top of the scan, so tick is where the reads and
+// the decision meet. The fixture is one node, so a scan is that node.
 func TestStrandedMonitor_Evaluate_FiresNamedAlarm(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -136,7 +140,7 @@ func TestStrandedMonitor_Evaluate_FiresNamedAlarm(t *testing.T) {
 	// Climb pending across strandedWindow+2 scans while unbound.
 	for i := 0; i < strandedWindow+2; i++ {
 		testutil.MustNoErr(t, db.AddPendingUOPDelta(nodeID, 7), "add pending")
-		sm.evaluate(node, base.Add(time.Duration(i)*time.Minute))
+		sm.tick(base.Add(time.Duration(i) * time.Minute))
 	}
 
 	if len(got) != 1 {
@@ -170,7 +174,7 @@ func TestStrandedMonitor_Evaluate_FiresNamedAlarm(t *testing.T) {
 	// Binding clears the alarm.
 	bound := int64(99)
 	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, &bound), "bind a bin")
-	sm.evaluate(node, base.Add(time.Duration(strandedWindow+3)*time.Minute))
+	sm.tick(base.Add(time.Duration(strandedWindow+3) * time.Minute))
 	if d := eng.StrandedAlarmDetail(node.CoreNodeName); d != "" {
 		t.Errorf("after bind, alarm detail = %q, want cleared", d)
 	}

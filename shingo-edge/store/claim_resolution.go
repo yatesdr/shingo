@@ -57,15 +57,93 @@ func (db *DB) ResolveNodeClaim(process *processes.Process, node *processes.Node,
 	if process == nil || node == nil {
 		return nil
 	}
-	first, second := process.ActiveStyleID, process.TargetStyleID
-	if p == TargetStyleFirst {
-		first, second = process.TargetStyleID, process.ActiveStyleID
-	}
-	for _, styleID := range []*int64{first, second} {
+	for _, styleID := range claimStyleOrder(process, p) {
 		if styleID == nil {
 			continue
 		}
 		if claim, err := db.GetStyleNodeClaimByNode(*styleID, node.CoreNodeName); err == nil && claim != nil {
+			return claim
+		}
+	}
+	return nil
+}
+
+// claimStyleOrder is the precedence itself, as a list of styles to try.
+//
+// SHARED BY BOTH RESOLVERS ON PURPOSE. ResolveNodeClaim reads a row per node
+// and NodeClaimSet.Resolve reads from rows already in hand, and the one thing
+// that must never differ between them is which style wins. Written twice, a
+// reversed pair would change every mid-changeover decision and nothing at all
+// outside a changeover — invisible to any test that seeds a single style.
+func claimStyleOrder(process *processes.Process, p ClaimPrecedence) [2]*int64 {
+	if p == TargetStyleFirst {
+		return [2]*int64{process.TargetStyleID, process.ActiveStyleID}
+	}
+	return [2]*int64{process.ActiveStyleID, process.TargetStyleID}
+}
+
+// NodeClaimSet answers ResolveNodeClaim's question for a whole walk from rows
+// read once, instead of a point query per node.
+//
+// THE THREE PER-NODE WALKERS ARE WHY IT EXISTS. The level sweep, the
+// parked-ticks monitor and the counter tick each walk a node list and ask this
+// question about every row; on a store pinned to one SQLite connection
+// (store.Open sets SetMaxOpenConns(1)) that is one serialised statement per
+// node per pass, on a Pi, with the operator board's next poll waiting behind
+// it.
+//
+// IT HANDS BACK THE SAME POINTER FOR THE SAME CLAIM, AND THAT IS DELIBERATE.
+// Two process_nodes can name one core node (a shared window is the ordinary
+// case), and the level sweep's evaluators MUTATE the claim they are given —
+// evaluateCellLevel writes below_reorder_since and then sets the field. Under
+// the per-node reads the second node re-read the row and saw the first node's
+// stamp, so it did not stamp again. Sharing the pointer reproduces that
+// exactly; handing out copies would not, and the second node would re-stamp a
+// falling edge that had already been recorded, moving the episode's start time.
+type NodeClaimSet struct {
+	byStyle map[int64]map[string]*processes.NodeClaim
+}
+
+// ClaimStyleIDs collects every style a claim lookup for these processes could
+// consult — the active and target styles, nils dropped. The caller passes the
+// result to NodeClaimsForStyles, which is the one query.
+func ClaimStyleIDs(procs ...*processes.Process) []int64 {
+	out := make([]int64, 0, 2*len(procs))
+	for _, p := range procs {
+		if p == nil {
+			continue
+		}
+		for _, styleID := range claimStyleOrder(p, ActiveStyleFirst) {
+			if styleID != nil {
+				out = append(out, *styleID)
+			}
+		}
+	}
+	return out
+}
+
+// NodeClaimsForStyles reads every live claim on the given styles in one query.
+func (db *DB) NodeClaimsForStyles(styleIDs []int64) (*NodeClaimSet, error) {
+	byStyle, err := processes.ClaimsByNodeForStyles(db.DB, styleIDs)
+	if err != nil {
+		return nil, err
+	}
+	return &NodeClaimSet{byStyle: byStyle}, nil
+}
+
+// Resolve is ResolveNodeClaim against the rows this set already holds. A style
+// the set was not built for resolves to nil, which is the same "no opinion" a
+// failed lookup gives — so a caller that forgets a style gets no claim rather
+// than the wrong one.
+func (s *NodeClaimSet) Resolve(process *processes.Process, node *processes.Node, p ClaimPrecedence) *processes.NodeClaim {
+	if s == nil || process == nil || node == nil {
+		return nil
+	}
+	for _, styleID := range claimStyleOrder(process, p) {
+		if styleID == nil {
+			continue
+		}
+		if claim := s.byStyle[*styleID][node.CoreNodeName]; claim != nil {
 			return claim
 		}
 	}

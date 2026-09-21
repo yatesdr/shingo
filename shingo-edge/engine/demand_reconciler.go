@@ -119,18 +119,56 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 		e.logFn("demand_sweep: list nodes for process %s: %v", process.Name, err)
 		return
 	}
+	if len(nodes) == 0 {
+		return
+	}
+	// THE CLAIMS AND THE RUNTIME ROWS COME BACK IN TWO QUERIES, NOT TWO PER
+	// NODE. This loop used to resolve the claim and read the runtime row one
+	// node at a time — 2N+1 statements per process per period, on a store
+	// pinned to one SQLite connection on a Pi, multiplied by the process count
+	// because sweepCellLevels runs this for every process. The board's next
+	// poll waits behind all of them.
+	//
+	// SAME ROWS, SAME ORDER, SAME DECISIONS. NodeClaimSet.Resolve applies the
+	// same precedence the per-node resolver applies (store.claimStyleOrder is
+	// shared by both) against rows carrying the same liveClaims predicate, and
+	// ProcessNodeRuntimes leaves a node with no runtime row absent from the map
+	// exactly as GetProcessNodeRuntime returned sql.ErrNoRows for it. The walk
+	// is still ListProcessNodesByProcess's order.
+	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(process))
+	if err != nil {
+		// Fails to inaction, like every other arm in this file: a pass that
+		// cannot read the claims decides nothing and the next one re-decides.
+		e.logFn("demand_sweep: read claims for process %s: %v", process.Name, err)
+		return
+	}
+	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
+	if err != nil {
+		e.logFn("demand_sweep: read runtime rows for process %s: %v", process.Name, err)
+		return
+	}
 	for i := range nodes {
 		node := &nodes[i]
-		claim := requestedClaimForProcess(e.db, process, node)
+		claim := claims.Resolve(process, node, store.ActiveStyleFirst)
 		if claim == nil {
 			continue
 		}
-		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
-		if err != nil || runtime == nil {
+		runtime := runtimes[node.ID]
+		if runtime == nil {
 			continue
 		}
 		e.sweepNodeLevel(node, runtime, claim)
 	}
+}
+
+// nodeIDsOf is the id list the batched runtime read takes, in the walk's own
+// order. Shared by the three per-node walkers.
+func nodeIDsOf(nodes []processes.Node) []int64 {
+	ids := make([]int64, 0, len(nodes))
+	for i := range nodes {
+		ids = append(ids, nodes[i].ID)
+	}
+	return ids
 }
 
 // sweepNodeLevel is the whole decision for one claim: record where the level

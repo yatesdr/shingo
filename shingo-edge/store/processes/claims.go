@@ -253,6 +253,63 @@ func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim,
 	return &c, nil
 }
 
+// ClaimsByNodeForStyles is GetClaimByNode for a whole set of styles at once:
+// one query, keyed [style_id][core_node_name].
+//
+// THE KEY IS UNIQUE IN THE TABLE, which is what makes the map a faithful
+// stand-in rather than a guess about which row a point read would have
+// returned. style_node_claims carries UNIQUE(style_id, core_node_name), so
+// there is exactly one row per key and GetClaimByNode's unordered QueryRow had
+// only ever one row to pick from. If that constraint is ever relaxed, this map
+// and that QueryRow begin disagreeing silently and both need revisiting.
+//
+// It exists for the three per-node walkers — the level sweep, the parked-ticks
+// monitor and the counter tick — each of which resolved the claim one node at a
+// time on a store pinned to one connection. Same liveClaims predicate as
+// GetClaimByNode, so a retired claim is absent here exactly as it reads absent
+// there. A style with no live claims is simply missing from the outer map,
+// which reads the same as GetClaimByNode's sql.ErrNoRows.
+func ClaimsByNodeForStyles(db *sql.DB, styleIDs []int64) (map[int64]map[string]*NodeClaim, error) {
+	out := map[int64]map[string]*NodeClaim{}
+	if len(styleIDs) == 0 {
+		return out, nil
+	}
+	seen := make(map[int64]bool, len(styleIDs))
+	args := make([]any, 0, len(styleIDs))
+	var placeholders strings.Builder
+	for _, id := range styleIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if placeholders.Len() > 0 {
+			placeholders.WriteByte(',')
+		}
+		placeholders.WriteByte('?')
+		args = append(args, id)
+	}
+	rows, err := db.Query(`SELECT `+claimSelect+`
+		FROM style_node_claims WHERE style_id IN (`+placeholders.String()+`) AND`+liveClaims, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		c, err := scanNodeClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		claim := c
+		byNode := out[claim.StyleID]
+		if byNode == nil {
+			byNode = map[string]*NodeClaim{}
+			out[claim.StyleID] = byNode
+		}
+		byNode[claim.CoreNodeName] = &claim
+	}
+	return out, rows.Err()
+}
+
 // IsPairedOnDeckNode reports whether coreNodeName is used as a paired /
 // on-deck (back) position by any claim of a style in the given process — i.e.
 // a two_robot_press_index PairedCoreNode or SecondPairedCoreNode. Such

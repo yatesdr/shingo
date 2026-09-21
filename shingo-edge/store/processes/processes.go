@@ -583,12 +583,17 @@ func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) 
 // in ONE query, keyed by process_node_id. Nodes with no row yet are simply
 // absent from the map.
 //
-// This is the read half of EnsureRuntime, split out so a caller building a whole
-// board can do one SELECT instead of one per tile — every read serialises on a
-// single connection (store.Open sets SetMaxOpenConns(1)). It deliberately does
-// NOT insert: the caller falls back to EnsureRuntime for exactly the ids that
-// come back missing, so the write happens for the same set of nodes as before
-// and the "ensure" semantics are preserved rather than reinterpreted.
+// This is the read half of EnsureRuntime, split out so a caller walking a whole
+// node set can do one SELECT instead of one per node — every read serialises on
+// a single connection (store.Open sets SetMaxOpenConns(1)).
+//
+// IT DELIBERATELY DOES NOT INSERT, and what a caller does about that depends on
+// which per-node read it is standing in for. A board builder replacing
+// EnsureRuntime falls back to EnsureRuntime for exactly the ids that come back
+// missing, so the write happens for the same set of nodes as before and the
+// "ensure" semantics are preserved rather than reinterpreted. A walker
+// replacing GetRuntime — which never inserted either — reads a missing id as
+// the absence it already was and skips that node.
 func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeState, error) {
 	out := map[int64]*RuntimeState{}
 	if len(processNodeIDs) == 0 {

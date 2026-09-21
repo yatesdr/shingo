@@ -955,6 +955,38 @@ func (db *DB) migrate() error {
 	// the new one.
 	db.Exec("ALTER TABLE orders ADD COLUMN cell_left_at TEXT")
 
+	// v41 (2026-09-20, the capacity subquery's index): payload_catalog carried
+	// an id primary key and nothing on `code`, and `code` is the only column
+	// anything looks a payload up by.
+	//
+	// ITS READER IS EVERY CLAIM READ. capacity.SQL puts a correlated scalar
+	// subquery in the claim SELECT list — SELECT pc.uop_capacity FROM
+	// payload_catalog pc WHERE pc.code = style_node_claims.payload_code — which
+	// SQLite evaluates once per claim ROW, so an unindexed `code` is one full
+	// scan of the catalog per claim. The set-returning reader the per-node
+	// walkers now use (processes.ClaimsByNodeForStyles, reached from
+	// engine.sweepProcessLevels, strandedMonitor.tick and handleCounterDelta)
+	// makes that concentration plain: one query returning a press's whole claim
+	// set scans the catalog once per claim in it. EXPLAIN QUERY PLAN on that
+	// query goes from `SCAN pc` to
+	// `SEARCH pc USING INDEX idx_payload_catalog_code (code=?)`.
+	// GetPayloadCatalogByCode is the second reader and the catalog sync's own
+	// by-code probe the third.
+	//
+	// HERE AND NOT IN schema/sqlite_ddl.go, for idx_orders_source_node's
+	// reason: schema.Apply runs against legacy-shaped databases, and this table
+	// arrived through two renames (style_catalog -> blueprint_catalog ->
+	// payload_catalog) that run EARLIER in this same pass but not in Apply. A
+	// canonical index naming a column a pre-rename table may not carry would
+	// fail and take the whole DDL with it. Placed after every catalog migration
+	// above, with the error discarded and IF NOT EXISTS, exactly as that index
+	// is written.
+	//
+	// NOT UNIQUE. Core owns the catalog and syncs it by id; a duplicate code is
+	// a Core-side data problem, and refusing the sync at the index would stop
+	// every capacity on this Edge from updating rather than report it.
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_payload_catalog_code ON payload_catalog(code)")
+
 	// LAST, AND THAT IS ITS ONLY ORDERING REQUIREMENT. The claim quarantine is a
 	// column-for-column mirror of style_node_claims, derived from the live column
 	// list rather than written down, so it has to look after every ALTER and

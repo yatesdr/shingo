@@ -159,9 +159,15 @@ func requestedClaimAtNode(db *store.DB, node *processes.Node) *processes.NodeCla
 }
 
 // requestedClaimForProcess is requestedClaimAtNode for a caller that already holds the
-// process row. Split out for the level sweep, which walks every node of every
-// process once a period: re-deriving the process per node would turn one read
-// into one per node for an answer it was already holding.
+// process row.
+//
+// IT WAS SPLIT OUT FOR THE LEVEL SWEEP AND THE LEVEL SWEEP NO LONGER CALLS IT.
+// The saving it existed for — not re-reading the process once per node — was
+// the smaller half of that walk's cost, and the sweep now reads its whole
+// claim set in one query through store.NodeClaimSet instead, as do the
+// parked-ticks monitor and the counter tick. What is left here is the point
+// read for ONE node, which is the shape every other caller has: an operator
+// action, a departure stamp, an A/B flip.
 //
 // ACTIVE FIRST — store.ActiveStyleFirst. It answers "which STYLE'S claim
 // governs this node as configured now", which is what its callers want: counts,

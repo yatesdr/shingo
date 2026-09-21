@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
@@ -33,6 +34,44 @@ import (
 // coordination, and dispatches to role-specific helpers. The UOP arithmetic
 // and the lineside drain live in handleConsumeTick / handleProduceTick /
 // handleABFallthrough.
+// counterDeltaRows reads, once per tick, the three things the walk below needs
+// for every node: the process, the claims of its styles, and the nodes' runtime
+// rows.
+//
+// THE WALK'S READS ARE THREE STATEMENTS, NOT THREE PER NODE. The walk used to
+// read each node's runtime row, then resolve its claim — which re-read the same
+// process for every node — so a tick cost 3N+1 statements before it moved a
+// single count, on a store pinned to one SQLite connection and on the hottest
+// path Edge has: this fires on every PLC count.
+//
+// EACH FAILURE IS CARRIED, NOT RETURNED, so the skip ladder answers exactly what
+// it answered before. A process that cannot be read left every node with no
+// claim (requestedClaimAtNode swallowed the error and returned nil), so a nil
+// process here produces an empty claim set and the same no_claim for every node.
+// A claims read that fails does the same. A runtimes read that fails leaves
+// every node absent from the map, which is the no_runtime the per-node read
+// gave. In all three cases the walk still runs and the caller's unattributed
+// line still names what happened.
+//
+// It returns bare values rather than an error precisely because there is nothing
+// for a caller to do with one: the tick is already here and the ladder already
+// has an honest answer for each absence.
+func (e *Engine) counterDeltaRows(processID int64, nodes []processes.Node) (*processes.Process, *store.NodeClaimSet, map[int64]*processes.RuntimeState) {
+	process, err := e.db.GetProcess(processID)
+	if err != nil {
+		process = nil
+	}
+	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(process))
+	if err != nil {
+		claims = nil
+	}
+	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
+	if err != nil {
+		runtimes = nil
+	}
+	return process, claims, runtimes
+}
+
 func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 || delta.Delta <= 0 {
 		// A malformed tick is not a quiet no-op: the PLC path only
@@ -67,15 +106,17 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	var pairedFallbackClaim *processes.NodeClaim
 	pairedConsumeHandled := false
 
+	process, claims, runtimes := e.counterDeltaRows(delta.ProcessID, nodes)
+
 	for _, node := range nodes {
-		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
-		if err != nil || runtime == nil {
+		runtime := runtimes[node.ID]
+		if runtime == nil {
 			attr.noRuntime++
 			continue
 		}
 
 		// Look up active claim for this node
-		claim := requestedClaimAtNode(e.db, &node)
+		claim := claims.Resolve(process, &node, store.ActiveStyleFirst)
 		if claim == nil {
 			attr.noClaim++
 			continue
@@ -509,6 +550,9 @@ func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, de
 	// Preserve the matched style for downstream LinesideBucketDelta
 	// attribution so Core's dedup scope_key (...|<StyleID>|...)
 	// matches the bucket's own ID-space.
+	// The parts that drained nothing, collected rather than reported one at a
+	// time — see logUnexpectedDrainMisses.
+	var missed []drainMiss
 	if primary := claim.PayloadCode; primary != "" {
 		drained, matchedStyleID, err := e.db.DrainLinesideBucket(nodeID, primary, delta)
 		if err != nil {
@@ -517,7 +561,7 @@ func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, de
 			if drained > 0 {
 				drains[primary] = uop.LinesideDrain{Qty: drained, StyleID: matchedStyleID}
 			} else {
-				e.logUnexpectedDrainMiss(nodeID, primary, "primary")
+				missed = append(missed, drainMiss{payloadCode: primary, role: "primary"})
 			}
 			binRemainder = delta - drained
 		}
@@ -538,51 +582,71 @@ func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, de
 		if drained > 0 {
 			drains[part] = uop.LinesideDrain{Qty: drained, StyleID: matchedStyleID}
 		} else {
-			e.logUnexpectedDrainMiss(nodeID, part, "secondary")
+			missed = append(missed, drainMiss{payloadCode: part, role: "secondary"})
 		}
 	}
+	e.logUnexpectedDrainMisses(nodeID, missed)
 
 	return drains, binRemainder
 }
 
-// logUnexpectedDrainMiss fires when Drain returned zero qty for a
-// (node, part) but ListActiveLinesideBuckets reports at least one
-// active bucket present at that node — the "we expected to drain but
-// didn't" signal that pre-Round-3 was swallowed by silent
-// `log.Printf + continue` (and so didn't surface the original
-// styleID-mismatch bug for weeks). After Round-3 A* the WHERE clause
-// no longer filters by style, so a drain miss really does mean
-// "no matching payload active here," not "wrong style." Keeping
-// the diagnostic anyway because the failure mode is cheap to log and
-// useful when investigating future inventory-delta drift.
+// drainMiss is one (part, role) that asked its bucket for units and got none.
+type drainMiss struct {
+	payloadCode string
+	role        string
+}
+
+// logUnexpectedDrainMisses fires for each part where Drain returned zero qty
+// but ListActiveLinesideBuckets reports an active bucket for that same part at
+// that node — the "we expected to drain but didn't" signal that pre-Round-3 was
+// swallowed by silent `log.Printf + continue` (and so didn't surface the
+// original styleID-mismatch bug for weeks). After Round-3 A* the WHERE clause
+// no longer filters by style, so a drain miss really does mean "no matching
+// payload active here," not "wrong style." Keeping the diagnostic anyway
+// because the failure mode is useful when investigating inventory-delta drift.
 //
-// Best-effort: a DB error on the visibility check is silently ignored
-// — the function is purely diagnostic, not load-bearing.
-func (e *Engine) logUnexpectedDrainMiss(nodeID int64, payloadCode, role string) {
+// ONE VISIBILITY READ PER TICK, NOT ONE PER MISS. A miss is the ORDINARY
+// outcome for a secondary part that has not been pulled this cycle — the
+// function's own comment says so — so a six-part claim paid six reads per tick
+// to decide six times to stay silent, on the hottest path Edge has and on a
+// store pinned to one connection.
+//
+// Reading the buckets once, after the drains, cannot change what is logged.
+// Drain is keyed by payload code, so no part's drain can empty the bucket
+// another part missed on; each miss is still judged against that part's own
+// bucket. What changes is the order — every miss is reported after the last
+// drain rather than interleaved with them — and a log line's position is not a
+// decision.
+//
+// Best-effort: a DB error on the visibility check is silently ignored — the
+// function is purely diagnostic, not load-bearing.
+func (e *Engine) logUnexpectedDrainMisses(nodeID int64, missed []drainMiss) {
+	if len(missed) == 0 {
+		return
+	}
 	active, err := e.db.ListActiveLinesideBuckets(nodeID)
 	if err != nil {
 		return
 	}
 	if len(active) == 0 {
-		// No active buckets at all — drain miss is expected.
+		// No active buckets at all — every miss is expected.
 		return
 	}
-	matched := false
+	present := make(map[string]bool, len(active))
 	visible := make([]string, 0, len(active))
 	for _, b := range active {
 		visible = append(visible, b.PayloadCode)
-		if b.PayloadCode == payloadCode {
-			matched = true
+		present[b.PayloadCode] = true
+	}
+	for _, m := range missed {
+		if !present[m.payloadCode] {
+			// Active buckets at this node, but none match this part —
+			// nothing to drain. The part-vs-bucket mismatch is the normal
+			// case (e.g. secondary parts that haven't been pulled this
+			// cycle), so it stays quiet.
+			continue
 		}
+		log.Printf("lineside: %s part %q on node %d returned 0 drained despite an active bucket existing — possible drain/capture race (visible parts: %v)",
+			m.role, m.payloadCode, nodeID, visible)
 	}
-	if !matched {
-		// Active buckets at this node, but none match this part —
-		// nothing to drain. Don't bother logging unless callers want
-		// the visibility detail; the part-vs-bucket mismatch is the
-		// normal case (e.g. secondary parts that haven't been pulled
-		// this cycle).
-		return
-	}
-	log.Printf("lineside: %s part %q on node %d returned 0 drained despite an active bucket existing — possible drain/capture race (visible parts: %v)",
-		role, payloadCode, nodeID, visible)
 }

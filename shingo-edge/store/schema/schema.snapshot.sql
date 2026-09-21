@@ -33,6 +33,8 @@ CREATE INDEX idx_orders_uuid ON orders(uuid);
 
 CREATE INDEX idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
 
+CREATE INDEX idx_payload_catalog_code ON payload_catalog(code);
+
 CREATE UNIQUE INDEX idx_process_nodes_process_code_live
 		ON process_nodes(process_id, code) WHERE deleted_at IS NULL;
 

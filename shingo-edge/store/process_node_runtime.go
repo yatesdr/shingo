@@ -17,6 +17,14 @@ func (db *DB) GetProcessNodeRuntime(processNodeID int64) (*processes.RuntimeStat
 	return processes.GetRuntime(db.DB, processNodeID)
 }
 
+// ProcessNodeRuntimes returns the runtime rows for a set of process_nodes in
+// one query, keyed by process_node_id. A node with no row yet is absent from
+// the map — which is what a caller looping over GetProcessNodeRuntime saw as
+// sql.ErrNoRows, and it does NOT insert one. Used by the per-node walkers.
+func (db *DB) ProcessNodeRuntimes(processNodeIDs []int64) (map[int64]*processes.RuntimeState, error) {
+	return processes.RuntimesForNodes(db.DB, processNodeIDs)
+}
+
 // SetProcessNodeRuntime updates the active claim and remaining UOP on
 // a runtime row. Does not touch active_bin_id — callers that need
 // atomic bin-pointer turnover should use SetProcessNodeRuntimeWithBin.
