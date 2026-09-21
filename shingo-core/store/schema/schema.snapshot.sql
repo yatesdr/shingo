@@ -561,6 +561,28 @@ CREATE SEQUENCE public.lineside_buckets_id_seq
 
 ALTER SEQUENCE public.lineside_buckets_id_seq OWNED BY public.lineside_buckets.id;
 
+CREATE TABLE public.lineside_drain_ledger (
+    id bigint NOT NULL,
+    station text NOT NULL,
+    node_id bigint NOT NULL,
+    pair_key text NOT NULL,
+    style_id bigint NOT NULL,
+    payload_code text NOT NULL,
+    before_qty integer NOT NULL,
+    after_qty integer NOT NULL,
+    reason text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.lineside_drain_ledger_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.lineside_drain_ledger_id_seq OWNED BY public.lineside_drain_ledger.id;
+
 CREATE TABLE public.load_sequences (
     name text NOT NULL,
     task_names text DEFAULT '[]'::text NOT NULL,
@@ -1368,6 +1390,8 @@ ALTER TABLE ONLY public.edge_registry ALTER COLUMN id SET DEFAULT nextval('publi
 
 ALTER TABLE ONLY public.lineside_buckets ALTER COLUMN id SET DEFAULT nextval('public.lineside_buckets_id_seq'::regclass);
 
+ALTER TABLE ONLY public.lineside_drain_ledger ALTER COLUMN id SET DEFAULT nextval('public.lineside_drain_ledger_id_seq'::regclass);
+
 ALTER TABLE ONLY public.mission_events ALTER COLUMN id SET DEFAULT nextval('public.mission_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.mission_telemetry ALTER COLUMN id SET DEFAULT nextval('public.mission_telemetry_id_seq'::regclass);
@@ -1523,6 +1547,9 @@ ALTER TABLE ONLY public.lineside_buckets
 
 ALTER TABLE ONLY public.lineside_buckets
     ADD CONSTRAINT lineside_buckets_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.lineside_drain_ledger
+    ADD CONSTRAINT lineside_drain_ledger_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.load_sequences
     ADD CONSTRAINT load_sequences_pkey PRIMARY KEY (name);
@@ -1732,6 +1759,10 @@ CREATE INDEX idx_inbox_processed_at ON public.inbox USING btree (processed_at);
 CREATE INDEX idx_lineside_buckets_node_style ON public.lineside_buckets USING btree (core_node_name, style_id);
 
 CREATE INDEX idx_lineside_buckets_payload ON public.lineside_buckets USING btree (payload_code);
+
+CREATE INDEX idx_lineside_drain_ledger_applied_at ON public.lineside_drain_ledger USING btree (applied_at);
+
+CREATE INDEX idx_lineside_drain_ledger_node_payload_time ON public.lineside_drain_ledger USING btree (node_id, payload_code, applied_at DESC);
 
 CREATE INDEX idx_mission_events_order ON public.mission_events USING btree (order_id);
 

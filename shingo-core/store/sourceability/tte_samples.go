@@ -98,10 +98,16 @@ func pruneTTESamples(db *sql.DB, retain time.Duration) error {
 	if secs <= 0 {
 		return nil
 	}
-	_, err := db.Exec(
-		`DELETE FROM tte_samples WHERE computed_at < NOW() - make_interval(secs => $1)`, secs)
-	if err != nil {
+	if _, err := db.Exec(
+		`DELETE FROM tte_samples WHERE computed_at < NOW() - make_interval(secs => $1)`, secs); err != nil {
 		return fmt.Errorf("sourceability: prune tte samples: %w", err)
+	}
+	// The drain ledger rides the same sweep (v120): the rate window is 30
+	// minutes and 45 days is forensic slack, same as the samples. One more
+	// bounded DELETE per pass, not a second timer to configure and watch.
+	if _, err := db.Exec(
+		`DELETE FROM lineside_drain_ledger WHERE applied_at < NOW() - make_interval(secs => $1)`, secs); err != nil {
+		return fmt.Errorf("sourceability: prune lineside drain ledger: %w", err)
 	}
 	return nil
 }

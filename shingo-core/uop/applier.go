@@ -822,7 +822,8 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	// entirely, or to no node at all (the Hopkinsville orphan shape).
 	// GetNodeByName returns sql.ErrNoRows when the row is absent;
 	// drop the delta loudly and let the operator investigate.
-	if _, err := s.db.GetNodeByName(d.CoreNodeName); err != nil {
+	node, err := s.db.GetNodeByName(d.CoreNodeName)
+	if err != nil {
 		return fmt.Errorf("LinesideBucketDelta core_node_name=%q does not resolve to a Core node (station=%s part=%q): %w",
 			d.CoreNodeName, station, d.PayloadCode, err)
 	}
@@ -876,25 +877,47 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	// as "who last reported this". Matching on it would mean a bucket reported
 	// by a second edge inserts a SECOND row for one physical place, which the
 	// station-blind SUM in SystemUOPForPayload would then count twice.
-	res, err := tx.Exec(`
+	// RETURNING (v120) answers the drain ledger's before/after from the qty
+	// arithmetic this statement already performs: qty_before = qty - delta is
+	// the bucket's prior qty on the DO UPDATE arm and 0 on the first-sight
+	// INSERT arm (a negative delta cannot take that arm - the exists-guard
+	// above rejected it - and GREATEST(delta,0) - delta = 0 for delta >= 0).
+	// The old RowsAffected==0 check folds into the scan: an UPSERT with
+	// RETURNING yields exactly one row or an error.
+	var qtyBefore, qtyAfter int
+	err = tx.QueryRow(`
 		INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
 		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0))
 		ON CONFLICT (core_node_name, pair_key, style_id, payload_code)
 		DO UPDATE SET
 			qty = lineside_buckets.qty + $6,
 			station = $1,
-			updated_at = NOW()`,
-		station, d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode, d.Delta)
+			updated_at = NOW()
+		RETURNING qty - $6 AS qty_before, qty AS qty_after`,
+		station, d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode, d.Delta).Scan(&qtyBefore, &qtyAfter)
 	if err != nil {
 		// Most likely cause: CHECK (qty >= 0) violation when the
 		// DO UPDATE branch tried to drive qty negative. Wrap.
 		return fmt.Errorf("apply LinesideBucketDelta core_node_name=%q payload=%q delta=%d: %w",
 			d.CoreNodeName, d.PayloadCode, d.Delta, err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		// UPSERT must always touch a row.
-		return fmt.Errorf("LinesideBucketDelta UPSERT produced no row (core_node_name=%q payload=%q)",
-			d.CoreNodeName, d.PayloadCode)
+
+	// THE DRAIN LEDGER ROW (v120): one row per APPLIED consume_drain - the
+	// consumption rate's drain arm. Only consume_drain: capture_fill is parts
+	// arriving at a pile and operator_correction is bookkeeping; neither is
+	// consumption and neither may set a cell's velocity. before/after are the
+	// qty facts the UPSERT just returned, recorded here because the bucket row
+	// this drained may be deleted by the GC two statements below - the ledger
+	// row is what survives (lineside_buckets keeps no history; Option C).
+	if d.Reason == protocol.ReasonConsumeDrain && qtyAfter < qtyBefore {
+		if _, err := tx.Exec(`INSERT INTO lineside_drain_ledger
+			(station, node_id, pair_key, style_id, payload_code, before_qty, after_qty, reason)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			station, node.ID, d.PairKey, d.StyleID, d.PayloadCode, qtyBefore, qtyAfter,
+			string(d.Reason)); err != nil {
+			return fmt.Errorf("audit lineside drain core_node_name=%q payload=%q: %w",
+				d.CoreNodeName, d.PayloadCode, err)
+		}
 	}
 
 	// Garbage-collect rows that have hit zero. Option C — empty

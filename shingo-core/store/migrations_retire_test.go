@@ -117,6 +117,14 @@ import (
 // binary; a rollback drops both columns and the backfill is never needed
 // again (metadata keeps the reason — one fact, two homes for one release).
 //
+// v120 ADDS lineside_drain_ledger - the lineside drain own row shape. The
+// drain is consumption at a node from a pile, not a bin event: bin_uop_ledger
+// cannot take it (bin_id NOT NULL, nine non-nullable scans), and the bucket
+// row deletes at qty 0 so no history survives there. One row per applied
+// consume_drain, written in ApplyLinesideBucketDelta own transaction; the
+// consumption rate reads it through a UNION ALL arm. Inert to a pre-v120
+// binary; rollback is DROP TABLE.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -128,8 +136,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 119 {
-		t.Errorf("head migration = %d, want 119", got)
+	if got := store.LatestMigrationVersion(); got != 120 {
+		t.Errorf("head migration = %d, want 120", got)
 	}
 }
 

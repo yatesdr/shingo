@@ -42,6 +42,7 @@ var migrationOnlyTables = map[string]string{
 	"node_maintain_supports":      "added by v90 — which process nodes a maintained group serves; the resolved node set, because a claim is Edge-local and Core cannot read one",
 	"edge_cells":                  "added by a numbered migration after the baseline was frozen",
 	"edge_lineside_reports":       "added by a numbered migration after the baseline was frozen",
+	"lineside_drain_ledger":       "added by v120 — one row per applied lineside drain. A drain is consumption at a node from a pile, not a bin event, so bin_uop_ledger cannot take it (bin_id is NOT NULL) and the bucket row deletes at qty 0; this is where the history survives",
 	"order_bins":                  "added by a numbered migration after the baseline was frozen",
 	"order_intake_refusals":       "added by v115 — the pair legs Core refused at intake. A refused request leaves no order row, so the partner naming one could not tell refused from not-received-yet; the pair rule reads this when the partner's row is absent",
 	"parts":                       "added by v107 — a part under both of the names it is known by, the part number CMS books against and the cat id a cell's PLC declares. It is a table rather than two columns on payload_manifest because a cat id belongs to the PART, not to the line that mentions it, and because a foreign key from the line is the one guard that cannot be forgotten at a door",

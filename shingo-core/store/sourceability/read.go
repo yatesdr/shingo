@@ -287,11 +287,10 @@ type nodePayload struct {
 //   - operator_correction / capture_reduction — NOT consumption (a cycle
 //     count; parts pulled to lineside). Excluded entirely.
 //
-// The op='lineside_drain' arm is kept although no writer emits it yet:
-// Fix 2 (the lineside drain's ledger row) stopped on bin_uop_ledger.bin_id
-// NOT NULL (v17) — see the B7 report. The arm lands the query half ready so
-// the drain row needs no second migration to this query; until then it
-// matches zero rows at zero cost.
+// lineside_drain_ledger (v120) is the third consumption source, joined by a
+// UNION ALL arm below: a drain is consumption at a node from a pile. It got
+// its own table rather than a bin_uop_ledger row because bin_id is NOT NULL
+// there (v17) and a drain is not a bin event — see v120's comment.
 //
 // byNode keys on the node NAME (nodes.name), not node_id: lineTTE looks up
 // by CoreNodeName, the claim's own spelling. A NULL node_id (carrier standing
@@ -305,16 +304,34 @@ func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]fl
 	if secs <= 0 {
 		return map[string]float64{}, map[nodePayload]float64{}, nil
 	}
+	// TWO ARMS, ONE STATEMENT (v120): the bin ledger arm covers ticks and
+	// fallthrough; the drain-ledger arm covers lineside drains, keyed on the
+	// node the pile sits at — never NULL, so its byNode fold is unconditional.
+	// The two idiom groups (UOP vs qty) are summed in their own arm and
+	// unified by the UNION, so the Go fold below stays one spelling.
 	rows, err := db.Query(`
-		SELECT l.payload_code, COALESCE(n.name, ''), l.reason, COALESCE(SUM(l.before_uop - l.after_uop), 0)
-		FROM bin_uop_ledger l
-		LEFT JOIN nodes n ON n.id = l.node_id
-		WHERE ((l.op = 'bin_uop_delta' AND l.reason IN ('consume_tick','ab_fallthrough'))
-		    OR l.op = 'lineside_drain')
-		  AND l.after_uop < l.before_uop
-		  AND l.payload_code <> ''
-		  AND l.applied_at >= NOW() - make_interval(secs => $1)
-		GROUP BY l.payload_code, n.name, l.reason`, secs)
+		SELECT payload_code, node_name, reason, consumed FROM (
+			SELECT l.payload_code, COALESCE(n.name, '') AS node_name, l.reason,
+			       COALESCE(SUM(l.before_uop - l.after_uop), 0) AS consumed
+			FROM bin_uop_ledger l
+			LEFT JOIN nodes n ON n.id = l.node_id
+			WHERE l.op = 'bin_uop_delta'
+			  AND l.reason IN ('consume_tick','ab_fallthrough')
+			  AND l.after_uop < l.before_uop
+			  AND l.payload_code <> ''
+			  AND l.applied_at >= NOW() - make_interval(secs => $1)
+			GROUP BY l.payload_code, n.name, l.reason
+			UNION ALL
+			SELECT d.payload_code, n.name, d.reason,
+			       COALESCE(SUM(d.before_qty - d.after_qty), 0)
+			FROM lineside_drain_ledger d
+			JOIN nodes n ON n.id = d.node_id
+			WHERE d.reason = 'consume_drain'
+			  AND d.after_qty < d.before_qty
+			  AND d.payload_code <> ''
+			  AND d.applied_at >= NOW() - make_interval(secs => $1)
+			GROUP BY d.payload_code, n.name, d.reason
+		) u`, secs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sourceability: consumption rates: %w", err)
 	}
@@ -334,6 +351,7 @@ func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]fl
 		}
 		byPayload[payload] += float64(consumed) / secs
 		// The A/B rule above: fallthrough rows sum plant-wide, never per-node.
+		// Drain rows (node never NULL from their arm) fold per-node always.
 		if node != "" && reason != "ab_fallthrough" {
 			byNode[nodePayload{Node: node, Payload: payload}] += float64(consumed) / secs
 		}

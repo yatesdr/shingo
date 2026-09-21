@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
 )
@@ -43,6 +44,7 @@ func seedRateDelta(t *testing.T, db *sql.DB, binID int64, nodeID any, payload, r
 // start with uop_remaining set by the caller (lineUOP reads bins at the node).
 type rateWorld struct {
 	db     *sql.DB
+	sdb    *store.DB
 	std    *testdb.StandardData
 	line2  *int64
 	bin1ID int64
@@ -85,7 +87,7 @@ func setupRateWorld(t *testing.T, uop1, uop2 int) *rateWorld {
 	}
 	testutil.MustNoErr(t, plantclaims.ReplaceProcess(db, "SNF2", styles, claims, 0), "seed mirror")
 
-	return &rateWorld{db: db, std: std, line2: &line2ID, bin1ID: bin1.ID, bin2ID: bin2.ID}
+	return &rateWorld{db: db, sdb: sdb, std: std, line2: &line2ID, bin1ID: bin1.ID, bin2ID: bin2.ID}
 }
 
 // buildAndCompute runs the monitor's own path: BuildInputs over the 30-minute

@@ -4250,6 +4250,10 @@ func migrationList() []migration {
 				return schema.ColumnExists(q, "bin_uop_ledger", "reason") &&
 					schema.ColumnExists(q, "tte_samples", "rate_grain")
 			}},
+
+		{120, "lineside_drain_ledger — a lineside drain is consumption at a node from a pile, not a bin event, and it leaves a row of its own",
+			v120LinesideDrainLedger,
+			func(q schema.Querier) bool { return schema.TableExists(q, "lineside_drain_ledger") }},
 	}
 }
 
@@ -4442,6 +4446,52 @@ func v119LedgerReasonAndSampleGrain(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v119 reason + grain: %w", err)
+		}
+	}
+	return nil
+}
+
+// v120LinesideDrainLedger gives the lineside drain its own row shape.
+//
+// WHY NOT A COLUMN FAMILY ON bin_uop_ledger: bin_id is BIGINT NOT NULL (v17)
+// and nine readers scan it into a non-pointer. Relaxing it is a nullable
+// column meeting nine non-nullable scans, and it would be bending the bin
+// ledger to hold a thing that is not a bin event — a drain is consumption AT
+// A NODE FROM A PILE. The bucket row itself is no good either: lineside_buckets
+// deletes at qty 0 (Option C), so the drain history vanishes with the bucket,
+// which is exactly why the consumption rate had no drain arm to read.
+//
+// One row per APPLIED consume_drain, written by ApplyLinesideBucketDelta in
+// the transaction it already opens. capture_fill and operator_correction
+// write nothing here — they are not consumption. reason is stamped as a
+// column from day one (v119's lesson, one release early).
+//
+// Retention: the 45-day sweep that prunes tte_samples also prunes this table
+// (pruneTTESamples). The rate window is 30 minutes; 45 days is two months of
+// forensic slack.
+//
+// ROLLBACK: a new table nothing older reads; DROP TABLE and nothing else.
+func v120LinesideDrainLedger(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS lineside_drain_ledger (
+			id           BIGSERIAL PRIMARY KEY,
+			station      TEXT NOT NULL,
+			node_id      BIGINT NOT NULL,
+			pair_key     TEXT NOT NULL,
+			style_id     BIGINT NOT NULL,
+			payload_code TEXT NOT NULL,
+			before_qty   INT NOT NULL,
+			after_qty    INT NOT NULL,
+			reason       TEXT NOT NULL,
+			applied_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_lineside_drain_ledger_applied_at ON lineside_drain_ledger (applied_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_lineside_drain_ledger_node_payload_time
+			ON lineside_drain_ledger (node_id, payload_code, applied_at DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v120 lineside drain ledger: %w", err)
 		}
 	}
 	return nil
