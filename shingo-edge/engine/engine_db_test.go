@@ -937,7 +937,7 @@ func TestCoreSyncService_RequestOrderStatusSync_SendsEnvelope(t *testing.T) {
 	eng := newCoverageEngine(t)
 	// Seed an active order so ListActiveOrders returns something.
 	orderUUID := "uuid-active"
-	if _, err := eng.db.CreateOrder(orderUUID, "complex", nil, false, 1, "", "", "", "", false, ""); err != nil {
+	if _, err := eng.db.CreateOrder(orderUUID, "complex", nil, false, 1, "", "", "", "", false, "", "", ""); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 	var captured *protocol.Envelope
@@ -968,7 +968,7 @@ func TestCoreSyncService_RequestOrderStatusSync_SendsEnvelope(t *testing.T) {
 func TestCoreSyncService_RequestOrderStatusSync_SendFnError(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
-	if _, err := eng.db.CreateOrder("uuid-err", "complex", nil, false, 1, "", "", "", "", false, ""); err != nil {
+	if _, err := eng.db.CreateOrder("uuid-err", "complex", nil, false, 1, "", "", "", "", false, "", "", ""); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 	eng.SetSendFunc(func(*protocol.Envelope) error { return fmt.Errorf("kafka down") })
@@ -982,7 +982,7 @@ func TestCoreSyncService_HandleOrderStatusSnapshots(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
 	// Create a local order so ApplyCoreStatusSnapshot has something to act on.
-	if _, err := eng.db.CreateOrder("uuid-snap", "complex", nil, false, 1, "", "", "", "", false, ""); err != nil {
+	if _, err := eng.db.CreateOrder("uuid-snap", "complex", nil, false, 1, "", "", "", "", false, "", "", ""); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 	// One known snapshot + one unknown UUID (exercises the debugFn err path

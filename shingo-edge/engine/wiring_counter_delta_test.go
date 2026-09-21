@@ -512,7 +512,7 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 	// (binAtNode looks the bin up via runtime.ActiveOrderID).
 	const binID int64 = 9101
 	orderID, err := db.CreateOrder("uuid-overpack", orders.TypeRetrieve,
-		&nodeID, false, 1, "OVERPACK-NODE", "", "", "", false, "PART-OP")
+		&nodeID, false, 1, "OVERPACK-NODE", "", "", "", false, "PART-OP", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 	// same value — bin attribution reads from the runtime row directly.
 	const binID int64 = 777
 	orderID, err := db.CreateOrder("uuid-drain-attr", orders.TypeRetrieve,
-		&nodeID, false, 1, "DRAIN-ATTR-NODE", "", "", "", false, "PART-DRAIN")
+		&nodeID, false, 1, "DRAIN-ATTR-NODE", "", "", "", false, "PART-DRAIN", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestRegression_NoBucketAllToBin(t *testing.T) {
 
 	const binID int64 = 888
 	orderID, err := db.CreateOrder("uuid-no-bucket", orders.TypeRetrieve,
-		&nodeID, false, 1, "NO-BUCKET-NODE", "", "", "", false, "PART-NB")
+		&nodeID, false, 1, "NO-BUCKET-NODE", "", "", "", false, "PART-NB", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -741,7 +741,7 @@ func TestRegression_BinAttributionRequiresActiveBinID(t *testing.T) {
 	// helper sets a default). This models a delivered order whose
 	// completion hasn't anchored the bin pointer yet.
 	orderID, err := db.CreateOrder("uuid-no-bin-id", orders.TypeRetrieve,
-		&nodeID, false, 1, "NO-BIN-ID-NODE", "", "", "", false, "PART-NBI")
+		&nodeID, false, 1, "NO-BIN-ID-NODE", "", "", "", false, "PART-NBI", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

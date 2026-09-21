@@ -58,9 +58,12 @@ func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return orders.GetByUUID(db.DB, uuid)
 }
 
-// CreateOrder inserts an order and returns the new row id.
-func (db *DB) CreateOrder(uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
-	return orders.Create(db.DB, uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
+// CreateOrder inserts an order and returns the new row id. originID and
+// originClass are the demand attribution of the order this Edge is creating —
+// see orders.Create for why the row has to carry it, and why blank is an answer
+// rather than an omission.
+func (db *DB) CreateOrder(uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
+	return orders.Create(db.DB, uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode, originID, originClass)
 }
 
 // UpdateOrderProcessNode rebinds an order to a different process_node.

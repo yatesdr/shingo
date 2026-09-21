@@ -65,7 +65,7 @@ func seedSecondProcess(t *testing.T, db *store.DB) (processID, nodeID int64) {
 func seedOrderAt(t *testing.T, db *store.DB, nodeID int64, coreNode, uuid, payload string, status protocol.Status) int64 {
 	t.Helper()
 	id, err := db.CreateOrder(uuid, orders.TypeMove, &nodeID, false, 1,
-		coreNode, "", "SOURCE-OLD", "", false, payload)
+		coreNode, "", "SOURCE-OLD", "", false, payload, "", "")
 	testutil.MustNoErr(t, err, "create order "+uuid)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(status)), "set status "+string(status))
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &id, nil), "attach order to runtime")
@@ -129,7 +129,7 @@ func TestChangeoverStart_CancelsBothSwapSiblings(t *testing.T) {
 
 	supplyID := seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-swap-supply", "PART-OLD", orders.StatusQueued)
 	evacID, err := db.CreateOrder("uuid-swap-evac", orders.TypeComplex, &nodeID, false, 1,
-		"CO-NODE", "", "SOURCE-OLD", "", false, "PART-OLD")
+		"CO-NODE", "", "SOURCE-OLD", "", false, "PART-OLD", "", "")
 	testutil.MustNoErr(t, err, "create evac leg")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(orders.StatusQueued)), "queue evac leg")
 	testutil.MustNoErr(t, db.LinkOrderSiblings(supplyID, evacID), "link siblings")

@@ -27,7 +27,7 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 
 	// Create a retrieve order (empty bin delivery to produce node)
 	orderID, err := db.CreateOrder("uuid-retrieve-prod", orders.TypeRetrieve,
-		&nodeID, false, 1, "PRODUCE-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "PRODUCE-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 
 	// Create a retrieve order (full bin delivery to consume node)
 	orderID, err := db.CreateOrder("uuid-retrieve-con", orders.TypeRetrieve,
-		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 
 	// Create a move order
 	orderID, err := db.CreateOrder("uuid-move-bl", orders.TypeMove,
-		&nodeID, false, 1, "DEST-NODE", "", "BL-NODE", "", false, "")
+		&nodeID, false, 1, "DEST-NODE", "", "BL-NODE", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

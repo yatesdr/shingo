@@ -237,11 +237,44 @@ func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
 }
 
 // Create inserts an order and returns the new row id.
-func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
+//
+// originID and originClass are the demand attribution of the order THIS EDGE is
+// creating, and they are written by the same INSERT as everything else — same
+// statement, two more columns, no extra round trip. That matters on a Pi whose
+// store sets SetMaxOpenConns(1): every write on this box serialises on one
+// connection, so a second statement here would be a second statement on every
+// order the plant creates.
+//
+// ── WHY THE ROW HAS TO CARRY IT ───────────────────────────────────────────
+//
+// Every create door already takes an Origin and is compile-forced to name one,
+// and every door already puts it on the OrderRequest envelope. So Core has
+// always learned the attribution. The Edge asked and did not remember: this
+// column list did not name origin_id or origin_class, and nothing else on the
+// Edge writes them on a locally created row.
+//
+// That was survivable for the simple types only by accident. Core projects a
+// wire-originated order straight back, and the projection carries the origin
+// home — so a retrieve looked attributed on the board because Core told the
+// Edge what the Edge had just told Core. Complex orders are never projected,
+// and they are 69% of Springfield's Edge orders, so for most of what this
+// station creates the attribution existed on Core and nowhere here.
+//
+// THE GRAIN CANNOT BE RECOVERED AFTERWARDS. An episode is a window in time; by
+// the time anyone wants the number, the order is terminal and the episode is
+// closed, and no join reconstructs which of them asked. The stamp has to be
+// taken at creation or not at all, which is why it ships ahead of the reader
+// that will use it.
+//
+// BLANK IS A REAL ANSWER and not an omission — see the Origin type in
+// shingoedge/orders. An order stamped no_demand carries a class and no id, and
+// that pair means "belongs to no demand episode by construction". A row with
+// both blank is a row written before this column list named them.
+func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
+		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code, origin_id, origin_class)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode, originID, originClass)
 	if err != nil {
 		return 0, err
 	}
@@ -266,9 +299,16 @@ type ProjectionRow struct {
 	QueueCode     string
 
 	// OriginID and OriginClass are the demand attribution Core stamped on the
-	// order. Blank is ordinary and MEANS "not recorded": an Edge-authored order
-	// has no Core origin by construction, and a projection that landed before
-	// these columns existed dropped the value with no way to recover it.
+	// order.
+	//
+	// BLANK IS ORDINARY AND MEANS "NOT RECORDED", never "empty". Core sends
+	// blank for an order it never classified, and a projection that landed
+	// before these columns existed dropped the value with no way to recover it.
+	// That reading is why the upsert's conflict arm keeps the row's own value
+	// when the incoming one is blank: the same order's row may already hold an
+	// attribution — Core's from an earlier projection, or the Edge's own, since
+	// Create stamps an Edge-authored order with the episode this station minted
+	// for it — and a blank arrival is not a statement that it should go.
 	OriginID    string
 	OriginClass string
 }
@@ -288,15 +328,42 @@ type ProjectionRow struct {
 // explicitly. Bypassing those paths is what makes a projection silent. The
 // provenance test asserts it rather than trusting it.
 //
-// authored_by is stamped 'core' unconditionally: a row that arrives by
-// projection was authored by Core by definition, and an update must re-assert it
-// so a row cannot be laundered into looking locally created.
+// authored_by is stamped 'core' BY THE INSERT ARM ONLY, and the conflict arm
+// leaves it alone. The INSERT is where the fact is established: a row that did
+// not exist here until a projection arrived was authored by Core by definition.
+// The conflict arm is a different situation entirely — the row already exists,
+// so somebody already answered the question, and the answer is not Core's to
+// overwrite.
 //
-// NOT UPDATED on conflict: created_at (the row's own history), bin_id,
-// staged_expire_at, waybill and count fields. Those are Edge-side working state
-// written as the order progresses through the plant, and Core's view of the
-// order does not contain them. Overwriting them with zero values on every
-// re-projection would erase what the Edge learned by doing the work.
+// THE UNCONDITIONAL RE-STAMP WAS WRONG ON THE CASE IT WOULD MEET MOST. It was
+// written to stop a Core row being laundered into looking locally created, but
+// the conflict arm cannot see that case: an order this Edge created is written
+// here BEFORE the request goes up, Core admits it and projects it straight back
+// (CreateInboundOrder does that deliberately, to give the projection path real
+// traffic), and the echo landed on an 'edge' row and re-stamped it 'core'. The
+// operator was then told Core had created an order their own station had asked
+// for — orders-body.html renders a "core" tag beside the uuid on exactly that
+// column, with the title "Core created this order; this station did not request
+// it". The row that actually needed protecting is the Edge-authored one.
+//
+// origin_id and origin_class KEEP THE LOCAL VALUE WHEN THE INCOMING ONE IS
+// BLANK. Same statement — a COALESCE in the SET clause, the same fall-back-to-
+// the-stored-value shape process_node_id already uses, with a NULLIF in front
+// because these two columns are NOT NULL and spell absence as the empty string.
+//
+// Blank on the wire MEANS "not recorded" and not "empty" — Core sends blank for
+// an order it never classified, and a pre-column projection dropped the value
+// with no way to invent it back. Taking excluded.* unconditionally therefore let
+// a routine reconcile erase an attribution the row already held, including one
+// the Edge minted for an order of its own. A non-blank incoming value still
+// wins: that is Core's newer statement about the same order.
+//
+// NOT UPDATED on conflict: authored_by (above), created_at (the row's own
+// history), bin_id, staged_expire_at, waybill and count fields. Those last ones
+// are Edge-side working state written as the order progresses through the plant,
+// and Core's view of the order does not contain them. Overwriting them with zero
+// values on every re-projection would erase what the Edge learned by doing the
+// work.
 func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 	var existed int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE uuid=?`, r.UUID).Scan(&existed); err != nil {
@@ -319,9 +386,8 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 			payload_desc=excluded.payload_desc,
 			queue_reason=excluded.queue_reason,
 			queue_code=excluded.queue_code,
-			origin_id=excluded.origin_id,
-			origin_class=excluded.origin_class,
-			authored_by='core',
+			origin_id=COALESCE(NULLIF(excluded.origin_id, ''), orders.origin_id),
+			origin_class=COALESCE(NULLIF(excluded.origin_class, ''), orders.origin_class),
 			updated_at=datetime('now')`,
 		r.UUID, r.OrderType, r.Status, r.ProcessNodeID, r.RetrieveEmpty, r.Quantity,
 		r.SourceNode, r.DeliveryNode, r.PayloadCode, r.PayloadDesc, r.QueueReason, r.QueueCode,

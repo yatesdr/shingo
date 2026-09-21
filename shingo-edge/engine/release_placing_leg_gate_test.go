@@ -20,9 +20,9 @@ func seedSwapPairAt(t *testing.T, mode protocol.SwapMode, evacStatus, supplyStat
 	testutil.MustNoErr(t, err, "ensure runtime")
 	eng := testEngine(t, db)
 
-	evacID, err := db.CreateOrder("uuid-evac", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "WIDGET-A")
+	evacID, err := db.CreateOrder("uuid-evac", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create evac")
-	supplyID, err := db.CreateOrder("uuid-supply", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "WIDGET-A")
+	supplyID, err := db.CreateOrder("uuid-supply", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create supply")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(evacStatus)), "evac status")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(supplyStatus)), "supply status")

@@ -121,7 +121,7 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 	// rolled-back manifest sync. LookupLastReleaseError reads the most recent
 	// non-empty detail, so the ordinary transition below it must NOT win.
 	orderID, err := db.CreateOrder("gold-order-1", protocol.OrderTypeRetrieve, &pressNodeID,
-		false, 1, "PLN_G1", "", "SMN_01", "standard", false, "PAY-1")
+		false, 1, "PLN_G1", "", "SMN_01", "standard", false, "PAY-1", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

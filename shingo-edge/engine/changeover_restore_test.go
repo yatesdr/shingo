@@ -22,7 +22,7 @@ func seedStagingRestoreTask(t *testing.T, db *store.DB) (nodeID, toStyleID, toCl
 	_, nodeID, _, toStyleID, _, toClaimID = seedChangeoverScenario(t, db)
 
 	orderID, err := db.CreateOrder("uuid-restore-staging", orders.TypeRetrieve,
-		&nodeID, false, 1, "CO-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "CO-NODE", "", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create staging order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "terminal staging order")
 

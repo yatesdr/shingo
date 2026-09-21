@@ -106,8 +106,14 @@ type Order struct {
 	// the projection tests assert against. Keeping it inert means turning the
 	// label off is a rendering change, not a behaviour change.
 	AuthoredBy string `json:"authored_by"`
-	// OriginID and OriginClass are the demand attribution Core stamped on the
-	// order: which demand episode it belongs to, and what kind of demand that is.
+	// OriginID and OriginClass are the demand attribution on the order: which
+	// demand episode it belongs to, and what kind of demand that is.
+	//
+	// EITHER SIDE CAN HAVE STAMPED THEM, and the row does not say which. A
+	// projected row carries what Core stamped; an order this Edge created
+	// carries the episode this station minted for it, written by the same INSERT
+	// as the rest of the row (store/orders.Create). AuthoredBy is the column
+	// that tells the two apart.
 	//
 	// THE WIRE TYPE HAS ALWAYS PROMISED THESE — "passed through so a projected
 	// row answers 'why does this exist' the same way a locally created one does"
@@ -116,9 +122,11 @@ type Order struct {
 	// attribution at all and the demand grain stopped at the module boundary.
 	//
 	// INERT HERE, like AuthoredBy. Nothing branches on either; they label the
-	// board and they are what the drift test asserts against. Blank means "not
-	// recorded" — an Edge-authored order has no Core origin by construction, and
-	// no backfill can invent one for a row whose value was dropped.
+	// board and they are what the drift test asserts against. Blank means "NOT
+	// RECORDED" and never "no episode" — a no_demand order states that with its
+	// class and an empty id. No backfill can invent a value for a row whose one
+	// was dropped, which is why a projection carrying blank leaves a stored value
+	// standing rather than overwriting it.
 	OriginID    string `json:"origin_id"`
 	OriginClass string `json:"origin_class"`
 	// LaneHeld reports that this order is parked on a wait CORE owns — a lane

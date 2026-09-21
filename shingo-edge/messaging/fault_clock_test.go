@@ -32,7 +32,7 @@ func TestHandleOrderUpdate_StoresTheFaultClock(t *testing.T) {
 	h := testHandler(t, db)
 	since := time.Now().UTC().Add(-30 * time.Second).Truncate(time.Second)
 
-	id, err := db.CreateOrder("fault-clock-1", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	id, err := db.CreateOrder("fault-clock-1", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestHandleOrderUpdate_ClearsTheFaultClockOnceMoving(t *testing.T) {
 	h := testHandler(t, db)
 	since := time.Now().UTC().Add(-30 * time.Second).Truncate(time.Second)
 
-	id, err := db.CreateOrder("fault-clock-2", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	id, err := db.CreateOrder("fault-clock-2", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestHandleOrderUpdate_FaultedWithNoClockFromAnOlderCore(t *testing.T) {
 	db := testHandlerDB(t)
 	h := testHandler(t, db)
 
-	id, err := db.CreateOrder("fault-clock-3", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	id, err := db.CreateOrder("fault-clock-3", protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

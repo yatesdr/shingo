@@ -93,7 +93,7 @@ func TestListActiveByNodeKeys_MatchesPerNodeCalls(t *testing.T) {
 
 	mkOrder := func(uuid string, nodeID *int64, sourceNode string) int64 {
 		id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, nodeID, false, 1,
-			"DEST", "", sourceNode, "", false, "PAY-1")
+			"DEST", "", sourceNode, "", false, "PAY-1", "", "")
 		if err != nil {
 			t.Fatalf("CreateOrder(%s): %v", uuid, err)
 		}
@@ -222,7 +222,7 @@ func TestListActiveByNodeKeys_LaneHeldDerivation(t *testing.T) {
 
 	mk := func(uuid, status, steps string) {
 		id, cErr := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, &nodeID, false, 1,
-			"DEST", "", "ALN_009", "", false, "PAY-1")
+			"DEST", "", "ALN_009", "", false, "PAY-1", "", "")
 		if cErr != nil {
 			t.Fatalf("CreateOrder(%s): %v", uuid, cErr)
 		}

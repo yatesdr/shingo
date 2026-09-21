@@ -276,8 +276,8 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(nt.ID, domain.NodeTaskStagingRequested), "update node task")
 
 	// Link material orders.
-	orderA, _ := db.CreateOrder("next", "retrieve", &nid, false, 1, "", "", "", "", false, "")
-	orderB, _ := db.CreateOrder("old", "retrieve", &nid, false, 1, "", "", "", "", false, "")
+	orderA, _ := db.CreateOrder("next", "retrieve", &nid, false, 1, "", "", "", "", false, "", "", "")
+	orderB, _ := db.CreateOrder("old", "retrieve", &nid, false, 1, "", "", "", "", false, "", "", "")
 	testutil.MustNoErr(t, db.LinkChangeoverNodeOrders(nt.ID, &orderA, &orderB), "link orders")
 	nt2, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
 	if nt2.State != domain.NodeTaskStagingRequested {
@@ -291,7 +291,7 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	}
 
 	// Partial link (only old) — COALESCE keeps previous next.
-	orderC, _ := db.CreateOrder("old2", "retrieve", &nid, false, 1, "", "", "", "", false, "")
+	orderC, _ := db.CreateOrder("old2", "retrieve", &nid, false, 1, "", "", "", "", false, "", "", "")
 	testutil.MustNoErr(t, db.LinkChangeoverNodeOrders(nt.ID, nil, &orderC), "partial link")
 	nt3, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
 	if nt3.NextMaterialOrderID == nil || *nt3.NextMaterialOrderID != orderA {

@@ -86,7 +86,7 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 
 	// Create a kanban-style order with no process node attached.
 	orderID, err := db.CreateOrder("uuid-no-pn", orders.TypeRetrieve,
-		nil /* processNodeID */, false, 1, "GENERIC-NODE", "", "", "", false, "")
+		nil /* processNodeID */, false, 1, "GENERIC-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 
 	// Stage an order against the produce node.
 	orderID, err := db.CreateOrder("uuid-produce-rel", orders.TypeComplex,
-		&nodeID, false, 1, "PRODUCE-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "PRODUCE-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	}
 
 	orderID, err := db.CreateOrder("uuid-orphan-rel", orders.TypeComplex,
-		&nodeID, false, 1, "ORPHAN-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "ORPHAN-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDispositio
 
 	// Drive the no_process_node path.
 	orderID, err := db.CreateOrder("uuid-shape", orders.TypeRetrieve,
-		nil, false, 1, "GENERIC", "", "", "", false, "")
+		nil, false, 1, "GENERIC", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

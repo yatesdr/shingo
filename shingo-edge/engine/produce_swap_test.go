@@ -157,7 +157,7 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	// blank DeliveryNode (as complex orders have) — destination only in steps.
 	const binID int64 = 4242
 	orderID, err := db.CreateOrder("uuid-cmplx-bind", orders.TypeComplex,
-		&nodeID, false, 1, "", "", "PAIRED", "", true, "WIDGET-A")
+		&nodeID, false, 1, "", "", "PAIRED", "", true, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create complex order")
 	steps := `[{"action":"wait","node":"PAIRED"},{"action":"pickup","node":"PAIRED"},{"action":"dropoff","node":"` + node.CoreNodeName + `"}]`
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID, steps), "set steps")
@@ -178,7 +178,7 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	// node) must NOT rebind — the active bin stays bin 4242.
 	const binID2 int64 = 5555
 	orderID2, err := db.CreateOrder("uuid-cmplx-removal", orders.TypeComplex,
-		&nodeID, false, 1, "", "", node.CoreNodeName, "", true, "WIDGET-A")
+		&nodeID, false, 1, "", "", node.CoreNodeName, "", true, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create removal order")
 	removalSteps := `[{"action":"pickup","node":"` + node.CoreNodeName + `"},{"action":"dropoff","node":"FILLED-STORAGE"}]`
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(orderID2, removalSteps), "set removal steps")

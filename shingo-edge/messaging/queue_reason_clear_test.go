@@ -62,7 +62,7 @@ func testHandler(t *testing.T, db *store.DB) *EdgeHandler {
 // the reason Core sent, i.e. the state the Edge is legitimately in mid-wait.
 func seedQueuedWithReason(t *testing.T, h *EdgeHandler, db *store.DB, uuid string) int64 {
 	t.Helper()
-	id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	id, err := db.CreateOrder(uuid, protocol.OrderTypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

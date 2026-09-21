@@ -27,7 +27,7 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 	const binID int64 = 11001
 	const orderUUID = "uuid-bpu-flush"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "BPU-FLUSH-NODE", "", "", "", false, "PART-BPU")
+		&nodeID, false, 1, "BPU-FLUSH-NODE", "", "", "", false, "PART-BPU", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
 	const binID int64 = 11002
 	const orderUUID = "uuid-bpu-partial"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "BPU-PARTIAL-NODE", "", "", "", false, "PART-PB")
+		&nodeID, false, 1, "BPU-PARTIAL-NODE", "", "", "", false, "PART-PB", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestRegression_AbortedEvacPickupClearsActiveBinByIdentity(t *testing.T) {
 	// The evac order that carries the old bin out, tied to this node.
 	const evacUUID = "uuid-abort-evac"
 	evacID, err := db.CreateOrder(evacUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "ABORT-EVAC-NODE", "", "", "", false, "PART-AE")
+		&nodeID, false, 1, "ABORT-EVAC-NODE", "", "", "", false, "PART-AE", "", "")
 	if err != nil {
 		t.Fatalf("create evac order: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestRegression_BinPickedUpEmptyLocationFailsClosed(t *testing.T) {
 
 	const orderUUID = "uuid-empty-loc"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "EMPTY-LOC-NODE", "", "", "", false, "PART-EL")
+		&nodeID, false, 1, "EMPTY-LOC-NODE", "", "", "", false, "PART-EL", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestRegression_BinPickedUpWhitespaceLocationMatches(t *testing.T) {
 	const binID int64 = 12002
 	const orderUUID = "uuid-ws-loc"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "WS-LOC-NODE", "", "", "", false, "PART-WS")
+		&nodeID, false, 1, "WS-LOC-NODE", "", "", "", false, "PART-WS", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

@@ -119,7 +119,7 @@ func headOccupancyStub(t *testing.T, occupied bool) *httptest.Server {
 func seedInFlightSwap(t *testing.T, db *store.DB, nodeID int64) int64 {
 	t.Helper()
 	orderID, err := db.CreateOrder("w1-swap-in-flight", orders.TypeComplex,
-		&nodeID, false, 1, "SYN_MARKET", "", "", "", true, "BRKT")
+		&nodeID, false, 1, "SYN_MARKET", "", "", "", true, "BRKT", "", "")
 	testutil.MustNoErr(t, err, "create in-flight swap order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
 	return orderID

@@ -647,7 +647,7 @@ func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Statu
 	t.Helper()
 	n := atomic.AddInt64(&orderUUIDCounter, 1)
 	uuid := fmt.Sprintf("test-uuid-%s-%d", string(orderType), n)
-	id, err := testDB.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", "", false, "")
+	id, err := testDB.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
 	}

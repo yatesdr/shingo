@@ -62,11 +62,11 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 		t.Fatalf("get claim: %v", err)
 	}
 
-	aID, err := d.CreateOrder("uuid-a", "complex", &nodeID, false, 1, "", "", "", "", false, "WIDGET")
+	aID, err := d.CreateOrder("uuid-a", "complex", &nodeID, false, 1, "", "", "", "", false, "WIDGET", "", "")
 	if err != nil {
 		t.Fatalf("create order A: %v", err)
 	}
-	bID, err := d.CreateOrder("uuid-b", "complex", &nodeID, false, 1, "", "", "", "", false, "WIDGET")
+	bID, err := d.CreateOrder("uuid-b", "complex", &nodeID, false, 1, "", "", "", "", false, "WIDGET", "", "")
 	if err != nil {
 		t.Fatalf("create order B: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestComputeSwapReady_StaleActiveOrderPointer(t *testing.T) {
 	t.Parallel()
 	db, claim, _, aID, bID := seedSwapReadyFixture(t)
 	// A third, unrelated live order — what a stale ActiveOrderID points at.
-	strayID, err := db.CreateOrder("uuid-stray", "complex", nil, false, 1, "", "", "", "", false, "WIDGET")
+	strayID, err := db.CreateOrder("uuid-stray", "complex", nil, false, 1, "", "", "", "", false, "WIDGET", "", "")
 	testutil.MustNoErr(t, err, "create stray order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(strayID, "in_transit"), "stray in_transit")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")

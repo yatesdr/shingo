@@ -84,7 +84,7 @@ func TestRuntimeBinding_ReleaseDoesNotPreloadIncomingBin(t *testing.T) {
 	eng.coreClient = NewCoreClient(srv.URL)
 
 	orderID, err := db.CreateOrder("uuid-rc-nopre", orders.TypeRetrieve,
-		&nodeID, false, 1, "RC-NOPRE-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "RC-NOPRE-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestRuntimeBinding_DeliveredFlipsCacheAndPointers(t *testing.T) {
 	eng.wireEventHandlers()
 
 	orderID, err := db.CreateOrder("uuid-del-flip", orders.TypeRetrieve,
-		&nodeID, false, 1, "DEL-FLIP-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "DEL-FLIP-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRuntimeBinding_RemovalOnlyOrderDoesNotResetCache(t *testing.T) {
 	// Removal order: process node points at the slot, but DeliveryNode
 	// is the supermarket. Has its own (outgoing) bin.
 	removalOrderID, _ := db.CreateOrder("uuid-rem-norst", orders.TypeComplex,
-		&nodeID, false, 1, "MARKET", "", "", "", false, "")
+		&nodeID, false, 1, "MARKET", "", "", "", false, "", "", "")
 	outgoingBin := int64(9402)
 	db.UpdateOrderBinID(removalOrderID, &outgoingBin)
 
@@ -248,7 +248,7 @@ func TestRuntimeBinding_PLCTicksHoldWhenNoBinThenReplayOntoNextBin(t *testing.T)
 	const newBinUOP = 1000
 	uop := newBinUOP
 	orderID, _ := db.CreateOrder("uuid-hold-replay", orders.TypeRetrieve,
-		&nodeID, false, 1, "HOLD-REPLAY-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "HOLD-REPLAY-NODE", "", "", "", false, "", "", "")
 	bid := newBin
 	db.UpdateOrderBinID(orderID, &bid)
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
@@ -352,7 +352,7 @@ func TestRuntimeBinding_ConfirmDoesNotTouchCache(t *testing.T) {
 	eng.wireEventHandlers()
 
 	orderID, _ := db.CreateOrder("uuid-conf-noop", orders.TypeRetrieve,
-		&nodeID, false, 1, "CONF-NOOP-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "CONF-NOOP-NODE", "", "", "", false, "", "", "")
 	differentBin := int64(9802)
 	db.UpdateOrderBinID(orderID, &differentBin)
 

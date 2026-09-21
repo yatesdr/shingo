@@ -47,7 +47,7 @@ func seedOrderTo(t *testing.T, db *store.DB, uuid, deliveryNode string, complex 
 	if complex {
 		typ = orders.TypeComplex
 	}
-	id, err := db.CreateOrder(uuid, typ, nil, false, 1, deliveryNode, "", "SOURCE-OLD", "", false, "PART-OLD")
+	id, err := db.CreateOrder(uuid, typ, nil, false, 1, deliveryNode, "", "SOURCE-OLD", "", false, "PART-OLD", "", "")
 	testutil.MustNoErr(t, err, "create order "+uuid)
 	if complex {
 		steps := `[{"action":"pickup","node":"SOURCE-OLD"},{"action":"dropoff","node":"` + deliveryNode + `"}]`

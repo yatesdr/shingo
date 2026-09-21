@@ -34,7 +34,7 @@ func seedStagedPair(t *testing.T, prefix string, link bool) (db *DB, runtime *pr
 	}
 	mk := func(uuid string) int64 {
 		id, cerr := db.CreateOrder(uuid, protocol.OrderTypeComplex, &nodeID, false, 1,
-			prefix+"-N", "", "", "", false, "PART-X")
+			prefix+"-N", "", "", "", false, "PART-X", "", "")
 		if cerr != nil {
 			t.Fatalf("create order %s: %v", uuid, cerr)
 		}

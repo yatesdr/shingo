@@ -77,7 +77,7 @@ func seedLoaderCard(t *testing.T) *loaderFixture {
 func (f *loaderFixture) call(t *testing.T, payload string) int64 {
 	t.Helper()
 	id, err := f.db.CreateOrder("uuid-"+payload+"-"+f.core, orders.TypeRetrieve,
-		&f.nodeID, true, 1, f.core, "", "MARKET", "", false, payload)
+		&f.nodeID, true, 1, f.core, "", "MARKET", "", false, payload, "", "")
 	testutil.MustNoErr(t, err, "create call")
 	testutil.MustNoErr(t, f.db.UpdateOrderStatus(id, string(orders.StatusQueued)), "queue call")
 	return id

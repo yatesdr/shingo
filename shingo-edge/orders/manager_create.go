@@ -37,7 +37,8 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
 		processNodeID, retrieveEmpty,
-		quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
+		quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode,
+		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
@@ -120,7 +121,8 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, "", autoConfirm, payloadCode)
+		quantity, deliveryNode, "", sourceNode, "", autoConfirm, payloadCode,
+		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
@@ -241,7 +243,8 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
 		processNodeID, false,
-		quantity, deliveryNode, "", "", "", autoConfirm, payloadCode)
+		quantity, deliveryNode, "", "", "", autoConfirm, payloadCode,
+		origin.ID, origin.Class)
 	if err != nil {
 		return nil, fmt.Errorf("create complex order: %w", err)
 	}

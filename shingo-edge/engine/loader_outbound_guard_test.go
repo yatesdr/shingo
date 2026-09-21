@@ -13,7 +13,7 @@ import (
 func outboundOrder(t *testing.T, db *store.DB, nodeID int64, uuid, coreNode, dest string, status protocol.Status) int64 {
 	t.Helper()
 	id, err := db.CreateOrder(uuid, orders.TypeMove, &nodeID, false, 1,
-		dest, "", coreNode, "", true, "STUD")
+		dest, "", coreNode, "", true, "STUD", "", "")
 	testutil.MustNoErr(t, err, "create outbound "+uuid)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(status)), "set status "+string(status))
 	return id
@@ -55,7 +55,7 @@ func TestOutboundMoveInFlight_IgnoresArrivals(t *testing.T) {
 
 	// delivery_node = this loader, source elsewhere: an inbound move.
 	id, err := db.CreateOrder("u-in-1", orders.TypeMove, &nodeID, false, 1,
-		"PLK_X2", "", "SYN_COMP", "", true, "STUD")
+		"PLK_X2", "", "SYN_COMP", "", true, "STUD", "", "")
 	testutil.MustNoErr(t, err, "create inbound")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusQueued)), "queue inbound")
 

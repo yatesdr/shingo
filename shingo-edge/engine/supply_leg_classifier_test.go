@@ -62,7 +62,7 @@ func mkSwapLeg(t *testing.T, db *store.DB, nodeID int64, uuid string, steps []pr
 	t.Helper()
 	stepsJSON, err := json.Marshal(steps)
 	testutil.MustNoErr(t, err, "marshal steps "+uuid)
-	id, err := db.CreateOrder(uuid, orders.TypeComplex, &nodeID, false, 1, deliveryNode, "", "", "", false, "WIDGET-A")
+	id, err := db.CreateOrder(uuid, orders.TypeComplex, &nodeID, false, 1, deliveryNode, "", "", "", false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create order "+uuid)
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(id, string(stepsJSON)), "steps "+uuid)
 	o, err := db.GetOrder(id)

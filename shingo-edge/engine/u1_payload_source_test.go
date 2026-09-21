@@ -26,7 +26,7 @@ func TestU1_AsksForTheFinishedBinsPayloadNotTheClaims(t *testing.T) {
 	// The order carries the OUTGOING part. The node's claim names WIDGET-A.
 	const finished = "PART-BEING-FINISHED"
 	orderID, err := db.CreateOrder("uuid-u1-payload", orders.TypeRetrieve, &nodeID, false, 1,
-		"PRODUCE-NODE", "", "", "", false, finished)
+		"PRODUCE-NODE", "", "", "", false, finished, "", "")
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "stage order")
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "point runtime at the order")

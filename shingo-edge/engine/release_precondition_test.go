@@ -27,7 +27,7 @@ func TestReleaseOrderWithLineside_RefusesWhatCoreWillNotTake(t *testing.T) {
 		t.Fatalf("seed runtime: %v", err)
 	}
 	orderID, err := db.CreateOrder("uuid-rel-pre", orders.TypeRetrieve,
-		&nodeID, false, 1, "REL-PRE-NODE", "", "", "", false, "PART-RP")
+		&nodeID, false, 1, "REL-PRE-NODE", "", "", "", false, "PART-RP", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestReleaseOrderWithLineside_RefusalNamesCoresBlocker(t *testing.T) {
 		t.Fatalf("seed runtime: %v", err)
 	}
 	orderID, err := db.CreateOrder("uuid-rel-why", orders.TypeRetrieve,
-		&nodeID, false, 1, "REL-WHY-NODE", "", "", "", false, "PART-RW")
+		&nodeID, false, 1, "REL-WHY-NODE", "", "", "", false, "PART-RW", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestReleaseOrderWithLineside_StagedStillReleases(t *testing.T) {
 		t.Fatalf("seed runtime: %v", err)
 	}
 	orderID, err := db.CreateOrder("uuid-rel-ok", orders.TypeRetrieve,
-		&nodeID, false, 1, "REL-OK-NODE", "", "", "", false, "PART-RO")
+		&nodeID, false, 1, "REL-OK-NODE", "", "", "", false, "PART-RO", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

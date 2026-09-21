@@ -27,7 +27,7 @@ func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
 	// U1 = retrieve order (NOT retrieve_empty) at the unloader for the payload.
 	// Seed it at `delivered` — that's the precondition for confirm.
 	orderID, err := db.CreateOrder("uuid-u1-conf", orders.TypeRetrieve,
-		&unloaderNodeID, false, 1, "U1-CONF-MSWAP-NODE", "", "", "", false, "PART-CONF")
+		&unloaderNodeID, false, 1, "U1-CONF-MSWAP-NODE", "", "", "", false, "PART-CONF", "", "")
 	if err != nil {
 		t.Fatalf("create U1 order: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestConfirmUnloaderU1OnClear_IgnoresL1(t *testing.T) {
 	// Seed an L1 (retrieve_empty=true) at delivered — the wrong shape; helper
 	// must skip it.
 	orderID, err := db.CreateOrder("uuid-l1-ign", orders.TypeRetrieve,
-		&unloaderNodeID, true, 1, "U1-IGN-L1-MSWAP-NODE", "", "", "", false, "PART-IGN")
+		&unloaderNodeID, true, 1, "U1-IGN-L1-MSWAP-NODE", "", "", "", false, "PART-IGN", "", "")
 	if err != nil {
 		t.Fatalf("create L1 order: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U1-NDLV", "consume", "PART-NDLV", "STORAGE-NODE")
 
 	orderID, err := db.CreateOrder("uuid-u1-ndlv", orders.TypeRetrieve,
-		&unloaderNodeID, false, 1, "U1-NDLV-MSWAP-NODE", "", "", "", false, "PART-NDLV")
+		&unloaderNodeID, false, 1, "U1-NDLV-MSWAP-NODE", "", "", "", false, "PART-NDLV", "", "")
 	if err != nil {
 		t.Fatalf("create U1 order: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-VIA-CLR", "consume", "PART-CLR", "STORAGE-NODE")
 
 	orderID, err := db.CreateOrder("uuid-u1-clr", orders.TypeRetrieve,
-		&unloaderNodeID, false, 1, "U2-VIA-CLR-MSWAP-NODE", "", "", "", false, "PART-CLR")
+		&unloaderNodeID, false, 1, "U2-VIA-CLR-MSWAP-NODE", "", "", "", false, "PART-CLR", "", "")
 	if err != nil {
 		t.Fatalf("create U1 order: %v", err)
 	}

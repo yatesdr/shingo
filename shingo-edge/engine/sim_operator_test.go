@@ -114,10 +114,10 @@ func TestSimOperator_OutboundDeliveryDoesNotScheduleAClear(t *testing.T) {
 	testutil.MustNoErr(t, err, "create node")
 
 	out, err := db.CreateOrder("u2-empty-out", orders.TypeMove, &nodeID, false, 1,
-		"SYN_PRESS_EMPTIES", "", "FGN_001", "", true, "ASSY")
+		"SYN_PRESS_EMPTIES", "", "FGN_001", "", true, "ASSY", "", "")
 	testutil.MustNoErr(t, err, "create U2 order")
 	in, err := db.CreateOrder("u1-full-in", orders.TypeRetrieve, &nodeID, false, 1,
-		"FGN_001", "", "SYN_MARKET", "", true, "ASSY")
+		"FGN_001", "", "SYN_MARKET", "", true, "ASSY", "", "")
 	testutil.MustNoErr(t, err, "create U1 order")
 
 	op := newTestSimOperator(clock.NewManual(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))

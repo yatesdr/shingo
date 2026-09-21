@@ -93,7 +93,7 @@ func TestSimOperator_LegServesNode_SimpleOrderUsesDeliveryNode(t *testing.T) {
 	nodeID, node, _ := seedSwapClaim(t, db, protocol.SwapModeTwoRobot, "")
 	press := node.CoreNodeName
 
-	id, err := db.CreateOrder("sim-simple", edgeorders.TypeRetrieve, &nodeID, false, 1, press, "", "", "", false, "WIDGET-A")
+	id, err := db.CreateOrder("sim-simple", edgeorders.TypeRetrieve, &nodeID, false, 1, press, "", "", "", false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create retrieve order")
 	simple, err := db.GetOrder(id)
 	testutil.MustNoErr(t, err, "get retrieve order")

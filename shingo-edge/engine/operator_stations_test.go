@@ -147,7 +147,7 @@ func TestCanAcceptOrders(t *testing.T) {
 	t.Run("unavailable with active order", func(t *testing.T) {
 		db := testEngineDB(t)
 		_, nodeID := seedProcessNode(t, db)
-		orderID, err := db.CreateOrder("uuid-active", orders.TypeRetrieve, &nodeID, false, 1, "TEST-NODE", "", "", "", false, "")
+		orderID, err := db.CreateOrder("uuid-active", orders.TypeRetrieve, &nodeID, false, 1, "TEST-NODE", "", "", "", false, "", "", "")
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}
@@ -168,7 +168,7 @@ func TestCanAcceptOrders(t *testing.T) {
 	t.Run("unavailable with staged order", func(t *testing.T) {
 		db := testEngineDB(t)
 		_, nodeID := seedProcessNode(t, db)
-		orderID, err := db.CreateOrder("uuid-staged", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "")
+		orderID, err := db.CreateOrder("uuid-staged", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "", "", "")
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}
@@ -189,7 +189,7 @@ func TestCanAcceptOrders(t *testing.T) {
 	t.Run("available when active order is terminal", func(t *testing.T) {
 		db := testEngineDB(t)
 		_, nodeID := seedProcessNode(t, db)
-		orderID, err := db.CreateOrder("uuid-terminal", orders.TypeRetrieve, &nodeID, false, 1, "TEST-NODE", "", "", "", false, "")
+		orderID, err := db.CreateOrder("uuid-terminal", orders.TypeRetrieve, &nodeID, false, 1, "TEST-NODE", "", "", "", false, "", "", "")
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}

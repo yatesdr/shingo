@@ -45,7 +45,7 @@ func runFailedReleaseRetry(t *testing.T, rollback func(m *orders.Manager, uuid, 
 	const uuid = "uuid-rel-retry"
 	const newBinID int64 = 512
 	orderID, err := db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1,
-		node.CoreNodeName, "", "", "", false, "PART-REL")
+		node.CoreNodeName, "", "", "", false, "PART-REL", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	// The release click already ran on Edge, so the leg is in_transit when Core
 	// bounces it — the precondition RollbackReleaseRejection requires, and a

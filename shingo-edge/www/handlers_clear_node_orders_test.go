@@ -38,11 +38,11 @@ func TestClearNodeOrders_NamesTheNodeAndBothPointers(t *testing.T) {
 		t.Fatalf("ensure runtime: %v", err)
 	}
 	// Two live pointers, which is exactly the state worth a record.
-	active, err := db.CreateOrder("uuid-clear-active", "retrieve", &nodeID, false, 1, "SMN_029", "", "", "", false, "PART-A")
+	active, err := db.CreateOrder("uuid-clear-active", "retrieve", &nodeID, false, 1, "SMN_029", "", "", "", false, "PART-A", "", "")
 	if err != nil {
 		t.Fatalf("create active order: %v", err)
 	}
-	staged, err := db.CreateOrder("uuid-clear-staged", "retrieve", &nodeID, false, 1, "SMN_029", "", "", "", false, "PART-A")
+	staged, err := db.CreateOrder("uuid-clear-staged", "retrieve", &nodeID, false, 1, "SMN_029", "", "", "", false, "PART-A", "", "")
 	if err != nil {
 		t.Fatalf("create staged order: %v", err)
 	}

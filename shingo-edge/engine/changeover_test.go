@@ -1381,7 +1381,7 @@ func TestStartChangeover_RefusesWhileNodeHasOrderInFlight(t *testing.T) {
 	eng := testEngine(t, db)
 
 	orderID, err := db.CreateOrder("uuid-inflight-co", orders.TypeRetrieve,
-		&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD")
+		&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD", "", "")
 	testutil.MustNoErr(t, err, "create in-flight order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "put the carrier in transit")
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "attach order to runtime")
@@ -1451,7 +1451,7 @@ func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {
 			eng := testEngine(t, db)
 
 			orderID, err := db.CreateOrder("uuid-pass-"+string(status), orders.TypeRetrieve,
-				&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD")
+				&nodeID, false, 1, "CO-NODE", "", "", "", false, "PART-OLD", "", "")
 			testutil.MustNoErr(t, err, "create order")
 			testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(status)), "set status")
 			testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "attach to runtime")

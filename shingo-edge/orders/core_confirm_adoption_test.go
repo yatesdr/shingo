@@ -27,7 +27,7 @@ func TestApplyCoreStatus_AdoptsCoreConfirm(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	oid, _ := db.CreateOrder("uuid-core-confirm", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	oid, _ := db.CreateOrder("uuid-core-confirm", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusDelivered))
 
 	order, _ := db.GetOrder(oid)
@@ -51,7 +51,7 @@ func TestApplyCoreStatus_CoreConfirmEchoIsNoop(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	oid, _ := db.CreateOrder("uuid-echo", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	oid, _ := db.CreateOrder("uuid-echo", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusDelivered))
 	_ = db.UpdateOrderStatus(oid, string(StatusConfirmed))
 
@@ -78,7 +78,7 @@ func TestApplyCoreStatus_CoreConfirmDoesNotResurrectTerminal(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	oid, _ := db.CreateOrder("uuid-cancelled", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	oid, _ := db.CreateOrder("uuid-cancelled", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusCancelled))
 
 	order, _ := db.GetOrder(oid)

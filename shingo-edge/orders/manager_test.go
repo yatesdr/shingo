@@ -39,7 +39,7 @@ func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-abort", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-abort", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRollbackReleaseRejection_InTransitRollsBack(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	id, err := db.CreateOrder("uuid-rr-intransit", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	id, err := db.CreateOrder("uuid-rr-intransit", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRollbackReleaseRejection_TerminalIgnored(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	id, err := db.CreateOrder("uuid-rr-terminal", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	id, err := db.CreateOrder("uuid-rr-terminal", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-redirect", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-redirect", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRegression_TerminalTransitionIdempotent(t *testing.T) {
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
 	// Create and move order to confirmed (terminal)
-	orderID, err := db.CreateOrder("uuid-term-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-term-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestHandleSkipped_OverridesAcknowledged(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-skip-ack", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-skip-ack", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRegression_CancelledToCancelledIdempotent(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-cancel-2", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-cancel-2", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestRegression_ValidTransitionsStillWork(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-valid-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-valid-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestRegression_FailedToFailedIdempotent(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-failed-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	orderID, err := db.CreateOrder("uuid-failed-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

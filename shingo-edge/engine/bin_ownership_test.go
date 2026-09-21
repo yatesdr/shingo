@@ -36,7 +36,7 @@ func TestBinOwnership_BinAtNodeReadsRuntimeActiveBinID(t *testing.T) {
 	// BinID; post-flip it returns runtime.ActiveBinID.
 	const orderBin int64 = 9999
 	orderID, err := db.CreateOrder("uuid-own-ban", orders.TypeRetrieve,
-		&nodeID, false, 1, "OWN-BAN-NODE", "", "", "", false, "PART-OWN")
+		&nodeID, false, 1, "OWN-BAN-NODE", "", "", "", false, "PART-OWN", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestBinOwnership_PickupClearsActiveBinID(t *testing.T) {
 	const orderUUID = "uuid-own-pick"
 	bid := binID
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "OWN-PICK-NODE", "", "", "", false, "PART-PICK")
+		&nodeID, false, 1, "OWN-PICK-NODE", "", "", "", false, "PART-PICK", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestBinOwnership_DeliveryThenTickThenPickup(t *testing.T) {
 	const orderUUID = "uuid-own-rt"
 	bid := binID
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
-		&nodeID, false, 1, "OWN-RT-NODE", "", "", "", false, "PART-RT")
+		&nodeID, false, 1, "OWN-RT-NODE", "", "", "", false, "PART-RT", "", "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
