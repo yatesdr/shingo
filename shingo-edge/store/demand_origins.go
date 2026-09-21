@@ -215,6 +215,39 @@ func (db *DB) ListOpenDemandOrigins() ([]OpenOrigin, error) {
 	return out, rows.Err()
 }
 
+// ListOpenDemandOriginsForProcess returns the episodes open for one process
+// NAME — every kind, not just the cell kinds, because the name is what the
+// process-delete path has to account for and a changeover episode carries the
+// same value in the same column.
+//
+// It is the READ half of deleting a process. The delete used to drop these rows
+// with a `DELETE FROM demand_origins_open WHERE process_id=?` inside its own
+// transaction and tell Core nothing, so Core's copy of each episode stayed open
+// with the only row that could close it already gone. Engine.DeleteProcess lists
+// them here and closes each one through the ordinary close writer instead.
+//
+// SCOPED IN SQL rather than by filtering ListOpenDemandOrigins in Go. Same one
+// statement either way, and one statement is what matters on a store pinned to a
+// single connection — but this one reads the rows the delete is about, and is
+// keyed exactly like the DELETE it stands in front of.
+func (db *DB) ListOpenDemandOriginsForProcess(processName string) ([]OpenOrigin, error) {
+	rows, err := db.Query(`SELECT `+openOriginCols+` FROM demand_origins_open WHERE process_id = ?`, processName)
+	if err != nil {
+		return nil, fmt.Errorf("list open demand origins for process %q: %w", processName, err)
+	}
+	defer rows.Close()
+
+	var out []OpenOrigin
+	for rows.Next() {
+		o, err := scanOpenOrigin(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan open demand origin for process %q: %w", processName, err)
+		}
+		out = append(out, *o)
+	}
+	return out, rows.Err()
+}
+
 // CellLevelStillBreached reports whether a cell episode's precondition still
 // holds: does ANY claim on this process still have its level breached, for this
 // payload and this direction?

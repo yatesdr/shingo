@@ -1815,9 +1815,15 @@ const (
 	// CloseReasonClaimRemoved — the cell-side mirror of threshold_removed: the
 	// claim that was below its level is gone, or the process swapped to a style
 	// that does not claim that payload there. The need did not recover; it
-	// stopped being asked. Reachable only from the reconciler, because nothing
-	// fires when a claim quietly stops existing — which is the whole reason the
-	// reconciler exists.
+	// stopped being asked.
+	//
+	// TWO PATHS REACH IT, and closed_by is what tells them apart. The reconciler
+	// finds it by sweeping, because nothing fires when a claim quietly stops
+	// existing — that is the whole reason the reconciler exists — and sends it
+	// with closed_by=sweep. Deleting the process that was asking sends the same
+	// reason with closed_by=notification: the same fact about the plant, learned
+	// from an event instead of from a sweep. This comment said "reachable only
+	// from the reconciler" until the delete path was wired.
 	CloseReasonClaimRemoved = "claim_removed"
 	// CloseReasonUnattributed — a childless episode aged out. NOT OPTIONAL:
 	// childless episodes are reachable even at full version parity, because

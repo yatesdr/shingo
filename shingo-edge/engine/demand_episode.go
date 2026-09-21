@@ -330,14 +330,24 @@ func (e *Engine) closeCellEpisode(processID int64, payload string, role protocol
 // pokes that exist because a node which stops consuming produces no ticks, and
 // the reconciling sweep — so two of them racing to close one episode is
 // ordinary rather than exceptional.
-func (e *Engine) closeEpisode(key, reason, closedBy string) {
+//
+// IT RETURNS AN ERROR AND MOST CALLERS IGNORE IT, on the same split as
+// emitOriginState. For the level and changeover paths a close that did not land
+// self-heals: the row is still on disk, so the reconciling sweep closes it again
+// later and the re-send is a no-op under Core's revision guard. ONE caller
+// cannot rely on that, and it is the reason this reports at all —
+// closeProcessEpisodes is about to delete the process, and with the process gone
+// there is no claim left for the sweep to re-derive a close from. It refuses the
+// delete instead, which leaves the episode open and the process alive: a state
+// the sweep still understands, and an operator can retry.
+func (e *Engine) closeEpisode(key, reason, closedBy string) error {
 	closed, err := e.db.CloseDemandOrigin(key)
 	if errors.Is(err, store.ErrOriginNotOpen) {
-		return
+		return nil
 	}
 	if err != nil {
 		e.logFn("demand_episode: close %s: %v", key, err)
-		return
+		return fmt.Errorf("close episode %s: %w", key, err)
 	}
 	closedAt := time.Now().UTC()
 	e.logFn("demand_episode: CLOSED origin=%s key=%s reason=%s duration=%s rerequests=%d rev=%d",
@@ -357,14 +367,16 @@ func (e *Engine) closeEpisode(key, reason, closedBy string) {
 		// the delta snapshot when the enqueue fails, rather than trusting the
 		// outbox with something that never got there.
 		e.logFn("demand_episode: close %s kept open — state not enqueued: %v", key, err)
-		return
+		return fmt.Errorf("enqueue close for episode %s: %w", key, err)
 	}
 	if err := e.db.DeleteDemandOrigin(key); err != nil {
 		// The state IS enqueued, so Core converges regardless. A row left
 		// behind reads as still-open until the reconciler sweeps it and sends
 		// the close again — harmless under the revision guard.
 		e.logFn("demand_episode: delete closed episode %s: %v", key, err)
+		return fmt.Errorf("delete closed episode %s: %w", key, err)
 	}
+	return nil
 }
 
 // evaluateCellLevel is the falling/rising edge for one claim.

@@ -84,8 +84,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 74 methods —
-// ServiceAccess's 20 embedded, plus 54 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 75 methods —
+// ServiceAccess's 20 embedded, plus 55 orchestration verbs of its own.
 //
 // The 51st is SetActivePullSide, added 2026-08-28 under the owner ruling that
 // the operator gets an explicit set/change control for which side of an A/B pair
@@ -99,6 +99,13 @@ func TestServiceAccessWidth(t *testing.T) {
 // composer routes and the start handler's fingerprint check call them, and
 // each is an orchestration verb for the same reason PreviewChangeoverPlan
 // and StartProcessChangeover are.
+//
+// The 55th is DeleteProcess, added 2026-09-20 with the S0 demand-loop
+// groundwork. It is a MOVE rather than a widening: apiDeleteProcess used to
+// call ProcessService().Delete, and the verb came up here because the delete
+// now has to close the process's open demand episodes through the engine's
+// close writer first — a composition the service layer cannot express, since
+// engine imports service and not the other way round.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -126,6 +133,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CoreSync",
 		"CounterService",
 		"CreateRetrieveForAPI",
+		"DeleteProcess",
 		"DeliverNewMaterialForChangeover",
 		"EnrichHomeBufferPartials",
 		"EnsureTagPublished",

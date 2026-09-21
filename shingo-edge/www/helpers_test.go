@@ -343,6 +343,15 @@ func (s *stubEngine) OrderService() *service.OrderService {
 	return service.NewOrderService(s.db)
 }
 
+// DeleteProcess mirrors the engine verb's SHAPE, not its demand-episode half:
+// the stub has no engine and therefore no close writer, so what a www test can
+// check here is the handler's own contract — the route, the 409 on
+// ErrProcessHasStock, and the row being gone. The close itself is pinned
+// against the real engine in engine/process_delete_test.go.
+func (s *stubEngine) DeleteProcess(processID int64) error {
+	return service.NewProcessService(s.db).Delete(processID)
+}
+
 func (s *stubEngine) SourcingStateForProcess(process string) []protocol.SourcingState {
 	states, _ := s.db.ListSourcingStateForProcess(process)
 	return states

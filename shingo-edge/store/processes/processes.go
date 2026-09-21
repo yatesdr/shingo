@@ -117,7 +117,35 @@ func Update(db *sql.DB, id int64, name, description, productionState string, cou
 // is not.
 var ErrProcessHasStock = errors.New("process still has lineside stock booked at its nodes: clear or consume it first")
 
+// EnsureNoLinesideStock is the process-delete precondition, named so that the
+// delete's CALLER can ask it before doing anything it cannot take back.
+//
+// Delete still asks it itself — a guard that only runs when somebody remembers
+// to call it is not a guard — so at a delete the COUNT runs twice. That is the
+// price of the ordering Engine.DeleteProcess needs: it closes the process's open
+// demand episodes before the delete, each close is an outbox message that cannot
+// be recalled, and a refusal arriving after them would have ended episodes for a
+// process that is still running. Two reads of one indexed count, at a config
+// action nobody performs twice a shift, against a close that cannot be undone.
+func EnsureNoLinesideStock(db DBTX, id int64) error {
+	var booked int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket b
+		JOIN process_nodes n ON n.id = b.node_id
+		WHERE n.process_id = ? AND b.qty > 0`, id).Scan(&booked); err != nil {
+		return fmt.Errorf("process %d: check lineside stock: %w", id, err)
+	}
+	if booked > 0 {
+		return fmt.Errorf("%w (%d bucket(s) still hold parts)", ErrProcessHasStock, booked)
+	}
+	return nil
+}
+
 // Delete removes a process and retires the rows that are meaningless without it.
+//
+// IT IS REACHED THROUGH Engine.DeleteProcess, which closes the process's open
+// demand episodes first. Reaching it any other way still removes those episodes'
+// rows — and still tells Core nothing about them, which is the whole reason the
+// engine verb exists. See the demand_origins_open note inside.
 //
 // It used to be one statement — `DELETE FROM processes WHERE id=?` — with the
 // children left to ON DELETE CASCADE. THAT CASCADE NEVER FIRES: edge SQLite runs
@@ -148,19 +176,30 @@ var ErrProcessHasStock = errors.New("process still has lineside stock booked at 
 // that stays readable), and style_node_claims (owned by their now-retired style,
 // and kept so that restoring the style is still a restore).
 func Delete(db *sql.DB, id int64) error {
-	var booked int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket b
-		JOIN process_nodes n ON n.id = b.node_id
-		WHERE n.process_id = ? AND b.qty > 0`, id).Scan(&booked); err != nil {
-		return fmt.Errorf("process %d: check lineside stock: %w", id, err)
-	}
-	if booked > 0 {
-		return fmt.Errorf("%w (%d bucket(s) still hold parts)", ErrProcessHasStock, booked)
+	if err := EnsureNoLinesideStock(db, id); err != nil {
+		return err
 	}
 
 	// sourcing_state and demand_origins_open key on the process NAME, not its id,
-	// so the name must be read before the row goes. Leaving them is not merely
-	// untidy — a later process created with the same name inherits the stale state.
+	// so the name must be read before the row goes.
+	//
+	// THE TWO ROWS ARE NOT THE SAME KIND OF LEFTOVER, and this comment used to
+	// say they were. For sourcing_state the sentence holds as written: it is a
+	// cached verdict, nothing outside this database reads it, and leaving it
+	// means a later process created with the same name inherits the stale state.
+	//
+	// A demand_origins_open row has a second half on Core, and that is the cost
+	// local inheritance was hiding. Deleting it here tells Core nothing, so
+	// Core's copy of the episode stays open with the only row that could close it
+	// already gone. Engine.DeleteProcess is therefore the entry point for a
+	// delete: it closes each of them through the ordinary close writer first —
+	// the close reaches the durable outbox before this transaction opens — and
+	// the statement below is what it leaves behind, a BACKSTOP that should find
+	// nothing. It is kept because a row that escaped the close (written between
+	// that list and this transaction, or carrying a name the close could not
+	// match) must still not be inherited by the next process of this name.
+	//
+	// Calling Delete directly is the old behaviour, silence included.
 	var name string
 	switch err := db.QueryRow(`SELECT name FROM processes WHERE id=?`, id).Scan(&name); {
 	case errors.Is(err, sql.ErrNoRows):

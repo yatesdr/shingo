@@ -122,6 +122,10 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 	eng.hourlyTracker = NewHourlyTracker(db)
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
+	// DeleteProcess composes its demand-episode closes on top of this one, so a
+	// fixture without it nil-panics on the delete rather than on anything the
+	// test is about.
+	eng.processService = service.NewProcessService(db)
 	// Phase 3a: default sink that does real DB writes so tests
 	// exercising state-mutation verbs (BindActiveBin, ClearActiveBin,
 	// OnDelivered, etc.) see post-state correctly without each test

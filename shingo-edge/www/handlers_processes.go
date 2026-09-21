@@ -150,7 +150,12 @@ func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	if err := h.engine.ProcessService().Delete(id); err != nil {
+	// h.orchestration, not the process service: deleting a process has to close
+	// the demand episodes it owns before the row goes, or Core keeps them open
+	// forever. That composition lives on the engine (engine/process_delete.go)
+	// because the close writer does, and this handler does not orchestrate it —
+	// it calls the one verb.
+	if err := h.orchestration.DeleteProcess(id); err != nil {
 		// Stock still booked is a precondition the operator can clear, not a
 		// fault. A 500 would read as "shingo broke" and send them to a log.
 		if errors.Is(err, service.ErrProcessHasStock) {

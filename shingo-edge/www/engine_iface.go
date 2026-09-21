@@ -176,6 +176,13 @@ type EngineOrchestration interface {
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error
+	// DeleteProcess is the process delete, and it is here rather than on
+	// ProcessService because it spans two subsystems: it closes the process's
+	// open demand episodes through the engine's close writer before the row is
+	// removed, so Core is told the episodes ended instead of keeping them open
+	// against a process that no longer exists. Same reason SyncProcessCounter
+	// above is an orchestration verb rather than a service call.
+	DeleteProcess(processID int64) error
 	FlipABNode(nodeID int64, req engine.FlipRequest) error
 	SetActivePullSide(nodeID int64, req engine.FlipRequest) error
 

@@ -3,7 +3,9 @@ package store
 import (
 	"errors"
 	"testing"
+	"time"
 
+	"shingo/protocol"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
@@ -179,5 +181,119 @@ func TestDeleteProcess_MissingIsNotAnError(t *testing.T) {
 	db := testDB(t)
 	if err := db.DeleteProcess(99999); err != nil {
 		t.Fatalf("deleting a missing process: %v", err)
+	}
+}
+
+// ── The demand episodes a process delete leaves behind ────────────────────
+//
+// demand_origins_open is Edge's half of the demand grain: one row per OPEN
+// episode, keyed on episode_key, carrying the process NAME in process_id. The
+// other half lives on Core, which is told about an episode by a demand.origin
+// message on the durable outbox — opened once, closed once, both as whole
+// STATE rather than as events.
+//
+// Deleting a process removes its open rows in the delete's own transaction and
+// sends Core NOTHING, so Core's rows stay open with no Edge row left to close
+// them. These pin that as it stands, which is what makes a later change to it
+// visible rather than plausible.
+
+// seedOpenEpisode opens one demand episode for a process NAME, the way the
+// engine's mint path does. Returns the episode key.
+func seedOpenEpisode(t *testing.T, db *DB, processName, payload string, role protocol.ClaimRole) string {
+	t.Helper()
+	key := protocol.CellEpisodeKey(processName, payload, role)
+	expected := 2
+	if err := db.OpenDemandOrigin(&OpenOrigin{
+		EpisodeKey: key, OriginID: "origin-" + key, Kind: protocol.EpisodeKindCell,
+		Direction: role, TriggerKind: protocol.EpisodeTriggerAutoreorder,
+		TriggerRef: "claim:1", ProcessID: processName, CoreNodeName: "SYN_NODE01",
+		PayloadCode: payload, Threshold: 50, ExpectedOrders: &expected,
+		OpenedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("open demand origin %s: %v", key, err)
+	}
+	return key
+}
+
+// TestDeleteProcess_DropsOpenEpisodesAndTellsCoreNothing is the characterisation
+// of the delete as it stands: the open rows for this process's name go with the
+// process, another process's episode is untouched, and not one byte reaches the
+// outbox — so Core keeps every one of those episodes open, indefinitely, with
+// nothing left on Edge that could ever close them.
+func TestDeleteProcess_DropsOpenEpisodesAndTellsCoreNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	pid, _, _, _ := seedProcessWithChildren(t, db, "EPI-DELETED")
+	seedOpenEpisode(t, db, "EPI-DELETED", "SYN-PANEL-B", protocol.ClaimRoleConsume)
+	seedOpenEpisode(t, db, "EPI-DELETED", "SYN-PANEL-B", protocol.ClaimRoleProduce)
+
+	// A bystander: same table, different process. The delete is keyed on the
+	// NAME, so this row is the evidence that the key is doing the work.
+	if _, err := db.CreateProcess("EPI-BYSTANDER", "", "", "", "", false); err != nil {
+		t.Fatalf("create bystander process: %v", err)
+	}
+	seedOpenEpisode(t, db, "EPI-BYSTANDER", "SYN-PANEL-B", protocol.ClaimRoleConsume)
+
+	if n := count(t, db, `SELECT COUNT(*) FROM demand_origins_open`); n != 3 {
+		t.Fatalf("fixture: %d open episodes, want 3", n)
+	}
+
+	if err := db.DeleteProcess(pid); err != nil {
+		t.Fatalf("DeleteProcess: %v", err)
+	}
+
+	if n := count(t, db, `SELECT COUNT(*) FROM demand_origins_open WHERE process_id='EPI-DELETED'`); n != 0 {
+		t.Errorf("open episode rows survived the delete: %d", n)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM demand_origins_open WHERE process_id='EPI-BYSTANDER'`); n != 1 {
+		t.Errorf("another process's episode was taken with it: %d rows left, want 1", n)
+	}
+
+	// THE PIN THAT MATTERS. Deleting a process is silent: no demand.origin
+	// close, no message of any kind. Core's rows for those two episodes stay
+	// open until its own childless pass sweeps them under a reason nobody asked
+	// for, and the Edge rows that could have closed them are already gone.
+	if n := count(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
+		t.Errorf("the delete enqueued %d outbox message(s); today it sends Core nothing", n)
+	}
+}
+
+// A refused delete must close nothing. ErrProcessHasStock is checked before any
+// write, so the episode is still open and the outbox still empty — which is the
+// property any close-on-delete has to preserve: the operator clears the stock
+// and tries again, and the episodes are still there to be closed properly.
+func TestDeleteProcess_RefusedWhileStockedClosesNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	pid, sid, nid, _ := seedProcessWithChildren(t, db, "EPI-STOCKED")
+	key := seedOpenEpisode(t, db, "EPI-STOCKED", "SYN-PANEL-B", protocol.ClaimRoleConsume)
+
+	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, style_id, payload_code, qty)
+		VALUES (?, ?, 'SYN-PANEL-B', 240)`, nid, sid); err != nil {
+		t.Fatalf("insert bucket: %v", err)
+	}
+
+	if err := db.DeleteProcess(pid); !errors.Is(err, processes.ErrProcessHasStock) {
+		t.Fatalf("expected ErrProcessHasStock, got %v", err)
+	}
+
+	if _, err := db.GetOpenDemandOrigin(key); err != nil {
+		t.Errorf("a refused delete closed the episode anyway: %v", err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
+		t.Errorf("a refused delete enqueued %d outbox message(s), want 0", n)
+	}
+}
+
+// Deleting an already-deleted process is not an error and must stay silent: a
+// double-click is not a reason to send Core anything.
+func TestDeleteProcess_MissingSendsNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	if err := db.DeleteProcess(99999); err != nil {
+		t.Fatalf("deleting a missing process: %v", err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
+		t.Errorf("deleting a missing process enqueued %d outbox message(s), want 0", n)
 	}
 }

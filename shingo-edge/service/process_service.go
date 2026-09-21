@@ -58,6 +58,13 @@ var ErrDuplicateGroupName = process_groups.ErrDuplicateGroupName
 // Delete removes a process row by id, retiring the rows that are meaningless
 // without it. Returns ErrProcessHasStock when lineside stock is still booked at
 // the process's nodes — a precondition the operator can clear, not a fault.
+//
+// ITS ONE CALLER IS Engine.DeleteProcess, and a second one would be a bug. This
+// is the delete's LAST step: the engine closes the process's open demand
+// episodes before reaching here, and calling this directly removes those rows
+// without telling Core the episodes ended. The composition cannot live on this
+// service — the close writer is on the engine, and engine imports service, not
+// the other way round.
 func (s *ProcessService) Delete(id int64) error {
 	return s.db.DeleteProcess(id)
 }
