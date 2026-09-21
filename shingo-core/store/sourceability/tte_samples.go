@@ -16,7 +16,7 @@ import (
 const TTERetention = 45 * 24 * time.Hour
 
 // maxSampleParams keeps one INSERT inside Postgres' 65535-parameter ceiling.
-// Nine placeholders per row, chunked well under it — a plant does not come
+// Ten placeholders per row, chunked well under it — a plant does not come
 // close, but the failure if it ever did would be a whole pass's samples lost to
 // a driver error on a path whose whole job is to be unobtrusive.
 const sampleChunkRows = 1000
@@ -61,12 +61,12 @@ func insertTTEChunk(db *sql.DB, samples []TTESample) error {
 	}
 	var (
 		rows = make([]string, 0, len(samples))
-		args = make([]any, 0, len(samples)*9)
+		args = make([]any, 0, len(samples)*10)
 	)
 	for _, s := range samples {
 		n := len(args)
-		rows = append(rows, fmt.Sprintf("(NOW(),$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9))
+		rows = append(rows, fmt.Sprintf("(NOW(),$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10))
 		// A projection that is not Known has NO time-to-empty — nothing staged,
 		// or no consumption in the rate window. It stores as NULL rather than 0:
 		// zero reads as "empty right now", which is the opposite of what an
@@ -78,11 +78,11 @@ func insertTTEChunk(db *sql.DB, samples []TTESample) error {
 		args = append(args,
 			s.ProcessID, s.StyleID, s.Line.NodeName, s.Line.PayloadCode,
 			s.Line.UOPRemaining, s.Line.RatePerSec, tte,
-			string(s.StyleStatus), s.ReorderPoint)
+			string(s.StyleStatus), s.ReorderPoint, s.Line.RateGrain)
 	}
 	_, err := db.Exec(`INSERT INTO tte_samples
 		(computed_at, process_id, style_id, core_node_name, payload_code,
-		 uop_remaining, rate_per_sec, tte_seconds, style_status, reorder_point)
+		 uop_remaining, rate_per_sec, tte_seconds, style_status, reorder_point, rate_grain)
 		VALUES `+strings.Join(rows, ","), args...)
 	if err != nil {
 		return fmt.Errorf("sourceability: insert tte samples: %w", err)

@@ -65,9 +65,17 @@ type LineTTE struct {
 	NodeName     string
 	PayloadCode  string
 	UOPRemaining int
-	// RatePerSec is the payload's consumption velocity (UOP/sec, positive),
-	// derived from the negative bin_uop_delta history over the rate window.
+	// RatePerSec is the velocity the projection used (UOP/sec, positive) —
+	// the node's own rate when RateGrain is "node", the plant-wide payload
+	// rate when it is "payload" (the fallback for a node with no rows in the
+	// window).
 	RatePerSec float64
+	// RateGrain names which grain produced RatePerSec: "node" (per-node rate
+	// from RatePerNode) or "payload" (plant-wide fallback). Empty on a line
+	// with no projection (Known=false), where no rate was consulted. B6's
+	// sample records it so a scored forecast can tell a fresh per-node number
+	// from a stale plant-wide one.
+	RateGrain string
 	// TimeToEmpty = UOPRemaining / RatePerSec. Meaningful only when Known is
 	// true; a line with nothing staged or no consumption history has no
 	// projection.
@@ -147,6 +155,13 @@ type Inputs struct {
 	LineUOP map[string]int
 	// RatePerSec is the consumption velocity per payload (UOP/sec, positive).
 	RatePerSec map[string]float64
+	// RatePerNode is the consumption velocity per (node name, payload)
+	// (UOP/sec, positive), from the same scan as RatePerSec. A cell's line
+	// TTE prefers this grain — its staged bin is one node's stock, burning at
+	// that node's rate — and falls back to RatePerSec when the node has no
+	// rows in the window (first cycle after a changeover). Absent key = no
+	// per-node history, not a zero rate.
+	RatePerNode map[nodePayload]float64
 	// ActiveStyles is the style each process is currently RUNNING, keyed by
 	// process ID — the same map ActiveStyles() returns. It scopes the kept TTE
 	// samples and nothing else: no verdict reads it, because every configured
@@ -228,23 +243,11 @@ func ComputeWithSamples(in Inputs, cfg Config, now time.Time) ([]StyleState, []T
 			continue
 		}
 
-		// THE PROJECTION IS TAKEN HERE, above every exit from this loop, so the
-		// RED return below cannot skip it. Only the running style is sampled:
-		// in.Styles carries every configured style, and sampling all of them
-		// would multiply the rows by the styles-per-process without adding a
-		// line anyone is running dry on.
-		var pending []TTESample
-		if key.StyleID != "" && in.ActiveStyles[key.ProcessID] == key.StyleID {
-			pending = make([]TTESample, 0, len(claims))
-			for _, c := range claims {
-				pending = append(pending, TTESample{
-					ProcessID:    key.ProcessID,
-					StyleID:      key.StyleID,
-					Line:         lineTTE(c, in),
-					ReorderPoint: c.ReorderPoint,
-				})
-			}
-		}
+		// THE PROJECTION IS TAKEN via pendingSamples, above every exit from this
+		// loop, so the RED return below cannot skip it. Only the running style is
+		// sampled (see pendingSamples for why).
+		pending := pendingSamples(key, claims, in)
+
 		// keep stamps the verdict this pass reached onto the style's samples and
 		// moves them to the output. Called at each verdict exit so the status a
 		// sample carries is the one the same pass published.
@@ -360,15 +363,46 @@ func drawOne(avail map[string]int, c plantclaims.ClaimRow) bool {
 	return false
 }
 
+// pendingSamples takes the per-line projection for one style's claims. Only
+// the running style is sampled: in.Styles carries every configured style, and
+// sampling all of them would multiply the rows by the styles-per-process
+// without adding a line anyone is running dry on.
+func pendingSamples(key plantclaims.ProcessKey, claims []plantclaims.ClaimRow, in Inputs) []TTESample {
+	if key.StyleID == "" || in.ActiveStyles[key.ProcessID] != key.StyleID {
+		return nil
+	}
+	pending := make([]TTESample, 0, len(claims))
+	for _, c := range claims {
+		pending = append(pending, TTESample{
+			ProcessID:    key.ProcessID,
+			StyleID:      key.StyleID,
+			Line:         lineTTE(c, in),
+			ReorderPoint: c.ReorderPoint,
+		})
+	}
+	return pending
+}
+
 // lineTTE projects one line's time-to-empty from the bin staged there and the
-// payload's consumption rate. Known is false when nothing is staged, the rate is
-// non-positive (no recent consumption), or the line is empty — none of which is
-// "at risk", they are "no projection".
+// rate at the grain that line actually burns: the NODE's rate when it has
+// rows in the window (its staged bin is one node's stock), else the plant-wide
+// payload rate (first cycle after a changeover; a node whose consumption has
+// only ever run through its lineside bucket until Fix 2 lands). Known is
+// false when nothing is staged, both rates are non-positive, or the line is
+// empty — none of which is "at risk", they are "no projection" — and
+// RateGrain is empty alongside it: no rate, no grain.
 func lineTTE(c plantclaims.ClaimRow, in Inputs) LineTTE {
 	uop, staged := in.LineUOP[c.CoreNodeName]
-	rate := in.RatePerSec[c.PayloadCode]
-	lt := LineTTE{NodeName: c.CoreNodeName, PayloadCode: c.PayloadCode, UOPRemaining: uop, RatePerSec: rate}
+	nodeRate := in.RatePerNode[nodePayload{Node: c.CoreNodeName, Payload: c.PayloadCode}]
+	payloadRate := in.RatePerSec[c.PayloadCode]
+	rate, grain := payloadRate, "payload"
+	if nodeRate > 0 {
+		rate, grain = nodeRate, "node"
+	}
+	lt := LineTTE{NodeName: c.CoreNodeName, PayloadCode: c.PayloadCode, UOPRemaining: uop,
+		RatePerSec: rate, RateGrain: grain}
 	if !staged || uop <= 0 || rate <= 0 {
+		lt.RateGrain = "" // no projection: no rate was consulted, name no grain
 		return lt
 	}
 	lt.TimeToEmpty = time.Duration(float64(uop) / rate * float64(time.Second))

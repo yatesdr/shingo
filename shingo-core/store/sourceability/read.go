@@ -12,9 +12,10 @@ import (
 
 // BuildInputs assembles the plant snapshot Compute consumes: the mirrored styles
 // and claims, the available-bin pool per payload, the current line UOP per node,
-// and the per-payload consumption rate over rateWindow. Every query is a plain
-// READ. rateWindow is the look-back for the consumption rate (only used to fill
-// RatePerSec — the at-risk tier that ships dark).
+// and the consumption rates over rateWindow — plant-wide per payload and
+// per (node, payload), from one scan. Every query is a plain READ. rateWindow
+// is the look-back for the rates (they feed RatePerSec and RatePerNode — the
+// at-risk tier that ships dark).
 func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	styles, claims, err := loadStylesAndClaims(db)
 	if err != nil {
@@ -32,7 +33,7 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	rate, err := consumptionRateByPayload(db, rateWindow)
+	rate, rateByNode, err := consumptionRates(db, rateWindow)
 	if err != nil {
 		return Inputs{}, err
 	}
@@ -44,7 +45,7 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 		return Inputs{}, err
 	}
 	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared,
-		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, ActiveStyles: active}, nil
+		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, RatePerNode: rateByNode, ActiveStyles: active}, nil
 }
 
 // loadStylesAndClaims reads the whole plant.claims mirror: every configured
@@ -259,45 +260,85 @@ func lineUOPByNode(db *sql.DB) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// consumptionRateByPayload derives a per-payload consumption velocity (UOP/sec)
-// from the bin_uop_delta audit history over window. Consumption is a negative
-// delta — here (before_uop - after_uop) > 0, equivalent to summing the negated
-// metadata.delta but reading the first-class columns the (op, applied_at) index
-// already covers. rate = total consumed ÷ window seconds.
+// nodePayload is the per-node rate key: one cell's (node, payload) pair. A
+// struct key rather than a concatenated string so a reader can never parse it
+// back wrong.
+type nodePayload struct {
+	Node    string
+	Payload string
+}
+
+// consumptionRates derives consumption velocity (UOP/sec) at TWO grains in
+// one scan: byPayload (plant-wide, what a loader place's threshold and the
+// loop-wide projections read) and byNode (what one cell's own line TTE
+// reads). Consumption is a negative delta — (before_uop - after_uop) > 0 —
+// read from the first-class columns the (op, applied_at DESC) index covers;
+// the reason column (v119) narrows it to reasons that are consumption:
 //
-// This feeds only the at-risk (yellow) tier, which ships dark until the owner
-// validates the window on real plant data.
-func consumptionRateByPayload(db *sql.DB, window time.Duration) (map[string]float64, error) {
+//   - consume_tick — ordinary consumption at the bin.
+//   - ab_fallthrough — real consumption, but stamped on the INACTIVE node of
+//     an A/B pair: the wire carries no node, node_id comes from the bins row
+//     at apply time, and fallthrough only fires when NO active-pull node
+//     exists (wiring_counter_delta.go: !pairedConsumeHandled). No durable
+//     pair map exists on Core (style_claims excludes pairing by design;
+//     lineside_buckets rows are deleted at qty 0), so "the active node" is
+//     undefined at emit time — it counts in byPayload and is EXCLUDED from
+//     byNode. An under-count on the active node beats a wrong node.
+//   - operator_correction / capture_reduction — NOT consumption (a cycle
+//     count; parts pulled to lineside). Excluded entirely.
+//
+// The op='lineside_drain' arm is kept although no writer emits it yet:
+// Fix 2 (the lineside drain's ledger row) stopped on bin_uop_ledger.bin_id
+// NOT NULL (v17) — see the B7 report. The arm lands the query half ready so
+// the drain row needs no second migration to this query; until then it
+// matches zero rows at zero cost.
+//
+// byNode keys on the node NAME (nodes.name), not node_id: lineTTE looks up
+// by CoreNodeName, the claim's own spelling. A NULL node_id (carrier standing
+// nowhere) folds into byPayload only — the plant-wide sum must not lose it,
+// and there is no node to key it under.
+//
+// This feeds the at-risk tier and B6's tte_samples; byPayload is also the
+// number a loader place's velocity will read when that surface moves over.
+func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]float64, byNode map[nodePayload]float64, err error) {
 	secs := window.Seconds()
 	if secs <= 0 {
-		return map[string]float64{}, nil
+		return map[string]float64{}, map[nodePayload]float64{}, nil
 	}
 	rows, err := db.Query(`
-		SELECT payload_code, COALESCE(SUM(before_uop - after_uop), 0)
-		FROM bin_uop_ledger
-		WHERE op = 'bin_uop_delta'
-		  AND after_uop < before_uop
-		  AND payload_code <> ''
-		  AND applied_at >= NOW() - make_interval(secs => $1)
-		GROUP BY payload_code`, secs)
+		SELECT l.payload_code, COALESCE(n.name, ''), l.reason, COALESCE(SUM(l.before_uop - l.after_uop), 0)
+		FROM bin_uop_ledger l
+		LEFT JOIN nodes n ON n.id = l.node_id
+		WHERE ((l.op = 'bin_uop_delta' AND l.reason IN ('consume_tick','ab_fallthrough'))
+		    OR l.op = 'lineside_drain')
+		  AND l.after_uop < l.before_uop
+		  AND l.payload_code <> ''
+		  AND l.applied_at >= NOW() - make_interval(secs => $1)
+		GROUP BY l.payload_code, n.name, l.reason`, secs)
 	if err != nil {
-		return nil, fmt.Errorf("sourceability: consumption rate: %w", err)
+		return nil, nil, fmt.Errorf("sourceability: consumption rates: %w", err)
 	}
 	defer rows.Close()
-	rate := make(map[string]float64)
+	byPayload = make(map[string]float64)
+	byNode = make(map[nodePayload]float64)
 	for rows.Next() {
 		var (
-			payload  string
-			consumed int64
+			payload, node, reason string
+			consumed              int64
 		)
-		if err := rows.Scan(&payload, &consumed); err != nil {
-			return nil, fmt.Errorf("sourceability: scan rate: %w", err)
+		if err := rows.Scan(&payload, &node, &reason, &consumed); err != nil {
+			return nil, nil, fmt.Errorf("sourceability: scan rates: %w", err)
 		}
-		if consumed > 0 {
-			rate[payload] = float64(consumed) / secs
+		if consumed <= 0 {
+			continue
+		}
+		byPayload[payload] += float64(consumed) / secs
+		// The A/B rule above: fallthrough rows sum plant-wide, never per-node.
+		if node != "" && reason != "ab_fallthrough" {
+			byNode[nodePayload{Node: node, Payload: payload}] += float64(consumed) / secs
 		}
 	}
-	return rate, rows.Err()
+	return byPayload, byNode, rows.Err()
 }
 
 // ActiveStyles returns the style each process is currently running, keyed by
