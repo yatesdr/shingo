@@ -795,12 +795,17 @@ func (s *CoreDataService) unlistedFor(stationID string, asked map[string]bool) [
 }
 
 // HandlePlantClaims mirrors a plant-claims report (Edge → Core) for one
-// process into process_styles/style_claims and rebuilds the dirty index for
-// that process. The message is authoritative for its process: the handler
-// replaces the process's rows wholesale on every message, so a periodic full
-// snapshot rebuilds late joiners (no Kafka compaction). Loaders/unloaders are
-// already excluded by the publisher (manual_swap claims never appear); nothing
-// here filters by swap_mode.
+// process into process_styles/style_claims. The message is authoritative for
+// its process: the handler replaces the process's rows wholesale on every
+// message, so a periodic full snapshot rebuilds late joiners (no Kafka
+// compaction). Loaders/unloaders are already excluded by the publisher
+// (manual_swap claims never appear); nothing here filters by swap_mode.
+//
+// IT REBUILDS NO INDEX, which this comment used to claim it did. The dirty
+// index is DERIVED on demand — plantclaims.DirtyIndex queries style_claims
+// when the recompute asks — so replacing these rows is the whole of the
+// update, and there is no second structure that could fall out of step with
+// them.
 //
 // ConfigGen is a stale-snapshot guard: if the mirror already holds a NEWER
 // config_gen for this process (an out-of-order older snapshot landing after a
@@ -833,6 +838,16 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 				UOPCapacity:         c.UOPCapacity,
 				ReorderPoint:        c.ReorderPoint,
 				Seq:                 i,
+				// The legs, mirrored as sent. An Edge too old to publish them
+				// sends no such keys, the decoder leaves these at "", and the
+				// mirror's empty-string-defaulted columns take that — which is
+				// the correct record of what Core was told, not a gap to
+				// paper over. There is nothing to default to here: a guessed
+				// leg would be Core inventing an arc in the material loop.
+				InboundSource:        c.InboundSource,
+				OutboundDestination:  c.OutboundDestination,
+				PairedCoreNode:       c.PairedCoreNode,
+				SecondPairedCoreNode: c.SecondPairedCoreNode,
 			})
 		}
 	}

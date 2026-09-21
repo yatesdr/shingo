@@ -125,6 +125,14 @@ import (
 // consumption rate reads it through a UNION ALL arm. Inert to a pre-v120
 // binary; rollback is DROP TABLE.
 //
+// v121 ADDS four style_claims columns — the claim's legs, the nodes it draws
+// from, ships to and is paired with. All four are TEXT, NOT NULL with an
+// empty-string default, so a pre-v121 binary's INSERT, which names none of
+// them, still lands; it simply
+// stops recording legs. No backfill is possible and none is wanted: the mirror
+// is replaced wholesale per process on every plant-claims message, so every
+// process repopulates at its next publish.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -136,8 +144,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 120 {
-		t.Errorf("head migration = %d, want 120", got)
+	if got := store.LatestMigrationVersion(); got != 121 {
+		t.Errorf("head migration = %d, want 121", got)
 	}
 }
 

@@ -208,6 +208,23 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 				AllowedPayloadCodes: c.AllowedPayloads(),
 				UOPCapacity:         c.UOPCapacity,
 				ReorderPoint:        c.ReorderPoint,
+				// The legs, copied verbatim off the stored claim — the four
+				// node names that say where this cell's material comes from
+				// and where it goes. Core's loop compiler reads them; nothing
+				// on Edge changes because they are now published.
+				//
+				// VERBATIM IS THE POINT. An unset leg is "", which Core reads
+				// as "not reported" rather than as a node named "", so there
+				// is nothing to normalise here — and normalising would be Edge
+				// deciding what a blank means on Core's behalf.
+				// PairedCoreNode's two-meanings-by-mode overload travels with
+				// it for the same reason: SwapMode is already on the wire
+				// beside it, so Core can read the field the way Edge does
+				// instead of being handed a second vocabulary.
+				InboundSource:        c.InboundSource,
+				OutboundDestination:  c.OutboundDestination,
+				PairedCoreNode:       c.PairedCoreNode,
+				SecondPairedCoreNode: c.SecondPairedCoreNode,
 			})
 		}
 		report.Styles = append(report.Styles, wire)

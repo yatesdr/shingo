@@ -1570,10 +1570,21 @@ type PlantClaimsStyle struct {
 	Active bool `json:"active,omitempty"`
 }
 
-// PlantClaim is one (node, payload) assignment under a style — the
-// sourceability subset of an Edge NodeClaim. Fields mirror ONLY what the
-// computation reads; everything else (staging, pairing, flags, reorder
-// source) stays on Edge and never crosses.
+// PlantClaim is one (node, payload) assignment under a style — an Edge
+// NodeClaim reduced to what Core has to be able to answer without Edge.
+//
+// TWO QUESTIONS, ONE MESSAGE. The first seven fields are the SOURCEABILITY
+// subset: node, role, mode, payload, allowed set, capacity, reorder point —
+// exactly what the netting reads to say whether a style can run. The four LEG
+// fields after them answer a second question, the demand loop's: not "are the
+// parts there" but "where do they come from and where do they go". They ride
+// here because they arrive from the same place and are replaced wholesale with
+// the rest of the claim, NOT because the sourceability verdict reads them. It
+// does not, and Core's recompute projects no leg column.
+//
+// Everything else still stays on Edge and never crosses: staging positions,
+// the per-claim flags, reorder-point provenance, auto-request. A field earns a
+// place here by having a Core reader, and those have none.
 type PlantClaim struct {
 	// CoreNodeName is the node the claim binds (Core's node-name key
 	// space). The netting nets bin/order/reservation state against this.
@@ -1599,6 +1610,45 @@ type PlantClaim struct {
 	// UOP threshold; produce: bin-count floor). Carried so the
 	// computation's fill-priority signal has the configured trigger.
 	ReorderPoint int `json:"reorder_point"`
+
+	// ── THE CLAIM'S LEGS ──────────────────────────────────────────────
+	//
+	// Four node names besides CoreNodeName, and together they are the arcs
+	// of the material loop through this cell. Core's loop compiler reads
+	// them to know that THIS node pulls from THAT pool and returns to the
+	// other one; without them the mirror holds a set of nodes with no
+	// edges between them, which is a list and not a loop.
+	//
+	// ALL FOUR ARE omitempty, AND THAT IS THE FLEET ARGUMENT. This feed is
+	// one message per process on every spec edit plus an hourly full
+	// snapshot per process, published from a Pi. Most claims at most plants
+	// configure no leg at all, and a required field would bill every one of
+	// them on every message for a value they never set. Blank therefore
+	// means NOT REPORTED, which is also exactly what an Edge too old to
+	// know these fields sends — the two are indistinguishable on purpose,
+	// because Core's answer to both is the same: it does not know this
+	// claim's legs and must not invent them.
+
+	// InboundSource is the pool this claim's inbound material is picked up
+	// FROM — a node name or a group name; Core resolves either. Blank means
+	// not reported.
+	InboundSource string `json:"inbound_source,omitempty"`
+	// OutboundDestination is where this claim's outbound material is dropped
+	// off TO — a node name or a group name, the same resolution as
+	// InboundSource. Blank means not reported.
+	OutboundDestination string `json:"outbound_destination,omitempty"`
+	// PairedCoreNode is the claim's partner position, and it carries TWO
+	// meanings depending on SwapMode — the partner side at a sequential
+	// (A/B) cell, the back press at a press-index cell. Mirrored verbatim
+	// rather than disambiguated here: the overload lives on Edge's
+	// NodeClaim (see its field comment and docs/terminology.md), and a
+	// mirror that renamed it per mode would be a second vocabulary for the
+	// same column. Blank means not reported.
+	PairedCoreNode string `json:"paired_core_node,omitempty"`
+	// SecondPairedCoreNode is the optional third (back-most) position of a
+	// press-index cell, where the layout is C -> B -> A. Blank means not
+	// reported, which on a two-position cell is also the configured truth.
+	SecondPairedCoreNode string `json:"second_paired_core_node,omitempty"`
 }
 
 // SourcingStateReport is the Core → Edge sourceability feed (SubjectSourcingState).

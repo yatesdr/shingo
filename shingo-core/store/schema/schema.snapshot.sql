@@ -1287,7 +1287,11 @@ CREATE TABLE public.style_claims (
     allowed_payload_codes text DEFAULT '[]'::text NOT NULL,
     uop_capacity integer DEFAULT 0 NOT NULL,
     reorder_point integer DEFAULT 0 NOT NULL,
-    seq integer DEFAULT 0 NOT NULL
+    seq integer DEFAULT 0 NOT NULL,
+    inbound_source text DEFAULT ''::text NOT NULL,
+    outbound_destination text DEFAULT ''::text NOT NULL,
+    paired_core_node text DEFAULT ''::text NOT NULL,
+    second_paired_core_node text DEFAULT ''::text NOT NULL
 );
 
 CREATE TABLE public.supply_refusals (

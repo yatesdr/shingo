@@ -427,3 +427,134 @@ func TestPlantClaimsPublisher_ChangedMatchesAllForThatProcess(t *testing.T) {
 		t.Errorf("the active style must be flagged on the single-process path: %+v", fromChanged.Styles)
 	}
 }
+
+// ── THE CLAIM'S LEGS, AND WHETHER THEY REACH CORE ─────────────────────────
+//
+// An Edge NodeClaim names four nodes besides its own: where inbound material
+// is picked up from (InboundSource), where outbound is dropped off to
+// (OutboundDestination), and the paired positions of a two-robot cell
+// (PairedCoreNode, SecondPairedCoreNode). Together they are the arcs of the
+// material loop through the cell — the thing a loop compiler on Core has to
+// read to know that this press pulls from that supermarket.
+//
+// They used to stop here. protocol.PlantClaim carried the sourceability subset
+// only, so the four were dropped at the wire and Core's mirror had no column
+// for them — nothing broken, the feed answered the question it was built for,
+// but it is why the loop compiler had nothing to read. They cross now, and this
+// test is what says they arrive with the values the Edge row holds rather than
+// with plausible ones.
+func TestPlantClaimsPublisher_ClaimLegsOnTheWire(t *testing.T) {
+	t.Parallel()
+	db, _ := countingPublisherDB(t)
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+
+	pid, ids := seedClaimsProcess(t, db, "LEGS", 1, 0)
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: ids[0], CoreNodeName: "PLN_002", Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "SYN-PART-A",
+		UOPCapacity: 120, ReorderPoint: 30,
+		// The four legs, all set, which is the heaviest shape a press cell
+		// configures: a three-position index that draws from one synthetic
+		// supermarket and ships to another.
+		InboundSource: "SYN-SMN_001", OutboundDestination: "SYN-SMN_002",
+		PairedCoreNode: "PLN_003", SecondPairedCoreNode: "PLN_004",
+	}); err != nil {
+		t.Fatalf("upsert claim: %v", err)
+	}
+
+	proc, err := processes.Get(db.DB, pid)
+	if err != nil {
+		t.Fatalf("get process: %v", err)
+	}
+	data, err := p.buildProcess(*proc)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	got := decodeReport(t, data)
+	if len(got.Styles) != 1 || len(got.Styles[0].Claims) != 1 {
+		t.Fatalf("report = %+v, want one style with one claim", got.Styles)
+	}
+	claim := got.Styles[0].Claims[0]
+
+	// The Edge row is the authority for what the legs are; read it back so the
+	// assertion below compares the wire against the SPEC rather than against
+	// the literals this test typed.
+	stored, err := processes.ListLiveClaimsByProcess(db.DB, pid)
+	if err != nil {
+		t.Fatalf("read the stored claim back: %v", err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("stored claims = %d, want 1", len(stored))
+	}
+	src := stored[0]
+	if src.InboundSource == "" || src.OutboundDestination == "" ||
+		src.PairedCoreNode == "" || src.SecondPairedCoreNode == "" {
+		t.Fatalf("the Edge row did not keep the legs, so this test proves nothing about the wire: %+v", src)
+	}
+
+	assertPublishedLegs(t, claim, src)
+}
+
+// assertPublishedLegs compares the wire claim against the STORED claim, field
+// by field, rather than against the literals the test typed. The publisher's
+// job is to carry what the spec says; a test that re-typed the expected values
+// would still pass if the publisher started reading the wrong column, as long
+// as both readings happened to be written by the same seed.
+func assertPublishedLegs(t *testing.T, claim protocol.PlantClaim, src processes.NodeClaim) {
+	t.Helper()
+	if claim.CoreNodeName != src.CoreNodeName || claim.PayloadCode != src.PayloadCode ||
+		claim.UOPCapacity != src.UOPCapacity || claim.ReorderPoint != src.ReorderPoint {
+		t.Errorf("wire claim = %+v, want the sourceability subset of %+v", claim, src)
+	}
+	for _, leg := range []struct{ what, got, want string }{
+		{"inbound_source", claim.InboundSource, src.InboundSource},
+		{"outbound_destination", claim.OutboundDestination, src.OutboundDestination},
+		{"paired_core_node", claim.PairedCoreNode, src.PairedCoreNode},
+		{"second_paired_core_node", claim.SecondPairedCoreNode, src.SecondPairedCoreNode},
+	} {
+		if leg.got != leg.want {
+			t.Errorf("wire %s = %q, want the stored claim's %q — the legs are the loop "+
+				"compiler's only source of the arcs between nodes, so a leg that does not "+
+				"cross is an arc Core cannot know about", leg.what, leg.got, leg.want)
+		}
+	}
+}
+
+// A claim with NO legs configured must publish no leg keys at all. This is the
+// fleet's case and the old-Edge case in one: omitempty is what keeps the
+// message the same size it has always been for the claims — most of them, at
+// most plants — that name no source, no destination and no partner.
+func TestPlantClaimsPublisher_ClaimWithNoLegsPublishesNoLegKeys(t *testing.T) {
+	t.Parallel()
+	db, _ := countingPublisherDB(t)
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+
+	pid, _ := seedClaimsProcess(t, db, "NOLEGS", 1, 1)
+	proc, err := processes.Get(db.DB, pid)
+	if err != nil {
+		t.Fatalf("get process: %v", err)
+	}
+	data, err := p.buildProcess(*proc)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	got := decodeReport(t, data)
+	if len(got.Styles) != 1 || len(got.Styles[0].Claims) != 1 {
+		t.Fatalf("report = %+v, want one style with one claim", got.Styles)
+	}
+	encoded, err := json.Marshal(got.Styles[0].Claims[0])
+	if err != nil {
+		t.Fatalf("marshal the wire claim: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatalf("unmarshal the wire claim into a key map: %v", err)
+	}
+	for _, leg := range []string{"inbound_source", "outbound_destination", "paired_core_node", "second_paired_core_node"} {
+		if _, present := keys[leg]; present {
+			t.Errorf("a claim with no legs configured still publishes %q. Every claim at every "+
+				"plant is sent on every spec edit and every hourly snapshot, from a Pi — the "+
+				"unconfigured case has to stay free.", leg)
+		}
+	}
+}

@@ -4254,6 +4254,15 @@ func migrationList() []migration {
 		{120, "lineside_drain_ledger — a lineside drain is consumption at a node from a pile, not a bin event, and it leaves a row of its own",
 			v120LinesideDrainLedger,
 			func(q schema.Querier) bool { return schema.TableExists(q, "lineside_drain_ledger") }},
+
+		{121, "style_claims legs — the four nodes a claim draws from, ships to and is paired with, so the mirror holds edges and not just nodes",
+			v121StyleClaimLegs,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "style_claims", "inbound_source") &&
+					schema.ColumnExists(q, "style_claims", "outbound_destination") &&
+					schema.ColumnExists(q, "style_claims", "paired_core_node") &&
+					schema.ColumnExists(q, "style_claims", "second_paired_core_node")
+			}},
 	}
 }
 
@@ -4493,6 +4502,56 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v120 lineside drain ledger: %w", err)
 		}
+	}
+	return nil
+}
+
+// v121StyleClaimLegs gives the plant-claims mirror the four node names that
+// turn a claim from a point into an edge. It was written as 118 on a branch
+// cut from a 117 head and renumbered to 121 when that branch met the
+// sourceability work, which had already taken 118-120.
+//
+// WHAT THE MIRROR HOLDS TODAY is a set of nodes with payloads attached, which
+// is enough to answer the only question it was built for — can this (process,
+// style) be sourced. It is not enough to answer the demand loop's: a cell draws
+// its inbound material FROM somewhere and returns its outbound TO somewhere,
+// and a two-robot cell is paired with one or two other positions. Those four
+// names exist on Edge's style_node_claims and stopped there, so a loop compiler
+// on Core had nodes and no arcs between them.
+//
+// FOUR TEXT COLUMNS, NOT NULL WITH AN EMPTY-STRING DEFAULT, AND THE DEFAULT IS
+// THE COMPATIBILITY STORY. Blank means the Edge did not report a leg, which is
+// deliberately the same value an Edge too old to publish them leaves behind,
+// because Core's answer to both is identical — it does not know this claim's
+// legs — and a column that distinguished "unset" from "unreported" would be
+// asking Core to act on a difference it can do nothing with. No backfill is possible and none
+// is wanted: the mirror is replaced wholesale per process on every plant-claims
+// message, so every process repopulates at its next publish (a spec edit, or
+// the hourly snapshot at the latest), which is the same path that populates it
+// after any other mirror gap.
+//
+// NOT NULLABLE, unlike the timestamp v117 added beside it. A nullable column is
+// right when absence is a distinct FACT with its own meaning (a finding that
+// has not happened). Here absence and blank are the same statement — no leg
+// configured — and a NULL would only add a second spelling of it for every
+// reader to handle.
+//
+// NO INDEX. Nothing queries by leg: the loop compiler reads whole processes,
+// the same way the sourceability recompute does, and an index on a column no
+// WHERE clause names is maintenance the write path pays for nothing. The next
+// lane adds one if it turns out to need one.
+//
+// INERT TO AN OLDER BINARY. A pre-v121 Core never names these columns in an
+// INSERT, and the defaults let its writes land unchanged — so a plant that
+// rolls the binary back keeps ingesting plant.claims, it simply stops recording
+// legs until it rolls forward again.
+func v121StyleClaimLegs(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE style_claims
+		ADD COLUMN IF NOT EXISTS inbound_source           TEXT NOT NULL DEFAULT '',
+		ADD COLUMN IF NOT EXISTS outbound_destination     TEXT NOT NULL DEFAULT '',
+		ADD COLUMN IF NOT EXISTS paired_core_node         TEXT NOT NULL DEFAULT '',
+		ADD COLUMN IF NOT EXISTS second_paired_core_node  TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v121 style_claims leg columns: %w", err)
 	}
 	return nil
 }

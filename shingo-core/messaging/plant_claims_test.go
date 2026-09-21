@@ -231,13 +231,17 @@ func TestPlantClaimsMirror_MigrationIdempotent(t *testing.T) {
 // --- helpers ---
 
 type claimSpec struct {
-	node    string
-	role    protocol.ClaimRole
-	swap    protocol.SwapMode
-	payload string
-	allowed []string
-	cap     int
-	reorder int
+	node     string
+	role     protocol.ClaimRole
+	swap     protocol.SwapMode
+	payload  string
+	allowed  []string
+	cap      int
+	reorder  int
+	inbound  string
+	outbound string
+	paired   string
+	second   string
 }
 
 type styleSpec struct {
@@ -259,13 +263,17 @@ func plantClaimsReport(process string, configGen int64, styles []styleSpec) *pro
 				swap = protocol.SwapModeSingleRobot
 			}
 			ws.Claims = append(ws.Claims, protocol.PlantClaim{
-				CoreNodeName:        c.node,
-				Role:                role,
-				SwapMode:            swap,
-				PayloadCode:         c.payload,
-				AllowedPayloadCodes: c.allowed,
-				UOPCapacity:         c.cap,
-				ReorderPoint:        c.reorder,
+				CoreNodeName:         c.node,
+				Role:                 role,
+				SwapMode:             swap,
+				PayloadCode:          c.payload,
+				AllowedPayloadCodes:  c.allowed,
+				UOPCapacity:          c.cap,
+				ReorderPoint:         c.reorder,
+				InboundSource:        c.inbound,
+				OutboundDestination:  c.outbound,
+				PairedCoreNode:       c.paired,
+				SecondPairedCoreNode: c.second,
 			})
 		}
 		out.Styles = append(out.Styles, ws)
@@ -290,10 +298,12 @@ func payloadTargets(idx map[string][]plantclaims.ProcessKey, payload string) []s
 // restore the tables without a full re-migrate.
 func reseedMirrorTables(db *sql.DB) error {
 	stmts := []string{
-		// Mirrors the migrated shape, v49 + v51. This helper hand-rolls the DDL
-		// to model a "tables dropped, recreated, feed replayed" cycle, so it has
-		// to track every migration that touches these tables — is_active came
-		// with v51 (the running style from the plant-claims feed).
+		// Mirrors the migrated shape, v49 + v51 + v118. This helper hand-rolls
+		// the DDL to model a "tables dropped, recreated, feed replayed" cycle,
+		// so it has to track every migration that touches these tables —
+		// is_active came with v51 (the running style from the plant-claims
+		// feed), and the four leg columns with v118 (the arcs of the material
+		// loop, which the demand loop compiler reads).
 		`CREATE TABLE IF NOT EXISTS process_styles (
 			process_id   TEXT NOT NULL,
 			style_id     TEXT NOT NULL,
@@ -312,7 +322,11 @@ func reseedMirrorTables(db *sql.DB) error {
 			allowed_payload_codes TEXT NOT NULL DEFAULT '[]',
 			uop_capacity        INTEGER NOT NULL DEFAULT 0,
 			reorder_point       INTEGER NOT NULL DEFAULT 0,
-			seq                 INTEGER NOT NULL DEFAULT 0
+			seq                 INTEGER NOT NULL DEFAULT 0,
+			inbound_source          TEXT NOT NULL DEFAULT '',
+			outbound_destination    TEXT NOT NULL DEFAULT '',
+			paired_core_node        TEXT NOT NULL DEFAULT '',
+			second_paired_core_node TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_style_claims_payload ON style_claims (payload_code)`,
 		`CREATE INDEX IF NOT EXISTS idx_style_claims_process_style ON style_claims (process_id, style_id)`,
@@ -403,5 +417,124 @@ func TestHandlePlantClaims_ActiveStyleFollowsAChangeover(t *testing.T) {
 	}
 	if got := active["SNF4"]; got != "B" {
 		t.Fatalf("running style after changeover = %q, want B", got)
+	}
+}
+
+// ── THE CLAIM'S LEGS IN THE MIRROR ────────────────────────────────────────
+
+// legsOf reads one claim's four leg columns straight out of style_claims.
+// Deliberately a raw query and not a store reader: no store reader projects
+// these columns, and adding one to make this test shorter would be the test
+// inventing the very coupling the sourceability guard exists to prevent.
+func legsOf(t *testing.T, db *sql.DB, process, style, node string) [4]string {
+	t.Helper()
+	var legs [4]string
+	if err := db.QueryRow(
+		`SELECT inbound_source, outbound_destination, paired_core_node, second_paired_core_node
+		   FROM style_claims WHERE process_id = $1 AND style_id = $2 AND core_node_name = $3`,
+		process, style, node,
+	).Scan(&legs[0], &legs[1], &legs[2], &legs[3]); err != nil {
+		t.Fatalf("read legs for %s|%s|%s: %v", process, style, node, err)
+	}
+	return legs
+}
+
+// TestHandlePlantClaims_MirrorsTheClaimLegs pins the lane end to end on Core's
+// side: the four node names a claim reports arrive in style_claims exactly as
+// sent. Without them Core's mirror holds a set of nodes and no edges between
+// them, which is a list and not a loop — the demand loop compiler has nothing
+// to read.
+func TestHandlePlantClaims_MirrorsTheClaimLegs(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
+
+	svc.HandlePlantClaims(nil, plantClaimsReport("SNF7", 1, []styleSpec{
+		{name: "A", claims: []claimSpec{{
+			node: "PLN_002", payload: "BIN-A", allowed: []string{"BIN-A"},
+			inbound: "SMN_SYN_A", outbound: "SMN_SYN_B",
+			paired: "PLN_003", second: "PLN_004",
+		}}},
+	}))
+
+	want := [4]string{"SMN_SYN_A", "SMN_SYN_B", "PLN_003", "PLN_004"}
+	if got := legsOf(t, db.DB, "SNF7", "A", "PLN_002"); got != want {
+		t.Errorf("mirrored legs = %v, want %v", got, want)
+	}
+}
+
+// TestHandlePlantClaims_AnOlderEdgeLandsBlankLegs is the rollout half. Edge
+// deploys before Core, so for a window a NEW Core is fed by an OLD Edge whose
+// report simply has no leg keys — the decoder leaves them "", and the
+// empty-string-defaulted columns take that without an error.
+//
+// Blank is the correct record of what Core was told. It must not become a
+// guess: a leg Core invented would be an arc in the material loop that nobody
+// configured, and the compiler downstream cannot tell an invented arc from a
+// real one.
+func TestHandlePlantClaims_AnOlderEdgeLandsBlankLegs(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
+
+	// No legs on the spec at all — exactly what an Edge too old to publish
+	// them sends, because an absent JSON key and an unset field are the same
+	// thing at the decoder.
+	svc.HandlePlantClaims(nil, plantClaimsReport("SNF8", 1, []styleSpec{
+		{name: "A", claims: []claimSpec{{node: "PLN_002", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
+	}))
+
+	if got := legsOf(t, db.DB, "SNF8", "A", "PLN_002"); got != [4]string{} {
+		t.Errorf("legs from an older Edge = %v, want four blanks", got)
+	}
+	// And the rest of the mirror is untouched by their absence.
+	idx, err := db.PlantClaimsDirtyIndex()
+	if err != nil {
+		t.Fatalf("dirty index: %v", err)
+	}
+	if got := payloadTargets(idx, "BIN-A"); !reflect.DeepEqual(got, []string{"SNF8|A"}) {
+		t.Errorf("dirty index BIN-A = %v, want [SNF8|A] — blank legs must not disturb sourceability", got)
+	}
+}
+
+// TestHandlePlantClaims_LegsDoNotDirtyTheRecompute is the other half of the
+// boundary the source guard in store/plantclaims states: the dirty index is
+// built from payloads, so two reports that differ ONLY in their legs produce
+// the same index. A changeover-position edit changes no payload and no stock,
+// and a sourceability verdict that moved for one would be a false alarm on an
+// operator screen.
+func TestHandlePlantClaims_LegsDoNotDirtyTheRecompute(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
+
+	withLegs := func(gen int64, inbound string) *protocol.PlantClaimsReport {
+		return plantClaimsReport("SNF9", gen, []styleSpec{
+			{name: "A", claims: []claimSpec{{
+				node: "PLN_002", payload: "BIN-A", allowed: []string{"BIN-A"},
+				inbound: inbound, outbound: "SMN_SYN_B", paired: "PLN_003",
+			}}},
+		})
+	}
+
+	svc.HandlePlantClaims(nil, withLegs(1, "SMN_SYN_A"))
+	before, err := db.PlantClaimsDirtyIndex()
+	if err != nil {
+		t.Fatalf("dirty index before: %v", err)
+	}
+
+	svc.HandlePlantClaims(nil, withLegs(2, "SMN_SYN_C"))
+	after, err := db.PlantClaimsDirtyIndex()
+	if err != nil {
+		t.Fatalf("dirty index after: %v", err)
+	}
+
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("moving a leg changed the dirty index:\n before: %v\n after:  %v", before, after)
+	}
+	// The leg itself did move, so the comparison above is about the index and
+	// not about a replace that did nothing.
+	if got := legsOf(t, db.DB, "SNF9", "A", "PLN_002")[0]; got != "SMN_SYN_C" {
+		t.Fatalf("inbound_source after the second report = %q, want SMN_SYN_C", got)
 	}
 }

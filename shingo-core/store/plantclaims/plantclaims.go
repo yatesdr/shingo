@@ -30,20 +30,32 @@ type StyleRow struct {
 	IsActive bool
 }
 
-// ClaimRow is one sourceability-relevant node claim under a (process, style).
+// ClaimRow is one node claim under a (process, style), as mirrored.
 // AllowedPayloadCodes is the effective payload set (mirrors
 // PlantClaim.AllowedPayloadCodes on the wire).
+//
+// The last four are the claim's LEGS — the nodes it draws from, ships to, and
+// is paired with. They are mirrored for the demand loop compiler, which needs
+// the edges between nodes and not just the nodes; the sourceability recompute
+// reads none of them (see DirtyIndex below, and store/sourceability). Blank
+// means the Edge did not report a leg, which is the same value an Edge too old
+// to publish them leaves behind — and Core must read both as "unknown", never
+// as a node whose name is empty.
 type ClaimRow struct {
-	ProcessID           string
-	StyleID             string
-	CoreNodeName        string
-	Role                protocol.ClaimRole
-	SwapMode            protocol.SwapMode
-	PayloadCode         string
-	AllowedPayloadCodes []string
-	UOPCapacity         int
-	ReorderPoint        int
-	Seq                 int
+	ProcessID            string
+	StyleID              string
+	CoreNodeName         string
+	Role                 protocol.ClaimRole
+	SwapMode             protocol.SwapMode
+	PayloadCode          string
+	AllowedPayloadCodes  []string
+	UOPCapacity          int
+	ReorderPoint         int
+	Seq                  int
+	InboundSource        string
+	OutboundDestination  string
+	PairedCoreNode       string
+	SecondPairedCoreNode string
 }
 
 // ReplaceProcess replaces the mirror for one process in a single transaction.
@@ -94,8 +106,8 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 
 	// swap_mode HAS NO CORE READER, AND THE WRITE STILL CANNOT STOP. No SELECT
 	// anywhere in shingo-core reads style_claims.swap_mode back — the mirror's own
-	// readers (PayloadsRequiring below, sourceability, lane_queries, bins,
-	// inventory) all project other columns — so this is a write-only column.
+	// readers (DirtyIndex below, sourceability, lane_queries, bins, inventory)
+	// all project other columns — so this is a write-only column.
 	//
 	// It cannot simply be dropped from the INSERT: the column is
 	// `swap_mode TEXT NOT NULL` with NO DEFAULT (store/migrations.go v49, and the
@@ -107,11 +119,22 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 	// Note the wire already excludes loaders: the Edge publisher skips
 	// IsLoaderNode() claims ("pool, not claims"), so manual_swap never reaches
 	// this column in the first place.
+	//
+	// THE FOUR LEG COLUMNS BELOW ARE THE OPPOSITE CASE, and it is worth saying
+	// so next to a write-only column. They have no reader in shingo-core TODAY
+	// either — the loop compiler that reads them is the next lane — but they
+	// are written because the mirror is REPLACED WHOLESALE on every message:
+	// there is no later pass that could fill them in, so a claim mirrored
+	// without its legs is a claim whose legs are lost until Edge happens to
+	// republish that process. v118 gives them an empty-string default, so unlike
+	// swap_mode they could be dropped from this INSERT later without breaking
+	// ingestion.
 	styleInsert, err := tx.Prepare(
 		`INSERT INTO style_claims
 		 (process_id, style_id, core_node_name, role, swap_mode, payload_code,
-		  allowed_payload_codes, uop_capacity, reorder_point, seq)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`)
+		  allowed_payload_codes, uop_capacity, reorder_point, seq,
+		  inbound_source, outbound_destination, paired_core_node, second_paired_core_node)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`)
 	if err != nil {
 		return fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
 	}
@@ -128,6 +151,7 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 		if _, err := styleInsert.Exec(
 			c.ProcessID, c.StyleID, c.CoreNodeName, string(c.Role), string(c.SwapMode),
 			c.PayloadCode, string(allowed), c.UOPCapacity, c.ReorderPoint, c.Seq,
+			c.InboundSource, c.OutboundDestination, c.PairedCoreNode, c.SecondPairedCoreNode,
 		); err != nil {
 			return fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)
 		}
