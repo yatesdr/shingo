@@ -3,6 +3,67 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-21 — A quiet Edge keeps its thresholds
+
+- Core no longer wipes a silent Edge's `demand_registry`: those rows are Core's own derivation from
+  Core's own loader config, and the wipe closed live demands `threshold_removed` that nobody removed
+- A silent Edge is still detected and still announced — only the config withdrawal is gone
+- The monitor's memory follows the registry: `Resync` unions what the database says about a station
+  with what memory still holds, so a station whose rows were just emptied no longer returns having
+  dropped nothing
+- Retiring a loader closes its episodes `threshold_removed`, not `threshold_changed` — zero is the
+  binding ceasing to exist, not a new denominator
+- The reconciling sweep rebuilds the bindings it closed and logs `STALE BINDING IN MEMORY` with the
+  registry row count, which is the fact the journal never carried
+- That sweep never creates an order and never judges a level: the rebuild and the evaluate are now
+  separate functions, and only the two notification doors call both
+- An Edge order carries its own origin at `Create` — the push never projects a complex order, and
+  the reconcile only sends rows the Edge does not already hold, so an Edge-authored complex order
+  carried no attribution and never could
+- Deleting a process closes the demands it owned, through the existing writer, `claim_removed`
+- A claim's four legs reach Core, so the mirror holds edges and not just nodes (migration 121)
+- One derivation of the level a claim is judged against — a produce cell can ask early instead of
+  asking at the one moment it can no longer use the bin it is holding
+- The three per-node Edge walkers read their rows once: the level sweep 2N+1 to a flat 3, the
+  stranded scan and the counter walk 3N+1 to a flat 4 — the cost that matters on a Pi
+- `idx_payload_catalog_code`, so the catalog lookup those walkers share stops scanning
+
+## 2026-09-21 — The plant's own velocity, at the grain the cell runs at
+
+- Every line's time-to-empty read the plant-wide payload rate; two cells sharing a payload at
+  different velocities got the same projection, so the fast cell's would have read late
+- One scan now folds into two maps: plant-wide for the loop-wide projections, per-node for a cell
+- The per-line time-to-empty is kept on every pass instead of discarded (migration 118) — it had
+  survived only for GREEN/YELLOW styles with the yellow tier enabled, which is neither plant
+- A sample is scored against the demand episode that followed it, so the forecast's error is
+  measurable before a table, a projector and a Pi field are built on it
+- A UOP delta records the node the bin stood at; the grain cannot be recovered afterwards, because
+  joining bins later returns where the bin is now, not where the tick landed
+- The delta's reason is a column, backfilled from the metadata it already lived in (migration 119)
+- A lineside drain leaves a row of its own (migration 120): it is consumption at a node from a pile
+  rather than a bin event, and the bucket row deletes at qty 0, so no history survived there
+
+## 2026-09-21 — One sourcing predicate, and a disabled node is dead to automation
+
+- Thirteen implementations of "may this bin be sourced" disagreed; they are one predicate now, in
+  `store/internal/helpers`, with the four divergences ruled on rather than quietly reconciled
+- Status is an allow-list, once: every hand-spelled reject-list is deleted, because a reject-list
+  answers true for any status it forgot to name and the column carries no CHECK constraint
+- The bin-type rule binds every door, not only the SQL readers — a bin loaded with a part its carrier
+  may not hold counted as stock and could never be fetched, so the plant read as supplied
+- The produce door records a finding instead of refusing: the parts are already in the bin, and
+  refusing a finalize writes down that something which happened did not
+- The finding clears itself in the transaction that makes it false, in both directions
+- A count on `/inventory`, a row per carrier on `/material-flags`, and a second sentence on the RED
+  sourcing reason — "there is no stock" and "the stock is in the wrong carrier" are two actions
+- Disabling a lane cascades to its slots; it was a single-row update, so the lane was off and every
+  place a bin actually stands was not
+- The dig readers compose the shared fragments rather than a near-copy, and stay reservation-blind —
+  a reservation on a buried bin is the reason to dig it, not a reason to leave it
+- An unreadable `node_bin_types` refuses, instead of reading "could not be read" as "no restriction"
+- A payload with no declared carriers is never flagged, counted or named: Springfield declares
+  carriers for one payload of 128, and flagging the other 127 would bury the one case worth walking to
+
 ## 2026-09-15 — A drained bin may go to a smaller robot than a full one
 
 - A payload names a second robot group and a fill threshold; at or below it, the bin dispatches to
