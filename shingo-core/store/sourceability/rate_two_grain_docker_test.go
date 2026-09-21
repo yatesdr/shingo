@@ -91,11 +91,22 @@ func setupRateWorld(t *testing.T, uop1, uop2 int) *rateWorld {
 }
 
 // buildAndCompute runs the monitor's own path: BuildInputs over the 30-minute
-// window, ComputeWithSamples for both the verdict and the recorded samples.
+// window, the running-style read beside it, then ComputeWithSamples for both
+// the verdict and the recorded samples.
+//
+// THE ACTIVESTYLES READ IS SEPARATE because it is separate in production. B8
+// moved it out of BuildInputs, which both recompute paths call, so that the 300
+// ms debounce stops paying for a map only the full pass consumes — see
+// read.go's note where the read used to be. Anything that wants SAMPLES must
+// now supply the running style itself, exactly as recomputeAll does; without
+// it pendingSamples correctly returns nothing, because it will not guess at
+// which style a process is running.
 func buildAndCompute(t *testing.T, w *rateWorld) ([]sourceability.StyleState, []sourceability.TTESample) {
 	t.Helper()
 	in, err := sourceability.BuildInputs(w.db, 30*time.Minute)
 	testutil.MustNoErr(t, err, "build inputs")
+	in.ActiveStyles, err = sourceability.ActiveStyles(w.db)
+	testutil.MustNoErr(t, err, "active styles")
 	return sourceability.ComputeWithSamples(in, sourceability.Config{}, time.Now())
 }
 

@@ -216,6 +216,84 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 	m.emitSourcingUpdated(len(changed))
 }
 
+// loaderSamples builds one projection per monitored loader binding: the
+// payload's whole in-loop total against the rate the plant burns it at.
+//
+// ON THE FULL PASS ONLY, like the cell samples beside it, and for the same
+// reason — the debounced path reacts to a bin moving and must not carry a read
+// that exists for history.
+//
+// BINDINGS COME FROM THE DATABASE, never from ThresholdMonitor's
+// thresholdsByPayload. That map is the monitor's own working memory, guarded by
+// its own mutex and reconciled on its own schedule; a second reader would make
+// this pass's samples depend on where that reconciliation happened to be, and
+// would put a lock the threshold path holds on the sourceability path's
+// critical section. demand_registry is the record both derive from.
+//
+// THE TOTAL IS THE LEDGER'S, not the R1 edge-adjusted one. SystemUOPForPayload
+// sums bins plus lineside buckets — what Core believes is in the loop — and the
+// R1 adjustment reconciles that against what the Edge reports. The gap between
+// the two is part of what a scored forecast is meant to expose, so the sample
+// records the number the threshold decision itself is made against and lets the
+// score show the difference rather than hiding it inside the numerator.
+//
+// ONE CALL WITH EVERY PAYLOAD, not one per payload: SystemUOPForPayload is two
+// statements whatever the list length (one bins sum, one buckets sum), so the
+// whole set costs two and a per-payload loop would cost twice the bindings.
+//
+// BEST-EFFORT. A failed read logs and returns nothing: the verdict publish and
+// the cell samples are not this function's to lose.
+func (m *SourceabilityMonitor) loaderSamples(in sourceability.Inputs) []sourceability.TTESample {
+	bindings, err := m.eng.db.ListDemandThresholds()
+	if err != nil {
+		m.eng.logFn("sourceability: loader samples: list monitored bindings: %v — none this pass", err)
+		return nil
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(bindings))
+	payloads := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		// An empty payload code is not a payload. SystemUOPForPayload rejects
+		// the whole request if one reaches it, which would cost every binding's
+		// sample for one malformed row.
+		if b.PayloadCode == "" {
+			continue
+		}
+		if _, dup := seen[b.PayloadCode]; dup {
+			continue
+		}
+		seen[b.PayloadCode] = struct{}{}
+		payloads = append(payloads, b.PayloadCode)
+	}
+	if len(payloads) == 0 {
+		return nil
+	}
+
+	totals, err := m.eng.InventoryService().SystemUOPForPayload(context.Background(), payloads)
+	if err != nil {
+		m.eng.logFn("sourceability: loader samples: system UOP: %v — none this pass", err)
+		return nil
+	}
+	total := make(map[string]int, len(totals.Counts))
+	for _, c := range totals.Counts {
+		total[c.PayloadCode] = c.TotalUOP
+	}
+
+	out := make([]sourceability.TTESample, 0, len(bindings))
+	for _, b := range bindings {
+		if b.PayloadCode == "" {
+			continue
+		}
+		out = append(out, sourceability.LoaderSample(
+			b.CoreNodeName, b.PayloadCode, total[b.PayloadCode],
+			in.RatePerSec[b.PayloadCode], b.ReplenishUOPThreshold))
+	}
+	return out
+}
+
 // verdictChange is one persisted verdict movement, collected under the
 // monitor's lock and written outside it — a DB round trip must not hold a
 // mutex that the SSE broadcast and every read path also take.
@@ -269,7 +347,32 @@ func (m *SourceabilityMonitor) recomputeAll() {
 		m.eng.logFn("sourceability: full recompute build inputs: %v", err)
 		return
 	}
+
+	// THE RUNNING STYLE IS READ HERE, not in BuildInputs, because only this path
+	// uses it — it scopes the kept cell samples and no verdict consults it. Read
+	// on the debounced path it was a query per bin movement for an answer that
+	// path discards, and a read error there failed the verdict itself. A failure
+	// here costs the cell samples for one pass and nothing else.
+	active, err := sourceability.ActiveStyles(m.eng.db.DB)
+	if err != nil {
+		m.eng.logFn("sourceability: full recompute active styles: %v — no cell samples this pass", err)
+	}
+	in.ActiveStyles = active
+
 	states, samples := sourceability.ComputeWithSamples(in, m.cfg, time.Now())
+
+	// A LOADER PLACE GETS A SAMPLE TOO. Measured at Springfield 2026-09-21: 22
+	// monitored bindings, NONE at a node any style claim names for that payload,
+	// against a history of 2,931 threshold episodes to 937 cell ones. So the
+	// score's threshold arm had nothing to join and three quarters of the
+	// plant's demand was unscoreable for the whole collection window — not
+	// because the forecast was wrong but because no forecast was ever recorded
+	// about the places the demand came from.
+	//
+	// A sample that is not taken cannot be recovered. A scorer can be fixed
+	// later against kept rows, so this takes the sample and leaves the scoring
+	// arithmetic alone.
+	samples = append(samples, m.loaderSamples(in)...)
 
 	// KEEP THE PROJECTION THIS PASS ALREADY MADE. lineTTE has run on every full
 	// pass since the monitor was written and the number has been discarded every

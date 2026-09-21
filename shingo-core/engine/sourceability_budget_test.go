@@ -44,33 +44,35 @@ type recomputeBudget struct {
 
 // The pinned costs, measured on this fixture.
 //
-// BOTH FULL-PASS SHAPES ARE PINNED. With no running style no cell sample is
-// taken and RecordTTESamples is never reached, which isolates read cost from
-// write cost; with one, the write is on the pass, and that is what a plant
-// actually runs. Reading a change's cost off the wrong one of those two
-// overstates it by the three statements of a write that was always there.
+// THE FIXTURE HAS NO ACTIVE STYLE, so no CELL sample is taken. Before B8 that
+// meant RecordTTESamples was never reached and the full pass cost 8; it is
+// reached now because the LOADER samples are non-empty, which is why the write's
+// three statements appear as part of B8's delta rather than as a constant.
 //
 // recomputeKeys is the one that matters. It fires on bin movement, so it is
 // paid at whatever rate the plant moves bins, and every statement on it is on
-// the path that tells an Edge what it can source. The seventh BuildInputs read
-// is ActiveStyles, whose answer only the full pass's samples consume.
+// the path that tells an Edge what it can source. B8 took it from 7 to 6 by
+// moving ActiveStyles to the pass that actually reads it.
 var (
 	budgetRecomputeAll = recomputeBudget{
-		path: "recomputeAll", want: 8,
-		formula: "BuildInputs 7 (styles, claims, pool, on-line, line-UOP, rates, active-styles) " +
-			"+ 1 verdict-history write, this being the first observation of the style. No sample " +
-			"write: with no running style there is no cell sample, so RecordTTESamples is not reached",
+		path: "recomputeAll", want: 14,
+		formula: "BuildInputs 6 + ActiveStyles 1 (read here now, not in BuildInputs) " +
+			"+ ListDemandThresholds 1 + SystemUOPForPayload 2 (bins sum, buckets sum — two " +
+			"whatever the payload count) + samples INSERT 1 + prunes 2 (samples, drain ledger) " +
+			"+ 1 verdict-history write, this being the first observation of the style",
 	}
 	budgetRecomputeAllRunning = recomputeBudget{
-		path: "recomputeAll (running style)", want: 11,
-		formula: "the no-running-style pass (8) plus the cell sample write: INSERT 1 + prunes 2 " +
-			"(samples, drain ledger). THIS is the shape a plant runs, because a plant is always " +
-			"running a style",
+		path: "recomputeAll (running style)", want: 14,
+		formula: "IDENTICAL to the pass with no running style: the cell samples join the " +
+			"loader samples in the SAME multi-row INSERT, so they are more rows and not one " +
+			"more statement. At base this shape cost 11 (the 8 plus the INSERT and two prunes " +
+			"that a no-running-style pass never reached), so B8's production cost is +3: " +
+			"ListDemandThresholds 1 + SystemUOPForPayload 2, and no extra write",
 	}
 	budgetRecomputeKeys = recomputeBudget{
-		path: "recomputeKeys", want: 7,
-		formula: "BuildInputs 7, and nothing else — the debounced path writes nothing in steady " +
-			"state. One of the seven is ActiveStyles, which only the full pass's samples read",
+		path: "recomputeKeys", want: 6,
+		formula: "BuildInputs 6 — styles, claims, pool, on-line, line-UOP, rates — and nothing " +
+			"else. It was 7 before B8: ActiveStyles rode along for a map this path discards",
 	}
 )
 

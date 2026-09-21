@@ -17,6 +17,7 @@ import (
 	"sort"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/store/plantclaims"
 )
 
@@ -191,6 +192,62 @@ type TTESample struct {
 	Line         LineTTE
 	StyleStatus  Status
 	ReorderPoint int
+	// Kind names which kind of demand episode this sample is meant to be scored
+	// against, in demand_origins' own vocabulary. A cell sample is keyed on its
+	// process; a threshold sample on its node. ScoreTTE's two arms filter on it
+	// so a cell row that happens to share a node and payload with a monitored
+	// binding cannot be scored as that binding's forecast — they are projections
+	// about different stock, one line's staged bin against a payload's whole
+	// in-loop total, and averaging them would read as one number about neither.
+	Kind string
+}
+
+// The sample kinds, aliased to the episode vocabulary rather than respelled.
+// A sample exists to be joined to a demand_origins row of the same kind, so the
+// two must not be free to drift; binding them here makes a rename a compile
+// error instead of a silently empty join.
+const (
+	SampleKindCell      = protocol.EpisodeKindCell
+	SampleKindThreshold = protocol.EpisodeKindThreshold
+)
+
+// LoaderSample is the projection for one monitored loader binding: the payload's
+// whole in-loop total against the rate the plant burns it at.
+//
+// PURE, so the arithmetic is fixture-tested without a database — the same split
+// this package already keeps between Compute and read.go. The caller supplies
+// the two reads (the binding list and the system total); nothing here touches a
+// connection.
+//
+// IT IS A DIFFERENT PROJECTION FROM A CELL'S, deliberately. lineTTE asks "how
+// long until the bin standing at this line is empty" and divides one node's
+// stock by that node's rate. A loader binding has no staged bin and no node
+// rate: what it is monitoring is the payload's plant-wide in-loop total against
+// the threshold the loader replenishes at, so the total is the numerator and
+// the plant-wide payload rate is the denominator. RateGrain is "payload"
+// always, for that reason, and never "node".
+//
+// KNOWN IS FALSE ON THE SAME TWO CONDITIONS lineTTE uses — no stock, or no rate
+// — and for the same reason: neither is "about to run dry", both are "no
+// projection", and a zero would read as "empty right now", which is the
+// opposite. One scorer fix later therefore covers a loader row and a cell row
+// together, which is the point of giving them the same shape.
+func LoaderSample(nodeName, payloadCode string, totalUOP int, ratePerSec float64, reorderPoint int) TTESample {
+	lt := LineTTE{
+		NodeName: nodeName, PayloadCode: payloadCode,
+		UOPRemaining: totalUOP, RatePerSec: ratePerSec, RateGrain: "payload",
+	}
+	if totalUOP <= 0 || ratePerSec <= 0 {
+		lt.RateGrain = "" // no projection: no rate was consulted, name no grain
+	} else {
+		lt.TimeToEmpty = time.Duration(float64(totalUOP) / ratePerSec * float64(time.Second))
+		lt.Known = true
+	}
+	// ProcessID, StyleID and StyleStatus stay empty: a binding belongs to a
+	// loader, not to a process running a style, and there is no verdict about
+	// it to stamp. Writing a process here would make the cell arm's join find
+	// a row that is not a cell's.
+	return TTESample{Line: lt, ReorderPoint: reorderPoint, Kind: SampleKindThreshold}
 }
 
 // Compute nets the available pool against every style's claims and returns a
@@ -378,6 +435,7 @@ func pendingSamples(key plantclaims.ProcessKey, claims []plantclaims.ClaimRow, i
 			StyleID:      key.StyleID,
 			Line:         lineTTE(c, in),
 			ReorderPoint: c.ReorderPoint,
+			Kind:         SampleKindCell,
 		})
 	}
 	return pending

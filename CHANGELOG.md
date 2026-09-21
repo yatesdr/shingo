@@ -37,6 +37,9 @@ belongs in the commit message or in `docs/` — this file is the index.
   survived only for GREEN/YELLOW styles with the yellow tier enabled, which is neither plant
 - A sample is scored against the demand episode that followed it, so the forecast's error is
   measurable before a table, a projector and a Pi field are built on it
+- A monitored loader place is sampled too (migration 122, `kind`), and each arm of the score reads
+  only its own kind — Springfield's 22 bindings sat at nodes no claim named, so the arm that grades
+  three quarters of its demand had nothing to join and never would have
 - A UOP delta records the node the bin stood at; the grain cannot be recovered afterwards, because
   joining bins later returns where the bin is now, not where the tick landed
 - The delta's reason is a column, backfilled from the metadata it already lived in (migration 119)

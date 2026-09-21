@@ -61,12 +61,12 @@ func insertTTEChunk(db *sql.DB, samples []TTESample) error {
 	}
 	var (
 		rows = make([]string, 0, len(samples))
-		args = make([]any, 0, len(samples)*10)
+		args = make([]any, 0, len(samples)*11)
 	)
 	for _, s := range samples {
 		n := len(args)
-		rows = append(rows, fmt.Sprintf("(NOW(),$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10))
+		rows = append(rows, fmt.Sprintf("(NOW(),$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10, n+11))
 		// A projection that is not Known has NO time-to-empty — nothing staged,
 		// or no consumption in the rate window. It stores as NULL rather than 0:
 		// zero reads as "empty right now", which is the opposite of what an
@@ -75,14 +75,23 @@ func insertTTEChunk(db *sql.DB, samples []TTESample) error {
 		if s.Line.Known {
 			tte = s.Line.TimeToEmpty.Seconds()
 		}
+		// An unset Kind writes as a cell sample, which is also the column's
+		// default — the two agree so a row cannot mean one thing to the writer
+		// and another to the reader. It is spelled here rather than left to the
+		// default because the INSERT names the column, and a named column with
+		// an empty value takes the empty value, not the default.
+		kind := s.Kind
+		if kind == "" {
+			kind = SampleKindCell
+		}
 		args = append(args,
 			s.ProcessID, s.StyleID, s.Line.NodeName, s.Line.PayloadCode,
 			s.Line.UOPRemaining, s.Line.RatePerSec, tte,
-			string(s.StyleStatus), s.ReorderPoint, s.Line.RateGrain)
+			string(s.StyleStatus), s.ReorderPoint, s.Line.RateGrain, kind)
 	}
 	_, err := db.Exec(`INSERT INTO tte_samples
 		(computed_at, process_id, style_id, core_node_name, payload_code,
-		 uop_remaining, rate_per_sec, tte_seconds, style_status, reorder_point, rate_grain)
+		 uop_remaining, rate_per_sec, tte_seconds, style_status, reorder_point, rate_grain, kind)
 		VALUES `+strings.Join(rows, ","), args...)
 	if err != nil {
 		return fmt.Errorf("sourceability: insert tte samples: %w", err)

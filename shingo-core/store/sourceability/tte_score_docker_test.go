@@ -18,13 +18,17 @@ import (
 
 var scoreBase = time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 
-func insertSample(t *testing.T, db *store.DB, at time.Time, process, node, payload string, tte any) {
+// insertSample writes one kept projection. KIND IS AN ARGUMENT, not a default,
+// because it is the thing each arm now selects on (v122): a row's kind decides
+// which arm can see it, so a fixture that left it implicit would be asserting
+// against a value the test never states.
+func insertSample(t *testing.T, db *store.DB, at time.Time, kind, process, node, payload string, tte any) {
 	t.Helper()
 	_, err := db.DB.Exec(`INSERT INTO tte_samples
-		(computed_at, process_id, style_id, core_node_name, payload_code,
+		(computed_at, kind, process_id, style_id, core_node_name, payload_code,
 		 uop_remaining, rate_per_sec, tte_seconds, style_status, reorder_point)
-		VALUES ($1,$2,'A',$3,$4,100,1.0,$5,'green',0)`,
-		at, process, node, payload, tte)
+		VALUES ($1,$2,$3,'A',$4,$5,100,1.0,$6,'green',0)`,
+		at, kind, process, node, payload, tte)
 	if err != nil {
 		t.Fatalf("insert sample: %v", err)
 	}
@@ -61,14 +65,14 @@ func TestScoreTTE_HitLateHitEarlyAndBlind(t *testing.T) {
 	// LATE: at 11:00 the line was projected to run dry in 3600s (12:00). It
 	// actually opened a demand at 11:50 — the forecast still had 600s on the
 	// clock, so the error is +600.
-	insertSample(t, db, scoreBase.Add(-60*time.Minute), "PRESS-1", "NODE-LATE", "BIN-A", 3600.0)
+	insertSample(t, db, scoreBase.Add(-60*time.Minute), "threshold", "PRESS-1", "NODE-LATE", "BIN-A", 3600.0)
 	insertEpisode(t, db, "11111111-1111-1111-1111-111111111111",
 		"thr|NODE-LATE|BIN-A", "threshold", "PRESS-1", "NODE-LATE", "BIN-A",
 		scoreBase.Add(-10*time.Minute), "autoreorder")
 
 	// EARLY: at 11:00 projected dry in 600s (11:10), but the demand did not
 	// open until 11:40 — called dry 1800s early.
-	insertSample(t, db, scoreBase.Add(-60*time.Minute), "PRESS-2", "", "BIN-B", 600.0)
+	insertSample(t, db, scoreBase.Add(-60*time.Minute), "cell", "PRESS-2", "", "BIN-B", 600.0)
 	insertEpisode(t, db, "22222222-2222-2222-2222-222222222222",
 		"cell|PRESS-2|BIN-B|consume", "cell", "PRESS-2", "", "BIN-B",
 		scoreBase.Add(-20*time.Minute), "operator")
@@ -127,8 +131,8 @@ func TestScoreTTE_HitLateHitEarlyAndBlind(t *testing.T) {
 func TestScoreTTE_IgnoresSamplesAfterTheEpisodeOpened(t *testing.T) {
 	db := testdb.Open(t)
 
-	insertSample(t, db, scoreBase.Add(-30*time.Minute), "P", "NODE-X", "BIN-A", 1800.0)  // before: the one to use
-	insertSample(t, db, scoreBase.Add(+30*time.Minute), "P", "NODE-X", "BIN-A", 99999.0) // after: must be ignored
+	insertSample(t, db, scoreBase.Add(-30*time.Minute), "threshold", "P", "NODE-X", "BIN-A", 1800.0)  // before: the one to use
+	insertSample(t, db, scoreBase.Add(+30*time.Minute), "threshold", "P", "NODE-X", "BIN-A", 99999.0) // after: must be ignored
 	insertEpisode(t, db, "44444444-4444-4444-4444-444444444444",
 		"thr|NODE-X|BIN-A", "threshold", "P", "NODE-X", "BIN-A", scoreBase, "autoreorder")
 
@@ -148,8 +152,8 @@ func TestScoreTTE_IgnoresSamplesAfterTheEpisodeOpened(t *testing.T) {
 func TestScoreTTE_TakesTheLastSampleBefore(t *testing.T) {
 	db := testdb.Open(t)
 
-	insertSample(t, db, scoreBase.Add(-60*time.Minute), "P", "NODE-Y", "BIN-A", 60.0)
-	insertSample(t, db, scoreBase.Add(-10*time.Minute), "P", "NODE-Y", "BIN-A", 600.0) // the last one
+	insertSample(t, db, scoreBase.Add(-60*time.Minute), "threshold", "P", "NODE-Y", "BIN-A", 60.0)
+	insertSample(t, db, scoreBase.Add(-10*time.Minute), "threshold", "P", "NODE-Y", "BIN-A", 600.0) // the last one
 	insertEpisode(t, db, "55555555-5555-5555-5555-555555555555",
 		"thr|NODE-Y|BIN-A", "threshold", "P", "NODE-Y", "BIN-A", scoreBase, "autoreorder")
 
@@ -170,7 +174,7 @@ func TestScoreTTE_TakesTheLastSampleBefore(t *testing.T) {
 func TestScoreTTE_NullProjectionIsNotAForecast(t *testing.T) {
 	db := testdb.Open(t)
 
-	insertSample(t, db, scoreBase.Add(-10*time.Minute), "P", "NODE-Z", "BIN-A", nil)
+	insertSample(t, db, scoreBase.Add(-10*time.Minute), "threshold", "P", "NODE-Z", "BIN-A", nil)
 	insertEpisode(t, db, "66666666-6666-6666-6666-666666666666",
 		"thr|NODE-Z|BIN-A", "threshold", "P", "NODE-Z", "BIN-A", scoreBase, "autoreorder")
 
@@ -288,8 +292,8 @@ func TestRecordTTESamples_PrunesPastRetention(t *testing.T) {
 	db := testdb.Open(t)
 
 	// Written directly with explicit ages; RecordTTESamples stamps NOW().
-	insertSample(t, db, time.Now().Add(-100*24*time.Hour), "P", "NODE-OLD", "BIN-A", 10.0)
-	insertSample(t, db, time.Now().Add(-1*24*time.Hour), "P", "NODE-NEW", "BIN-A", 10.0)
+	insertSample(t, db, time.Now().Add(-100*24*time.Hour), "threshold", "P", "NODE-OLD", "BIN-A", 10.0)
+	insertSample(t, db, time.Now().Add(-1*24*time.Hour), "threshold", "P", "NODE-NEW", "BIN-A", 10.0)
 
 	if err := sourceability.RecordTTESamples(db.DB, nil, sourceability.TTERetention); err != nil {
 		t.Fatalf("RecordTTESamples: %v", err)

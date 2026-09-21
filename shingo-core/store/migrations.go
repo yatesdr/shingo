@@ -4263,6 +4263,10 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "style_claims", "paired_core_node") &&
 					schema.ColumnExists(q, "style_claims", "second_paired_core_node")
 			}},
+
+		{122, "tte_samples.kind — which kind of demand episode a sample is to be scored against, so a cell's line projection is never read as a loader's",
+			v122TTESampleKind,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "tte_samples", "kind") }},
 	}
 }
 
@@ -4502,6 +4506,50 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v120 lineside drain ledger: %w", err)
 		}
+	}
+	return nil
+}
+
+// v122TTESampleKind says which kind of demand episode a kept projection is
+// meant to be scored against.
+//
+// WHY A SAMPLE NEEDS TO SAY THIS AT ALL. ScoreTTE has two arms, because the two
+// episode kinds identify different places: a threshold episode names a Core
+// node, a cell episode names a process. Until now every sample was a cell's, so
+// the arms could be told apart by their join keys alone. B8 writes a second
+// kind of row — one per monitored loader binding, keyed on the binding's node —
+// and the moment both exist, a cell sample standing at the same node as a
+// binding, carrying the same payload, satisfies the threshold arm's join.
+//
+// IT WOULD BE THE WRONG NUMBER, not merely an extra one. A cell's projection
+// divides ONE node's staged bin by that node's rate; a loader's divides the
+// payload's whole in-loop total by the plant-wide rate. They answer different
+// questions about different stock, and a score that mixed them would read as
+// one figure about neither — which is exactly the failure the score exists to
+// detect, arriving as data rather than as a bug.
+//
+// TEXT NOT NULL DEFAULT 'cell', AND THE DEFAULT IS THE BACKFILL. Every row
+// written before this migration is a cell sample by construction: the only
+// writer was pendingSamples, which is scoped to a running style's claims. So
+// the default states a fact about the existing rows rather than guessing at
+// one, and no UPDATE is needed to make it true.
+//
+// NO INDEX. The two arms already reach tte_samples through
+// idx_tte_samples_place_time and its process sibling, and kind is a filter
+// applied to rows those indexes have already narrowed to one place and payload
+// — a handful per pass. An index on a column with two values, added to a table
+// written once every two minutes, would be maintenance the write path pays for
+// a scan it does not do.
+//
+// INERT TO AN OLDER BINARY. A pre-v122 Core never names the column in its
+// INSERT and the default fills it, so a plant that rolls back keeps writing
+// samples; they are all cell rows, which is what a pre-v122 binary only ever
+// wrote anyway. ROLLBACK is DROP COLUMN, and it costs the ability to tell the
+// two kinds apart, not any row.
+func v122TTESampleKind(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE tte_samples ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'cell'`); err != nil {
+		return fmt.Errorf("v122 tte_samples.kind: %w", err)
 	}
 	return nil
 }

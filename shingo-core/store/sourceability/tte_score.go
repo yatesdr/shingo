@@ -87,6 +87,7 @@ func ScoreTTE(db *sql.DB, since time.Time) ([]TTEScore, error) {
 			SELECT t.computed_at, t.tte_seconds, t.style_status
 			FROM tte_samples t
 			WHERE %s
+			  AND t.kind = '%s'
 			  AND t.payload_code = o.payload_code
 			  AND t.computed_at < o.opened_at
 			  AND t.tte_seconds IS NOT NULL
@@ -95,9 +96,16 @@ func ScoreTTE(db *sql.DB, since time.Time) ([]TTEScore, error) {
 		) s ON TRUE
 		WHERE o.opened_at >= $1 AND o.kind = '%s'`
 
-	q := fmt.Sprintf(arm, "t.core_node_name = o.core_node_name", "threshold") +
+	// EACH ARM TAKES ONLY ITS OWN KIND OF SAMPLE (v122). Both kinds of row now
+	// exist, and a CELL sample standing at the same node as a monitored binding,
+	// carrying the same payload, satisfies the threshold arm's join key. Its
+	// number would be the wrong one: a cell's projection divides one node's
+	// staged bin by that node's rate, a loader's divides the payload's whole
+	// in-loop total by the plant-wide rate. Filtering on kind keeps each arm
+	// scoring the forecast that was actually made about its place.
+	q := fmt.Sprintf(arm, "t.core_node_name = o.core_node_name", SampleKindThreshold, SampleKindThreshold) +
 		"\nUNION ALL\n" +
-		fmt.Sprintf(arm, "t.process_id = o.process_id", "cell") +
+		fmt.Sprintf(arm, "t.process_id = o.process_id", SampleKindCell, SampleKindCell) +
 		"\nORDER BY opened_at"
 
 	rows, err := db.Query(q, since)

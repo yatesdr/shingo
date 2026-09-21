@@ -37,16 +37,20 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	// The running style per process. It scopes the kept TTE samples only — no
-	// verdict reads it — so a plant whose mirror carries no active flag computes
-	// exactly the verdicts it did before and simply records no samples.
-	active, err := ActiveStyles(db)
-	if err != nil {
-		return Inputs{}, err
-	}
 	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared,
-		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, RatePerNode: rateByNode, ActiveStyles: active}, nil
+		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, RatePerNode: rateByNode}, nil
 }
+
+// ACTIVESTYLES IS NOT READ HERE, and that is the correction. B6 put it in this
+// function, which both recompute paths call — so the 300 ms debounce, fired by
+// bin movement, paid a query per fire for a map only the two-minute pass's
+// samples consume, and an unreadable process_styles began failing the DEBOUNCED
+// VERDICT: a new way for the path that tells an Edge what it can source to
+// return nothing, introduced for a sample it does not take. B6's report
+// recorded "zero on the 300 ms debounce"; it was one query and one failure
+// mode. The full pass reads it for itself now, and a failure there costs the
+// samples rather than the verdict. The two budgets are pinned in
+// engine/sourceability_budget_test.go.
 
 // loadStylesAndClaims reads the whole plant.claims mirror: every configured
 // (process, style) plus its sourceability claims. Styles with no claims still
