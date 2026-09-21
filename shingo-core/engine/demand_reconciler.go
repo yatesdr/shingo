@@ -13,13 +13,37 @@ import (
 //
 // DON'T RELY SOLELY ON BEING TOLD — ALSO BE ABLE TO NOTICE. Every site that
 // closes a demand episode today is a NOTIFICATION path: something happens, so
-// something fires. That works right up until nothing fires, and on Core there
-// is a site where nothing ever will. SyncRegistry replaces a station's whole
-// demand_registry in one transaction and reports only the rows whose threshold
-// VALUE moved, so a binding that vanishes and comes back unchanged emits no
-// RegistryChange at all; and three of its call sites throw the change list away
-// regardless, including the stale-edge reaper, which deletes every binding a
-// station has. You cannot add a hook to a thing that does not happen.
+// something fires. That works right up until nothing fires. SyncRegistry
+// replaces a station's whole demand_registry in one transaction and reports only
+// the rows whose threshold VALUE moved, so a binding that vanishes and comes
+// back unchanged emits no RegistryChange at all; two of its three call sites
+// throw the change list away regardless, and only one of those tells the monitor
+// by another route; and a row deleted by hand in Postgres announces itself to
+// nobody. You cannot add a hook to a thing that does not happen.
+//
+// THE STALE-EDGE REAPER USED TO BE THE HEADLINE EXAMPLE HERE AND NO LONGER
+// EXISTS. It emptied a silent station's demand_registry, this sweep read the
+// missing rows as a withdrawn config and closed the station's open demands, and
+// the close cleared belowThresholdSince, which re-armed the falling edge for the
+// next delta: mint, close, re-arm, 1293 rows for one station over two days at
+// Springfield. The wipe is gone — an Edge going quiet says nothing about config
+// Core derives for itself — so this sweep no longer has that fabricated absence
+// to react to. The lesson is worth keeping in the file: a reconciler underneath
+// a notification path that lies can make a defect LOUDER rather than safer, and
+// the answer is to stop the lie, not to remove the floor.
+//
+// THAT USED TO READ "an argument for fixing the notification path, not for
+// removing the floor", AND IT IS ONLY HALF THE ARGUMENT. Fixing named doors is
+// only available for doors that can be named. Springfield 2026-08-19 ran this
+// same oscillator with the reaper eliminated — `marked stale` is 0 across the
+// burst window and across a 48h control — and after six eliminations nothing is
+// known to have emptied demand_registry; the onset is a whole-station absence
+// appearing between two sweeps, not a per-binding edit. Deleting the reaper
+// therefore removes one writer that could fabricate an absence and does not
+// remove the class. So the floor stopped doing half a reconciliation:
+// reconcileThresholdBindings now rebuilds the monitor's memory for the payloads
+// whose episodes it closed (dropAbsentBindingsFromMemory), which is what makes
+// it a floor under an UNNAMED writer rather than only under a known-broken hook.
 //
 // So this sweep closes any open episode whose PRECONDITION no longer holds,
 // regardless of how it stopped holding. The notification sites keep their job
@@ -266,11 +290,11 @@ func classifyEdgeContact(lastSeen *time.Time, now time.Time, horizon time.Durati
 // edgeSilenceHorizon is how long a station may be quiet before Core stops
 // treating the absence of its orders as evidence about anything.
 //
-// It is the SAME number the stale-edge reaper uses, read from the same config
+// It is the SAME number the stale-edge pass uses, read from the same config
 // key, because it answers the same question. Two knobs would open a window in
-// which the reaper has already given up on a station and deleted its demand
-// bindings while this sweep is still closing that station's episodes on the
-// strength of its silence.
+// which one of them has already declared a station gone while the other is
+// still treating its silence as ordinary, and the two would then disagree about
+// the same station in the same minute with nothing saying which was right.
 func (e *Engine) edgeSilenceHorizon() time.Duration {
 	if e.cfg == nil || e.cfg.Messaging.StaleEdgeThreshold <= 0 {
 		return messaging.DefaultStaleEdgeThreshold

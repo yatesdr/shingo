@@ -148,13 +148,20 @@ func mustGetOrigin(t *testing.T, db *store.DB, originID string) *store.DemandOri
 // THE SWEEP'S ENTIRE REASON TO EXIST, and the test is built to be able to fail.
 //
 // SyncRegistry replaces a station's whole demand_registry in one transaction
-// and emits a RegistryChange only when a threshold VALUE moved. Three of its
-// call sites discard the change list outright, and the worst of them is the
-// stale-edge reaper, which calls SyncDemandRegistry(station, nil) — every
-// binding at that station deleted, `_` on the changes, nothing fired, nothing
-// logged. That is reproduced here EXACTLY: the notification path is not broken
-// with a flag or a stub, it simply is not invoked, because in production it is
-// not invoked either. You cannot wire up an absence.
+// and emits a RegistryChange only when a threshold VALUE moved. Two of its
+// three call sites discard the change list outright, and a row deleted by hand in
+// Postgres emits nothing at all. What is reproduced here is the general shape: the
+// registry loses a binding and no notification path is invoked — not broken with
+// a flag or a stub, simply never called. You cannot wire up an absence.
+//
+// THIS USED TO BE THE STALE-EDGE REAPER SPECIFICALLY, and that reaper no longer
+// exists: a silent Edge is not evidence that Core's own loader derivation
+// changed, so the stale pass leaves demand_registry alone (see
+// engine/demand_stale_station_test.go, which pins that it does). The
+// SyncDemandRegistry(station, nil) below is still the right STIMULUS — it is the
+// cheapest way to make a binding vanish with nothing firing — but it now stands
+// for the general shape rather than for a production path that empties a station
+// on a timer.
 //
 // Without the sweep this episode stays open forever: the monitor's rising edge
 // only runs for bindings that still exist, engagePayloads only rebuilds
@@ -175,10 +182,10 @@ func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
 	}
 	originID := open[0].OriginID
 
-	// The stale-edge reaper, verbatim: core_handler.go's
-	// `if _, err := h.db.SyncDemandRegistry(sid, nil); err != nil`.
+	// The binding vanishes with nothing firing — the shape a hand-edited row or
+	// a call site that discards its change list leaves behind.
 	if _, err := db.SyncDemandRegistry(b.stationID, nil); err != nil {
-		t.Fatalf("reap registry: %v", err)
+		t.Fatalf("empty the station's registry: %v", err)
 	}
 	// And prove the premise rather than assuming it — if some path HAD closed
 	// the episode here, the assertions below would be measuring that path.

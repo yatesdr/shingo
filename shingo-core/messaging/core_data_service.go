@@ -45,8 +45,12 @@ type ThresholdMonitor interface {
 	OnThresholdChanges(changes []demands.RegistryChange)
 	OnBinUOPDelta(payloadCode string, delta int)
 	OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
-	// Resync re-engages a station's demand_registry bindings on (re)connect, so a
-	// threshold seeded after the startup sweep fires without a Core restart.
+	// Resync makes the monitor's in-memory bindings for one station agree with
+	// demand_registry — engaging what was added, dropping what was deleted. It
+	// is called on (re)connect, right after the station's registry has been
+	// re-derived from the loader aggregate, so a threshold seeded or edited
+	// while the station was away engages without a Core restart and a binding
+	// retired while it was away stops minting against config that is gone.
 	Resync(stationID string)
 	// OnLinesideReports is the R1 report-arrival trigger for the payloads in a
 	// just-arrived Edge report. R1 is LIVE: in edge_reports mode a fresh report is

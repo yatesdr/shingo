@@ -481,7 +481,9 @@ type MessagingConfig struct {
 	StationID           string        `yaml:"station_id"`
 	SigningKey          string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
 	// StaleEdgeThreshold is how long an edge can go without a heartbeat
-	// before core marks it stale and reaps its demand_registry rows.
+	// before core marks it stale and announces it. It is also the horizon
+	// the demand reconciler reads to decide whether a station's silence is
+	// evidence about anything — one number for one question.
 	// Zero falls back to the 15 minute default. Tune down for faster
 	// reaction to edge failures at the cost of more false positives on
 	// flaky links; tune up if edges routinely pause longer than 15 min.

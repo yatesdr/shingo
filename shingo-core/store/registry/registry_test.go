@@ -602,8 +602,8 @@ func TestCoverage_MarkStaleEdges(t *testing.T) {
 //
 // A station that has been enrolled and not yet stood up carries status
 // 'enrolled' and a NULL heartbeat. Sweeping it would mark stale a station that
-// has correctly never claimed to be up — and since the stale sweep also reaps
-// that station's demand_registry rows, "stale" is not a cosmetic label.
+// has correctly never claimed to be up — and a station reported down is one
+// somebody is asked to go and look at, so "stale" is not a cosmetic label.
 func TestCoverage_MarkStaleEdges_EnrolledButNeverStartedIsNotStale(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

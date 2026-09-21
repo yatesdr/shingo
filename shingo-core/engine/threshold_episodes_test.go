@@ -249,9 +249,10 @@ func TestThresholdEpisode_ThresholdChangeClosesAndReopens(t *testing.T) {
 	}
 }
 
-// A BINDING DELETED UNDERNEATH A LIVE DEMAND. Before the grain, engagePayloads
-// rebuilt a payload's bindings and simply dropped whatever was there, so the
-// episode stranded permanently with nothing saying it had ended.
+// A BINDING DELETED UNDERNEATH A LIVE DEMAND. Before the grain, the rebuild
+// (rebuildPayloadBindings today) replaced a payload's bindings and simply
+// dropped whatever was there, so the episode stranded permanently with nothing
+// saying it had ended.
 //
 // The partial-removal case is the one that matters and the one the obvious
 // implementation misses: this payload keeps a binding at another station, so

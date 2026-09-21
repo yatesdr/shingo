@@ -29,10 +29,9 @@ type CoreHandler struct {
 	DebugLog      func(string, ...any)
 
 	// StaleEdgeThreshold controls how long an edge can skip heartbeats
-	// before the stale-detection loop marks it stale and reaps its
-	// demand_registry rows. Composition root sets this after
-	// construction from MessagingConfig; zero falls back to
-	// DefaultStaleEdgeThreshold.
+	// before the stale-detection loop marks it stale and announces it.
+	// Composition root sets this after construction from MessagingConfig;
+	// zero falls back to DefaultStaleEdgeThreshold.
 	StaleEdgeThreshold time.Duration
 
 	// Background goroutine for stale edge detection
@@ -43,16 +42,16 @@ type CoreHandler struct {
 // DefaultStaleEdgeThreshold is the fallback used when the caller leaves
 // StaleEdgeThreshold unset. 15 minutes matches the operations guidance
 // in docs/bin-loader-unloader-architecture.md — long enough to ride out
-// flaky links, short enough to bound how long stale demand signals
-// target a dead edge after a hard crash.
+// flaky links, short enough that a hard crash is reported while somebody
+// can still act on it.
 //
 // EXPORTED BECAUSE IT IS NOW ANSWERING TWO QUESTIONS, and they must not be
 // allowed to drift apart. The demand reconciler asks the same thing this loop
 // asks — "has this station been quiet long enough that we should stop believing
 // anything about it?" — and it asks it of the heartbeat timestamp directly
 // rather than of the flag this loop sets. Two numbers for one question would
-// mean a window in which the reaper has given up on a station while the sweep
-// is still closing episodes on the strength of its silence.
+// mean a window in which this loop has already declared a station gone while
+// the sweep is still deciding what its silence licenses.
 const DefaultStaleEdgeThreshold = 15 * time.Minute
 
 // NewCoreHandler creates a handler for the order-channel inbound
@@ -187,39 +186,70 @@ func (h *CoreHandler) HandleOrderIngest(env *protocol.Envelope, p *protocol.Orde
 func (h *CoreHandler) staleEdgeLoop() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-	threshold := h.StaleEdgeThreshold
-	if threshold <= 0 {
-		threshold = DefaultStaleEdgeThreshold
-	}
 	for {
 		select {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
-			staleIDs, err := h.db.MarkStaleEdges(threshold)
-			if err != nil {
-				log.Printf("core_handler: mark stale edges: %v", err)
-				continue
-			}
-			if len(staleIDs) > 0 {
-				h.dbg("stale edge check: %d stale", len(staleIDs))
-			}
-			for _, sid := range staleIDs {
-				log.Printf("core_handler: edge %s marked stale, sending notification", sid)
-				h.sendStaleNotification(sid)
-				// Reap demand_registry rows for the stale station so
-				// the threshold monitor stops evaluating bindings
-				// for an edge that isn't listening. The station's
-				// entries repopulate from the loader aggregate when
-				// the edge re-registers, same path as cold boot.
-				// (The comment used to say "route demand signals" —
-				// that route was deleted with the kanban
-				// demand-signal path, 2026-08.)
-				if _, err := h.db.SyncDemandRegistry(sid, nil); err != nil {
-					log.Printf("core_handler: reap demand registry for %s: %v", sid, err)
-				}
-			}
+			h.SweepStaleEdges()
 		}
+	}
+}
+
+// SweepStaleEdges is ONE PASS of stale-edge detection: mark every active edge
+// that has missed its heartbeat window, and tell each one that it was marked.
+//
+// SPLIT FROM THE LOOP SO A TEST CAN DRIVE IT, rather than waiting out a
+// sixty-second ticker — the same shape Engine.reconcileDemandEpisodes already
+// has in this repo, and for the same reason.
+//
+// It is EXPORTED because the tests that matter most for this pass are not in
+// this package. What a stale station does to a demand episode is an engine
+// question — episodes, bindings and the reconciling sweep all live there — and
+// the only alternative is an engine test that reimplements this body, which is
+// a copy that by construction cannot notice this body changing. That copy
+// existed for a while — an engine helper documented as "the stale-edge reaper's
+// database half, verbatim" — and it is exactly how a registry wipe nobody
+// wanted sat under a green suite.
+//
+// ── DETECTING IS THE WHOLE JOB. CORE HOLDS WHAT IT HAD ──────────────────────
+//
+// This pass used to also empty the station's demand_registry, on the reasoning
+// that demand signals should stop being routed to a dead station. That
+// reasoning was true when it was written and stopped being true on 2026-08-19,
+// when the kanban demand-signal path it protected was deleted: the produce leg
+// was 100% discarded on arrival and the consume leg had no rows at either
+// plant, so nothing has read the registry to route anything since.
+//
+// What the wipe still did was destroy Core's own record. demand_registry is
+// DERIVED BY CORE FROM CORE'S OWN LOADER AGGREGATE — the Edge pushes no claim
+// config over the wire — so an Edge going quiet is not evidence that any of it
+// changed. Deleting it on the strength of that silence manufactures a config
+// withdrawal nobody performed: the monitor's next reconciling pass sees a
+// binding that no longer exists and closes the open demand `threshold_removed`,
+// while the orders that demand created are still driving robots at the loader.
+// A demand ends when a person retires the loader or the level recovers, and a
+// flapping link is neither.
+//
+// So Core keeps the rows and reconciles when the Edge comes back. If the
+// aggregate changed while the station was down, the re-derive on register is
+// what notices; if it did not, nothing happened and nothing is written.
+func (h *CoreHandler) SweepStaleEdges() {
+	threshold := h.StaleEdgeThreshold
+	if threshold <= 0 {
+		threshold = DefaultStaleEdgeThreshold
+	}
+	staleIDs, err := h.db.MarkStaleEdges(threshold)
+	if err != nil {
+		log.Printf("core_handler: mark stale edges: %v", err)
+		return
+	}
+	if len(staleIDs) > 0 {
+		h.dbg("stale edge check: %d stale", len(staleIDs))
+	}
+	for _, sid := range staleIDs {
+		log.Printf("core_handler: edge %s marked stale, sending notification", sid)
+		h.sendStaleNotification(sid)
 	}
 }
 

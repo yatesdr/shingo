@@ -60,6 +60,25 @@ func (s *logSink) countContaining(sub string) int {
 	return n
 }
 
+// linesContaining is countContaining for a caller that has to READ the line and
+// not just count it.
+//
+// A log line written as a PROVER — one whose whole job is to answer a question
+// the rest of the journal could not — has load-bearing fields, and "a line was
+// printed" does not check them. The threshold sweep's stale-binding line is one
+// of those; see threshold_sweep_rebuild_test.go.
+func (s *logSink) linesContaining(sub string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, l := range s.lines {
+		if strings.Contains(l, sub) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // newLoggingEngine is newUnstartedEngine with the log captured instead of
 // forwarded to t.Logf.
 func newLoggingEngine(t *testing.T, db *store.DB, sink *logSink) *Engine {

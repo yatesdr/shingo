@@ -390,6 +390,11 @@ func main() {
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
 	coreHandler.DebugLog = dbg.Func("core_handler")
 	coreHandler.StaleEdgeThreshold = cfg.Messaging.StaleEdgeThreshold
+	// No threshold-monitor wire here, and that is deliberate: the stale-edge
+	// pass detects and announces, and it changes no demand config, so there is
+	// nothing for the monitor to hear from it. The monitor's wire to the
+	// messaging layer is coreDataService's below, which carries the re-derive
+	// that happens when an Edge actually registers.
 	coreHandler.Start()
 	defer coreHandler.Stop()
 

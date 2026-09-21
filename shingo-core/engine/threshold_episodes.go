@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/google/uuid"
 
 	"shingo/protocol"
@@ -28,14 +31,24 @@ import (
 // nothing and the read cost must be nothing.
 
 // openEpisodeRef is what the monitor remembers about an open episode: the id to
-// stamp on its signals, and the payload it belongs to.
+// stamp on its signals, and the station and payload it belongs to.
 //
-// The payload is carried rather than parsed back out of the bindingKey. The key
-// is station|node|payload and the payload is its last field, so a suffix match
-// would work today — and would break the first time a payload code contains the
-// separator, silently, by failing to close an episode nobody is watching.
+// Both are carried rather than parsed back out of the bindingKey. The key is
+// station|node|payload, so a prefix match would find the station and a suffix
+// match the payload — today. Either would break the first time the field it
+// matches contains the separator, silently, by failing to close an episode
+// nobody is watching.
+//
+// THE STATION IS HERE FOR Resync. It has to answer "which
+// payloads does this station still hold in memory?", and an episode can outlive
+// its entry in thresholdsByPayload — rehydrateThresholdEpisodes fills
+// openOrigins at boot, before the startup sweep builds the binding cache, and
+// closeThresholdEpisodeRef clears an episode without touching the cache.
+// Reading both maps is what makes the answer complete, and reading openOrigins
+// needs a station on the ref.
 type openEpisodeRef struct {
 	originID    string
+	stationID   string
 	payloadCode string
 }
 
@@ -93,7 +106,7 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 
 	m.mu.Lock()
 	m.belowThresholdSince[key] = origin.OpenedAt
-	m.openOrigins[key] = openEpisodeRef{originID: origin.OriginID, payloadCode: b.payloadCode}
+	m.openOrigins[key] = openEpisodeRef{originID: origin.OriginID, stationID: b.stationID, payloadCode: b.payloadCode}
 	m.mu.Unlock()
 
 	m.eng.logFn("threshold_monitor: DEMAND OPENED origin=%s station=%s loader=%s payload=%s total=%d threshold=%d expected_orders=%s",
@@ -173,10 +186,10 @@ func (m *ThresholdMonitor) closeThresholdEpisodeRef(key string, ref openEpisodeR
 // when the sweep landed. The reason is a shared vocabulary, not a private one:
 // anything that notices a declaration vanish says threshold_removed.)
 //
-// engagePayloads rebuilds a payload's bindings from demand_registry and, before
-// the grain existed, simply dropped whatever was there — so a binding deleted
-// underneath an open demand stranded that demand permanently, with nothing
-// anywhere saying it had ended.
+// rebuildPayloadBindings rebuilds a payload's bindings from demand_registry and,
+// before the grain existed, simply dropped whatever was there — so a binding
+// deleted underneath an open demand stranded that demand permanently, with
+// nothing anywhere saying it had ended. This is its only caller.
 //
 // SCOPED BY LIVE-KEY SET, NOT BY "the payload has no bindings left" — see
 // staleEpisodeKeys, which now owns that comparison for every caller.
@@ -215,14 +228,22 @@ func (m *ThresholdMonitor) closeThresholdEpisodesForPayloadNotIn(payload string,
 // The set difference itself lives in staleEpisodeKeys, shared with the
 // maintainer's config-withdrawn pass — see there for the scoping lesson it
 // carries.
-func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]openEpisodeRef, live map[string]bool, closedBy string) int {
+//
+// IT RETURNS THE KEYS IT ACTUALLY CLOSED, not a count, because closing the
+// episode is only half of what an absent binding needs doing about it — the
+// sweep has to go on and rebuild the monitor's memory for the payloads those
+// keys belong to, and it cannot do that from a number. Keys where the UPDATE
+// moved no row are left out on purpose: another path had already closed that
+// episode, so this pass did not discover anything and has nothing to announce.
+// Order is staleEpisodeKeys' order, which is sorted.
+func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]openEpisodeRef, live map[string]bool, closedBy string) []string {
 	if m.eng == nil || m.eng.db == nil {
-		return 0
+		return nil
 	}
-	closed := 0
+	var closed []string
 	for _, key := range staleEpisodeKeys(candidates, live) {
 		if m.closeThresholdEpisodeRef(key, candidates[key], protocol.CloseReasonThresholdRemoved, closedBy) {
-			closed++
+			closed = append(closed, key)
 		}
 	}
 	return closed
@@ -244,15 +265,37 @@ func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]ope
 // firing, and there are live sites where exactly that happens. SyncRegistry
 // DELETEs and re-INSERTs a station's whole registry, and only emits a
 // RegistryChange when a threshold VALUE moved — so a binding that vanishes and
-// returns unchanged inside one transaction emits nothing at all. Worse, three
-// call sites discard the change list entirely, and one of them is the
-// stale-edge reaper (core_handler.go, `SyncDemandRegistry(sid, nil)`), which
-// deletes every binding a station has. You cannot wire up an absence; you can
-// only notice it afterwards.
+// returns unchanged inside one transaction emits nothing at all. Two of its
+// three call sites discard the change list outright; one of those tells the
+// monitor by another route (Resync, on Edge register), and the other is seeddev,
+// a separate process with no running monitor to tell. A row deleted by hand in
+// Postgres announces itself to nobody at all. You cannot wire up an absence; you
+// can only notice it afterwards.
+//
+// THE STALE-EDGE REAPER USED TO BE THE WORST OF THOSE SITES AND NO LONGER
+// EXISTS. core_handler.go used to delete every binding a silent station had, and
+// what this pass then noticed was not an absence but a fabrication: nobody
+// withdrew that config, so every close it wrote was false, and the close cleared
+// belowThresholdSince and re-armed the mint. That is not a sweep catching an
+// absence, it is a sweep supplying the other half of an oscillator — Springfield,
+// 1293 rows for one station over two days. The floor is only as good as the
+// facts under it, which is why the wipe went rather than this pass.
 //
 // IT READS THE DATABASE, NOT openOrigins. The monitor's map is a cache of what
 // the monitor thinks is open, and the failure this sweep exists to catch
 // includes the cases where that belief is the thing that went wrong.
+//
+// AND IT FINISHES THE RECONCILIATION IT STARTS — see
+// dropAbsentBindingsFromMemory. Closing the episode and leaving the binding in
+// thresholdsByPayload is one half of a reconciliation: the close clears
+// belowThresholdSince, so the next delta mints the same demand again and the
+// next pass closes it again. Springfield 2026-08-19 is that shape with no
+// reaper anywhere in it — 411 opens, 411 distinct origins, 405 closes, every
+// binding still matching the registry on station, node, payload and threshold —
+// and after six eliminations the writer that emptied demand_registry is still
+// unnamed. An entry point nobody can name cannot be fixed at its door, so it is
+// fixed here: whatever put the binding in memory, the floor takes it out again
+// on the same pass that closes its episode.
 func (m *ThresholdMonitor) reconcileThresholdBindings() int {
 	if m.eng == nil || m.eng.db == nil {
 		return 0
@@ -267,6 +310,14 @@ func (m *ThresholdMonitor) reconcileThresholdBindings() int {
 		return 0
 	}
 	live := make(map[string]bool, len(entries))
+	// HOW MANY ROWS THE REGISTRY HOLDS PER PAYLOAD, counted off the SAME read
+	// the live set is built from, so the number reported cannot disagree with
+	// the comparison it explains. It costs one map and no query: the pass
+	// already has every monitored row in hand and already walks them. It counts
+	// MONITORED rows only, because it is incremented under the same opt-out
+	// filter below that the live set is — see dropAbsentBindingsFromMemory for
+	// what that means to a reader of the line.
+	registryRows := make(map[string]int, len(entries))
 	for _, e := range entries {
 		// A threshold of 0 is the documented OPT-OUT — Core never signals for
 		// such a pair, bin-count is Edge's — so for episode purposes the place
@@ -284,6 +335,7 @@ func (m *ThresholdMonitor) reconcileThresholdBindings() int {
 			continue
 		}
 		live[bindingKey(e.StationID, e.CoreNodeName, e.PayloadCode)] = true
+		registryRows[e.PayloadCode]++
 	}
 
 	open, err := m.eng.db.ListOpenThresholdEpisodes()
@@ -292,16 +344,144 @@ func (m *ThresholdMonitor) reconcileThresholdBindings() int {
 		return 0
 	}
 	candidates := make(map[string]openEpisodeRef, len(open))
+	// The display form of each binding, built here rather than parsed back out
+	// of the key later. bindingKey is station|node|payload, so splitting it is
+	// correct right up until one of the three fields contains the separator, and
+	// the failure would be a log line naming the wrong loader in the middle of an
+	// incident. openEpisodeRef carries the station for the same reason and
+	// deliberately does not carry the node; this is where the node is still in
+	// hand.
+	labels := make(map[string]string, len(open))
 	for _, o := range open {
-		candidates[bindingKey(o.StationID, o.CoreNodeName, o.PayloadCode)] = openEpisodeRef{
-			originID: o.OriginID, payloadCode: o.PayloadCode,
+		key := bindingKey(o.StationID, o.CoreNodeName, o.PayloadCode)
+		candidates[key] = openEpisodeRef{
+			originID: o.OriginID, stationID: o.StationID, payloadCode: o.PayloadCode,
 		}
+		labels[key] = o.StationID + "/" + o.CoreNodeName
 	}
-	return m.closeThresholdEpisodesNotIn(candidates, live, protocol.ClosedBySweep)
+	closed := m.closeThresholdEpisodesNotIn(candidates, live, protocol.ClosedBySweep)
+	m.dropAbsentBindingsFromMemory(closed, candidates, labels, registryRows)
+	return len(closed)
 }
 
-// closeThresholdEpisodesForChangedBindings ends the episodes whose DENOMINATOR
-// moved.
+// dropAbsentBindingsFromMemory is the other half of the sweep's reconciliation:
+// having closed the episodes of bindings the database does not have, it takes
+// those bindings OUT OF THE MONITOR'S MEMORY, by rebuilding the affected
+// payloads from the database.
+//
+// WHY THE CLOSE ALONE IS NOT A FIX. reconcileThresholdBindings treats
+// demand_registry as the truth about which bindings exist — that is the whole
+// premise — and then leaves thresholdsByPayload holding a binding that truth
+// says is gone. closeThresholdEpisodeRef clears belowThresholdSince on its way
+// out, which re-arms the falling edge, so the next delta for that payload mints
+// the same demand again and the next pass closes it again. One withdrawn config
+// renders as a stream of instantaneous demands, which is the exact failure the
+// episode grain was built to end.
+//
+// IT IS THE REBUILD THE NOTIFICATION DOORS ALREADY DO, not a second one:
+// rebuildPayloadBindings, shared with engagePayloads. Two implementations of
+// "make memory agree with demand_registry for this payload" would answer
+// differently the first time one of them learned something the other did not,
+// and the scoping lesson in staleEpisodeKeys is exactly the kind of thing that
+// gets learned once. That function also carries the part that is easy to get
+// wrong: LookupDemandThresholdsByPayload is PLANT-WIDE, so a payload bound at
+// two stations that loses one of them keeps the other's binding, and the
+// comparison is by key rather than by "does this payload have bindings left".
+//
+// THE REBUILD HALF ONLY, AND THAT IS THE WHOLE OF WHAT THIS PASS MAY DO. It
+// used to call engagePayloads, which rebuilds AND THEN EVALUATES — reads the
+// authoritative in-loop total and creates replenishment orders for every
+// binding below threshold. The rebuild is plant-wide, so the bindings that
+// evaluation reached were mostly healthy ones at other loaders that this pass
+// had never been asked about; and when the read fails it deliberately falls
+// through to a total of 0, which is below every threshold there is. A
+// sixty-second timer that answers one Postgres blip by ordering material for
+// every payload it happened to touch is not a floor under anything. A
+// reconciling sweep keeps the record straight: it never creates an order and it
+// never evaluates a level. Surviving bindings are evaluated by the next delta,
+// as they always were — which is the same rule reconcileThresholdBindings
+// already states about the close, for the same reason. The half that stays
+// behind is evaluateRebuiltBindings.
+//
+// AFTER THE CLOSES, NEVER BEFORE, and the order is load-bearing twice. The
+// sweep's closes are attributed `by=sweep`, which is what makes the notification
+// paths' share measurable; the rebuild's own comparison says `by=notification`
+// and would take that attribution away if it got there first. And by the time it
+// runs, closeThresholdEpisodeRef has already dropped each closed key from
+// openOrigins, so the candidate set the rebuild builds cannot contain a row
+// this pass just closed — no episode is closed twice. The one thing it CAN find
+// is a different origin under the same key, minted by a delta that raced between
+// this pass's ListOpenThresholdEpisodes and its close; closing that one is
+// correct, because its binding is absent too.
+//
+// ONLY ON AN ACTUAL CLOSE. A pass that found nothing stale does no lookup and
+// prints nothing, so a plant whose notification paths all work pays nothing for
+// the floor — and the line below stays a finding rather than a heartbeat.
+//
+// WHAT THE LINE SAYS, AND WHY THE REASONING IS HERE RATHER THAN IN IT. The line
+// is four fields and one clause; this comment is the explanation, and that split
+// is deliberate on both counts. Springfield's Core journal is 3.5 GB and an
+// unbounded scan of it takes about forty minutes, and this line fires once per
+// affected payload per sweep for as long as the mismatch lasts — the 2026-08-19
+// burst ran over nineteen hours. A paragraph per pass is a meaningful
+// contribution to the file the next diagnosis has to grep. It also has to be
+// skimmable beside its neighbours, which are all of the DEMAND OPENED /
+// NEGATIVE COUNT shape: key=value fields a reader's eye can run down.
+//
+// registry_rows IS THE FACT THE 2026-08-19 JOURNAL DID NOT HAVE. The burst
+// showed 411 opens, 411 distinct origins and 405 closes for bindings whose
+// station, node, payload and threshold matched demand_registry exactly, and
+// nothing recorded whether the ROWS were there at the moment the comparison
+// decided they were not. So the count is carried: 0 means this payload's
+// bindings are gone plant-wide, and a non-zero count means it is still bound at
+// another loader and only the listed bindings went. Those are different plants
+// and they want different investigations.
+//
+// It counts MONITORED rows — replenish_uop_threshold > 0 — because it is
+// incremented under the same opt-out filter the live set is built under. A row
+// whose threshold is 0 is the documented opt-out, not watched by anything, so
+// counting it would make a payload nobody monitors read as still bound. The
+// consequence for a reader is that a bare `SELECT count(*) FROM demand_registry`
+// can legitimately return a larger number.
+//
+// absent_bindings IS A LIST, NOT A SCALAR station FIELD, because the several-
+// bindings case is the one that happened: the onset of the 2026-08-19 burst was
+// a whole-station absence that closed two long-open episodes on two different
+// nodes in the same instant. A field whose meaning depends on how many there are
+// is the ambiguity that made that journal unreadable in the first place. Sorted,
+// for the same reason staleEpisodeKeys sorts — two journals of one incident have
+// to diff.
+func (m *ThresholdMonitor) dropAbsentBindingsFromMemory(closed []string, candidates map[string]openEpisodeRef, labels map[string]string, registryRows map[string]int) {
+	if len(closed) == 0 || m.eng == nil || m.eng.db == nil {
+		return
+	}
+	absent := make(map[string][]string, len(closed))
+	for _, key := range closed {
+		payload := candidates[key].payloadCode
+		absent[payload] = append(absent[payload], labels[key])
+	}
+	// Sorted, for the same reason staleEpisodeKeys sorts: a pass that announces
+	// several payloads at once must announce them in the same order next time,
+	// or two journals of the same incident will not diff.
+	payloads := make([]string, 0, len(absent))
+	for payload := range absent {
+		payloads = append(payloads, payload)
+	}
+	sort.Strings(payloads)
+	// ANNOUNCE AND REBUILD IN THE SAME LOOP, so the line is immediately followed
+	// by the rebuild it describes. It also puts the rebuilds in the sorted order
+	// the announcement is in, which a map-keyed set could not promise — the same
+	// two-journals-must-diff argument as above, applied to whatever the rebuild
+	// itself logs.
+	for _, payload := range payloads {
+		m.eng.logFn("demand_reconciler: STALE BINDING IN MEMORY payload=%s absent_bindings=%s registry_rows=%d closed=%d — monitor held bindings with no demand_registry row; episodes closed and the payload's bindings rebuilt from the database",
+			payload, strings.Join(absent[payload], ","), registryRows[payload], len(absent[payload]))
+		m.rebuildPayloadBindings(payload)
+	}
+}
+
+// closeThresholdEpisodesForChangedBindings ends the episodes whose binding was
+// edited — the denominator moved, or the binding stopped existing.
 //
 // A threshold change closes the episode and lets the next evaluation open a new
 // one. Continuing the old episode across the change would make its cost_ratio a
@@ -310,15 +490,29 @@ func (m *ThresholdMonitor) reconcileThresholdBindings() int {
 // then record the transition honestly, and OnThresholdChanges already carries
 // OldThreshold/NewThreshold for whoever wants to read it back.
 //
+// A NEW THRESHOLD OF ZERO IS NOT A NEW DENOMINATOR, and the reason has to be
+// picked accordingly. SyncRegistry reports a binding that vanished as a change
+// to zero — that is how a retired loader arrives here — and zero is also the
+// documented opt-out, under which Core stops watching the pair entirely. Either
+// way the place is no longer watched, which is `threshold_removed`: the need did
+// not recover and nothing is measuring it against a new number. It is the same
+// word reconcileThresholdBindings uses when it finds the same state by sweeping,
+// and one vocabulary for one fact about the plant is what lets closed_by
+// measure which mechanism is doing the work.
+//
 // A newly ADDED binding has no open episode, so this is a no-op for it.
 func (m *ThresholdMonitor) closeThresholdEpisodesForChangedBindings(changes []demands.RegistryChange) {
 	for _, c := range changes {
 		if c.OldThreshold == c.NewThreshold {
 			continue
 		}
+		reason := protocol.CloseReasonThresholdChanged
+		if c.NewThreshold <= 0 {
+			reason = protocol.CloseReasonThresholdRemoved
+		}
 		m.closeThresholdEpisode(
 			bindingKey(c.StationID, c.CoreNodeName, c.PayloadCode),
-			protocol.CloseReasonThresholdChanged, protocol.ClosedByNotification)
+			reason, protocol.ClosedByNotification)
 	}
 }
 
@@ -430,7 +624,7 @@ func (m *ThresholdMonitor) rehydrateThresholdEpisodes() {
 	m.mu.Lock()
 	for _, o := range open {
 		key := bindingKey(o.StationID, o.CoreNodeName, o.PayloadCode)
-		m.openOrigins[key] = openEpisodeRef{originID: o.OriginID, payloadCode: o.PayloadCode}
+		m.openOrigins[key] = openEpisodeRef{originID: o.OriginID, stationID: o.StationID, payloadCode: o.PayloadCode}
 		m.belowThresholdSince[key] = o.OpenedAt
 	}
 	n := len(open)

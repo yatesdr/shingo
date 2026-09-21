@@ -542,8 +542,9 @@ func GetByUID(db *sql.DB, uid string) (*Edge, error) {
 //   - database BEHIND Core's host: edges go stale EARLY. As the skew
 //     approaches the configured threshold the effective threshold reaches
 //     zero, and every edge — including one heartbeating normally — is
-//     marked stale on every 60-second tick, which also reaps that
-//     station's demand_registry rows in CoreHandler.staleEdgeLoop.
+//     marked stale on every 60-second tick, which announces an outage to
+//     each of them and leaves the whole plant's connectivity surface
+//     reporting failures that are not happening.
 //
 // The same comparison is what made TestCoverage_MarkStaleEdges (I6)
 // flake, where the two clocks are the test container's and the host's and
