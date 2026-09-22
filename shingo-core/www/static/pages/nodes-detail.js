@@ -122,6 +122,11 @@ function loadNodeDetail(nodeID, isSynthetic) {
       }
 
       if (isAuth) {
+        // Before the onModeChange calls below, which render the inherit hint
+        // from these.
+        _effectiveLabels['bin-types'] = effBts.map(function(b) { return b.code; });
+        _effectiveLabels['stations'] = effStations.slice();
+
         var btSelect = document.getElementById('nf-bt-mode');
         btSelect.value = btMode || (data.node && data.node.parent_id ? 'inherit' : 'all');
         populateChipPicker('bin-types', bts.map(function(b) { return { id: String(b.id), label: b.code }; }));
@@ -161,9 +166,36 @@ function loadNodeDetail(nodeID, isSynthetic) {
 }
 
 /* --- Chip Picker --- */
-var _allBinTypes = JSON.parse(document.getElementById('page-data').dataset.binTypes || '[]');
-var _allStations = JSON.parse(document.getElementById('page-data').dataset.edges || '[]');
+
+// NORMALISED AT THE SOURCE, because the picker below speaks {id, label} and the
+// page hands over raw domain rows: bin types as {id, code, ...} with a NUMERIC
+// id, edges as {station_uid, display_name, ...}. Feeding those in raw is what
+// the picker did, and all three consequences were live:
+//
+//   - every dropdown row rendered the literal text "undefined" (item.label),
+//   - the filter box threw on item.label.toLowerCase() and killed the dropdown,
+//   - selectedIds holds String(id) while a raw id is a number, so an already-
+//     assigned type never dropped out of the list and could be added twice.
+//
+// The station picker also SAVED wrong: it serialized item.id, which on a raw
+// edge row is the numeric registry id, into a field that stores station_uid
+// strings (node_stations.station_id, e.g. "plant-a.line-1"). Bin types were
+// saved correctly only by luck — bin_type_ids genuinely wants the id.
+//
+// Bin types keep their id as a STRING here so it matches the String(b.id) the
+// assigned-chips mapping produces; serializeChipPickers writes it into a form
+// field either way, and ApplyAssignments parses it.
+var _allBinTypes = JSON.parse(document.getElementById('page-data').dataset.binTypes || '[]')
+  .map(function(b) { return { id: String(b.id), label: b.code }; });
+var _allStations = JSON.parse(document.getElementById('page-data').dataset.edges || '[]')
+  .map(function(e) { return { id: e.station_uid, label: e.display_name || e.station_uid }; });
 var _chipSelections = { 'bin-types': [], 'stations': [] };
+
+// What "Inherit" currently resolves to, per picker, so the mode hint can say it.
+// The read-only view has always rendered this ("TOTE-2415 (inherited)"); the
+// editing form fetched the same field and discarded it, leaving the person
+// making the decision with strictly less than the shop floor sees.
+var _effectiveLabels = { 'bin-types': [], 'stations': [] };
 
 function getPickerConfig(name) {
   if (name === 'bin-types') return { all: _allBinTypes, inputName: 'bin_type_ids', modeId: 'nf-bt-mode' };
@@ -175,6 +207,28 @@ function onModeChange(name) {
   var mode = document.getElementById(cfg.modeId).value;
   var spec = document.getElementById('cp-' + name + '-specific');
   spec.classList.toggle('hide', mode !== 'specific');
+  renderModeHint(name, mode);
+}
+
+// ONLY "INHERIT" GETS A HINT. It is the one mode whose name does not say what it
+// does — inherit from WHAT, and resolving to what today — and it is the default
+// a child node opens on, so it is what an operator sees before they touch
+// anything. "Any" and "Only selected" describe themselves, and a line under
+// every mode is noise that trains people to stop reading it.
+function renderModeHint(name, mode) {
+  var hint = document.getElementById('cp-' + name + '-hint');
+  if (!hint) return;
+  if (mode !== 'inherit') {
+    hint.textContent = '';
+    return;
+  }
+  var eff = _effectiveLabels[name] || [];
+  // An empty effective list means no ancestor declared anything, which reads as
+  // unrestricted everywhere it is consulted. Saying so is the difference between
+  // a person believing this node is fenced and knowing it is not.
+  hint.textContent = eff.length
+    ? 'Currently inheriting: ' + eff.join(', ')
+    : 'Nothing declared on any parent, so this node accepts any.';
 }
 
 function toggleInheritOption(selectId, hasParent) {

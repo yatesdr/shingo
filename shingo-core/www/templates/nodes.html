@@ -140,13 +140,18 @@
       <!-- Bin Types & Stations (hidden for child nodes) -->
       <div class="grid grid-2 mb-1" id="nf-assoc-section">
         <div class="form-group">
-          <label>Allowed Bins</label>
+          <label>Allowed Bin Types</label>
           <div class="tag-field" id="cp-bin-types">
+            <!-- THE OPTION TEXT CARRIES THE MEANING. "Any / Inherit / Selected"
+                 named the mode and not the effect, and the effect is the whole
+                 decision: an operator choosing between them is asking "what will
+                 this position accept", which the bare words do not answer. -->
             <select class="mode-select text-sm" id="nf-bt-mode" name="bin_type_mode" data-action-change="onModeChange:bin-types">
-              <option value="all">Any</option>
-              <option value="inherit">Inherit</option>
-              <option value="specific">Selected</option>
+              <option value="all">Any bin type</option>
+              <option value="inherit">Inherit from parent group</option>
+              <option value="specific">Selected types only</option>
             </select>
+            <div class="text-sm text-muted" id="cp-bin-types-hint"></div>
             <div id="cp-bin-types-specific" class="hide">
               <div class="tag-list" id="cp-bin-types-chips"></div>
               <input type="text" class="tag-filter" placeholder="Filter bins..." data-action-input="filterChipDropdown:bin-types" data-action-focus="showChipDropdown:bin-types" data-action-blur="hideChipDropdown:bin-types">
@@ -158,11 +163,12 @@
           <label>Allowed Stations</label>
           <div class="tag-field" id="cp-stations">
             <select class="mode-select text-sm" id="nf-st-mode" name="station_mode" data-action-change="onModeChange:stations">
-              <option value="all">Any</option>
+              <option value="all">Any station</option>
               <option value="none">None (Core only)</option>
-              <option value="inherit">Inherit</option>
-              <option value="specific">Selected</option>
+              <option value="inherit">Inherit from parent</option>
+              <option value="specific">Only the stations I pick</option>
             </select>
+            <div class="text-sm text-muted" id="cp-stations-hint"></div>
             <div id="cp-stations-specific" class="hide">
               <div class="tag-list" id="cp-stations-chips"></div>
               <input type="text" class="tag-filter" placeholder="Filter stations..." data-action-input="filterChipDropdown:stations" data-action-focus="showChipDropdown:stations" data-action-blur="hideChipDropdown:stations">
