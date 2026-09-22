@@ -31,6 +31,27 @@ import (
 // records the decision that dispatch keeps its current reading. See
 // binTypeAllowed's doc comment.
 
+func ptrTo[T any](v T) *T { return &v }
+
+// TestBinTypeAllowed_NilTypeAllows pins the guard that used to live at four call
+// sites as `if binTypeID != nil`. Folding it into the predicate is only safe if
+// nil still means "narrow nothing" — the reading every untyped resolve in the
+// plant depends on.
+func TestBinTypeAllowed_NilTypeAllows(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeStore()
+	f.effBinTypes[42] = []*bins.BinType{{ID: 7, Code: "FITS"}}
+	r := &GroupResolver{DB: f}
+
+	if !r.binTypeAllowed(42, nil) {
+		t.Error("a nil carrier type was refused at a node that declares a set.\n\n" +
+			"nil means the resolver could not work out what is being placed, not that " +
+			"it is placing something unacceptable. Refusing here would close every " +
+			"declared node to every order whose carrier could not be identified.")
+	}
+}
+
 func TestBinTypeAllowed_ReadFailureRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -38,7 +59,7 @@ func TestBinTypeAllowed_ReadFailureRefuses(t *testing.T) {
 	f.effBinTypesErr = errors.New("connection reset by peer")
 	r := &GroupResolver{DB: f}
 
-	if r.binTypeAllowed(42, 7) {
+	if r.binTypeAllowed(42, ptrTo(int64(7))) {
 		t.Error("an unreadable node_bin_types list allowed the carrier.\n\n" +
 			"A list that could not be read is not an empty list. Allowing here opens " +
 			"every node to every bin type for as long as the read keeps failing, and " +
@@ -57,7 +78,7 @@ func TestBinTypeAllowed_EmptyListAllows(t *testing.T) {
 	f := newFakeStore() // no error, no declarations
 	r := &GroupResolver{DB: f}
 
-	if !r.binTypeAllowed(42, 7) {
+	if !r.binTypeAllowed(42, ptrTo(int64(7))) {
 		t.Error("a node with no declared bin types refused a carrier; node_bin_types " +
 			"is a restriction, not a default-closed whitelist")
 	}
@@ -73,10 +94,10 @@ func TestBinTypeAllowed_DeclaredSetIsRespected(t *testing.T) {
 	f.effBinTypes[42] = []*bins.BinType{{ID: 7, Code: "FITS"}}
 	r := &GroupResolver{DB: f}
 
-	if !r.binTypeAllowed(42, 7) {
+	if !r.binTypeAllowed(42, ptrTo(int64(7))) {
 		t.Error("a declared bin type was refused at its own node")
 	}
-	if r.binTypeAllowed(42, 9) {
+	if r.binTypeAllowed(42, ptrTo(int64(9))) {
 		t.Error("an undeclared bin type was allowed at a node that declares a set")
 	}
 }

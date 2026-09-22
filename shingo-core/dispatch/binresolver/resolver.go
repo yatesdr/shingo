@@ -124,8 +124,8 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 	}
 
 	// Delegate to group resolver for NGRP nodes
+	gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
 	if syntheticNode.NodeTypeCode == protocol.NodeClassNGRP {
-		gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
 		switch mode {
 		case ResolveModeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode, asker, accept)
@@ -142,7 +142,17 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		}
 		return &ResolveResult{Node: node}, nil
 	case ResolveModeStore:
-		node, err := r.resolveStore(children, payloadCode)
+		// THE LANE PATH GETS THE SAME GATE. resolveSyntheticDropoff keys on
+		// IsSynthetic rather than NGRP — a LANE is seeded synthetic too — so a
+		// store can land here, and this branch checked neither the declared bin
+		// types nor anything else about what a slot accepts. A lane whose slots
+		// declared a carrier type had those declarations honoured through the
+		// group resolver and ignored through this one, which is the same
+		// lane/flat asymmetry payloadAllowedAt was written to end.
+		if binTypeID == nil {
+			binTypeID = gr.carrierTypeFor(asker)
+		}
+		node, err := r.resolveStore(children, payloadCode, binTypeID, gr)
 		if err != nil {
 			return nil, err
 		}
@@ -205,10 +215,17 @@ func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode st
 }
 
 // resolveStore finds the best child node for storage (consolidation-first, then emptiest).
-func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
+func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode string,
+	binTypeID *int64, gr *GroupResolver) (*nodes.Node, error) {
 	var candidates []storageCandidate
 	for _, child := range children {
 		if !child.Enabled || child.IsSynthetic {
+			continue
+		}
+		// BEFORE THE COUNTS, because it is the cheaper refusal: a nil type short-
+		// circuits without touching the database, and a declared mismatch skips
+		// two queries this child was going to fail anyway.
+		if !gr.binTypeAllowed(child.ID, binTypeID) {
 			continue
 		}
 		count, err := r.DB.CountBinsByNode(child.ID)

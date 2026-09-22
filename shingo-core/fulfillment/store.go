@@ -3,6 +3,7 @@ package fulfillment
 import (
 	"shingo/protocol"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -49,6 +50,11 @@ type Store interface {
 	// carrier (MG4-3). The scanner itself reads neither.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+	// The per-node Allowed Bin Types reads, here for the same reason and read by
+	// the scanner itself no more than the two above: the gate must not count a
+	// child free that the resolver will refuse for declaring another carrier type.
+	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
+	CarrierTypeForOrder(orderID int64) (*int64, error)
 
 	// Bin reads (CapacityDB).
 	CountBinsByNode(nodeID int64) (int, error)

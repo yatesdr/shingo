@@ -52,6 +52,7 @@ import (
 	"errors"
 
 	"shingo/protocol"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
 
@@ -79,6 +80,22 @@ type CapacityDB interface {
 	// says nothing about the level.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+
+	// ── The per-node Allowed Bin Types fence ────────────────────────────────
+	//
+	// Same reason as the level above, one question over: the gate counted a
+	// child FREE that the resolver then refuses for declaring a different
+	// carrier type. That divergence was invisible while the resolver's own
+	// bin-type check was inert, and goes live with it — a group whose only free
+	// positions are fenced against the arriving carrier reports room here, and
+	// the order is admitted, resolved, refused, and parked a layer deeper under
+	// a cause that says nothing about the fence.
+	//
+	// CarrierTypeForOrder is read through the SAME store method the resolver
+	// derives from, keyed on the asking order, so the two cannot answer
+	// differently about what is arriving.
+	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
+	CarrierTypeForOrder(orderID int64) (*int64, error)
 }
 
 // CapacityBlock is the structured result of a blocked dropoff-capacity check —
@@ -277,7 +294,30 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		// surfaces rather than being masked as a queue. Unchanged.
 		return false, CapacityBlock{}
 	}
+	// Derived here exactly as the resolver derives it, and only when the caller
+	// did not already know. excludeOrderID is the asking order — the same id the
+	// resolver sees in its dig asker — so the two reach the same answer or both
+	// reach "could not tell".
+	if binTypeID == nil && excludeOrderID != 0 {
+		if id, err := db.CarrierTypeForOrder(excludeOrderID); err == nil {
+			binTypeID = id
+		}
+	}
+	// ENABLED AND ADMISSIBLE ARE COUNTED SEPARATELY, and the difference decides
+	// between two dispositions that look alike and are not:
+	//
+	//   enabledCount == 0  — the group has no usable positions AT ALL. Structural,
+	//                        and it passes through so the resolver's own failure
+	//                        surfaces instead of being masked as a queue. This is
+	//                        the pre-existing rule and it must not absorb the case
+	//                        below, or a fenced group would be ADMITTED and then
+	//                        parked a layer deeper — the exact loop this gate
+	//                        exists to prevent.
+	//   admissible == 0    — positions exist and every one of them refuses THIS
+	//                        carrier. That is a capacity fact about this order, so
+	//                        it blocks as ngrp-full and the order queues here.
 	enabledCount := 0
+	admissible := 0
 	freeCount := 0
 	unreadable := 0
 	for _, child := range children {
@@ -285,6 +325,20 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 			continue
 		}
 		enabledCount++
+		// A READ FAILURE COUNTS THE CHILD AS UNREADABLE rather than free or
+		// fenced — the same disposition the two occupancy reads below take, and
+		// the reason the group reports capacity-check-failed instead of claiming
+		// fullness it did not establish.
+		allowed, aErr := binTypeAllowedAt(db, child.ID, binTypeID)
+		if aErr != nil {
+			admissible++
+			unreadable++
+			continue
+		}
+		if !allowed {
+			continue
+		}
+		admissible++
 		c, cErr := db.CountBinsByNode(child.ID)
 		if cErr != nil {
 			unreadable++
@@ -312,12 +366,49 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	if freeCount > 0 {
 		return false, CapacityBlock{}
 	}
+	if admissible == 0 {
+		// Positions exist and all of them are fenced against this carrier. Said as
+		// fullness because that is what it is from this order's side — the group
+		// has nowhere for it — and blocking here is what keeps it from being
+		// admitted onto a destination the resolver is going to refuse.
+		return true, CapacityBlock{Cause: CauseNGRPFull, Params: params}
+	}
 	if unreadable > 0 {
 		// No free child was FOUND, but at least one could not be looked at, so
 		// "full" is not something this run is entitled to say.
 		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
 	return true, CapacityBlock{Cause: CauseNGRPFull, Params: params}
+}
+
+// binTypeAllowedAt is the gate's copy of binresolver.binTypeAllowed, and — like
+// ngrpAtDeclaredLevel below — it is a copy of the CALL and not of the LOGIC:
+// both read GetEffectiveBinTypes, and both take an empty result as "nothing
+// declared, so nothing refused".
+//
+// THE ERROR IS RETURNED HERE RATHER THAN SWALLOWED INTO A REFUSAL. The resolver
+// refuses on an unreadable list because its next move is to try another
+// candidate slot, which costs nothing. This gate's next move is to decide
+// whether the whole group is full, and a read fault must surface as
+// capacity-check-failed rather than as a child quietly counted out — otherwise a
+// database blip reads as "the supermarket is full" and sends somebody looking.
+func binTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, error) {
+	if binTypeID == nil {
+		return true, nil
+	}
+	bts, err := db.GetEffectiveBinTypes(nodeID)
+	if err != nil {
+		return false, err
+	}
+	if len(bts) == 0 {
+		return true, nil
+	}
+	for _, bt := range bts {
+		if bt.ID == *binTypeID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ngrpAtDeclaredLevel is the gate's copy of the level question, and it is a copy

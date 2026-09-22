@@ -39,6 +39,10 @@ type fakeStore struct {
 	effPayloads      map[int64][]*payloads.Payload
 	effBinTypesErr   error // injected read failure; see TestBinTypeAllowed_ReadFailureRefuses
 	effBinTypes      map[int64][]*bins.BinType
+	// carrierTypes answers CarrierTypeForOrder per order id; absent = "could not
+	// tell", which is the untyped resolve every test predating the derivation got.
+	carrierTypes   map[int64]int64
+	carrierTypeErr error // injected read failure; the derivation must not refuse on it
 
 	// Lane query fixtures.
 	//
@@ -238,6 +242,19 @@ func (f *fakeStore) LaneAcceptsInbound(laneID int64) (bool, error) {
 		return v, nil
 	}
 	return true, nil // default: empty lane is compatible
+}
+
+// CarrierTypeForOrder defaults to "could not tell", which is what an order with
+// no bin and no holds answers in production and what leaves every pre-existing
+// resolver test untyped — the state they were all written in.
+func (f *fakeStore) CarrierTypeForOrder(orderID int64) (*int64, error) {
+	if f.carrierTypeErr != nil {
+		return nil, f.carrierTypeErr
+	}
+	if id, ok := f.carrierTypes[orderID]; ok {
+		return &id, nil
+	}
+	return nil, nil
 }
 
 // Compile-time check: *fakeStore satisfies Store.

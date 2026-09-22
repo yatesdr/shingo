@@ -27,6 +27,10 @@ import (
 // classifyResolutionError's ResolutionCapacity branch can match.
 func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) ([]resolvedStep, error) {
 	var resolved []resolvedStep
+	// The carrier the most recently resolved pickup is holding, which is the one
+	// the next dropoff puts down. See the storeType comment in resolveStepNode
+	// for why the dropoff cannot work this out for itself at intake.
+	var carrier *int64
 	for i, step := range steps {
 		// MG3-4: where this leg's carrier is GOING, for the pickup that has not
 		// happened yet. See resolveStepNode.
@@ -40,9 +44,12 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 					PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
 				continue
 			}
-			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop)
+			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop, carrier)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
+			}
+			if step.Action == protocol.ActionPickup {
+				carrier = d.carrierTypeAtNode(nodeName)
 			}
 			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty,
 				PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
@@ -57,7 +64,9 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			// station's by the drain-window default, which is right today by
 			// accident and wrong the moment that window closes.
 			if step.Node != "" {
-				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop)
+				// nil carrier: a wait puts nothing down, so there is nothing for the
+				// bin-type fence to narrow on.
+				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop, nil)
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
@@ -132,7 +141,13 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		// the produce empty-leg distinction survives replay re-resolution.
 		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty,
 			PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot}
-		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker, "")
+		// Same carrier question as intake, asked of the already-resolved list.
+		// The resolver would derive one from the asker here (this path has a real
+		// order), but a complex PARENT owns legs rather than cargo — its bin_id is
+		// NULL by design and its holds can name two carriers at once — so the
+		// paired pickup is the better answer and this prefers it.
+		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker, "",
+			d.carrierBeforeStep(steps, i))
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
 		}
@@ -204,8 +219,55 @@ func resolvedStepPayload(step resolvedStep, orderPayload string) string {
 	return orderPayload
 }
 
+// carrierBeforeStep names the carrier the nearest PICKUP ahead of index i is
+// holding — the one a dropoff at i is about to put down.
+//
+// Backwards from i rather than tracked in a variable, because this runs on the
+// REPLAY path, where only the steps still naming a group are re-resolved and the
+// walk therefore skips most of the list. A carried variable would be updated on
+// the iterations that happen to re-resolve and stale on the ones that do not.
+// The lists are a handful of steps long, so the scan costs nothing.
+func (d *Dispatcher) carrierBeforeStep(steps []resolvedStep, i int) *int64 {
+	for j := i - 1; j >= 0; j-- {
+		if steps[j].Action != protocol.ActionPickup || steps[j].Node == "" {
+			continue
+		}
+		return d.carrierTypeAtNode(steps[j].Node)
+	}
+	return nil
+}
+
+// carrierTypeAtNode names the carrier standing at a just-resolved pickup slot,
+// so the dropoff that follows can be fenced by type at intake.
+//
+// EXACTLY ONE, OR NOTHING — the same rule typeFromDestinationPosition uses for
+// the same reason. A slot holding one carrier is a statement about what this leg
+// is about to carry. Zero means the pickup resolved against something this read
+// cannot see (a lane whose slot rows live a level down, a group child picked for
+// a bin not yet placed), and many means the answer is a guess. Both return nil,
+// which resolves the dropoff untyped exactly as it did before.
+//
+// BEST EFFORT THROUGHOUT. Every error path returns nil rather than failing the
+// intake: this is a narrowing, and a narrowing that cannot be computed must not
+// be able to refuse an order Edge just asked for.
+func (d *Dispatcher) carrierTypeAtNode(nodeName string) *int64 {
+	if nodeName == "" {
+		return nil
+	}
+	node, err := d.db.GetNodeByDotName(nodeName)
+	if err != nil || node == nil {
+		return nil
+	}
+	binsAt, err := d.db.ListBinsByNode(node.ID)
+	if err != nil || len(binsAt) != 1 {
+		return nil
+	}
+	id := binsAt[0].BinTypeID
+	return &id
+}
+
 func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayload string,
-	asker reservations.DigAsker, nextDropoff string) (string, string, error) {
+	asker reservations.DigAsker, nextDropoff string, carrierTypeID *int64) (string, string, error) {
 	payloadCode := stepPayload(step, orderPayload)
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)
@@ -260,7 +322,22 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayloa
 			if step.Action == protocol.ActionDropoff {
 				mode = binresolver.ResolveModeStore
 			}
-			result, err := d.resolver.Resolve(node, mode, payloadCode, nil, asker, nil)
+			// THE CARRIER TYPE, FOR THE DROPOFF THAT HAS ONE. At intake the order
+			// row does not exist yet (complex_intake.go passes reservations.Anyone
+			// for exactly that reason), so the resolver's own derivation has no id
+			// to work from and the per-node Allowed Bin Types fence would be
+			// skipped — on a destination choice that is then LOCKED IN, because
+			// reResolveComplexSteps only re-resolves steps still naming a group.
+			//
+			// The pickup that precedes it is the answer: it resolves to a slot
+			// holding a specific carrier, and that carrier is the one this leg puts
+			// down. Nil on a retrieve, and nil when the pickup could not be pinned
+			// to exactly one bin, which resolves untyped as it always did.
+			var storeType *int64
+			if mode == binresolver.ResolveModeStore {
+				storeType = carrierTypeID
+			}
+			result, err := d.resolver.Resolve(node, mode, payloadCode, storeType, asker, nil)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}

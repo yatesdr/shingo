@@ -6,6 +6,7 @@ import (
 	"shingocore/store/reservations"
 
 	"shingo/protocol"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -21,6 +22,10 @@ import (
 type fakeStore struct {
 	maintainLevels map[int64][]nodes.MaintainLevel
 	emptyInGroup   map[int64]int
+	// Per-node Allowed Bin Types: what each node declares, and what carrier the
+	// asking order is placing. Both empty by default = the fence is inert.
+	effBinTypes  map[int64][]*bins.BinType
+	carrierTypes map[int64]int64
 	// Seed data.
 	queued     []*orders.Order
 	ordersByID map[int64]*orders.Order
@@ -279,4 +284,21 @@ func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel
 
 func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
 	return f.emptyInGroup[groupNodeID], nil
+}
+
+// ── The per-node Allowed Bin Types fence ────────────────────────────────────
+//
+// "Nothing declared, carrier unknown" by default — the state of every node at
+// both live plants (node_bin_types is empty everywhere), so the fence is inert
+// and every existing scanner case keeps its behaviour.
+
+func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
+	return f.effBinTypes[nodeID], nil
+}
+
+func (f *fakeStore) CarrierTypeForOrder(orderID int64) (*int64, error) {
+	if id, ok := f.carrierTypes[orderID]; ok {
+		return &id, nil
+	}
+	return nil, nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
 
@@ -26,6 +27,12 @@ type fakeCapacityDB struct {
 	childrenErr    error
 	binsByChild    map[int64]int
 	inFlightByName map[string]int
+
+	// Per-node Allowed Bin Types: what each child declares, and what carrier the
+	// asking order is placing. Both empty by default = the fence is inert.
+	effBinTypes    map[int64][]*bins.BinType
+	effBinTypesErr error
+	carrierTypes   map[int64]int64
 }
 
 func (f *fakeCapacityDB) GetNodeByDotName(string) (*nodes.Node, error) {
@@ -344,4 +351,25 @@ func (f *fakeCapacityDB) ListMaintainLevels(groupNodeID int64) ([]nodes.Maintain
 
 func (f *fakeCapacityDB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
 	return f.emptyInGroup[groupNodeID], nil
+}
+
+// ── The per-node Allowed Bin Types fence ────────────────────────────────────
+//
+// Both default to "nothing declared, carrier unknown", which is the state every
+// existing case was written in and the state of every node at both live plants:
+// node_bin_types is empty everywhere, so the fence is a no-op until somebody
+// configures one.
+
+func (f *fakeCapacityDB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
+	if f.effBinTypesErr != nil {
+		return nil, f.effBinTypesErr
+	}
+	return f.effBinTypes[nodeID], nil
+}
+
+func (f *fakeCapacityDB) CarrierTypeForOrder(orderID int64) (*int64, error) {
+	if id, ok := f.carrierTypes[orderID]; ok {
+		return &id, nil
+	}
+	return nil, nil
 }

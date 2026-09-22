@@ -395,6 +395,22 @@ func (r *GroupResolver) classifyEmptyGroup(
 
 // ResolveStore finds the best slot for storing a bin in a node group.
 func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
+	// ── THE TYPE IS DERIVED, NOT DEMANDED ───────────────────────────────────
+	//
+	// The parameter stays an OVERRIDE and the derivation is the default, which
+	// is the order that makes both callers right. A level keeper's ask names a
+	// carrier type before any carrier exists and its order may not be readable
+	// by id yet, so it must be able to say so; everything else has an order with
+	// a bin or a hold behind it and should not have to.
+	//
+	// This is the line that puts the per-node Allowed Bin Types gate into
+	// service. It was written, tested, and inert: five of the seven store call
+	// sites passed nil, so binTypeAllowed below was simply never reached with
+	// anything to check. Deriving here rather than at each call site is what
+	// makes that un-forgettable — a new store path gets the gate by existing.
+	if binTypeID == nil {
+		binTypeID = r.carrierTypeFor(asker)
+	}
 	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
 	//
 	// A maintained group holds a declared number of empty carriers. The keeper
@@ -514,10 +530,8 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 			}
 
 			// Skip lanes with bin type restrictions that don't match
-			if binTypeID != nil {
-				if !r.binTypeAllowed(child.ID, *binTypeID) {
-					continue
-				}
+			if !r.binTypeAllowed(child.ID, binTypeID) {
+				continue
 			}
 
 			slot, err := r.DB.FindStoreSlotInLaneExcluding(child.ID, asker.OrderID)
@@ -585,10 +599,8 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 			}
 
 			// Skip nodes with bin type restrictions that don't match
-			if binTypeID != nil {
-				if !r.binTypeAllowed(child.ID, *binTypeID) {
-					continue
-				}
+			if !r.binTypeAllowed(child.ID, binTypeID) {
+				continue
 			}
 
 			hasMatch := false
@@ -636,10 +648,8 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 		}
 
 		// Skip lanes with bin type restrictions that don't match
-		if binTypeID != nil {
-			if !r.binTypeAllowed(child.ID, *binTypeID) {
-				continue
-			}
+		if !r.binTypeAllowed(child.ID, binTypeID) {
+			continue
 		}
 
 		slot, err := r.DB.FindStoreSlotInLaneExcluding(child.ID, asker.OrderID)
@@ -671,10 +681,8 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 		}
 
 		// Skip nodes with bin type restrictions that don't match
-		if binTypeID != nil {
-			if !r.binTypeAllowed(child.ID, *binTypeID) {
-				continue
-			}
+		if !r.binTypeAllowed(child.ID, binTypeID) {
+			continue
 		}
 
 		count, err := r.DB.CountBinsByNode(child.ID)
@@ -719,9 +727,39 @@ func (r *GroupResolver) noteClosedLanes(group *nodes.Node, closed []string) {
 		group.Name, len(closed), strings.Join(closed, ", "))
 }
 
+// carrierTypeFor asks the store what carrier the asking order is placing, so
+// the gate below has something to check without every caller remembering to say.
+//
+// A READ FAILURE IS LOGGED AND NARROWS NOTHING, which is the opposite direction
+// from binTypeAllowed's refusal and deliberately so. That one is answering "may
+// this carrier go here" and a failed read there could put a bin where it does
+// not fit. This one is answering "what is the carrier", and a failed read means
+// only that we cannot narrow — the resolve proceeds exactly as it did before the
+// gate existed, rather than refusing to place anything at all.
+//
+// reservations.Anyone carries OrderID 0 and gets nil back, so a call site with
+// no order in hand keeps its untyped resolve.
+func (r *GroupResolver) carrierTypeFor(asker reservations.DigAsker) *int64 {
+	if asker.OrderID == 0 {
+		return nil
+	}
+	id, err := r.DB.CarrierTypeForOrder(asker.OrderID)
+	if err != nil {
+		log.Printf("store slot: carrier type for order %d unreadable (%v) — resolving untyped",
+			asker.OrderID, err)
+		return nil
+	}
+	return id
+}
+
 // binTypeAllowed checks whether a bin type is permitted at a node via effective
 // bin types. An empty set is "no restrictions declared" and allows everything;
 // a non-empty set allows only its members.
+//
+// A NIL binTypeID ALLOWS, and it lives here rather than at the four call sites.
+// Each of them used to wrap this in `if binTypeID != nil`, which is four copies
+// of one rule and a nil dereference waiting for the fifth caller. Folding it in
+// makes every site read exactly like the payloadAllowedAt call beside it.
 //
 // A READ FAILURE REFUSES, and it used to allow. The two were spelled as one
 // condition — `if err != nil || len(bts) == 0` — which reads a list that could
@@ -744,18 +782,21 @@ func (r *GroupResolver) noteClosedLanes(group *nodes.Node, closed []string) {
 // (engine/stranded_transit.go: "Nothing in dispatch changes") stands. Merging
 // the two would close every store slot at a node configured `specific` and left
 // unassigned — a ruling of its own, not a bug fix, and not taken here.
-func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID int64) bool {
+func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID *int64) bool {
+	if binTypeID == nil {
+		return true // nothing known about the carrier = nothing to narrow on
+	}
 	bts, err := r.DB.GetEffectiveBinTypes(nodeID)
 	if err != nil {
 		log.Printf("store slot: node %d bin-type list unreadable (%v); refusing bin type %d "+
-			"— a list that could not be read is not an empty list", nodeID, err, binTypeID)
+			"— a list that could not be read is not an empty list", nodeID, err, *binTypeID)
 		return false
 	}
 	if len(bts) == 0 {
 		return true // nothing declared = no restriction
 	}
 	for _, bt := range bts {
-		if bt.ID == binTypeID {
+		if bt.ID == *binTypeID {
 			return true
 		}
 	}
