@@ -10,6 +10,35 @@ import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/s
 // Auth comes from the wrapper's data-authenticated, set by the Go template.
 // The manifest is drawn by JS on two surfaces, neither of which is a
 // template, so {{if .Authenticated}} can't gate the controls.
+// meaningfulNotices drops the fleet's routine roll-call and keeps the exceptions.
+//
+// SEER stamps notice 80004 on essentially EVERY order — a list of every robot
+// that did not take the job, which is all of them but the one that did. It
+// rides orders that delivered perfectly: 2209 and 2211 at Hopkinsville both
+// FINISHED carrying the identical eleven-robot line. So it is chatter, not a
+// fault, and rendering it verbatim puts a wall of robot names under a healthy
+// order and teaches an operator that this panel cries wolf.
+//
+// It was shown verbatim for about an hour on 2026-09-22 because the first place
+// anybody read it was a STOPPED order, where it looked like the explanation. It
+// was not; it was on the successful ones too.
+//
+// THE EXCEPTION IS THE SIGNAL. That same stopped order's notice also carried
+// "AMR-05:robot is not dispatchable" — a robot in a state somebody may need to
+// clear, buried in ten identical siblings. So the roll-call entries are dropped
+// and anything else is kept; a notice that is nothing but roll-call disappears.
+function meaningfulNotices(items) {
+  if (!items || !items.length) return [];
+  return items.map(function(m) {
+    if (!m || typeof m !== 'object' || !m.desc) return m;
+    var kept = String(m.desc).split(';').filter(function(part) {
+      return part.trim() !== '' && !/no joining order\s*$/i.test(part.trim());
+    });
+    if (kept.length === 0) return null;
+    return { code: m.code, desc: kept.join('; '), times: m.times, timestamp: m.timestamp };
+  }).filter(function(m) { return m !== null; });
+}
+
 // fleetMessages renders one class of vendor message — errors, warnings or
 // notices — as the fleet actually worded it.
 //
@@ -446,7 +475,7 @@ function buildManifest(data, opts) {
     // after "why did it stop" — and this page dropped it on the floor.
     out += fleetMessages('Errors', 'manifest-alert-danger', vd.errors);
     out += fleetMessages('Warnings', 'manifest-alert-warn', vd.warnings);
-    out += fleetMessages('Notices', 'manifest-alert-warn', vd.notices);
+    out += fleetMessages('Notices', 'manifest-alert-warn', meaningfulNotices(vd.notices));
   }
 
   // ── CHILD ORDERS / STEPS ──
