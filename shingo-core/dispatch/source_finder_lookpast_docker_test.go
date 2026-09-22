@@ -90,7 +90,7 @@ func TestGroupRetrieve_LooksPastACandidateTheCallerCannotUse(t *testing.T) {
 
 	// (1) NO FILTER — FIFO is exactly as it was, and the oldest wins even though
 	// it is nearly empty. This is what demand must keep getting.
-	unfiltered, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, nil,
+	unfiltered, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, binresolver.NoBinType,
 		reservations.DigAsker{}, nil)
 	testutil.MustNoErr(t, err, "unfiltered resolve")
 	if unfiltered == nil || unfiltered.Bin == nil || unfiltered.Bin.ID != partial.ID {
@@ -100,7 +100,7 @@ func TestGroupRetrieve_LooksPastACandidateTheCallerCannotUse(t *testing.T) {
 
 	// (2) WITH THE DRAIN WINDOW'S FILTER — the partial is not a candidate, so the
 	// scan keeps looking and finds the full one in the sibling lane.
-	filtered, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, nil,
+	filtered, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, binresolver.NoBinType,
 		reservations.DigAsker{}, func(b *bins.Bin) bool { return b.UOPRemaining >= 30 })
 	testutil.MustNoErr(t, err, "filtered resolve")
 	if filtered == nil || filtered.Bin == nil {

@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"fmt"
+	"shingocore/dispatch/binresolver"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -112,7 +113,7 @@ func TestGroupResolveStore_OwnerGetsItsOwnDeepSlotBack(t *testing.T) {
 			gr := &GroupResolver{DB: db}
 
 			// 1. OWNER-AWARE: the holder re-resolves its own group.
-			own, err := gr.ResolveStore(grp, "", nil, reservations.AskerFor(holder.ID, 0))
+			own, err := gr.ResolveStore(grp, "", binresolver.UnknownBinType("test: caller names no carrier"), reservations.AskerFor(holder.ID, 0))
 			if err != nil {
 				t.Fatalf("ResolveStore(owner-aware): %v — the holder cannot see the slot it is "+
 					"already holding, which is the trap the owner-aware form exists to close", err)
@@ -132,7 +133,7 @@ func TestGroupResolveStore_OwnerGetsItsOwnDeepSlotBack(t *testing.T) {
 			//    behaviour, and it must still be broken. If this arm starts agreeing
 			//    with the one above, the fixture has stopped holding the slot and the
 			//    assertion above is passing for free.
-			blind, err := gr.ResolveStore(grp, "", nil, reservations.Anyone)
+			blind, err := gr.ResolveStore(grp, "", binresolver.UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 			if err != nil {
 				t.Fatalf("ResolveStore(blind): %v — expected it to succeed and pick the WRONG slot; "+
 					"an error here means lane A offered nothing at all and the fixture is degenerate", err)

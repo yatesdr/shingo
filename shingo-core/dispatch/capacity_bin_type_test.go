@@ -44,7 +44,7 @@ func fencedNGRP() *fakeCapacityDB {
 func TestNGRPCapacity_AllFreeChildrenFenced_Blocks(t *testing.T) {
 	t.Parallel()
 	db := fencedNGRP()
-	db.carrierTypes = map[int64]int64{42: 1} // a knockdown, into a tote-only group
+	db.orderBinTypes = map[int64]int64{42: 1} // a knockdown, into a tote-only group
 
 	blocked, block := CheckDropoffCapacity(db, "SMKT", 42)
 	if !blocked {
@@ -64,7 +64,7 @@ func TestNGRPCapacity_AllFreeChildrenFenced_Blocks(t *testing.T) {
 func TestNGRPCapacity_MatchingCarrierPasses(t *testing.T) {
 	t.Parallel()
 	db := fencedNGRP()
-	db.carrierTypes = map[int64]int64{42: 2} // a tote, into the tote-only group
+	db.orderBinTypes = map[int64]int64{42: 2} // a tote, into the tote-only group
 
 	if blocked, block := CheckDropoffCapacity(db, "SMKT", 42); blocked {
 		t.Errorf("a tote was refused room in a group declaring TOTE-2415 (cause=%q)", block.Cause)
@@ -73,9 +73,9 @@ func TestNGRPCapacity_MatchingCarrierPasses(t *testing.T) {
 
 // AN UNKNOWN CARRIER NARROWS NOTHING. Every order in the plant is here until the
 // derivation can name its carrier, so this is the path that must not change.
-func TestNGRPCapacity_UnknownCarrierIgnoresFence(t *testing.T) {
+func TestNGRPCapacity_UnknownBinTypeIgnoresFence(t *testing.T) {
 	t.Parallel()
-	db := fencedNGRP() // no carrierTypes entry = "could not tell"
+	db := fencedNGRP() // no orderBinTypes entry = "could not tell"
 
 	if blocked, block := CheckDropoffCapacity(db, "SMKT", 42); blocked {
 		t.Errorf("an order whose carrier could not be identified was refused room "+
@@ -88,7 +88,7 @@ func TestNGRPCapacity_UnknownCarrierIgnoresFence(t *testing.T) {
 func TestNGRPCapacity_FenceReadFailure_IsNotFullness(t *testing.T) {
 	t.Parallel()
 	db := fencedNGRP()
-	db.carrierTypes = map[int64]int64{42: 2}
+	db.orderBinTypes = map[int64]int64{42: 2}
 	db.effBinTypesErr = errors.New("connection reset by peer")
 
 	blocked, block := CheckDropoffCapacity(db, "SMKT", 42)

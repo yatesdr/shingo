@@ -5,6 +5,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"shingocore/dispatch/binresolver"
 	"testing"
 	"time"
 
@@ -139,7 +140,7 @@ func TestGroupResolveStore_BackToFront(t *testing.T) {
 
 	gr := &GroupResolver{DB: db}
 
-	result, err := gr.ResolveStore(grp, bp.Code, nil, reservations.Anyone)
+	result, err := gr.ResolveStore(grp, bp.Code, binresolver.UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -161,7 +162,7 @@ func TestGroupResolveStore_Consolidation(t *testing.T) {
 	// Place a bin at lane 0, slot depth 3 (deepest)
 	createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-CONSOL")
 
-	result, err := gr.ResolveStore(grp, bp.Code, nil, reservations.Anyone)
+	result, err := gr.ResolveStore(grp, bp.Code, binresolver.UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestGroupResolveStore_FullLane(t *testing.T) {
 		createTestBinAtNode(t, db, bp.Code, slots[0][i].ID, fmt.Sprintf("BIN-FULL-%d", i))
 	}
 
-	result, err := gr.ResolveStore(grp, "", nil, reservations.Anyone)
+	result, err := gr.ResolveStore(grp, "", binresolver.UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -316,7 +317,7 @@ func TestNodeGroupResolveStore_DirectChildren(t *testing.T) {
 	db.CreateNode(child2)
 
 	gr := &GroupResolver{DB: db}
-	result, err := gr.ResolveStore(grp, bp.Code, nil, reservations.Anyone)
+	result, err := gr.ResolveStore(grp, bp.Code, binresolver.UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -354,7 +355,7 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	gr := &GroupResolver{DB: db}
 
 	// Try to store a LARGE bin — should skip lane 0 and use lane 1
-	result, err := gr.ResolveStore(grp, bp.Code, &btLarge.ID, reservations.Anyone)
+	result, err := gr.ResolveStore(grp, bp.Code, binresolver.KnownBinType(btLarge.ID), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -365,7 +366,7 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	}
 
 	// Try to store a SMALL bin — should use lane 0
-	result, err = gr.ResolveStore(grp, bp.Code, &btSmall.ID, reservations.Anyone)
+	result, err = gr.ResolveStore(grp, bp.Code, binresolver.KnownBinType(btSmall.ID), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}

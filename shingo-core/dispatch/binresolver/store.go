@@ -86,13 +86,13 @@ type Store interface {
 	GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, error)
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
 
-	// CarrierTypeForOrder is how a store resolution learns what it is placing
-	// WITHOUT being told. See store.CarrierTypeForOrder: the bin-type gate spent
+	// BinTypeForOrder is how a store resolution learns what it is placing
+	// WITHOUT being told. See store.BinTypeForOrder: the bin-type gate spent
 	// its whole life inert because the type arrived as a parameter and almost
 	// nobody passed one, so the resolver now derives it from the order id the
 	// dig asker already carries. nil means "could not tell", which narrows
 	// nothing.
-	CarrierTypeForOrder(orderID int64) (*int64, error)
+	BinTypeForOrder(orderID int64) (*int64, error)
 }
 
 // Compile-time check that *store.DB satisfies Store. If the store package

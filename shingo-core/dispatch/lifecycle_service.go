@@ -281,6 +281,58 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 // because the burial tripwire has to be able to ask "could the selector have
 // seen this claim", and until this column existed it was reduced to comparing
 // against the fleet-commit — an event that can trail the choice by minutes.
+// binTypeAtIntake names what an order is about to place, at the one moment the
+// resolver's own lookup cannot do it.
+//
+// ── WHY INTAKE IS THE BLIND SPOT ────────────────────────────────────────────
+//
+// admitOrder resolves the destination BEFORE the INSERT — its own comment says
+// so: "resolution rewrites a field on a struct that has no id yet". So the order
+// has no id, no bin row and no reservation, and GroupResolver.settleBinType's
+// order-id lookup can find nothing. It reported "I do not know", the fence read
+// that as "do not narrow", and on 2026-09-22 an operator's CLEAR at unloader
+// SMN_03 sent a 45x48 KD into SMN_05, which accepts TOTE-2415 and nothing else.
+//
+// THREE SOURCES, IN DESCENDING CERTAINTY:
+//
+//  1. The maintained episode behind the origin. The level keeper names a carrier
+//     type before any carrier exists and is the one door that always could.
+//  2. The order's own bin, when the door already chose one (a bin move names the
+//     bin; the wire can carry one).
+//  3. The SOURCE NODE holding exactly one carrier. This is the unloader-CLEAR
+//     case and every other "take what is standing there" order: the scanner will
+//     claim that very bin moments later, so reading it now is the same answer
+//     early rather than a guess.
+//
+// EXACTLY ONE, OR NOTHING, for source 3 — the rule typeFromDestinationPosition
+// and binTypeBeforeStep already use. A node holding two carriers has no single
+// answer and a narrowing on a guess is worse than no narrowing.
+//
+// UNKNOWN IS RETURNED WITH ITS REASON, never a bare nil. The resolver logs it
+// against the group, so a door this cannot serve shows up in the plant's traffic
+// instead of in somebody's reading of the call graph.
+func (s *LifecycleService) binTypeAtIntake(order *orders.Order) binresolver.BinTypeStatement {
+	if order.OriginID != "" {
+		id, err := s.db.MaintainedBinTypeIDForOrigin(order.OriginID)
+		if err != nil {
+			s.dbg("intake: maintained bin type for origin %s unreadable (%v)", order.OriginID, err)
+		} else if id != nil {
+			return binresolver.KnownBinType(*id)
+		}
+	}
+	if order.BinID != nil {
+		if bin, err := s.db.GetBin(*order.BinID); err == nil && bin != nil {
+			return binresolver.KnownBinType(bin.BinTypeID)
+		}
+	}
+	if id := binTypeAtNode(s.db, order.SourceNode); id != nil {
+		return binresolver.KnownBinType(*id)
+	}
+	return binresolver.UnknownBinType(fmt.Sprintf(
+		"intake: order not yet persisted, no bin named, and source %q does not hold exactly one carrier",
+		order.SourceNode))
+}
+
 func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) (time.Time, *lifecycleError) {
 	if destNode == nil || !destNode.IsSynthetic || s.resolver == nil {
 		return time.Time{}, nil
@@ -305,18 +357,9 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 	// A FAILED READ RESOLVES UNTYPED rather than refusing. That is the behaviour
 	// every order had before this line existed, so the failure mode is "no worse
 	// than yesterday" rather than a placement that does not happen.
-	var binTypeID *int64
-	if order.OriginID != "" {
-		id, terr := s.db.MaintainedBinTypeIDForOrigin(order.OriginID)
-		if terr != nil {
-			s.dbg("intake: maintained bin type for origin %s unreadable (%v) — resolving untyped",
-				order.OriginID, terr)
-		} else {
-			binTypeID = id
-		}
-	}
+	carrier := s.binTypeAtIntake(order)
 
-	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, binTypeID, digAskerFor(order), nil)
+	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, carrier, digAskerFor(order), nil)
 	if err != nil {
 		// A full group (ResolutionCapacity — "no available slot in node group
 		// X") must NOT fail the operator's action. Leave the synthetic
@@ -600,14 +643,10 @@ func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node) (
 		return "", time.Time{}, false
 	}
 
-	var binTypeID *int64
-	if order.OriginID != "" {
-		if id, terr := s.db.MaintainedBinTypeIDForOrigin(order.OriginID); terr == nil {
-			binTypeID = id
-		}
-	}
+	// The overflow destination is the same placement one group over, so it gets
+	// the same carrier answer rather than a second, weaker one.
 	result, err := s.resolver.Resolve(dest, binresolver.ResolveModeStore, order.PayloadCode,
-		binTypeID, digAskerFor(order), nil)
+		s.binTypeAtIntake(order), digAskerFor(order), nil)
 	if err != nil || result == nil || result.Node == nil {
 		s.dbg("intake: overflow %s of %s has no room either (%v) — parking",
 			overflow, group.Name, err)

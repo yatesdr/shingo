@@ -338,7 +338,9 @@ func (m *Maintainer) createAsks(g *nodes.Node, lv store.MaintainLevel, station s
 	}
 	binTypeID := lv.BinTypeID
 	for i := 0; i < gap; i++ {
-		res, err := resolver.ResolveStore(g, "", &binTypeID, reservations.Anyone)
+		// The one door that has always named its carrier: the level IS a carrier
+		// type, so this asks for a free slot OF that type rather than any free slot.
+		res, err := resolver.ResolveStore(g, "", binresolver.KnownBinType(binTypeID), reservations.Anyone)
 		if err != nil || res == nil || res.Node == nil {
 			// QUEUE-ON-FULL IS A NORMAL OUTCOME, NEVER AN ERROR. The group has no
 			// free typed slot this tick; the level stays short, the episode stays

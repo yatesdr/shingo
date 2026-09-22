@@ -49,7 +49,7 @@ func TestEmptiesOnly_LabelledStoreRefused(t *testing.T) {
 	f, grp := emptiesOnlyStore()
 	r := &GroupResolver{DB: f}
 
-	if _, err := r.ResolveStore(grp, "PANEL-A", nil, reservations.Anyone); err == nil {
+	if _, err := r.ResolveStore(grp, "PANEL-A", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err == nil {
 		t.Fatal("a PANEL-A store landed in SYN_PRESS_EMPTIES. A maintained group's level " +
 			"counts EMPTY carriers, so a payload-bearing bin parked there is invisible to " +
 			"the keeper, which then fetches another carrier to stand beside it")
@@ -70,7 +70,7 @@ func TestEmptiesOnly_EmptyCarrierStillLands(t *testing.T) {
 	f, grp := emptiesOnlyStore()
 	r := &GroupResolver{DB: f}
 
-	res, err := r.ResolveStore(grp, "", nil, reservations.Anyone)
+	res, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("an EMPTY carrier was refused by the empties-only rule: %v. The refusal "+
 			"would close the bank against the keeper that fills it", err)
@@ -88,7 +88,7 @@ func TestEmptiesOnly_UndeclaredGroupUnaffected(t *testing.T) {
 	f.maintainLevels = nil
 	r := &GroupResolver{DB: f}
 
-	if _, err := r.ResolveStore(grp, "PANEL-A", nil, reservations.Anyone); err != nil {
+	if _, err := r.ResolveStore(grp, "PANEL-A", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil {
 		t.Fatalf("a payload store was refused by a group with NO declared level: %v. The "+
 			"rule keys on the level, not on the group's name or its contents", err)
 	}
@@ -119,11 +119,11 @@ func TestFlatPayloadDeclaration_LKNDRefusesMismatch(t *testing.T) {
 	f, grp := flatPayloadStore("")
 	r := &GroupResolver{DB: f}
 
-	if _, err := r.ResolveStore(grp, "STUD", nil, reservations.Anyone); err == nil {
+	if _, err := r.ResolveStore(grp, "STUD", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err == nil {
 		t.Fatal("a STUD store landed in a flat slot declared for CLIP. An identically " +
 			"configured LANE would have refused it; the flat branch never grew the clause")
 	}
-	if _, err := r.ResolveStore(grp, "CLIP", nil, reservations.Anyone); err != nil {
+	if _, err := r.ResolveStore(grp, "CLIP", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil {
 		t.Fatalf("the DECLARED payload was refused at its own slot: %v", err)
 	}
 }
@@ -135,10 +135,10 @@ func TestFlatPayloadDeclaration_DPTHRefusesMismatch(t *testing.T) {
 	f, grp := flatPayloadStore(StoreDPTH)
 	r := &GroupResolver{DB: f}
 
-	if _, err := r.ResolveStore(grp, "STUD", nil, reservations.Anyone); err == nil {
+	if _, err := r.ResolveStore(grp, "STUD", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err == nil {
 		t.Fatal("DPTH stored STUD into a flat slot declared for CLIP")
 	}
-	if _, err := r.ResolveStore(grp, "CLIP", nil, reservations.Anyone); err != nil {
+	if _, err := r.ResolveStore(grp, "CLIP", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil {
 		t.Fatalf("DPTH refused the DECLARED payload at its own slot: %v", err)
 	}
 }
@@ -152,7 +152,7 @@ func TestFlatPayloadDeclaration_UndeclaredSlotAcceptsAnything(t *testing.T) {
 	f.effPayloads = nil
 	r := &GroupResolver{DB: f}
 
-	if _, err := r.ResolveStore(grp, "STUD", nil, reservations.Anyone); err != nil {
+	if _, err := r.ResolveStore(grp, "STUD", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil {
 		t.Fatalf("an undeclared flat slot refused a store: %v", err)
 	}
 }

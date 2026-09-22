@@ -46,7 +46,7 @@ func TestResolveStore_ResolveAround_PrefersCompatibleLane(t *testing.T) {
 		}
 
 		gr := &GroupResolver{DB: f}
-		res, err := gr.ResolveStore(group, "", nil, reservations.Anyone)
+		res, err := gr.ResolveStore(group, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 		if err != nil {
 			t.Fatalf("ResolveStore: %v", err)
 		}

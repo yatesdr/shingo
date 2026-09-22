@@ -373,7 +373,7 @@ type fakeResolver struct {
 	err    error
 }
 
-func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ *int64, _ reservations.DigAsker, _ binresolver.BinFilter) (*ResolveResult, error) {
+func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ binresolver.BinTypeStatement, _ reservations.DigAsker, _ binresolver.BinFilter) (*ResolveResult, error) {
 	return r.result, r.err
 }
 

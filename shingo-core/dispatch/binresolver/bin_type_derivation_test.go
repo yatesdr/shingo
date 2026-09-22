@@ -12,7 +12,7 @@ import (
 // carrier_type_derivation_test.go — THE GATE THAT WAS NEVER REACHED.
 //
 // binTypeAllowed has been correct since it was written and did nothing for just
-// as long: the carrier type arrived as a parameter, five of the seven store call
+// as long: the bin type arrived as a parameter, five of the seven store call
 // sites passed nil, and the one that did pass it (the level keeper) was added
 // long after. Every test in this package predating these therefore proves the
 // PREDICATE and none of them prove the WIRE.
@@ -57,17 +57,17 @@ func fencedGroup(t *testing.T) (*fakeStore, *nodes.Node, *nodes.Node, *nodes.Nod
 func TestResolveStore_DerivesCarrierType_FencesKnockdown(t *testing.T) {
 	t.Parallel()
 	f, grp, _, kdSlot := fencedGroup(t)
-	f.carrierTypes = map[int64]int64{42: btKD}
+	f.orderBinTypes = map[int64]int64{42: btKD}
 
 	r := &GroupResolver{DB: f}
-	got, err := r.ResolveStore(grp, "", nil, reservations.AskerFor(42, 42))
+	got, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no bin type"), reservations.AskerFor(42, 42))
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
 	if got.Node.ID != kdSlot.ID {
 		t.Errorf("a knockdown resolved to %s, want %s.\n\n"+
 			"The per-node Allowed Bin Types fence was not consulted. Nobody passed a "+
-			"carrier type — which is what every ordinary order does — so the resolver "+
+			"bin type — which is what every ordinary order does — so the resolver "+
 			"has to derive it from the asking order or the fence stays decorative.",
 			got.Node.Name, kdSlot.Name)
 	}
@@ -77,10 +77,10 @@ func TestResolveStore_DerivesCarrierType_FencesKnockdown(t *testing.T) {
 func TestResolveStore_DerivesCarrierType_FencesTote(t *testing.T) {
 	t.Parallel()
 	f, grp, toteSlot, _ := fencedGroup(t)
-	f.carrierTypes = map[int64]int64{42: btTote}
+	f.orderBinTypes = map[int64]int64{42: btTote}
 
 	r := &GroupResolver{DB: f}
-	got, err := r.ResolveStore(grp, "", nil, reservations.AskerFor(42, 42))
+	got, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no bin type"), reservations.AskerFor(42, 42))
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -96,10 +96,10 @@ func TestResolveStore_AllSlotsFenced_ParksAsCapacity(t *testing.T) {
 	t.Parallel()
 	f, grp, _, _ := fencedGroup(t)
 	const btWire = int64(3) // 48x54, declared nowhere in this group
-	f.carrierTypes = map[int64]int64{42: btWire}
+	f.orderBinTypes = map[int64]int64{42: btWire}
 
 	r := &GroupResolver{DB: f}
-	_, err := r.ResolveStore(grp, "", nil, reservations.AskerFor(42, 42))
+	_, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no bin type"), reservations.AskerFor(42, 42))
 	if err == nil {
 		t.Fatal("a carrier no slot in the group accepts was placed anyway")
 	}
@@ -116,16 +116,16 @@ func TestResolveStore_AllSlotsFenced_ParksAsCapacity(t *testing.T) {
 func TestResolveStore_ExplicitTypeOverridesDerivation(t *testing.T) {
 	t.Parallel()
 	f, grp, toteSlot, _ := fencedGroup(t)
-	f.carrierTypes = map[int64]int64{42: btKD} // the order says knockdown
+	f.orderBinTypes = map[int64]int64{42: btKD} // the order says knockdown
 
 	bt := btTote // the caller says tote, and the caller wins
 	r := &GroupResolver{DB: f}
-	got, err := r.ResolveStore(grp, "", &bt, reservations.AskerFor(42, 42))
+	got, err := r.ResolveStore(grp, "", KnownBinType(bt), reservations.AskerFor(42, 42))
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
 	if got.Node.ID != toteSlot.ID {
-		t.Errorf("resolved to %s, want %s — an explicit carrier type must outrank "+
+		t.Errorf("resolved to %s, want %s — an explicit bin type must outrank "+
 			"the derivation, or the level keeper loses the one answer it has",
 			got.Node.Name, toteSlot.Name)
 	}
@@ -133,17 +133,17 @@ func TestResolveStore_ExplicitTypeOverridesDerivation(t *testing.T) {
 
 // A DERIVATION READ FAILURE NARROWS NOTHING, which is the opposite disposition
 // from binTypeAllowed's refusal and deliberately so: this read answers "what IS
-// the carrier", and failing to learn that must leave the resolve exactly as it
+// the bin type", and failing to learn that must leave the resolve exactly as it
 // was before the gate existed rather than refusing to place anything.
 func TestResolveStore_DerivationReadFailureResolvesUntyped(t *testing.T) {
 	t.Parallel()
 	f, grp, _, _ := fencedGroup(t)
-	f.carrierTypeErr = errors.New("connection reset by peer")
+	f.orderBinTypeErr = errors.New("connection reset by peer")
 
 	r := &GroupResolver{DB: f}
-	got, err := r.ResolveStore(grp, "", nil, reservations.AskerFor(42, 42))
+	got, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no bin type"), reservations.AskerFor(42, 42))
 	if err != nil || got == nil || got.Node == nil {
-		t.Fatalf("got %v, err %v — an unreadable carrier type must resolve UNTYPED, "+
+		t.Fatalf("got %v, err %v — an unreadable bin type must resolve UNTYPED, "+
 			"not refuse. Refusing converts a database blip into a parked robot", got, err)
 	}
 }
@@ -153,15 +153,15 @@ func TestResolveStore_DerivationReadFailureResolvesUntyped(t *testing.T) {
 func TestResolveStore_AnyoneResolvesUntyped(t *testing.T) {
 	t.Parallel()
 	f, grp, toteSlot, _ := fencedGroup(t)
-	f.carrierTypes = map[int64]int64{42: btKD}
+	f.orderBinTypes = map[int64]int64{42: btKD}
 
 	r := &GroupResolver{DB: f}
-	got, err := r.ResolveStore(grp, "", nil, reservations.Anyone)
+	got, err := r.ResolveStore(grp, "", UnknownBinType("test: caller names no bin type"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
 	if got.Node.ID != toteSlot.ID {
-		t.Errorf("an order-less resolve picked %s; with no order there is no carrier "+
+		t.Errorf("an order-less resolve picked %s; with no order there is no bin type "+
 			"to derive, so the fence must not narrow and the ordinary ranking stands",
 			got.Node.Name)
 	}

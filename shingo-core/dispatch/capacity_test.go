@@ -32,7 +32,7 @@ type fakeCapacityDB struct {
 	// asking order is placing. Both empty by default = the fence is inert.
 	effBinTypes    map[int64][]*bins.BinType
 	effBinTypesErr error
-	carrierTypes   map[int64]int64
+	orderBinTypes  map[int64]int64
 }
 
 func (f *fakeCapacityDB) GetNodeByDotName(string) (*nodes.Node, error) {
@@ -367,8 +367,8 @@ func (f *fakeCapacityDB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, er
 	return f.effBinTypes[nodeID], nil
 }
 
-func (f *fakeCapacityDB) CarrierTypeForOrder(orderID int64) (*int64, error) {
-	if id, ok := f.carrierTypes[orderID]; ok {
+func (f *fakeCapacityDB) BinTypeForOrder(orderID int64) (*int64, error) {
+	if id, ok := f.orderBinTypes[orderID]; ok {
 		return &id, nil
 	}
 	return nil, nil

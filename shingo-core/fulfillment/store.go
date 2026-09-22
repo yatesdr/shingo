@@ -54,7 +54,7 @@ type Store interface {
 	// the scanner itself no more than the two above: the gate must not count a
 	// child free that the resolver will refuse for declaring another carrier type.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
-	CarrierTypeForOrder(orderID int64) (*int64, error)
+	BinTypeForOrder(orderID int64) (*int64, error)
 
 	// Bin reads (CapacityDB).
 	CountBinsByNode(nodeID int64) (int, error)

@@ -246,7 +246,7 @@ func TestLKND_PrefersConsolidationOverEmptier(t *testing.T) {
 	f.bins[match.ID] = []*bins.Bin{availBin(100, "P1", time.Now())}
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "P1", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestLKND_EmptiestWhenNoMatch(t *testing.T) {
 	// No bins anywhere -> hasMatch stays false for both, emptier wins.
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "P1", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestLKND_PacksDeepestLaneAheadOfEmptiest(t *testing.T) {
 	f.laneBinCounts[back.ID] = 2
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "P1", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestLKND_SkipsLaneWithPayloadMismatch(t *testing.T) {
 	f.effPayloads[restricted.ID] = []*payloads.Payload{payload("OTHER")}
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "P1", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestLKND_SkipsBinTypeMismatch(t *testing.T) {
 
 	want := int64(7)
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "", &want, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "", KnownBinType(want), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestDPTH_LanesBeatDirectChildren(t *testing.T) {
 	f.storeSlot[lane.ID] = laneSlot
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "P1", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestDPTH_FallsBackToDirectChild(t *testing.T) {
 	f.binCounts[direct.ID] = 0
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "", nil, reservations.Anyone)
+	got, err := gr.ResolveStore(group, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

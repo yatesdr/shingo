@@ -70,7 +70,7 @@ func TestGroupRetrieve_BuriedLookupHonoursTheCallersFilter(t *testing.T) {
 
 	// (1) NO FILTER — the buried arm is FIFO across lanes and takes the oldest
 	// buried bin, which is the trap. This is the behaviour demand must keep.
-	res, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, nil,
+	res, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, binresolver.NoBinType,
 		reservations.DigAsker{}, nil)
 	var unfiltered *binresolver.BuriedError
 	if !errors.As(err, &unfiltered) {
@@ -88,7 +88,7 @@ func TestGroupRetrieve_BuriedLookupHonoursTheCallersFilter(t *testing.T) {
 	// THIS IS THE ASSERTION THE MUTATION KILLS. Drop accept.accepts(buried) from
 	// checkOldestBuried and this returns the trap: an excavation planned to
 	// expose a partial that requiresFullCarrier then declines on arrival.
-	res, err = r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, nil,
+	res, err = r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, binresolver.NoBinType,
 		reservations.DigAsker{}, fullOnly)
 	var filtered *binresolver.BuriedError
 	if !errors.As(err, &filtered) {
@@ -126,7 +126,7 @@ func TestGroupRetrieve_BuriedFilterOnTheSingleDeepLane(t *testing.T) {
 	full := agedBinAt(t, db, bp.Code, w[1].ID, "BIN-B1L-BURIED-FULL", 30, 10*time.Minute)
 
 	r := &binresolver.DefaultResolver{DB: db}
-	res, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, nil,
+	res, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, binresolver.NoBinType,
 		reservations.DigAsker{}, func(b *bins.Bin) bool { return b.UOPRemaining >= 30 })
 
 	var buried *binresolver.BuriedError
@@ -170,7 +170,7 @@ func TestGroupRetrieve_BuriedFilterSkipsTheLaneItRefuses(t *testing.T) {
 	agedBinAt(t, db, bp.Code, w[2].ID, "BIN-BL-BURIED-FULL", 30, 60*time.Minute)
 
 	r := &binresolver.DefaultResolver{DB: db}
-	res, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, nil,
+	res, err := r.Resolve(group, binresolver.ResolveModeRetrieve, bp.Code, binresolver.NoBinType,
 		reservations.DigAsker{}, func(b *bins.Bin) bool { return b.UOPRemaining >= 30 })
 
 	var buried *binresolver.BuriedError

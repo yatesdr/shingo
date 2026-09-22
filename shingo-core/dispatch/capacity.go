@@ -91,11 +91,11 @@ type CapacityDB interface {
 	// the order is admitted, resolved, refused, and parked a layer deeper under
 	// a cause that says nothing about the fence.
 	//
-	// CarrierTypeForOrder is read through the SAME store method the resolver
+	// BinTypeForOrder is read through the SAME store method the resolver
 	// derives from, keyed on the asking order, so the two cannot answer
 	// differently about what is arriving.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
-	CarrierTypeForOrder(orderID int64) (*int64, error)
+	BinTypeForOrder(orderID int64) (*int64, error)
 }
 
 // CapacityBlock is the structured result of a blocked dropoff-capacity check —
@@ -299,7 +299,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	// resolver sees in its dig asker — so the two reach the same answer or both
 	// reach "could not tell".
 	if binTypeID == nil && excludeOrderID != 0 {
-		if id, err := db.CarrierTypeForOrder(excludeOrderID); err == nil {
+		if id, err := db.BinTypeForOrder(excludeOrderID); err == nil {
 			binTypeID = id
 		}
 	}

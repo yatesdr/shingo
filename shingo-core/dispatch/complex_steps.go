@@ -10,6 +10,7 @@ import (
 	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
+	"shingocore/store"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -49,7 +50,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
 			if step.Action == protocol.ActionPickup {
-				carrier = d.carrierTypeAtNode(nodeName)
+				carrier = binTypeAtNode(d.db, nodeName)
 			}
 			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty,
 				PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
@@ -147,7 +148,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		// NULL by design and its holds can name two carriers at once — so the
 		// paired pickup is the better answer and this prefers it.
 		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker, "",
-			d.carrierBeforeStep(steps, i))
+			d.binTypeBeforeStep(steps, i))
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
 		}
@@ -219,7 +220,7 @@ func resolvedStepPayload(step resolvedStep, orderPayload string) string {
 	return orderPayload
 }
 
-// carrierBeforeStep names the carrier the nearest PICKUP ahead of index i is
+// binTypeBeforeStep names the carrier the nearest PICKUP ahead of index i is
 // holding — the one a dropoff at i is about to put down.
 //
 // Backwards from i rather than tracked in a variable, because this runs on the
@@ -227,17 +228,17 @@ func resolvedStepPayload(step resolvedStep, orderPayload string) string {
 // walk therefore skips most of the list. A carried variable would be updated on
 // the iterations that happen to re-resolve and stale on the ones that do not.
 // The lists are a handful of steps long, so the scan costs nothing.
-func (d *Dispatcher) carrierBeforeStep(steps []resolvedStep, i int) *int64 {
+func (d *Dispatcher) binTypeBeforeStep(steps []resolvedStep, i int) *int64 {
 	for j := i - 1; j >= 0; j-- {
 		if steps[j].Action != protocol.ActionPickup || steps[j].Node == "" {
 			continue
 		}
-		return d.carrierTypeAtNode(steps[j].Node)
+		return binTypeAtNode(d.db, steps[j].Node)
 	}
 	return nil
 }
 
-// carrierTypeAtNode names the carrier standing at a just-resolved pickup slot,
+// binTypeAtNode names the carrier standing at a just-resolved pickup slot,
 // so the dropoff that follows can be fenced by type at intake.
 //
 // EXACTLY ONE, OR NOTHING — the same rule typeFromDestinationPosition uses for
@@ -250,15 +251,15 @@ func (d *Dispatcher) carrierBeforeStep(steps []resolvedStep, i int) *int64 {
 // BEST EFFORT THROUGHOUT. Every error path returns nil rather than failing the
 // intake: this is a narrowing, and a narrowing that cannot be computed must not
 // be able to refuse an order Edge just asked for.
-func (d *Dispatcher) carrierTypeAtNode(nodeName string) *int64 {
+func binTypeAtNode(db *store.DB, nodeName string) *int64 {
 	if nodeName == "" {
 		return nil
 	}
-	node, err := d.db.GetNodeByDotName(nodeName)
+	node, err := db.GetNodeByDotName(nodeName)
 	if err != nil || node == nil {
 		return nil
 	}
-	binsAt, err := d.db.ListBinsByNode(node.ID)
+	binsAt, err := db.ListBinsByNode(node.ID)
 	if err != nil || len(binsAt) != 1 {
 		return nil
 	}
@@ -333,11 +334,12 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayloa
 			// holding a specific carrier, and that carrier is the one this leg puts
 			// down. Nil on a retrieve, and nil when the pickup could not be pinned
 			// to exactly one bin, which resolves untyped as it always did.
-			var storeType *int64
+			storeCarrier := binresolver.NoBinType
 			if mode == binresolver.ResolveModeStore {
-				storeType = carrierTypeID
+				storeCarrier = binresolver.BinTypeFrom(carrierTypeID,
+					"complex step: no preceding pickup resolved to exactly one carrier")
 			}
-			result, err := d.resolver.Resolve(node, mode, payloadCode, storeType, asker, nil)
+			result, err := d.resolver.Resolve(node, mode, payloadCode, storeCarrier, asker, nil)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}

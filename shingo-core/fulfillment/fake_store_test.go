@@ -24,8 +24,8 @@ type fakeStore struct {
 	emptyInGroup   map[int64]int
 	// Per-node Allowed Bin Types: what each node declares, and what carrier the
 	// asking order is placing. Both empty by default = the fence is inert.
-	effBinTypes  map[int64][]*bins.BinType
-	carrierTypes map[int64]int64
+	effBinTypes   map[int64][]*bins.BinType
+	orderBinTypes map[int64]int64
 	// Seed data.
 	queued     []*orders.Order
 	ordersByID map[int64]*orders.Order
@@ -296,8 +296,8 @@ func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) 
 	return f.effBinTypes[nodeID], nil
 }
 
-func (f *fakeStore) CarrierTypeForOrder(orderID int64) (*int64, error) {
-	if id, ok := f.carrierTypes[orderID]; ok {
+func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, error) {
+	if id, ok := f.orderBinTypes[orderID]; ok {
 		return &id, nil
 	}
 	return nil, nil

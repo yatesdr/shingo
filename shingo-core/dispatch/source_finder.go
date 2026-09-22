@@ -360,7 +360,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		// been deleted, so the rule is what carries forward and not the fixture.
 		//
 		// Every other need passes nil and gets the oldest bin exactly as before.
-		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil,
+		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, binresolver.NoBinType,
 			need.Asker, f.acceptableSourceFor(need))
 		if err != nil {
 			switch class, payload := classifyResolutionError(err); class {

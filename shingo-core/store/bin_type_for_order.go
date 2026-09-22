@@ -1,13 +1,13 @@
 package store
 
-// CarrierTypeForOrder answers ONE question: which carrier type is this order
+// BinTypeForOrder answers ONE question: which bin type is this order
 // going to put down. It exists because the per-node Allowed Bin Types gate had
 // no way to find out.
 //
 // ── WHY THIS IS A LOOKUP AND NOT A PARAMETER ────────────────────────────────
 //
 // The gate in binresolver.binTypeAllowed has been correct since it was written
-// and did nothing for just as long, because the carrier type reached it as a
+// and did nothing for just as long, because the bin type reached it as a
 // parameter that five of seven call sites passed as nil. A parameter threaded
 // through every path is a check that every NEW path forgets, and the history
 // here is the proof: the one caller that did pass it (the level keeper) was
@@ -23,7 +23,7 @@ package store
 // The same question is asked at three different moments in an order's life, and
 // only the last of them has a carrier in hand:
 //
-//  1. orders.bin_id — the carrier is chosen and recorded. Every simple move and
+//  1. orders.bin_id — the bin type is chosen and recorded. Every simple move and
 //     retrieve that has reached dispatch is here. This is the physical thing the
 //     robot is holding, so it outranks anything inferred.
 //  2. the order's BIN reservations — a complex order's legs hold their carriers
@@ -34,13 +34,13 @@ package store
 //
 // ── EVERY DOUBT RETURNS NIL, WHICH MEANS "DO NOT NARROW" ────────────────────
 //
-// Not "refuse". An unreadable row, an order with no carrier yet, a plan holding
+// Not "refuse". An unreadable row, an order with no bin type yet, a plan holding
 // two carriers of different types — all of them resolve untyped, which is the
 // behaviour every order in the plant had before this function existed. The
 // alternative is refusing to place a carrier because we could not work out what
 // it was, which converts a transient read fault into a parked robot.
 //
-// AMBIGUITY IS NIL ON PURPOSE. An order holding two carrier types has no single
+// AMBIGUITY IS NIL ON PURPOSE. An order holding two bin types has no single
 // answer, and choosing either would fence the resolve on a guess. Two held types
 // is a compound or a mis-shaped plan; both deserve the untyped resolve they have
 // always had rather than a narrowing nobody asked for.
@@ -48,7 +48,7 @@ package store
 // The error is returned rather than swallowed so the resolver can say a read
 // failed. A silent nil on a database fault is how an un-narrowed placement
 // becomes unexplainable after the fact.
-func (db *DB) CarrierTypeForOrder(orderID int64) (*int64, error) {
+func (db *DB) BinTypeForOrder(orderID int64) (*int64, error) {
 	if orderID == 0 {
 		return nil, nil
 	}
@@ -71,17 +71,17 @@ func (db *DB) CarrierTypeForOrder(orderID int64) (*int64, error) {
 		}
 	}
 
-	return db.heldCarrierType(orderID)
+	return db.heldBinType(orderID)
 }
 
-// heldCarrierType reads the carrier type off the order's bin reservations, for
+// heldBinType reads the bin type off the order's bin reservations, for
 // the orders whose bin_id is not the answer — a complex order's legs hold their
 // carriers well before the column means anything.
 //
 // SLOT AND MOUTH ROWS ARE SKIPPED, not treated as unknown: ListByOrder returns
 // both kinds and sets exactly one of BinID/NodeID, so a zero BinID is a row
-// about a PLACE, which names no carrier and says nothing either way.
-func (db *DB) heldCarrierType(orderID int64) (*int64, error) {
+// about a PLACE, which names no bin type and says nothing either way.
+func (db *DB) heldBinType(orderID int64) (*int64, error) {
 	held, err := db.ListReservationsByOrder(orderID)
 	if err != nil {
 		return nil, err

@@ -45,7 +45,7 @@ const (
 // the order in hand is out here — every production call site has one. Pass
 // reservations.Anyone where none exists.
 type NodeResolver interface {
-	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64,
+	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, stated BinTypeStatement,
 		asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error)
 }
 
@@ -113,7 +113,7 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 
 // Resolve selects the best physical child of a synthetic node for the given
 // direction of travel.
-func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64,
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, stated BinTypeStatement,
 	asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
@@ -130,7 +130,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		case ResolveModeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode, asker, accept)
 		case ResolveModeStore:
-			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID, asker)
+			return gr.ResolveStore(syntheticNode, payloadCode, stated, asker)
 		}
 	}
 
@@ -149,10 +149,8 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		// declared a carrier type had those declarations honoured through the
 		// group resolver and ignored through this one, which is the same
 		// lane/flat asymmetry payloadAllowedAt was written to end.
-		if binTypeID == nil {
-			binTypeID = gr.carrierTypeFor(asker)
-		}
-		node, err := r.resolveStore(children, payloadCode, binTypeID, gr)
+		stated = gr.settleBinType(stated, asker, syntheticNode)
+		node, err := r.resolveStore(children, payloadCode, stated.TypeID(), gr)
 		if err != nil {
 			return nil, err
 		}

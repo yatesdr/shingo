@@ -394,7 +394,7 @@ func (r *GroupResolver) classifyEmptyGroup(
 }
 
 // ResolveStore finds the best slot for storing a bin in a node group.
-func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
+func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stated BinTypeStatement, asker reservations.DigAsker) (*ResolveResult, error) {
 	// ── THE TYPE IS DERIVED, NOT DEMANDED ───────────────────────────────────
 	//
 	// The parameter stays an OVERRIDE and the derivation is the default, which
@@ -408,9 +408,8 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binT
 	// sites passed nil, so binTypeAllowed below was simply never reached with
 	// anything to check. Deriving here rather than at each call site is what
 	// makes that un-forgettable — a new store path gets the gate by existing.
-	if binTypeID == nil {
-		binTypeID = r.carrierTypeFor(asker)
-	}
+	stated = r.settleBinType(stated, asker, group)
+	binTypeID := stated.TypeID()
 	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
 	//
 	// A maintained group holds a declared number of empty carriers. The keeper
@@ -727,29 +726,50 @@ func (r *GroupResolver) noteClosedLanes(group *nodes.Node, closed []string) {
 		group.Name, len(closed), strings.Join(closed, ", "))
 }
 
-// carrierTypeFor asks the store what carrier the asking order is placing, so
-// the gate below has something to check without every caller remembering to say.
+// settleBinType fills in a carrier the caller could not name, and says so when
+// it still cannot.
 //
-// A READ FAILURE IS LOGGED AND NARROWS NOTHING, which is the opposite direction
-// from binTypeAllowed's refusal and deliberately so. That one is answering "may
-// this carrier go here" and a failed read there could put a bin where it does
-// not fit. This one is answering "what is the carrier", and a failed read means
-// only that we cannot narrow — the resolve proceeds exactly as it did before the
-// gate existed, rather than refusing to place anything at all.
+// THE CALLER'S STATEMENT WINS. A caller that named a type knows something this
+// lookup does not — the level keeper names a carrier before one exists, and its
+// order may not be readable by id yet — so a known carrier is returned
+// untouched.
 //
-// reservations.Anyone carries OrderID 0 and gets nil back, so a call site with
-// no order in hand keeps its untyped resolve.
-func (r *GroupResolver) carrierTypeFor(asker reservations.DigAsker) *int64 {
-	if asker.OrderID == 0 {
-		return nil
+// THE LOOKUP IS A COURTESY, NOT THE CONTRACT. It recovers the common case (an
+// order with a bin, or holding one) so six of the eight resolution sites need
+// say nothing. The two that resolve before their order row exists cannot be
+// recovered here and must name their own carrier; the log line below is what
+// makes a site that does not stand out in the plant's own traffic rather than
+// in somebody's reading of the call graph.
+//
+// A READ FAILURE NARROWS NOTHING, the opposite direction from binTypeAllowed's
+// refusal and deliberately so. That one asks "may this carrier go here", where
+// a failed read could put a bin where it does not fit. This asks "what IS the
+// carrier", and failing to learn that must leave the resolve as it was before
+// the fence existed rather than refusing to place anything at all.
+func (r *GroupResolver) settleBinType(stated BinTypeStatement, asker reservations.DigAsker, group *nodes.Node) BinTypeStatement {
+	if !stated.gap() {
+		return stated // already named, or a retrieve that places nothing
 	}
-	id, err := r.DB.CarrierTypeForOrder(asker.OrderID)
-	if err != nil {
-		log.Printf("store slot: carrier type for order %d unreadable (%v) — resolving untyped",
-			asker.OrderID, err)
-		return nil
+	if asker.OrderID != 0 {
+		id, err := r.DB.BinTypeForOrder(asker.OrderID)
+		if err != nil {
+			log.Printf("store slot: bin type for order %d unreadable (%v) — resolving %s untyped",
+				asker.OrderID, err, group.Name)
+			return stated
+		}
+		if id != nil {
+			return KnownBinType(*id)
+		}
 	}
-	return id
+	// THE LINE THAT ANSWERS "WHICH PATHS ARE BLIND". Reasoning about which of
+	// eight sites can name a carrier is how this was got wrong twice; a group
+	// name and a caller's own reason, on real traffic, answers it in a shift.
+	// It fires only on a store into a group whose slots could be fenced, which
+	// is rare enough to read and common enough to catch every path that matters.
+	log.Printf("store slot: resolving %s without knowing what it places (%s) — "+
+		"the per-node Allowed Bin Types fence cannot apply to this order",
+		group.Name, stated.why)
+	return stated
 }
 
 // binTypeAllowed checks whether a bin type is permitted at a node via effective

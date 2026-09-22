@@ -43,7 +43,7 @@ func TestLevelFilter_AtLevelRefuses(t *testing.T) {
 		map[groupKey]int{{100, "LVL-45x58"}: 4})
 
 	r := &GroupResolver{DB: f}
-	_, err := r.ResolveStore(grp, "", &bt, reservations.Anyone)
+	_, err := r.ResolveStore(grp, "", KnownBinType(bt), reservations.Anyone)
 	if err == nil {
 		t.Fatal("a group holding 4 against a level of 4 accepted a fifth carrier. The level " +
 			"is a CAP; without this the keeper's number is only a floor")
@@ -65,7 +65,7 @@ func TestLevelFilter_BelowLevelIsUnaffected(t *testing.T) {
 		map[groupKey]int{{200, "LVL-45x58"}: 3})
 
 	r := &GroupResolver{DB: f}
-	got, err := r.ResolveStore(grp, "", &bt, reservations.Anyone)
+	got, err := r.ResolveStore(grp, "", KnownBinType(bt), reservations.Anyone)
 	if err != nil || got == nil || got.Node == nil {
 		t.Fatalf("got %v, err %v — a group below its level takes the carrier", got, err)
 	}
@@ -87,10 +87,10 @@ func TestLevelFilter_PerTypeWhenTheTypeIsKnown(t *testing.T) {
 
 	r := &GroupResolver{DB: f}
 
-	if _, err := r.ResolveStore(grp, "", &big, reservations.Anyone); err == nil {
+	if _, err := r.ResolveStore(grp, "", KnownBinType(big), reservations.Anyone); err == nil {
 		t.Error("the MET type was accepted — its own declaration is satisfied")
 	}
-	if got, err := r.ResolveStore(grp, "", &small, reservations.Anyone); err != nil || got == nil {
+	if got, err := r.ResolveStore(grp, "", KnownBinType(small), reservations.Anyone); err != nil || got == nil {
 		t.Errorf("the SHORT type was refused (%v). One satisfied declaration must not fence "+
 			"the group against every other type it was told to hold", err)
 	}
@@ -106,7 +106,7 @@ func TestLevelFilter_UndeclaredTypeIsNotFenced(t *testing.T) {
 		map[groupKey]int{{400, "LVL-D"}: 1})
 
 	r := &GroupResolver{DB: f}
-	if got, err := r.ResolveStore(grp, "", &other, reservations.Anyone); err != nil || got == nil {
+	if got, err := r.ResolveStore(grp, "", KnownBinType(other), reservations.Anyone); err != nil || got == nil {
 		t.Errorf("an UNDECLARED type was refused (%v). A maintained group is a group with a "+
 			"level on some types, not a group closed to every other", err)
 	}
@@ -131,7 +131,7 @@ func TestLevelFilter_UntypedUsesTheGroupTotal(t *testing.T) {
 	f, grp := levelStore(500, levels, map[groupKey]int{
 		{500, "LVL-BIG"}: 4, {500, "LVL-SMALL"}: 0,
 	})
-	if got, err := (&GroupResolver{DB: f}).ResolveStore(grp, "", nil, reservations.Anyone); err != nil || got == nil {
+	if got, err := (&GroupResolver{DB: f}).ResolveStore(grp, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil || got == nil {
 		t.Errorf("untyped store refused at 4 of a 6 total (%v) — the strict reading would "+
 			"let one satisfied type fence the whole group", err)
 	}
@@ -140,7 +140,7 @@ func TestLevelFilter_UntypedUsesTheGroupTotal(t *testing.T) {
 	f2, grp2 := levelStore(500, levels, map[groupKey]int{
 		{500, "LVL-BIG"}: 4, {500, "LVL-SMALL"}: 2,
 	})
-	if _, err := (&GroupResolver{DB: f2}).ResolveStore(grp2, "", nil, reservations.Anyone); err == nil {
+	if _, err := (&GroupResolver{DB: f2}).ResolveStore(grp2, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err == nil {
 		t.Error("untyped store accepted at 6 of a 6 total — the cap is the sum when the " +
 			"caller cannot say which declaration it fills")
 	}
@@ -157,7 +157,7 @@ func TestLevelFilter_UnmaintainedGroupIsANoOp(t *testing.T) {
 	f.nodes[child.ID] = child
 	f.children[grp.ID] = []*nodes.Node{child}
 
-	if got, err := (&GroupResolver{DB: f}).ResolveStore(grp, "", nil, reservations.Anyone); err != nil || got == nil {
+	if got, err := (&GroupResolver{DB: f}).ResolveStore(grp, "", UnknownBinType("test: caller names no carrier"), reservations.Anyone); err != nil || got == nil {
 		t.Fatalf("a group with no declared level was affected: got %v err %v", got, err)
 	}
 }
@@ -185,7 +185,7 @@ func TestLevelFilter_ReadFailureRefusesAndPropagates(t *testing.T) {
 				map[groupKey]int{{700, "LVL-X"}: 0})
 			tc.spoil(f)
 
-			got, err := (&GroupResolver{DB: f}).ResolveStore(grp, "", &bt, reservations.Anyone)
+			got, err := (&GroupResolver{DB: f}).ResolveStore(grp, "", KnownBinType(bt), reservations.Anyone)
 			if err == nil || got != nil {
 				t.Fatalf("got %v err %v — a level that could not be read is not a level that "+
 					"said yes", got, err)

@@ -149,7 +149,7 @@ func TestBuildComplexPlan_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	}
 }
 
-func TestBuildComplexPlan_EmptyLegNoCarrierSkips(t *testing.T) {
+func TestBuildComplexPlan_EmptyLegNoBinTypeSkips(t *testing.T) {
 	t.Parallel()
 	// Empty leg with only a full present: the plan skips with the same reason
 	// string the live claim path emits, not a misleading "no bins at node".
