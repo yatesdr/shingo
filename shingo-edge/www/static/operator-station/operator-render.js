@@ -381,11 +381,20 @@ export function renderGrid() {
 // bin_uop_ledger as clear_for_reuse. What was missing was the operator seeing
 // what they were discarding at the moment they discarded it. Pass 0 or null
 // when there is nothing to say and the line is omitted.
-function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding) {
+// dunnageTypesFor derives the distinct carrier types a node may declare, from
+// the view-level payload_bin_types catalog narrowed to the node's payloads.
+//
+// ONE SPELLING, because two panels ask it now: the swap confirmation and the
+// empty-carrier panel beside it. It lived inline in the first, and the second
+// would have been a copy — which is how the two would drift into offering an
+// operator different type lists for the same carrier at the same window.
+//
+// The fallback is deliberate: a node whose payloads match nothing in the
+// catalog shows ALL dunnage codes rather than none, so the operator is never
+// stuck in front of an empty menu on a node nobody has finished configuring.
+function dunnageTypesFor(allowedPayloadCodes) {
     var view = getView();
     var catalog = (view && view.payload_bin_types) || [];
-
-    // Derive distinct dunnage codes for this node's payloads.
     var seen = {};
     var binTypeCodes = [];
     catalog.forEach(function(e) {
@@ -397,8 +406,6 @@ function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding) {
             binTypeCodes.push(e.bin_type_code);
         }
     });
-    // Fallback: if no payloads matched, show all dunnage codes so the
-    // operator is never stuck (e.g. node has no payloads configured yet).
     if (binTypeCodes.length === 0) {
         catalog.forEach(function(e) {
             if (!seen[e.bin_type_code]) {
@@ -407,6 +414,11 @@ function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding) {
             }
         });
     }
+    return binTypeCodes;
+}
+
+function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding) {
+    var binTypeCodes = dunnageTypesFor(allowedPayloadCodes);
 
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
@@ -459,7 +471,7 @@ function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding) {
 // confirmPushEmpty shows a confirmation panel for an empty carrier sitting in a
 // drain slot. Tapping PUSH EMPTY fires the push-empty endpoint so the carrier is
 // sent to the supermarket and the node can request a fresh full bin.
-function confirmPushEmpty(nodeID) {
+function confirmPushEmpty(nodeID, allowedPayloadCodes) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Empty bin in slot' }));
@@ -472,6 +484,42 @@ function confirmPushEmpty(nodeID) {
         postAction('/api/process-nodes/' + nodeID + '/push-empty', undefined, loadViewRef);
     });
     panel.appendChild(push);
+
+    // ── RE-CLEAR: SAY WHAT THIS CARRIER IS, ON THE WAY OUT ──────────────────
+    //
+    // The swap panel has always let the operator declare the dunnage type,
+    // because a clear is where that gets recorded. This panel is the SAME
+    // window one state later — the carrier is already empty — and it had no way
+    // to say anything about the carrier at all. So a carrier Core has typed
+    // wrong leaves typed wrong, and the operator standing in front of it, who
+    // can see what it is, has no way to correct the record.
+    //
+    // It posts the CLEAR endpoint, not push-empty, and that is the whole
+    // mechanism: a clear on an already-empty carrier discards nothing (Core
+    // records "discarded 0 parts"), writes the declared bin type, and fires the
+    // same empty-out move push-empty would have. Re-clearing IS pushing empty,
+    // plus the one fact this panel was missing.
+    //
+    // THE OPERATOR IS ASSERTING, NOT GUESSING. This is the same reading
+    // RecoverTransitAnomaly takes — a person looking at the thing is believed —
+    // and it is NOT a way to argue with the Allowed Bin Types fence. Declaring
+    // a carrier's real type is a correction; retyping a carrier so a refused
+    // order will go through would be a lie about a physical object, and this
+    // panel only ever offers the types the node's payloads actually use.
+    const dunnage = dunnageTypesFor(allowedPayloadCodes);
+    if (dunnage.length > 0) {
+        panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+            textContent: 'Or push it out and correct the carrier type:' }));
+        dunnage.forEach(function(code) {
+            const btn = el('button', { className: 'os-co-picker-btn', textContent: 'PUSH AS ' + code });
+            btn.addEventListener('click', function() {
+                overlay.remove();
+                postAction('/api/process-nodes/' + nodeID + '/clear-bin',
+                    { bin_type_code: code }, loadViewRef);
+            });
+            panel.appendChild(btn);
+        });
+    }
 
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
     cancel.addEventListener('click', () => overlay.remove());
@@ -1321,7 +1369,8 @@ function createNodeButton(entry) {
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
             if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
                 entry.runtime && entry.runtime.remaining_uop_cached);
-            else if (emptyPresent) confirmPushEmpty(entry.node.id);
+            else if (emptyPresent) confirmPushEmpty(entry.node.id,
+                entry.active_claim && entry.active_claim.allowed_payload_codes);
         });
     } else {
         btn.addEventListener('click', () => openModalRef(entry.node.id));
