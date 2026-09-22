@@ -10,6 +10,29 @@ import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/s
 // Auth comes from the wrapper's data-authenticated, set by the Go template.
 // The manifest is drawn by JS on two surfaces, neither of which is a
 // template, so {{if .Authenticated}} can't gate the controls.
+// fleetMessages renders one class of vendor message — errors, warnings or
+// notices — as the fleet actually worded it.
+//
+// A STRING IS STILL ACCEPTED. Older telemetry rows, and any vendor that sends a
+// bare string, must not regress to showing nothing; only the object form was
+// ever broken. An entry with neither a code nor a desc is dropped rather than
+// rendered as an empty bullet.
+function fleetMessages(label, alertClass, items) {
+  if (!items || !items.length) return '';
+  var lines = items.map(function(m) {
+    if (typeof m === 'string') return escapeHtml(m);
+    if (!m || (m.code === undefined && !m.desc)) return '';
+    var out = '';
+    if (m.code !== undefined) out += 'Code ' + escapeHtml(String(m.code)) + ': ';
+    out += escapeHtml(m.desc || '-');
+    if (m.times > 1) out += ' (x' + escapeHtml(String(m.times)) + ')';
+    return out;
+  }).filter(function(t) { return t !== ''; });
+  if (!lines.length) return '';
+  return '<div class="manifest-alert ' + alertClass + '"><strong>' + label +
+    ':</strong> ' + lines.join('; ') + '</div>';
+}
+
 function isAuthenticated() {
   var root = document.querySelector('[data-sse="orders"]');
   return !!root && root.dataset.authenticated === 'true';
@@ -400,8 +423,30 @@ function buildManifest(data, opts) {
       }</tbody></table>`;
     }
 
-    if (vd.errors && vd.errors.length) out += '<div class="manifest-alert manifest-alert-danger"><strong>Errors:</strong> ' + vd.errors.map(escapeHtml).join(', ') + '</div>';
-    if (vd.warnings && vd.warnings.length) out += '<div class="manifest-alert manifest-alert-warn"><strong>Warnings:</strong> ' + vd.warnings.map(escapeHtml).join(', ') + '</div>';
+    // ── THE FLEET'S OWN WORDS, NOT "[object Object]" ────────────────────────
+    //
+    // These arrive as OBJECTS — {code, desc, times, timestamp} — and this ran
+    // escapeHtml over each one, which stringifies an object to the literal text
+    // "[object Object]". Every vendor refusal this page has ever shown was that
+    // string, on the one surface an operator opens to find out why an order died.
+    //
+    // It cost a real diagnosis on 2026-09-22: a move was STOPPED by the fleet
+    // seconds after dispatch and the page said "[object Object]", while the
+    // answer sat in the same payload — code 60009, "Cannot find path to
+    // [SMN_011]", i.e. a destination the robot map cannot route to. Somebody had
+    // to go and read the database to learn what the screen already had.
+    //
+    // SAME SPELLING AS mission-detail.js renderMessages, deliberately: "Code N:
+    // desc", the repeat count when there is one. Two pages showing the same fleet
+    // message two ways is how an operator learns to trust one screen and not the
+    // other. If that spelling changes, change it here too.
+    //
+    // NOTICES ARE SHOWN NOW TOO. The same incident's notice named every robot and
+    // why each declined the job — which is the second question an operator asks
+    // after "why did it stop" — and this page dropped it on the floor.
+    out += fleetMessages('Errors', 'manifest-alert-danger', vd.errors);
+    out += fleetMessages('Warnings', 'manifest-alert-warn', vd.warnings);
+    out += fleetMessages('Notices', 'manifest-alert-warn', vd.notices);
   }
 
   // ── CHILD ORDERS / STEPS ──
