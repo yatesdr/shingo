@@ -747,45 +747,23 @@ textarea { resize: vertical; min-height: 60px; }
  * two components sharing one name is expensive. Hence `.tag-field`. */
 .tag-field { position: relative; }
 .tag-field .mode-select { margin-bottom: 0.4rem; }
+/* A COLUMN THAT SCROLLS, because the list is now every option rather than the
+ * handful somebody picked. Three carrier types fit in nothing; a plant that
+ * defines twenty would otherwise push Save off the bottom of the modal and the
+ * operator would have no way to reach it. The cap is ~7 rows — enough that the
+ * common case never scrolls, low enough that the worst case cannot run away. */
 .tag-list {
-  display: flex; flex-wrap: wrap; gap: 0.3rem;
-  padding: 0.3rem; min-height: 30px;
+  display: flex; flex-direction: column; gap: 0.1rem;
+  padding: 0.3rem; min-height: 30px; max-height: 11rem; overflow-y: auto;
   border: 1px solid var(--border); border-radius: 0.35rem;
   background: var(--surface);
 }
-.tag {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  padding: 0.15rem 0.4rem; font-size: 0.8rem;
-  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
-  border-radius: 0.25rem; white-space: nowrap;
+.tag-check {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.8rem; padding: 0.15rem 0;
+  cursor: pointer; user-select: none;
 }
-.tag-remove {
-  background: none; border: none; cursor: pointer;
-  color: var(--text-muted); font-size: 0.9rem; line-height: 1;
-  padding: 0 0.1rem;
-}
-.tag-remove:hover { color: var(--danger); }
-.tag-filter {
-  width: 100%; padding: 0.3rem 0.5rem; font-size: 0.8rem;
-  border: 1px solid var(--border); border-radius: 0.35rem;
-  background: var(--surface); color: var(--text);
-  margin-top: 0.3rem;
-}
-.tag-dropdown {
-  max-height: 120px; overflow-y: auto;
-  border: 1px solid var(--border); border-radius: 0.35rem;
-  background: var(--surface); margin-top: 0.15rem;
-}
-.tag-dropdown-item {
-  padding: 0.25rem 0.5rem; font-size: 0.8rem;
-  cursor: pointer;
-}
-.tag-dropdown-item:hover { background: color-mix(in srgb, var(--primary) 10%, var(--surface)); }
-.tag-dropdown-empty {
-  padding: 0.25rem 0.5rem; font-size: 0.8rem;
-  color: var(--text-muted); font-style: italic;
-}
+.tag-check input { cursor: pointer; margin: 0; }
 
 /* Bin content state dots */
 .bin-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }

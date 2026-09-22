@@ -240,10 +240,8 @@ function toggleInheritOption(selectId, hasParent) {
 
 function clearChipPicker(name) {
   _chipSelections[name] = [];
-  var chips = document.getElementById('cp-' + name + '-chips');
-  if (chips) chips.innerHTML = '';
-  var filter = document.querySelector('#cp-' + name + ' .tag-filter');
-  if (filter) filter.value = '';
+  var host = document.getElementById('cp-' + name + '-chips');
+  if (host) host.innerHTML = '';
 }
 
 function populateChipPicker(name, items) {
@@ -251,70 +249,54 @@ function populateChipPicker(name, items) {
   renderChips(name);
 }
 
+// ── A CHECKBOX LIST, NOT A TYPE-AHEAD ───────────────────────────────────────
+//
+// This was a chip field: a filter input, a dropdown that opened on focus and
+// closed on a blur timer, and chips with remove buttons. That shape is for
+// picking a few things out of hundreds. A plant has THREE carrier types and two
+// stations, so the filter box could never filter anything, the dropdown hid the
+// options behind a click, and "which types does this node accept" — the actual
+// question — could not be answered without opening it.
+//
+// Every option visible with its state on it answers that at a glance, and the
+// whole apparatus it replaces (renderChipDropdown, addChip, removeChip,
+// filter/show/hideChipDropdown and the blur setTimeout that kept the dropdown
+// alive long enough to receive a click) is gone with it.
 function renderChips(name) {
-  var container = document.getElementById('cp-' + name + '-chips');
-  container.innerHTML = '';
-  _chipSelections[name].forEach(function(item) {
-    var chip = document.createElement('span');
-    chip.className = 'tag';
-    chip.textContent = item.label;
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tag-remove';
-    btn.innerHTML = '&times;';
-    btn.onclick = function() { removeChip(name, item.id); };
-    chip.appendChild(btn);
-    container.appendChild(chip);
-  });
-  renderChipDropdown(name);
-}
-
-function renderChipDropdown(name) {
   var cfg = getPickerConfig(name);
-  var dd = document.getElementById('cp-' + name + '-dropdown');
-  var filter = document.querySelector('#cp-' + name + ' .tag-filter');
-  var q = (filter ? filter.value : '').toLowerCase();
-  var selectedIds = _chipSelections[name].map(function(i) { return i.id; });
-  var available = cfg.all.filter(function(item) {
-    return selectedIds.indexOf(item.id) < 0 && (!q || item.label.toLowerCase().indexOf(q) >= 0);
-  });
-  if (available.length === 0) {
-    dd.innerHTML = '<div class="tag-dropdown-empty">No items</div>';
+  var host = document.getElementById('cp-' + name + '-chips');
+  if (!host) return;
+  host.innerHTML = '';
+  if (cfg.all.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'text-muted';
+    none.style.fontSize = '0.75rem';
+    none.textContent = name === 'bin-types'
+      ? 'No bin types are defined yet — add them on the Bins page.'
+      : 'No stations are enrolled yet.';
+    host.appendChild(none);
     return;
   }
-  dd.innerHTML = '';
-  available.forEach(function(item) {
-    var div = document.createElement('div');
-    div.className = 'tag-dropdown-item';
-    div.textContent = item.label;
-    div.onclick = function() { addChip(name, item); };
-    dd.appendChild(div);
+  var selectedIds = _chipSelections[name].map(function(i) { return i.id; });
+  cfg.all.forEach(function(item) {
+    var row = document.createElement('label');
+    row.className = 'tag-check';
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = item.id;
+    box.checked = selectedIds.indexOf(item.id) >= 0;
+    box.onchange = function() { toggleChip(name, item, box.checked); };
+    row.appendChild(box);
+    row.appendChild(document.createTextNode(' ' + item.label));
+    host.appendChild(row);
   });
 }
 
-function addChip(name, item) {
-  _chipSelections[name].push(item);
-  renderChips(name);
-}
-
-function removeChip(name, id) {
-  _chipSelections[name] = _chipSelections[name].filter(function(i) { return i.id !== id; });
-  renderChips(name);
-}
-
-function filterChipDropdown(name) { renderChipDropdown(name); }
-
-function showChipDropdown(name) {
-  var dd = document.getElementById('cp-' + name + '-dropdown');
-  dd.classList.remove('hide');
-  renderChipDropdown(name);
-}
-
-function hideChipDropdown(name) {
-  setTimeout(function() {
-    var dd = document.getElementById('cp-' + name + '-dropdown');
-    dd.classList.add('hide');
-  }, 150);
+function toggleChip(name, item, on) {
+  var rest = _chipSelections[name].filter(function(i) { return i.id !== item.id; });
+  // Rebuilt rather than spliced so a selection carrying a stale duplicate (or an
+  // id no longer in the list) cannot survive a toggle.
+  _chipSelections[name] = on ? rest.concat([item]) : rest;
 }
 
 function serializeChipPickers() {
@@ -479,22 +461,17 @@ async function handleNodeSave(el, evt) {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
-    addChip,
     clearChipPicker,
     closeNodeModal,
     deleteNode,
-    filterChipDropdown,
     getPickerConfig,
     handleNodeSave,
-    hideChipDropdown,
     loadInventory,
     loadNodeDetail,
     onAsrsToggle,
     onModeChange,
     openNodeModal,
     populateChipPicker,
-    removeChip,
-    renderChipDropdown,
     renderChips,
     clearGatePoint,
     clearGroupWaitPoints,
@@ -502,7 +479,6 @@ delegateActions(document.body, {
     pickGatePoint,
     saveAlgorithmProperties,
     serializeChipPickers,
-    showChipDropdown,
     toggleInheritOption
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
