@@ -104,6 +104,21 @@ func (f *SourceFinder) requiresFullCarrier(need SourceNeed) bool {
 	if need.Intent != IntentFull || need.DeliveryNode == "" {
 		return false
 	}
+	// AN OPERATOR'S MOVE IS NOT A SELECTION. This rule says "when CHOOSING what
+	// to bring a drain window, do not bring an empty" — and a person who named
+	// a carrier and a destination has already chosen. Every move is IntentFull
+	// (see the Intent constants: "retrieve, move"), so without this guard a
+	// manual move of an empty onto a consume window parks as "Waiting for
+	// material" forever, waiting for a full carrier nobody will send. That is
+	// order 2213 at Hopkinsville, 2026-09-22, with the operator's own bin
+	// standing at the source node the whole time.
+	//
+	// Same reading redirectStoreOffDugLane already applies to the DESTINATION
+	// half: re-aiming a no-demand order "is not a recalculation, it is Core
+	// overruling somebody".
+	if need.OriginClass == protocol.OriginClassNoDemand {
+		return false
+	}
 	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
 	if err != nil || dest == nil {
 		return false
@@ -240,7 +255,11 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// Both read straight off the order, never re-derived: the values are in
 		// hand here, and a per-step lookup would put a database round trip inside
 		// the tier cascade for something the caller was already holding.
-		OriginID:    order.OriginID,
+		OriginID: order.OriginID,
+		// Read off the order beside OriginID and for the same reason: the value
+		// is in hand, and requiresFullCarrier needs to know whether a person
+		// chose this move or the plant did.
+		OriginClass: order.OriginClass,
 		ProcessNode: order.ProcessNode,
 		// THE ASKER, ACTUALLY FILLED. SourceNeed.Asker's doc has claimed
 		// "FindSource fills it" since the field existed and this line is the

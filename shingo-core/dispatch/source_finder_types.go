@@ -74,6 +74,31 @@ type SourceNeed struct {
 	// uncovered.
 	Asker reservations.DigAsker
 
+	// OriginClass says WHO asked, and it exists so a rule meant for automatic
+	// sourcing does not get applied to a human's explicit instruction.
+	//
+	// no_demand means a person named this move at a door — the Core bins page,
+	// the spot order — rather than a place asking for material. The drain-window
+	// fullness rule (requiresFullCarrier) is a SELECTION preference: "when
+	// choosing what to bring an unloader, do not bring an empty". An operator
+	// who pointed at a carrier and a destination has already chosen, and there
+	// is nothing left to select.
+	//
+	// Applying it anyway is how order 2213 came to sit forever at Hopkinsville
+	// on 2026-09-22: a manual move of an EMPTY carrier onto a consume-role
+	// window parked as "Waiting for material", waiting for a full carrier
+	// nobody was ever going to send. The operator's own bin was standing at the
+	// source node the whole time.
+	//
+	// THIS IS THE RULE redirectStoreOffDugLane ALREADY STATES, one site over:
+	// "an order stamped no-demand had its destination named by a human at a
+	// door, and re-aiming that is not a recalculation, it is Core overruling
+	// somebody". Same reading, now applied to the SOURCE half.
+	//
+	// Blank for every need built by hand, which reads as "not an operator act"
+	// and leaves those callers exactly as they were.
+	OriginClass string
+
 	// OriginID is the demand episode this need serves, when it has one.
 	//
 	// IT IS HOW A TYPE TRAVELS FROM A DECISION TO A SOURCE. The maintained-group

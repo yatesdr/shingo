@@ -316,3 +316,75 @@ func TestBufferedUnloader_TakesAFullFromItsGroup(t *testing.T) {
 		t.Fatalf("outcome=%v bin=%v, want the full carrier from the buffer", res.Outcome, res.Bin)
 	}
 }
+
+// ── AN OPERATOR'S MOVE IS NOT A SELECTION ───────────────────────────────────
+//
+// The rule above is about CHOOSING: when the plant goes shopping for a carrier
+// to feed a drain window, it must not come back with an empty. A person who
+// pointed at a carrier and at a destination has already chosen, and there is
+// nothing left for the rule to prefer between.
+//
+// Applying it anyway wedged a live plant. Hopkinsville, 2026-09-22: an operator
+// moved an EMPTY carrier off a supermarket node onto a consume-role window from
+// the Core bins page. Every move is IntentFull (see the Intent constants —
+// "retrieve, move"), so the drain-window rule fired, and the order parked as
+// "Waiting for material" waiting for a full carrier nobody was ever going to
+// send. The operator's own bin stood at the source node the whole time. Nothing
+// would ever have released it.
+
+func TestOperatorMove_CanMoveAnEmptyOntoADrainWindow(t *testing.T) {
+	t.Parallel()
+	db := newFakeFinderDB()
+
+	window := &nodes.Node{ID: 10, Name: "SMN_001", Enabled: true}
+	db.addNode(window)
+	db.addConsumeLoaderWindow(1, window.ID)
+
+	// An EMPTY carrier — no payload, nothing in it — standing at a source node.
+	db.fifoBin = atStorage(db, &bins.Bin{ID: 99, UOPRemaining: 0, UOPCapacity: 100})
+
+	f := NewSourceFinder(db, nil, nil)
+	res := f.FindSource(&orders.Order{
+		DeliveryNode: "SMN_001",
+		SourceIntent: SourceIntentFull,
+		// The operator signal: a person named this at a door, so no episode.
+		OriginClass: protocol.OriginClassNoDemand,
+	}, IntentFull)
+
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 99 {
+		t.Fatalf("outcome=%v bin=%v, want the empty carrier the operator named.\n\n"+
+			"The drain-window fullness rule is a SELECTION preference and there is nothing "+
+			"here to select: a person chose the carrier and the destination. Refusing parks "+
+			"the order as \"Waiting for material\" forever — no full carrier is coming, "+
+			"because none was asked for.", res.Outcome, res.Bin)
+	}
+}
+
+// AND THE RULE STILL HOLDS FOR THE PLANT'S OWN PULLS. The guard keys on the
+// operator signal, not on emptiness, so an automatic pull into a drain window
+// is refused an empty exactly as before. Without this the fix would read as
+// "drain windows accept anything now".
+func TestAutomaticPull_StillRefusesAnEmptyIntoADrainWindow(t *testing.T) {
+	t.Parallel()
+	db := newFakeFinderDB()
+
+	window := &nodes.Node{ID: 10, Name: "SMN_001", Enabled: true}
+	db.addNode(window)
+	db.addConsumeLoaderWindow(1, window.ID)
+
+	db.fifoBin = atStorage(db, &bins.Bin{ID: 99, PayloadCode: "PART-A", UOPRemaining: 0, UOPCapacity: 100})
+
+	f := NewSourceFinder(db, nil, nil)
+	res := f.FindSource(&orders.Order{
+		PayloadCode:  "PART-A",
+		DeliveryNode: "SMN_001",
+		SourceIntent: SourceIntentFull,
+		// No OriginClass: the plant asked, not a person.
+	}, IntentFull)
+
+	if res.Outcome == OutcomeFound {
+		t.Fatalf("an automatic pull brought bin %d (uop=%d of %d) to a drain window — "+
+			"the operator guard must key on WHO ASKED, not on whether the carrier is empty",
+			res.Bin.ID, res.Bin.UOPRemaining, res.Bin.UOPCapacity)
+	}
+}
