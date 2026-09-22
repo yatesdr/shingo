@@ -17,6 +17,50 @@ import '/static/pages/nodes-detail.js';
 // nodes-supermarket.js) read isAuth from #page-data independently
 // under ES module scoping.
 
+// ── THE PAGE COMES BACK WHERE YOU LEFT IT ───────────────────────────────────
+//
+// Saving a node POSTs to /nodes/update, which answers 303 and navigates the
+// whole page; the six location.reload() calls across this module and
+// nodes-supermarket.js do the same thing by another route. Every one of them
+// lands the operator at the TOP, and the node they were working on is a scroll
+// down a long tile map. On a floor edit that is the difference between changing
+// four nodes and changing one and giving up.
+//
+// ONE beforeunload HOOK, NOT SEVEN CALL SITES. Every navigation off this page
+// goes through it — form.submit(), location.reload(), a plain link — so the
+// fix cannot be forgotten by the next thing that reloads. The alternative was
+// re-rendering the tiles in place on save, which no code here does: all six
+// existing sites reload, and inventing an in-place path for one of them would
+// leave the tile map showing pre-save state everywhere else.
+//
+// KEYED BY PATH AND FENCED BY TIME. Only a return to the SAME page restores,
+// and only within 30s, so this is the save-and-come-back round trip and not a
+// position remembered from a visit an hour ago. Browsers restore scroll on
+// back/forward themselves; a POST-redirect-GET is the case they do not cover.
+//
+// try/catch because sessionStorage throws outright in some privacy modes, and a
+// scroll convenience must never be the thing that stops the page loading.
+var SCROLL_KEY = 'nodes:scroll:' + location.pathname;
+
+window.addEventListener('beforeunload', function() {
+  try {
+    sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ y: window.scrollY, at: Date.now() }));
+  } catch (e) { /* storage unavailable: the page simply lands at the top */ }
+});
+
+(function restoreScroll() {
+  var saved;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(SCROLL_KEY) || 'null');
+    sessionStorage.removeItem(SCROLL_KEY);
+  } catch (e) { return; }
+  if (!saved || !saved.y || Date.now() - saved.at > 30000) return;
+  // After paint, or the document is still short and the scroll goes nowhere.
+  window.requestAnimationFrame(function() {
+    window.requestAnimationFrame(function() { window.scrollTo(0, saved.y); });
+  });
+})();
+
 // Sync + the test-data tools used to hide behind Ctrl/Shift-click on one button
 // (undiscoverable, and hazardous right next to a production action). They are now
 // three explicit actions: Sync from Fleet, and the two test-node tools tucked
