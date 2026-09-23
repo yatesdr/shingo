@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"shingocore/domain"
 	"shingocore/store"
@@ -61,14 +62,26 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 	for i := range containment {
 		containmentState[containment[i].PayloadCode] = &containment[i]
 	}
+	// The partial-containment warning, per payload: which OTHER processes
+	// produce the part without a containment route. The contain-confirmation
+	// names them, because "contained" that leaves half the producers shipping
+	// to FG is the hole the floor needs to see before they believe the part
+	// is held.
+	unroutedProducers := make(map[string]string, len(payloads))
+	for _, p := range payloads {
+		if names := h.engine.PayloadService().UnroutedProducersForPayload(p.Code); len(names) > 0 {
+			unroutedProducers[p.Code] = strings.Join(names, ", ")
+		}
+	}
 
 	data := map[string]any{
-		"Page":             "payloads",
-		"Payloads":         payloads,
-		"BinTypes":         binTypes,
-		"CompatNodes":      compatNodes,
-		"PayloadBinTypes":  payloadBinTypes,
-		"ContainmentState": containmentState,
+		"Page":              "payloads",
+		"Payloads":          payloads,
+		"BinTypes":          binTypes,
+		"CompatNodes":       compatNodes,
+		"PayloadBinTypes":   payloadBinTypes,
+		"ContainmentState":  containmentState,
+		"UnroutedProducers": unroutedProducers,
 	}
 	h.render(w, r, "payloads.html", data)
 }

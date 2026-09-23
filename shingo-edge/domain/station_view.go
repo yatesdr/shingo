@@ -94,6 +94,13 @@ type StationNodeView struct {
 	// outbound (two producers, two FG drops) leave the field empty — a tile
 	// with no action is the safe rendering of a config problem.
 	ContainmentReleaseTarget string `json:"containment_release_target,omitempty"`
+	// ContainmentFlagged is the FLAG's presence on the floor: the bin on this
+	// tile carries a payload whose containment flag is ACTIVE on Core, so its
+	// next FG-bound delivery diverts automatically. Rendered as a chip — an
+	// operator watching the tile sees the state and the coming divert instead
+	// of being surprised by a robot heading somewhere unexpected. Empty/false
+	// on everything else.
+	ContainmentFlagged bool `json:"containment_flagged,omitempty"`
 	// ActiveStylePayloads / AllStylePayloads are the manual_swap loader-board
 	// unions across EVERY active process sharing this node's CoreNodeName (not
 	// just this station's process): active = payloads the running styles need,

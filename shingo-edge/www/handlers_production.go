@@ -137,6 +137,21 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 		}
 		return false
 	}
+	// THE FLAG'S PRESENCE ON THE FLOOR: which payloads Core currently holds
+	// contained — one read for the whole call. A tile whose bin's payload is
+	// flagged renders the CONTAINED chip: its next FG-bound delivery diverts
+	// automatically, and the operator sees that coming instead of being
+	// surprised by a robot headed somewhere unexpected.
+	flagged := make(map[string]bool)
+	if coreAPI != nil {
+		if state, err := coreAPI.GetContainment(); err == nil && state != nil {
+			for _, row := range state.Containment {
+				if row.Active {
+					flagged[row.PayloadCode] = true
+				}
+			}
+		}
+	}
 	for i := range views {
 		for j := range views[i].Nodes {
 			name := views[i].Nodes[j].Node.CoreNodeName
@@ -156,6 +171,14 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 					views[i].Nodes[j].ContainmentReleaseTarget = out
 					break
 				}
+			}
+			// THE FLAG'S PRESENCE ON THE FLOOR: the tile's bin carries a
+			// payload whose containment flag is ACTIVE on Core, so its next
+			// FG-bound delivery diverts automatically. The chip renders that
+			// state — an operator sees it coming instead of being surprised
+			// by a robot headed somewhere unexpected.
+			if binPayload != "" && flagged[binPayload] {
+				views[i].Nodes[j].ContainmentFlagged = true
 			}
 		}
 	}

@@ -174,6 +174,24 @@ func (s *PayloadService) ListHeldBins() ([]store.HeldBinRow, error) {
 	return s.db.ListHeldBins()
 }
 
+// UnroutedProducersForPayload names the processes that PRODUCE a payload but
+// carry no containment route — the partial-containment warning the
+// contain-confirmation shows. Their FG deliveries keep flowing until their
+// holds are enabled.
+func (s *PayloadService) UnroutedProducersForPayload(payloadCode string) []string {
+	producers, err := s.db.ListProducersForPayload(payloadCode)
+	if err != nil {
+		return nil
+	}
+	var unrouted []string
+	for _, p := range producers {
+		if !p.Routed {
+			unrouted = append(unrouted, p.ProcessID)
+		}
+	}
+	return unrouted
+}
+
 // ListManifest returns the manifest items defined for a payload
 // template.
 func (s *PayloadService) ListManifest(payloadID int64) ([]*payloads.ManifestItem, error) {

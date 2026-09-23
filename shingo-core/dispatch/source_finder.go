@@ -674,6 +674,15 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 					continue
 				}
 			}
+			// QUALITY HOLD (v100): a bin carrying the operator's hold marker
+			// waits for its containment move and is not sourceable into the
+			// ordinary flow. Move-shaped sourcing is the exception
+			// deliberately: the containment move itself must be able to pick
+			// up the very bin it was created to carry, and a human-driven
+			// move is a deliberate act the hold does not outrank.
+			if b.QualityHold && !moveShaped {
+				continue
+			}
 			// AN EMPTY CARRIER ON A MOVE IS NOT BEING TAKEN FOR THE PART. The
 			// carrier rule guards "may this part travel in this carrier", and a
 			// move relocates the carrier as it stands — an empty one leaves
@@ -986,6 +995,17 @@ func (f *SourceFinder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCod
 	if err != nil {
 		return nil, nil, true, fmt.Errorf("list bins for loader %d pool: %w", home.LoaderID, err)
 	}
+	// QUALITY HOLD (v100): a held bin waits for its containment move and is
+	// never a pool candidate — the hold marker keeps it out of the ordinary
+	// flow, and nothing about pool sourcing outranks that.
+	var readable []*bins.Bin
+	for _, b := range slotBins {
+		if b.QualityHold {
+			continue
+		}
+		readable = append(readable, b)
+	}
+	slotBins = readable
 	cands := make([]binsource.Cand, 0, len(slotBins))
 	byID := make(map[int64]*bins.Bin, len(slotBins))
 	for _, b := range slotBins {

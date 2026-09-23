@@ -322,6 +322,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/quality-hold", h.apiQualityHoldNode)
 			r.Post("/containment/release", h.apiContainmentRelease)
 			r.Post("/containment/recall", h.apiContainmentRecall)
+			// The stray's way out: clear a hold marker nothing else reaches.
+			r.Post("/containment/unhold", h.apiContainmentUnhold)
 
 			// Changeover lifecycle
 			// Read-only gate status behind the live "waiting on:" panel.

@@ -82,7 +82,7 @@
     <div class="card-header"><strong>Held bins (waiting for their containment move)</strong></div>
     <div class="card-body">
       <table class="table table-compact">
-        <thead><tr><th>Bin</th><th>Payload</th><th>At</th><th>Held by</th><th>Since</th></tr></thead>
+        <thead><tr><th>Bin</th><th>Payload</th><th>At</th><th>Held by</th><th>Since</th><th></th></tr></thead>
         <tbody>
         {{range .HeldBins}}
         <tr>
@@ -91,6 +91,10 @@
           <td class="mono">{{if .NodeName}}{{.NodeName}}{{else}}in transit{{end}}</td>
           <td class="text-muted-sm">{{.HoldBy}}</td>
           <td class="text-muted-sm">{{.HoldAt}}</td>
+          <td>
+            <button class="btn btn-sm" data-action="unholdHeldBin" data-bin-id="{{.BinID}}"
+              title="Clear the hold marker. The bin returns to the ordinary flow — use only when the hold is stale or was a mistake.">Unhold</button>
+          </td>
         </tr>
         {{end}}
         </tbody>

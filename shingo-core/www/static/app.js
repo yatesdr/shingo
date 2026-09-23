@@ -435,6 +435,14 @@ export async function containmentForm(el, evt) {
   evt.preventDefault();
   var data = new FormData(el);
   var msg = el.dataset.confirmMsg || 'Are you sure?';
+  // The partial-containment warning, if the row carries one: producers of
+  // this part whose claims route no containment keep shipping to FG. The
+  // floor needs that sentence BEFORE they believe the part is held, not
+  // after a bin escapes.
+  if (el.dataset.unrouted) {
+    msg += ' WARNING: ' + el.dataset.unrouted +
+      ' also produce this part with no containment route — their FG deliveries keep flowing until their holds are enabled.';
+  }
   // A form declaring data-confirm-input gets the confirm dialog WITH a text
   // field inside it, and the typed value rides the POST as `reason` — set
   // unconditionally: the form itself no longer carries a reason input (it

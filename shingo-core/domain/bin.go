@@ -74,6 +74,12 @@ type Bin struct {
 	// with a hard claimed_by (structural, since the one-tx claim+confirm moves them
 	// together), which the separate claimed_by check already covers.
 	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
+	// QualityHold is the per-bin containment marker (v118): an operator's
+	// "Send to Quality Hold" set it, and the bin must not be SOURCED back into
+	// the ordinary flow while it waits for (or sits in) containment. The
+	// source finder skips held candidates; occupancy and inventory reads see
+	// it normally — the bin physically occupies its spot either way.
+	QualityHold bool `json:"quality_hold,omitempty"`
 }
 
 // ManifestEntry is a single line in a bin's manifest — one part number,

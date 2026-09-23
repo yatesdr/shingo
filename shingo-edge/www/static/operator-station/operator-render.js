@@ -1306,6 +1306,23 @@ function createNodeButton(entry) {
         btn.appendChild(alarm);
     }
 
+    // CONTAINED chip — the bin on this tile carries a payload whose quality
+    // containment flag is ACTIVE: its next FG-bound delivery diverts to the
+    // hold spot automatically. Red, and it does not ask anyone to do
+    // anything — the state is the system working — but an operator watching
+    // the tile sees the divert coming instead of being surprised by a robot
+    // headed somewhere unexpected.
+    if (entry.containment_flagged) {
+        const chip = el('span', {
+            className: 'os-node-alarm',
+            textContent: 'CONTAINED',
+        });
+        chip.style.cssText = 'position:absolute;top:4px;right:4px;font-size:11px;' +
+            'font-weight:700;color:#fff;background:#842029;padding:2px 6px;border-radius:4px';
+        chip.title = 'This payload is quality-contained — its finished-goods deliveries divert to the hold spot until released.';
+        btn.appendChild(chip);
+    }
+
     // Banner label for the priority states. The full-tile background
     // already signals "something is up"; the label says what.
     if (releaseReady && !drain) {

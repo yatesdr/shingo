@@ -216,6 +216,31 @@ func (h *Handlers) apiContainmentRelease(w http.ResponseWriter, r *http.Request)
 	writeJSONWithTrigger(w, r, map[string]any{"status": "ok", "order_id": order.ID}, "refreshMaterial")
 }
 
+// apiContainmentUnhold clears a bin's hold marker — the stray's way out. A
+// bin held while in transit, or whose containment move died unobserved,
+// otherwise sits on the held list forever: no release path reaches it, and
+// the hold's purpose (keeping it out of the ordinary flow) is served by the
+// marker, not by anything that would clear it. Machine path through Core's
+// telemetry endpoint, station-level attribution.
+func (h *Handlers) apiContainmentUnhold(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BinID int64 `json:"bin_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.BinID == 0 {
+		writeError(w, http.StatusBadRequest, "bin_id is required")
+		return
+	}
+	if err := h.engine.CoreAPI().SetBinQualityHold(req.BinID, false, "containment-screen"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 // apiContainmentRecall walks a contained payload's bins still at their FG
 // outbound nodes into containment. Partial success is the honest shape: the
 // response carries the count created AND the per-bin refusals.

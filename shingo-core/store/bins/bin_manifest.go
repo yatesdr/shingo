@@ -154,6 +154,9 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		WHERE b.payload_code = $1
 		  AND %s
 		  AND ($2 = 0 OR b.node_id != $2)
+		  -- Quality hold (v100): a bin carrying the operator's hold marker waits
+		  -- for its containment move and is NOT sourceable back into the flow.
+		  AND NOT COALESCE(b.quality_hold, false)
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
 		LIMIT 1`, BinJoinQuery, BinSourceableSQL("$1")), payloadCode, excludeNodeID)
 	return ScanBin(row)

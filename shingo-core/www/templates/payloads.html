@@ -85,7 +85,7 @@
             {{else}}
               
               {{if $.Authenticated}}
-              <form method="POST" action="/payloads/containment" style="display:inline;align-items:center;gap:0.4rem" data-action-submit="containmentForm" data-confirm-input="Reason (optional)" data-confirm-msg="Activate quality containment for {{.PayloadCode}}? Every finished-goods delivery of this payload diverts to its claims' containment destination until released.">
+              <form method="POST" action="/payloads/containment" style="display:inline;align-items:center;gap:0.4rem" data-unrouted="{{index $.UnroutedProducers .PayloadCode}}" data-action-submit="containmentForm" data-confirm-input="Reason (optional)" data-confirm-msg="Activate quality containment for {{.PayloadCode}}? Every finished-goods delivery of this payload diverts to its claims' containment destination until released.">
                 <input type="hidden" name="payload_code" value="{{.PayloadCode}}">
                 <input type="hidden" name="active" value="true">
                 <button type="submit" class="btn btn-sm">Contain</button>
@@ -94,7 +94,7 @@
             {{end}}
           {{else}}
             {{if $.Authenticated}}
-            <form method="POST" action="/payloads/containment" style="display:inline;align-items:center;gap:0.4rem" data-action-submit="containmentForm" data-confirm-input="Reason (optional)" data-confirm-msg="Activate quality containment for {{.Code}}? Every finished-goods delivery of this payload diverts to its claims' containment destination until released.">
+            <form method="POST" action="/payloads/containment" style="display:inline;align-items:center;gap:0.4rem" data-unrouted="{{index $.UnroutedProducers .PayloadCode}}" data-unrouted="{{index $.UnroutedProducers .Code}}" data-action-submit="containmentForm" data-confirm-input="Reason (optional)" data-confirm-msg="Activate quality containment for {{.Code}}? Every finished-goods delivery of this payload diverts to its claims' containment destination until released.">
               <input type="hidden" name="payload_code" value="{{.Code}}">
               <input type="hidden" name="active" value="true">
               <button type="submit" class="btn btn-sm">Contain</button>

@@ -54,6 +54,7 @@ CREATE TABLE style_node_claims (
   reorder_point INTEGER NOT NULL DEFAULT 0, auto_reorder INTEGER NOT NULL DEFAULT 1,
   inbound_staging TEXT NOT NULL DEFAULT '', outbound_staging TEXT NOT NULL DEFAULT '',
   inbound_source TEXT NOT NULL DEFAULT '', outbound_destination TEXT NOT NULL DEFAULT '',
+  containment_destination TEXT NOT NULL DEFAULT '',
   allowed_payload_codes TEXT NOT NULL DEFAULT '', auto_request_payload TEXT NOT NULL DEFAULT '',
   keep_staged INTEGER NOT NULL DEFAULT 0, evacuate_on_changeover INTEGER NOT NULL DEFAULT 0,
   paired_core_node TEXT NOT NULL DEFAULT '', auto_confirm INTEGER NOT NULL DEFAULT 0,

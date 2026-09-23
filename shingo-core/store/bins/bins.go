@@ -100,7 +100,8 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	bt.required_robot_group, bt.bare, COALESCE(p.robot_group, ''),
 	COALESCE(p.near_empty_enabled, false), COALESCE(p.near_empty_robot_group, ''),
 	COALESCE(p.near_empty_threshold_pct, 0),
-	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation
+	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation,
+	COALESCE(b.quality_hold, false) AS quality_hold
 	` + BinFromClause
 
 // BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
@@ -430,6 +431,13 @@ func NotFencedArm() string {
 // This spelling names no requester, so it excludes EVERY live loader position.
 // A finder that knows the node it is delivering to composes EmptyCarrierWhereFor
 // instead, which hands a dedicated loader's homes their own buffers back.
+//
+// QUALITY HOLD IS SOURCING-EXCLUDED HERE, at the one fragment every empty
+// finder composes: a bin carrying the operator's quality-hold marker waits
+// for its containment move, and "waiting" must not read as "available" — the
+// marker is what keeps the bin out of the ordinary flow (v134). Occupancy
+// and inventory reads compose their own WHERE and still see held bins: the
+// bin physically occupies its spot either way.
 var EmptyCarrierWhere = emptyCarrierWhere("NULL")
 
 // EmptyCarrierWhereFor is EmptyCarrierWhere asked on behalf of the delivery node
@@ -466,7 +474,8 @@ func emptyCarrierWhere(destExpr string) string {
 	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL
 	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (
 	                            SELECT d.loader_id FROM bin_loader_homes d WHERE d.position_node_id = ` + destExpr + `)))
-	  AND NOT bt.bare`
+	  AND NOT bt.bare
+	  AND NOT COALESCE(b.quality_hold, false)`
 }
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
@@ -686,7 +695,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
 		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
-		&b.HasPendingReservation)
+		&b.HasPendingReservation, &b.QualityHold)
 	if err != nil {
 		return nil, err
 	}

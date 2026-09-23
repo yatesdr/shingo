@@ -38,9 +38,23 @@ async function recallContained(el) {
     }
 }
 
+async function unholdHeldBin(el) {
+    var binID = parseInt(el.dataset.binId, 10);
+    if (!binID) return;
+    if (!await confirm('Clear the hold on bin #' + binID + '? It returns to the ordinary flow — use only when the hold is stale or was a mistake.')) return;
+    try {
+        await api.post('/api/containment/unhold', { bin_id: binID });
+        toast('Hold cleared on bin #' + binID, 'success');
+        window.location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
 delegateActions(document.body, {
     verifyContainmentBin,
     recallContained,
+    unholdHeldBin,
 }, { events: ['click'] });
 
 // ── Auto-refresh ─────────────────────────────────────────────────────────
