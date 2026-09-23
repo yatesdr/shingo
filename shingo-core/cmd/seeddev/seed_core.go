@@ -13,6 +13,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/domain"
 	"shingocore/plantspec"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -49,8 +50,12 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 
 	// --- bin types + payloads (+ payload→bin-type links) ---
 	binTypeIDs := make(map[string]int64)
+	bareTypes := make(map[string]bool, len(p.BareBinTypes))
+	for _, bt := range p.BareBinTypes {
+		bareTypes[bt] = true
+	}
 	for _, bt := range p.BinTypes {
-		id, err := ensureBinType(db, bt, p.CarrierRobotGroups[bt])
+		id, err := ensureBinType(db, bt, p.CarrierRobotGroups[bt], bareTypes[bt])
 		if err != nil {
 			return err
 		}
@@ -67,6 +72,11 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return err
 		}
 		if btID, ok := binTypeIDs[pl.BinType]; ok {
+			// The admin door's refusal, asked here too: this writes the rule at
+			// store level, and a fixture must not seed a bare type into a rule.
+			if err := service.CheckNoBareInPayloadRule(db, []int64{btID}); err != nil {
+				return fmt.Errorf("link payload %s → bin type %s: %w", pl.Code, pl.BinType, err)
+			}
 			if err := db.SetPayloadBinTypes(id, []int64{btID}); err != nil {
 				return fmt.Errorf("link payload %s → bin type %s: %w", pl.Code, pl.BinType, err)
 			}
@@ -389,6 +399,7 @@ func boolProp(b bool) string {
 func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 	// The station's own setting, by node name: whether a changeover commandeers
 	// its card. It lives on the station because it describes the station.
+	settingsSeen := map[string]bool{}
 	directive := map[string]bool{}
 	for _, s := range p.Stations {
 		if s.ChangeoverLoadDirective {
@@ -479,6 +490,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		if err != nil {
 			return fmt.Errorf("check loader %s/%s: %w", k.node, k.role, err)
 		}
+		settingsSeen[k.node] = true
 		if existing != nil {
 			continue
 		}
@@ -487,6 +499,10 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		repl := "threshold"
 		if k.role == "consume" {
 			repl = "operator"
+		}
+		accept, bare, err := loaderSettingsFor(db, p, k.node, k.role)
+		if err != nil {
+			return err
 		}
 		id, err := db.CreateLoader(store.Loader{
 			Name:          k.node,
@@ -497,6 +513,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			InboundSource: c.InboundSource,
 
 			ChangeoverLoadDirective: directive[k.node],
+			AcceptPartials:          accept,
+			BareBinTypeID:           bare,
 		})
 		if err != nil {
 			return fmt.Errorf("create loader %s/%s: %w", k.node, k.role, err)
@@ -559,12 +577,17 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		if err != nil {
 			return fmt.Errorf("check synthetic loader %s/%s: %w", id, lead.Role, err)
 		}
+		settingsSeen[id] = true
 		if existing != nil {
 			continue
 		}
 		repl := "threshold"
 		if lead.Role == "consume" {
 			repl = "operator"
+		}
+		accept, bare, err := loaderSettingsFor(db, p, id, lead.Role)
+		if err != nil {
+			return err
 		}
 		lid, err := db.CreateLoader(store.Loader{
 			Name:          id,
@@ -575,6 +598,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			InboundSource: lead.InboundSource,
 
 			ChangeoverLoadDirective: directive[id],
+			AcceptPartials:          accept,
+			BareBinTypeID:           bare,
 		})
 		if err != nil {
 			return fmt.Errorf("create synthetic loader %s/%s: %w", id, lead.Role, err)
@@ -616,12 +641,17 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		if err != nil {
 			return fmt.Errorf("check dedicated loader %s/%s: %w", id, lead.Role, err)
 		}
+		settingsSeen[id] = true
 		if existing != nil {
 			continue
 		}
 		repl := "threshold"
 		if lead.Role == "consume" {
 			repl = "operator"
+		}
+		accept, bare, err := loaderSettingsFor(db, p, id, lead.Role)
+		if err != nil {
+			return err
 		}
 		lid, err := db.CreateLoader(store.Loader{
 			Name:          id,
@@ -632,6 +662,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			InboundSource: lead.InboundSource,
 
 			ChangeoverLoadDirective: directive[id],
+			AcceptPartials:          accept,
+			BareBinTypeID:           bare,
 		})
 		if err != nil {
 			return fmt.Errorf("create dedicated loader %s/%s: %w", id, lead.Role, err)
@@ -673,10 +705,38 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 		created++
 	}
 
+	// A loader_settings entry that named no loader would be silently inert.
+	for name := range p.LoaderSettings {
+		if !settingsSeen[name] {
+			return fmt.Errorf("loader_settings %q names no loader the claims create", name)
+		}
+	}
 	if created > 0 {
 		log.Printf("core: seeded %d bin loader(s) into the aggregate", created)
 	}
 	return nil
+}
+
+// loaderSettingsFor resolves a loader's loader_settings entry through the
+// admin door's own checks: accept_partials and a bare type are unloader-only,
+// and the bare type must be flagged bare (service.CheckLoaderBareType).
+func loaderSettingsFor(db *store.DB, p *plantspec.Plant, name, role string) (bool, *int64, error) {
+	ls := p.LoaderSettings[name]
+	if ls.AcceptPartials && role != string(protocol.ClaimRoleConsume) {
+		return false, nil, fmt.Errorf("loader_settings %q: %w", name, service.ErrAcceptPartialsProduce)
+	}
+	if ls.BareBinType == "" {
+		return ls.AcceptPartials, nil, nil
+	}
+	bt, err := db.GetBinTypeByCode(ls.BareBinType)
+	if err != nil {
+		return false, nil, fmt.Errorf("loader_settings %q: bare_bin_type %q: %w", name, ls.BareBinType, err)
+	}
+	bare, err := service.CheckLoaderBareType(db, role, bt.ID)
+	if err != nil {
+		return false, nil, fmt.Errorf("loader_settings %q: %w", name, err)
+	}
+	return ls.AcceptPartials, bare, nil
 }
 
 func ensureNodeType(db *store.DB, code, name string, synthetic bool) (int64, error) {
@@ -709,21 +769,23 @@ func ensureNode(db *store.DB, name string, typeID, parentID *int64, zone string,
 	return n.ID, nil
 }
 
-func ensureBinType(db *store.DB, code, requiredRobotGroup string) (int64, error) {
+func ensureBinType(db *store.DB, code, requiredRobotGroup string, bare bool) (int64, error) {
 	if bt, err := db.GetBinTypeByCode(code); err == nil && bt != nil {
 		// Re-seed onto an existing plant, same reasoning as ensurePayload: the
-		// yaml is the source of truth for the carrier restriction, and a plant
-		// seeded before the spec carried one would otherwise keep dispatching
-		// its empties unrestricted while the spec says they are held back.
-		if bt.RequiredRobotGroup != requiredRobotGroup {
+		// yaml is the source of truth for the carrier restriction and the bare
+		// flag, and a plant seeded before the spec carried one would otherwise
+		// keep dispatching its empties unrestricted while the spec says they
+		// are held back.
+		if bt.RequiredRobotGroup != requiredRobotGroup || bt.Bare != bare {
 			bt.RequiredRobotGroup = requiredRobotGroup
+			bt.Bare = bare
 			if err := db.UpdateBinType(bt); err != nil {
-				return 0, fmt.Errorf("update required robot group on bin type %s: %w", code, err)
+				return 0, fmt.Errorf("update bin type %s: %w", code, err)
 			}
 		}
 		return bt.ID, nil
 	}
-	bt := &bins.BinType{Code: code, Description: code + " (dev)", RequiredRobotGroup: requiredRobotGroup}
+	bt := &bins.BinType{Code: code, Description: code + " (dev)", RequiredRobotGroup: requiredRobotGroup, Bare: bare}
 	if err := db.CreateBinType(bt); err != nil {
 		return 0, fmt.Errorf("create bin type %s: %w", code, err)
 	}

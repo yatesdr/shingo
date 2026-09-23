@@ -263,9 +263,28 @@ func (s *PayloadService) SetPartCATID(partNumber, catid string) error {
 // --- Bin-type associations ------------------------------------------------
 
 // SetBinTypes replaces the set of compatible bin types for a payload
-// template.
+// template. A bare type is refused (ErrBareTypeInPayloadRule), with one read
+// of the named types on this admin save; the other direction is refused by
+// BinService.UpdateBinType.
 func (s *PayloadService) SetBinTypes(payloadID int64, binTypeIDs []int64) error {
+	if err := CheckNoBareInPayloadRule(s.db, binTypeIDs); err != nil {
+		return err
+	}
 	return s.db.SetPayloadBinTypes(payloadID, binTypeIDs)
+}
+
+// CheckNoBareInPayloadRule refuses a payload rule naming a bare type. Exported
+// so every writer of payload_bin_types asks the same question — the admin
+// door above and cmd/seeddev's fixture load.
+func CheckNoBareInPayloadRule(db *store.DB, binTypeIDs []int64) error {
+	bare, err := db.BareBinTypeCodes(binTypeIDs)
+	if err != nil {
+		return err
+	}
+	if len(bare) > 0 {
+		return fmt.Errorf("%w (%s)", ErrBareTypeInPayloadRule, strings.Join(bare, ", "))
+	}
+	return nil
 }
 
 // ListBinTypes returns the bin types compatible with the given

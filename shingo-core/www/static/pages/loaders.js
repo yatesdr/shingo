@@ -83,6 +83,7 @@ function blankForm() {
     kind: 'multi_window',  // multi_window | single_window | dedicated
     changeoverLoadDirective: false,
     acceptPartials: false,
+    bareBinTypeID: 0,
     replenishment: 'operator',
     fedByHand: false,
     inbound: '',
@@ -102,6 +103,7 @@ function readForm() {
     fedByHand: checked('loader-fed-by-hand'),
     changeoverLoadDirective: checked('loader-changeover-directive'),
     acceptPartials: checked('loader-accept-partials'),
+    bareBinTypeID: Number(val('loader-bare-type') || 0),
     inbound: val('loader-inbound'),
     outbound: val('loader-outbound'),
   };
@@ -153,6 +155,10 @@ function formShape(state) {
     // unloader is asked. Edited against a saved loader, like the carrier mix:
     // create does not carry it.
     partials: state.role === 'consume' && saved,
+    // The bare type is what an UNLOADER's blank CLEAR stamps (the first stage
+    // of a two-stage unloader), so only an unloader is asked, and like the
+    // partials switch it is edited against a saved loader.
+    bare: state.role === 'consume' && saved,
   };
 }
 
@@ -173,6 +179,7 @@ function renderForm(state) {
   setChecked('loader-fed-by-hand', state.fedByHand);
   setChecked('loader-changeover-directive', state.changeoverLoadDirective);
   setChecked('loader-accept-partials', state.acceptPartials);
+  renderBareTypeSelect(state.bareBinTypeID);
   setVal('loader-inbound', state.inbound);
   setVal('loader-outbound', state.outbound);
   setReplenishmentOptions(state);
@@ -184,6 +191,7 @@ function renderForm(state) {
   setShown('loader-mix-row', shape.mix);
   setShown('loader-windows-row', shape.windows);
   setShown('loader-partials-row', shape.partials);
+  setShown('loader-bare-row', shape.bare);
   if (shape.mix) renderMixEditor(state.id);
   if (shape.windows) renderWindowCapEditor(state.id);
 }
@@ -215,7 +223,9 @@ function renderMixEditor(loaderID) {
       + escapeHtml(q.bin_type_code) + '">×</button>'
       + '</div>';
   }).join('');
-  const rest = binTypeOptions(declared);
+  // No bare types: a mix line of one could never be fetched, because no empty
+  // finder hands a bare carrier out.
+  const rest = binTypeOptions(declared, false);
   const add = rest
     ? '<div class="loader-mix-add">'
       + '<select id="loader-mix-add-type" class="form-input" aria-label="Carrier type">' + rest + '</select>'
@@ -259,7 +269,9 @@ function renderWindowCapEditor(loaderID) {
         + '<span class="loader-chip-x" title="Remove" data-action="removeWindowBinType"'
         + ' data-node-id="' + nodeID + '" data-bin-type="' + escapeHtml(code) + '">×</span></span>';
     }).join('');
-    const rest = binTypeOptions(set);
+    // Bare types included: a window with a capability list must be able to
+    // take the carrier a first-stage unloader leaves bare.
+    const rest = binTypeOptions(set, true);
     const add = rest
       ? '<select class="form-input" data-action-change="addWindowBinType" data-node-id="' + nodeID + '"'
         + ' aria-label="Add a carrier type ' + escapeHtml(name) + ' can take">'
@@ -284,14 +296,35 @@ function loadBinTypeCatalog() {
 
 // binTypeOptions lists the carrier catalogue minus what is already set. An "add"
 // control should only offer what can actually be added; when that leaves nothing
-// the caller drops the control rather than showing an empty one.
-function binTypeOptions(exclude) {
+// the caller drops the control rather than showing an empty one. withBare says
+// whether bare types are offered at all.
+function binTypeOptions(exclude, withBare) {
   const taken = {};
   (exclude || []).forEach(function (c) { taken[c] = true; });
-  return binTypeCatalog.filter(function (t) { return !taken[t.code]; })
+  return binTypeCatalog.filter(function (t) { return !taken[t.code] && (withBare || !t.bare); })
     .map(function (t) {
       return '<option value="' + Number(t.id) + '">' + escapeHtml(t.code) + '</option>';
     }).join('');
+}
+
+// renderBareTypeSelect fills the unloader's bare-type select: none, or one of
+// the types flagged bare. A stored id the catalog does not list as bare (not
+// loaded yet, or un-flagged since) is kept as its own option so a save does not
+// silently drop it; the server then says why it refuses.
+function renderBareTypeSelect(selectedID) {
+  const e = document.getElementById('loader-bare-type');
+  if (!e) return;
+  const sel = Number(selectedID || 0);
+  const bare = binTypeCatalog.filter(function (t) { return t.bare; });
+  let opts = '<option value="">None — a clear stamps nothing</option>';
+  let listed = false;
+  bare.forEach(function (t) {
+    if (Number(t.id) === sel) listed = true;
+    opts += '<option value="' + Number(t.id) + '">' + escapeHtml(t.code) + '</option>';
+  });
+  if (sel && !listed) opts += '<option value="' + sel + '">bin type ' + sel + '</option>';
+  e.innerHTML = opts;
+  e.value = sel ? String(sel) : '';
 }
 
 function loaderItem(loaderID) {
@@ -430,6 +463,7 @@ function formStateFromLoader(l) {
     kind: kindFromLoader(l),
     changeoverLoadDirective: !!l.changeover_load_directive,
     acceptPartials: !!l.accept_partials,
+    bareBinTypeID: Number(l.bare_bin_type_id || 0),
     replenishment: l.replenishment || 'operator',
     // No source IS the fed-by-hand choice; that is what the stored blank means.
     fedByHand: !(l.inbound_source || ''),
@@ -492,6 +526,9 @@ function loaderPayload(state) {
     // Unloaders only. Sent false for a produce loader, which the server
     // refuses to store as true: the rule it relaxes is a consume rule.
     accept_partials: state.role === 'consume' && !!state.acceptPartials,
+    // Unloaders only, 0 = none. A produce loader sends 0, which the server
+    // would otherwise refuse: only an unloader's clear stamps a type.
+    bare_bin_type_id: state.role === 'consume' ? Number(state.bareBinTypeID || 0) : 0,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };

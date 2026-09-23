@@ -196,7 +196,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 
 	if len(req.BinTypeIDs) > 0 {
 		if err := h.engine.PayloadService().SetBinTypes(p.ID, req.BinTypeIDs); err != nil {
-			h.jsonError(w, "bin types: "+err.Error(), http.StatusInternalServerError)
+			h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
 			return
 		}
 	}
@@ -275,7 +275,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.engine.PayloadService().SetBinTypes(p.ID, req.BinTypeIDs); err != nil {
-		h.jsonError(w, "bin types: "+err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
 		return
 	}
 
@@ -359,8 +359,17 @@ func (h *Handlers) apiSavePayloadBinTypes(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.engine.PayloadService().SetBinTypes(req.PayloadID, req.BinTypeIDs); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, err.Error(), payloadRuleWriteStatus(err))
 		return
 	}
 	h.jsonSuccess(w)
+}
+
+// payloadRuleWriteStatus maps a payload-rule save failure to its status. A bare
+// type in the rule is the admin's to fix (400); anything else is ours (500).
+func payloadRuleWriteStatus(err error) int {
+	if errors.Is(err, service.ErrBareTypeInPayloadRule) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }

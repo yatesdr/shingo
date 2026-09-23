@@ -99,6 +99,7 @@ CREATE TABLE public.bin_loaders (
     archived_at timestamp with time zone,
     funnel_windows boolean DEFAULT false NOT NULL,
     accept_partials boolean DEFAULT false NOT NULL,
+    bare_bin_type_id bigint,
     CONSTRAINT bin_loaders_layout_check CHECK ((layout = ANY (ARRAY['shared_window'::text, 'dedicated_positions'::text]))),
     CONSTRAINT bin_loaders_replenishment_check CHECK ((replenishment = ANY (ARRAY['operator'::text, 'threshold'::text]))),
     CONSTRAINT bin_loaders_role_check CHECK ((role = ANY (ARRAY['produce'::text, 'consume'::text])))
@@ -122,7 +123,8 @@ CREATE TABLE public.bin_types (
     length_in double precision DEFAULT 0 NOT NULL,
     required_robot_group text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    bare boolean DEFAULT false NOT NULL
 );
 
 CREATE SEQUENCE public.bin_types_id_seq
@@ -1890,6 +1892,9 @@ ALTER TABLE ONLY public.bin_loader_quotas
 
 ALTER TABLE ONLY public.bin_loader_quotas
     ADD CONSTRAINT bin_loader_quotas_loader_id_fkey FOREIGN KEY (loader_id) REFERENCES public.bin_loaders(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.bin_loaders
+    ADD CONSTRAINT bin_loaders_bare_bin_type_id_fkey FOREIGN KEY (bare_bin_type_id) REFERENCES public.bin_types(id);
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id);

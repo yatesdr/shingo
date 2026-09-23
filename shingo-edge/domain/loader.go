@@ -172,8 +172,10 @@ func (p Position) IsBuffer() bool {
 //   - a shared layout with per-position payloads is unrepresentable — the
 //     shared constructor takes a payload SET, not positions, so the type
 //     signature alone forbids it (stronger than a runtime check);
-//   - zero windows / zero positions / zero payloads, empty node ids, and empty
-//     payloads in the shared set are rejected by the constructors;
+//   - zero windows / zero positions, zero payloads on a PRODUCE shared loader,
+//     empty node ids, and empty payloads in the shared set are rejected by the
+//     constructors (a consume shared loader may declare zero payloads — see
+//     NewSharedWindowLoader);
 //   - SlotCount is DERIVED, never passed, so a slot count below the member count
 //     cannot be expressed.
 //
@@ -198,6 +200,7 @@ type Loader struct {
 	uopThreshold            map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
 	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
+	bareBinTypeCode         string              // the type a blank CLEAR at this unloader stamps (see BareBinTypeCode)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -254,7 +257,13 @@ func NewSharedWindowLoader(id LoaderID, name string, role LoaderRole, repl Loade
 	if len(windows) == 0 {
 		return nil, fmt.Errorf("loader %s: shared_window needs at least one window", id)
 	}
-	if len(payloadSet) == 0 {
+	// A loader stages empties FOR a payload, so it needs at least one. An
+	// unloader may declare none: the stage-2 window of a two-stage unloader is
+	// fed directly by stage 1 and offered no fulls. With no payloads,
+	// ServesPayload is false for every code (no LoaderForPayload match, no U1)
+	// and the unloader sweep offers nothing and reads nothing
+	// (TestSharedWindowZeroPayloads_ByRole, TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads).
+	if len(payloadSet) == 0 && role != RoleConsume {
 		return nil, fmt.Errorf("loader %s: shared_window needs at least one payload", id)
 	}
 	for i, w := range windows {
@@ -464,6 +473,19 @@ func WithChangeoverLoadDirective(on bool) LoaderOption {
 // it lives beside the rest of the station's setup in bin_loaders rather than on
 // each style's claim, where it used to be duplicated per style.
 func (l *Loader) ChangeoverLoadDirective() bool { return l.changeoverLoadDirective }
+
+// WithBareBinType sets the bin type a blank CLEAR at this unloader stamps on
+// the carrier it leaves behind (CoreLoader.BareBinTypeCode, owned by Core's
+// bin_loaders.bare_bin_type_id). "" — not passing the option — stamps nothing,
+// which is what every unloader does.
+func WithBareBinType(code string) LoaderOption {
+	return func(l *Loader) { l.bareBinTypeCode = code }
+}
+
+// BareBinTypeCode is the stage-1 half of a two-stage unloader: the bin type
+// Core flags bare, so no empty finder hands the carrier out until PUSH AS
+// re-stamps it at stage 2. "" for every other loader.
+func (l *Loader) BareBinTypeCode() string { return l.bareBinTypeCode }
 
 // IsOperatorDriven reports whether the loader's replenishment is operator-driven
 // (replenishment = operator) — the operator stages/clears at the board rather than

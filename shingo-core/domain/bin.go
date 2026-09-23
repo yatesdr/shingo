@@ -61,6 +61,10 @@ type Bin struct {
 	PayloadNearEmptyEnabled   bool   `json:"payload_near_empty_enabled,omitempty"`   // JOIN from payloads.near_empty_enabled
 	PayloadNearEmptyGroup     string `json:"payload_near_empty_group,omitempty"`     // JOIN from payloads.near_empty_robot_group
 	PayloadNearEmptyPct       int    `json:"payload_near_empty_pct,omitempty"`       // JOIN from payloads.near_empty_threshold_pct
+	// BinTypeBare is bin_types.bare: the carrier holds no container and is never
+	// an empty anybody can be given (bins.EmptyCarrierWhere). Joined so the
+	// node-bins row can say so without a read of its own.
+	BinTypeBare bool `json:"bin_type_bare,omitempty"`
 	// HasPendingReservation is populated by BinJoinQuery from the reservations
 	// table. True when ANY order holds a pending (pre-claim) reservation on this
 	// bin — owner-blind, so it may be this order's own hold (the reserve reconcile

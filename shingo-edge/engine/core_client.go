@@ -21,10 +21,13 @@ import (
 // carry binID) and capture_reduction would otherwise be silently
 // dropped at the BinID==0 gate.
 type NodeBinInfo struct {
-	NodeName     string `json:"node_name"`
-	BinID        int64  `json:"bin_id,omitempty"`
-	BinLabel     string `json:"bin_label,omitempty"`
-	BinTypeCode  string `json:"bin_type_code,omitempty"`
+	NodeName    string `json:"node_name"`
+	BinID       int64  `json:"bin_id,omitempty"`
+	BinLabel    string `json:"bin_label,omitempty"`
+	BinTypeCode string `json:"bin_type_code,omitempty"`
+	// Bare is Core's bin_types.bare for the carrier: it holds no container,
+	// so the only way out of the window is PUSH AS a real type.
+	Bare         bool   `json:"bare,omitempty"`
 	PayloadCode  string `json:"payload_code,omitempty"`
 	UOPRemaining int    `json:"uop_remaining"`
 	// DeltaEpoch is Core's bins.delta_epoch — bumps on every load-

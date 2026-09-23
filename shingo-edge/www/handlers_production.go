@@ -43,6 +43,7 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 				views[i].Nodes[j].BinState = &domain.NodeBinState{
 					BinLabel:          info.BinLabel,
 					BinTypeCode:       info.BinTypeCode,
+					Bare:              info.Bare,
 					PayloadCode:       info.PayloadCode,
 					UOPRemaining:      info.UOPRemaining,
 					Manifest:          info.Manifest,

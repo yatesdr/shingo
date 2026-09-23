@@ -32,7 +32,13 @@ type BinType struct {
 	// Applying it at every fill level instead would be wrong in the other
 	// direction: a carrier misconfigured to a lighter group would then take a
 	// full heavy load. See dispatch/robot_group.go.
-	RequiredRobotGroup string    `json:"required_robot_group"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	RequiredRobotGroup string `json:"required_robot_group"`
+	// Bare flags a carrier type that holds no container: the label a stage-1
+	// unloader's CLEAR stamps on the carrier it leaves behind (the half
+	// loader). A bare carrier is never handed out as an empty
+	// (bins.EmptyCarrierWhere), a bare type is never in a payload rule, and
+	// PUSH AS at stage 2 overwrites it with a real type.
+	Bare      bool      `json:"bare"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }

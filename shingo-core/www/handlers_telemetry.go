@@ -48,10 +48,13 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 	names := strings.Split(nodesParam, ",")
 
 	type nodeBinInfo struct {
-		NodeName     string `json:"node_name"`
-		BinID        int64  `json:"bin_id,omitempty"`
-		BinLabel     string `json:"bin_label,omitempty"`
-		BinTypeCode  string `json:"bin_type_code,omitempty"`
+		NodeName    string `json:"node_name"`
+		BinID       int64  `json:"bin_id,omitempty"`
+		BinLabel    string `json:"bin_label,omitempty"`
+		BinTypeCode string `json:"bin_type_code,omitempty"`
+		// Bare reports the bin type's bare flag: a carrier that holds no
+		// container and is never handed out as an empty.
+		Bare         bool   `json:"bare,omitempty"`
 		PayloadCode  string `json:"payload_code,omitempty"`
 		UOPRemaining int    `json:"uop_remaining"`
 		// DeltaEpoch is the bin's current load-lifecycle epoch.
@@ -100,6 +103,7 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		entry.BinID = bin.ID
 		entry.BinLabel = bin.Label
 		entry.BinTypeCode = bin.BinTypeCode
+		entry.Bare = bin.BinTypeBare
 		entry.PayloadCode = bin.PayloadCode
 		entry.UOPRemaining = bin.UOPRemaining
 		entry.DeltaEpoch = bin.DeltaEpoch

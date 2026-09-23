@@ -906,9 +906,16 @@ type LoaderInfo struct {
 	// the carrier the incoming style needs. Stated as the opt-in so the zero
 	// value — which is also what a Core predating this field sends — means the
 	// ordinary board, which is what every loader does today.
-	ChangeoverLoadDirective bool                `json:"changeover_load_directive,omitempty"`
-	Positions               []LoaderPosition    `json:"positions,omitempty"`
-	Payloads                []LoaderPayloadInfo `json:"payloads,omitempty"`
+	ChangeoverLoadDirective bool `json:"changeover_load_directive,omitempty"`
+	// BareBinTypeCode names the bin type a blank CLEAR at this unloader stamps
+	// on the carrier it leaves behind: the stage-1 half of a two-stage
+	// unloader. The type is flagged bare on Core, so no empty finder hands the
+	// carrier out until PUSH AS re-stamps it. Empty — also what a Core
+	// predating this field sends — means a blank CLEAR stamps nothing, which
+	// is what every unloader does today.
+	BareBinTypeCode string              `json:"bare_bin_type_code,omitempty"`
+	Positions       []LoaderPosition    `json:"positions,omitempty"`
+	Payloads        []LoaderPayloadInfo `json:"payloads,omitempty"`
 	// Quota is the declared carrier mix — how many of each bin type this loader
 	// wants on hand. Empty means none declared, which is today's behaviour.
 	Quota []LoaderQuota `json:"quota,omitempty"`

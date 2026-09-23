@@ -489,7 +489,8 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // to the reservation seam — a no-inbound drain is gated there too, so it's a no-op.
 // ClearBin clears the bin at the consume-unloader window. binTypeCode is the
 // dunnage type the operator selected at the confirm tap; empty string means no
-// change to the carrier's bin_type_id (existing behaviour for all other callers).
+// change to the carrier's bin_type_id — except at an unloader with a bare type,
+// where a blank code stamps that type (see the substitution before the clear).
 func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -514,6 +515,17 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		// we proceed to the empty-out regardless (it no longer depends on a U1).
 		if u1ID, ok := e.confirmDeliveredAt(node.CoreNodeName, false, 0); ok {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
+		}
+	}
+	// A blank code at an unloader Core configured with a bare type (the stage-1
+	// half of a two-stage unloader) stamps that type through the same
+	// bin_type_code parameter; an explicit code still wins. The lookup is the
+	// loader store's in-memory snapshot — no SQL, no Core round trip
+	// (TestClearBin_BinTypeCodeAtACoreOwnedUnloader). Consume only: the bare
+	// type is an unloader's.
+	if binTypeCode == "" && claim.Role == protocol.ClaimRoleConsume {
+		if l, lerr := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
+			binTypeCode = l.BareBinTypeCode()
 		}
 	}
 	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode)

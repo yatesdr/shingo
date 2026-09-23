@@ -2311,6 +2311,13 @@ This is the worst overloading in the codebase today — the word "Station" means
 | **Edge Cell** | One Edge installation — a physical production cell with its own Edge instance, controllers, HMIs, and Core sync. Identified by `StationID` in `Config.Messaging`. Core's `NodeType` code `EDGE` and `Order.StationID` refer to this concept. **The term "Edge Cell" is the proposed unified name** — code currently uses "Station" (Edge config), "edge-station" (Core docstrings), and `StationID` (both) | `shingo-edge/config/...` `StationID`; `shingo-core/domain/order.go:23` `StationID`; `shingo-core/domain/node_type.go:6` "EDGE (edge station)" |
 | **Operator Station** | A specific HMI screen inside an Edge Cell. Configured to claim a subset of the cell's Process Nodes; renders an operator-facing UI for those nodes. Multiple Operator Stations exist per cell. **The term "Operator Station" wins** — code currently mixes this with "Station" (the domain type) and "Operator Screen" (the processes-tab UI label) | `shingo-edge/domain/station.go:8` `type Station struct`; API at `/api/operator-stations`; URL `/operator/station/{id}` |
 
+### Carriers
+
+| Term | Definition | Code reference |
+|---|---|---|
+| **Bare bin type** | A bin type flagged `bare`: the label the first stage of a two-stage unloader (the half loader) stamps, on its blank CLEAR, on the carrier it leaves behind. It says "this carrier holds no container yet". A bare carrier is never handed out as an empty, a bare type can never be in a payload's carrier rules, and PUSH AS at the second stage overwrites it with a real type. Configured per unloader as its bare type ("Leaves carriers bare as"). UI: a **bare** badge on the bin types table | `shingo-core/domain/bin_type.go` `BinType.Bare`; `store/loaders` `Loader.BareBinTypeID`; `store/bins/bins.go` `EmptyCarrierWhere` |
+| **Bare position** | **Not the same thing.** An Edge word for a position with no carrier standing on it at all. Nothing to do with a bin type; do not shorten "bare bin type" to "bare" where the two could be confused | `shingo-edge/engine/consume_plan.go`, `operator_produce.go` |
+
 ### Orders
 
 | Term | Definition | Code reference |

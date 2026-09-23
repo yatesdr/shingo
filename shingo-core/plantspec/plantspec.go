@@ -49,6 +49,14 @@ type Plant struct {
 	LinesideBuckets    []LinesideBucket  `yaml:"lineside_buckets"`
 	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
 	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
+	// BareBinTypes lists the bin types flagged bare (→ bin_types.bare): the label
+	// a two-stage unloader's first stage stamps on the carrier it leaves. Each
+	// must be in bin_types and no payload may name one as its bin_type.
+	BareBinTypes []string `yaml:"bare_bin_types,omitempty"`
+	// LoaderSettings holds the per-loader switches a claim cannot express, keyed
+	// by loader name: the anchor node a claim names, or a window_of / home_of
+	// label. Absent = the column defaults, which is every loader today.
+	LoaderSettings map[string]LoaderSettings `yaml:"loader_settings,omitempty"`
 	// Headroom is the storage-slack rule the census at birth asserts (§R.78).
 	Headroom Headroom `yaml:"headroom,omitempty"`
 	// BaselineFrozenAt names the ruling that froze this spec as a MEASUREMENT
@@ -219,6 +227,18 @@ type Station struct {
 	// property of the station, which is why it sits here and not on each
 	// style's claim.
 	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`
+}
+
+// LoaderSettings is one loader's entry in Plant.LoaderSettings. Both switches
+// are unloader-only; the seeder refuses them on a produce loader, as the
+// loader admin does.
+type LoaderSettings struct {
+	// AcceptPartials → bin_loaders.accept_partials: the unloader may be fed a
+	// partly drained carrier.
+	AcceptPartials bool `yaml:"accept_partials,omitempty"`
+	// BareBinType → bin_loaders.bare_bin_type_id, by code: the bare type this
+	// unloader's blank CLEAR stamps. Must be listed in bare_bin_types.
+	BareBinType string `yaml:"bare_bin_type,omitempty"`
 }
 
 // Bin is an initial bin placement. Empty Payload = an empty bin.

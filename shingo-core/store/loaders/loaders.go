@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/store/internal/helpers"
 )
 
 // Key mints the opaque wire/identity token for a loader from its surrogate id:
@@ -111,6 +112,18 @@ type Loader struct {
 	// sends, so every path that does not say otherwise keeps the full-carrier
 	// rule.
 	AcceptPartials bool `json:"accept_partials"`
+
+	// BareBinTypeID is the bin type a blank CLEAR at this UNLOADER stamps on
+	// the carrier it leaves behind: the stage-1 half of a two-stage unloader.
+	// The type must be flagged bare, so no empty finder hands the carrier out
+	// until PUSH AS at stage 2 re-stamps it. NULL — the column default and every
+	// unloader until one is configured — stamps nothing. Consume only; the
+	// service refuses it on a produce loader and refuses a type that is not bare.
+	BareBinTypeID *int64 `json:"bare_bin_type_id"`
+	// BareBinTypeCode is that type's code, "" when none: what LoaderInfo
+	// carries to the Edge. Read-only, resolved inside the loader row's own read
+	// (loaderCols), so projecting it costs no query per loader.
+	BareBinTypeCode string `json:"bare_bin_type_code,omitempty"`
 }
 
 // Home is one dedicated position: exactly one payload. The global
@@ -155,18 +168,26 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials`
+// loaderCols is every loader read's column list. The bare type's code is a
+// scalar subquery on the bin_types primary key, so each reader gets it in the
+// same row; with bare_bin_type_id NULL it matches nothing.
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id,
+	COALESCE((SELECT bt.code FROM bin_types bt WHERE bt.id = bin_loaders.bare_bin_type_id), '')`
 
 type scanner interface{ Scan(...any) error }
 
 func scanLoader(s scanner) (Loader, error) {
 	var l Loader
 	var archivedAt sql.NullTime
+	var bareID sql.NullInt64
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
-		&l.ChangeoverLoadDirective, &l.AcceptPartials)
+		&l.ChangeoverLoadDirective, &l.AcceptPartials, &bareID, &l.BareBinTypeCode)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
+	}
+	if bareID.Valid {
+		l.BareBinTypeID = &bareID.Int64
 	}
 	return l, err
 }
@@ -178,10 +199,10 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
-			funnel_windows, changeover_load_directive, accept_partials)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+			funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.AcceptPartials,
+		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -244,11 +265,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
-			changeover_load_directive=$7, accept_partials=$8,
+			changeover_load_directive=$7, accept_partials=$8, bare_bin_type_id=$9,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$9`,
+		WHERE id=$10`,
 		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.AcceptPartials, l.ID)
+		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID), l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

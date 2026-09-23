@@ -515,3 +515,86 @@ func findLoaderInfo(t *testing.T, db *store.DB, id int64) protocol.LoaderInfo {
 	t.Fatalf("loader %s not in BuildLoaderInfos output", want)
 	return protocol.LoaderInfo{}
 }
+
+// TestPinBuildLoaderInfos_AZeroPayloadUnloader pins the stage-2 shape on the
+// wire: a consume shared-window loader with a window, no payloads and no bare
+// type projects its window, no payloads, and a blank BareBinTypeCode (omitted
+// on the wire).
+func TestPinBuildLoaderInfos_AZeroPayloadUnloader(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, winID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-HLPIN','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('HLPIN-S2-WIN',false,$1,true) RETURNING id`, ntID,
+	).Scan(&winID); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "HLPIN-S2", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	if err := db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: winID}); err != nil {
+		t.Fatalf("window: %v", err)
+	}
+
+	li := findLoaderInfo(t, db, id)
+	if len(li.Positions) != 1 || li.Positions[0].CoreNodeName != "HLPIN-S2-WIN" ||
+		li.Positions[0].Kind != protocol.LoaderPositionKindWindow {
+		t.Errorf("positions = %+v, want the one window", li.Positions)
+	}
+	if len(li.Payloads) != 0 {
+		t.Errorf("payloads = %+v, want none", li.Payloads)
+	}
+	if li.BareBinTypeCode != "" {
+		t.Errorf("BareBinTypeCode = %q, want blank for a loader with no bare type", li.BareBinTypeCode)
+	}
+}
+
+// TestBuildLoaderInfos_CarriesTheBareType: an unloader's bare type reaches the
+// wire as its code, resolved in the loader row; cleared, it is blank again.
+func TestBuildLoaderInfos_CarriesTheBareType(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var bareID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO bin_types (code, bare) VALUES ('HL-HALF', true) RETURNING id`,
+	).Scan(&bareID); err != nil {
+		t.Fatalf("seed bare type: %v", err)
+	}
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "HL-S1", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	l, err := db.GetLoader(id)
+	if err != nil || l == nil {
+		t.Fatalf("GetLoader: %v", err)
+	}
+	l.BareBinTypeID = &bareID
+	if err := db.UpdateLoader(*l); err != nil {
+		t.Fatalf("UpdateLoader: %v", err)
+	}
+	if got := findLoaderInfo(t, db, id).BareBinTypeCode; got != "HL-HALF" {
+		t.Errorf("BareBinTypeCode = %q, want HL-HALF", got)
+	}
+
+	l.BareBinTypeID = nil
+	if err := db.UpdateLoader(*l); err != nil {
+		t.Fatalf("UpdateLoader clear: %v", err)
+	}
+	if got := findLoaderInfo(t, db, id).BareBinTypeCode; got != "" {
+		t.Errorf("BareBinTypeCode = %q after clearing, want blank", got)
+	}
+}

@@ -4271,6 +4271,12 @@ func migrationList() []migration {
 		{123, "bin_loaders.accept_partials — an unloader may say a partly drained carrier is worth the trip, instead of every drain window taking fulls only",
 			v123LoaderAcceptPartials,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "accept_partials") }},
+
+		{124, "bin_types.bare + bin_loaders.bare_bin_type_id — a carrier type that holds no container, and the unloader that leaves its carriers as it",
+			v124BareBinType,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bin_types", "bare") && schema.ColumnExists(q, "bin_loaders", "bare_bin_type_id")
+			}},
 	}
 }
 
@@ -4509,6 +4515,35 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v120 lineside drain ledger: %w", err)
+		}
+	}
+	return nil
+}
+
+// v124BareBinType adds the half loader's two facts.
+//
+// bin_types.bare flags a carrier type that holds no container: the label a
+// stage-1 unloader's CLEAR stamps on the carrier it leaves behind. No empty
+// finder hands a bare carrier out (bins.EmptyCarrierWhere), and PUSH AS at
+// stage 2 overwrites the type. bin_loaders.bare_bin_type_id names, per unloader,
+// the bare type its blank CLEAR stamps; NULL is every unloader today.
+//
+// DEFAULT FALSE and NULL: every existing type stays sourceable and every
+// existing unloader stamps nothing, so the migration changes no behaviour.
+//
+// The FK is NO ACTION, the same as bins.bin_type_id, so deleting a bin type a
+// loader names is refused by the database. NO INDEX: bin_loaders is
+// config-sized, and the code is resolved inside the loader row's own read.
+//
+// INERT TO AN OLDER BINARY, which never names either column. ROLLBACK is DROP
+// COLUMN on both.
+func v124BareBinType(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE bin_types ADD COLUMN IF NOT EXISTS bare BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS bare_bin_type_id BIGINT NULL REFERENCES bin_types(id)`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v124 bare bin type: %w", err)
 		}
 	}
 	return nil

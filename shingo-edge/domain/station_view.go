@@ -7,8 +7,12 @@ import "time"
 // at the corresponding Core node — what's loaded, how full, whether
 // the manifest has been confirmed.
 type NodeBinState struct {
-	BinLabel          string  `json:"bin_label,omitempty"`
-	BinTypeCode       string  `json:"bin_type_code,omitempty"`
+	BinLabel    string `json:"bin_label,omitempty"`
+	BinTypeCode string `json:"bin_type_code,omitempty"`
+	// Bare is Core's bin_types.bare for the carrier: it holds no container, so
+	// the board hides plain PUSH EMPTY and PUSH AS a real type is the only way
+	// out of the window.
+	Bare              bool    `json:"bare,omitempty"`
 	PayloadCode       string  `json:"payload_code,omitempty"`
 	UOPRemaining      int     `json:"uop_remaining"`
 	Manifest          *string `json:"manifest,omitempty"`
@@ -106,6 +110,11 @@ type StationNodeView struct {
 	// from the Edge-only home_location_loaders table — that copy was orphaned by
 	// the loader move to Core and has no reader.
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
+	// BareBinTypeCode is the bin type a blank CLEAR at this unloader stamps on
+	// the carrier it leaves (Loader.BareBinTypeCode, Core-owned). When set the
+	// board's CLEAR is one tap with no dunnage picker, and the engine fills the
+	// code (ClearBin). Empty for every other node.
+	BareBinTypeCode string `json:"bare_bin_type_code,omitempty"`
 	// HasBufferPartial is true when this is a dedicated home position with a
 	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with
 	// the same payload. When set, the HMI shows the "Clear Bin" button so the

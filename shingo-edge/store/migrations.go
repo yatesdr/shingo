@@ -353,6 +353,11 @@ func (db *DB) migrate() error {
 	// Core owns it (bin_loaders); this is the mirror. Default 0 = the ordinary
 	// board, which is what every station does until one is opted in.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
+	// The bin type a blank CLEAR at this unloader stamps (bin_loaders.bare_bin_type_id,
+	// carried as its code). Idempotent — duplicate ADD COLUMN fails silently.
+	// Default '' = a blank CLEAR stamps nothing, which is every unloader until
+	// Core configures one.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN bare_bin_type_code TEXT NOT NULL DEFAULT ''")
 
 	// Where the operator dragged this window. Core has always stored the
 	// arrangement and sent it down; there was nowhere here to put it, so the

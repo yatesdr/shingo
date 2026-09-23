@@ -57,6 +57,16 @@ func checkReplenishment(role, replenishment string) error {
 // on a produce loader it would be stored, shown, and do nothing.
 var ErrAcceptPartialsProduce = errors.New("only an unloader can accept partial carriers: the full-carrier rule it relaxes applies to consume loaders only")
 
+// ErrBareTypeProduce refuses a bare type on a produce loader. The bare type is
+// what an unloader's blank CLEAR stamps on the carrier it leaves behind; a
+// produce loader has no such CLEAR, so it would be stored, shown, and do nothing.
+var ErrBareTypeProduce = errors.New("only an unloader can leave carriers bare: a produce loader has no clear that would stamp the type")
+
+// ErrBareTypeNotBare refuses a loader's bare type that is not flagged bare. The
+// stamped carrier would then be an ordinary empty the plant-wide finders hand
+// out, which is the stealing the flag exists to prevent.
+var ErrBareTypeNotBare = errors.New("an unloader's bare type must be a bin type flagged bare: otherwise the carrier it leaves is handed out as an ordinary empty")
+
 // LoaderService wraps the bin_loaders store CRUD with the demand re-derive.
 type LoaderService struct {
 	db       *store.DB
@@ -166,6 +176,9 @@ type LoaderUpdate struct {
 	// AcceptPartials: an unloader may be fed partly drained carriers. Consume
 	// only; set on a saved loader, like ChangeoverLoadDirective.
 	AcceptPartials bool
+	// BareBinTypeID: the bare type this unloader's blank CLEAR stamps. 0 is
+	// none. Consume only, and the type must be flagged bare.
+	BareBinTypeID int64
 }
 
 func (s *LoaderService) Update(in LoaderUpdate) error {
@@ -203,11 +216,38 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 		return ErrAcceptPartialsProduce
 	}
 	cur.AcceptPartials = in.AcceptPartials
+	bare, err := CheckLoaderBareType(s.db, cur.Role, in.BareBinTypeID)
+	if err != nil {
+		return err
+	}
+	cur.BareBinTypeID = bare
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err
 	}
 	s.rederive()
 	return nil
+}
+
+// CheckLoaderBareType resolves a loader's bare type: nil for none, else the id
+// once the role is consume and the type is flagged bare. One bin-type read, and
+// only when a type is named. Exported so every writer of
+// bin_loaders.bare_bin_type_id asks the same question — Update above and
+// cmd/seeddev's fixture load.
+func CheckLoaderBareType(db *store.DB, role string, id int64) (*int64, error) {
+	if id == 0 {
+		return nil, nil
+	}
+	if role != loaders.RoleConsume {
+		return nil, ErrBareTypeProduce
+	}
+	bt, err := db.GetBinType(id)
+	if err != nil {
+		return nil, fmt.Errorf("bare bin type %d: %w", id, err)
+	}
+	if !bt.Bare {
+		return nil, ErrBareTypeNotBare
+	}
+	return &id, nil
 }
 
 // Delete removes a loader (cascades its homes + payloads) and re-derives.

@@ -156,6 +156,30 @@ func (p *Plant) Validate() error {
 		}
 	}
 
+	// --- bare bin types + per-loader settings ---
+	// The same refusals the admin doors make, so a fixture cannot seed a state
+	// the running plant would refuse: a bare type is a declared bin type, is no
+	// payload's carrier, and is what an unloader's bare_bin_type names.
+	bare := toSet(p.BareBinTypes)
+	for _, bt := range p.BareBinTypes {
+		if !binTypes[bt] {
+			add("bare_bin_types names unknown bin_type %q", bt)
+		}
+	}
+	for _, pl := range p.Payloads {
+		if bare[pl.BinType] {
+			add("payload %q names bare bin_type %q: a bare type holds no container, so no part travels in it", pl.Code, pl.BinType)
+		}
+	}
+	for name, ls := range p.LoaderSettings {
+		if !ref(name) && !loaderIdentities[name] {
+			add("loader_settings names %q, which is neither a node nor a window_of/home_of loader", name)
+		}
+		if ls.BareBinType != "" && !bare[ls.BareBinType] {
+			add("loader_settings %q: bare_bin_type %q is not listed in bare_bin_types", name, ls.BareBinType)
+		}
+	}
+
 	// --- edge processes / styles / operator stations ---
 	processes := make(map[string]bool)
 	for _, pr := range p.Processes {

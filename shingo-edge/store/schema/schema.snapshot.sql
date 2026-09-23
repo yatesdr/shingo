@@ -136,6 +136,9 @@ CREATE TABLE core_loaders (
     -- 1 = a changeover commandeers this station's card and names the carrier the
     -- incoming style needs. Core owns it (bin_loaders); this is the mirror.
     changeover_load_directive INTEGER NOT NULL DEFAULT 0,
+    -- The bin type a blank CLEAR at this unloader stamps on the carrier it
+    -- leaves. Core owns it (bin_loaders.bare_bin_type_id); '' = stamps nothing.
+    bare_bin_type_code TEXT NOT NULL DEFAULT '',
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );

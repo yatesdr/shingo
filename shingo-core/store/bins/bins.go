@@ -34,7 +34,7 @@ type Bin = domain.Bin
 // BinJoinQuery (the const below) is the SELECT prefix used by every
 // bin-reading query, exported so cross-aggregate readers at the outer store/
 // level (which add their own WHERE clauses) can reuse it.
-// The 27th column (has_pending_reservation) is populated from the
+// The last column (has_pending_reservation) is populated from the
 // reservations table so BinUnavailableReason can filter reserved bins
 // without a separate round-trip. ScanBin reads it into HasPendingReservation.
 // Pending-ONLY is sufficient: a confirmed reservation coincides with a hard
@@ -97,7 +97,7 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, COALESCE(b.anomaly_note, ''), b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
-	bt.required_robot_group, COALESCE(p.robot_group, ''),
+	bt.required_robot_group, bt.bare, COALESCE(p.robot_group, ''),
 	COALESCE(p.near_empty_enabled, false), COALESCE(p.near_empty_robot_group, ''),
 	COALESCE(p.near_empty_threshold_pct, 0),
 	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation
@@ -348,7 +348,8 @@ func NotFencedArm() string {
 //   - anything carrying a payload has left the empty population entirely;
 //   - a carrier standing on a CELL'S OWN POSITION is that cell's working stock;
 //   - a carrier standing on a LIVE LOADER'S OWN POSITION (a window or a home)
-//     belongs to that loader.
+//     belongs to that loader;
+//   - a carrier of a BARE bin type holds no container, wherever it stands.
 //
 // ── THE LAST ONE COST A WHOLE PLANT, AND IT IS THE SUBTLE ONE ─────────────
 //
@@ -412,6 +413,18 @@ func NotFencedArm() string {
 // where NOT EXISTS would keep it). Measured equal to the NOT EXISTS form over
 // the whole population, including carriers with no node.
 //
+// ── A BARE CARRIER IS NOBODY'S EMPTY ──────────────────────────────────────
+//
+// A bare bin type is the label the first stage of a two-stage unloader stamps
+// on the carrier it leaves behind: the carrier holds no container yet, so no
+// empty request may be given it, wherever it stands — including on the way from
+// stage 1 to stage 2, when it is on neither loader's position. It leaves the
+// bare type only when PUSH AS at stage 2 re-stamps it; the stage-1 U2 and the
+// stage-2 U2 are moves naming the node, which list the node directly and never
+// read this predicate (TestEmptyScan_NeverOffersABareCarrier).
+//
+// COST: a filter on the bin_types row the join already reads; no new join.
+//
 // It opens the WHERE. Arms append to it; nothing composes in front of it.
 const EmptyCarrierWhere = `
 	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
@@ -421,7 +434,8 @@ const EmptyCarrierWhere = `
 	  AND COALESCE(b.payload_code, '') = ''
 	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
 	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
-	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL)`
+	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL)
+	  AND NOT bt.bare`
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
 //
@@ -633,7 +647,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
-		&b.CarrierRequiredRobotGroup, &b.PayloadRobotGroup,
+		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
 		&b.HasPendingReservation)
 	if err != nil {

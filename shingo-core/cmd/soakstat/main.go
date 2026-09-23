@@ -1461,6 +1461,11 @@ func checkNegativeTotalUOP(db *store.DB) []string {
 // as available reports a pool of empties nobody can have. That constant's own
 // comment makes the requirement explicit: "any count over the same population
 // must agree".
+//
+// A BARE TYPE IS NOT A POOL. Its carriers are never sourceable as empties by
+// design, so its sourceable count is zero for its whole life and the check would
+// report it on every run; they become a real type's carriers again at PUSH AS
+// (TestExhaustedCarrierPool_ABareTypeIsNotAPool).
 func checkExhaustedCarrierPool(db *store.DB) []string {
 	var out []string
 
@@ -1470,6 +1475,7 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 		       COUNT(*) FILTER (WHERE COALESCE(b.payload_code, '') <> '') AS full
 		FROM bins b
 		JOIN bin_types bt ON bt.id = b.bin_type_id
+		WHERE NOT bt.bare
 		GROUP BY bt.code
 		ORDER BY bt.code`)
 	if err != nil {

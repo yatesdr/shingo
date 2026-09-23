@@ -87,7 +87,7 @@ function load() {
         'loader-kind', 'loader-fed-by-hand', 'loader-supply-row',
         'loader-mix-row', 'loader-mix-editor', 'loader-mix-add-type',
         'loader-mix-add-want', 'loader-edit-id', 'loader-windows-row',
-        'loader-windows-editor',
+        'loader-windows-editor', 'loader-bare-row', 'loader-bare-type',
     ];
     const els = {};
     ids.forEach(function (id) { els[id] = makeEl(id); });
@@ -177,6 +177,34 @@ console.log('formShape — the rules, as a pure function of state');
     check('partials: a produce loader never sends true',
         h.ctx.loaderPayload(st({ acceptPartials: true })).accept_partials === false &&
         h.ctx.loaderPayload(st({ role: 'consume', acceptPartials: true })).accept_partials === true);
+    // The bare type is what an unloader's blank CLEAR stamps: same audience.
+    check('bare: asked of a saved unloader only',
+        shape(st({ role: 'consume' })).bare === true &&
+        shape(st({})).bare === false &&
+        shape(st({ role: 'consume', id: 0 })).bare === false);
+    check('bare: a produce loader always sends 0',
+        h.ctx.loaderPayload(st({ bareBinTypeID: 7 })).bare_bin_type_id === 0 &&
+        h.ctx.loaderPayload(st({ role: 'consume', bareBinTypeID: 7 })).bare_bin_type_id === 7 &&
+        h.ctx.loaderPayload(st({ role: 'consume' })).bare_bin_type_id === 0);
+    check('bare: a stored loader reads its bare type back',
+        h.ctx.formStateFromLoader({ id: 3, role: 'consume', bare_bin_type_id: 9 }).bareBinTypeID === 9 &&
+        h.ctx.formStateFromLoader({ id: 3, role: 'consume' }).bareBinTypeID === 0);
+    // A mix line of a bare type could never be fetched; a window must be able
+    // to take one.
+    vm.runInContext("binTypeCatalog = [{id: 1, code: 'STD', bare: false}, {id: 2, code: 'HALF', bare: true}];", h.ctx);
+    const mixOpts = h.ctx.binTypeOptions([], false);
+    const winOpts = h.ctx.binTypeOptions([], true);
+    check('bare: the mix picker leaves bare types out, the window picker keeps them',
+        mixOpts.indexOf('STD') >= 0 && mixOpts.indexOf('HALF') < 0 &&
+        winOpts.indexOf('STD') >= 0 && winOpts.indexOf('HALF') >= 0);
+    // Through the DOM: the select lists bare types only and shows the stored one.
+    h.ctx.renderForm(st({ role: 'consume', bareBinTypeID: 2 }));
+    const sel = h.els['loader-bare-type'];
+    check('bare: the unloader form shows the select, bare types only, stored one chosen',
+        shown(h.els['loader-bare-row']) && sel.value === '2' &&
+        sel.innerHTML.indexOf('HALF') >= 0 && sel.innerHTML.indexOf('STD') < 0);
+    h.ctx.renderForm(st({}));
+    check('bare: a produce loader form hides it', !shown(h.els['loader-bare-row']));
 })();
 
 console.log('applyLoaderForm — the same rules, through the DOM');
