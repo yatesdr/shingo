@@ -747,33 +747,65 @@ function uopBar(remaining, template) {
 }
 
 // ===== BIN TYPE MODALS =====
-function openCreateBTModal() { loadRobotGroupSuggestions(); showModal('bt-create-modal'); }
+function openCreateBTModal() {
+  renderRobotGroupChoices(document.getElementById('bt-create-robot-group'), '');
+  showModal('bt-create-modal');
+}
 
-// loadRobotGroupSuggestions fills the shared <datalist> from the live fleet
-// scene so the required-robot-group box is typo-proof by construction.
+// renderRobotGroupChoices draws the empty-carrier robot picker: one radio per
+// fleet robot group plus "Any robot", every option visible with its state on
+// it, the same shape as the node Allowed Bin Types list. ONE choice, not
+// checkboxes, because a fleet order carries exactly one group
+// (fleet.CreateOrderRequest.RobotGroup) and "every group" is already "Any robot".
 //
-// Best-effort, the same contract the payloads page uses: on an RDS outage the
-// datalist is left empty, the input stays free text, and the value already
-// saved on the carrier is submitted regardless. A carrier restriction must
-// survive the fleet manager being down - it is the reason the restriction
-// exists.
-function loadRobotGroupSuggestions() {
-  var dl = document.getElementById('robot-groups-list');
-  if (!dl) return;
+// The saved value is drawn FIRST and stays drawn whatever the fetch does. A
+// carrier restriction must survive the fleet manager being down - it is the
+// reason the restriction exists - so on an RDS outage the list still submits
+// what is saved instead of silently falling back to "Any robot". A saved group
+// the fleet no longer reports is kept and marked, never dropped.
+function renderRobotGroupChoices(box, current) {
+  if (!box) return;
+  current = current || '';
+  var name = 'required_robot_group';
+  var drawn = {};
+  box.innerHTML = '';
+  function addChoice(value, text, note) {
+    if (drawn[value]) return;
+    drawn[value] = true;
+    var row = document.createElement('label');
+    row.className = 'tag-check';
+    var radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = value;
+    radio.checked = value === current;
+    row.appendChild(radio);
+    row.appendChild(document.createTextNode(' ' + text));
+    if (note) {
+      var n = document.createElement('span');
+      n.className = 'text-muted';
+      n.textContent = ' ' + note;
+      row.appendChild(n);
+    }
+    box.appendChild(row);
+  }
+  addChoice('', 'Any robot');
+  if (current) addChoice(current, current);
   fetch('/api/fleet/robot-groups')
     .then(function(r) { return r.json(); })
     .then(function(resp) {
       var data = (resp && resp.data) || resp || {};
       var groups = data.groups || [];
-      dl.innerHTML = '';
-      groups.forEach(function(g) {
-        var opt = document.createElement('option');
-        opt.value = g.name;
-        if (g.desc) opt.label = g.desc;
-        dl.appendChild(opt);
-      });
+      var known = {};
+      groups.forEach(function(g) { known[g.name] = true; });
+      // Redraw in fleet order, keeping the saved value however the fleet answers.
+      drawn = {};
+      box.innerHTML = '';
+      addChoice('', 'Any robot');
+      groups.forEach(function(g) { addChoice(g.name, g.name, g.desc ? '- ' + g.desc : ''); });
+      if (current && !known[current]) addChoice(current, current, '(not reported by the fleet)');
     })
-    .catch(function() { /* no suggestions; free-text entry still works */ });
+    .catch(function() { /* keep what is drawn: Any robot + the saved value */ });
 }
 function closeBTCreateModal() { hideModal('bt-create-modal'); }
 
@@ -785,8 +817,7 @@ function openEditBTModal(btn) {
   document.getElementById('bt-edit-w').value = d.width && d.width !== '0' ? d.width : '';
   document.getElementById('bt-edit-h').value = d.height && d.height !== '0' ? d.height : '';
   document.getElementById('bt-edit-l').value = d.length && d.length !== '0' ? d.length : '';
-  document.getElementById('bt-edit-robot-group').value = d.robotGroup || '';
-  loadRobotGroupSuggestions();
+  renderRobotGroupChoices(document.getElementById('bt-edit-robot-group'), d.robotGroup || '');
   showModal('bt-edit-modal');
 }
 function closeBTEditModal() { hideModal('bt-edit-modal'); }

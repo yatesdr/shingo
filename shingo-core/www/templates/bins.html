@@ -22,6 +22,7 @@
             <th>Code</th>
             <th>Description</th>
             <th>Dimensions (in)</th>
+            <th>Empty carrier robots</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -32,6 +33,7 @@
             <td><code>{{.Code}}</code></td>
             <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>{{if .WidthIn}}{{.WidthIn}} x {{.HeightIn}}{{if .LengthIn}} x {{.LengthIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+            <td>{{if .RequiredRobotGroup}}<code>{{.RequiredRobotGroup}}</code>{{else}}<span class="text-muted">Any robot</span>{{end}}</td>
             <td>
               <button class="btn btn-sm" data-action="openEditBTModal"
                 data-id="{{.ID}}"
@@ -210,16 +212,14 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Required Robot Group <span class="tooltip-trigger" title="The SEER robot group required to move this carrier. Blank = no restriction (any robot), which is how every carrier behaves today. Set it for a carrier that is heavy in its own right - an FG rack stays on the big robots even when empty, whatever its payloads allow. It never applies to a loaded bin: a full bin follows its payload's own group.">?</span></label>
-        <input type="text" name="required_robot_group" list="robot-groups-list" placeholder="(no restriction - any robot)" autocomplete="off">
+        <label>Empty carrier robots <span class="tooltip-trigger" title="Which robots may move this carrier when it is EMPTY. A loaded carrier always goes by its part's own robot group, set on the Payloads page. Any robot = no restriction, so the fleet manager may send a robot of any size.">?</span></label>
+        <div class="tag-list" id="bt-create-robot-group" data-current=""></div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
       <button type="button" class="btn ml-05" data-action="closeBTCreateModal">Cancel</button>
     </form>
   </div>
 </div>
-
-<datalist id="robot-groups-list"></datalist>
 
 <!-- Edit Bin Type Modal -->
 <div id="bt-edit-modal" class="modal-overlay" data-backdrop-close>
@@ -249,8 +249,8 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Required Robot Group <span class="tooltip-trigger" title="The SEER robot group required to move this carrier. Blank = no restriction (any robot), which is how every carrier behaves today. Set it for a carrier that is heavy in its own right - an FG rack stays on the big robots even when empty, whatever its payloads allow. It never applies to a loaded bin: a full bin follows its payload's own group.">?</span></label>
-        <input type="text" name="required_robot_group" id="bt-edit-robot-group" list="robot-groups-list" placeholder="(no restriction - any robot)" autocomplete="off">
+        <label>Empty carrier robots <span class="tooltip-trigger" title="Which robots may move this carrier when it is EMPTY. A loaded carrier always goes by its part's own robot group, set on the Payloads page. Any robot = no restriction, so the fleet manager may send a robot of any size.">?</span></label>
+        <div class="tag-list" id="bt-edit-robot-group" data-current=""></div>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
       <button type="button" class="btn ml-05" data-action="closeBTEditModal">Cancel</button>
