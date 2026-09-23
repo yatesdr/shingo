@@ -50,8 +50,16 @@ type EdgeLinesideReport struct {
 //
 // Strict `<`, so an exact duplicate is a no-op rather than a pointless write,
 // and updated_at stays inside the SET so it only moves when the row does.
-func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) error {
-	_, err := db.Exec(`
+//
+// moved reports whether the row was inserted or updated — false when the
+// condition turned the write into a no-op (a duplicate, an older report, or a
+// report stamped at the stored instant). The handler evaluates only payloads
+// with a moved row, because the inbox dedup does not gate data envelopes and
+// this condition is the only thing that tells a redelivery from a report.
+// RowsAffected reads the count from the statement's own CommandComplete tag
+// (pgx stdlib), so it is not another round trip.
+func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err error) {
+	res, err := db.Exec(`
 		INSERT INTO edge_lineside_reports
 			(station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty, reported_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
@@ -64,9 +72,13 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) error {
 		WHERE edge_lineside_reports.reported_at < EXCLUDED.reported_at`,
 		r.Station, r.CoreNodeName, r.PayloadCode, r.BinCount, r.BinUOP, r.BucketQty, r.ReportedAt)
 	if err != nil {
-		return fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
+		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: rows affected: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
+	}
+	return n > 0, nil
 }
 
 // LinesideReportRetentionPeriod is how long a per-(station, node, payload) row

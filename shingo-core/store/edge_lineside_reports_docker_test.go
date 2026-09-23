@@ -49,9 +49,12 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 	)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
-	write := func(at time.Time, binUOP int) {
+	// write returns whether the row moved: the handler evaluates only payloads
+	// with a moved row, so a wrong answer here either re-runs the fire gate on
+	// every redelivery or stops a fresh report from evaluating at all.
+	write := func(at time.Time, binUOP int) bool {
 		t.Helper()
-		if err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+		moved, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
 			Station:      station,
 			CoreNodeName: node,
 			PayloadCode:  payload,
@@ -59,20 +62,26 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 			BinUOP:       binUOP,
 			BucketQty:    0,
 			ReportedAt:   at,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("upsert at %v: %v", at, err)
 		}
+		return moved
 	}
 
 	// Current report.
-	write(now, 46)
+	if !write(now, 46) {
+		t.Error("first write reported not moved — an insert moves the row")
+	}
 	if got := linesideRow(t, db, station, node, payload); got.BinUOP != 46 {
 		t.Fatalf("bin_uop = %d after first write, want 46", got.BinUOP)
 	}
 
 	// A stale report arrives afterwards — a replay, or a reordered delivery.
 	// It must not land.
-	write(now.Add(-time.Minute), 150)
+	if write(now.Add(-time.Minute), 150) {
+		t.Error("STALE write reported moved")
+	}
 	got := linesideRow(t, db, station, node, payload)
 	if !got.ReportedAt.UTC().Equal(now) {
 		t.Errorf("reported_at = %v after a STALE write, want %v — moving the row "+
@@ -86,7 +95,9 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 
 	// An exact duplicate is a no-op: strict `<`, so it neither errors nor
 	// rewrites the row.
-	write(now, 999)
+	if write(now, 999) {
+		t.Error("same-timestamp write reported moved")
+	}
 	if got := linesideRow(t, db, station, node, payload); got.BinUOP != 46 {
 		t.Errorf("bin_uop = %d after a same-timestamp write, want 46 — an exact "+
 			"duplicate must be a no-op", got.BinUOP)
@@ -94,7 +105,9 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 
 	// A genuinely newer report still lands.
 	newer := now.Add(time.Minute)
-	write(newer, 12)
+	if !write(newer, 12) {
+		t.Error("NEWER write reported not moved")
+	}
 	got = linesideRow(t, db, station, node, payload)
 	if !got.ReportedAt.UTC().Equal(newer) {
 		t.Errorf("reported_at = %v after a NEWER write, want %v — latest-wins must "+
@@ -122,7 +135,7 @@ func TestPurgeStaleLinesideReports(t *testing.T) {
 
 	write := func(node string, age time.Duration) {
 		t.Helper()
-		if err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+		if _, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
 			Station:      station,
 			CoreNodeName: node,
 			PayloadCode:  payload,

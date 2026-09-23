@@ -366,15 +366,18 @@ func TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal(t *testing.T) {
 	}(), "set bin uop")
 
 	// Edge reports that node's bin drained to 10 — a fresh, sharp divergence.
-	testutil.MustNoErr(t, db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-		Station:      stationID,
-		CoreNodeName: sd.LineNode.Name,
-		PayloadCode:  payload,
-		BinCount:     1,
-		BinUOP:       10,
-		BucketQty:    0,
-		ReportedAt:   time.Now().UTC(),
-	}), "upsert edge report")
+	testutil.MustNoErr(t, func() error {
+		_, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+			Station:      stationID,
+			CoreNodeName: sd.LineNode.Name,
+			PayloadCode:  payload,
+			BinCount:     1,
+			BinUOP:       10,
+			BucketQty:    0,
+			ReportedAt:   time.Now().UTC(),
+		})
+		return err
+	}(), "upsert edge report")
 
 	m := eng.thresholdMonitor
 	m.mu.Lock()
@@ -455,15 +458,18 @@ func TestThresholdMonitor_R1Live_StaleReportFallsBackToLedger(t *testing.T) {
 
 	// Report says drained to 10, but it is STALE (reported well past the window),
 	// so it must be ignored and the ledger term (150) stands.
-	testutil.MustNoErr(t, db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-		Station:      stationID,
-		CoreNodeName: sd.LineNode.Name,
-		PayloadCode:  payload,
-		BinCount:     1,
-		BinUOP:       10,
-		BucketQty:    0,
-		ReportedAt:   time.Now().UTC().Add(-linesideReportStaleness - time.Minute),
-	}), "upsert stale edge report")
+	testutil.MustNoErr(t, func() error {
+		_, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+			Station:      stationID,
+			CoreNodeName: sd.LineNode.Name,
+			PayloadCode:  payload,
+			BinCount:     1,
+			BinUOP:       10,
+			BucketQty:    0,
+			ReportedAt:   time.Now().UTC().Add(-linesideReportStaleness - time.Minute),
+		})
+		return err
+	}(), "upsert stale edge report")
 
 	m := eng.thresholdMonitor
 	m.mu.Lock()
@@ -535,15 +541,18 @@ func TestThresholdMonitor_LedgerMode_RevertsToPreR1(t *testing.T) {
 		return err
 	}(), "set bin uop")
 
-	testutil.MustNoErr(t, db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-		Station:      stationID,
-		CoreNodeName: sd.LineNode.Name,
-		PayloadCode:  payload,
-		BinCount:     1,
-		BinUOP:       10,
-		BucketQty:    0,
-		ReportedAt:   time.Now().UTC(),
-	}), "upsert edge report")
+	testutil.MustNoErr(t, func() error {
+		_, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
+			Station:      stationID,
+			CoreNodeName: sd.LineNode.Name,
+			PayloadCode:  payload,
+			BinCount:     1,
+			BinUOP:       10,
+			BucketQty:    0,
+			ReportedAt:   time.Now().UTC(),
+		})
+		return err
+	}(), "upsert edge report")
 
 	m := eng.thresholdMonitor
 	m.mu.Lock()

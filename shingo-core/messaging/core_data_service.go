@@ -52,10 +52,12 @@ type ThresholdMonitor interface {
 	// while the station was away engages without a Core restart and a binding
 	// retired while it was away stops minting against config that is gone.
 	Resync(stationID string)
-	// OnLinesideReports is the R1 report-arrival trigger for the payloads in a
-	// just-arrived Edge report. R1 is LIVE: in edge_reports mode a fresh report is
-	// a fire trigger (decide off the edge-adjusted total); in ledger mode it stays
-	// audit-only. Either way it logs the ledger-vs-edge disagreement audit line.
+	// OnLinesideReports is the R1 report-arrival trigger for the payloads of a
+	// just-arrived Edge report that moved at least one row (a duplicate or older
+	// report moves none and is not passed on). R1 is LIVE: in edge_reports mode
+	// a fresh report is a fire trigger (decide off the edge-adjusted total); in
+	// ledger mode it stays audit-only. Either way it logs the ledger-vs-edge
+	// disagreement audit line.
 	OnLinesideReports(payloadCodes []string)
 }
 
