@@ -4,8 +4,8 @@
 //
 // Phase 5 of the architecture plan moved the reconciliation query
 // fan-out out of the flat store/ package and into this sub-package.
-// The outer store/ keeps type aliases and one-line delegate methods on
-// *store.DB so external callers see no API change.
+// The outer store/ keeps one-line delegate methods on *store.DB; callers
+// name this package's types directly.
 //
 // Reconciliation is grouped as its own aggregate (rather than colocated
 // with orders, bins, or edges) because the whole point of the module is

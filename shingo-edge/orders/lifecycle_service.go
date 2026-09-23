@@ -158,7 +158,7 @@ func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus proto
 		// operator's force-confirm button.
 		//
 		// Status write ONLY — deliberately not routed through the Edge's own
-		// confirm command (Manager.ConfirmOrder), which files a receipt back to
+		// confirm command (Manager.ConfirmDelivery), which files a receipt back to
 		// Core. Core just told us; answering would be a receipt for a receipt.
 		// The local terminal bookkeeping we DO want still runs, because
 		// applyTransition fires EmitOrderCompleted on any terminal status, and

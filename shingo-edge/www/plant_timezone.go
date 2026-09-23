@@ -9,7 +9,7 @@ import (
 
 // plantLocation is edge's single resolution point for the plant's IANA
 // timezone, mirroring core's www/plant_timezone.go. Edge's value comes from
-// shingoedge.yaml `timezone:` — the SAME key engine.BucketLocation reads for
+// shingoedge.yaml `timezone:` — the SAME key engine.ReportingLocation reads for
 // hourly-count bucketing, so display and reporting cannot disagree about
 // which clock a station is on.
 //

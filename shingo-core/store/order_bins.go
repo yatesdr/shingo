@@ -73,9 +73,9 @@ func (db *DB) PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 // is what the primitive exists to make unrepeatable. The loop spelled its own
 // `claimed_by=NULL` with no scope at all — the pre-445f79eb shape, fixed in
 // applyArrival and never carried here. The round split on whether it mattered;
-// it was settled by running the caller (engine.TestMultiBinSettle_CompoundChild-
-// ScopesItsUnclaim), not by argument. refuseArrival IS a complete guard for an
-// ORDINARY order, but its first line waves compound children through the
+// it was settled by running the caller
+// (engine.TestMultiBinSettle_CompoundChildScopesItsUnclaim), not by argument.
+// refuseArrival IS a complete guard for an ORDINARY order, but its first line waves compound children through the
 // ownership question entirely, so a dig leg reached this writer holding a
 // stranger's claim.
 //

@@ -6,8 +6,8 @@
 //
 // Phase 5b of the architecture plan moved this CRUD out of the flat
 // store/ package and into this sub-package. The outer store/ keeps
-// type aliases (`store.Process = processes.Process`, etc.) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// one-line delegate methods on *store.DB; callers name processes.Process
+// and its siblings directly.
 package processes
 
 import (

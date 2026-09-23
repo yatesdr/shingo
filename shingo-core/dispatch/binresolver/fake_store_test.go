@@ -122,7 +122,7 @@ func (f *fakeStore) ListChildNodesUnlocked(parentID int64, asker reservations.Di
 }
 
 // lockLaneForDig marks a lane dig-held, the fixture equivalent of a dig mouth
-// row existing. Replaces `ll := NewLaneLock(); ll.TryLock(lane, order)` — the
+// row existing. Replaces the removed `ll := NewLaneLock(); ll.TryLock(lane, order)` — the
 // resolver no longer holds a lock object to ask, so the fixture sets the state
 // the candidate query reads.
 func (f *fakeStore) lockLaneForDig(laneID int64) {

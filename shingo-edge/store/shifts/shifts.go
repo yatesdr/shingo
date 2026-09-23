@@ -2,8 +2,8 @@
 //
 // Phase 5b of the architecture plan moved the shifts CRUD out of the
 // flat store/ package and into this sub-package. The outer store/
-// keeps a type alias (`store.Shift = shifts.Shift`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// keeps one-line delegate methods on *store.DB; callers name shifts.Shift
+// directly.
 package shifts
 
 import (

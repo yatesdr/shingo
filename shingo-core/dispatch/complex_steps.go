@@ -279,9 +279,9 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayloa
 		if node.IsSynthetic && node.NodeTypeCode == protocol.NodeClassNGRP && d.resolver != nil {
 			// Empty pickup leg (produce node's "bring an empty to fill"):
 			// resolve to a slot holding an EMPTY compatible carrier, not a
-			// payload-matching full. Mirrors planRetrieveEmpty's source-group
-			// branch, which also bypasses the full-retrieve resolver for
-			// empties. (Pre-fix every complex pickup resolved as
+			// payload-matching full. Mirrors the source finder's group-scoped
+			// empty tier (planTransport, empty intent), which also bypasses the
+			// full-retrieve resolver for empties. (Pre-fix every complex pickup resolved as
 			// OrderTypeRetrieve — a full — which delivered a full to produce
 			// nodes; step.Empty now carries the distinction the old comment
 			// here said it would need.)

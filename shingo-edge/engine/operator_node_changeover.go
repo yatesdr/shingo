@@ -306,7 +306,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	needsUOPReset := runtimeErr != nil || runtime == nil ||
 		runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != claimID
 	if needsUOPReset {
-		// NO CAPACITY SEED. This wrote deliveredFallbackUOP(claim) — capacity for
+		// NO CAPACITY SEED. This wrote the since-removed deliveredFallbackUOP(claim) — capacity for
 		// consume, 0 for produce — which is a POLICY number in a field that Core
 		// reads as a physical measurement. It existed to hold a consume tile above
 		// its reorder point during the window between the switch and its bin

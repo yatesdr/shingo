@@ -2,9 +2,8 @@
 //
 // Stage 2D of the architecture plan moved payload CRUD + manifest
 // templates out of the flat store/ package and into this sub-package.
-// The outer store/ keeps type aliases (`store.Payload = payloads.Payload`,
-// etc.) and one-line delegate methods on *store.DB so callers see no
-// public API change. Cross-aggregate methods (those that span payloads
+// The outer store/ keeps one-line delegate methods on *store.DB; callers
+// name payloads.Payload and its siblings directly. Cross-aggregate methods (those that span payloads
 // and bins/nodes) stay at the outer store/ level.
 package payloads
 

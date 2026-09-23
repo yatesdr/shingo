@@ -115,7 +115,7 @@ func (e *Engine) cellEpisodeOrigin(node *processes.Node, claim *processes.NodeCl
 	}
 	// ── THE JOIN ASKED FOR A KEY NOTHING EVER OPENS ───────────────────────────
 	//
-	// This line read protocol.EpisodeDirectionSupply, hardcoded. A PRODUCE cell
+	// This line read protocol.EpisodeDirectionSupply (since removed), hardcoded. A PRODUCE cell
 	// only ever opens its episode in the other spelling (operator_produce.go), and
 	// the spelling is part of the key's identity — so the join asked for
 	// `cell|PRESS-2|PANEL-B|supply` while the open row said

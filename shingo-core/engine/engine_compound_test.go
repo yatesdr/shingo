@@ -913,7 +913,7 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 // --- Test: Staging TTL expiry during compound order execution (TC-54) ---
 //
 // Scenario: During a compound reshuffle, child 1 (unbury) completes and
-// delivers the blocker to a non-storage node (shuffle slot). ApplyBinArrival
+// delivers the blocker to a non-storage node (shuffle slot). BinService.ApplyArrival
 // marks it as staged with a TTL. If the reshuffle takes longer than the TTL,
 // the staging sweep runs and flips the blocker bin to "available" while the
 // restock child hasn't executed yet.
@@ -981,7 +981,7 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	blockerBin, _ = db.GetBin(blockerBin.ID)
 	t.Logf("blocker after sweep: status=%s claimed=%v", blockerBin.Status, blockerBin.ClaimedBy)
 
-	// After child 1 completion, ApplyBinArrival released the blocker's claim (correct behavior).
+	// After child 1 completion, BinService.ApplyArrival released the blocker's claim (correct behavior).
 	// The sweep query has AND claimed_by IS NULL, so it only flips UNCLAIMED staged bins.
 	// If the claim survived child 1 completion, the sweep should have skipped this bin.
 	// Verify the sweep correctly changed status from staged to available for unclaimed bins.

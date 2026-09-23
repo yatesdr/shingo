@@ -84,7 +84,7 @@ func (s BinStatus) CanTransitionTo(to BinStatus) bool {
 
 // Sourceable reports whether a bin in this status MAY be taken for a
 // pickup/retrieve. 'available' and 'staged' are pickable — loader and lineside
-// slots source as concrete pickups, and ApplyBinArrival stages every non-storage
+// slots source as concrete pickups, and BinService.ApplyArrival stages every non-storage
 // slot, so refusing 'staged' would refuse every lineside bin.
 //
 // ALLOW-LIST, DELIBERATELY. The status column carries no CHECK constraint and

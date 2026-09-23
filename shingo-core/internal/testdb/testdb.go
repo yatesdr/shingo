@@ -901,7 +901,7 @@ var (
 // (ALTER/RENAME), mid-test db.Close, or asserts over global unscoped state —
 // see the dispatch OpenShared lint guard.
 //
-// The intended key is the test FILE (testFileKey()), so "shared" means
+// The intended key is the test FILE (FileKey(t)), so "shared" means
 // "one database per file, all tests in the file on it". A hand-written key is
 // allowed but must be stable, not derived from t.Name().
 //

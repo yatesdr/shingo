@@ -339,7 +339,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	// Cache binding no longer asserted at confirm under the new contract.
 	// After the side-cycle refactor (commit 4f9212b + tryAutoRequest
-	// removal), handleManualSwapCompletion clears ActiveOrderID without
+	// removal), applyManualSwap clears ActiveOrderID without
 	// queueing a follow-up kanban request. New empties are driven by
 	// line REQUESTs through the loader replenishment path, not by
 	// completion-time auto-requests at the loader.

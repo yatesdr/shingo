@@ -178,7 +178,7 @@ func TestStrandedHandoff_AnOwnerStillOwingThisLaneADropKeepsIt(t *testing.T) {
 // got past the claim walk has its bin out of this lane, and a jammed aisle is
 // jammed by the ROBOT rather than by a row.
 //
-// The stranded walk's KEEP predicate was `len(claimed)==0 && !swapLegCommitted`,
+// The stranded walk's KEEP predicate, since replaced, was `len(claimed)==0 && !swapLegCommitted`,
 // and swapLegCommittedToFleet rules faulted NOT-committed on purpose (its swap
 // caller wants a faulted sibling to keep waiting). So the second asking re-keeps
 // exactly what the first asking releases — and `faulted` is non-terminal,

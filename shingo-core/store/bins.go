@@ -79,7 +79,7 @@ func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNode
 
 // FindEmptyCompatibleBinInGroup is FindEmptyCompatibleBin scoped to descendants
 // of a synthetic group node. See bins.FindEmptyCompatibleInGroup for the full
-// rationale. Used by planRetrieveEmpty's source-group branch.
+// rationale. Used by the source finder's group-scoped empty tier.
 func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64,
 	asker reservations.DigAsker) (*bins.Bin, error) {
 	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker)

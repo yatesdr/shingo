@@ -495,7 +495,7 @@ const (
 	// ── The finder's tiers (source_finder.go) ─────────────────────────────
 	//
 	// FOUND BY THE OBSERVED-VS-DECLARED CHECK, ON THE RIG, NOT BY THE GREP.
-	// These reach setQueueReason through SourceOutcome.QueueCause, which was a
+	// These reach setQueueReason through SourceResult.QueueCause, which was a
 	// bare `string` — so no call site ever wrote QueueCause("…"), the type never
 	// forced a name, and the literal-conversion guard could not see them. The
 	// plant's own rows could: soakstat's cross-check reported orders parked under
@@ -597,7 +597,7 @@ const (
 	CauseIntakeResolve QueueCause = "intake-resolve"
 
 	// ── Dropoff capacity (capacity.go) ────────────────────────────────────
-	// Same story as the finder tiers: CapacityDetail.Cause was a bare string.
+	// Same story as the finder tiers: CapacityBlock.Cause was a bare string.
 	//
 	// These four were declared and then not adopted — capacity.go kept writing
 	// the literals. It compiled because the field is typed QueueCause and an

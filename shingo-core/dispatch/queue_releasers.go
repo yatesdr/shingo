@@ -871,7 +871,7 @@ var causeReleasers = []causeReleaser{
 	//
 	// THESE TWELVE WERE FOUND BY THE SOAK, NOT BY THE CODE AUDIT, and that is
 	// worth recording where the next person will read it. They reach the row
-	// through SourceOutcome.QueueCause and CapacityDetail.Cause, both of which
+	// through SourceResult.QueueCause and CapacityBlock.Cause, both of which
 	// were bare `string` fields — so no site ever wrote QueueCause("…"), the type
 	// never demanded a name, and the literal-conversion guard was structurally
 	// unable to see them. The audit found 12 of 24. The observed-vs-declared

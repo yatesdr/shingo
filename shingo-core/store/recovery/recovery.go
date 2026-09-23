@@ -3,9 +3,9 @@
 //
 // Phase 5 of the architecture plan moved RepairConfirmedOrderCompletion,
 // ReleaseTerminalBinClaim, and the recovery_actions CRUD out of the flat
-// store/ package and into this sub-package. The outer store/ keeps type
-// aliases (`store.RecoveryAction = recovery.Action`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// store/ package and into this sub-package. The outer store/ keeps
+// one-line delegate methods on *store.DB; callers name recovery.Action
+// directly.
 //
 // The two repair methods cross orders + bins in a single transaction,
 // but they are grouped here (rather than at the outer store/ level)
@@ -23,9 +23,7 @@ import (
 	"shingocore/store/internal/helpers"
 )
 
-// Action is the recovery_actions row entity. The type is re-aliased at
-// the outer store/ level as store.RecoveryAction so
-// engine/reconciliation_service.go compiles unchanged.
+// Action is the recovery_actions row entity.
 type Action struct {
 	ID         int64     `json:"id"`
 	Action     string    `json:"action"`

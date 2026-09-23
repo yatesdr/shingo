@@ -18,8 +18,9 @@ import (
 // search (legacy behaviour). For bin_loader manual_swap claims this MUST be
 // claim.InboundSource — otherwise the planner happily pulls a payload-matching
 // empty/full bin from anywhere in the system, including the empty-tote return
-// area instead of the configured supermarket. See planRetrieveEmpty in
-// shingo-core/dispatch/planning_service.go for the resolver branch.
+// area instead of the configured supermarket. See planTransport in
+// shingo-core/dispatch/planning_service.go, and its source finder, for the
+// resolver branch.
 // origin is REQUIRED. There is no unattributed twin of this any more — see the
 // Origin type, and see specimen (c) for what the twin cost.
 func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, sourceNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {

@@ -601,7 +601,7 @@ func (s *StationService) cellPicture(stationID int64, process *processes.Process
 	}
 	in := domain.CellPictureInput{
 		StationID: stationID, Nodes: nodes, Claims: active,
-		// DERIVED, NOT QUERIED. store.ListBackPositionNames read the same rows
+		// DERIVED, NOT QUERIED. The removed store.ListBackPositionNames read the same rows
 		// this caller already has, with its own JOIN. See
 		// domain.BackPositionNames.
 		BackPositions: domain.BackPositionNames(live),
@@ -642,7 +642,7 @@ func (s *StationService) liveClaims(processID int64) []processes.NodeClaim {
 
 // THE QUARTER-BIN HEURISTIC USED TO LIVE HERE and is deleted, not disabled.
 //
-// linesideStarved(capacityUOP, linesideUOP) returned linesideUOP < capacityUOP/4.
+// The deleted linesideStarved(capacityUOP, linesideUOP) returned linesideUOP < capacityUOP/4.
 // It was a guess with no relationship to the number that actually triggers
 // replenishment, so the board could go red while the reorder logic was content
 // or stay calm while it was not. The starvation test now reads the Core-owned

@@ -23,7 +23,7 @@ import (
 //	        that claims the bin, even though the bin was already delivered to lineside.
 //	        The return order has SourceNode = warehouse (wrong — bin is physically at lineside).
 //	Bug B: ConfirmReceipt does not guard against cancelled orders. It overwrites status
-//	        from "cancelled" back to "confirmed" and calls ApplyBinArrival, moving the bin
+//	        from "cancelled" back to "confirmed" and calls BinService.ApplyArrival, moving the bin
 //	        in the DB to lineside while it's claimed by the return order.
 //
 // Result: bin is at lineside in DB, claimed by a return order that thinks it's at the
@@ -53,7 +53,7 @@ func TestCancelDeliveredOrder_NoReturnCreated(t *testing.T) {
 	binID := *order.BinID
 
 	// Step 2: Robot runs and finishes. Order status = "delivered".
-	// Bin is physically at lineside, but DB still has it at source (ApplyBinArrival
+	// Bin is physically at lineside, but DB still has it at source (BinService.ApplyArrival
 	// only fires on receipt confirmation, which hasn't happened yet).
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
@@ -89,7 +89,7 @@ func TestCancelDeliveredOrder_NoReturnCreated(t *testing.T) {
 
 	// Step 4: Operator confirms receipt on the now-cancelled order (3:36 PM in production).
 	// BUG B: ConfirmReceipt does not reject receipts on cancelled orders.
-	// It overwrites status from "cancelled" to "confirmed" and runs ApplyBinArrival.
+	// It overwrites status from "cancelled" to "confirmed" and runs BinService.ApplyArrival.
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   "tc38-1",
 		ReceiptType: "confirmed",

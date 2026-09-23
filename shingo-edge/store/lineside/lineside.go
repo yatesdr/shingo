@@ -12,8 +12,9 @@
 // Buckets with qty == 0 are deleted on Deactivate/Drain; the inactive
 // state always has qty > 0 in practice.
 //
-// The outer store/ package keeps type aliases and delegate methods on
-// *store.DB so callers see no API change.
+// The outer store/ package keeps delegate methods on *store.DB and
+// re-exports the bucket-state constants; callers name this package's
+// types directly.
 package lineside
 
 import (

@@ -181,7 +181,7 @@ func (t laneGateTarget) pointFor(orderID int64) string {
 //
 // It takes the LANE because the splice walks steps and already has one. The two
 // functions this replaced - resolveLaneGateTarget(destNode) and its byte-for-byte
-// twin resolveLaneGateSource(sourceNode) - existed only because the valve keyed
+// twin resolveLaneGateSource(sourceNode), both removed, existed only because the valve keyed
 // on an END of the order and so had to be written once per end.
 func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, error) {
 	if lane == nil || lane.ParentID == nil {

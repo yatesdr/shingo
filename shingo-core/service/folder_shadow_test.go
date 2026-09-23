@@ -18,12 +18,12 @@ import (
 // count is what the stage-1 cutover is meant to quote.
 //
 // It counted the opposite. NoteFolderShadow took a binIDIsNil parameter and
-// tested `binIDIsNil != ownsNoCargo`, which reads like a symmetric comparison
-// of two answers — but all seven callers are inside their own nil branch and
-// passed the constant `true`, so it reduced to `!ownsNoCargo`, and
-// OrderOwnsNoCargo returns TRUE for a coordinator. So it tallied and shouted
-// about the firings that were RIGHT and stayed silent on every one that was
-// wrong.
+// tested `binIDIsNil != ownsNoCargo` (both since removed), which reads like a
+// symmetric comparison of two answers — but all seven callers are inside their
+// own nil branch and passed the constant `true`, so it reduced to
+// `!ownsNoCargo` (since removed), and OrderOwnsNoCargo returns TRUE for a coordinator. So
+// it tallied and shouted about the firings that were RIGHT and stayed silent on
+// every one that was wrong.
 //
 // A number that means the reverse of its label is worse than no number: the
 // window would have ended by justifying the opposite of the cutover, with

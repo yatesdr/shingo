@@ -141,8 +141,8 @@ func TestCellPictureVersion_TellsTwoStylesApart(t *testing.T) {
 	}
 }
 
-// BackPositionNames replaces a query. The rule is the one
-// store.ListBackPositionNames had: every position any LIVE claim of the
+// BackPositionNames replaces a query. The rule is the one the
+// removed store.ListBackPositionNames had: every position any LIVE claim of the
 // process names as a partner slot — paired, second paired, inbound or outbound
 // staging — whichever style is running.
 func TestBackPositionNames_IsEveryPartnerSlotOfEveryLiveClaim(t *testing.T) {

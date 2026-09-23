@@ -607,8 +607,8 @@ type ParticipantWithStation struct {
 // ListParticipantsWithStation resolves the release station for every
 // participant in a changeover.
 //
-// This is `stationForRelease`, expressed as one query rather than a per-node
-// walk, and it is the single definition the affordance and the plan-time
+// This is the since-removed `stationForRelease`, expressed as one query rather
+// than a per-node walk, and it is the single definition the affordance and the plan-time
 // assertion both consume — the whole point of the participant work is that
 // "which station owns this node" stops having two answers.
 //

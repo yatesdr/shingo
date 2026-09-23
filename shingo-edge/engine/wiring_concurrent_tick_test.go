@@ -508,7 +508,7 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 // TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8 pins
 // the post-Item-8 partial-return shape across a style cycle: original
 // X bin returns (e.g. SEND PARTIAL BACK then re-deliver). Pre-Item-8
-// the runtime read OrderDelivered.BinUOPRemaining and reset to the
+// the runtime read OrderDelivered.BinUOPRemaining (since removed) and reset to the
 // bin's actual partial value; post-Item-8 the snapshot is gone and
 // the runtime resets to claim.UOPCapacity unconditionally. The
 // reconciler heals to Core's authoritative bin value within ~60s

@@ -3,9 +3,8 @@
 //
 // Phase 5 of the architecture plan moved mission events, telemetry rows,
 // filter + stats queries out of the flat store/ package and into this
-// sub-package. The outer store/ keeps type aliases
-// (`store.MissionEvent = telemetry.Event`, etc.) and one-line delegate
-// methods on *store.DB so external callers see no API change.
+// sub-package. The outer store/ keeps one-line delegate methods on
+// *store.DB; callers name telemetry.Event and its siblings directly.
 //
 // Stage 2A.2 lifted the Event, Mission, Filter, and Stats structs into
 // shingocore/domain so www handlers + service callers can construct

@@ -140,7 +140,7 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 }
 
 // --- TC-24b: Stale bin location after complex order completes ---
-// Regression: complex orders never call ApplyBinArrival because BinID is nil,
+// Regression: complex orders never call BinService.ApplyArrival because BinID is nil,
 // so the bin's node_id in the database is never updated after the robot
 // delivers it. The bin physically moves but the DB still shows the old node.
 //
@@ -149,7 +149,7 @@ func TestComplexOrder_BinPoachingPrevention(t *testing.T) {
 // Expected (current behavior): bin still shows storage node — BUG.
 func TestComplexOrder_StaleBinLocation(t *testing.T) {
 	t.Parallel()
-	// complex orders now set BinID, so ApplyBinArrival fires on
+	// complex orders now set BinID, so BinService.ApplyArrival fires on
 	// completion and moves the bin to the delivery node in the DB.
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -186,7 +186,7 @@ func TestComplexOrder_StaleBinLocation(t *testing.T) {
 		sim.DriveState(order.VendorOrderID, "FINISHED")
 	}
 
-	// Simulate Edge receipt — this triggers handleOrderCompleted → ApplyBinArrival.
+	// Simulate Edge receipt — this triggers handleOrderCompleted → BinService.ApplyArrival.
 	// FINISHED alone only sets status to "delivered". The Edge receipt confirms
 	// physical delivery and runs the bin lifecycle.
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -198,7 +198,7 @@ func TestComplexOrder_StaleBinLocation(t *testing.T) {
 	// KEY CHECK: bin's location must update to the line node
 	testdb.AssertBinAtNode(t, db, bin.ID, lineNode.ID)
 
-	// Bin should be unclaimed after completion (ApplyBinArrival unclaims)
+	// Bin should be unclaimed after completion (BinService.ApplyArrival unclaims)
 	if bin.ClaimedBy != nil {
 		t.Errorf("bin %d should be unclaimed after completion, got claimed_by=%d",
 			bin.ID, *bin.ClaimedBy)
@@ -220,7 +220,7 @@ func TestComplexOrder_StaleBinLocation(t *testing.T) {
 // Expected (current behavior): robot dispatched to empty node — BUG.
 func TestComplexOrder_PhantomInventoryRetrieve(t *testing.T) {
 	t.Parallel()
-	// with the bin claimed and BinID set, ApplyBinArrival runs on
+	// with the bin claimed and BinID set, BinService.ApplyArrival runs on
 	// completion, moving the bin to the line node. A subsequent retrieve
 	// targeting storage will NOT find a phantom bin at the old location.
 	db := testDB(t)

@@ -34,7 +34,7 @@ var sqlOwnerExclusion = regexp.MustCompile(`order_id\s*(<>|!=)\s*\$`)
 //     this whole change was modelled on, including the sentinel: its doc already
 //     records that "excludeOrderID = 0 disables the exemption and reproduces the
 //     blind behavior exactly", which is what reservations.Anyone is.
-//   - orders.stealSoftHold — resource_kind='bin', and a THREE-arm exemption
+//   - store.stealSoftHolds — resource_kind='bin', and a THREE-arm exemption
 //     (self, parent, and siblings via parent_order_id).
 //
 // So the ownership rule is written three times over three resource kinds, with

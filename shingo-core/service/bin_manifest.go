@@ -465,7 +465,7 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 //
 // ── AND IT IS protocol.Declarer, NOT A SECOND ENUM ────────────────────────
 //
-// This started as a private `payloadWriteDoor` with two values. It encoded
+// This started as a private `payloadWriteDoor` (since removed) with two values. It encoded
 // exactly the split Declarer already carries — every produce/tick/ingest call
 // site passes DeclaredByLifecycle and the one admin door passes
 // DeclaredByPerson — so it was a second enum whose values had to be kept in
@@ -714,7 +714,7 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 	// bin even if it passes the claimed_by check. claimed_by IS NULL is
 	// defense-in-depth for the mixed-binary rollback window; the OR claimed_by=$1
 	// leg makes a re-claim by THIS order idempotent (the wedge heal),
-	// mirroring bins.Claim / nodes.ClaimSlot.
+	// mirroring bins.Claim / nodes.ClaimSlotTx.
 	res, err := tx.Exec(`
 		UPDATE bins SET
 			payload_code='', manifest=NULL, uop_remaining=0,

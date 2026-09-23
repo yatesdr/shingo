@@ -56,7 +56,7 @@ func deliveredOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.Sim
 }
 
 // Normal receipt — bin already at destination (idempotent safety net).
-// handleOrderCompleted should detect bin is already at dest and skip ApplyBinArrival.
+// handleOrderCompleted should detect bin is already at dest and skip BinService.ApplyArrival.
 func TestOrderCompleted_BinAlreadyAtDest(t *testing.T) {
 	t.Parallel()
 	db, _, _, d, order, lineNode := deliveredOrder(t)
@@ -198,7 +198,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 		StationID: order.StationID,
 	})
 
-	// Bin should now be at the delivery (line) node via ApplyBinArrival
+	// Bin should now be at the delivery (line) node via BinService.ApplyArrival
 	testdb.AssertBinAtNode(t, db, bin.ID, sd.LineNode.ID)
 }
 

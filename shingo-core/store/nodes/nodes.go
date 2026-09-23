@@ -3,9 +3,8 @@
 // Stage 2D of the architecture plan moved node CRUD, node types,
 // node group/lane layout, node properties, station/payload bindings,
 // and node-state queries out of the flat store/ package and into this
-// sub-package. The outer store/ keeps type aliases (`store.Node = nodes.Node`,
-// etc.) and one-line delegate methods on *store.DB so callers see no
-// public API change. Cross-aggregate helpers (those that join bins or
+// sub-package. The outer store/ keeps one-line delegate methods on
+// *store.DB; callers name nodes.Node and its siblings directly. Cross-aggregate helpers (those that join bins or
 // payloads — GetGroupLayout, ListNodeStates, ListPayloadsForNode,
 // FindSourceBinInLane, etc.) stay at the outer store/ level as
 // composition methods.
@@ -136,7 +135,7 @@ func UnclaimSlot(db *sql.DB, nodeID int64) error {
 }
 
 // UnclaimOrderSlots releases all slots claimed by a specific order. Mirrors
-// bins.UnclaimByOrder — it must be called from the same terminal/cleanup hooks
+// the bin half of store.releaseOrderHoldingsTx — it must be called from the same terminal/cleanup hooks
 // so a terminated order never strands a slot claim (the bin-claim path had a
 // leaked-claim failure mode under partial failure, fixed by reconciliation;
 // the slot claim inherits that by riding the same hooks).

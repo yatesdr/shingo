@@ -622,7 +622,7 @@ func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
 	})
 }
 
-// Empty-intent buried result routes to reshuffle (planRetrieveEmpty's :421 path).
+// Empty-intent buried result routes to reshuffle (planTransport's empty path).
 func TestFindSourceEmptyBuriedReshuffles(t *testing.T) {
 	t.Parallel()
 

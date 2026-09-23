@@ -204,7 +204,7 @@ import (
 // undetermined arm that must not read as a yes.
 //
 // Sharing the shape does NOT merge the decisions, and the name is deliberate
-// about that: an `admissionVerdict` coming back from the ordering gate would
+// about that: a type named admission verdict coming back from the ordering gate would
 // tell a reader that ordering IS admission, which is the one confusion the
 // boundary above exists to prevent. The questions stay apart because they are
 // different FUNCTIONS returning different causes; only the envelope is common.

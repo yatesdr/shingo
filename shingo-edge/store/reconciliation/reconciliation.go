@@ -4,9 +4,8 @@
 //
 // Phase 5b of the architecture plan moved this CRUD out of the flat
 // store/ package and into this sub-package. The outer store/ keeps
-// type aliases (`store.ReconciliationAnomaly = reconciliation.Anomaly`,
-// `store.ReconciliationSummary = reconciliation.Summary`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// one-line delegate methods on *store.DB; callers name
+// reconciliation.Anomaly and reconciliation.Summary directly.
 //
 // Note: this package imports shingoedge/store/messaging to share the
 // MaxRetries const used to compute pending vs. dead-letter counts.

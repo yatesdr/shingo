@@ -243,7 +243,7 @@ func testEnvelopeWithUOP(t *testing.T, uop *int) *protocol.Envelope {
 // The two dispatch paths move the order to sourcing at different points relative
 // to bin claim:
 //
-//   Simple (planRetrieve/planRetrieveEmpty/planMove):
+//   Simple (planRetrieve/planRetrieveEmpty/planMove, since replaced by planTransport):
 //     MoveToSourcing is called BEFORE ClaimForDispatch.
 //     Order is in "sourcing" status when the bin claim fires.
 //

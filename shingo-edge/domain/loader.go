@@ -221,8 +221,7 @@ func WithOutboundDest(dst string) LoaderOption {
 // WithUOPThreshold sets the shared_window per-payload UOP threshold — carried
 // down from the Core aggregate for display/config parity. Nothing on the Edge
 // acts on it any more (the threshold receiver it fed is deleted; Core orders
-// directly). Mirrors WithMinStock; dedicated loaders carry the threshold on
-// each Position.
+// directly). Dedicated loaders carry the threshold on each Position.
 func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
 	return func(l *Loader) {
 		l.uopThreshold = make(map[PayloadCode]int, len(m))
@@ -622,8 +621,8 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 //     first-match; member "" (operator request) falls back to
 //     first-match, preserving prior behaviour. Positions never share a budget.
 //
-// member is the specific loader member node the triggering signal names
-// (LoopBelowThresholdSignal.MemberNodeName). It is honoured only for dedicated
+// member is the specific loader member node the caller names — the node the
+// operator acted at (withLoaderBudget's member). It is honoured only for dedicated
 // layouts — shared windows share one budget, so the seam's free-window assignment
 // (perNode==0) picks the slot and member is ignored. "" means "no member named."
 //

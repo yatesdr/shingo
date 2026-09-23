@@ -55,7 +55,7 @@ func (db *DB) RoutingSetReport(processID int64, isUnknown func(name string) bool
 //
 // GET …/routing-nodes used to ask for the report and then ask for the list,
 // and the report re-read the same table the list was about — see
-// processes.RoutingSetReportFrom. The route reads process, rows and the live
+// processes.RoutingSetReportFrom (since deleted). The route reads process, rows and the live
 // claim count now, and nothing else.
 func (db *DB) RoutingSet(processID int64, isUnknown func(name string) bool) (processes.RoutingDeriveReport, []processes.RoutingNode, error) {
 	p, err := processes.Get(db.DB, processID)

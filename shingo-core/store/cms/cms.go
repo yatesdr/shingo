@@ -2,9 +2,8 @@
 //
 // Phase 5 of the architecture plan moved cms_transactions CRUD out of
 // the flat store/ package and into this sub-package. The outer store/
-// keeps a type alias (`store.CMSTransaction = cms.Transaction`) and
-// one-line delegate methods on *store.DB so external callers don't
-// change.
+// keeps one-line delegate methods on *store.DB; callers name
+// cms.Transaction directly.
 package cms
 
 import (
@@ -61,9 +60,7 @@ func Postable(sourceType string) bool {
 	return sourceType == SourceTypeMovement || sourceType == SourceTypeClear
 }
 
-// Transaction is the cms_transactions row entity. The type is re-aliased
-// at the outer store/ level as store.CMSTransaction so service/, engine/,
-// and material/ compile unchanged.
+// Transaction is the cms_transactions row entity.
 // Delta is signed and is the whole story: negative leaves the boundary,
 // positive arrives at it. There is no TxnType — that column stored sign(delta)
 // beside the delta, so the two could disagree and one of them would be a lie.

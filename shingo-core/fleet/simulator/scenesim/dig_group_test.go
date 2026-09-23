@@ -403,7 +403,7 @@ func TestDigGroup_GatedRetrieveDwellsForWholeGroup(t *testing.T) {
 // TestDigGroup_TwoDifferentDigsExcludeEachOther is case E, and it is a DEFECT
 // FIXED rather than a property preserved.
 //
-// admitToLane's dig-hold block read `if myMode != "dig" && laneHasActiveDig(...)`.
+// admitToLane's dig-hold block, since replaced, read `if myMode != "dig" && laneHasActiveDig(...)`.
 // A foreign DIG therefore skipped the claim check entirely and was caught only by
 // the occupant loop — which sees nothing while the holding dig is out on its
 // parking leg. Two digs on one lane could interleave. It was latent only because

@@ -127,7 +127,7 @@ const defaultDeckWitnessRecency = 10 * time.Minute
 
 // markDeckLoaded records WHEN this process last saw this bin's deck loaded.
 //
-// THIS IS THE WITNESS, and it is why no `Witnessed` bool is needed on the
+// THIS IS THE WITNESS, and it is why no witnessed flag is needed on the
 // observation itself: the freeze only ever forms on a loaded→empty transition
 // this process watched, so a carried bin whose deck reads empty with no recent
 // mark is the unwitnessed case by construction.

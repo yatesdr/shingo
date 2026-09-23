@@ -36,7 +36,7 @@ import (
 // At the time, an in-memory map was the grant authority and the group resolver
 // skipped dig-locked lanes from it, so no competing order ever bound to the
 // lane. The row was a mirror, not load-bearing for exclusion. And the tripwire
-// that would have reported the divergence, LaneLock.CheckDivergence, had no
+// that would have reported the divergence, LaneLock.CheckDivergence (since removed), had no
 // production caller at all. The row vanished, memory kept working, nothing
 // logged.
 //

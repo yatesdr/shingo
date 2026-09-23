@@ -30,9 +30,10 @@ type Config struct {
 	// It rides the backup archive (backup/snapshot.go includes the config), so
 	// a restore is the other way a replacement box gets it back.
 	//
-	// Empty means unenrolled, and since the enrollment deploy that is a startup
-	// REFUSAL rather than a derivation — there is no default left to compose
-	// one from. See main.mustHaveIdentity.
+	// Empty means the edge has never started: main.ensureIdentity mints a
+	// random uid on first start and persists it, and Core holds the station
+	// unclaimed until a human claims it. Nothing composes a default from other
+	// fields.
 	StationUID string `yaml:"station_uid"`
 
 	// Namespace / LineID are LABELS NOW, not identity. They no longer compose

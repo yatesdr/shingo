@@ -2,9 +2,8 @@
 //
 // Phase 5 of the architecture plan moved the edge_registry CRUD +
 // heartbeat upsert + stale-edge sweep out of the flat store/ package
-// and into this sub-package. The outer store/ keeps a type alias
-// (`store.EdgeRegistration = registry.Edge`) and one-line delegate
-// methods on *store.DB so external callers see no API change.
+// and into this sub-package. The outer store/ keeps one-line delegate
+// methods on *store.DB; callers name registry.Edge directly.
 //
 // # THE STATEMENT SPLIT, which is the reason this file changed
 //

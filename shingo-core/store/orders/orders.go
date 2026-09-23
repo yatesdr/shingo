@@ -2,12 +2,11 @@
 //
 // Stage 2D of the architecture plan moved order CRUD, history, filters,
 // and the order_bins junction out of the flat store/ package and into
-// this sub-package. The outer store/ keeps type aliases
-// (`store.Order = orders.Order`, etc.) and one-line delegate methods on
-// *store.DB so callers see no public API change. Cross-aggregate methods
+// this sub-package. The outer store/ keeps one-line delegate methods on
+// *store.DB; callers name orders.Order directly. Cross-aggregate methods
 // that mutate bins in the same transaction (CreateCompoundChildren,
-// FailOrderAtomic, CancelOrderAtomic, ApplyBinArrival, ApplyMultiBinArrival)
-// stay at the outer store/ level as composition methods.
+// FailOrderAtomic, ApplyMultiBinArrival) stay at the outer store/ level as
+// composition methods; the single-bin arrival is BinService.ApplyArrival.
 package orders
 
 import (
@@ -30,7 +29,7 @@ import (
 // Order is the order domain entity. The struct lives in shingocore/domain
 // (Stage 2A); this alias keeps the orders.Order name used by ScanOrder,
 // Create/Update, the filter + list helpers, and the outer store/ orders.go
-// re-export (store.Order). History also lifted to domain in Stage 2A.2 so
+// delegates. History also lifted to domain in Stage 2A.2 so
 // www handlers can return order-with-history shapes without importing this
 // sub-package; Filter stays local because it's a query DSL.
 type Order = domain.Order

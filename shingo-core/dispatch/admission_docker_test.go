@@ -305,7 +305,7 @@ func TestAdmit_BuriedRefusesAtThePickupEndOnly(t *testing.T) {
 // MUTATION (re-driven 2026-08-16): return Admitted() alongside the error in
 // admitLane's pickupSlotNow arm. The second half fires; the type half stays
 // green, which is the split showing they are different claims. The note used to
-// name `admittedVerdict()`, which is not a symbol in this tree — the recipe was
+// name an admittedVerdict function, which is not a symbol in this tree — the recipe was
 // unperformable as written.
 func TestAdmit_UndeterminedIsNeverAdmitted(t *testing.T) {
 	t.Parallel()

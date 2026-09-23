@@ -15,7 +15,7 @@ import (
 // TestSimOperator_NamesNoPlantsNodes is a tripwire for the defect class that
 // killed a two-and-a-half-hour soak.
 //
-// `const negBinMarket = "SYN_MARKET"` lived in sim_operator.go with a comment
+// `const negBinMarket = "SYN_MARKET"`, since removed, lived in sim_operator.go with a comment
 // admitting what it was: "hardcoded to the demo's combined market name. If the
 // plant renames/splits its market group, update this... Untested." A second plant
 // then arrived with SYN_STAMP and SYN_COMP, the negative-bin sweep looked up a

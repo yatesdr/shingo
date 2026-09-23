@@ -418,10 +418,11 @@ func TestHandleLoaderEmptyInCompletion_FiresL2(t *testing.T) {
 
 	// L1 = retrieve_empty order at the loader. RetrieveEmpty=true is the
 	// trigger condition; the payload code on the L1 itself is not what
-	// drives L2's payload (handleLoaderEmptyInCompletion looks up the
-	// loaded payload code via coreClient.FetchNodeBins — coreClient is
-	// nil in this fixture, so L2 ships with an empty payload code, which
-	// is acceptable for asserting the dispatch shape).
+	// drives L2's payload (loadedPayloadForL2 takes the part LOAD
+	// recorded on the runtime row, else reads coreClient.FetchNodeBins —
+	// this fixture confirms without LOAD and coreClient is nil, so L2
+	// ships with an empty payload code, which is acceptable for asserting
+	// the dispatch shape).
 	orderID, err := db.CreateOrder("uuid-l1-fire", orders.TypeRetrieve,
 		&loaderNodeID, true, 1, "L2-FIRE-MSWAP-NODE", "", "", "", false, "", "", "")
 	if err != nil {

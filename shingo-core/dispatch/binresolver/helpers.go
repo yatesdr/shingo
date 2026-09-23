@@ -57,7 +57,7 @@ func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
 //     manifest_confirmed) is a valid pickup target at a lineside slot.
 //
 //  2. Status "staged" is accepted (not just "available"). Lineside bins
-//     are always staged — ApplyBinArrival sets staged for non-storage slots.
+//     are always staged — BinService.ApplyArrival sets staged for non-storage slots.
 //
 // The payload filter only rejects a mismatch when both sides are non-empty:
 //

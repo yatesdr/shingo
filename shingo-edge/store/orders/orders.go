@@ -2,9 +2,8 @@
 //
 // Phase 5b of the architecture plan moved the orders + order_history
 // CRUD out of the flat store/ package and into this sub-package. The
-// outer store/ keeps type aliases (`store.Order = orders.Order`,
-// `store.OrderHistory = orders.History`) and one-line delegate methods
-// on *store.DB so external callers see no API change.
+// outer store/ keeps one-line delegate methods on *store.DB; callers
+// name orders.Order and orders.History directly.
 package orders
 
 import (

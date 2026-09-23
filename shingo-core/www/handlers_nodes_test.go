@@ -49,7 +49,7 @@ func postForm(t *testing.T, handler http.HandlerFunc, path string, values url.Va
 
 // TestHandleNodeCreate_HappyPathSpecificModes exercises the full 5-write chain
 // with both station_mode=specific and bin_type_mode=specific. Each side-table
-// must be populated and the NodeUpdated(created) event emitted.
+// must be populated and the EventNodeUpdated (created) event emitted.
 func TestHandleNodeCreate_HappyPathSpecificModes(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
@@ -253,7 +253,7 @@ func TestHandleNodeUpdate_HappyPathRewritesAssignments(t *testing.T) {
 		}
 	}
 
-	// NodeUpdated(updated) emitted.
+	// EventNodeUpdated (updated) emitted.
 	var matched bool
 	for _, e := range snap() {
 		if e.NodeID == node.ID && e.Action == "updated" {

@@ -48,7 +48,7 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 	// Delivered (the call asserts the status; order is refetched at the confirmed step).
 	testdb.RequireOrderStatus(t, db, "lc-1", "delivered")
 
-	// Step 4: Simulate Edge receipt — triggers handleOrderCompleted → ApplyBinArrival
+	// Step 4: Simulate Edge receipt — triggers handleOrderCompleted → BinService.ApplyArrival
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   "lc-1",
 		ReceiptType: "confirmed",

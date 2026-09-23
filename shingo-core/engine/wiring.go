@@ -524,7 +524,7 @@ func (e *Engine) wireEventHandlers() {
 	// (restore-blockers cleanup, lane-lock release) on top of the
 	// existing auto-return and audit subscribers. If you're modifying
 	// any of the reshuffle terminal handlers, consider consolidating
-	// them into a single dispatcher.onComplexParentTerminal(event)
+	// them into a single dispatcher-owned complex-parent-terminal
 	// subscriber that fans to internal idempotent helpers. Auto-return
 	// and audit stay separate — they aren't reshuffle-coupled. See
 	// "Refactor targets" in complex-order-buried-reshuffle-scope.md §10

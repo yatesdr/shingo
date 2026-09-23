@@ -583,7 +583,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 // handleOrderCompleted runs when Edge confirms receipt. Bin movement already
 // happened in handleOrderDelivered, so this is mostly paperwork (compound
 // order advancement, cleanup). The bin arrival call is kept as an idempotent
-// safety net — if the bin is already at dest, ApplyBinArrival is a no-op.
+// safety net — if the bin is already at dest, BinService.ApplyArrival is a no-op.
 func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	order, err := e.db.GetOrder(ev.OrderID)
 	if err != nil {

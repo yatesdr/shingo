@@ -675,8 +675,8 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // — same placement, claim retained.
 //
 // Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
-// moved the orchestration body in from the (now-deleted) outer
-// store/completion.go::ApplyBinArrival.
+// moved the orchestration body in from the outer store's arrival method
+// in store/completion.go, since deleted.
 // Returns evicted=true when the destination already recorded a different
 // non-retired bin and that stale ghost was evicted to _TRANSIT (see below);
 // callers surface that as an operator alert. A normal arrival onto an empty

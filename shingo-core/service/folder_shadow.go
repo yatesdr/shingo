@@ -40,12 +40,12 @@ import (
 //
 // ── WHAT THIS COUNTED FIRST TIME ROUND, AND WHY IT WAS THE WRONG NUMBER ───
 //
-// It counted where the two spellings DISAGREED, through
-// `NoteFolderShadow(site, id, binIDIsNil, ownsNoCargo, err)` and the test
-// `binIDIsNil != ownsNoCargo`. That reads like a symmetric comparison of two
-// answers. It is not: every one of the seven call sites is INSIDE its own
-// `BinID == nil` branch, so binIDIsNil was the constant `true` at all of them
-// and the test reduced to `!ownsNoCargo`.
+// It counted where the two spellings DISAGREED, through a signature since
+// removed, `NoteFolderShadow(site, id, binIDIsNil, ownsNoCargo, err)`, and the
+// removed test `binIDIsNil != ownsNoCargo`. That reads like a symmetric
+// comparison of two answers. It is not: every one of the seven call sites is
+// INSIDE its own `BinID == nil` branch, so binIDIsNil was the constant `true` at
+// all of them and the removed test reduced to `!ownsNoCargo`.
 //
 // OrderOwnsNoCargo returns TRUE for a coordinator. So the instrument counted —
 // and shouted about — the firings that landed on an ORDINARY order, which is

@@ -750,7 +750,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 
 // TestRetrieveEmpty_LaneSourceScopesToLane verifies that a manual empty pull
 // whose source_node is a LANE (not its parent NGRP) scopes the empty search to
-// that lane's own slots — exercising the planRetrieveEmpty LANE-source gate
+// that lane's own slots — exercising planTransport's empty-intent LANE-source gate
 // (previously NGRP-only, so a LANE source fell through to the global finder).
 // A decoy empty outside the lane (no depth, lower id) would win the global
 // any-zone finder; the LANE source must skip it and pick the lane's empty.
@@ -1348,7 +1348,7 @@ func TestHandleOrderIngest(t *testing.T) {
 // TestDispatcher_RetrieveOrder_NGRPSource verifies that a retrieve_full order
 // with an NGRP (supermarket group) as the source resolves to a concrete slot,
 // claims the target bin, and dispatches. Regression for the shadowed-sourceNode
-// panic in planRetrieve: when the NGRP resolver succeeded, the inner `:=`
+// panic in planRetrieve (since replaced by planTransport): when the NGRP resolver succeeded, the inner `:=`
 // declaration shadowed the outer `sourceNode` and the subsequent
 // `sourceNode.Name` deref nil-panicked, leaving the order stranded at
 // `sourcing`. Lit up in production by unloader auto-push passing
@@ -1572,7 +1572,7 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 	}
 }
 
-// Bug: 2026-04-13 — planMove() did not guard against same-node moves,
+// Bug: 2026-04-13 — planMove() (since replaced by planTransport) did not guard against same-node moves,
 // which would dispatch a physically impossible fleet transport.
 func TestDispatcher_MoveOrder_SameNode(t *testing.T) {
 	t.Parallel()

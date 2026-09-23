@@ -99,7 +99,7 @@ func TestFlowRoundTrip_ExpandCollapseWritesTheClaimBack(t *testing.T) {
 }
 
 // TestFlowRoundTrip_CollapseReadsTheCellOutOfAnInsert:
-// Collapse(Materialize(Expand(cell, nil))) == cell for an unlocked cell — a
+// Collapse(MaterializeClaim(Expand(cell, nil, ...), nil)) == cell for an unlocked cell — a
 // brand-new claim written from a cell reads back as that cell.
 func TestFlowRoundTrip_CollapseReadsTheCellOutOfAnInsert(t *testing.T) {
 	t.Parallel()

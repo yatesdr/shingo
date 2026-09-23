@@ -889,7 +889,7 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 	t.Run("GetManifest_on_empty_bin_returns_empty", func(t *testing.T) {
 		// EMPTY THE BIN HERE rather than relying on a previous subtest to have
 		// done it. It used to lean on a ClearManifest_empties_bin subtest above,
-		// which was the only caller of bins.ClearManifest anywhere — so the
+		// which was the only caller of bins.ClearManifest (since deleted) — so the
 		// function existed to keep this subtest's premise true and for nothing
 		// else. Deleting the dead function left this one reading a bin that still
 		// held two items, and the failure named the manifest rather than the

@@ -35,7 +35,7 @@ type DropoffCapacityPreview struct {
 // The capacity model can shift between preview-call and actual dispatch
 // (operator clicks twice in quick succession, scanner runs, etc.); the
 // preview is "best-effort current snapshot" rather than a reservation.
-// The actual gate at HandleComplexOrderRequest / planRetrieve / etc. is
+// The actual gate at HandleComplexOrderRequest / planTransport / etc. is
 // what enforces correctness.
 func (d *Dispatcher) PreviewDropoffCapacity(deliveryNode string) DropoffCapacityPreview {
 	blocked, block := CheckDropoffCapacity(d.db, deliveryNode, 0)

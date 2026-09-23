@@ -2,8 +2,8 @@
 //
 // Phase 5 of the architecture plan moved admin_users CRUD out of the
 // flat store/ package and into this sub-package. The outer store/ keeps
-// a type alias (`store.AdminUser = admin.AdminUser`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// one-line delegate methods on *store.DB; callers name admin.User
+// directly.
 package admin
 
 import (
@@ -11,9 +11,7 @@ import (
 	"time"
 )
 
-// User is the admin-user entity. The type is re-aliased at the outer
-// store/ level as store.AdminUser so service/admin_service.go compiles
-// unchanged.
+// User is the admin-user entity.
 type User struct {
 	ID           int64     `json:"id"`
 	Username     string    `json:"username"`

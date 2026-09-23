@@ -176,7 +176,7 @@ func renderValue(v reflect.Value) string {
 //     the test if anything got through anyway.
 //
 // The name heuristic alone was the original design and it is not enough: it
-// breaks the day somebody adds `apiToken` spelled `bearer` or `pat`. The tag
+// breaks the day somebody adds an apiToken field spelled `bearer` or `pat`. The tag
 // alone is not enough either, because it has to be remembered. The output scan
 // is what makes a miss loud rather than silent.
 var secretMarkers = []string{"secret", "password", "key", "token", "credential", "passwd", "auth"}

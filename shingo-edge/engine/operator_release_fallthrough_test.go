@@ -26,7 +26,7 @@ import (
 
 // captureReleaseLogs wires an in-memory debuglog into eng and returns a
 // closure that pulls every "release" subsystem entry as a formatted line.
-// Drop-in replacement for the eng.logFn = captureLogs(&logs) pattern now
+// Drop-in replacement for the retired eng.logFn = captureLogs(&logs) pattern now
 // that release breadcrumbs go through e.logRelease → debugLogger.
 func captureReleaseLogs(t *testing.T, eng *Engine) func() []string {
 	t.Helper()

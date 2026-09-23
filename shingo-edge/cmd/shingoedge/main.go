@@ -299,10 +299,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	hb.SceneRevisionFn = eng.SceneRevision
 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
-	// Every protocol.SubjectX is registered against the closure that
+	// Every protocol.Subject* constant is registered against the closure that
 	// drives the corresponding Edge subsystem (engine method, heartbeater
 	// resync trigger, node structure changes, etc). Pre-router this was done
-	// via nine EdgeHandler.SetXHandler setters; the router is now the
+	// via nine EdgeHandler.Set*Handler setters (since removed); the router is now the
 	// registration surface and EdgeHandler holds only order-channel
 	// state.
 	subjectRouter := router.NewSubject()

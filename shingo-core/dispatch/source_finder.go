@@ -1,7 +1,7 @@
 package dispatch
 
 // source_finder.go — the one shared source-finding seam behind BOTH intake
-// planning (planRetrieve / planRetrieveEmpty / planMove) and the fulfillment
+// planning (PlanningService.planTransport) and the fulfillment
 // scanner's replay path. One pure seam both callers share.
 //
 // Why it exists: the scanner's inline finder had drifted from the intake
@@ -360,8 +360,8 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// ── Tier 1: NGRP synthetic source (full intent only) ──────────────────
 	// Empties never route through the retrieve resolver: ResolveRetrieve is
 	// payload-match-required and rejects PayloadCode=="" bins, so an empty pull
-	// on an NGRP source falls to the group-scoped empty tier (planRetrieveEmpty's
-	// comment). Errors route through the SAME classifier intake uses — this is
+	// on an NGRP source falls to the group-scoped empty tier (tier 3 below).
+	// Errors route through the SAME classifier intake uses — this is
 	// where the A4 drift lived (the scanner checked only *StructuralError and
 	// fell through to plant-wide FIFO on a capacity/buried error).
 	if intent == IntentFull && srcNode != nil && srcNode.IsSynthetic &&
@@ -399,7 +399,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		}
 		if result.Bin == nil {
 			// Resolver returned a node but no concrete bin — queue and retry.
-			// Matches planMove's defensive branch; safe for retrieve, where
+			// The move-shaped defensive branch; safe for retrieve, where
 			// ResolveRetrieve always carries a Bin on success.
 			return SourceResult{
 				Outcome:     OutcomeWait,
@@ -414,9 +414,9 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// ── Tier 2: dedicated-loader pool ─────────────────────────────────────
 	// Drain (full) / Fill (empty). A payload-less move (full intent, blank
 	// payload) skips the pool source — it is a direct relocation of the physical
-	// bin at the position, handled by the concrete-node tier below. This mirrors
-	// planMove:580 (`isLoaderPos && payloadCode != ""`); planRetrieve and
-	// planRetrieveEmpty always carry a payload/intent that reaches here.
+	// bin at the position, handled by the concrete-node tier below. That is the
+	// `payloadCode != ""` arm of the gate on the next line; a retrieve and a
+	// retrieve_empty always carry a payload/intent that reaches here.
 	if bin == nil && need.SourceNode != "" && (intent == IntentEmpty || payloadCode != "") {
 		loaderIntent := binsource.Drain
 		if intent == IntentEmpty {
@@ -549,8 +549,8 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// ── Tier 4: concrete-node candidates (node-local needs) ───────────────
 	// A node-local need sources the bin parked AT its concrete source node —
 	// the first available candidate (BinUnavailableReason=="", which skips the
-	// payload check for a payload-less move, exactly as claimFirstAvailable
-	// does at intake). No plant-wide fallback: not-found queues, never widens.
+	// payload check for a payload-less move, as intake's first-available claim did
+	// before its removal). No plant-wide fallback: not-found queues, never widens.
 	//
 	// IntentEmpty extension (C(i), DORMANT until C(ii)): tier 4 also serves
 	// node-local EMPTY needs, filtered to empty carriers exactly as the
@@ -781,7 +781,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	}
 
 	// ── Tier 6: post-find buried check (empty intent only) ────────────────
-	// Preserves planRetrieveEmpty's last-resort reshuffle (:421-434): the empty
+	// Preserves planTransport's last-resort reshuffle for an empty: the empty
 	// finder prefers lane-mouth empties, so a buried empty landing here means
 	// every compatible empty is buried — dig this one out rather than dispatch a
 	// robot to an unreachable slot. The full-retrieve path has no post-find

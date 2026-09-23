@@ -357,7 +357,7 @@ func (e *Engine) cellPreconditionGone(ep *store.OpenOrigin) (string, bool, error
 	// THE TRANSLATION TABLE IS GONE. This read
 	//
 	//	role := string(protocol.ClaimRoleConsume)
-	//	if ep.Direction == protocol.EpisodeDirectionEvacuate { role = ... }
+	//	if ep.Direction == protocol.EpisodeDirectionEvacuate { role = ... } // removed
 	//
 	// — a hand-written 1:1 dictionary from the episode's vocabulary back into
 	// the claim's, which is where the value came from in the first place. The

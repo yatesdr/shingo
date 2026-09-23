@@ -1147,7 +1147,7 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 // payload template AND writes the bin via SetForProduction, which
 // audits via bin_uop_ledger. Pre-Item-19 the dispatch ingest path
 // and the operator load-payload action called the lower-level
-// *store.DB.SetBinManifestFromTemplate which bypassed audit; Item
+// *store.DB.SetBinManifestFromTemplate (since removed), which bypassed audit; Item
 // 10's UI surface made the audit-bypass a real gap.
 func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	t.Parallel()

@@ -16,7 +16,7 @@ import (
 // This package exists because a Core board and an Edge station rendering one
 // event on two clocks is a defect that reaches the floor. The zone was only
 // half of it. Every elapsed reading in the UI — the live durations, the "as
-// of" stamps, the header clock — was computed as `Date.now() - serverStamp`:
+// of" stamps, the header clock — was computed as `Date.now() - serverStamp` (since removed):
 // a BROWSER wall clock differenced against a SERVER timestamp. On a plant that
 // is merely fragile (an operator's laptop with a wrong clock shows wrong ages
 // and nothing says so). On a sim rig it is fatal, because simulated now is not

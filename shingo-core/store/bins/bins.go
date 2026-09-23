@@ -3,11 +3,11 @@
 // Stage 2D of the architecture plan moved bin CRUD, bin types, bin
 // manifest operations, and node↔bin-type bindings out of the flat
 // store/ package and into this sub-package. The outer store/ keeps
-// type aliases (`store.Bin = bins.Bin`, etc.) and one-line delegate
-// methods on *store.DB so callers see no public API change.
+// one-line delegate methods on *store.DB; callers name bins.Bin and its
+// siblings directly.
 // Cross-aggregate methods (those whose return type or mutations span
-// multiple aggregates, e.g. SetBinManifestFromTemplate) stay at the
-// outer store/ level as composition methods.
+// multiple aggregates) stay at the outer store/ level as composition methods.
+// SetBinManifestFromTemplate was the example here and has been removed.
 package bins
 
 import (
@@ -31,10 +31,9 @@ import (
 // codebase compile unchanged.
 type Bin = domain.Bin
 
-// binJoinQuery is the SELECT prefix used by every bin-reading query.
-// Export as BinJoinQuery so cross-aggregate readers at the outer store/
-// level (which need to add their own WHERE clauses) can reuse it.
-// BinJoinQuery is the SELECT prefix used by every bin-reading query.
+// BinJoinQuery (the const below) is the SELECT prefix used by every
+// bin-reading query, exported so cross-aggregate readers at the outer store/
+// level (which add their own WHERE clauses) can reuse it.
 // The 27th column (has_pending_reservation) is populated from the
 // reservations table so BinUnavailableReason can filter reserved bins
 // without a separate round-trip. ScanBin reads it into HasPendingReservation.
@@ -1005,7 +1004,7 @@ type binExecer interface {
 // defense-in-depth for the mixed-binary rollback window.
 //
 // Owner-idempotent: the CAS is (claimed_by IS NULL OR claimed_by=$1),
-// mirroring nodes.ClaimSlot. A re-claim by the SAME order succeeds instead of
+// mirroring nodes.ClaimSlotTx. A re-claim by the SAME order succeeds instead of
 // hitting 0 rows — so a claim that committed but whose reservation confirm did
 // NOT (a transient DB error / core restart between the two writes) heals on the
 // next retry rather than wedging codeClaimFailed forever. The EXISTS(pending)
@@ -1068,7 +1067,7 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // which caused the 2026-04-27 starvation. Since 2026-09-14 every sourcing
 // reader composes this rule; it is no longer one reader's private check.
 // FindEmptyCompatibleInGroup is FindEmptyCompatible scoped to descendants of
-// a synthetic group node (NGRP / LANE). Used by planRetrieveEmpty when the
+// a synthetic group node (NGRP / LANE). Used by planTransport when the
 // edge sends a source-group constraint, so an empty-bin retrieve picks from
 // the configured supermarket instead of any compatible empty in the system.
 //

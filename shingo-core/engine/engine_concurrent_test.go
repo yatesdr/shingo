@@ -38,8 +38,8 @@ import (
 // This REPLACES the old two-goroutine "TOCTOU at intake" race this file used to
 // force with a PostFindHook: that race is architecturally gone because intake no
 // longer claims (only the scanner does, serialized). The deterministic
-// claim-fail→requeue path is now covered directly at the scanner in
-// fulfillment.TestScannerSimpleClaimFailRequeues.
+// claim-fail→requeue path is now covered at the scanner by its soft-reserve
+// analog, fulfillment.TestScannerSimpleSoftReserveFailRequeuesToSourcing.
 func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
 	t.Parallel()
 
@@ -564,8 +564,9 @@ func TestStagingExpiry_DoesNotExpireActiveClaim(t *testing.T) {
 //
 // Risk: FindSourceBinFIFO returns the oldest unclaimed bin. If both orders
 // SELECT the same bin before either calls ClaimBin, the second ClaimBin
-// fails (WHERE claimed_by IS NULL). planRetrieve does not retry — it
-// returns claim_failed and the order dies. This test checks whether the
+// fails (WHERE claimed_by IS NULL). planRetrieve (since replaced by
+// planTransport, which leaves the claim to the scanner) did not retry — it
+// returned claim_failed and the order died. This test checks whether the
 // system handles this correctly or whether we need retry logic.
 func TestConcurrentRetrieve_SamePart(t *testing.T) {
 	t.Parallel()

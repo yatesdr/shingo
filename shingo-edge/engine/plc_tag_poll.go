@@ -13,7 +13,7 @@ import "time"
 // CATID auto-arm replaced it.
 //
 // The constants are named for what they DO rather than for the removed
-// feature: they were `cutoverPollInterval` and `cutoverDebounce`, which would
+// feature: they were `cutoverPollInterval` and `cutoverDebounce` (renamed), which would
 // have left every remaining caller referring to a mechanism that no longer
 // exists. Stale naming of exactly that kind is what made the two changeover
 // controls read as one duplicated feature in the first place.

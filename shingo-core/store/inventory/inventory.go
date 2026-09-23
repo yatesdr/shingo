@@ -2,9 +2,9 @@
 // for shingo-core.
 //
 // Phase 5 of the architecture plan moved this query out of the flat
-// store/ package and into this sub-package. The outer store/ keeps a
-// type alias (`store.InventoryRow = inventory.Row`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// store/ package and into this sub-package. The outer store/ keeps
+// one-line delegate methods on *store.DB; callers name inventory.Row
+// directly.
 //
 // It also held the corrections CRUD until the correction path was
 // removed wholesale — see the commit that deleted engine/corrections.go.

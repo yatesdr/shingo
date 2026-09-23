@@ -92,7 +92,7 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 	t.Logf("bin after cancel: claimed_by=%v status=%s", bin.ClaimedBy, bin.Status)
 
 	// Auto-return is intentionally skipped for complex orders cancelled
-	// mid-transit — the bin's physical position is uncertain (ApplyBinArrival
+	// mid-transit — the bin's physical position is uncertain (BinService.ApplyArrival
 	// only fires on FINISHED), so a return order with the DB-stale source
 	// node would dispatch a robot to an empty location and sit forever.
 	// The bin is left unclaimed for manual recovery.
@@ -233,7 +233,7 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 	})
 
 	// Empty release completes the fleet order. Drive it through to receipt
-	// so ApplyBinArrival fires and moves the bin to lineNode.
+	// so BinService.ApplyArrival fires and moves the bin to lineNode.
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -901,7 +901,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 		t.Errorf("block 2: location=%q task=%q, want %q/JackUnload", view.Blocks[2].Location, view.Blocks[2].BinTask, outboundDest.Name)
 	}
 
-	// Complete — BinID is set, so ApplyBinArrival moves bin to outboundDest
+	// Complete — BinID is set, so BinService.ApplyArrival moves bin to outboundDest
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -1044,7 +1044,7 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 //   - Both bins are unclaimed on the success path
 //
 // Previously failed (OPEN defect) because Order.BinID is *int64 (single bin)
-// and handleOrderCompleted only processed one bin via ApplyBinArrival.
+// and handleOrderCompleted only processed one bin via BinService.ApplyArrival.
 //
 // Expected: 3 pre-wait blocks, staged order. After release: 9 total blocks.
 // Both bins at correct destinations, both unclaimed.

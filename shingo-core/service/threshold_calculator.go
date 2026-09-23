@@ -12,8 +12,8 @@
 //	        cell_reorder = ceil((market_to_cell / cycle) * safety)
 //
 // No clamps — the formula output is returned verbatim; min-stock floors and
-// over-capacity callouts are UI concerns. The JS modal mirrors this formula in
-// recomputeOutputsLocally(); keep the two paired.
+// over-capacity callouts are UI concerns. No JS copy of the formula exists;
+// the page asks for it through www/handlers_loader.go.
 //
 // Core has no payload_catalog/cycle_seconds (an Edge concept), so CycleSeconds
 // is supplied by the caller (the modal already does). When it is 0 the formula

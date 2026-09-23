@@ -2,9 +2,8 @@
 //
 // Phase 5b of the architecture plan moved the operator_stations CRUD
 // out of the flat store/ package and into this sub-package. The outer
-// store/ keeps a type alias (`store.OperatorStation = stations.Station`)
-// and one-line delegate methods on *store.DB so external callers see
-// no API change.
+// store/ keeps one-line delegate methods on *store.DB; callers name
+// stations.Station directly.
 //
 // SetStationNodes (the cross-aggregate orchestration that adds/removes
 // process_nodes for a station) lives at the top-level store package

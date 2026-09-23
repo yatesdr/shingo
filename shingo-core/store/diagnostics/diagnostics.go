@@ -2,9 +2,8 @@
 //
 // Phase 5 of the architecture plan moved the test_commands CRUD out of
 // the flat store/ package and into this sub-package. The outer store/
-// keeps a type alias (`store.TestCommand = diagnostics.TestCommand`)
-// and one-line delegate methods on *store.DB so external callers see no
-// API change.
+// keeps one-line delegate methods on *store.DB; callers name
+// diagnostics.TestCommand directly.
 //
 // "test_commands" is the developer-tooling table that drives the
 // diagnostics console — it has nothing to do with Go test files.

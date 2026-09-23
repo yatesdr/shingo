@@ -656,10 +656,11 @@ func TestFindEmptyCompatible_LaneUnawareStarvation(t *testing.T) {
 	}
 	t.Logf("Bin %d is at an inaccessible slot — robot would be dispatched to a location it can't reach", found.ID)
 
-	// GAP PROOF 3: The retrieve_empty planning path (planRetrieveEmpty) does not call
-	// the NGRP resolver, so there's no BuriedError detection and no reshuffle trigger.
-	// This is a documentation-only assertion — the code path is:
-	//   planRetrieveEmpty → FindEmptyCompatibleBin → ClaimBin → dispatch
+	// GAP PROOF 3, as recorded against planRetrieveEmpty (since replaced by
+	// planTransport): the retrieve_empty planning path did not call the NGRP
+	// resolver, so there was no BuriedError detection and no reshuffle trigger.
+	// This is a documentation-only assertion — the removed code path was:
+	//   planRetrieveEmpty → FindEmptyCompatibleBin → ClaimBin → dispatch (removed)
 	// No lane awareness anywhere in that chain.
 	t.Log("TC-41 gap confirmed: FindEmptyCompatibleBin returns buried bins, planRetrieveEmpty has no reshuffle path")
 }

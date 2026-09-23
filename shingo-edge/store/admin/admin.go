@@ -2,8 +2,8 @@
 //
 // Phase 5b of the architecture plan moved the admin_users CRUD out of
 // the flat store/ package and into this sub-package. The outer store/
-// keeps a type alias (`store.AdminUser = admin.User`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// keeps one-line delegate methods on *store.DB; callers name admin.User
+// directly.
 package admin
 
 import (

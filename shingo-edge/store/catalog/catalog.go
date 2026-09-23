@@ -8,9 +8,8 @@
 // disambiguates from core's `payloads/` (which holds the source-of-
 // truth template definitions) — same word, different responsibility.
 // On-disk table name `payload_catalog` is unchanged. The outer store/
-// keeps a type alias (`store.PayloadCatalogEntry = catalog.CatalogEntry`)
-// and one-line delegate methods on *store.DB so external callers see
-// no API change.
+// keeps one-line delegate methods on *store.DB; callers name
+// catalog.CatalogEntry directly.
 package catalog
 
 import (
