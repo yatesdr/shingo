@@ -320,84 +320,136 @@ func TestBufferedUnloader_TakesAFullFromItsGroup(t *testing.T) {
 	}
 }
 
-// ── AN OPERATOR'S MOVE IS NOT A SELECTION ───────────────────────────────────
+// ── THE CARRIER ON THE NAMED NODE IS NOT A SELECTION ────────────────────────
 //
 // The rule above is about CHOOSING: when the plant goes shopping for a carrier
-// to feed a drain window, it must not come back with an empty. A person who
-// pointed at a carrier and at a destination has already chosen, and there is
-// nothing left for the rule to prefer between.
+// to feed a drain window, it must not come back with a partial or an empty. A
+// move of the carrier standing on the node it names has nothing to choose
+// between, and the finder exempts exactly that: a carrier tier 4 found.
 //
-// Applying it anyway wedged a live plant. Hopkinsville, 2026-09-22: an operator
-// moved an EMPTY carrier off a supermarket node onto a consume-role window from
-// the Core bins page. Every move is IntentFull (see the Intent constants —
-// "retrieve, move"), so the drain-window rule fired, and the order parked as
-// "Waiting for material" waiting for a full carrier nobody was ever going to
-// send. The operator's own bin stood at the source node the whole time. Nothing
-// would ever have released it.
+// Applying the rule anyway wedged a live plant. Hopkinsville, 2026-09-22 (order
+// 2213): an operator moved an EMPTY carrier onto a consume-role window from the
+// orders page. Every move is IntentFull (see the Intent constants — "retrieve,
+// move"), so the drain-window rule fired, and the order parked as "Waiting for
+// material" waiting for a full carrier nobody was ever going to send. The
+// operator's own bin stood at the source node the whole time.
+//
+// The first fix keyed the exemption on the no_demand origin. The automatic
+// unloader pull (U1) is no_demand too, so it switched the rule off for every
+// U1. The cases below use the shapes production sends.
 
-func TestOperatorMove_CanMoveAnEmptyOntoADrainWindow(t *testing.T) {
-	t.Parallel()
-	db := newFakeFinderDB()
-
-	window := &nodes.Node{ID: 10, Name: "SMN_001", Enabled: true}
-	db.addNode(window)
-	db.addConsumeLoaderWindow(1, window.ID)
-
-	// An EMPTY carrier — no payload, nothing in it — standing at a source node.
-	db.fifoBin = atStorage(db, &bins.Bin{ID: 99, UOPRemaining: 0, UOPCapacity: 100})
-
-	f := NewSourceFinder(db, nil, nil)
-	res := f.FindSource(&orders.Order{
-		DeliveryNode: "SMN_001",
-		SourceIntent: SourceIntentFull,
-		// The operator signal: a person named this at a door, so no episode.
-		OriginClass: protocol.OriginClassNoDemand,
-	}, IntentFull)
-
-	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 99 {
-		t.Fatalf("outcome=%v bin=%v, want the empty carrier the operator named.\n\n"+
-			"The drain-window fullness rule is a SELECTION preference and there is nothing "+
-			"here to select: a person chose the carrier and the destination. Refusing parks "+
-			"the order as \"Waiting for material\" forever — no full carrier is coming, "+
-			"because none was asked for.", res.Outcome, res.Bin)
+// u1Order is the order CreateInboundOrder builds from the Edge's automatic
+// unloader pull (operator_demand_unloader.go CreateRetrieveOrder): a retrieve,
+// a payload, the window as destination, the loader's inbound source (blank or
+// an NGRP), skip_auto_confirm, and origin no_demand passed through unchanged by
+// classifyInboundOrigin. The intake half is pinned against a real Postgres by
+// TestIntake_EdgeU1Envelope_PartialParksForAFullCarrier.
+func u1Order(source string) *orders.Order {
+	return &orders.Order{
+		OrderType:       OrderTypeRetrieve,
+		PayloadCode:     "PART-A",
+		SourceNode:      source,
+		DeliveryNode:    "SMN_001",
+		Quantity:        1,
+		SkipAutoConfirm: true,
+		SourceIntent:    SourceIntentForType(OrderTypeRetrieve),
+		OriginClass:     protocol.OriginClassNoDemand,
 	}
 }
 
-// AND THE RULE STILL HOLDS FOR THE PLANT'S OWN PULLS. The guard keys on the
-// operator signal, not on emptiness, so an automatic pull into a drain window
-// is refused an empty exactly as before. Without this the fix would read as
-// "drain windows accept anything now".
-func TestAutomaticPull_StillRefusesAnEmptyIntoADrainWindow(t *testing.T) {
+// The U1 with a blank inbound source: plant-wide FIFO, whose only candidate is
+// a partial. It parks for a full.
+func TestD1_U1FromPlantWide_PartialWaitsForAFull(t *testing.T) {
 	t.Parallel()
 	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 10, Name: "SMN_001", Enabled: true})
+	db.addConsumeLoaderWindow(1, 10)
+	db.fifoBin = atStorage(db, &bins.Bin{ID: 77, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100})
 
-	window := &nodes.Node{ID: 10, Name: "SMN_001", Enabled: true}
-	db.addNode(window)
-	db.addConsumeLoaderWindow(1, window.ID)
+	res := NewSourceFinder(db, nil, nil).FindSource(u1Order(""), IntentFull)
+	if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderNoFullCarrier {
+		t.Fatalf("outcome=%v cause=%q bin=%v, want Wait %q — an automatic unloader pull is a "+
+			"selection, and no_demand does not make it a person's choice", res.Outcome, res.QueueCause,
+			res.Bin, CauseFinderNoFullCarrier)
+	}
+}
 
-	db.fifoBin = atStorage(db, &bins.Bin{ID: 99, PayloadCode: "PART-A", UOPRemaining: 0, UOPCapacity: 100})
-
-	f := NewSourceFinder(db, nil, nil)
-	res := f.FindSource(&orders.Order{
-		PayloadCode:  "PART-A",
-		DeliveryNode: "SMN_001",
-		SourceIntent: SourceIntentFull,
-		// No OriginClass: the plant asked, not a person.
-	}, IntentFull)
-
+// The U1 with an NGRP inbound source: the group scan is handed the fullness
+// filter, so the partial is not a candidate.
+func TestD1_U1FromItsGroup_ScanSkipsThePartial(t *testing.T) {
+	t.Parallel()
+	db, r := drainWindowGroupFixture()
+	res := NewSourceFinder(db, r, nil).FindSource(u1Order("FG-BUFFER"), IntentFull)
+	if !r.sawFilter {
+		t.Error("group resolver was given no filter for a U1")
+	}
 	if res.Outcome == OutcomeFound {
-		t.Fatalf("an automatic pull brought bin %d (uop=%d of %d) to a drain window — "+
-			"the operator guard must key on WHO ASKED, not on whether the carrier is empty",
-			res.Bin.ID, res.Bin.UOPRemaining, res.Bin.UOPCapacity)
+		t.Fatalf("U1 Found bin %d (uop %d of %d) from its group", res.Bin.ID, res.Bin.UOPRemaining, res.Bin.UOPCapacity)
 	}
 }
 
-// ── THE DRAIN-WINDOW RULE, TIER BY TIER, AS IT STANDS AT c0c525c0 ───────────
+// AN UNLOADER THAT ACCEPTS PARTIALS takes one, from either tier: the loader's
+// own accept_partials setting is the only switch on the rule.
+func TestD1_U1_AcceptPartials_TakesThePartial(t *testing.T) {
+	t.Parallel()
+	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 10, Name: "SMN_001", Enabled: true})
+	db.addConsumeLoaderWindow(1, 10)
+	db.loaders[1].AcceptPartials = true
+	db.fifoBin = atStorage(db, &bins.Bin{ID: 77, PayloadCode: "PART-A", UOPRemaining: 40, UOPCapacity: 100})
+
+	res := NewSourceFinder(db, nil, nil).FindSource(u1Order(""), IntentFull)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 77 {
+		t.Fatalf("outcome=%v cause=%q bin=%v, want the partial 77 — this unloader accepts partials",
+			res.Outcome, res.QueueCause, res.Bin)
+	}
+}
+
+func TestD1_U1FromItsGroup_AcceptPartials_ScanIsUnfiltered(t *testing.T) {
+	t.Parallel()
+	db, r := drainWindowGroupFixture()
+	db.loaders[1].AcceptPartials = true
+	res := NewSourceFinder(db, r, nil).FindSource(u1Order("FG-BUFFER"), IntentFull)
+	if r.sawFilter {
+		t.Error("group resolver was given the fullness filter for an unloader that accepts partials")
+	}
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 33 {
+		t.Fatalf("outcome=%v bin=%v, want the group's partial 33", res.Outcome, res.Bin)
+	}
+}
+
+// The orders-page spot move (handlers_orders.go): a move, a concrete source, no
+// payload, no_demand. The carrier standing on the named node is an empty, and
+// the destination is a drain window. It is Found — order 2213.
+func TestD1_SpotMove_EmptyResidentOntoADrainWindow_Found(t *testing.T) {
+	t.Parallel()
+	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 10, Name: "SMN_001", Enabled: true})
+	db.addConsumeLoaderWindow(1, 10)
+	srcID := int64(70)
+	db.addNode(&nodes.Node{ID: srcID, Name: "SMN_014", Enabled: true})
+	db.addBin(&bins.Bin{ID: 99, NodeID: &srcID, UOPRemaining: 0, UOPCapacity: 100, Status: "available"})
+
+	res := NewSourceFinder(db, nil, nil).FindSource(&orders.Order{
+		OrderType:    OrderTypeMove,
+		SourceNode:   "SMN_014",
+		DeliveryNode: "SMN_001",
+		Quantity:     1,
+		SourceIntent: SourceIntentForType(OrderTypeMove),
+		OriginClass:  protocol.OriginClassNoDemand,
+	}, IntentFull)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 99 {
+		t.Fatalf("outcome=%v cause=%q bin=%v, want the resident empty 99 — a move of the carrier on "+
+			"a named node selects nothing", res.Outcome, res.QueueCause, res.Bin)
+	}
+}
+
+// ── THE DRAIN-WINDOW RULE, TIER BY TIER ─────────────────────────────────────
 //
-// Characterisation pins: each case states today's verdict for one tier that can
-// hand a carrier to a drain window, with and without the no_demand origin. They
-// pin what the code does, including verdicts the next change is expected to
-// alter, so an alteration shows up here as a test diff rather than silently.
+// One verdict per tier that can hand a carrier to a drain window, with and
+// without the no_demand origin. Pinned at c0c525c0; the three no_demand /
+// complex cases flipped with the tier-4 exemption, and the names say the new
+// verdict.
 
 // filterHonouringResolver stands in for the group resolver: it returns the first
 // candidate the caller's filter admits, and records whether a filter was passed
@@ -451,21 +503,21 @@ func TestDrainWindowPin_Tier1_PlantPullFiltersTheGroup(t *testing.T) {
 	}
 }
 
-// TIER 1, no_demand, at c0c525c0: requiresFullCarrier returns false for a
-// no_demand need, so the group scan runs unfiltered and the late seatbelt is
-// skipped too — the partial is Found.
-func TestDrainWindowPin_Tier1_NoDemandSkipsTheFilter(t *testing.T) {
+// TIER 1, no_demand: choosing from a group is a selection whoever asked, so the
+// scan is filtered the same way. (At c0c525c0 it ran unfiltered and the partial
+// was Found.)
+func TestDrainWindowPin_Tier1_NoDemandIsFilteredToo(t *testing.T) {
 	t.Parallel()
 	db, r := drainWindowGroupFixture()
 	res := NewSourceFinder(db, r, nil).FindSource(&orders.Order{
 		PayloadCode: "PART-A", SourceNode: "FG-BUFFER", DeliveryNode: "SMN_001",
 		SourceIntent: SourceIntentFull, OriginClass: protocol.OriginClassNoDemand,
 	}, IntentFull)
-	if r.sawFilter {
-		t.Error("group resolver was given a filter for a no_demand need; at c0c525c0 it is not")
+	if !r.sawFilter {
+		t.Error("group resolver was given no filter for a no_demand need")
 	}
-	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 33 {
-		t.Errorf("outcome=%v bin=%v, want the partial 33 Found (c0c525c0 behaviour)", res.Outcome, res.Bin)
+	if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderGroupEmpty {
+		t.Errorf("outcome=%v cause=%q, want Wait %q", res.Outcome, res.QueueCause, CauseFinderGroupEmpty)
 	}
 }
 
@@ -494,16 +546,16 @@ func TestDrainWindowPin_Tier2_PlantPullSeatbeltRefusesPoolPartial(t *testing.T) 
 	}
 }
 
-// TIER 2, no_demand, at c0c525c0: the seatbelt is skipped and the pool partial
-// is Found.
-func TestDrainWindowPin_Tier2_NoDemandSkipsTheSeatbelt(t *testing.T) {
+// TIER 2, no_demand: ranking a loader pool is a selection too, so the seatbelt
+// refuses the partial. (At c0c525c0 it was skipped and the partial was Found.)
+func TestDrainWindowPin_Tier2_NoDemandHeldToFullness(t *testing.T) {
 	t.Parallel()
 	res := NewSourceFinder(drainWindowPoolFixture(), nil, nil).FindSource(&orders.Order{
 		PayloadCode: "PART-A", SourceNode: "L1", DeliveryNode: "SMN_001", SourceIntent: SourceIntentFull,
 		OriginClass: protocol.OriginClassNoDemand,
 	}, IntentFull)
-	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 101 {
-		t.Errorf("outcome=%v bin=%v, want the pool partial 101 Found (c0c525c0 behaviour)", res.Outcome, res.Bin)
+	if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderNoFullCarrier {
+		t.Errorf("outcome=%v cause=%q, want Wait %q", res.Outcome, res.QueueCause, CauseFinderNoFullCarrier)
 	}
 }
 
@@ -521,8 +573,9 @@ func drainWindowConcreteFixture() *fakeFinderDB {
 
 // TIER 4, the complex needs built at complex_steps.go (the widen loop and the
 // buried-need recalculation): node-local, a payload, a DeliveryNode, no origin.
-// At c0c525c0 the late seatbelt refuses the partial standing on the anchor.
-func TestDrainWindowPin_Tier4_ComplexNodeLocalNeedSeatbeltRefusesResident(t *testing.T) {
+// The partial standing on the concrete anchor is the carrier the need named, so
+// it is taken. (At c0c525c0 the seatbelt refused it.)
+func TestDrainWindowPin_Tier4_ComplexNodeLocalNeedTakesTheResident(t *testing.T) {
 	t.Parallel()
 	res := NewSourceFinder(drainWindowConcreteFixture(), nil, nil).FindSourceForNeed(SourceNeed{
 		SourceNode:   "ALN_010",
@@ -531,8 +584,8 @@ func TestDrainWindowPin_Tier4_ComplexNodeLocalNeedSeatbeltRefusesResident(t *tes
 		Intent:       IntentFull,
 		NodeLocal:    true,
 	})
-	if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderNoFullCarrier {
-		t.Errorf("outcome=%v cause=%q, want Wait %q (c0c525c0 behaviour)", res.Outcome, res.QueueCause, CauseFinderNoFullCarrier)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 202 {
+		t.Errorf("outcome=%v cause=%q bin=%v, want the resident partial 202", res.Outcome, res.QueueCause, res.Bin)
 	}
 }
 

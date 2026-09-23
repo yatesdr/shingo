@@ -4267,6 +4267,10 @@ func migrationList() []migration {
 		{122, "tte_samples.kind — which kind of demand episode a sample is to be scored against, so a cell's line projection is never read as a loader's",
 			v122TTESampleKind,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "tte_samples", "kind") }},
+
+		{123, "bin_loaders.accept_partials — an unloader may say a partly drained carrier is worth the trip, instead of every drain window taking fulls only",
+			v123LoaderAcceptPartials,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "accept_partials") }},
 	}
 }
 
@@ -4506,6 +4510,27 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v120 lineside drain ledger: %w", err)
 		}
+	}
+	return nil
+}
+
+// v123LoaderAcceptPartials adds the per-unloader switch that relaxes the
+// drain-window rule: a consume loader's windows are fed full carriers only
+// (dispatch.requiresFullCarrier) unless the loader sets this.
+//
+// DEFAULT FALSE, and that is the whole safety argument. Every existing loader
+// keeps the full-carrier rule it has today, a produce loader never reads it,
+// and a full-record update from a client that omits the field writes the same
+// value it read.
+//
+// NO INDEX: it is read off the loader row the finder already loads by id.
+//
+// INERT TO AN OLDER BINARY, which never names the column. ROLLBACK is DROP
+// COLUMN, and it returns every unloader to fulls-only.
+func v123LoaderAcceptPartials(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS accept_partials BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("v123 bin_loaders.accept_partials: %w", err)
 	}
 	return nil
 }

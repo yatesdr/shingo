@@ -52,6 +52,11 @@ func checkReplenishment(role, replenishment string) error {
 	return nil
 }
 
+// ErrAcceptPartialsProduce refuses accept_partials on a produce loader. The
+// setting relaxes the drain-window rule, which exists only for consume loaders;
+// on a produce loader it would be stored, shown, and do nothing.
+var ErrAcceptPartialsProduce = errors.New("only an unloader can accept partial carriers: the full-carrier rule it relaxes applies to consume loaders only")
+
 // LoaderService wraps the bin_loaders store CRUD with the demand re-derive.
 type LoaderService struct {
 	db       *store.DB
@@ -158,6 +163,9 @@ type LoaderUpdate struct {
 	InboundSource           string
 	FunnelWindows           bool
 	ChangeoverLoadDirective bool
+	// AcceptPartials: an unloader may be fed partly drained carriers. Consume
+	// only; set on a saved loader, like ChangeoverLoadDirective.
+	AcceptPartials bool
 }
 
 func (s *LoaderService) Update(in LoaderUpdate) error {
@@ -191,6 +199,10 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	cur.InboundSource = inboundSource
 	cur.FunnelWindows = funnelWindows
 	cur.ChangeoverLoadDirective = in.ChangeoverLoadDirective
+	if in.AcceptPartials && cur.Role != loaders.RoleConsume {
+		return ErrAcceptPartialsProduce
+	}
+	cur.AcceptPartials = in.AcceptPartials
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err
 	}

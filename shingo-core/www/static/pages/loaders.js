@@ -82,6 +82,7 @@ function blankForm() {
     role: 'produce',       // produce | consume
     kind: 'multi_window',  // multi_window | single_window | dedicated
     changeoverLoadDirective: false,
+    acceptPartials: false,
     replenishment: 'operator',
     fedByHand: false,
     inbound: '',
@@ -100,6 +101,7 @@ function readForm() {
     replenishment: val('loader-replenishment') || 'operator',
     fedByHand: checked('loader-fed-by-hand'),
     changeoverLoadDirective: checked('loader-changeover-directive'),
+    acceptPartials: checked('loader-accept-partials'),
     inbound: val('loader-inbound'),
     outbound: val('loader-outbound'),
   };
@@ -147,6 +149,10 @@ function formShape(state) {
     outbound: true,
     mix: !dedicated && saved,
     windows: !dedicated && saved,
+    // Partials are a question about what an UNLOADER is fed, so only an
+    // unloader is asked. Edited against a saved loader, like the carrier mix:
+    // create does not carry it.
+    partials: state.role === 'consume' && saved,
   };
 }
 
@@ -166,6 +172,7 @@ function renderForm(state) {
   setVal('loader-kind', state.kind);
   setChecked('loader-fed-by-hand', state.fedByHand);
   setChecked('loader-changeover-directive', state.changeoverLoadDirective);
+  setChecked('loader-accept-partials', state.acceptPartials);
   setVal('loader-inbound', state.inbound);
   setVal('loader-outbound', state.outbound);
   setReplenishmentOptions(state);
@@ -176,6 +183,7 @@ function renderForm(state) {
   setShown('loader-outbound', shape.outbound);
   setShown('loader-mix-row', shape.mix);
   setShown('loader-windows-row', shape.windows);
+  setShown('loader-partials-row', shape.partials);
   if (shape.mix) renderMixEditor(state.id);
   if (shape.windows) renderWindowCapEditor(state.id);
 }
@@ -421,6 +429,7 @@ function formStateFromLoader(l) {
     role: l.role || 'produce',
     kind: kindFromLoader(l),
     changeoverLoadDirective: !!l.changeover_load_directive,
+    acceptPartials: !!l.accept_partials,
     replenishment: l.replenishment || 'operator',
     // No source IS the fed-by-hand choice; that is what the stored blank means.
     fedByHand: !(l.inbound_source || ''),
@@ -480,6 +489,9 @@ function loaderPayload(state) {
     // every payload it serves, the card names the carrier the incoming style
     // needs. Set here because it describes the station, not a style.
     changeover_load_directive: !!state.changeoverLoadDirective,
+    // Unloaders only. Sent false for a produce loader, which the server
+    // refuses to store as true: the rule it relaxes is a consume rule.
+    accept_partials: state.role === 'consume' && !!state.acceptPartials,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };

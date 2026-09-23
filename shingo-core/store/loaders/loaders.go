@@ -100,6 +100,17 @@ type Loader struct {
 	// IGNORED by dedicated_positions loaders: their positions are independent
 	// one-bin slots that never shared a budget, so there is nothing to funnel.
 	FunnelWindows bool `json:"funnel_windows"`
+
+	// AcceptPartials lets an UNLOADER be fed a partly drained carrier. By
+	// default a consume loader's windows are drain windows and the source finder
+	// hands them full carriers only (dispatch.requiresFullCarrier); this is the
+	// loader saying a partial is worth the trip.
+	//
+	// Consume only: the service refuses it on a produce loader. FALSE is the
+	// column default, the Go zero value and what a client omitting the field
+	// sends, so every path that does not say otherwise keeps the full-carrier
+	// rule.
+	AcceptPartials bool `json:"accept_partials"`
 }
 
 // Home is one dedicated position: exactly one payload. The global
@@ -144,7 +155,7 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials`
 
 type scanner interface{ Scan(...any) error }
 
@@ -153,7 +164,7 @@ func scanLoader(s scanner) (Loader, error) {
 	var archivedAt sql.NullTime
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
-		&l.ChangeoverLoadDirective)
+		&l.ChangeoverLoadDirective, &l.AcceptPartials)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -167,10 +178,10 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
-			funnel_windows, changeover_load_directive)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+			funnel_windows, changeover_load_directive, accept_partials)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective,
+		l.ChangeoverLoadDirective, l.AcceptPartials,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -233,11 +244,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
-			changeover_load_directive=$7,
+			changeover_load_directive=$7, accept_partials=$8,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$8`,
+		WHERE id=$9`,
 		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.ID)
+		l.ChangeoverLoadDirective, l.AcceptPartials, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

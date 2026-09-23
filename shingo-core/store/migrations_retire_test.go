@@ -141,6 +141,11 @@ import (
 // correctly; rollback is DROP COLUMN and costs no row, only the ability to tell
 // a loader's projection from a cell's.
 //
+// v123 ADDS bin_loaders.accept_partials — an unloader may be fed partly
+// drained carriers. BOOLEAN NOT NULL DEFAULT false, and the default keeps every
+// existing unloader on the full-carrier rule. Inert to a pre-v123 binary;
+// rollback is DROP COLUMN and returns every unloader to fulls-only.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -152,8 +157,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 122 {
-		t.Errorf("head migration = %d, want 122", got)
+	if got := store.LatestMigrationVersion(); got != 123 {
+		t.Errorf("head migration = %d, want 123", got)
 	}
 }
 

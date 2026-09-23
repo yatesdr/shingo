@@ -89,34 +89,33 @@ func isFullCarrier(b *bins.Bin) bool {
 //     window would invert a written contract.
 //   - FULL intent only. A retrieve_empty to the same window wants an empty
 //     carrier, which is never full by definition.
+//   - Not an unloader configured with accept_partials: the loader's own
+//     statement that a partly drained carrier is worth the trip. Read off the
+//     loader row this function already loads, so it costs no read
+//     (TestD1_U1_AcceptPartials_TakesThePartial).
+//
+// WHO ASKED IS NOT AN EXCLUSION. An automatic unloader pull (U1) is stamped
+// no_demand exactly like an operator's spot order, so a rule keyed on the
+// origin exempted every U1 and unloaders were sent partials again
+// (TestD1_U1FromPlantWide_PartialWaitsForAFull). What an operator's move has
+// that a pull lacks is a carrier already chosen — the one standing on the node
+// it named — and that exemption lives at the late seatbelt, keyed on tier 4
+// having found the carrier.
 //
 // A complex order's DeliveryNode is its LAST step's node rather than any one
-// pickup's destination, so a rule read off it would tag every pickup in the
-// order. It cannot happen here and needs no guard of its own: every complex
-// full-intent need either carries no DeliveryNode at all, or is node-local —
-// and node-local makes the plant-wide tier unreachable by type. Both exclusions
-// already existed. A third was written and removed as dead weight.
+// pickup's destination, and the node-local complex needs built in
+// complex_steps.go (the widen loop and the buried-need recalculation) carry it.
+// So the rule does reach them: a pickup whose carrier tier 4 finds on its
+// concrete anchor is exempt at the seatbelt
+// (TestDrainWindowPin_Tier4_ComplexNodeLocalNeedTakesTheResident); one sourced
+// from a group (tier 1) or a loader pool (tier 2) is judged against the order's
+// last node.
 //
 // Everywhere that is not a drain window keeps taking partials. A cell asking
 // for material can work a half carrier down, and refusing it because no full
 // exists would stop a line that had parts available to it.
 func (f *SourceFinder) requiresFullCarrier(need SourceNeed) bool {
 	if need.Intent != IntentFull || need.DeliveryNode == "" {
-		return false
-	}
-	// AN OPERATOR'S MOVE IS NOT A SELECTION. This rule says "when CHOOSING what
-	// to bring a drain window, do not bring an empty" — and a person who named
-	// a carrier and a destination has already chosen. Every move is IntentFull
-	// (see the Intent constants: "retrieve, move"), so without this guard a
-	// manual move of an empty onto a consume window parks as "Waiting for
-	// material" forever, waiting for a full carrier nobody will send. That is
-	// order 2213 at Hopkinsville, 2026-09-22, with the operator's own bin
-	// standing at the source node the whole time.
-	//
-	// Same reading redirectStoreOffDugLane already applies to the DESTINATION
-	// half: re-aiming a no-demand order "is not a recalculation, it is Core
-	// overruling somebody".
-	if need.OriginClass == protocol.OriginClassNoDemand {
 		return false
 	}
 	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
@@ -131,7 +130,7 @@ func (f *SourceFinder) requiresFullCarrier(need SourceNeed) bool {
 	if err != nil || l == nil {
 		return false
 	}
-	return l.Role == loaders.RoleConsume
+	return l.Role == loaders.RoleConsume && !l.AcceptPartials
 }
 
 // acceptableSourceFor returns the filter this need imposes on candidate bins,
@@ -255,11 +254,7 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// Both read straight off the order, never re-derived: the values are in
 		// hand here, and a per-step lookup would put a database round trip inside
 		// the tier cascade for something the caller was already holding.
-		OriginID: order.OriginID,
-		// Read off the order beside OriginID and for the same reason: the value
-		// is in hand, and requiresFullCarrier needs to know whether a person
-		// chose this move or the plant did.
-		OriginClass: order.OriginClass,
+		OriginID:    order.OriginID,
 		ProcessNode: order.ProcessNode,
 		// THE ASKER, ACTUALLY FILLED. SourceNeed.Asker's doc has claimed
 		// "FindSource fills it" since the field existed and this line is the
@@ -357,6 +352,9 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	var (
 		bin     *bins.Bin
 		binNode *nodes.Node
+		// atNamedNode: tier 4 found the carrier standing on the concrete node
+		// the need named. Read only by the drain-window seatbelt below.
+		atNamedNode bool
 	)
 
 	// ── Tier 1: NGRP synthetic source (full intent only) ──────────────────
@@ -615,7 +613,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			if BinUnavailableReason(b, claimPayload, rule) != "" {
 				continue
 			}
-			bin, binNode = b, srcNode
+			bin, binNode, atNamedNode = b, srcNode, true
 			break
 		}
 		if bin == nil {
@@ -718,7 +716,22 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// its place: the plant-wide scan and any caller that resolves without a filter
 	// both arrive here, and a partial that reaches this point must still wait
 	// rather than be handed to a drain window.
-	if bin != nil && f.requiresFullCarrier(need) && !isFullCarrier(bin) {
+	//
+	// EXCEPT THE CARRIER ON THE NAMED NODE. The rule is about CHOOSING what to
+	// bring a drain window, and a carrier tier 4 found is the one standing on the
+	// node the need named: nothing was chosen between. Without this, a manual
+	// move of an empty onto a consume window parks as "Waiting for material"
+	// forever, waiting for a full nobody will send. That is order 2213 at
+	// Hopkinsville, 2026-09-22 — an orders-page spot move with the operator's own
+	// bin standing at the source node the whole time
+	// (TestD1_SpotMove_EmptyResidentOntoADrainWindow_Found).
+	//
+	// Keyed on WHERE THE CARRIER WAS FOUND, not on who asked. The first fix keyed
+	// on the no_demand origin, and every automatic unloader pull is no_demand
+	// too, so it switched this check off for all of them. A group (tier 1), a
+	// loader pool (tier 2) or the plant-wide scan (tier 5) is still a selection
+	// and still held to fullness.
+	if bin != nil && !atNamedNode && f.requiresFullCarrier(need) && !isFullCarrier(bin) {
 		f.debug("finder: %s is a drain window and bin %d is a partial (%d of %d) — waiting for a full",
 			need.DeliveryNode, bin.ID, bin.UOPRemaining, bin.UOPCapacity)
 		return SourceResult{

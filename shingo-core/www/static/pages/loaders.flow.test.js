@@ -169,6 +169,14 @@ console.log('formShape — the rules, as a pure function of state');
         shape(st({ kind: 'dedicated' })).outbound === true);
     check('inbound: not asked when fed by hand',
         shape(st({ fedByHand: true })).inbound === false);
+    // Accept partials relaxes the drain-window rule, which only an unloader has.
+    check('partials: asked of a saved unloader only',
+        shape(st({ role: 'consume' })).partials === true &&
+        shape(st({})).partials === false &&
+        shape(st({ role: 'consume', id: 0 })).partials === false);
+    check('partials: a produce loader never sends true',
+        h.ctx.loaderPayload(st({ acceptPartials: true })).accept_partials === false &&
+        h.ctx.loaderPayload(st({ role: 'consume', acceptPartials: true })).accept_partials === true);
 })();
 
 console.log('applyLoaderForm — the same rules, through the DOM');

@@ -12,7 +12,7 @@ import (
 // else is ours and stays 500. Without this a rejected config reads as "the
 // server broke", which is the opposite of what the rejection is for.
 func loaderWriteStatus(err error) int {
-	if errors.Is(err, service.ErrConsumeThreshold) {
+	if errors.Is(err, service.ErrConsumeThreshold) || errors.Is(err, service.ErrAcceptPartialsProduce) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
@@ -71,6 +71,9 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// changeover. Set up where the loader is set up, rather than on each
 		// style's claim.
 		ChangeoverLoadDirective bool `json:"changeover_load_directive"`
+		// AcceptPartials: an unloader may be fed partly drained carriers.
+		// Absent reads as false, which keeps the full-carrier rule.
+		AcceptPartials bool `json:"accept_partials"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -83,6 +86,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		ID: req.ID, Name: req.Name, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
 		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
+		AcceptPartials: req.AcceptPartials,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return
