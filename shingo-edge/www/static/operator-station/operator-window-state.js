@@ -79,6 +79,20 @@ export function nodeFacts(entry) {
     };
 }
 
+// isOwnEmptyOut reports whether order o is this CONSUME node's own empty-out (U2):
+// a move whose source_node is this node. The U2 names no part (the Edge sends it
+// blank — createUnloaderEmptyOut), so matching it by payload_code would drop it
+// from every card while its carrier leaves; it is attributed by where it leaves
+// FROM instead. Nothing broader: a produce home position receives blank L1s, and a
+// blank move arriving from another node is not this node's carrier leaving, so
+// neither counts (operator-window-state.test.js cases 24–27).
+export function isOwnEmptyOut(entry, o) {
+    const claim = entry.active_claim || {};
+    const coreNode = (entry.node && entry.node.core_node_name) || '';
+    return claim.role === 'consume' && coreNode !== '' &&
+        o.order_type === 'move' && o.source_node === coreNode;
+}
+
 // cardModel computes the rendered state of one (window × payload) card: the status
 // tag, its CSS class, the detail line, the click action, and the load-now flag.
 // Replaces cardState + the per-card derivation in buildLoaderCard. The precedence is
@@ -89,7 +103,9 @@ export function cardModel(entry, code) {
     const role = f.role;
     const w = words(role);
 
-    const payloadOrders = f.activeOrders.filter(function (o) { return o.payload_code === code; });
+    const payloadOrders = f.activeOrders.filter(function (o) {
+        return o.payload_code === code || isOwnEmptyOut(entry, o);
+    });
     // Agnostic blank-payload demand: an empty parked with general (untagged) demand
     // lights every allowed payload so the operator picks the carrier. Must not fire
     // once a bin is loaded or an order carries a specific code (else every tile reads

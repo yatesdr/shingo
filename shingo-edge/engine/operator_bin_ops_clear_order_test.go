@@ -26,8 +26,9 @@ import (
 // WHAT MUST SURVIVE THE REORDER, and is pinned by the tests already in
 // operator_bin_ops_test.go rather than repeated here: the U2 still fires for a
 // PRESS-FED drain with no inbound U1 at all (that is why it hangs off the CLEAR
-// and not off a U1 completion), it still fires exactly once, and the cleared
-// payload still threads onto the move for tile routing.
+// and not off a U1 completion), and it still fires exactly once. It names no
+// part — the cleared payload is NOT threaded onto the move (see
+// createUnloaderEmptyOut).
 
 // clearOrderServer records, at the moment Core is asked to clear the bin,
 // whether an empty-out move already exists at the node. That is the ordering
@@ -88,9 +89,8 @@ func TestClearBin_EmptyOutIsCreatedAfterTheClearCommits(t *testing.T) {
 	// And it did still fire — the reorder must not turn the U2 off.
 	if n, payload := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("empty-out moves after the clear = %d, want exactly 1", n)
-	} else if payload != "ORD-PART" {
-		t.Errorf("empty-out payload = %q, want %q — the cleared payload is captured "+
-			"BEFORE the clear precisely so the reorder can keep threading it", payload, "ORD-PART")
+	} else if payload != "" {
+		t.Errorf("empty-out payload = %q, want \"\" — the U2 is a removal and names no part", payload)
 	}
 }
 

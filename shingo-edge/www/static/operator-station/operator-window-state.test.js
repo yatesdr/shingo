@@ -237,6 +237,60 @@ eq(headerModel(entry('consume', null, [])).text, 'AWAITING FULL', 'consume idle:
     eq(c.waitingSince, '2026-07-29T12:00:00Z', 'waitingSince takes the oldest call');
 })();
 
+// ─────────── the empty-out (U2) on a home-location unloader card ───────────
+//
+// The U2 names no part (createUnloaderEmptyOut), so the card attributes a consume
+// node's own empty-out by source_node (isOwnEmptyOut). These read the card while
+// that carrier is leaving: no bin at the window, one active MOVE whose source_node
+// is this node — plus the two shapes the rule must NOT capture.
+
+function homeEntry(role, coreNode, orders) {
+    const e = entry(role, null, orders);
+    e.node = { id: 1, core_node_name: coreNode };
+    return e;
+}
+
+// 24. A U2 still tagged with a part (one filed before the Edge stopped naming it)
+//     lights that part's card; it lights a sibling part's card too, because the
+//     move is this node's carrier leaving whatever it was tagged.
+(function () {
+    const e = homeEntry('consume', 'UNL-H1', [
+        { status: 'in_transit', order_type: 'move', payload_code: 'ASSY', source_node: 'UNL-H1', delivery_node: 'EMPTIES' },
+    ]);
+    eq(card(e, 'ASSY').statusText, 'IN TRANSIT', 'U2 tagged with the part: its card is IN TRANSIT');
+    eq(card(e, 'OTHER').statusText, 'IN TRANSIT', 'U2 tagged with the part: attributed by source_node too');
+})();
+
+// 25. The blank U2 — the shape the Edge sends — reads IN TRANSIT on the home card.
+//     Before D2 it matched no card and the home read NO DEMAND while its carrier
+//     was leaving.
+(function () {
+    const e = homeEntry('consume', 'UNL-H1', [
+        { status: 'in_transit', order_type: 'move', payload_code: '', source_node: 'UNL-H1', delivery_node: 'EMPTIES' },
+    ]);
+    eq(card(e, 'ASSY').statusText, 'IN TRANSIT', 'blank U2: the home card shows IN TRANSIT');
+    eq(card(e, 'ASSY').queueCount, 1, 'blank U2: the badge counts it');
+})();
+
+// 26. MUST STAY: a produce home position receiving a BLANK L1 (an empty arriving
+//     from the market) is not this node's move out and must not be attributed to
+//     it. The D2 rule is consume-role moves from this node only.
+(function () {
+    const e = homeEntry('produce', 'LDR-H1', [
+        { status: 'in_transit', order_type: 'retrieve', retrieve_empty: true, payload_code: '', source_node: 'EMPTY-MKT', delivery_node: 'LDR-H1' },
+    ]);
+    eq(card(e, 'BRKT').statusText, 'NO DEMAND', 'blank L1 to a produce home: NO DEMAND');
+})();
+
+// 27. MUST STAY: a blank move ARRIVING at a consume node (source elsewhere) is not
+//     this node's empty-out and lights no card.
+(function () {
+    const e = homeEntry('consume', 'UNL-H1', [
+        { status: 'in_transit', order_type: 'move', payload_code: '', source_node: 'STAGE-A', delivery_node: 'UNL-H1' },
+    ]);
+    eq(card(e, 'ASSY').statusText, 'NO DEMAND', 'blank move arriving at a consume node: NO DEMAND');
+})();
+
 // ── result ──
 if (failed > 0) { console.error('\n' + failed + ' failure(s), ' + passed + ' passed'); process.exit(1); }
 console.log('operator-window-state: ' + passed + ' assertions passed');

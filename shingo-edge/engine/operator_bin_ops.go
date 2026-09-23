@@ -444,8 +444,8 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 //
 // The empty-out is created AFTER the manifest clear has committed on Core. It used to
 // be created before, on the reasoning that Core's bin record was "still coherent" — but
-// what the U2 needs from that record is captured into locals first (clearedPayload,
-// hadBin), so the ordering bought nothing and cost a race: between the create and the
+// what the U2 needs from that record is captured into a local first (hadBin), so the
+// ordering bought nothing and cost a race: between the create and the
 // clear, the bin Core hands the U2 still carries its payload, and a mover that reads it
 // in that window carries a labelled carrier to the empty-totes destination. Creating it
 // after the clear commits means the carrier a U2 ever names is already empty.
@@ -470,9 +470,9 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		return err
 	}
 	// Capture the bin in the window BEFORE confirm/clear, while Core's manifest is
-	// still coherent. clearedPayload threads onto the empty-out so the operator board
-	// matches the move to the right tile (multi-payload drains otherwise mis-render);
-	// hadBin gates the empty-out so clearing an already-empty window creates nothing.
+	// still coherent. hadBin gates the empty-out so clearing an already-empty window
+	// creates nothing; clearedPayload is recorded in the CLEAR log line below. It does
+	// NOT ride the empty-out — see createUnloaderEmptyOut for why the U2 names no part.
 	var clearedPayload string
 	var hadBin bool
 	if claim.Role == protocol.ClaimRoleConsume {
@@ -519,7 +519,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
 				node.Name, existing[0].ID)
 		} else {
-			e.createUnloaderEmptyOut(node, claim, clearedPayload)
+			e.createUnloaderEmptyOut(node, claim)
 		}
 	}
 	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
@@ -622,15 +622,10 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if len(existing) > 0 {
 		return fmt.Errorf("node %s already has an empty-out in flight", node.Name)
 	}
-	// THE EMPTY PAYLOAD HERE IS NOT AN OVERSIGHT, and the two doors into
-	// createUnloaderEmptyOut are both telling the truth about their own bin.
-	// This door has already REFUSED a payload-bearing bin twenty lines up, so
-	// the carrier it is pushing has no payload to name and "" is the fact.
-	// ClearBin's door passes the payload it just cleared, because there the
-	// carrier did hold something and the operator board routes the move to that
-	// payload's tile — a multi-payload drain mis-renders without it. Unifying
-	// them would mean one of the two sites lying about its own carrier.
-	e.createUnloaderEmptyOut(node, claim, "")
+	// Same empty-out as ClearBin's door, and it names no part either: the U2 is a
+	// removal of whatever carrier stands on the window, never a fetch for a part.
+	// See createUnloaderEmptyOut.
+	e.createUnloaderEmptyOut(node, claim)
 	// Re-arm the delivery seam so the next full bin is requested after the
 	// empty departs — mirrors ClearBin's gated MaybePushUnloader at its tail.
 	if claim.AutoPush {
@@ -675,11 +670,32 @@ func (e *Engine) confirmUnloaderU1OnClear(coreNodeName string) (int64, bool) {
 // never fired for it.
 //
 // Outbound resolves from the loader AGGREGATE (consume role), falling back to the
-// claim — the same severing-the-legacy-claim source the old handler used. payloadCode
-// is the part that was in the cleared bin; it threads onto the move so a multi-payload
-// drain board matches the empty-out to the right tile. U2 auto-confirms: outbound is an
-// unattended supermarket node with no operator to tap CONFIRM (same rule as L2).
-func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim, payloadCode string) {
+// claim — the same severing-the-legacy-claim source the old handler used. U2
+// auto-confirms: outbound is an unattended supermarket node with no operator to tap
+// CONFIRM (same rule as L2).
+//
+// THE U2 NAMES NO PART. Core reads a part on a move as "this carrier is fetched for
+// part X", and three things follow from that, all wrong for a removal:
+//
+//   - tier 4 judges the resident carrier against the part's carrier rule
+//     (binresolver BinUnavailableReason). A shared window's CLEAR picker offers the
+//     union of its payloads' carrier types, so the operator can declare a type the
+//     cleared part may not travel in; the U2 is then refused its own carrier and
+//     parks as finder-node-empty while the carrier stands there;
+//   - at a home-location (dedicated) unloader, tier 2 turns the move into a pool
+//     Drain selection (sourceFromDedicatedLoader), rejects the just-cleared empty,
+//     and drives out the oldest bin of that part anywhere in the pool;
+//   - the destination is gated through payloadAllowedAt for a part the carrier no
+//     longer holds.
+//
+// The carrier rule's own doc says a removal leg passes payloadCode "", and the
+// ALN_006 removal ruling (allocator) binds by node, never by the order's payload
+// tag. lookupPayloadMeta does not backfill a manual_swap claim, so "" reaches the
+// wire. The operator board attributes the move by source_node instead (cardModel
+// in operator-window-state.js, and the modal's demand queue). Pinned by
+// TestEmptyOut_EnvelopeNamesNoPart and, Core side,
+// TestPayloadlessEmptyOut_SourcesAResidentThePartCouldNotCarry.
+func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim) {
 	outbound := claim.OutboundDestination
 	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume); err == nil && l != nil && l.OutboundDest() != "" {
 		outbound = l.OutboundDest()
@@ -695,13 +711,13 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	nodeID := node.ID
 	// NoDemand: the side-cycle's empty-out is the system's own consequence of a
 	// clear, not a demand anybody expressed.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, outbound, payloadCode, true,
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, outbound, "", true,
 		ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", node.Name, err)
 		return
 	}
-	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, node.Name, outbound, payloadCode)
+	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s (names no part)", order.ID, node.Name, outbound)
 	// Point the runtime active order at U2 so the unloader UI shows the empty-out next.
 	// (ClearBin's SetClaimAndCount zeroes the count/claim but leaves this pointer.)
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(node.ID, &order.ID); err != nil {

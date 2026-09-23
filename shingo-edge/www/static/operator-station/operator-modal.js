@@ -10,6 +10,7 @@ import { openLoadBin } from './operator-load-bin.js';
 import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, openStrandedStub } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
+import { isOwnEmptyOut } from './operator-window-state.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
@@ -346,7 +347,14 @@ export function renderModal(entry) {
 
             var queuePos = 1;
             allowed.forEach(function(code) {
-                var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
+                // The node's own empty-out (U2) names no part, so it is matched by
+                // source_node (isOwnEmptyOut) — but only where the node has ONE
+                // row. With several rows a blank U2 belongs to none of them in
+                // particular, and lighting all of them would be a false IN TRANSIT
+                // on every part (operator-modal-home-transit.test.js).
+                var payloadOrders = activeOrders.filter(function(o) {
+                    return o.payload_code === code || (allowed.length === 1 && isOwnEmptyOut(entry, o));
+                });
                 // Mirror operator-render.js: the no-payload-code fallback is
                 // for the empty-bin-parked manual-request phase only. After
                 // load (bin has payload_code) or once any active order has a

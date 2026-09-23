@@ -186,16 +186,15 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	if n != 1 {
 		t.Errorf("empty-out moves to STORAGE-NODE = %d, want exactly 1 (no double-fire)", n)
 	}
-	if payload != "PART-CLR" {
-		t.Errorf("empty-out payload_code = %q, want %q (cleared bin's payload threads onto U2)", payload, "PART-CLR")
+	if payload != "" {
+		t.Errorf("empty-out payload_code = %q, want \"\" (the U2 names no part, even after a full was cleared)", payload)
 	}
 }
 
 // TestClearBin_FiresEmptyOut_PressFed is the core of the fix: a press/forklift-fed
 // drain has NO inbound U1 (the press delivered the full directly), so the old
 // U1-completion trigger never fired and the empty bin stranded. Driving the
-// empty-out off the CLEAR makes it fire here too — one U2 move, payload threaded
-// from Core's bin manifest (not from any order, because there is none).
+// empty-out off the CLEAR makes it fire here too — one U2 move, naming no part.
 func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 	t.Parallel()
 	srv := fakeCoreBinServer(t, true, "PRESS-PART")
@@ -213,8 +212,8 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 	if n != 1 {
 		t.Errorf("press-fed empty-out moves = %d, want exactly 1 (the fix: no U1 needed)", n)
 	}
-	if payload != "PRESS-PART" {
-		t.Errorf("press-fed empty-out payload = %q, want %q (from the bin manifest)", payload, "PRESS-PART")
+	if payload != "" {
+		t.Errorf("press-fed empty-out payload = %q, want \"\" (the U2 names no part)", payload)
 	}
 }
 
