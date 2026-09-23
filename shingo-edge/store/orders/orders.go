@@ -346,8 +346,7 @@ type ProjectionRow struct {
 // it". The row that actually needed protecting is the Edge-authored one.
 //
 // origin_id and origin_class KEEP THE LOCAL VALUE WHEN THE INCOMING ONE IS
-// BLANK. Same statement — a COALESCE in the SET clause, the same fall-back-to-
-// the-stored-value shape process_node_id already uses, with a NULLIF in front
+// BLANK. Same statement — a COALESCE in the SET clause, with a NULLIF in front
 // because these two columns are NOT NULL and spell absence as the empty string.
 //
 // Blank on the wire MEANS "not recorded" and not "empty" — Core sends blank for
@@ -356,6 +355,20 @@ type ProjectionRow struct {
 // a routine reconcile erase an attribution the row already held, including one
 // the Edge minted for an order of its own. A non-blank incoming value still
 // wins: that is Core's newer statement about the same order.
+//
+// process_node_id KEEPS THE STORED VALUE, and the incoming one only fills a row
+// that has none. The incoming value is not Core's statement at all: Core has no
+// Edge process node id, and ApplyOrderProjection guesses it from the DELIVERY
+// node (resolveProjectionNode). For a row this Edge created, the station already
+// answered — the process node that asked. An order created at one node that
+// delivers to another on the same Edge (the stage-1 U2 to a stage-2 window, a
+// release to a node here, a manual move) was re-credited to its destination by
+// the echo from cdc95c55 on: the destination's double-tap guard then counted it
+// as its own empty-out and refused PUSH EMPTY, the creator's guard went blind to
+// it and filed a second U2, and the completion and delivered handlers ran for
+// the wrong node. A Core-authored row is created by the INSERT arm, where the
+// guess is all there is; a later arrival leaves it alone as well. Pinned by
+// TestEcho_KeepsTheEdgesOwnProcessNode and TestPinEcho_*.
 //
 // NOT UPDATED on conflict: authored_by (above), created_at (the row's own
 // history), bin_id, staged_expire_at, waybill and count fields. Those last ones
@@ -376,7 +389,7 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 		ON CONFLICT(uuid) DO UPDATE SET
 			order_type=excluded.order_type,
 			status=excluded.status,
-			process_node_id=COALESCE(excluded.process_node_id, orders.process_node_id),
+			process_node_id=COALESCE(orders.process_node_id, excluded.process_node_id),
 			retrieve_empty=excluded.retrieve_empty,
 			quantity=excluded.quantity,
 			source_node=excluded.source_node,

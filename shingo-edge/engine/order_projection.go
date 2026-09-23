@@ -67,6 +67,13 @@ func (e *Engine) ApplyOrderProjection(p protocol.OrderProjection) (created bool,
 // resolveProjectionNode turns Core's delivery node NAME into this Edge's own
 // process_node id, which is what the operator board joins on.
 //
+// IT IS A GUESS FOR A ROW THAT HAS NO STATION, never an override. It fills the
+// process node of an order this Edge first hears of from Core; for an order the
+// Edge created, the row already names the node that asked, and UpsertProjection
+// keeps that. The delivery node is where the bin goes, not who owns the order —
+// an order created at one node that delivers to another on this Edge is the
+// creator's.
+//
 // Core has never had that id — it is Edge-local — so the resolution has to
 // happen here, and it can legitimately fail. A Core node with no matching Edge
 // process node is a supported shape: a manual move to a storage location, or a
