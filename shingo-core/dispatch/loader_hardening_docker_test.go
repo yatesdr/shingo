@@ -130,9 +130,12 @@ func TestPlanRetrieve_DedicatedLoaderPool_MultiHomeSamePayload(t *testing.T) {
 // TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool is the M3 market-loader
 // guard: a shared_window loader's window node ALSO lives in bin_loader_homes, but
 // the layout gate keeps it out of the dedicated flat-pool ranker. A retrieve whose
-// SourceNode is that window must fall through to the normal (global) finder, not
-// pool-source the window — so with an empty window but a global X present, the
-// order resolves the global bin instead of queuing on an empty pool.
+// SourceNode is that window is sourced as the concrete node it is: the matching
+// full standing ON the window, never the pool. So with an empty window and a
+// global X present, the order waits on the window as finder-node-empty — a
+// pool-sourced window would have queued finder-pool-empty instead. (It used to
+// fall through to the global finder and take the global bin; a named concrete
+// source no longer widens — TestNamedSourcePin_ConcreteSourceStaysOnTheNode.)
 func TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -164,11 +167,23 @@ func TestPlanRetrieve_SharedWindowLoader_LayoutGatedFromPool(t *testing.T) {
 	})
 
 	order := dispatchSimpleViaScanner(t, d, db, "shared-window-1")
-	// Gated correctly → fell through to the global finder → claimed the global bin.
-	// If the window had wrongly entered Source, the empty pool would have QUEUED
-	// (BinID nil) instead.
-	if order.BinID == nil || *order.BinID != globalFull.ID {
-		t.Fatalf("sourced bin %v, want the global full %d — a shared_window window must NOT pool-source (it would have queued)",
-			order.BinID, globalFull.ID)
+	if order.BinID != nil {
+		t.Fatalf("sourced bin %d (the global full is %d) — a retrieve naming the window stays on the window",
+			*order.BinID, globalFull.ID)
+	}
+	if order.QueueCause != string(CauseFinderNodeEmpty) {
+		t.Fatalf("queue_cause = %q, want %q — %q would mean the window entered the dedicated pool ranker",
+			order.QueueCause, CauseFinderNodeEmpty, CauseFinderPoolEmpty)
+	}
+
+	// And the full that IS on the window is taken, as the concrete node's resident.
+	atWindow := makeLoaderBin(t, db, "PART-X", window.ID, "window-full", 10, time.Now().UTC())
+	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID: "shared-window-2", OrderType: OrderTypeRetrieve, PayloadCode: "PART-X",
+		DeliveryNode: lineNode.Name, SourceNode: window.Name, Quantity: 1.0,
+	})
+	order = dispatchSimpleViaScanner(t, d, db, "shared-window-2")
+	if order.BinID == nil || *order.BinID != atWindow.ID {
+		t.Fatalf("sourced bin %v, want the full %d standing on the window", order.BinID, atWindow.ID)
 	}
 }

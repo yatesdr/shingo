@@ -39,7 +39,7 @@ const (
 
 // NodeResolver resolves a synthetic node to a physical child node.
 //
-// asker names the order the resolution is FOR. Only the NGRP path consults it,
+// asker names the order the resolution is FOR. Only the NGRP and LANE paths consult it,
 // and only to answer the dig-lock question about candidate lanes, but it sits
 // on the interface rather than on the group resolver because the caller with
 // the order in hand is out here — every production call site has one. Pass
@@ -115,6 +115,13 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 // direction of travel.
 func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, stated BinTypeStatement,
 	asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error) {
+	// A LANE NAMED AS A RETRIEVE SOURCE resolves inside that lane with the group
+	// scan's own ranking and buried check (GroupResolver.ResolveRetrieveInLane).
+	// Ahead of the child listing below, which that path does not need.
+	if syntheticNode.NodeTypeCode == protocol.NodeClassLANE && mode == ResolveModeRetrieve {
+		gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
+		return gr.ResolveRetrieveInLane(syntheticNode, payloadCode, asker, accept)
+	}
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -182,16 +189,16 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 //
 // UNREACHABLE FROM PRODUCTION, and the doc is kept rather than the code deleted
 // so the next reader learns that here instead of re-deriving it. Resolve routes
-// every NGRP node to GroupResolver before this switch, and both retrieve-mode
-// entry points already gate on NGRP themselves (source_finder's tier 1 and
-// complex_steps' group branch), so no caller can reach this arm with a
-// retrieve. The only synthetic node outside NGRP is _TRANSIT, which is never a
-// source or a delivery target. Store mode is a different matter -- resolveStore
-// IS reachable, because lifecycle_service gates on IsSynthetic alone.
+// every NGRP node to GroupResolver, and a LANE retrieve to
+// GroupResolver.ResolveRetrieveInLane, before this switch, and the retrieve-mode
+// entry points gate themselves (source_finder's tier 1 on NGRP or LANE,
+// complex_steps' group branch on NGRP), so no caller reaches this arm with a retrieve.
+// Store mode is a different matter -- resolveStore IS reachable, because
+// lifecycle_service gates on IsSynthetic alone.
 //
 // Consequence worth stating: because this never runs, its ordering is not a live
-// FIFO defect. If a caller is ever generalised past the NGRP gate, that changes,
-// and the ranking question has to be answered before it does.
+// FIFO defect. The one caller generalised past the NGRP gate so far (a LANE
+// source) answered the ranking question by taking the group scan's.
 func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
 	for _, child := range children {
 		if !child.Enabled {

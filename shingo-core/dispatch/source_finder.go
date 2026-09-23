@@ -133,21 +133,6 @@ func (f *SourceFinder) requiresFullCarrier(need SourceNeed) bool {
 	return l.Role == loaders.RoleConsume && !l.AcceptPartials
 }
 
-// acceptableSourceFor returns the filter this need imposes on candidate bins,
-// or nil when it imposes none.
-//
-// It is the SAME question requiresFullCarrier answers, asked one step earlier —
-// at selection instead of after it. The late check stays where it is as a
-// seatbelt for the tiers that do not go through the resolver; what changes is
-// that the resolver-backed tier no longer picks a bin this need cannot use and
-// then throws the whole resolution away.
-func (f *SourceFinder) acceptableSourceFor(need SourceNeed) binresolver.BinFilter {
-	if !f.requiresFullCarrier(need) {
-		return nil
-	}
-	return isFullCarrier
-}
-
 func (f *SourceFinder) debug(format string, args ...any) {
 	if f.dbg != nil {
 		f.dbg(format, args...)
@@ -229,10 +214,10 @@ func (f *SourceFinder) explainEmptyPool(loaderID int64, anchor, payloadCode stri
 // Tier cascade (intake's order — reproduced faithfully per intent/shape so
 // replay cannot drift from intake):
 //
-//  1. NGRP synthetic source  → resolver.Resolve, classified   (full intent)
+//  1. NGRP/LANE source        → resolver.Resolve, classified   (full intent)
 //  2. dedicated-loader pool  → sourceFromDedicatedLoader        (Drain/Fill)
 //  3. group/lane-scoped empty → FindEmptyCompatibleBinInGroup   (empty intent)
-//  4. concrete-node candidate → ListBinsByNode                  (move-shaped)
+//  4. concrete-node candidate → ListBinsByNode    (move-shaped; a full naming a node)
 //  5. plant-wide fallback    → FindSourceBinFIFO / FindEmptyCompatibleBin
 //  6. post-find buried check → IsSlotAccessible                 (empty intent)
 //
@@ -353,19 +338,53 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		bin     *bins.Bin
 		binNode *nodes.Node
 		// atNamedNode: tier 4 found the carrier standing on the concrete node
-		// the need named. Read only by the drain-window seatbelt below.
+		// a NODE-LOCAL need named. Read only by the drain-window seatbelt below.
 		atNamedNode bool
 	)
 
-	// ── Tier 1: NGRP synthetic source (full intent only) ──────────────────
+	// The drain-window question, asked AT MOST ONCE per need. It costs three
+	// reads (destination, loader home, loader) and three sites ask it — tier 1's
+	// filter, tier 4's filter and the late seatbelt — so an NGRP-sourced need
+	// into a drain window used to pay six (TestFinderReads_NGRPDrainWindowAsksOnce).
+	// Lazy, so a need no site asks about pays nothing.
+	//
+	// acceptable() is the same question as a candidate filter: asked at
+	// selection, so a tier picks a bin this need can use instead of picking one
+	// it cannot and having the seatbelt throw the resolution away.
+	var fullAsked, fullWanted bool
+	wantsFull := func() bool {
+		if !fullAsked {
+			fullWanted, fullAsked = f.requiresFullCarrier(need), true
+		}
+		return fullWanted
+	}
+	acceptable := func() binresolver.BinFilter {
+		if wantsFull() {
+			return isFullCarrier
+		}
+		return nil
+	}
+
+	// ── Tier 1: NGRP or LANE synthetic source (full intent only) ──────────
 	// Empties never route through the retrieve resolver: ResolveRetrieve is
 	// payload-match-required and rejects PayloadCode=="" bins, so an empty pull
 	// on an NGRP source falls to the group-scoped empty tier (tier 3 below).
 	// Errors route through the SAME classifier intake uses — this is
 	// where the A4 drift lived (the scanner checked only *StructuralError and
 	// fell through to plant-wide FIFO on a capacity/buried error).
+	//
+	// A LANE SOURCE STAYS IN THE LANE. It used to pass this gate (NGRP only),
+	// tier 2 (not a loader position) and tier 4 (not node-local), and land in the
+	// plant-wide scan — a U1 whose inbound source was a lane took a full of its
+	// part from another cell's supermarket (TestNamedSourcePin_LaneSourceStaysInTheLane).
+	// It is tier 3's rule for empties applied to fulls: a scoped need that falls
+	// through to the plant-wide scan is the Hopkinsville wrong-supermarket pull.
+	// The resolver answers a lane with the group scan's ranking, buried check and
+	// dig lock (binresolver.GroupResolver.ResolveRetrieveInLane), and a lane with
+	// nothing queues here, scoped, like an empty group.
 	if intent == IntentFull && srcNode != nil && srcNode.IsSynthetic &&
-		srcNode.NodeTypeCode == protocol.NodeClassNGRP && f.resolver != nil {
+		(srcNode.NodeTypeCode == protocol.NodeClassNGRP || srcNode.NodeTypeCode == protocol.NodeClassLANE) &&
+		f.resolver != nil {
 		// THE ONE CALLER WITH A REAL CONSTRAINT. A drain window can only use a
 		// FULL carrier, so a partial is not a candidate for it — it must lose the
 		// FIFO comparison rather than win it and be refused afterwards.
@@ -378,7 +397,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		//
 		// Every other need passes nil and gets the oldest bin exactly as before.
 		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, binresolver.NoBinType,
-			need.Asker, f.acceptableSourceFor(need))
+			need.Asker, acceptable())
 		if err != nil {
 			switch class, payload := classifyResolutionError(err); class {
 			case ResolutionBuried:
@@ -560,7 +579,23 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// this changes nothing now; without it, C(ii)'s node-local empty needs
 	// would fall past every tier into a permanent Wait and strand every
 	// produce-side press-index empty refill.
-	if bin == nil && moveShaped && srcNode != nil && (intent == IntentFull || intent == IntentEmpty) {
+	//
+	// AND A FULL THAT NAMED A CONCRETE SOURCE (namedFull). A retrieve whose
+	// source is one physical, non-loader node used to pass every scoped tier and
+	// take a full of its part from anywhere in the plant
+	// (TestNamedSourcePin_ConcreteSourceStaysOnTheNode). It now takes the
+	// matching full standing on that node or waits there. Three differences from
+	// the node-local arm, each because this is still the PLANT choosing:
+	//   - the carrier must HOLD the part — an empty standing there is not a full
+	//     of anything, and the a9a0eb78 empty exemption below is for moves;
+	//   - the drain-window filter applies in the loop, so a partial on the node
+	//     does not hide a full beside it;
+	//   - atNamedNode stays false, so the late seatbelt still judges it.
+	// Loader positions never arrive here: tier 2 answered them. Reads: the same
+	// ListBinsByNode + LoadBinTypeRule the node-local arm makes, in place of the
+	// plant-wide FindSourceBinFIFO + GetNode (TestFinderReads_ConcreteSourceUnchanged).
+	namedFull := !moveShaped && intent == IntentFull && payloadCode != "" && srcNode != nil && !srcNode.IsSynthetic
+	if bin == nil && srcNode != nil && (namedFull || (moveShaped && (intent == IntentFull || intent == IntentEmpty))) {
 		// THE ERROR WAS DISCARDED HERE UNTIL MG3-1a, and it is the same collapse
 		// as the finder call sites below wearing a different shape: a failed read
 		// yields zero candidates, and zero candidates parks under
@@ -596,7 +631,17 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return unreadableSource(nodeLocalKind(intent), payloadCode, need.SourceNode)
 			}
 		}
+		onlyPartials := false
 		for _, b := range candidates {
+			if namedFull {
+				if b.PayloadCode != payloadCode {
+					continue
+				}
+				if accept := acceptable(); accept != nil && !accept(b) {
+					onlyPartials = true
+					continue
+				}
+			}
 			// AN EMPTY CARRIER ON A MOVE IS NOT BEING TAKEN FOR THE PART. The
 			// carrier rule guards "may this part travel in this carrier", and a
 			// move relocates the carrier as it stands — an empty one leaves
@@ -613,7 +658,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			if BinUnavailableReason(b, claimPayload, rule) != "" {
 				continue
 			}
-			bin, binNode, atNamedNode = b, srcNode, true
+			bin, binNode, atNamedNode = b, srcNode, moveShaped
 			break
 		}
 		if bin == nil {
@@ -621,10 +666,16 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			if intent == IntentEmpty {
 				params.Kind = "empty"
 			}
+			cause := CauseFinderNodeEmpty
+			if onlyPartials {
+				// The part IS on the node, but only as partials, and this is a
+				// drain window: the same wait the seatbelt gives, naming where.
+				cause = CauseFinderNoFullCarrier
+			}
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  CauseFinderNodeEmpty,
+				QueueCause:  cause,
 				QueueParams: params,
 			}
 		}
@@ -731,7 +782,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// too, so it switched this check off for all of them. A group (tier 1), a
 	// loader pool (tier 2) or the plant-wide scan (tier 5) is still a selection
 	// and still held to fullness.
-	if bin != nil && !atNamedNode && f.requiresFullCarrier(need) && !isFullCarrier(bin) {
+	if bin != nil && !atNamedNode && wantsFull() && !isFullCarrier(bin) {
 		f.debug("finder: %s is a drain window and bin %d is a partial (%d of %d) — waiting for a full",
 			need.DeliveryNode, bin.ID, bin.UOPRemaining, bin.UOPCapacity)
 		return SourceResult{

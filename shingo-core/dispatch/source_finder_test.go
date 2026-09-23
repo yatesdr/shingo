@@ -575,10 +575,17 @@ func TestMoveReplayNotStructurallyFailed(t *testing.T) {
 // and falls through to the plant-wide FIFO scan. Before Stage 4
 // (moveShaped := order.OrderType == OrderTypeMove) the second subcase would have
 // stayed node-local and this test would fail — that is the red-before-green.
+//
+// BOTH SUBCASES NAME NO SOURCE. They used to name a concrete node SRC, and a
+// full retrieve naming a concrete node now takes the full standing on it rather
+// than widening (TestNamedSourcePin_ConcreteSourceStaysOnTheNode), so the
+// retrieve-shaped arm would no longer reach the plant-wide scan. With no source
+// named, the move still sources nothing and never widens, and the retrieve
+// still widens: the field alone still decides.
 func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
 	t.Parallel()
 
-	// SourceIntentLocal → move-shaped: no bin at the source queues scoped and
+	// SourceIntentLocal → move-shaped: nothing named, nothing sourced, and it
 	// never touches the plant-wide FIFO scan.
 	t.Run("local_intent_sources_node_local", func(t *testing.T) {
 		db := newFakeFinderDB()
@@ -587,7 +594,7 @@ func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
 		db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
 		db.fifoBin = &bins.Bin{ID: 900, PayloadCode: "X"} // must never be chosen
 		finder := NewSourceFinder(db, nil, nil)
-		order := &orders.Order{ID: 1, OrderType: OrderTypeMove, SourceIntent: SourceIntentLocal, SourceNode: "SRC", DeliveryNode: "DEST", PayloadCode: "X"}
+		order := &orders.Order{ID: 1, OrderType: OrderTypeMove, SourceIntent: SourceIntentLocal, DeliveryNode: "DEST", PayloadCode: "X"}
 		res := finder.FindSource(order, IntentFull)
 		if res.Outcome != OutcomeWait {
 			t.Fatalf("no bin at source: got %v, want OutcomeWait", res.Outcome)
@@ -608,7 +615,7 @@ func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
 		db.addNode(&nodes.Node{ID: fifoNodeID, Name: "FIFO-SLOT"})
 		db.fifoBin = &bins.Bin{ID: 901, PayloadCode: "X", NodeID: &fifoNodeID}
 		finder := NewSourceFinder(db, nil, nil)
-		order := &orders.Order{ID: 2, OrderType: OrderTypeMove, SourceNode: "SRC", DeliveryNode: "DEST", PayloadCode: "X"}
+		order := &orders.Order{ID: 2, OrderType: OrderTypeMove, DeliveryNode: "DEST", PayloadCode: "X"}
 		res := finder.FindSource(order, IntentFull)
 		if res.Outcome != OutcomeFound {
 			t.Fatalf("retrieve-shaped: got %v, want OutcomeFound", res.Outcome)

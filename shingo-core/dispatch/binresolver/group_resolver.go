@@ -224,7 +224,18 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
+	res, err := r.scanChildren(children, payloadCode, s, accept)
+	if err != nil || res != nil {
+		return res, err
+	}
+	return nil, r.classifyEmptyGroup(group, payloadCode)
+}
 
+// scanChildren is scanForBestBin's body over a child list the CALLER chose:
+// the group's dig-filtered children, or a single lane (ResolveRetrieveInLane).
+// It returns (nil, nil) when nothing is found, and the caller says why.
+func (r *GroupResolver) scanChildren(children []*nodes.Node, payloadCode string, s retrieveStrategy,
+	accept BinFilter) (*ResolveResult, error) {
 	var bestBin *bins.Bin
 	var bestNode *nodes.Node
 	var bestTime time.Time
@@ -300,8 +311,58 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 	if bestBin != nil {
 		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
 	}
+	return nil, nil
+}
 
-	return nil, r.classifyEmptyGroup(group, payloadCode)
+// ResolveRetrieveInLane resolves a retrieve INSIDE ONE LANE, for a need that
+// named the lane as its source.
+//
+// It is the group scan over a one-element child list, so a lane behaves
+// exactly as it does inside its own group: the mouth bin via
+// FindSourceBinInLane, the caller's filter, the parent group's retrieve
+// algorithm, and the buried check that digs for a usable bin behind an unusable
+// mouth. Without that last part a drain window sourcing from a lane would wait
+// forever on a partial at the mouth with a full behind it — the 1,715-refusal
+// shape BinFilter exists for.
+//
+// THE DIG LOCK IS THE GROUP'S: a lane another order is digging is dropped from
+// the parent's ListChildNodesUnlocked, and a lane missing from it is not
+// searched. A lane with no parent has no such list and is searched as is.
+//
+// Reads, FIFO strategy: two node-property reads for the algorithm, the parent's
+// unlocked children, the mouth bin, its slot, the oldest buried bin — six, one
+// fewer than the same lane as the only child of an NGRP (which also lists the
+// group's children in DefaultResolver.Resolve).
+//
+// Nothing found is a plain error, never a StructuralError: the lane may simply
+// be empty now, and the caller queues scoped
+// (TestResolveRetrieveInLane_EmptyLaneWaits).
+func (r *GroupResolver) ResolveRetrieveInLane(lane *nodes.Node, payloadCode string, asker reservations.DigAsker,
+	accept BinFilter) (*ResolveResult, error) {
+	algoAt := lane.ID
+	if lane.ParentID != nil {
+		algoAt = *lane.ParentID
+		siblings, err := r.DB.ListChildNodesUnlocked(algoAt, asker)
+		if err != nil {
+			return nil, fmt.Errorf("list children of lane %s's group: %w", lane.Name, err)
+		}
+		unlocked := false
+		for _, c := range siblings {
+			if c.ID == lane.ID {
+				unlocked = true
+				break
+			}
+		}
+		if !unlocked {
+			return nil, fmt.Errorf("no bin of requested payload in lane %s: the lane is held by a dig", lane.Name)
+		}
+	}
+	strategy := retrieveStrategies[r.getGroupAlgorithm(algoAt, "retrieve_algorithm", RetrieveFIFO)]
+	res, err := r.scanChildren([]*nodes.Node{lane}, payloadCode, strategy, accept)
+	if err != nil || res != nil {
+		return res, err
+	}
+	return nil, fmt.Errorf("no bin of requested payload in lane %s", lane.Name)
 }
 
 // binTimestamp returns the effective timestamp for a bin (LoadedAt if set, else CreatedAt).
