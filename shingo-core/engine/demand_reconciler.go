@@ -105,11 +105,12 @@ func (e *Engine) demandReconcileInterval() time.Duration {
 // reconcileDemandEpisodes is one pass. Split from the loop so tests drive it
 // directly rather than waiting on a ticker.
 //
-// ORDER MATTERS BETWEEN THE FIRST TWO PASSES. A threshold episode whose binding
-// vanished is usually also childless, and both passes would close it — but
-// `threshold_removed` says what happened and `unattributed` says only that we
-// never heard anything. Running the binding pass first means the truer reason
-// wins whenever it is available.
+// THE BINDING PASS RUNS FIRST, and the order used to decide a close reason: a
+// threshold episode whose binding vanished is usually also childless, and the
+// childless pass would have closed it `unattributed` where `threshold_removed`
+// says what happened. The childless pass now leaves threshold episodes alone
+// (see reconcileChildlessEpisodes), so the binding pass is the only one of the
+// two that closes them and the order no longer matters for that kind.
 func (e *Engine) reconcileDemandEpisodes() {
 	byBinding := 0
 	if e.thresholdMonitor != nil {
@@ -180,15 +181,31 @@ func (e *Engine) reconcileChildlessEpisodes() (closed int, unreachable int) {
 
 	for i := range states {
 		s := &states[i]
-		if s.Kind == protocol.EpisodeKindMaintain {
-			// EXEMPT, and not because maintain episodes are special-cased out of
+		if s.Kind == protocol.EpisodeKindMaintain || s.Kind == protocol.EpisodeKindThreshold {
+			// EXEMPT, and not because Core's kinds are special-cased out of
 			// hygiene — because this check's evidence does not exist for them.
 			//
 			// Zero children means "Core never heard an order attributed to this
 			// demand", which is evidence only for demand whose orders arrive from
-			// somewhere else. A maintain episode's asks are created by Core, in
-			// this process, with the origin already stamped on them. If none
-			// exist, none were wanted: the keeper mints the episode on the gap and
+			// somewhere else: the Edge-authored kinds, cell and changeover. A
+			// maintain episode's asks and a threshold episode's orders are both
+			// created by Core, in this process, with the origin already stamped
+			// on them. If none exist, none were wanted.
+			//
+			// THRESHOLD JOINED MAINTAIN HERE LATER, though this reasoning has held
+			// for it since the 2026-07-31 cutover moved replenishment into
+			// fireSignalCached. A threshold episode with no children is a demand
+			// whose fire debounce held, whose windows were full, or whose config
+			// refused. Closing it wrote a row the monitor never heard about: it
+			// kept stamping the closed origin on new orders and minted no
+			// replacement while the level stayed below. Springfield: 865 threshold
+			// episodes closed `unattributed` this way, 30% of every one it had
+			// recorded, and 195 orders stamped with an origin already closed. The
+			// monitor's own edges end these: `recovered` on the rising edge, and
+			// `threshold_removed` when reconcileThresholdBindings finds the
+			// binding gone.
+			//
+			// For maintain specifically: the keeper mints the episode on the gap and
 			// then pre-resolves each ask to a free position, so a group whose
 			// positions are all occupied opens an episode and legitimately creates
 			// nothing until one frees up. That is a group that is FULL, which is a

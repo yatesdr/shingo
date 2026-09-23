@@ -277,18 +277,12 @@ func TestDemandReconciler_ChildlessEpisodeClosesUnattributed(t *testing.T) {
 
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
-	m := eng.thresholdMonitor
-	b := episodeBinding(t, eng, "PANEL-RC3", 18)
-	registerBinding(t, db, b)
-	registerActiveEdge(t, db, b.stationID)
-
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
-	open, _ := db.ListOpenThresholdEpisodes()
-	if len(open) != 1 {
-		t.Fatalf("no episode opened: %d", len(open))
-	}
-	originID := open[0].OriginID
-	backdateEpisode(t, db, originID, time.Hour)
+	// A CELL episode: the childless pass reads only the Edge-authored kinds.
+	// Threshold and maintain are Core's own and exempt — see
+	// TestDemandReconciler_LeavesThresholdEpisodesToTheMonitor.
+	const station = "PLANT.LINE1"
+	registerActiveEdge(t, db, station)
+	originID := openCellEpisode(t, db, station, "PANEL-RC3", "SNF9", time.Hour)
 
 	eng.reconcileDemandEpisodes()
 
@@ -307,26 +301,11 @@ func TestDemandReconciler_ChildlessEpisodeClosesUnattributed(t *testing.T) {
 	// The grace is not decoration. A young childless episode is a demand whose
 	// orders have not been created YET, and closing it would be the reconciler
 	// racing the thing it is meant to be a floor under.
-	young := episodeBinding(t, eng, "PANEL-RC3B", 18)
-	young.coreNodeName = "SLN_003"
-	registerBinding(t, db, young)
-	m.checkBindings([]thresholdEntry{young}, 40, "below_threshold", false)
+	young := openCellEpisode(t, db, station, "PANEL-RC3B", "SNF10", 0)
 	eng.reconcileDemandEpisodes()
-	for _, o := range mustListOpen(t, db) {
-		if o.PayloadCode == young.payloadCode {
-			return
-		}
+	if got := mustGetOrigin(t, db, young); got.ClosedAt != nil {
+		t.Error("the sweep closed an episode that opened seconds ago — the childless grace is not being applied")
 	}
-	t.Error("the sweep closed an episode that opened seconds ago — the childless grace is not being applied")
-}
-
-func mustListOpen(t *testing.T, db *store.DB) []store.DemandOrigin {
-	t.Helper()
-	open, err := db.ListOpenThresholdEpisodes()
-	if err != nil {
-		t.Fatalf("list open: %v", err)
-	}
-	return open
 }
 
 // A CHECK MUST KNOW WHETHER IT HAD THE INPUT TO CHECK.
@@ -710,18 +689,10 @@ func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
 	maintainOrigin := st.OriginID
 	backdateEpisode(t, db, maintainOrigin, time.Hour)
 
-	// The control: a stranded threshold episode of the same age.
-	m := eng.thresholdMonitor
-	b := episodeBinding(t, eng, "PANEL-RCX", 18)
-	registerBinding(t, db, b)
-	registerActiveEdge(t, db, b.stationID)
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
-	open, _ := db.ListOpenThresholdEpisodes()
-	if len(open) != 1 {
-		t.Fatalf("control: no threshold episode opened: %d", len(open))
-	}
-	thresholdOrigin := open[0].OriginID
-	backdateEpisode(t, db, thresholdOrigin, time.Hour)
+	// The control: a stranded CELL episode of the same age. (It used to be a
+	// threshold episode; those are exempt too now, for the same reason.)
+	registerActiveEdge(t, db, "PLANT.RCX")
+	controlOrigin := openCellEpisode(t, db, "PLANT.RCX", "PANEL-RCX", "SNFX", time.Hour)
 
 	eng.reconcileDemandEpisodes()
 
@@ -729,8 +700,8 @@ func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
 		t.Errorf("the sweep closed a maintain episode as %q — the keeper owns ending these, "+
 			"and it will re-open this key on its next tick", got.CloseReason)
 	}
-	if got := mustGetOrigin(t, db, thresholdOrigin); got.ClosedAt == nil {
-		t.Error("control failed: the sweep left a stranded threshold episode open, so this " +
+	if got := mustGetOrigin(t, db, controlOrigin); got.ClosedAt == nil {
+		t.Error("control failed: the sweep left a stranded cell episode open, so this " +
 			"test proves nothing about the exemption")
 	}
 }
