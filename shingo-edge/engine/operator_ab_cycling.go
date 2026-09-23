@@ -205,7 +205,7 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 	//
 	// Unreadable to-claim answers ready(""): this guard catches the operator's
 	// honest mistake, not a query hiccup, and it is confirm-overridable anyway.
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim != nil && claim.Role == protocol.ClaimRoleConsume {
 		if rt.RemainingUOPCached <= 0 {
 			return fmt.Sprintf("%s holds no material to feed the line", node.CoreNodeName)
@@ -224,7 +224,7 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 // Both writers of active_pull go through it, so neither can end up writing one
 // bit while disagreeing about which row the partner is.
 func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}

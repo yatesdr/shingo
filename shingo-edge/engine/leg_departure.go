@@ -151,11 +151,11 @@ func (e *Engine) stampDepartureIfLeftCell(order *domain.Order, location string) 
 	if err != nil || node == nil {
 		return
 	}
-	// requestedClaimAtNode, not runtime.ActiveClaimID: the runtime pointer is the
+	// claimAtNode, not runtime.ActiveClaimID: the runtime pointer is the
 	// swap machinery's and is nil for long stretches of a cell's life, while the
 	// claim resolved from the process's active style is the one that describes
 	// the cell's GEOMETRY — the only thing wanted here.
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim == nil {
 		return
 	}
@@ -283,7 +283,7 @@ func (e *Engine) settleCellPlacement(nodeID int64) {
 	if err != nil || node == nil {
 		return
 	}
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim == nil {
 		return
 	}

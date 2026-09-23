@@ -317,7 +317,7 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 		return
 	}
 	ids := []int64{nodeID}
-	if claim := requestedClaimAtNode(e.db, node); claim != nil && claim.PairedCoreNode != "" {
+	if claim := e.claimAtNode(node); claim != nil && claim.PairedCoreNode != "" {
 		if nodes, lErr := e.db.ListProcessNodesByProcess(node.ProcessID); lErr == nil {
 			for i := range nodes {
 				if nodes[i].CoreNodeName == claim.PairedCoreNode {

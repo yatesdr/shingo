@@ -116,6 +116,17 @@ func requireLoaderClaim(node *processes.Node, claim *processes.NodeClaim) error 
 	return nil
 }
 
+// persistedClaimID is the claim id to write into runtime.active_claim_id: the
+// stored claim's id, or nil for a synthesized one. A SynthClaim has ID 0, and
+// active_claim_id is a reference into style_node_claims — 0 names no row.
+func persistedClaimID(claim *processes.NodeClaim) *int64 {
+	if claim == nil || claim.ID == 0 {
+		return nil
+	}
+	id := claim.ID
+	return &id
+}
+
 // synthLoaderClaim returns a synthesized manual_swap NodeClaim for a node that is a
 // member of a Core-owned loader but has no per-style edge claim, or nil if the node
 // belongs to no loader. Resolved through the SAME LoaderStore the runtime uses, so

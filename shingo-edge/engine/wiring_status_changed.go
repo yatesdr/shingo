@@ -61,7 +61,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		return
 	}
 
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim == nil || claim.SwapMode != protocol.SwapModeSequential {
 		return
 	}

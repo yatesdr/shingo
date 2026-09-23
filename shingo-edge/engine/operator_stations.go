@@ -605,9 +605,9 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// eighteen paths and can be stale, dangling, or nil, and none of those states
 	// says anything about how this window swaps; a node whose claim row was
 	// deleted would silently lose its multi-order queue and start refusing the
-	// operator's second tap. requestedClaimAtNode answers the configuration
-	// question from the style the process is running.
-	if claim := requestedClaimAtNode(e.db, node); claim.IsLoaderNode() {
+	// operator's second tap. claimAtNode answers the configuration question from
+	// the style the process is running, or from the node's Core loader.
+	if claim := e.claimAtNode(node); claim.IsLoaderNode() {
 		return true, ""
 	}
 

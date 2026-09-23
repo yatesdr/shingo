@@ -197,10 +197,12 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if _, err := e.db.EnsureProcessNodeRuntime(node.ID); err != nil {
 		return
 	}
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim == nil {
 		// The bin landed at a node we own but there is no active claim to bind it
-		// to (unpublished/mid-changeover style, orphaned node). Pre-fix this was a
+		// to (unpublished/mid-changeover style, orphaned node). A Core-owned loader
+		// window is NOT this case: claimAtNode synthesizes its claim, so its
+		// deliveries bind (TestPinClaimReader_DeliveredAtACoreOwnedWindow_Binds). Pre-fix this was a
 		// silent no-op and the bin's ticks stranded; now it names the bin + node so
 		// the operator can correct it through the front door.
 		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
@@ -217,16 +219,17 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	} else {
 		cacheValue = blindDeliverySeed(e, delivered, node.CoreNodeName, claim.Role)
 	}
-	claimID := claim.ID
+	claimID := persistedClaimID(claim)
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
+		if err := e.inventoryDelta.OnDelivered(node.ID, claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
 			log.Printf("delivered: set runtime for node %d bin %d: %v", node.ID, *delivered.BinID, err)
 		}
 	}
 	// WHAT THIS CARRIER IS, from Core, alongside the claim that says what was
 	// wanted. The claim id above is the requested identity — it comes from
-	// requestedClaimAtNode, which reads the process's active style — and it is right
-	// only while the two agree. This is the fact itself.
+	// claimAtNode, which reads the process's active style (or, at a Core-owned
+	// loader window, the loader's synthesized claim, which persists no id) — and
+	// it is right only while the two agree. This is the fact itself.
 	//
 	// nil means an older Core sent no payload. Leaving the previous value
 	// standing would be worse than the gap: a stale identity is a confident
@@ -249,7 +252,7 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			log.Printf("market_pullback: auto-cleared bin at %s on delivery", node.CoreNodeName)
 			if e.inventoryDelta != nil {
 				// The stamp too: the auto-clear started this carrier's next life.
-				_ = e.inventoryDelta.SetClaimCountAndEpoch(node.ID, &claimID, 0, cleared.BinID, cleared.DeltaEpoch)
+				_ = e.inventoryDelta.SetClaimCountAndEpoch(node.ID, claimID, 0, cleared.BinID, cleared.DeltaEpoch)
 			}
 		}
 	}
@@ -355,7 +358,7 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 			fmt.Sprintf("could not open runtime row for the node: %v", err))
 		return
 	}
-	claim := requestedClaimAtNode(e.db, node)
+	claim := e.claimAtNode(node)
 	if claim == nil {
 		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
 		return
@@ -366,12 +369,12 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 	} else {
 		cacheValue = blindDeliverySeed(e, delivered, node.CoreNodeName, claim.Role)
 	}
-	claimID := claim.ID
+	claimID := persistedClaimID(claim)
 	if e.inventoryDelta == nil {
 		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "inventory delta sink not wired")
 		return
 	}
-	if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
+	if err := e.inventoryDelta.OnDelivered(node.ID, claimID, *delivered.BinID, delivered.BinEpoch, cacheValue); err != nil {
 		e.raiseDeliveredNotBound(delivered, node.CoreNodeName,
 			fmt.Sprintf("runtime write failed: %v", err))
 		return

@@ -11,16 +11,16 @@ import (
 	"shingoedge/store/processes"
 )
 
-// claim_reader_pins_test.go — the readers that resolve a node's claim from
-// stored style_node_claims only (requestedClaimAtNode), pinned at 1bb689bc at a
-// Core-owned loader window: a node in Core's loader cache with NO stored claim,
+// claim_reader_pins_test.go — the readers that resolved a node's claim from
+// stored style_node_claims only (requestedClaimAtNode, pinned at 1bb689bc) and
+// now use claimAtNode, read at a Core-owned loader window: a node in Core's loader cache with NO stored claim,
 // which after the claim quarantine is every loader window. claimAtNode (stored,
 // else SynthClaim) answers differently ONLY there; a node with a stored claim
 // keeps it, and a node that belongs to no loader synthesizes nothing.
 //
-// One site changes a decision (the delivered handler binds the carrier); every
-// other site gives the same answer through a synthesized claim, and its pin
-// states that answer.
+// One reader changed a decision (the delivered handler, both arms, now binds the
+// carrier); one changed only a refusal's sentence (pairedNodeOf); every other
+// site gives the same answer through a synthesized claim, and its pin states it.
 
 // crFixture is one Core-owned consume window W, plus a plain node P on the same
 // process that belongs to no loader and has no claim.
@@ -80,28 +80,38 @@ func (f *crFixture) boundBin(t *testing.T, id int64) (bin *int64, uop int, claim
 	return rt.ActiveBinID, rt.RemainingUOPCached, rt.ActiveClaimID
 }
 
-// wiring_delivered.go:200 — CHANGES. At base the delivery at a Core-owned window
-// raises "delivered but NOT bound … no active claim at node" and binds nothing.
-func TestPinClaimReader_DeliveredAtACoreOwnedWindow_DoesNotBind(t *testing.T) {
+// wiring_delivered.go handleNodeOrderDelivered — a delivery at a Core-owned
+// window binds the carrier, and writes NO claim id: the synthesized claim has
+// none. Before (1bb689bc) it raised "delivered but NOT bound … no active claim at
+// node" and bound nothing.
+func TestPinClaimReader_DeliveredAtACoreOwnedWindow_Binds(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRD")
 	f.deliverU1(t, f.w, f.wCore)
-	if bin, uop, _ := f.boundBin(t, f.w); bin != nil || uop != 0 {
-		t.Errorf("W runtime after delivery = bin %v uop %d, want unbound at base", bin, uop)
+	bin, uop, claimID := f.boundBin(t, f.w)
+	if bin == nil || *bin != 991 || uop != 30 {
+		t.Errorf("W runtime after delivery = bin %v uop %d, want bin 991 with 30", bin, uop)
+	}
+	if claimID != nil {
+		t.Errorf("active_claim_id = %d, want nil — a synthesized claim persists no id", *claimID)
 	}
 }
 
-// wiring_delivered.go:358 (the fallback for a delivery with no Edge row) —
-// the same reader, same answer at base.
-func TestPinClaimReader_FallbackDeliveredAtACoreOwnedWindow_DoesNotBind(t *testing.T) {
+// wiring_delivered.go handleFallbackDelivered (a delivery with no Edge row) —
+// the same reader: binds at a Core-owned window, no claim id. Before: unbound.
+func TestPinClaimReader_FallbackDeliveredAtACoreOwnedWindow_Binds(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRF")
 	bin, uop := int64(992), 30
 	if err := f.eng.orderMgr.HandleDeliveredWithExpiry("no-edge-row", "delivered", nil, &bin, &uop, nil, 0, f.wCore, ""); err == nil {
 		t.Fatalf("fixture: an unknown uuid must take the fallback path (the manager reports not-found)")
 	}
-	if got, u, _ := f.boundBin(t, f.w); got != nil || u != 0 {
-		t.Errorf("W runtime after the fallback delivery = bin %v uop %d, want unbound at base", got, u)
+	got, u, claimID := f.boundBin(t, f.w)
+	if got == nil || *got != 992 || u != 30 {
+		t.Errorf("W runtime after the fallback delivery = bin %v uop %d, want bin 992 with 30", got, u)
+	}
+	if claimID != nil {
+		t.Errorf("active_claim_id = %d, want nil", *claimID)
 	}
 }
 
@@ -116,7 +126,7 @@ func TestPinClaimReader_DeliveredAtAPlainNodeWithNoClaim_DoesNotBind(t *testing.
 	}
 }
 
-// wiring_status_changed.go:64 — SAME ANSWER. The sequential backfill needs a
+// wiring_status_changed.go handleSequentialBackfill — SAME ANSWER. The sequential backfill needs a
 // sequential claim; nil and a synthesized manual_swap claim both return.
 func TestPinClaimReader_SequentialBackfill_NoneAtACoreOwnedWindow(t *testing.T) {
 	t.Parallel()
@@ -135,7 +145,7 @@ func TestPinClaimReader_SequentialBackfill_NoneAtACoreOwnedWindow(t *testing.T) 
 	}
 }
 
-// leg_departure.go:158 and :286 — SAME ANSWER. A loader window's legs are simple
+// leg_departure.go stampDepartureIfLeftCell and settleCellPlacement — SAME ANSWER. A loader window's legs are simple
 // moves with no steps, so neither the departure stamp nor the placement settle
 // has anything to act on through a synthesized claim either.
 func TestPinClaimReader_DepartureAndSettle_NothingAtACoreOwnedWindow(t *testing.T) {
@@ -152,8 +162,9 @@ func TestPinClaimReader_DepartureAndSettle_NothingAtACoreOwnedWindow(t *testing.
 	}
 }
 
-// operator_stations.go:610 — SAME ANSWER. The Core-loader shortcut a few lines
-// above already returns true for a loader window, so :610 is not reached for one.
+// operator_stations.go CanAcceptOrders — SAME ANSWER. The Core-loader shortcut
+// above the claim read already returns true for a loader window, so that read is
+// not reached for one.
 func TestPinClaimReader_CanAcceptOrders_TrueAtACoreOwnedWindow(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRA")
@@ -162,12 +173,12 @@ func TestPinClaimReader_CanAcceptOrders_TrueAtACoreOwnedWindow(t *testing.T) {
 	}
 }
 
-// operator_ab_cycling.go:208 and :227 — SAME DECISION, one message. A flip at a
-// loader window is refused either way: flipTargetReady answers first (no bin,
-// no changeover — :208's consume arm is reached only through a changeover task,
-// which a loader window has none of), and pairedNodeOf refuses the confirmed
-// flip. At base its sentence is "has no active claim"; through a synthesized
-// claim it becomes "is not part of an A/B pair".
+// operator_ab_cycling.go flipTargetReady and pairedNodeOf — SAME DECISION, one
+// message. A flip at a loader window is refused either way: flipTargetReady
+// answers first (no bin, no changeover — its consume arm is reached only through
+// a changeover task, which a loader window has none of), and pairedNodeOf
+// refuses the confirmed flip. Through the synthesized claim it says "is not part
+// of an A/B pair"; before (1bb689bc) it said "has no active claim".
 func TestPinClaimReader_FlipAtACoreOwnedWindow_IsRefused(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRB")
@@ -176,12 +187,12 @@ func TestPinClaimReader_FlipAtACoreOwnedWindow_IsRefused(t *testing.T) {
 		t.Errorf("unconfirmed flip at W = %v, want the no-bin refusal", err)
 	}
 	err = f.eng.FlipABNode(f.w, FlipRequest{CalledBy: "test", Confirm: true})
-	if err == nil || !strings.Contains(err.Error(), "has no active claim") {
-		t.Errorf("confirmed flip at W = %v, want pairedNodeOf's refusal (at base: has no active claim)", err)
+	if err == nil || !strings.Contains(err.Error(), "is not part of an A/B pair") {
+		t.Errorf("confirmed flip at W = %v, want pairedNodeOf's refusal", err)
 	}
 }
 
-// operator_changeover_release.go:196 — SAME ANSWER. Not a paired position.
+// operator_changeover_release.go linePullsFrom — SAME ANSWER. Not a paired position.
 func TestPinClaimReader_LinePullsFrom_NothingAtACoreOwnedWindow(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRR")
@@ -191,7 +202,7 @@ func TestPinClaimReader_LinePullsFrom_NothingAtACoreOwnedWindow(t *testing.T) {
 	}
 }
 
-// changeover_applier.go:320 — SAME ANSWER. An evacuate clears the pull bit on
+// changeover_applier.go clearActivePullForEvacuate — SAME ANSWER. An evacuate clears the pull bit on
 // the node alone; a loader window has no A/B partner to clear.
 func TestPinClaimReader_ClearActivePull_OnlyTheNodeAtACoreOwnedWindow(t *testing.T) {
 	t.Parallel()
