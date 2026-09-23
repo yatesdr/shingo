@@ -127,6 +127,17 @@ func fakeCoreBinServer(t *testing.T, occupied bool, payload string) *httptest.Se
 			json.NewEncoder(w).Encode(rows)
 			return
 		}
+		if r.URL.Path == "/api/telemetry/bin-clear" && !occupied {
+			// Core refuses to clear a node that holds no bin
+			// (TestApiBinClear_NodeWithoutBin_Refuses).
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "no bin at node"})
+			return
+		}
+		if r.URL.Path == "/api/telemetry/bin-clear" {
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "cleared_payload_code": payload})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	t.Cleanup(srv.Close)
@@ -228,6 +239,8 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 // TestClearBin_NoEmptyOut_WhenWindowEmpty pins the hadBin gate: clearing a window
 // Core reports as empty creates NO move — otherwise a stray clear would queue a
 // phantom empty-out with no bin to pick up (the queue noise this refactor removes).
+// Core refuses the clear itself ("no bin at node"), ClearBin returns that refusal
+// to the operator — as it always did against a real Core — and files nothing.
 func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	t.Parallel()
 	srv := fakeCoreBinServer(t, false, "")
@@ -238,10 +251,12 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = NewCoreClient(srv.URL)
 
-	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
+	if err := eng.ClearBin(unloaderNodeID, ""); err == nil || !strings.Contains(err.Error(), "no bin at node") {
+		t.Errorf("ClearBin on an empty window = %v, want Core's no-bin refusal", err)
+	}
 
 	if n, _ := countMovesTo(t, db, unloaderNodeID, "EMPTY-TOTES"); n != 0 {
-		t.Errorf("empty-out moves on empty window = %d, want 0 (hadBin gate)", n)
+		t.Errorf("empty-out moves on empty window = %d, want 0", n)
 	}
 }
 

@@ -402,7 +402,7 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 // NOTE: TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires was REMOVED
 // with the bin-count produce trigger. Produce L1s now come from the UOP-threshold
 // path (HandleLoopBelowThreshold — handle_loop_below_threshold_test.go) or operator
-// staging (MaybePushLoader — maybe_push_loader_test.go); there is no bin-count
+// staging (rePushOwnLoader / SweepPushLoaders — maybe_push_loader_test.go); there is no bin-count
 // DemandSignal path left to test here.
 
 // TestHandleLoaderEmptyInCompletion_FiresL2 verifies the L2 fire on the

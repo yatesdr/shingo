@@ -30,7 +30,7 @@ const manualSwapWindowSlots = 1
 // The Edge used to receive a below-threshold signal and work out how many
 // carriers were needed and where they went; that half is gone, and Core creates
 // the orders itself. What is left here is the OPERATOR side: the opportunistic
-// window-free push (MaybePushLoader), the operator's own requests, and the
+// window-free push (rePushOwnLoader, SweepPushLoaders), the operator's own requests, and the
 // unloader path — all still through the withLoaderBudget seam.
 //
 // Two earlier retirements, kept as gravestones because their names still appear
@@ -64,7 +64,7 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 //
 // SCOPE — this is the never-2N guarantee only for the writers that route
 // through here: stageOperatorEmpty (the opportunistic push, via
-// maybeStageLoaderEmpty/MaybePushLoader), RequestEmptyBin's manual_swap branch
+// maybeStageLoaderEmpty, from rePushOwnLoader and SweepPushLoaders), RequestEmptyBin's manual_swap branch
 // and RequestFullBin (operator), and CreateRetrieveForAPI (the HTTP order API,
 // since Deploy 1b). The automatic U1 (createUnloaderFullIns) takes the same
 // per-loader mutex and the same count/cap/target step (decideLoaderBudget) but
@@ -455,38 +455,6 @@ func (e *Engine) stageOperatorEmpty(loader *domain.Loader, payload domain.Payloa
 		return created, err
 	}
 	return created, nil
-}
-
-// MaybePushLoader is the opportunistic empty-staging push for OPERATOR-DRIVEN
-// loaders, walking every one of them. When an
-// operator-driven loader's window is free it stages one empty so the operator
-// always has a bin to fill. Threshold loaders are no-ops here — Core decides
-// and creates their empties itself. Opportunistic, one at a time: maybeStageLoaderEmpty fires only when
-// no empty is already in flight, and Core's CheckDropoffCapacity queues the
-// order if the window is still physically occupied, so it can't slam.
-//
-// Trigger site: ClearBin (operator cleared a produce window). An L2 landing
-// pushes only the loader that owns the node (rePushOwnLoader, applyManualSwap),
-// and Edge startup runs SweepPushLoaders.
-//
-// The nodeID arg is vestigial — the reservation seam's never-2N budget makes
-// the sweep idempotent (already-staged loaders create nothing), so there is no need
-// to filter to a specific loader.
-func (e *Engine) MaybePushLoader(_ int64) {
-	loaders, err := e.loaders().Loaders(domain.RoleProduce)
-	if err != nil {
-		e.logFn("loader-push: list produce loaders: %v", err)
-		return
-	}
-	for _, l := range loaders {
-		// Operator-driven loaders only. A threshold loader is Core's to feed, even
-		// if it has no threshold configured — in which case it is fed by nothing,
-		// and SweepPushLoaders is where that gets said out loud.
-		if !l.UsesOperatorStaging() {
-			continue
-		}
-		e.maybeStageLoaderEmpty(l)
-	}
 }
 
 // maybeStageLoaderEmpty stages one empty at an operator-driven loader if none is

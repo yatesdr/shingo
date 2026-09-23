@@ -620,6 +620,9 @@ type BinClearResponse struct {
 	BinID      int64  `json:"bin_id,omitempty"`
 	BinLabel   string `json:"bin_label,omitempty"`
 	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
+	// ClearedPayloadCode is what the carrier held before the clear. ClearBin
+	// logs it; nothing decides on it. Blank from a Core that predates the field.
+	ClearedPayloadCode string `json:"cleared_payload_code,omitempty"`
 }
 
 // BinCountResponse is Core's reply to a count declared from the line.

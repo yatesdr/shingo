@@ -20,9 +20,10 @@ import (
 
 // TestPinFold_SingleWindowCycleReads: full on N → CLEAR → U2 lifts the carrier
 // (the pickup gate pulls the next full) → an upstream produce release of the
-// same payload → the U2 lands. CLEAR 1 (hadBin pre-read; the gate is covered
-// locally), pickup 1, release 0 (covered locally), landing 0. At f9a854cb: CLEAR
-// 2, pickup 1, release 1, landing 0 = 4.
+// same payload → the U2 lands. CLEAR 0 (the clear answers hadBin; the gate is
+// covered locally), pickup 1, release 0 (covered locally), landing 0 — ONE Core
+// read per cycle, the one that pulls. At f9a854cb: CLEAR 2, pickup 1, release 1,
+// landing 0 = 4.
 func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 	t.Parallel()
 	f := newCycleUnloader(t, "FLD")
@@ -39,7 +40,7 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 		}
 	}
 
-	step("CLEAR", 1, func() { testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin") })
+	step("CLEAR", 0, func() { testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin") })
 	u2 := f.onlyU2(t)
 	step("pickup", 1, func() { f.pickUp(t, u2) })
 	if got := f.fulls(t, f.nCore); got != 1 {
@@ -50,8 +51,8 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 		t.Errorf("after the release: U1s = %d, want still 1 (the one in flight covers it)", got)
 	}
 	step("landing", 0, func() { scLand(t, f.eng, f.db, u2) })
-	if total != 2 {
-		t.Errorf("Core node-bins reads per cycle = %d, want 2", total)
+	if total != 1 {
+		t.Errorf("Core node-bins reads per cycle = %d, want 1", total)
 	}
 }
 
@@ -156,10 +157,10 @@ func newClearShapeCore(t *testing.T, failBins bool, clearBody map[string]any) *c
 	return c
 }
 
-// TestPinFold_ClearAgainstTodaysCoreResponse: the bin-clear answer as Core sends
-// it at base (status, bin_id, bin_label, delta_epoch — no cleared payload). The
-// U2 is created. This is the mixed-version case R3 must keep: an Edge talking
-// to a Core that sends no new field still sends the U2.
+// TestPinFold_ClearAgainstTodaysCoreResponse: the bin-clear answer as a Core that
+// predates cleared_payload_code sends it (status, bin_id, bin_label, delta_epoch).
+// The U2 is still created — hadBin comes from the clear succeeding, not from any
+// new field — and the Edge reads no node-bins.
 func TestPinFold_ClearAgainstTodaysCoreResponse(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -171,15 +172,15 @@ func TestPinFold_ClearAgainstTodaysCoreResponse(t *testing.T) {
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("U2s after a CLEAR against today's Core answer = %d, want 1", n)
 	}
-	if got := c.reads(); got != 1 {
-		t.Errorf("node-bins reads = %d, want 1 at base (the hadBin pre-read)", got)
+	if got := c.reads(); got != 0 {
+		t.Errorf("node-bins reads = %d, want 0 (the pre-read is gone)", got)
 	}
 }
 
-// TestPinFold_ClearWhenThePreReadFails: the hadBin pre-read fails (Core answers
-// 500) while the clear itself commits. At base hadBin reads false, so NO U2 is
-// created for a carrier Core has just cleared — it strands at the window until
-// someone taps PUSH EMPTY.
+// TestPinFold_ClearWhenThePreReadFails: node-bins would fail (Core answers 500)
+// while the clear itself commits. The U2 is created. At f9a854cb the pre-read's
+// failure read as "no bin", so NO U2 was created for a carrier Core had just
+// cleared — it stranded at the window until someone tapped PUSH EMPTY.
 func TestPinFold_ClearWhenThePreReadFails(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -188,7 +189,7 @@ func TestPinFold_ClearWhenThePreReadFails(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = NewCoreClient(c.srv.URL)
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin")
-	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 0 {
-		t.Errorf("U2s after a CLEAR whose pre-read failed = %d, want 0 at base", n)
+	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
+		t.Errorf("U2s after a CLEAR with node-bins failing = %d, want 1", n)
 	}
 }

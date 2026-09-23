@@ -645,12 +645,11 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	}
 	// Push-driven loader (operator-staged): L2 just landed at the market, so the
 	// loader window is confirmed free — stage the next empty at THE LOADER THIS
-	// NODE BELONGS TO, and only that one. MaybePushLoader walks every
-	// operator-staged produce loader with a Core read each; one loader's landing
-	// frees only its own window, so the walk was that many GETs for one fact.
-	// Threshold loaders are Core's to feed and are skipped here, as they are in
-	// MaybePushLoader. Every loader's own landing re-pushes it —
-	// TestLanding_RePushesOnlyItsOwnLoader.
+	// NODE BELONGS TO, and only that one. The walk over every operator-staged
+	// produce loader this replaced read Core once per loader, and one loader's
+	// landing frees only its own window, so it was that many GETs for one fact.
+	// Threshold loaders are Core's to feed and are skipped. Every loader's own
+	// landing re-pushes it — TestLanding_RePushesOnlyItsOwnLoader.
 	if claim.Role == protocol.ClaimRoleProduce {
 		e.rePushOwnLoader(ctx.node)
 	}
@@ -658,9 +657,11 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 }
 
 // rePushOwnLoader stages one empty at the operator-staged produce loader that
-// owns node, through the same seam MaybePushLoader uses (maybeStageLoaderEmpty):
-// one budget-locked count and one Core occupancy read. A node that belongs to no
-// loader, or to a threshold one, stages nothing.
+// owns node, through maybeStageLoaderEmpty: one budget-locked count and one Core
+// occupancy read. A node that belongs to no loader, or to a threshold one, stages
+// nothing. It is the produce CLEAR's push and the L2-landed push; the startup
+// sweep is SweepPushLoaders. Pinned by TestProduceClear_RePushesOnlyItsOwnLoader
+// and TestLanding_RePushesOnlyItsOwnLoader.
 func (e *Engine) rePushOwnLoader(node *processes.Node) {
 	l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName))
 	if err != nil || l == nil {

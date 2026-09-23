@@ -3,9 +3,11 @@
 package www
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -24,4 +26,26 @@ func TestApiBinClear_NodeWithoutBin_Refuses(t *testing.T) {
 		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 	assertJSONError(t, rec.Body.Bytes(), "no bin at node")
+}
+
+// TestApiBinClear_AnswersWhatTheCarrierHeld: the clear's answer carries the
+// payload the carrier held before the clear, so the Edge can log it without
+// reading node-bins first.
+func TestApiBinClear_AnswersWhatTheCarrierHeld(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-HELD-1")
+	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
+		map[string]any{"node_name": sd.StorageNode.Name})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ClearedPayloadCode string `json:"cleared_payload_code"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
+	if resp.ClearedPayloadCode != sd.Payload.Code {
+		t.Errorf("cleared_payload_code = %q, want %q (what the carrier held)", resp.ClearedPayloadCode, sd.Payload.Code)
+	}
 }

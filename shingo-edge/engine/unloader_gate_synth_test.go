@@ -77,7 +77,7 @@ func TestUnloaderGate_SynthClaimAutoPush_ClearAndPushEmpty(t *testing.T) {
 		f.core.set(f.nCore, true, "PART-UG")
 		before := f.core.nodeBinReads()
 		testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin")
-		f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1+1, 1, 0)
+		f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1, 1, 0) // the gate's read; the clear answers hadBin
 	})
 	t.Run("push_empty", func(t *testing.T) {
 		t.Parallel()
@@ -128,5 +128,5 @@ func TestUnloaderGate_SynthClaimAutoPushOff_FiresNothing(t *testing.T) {
 	f.core.set(f.nCore, true, "PART-UG")
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin")
-	f.checkGate(t, "CLEAR (auto_push off)", f.core.nodeBinReads()-before, 1, 0, 0)
+	f.checkGate(t, "CLEAR (auto_push off)", f.core.nodeBinReads()-before, 0, 0, 0)
 }

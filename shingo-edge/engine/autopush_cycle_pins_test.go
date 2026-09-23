@@ -75,8 +75,8 @@ func TestAutoPushCycle_SingleWindow_RefillsAtThePickup(t *testing.T) {
 
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin")
-	if reads := f.core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("CLEAR: node-bins reads = %d, want 1 (the tap; the gate is covered locally — the carrier is held)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 0 {
+		t.Errorf("CLEAR: node-bins reads = %d, want 0 (the clear answers hadBin; the gate is covered locally)", reads)
 	}
 	if got := f.fulls(t, f.nCore); got != 0 {
 		t.Fatalf("CLEAR: U1s = %d, want 0 — the carrier is still on the window", got)
@@ -181,8 +181,8 @@ func TestPinAutoPushGate_ClearIsTheOnlyTriggerWhileAPeerFullIsUnconfirmed(t *tes
 
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin at N")
-	if reads := f.core.nodeBinReads() - before; reads != 1+1 {
-		t.Errorf("CLEAR at N: node-bins reads = %d, want 1 (hadBin pre-read) + 1 (the gate)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 1 {
+		t.Errorf("CLEAR at N: node-bins reads = %d, want 1 (the gate)", reads)
 	}
 	if got := f.fulls(t, f.n2Core); got != 1 {
 		t.Errorf("CLEAR at N: U1s to N2 = %d, want 1 — the confirm frees the payload's budget and the gate fires", got)

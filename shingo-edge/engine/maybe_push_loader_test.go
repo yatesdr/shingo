@@ -2,11 +2,11 @@ package engine
 
 import "testing"
 
-// TestMaybePushLoader_StagesOneEmptyForOperatorDrivenLoaderOnly pins the
+// TestRePushOwnLoader_StagesOneEmptyForOperatorDrivenLoaderOnly pins the
 // loader-side opportunistic staging: an operator-driven loader gets exactly one
 // empty staged (idempotent while in flight); a (configured) threshold loader gets
 // none (its empties come from the threshold path).
-func TestMaybePushLoader_StagesOneEmptyForOperatorDrivenLoaderOnly(t *testing.T) {
+func TestRePushOwnLoader_StagesOneEmptyForOperatorDrivenLoaderOnly(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -30,19 +30,19 @@ func TestMaybePushLoader_StagesOneEmptyForOperatorDrivenLoaderOnly(t *testing.T)
 
 	// Configured threshold loader → no opportunistic staging (Core's threshold
 	// monitor supplies it).
-	eng.MaybePushLoader(nodeID)
+	eng.rePushOwnLoader(mustNode(t, db, nodeID))
 	if got := countEmpties(); got != 0 {
 		t.Fatalf("configured threshold loader must not auto-stage, got %d", got)
 	}
 
 	// Mark operator-driven (replenishment=operator) → one empty staged.
 	seedCoreLoader(t, eng, sharedLoaderInfo("PUSH-LOADER", "produce", "operator", "PART-P", 0, 0))
-	eng.MaybePushLoader(nodeID)
+	eng.rePushOwnLoader(mustNode(t, db, nodeID))
 	if got := countEmpties(); got != 1 {
 		t.Fatalf("transitional loader should stage exactly 1 empty, got %d", got)
 	}
 	// Idempotent while one is in flight.
-	eng.MaybePushLoader(nodeID)
+	eng.rePushOwnLoader(mustNode(t, db, nodeID))
 	if got := countEmpties(); got != 1 {
 		t.Errorf("must not stage a 2nd empty while one is in flight, got %d", got)
 	}
@@ -91,7 +91,7 @@ func TestSweepPushLoaders_OnlyOperatorStagedLoaders(t *testing.T) {
 	}
 }
 
-// TestMaybePushLoader_ThresholdLoaderIsNotFedByThePush pins the ruling side of
+// TestRePushOwnLoader_ThresholdLoaderIsNotFedByThePush pins the ruling side of
 // the same decision (owner, 2026-08-02): threshold is switched on, not fallen
 // into.
 //
@@ -102,7 +102,7 @@ func TestSweepPushLoaders_OnlyOperatorStagedLoaders(t *testing.T) {
 //
 // That IS a loader nobody feeds, deliberately, and it is why SweepPushLoaders
 // warns about this configuration OUTSIDE the staging gate rather than inside it.
-func TestMaybePushLoader_ThresholdLoaderIsNotFedByThePush(t *testing.T) {
+func TestRePushOwnLoader_ThresholdLoaderIsNotFedByThePush(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -110,7 +110,7 @@ func TestMaybePushLoader_ThresholdLoaderIsNotFedByThePush(t *testing.T) {
 	// Threshold switched on, no threshold value configured.
 	seedCoreLoader(t, eng, sharedLoaderInfo("FB-LOADER", "produce", "threshold", "PART-F", 0, 0))
 
-	eng.MaybePushLoader(nodeID)
+	eng.rePushOwnLoader(mustNode(t, db, nodeID))
 
 	n := 0
 	ords, _ := db.ListActiveOrdersByProcessNode(nodeID)

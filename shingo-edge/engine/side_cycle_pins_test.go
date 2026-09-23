@@ -97,10 +97,16 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 	case "/api/telemetry/bin-clear":
 		var req map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if win := c.windows[req["node_name"]]; win != nil {
-			win.payload = ""
+		win := c.windows[req["node_name"]]
+		if win == nil || !win.occupied {
+			// Core refuses to clear a node that holds no bin.
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no bin at node"})
+			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "bin_id": 77, "delta_epoch": 4})
+		cleared := win.payload
+		win.payload = ""
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "bin_id": 77, "delta_epoch": 4, "cleared_payload_code": cleared})
 	default:
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}
@@ -384,16 +390,17 @@ func TestPinCoreOwnedLoader_L2LandingClearsAndRePushes(t *testing.T) {
 		t.Errorf("empties staged by the landing = %d, want 1 (the produce re-push)", n)
 	}
 
-	eng.MaybePushLoader(nodeID)
+	eng.SweepPushLoaders()
 	if n := scActiveEmptiesTo(t, db, window); n != 1 {
-		t.Errorf("control: MaybePushLoader after the re-push left %d empties, want still 1", n)
+		t.Errorf("control: a push sweep after the re-push left %d empties, want still 1", n)
 	}
 }
 
 // TestLanding_RePushesOnlyItsOwnLoader: an L2 landing re-pushes the loader that
 // owns the node and no other, at a cost of ONE Core occupancy read — for a
 // Core-owned loader and for one still holding a stored claim alike. The push
-// used to walk every operator-staged produce loader (MaybePushLoader), one read
+// used to walk every operator-staged produce loader (the push that preceded
+// rePushOwnLoader), one read
 // each, for a landing that frees exactly one window.
 func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 	t.Parallel()

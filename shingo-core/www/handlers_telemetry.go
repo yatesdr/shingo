@@ -555,11 +555,16 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "cleared", "bin_id": bin.ID,
 	}))
+	// cleared_payload_code is what the carrier held before this clear — `bin` was
+	// read above, before ClearForReuseAndBookDeparture. The Edge logs it with the
+	// CLEAR; it no longer reads node-bins first to learn it, and a successful
+	// answer here is what tells it a carrier was there (the no-bin refusal above).
 	h.jsonOK(w, map[string]any{
-		"status":      "ok",
-		"bin_id":      bin.ID,
-		"bin_label":   bin.Label,
-		"delta_epoch": newEpoch,
+		"status":               "ok",
+		"bin_id":               bin.ID,
+		"bin_label":            bin.Label,
+		"delta_epoch":          newEpoch,
+		"cleared_payload_code": bin.PayloadCode,
 	})
 }
 

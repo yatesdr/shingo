@@ -8,14 +8,17 @@ import (
 	"shingoedge/store/processes"
 )
 
-// produce_clear_repush_pins_test.go — CLEAR at a produce (loader) window, pinned
-// at e83cccd1. It calls MaybePushLoader, which walks EVERY operator-staged produce
-// loader with a Core node-bins read each, and stages an empty at any of them that
-// has a free window — including a loader whose window this tap did not free.
+// produce_clear_repush_pins_test.go — CLEAR at a produce (loader) window
+// re-pushes only the loader that owns the window (rePushOwnLoader): one Core
+// node-bins read, and nothing staged at another loader.
+//
+// BEFORE (pinned at e83cccd1) it walked EVERY operator-staged produce loader with
+// a read each, and staged an empty at any of them that had a free window —
+// including a loader whose window this tap did not free.
 //
 // Two Core-owned, operator-staged produce loaders: A (window WA, the one being
 // cleared) and B (window WB, free, nothing in flight).
-func TestPinProduceClear_WalksEveryOperatorStagedLoader(t *testing.T) {
+func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -46,13 +49,13 @@ func TestPinProduceClear_WalksEveryOperatorStagedLoader(t *testing.T) {
 
 	before := core.nodeBinReads()
 	testutil.MustNoErr(t, eng.ClearBin(waID, ""), "ClearBin at a produce window")
-	if n := scActiveEmptiesTo(t, db, wb); n != 1 {
-		t.Errorf("empties staged at the OTHER loader's window %s = %d, want 1 at base (the walk)", wb, n)
+	if n := scActiveEmptiesTo(t, db, wb); n != 0 {
+		t.Errorf("empties staged at the OTHER loader's window %s = %d, want 0", wb, n)
 	}
 	if n := scActiveEmptiesTo(t, db, wa); n != 0 {
 		t.Errorf("empties staged at %s = %d, want 0 (its carrier is still resident)", wa, n)
 	}
-	if reads := core.nodeBinReads() - before; reads != 2 {
-		t.Errorf("node-bins reads during the produce CLEAR = %d, want 2 at base (one per operator-staged loader)", reads)
+	if reads := core.nodeBinReads() - before; reads != 1 {
+		t.Errorf("node-bins reads during the produce CLEAR = %d, want 1 (the own loader)", reads)
 	}
 }

@@ -77,8 +77,8 @@ func coreUnloaderWindow(t *testing.T, eng *Engine, window string, info protocol.
 // no bin_type_code at all, and an explicit code is sent as given. At an
 // unloader with a bare type, a blank code sends the bare type and an explicit
 // code still wins. A produce loader never substitutes. Every case costs one
-// node-bins read (consume) and one bin-clear POST: the bare type comes from
-// the loader snapshot, not from Core.
+// bin-clear POST and no node-bins read: the bare type comes from the loader
+// snapshot, and whether a carrier was there comes from the clear's own answer.
 func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -87,11 +87,11 @@ func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 		wantKey                        bool
 		wantReads                      int
 	}{
-		{name: "blank code", window: "HLC-B", role: "consume", code: "", want: "", wantKey: false, wantReads: 1},
-		{name: "explicit code", window: "HLC-X", role: "consume", code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 1},
-		{name: "blank code at a bare unloader", window: "HLC-BB", role: "consume", bare: "HALF-TOTE", code: "", want: "HALF-TOTE", wantKey: true, wantReads: 1},
-		{name: "explicit code at a bare unloader wins", window: "HLC-BX", role: "consume", bare: "HALF-TOTE", code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 1},
-		// A produce loader's CLEAR reads no node-bins and never substitutes.
+		{name: "blank code", window: "HLC-B", role: "consume", code: "", want: "", wantKey: false, wantReads: 0},
+		{name: "explicit code", window: "HLC-X", role: "consume", code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 0},
+		{name: "blank code at a bare unloader", window: "HLC-BB", role: "consume", bare: "HALF-TOTE", code: "", want: "HALF-TOTE", wantKey: true, wantReads: 0},
+		{name: "explicit code at a bare unloader wins", window: "HLC-BX", role: "consume", bare: "HALF-TOTE", code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 0},
+		// A produce loader's CLEAR never substitutes.
 		{name: "blank code at a produce loader with a bare type", window: "HLC-PB", role: "produce", bare: "HALF-TOTE", code: "", want: "", wantKey: false, wantReads: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

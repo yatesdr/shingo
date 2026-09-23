@@ -473,17 +473,27 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 //
 // The empty-out is created AFTER the manifest clear has committed on Core. It used to
 // be created before, on the reasoning that Core's bin record was "still coherent" — but
-// what the U2 needs from that record is captured into a local first (hadBin), so the
-// ordering bought nothing and cost a race: between the create and the
-// clear, the bin Core hands the U2 still carries its payload, and a mover that reads it
-// in that window carries a labelled carrier to the empty-totes destination. Creating it
-// after the clear commits means the carrier a U2 ever names is already empty.
+// the ordering bought nothing and cost a race: between the create and the clear, the
+// bin Core hands the U2 still carries its payload, and a mover that reads it in that
+// window carries a labelled carrier to the empty-totes destination. Creating it after
+// the clear commits means the carrier a U2 ever names is already empty.
 //
-// It is still gated on a bin actually being present at the tap, so clearing an
-// already-empty window creates nothing — and it still fires for EVERY consume drain,
-// not just AMR-fed ones, which was the reason the create sat on the CLEAR in the first
-// place. That property is preserved by capturing hadBin before the clear rather than
-// re-reading the window after it.
+// It is still gated on a bin actually being present, and the clear itself is the
+// answer: Core refuses to clear a node that holds no bin (400 "no bin at node",
+// TestApiBinClear_NodeWithoutBin_Refuses) before it clears anything, so clearing an
+// already-empty window returns that refusal and creates nothing — and a clear that
+// succeeds proves a carrier was there. It still fires for EVERY consume drain, not
+// just AMR-fed ones, which was the reason the create sat on the CLEAR in the first
+// place.
+//
+// THE PRE-READ IS GONE. ClearBin used to read node-bins before the clear only to
+// learn "was there a bin, and what did it hold". That was a Core round trip per CLEAR
+// at every consume station, and it was wrong on a failed read: an unreachable
+// node-bins answered "no bin", the clear then committed anyway, and the cleared
+// carrier got no U2 (TestPinFold_ClearWhenThePreReadFails). The payload for the log
+// line now rides the clear's own answer (cleared_payload_code); a Core too old to
+// send it leaves the line blank and changes nothing else
+// (TestPinFold_ClearAgainstTodaysCoreResponse).
 //
 // Post-clear, if the claim has AutoPush enabled, rePushOwnUnloader offers the next pull
 // for this node's own unloader to the reservation seam — a no-inbound drain is gated
@@ -500,17 +510,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if err := requireLoaderClaim(node, claim); err != nil {
 		return err
 	}
-	// Capture the bin in the window BEFORE confirm/clear, while Core's manifest is
-	// still coherent. hadBin gates the empty-out so clearing an already-empty window
-	// creates nothing; clearedPayload is recorded in the CLEAR log line below. It does
-	// NOT ride the empty-out — see createUnloaderEmptyOut for why the U2 names no part.
-	var clearedPayload string
-	var hadBin bool
 	if claim.Role == protocol.ClaimRoleConsume {
-		if bins, _, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); len(bins) > 0 && bins[0].Occupied {
-			clearedPayload = bins[0].PayloadCode
-			hadBin = true
-		}
 		// Confirm any AMR-fed inbound (U1) — the operator's CLEAR tap IS the receipt
 		// ack. A press/forklift-fed drain has no U1; the helper returns ok=false and
 		// we proceed to the empty-out regardless (it no longer depends on a U1).
@@ -533,12 +533,16 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}
+	// What the carrier held, for the CLEAR log line only — it does NOT ride the
+	// empty-out (see createUnloaderEmptyOut for why the U2 names no part). Blank
+	// from a Core that predates the field.
+	clearedPayload := cleared.ClearedPayloadCode
 	// Empty-out (U2): send the now-empty bin to the unloader's outbound (empty
 	// totes). Fired off the CLEAR — so it runs for every consume drain, not just
 	// ones an AMR fed — but only after the clear has COMMITTED on Core, so the
 	// carrier the U2 names is empty on Core's side too and not merely about to be.
-	// Gated on hadBin, captured above while the window still held the bin.
-	if claim.Role == protocol.ClaimRoleConsume && hadBin {
+	// The clear succeeding is what says a carrier was there (see the doc above).
+	if claim.Role == protocol.ClaimRoleConsume {
 		// Double-tap guard, the same one PushEmptyOut carries: the order layer has
 		// no dedup for move orders, so a second CLEAR tap on the same window would
 		// mint a second U2 for one physical carrier. Moving the create after the
@@ -610,10 +614,13 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.rePushOwnUnloaderIfUncovered(node, node.CoreNodeName)
 	}
-	// Push-driven loader (transitional): the operator cleared the window, so
-	// stage the next empty. Gated inside MaybePushLoader on transitional.
+	// Push-driven loader (operator-staged): the operator cleared the window, so
+	// stage the next empty at the loader this window belongs to — only that one,
+	// and only if it is operator-staged (rePushOwnLoader). The walk over every
+	// operator-staged loader this replaced read Core once per loader and could
+	// stage an empty at a loader whose window this tap did not free.
 	if claim.Role == protocol.ClaimRoleProduce {
-		e.MaybePushLoader(nodeID)
+		e.rePushOwnLoader(node)
 	}
 	return nil
 }

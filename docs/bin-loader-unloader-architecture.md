@@ -177,7 +177,7 @@ How it works:
 
 **Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `withLoaderBudget` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestWithLoaderBudget_EmitDuringReservation_NoDeadlock`.
 
-Callers routed through the seam — **loader side:** `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty`/`MaybePushLoader` (the operator push), and `CreateRetrieveForAPI` (the HTTP order API). (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.) **Unloader side:** `createUnloaderFullInViaSeam`, reached from produce-role lineside release (`MaybeCreateUnloaderFullIn`) and the auto-push sweep (`MaybePushUnloader`/`SweepPushUnloaders`).
+Callers routed through the seam — **loader side:** `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty` (the operator push, from `rePushOwnLoader` and `SweepPushLoaders`), and `CreateRetrieveForAPI` (the HTTP order API). (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.) **Unloader side:** `createUnloaderFullInViaSeam`, reached from produce-role lineside release (`MaybeCreateUnloaderFullIn`), and `createUnloaderFullIns`, reached from the auto_push re-pull of the node's own unloader (`rePushOwnUnloader`: CLEAR, PUSH EMPTY, the U2's pickup, and the U2's landing as a fallback) and the startup sweep (`SweepPushUnloaders`).
 
 ---
 
@@ -205,7 +205,7 @@ One implementation, `aggregateLoaderStore` — it projects the Core-owned cache 
 
 Callers branch with `errors.Is(err, ErrLoaderNotFound)`. This closes the prior bug where `resolveCoreLoaderForPayload` returned `nil` for both a miss and a DB error and the caller fell open into payload-first-match on a transient flicker.
 
-**Consumed by the unloader paths.** The unloader full-in resolves a `*domain.Loader` through the store and passes it to the seam — `MaybeCreateUnloaderFullIn` / `MaybePushUnloader` resolve a consume `*domain.Loader` and route through the seam. There is no loader-side threshold resolver on the Edge any more (`HandleLoopBelowThreshold` is deleted — Core's threshold monitor creates its orders directly, so it never needs the Edge aggregate), and the legacy DemandSignal resolver and its bin-count minimum-stock read are retired too. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every remaining path resolves a `*domain.Loader` from the aggregate.
+**Consumed by the unloader paths.** The unloader full-in resolves a `*domain.Loader` through the store and passes it to the seam — `MaybeCreateUnloaderFullIn`, `rePushOwnUnloader` and `SweepPushUnloaders` resolve a consume `*domain.Loader` and route through the seam. There is no loader-side threshold resolver on the Edge any more (`HandleLoopBelowThreshold` is deleted — Core's threshold monitor creates its orders directly, so it never needs the Edge aggregate), and the legacy DemandSignal resolver and its bin-count minimum-stock read are retired too. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every remaining path resolves a `*domain.Loader` from the aggregate.
 
 ---
 
@@ -354,11 +354,12 @@ legacy Edge-only `operator_driven_loaders` table — renamed from `transitional_
 path is suppressed — the UOP-threshold C-push is Core-owned and checks the
 operator-driven flag on the Core aggregate, so it never orders for an
 operator-driven loader. Empties instead flow via
-`MaybePushLoader`, the loader-side mirror of `MaybePushUnloader`: when a window is free
-it opportunistically stages one empty. The staged empty is **payload-agnostic** — a
+`rePushOwnLoader`, the loader-side mirror of `rePushOwnUnloader`: when a window of
+that loader is freed it opportunistically stages one empty at that loader only. The staged empty is **payload-agnostic** — a
 generic carrier with no payload tag, since an opportunistic stage has no
 payload-specific demand behind it; the operator binds the real payload at load.
-Triggered on L2/clear completion and a startup sweep. (Single-carrier assumption: a
+Triggered by a CLEAR at the window, the L2's landing, and the startup sweep
+(`SweepPushLoaders`). (Single-carrier assumption: a
 blank order sources any compatible empty, correct only when the loader uses one carrier
 type — `OrderRequest` carries no bin-type field, so `payload_code` is the only carrier
 proxy on the wire. The blank-order path is still type-blind; the quota tables

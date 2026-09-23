@@ -119,15 +119,16 @@ func (f *ugFixture) checkGate(t *testing.T, gate string, reads, wantReads, atN2,
 	}
 }
 
-// TestPinUnloaderGate_Clear: CLEAR at N. The tap reads N once itself (hadBin);
-// the gate then reads its own unloader once and pulls into N2 only.
+// TestPinUnloaderGate_Clear: CLEAR at N. The tap reads no node-bins (the clear's
+// own answer says a carrier was there); the gate reads its own unloader once and
+// pulls into N2 only.
 func TestPinUnloaderGate_Clear(t *testing.T) {
 	t.Parallel()
 	f := newUGFixture(t, "UGC")
 	f.core.set(f.nCore, true, "PART-UG")
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin")
-	f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1+1, 1, 0)
+	f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1, 1, 0) // the gate's read; the clear answers hadBin
 }
 
 // TestPinUnloaderGate_PushEmpty: PUSH EMPTY at N (an empty carrier on it). Same
@@ -185,7 +186,7 @@ func TestPinUnloaderGate_OffAtACoreOwnedWindow(t *testing.T) {
 	if got := f.fulls(t, f.nCore) + f.fulls(t, f.w3Core); got != 0 {
 		t.Errorf("U1s after CLEAR at a Core-owned window = %d, want 0 (AutoPush is off on SynthClaim)", got)
 	}
-	if reads := f.core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("node-bins reads = %d, want 1 (the tap's own)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 0 {
+		t.Errorf("node-bins reads = %d, want 0", reads)
 	}
 }
