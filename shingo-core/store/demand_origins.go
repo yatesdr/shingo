@@ -6,9 +6,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"shingo/protocol"
 	"shingocore/domain"
 )
+
+// ErrEpisodeAlreadyOpen is what OpenCoreEpisode wraps when the partial unique
+// index refused the mint: another writer already holds this episode key open.
+// It is a distinct error rather than a swallowed one so a caller can decide
+// what a lost race means to it — the threshold monitor re-reads the open row
+// and joins it — while any other failure stays a failure.
+var ErrEpisodeAlreadyOpen = errors.New("an episode is already open for this key")
+
+// openKeyIndex is the partial unique index behind "one open episode per key"
+// (migration v59). Matched by name so an unrelated unique violation on this
+// table is never mistaken for a lost mint race.
+const openKeyIndex = "idx_demand_origins_open_key"
+
+func isOpenKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == openKeyIndex
+}
 
 // demand_origins.go — Core's history of every demand episode.
 //
@@ -195,26 +214,53 @@ func (db *DB) OpenCoreEpisode(o DemandOrigin, usedEdgeReports bool) error {
 		o.OriginID, o.EpisodeKey, o.Kind, o.TriggerRef, o.StationID,
 		o.CoreNodeName, o.PayloadCode, o.OpenedAt, o.OpenedTotal, o.Threshold,
 		usedEdgeReports, expected, o.ExpectedUnknownReason)
+	if isOpenKeyViolation(err) {
+		return fmt.Errorf("open core episode %s (%s): %w: %w", o.OriginID, o.EpisodeKey, ErrEpisodeAlreadyOpen, err)
+	}
 	if err != nil {
-		return fmt.Errorf("open threshold episode %s (%s): %w", o.OriginID, o.EpisodeKey, err)
+		return fmt.Errorf("open core episode %s (%s): %w", o.OriginID, o.EpisodeKey, err)
 	}
 	return nil
 }
 
-// CloseDemandOriginByID ends an episode Core owns, bumping the revision.
+// OpenOriginForKey returns the origin id of the open episode for one episode
+// key, or "" when none is open. At most one row, and an index probe: the
+// partial unique index on (episode_key) WHERE closed_at IS NULL is both the
+// guarantee and the access path.
 //
-// The bump is not bookkeeping. Core's threshold episodes never cross the seam
-// inbound, but the revision still has to move so that anything comparing
-// versions of this row — the reconciler re-closing what a notification path
-// already closed, a future read model — sees the close as newer. Closing an
-// already-closed episode is a NO-OP rather than an error: the level edges are
-// evaluated from several sites and the sweep runs underneath all of them, so
-// two of them racing to close one episode is ordinary.
+// It answers three questions in one read — is an episode open here, which
+// one, and what does a fire stamp — which is why the threshold monitor reads
+// it per place per evaluation rather than keeping a copy.
+func (db *DB) OpenOriginForKey(episodeKey string) (string, error) {
+	var id string
+	err := db.QueryRow(`SELECT origin_id FROM demand_origins
+		WHERE episode_key = $1 AND closed_at IS NULL`, episodeKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read open episode %s: %w", episodeKey, err)
+	}
+	return id, nil
+}
+
+// CloseDemandOriginByID ends an episode Core owns — threshold or maintain.
 //
-// ONLY FOR EPISODES CORE MINTS. Applying it to an Edge-authored episode would
-// push demand_origins.revision past the number Edge is about to send, and the
-// real close would then lose the upsert guard's comparison and be dropped —
-// see CloseDemandOriginInferred, which exists for exactly that case.
+// IT DOES NOT TOUCH THE REVISION, and this comment used to say it bumped it.
+// Its UPDATE is byte-identical to CloseDemandOriginInferred's: both set
+// closed_at, close_reason and closed_by on an open row and leave revision
+// alone. There is no behavioural distinction between the two functions. The
+// only difference is the caller's claim about whose episode it is closing —
+// this one for episodes Core mints, the other for Edge-authored episodes Core
+// is closing provisionally — and the error string. Leaving the revision alone
+// is what the Edge-authored case needs (the owner's real close arrives at a
+// higher revision and wins the upsert guard), and it costs nothing here:
+// Core's own episodes never cross the seam inbound, so nothing compares their
+// revisions.
+//
+// Closing an already-closed episode is a NO-OP rather than an error: the level
+// edges are evaluated from several sites and the sweep runs underneath all of
+// them, so two of them racing to close one episode is ordinary.
 //
 // Returns whether a row actually moved, so a caller that reports what it closed
 // reports work it did rather than work it attempted.

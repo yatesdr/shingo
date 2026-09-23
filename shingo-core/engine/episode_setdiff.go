@@ -5,10 +5,11 @@ import "sort"
 // staleEpisodeKeys is THE set difference behind every "close what the
 // configuration no longer calls for" path, and there is exactly one of it.
 //
-// Three sites ask the identical question — the threshold notification path
-// (closeThresholdEpisodesForPayloadNotIn), the threshold reconciling sweep
-// (reconcileThresholdBindings), and the maintainer's config-withdrawn pass
-// (closeWithdrawn) — and they must not be able to answer it differently. Two
+// Two sites ask the identical question — the threshold reconciling sweep
+// (reconcileThresholdBindings) and the maintainer's config-withdrawn pass
+// (closeWithdrawn) — and they must not be able to answer it differently. A
+// third, the threshold monitor's own notification path, went with the binding
+// memory it compared against. Two
 // implementations of a set difference look identical the day they are written
 // and drift the first time one of them learns something the other doesn't.
 //

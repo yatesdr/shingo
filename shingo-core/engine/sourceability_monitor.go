@@ -223,12 +223,10 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 // reason — the debounced path reacts to a bin moving and must not carry a read
 // that exists for history.
 //
-// BINDINGS COME FROM THE DATABASE, never from ThresholdMonitor's
-// thresholdsByPayload. That map is the monitor's own working memory, guarded by
-// its own mutex and reconciled on its own schedule; a second reader would make
-// this pass's samples depend on where that reconciliation happened to be, and
-// would put a lock the threshold path holds on the sourceability path's
-// critical section. demand_registry is the record both derive from.
+// BINDINGS COME FROM THE DATABASE. demand_registry is the record this pass and
+// the threshold monitor both read; the monitor used to keep a copy of it in
+// memory, and this pass was written not to depend on where that copy's
+// reconciliation happened to be. The copy is gone, and the rule is the same.
 //
 // THE TOTAL IS THE LEDGER'S, not the R1 edge-adjusted one. SystemUOPForPayload
 // sums bins plus lineside buckets — what Core believes is in the loop — and the

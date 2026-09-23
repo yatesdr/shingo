@@ -23,10 +23,11 @@ this machinery.
 | `OnLinesideReports` | `engine/threshold_monitor_lineside.go` | Edge report | ~60s | decides in `edge_reports` mode, audits only in `ledger` mode |
 | `NoteSwapRequestContradiction` | `engine/threshold_monitor.go` | complex order received | per order | contradiction re-check |
 | `OnThresholdChanges` | `engine/threshold_monitor.go` | loader config edit | per registry change | clears debounce so a new threshold takes effect at once |
-| `Resync` | `engine/threshold_monitor.go` | station resync | per resync | re-engages payloads, clears debounce, fires already-below |
-| `engagePayloads` | `engine/threshold_monitor.go` | config edit / Resync | per edit | the only path that deliberately fires on a read failure |
-| `rehydrateThresholdEpisodes` | `engine/threshold_episodes.go` | inside `startupSweep` | boot | rebuilds open-episode maps — without it every restart doubles open demand |
-| `reconcileThresholdBindings` | `engine/threshold_episodes.go` | demand reconciler | reconcile interval | closes episodes whose binding vanished |
+| `Resync` | `engine/threshold_monitor.go` | station resync | per resync | clears the station's timers and evaluates its payloads |
+| `startupSweep` | `engine/threshold_monitor.go` | boot | once | reads the open-episode set once for the pass; no rehydrate — the monitor keeps no copy |
+| `reconcileThresholdBindings` | `engine/threshold_episodes.go` | demand reconciler | reconcile interval | close-only: closes episodes whose place has no binding left |
+
+The threshold monitor reads `demand_registry` and `demand_origins` on every evaluation and holds only timers. A read error at any path decides nothing — no open, no close, no order.
 
 **The plant-claims snapshot is a safety net, not the delivery mechanism.** Changes reach Core via `PublishChanged` on every style/claim edit, and a full snapshot goes out on every registration — including the re-register Core asks for after it restarts. The ticker only has to catch a change whose publish was lost outright, which is why it moved from 5 minutes to 60: at 5 it was ~65 messages an hour of unchanged config and 66% of everything Core discarded for expiry.
 

@@ -58,21 +58,11 @@ func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
 	if len(open) != 1 {
 		t.Fatalf("five evaluations of one continuous demand produced %d episodes, want 1", len(open))
 	}
-	// WHAT ENFORCES WHAT, because these are two different guarantees and it is
-	// worth being honest about which one this line tests. The partial unique
-	// index is what makes a duplicate IMPOSSIBLE — verified by breaking the
-	// in-memory edge, which left the count at 1 because the second INSERT was
-	// rejected. So the monitor's open-episode check is not the correctness mechanism; it is
-	// what keeps the invariant from being enforced by a failed write on every
-	// delta, and it is the reason the monitor still HOLDS the origin id. That
-	// is the observable damage of a broken edge: the mint errors, the id is
-	// never recorded, and every signal fires with no demand attached — turning
-	// the episode's own children into orphans.
-	key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
-	if got := m.currentThresholdOrigin(key); got != open[0].OriginID {
-		t.Errorf("monitor holds origin %q but the open episode is %s — signals would fire with no demand attached",
-			got, open[0].OriginID)
-	}
+	// WHAT ENFORCES WHAT, because these are two different guarantees. The
+	// partial unique index is what makes a duplicate IMPOSSIBLE; the monitor's
+	// read of the open row before it writes is what keeps the invariant from
+	// being enforced by a failed INSERT on every delta — the failed-mint count
+	// above is that half.
 	// expected_orders is the system's stated intent, stamped ONCE:
 	// ceil((100-40)/18) = 4.
 	got, err := db.GetDemandOrigin(open[0].OriginID)
@@ -149,10 +139,9 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 	}
 	original := open[0].OriginID
 
-	// The restart: a whole new monitor over the same database, rehydrating,
-	// then seeing the same still-breached level.
+	// The restart: a whole new monitor over the same database, seeing the same
+	// still-breached level. No rehydrate — it reads the open row.
 	restarted := NewThresholdMonitor(eng)
-	restarted.rehydrateThresholdEpisodes()
 	restarted.checkBindings([]thresholdEntry{b}, 38, "below_threshold", false)
 	if n := sink.countContaining("open demand episode key="); n != 0 {
 		t.Errorf("%d failed mint(s) after the restart, want 0 — the restarted monitor must know the demand is open before it tries to write one", n)
@@ -169,18 +158,10 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 		t.Errorf("post-restart origin %s != %s — the demand was lost across the restart",
 			open[0].OriginID, original)
 	}
-	// THIS is the assertion that actually tests rehydration. Without it the row
-	// count stays 1 anyway — the partial unique index rejects the duplicate
-	// INSERT — so counting rows proves nothing here. What a restart without
-	// rehydration really costs is the monitor's KNOWLEDGE of the open demand:
-	// openOrigins comes back empty, the re-mint fails against the index, and
-	// every signal for a demand that is still live fires with no origin on it.
-	// The demand survives in the database and its children are orphaned.
-	key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
-	if got := restarted.currentThresholdOrigin(key); got != original {
-		t.Errorf("after restart the monitor holds origin %q, want %s — signals would fire with no demand attached",
-			got, original)
-	}
+	// There is nothing to rehydrate: the restarted monitor reads the open row
+	// the moment it evaluates the place, which is the failed-mint assertion
+	// above. What a restart that lost the demand would cost is a fire with no
+	// origin on it — pinned end to end in TestReadThrough_RestartMidEpisode.
 }
 
 // A DENOMINATOR NOBODY CAN COMPUTE IS NOT 1, AND IT IS NOT 0.
@@ -252,22 +233,17 @@ func TestThresholdEpisode_ThresholdChangeClosesAndReopens(t *testing.T) {
 		t.Errorf("close_reason = %q, want %q — the need did not recover and the binding did not vanish",
 			got.CloseReason, protocol.CloseReasonThresholdChanged)
 	}
-	// And the monitor no longer holds it, so the next crossing mints against
+	// And nothing is open for the place, so the next crossing mints against
 	// the NEW threshold rather than joining an episode measured on the old one.
-	key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
-	if held := m.currentThresholdOrigin(key); held != "" {
-		t.Errorf("monitor still holds %q after a threshold change", held)
+	if held, err := db.OpenOriginForKey(placeKey(b.coreNodeName, b.payloadCode)); err != nil || held != "" {
+		t.Errorf("an episode %q is still open after a threshold change (err %v)", held, err)
 	}
 }
 
-// A BINDING DELETED UNDERNEATH A LIVE DEMAND. Before the grain, the rebuild
-// (rebuildPayloadBindings today) replaced a payload's bindings and simply
-// dropped whatever was there, so the episode stranded permanently with nothing
-// saying it had ended.
-//
-// The partial-removal case is the one that matters and the one the obvious
-// implementation misses: this payload keeps a binding at another station, so
-// "the rebuild came back empty" is false and only a key comparison catches it.
+// A BINDING DELETED UNDERNEATH A LIVE DEMAND, while the payload stays bound at
+// another place. "The payload has no bindings left" is false here, so only a
+// comparison by place catches it — and the reconciling sweep is the one closer
+// of a binding that vanished with nothing announcing it.
 func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing.T) {
 	t.Parallel()
 
@@ -286,11 +262,9 @@ func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing
 		t.Fatalf("two bindings below threshold should open two episodes, got %d", len(open))
 	}
 
-	// The rebuild keeps only the survivor — the payload still HAS bindings.
-	live := map[string]bool{
-		bindingKey(survivor.stationID, survivor.coreNodeName, survivor.payloadCode): true,
-	}
-	m.closeThresholdEpisodesForPayloadNotIn(gone.payloadCode, live)
+	// The registry holds only the survivor — the payload still HAS a binding.
+	registerBinding(t, db, survivor)
+	m.reconcileThresholdBindings()
 
 	stillOpen, err := db.ListOpenThresholdEpisodes()
 	if err != nil {
@@ -299,13 +273,13 @@ func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing
 	if len(stillOpen) != 1 {
 		t.Fatalf("%d episodes still open, want 1 (only the survivor)", len(stillOpen))
 	}
-	if stillOpen[0].StationID != survivor.stationID {
-		t.Errorf("the WRONG episode was closed: %s survived", stillOpen[0].StationID)
+	if stillOpen[0].CoreNodeName != survivor.coreNodeName {
+		t.Errorf("the WRONG episode was closed: %s survived", stillOpen[0].CoreNodeName)
 	}
 	// And the closed one says why: the need did not recover, it stopped being
 	// watched.
 	for _, o := range open {
-		if o.StationID != gone.stationID {
+		if o.CoreNodeName != gone.coreNodeName {
 			continue
 		}
 		got, _ := db.GetDemandOrigin(o.OriginID)

@@ -17,8 +17,8 @@ import (
 //
 // Four entry points reach checkBindings: the delta hot path (evaluatePayload),
 // the boot pass (startupSweep), a human's manual-swap request
-// (NoteSwapRequestContradiction), and the two notification doors through
-// evaluateRebuiltBindings (Resync here). They must all judge the same payload
+// (NoteSwapRequestContradiction), and the two notification doors (Resync
+// here). They must all judge the same payload
 // against the same number, and that number is the one the configured R1 mode
 // names. The persisted used_edge_reports stamp must say which one decided.
 //
@@ -59,32 +59,23 @@ func decisionFixture(t *testing.T, mode, payload string, ledgerUOP, edgeUOP int)
 	return m, fires, b
 }
 
-// monitorPayload makes the binding visible to the paths that start from the
-// monitor's own binding set rather than from a door that rebuilds it.
-func monitorPayload(m *ThresholdMonitor, b thresholdEntry) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.thresholdsByPayload[b.payloadCode] = []thresholdEntry{b}
-}
-
-// the four entry points, each driven through its production door.
+// the four entry points, each driven through its production door. Each reads
+// the binding from demand_registry, where decisionFixture registered it.
 var decisionEntryPoints = []struct {
 	name  string
 	tag   string
 	drive func(m *ThresholdMonitor, b thresholdEntry)
 }{
 	{"evaluatePayload", "EP", func(m *ThresholdMonitor, b thresholdEntry) {
-		monitorPayload(m, b)
 		m.OnBinUOPDelta(b.payloadCode, -1)
 	}},
 	{"startupSweep", "SS", func(m *ThresholdMonitor, _ thresholdEntry) {
 		m.startupSweep(context.Background())
 	}},
 	{"NoteSwapRequestContradiction", "SW", func(m *ThresholdMonitor, b thresholdEntry) {
-		monitorPayload(m, b)
 		m.NoteSwapRequestContradiction(b.payloadCode)
 	}},
-	{"evaluateRebuiltBindings", "RB", func(m *ThresholdMonitor, b thresholdEntry) {
+	{"notification door (Resync)", "RB", func(m *ThresholdMonitor, b thresholdEntry) {
 		m.Resync(b.stationID)
 	}},
 }

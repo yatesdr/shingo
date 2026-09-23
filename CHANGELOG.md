@@ -3,6 +3,21 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-24 — The threshold monitor reads the database
+
+- The threshold monitor keeps no copy of `demand_registry` or `demand_origins`: every evaluation reads
+  the payload's bindings and each place's open episode, one index probe each, and memory holds only timers
+- One place is one demand: bindings collapse to `(core_node_name, payload)`, the episode key, and a
+  place bound under two stations logs `DUPLICATE BINDING` instead of minting twice
+- A read error at any fire path decides nothing; the config-edit and reconnect doors no longer fire off
+  a total of zero
+- No episode, no order: a fire whose mint failed is refused rather than sent with a blank origin
+- Every fire path judges against the configured R1 mode's total, and `used_edge_reports` says which
+  total decided
+- The childless pass leaves threshold episodes alone, as it already did maintain
+- The registry derive logs one line per station and refuses to empty a station it could not resolve
+- A duplicate or older lineside report no longer re-runs the fire gate
+
 ## 2026-09-23 — The half loader, and an unloader that refills itself
 
 - A move of an empty carrier is not judged by the part's carrier rule — Hopkinsville 2233/2234

@@ -80,15 +80,17 @@ func ordersForOrigin(t *testing.T, db *store.DB, originID string) int {
 	return n
 }
 
-// monitorHoldsBinding reports whether the station's binding is still in the
-// monitor's in-memory cache. The rows and the memory are two different records
-// of the same fact and they are lost by different mechanisms, so both are
-// asserted separately.
+// monitorHoldsBinding reports whether the monitor would evaluate the station's
+// binding — that is, whether the monitored lookup it reads on every
+// evaluation still returns it. There is no second record to check: the monitor
+// keeps no copy of the registry.
 func monitorHoldsBinding(m *ThresholdMonitor, b thresholdEntry) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, te := range m.thresholdsByPayload[b.payloadCode] {
-		if te.stationID == b.stationID && te.coreNodeName == b.coreNodeName {
+	entries, err := m.eng.db.LookupDemandThresholdsByPayload(b.payloadCode)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.StationID == b.stationID && e.CoreNodeName == b.coreNodeName {
 			return true
 		}
 	}
@@ -147,7 +149,7 @@ func TestStaleStation_KeepsRegistryEpisodeAndOrders(t *testing.T) {
 			got, b.stationID)
 	}
 	if !monitorHoldsBinding(m, b) {
-		t.Error("the stale pass dropped the station's binding from thresholdsByPayload — the station stops being replenished the moment its link flaps")
+		t.Error("the stale pass dropped the station's binding from what the monitor evaluates — the station stops being replenished the moment its link flaps")
 	}
 
 	// Deltas keep arriving and the reconciling sweep keeps running underneath
@@ -224,10 +226,9 @@ func TestStaleStation_ReRegisterUnchangedKeepsTheSameEpisode(t *testing.T) {
 		t.Errorf("the station came back holding episode %s, want the one it left open, %s — the outage split one demand in two",
 			rows[0].originID, originID)
 	}
-	key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
-	if held := m.currentThresholdOrigin(key); held != originID {
-		t.Errorf("the monitor holds %q after the reconnect, want %s — signals would fire with the wrong demand attached or none at all",
-			held, originID)
+	if held, err := db.OpenOriginForKey(placeKey(b.coreNodeName, b.payloadCode)); err != nil || held != originID {
+		t.Errorf("the place's open episode is %q after the reconnect (err %v), want %s — signals would fire with the wrong demand attached or none at all",
+			held, err, originID)
 	}
 }
 
@@ -349,6 +350,6 @@ func TestStaleStation_LoaderRetiredWhileDownClosesAsRemovedOnce(t *testing.T) {
 			got.closedBy, protocol.ClosedByNotification)
 	}
 	if monitorHoldsBinding(m, b) {
-		t.Error("the retired binding is still in thresholdsByPayload — the next delta mints against config that no longer exists")
+		t.Error("the retired binding is still monitored — the next delta mints against config that no longer exists")
 	}
 }

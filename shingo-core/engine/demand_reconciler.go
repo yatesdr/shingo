@@ -41,10 +41,11 @@ import (
 // known to have emptied demand_registry; the onset is a whole-station absence
 // appearing between two sweeps, not a per-binding edit. Deleting the reaper
 // therefore removes one writer that could fabricate an absence and does not
-// remove the class. So the floor stopped doing half a reconciliation:
-// reconcileThresholdBindings now rebuilds the monitor's memory for the payloads
-// whose episodes it closed (dropAbsentBindingsFromMemory), which is what makes
-// it a floor under an UNNAMED writer rather than only under a known-broken hook.
+// remove the class. The floor stays a floor under an UNNAMED writer because the
+// monitor no longer keeps a copy of the registry for a close to disagree with:
+// a binding that is gone is not evaluated, so nothing re-mints what this pass
+// closes. The writer itself now announces every derive it makes
+// (store.DeriveDemandRegistry), which is where an emptying would be named.
 //
 // So this sweep closes any open episode whose PRECONDITION no longer holds,
 // regardless of how it stopped holding. The notification sites keep their job

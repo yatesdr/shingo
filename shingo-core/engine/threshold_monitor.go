@@ -26,18 +26,23 @@
 // now just READS it on every evaluation. That deletes the drift failure
 // category outright: there is no cached belief left to diverge.
 //
-// Debounce policy: 15-second window per (loader_node, payload).
-// In-memory state (lost on Core restart — that's intentional; the
-// startup sweep handles the restart case). The debounce timer is
-// reset on SyncRegistry when the threshold value for the pair changes,
-// so a newly-applied threshold engages immediately.
+// Debounce policy: 15-second window per place — (core_node_name, payload),
+// the episode key's grain. In-memory state (lost on Core restart — that's
+// intentional; the startup sweep handles the restart case). The debounce timer
+// is reset when the threshold value for the place changes, so a newly-applied
+// threshold engages immediately.
 //
-// Startup sweep: on Run() the monitor walks every binding with
-// threshold > 0 once, builds its per-payload binding cache
-// (thresholdsByPayload — CONFIG, not a UOP tally), seeds the cold-start
-// warm-up allowance, and evaluates each binding against the authoritative
-// DB read. There is no ongoing reconcile sweep — every evaluation already
-// reads the truth.
+// Startup sweep: on Run() the monitor walks every binding with threshold > 0
+// once, seeds the cold-start warm-up allowance, and evaluates each against the
+// authoritative DB read. There is no ongoing reconcile sweep for the level —
+// every evaluation already reads the truth.
+//
+// IT KEEPS NO COPY OF ANYTHING A TABLE HOLDS. Which places are monitored, at
+// what threshold, comes from demand_registry on every evaluation; whether a
+// place already has an open demand, and which one, comes from demand_origins
+// on every evaluation. Memory holds only what this process is doing: debounce
+// and warm-up timers, log throttles, the contradiction chip's stamp. See the
+// ThresholdMonitor struct for the history of the copies it used to hold.
 //
 // There is no longer a second path to dedup against. The legacy bin-count
 // DemandSignal route was removed entirely (2026-08): Core no longer emits
@@ -64,6 +69,9 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,9 +139,11 @@ func resolveLinesideMode(raw string, warnf func(string, ...any)) string {
 // a per-request event.
 const swapContradictionWindow = 15 * time.Minute
 
-// thresholdEntry is one (station, loader, payload) binding with its
-// configured threshold, cached in memory so the monitor never queries
-// demand_registry on the hot path.
+// thresholdEntry is one monitored place — (core_node_name, payload) — with its
+// configured threshold, read from demand_registry for the evaluation that
+// holds it and dropped afterwards. The station is data on the entry (the
+// order's station, the episode's station, the log line's station), not part
+// of what identifies the place.
 type thresholdEntry struct {
 	stationID    string
 	coreNodeName string
@@ -142,11 +152,24 @@ type thresholdEntry struct {
 	loaderID     int64 // the owning loader (cutover); 0 for legacy pre-cutover bindings → no LoaderKey on the signal
 }
 
-// ThresholdMonitor tracks in-loop UOP per payload incrementally and
-// creates retrieve orders when a monitored (loader, payload) drops
-// below its configured threshold. It no longer emits a wire signal —
-// the LoopBelowThresholdSignal it used to send was deleted with the
-// Edge's half of replenishment (2026-08-02); see fireSignalCached.
+// ThresholdMonitor creates retrieve orders when a monitored place drops below
+// its configured threshold. It no longer emits a wire signal — the
+// LoopBelowThresholdSignal it used to send was deleted with the Edge's half of
+// replenishment (2026-08-02); see fireSignalCached.
+//
+// WHAT IT HOLDS IS WHAT IT IS DOING, AND NOTHING A TABLE KNOWS. Four copies
+// have come off this struct, and all four ran the same arc: introduced to save
+// a hot-path read, then fixed at the doors that forgot to update them, then
+// bounded by a reconciler or a rehydrate, then deleted. The uopCache tally went
+// first (1e8d542c, net -145 lines). belowThresholdSince went next — its key set
+// was openOrigins' and its value had no reader. Then thresholdsByPayload, a
+// copy of demand_registry that kept ordering against a withdrawn binding until
+// a sweep noticed (Springfield 2026-08-19), and openOrigins, a copy of the open
+// rows in demand_origins that kept stamping an origin another pass had closed
+// (865 threshold episodes, 195 orders). Both are now read at the point of
+// decision: one indexed lookup of the payload's bindings, one indexed probe of
+// the place's open episode. Before adding a rehydrate, resync or reconcile to a
+// field here, `git log -S` the fields that are gone.
 type ThresholdMonitor struct {
 	eng *Engine
 
@@ -156,62 +179,33 @@ type ThresholdMonitor struct {
 	// exists because fireSignalCached dereferences eng, which the pure unit
 	// harness leaves nil — without it, "did this fire?" is only answerable by
 	// standing up a whole engine.
-	fireHook func(b thresholdEntry, total int, reason string)
+	//
+	// It is handed the origin the fire would stamp, because "which demand does
+	// this order belong to" is half of what a fire decides.
+	fireHook func(b thresholdEntry, total int, reason, originID string)
 
 	mu sync.Mutex
-	// debounce is the last-fired timestamp per (station, loader,
-	// payload) key. An order batch is only created when
-	// now > debounce[key] + thresholdDebounceWindow.
+	// debounce is the last-fired timestamp per place. An order batch is only
+	// created when now > debounce[key] + thresholdDebounceWindow.
 	debounce map[string]time.Time
-	// warmUp tracks remaining cold-start fires per binding. Decremented
-	// each time the monitor signals; once at zero, normal debounced
-	// operation continues. Cap is seeded on startup sweep.
+	// warmUp tracks remaining cold-start fires per place. Decremented each time
+	// the monitor fires; once at zero, normal debounced operation continues.
+	// Seeded by the startup sweep.
 	warmUp map[string]int
-	// sweepDone gates startup-sweep-only behavior. While false the
-	// debounce check is bypassed on the very first signal per binding.
-	sweepDone bool
-	// thresholdsByPayload caches per-payload threshold bindings. Keyed
-	// by payload_code. Built from the startup sweep and kept fresh via
-	// OnThresholdChanges. This is CONFIG (which loaders watch which
-	// payload at what threshold), NOT a UOP tally — the UOP total is read
-	// fresh from the DB on every evaluation.
-	thresholdsByPayload map[string][]thresholdEntry
 	// negativeLogged is the last time the negative-count warning was logged
-	// per binding. Deliberately SEPARATE from debounce: debounce is
+	// per place. Deliberately SEPARATE from debounce: debounce is
 	// signal-eligibility budget, this is log volume. Sharing one stamp would
-	// mean a negative total consumed the binding's right to fire the moment
+	// mean a negative total consumed the place's right to fire the moment
 	// the ledger was corrected.
 	negativeLogged map[string]time.Time
+	// duplicateLogged is the last time the DUPLICATE BINDING line was logged
+	// per place. Log volume only, like negativeLogged: the collision it reports
+	// is a standing config condition read on every evaluation.
+	duplicateLogged map[string]time.Time
 	// swapContradiction is the last time a manual-swap request arrived for a
 	// payload the ledger read as fully stocked (P2-C9). Keyed by payload_code;
 	// drives the Replenishment Health contradiction chip and throttles the log.
 	swapContradiction map[string]time.Time
-	// openOrigins is the open episode's id per bindingKey — what every signal
-	// fired for that demand gets stamped with, so the orders Edge mints in
-	// response are children of it.
-	//
-	// ITS PRESENCE IS ALSO THE EDGE. checkBindings is level-triggered: "total <
-	// threshold" is true for as long as it is true, and a level has no memory.
-	// openThresholdEpisode asks this map whether the place is already below and
-	// mints only on the first crossing; the close deletes the entry, which is the
-	// recovery. The episode between the two edges is the demand.
-	//
-	// A second map, belowThresholdSince, used to answer that question. Its key
-	// set equalled this one's at every write and delete, and nothing read its
-	// time.Time — so it was a copy of a copy, and it went. That is the second
-	// copy deleted from this struct, after the uopCache tally (1e8d542c): a field
-	// introduced to save a hot-path read, then fixed at its doors, then bounded
-	// by a reconciler, then removed. Before adding a rehydrate, resync or
-	// reconcile to a field here, `git log -S` the sibling fields first.
-	//
-	// REHYDRATED BY startupSweep, not rebuilt empty. See
-	// rehydrateThresholdEpisodes.
-	//
-	// ALSO READ BY Resync, as the second half of "what does this station still
-	// hold in memory?" — which is why its ref carries a station id. The
-	// rehydration is exactly why one map is not enough: at boot this is full
-	// while thresholdsByPayload is still empty.
-	openOrigins map[string]openEpisodeRef
 
 	// linesideMode is the resolved R1 decision mode (edge_reports | ledger),
 	// validated once at construction from config. Read on every evaluation to
@@ -252,15 +246,14 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		}
 	}
 	return &ThresholdMonitor{
-		eng:                 e,
-		debounce:            make(map[string]time.Time),
-		warmUp:              make(map[string]int),
-		thresholdsByPayload: make(map[string][]thresholdEntry),
-		negativeLogged:      make(map[string]time.Time),
-		swapContradiction:   make(map[string]time.Time),
-		openOrigins:         make(map[string]openEpisodeRef),
-		linesideMode:        resolveLinesideMode(rawMode, warnf),
-		now:                 clock.Now,
+		eng:               e,
+		debounce:          make(map[string]time.Time),
+		warmUp:            make(map[string]int),
+		negativeLogged:    make(map[string]time.Time),
+		duplicateLogged:   make(map[string]time.Time),
+		swapContradiction: make(map[string]time.Time),
+		linesideMode:      resolveLinesideMode(rawMode, warnf),
+		now:               clock.Now,
 	}
 }
 
@@ -311,42 +304,66 @@ type MonitorSnapshotEntry struct {
 }
 
 // Snapshot returns which payloads are monitored and the binding set watching
-// each — a point-in-time read for the inventory Replenishment Health page.
-// Taken under the monitor lock; safe to call from an HTTP handler. It reports
-// only the monitored-set + thresholds; the caller reads DB on-hand itself.
-func (m *ThresholdMonitor) Snapshot() []MonitorSnapshotEntry {
+// each — the read model behind the inventory Replenishment Health page. It
+// reports only the monitored set and thresholds; the caller reads DB on-hand
+// itself.
+//
+// THE BINDINGS ARE READ, NOT REMEMBERED: one ListDemandThresholds per call.
+// This page is what an engineer opens to ask "is this loader monitored, at
+// what threshold?", and while it rendered a copy, the answer during the
+// 2026-08-19 burst would have been the copy's. It shows every registry row,
+// duplicates included, because the page is where a duplicate should be seen.
+// The contradiction chip is the one thing here no table holds.
+//
+// A read error is returned, not rendered as "nothing is monitored".
+func (m *ThresholdMonitor) Snapshot() ([]MonitorSnapshotEntry, error) {
+	if m.eng == nil || m.eng.db == nil {
+		return nil, nil
+	}
+	entries, err := m.eng.db.ListDemandThresholds()
+	if err != nil {
+		return nil, err
+	}
+	byPayload := map[string][]MonitorBinding{}
+	var order []string
+	for _, e := range entries {
+		if e.ReplenishUOPThreshold <= 0 {
+			continue
+		}
+		if _, seen := byPayload[e.PayloadCode]; !seen {
+			order = append(order, e.PayloadCode)
+		}
+		byPayload[e.PayloadCode] = append(byPayload[e.PayloadCode], MonitorBinding{
+			StationID:    e.StationID,
+			CoreNodeName: e.CoreNodeName,
+			Threshold:    e.ReplenishUOPThreshold,
+			LoaderID:     e.LoaderID,
+		})
+	}
 	now := m.nowFn()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]MonitorSnapshotEntry, 0, len(m.thresholdsByPayload))
-	for payload, bindings := range m.thresholdsByPayload {
-		bs := make([]MonitorBinding, 0, len(bindings))
-		for _, b := range bindings {
-			bs = append(bs, MonitorBinding{
-				StationID:    b.stationID,
-				CoreNodeName: b.coreNodeName,
-				Threshold:    b.threshold,
-				LoaderID:     b.loaderID,
-			})
-		}
+	out := make([]MonitorSnapshotEntry, 0, len(order))
+	for _, payload := range order {
 		contradiction := false
 		if last, ok := m.swapContradiction[payload]; ok && now.Sub(last) < swapContradictionWindow {
 			contradiction = true
 		}
 		out = append(out, MonitorSnapshotEntry{
 			PayloadCode:       payload,
-			Bindings:          bs,
+			Bindings:          byPayload[payload],
 			SwapContradiction: contradiction,
 		})
 	}
-	return out
+	return out, nil
 }
 
-// bindingKey composes the (station, core_node_name, payload) tuple
-// used to key per-binding state in the threshold monitor's debounce
-// and warm-up maps.
-func bindingKey(station, coreNodeName, payload string) string {
-	return station + "|" + coreNodeName + "|" + payload
+// placeKey is the grain of everything the monitor keys: the episode key,
+// (core_node_name, payload). Debounce, warm-up and the log throttles use it,
+// and so does demand_origins' partial unique index — so two registry rows for
+// one place are one debounce budget and one demand, not two.
+func placeKey(coreNodeName, payload string) string {
+	return protocol.ThresholdEpisodeKey(coreNodeName, payload)
 }
 
 // Run performs the startup sweep then returns. Idempotent — calling
@@ -389,137 +406,182 @@ func (m *ThresholdMonitor) readTotal(ctx context.Context, payloadCode string) (i
 	return 0, nil
 }
 
-// evaluatePayload re-reads the authoritative sum for a monitored payload and
-// checks its bindings — the single entry point the delta hot path and the
-// non-delta bin-update path both funnel through. Empty/unmonitored payloads
-// short-circuit BEFORE the DB read, so the hot path only pays for payloads a
-// binding actually watches. On a transient DB-read error it logs and SKIPS the
-// check (the next delta re-evaluates) rather than manufacturing a fire off a
-// zero — evaluateRebuiltBindings is the only path that deliberately fires on a
-// read failure, and it is reached from exactly two places, a loader config edit
-// and an Edge (re)connect, because both are somebody waiting for an answer. The
-// reconciling sweep was briefly a third and is not one any more: see
-// dropAbsentBindingsFromMemory.
+// evaluatePayload reads a payload's monitored places and, if it has any, the
+// authoritative total, and checks each place — the single entry point the
+// delta hot path, the non-delta bin-update path, a lineside report and both
+// notification doors funnel through. An unmonitored payload costs one indexed
+// lookup that returns nothing and stops BEFORE the total is read.
+//
+// A READ ERROR IS SIDE-EFFECT-FREE: a failed bindings lookup or a failed total
+// logs and evaluates nothing — no open, no close, no order. The next trigger
+// re-reads. Nothing here ever decides against a level it did not read.
 func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
-	if payloadCode == "" {
+	if payloadCode == "" || m.eng == nil || m.eng.db == nil {
 		return
 	}
-	m.mu.Lock()
-	bindings, monitored := m.thresholdsByPayload[payloadCode]
-	m.mu.Unlock()
-	if !monitored {
+	places, err := m.monitoredPlaces(payloadCode)
+	if err != nil {
+		m.eng.logFn("threshold_monitor: bindings for %s: %v (evaluating nothing)", payloadCode, err)
 		return
 	}
-	// R1: compute BOTH the pure ledger total and the Edge-report-adjusted total.
-	// The decision mode picks which one the fire gate decides off; the audit log
-	// records any binding whose firing decision the two totals disagree on, on
-	// every eval, whichever mode is active.
-	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "evaluate", skipOnReadError)
+	if len(places) == 0 {
+		return
+	}
+	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "evaluate")
 	if !ok {
 		return
 	}
-	m.auditLinesideDecision(payloadCode, bindings, r.ledger, r.edge, r.fresh)
-	m.checkBindings(bindings, r.total, reason, r.usedEdge)
+	m.auditLinesideDecision(payloadCode, places, r.ledger, r.edge, r.fresh)
+	m.checkBindings(places, r.total, reason, r.usedEdge)
 }
 
-// startupSweep iterates every (loader, payload) with threshold > 0,
-// builds the per-payload binding cache, seeds the cold-start warm-up
-// allowance, and evaluates each binding against an authoritative DB read —
-// firing signals for any already below threshold. It holds no UOP tally
-// afterwards; every later evaluation reads the DB again.
-func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
-	// REHYDRATE BEFORE EVALUATING ANYTHING. The sweep below re-evaluates every
-	// binding, and any that is still below threshold looks like a first
-	// crossing to empty maps — so it would mint a second episode for a place
-	// that already has one open, on every restart, for every hungry loader.
-	// This must come before the early return below too: a ListDemandThresholds
-	// failure still leaves the monitor running.
-	m.rehydrateThresholdEpisodes()
-
-	entries, err := m.eng.db.ListDemandThresholds()
+// monitoredPlaces reads the payload's bindings from demand_registry (one
+// indexed lookup, threshold > 0) and collapses them to one entry per place.
+func (m *ThresholdMonitor) monitoredPlaces(payloadCode string) ([]thresholdEntry, error) {
+	entries, err := m.eng.db.LookupDemandThresholdsByPayload(payloadCode)
 	if err != nil {
-		m.eng.logFn("threshold_monitor: startup sweep ListDemandThresholds: %v", err)
-		m.mu.Lock()
-		m.sweepDone = true
-		m.mu.Unlock()
-		return
+		return nil, err
 	}
-	m.eng.logFn("threshold_monitor: startup sweep — evaluating %d monitored bindings", len(entries))
+	return m.collapsePlaces(entries), nil
+}
 
-	byPayload := map[string][]demands.RegistryEntry{}
+// collapsePlaces turns registry rows into one binding per place.
+//
+// ONE PLACE IS ONE DEMAND, whatever the registry says. demand_registry is a
+// plant-wide derivation copied once per station, so the same (node, payload)
+// can appear under two station ids — Hopkinsville holds every one of its
+// pairs twice, one copy under a station last heard from in August. Treating
+// each row as a binding gave one place two debounce budgets and two mints, the
+// second of which the partial unique index refused on every evaluation, and
+// the refused one then fired with no origin at all.
+//
+// The row that stands for the place is the first by station id, so the choice
+// is the same on every evaluation and every restart. The collision is logged,
+// throttled per place, because it is two configs claiming one place and a
+// person should decide which is real.
+func (m *ThresholdMonitor) collapsePlaces(entries []demands.RegistryEntry) []thresholdEntry {
+	byPlace := map[string][]demands.RegistryEntry{}
+	var order []string
 	for _, e := range entries {
 		if e.ReplenishUOPThreshold <= 0 {
 			continue
 		}
+		key := placeKey(e.CoreNodeName, e.PayloadCode)
+		if _, seen := byPlace[key]; !seen {
+			order = append(order, key)
+		}
+		byPlace[key] = append(byPlace[key], e)
+	}
+	out := make([]thresholdEntry, 0, len(order))
+	for _, key := range order {
+		rows := byPlace[key]
+		sort.Slice(rows, func(i, j int) bool { return rows[i].StationID < rows[j].StationID })
+		if len(rows) > 1 {
+			m.logDuplicateBinding(key, rows)
+		}
+		e := rows[0]
+		out = append(out, thresholdEntry{
+			stationID:    e.StationID,
+			coreNodeName: e.CoreNodeName,
+			payloadCode:  e.PayloadCode,
+			threshold:    e.ReplenishUOPThreshold,
+			loaderID:     e.LoaderID,
+		})
+	}
+	return out
+}
+
+// logDuplicateBinding names a place bound under more than one station, at most
+// once per swapContradictionWindow per place.
+func (m *ThresholdMonitor) logDuplicateBinding(key string, rows []demands.RegistryEntry) {
+	now := m.nowFn()
+	m.mu.Lock()
+	last, seen := m.duplicateLogged[key]
+	if seen && now.Sub(last) < swapContradictionWindow {
+		m.mu.Unlock()
+		return
+	}
+	m.duplicateLogged[key] = now
+	m.mu.Unlock()
+	parts := make([]string, 0, len(rows))
+	for _, r := range rows {
+		parts = append(parts, fmt.Sprintf("%s(threshold=%d loader=%d)", r.StationID, r.ReplenishUOPThreshold, r.LoaderID))
+	}
+	m.eng.logFn("threshold_monitor: DUPLICATE BINDING node=%s payload=%s stations=%s — one place, %d registry rows; evaluating it once as %s. Two configs claim this place: decide which is real (further occurrences suppressed for %s)",
+		rows[0].CoreNodeName, rows[0].PayloadCode, strings.Join(parts, ","), len(rows), rows[0].StationID, swapContradictionWindow)
+}
+
+// startupSweep evaluates every monitored place once at boot, seeding the
+// cold-start warm-up allowance for the ones already below threshold.
+//
+// IT READS THE OPEN SET ONCE and hands it down for this one pass, rather than
+// probing demand_origins per place: ListOpenThresholdEpisodes is one statement
+// for the whole plant. The map lives for this function call and no longer, so
+// it is not a copy anything else can consult. It is also why a restart does not
+// mint a second demand for a place that is still hungry — the open row is read
+// before anything is decided. There used to be a rehydrate here that loaded
+// the same rows into a map the monitor then trusted for the life of the
+// process; that map is gone.
+//
+// A read failure — the bindings, the open set — evaluates nothing, and the
+// next delta re-reads. A place that is below threshold and receives no delta
+// stays unevaluated until one arrives or a door (reconnect, config edit) asks.
+func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
+	entries, err := m.eng.db.ListDemandThresholds()
+	if err != nil {
+		m.eng.logFn("threshold_monitor: startup sweep ListDemandThresholds: %v", err)
+		return
+	}
+	open, err := m.eng.db.ListOpenThresholdEpisodes()
+	if err != nil {
+		m.eng.logFn("threshold_monitor: startup sweep list open demand episodes: %v (evaluating nothing)", err)
+		return
+	}
+	openByKey := make(map[string]string, len(open))
+	for _, o := range open {
+		openByKey[placeKey(o.CoreNodeName, o.PayloadCode)] = o.OriginID
+	}
+	m.eng.logFn("threshold_monitor: startup sweep — evaluating %d monitored bindings, %d demand(s) already open", len(entries), len(open))
+
+	byPayload := map[string][]demands.RegistryEntry{}
+	var payloads []string
+	for _, e := range entries {
+		if e.ReplenishUOPThreshold <= 0 {
+			continue
+		}
+		if _, seen := byPayload[e.PayloadCode]; !seen {
+			payloads = append(payloads, e.PayloadCode)
+		}
 		byPayload[e.PayloadCode] = append(byPayload[e.PayloadCode], e)
 	}
 
-	// Build threshold cache.
-	m.mu.Lock()
-	for payload, bindings := range byPayload {
-		tes := make([]thresholdEntry, 0, len(bindings))
-		for _, b := range bindings {
-			tes = append(tes, thresholdEntry{
-				stationID:    b.StationID,
-				coreNodeName: b.CoreNodeName,
-				payloadCode:  b.PayloadCode,
-				threshold:    b.ReplenishUOPThreshold,
-				loaderID:     b.LoaderID,
-			})
-		}
-		m.thresholdsByPayload[payload] = tes
-	}
-	m.mu.Unlock()
-
-	// Evaluate each binding against the authoritative DB read once at boot.
-	for payload, bindings := range byPayload {
+	for _, payload := range payloads {
 		if ctx.Err() != nil {
 			return
 		}
-		r, ok := m.decisionTotalFor(ctx, payload, "startup sweep", skipOnReadError)
+		places := m.collapsePlaces(byPayload[payload])
+		r, ok := m.decisionTotalFor(ctx, payload, "startup sweep")
 		if !ok {
 			continue
 		}
-		total := r.total
-		// Seed the cold-start warm-up allowance, then let checkBindings make the
-		// FIRE decision against the total decisionTotalFor resolved — the gate is
-		// checkBindings, the input is decisionTotalFor, and neither is decided
-		// anywhere else.
+		// Warm-up is the sweep's own cold-start concern (Springfield's fresh
+		// start wants one bin in the supermarket and one in flight), not a fire
+		// decision, and it is seeded only for places below threshold. It must be
+		// seeded BEFORE the decision because allow() is what consumes it.
 		//
-		// This block used to compare total < threshold and call fireSignalCached
-		// itself, which meant the startup path silently bypassed every guard
-		// checkBindings applies. One fire decision, one set of guards — which
-		// matters more now, not less: a negative total no longer suppresses,
-		// and restart is exactly when that shows up, because restarting Core is
-		// the remedy an operator reaches for BECAUSE the counts look wrong.
-		//
-		// Warm-up is still seeded here, and still only for bindings that are
-		// currently below threshold — that is the sweep's own cold-start concern
-		// (Springfield's fresh start wants one bin in the supermarket and one in
-		// flight), not a fire decision. It must be seeded BEFORE checkBindings
-		// because allow() is what consumes it. If the floor suppresses the fire,
-		// the allowance simply survives until the ledger is corrected.
-		tes := make([]thresholdEntry, 0, len(bindings))
+		// It is also the one thing a restart changes about WHEN Core orders:
+		// warmUpFloor fires per hungry place bypass the debounce window, the
+		// sweep's own and one more. Both carry the open origin read above, so
+		// dispatch.ReplenishLoader subtracts the first from the second.
 		m.mu.Lock()
-		for _, b := range bindings {
-			if total < b.ReplenishUOPThreshold {
-				m.warmUp[bindingKey(b.StationID, b.CoreNodeName, b.PayloadCode)] = warmUpFloor
+		for _, b := range places {
+			if r.total < b.threshold {
+				m.warmUp[placeKey(b.coreNodeName, b.payloadCode)] = warmUpFloor
 			}
-			tes = append(tes, thresholdEntry{
-				stationID:    b.StationID,
-				coreNodeName: b.CoreNodeName,
-				payloadCode:  b.PayloadCode,
-				threshold:    b.ReplenishUOPThreshold,
-				loaderID:     b.LoaderID,
-			})
 		}
 		m.mu.Unlock()
-		m.checkBindings(tes, total, "warm_up_startup_sweep", r.usedEdge)
+		m.decide(places, r.total, "warm_up_startup_sweep", r.usedEdge, openByKey)
 	}
-
-	m.mu.Lock()
-	m.sweepDone = true
-	m.mu.Unlock()
 	m.eng.logFn("threshold_monitor: startup sweep complete — evaluating from authoritative DB reads")
 }
 
@@ -575,16 +637,18 @@ func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
 // contradiction log/chip is throttled to once per swapContradictionWindow per
 // payload, so a burst of complex orders can't spam it.
 func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
-	if payloadCode == "" {
+	if payloadCode == "" || m.eng == nil || m.eng.db == nil {
 		return
 	}
-	m.mu.Lock()
-	bindings, monitored := m.thresholdsByPayload[payloadCode]
-	m.mu.Unlock()
-	if !monitored {
+	bindings, err := m.monitoredPlaces(payloadCode)
+	if err != nil {
+		m.eng.logFn("threshold_monitor: NoteSwapRequestContradiction bindings for %s: %v", payloadCode, err)
 		return
 	}
-	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "NoteSwapRequestContradiction", skipOnReadError)
+	if len(bindings) == 0 {
+		return
+	}
+	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "NoteSwapRequestContradiction")
 	if !ok {
 		return
 	}
@@ -624,8 +688,22 @@ func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
 }
 
 // checkBindings evaluates all threshold bindings for a given total and
-// fires signals for any that are below threshold and past debounce.
+// fires signals for any that are below threshold and past debounce, reading
+// each place's open episode from demand_origins as it goes.
 func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string, usedEdgeReports bool) {
+	m.decide(bindings, total, reason, usedEdgeReports, nil)
+}
+
+// decide is checkBindings with an optional open set. A nil open set means
+// "probe demand_origins per place" — every caller but the startup sweep, which
+// has read the whole open set once and passes it for its one pass.
+func (m *ThresholdMonitor) decide(bindings []thresholdEntry, total int, reason string, usedEdgeReports bool, open map[string]string) {
+	// No database, no episode, and so no decision: every edge below reads
+	// demand_origins, and an order with no episode is refused anyway. Only the
+	// pure unit harness builds a monitor without one.
+	if m.eng == nil || m.eng.db == nil {
+		return
+	}
 	// A NEGATIVE TOTAL NO LONGER SUPPRESSES REPLENISHMENT.
 	//
 	// It used to. The reasoning was "a negative total is a broken ledger, so
@@ -660,13 +738,11 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 			// unthrottled line would bury the plant log exactly when it needs
 			// reading. shouldLogNegative touches ONLY negativeLogged — the
 			// binding's debounce budget is untouched.
-			if !m.shouldLogNegative(bindingKey(b.stationID, b.coreNodeName, b.payloadCode)) {
+			if !m.shouldLogNegative(placeKey(b.coreNodeName, b.payloadCode)) {
 				continue
 			}
-			if m.eng != nil { // nil in the pure unit harness (newTestMonitor)
-				m.eng.logFn("threshold_monitor: NEGATIVE COUNT station=%s loader=%s payload=%s — in-loop total is %d (threshold %d); the bins ledger for this payload is wrong (overpack, an untracked delivery, or a manual move) and needs a recount. Replenishment CONTINUES on this reading — a wrong count must not starve the line (further occurrences suppressed for %s)",
-					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, negativeLogWindow)
-			}
+			m.eng.logFn("threshold_monitor: NEGATIVE COUNT station=%s loader=%s payload=%s — in-loop total is %d (threshold %d); the bins ledger for this payload is wrong (overpack, an untracked delivery, or a manual move) and needs a recount. Replenishment CONTINUES on this reading — a wrong count must not starve the line (further occurrences suppressed for %s)",
+				b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, negativeLogWindow)
 		}
 		// Deliberately NO return — fall through to the normal evaluation.
 	}
@@ -674,35 +750,59 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 		if b.threshold <= 0 {
 			continue
 		}
+		key := placeKey(b.coreNodeName, b.payloadCode)
+		// READ, THEN WRITE. One indexed probe answers every question the edges
+		// ask — is an episode open here, which one, what does a fire stamp — so
+		// nothing can disagree with the row it describes. A failed read decides
+		// nothing: no open, no close, no order.
+		originID, err := m.openOrigin(key, open)
+		if err != nil {
+			m.eng.logFn("threshold_monitor: read open demand for %s: %v (deciding nothing)", key, err)
+			continue
+		}
 		if total >= b.threshold {
 			// THE RISING EDGE. Until the demand grain existed this branch did
 			// nothing at all — recovery was simply the absence of firing, which
 			// is why there was no way to say when a demand ENDED, and therefore
 			// no way to say what one had cost.
-			m.closeThresholdEpisode(bindingKey(b.stationID, b.coreNodeName, b.payloadCode),
-				protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+			if originID != "" {
+				m.closeThresholdEpisodeByID(originID, key, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+			}
 			continue
 		}
-		key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
 		// THE FALLING EDGE, AND IT IS MINTED BEFORE THE DEBOUNCE GATE ON
 		// PURPOSE. The episode is the DEMAND; the fire is the ACTION taken
 		// about it. Debounce decides how often it is worth acting — it must not
 		// decide whether the need is recorded, or a demand that fired once and
 		// then stayed suppressed for hours would look like it lasted an
 		// instant. The episode opens when the place goes hungry.
-		m.openThresholdEpisode(key, b, total, usedEdgeReports)
-		if !m.allow(key) {
-			// nil-guarded like every other eng use here. Unreachable with a
-			// nil eng until now: a negative total used to return before this
-			// point, so the pure unit harness never got here.
-			if m.eng != nil {
-				m.eng.dbg("threshold_monitor: suppress station=%s loader=%s payload=%s total=%d threshold=%d (debounce)",
-					b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
-			}
+		if originID == "" {
+			originID = m.openThresholdEpisode(key, b, total, usedEdgeReports)
+		}
+		// NO EPISODE, NO ORDER. An order with no origin is one the next ask
+		// cannot subtract — dispatch.ReplenishLoader counts the episode's live
+		// orders by origin, and a blank one counts nothing — which is how
+		// never-2N's sizing arm comes undone (Springfield 2026-08-03, 241
+		// orders at one window). openThresholdEpisode has already logged why.
+		if originID == "" {
 			continue
 		}
-		m.fireSignalCached(b, total, reason)
+		if !m.allow(key) {
+			m.eng.dbg("threshold_monitor: suppress station=%s loader=%s payload=%s total=%d threshold=%d (debounce)",
+				b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
+			continue
+		}
+		m.fireSignalCached(b, total, reason, originID)
 	}
+}
+
+// openOrigin is the open episode for a place: from the pass's open set when
+// the caller read one, from demand_origins otherwise. "" means none is open.
+func (m *ThresholdMonitor) openOrigin(key string, open map[string]string) (string, error) {
+	if open != nil {
+		return open[key], nil
+	}
+	return m.eng.db.OpenOriginForKey(key)
 }
 
 // shouldLogNegative reports whether the broken-ledger refusal should be logged
@@ -761,9 +861,9 @@ func (m *ThresholdMonitor) allow(key string) bool {
 // This is the ONE construction-and-send site, and every path reaches it through
 // checkBindings → allow() → here, so it is post-debounce and the per-bin
 // capacity read added below is per-fire rather than per-tick.
-func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason string) {
+func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason, originID string) {
 	if m.fireHook != nil {
-		m.fireHook(b, total, reason)
+		m.fireHook(b, total, reason, originID)
 		return
 	}
 	if m.eng == nil || m.eng.dispatcher == nil {
@@ -779,8 +879,6 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 	if pl, err := m.eng.db.GetPayloadByCode(b.payloadCode); err == nil && pl != nil {
 		perBin = pl.UOPCapacity
 	}
-
-	originID := m.currentThresholdOrigin(bindingKey(b.stationID, b.coreNodeName, b.payloadCode))
 
 	cfg, ok, err := m.eng.dispatcher.LoadReplenishConfig(b.loaderID)
 	if err != nil {
@@ -826,33 +924,29 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 		b.stationID, b.loaderID, b.payloadCode, total, b.threshold, reason, len(res.Created), res.Want, res.HeldBy)
 }
 
-// OnThresholdChanges resets per-binding debounce + warm-up state for
-// every (loader, payload) whose threshold value moved, and rebuilds
-// the in-memory threshold cache for affected payloads. Called by the
-// loader config-edit path (service/loader_service.go) after
-// SyncDemandRegistry returns its change list.
+// OnThresholdChanges is the loader config-edit door. Called by
+// service/loader_service.go after the registry derive returns its change list.
+// For every place whose threshold value moved it clears the debounce and
+// warm-up state, closes the open episode (the denominator moved, or the
+// binding went), and evaluates the affected payloads.
 //
-// After rebuilding the cache, this function re-evaluates the affected
-// bindings against the current cached UOP total and creates orders
-// immediately for any binding already below
-// threshold. Closes the gap where a newly-added or threshold-increased
-// binding for a payload with no incoming bin/bucket deltas (e.g. a
-// zero-stock payload) would stay silent until Core restarted — the
-// Springfield 6883 case where a threshold was configured but never
-// triggered because no delta arrived to drive checkBindings.
+// It EVALUATES, and does not wait for a delta, because a newly-added or
+// raised threshold on a payload with no stock moving would otherwise stay
+// silent until something else woke it — the Springfield 6883 case, a threshold
+// configured and never triggered because no delta arrived. A failed read here
+// is side-effect-free like everywhere else: the door no longer fires off a
+// fabricated zero.
 func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) {
 	if len(changes) == 0 {
 		return
 	}
-
-	affectedPayloads := make(map[string]bool)
-
+	affected := map[string]bool{}
 	m.mu.Lock()
 	for _, c := range changes {
-		key := bindingKey(c.StationID, c.CoreNodeName, c.PayloadCode)
+		key := placeKey(c.CoreNodeName, c.PayloadCode)
 		delete(m.debounce, key)
 		delete(m.warmUp, key)
-		affectedPayloads[c.PayloadCode] = true
+		affected[c.PayloadCode] = true
 		if m.eng != nil {
 			m.eng.dbg("threshold_monitor: reset debounce station=%s loader=%s payload=%s old=%d new=%d",
 				c.StationID, c.CoreNodeName, c.PayloadCode, c.OldThreshold, c.NewThreshold)
@@ -860,271 +954,65 @@ func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) 
 	}
 	m.mu.Unlock()
 
-	// The denominator moved, so the episode ends here and the re-evaluation
-	// inside engagePayloads opens a fresh one if the place is still hungry.
-	// Carrying one episode across the change would measure it against a
-	// threshold that was not in force for most of its life.
-	//
-	// It runs BEFORE engagePayloads, or the re-evaluation would find the old
-	// episode still open, treat the level as already-stamped, and the new
-	// threshold would never get an episode of its own.
+	// The denominator moved, so the episode ends here and the evaluation below
+	// opens a fresh one if the place is still hungry. Carrying one episode
+	// across the change would measure it against a threshold that was not in
+	// force for most of its life. BEFORE the evaluation, or it would find the
+	// old episode open and the new threshold would never get one of its own.
 	m.closeThresholdEpisodesForChangedBindings(changes)
 
-	m.engagePayloads(affectedPayloads)
+	m.evaluatePayloads(affected)
 }
 
-// Resync makes the monitor's in-memory bindings for one station agree with
-// demand_registry, firing any binding already below threshold. Called when an
-// Edge (re)connects — which is also when Core re-derives that station's
-// registry from the loader aggregate, so this is the call that turns the
-// re-derive into live bindings.
+// Resync is the Edge (re)connect door: Core has just re-derived the station's
+// registry from the loader aggregate, so every place the station is bound to
+// has its debounce and warm-up cleared and is evaluated now — a binding seeded
+// or edited while the station was away engages without waiting for a delta.
 //
-// THE ADD HALF. The startup sweep reads demand_registry once, ~3s after Core
-// boot. But the registry is populated out-of-band: seeddev writes it directly (a
-// separate process that can't notify a running monitor), and the live runtime
-// trigger (loader config edit → OnThresholdChanges) only fires for edits made
-// through the loader UI, not for seed/CLI writes. Without a re-engage on
-// (re)connect, a binding seeded after the startup sweep stays dark until Core
-// restarts — exactly the dev-sim symptom (seed populates the registry, edge
-// restarts, but C-push never fires).
+// THERE IS NO DROP HALF ANY MORE, because there is no memory to drop from. A
+// binding that vanished while the station was away is simply not in the
+// registry, so nothing evaluates it and nothing can mint for it; its open
+// episode, if it had one, is closed `threshold_removed` by the reconciling
+// sweep (reconcileThresholdBindings), which reads the same table.
 //
-// THE DROP HALF, AND WHY IT IS THE SAME FUNCTION. This was add-only, and it
-// could not drop a binding even when asked: `affected` was built solely from the
-// rows the database still reports for the station, so a station whose registry
-// had just LOST an entry — the loader retired while it was away — produced a set
-// that could not mention it, and the stale binding stayed live in
-// thresholdsByPayload. evaluatePayload would keep minting threshold episodes
-// against config that no longer exists, and reconcileThresholdBindings would
-// close each mint `threshold_removed` on its next pass while
-// closeThresholdEpisodeRef cleared openOrigins on the way out, re-arming
-// the falling edge for the next delta. That shape cost Springfield 1293
-// threshold_removed closes, across five close days, twelve nodes and two
-// station ids, while the stale-edge reaper was emptying registries wholesale; the reaper is gone, and this half is what
-// keeps the same shape from returning on the reconnect path.
-//
-// So the affected set is the UNION of what the database says about this station
-// and what memory still holds for it. Adding a payload to that set is not the
-// same as deciding anything about it: engagePayloads rebuilds each one from
-// LookupDemandThresholdsByPayload and lets the rebuilt binding set be the
-// answer. A payload whose station lost its binding drops out of
-// thresholdsByPayload and its episode closes `threshold_removed`; a payload
-// still bound elsewhere keeps the other station's bindings, because that lookup
-// is plant-wide and closeThresholdEpisodesForPayloadNotIn compares KEYS rather
-// than asking whether the payload has any bindings left.
-//
-// Idempotent: engagePayloads fires those below threshold and the episode dedups
-// the orders (dispatch.ReplenishLoader subtracts the episode's own live orders
-// from the ask), so re-firing a still-below binding on a reconnect is safe.
+// A READ FAILURE IS NOT AN EMPTY BINDING SET: it logs and does nothing.
 func (m *ThresholdMonitor) Resync(stationID string) {
 	if m.eng == nil || m.eng.db == nil {
 		return
 	}
 	entries, err := m.eng.db.ListDemandThresholds()
 	if err != nil {
-		// A READ FAILURE IS NOT AN EMPTY BINDING SET, and it matters more here
-		// than it did when this was add-only. Falling through would let the
-		// union below be the whole answer — every payload this station holds,
-		// rebuilt against a registry nobody could read — and one Postgres blip
-		// during a reconnect would close the station's open demands and stop
-		// replenishing it. Returning means a withdrawn binding is noticed late,
-		// which is what the reconciling sweep is the floor for.
 		m.eng.logFn("threshold_monitor: Resync(%s) list thresholds: %v", stationID, err)
 		return
 	}
-	affected := make(map[string]bool)
+	affected := map[string]bool{}
 	m.mu.Lock()
 	for _, e := range entries {
 		if e.StationID != stationID || e.ReplenishUOPThreshold <= 0 {
 			continue
 		}
-		// Clear debounce/warm-up so an already-below binding fires immediately on
-		// (re)connect instead of waiting out the window.
-		key := bindingKey(e.StationID, e.CoreNodeName, e.PayloadCode)
+		key := placeKey(e.CoreNodeName, e.PayloadCode)
 		delete(m.debounce, key)
 		delete(m.warmUp, key)
 		affected[e.PayloadCode] = true
-	}
-	// What memory still holds for this station. BOTH maps, because they can
-	// disagree and the disagreement is the interesting case: openOrigins is
-	// rehydrated at boot before the startup sweep builds thresholdsByPayload,
-	// and a close clears openOrigins while leaving the binding cached. Either
-	// one alone would leave the other's leftovers behind.
-	for payload, bindings := range m.thresholdsByPayload {
-		for _, te := range bindings {
-			if te.stationID == stationID {
-				affected[payload] = true
-				break
-			}
-		}
-	}
-	for _, ref := range m.openOrigins {
-		if ref.stationID == stationID {
-			affected[ref.payloadCode] = true
-		}
 	}
 	m.mu.Unlock()
 	if len(affected) == 0 {
 		return
 	}
 	m.eng.logFn("threshold_monitor: Resync station=%s — re-engaging %d monitored payload(s)", stationID, len(affected))
-	m.engagePayloads(affected)
+	m.evaluatePayloads(affected)
 }
 
-// engagePayloads makes memory agree with demand_registry for each affected
-// payload and then evaluates what survived, in that order. The two halves are
-// separate functions below; this is the composition, and it exists because the
-// doors that call it want both.
-//
-// TWO CALLERS, AND BOTH ARE SOMEBODY STANDING AT A DOOR. OnThresholdChanges is
-// the loader config edit; Resync is the Edge (re)connect. Each is a person or a
-// reconnecting service telling Core that the config it holds is out of date,
-// and each wants the correction applied AND acted on: a binding that is already
-// below threshold has no delta coming to wake it, so a zero-stock payload would
-// stay silent until Core restarted. That is Springfield 6883.
-//
-// THE RECONCILING SWEEP USED TO BE THE THIRD AND IS NOT ONE ANY MORE. It called
-// this whole function to get the rebuild and got the evaluation with it, so a
-// sixty-second timer could read a level and create replenishment orders for
-// bindings the pass had never been asked about — worst of all against a total
-// of zero, which is what the evaluate half deliberately falls through to when
-// the authoritative read fails. It now calls rebuildPayloadBindings directly
-// (see dropAbsentBindingsFromMemory), and the bindings that survive its rebuild
-// are evaluated by the next delta, the way every binding always has been.
-//
-// startupSweep is not a caller either, and never was, despite being named
-// alongside these two whenever the paths are discussed. It builds
-// thresholdsByPayload from its own ListDemandThresholds result and calls
-// checkBindings directly — which is why a failed authoritative read makes it
-// SKIP a payload where this path falls through to zero and fires.
-func (m *ThresholdMonitor) engagePayloads(affectedPayloads map[string]bool) {
-	for payload := range affectedPayloads {
-		tes := m.rebuildPayloadBindings(payload)
-		if len(tes) == 0 {
-			// Nothing survived: either the registry read failed and the cache
-			// was deliberately left alone, or the payload has no monitored
-			// bindings left anywhere and has been dropped. Both mean there is
-			// no binding here to evaluate, and the rebuild half has already put
-			// whichever it was in the log.
-			continue
-		}
-		m.evaluateRebuiltBindings(payload, tes)
+// evaluatePayloads evaluates a door's affected payloads, in sorted order so two
+// journals of the same door diff.
+func (m *ThresholdMonitor) evaluatePayloads(affected map[string]bool) {
+	payloads := make([]string, 0, len(affected))
+	for p := range affected {
+		payloads = append(payloads, p)
 	}
-}
-
-// rebuildPayloadBindings is the REBUILD HALF: it makes the monitor's memory for
-// one payload agree with demand_registry, closes the episodes of bindings that
-// did not survive, and returns the ones that did. It decides nothing about how
-// much material is on the floor and it creates no orders.
-//
-// TWO DIRECT CALLERS, THREE ENTRY POINTS. engagePayloads calls it for the two
-// notification doors — the loader config edit (OnThresholdChanges) and the Edge
-// (re)connect (Resync) — and dropAbsentBindingsFromMemory calls it for the
-// reconciling sweep. The sweep is the entry point that takes this half and
-// stops; the other two go on to evaluateRebuiltBindings.
-//
-// THE SWEEP ARRIVES HAVING ALREADY CLOSED the episodes of bindings the database
-// no longer has, and that matters to a reader here because the two passes work
-// off different candidate sets on purpose: the sweep's is the DATABASE's open
-// episodes, this function's is the monitor's own openOrigins — see
-// closeThresholdEpisodeRef. Running after the sweep's closes is also what keeps
-// `by=sweep` on the rows the sweep discovered; this function's own comparison
-// says `by=notification` and would take that attribution away if it got there
-// first.
-//
-// IT IS ONE REBUILD RATHER THAN THREE because "make memory agree with
-// demand_registry for this payload" is one question. A second implementation of
-// it looks identical the day it is written and drifts the first time one of
-// them learns something the other does not — the plant-wide scope of
-// LookupDemandThresholdsByPayload and the compare-by-key rule in
-// staleEpisodeKeys are both that kind of lesson.
-//
-// NIL MEANS "NOTHING HERE TO EVALUATE", and it deliberately answers two
-// different facts with one value: the registry read failed, in which case the
-// cache is left exactly as it was (a blip must not un-monitor a loader), or the
-// payload has no monitored binding left anywhere and has been dropped from the
-// cache. Callers treated both the same before the split — one `continue` each —
-// so collapsing them is the behaviour, not a simplification of it.
-func (m *ThresholdMonitor) rebuildPayloadBindings(payload string) []thresholdEntry {
-	if m.eng == nil || m.eng.db == nil {
-		return nil
+	sort.Strings(payloads)
+	for _, p := range payloads {
+		m.evaluatePayload(p, "below_threshold")
 	}
-	entries, err := m.eng.db.LookupDemandThresholdsByPayload(payload)
-	if err != nil {
-		m.eng.logFn("threshold_monitor: rebuildPayloadBindings for %s: %v", payload, err)
-		return nil
-	}
-	tes := make([]thresholdEntry, 0, len(entries))
-	for _, e := range entries {
-		tes = append(tes, thresholdEntry{
-			stationID:    e.StationID,
-			coreNodeName: e.CoreNodeName,
-			payloadCode:  e.PayloadCode,
-			threshold:    e.ReplenishUOPThreshold,
-			loaderID:     e.LoaderID,
-		})
-	}
-	// Which bindings SURVIVED the rebuild. Any open episode for this payload
-	// whose binding is not among them lost its precondition: the config went
-	// away underneath a live demand.
-	//
-	// NOT THE ONLY SITE THAT NOTICES, and the claim that it was has been
-	// wrong for a while. The reconciling sweep notices by comparing the same
-	// keys against the database, and on the config-edit path
-	// closeThresholdEpisodesForChangedBindings gets here first, because a
-	// removed binding arrives as a change to a threshold of zero and
-	// OnThresholdChanges runs that pass before this one. All three write the
-	// same reason for the same fact; whichever arrives first takes the row,
-	// and closeThresholdEpisodeRef reports no move for the ones that follow.
-	// This site is the one that still notices when a payload was rebuilt for
-	// some other reason entirely.
-	live := make(map[string]bool, len(tes))
-	for _, te := range tes {
-		live[bindingKey(te.stationID, te.coreNodeName, te.payloadCode)] = true
-	}
-	m.closeThresholdEpisodesForPayloadNotIn(payload, live)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(tes) == 0 {
-		delete(m.thresholdsByPayload, payload)
-		return nil
-	}
-	m.thresholdsByPayload[payload] = tes
-	return tes
-}
-
-// evaluateRebuiltBindings is the EVALUATE HALF: it reads the authoritative
-// in-loop sum for a payload whose bindings have just been rebuilt and hands it
-// to checkBindings, which makes the one fire decision there is.
-//
-// ONE DIRECT CALLER — engagePayloads — reached from two entry points, a loader
-// config edit (OnThresholdChanges) and an Edge (re)connect (Resync). Both are a
-// moment when somebody is actively correcting the system's belief, and that is
-// the entire justification for the paragraph below.
-//
-// IT DELIBERATELY FIRES ON A READ ERROR: the total falls through to 0, which is
-// below every threshold there is, so a config edit that lands during a
-// transient DB error still arms a zero-stock payload instead of going quiet
-// until a delta that may never arrive. The hot path does the opposite —
-// evaluatePayload logs and skips — because there the next delta re-evaluates in
-// a moment and nobody is waiting.
-//
-// SO THIS IS THE HALF A RECONCILING SWEEP MUST NOT REACH, and until this split
-// it did. On a timer, with nobody watching, "fall through to zero" turns one
-// Postgres blip into replenishment orders for every payload the pass happened
-// to rebuild — and it rebuilt them because a DIFFERENT binding's episode needed
-// closing. reconcileThresholdBindings already gives the general form of the
-// rule: the level belongs to the delta path, because the rising edge in
-// checkBindings runs on every delta, applies the hysteresis margin, and says
-// `recovered`. A sweep that also reads the total is a second opinion on a
-// question that already has an answer; a sweep that ORDERS off it puts material
-// behind the second opinion.
-//
-// THERE IS NO CACHED TALLY TO RE-BASELINE AGAINST, which is why this reads
-// rather than adjusts. The private copy that once sat at ~139 while DB truth
-// was 31 (Springfield 2026-07-21: the threshold was nudged 120→121→120 and
-// nothing fired) is gone, so "re-baseline" collapsed to "read".
-func (m *ThresholdMonitor) evaluateRebuiltBindings(payload string, tes []thresholdEntry) {
-	r, _ := m.decisionTotalFor(context.Background(), payload, "evaluateRebuiltBindings", zeroOnReadError)
-	m.checkBindings(tes, r.total, "below_threshold", r.usedEdge)
 }

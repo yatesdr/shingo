@@ -9,61 +9,18 @@ import (
 
 func newTestMonitor() *ThresholdMonitor {
 	return &ThresholdMonitor{
-		eng:                 nil,
-		debounce:            make(map[string]time.Time),
-		warmUp:              make(map[string]int),
-		sweepDone:           true,
-		thresholdsByPayload: make(map[string][]thresholdEntry),
-		negativeLogged:      make(map[string]time.Time),
-		swapContradiction:   make(map[string]time.Time),
+		eng:               nil,
+		debounce:          make(map[string]time.Time),
+		warmUp:            make(map[string]int),
+		negativeLogged:    make(map[string]time.Time),
+		duplicateLogged:   make(map[string]time.Time),
+		swapContradiction: make(map[string]time.Time),
 	}
 }
 
-// TestThresholdMonitor_Snapshot pins the monitored-set + binding view the
-// Replenishment Health page reads. The snapshot no longer carries a cached UOP
-// total (the private tally is gone); it reports only which payloads are
-// monitored and the bindings watching each.
-func TestThresholdMonitor_Snapshot(t *testing.T) {
-	t.Parallel()
-	tm := newTestMonitor()
-	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
-		{stationID: "st-1", coreNodeName: "MS-A", payloadCode: "WIDGET-A", threshold: 120, loaderID: 7},
-		{stationID: "st-1", coreNodeName: "SMN_015", payloadCode: "WIDGET-A", threshold: 96, loaderID: 7},
-	}
-	tm.thresholdsByPayload["WIDGET-B"] = []thresholdEntry{
-		{stationID: "st-2", coreNodeName: "MS-B", payloadCode: "WIDGET-B", threshold: 40, loaderID: 3},
-	}
-
-	byCode := map[string]MonitorSnapshotEntry{}
-	for _, s := range tm.Snapshot() {
-		byCode[s.PayloadCode] = s
-	}
-	if len(byCode) != 2 {
-		t.Fatalf("Snapshot returned %d payloads, want 2", len(byCode))
-	}
-	a, ok := byCode["WIDGET-A"]
-	if !ok {
-		t.Fatal("WIDGET-A missing from snapshot")
-	}
-	if len(a.Bindings) != 2 {
-		t.Fatalf("WIDGET-A bindings = %d, want 2", len(a.Bindings))
-	}
-	maxThresh := 0
-	for _, b := range a.Bindings {
-		if b.Threshold > maxThresh {
-			maxThresh = b.Threshold
-		}
-		if b.LoaderID != 7 {
-			t.Errorf("WIDGET-A binding loader id = %d, want 7", b.LoaderID)
-		}
-	}
-	if maxThresh != 120 {
-		t.Errorf("WIDGET-A max binding threshold = %d, want 120", maxThresh)
-	}
-	if b, ok := byCode["WIDGET-B"]; !ok || len(b.Bindings) != 1 {
-		t.Errorf("WIDGET-B should be present with 1 binding, got present=%v bindings=%d", ok, len(b.Bindings))
-	}
-}
+// The Snapshot read model is pinned against a real database in
+// threshold_readthrough_test.go (TestReadThrough_SnapshotReadsTheRegistry): it
+// reads demand_registry on every call and has nothing to show without one.
 
 // TestResolveLinesideMode pins the R1 config validation: empty and "edge_reports"
 // resolve to the edge_reports default, "ledger" is the revert knob, and any
@@ -112,7 +69,7 @@ func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
 
-	key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
+	key := placeKey("MS-LOADER", "WIDGET-A")
 	if !tm.allow(key) {
 		t.Fatal("first allow should pass")
 	}
@@ -133,7 +90,7 @@ func TestThresholdMonitor_OnThresholdChanges(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
 
-	key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
+	key := placeKey("MS-LOADER", "WIDGET-A")
 	tm.allow(key)
 
 	if tm.allow(key) {
@@ -156,7 +113,7 @@ func TestThresholdMonitor_OnThresholdChanges(t *testing.T) {
 func TestThresholdMonitor_WarmUpOverridesDebounce(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
-	key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
+	key := placeKey("MS-LOADER", "WIDGET-A")
 	tm.warmUp[key] = 2
 
 	if !tm.allow(key) {
@@ -196,67 +153,12 @@ func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
 	tm.OnBucketApplied("s1", "LOADER", "", -5, "capture") // should not panic
 }
 
-func TestThresholdMonitor_CheckBindings_AboveThreshold_NoFire(t *testing.T) {
-	t.Parallel()
-	tm := newTestMonitor()
-	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
-		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}
-
-	// Above threshold — checkBindings should not attempt to fire.
-	// With nil eng, a fire attempt would panic, so this passing proves
-	// the threshold check short-circuits correctly.
-	tm.checkBindings([]thresholdEntry{
-		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}, 100, "below_threshold", false)
-}
-
-// TestThresholdMonitor_CheckBindings_NegativeTotal_StillFires pins the
-// REVERSAL of the old validity floor.
-//
-// A negative total used to suppress replenishment entirely, on the reasoning
-// that it is a broken ledger and acting on garbage is worse than doing
-// nothing. On a plant floor that is backwards.
-//
-// A count goes negative for mundane physical reasons — a press overpacked, a
-// fork truck delivered parts outside ShinGo, some human intervention it cannot
-// see. It means "a person should look at this", not "stop the line". And the
-// reading is too LOW, so the honest response to it is to order material, which
-// is exactly what the threshold check does. Suppressing paired a number saying
-// the line is empty with a system that ordered nothing — the first link in the
-// 2026-07-21 chain, logged 1,119 times a day at Springfield.
-//
-// Over-ordering is recoverable. Starving a line because a count was wrong is
-// not. So a negative total is logged loudly for a human and evaluated normally.
-func TestThresholdMonitor_CheckBindings_NegativeTotal_StillFires(t *testing.T) {
-	t.Parallel()
-	tm := newTestMonitor()
-	var fired []thresholdEntry
-	tm.fireHook = func(b thresholdEntry, total int, reason string) { fired = append(fired, b) }
-	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
-		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}
-
-	tm.checkBindings([]thresholdEntry{
-		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
-	}, -443, "below_threshold", false)
-
-	if len(fired) != 1 {
-		t.Fatalf("a negative total must still order material, got %d signals", len(fired))
-	}
-	// And it consumes debounce like any other fire — it IS a fire now.
-	if _, ok := tm.debounce[bindingKey("s1", "LOADER", "WIDGET-A")]; !ok {
-		t.Error("a fired signal must record its debounce stamp")
-	}
-}
-
-// The zero boundary — the floor rejects NEGATIVE totals only, and a genuine
-// zero-stock payload must still signal — is already pinned end-to-end by
-// TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold
-// (threshold_monitor_registry_pg_test.go), which asserts a fired signal with
-// CurrentUOP == 0 against a real engine. Re-asserting it here against the
-// nil-eng harness cannot be done without either catching a deliberate panic or
-// writing a tautology, so it is deliberately left to that test.
+// The fire decision needs a database now — every edge reads the place's open
+// episode from demand_origins, and a fire without one is refused — so the
+// checkBindings cases that used to run against the nil-engine harness live in
+// threshold_readthrough_test.go: the negative total still fires
+// (TestReadThrough_FireGateBelowAtAbove/negative), and its log throttle does
+// not gate ordering (TestReadThrough_NegativeLogThrottleDoesNotGateOrdering).
 
 // TestThresholdMonitor_NegativeLogThrottle pins the log-volume control on the
 // broken-ledger refusal.
@@ -269,7 +171,7 @@ func TestThresholdMonitor_CheckBindings_NegativeTotal_StillFires(t *testing.T) {
 func TestThresholdMonitor_NegativeLogThrottle(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
-	key := bindingKey("s1", "LOADER", "WIDGET-A")
+	key := placeKey("LOADER", "WIDGET-A")
 
 	if !tm.shouldLogNegative(key) {
 		t.Fatal("first refusal must log")
@@ -288,46 +190,8 @@ func TestThresholdMonitor_NegativeLogThrottle(t *testing.T) {
 	}
 
 	// A different binding has its own budget.
-	if !tm.shouldLogNegative(bindingKey("s1", "LOADER", "WIDGET-B")) {
+	if !tm.shouldLogNegative(placeKey("LOADER", "WIDGET-B")) {
 		t.Error("throttle must be per binding, not global")
-	}
-}
-
-// TestThresholdMonitor_NegativeCount_LogThrottleDoesNotGateOrdering is the
-// property that keeps the throttle honest now that a negative count no longer
-// suppresses anything: the LOG is rate-limited so a broken ledger cannot bury
-// the plant log, but the ORDERING is not. Every tick still evaluates.
-//
-// Getting this wrong would reintroduce the old failure quietly — a line going
-// unserved because its warning had already been printed.
-func TestThresholdMonitor_NegativeCount_LogThrottleDoesNotGateOrdering(t *testing.T) {
-	t.Parallel()
-	tm := newTestMonitor()
-	var fires int
-	tm.fireHook = func(thresholdEntry, int, string) { fires++ }
-	entry := thresholdEntry{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50}
-	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{entry}
-	key := bindingKey("s1", "LOADER", "WIDGET-A")
-
-	// First tick fires. Subsequent ticks are held off by the normal debounce
-	// (which applies to every fire, negative or not) — NOT by the negative
-	// path, which no longer gates anything.
-	for range 25 {
-		tm.checkBindings([]thresholdEntry{entry}, -443, "below_threshold", false)
-	}
-
-	if fires == 0 {
-		t.Fatal("a negative count must still order material")
-	}
-	tm.mu.Lock()
-	stamps := len(tm.negativeLogged)
-	_, debounced := tm.debounce[key]
-	tm.mu.Unlock()
-	if stamps != 1 {
-		t.Errorf("negativeLogged entries = %d, want 1 — the LOG is throttled", stamps)
-	}
-	if !debounced {
-		t.Error("a fired signal must record its debounce stamp")
 	}
 }
 
@@ -355,7 +219,7 @@ func TestThresholdMonitor_WindowsRunOnTheInjectedClock(t *testing.T) {
 	tm.now = func() time.Time { return simNow }
 
 	t.Run("debounce", func(t *testing.T) {
-		key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
+		key := placeKey("MS-LOADER", "WIDGET-A")
 		if !tm.allow(key) {
 			t.Fatal("first allow should pass")
 		}
@@ -368,7 +232,7 @@ func TestThresholdMonitor_WindowsRunOnTheInjectedClock(t *testing.T) {
 	})
 
 	t.Run("negative log", func(t *testing.T) {
-		key := bindingKey("station-1", "MS-LOADER", "WIDGET-B")
+		key := placeKey("MS-LOADER", "WIDGET-B")
 		if !tm.shouldLogNegative(key) {
 			t.Fatal("first negative log should fire")
 		}
@@ -382,25 +246,11 @@ func TestThresholdMonitor_WindowsRunOnTheInjectedClock(t *testing.T) {
 	})
 
 	t.Run("swap contradiction", func(t *testing.T) {
-		// Snapshot reports per MONITORED payload, and the production caller
-		// returns early for an unmonitored one, so the chip is only reachable
-		// with a binding present.
-		tm.mu.Lock()
-		tm.thresholdsByPayload["WIDGET-C"] = []thresholdEntry{
-			{stationID: "station-1", coreNodeName: "MS-LOADER", payloadCode: "WIDGET-C", threshold: 100},
-		}
-		tm.mu.Unlock()
-
 		if !tm.recordSwapContradiction("WIDGET-C") {
 			t.Fatal("first contradiction should record")
 		}
 		if tm.recordSwapContradiction("WIDGET-C") {
 			t.Error("a second within the window must be throttled")
-		}
-		// The chip reads the same stamp against the same clock, so it must
-		// still be showing here.
-		if !hasContradiction(tm.Snapshot(), "WIDGET-C") {
-			t.Error("the contradiction chip must be lit inside its window")
 		}
 		simNow = simNow.Add(swapContradictionWindow + time.Second)
 		if !tm.recordSwapContradiction("WIDGET-C") {
@@ -417,20 +267,11 @@ func TestThresholdMonitor_ZeroValueClockFallsBack(t *testing.T) {
 	if tm.now != nil {
 		t.Fatal("fixture changed — this test is about the nil case")
 	}
-	key := bindingKey("station-1", "MS-LOADER", "WIDGET-Z")
+	key := placeKey("MS-LOADER", "WIDGET-Z")
 	if !tm.allow(key) {
 		t.Fatal("a monitor with no clock must still work")
 	}
 	if tm.allow(key) {
 		t.Error("and must still debounce")
 	}
-}
-
-func hasContradiction(snap []MonitorSnapshotEntry, payload string) bool {
-	for _, e := range snap {
-		if e.PayloadCode == payload {
-			return e.SwapContradiction
-		}
-	}
-	return false
 }

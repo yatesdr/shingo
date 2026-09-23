@@ -137,11 +137,6 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache(t *testing.T) {
 	// Engage the binding (as a real Resync/startup would) so the payload is
 	// monitored, then drive a delta.
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
-	}}
-	m.mu.Unlock()
 
 	fires := captureThresholdFires(t, eng)
 	preCount := fires.count(stationID)
@@ -184,11 +179,6 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
 	seedBinWithUOP(t, db, payload, 10)
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
-	}}
-	m.mu.Unlock()
 
 	fires := captureThresholdFires(t, eng)
 	preCount := fires.count(stationID)
@@ -244,11 +234,6 @@ func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
 	seedBinWithUOP(t, db, payload, 200)
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
-	}}
-	m.mu.Unlock()
 
 	fires := captureThresholdFires(t, eng)
 	preCount := fires.count(stationID)
@@ -258,7 +243,11 @@ func TestThresholdMonitor_SwapContradiction_ChipsWhenStocked(t *testing.T) {
 
 	// Chip raised for this payload.
 	chip := false
-	for _, s := range m.Snapshot() {
+	snap, err := m.Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	for _, s := range snap {
 		if s.PayloadCode == payload && s.SwapContradiction {
 			chip = true
 		}
@@ -302,16 +291,15 @@ func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
 	seedBinWithUOP(t, db, payload, 10)
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 50,
-	}}
-	m.mu.Unlock()
 
 	m.NoteSwapRequestContradiction(payload)
 	time.Sleep(200 * time.Millisecond)
 
-	for _, s := range m.Snapshot() {
+	snap, err := m.Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	for _, s := range snap {
 		if s.PayloadCode == payload && s.SwapContradiction {
 			t.Error("raised a contradiction chip for a genuinely below-threshold payload; the operator is right, not contradicted")
 		}
@@ -380,11 +368,6 @@ func TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal(t *testing.T) {
 	}(), "upsert edge report")
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 100,
-	}}
-	m.mu.Unlock()
 
 	fires := captureThresholdFires(t, eng)
 	preCount := fires.count(stationID)
@@ -472,11 +455,6 @@ func TestThresholdMonitor_R1Live_StaleReportFallsBackToLedger(t *testing.T) {
 	}(), "upsert stale edge report")
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 100,
-	}}
-	m.mu.Unlock()
 
 	// Prove the helper falls back: no fresh node, edge-adjusted == ledger, usedEdge false.
 	edgeTotal, ledgerTotal, usedEdge, err := m.linesideDecisionTotal(context.Background(), payload)
@@ -555,11 +533,6 @@ func TestThresholdMonitor_LedgerMode_RevertsToPreR1(t *testing.T) {
 	}(), "upsert edge report")
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID: stationID, coreNodeName: loader, payloadCode: payload, threshold: 100,
-	}}
-	m.mu.Unlock()
 
 	fires := captureThresholdFires(t, eng)
 	preCount := fires.count(stationID)
@@ -623,14 +596,6 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 	seedBinWithUOP(t, db, payload, -443)
 
 	m := eng.thresholdMonitor
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{{
-		stationID:    stationID,
-		coreNodeName: loader,
-		payloadCode:  payload,
-		threshold:    50,
-	}}
-	m.mu.Unlock()
 
 	fires := captureThresholdFires(t, eng)
 	preCount := fires.count(stationID)
@@ -743,6 +708,7 @@ type firedBinding struct {
 	Threshold    int
 	CurrentUOP   int
 	Reason       string
+	OriginID     string
 }
 
 // fireLog records the monitor's decisions. Concurrency-safe: the startup sweep
@@ -761,12 +727,12 @@ func captureThresholdFires(t *testing.T, eng *Engine) *fireLog {
 		t.Fatal("engine has no threshold monitor")
 	}
 	fl := &fireLog{}
-	m.fireHook = func(b thresholdEntry, total int, reason string) {
+	m.fireHook = func(b thresholdEntry, total int, reason, originID string) {
 		fl.mu.Lock()
 		defer fl.mu.Unlock()
 		fl.fired = append(fl.fired, firedBinding{
 			StationID: b.stationID, CoreNodeName: b.coreNodeName, PayloadCode: b.payloadCode,
-			Threshold: b.threshold, CurrentUOP: total, Reason: reason,
+			Threshold: b.threshold, CurrentUOP: total, Reason: reason, OriginID: originID,
 		})
 	}
 	return fl

@@ -34,19 +34,6 @@ import (
 // the ledger for that node (no adjustment) and flags the stale report.
 const linesideReportStaleness = 3 * time.Minute
 
-// readErrPolicy is what a fire path does when the authoritative in-loop total
-// cannot be read. It is a parameter of decisionTotalFor, not a property of it,
-// because the paths genuinely differ today and the resolver is not the place
-// to change that.
-type readErrPolicy int
-
-const (
-	// skipOnReadError logs and evaluates nothing; the next trigger re-reads.
-	skipOnReadError readErrPolicy = iota
-	// zeroOnReadError logs and evaluates against a total of 0.
-	zeroOnReadError
-)
-
 // decisionReading is one fire path's answer to "which total is this judged
 // against": total is the number checkBindings decides off, ledger and edge are
 // the two readings it was chosen from, fresh is whether a fresh Edge report
@@ -71,15 +58,19 @@ type decisionReading struct {
 // paths — a human's swap request was re-checked against the very ledger number
 // R1 exists to distrust — and made the persisted stamp lie on those three.
 //
-// ok=false means "evaluate nothing". site names the caller in the log line.
-func (m *ThresholdMonitor) decisionTotalFor(ctx context.Context, payload, site string, onErr readErrPolicy) (decisionReading, bool) {
+// ok=false means "evaluate nothing": a total that could not be read decides
+// nothing — no open, no close, no order — at every path. The notification
+// doors used to fall through to a total of 0 instead, which is below every
+// threshold there is; measured at both plants, the group that protected
+// (monitored, no lineside report, no bins) was empty. site names the caller in
+// the log line.
+func (m *ThresholdMonitor) decisionTotalFor(ctx context.Context, payload, site string) (decisionReading, bool) {
 	edge, ledger, fresh, err := m.linesideDecisionTotal(ctx, payload)
 	if err != nil {
 		if m.eng != nil {
-			m.eng.logFn("threshold_monitor: %s SystemUOPForPayload(%s): %v", site, payload, err)
+			m.eng.logFn("threshold_monitor: %s SystemUOPForPayload(%s): %v (deciding nothing)", site, payload, err)
 		}
-		// A zero reading decides off the ledger's absence, not the Edge's.
-		return decisionReading{}, onErr == zeroOnReadError
+		return decisionReading{}, false
 	}
 	r := decisionReading{total: ledger, ledger: ledger, edge: edge, fresh: fresh}
 	if m.decisionMode() == linesideModeEdgeReports {
@@ -100,7 +91,8 @@ func (m *ThresholdMonitor) decisionTotalFor(ctx context.Context, payload, site s
 // usedEdge is false.
 //
 // The ledger read error is propagated, and what happens next is the caller's
-// readErrPolicy (see decisionTotalFor) — this function never invents a total.
+// the caller's to act on (decisionTotalFor decides nothing on it) — this
+// function never invents a total.
 // A failure
 // to read the reports table or the per-node ledger degrades SAFELY to the pure
 // ledger (log + usedEdge=false) rather than suppressing a legitimate ledger-based
@@ -190,8 +182,9 @@ func (m *ThresholdMonitor) auditLinesideDecision(payload string, bindings []thre
 }
 
 // OnLinesideReports is the report-arrival trigger. Called by the messaging layer
-// after a batch of Edge lineside reports is upserted, for each payload that
-// appeared. In edge_reports mode the fresh reports are a legitimate new fire
+// after a batch of Edge lineside reports is upserted, for each payload with at
+// least one row that moved (a duplicate or older report moves none and is not
+// passed on). In edge_reports mode the fresh reports are a legitimate new fire
 // trigger (the SNF3 case — the ledger stays stocked while the line starves, so
 // the report is the only signal that reveals the truth), so it runs a full
 // evaluation off the edge-adjusted total. In ledger mode it stays audit-only —
@@ -221,10 +214,15 @@ func (m *ThresholdMonitor) OnLinesideReports(payloadCodes []string) {
 // touching the fire gate — the ledger-mode report-arrival behavior (pre-R1
 // shadow: compare both ways, log the disagreement, decide nothing).
 func (m *ThresholdMonitor) auditOnlyForPayload(payload string) {
-	m.mu.Lock()
-	bindings, monitored := m.thresholdsByPayload[payload]
-	m.mu.Unlock()
-	if !monitored || len(bindings) == 0 {
+	if m.eng == nil || m.eng.db == nil {
+		return
+	}
+	bindings, err := m.monitoredPlaces(payload)
+	if err != nil {
+		m.eng.logFn("threshold_monitor: R1 audit bindings for %s: %v", payload, err)
+		return
+	}
+	if len(bindings) == 0 {
 		return
 	}
 	edgeTotal, ledgerTotal, usedEdge, err := m.linesideDecisionTotal(context.Background(), payload)

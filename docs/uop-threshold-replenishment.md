@@ -80,7 +80,7 @@ Three separate Core subscriptions funnel into one evaluation, so a single bin mo
 
 15 seconds per `(station, core_node_name, payload)` tuple. The state is in-memory on Core — lost on restart. That's intentional: the startup sweep handles the restart case by re-evaluating every monitored binding with debounce bypassed.
 
-`OnThresholdChanges` resets the debounce timer (and warm-up counter) for any binding whose threshold value changed during a registry sync, so an engineer-applied threshold engages on the next inventory event rather than waiting out a debounce window from a previous firing. It also closes the binding's open demand episode and evaluates immediately (`engagePayloads`), so a config edit can itself fire.
+`OnThresholdChanges` resets the debounce timer (and warm-up counter) for any binding whose threshold value changed during a registry sync, so an engineer-applied threshold engages on the next inventory event rather than waiting out a debounce window from a previous firing. It also closes the binding's open demand episode and evaluates immediately (`evaluatePayload`), so a config edit can itself fire. A failed read there evaluates nothing.
 
 ### Startup sweep
 

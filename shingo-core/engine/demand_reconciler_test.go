@@ -164,8 +164,8 @@ func mustGetOrigin(t *testing.T, db *store.DB, originID string) *store.DemandOri
 // on a timer.
 //
 // Without the sweep this episode stays open forever: the monitor's rising edge
-// only runs for bindings that still exist, engagePayloads only rebuilds
-// payloads somebody told it about, and nothing else looks.
+// only runs for bindings that still exist, the doors only evaluate payloads
+// somebody told them about, and nothing else looks.
 func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
 	t.Parallel()
 
@@ -210,10 +210,11 @@ func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
 	if got.ClosedBy != protocol.ClosedBySweep {
 		t.Errorf("closed_by = %q, want %q", got.ClosedBy, protocol.ClosedBySweep)
 	}
-	// And the monitor released its hold, so the next crossing mints a fresh
-	// episode instead of failing against the partial unique index forever.
-	if held := m.currentThresholdOrigin(bindingKey(b.stationID, b.coreNodeName, b.payloadCode)); held != "" {
-		t.Errorf("monitor still holds %q after the sweep closed the episode", held)
+	// And the place is free again: the next crossing mints a fresh episode
+	// instead of failing against the partial unique index forever.
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	if next, err := db.OpenOriginForKey(placeKey(b.coreNodeName, b.payloadCode)); err != nil || next == "" || next == originID {
+		t.Errorf("after the sweep's close the next crossing opened %q (err %v), want a fresh episode", next, err)
 	}
 }
 
@@ -262,9 +263,6 @@ func TestDemandReconciler_LeavesAnEpisodeWhosePreconditionHolds(t *testing.T) {
 	if got.ClosedAt != nil {
 		t.Fatalf("the sweep closed a live episode (reason=%q, by=%q) — the binding still exists, so the demand is still being watched",
 			got.CloseReason, got.ClosedBy)
-	}
-	if held := m.currentThresholdOrigin(bindingKey(b.stationID, b.coreNodeName, b.payloadCode)); held != originID {
-		t.Errorf("the sweep dropped the monitor's hold on a live episode: held %q, want %s", held, originID)
 	}
 }
 

@@ -130,10 +130,10 @@ const (
 // ThresholdEpisodeKey identifies a Core threshold episode.
 //
 // NO STATION COMPONENT, and that is a deliberate narrowing from the original
-// format, which reproduced Core's own bindingKey verbatim — station, node,
-// payload. The bindingKey is a RUNTIME map key inside one process, where the
-// station is free; this is a PERSISTED identity compared across services and
-// across time, where it is not.
+// format, which reproduced a runtime key the threshold monitor once used —
+// station, node, payload. A map key inside one process can carry the station
+// for free; this is a PERSISTED identity compared across services and across
+// time, where it cannot. The monitor now keys everything by this key.
 //
 // nodes.name is TEXT NOT NULL UNIQUE (store/schema/postgres_ddl.go), so the
 // Core node name alone names the place. Adding the reporting edge to it would

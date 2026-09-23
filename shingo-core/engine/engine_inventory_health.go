@@ -58,7 +58,13 @@ type PayloadHealth struct {
 func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, error) {
 	var snap []MonitorSnapshotEntry
 	if e.thresholdMonitor != nil {
-		snap = e.thresholdMonitor.Snapshot()
+		// A failed bindings read fails the page rather than rendering every
+		// loader as unmonitored — that page is where an absent binding would be
+		// noticed, so it must not invent one.
+		var err error
+		if snap, err = e.thresholdMonitor.Snapshot(); err != nil {
+			return nil, err
+		}
 	}
 	byPayload := make(map[string]MonitorSnapshotEntry, len(snap))
 	set := make(map[string]struct{}, len(snap))

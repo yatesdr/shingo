@@ -14,25 +14,22 @@ import (
 	"shingocore/store/payloads"
 )
 
-// threshold_station_registry_test.go — what happens to the monitor's MEMORY
-// when a station's demand_registry loses every binding it had.
+// threshold_station_registry_test.go — what happens to a station's demand when
+// its demand_registry loses every binding it had.
 //
 // THE INCIDENT THAT TAUGHT THIS. A station's rows went away and nothing told
-// the monitor. Its bindings live in thresholdsByPayload, in memory, so
-// evaluatePayload kept minting threshold episodes for config that no longer
-// existed; the reconciling sweep closed each mint `threshold_removed` on its
-// next pass, and closeThresholdEpisodeRef cleared openOrigins, which
-// re-armed the mint. Springfield logged 1293 threshold_removed closes across
-// five close days, twelve nodes and two station ids — one demand rendered as a stream of instantaneous ones, which is the exact
-// failure the episode grain was built to end.
+// the monitor. Its bindings then lived in memory, so evaluatePayload kept
+// minting threshold episodes for config that no longer existed; the
+// reconciling sweep closed each mint `threshold_removed` on its next pass, and
+// the close re-armed the mint. Springfield logged 1293 threshold_removed closes
+// across five close days, twelve nodes and two station ids — one demand
+// rendered as a stream of instantaneous ones.
 //
-// What emptied the rows there was the stale-edge reaper, and that path is gone:
-// an Edge going quiet says nothing about config Core derives for itself, so the
-// stale pass no longer touches the registry (demand_stale_station_test.go pins
-// that it does not). What remains is the case where the rows really did go —
-// somebody retired the loader — and the monitor still has to find out. That is
-// the whole-station grain and it is what these tests are about;
-// threshold_episodes_test.go already pins the per-binding grain.
+// The monitor now reads demand_registry on every evaluation, so a binding that
+// is gone is not evaluated and cannot mint. What these tests pin is the rest of
+// the whole-station grain: a read error is not an empty binding set, one
+// station's withdrawal leaves another's demand alone, a withdrawal ends the
+// demand exactly once, and a restored station mints afresh.
 
 // emptyStationRegistry removes every binding a station has in one transaction
 // and discards the change list — the shape any writer leaves behind when it
@@ -162,23 +159,12 @@ func TestThresholdEpisode_ResyncEngagesAStationAndMints(t *testing.T) {
 	if len(open) != 1 {
 		t.Fatalf("Resync engaged %d episodes for one below-threshold binding, want 1", len(open))
 	}
-	key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
-	if held := m.currentThresholdOrigin(key); held != open[0].OriginID {
-		t.Errorf("monitor holds %q, the open episode is %s — signals would fire with no demand attached",
-			held, open[0].OriginID)
-	}
-	m.mu.Lock()
-	_, monitored := m.thresholdsByPayload[b.payloadCode]
-	m.mu.Unlock()
-	if !monitored {
-		t.Error("Resync opened an episode but did not leave the binding in thresholdsByPayload — the next delta would not evaluate it")
-	}
 }
 
 // A READ FAILURE IS NOT AN EMPTY BINDING SET, in Resync.
 //
-// This is the direction that takes the plant down. Resync's job is to make the
-// monitor's memory agree with demand_registry for one station; if a transient
+// This is the direction that takes the plant down. Resync's job is to evaluate
+// what demand_registry holds for one station; if a transient
 // Postgres error reads as "the station has no bindings", one blip during an
 // Edge reconnect closes every open demand that station has and stops
 // replenishing it until something else re-engages it.
@@ -197,9 +183,6 @@ func TestThresholdEpisode_ResyncReadErrorIsNotAnEmptyBindingSet(t *testing.T) {
 		t.Fatalf("no episode opened: %d", len(open))
 	}
 	originID := open[0].OriginID
-	m.mu.Lock()
-	m.thresholdsByPayload[b.payloadCode] = []thresholdEntry{b}
-	m.mu.Unlock()
 
 	hideDemandRegistry(t, db)
 	m.Resync(b.stationID)
@@ -208,12 +191,6 @@ func TestThresholdEpisode_ResyncReadErrorIsNotAnEmptyBindingSet(t *testing.T) {
 	if got.ClosedAt != nil {
 		t.Errorf("a demand_registry read error closed a live episode (reason=%q, by=%q) — a blip must not look like a withdrawn config",
 			got.CloseReason, got.ClosedBy)
-	}
-	m.mu.Lock()
-	_, monitored := m.thresholdsByPayload[b.payloadCode]
-	m.mu.Unlock()
-	if !monitored {
-		t.Error("a demand_registry read error dropped the binding from thresholdsByPayload — the station would stop being replenished on a transient error")
 	}
 }
 
@@ -251,12 +228,11 @@ func TestThresholdEpisode_SweepReadErrorIsNotAnEmptyBindingSet(t *testing.T) {
 // WITHDRAWING ONE STATION'S CONFIG MUST NOT TAKE ANOTHER STATION'S BINDING
 // WITH IT.
 //
-// The monitor's binding cache is keyed by PAYLOAD, not by station, and
-// LookupDemandThresholdsByPayload is global — so every rebuild of a payload
-// touches every station that watches it. A withdrawal scoped to one station
-// that rebuilds through that cache is one bad key comparison away from silently
-// unmonitoring a healthy line at another loader, which reads as nothing at all:
-// no error, no log, just a station that stops being replenished.
+// LookupDemandThresholdsByPayload is global, so every evaluation of a payload
+// touches every station that watches it. A withdrawal scoped to one station is
+// one bad key comparison away from silently unmonitoring a healthy line at
+// another loader, which reads as nothing at all: no error, no log, just a
+// station that stops being replenished.
 func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone(t *testing.T) {
 	t.Parallel()
 
@@ -271,17 +247,13 @@ func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone
 	registerBinding(t, db, survivor)
 
 	m.checkBindings([]thresholdEntry{withdrawn, survivor}, 40, "below_threshold", false)
-	m.mu.Lock()
-	m.thresholdsByPayload[payload] = []thresholdEntry{withdrawn, survivor}
-	m.mu.Unlock()
 	open := openThresholdEpisodes(t, db)
 	if len(open) != 2 {
 		t.Fatalf("two below-threshold bindings should open two episodes, got %d", len(open))
 	}
-	survivorKey := bindingKey(survivor.stationID, survivor.coreNodeName, survivor.payloadCode)
-	survivorOrigin := m.currentThresholdOrigin(survivorKey)
-	if survivorOrigin == "" {
-		t.Fatal("no episode held for the survivor binding")
+	survivorOrigin, err := db.OpenOriginForKey(placeKey(survivor.coreNodeName, survivor.payloadCode))
+	if err != nil || survivorOrigin == "" {
+		t.Fatalf("no episode open for the survivor binding (err %v)", err)
 	}
 
 	// The withdrawal, both halves: the rows go, and the monitor is told.
@@ -292,26 +264,12 @@ func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone
 		t.Errorf("withdrawing %s closed %s's episode (reason=%q, by=%q) — a silent Edge took a healthy line's demand with it",
 			withdrawn.stationID, survivor.stationID, got.CloseReason, got.ClosedBy)
 	}
-	if held := m.currentThresholdOrigin(survivorKey); held != survivorOrigin {
-		t.Errorf("withdrawing %s dropped the monitor's hold on %s's episode: held %q, want %s",
-			withdrawn.stationID, survivor.stationID, held, survivorOrigin)
+	if !monitorHoldsBinding(m, survivor) {
+		t.Errorf("withdrawing %s took %s's binding with it — that station would stop being replenished with nothing logged",
+			withdrawn.stationID, survivor.stationID)
 	}
-	m.mu.Lock()
-	bindings := append([]thresholdEntry(nil), m.thresholdsByPayload[payload]...)
-	m.mu.Unlock()
-	found := false
-	for _, te := range bindings {
-		if te.stationID == survivor.stationID && te.coreNodeName == survivor.coreNodeName {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("withdrawing %s dropped %s's binding from thresholdsByPayload (%d left) — that station would stop being replenished with nothing logged",
-			withdrawn.stationID, survivor.stationID, len(bindings))
-	}
-	// And the survivor is still EVALUATED, which is the part a dropped cache
-	// entry hides: with the binding gone, evaluatePayload short-circuits before
-	// the DB read and the line just goes quiet.
+	// And the survivor is still EVALUATED: an evaluation after the withdrawal
+	// leaves its demand open and does not mint it a second one.
 	m.evaluatePayload(payload, "below_threshold")
 	if got := mustGetOrigin(t, db, survivorOrigin); got.ClosedAt != nil {
 		t.Errorf("an evaluation after the withdrawal closed %s's episode (reason=%q)", survivor.stationID, got.CloseReason)
@@ -328,16 +286,14 @@ func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone
 	}
 }
 
-// THE OSCILLATOR.
+// THE OSCILLATOR, WHICH CAN NO LONGER RUN.
 //
-// The station's demand_registry is emptied — the loader was retired. The
-// monitor's bindings are in memory and survive the delete, so without a
-// notification every subsequent delta re-evaluates a binding whose config no
-// longer exists; the sweep closes each mint `threshold_removed`, and
-// closeThresholdEpisodeRef clears openOrigins on the way out, which
-// re-arms the falling edge for the next delta. Springfield: 1293
+// The station's demand_registry is emptied — the loader was retired — and the
+// station reconnects. Under the memory the monitor used to keep, every delta
+// after that re-evaluated a binding whose config no longer existed and the
+// sweep closed each mint, re-arming the next. Springfield: 1293
 // threshold_removed closes across five close days, twelve nodes and two
-// station ids.
+// station ids. Now nothing evaluates a binding the registry does not hold.
 //
 // One withdrawn config is ONE ending. The assertion is therefore a row count,
 // not a state: counting only open episodes would report a perfectly healthy
@@ -386,20 +342,19 @@ func TestThresholdEpisode_WithdrawnStationStopsMintingAndClosesExactlyOnce(t *te
 		t.Errorf("close_reason = %q, want %q — the need did not recover, it stopped being watched",
 			got.closeReason, protocol.CloseReasonThresholdRemoved)
 	}
-	// CLOSED BY THE NOTIFICATION PATH, not the sweep. closed_by is what makes
-	// the sweep's share of the closing measurable: if the withdrawal leaves the
-	// close to the sweep, the surface cannot tell a plant whose notification
-	// paths all work from one where they have silently stopped firing.
-	if got.closedBy != protocol.ClosedByNotification {
-		t.Errorf("closed_by = %q, want %q — whoever removed the binding knows it went away and must say so itself",
-			got.closedBy, protocol.ClosedByNotification)
+	// CLOSED BY THE SWEEP. The reconnect's derive discards its change list, and
+	// Resync evaluates what the registry holds — it has no memory to compare
+	// against, so it cannot notice what is missing. The sweep, which reads both
+	// tables, is the closer of a binding that vanished with nothing announcing
+	// it. A loader edit is different: its change list carries the removal and
+	// closes it by=notification
+	// (TestStaleStation_LoaderRetiredWhileDownClosesAsRemovedOnce).
+	if got.closedBy != protocol.ClosedBySweep {
+		t.Errorf("closed_by = %q, want %q — nothing on the reconnect path announced the removal",
+			got.closedBy, protocol.ClosedBySweep)
 	}
-	// And nothing is left in memory to mint against.
-	m.mu.Lock()
-	_, monitored := m.thresholdsByPayload[payload]
-	m.mu.Unlock()
-	if monitored {
-		t.Error("the withdrawn station's binding is still in thresholdsByPayload — the next delta mints again")
+	if monitorHoldsBinding(m, b) {
+		t.Error("the withdrawn station's binding is still monitored — the next delta mints again")
 	}
 }
 
@@ -410,10 +365,12 @@ func TestThresholdEpisode_WithdrawnStationStopsMintingAndClosesExactlyOnce(t *te
 // demand and it gets its own episode. Re-joining the closed one would make a
 // single row span a gap in which nothing was being asked for.
 //
-// The registry write here is the one HandleEdgeRegister performs —
-// BuildDemandRegistryFromAggregate's entries handed to SyncDemandRegistry —
-// with the aggregate derivation itself standing outside the test, which only
-// cares that the rows come back.
+// The registry write here is the one HandleEdgeRegister performs, with the
+// aggregate derivation itself standing outside the test, which only cares that
+// the rows come back. The reconciling sweep runs in between, as it does every
+// minute in production: it is what ends the withdrawn demand. A withdrawal and
+// a restore that both land inside one sweep interval are never observed by
+// anything that reads the table, and the one demand simply continues.
 func TestThresholdEpisode_WithdrawnStationIsRestoredAndMintsAfresh(t *testing.T) {
 	t.Parallel()
 
@@ -433,6 +390,7 @@ func TestThresholdEpisode_WithdrawnStationIsRestoredAndMintsAfresh(t *testing.T)
 
 	emptyStationRegistry(t, db, b.stationID)
 	m.Resync(b.stationID)
+	m.reconcileThresholdBindings()
 
 	// The loader is put back: the aggregate re-derives the same binding and the
 	// register path resyncs the monitor.
@@ -461,8 +419,7 @@ func TestThresholdEpisode_WithdrawnStationIsRestoredAndMintsAfresh(t *testing.T)
 	if reopened != 1 {
 		t.Fatalf("%d open episodes after the station came back, want exactly 1", reopened)
 	}
-	key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
-	if held := m.currentThresholdOrigin(key); held == "" || held == first {
-		t.Errorf("after the station came back the monitor holds %q — it must hold the NEW episode, not the closed one", held)
+	if held, err := db.OpenOriginForKey(placeKey(b.coreNodeName, b.payloadCode)); err != nil || held == "" || held == first {
+		t.Errorf("after the station came back the open episode is %q (err %v) — it must be a NEW one, not the closed one", held, err)
 	}
 }
