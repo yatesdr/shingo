@@ -40,12 +40,14 @@ import (
 //
 // ── WHAT IS AND IS NOT EXCLUDED ───────────────────────────────────────────
 //
-// The rule keys on style_claims.core_node_name, so it covers exactly the
+// This arm keys on style_claims.core_node_name, so it covers exactly the
 // positions a cell has claimed — a press side, a weld consume point — and
-// nothing else. An ordinary storage slot, a loader window, a staging node and an
-// empties-bank position are all untouched, which is what the second half of this
-// test asserts: an exclusion that swallowed the empties bank would starve every
-// producer instead of one press.
+// nothing else. Loader windows and homes are excluded by a separate arm over
+// bin_loader_homes, because style_claims never holds a loader (see
+// loader_position_empty_docker_test.go). An ordinary storage slot, a staging
+// node and an empties-bank position are untouched by both, which is what the
+// second half of this test asserts: an exclusion that swallowed the empties bank
+// would starve every producer instead of one press.
 func TestEmptyScan_SkipsACellsOwnPosition(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

@@ -347,7 +347,9 @@ func NotFencedArm() string {
 //   - claimed and locked ones likewise;
 //   - synthetic and disabled nodes hold nothing anybody can act on;
 //   - anything carrying a payload has left the empty population entirely;
-//   - a carrier standing on a CELL'S OWN POSITION is that cell's working stock.
+//   - a carrier standing on a CELL'S OWN POSITION is that cell's working stock;
+//   - a carrier standing on a LIVE LOADER'S OWN POSITION (a window or a home)
+//     belongs to that loader.
 //
 // ── THE LAST ONE COST A WHOLE PLANT, AND IT IS THE SUBTLE ONE ─────────────
 //
@@ -375,11 +377,41 @@ func NotFencedArm() string {
 // The rule is one sentence: A CARRIER ON A CELL'S OWN POSITION BELONGS TO THAT
 // CELL. It is not free inventory, and the cell's own orders are how it leaves —
 // a complex leg naming that node in a `pickup` step, never this scan. The same
-// reasoning covers a consume position holding a just-emptied carrier, which was
-// harvestable for the same reason and is the same mistake.
+// reasoning covers a cell's consume position holding a just-emptied carrier.
 //
 // A plant whose claims have not synced has an empty style_claims table and this
 // arm excludes nothing, which is the pre-existing behaviour.
+//
+// ── AND THE SAME SENTENCE FOR LOADERS, WHICH style_claims NEVER HOLDS ─────
+//
+// The cell arm reads style_claims, and the Edge publisher skips loader claims,
+// so a loader's windows and homes were never covered by it. An empty an L1
+// drops at a loader window for the operator to fill lands `available` (the
+// window is in bin_loader_homes, so arrival does not stage it), the arrival
+// releases the order's claim, and until the operator loads it any plant-wide
+// empty request could drive off with it. The last arm closes that: a carrier on
+// a LIVE loader's own position belongs to that loader
+// (TestEmptyScan_SkipsALiveLoadersOwnPosition). An archived loader owns nothing.
+//
+// The loader still reaches its own carriers: a dedicated loader's pool is read
+// in Go by the finder's pool tier, and a move naming the node lists that node
+// directly, neither through this predicate
+// (TestFinderPin_LoaderPoolFillTakesAnEmptyOnItsOwnHome,
+// TestFinderPin_MoveTakesTheEmptyOnALoaderWindow).
+//
+// COST, and why it is NOT IN. The set of live loader positions does not depend
+// on the bin, so it is written uncorrelated and Postgres hashes it once into the
+// bins scan's filter (a hashed SubPlan). The correlated NOT EXISTS spelling
+// planned as a nested-loop anti-join that re-ran the homes-loaders join per
+// candidate; on the D5 synthetic fixture (500 bins, 48 homes) the plant-wide
+// empty finder's median went from about 3.0 ms to 1.8 ms with it.
+//
+// NOT IN IS ONLY SAFE BECAUSE OF TWO FACTS, both checked when it was chosen:
+// bin_loader_homes.position_node_id is NOT NULL (a NULL in the list would make
+// NOT IN exclude every carrier), and `b.node_id IS NOT NULL` is an earlier
+// clause of this same WHERE (a NULL on the left makes NOT IN exclude the row,
+// where NOT EXISTS would keep it). Measured equal to the NOT EXISTS form over
+// the whole population, including carriers with no node.
 //
 // It opens the WHERE. Arms append to it; nothing composes in front of it.
 const EmptyCarrierWhere = `
@@ -388,7 +420,9 @@ const EmptyCarrierWhere = `
 	  AND b.node_id IS NOT NULL
 	  AND ` + BinAtLiveNodeSQL + `
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)`
+	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
+	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
+	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL)`
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
 //
