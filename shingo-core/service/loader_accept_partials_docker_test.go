@@ -53,3 +53,35 @@ func TestLoaderService_AcceptPartials(t *testing.T) {
 		t.Errorf("refused update landed: %+v", got)
 	}
 }
+
+// TestLoaderService_AutoPush: stored and kept on an unloader across re-saves,
+// refused on a produce loader.
+func TestLoaderService_AutoPush(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewLoaderService(db, nil)
+	consumeID, err := svc.Create("APU-UNLOADER", loaders.RoleConsume, loaders.LayoutSharedWindow, "", "", "", false)
+	testutil.MustNoErr(t, err, "create unloader")
+	produceID, err := svc.Create("APU-LOADER", loaders.RoleProduce, loaders.LayoutSharedWindow, "", "", "", false)
+	testutil.MustNoErr(t, err, "create loader")
+
+	for i := 1; i <= 2; i++ {
+		testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: consumeID, Name: "APU-UNLOADER",
+			Layout: loaders.LayoutSharedWindow, AutoPush: true}), "save unloader with auto_push")
+		got, err := db.GetLoader(consumeID)
+		testutil.MustNoErr(t, err, "re-read unloader")
+		if !got.AutoPush {
+			t.Fatalf("save %d: auto_push = false, want true", i)
+		}
+	}
+	err = svc.Update(LoaderUpdate{ID: produceID, Name: "APU-LOADER",
+		Layout: loaders.LayoutSharedWindow, AutoPush: true})
+	if !errors.Is(err, ErrAutoPushProduce) {
+		t.Fatalf("produce loader with auto_push: err = %v, want ErrAutoPushProduce", err)
+	}
+	got, err := db.GetLoader(produceID)
+	testutil.MustNoErr(t, err, "re-read loader")
+	if got.AutoPush {
+		t.Errorf("refused update landed: %+v", got)
+	}
+}

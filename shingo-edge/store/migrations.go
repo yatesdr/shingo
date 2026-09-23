@@ -358,6 +358,11 @@ func (db *DB) migrate() error {
 	// Default '' = a blank CLEAR stamps nothing, which is every unloader until
 	// Core configures one.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN bare_bin_type_code TEXT NOT NULL DEFAULT ''")
+	// Whether a CLEAR / PUSH EMPTY / empty-out landing re-pulls this unloader's
+	// next full (bin_loaders.auto_push). Idempotent — duplicate ADD COLUMN fails
+	// silently. Default 0 = no re-pull, which is every Core-owned unloader until
+	// Core turns it on.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
 
 	// Where the operator dragged this window. Core has always stored the
 	// arrangement and sent it down; there was nowhere here to put it, so the
@@ -575,7 +580,9 @@ func (db *DB) migrate() error {
 	// payload exists in claim.InboundSource — no external trigger
 	// required. Default false preserves the event-driven model. (The
 	// kanban demand signal this comment used to contrast against was
-	// deleted 2026-08.) See engine/operator_demand.go MaybePushUnloader.
+	// deleted 2026-08.) The gates that read it call rePushOwnUnloader
+	// (engine/wiring_completion.go); MaybePushUnloader, named here before,
+	// was removed when they stopped walking every unloader.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
 
 	// v25 (2026-05-16, UOP-threshold replenishment Phase 1): source

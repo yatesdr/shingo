@@ -913,9 +913,15 @@ type LoaderInfo struct {
 	// carrier out until PUSH AS re-stamps it. Empty — also what a Core
 	// predating this field sends — means a blank CLEAR stamps nothing, which
 	// is what every unloader does today.
-	BareBinTypeCode string              `json:"bare_bin_type_code,omitempty"`
-	Positions       []LoaderPosition    `json:"positions,omitempty"`
-	Payloads        []LoaderPayloadInfo `json:"payloads,omitempty"`
+	BareBinTypeCode string `json:"bare_bin_type_code,omitempty"`
+	// AutoPush re-pulls this unloader's next full when a CLEAR, a PUSH EMPTY or
+	// its own empty-out landing frees a window. It lives on the loader because
+	// the stored claim that used to carry it is retired and SynthClaim never set
+	// it. False — also what a Core predating this field sends — is what every
+	// Core-owned unloader does today.
+	AutoPush  bool                `json:"auto_push,omitempty"`
+	Positions []LoaderPosition    `json:"positions,omitempty"`
+	Payloads  []LoaderPayloadInfo `json:"payloads,omitempty"`
 	// Quota is the declared carrier mix — how many of each bin type this loader
 	// wants on hand. Empty means none declared, which is today's behaviour.
 	Quota []LoaderQuota `json:"quota,omitempty"`

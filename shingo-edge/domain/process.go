@@ -446,9 +446,12 @@ type NodeClaim struct {
 	// payload exists in InboundSource, Edge fires a U1 retrieve_full on its
 	// own. Useful for finished-goods unloaders that should drain the FG
 	// supermarket continuously. Default false keeps the unloader event-driven
-	// (fires only on a produce-role lineside release). See
-	// engine/operator_demand.go MaybePushUnloader. The kanban demand signal
-	// this comment used to name was deleted 2026-08.
+	// (fires only on a produce-role lineside release). The gates that read it
+	// (CLEAR, PUSH EMPTY, U2 landed) call rePushOwnUnloader in
+	// engine/wiring_completion.go. The kanban demand signal
+	// this comment used to name was deleted 2026-08. For a Core-owned loader
+	// window it comes from the loader (bin_loaders.auto_push) via
+	// Loader.SynthClaim.
 	AutoPush  bool      `json:"auto_push"`
 	CreatedAt time.Time `json:"created_at"`
 

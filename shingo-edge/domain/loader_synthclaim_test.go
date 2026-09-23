@@ -39,6 +39,17 @@ func TestLoader_SynthClaim(t *testing.T) {
 	if !c.AutoConfirm {
 		t.Error("AutoConfirm = false; want true (robot-drop ack — the operator still confirms load/unload)")
 	}
+	if c.AutoPush {
+		t.Error("AutoPush = true on a loader built without WithAutoPush; want false")
+	}
+	ap, err := NewSharedWindowLoader("loader:UNLD-AP", "AP", RoleConsume, ReplenishmentOperator,
+		[]Window{{Node: "SMN_03"}}, []PayloadCode{"P-A"}, WithAutoPush(true))
+	if err != nil {
+		t.Fatalf("build auto-push loader: %v", err)
+	}
+	if !ap.SynthClaim("SMN_03").AutoPush {
+		t.Error("AutoPush = false on a WithAutoPush(true) loader; want true (the loader carries it)")
+	}
 	if c.InboundSource != "Supermarket Area" || c.OutboundDestination != "Supermarket Empty Totes" {
 		t.Errorf("flow = %q -> %q, want Supermarket Area -> Supermarket Empty Totes", c.InboundSource, c.OutboundDestination)
 	}

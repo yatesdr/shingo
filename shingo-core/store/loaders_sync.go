@@ -60,6 +60,7 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			// Resolved in the ListLoaders row above; blank for every loader
 			// without one, and omitted on the wire.
 			BareBinTypeCode: l.BareBinTypeCode,
+			AutoPush:        l.AutoPush,
 		}
 
 		// A home's kind is fully determined by the parent loader's layout: a

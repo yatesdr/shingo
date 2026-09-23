@@ -22,9 +22,9 @@ func projectedByKey(t *testing.T, eng *Engine, key string, role domain.LoaderRol
 }
 
 // TestProjectCoreLoader_OptionsByBranch: the shared_window branch carries
-// inbound, outbound, funnel_windows, changeover_load_directive and the bare
-// bin type; the dedicated_positions branch carries inbound, outbound and the
-// bare bin type.
+// inbound, outbound, funnel_windows, changeover_load_directive, the bare bin
+// type and auto_push; the dedicated_positions branch carries inbound, outbound,
+// the bare bin type and auto_push.
 func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
@@ -33,7 +33,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Name: "OPT-SW", LoaderKey: "loader:OPT-SW", Role: "consume", Layout: "shared_window",
 			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
-			FunnelWindows: true, ChangeoverLoadDirective: true, BareBinTypeCode: "HALF-SW",
+			FunnelWindows: true, ChangeoverLoadDirective: true, BareBinTypeCode: "HALF-SW", AutoPush: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-SW-W1", Kind: "window"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		},
@@ -41,7 +41,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Name: "OPT-DP", LoaderKey: "loader:OPT-DP", Role: "consume", Layout: "dedicated_positions",
 			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
-			FunnelWindows: true, ChangeoverLoadDirective: true, BareBinTypeCode: "HALF-DP",
+			FunnelWindows: true, ChangeoverLoadDirective: true, BareBinTypeCode: "HALF-DP", AutoPush: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-DP-P1", PayloadCode: "PART-A", Kind: "position"}},
 		},
 	)
@@ -56,6 +56,9 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	if got := sw.BareBinTypeCode(); got != "HALF-SW" {
 		t.Errorf("shared bare bin type = %q, want HALF-SW", got)
 	}
+	if !sw.AutoPush() {
+		t.Error("shared AutoPush = false, want true")
+	}
 
 	dp := projectedByKey(t, eng, "loader:OPT-DP", domain.RoleConsume)
 	if dp.InboundSource() != "FG-SUPER" || dp.OutboundDest() != "EMPTY-TOTES" {
@@ -63,6 +66,9 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	}
 	if got := dp.BareBinTypeCode(); got != "HALF-DP" {
 		t.Errorf("dedicated bare bin type = %q, want HALF-DP", got)
+	}
+	if !dp.AutoPush() {
+		t.Error("dedicated AutoPush = false, want true")
 	}
 	// Not passed by the dedicated branch: funnel_windows is meaningless there
 	// (positions never share a budget), and changeover_load_directive is read
@@ -90,6 +96,43 @@ func TestProjectCoreLoader_ZeroPayloadSharedConsumeProjects(t *testing.T) {
 	for _, p := range []domain.PayloadCode{"", "PART-A"} {
 		if l, err := eng.loaderStore.LoaderForPayload(p, domain.RoleConsume, false); l != nil {
 			t.Errorf("LoaderForPayload(%q) = %v (err %v); want no loader", p, l.ID(), err)
+		}
+	}
+}
+
+// TestSynthClaim_AutoPushFromTheLoader: the claim a Core-owned loader window
+// acts on carries the loader's AutoPush, in each projection branch. It used to
+// be false whatever Core sent: the stored claim was the only carrier of the
+// flag and SynthClaim never set it. A loader Core sends without it stays false.
+func TestSynthClaim_AutoPushFromTheLoader(t *testing.T) {
+	t.Parallel()
+	eng := testEngine(t, testEngineDB(t))
+	seedCoreLoader(t, eng,
+		protocol.LoaderInfo{
+			Name: "AP-SW", LoaderKey: "loader:AP-SW", Role: "consume", Layout: "shared_window",
+			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1, AutoPush: true,
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "AP-SW-W1", Kind: "window"}},
+			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
+		},
+		protocol.LoaderInfo{
+			Name: "AP-DP", LoaderKey: "loader:AP-DP", Role: "consume", Layout: "dedicated_positions",
+			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1, AutoPush: true,
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "AP-DP-P1", PayloadCode: "PART-A", Kind: "position"}},
+		},
+		protocol.LoaderInfo{
+			Name: "AP-OFF", LoaderKey: "loader:AP-OFF", Role: "consume", Layout: "shared_window",
+			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
+			Positions: []protocol.LoaderPosition{{CoreNodeName: "AP-OFF-W1", Kind: "window"}},
+			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
+		},
+	)
+	for node, want := range map[string]bool{"AP-SW-W1": true, "AP-DP-P1": true, "AP-OFF-W1": false} {
+		c := eng.synthLoaderClaim(node)
+		if c == nil {
+			t.Fatalf("%s: no synthesized claim", node)
+		}
+		if c.AutoPush != want {
+			t.Errorf("%s: SynthClaim.AutoPush = %v, want %v", node, c.AutoPush, want)
 		}
 	}
 }

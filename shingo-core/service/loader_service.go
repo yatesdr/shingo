@@ -57,6 +57,11 @@ func checkReplenishment(role, replenishment string) error {
 // on a produce loader it would be stored, shown, and do nothing.
 var ErrAcceptPartialsProduce = errors.New("only an unloader can accept partial carriers: the full-carrier rule it relaxes applies to consume loaders only")
 
+// ErrAutoPushProduce refuses auto_push on a produce loader. It re-pulls an
+// unloader's next full when a window frees; a produce loader pulls no fulls, so
+// it would be stored, shown, and do nothing.
+var ErrAutoPushProduce = errors.New("only an unloader can re-pull its next full: a produce loader pulls no fulls")
+
 // ErrBareTypeProduce refuses a bare type on a produce loader. The bare type is
 // what an unloader's blank CLEAR stamps on the carrier it leaves behind; a
 // produce loader has no such CLEAR, so it would be stored, shown, and do nothing.
@@ -176,6 +181,9 @@ type LoaderUpdate struct {
 	// AcceptPartials: an unloader may be fed partly drained carriers. Consume
 	// only; set on a saved loader, like ChangeoverLoadDirective.
 	AcceptPartials bool
+	// AutoPush: an unloader re-pulls its next full when a window frees. Consume
+	// only; set on a saved loader, like AcceptPartials.
+	AutoPush bool
 	// BareBinTypeID: the bare type this unloader's blank CLEAR stamps. 0 is
 	// none. Consume only, and the type must be flagged bare.
 	BareBinTypeID int64
@@ -216,6 +224,10 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 		return ErrAcceptPartialsProduce
 	}
 	cur.AcceptPartials = in.AcceptPartials
+	if in.AutoPush && cur.Role != loaders.RoleConsume {
+		return ErrAutoPushProduce
+	}
+	cur.AutoPush = in.AutoPush
 	bare, err := CheckLoaderBareType(s.db, cur.Role, in.BareBinTypeID)
 	if err != nil {
 		return err

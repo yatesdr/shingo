@@ -100,6 +100,7 @@ CREATE TABLE public.bin_loaders (
     funnel_windows boolean DEFAULT false NOT NULL,
     accept_partials boolean DEFAULT false NOT NULL,
     bare_bin_type_id bigint,
+    auto_push boolean DEFAULT false NOT NULL,
     CONSTRAINT bin_loaders_layout_check CHECK ((layout = ANY (ARRAY['shared_window'::text, 'dedicated_positions'::text]))),
     CONSTRAINT bin_loaders_replenishment_check CHECK ((replenishment = ANY (ARRAY['operator'::text, 'threshold'::text]))),
     CONSTRAINT bin_loaders_role_check CHECK ((role = ANY (ARRAY['produce'::text, 'consume'::text])))

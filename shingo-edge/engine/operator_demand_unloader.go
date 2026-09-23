@@ -288,15 +288,6 @@ func (e *Engine) pushUnloadersViaSeam() {
 	}
 }
 
-// MaybePushUnloader is the consume-side auto-push: when a window frees (ClearBin
-// or applyManualSwap U2-arrived) it offers every auto consume loader's
-// payloads to the shared seam. The seam's never-2N budget makes the sweep
-// idempotent, so already-full windows create nothing — which is why nodeID is now
-// only a (currently unused) efficiency hint and the old node→loader filter is gone.
-func (e *Engine) MaybePushUnloader(_ int64) {
-	e.pushUnloadersViaSeam()
-}
-
 // SweepPushUnloaders runs the consume auto-push sweep on Edge startup (after
 // registration ack). Catches windows that became free while Edge was offline.
 // The CAS guard serializes a re-register storm so concurrent sweeps don't stack.

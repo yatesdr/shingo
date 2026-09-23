@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -192,8 +193,9 @@ func multiPayloadLoaderInfo(coreNode, role, repl string, payloads []string, _ in
 // for every produce path — see loader_reservation_seam_test.go.
 
 // TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots is the consume-side
-// analog: a 20-payload AutoPush unloader sweep (MaybePushUnloader) must not
-// stage more full-in (U1) orders at the window than it can physically hold.
+// analog: a 20-payload AutoPush unloader's re-pull (rePushOwnUnloader, what the
+// CLEAR / PUSH EMPTY / U2-landed gates call) must not stage more full-in (U1)
+// orders at the window than it can physically hold.
 func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -202,7 +204,9 @@ func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	nodeID := seedCapManualSwap(t, db, "UNL-PROC", "UNLOADER-1", protocol.ClaimRoleConsume, payloads, 0, true)
 	seedCoreLoader(t, eng, multiPayloadLoaderInfo("UNLOADER-1", "consume", "operator", payloads, 0))
 
-	eng.MaybePushUnloader(0) // 0 = sweep every matching unloader
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "read unloader node")
+	eng.rePushOwnUnloader(node)
 
 	if got := len(capActiveOrders(t, db, nodeID, false)); got > manualSwapWindowSlots {
 		t.Errorf("AutoPush unloader staged %d full-in orders, exceeds window cap %d", got, manualSwapWindowSlots)
@@ -211,7 +215,7 @@ func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 
 // TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots covers the startup
 // sweep path (SweepPushUnloaders), which loops the same per-payload create as
-// MaybePushUnloader and must hit the same node cap.
+// the gates' rePushOwnUnloader and must hit the same node cap.
 func TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

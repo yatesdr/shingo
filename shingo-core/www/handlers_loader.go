@@ -13,6 +13,7 @@ import (
 // server broke", which is the opposite of what the rejection is for.
 func loaderWriteStatus(err error) int {
 	if errors.Is(err, service.ErrConsumeThreshold) || errors.Is(err, service.ErrAcceptPartialsProduce) ||
+		errors.Is(err, service.ErrAutoPushProduce) ||
 		errors.Is(err, service.ErrBareTypeProduce) || errors.Is(err, service.ErrBareTypeNotBare) {
 		return http.StatusBadRequest
 	}
@@ -75,6 +76,9 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// AcceptPartials: an unloader may be fed partly drained carriers.
 		// Absent reads as false, which keeps the full-carrier rule.
 		AcceptPartials bool `json:"accept_partials"`
+		// AutoPush: an unloader re-pulls its next full when a window frees.
+		// Absent reads as false, which is today's behaviour.
+		AutoPush bool `json:"auto_push"`
 		// BareBinTypeID: the bare type an unloader's blank CLEAR stamps. Absent
 		// or 0 reads as none, which stamps nothing.
 		BareBinTypeID int64 `json:"bare_bin_type_id"`
@@ -90,7 +94,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		ID: req.ID, Name: req.Name, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
 		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
-		AcceptPartials: req.AcceptPartials, BareBinTypeID: req.BareBinTypeID,
+		AcceptPartials: req.AcceptPartials, BareBinTypeID: req.BareBinTypeID, AutoPush: req.AutoPush,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return

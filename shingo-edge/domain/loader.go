@@ -201,6 +201,7 @@ type Loader struct {
 	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
 	bareBinTypeCode         string              // the type a blank CLEAR at this unloader stamps (see BareBinTypeCode)
+	autoPush                bool                // a freed window re-pulls this unloader's next full (see AutoPush)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -487,6 +488,19 @@ func WithBareBinType(code string) LoaderOption {
 // re-stamps it at stage 2. "" for every other loader.
 func (l *Loader) BareBinTypeCode() string { return l.bareBinTypeCode }
 
+// WithAutoPush sets whether a CLEAR, a PUSH EMPTY or this unloader's own
+// empty-out landing re-pulls its next full (CoreLoader.AutoPush, owned by
+// Core's bin_loaders.auto_push). Not passing it leaves false, which is what
+// every Core-owned unloader did while the flag lived only on the stored claim.
+func WithAutoPush(on bool) LoaderOption {
+	return func(l *Loader) { l.autoPush = on }
+}
+
+// AutoPush reports whether a freed window re-pulls this unloader's next full.
+// SynthClaim carries it onto the claim the operator doors and the completion
+// chain read.
+func (l *Loader) AutoPush() bool { return l.autoPush }
+
 // IsOperatorDriven reports whether the loader's replenishment is operator-driven
 // (replenishment = operator) — the operator stages/clears at the board rather than
 // the automatic threshold path supplying it.
@@ -588,6 +602,7 @@ func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 		InboundSource:       l.inboundSource,
 		OutboundDestination: l.outboundDest,
 		AutoConfirm:         true, // mandatory for bin_loader claims (auto-confirm delivery)
+		AutoPush:            l.autoPush,
 	}
 }
 

@@ -4277,6 +4277,10 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bin_types", "bare") && schema.ColumnExists(q, "bin_loaders", "bare_bin_type_id")
 			}},
+
+		{125, "bin_loaders.auto_push — an unloader re-pulls its next full when a window frees, set on the loader Core owns instead of the retired stored claim",
+			v125LoaderAutoPush,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "auto_push") }},
 	}
 }
 
@@ -4537,6 +4541,27 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 //
 // INERT TO AN OLDER BINARY, which never names either column. ROLLBACK is DROP
 // COLUMN on both.
+// v125LoaderAutoPush adds the per-unloader switch that re-pulls the next full
+// when a CLEAR, a PUSH EMPTY or the unloader's own empty-out landing frees a
+// window. It lived only on the Edge's stored claim, which is retired for
+// Core-owned loaders, and SynthClaim never set it, so at every Core-owned
+// unloader the three re-pull gates were always off.
+//
+// DEFAULT FALSE is that live behaviour at every plant, so nothing changes until
+// a plant turns it on. Consume only: the service refuses it on a produce loader.
+//
+// NO INDEX: it is read off the loader row every loader read already loads.
+//
+// INERT TO AN OLDER BINARY, which never names the column. ROLLBACK is DROP
+// COLUMN.
+func v125LoaderAutoPush(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS auto_push BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("v125 bin_loaders.auto_push: %w", err)
+	}
+	return nil
+}
+
 func v124BareBinType(tx *sql.Tx) error {
 	for _, stmt := range []string{
 		`ALTER TABLE bin_types ADD COLUMN IF NOT EXISTS bare BOOLEAN NOT NULL DEFAULT false`,

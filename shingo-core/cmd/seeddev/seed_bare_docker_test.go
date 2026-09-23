@@ -32,7 +32,7 @@ func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
 	plant.BinTypes = append(plant.BinTypes, "HALF-CART")
 	plant.BareBinTypes = []string{"HALF-CART"}
 	plant.LoaderSettings = map[string]plantspec.LoaderSettings{
-		"FGN_001": {AcceptPartials: true, BareBinType: "HALF-CART"},
+		"FGN_001": {AcceptPartials: true, BareBinType: "HALF-CART", AutoPush: true},
 	}
 	if err := plant.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -56,12 +56,18 @@ func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
 	if !l.AcceptPartials || l.BareBinTypeID == nil || *l.BareBinTypeID != bt.ID || l.BareBinTypeCode != "HALF-CART" {
 		t.Errorf("FGN_001 = accept %v bare %v/%q, want true and HALF-CART", l.AcceptPartials, l.BareBinTypeID, l.BareBinTypeCode)
 	}
+	if !l.AutoPush {
+		t.Error("FGN_001 auto_push = false, want the loader_settings value")
+	}
 	other, err := db.GetLoaderByName("FGN_002", "consume")
 	if err != nil || other == nil {
 		t.Fatalf("FGN_002 loader: %v", err)
 	}
-	if other.AcceptPartials || other.BareBinTypeID != nil {
-		t.Errorf("FGN_002 has no settings but got accept %v bare %v", other.AcceptPartials, other.BareBinTypeID)
+	// FGN_002's CLAIM says auto_push: true; only loader_settings reaches the
+	// Core loader (TestPinSeedCore_ClaimAutoPushDoesNotReachTheCoreLoader).
+	if other.AcceptPartials || other.BareBinTypeID != nil || other.AutoPush {
+		t.Errorf("FGN_002 has no settings but got accept %v bare %v auto_push %v",
+			other.AcceptPartials, other.BareBinTypeID, other.AutoPush)
 	}
 	// Idempotent re-seed.
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
@@ -84,6 +90,9 @@ func TestSeedCore_RefusesAnIllegalBareFixture(t *testing.T) {
 		{"accept_partials on a produce loader", func(p *plantspec.Plant) {
 			p.LoaderSettings = map[string]plantspec.LoaderSettings{"PLK_X1": {AcceptPartials: true}}
 		}, service.ErrAcceptPartialsProduce},
+		{"auto_push on a produce loader", func(p *plantspec.Plant) {
+			p.LoaderSettings = map[string]plantspec.LoaderSettings{"PLK_X1": {AutoPush: true}}
+		}, service.ErrAutoPushProduce},
 		{"settings naming no loader", func(p *plantspec.Plant) {
 			p.LoaderSettings = map[string]plantspec.LoaderSettings{"SYN_SM_FG": {AcceptPartials: true}}
 		}, nil},

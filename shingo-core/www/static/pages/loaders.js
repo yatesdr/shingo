@@ -83,6 +83,7 @@ function blankForm() {
     kind: 'multi_window',  // multi_window | single_window | dedicated
     changeoverLoadDirective: false,
     acceptPartials: false,
+    autoPush: false,
     bareBinTypeID: 0,
     replenishment: 'operator',
     fedByHand: false,
@@ -103,6 +104,7 @@ function readForm() {
     fedByHand: checked('loader-fed-by-hand'),
     changeoverLoadDirective: checked('loader-changeover-directive'),
     acceptPartials: checked('loader-accept-partials'),
+    autoPush: checked('loader-auto-push'),
     bareBinTypeID: Number(val('loader-bare-type') || 0),
     inbound: val('loader-inbound'),
     outbound: val('loader-outbound'),
@@ -155,6 +157,8 @@ function formShape(state) {
     // unloader is asked. Edited against a saved loader, like the carrier mix:
     // create does not carry it.
     partials: state.role === 'consume' && saved,
+    // Re-pulling the next full is an UNLOADER's question too.
+    autoPush: state.role === 'consume' && saved,
     // The bare type is what an UNLOADER's blank CLEAR stamps (the first stage
     // of a two-stage unloader), so only an unloader is asked, and like the
     // partials switch it is edited against a saved loader.
@@ -179,6 +183,7 @@ function renderForm(state) {
   setChecked('loader-fed-by-hand', state.fedByHand);
   setChecked('loader-changeover-directive', state.changeoverLoadDirective);
   setChecked('loader-accept-partials', state.acceptPartials);
+  setChecked('loader-auto-push', state.autoPush);
   renderBareTypeSelect(state.bareBinTypeID);
   setVal('loader-inbound', state.inbound);
   setVal('loader-outbound', state.outbound);
@@ -191,6 +196,7 @@ function renderForm(state) {
   setShown('loader-mix-row', shape.mix);
   setShown('loader-windows-row', shape.windows);
   setShown('loader-partials-row', shape.partials);
+  setShown('loader-autopush-row', shape.autoPush);
   setShown('loader-bare-row', shape.bare);
   if (shape.mix) renderMixEditor(state.id);
   if (shape.windows) renderWindowCapEditor(state.id);
@@ -463,6 +469,7 @@ function formStateFromLoader(l) {
     kind: kindFromLoader(l),
     changeoverLoadDirective: !!l.changeover_load_directive,
     acceptPartials: !!l.accept_partials,
+    autoPush: !!l.auto_push,
     bareBinTypeID: Number(l.bare_bin_type_id || 0),
     replenishment: l.replenishment || 'operator',
     // No source IS the fed-by-hand choice; that is what the stored blank means.
@@ -526,6 +533,9 @@ function loaderPayload(state) {
     // Unloaders only. Sent false for a produce loader, which the server
     // refuses to store as true: the rule it relaxes is a consume rule.
     accept_partials: state.role === 'consume' && !!state.acceptPartials,
+    // Unloaders only. Sent false for a produce loader, which the server refuses
+    // to store as true: a produce loader pulls no fulls.
+    auto_push: state.role === 'consume' && !!state.autoPush,
     // Unloaders only, 0 = none. A produce loader sends 0, which the server
     // would otherwise refuse: only an unloader's clear stamps a type.
     bare_bin_type_id: state.role === 'consume' ? Number(state.bareBinTypeID || 0) : 0,

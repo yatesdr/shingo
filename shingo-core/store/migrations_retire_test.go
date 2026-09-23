@@ -151,6 +151,10 @@ import (
 // NULL keep every type sourceable and every unloader stamping nothing. Inert to
 // a pre-v124 binary; rollback is DROP COLUMN on both.
 //
+// v125 ADDS bin_loaders.auto_push — an unloader re-pulls its next full when a
+// window frees. DEFAULT false is every Core-owned unloader's live behaviour.
+// Inert to a pre-v125 binary; rollback is DROP COLUMN.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -162,8 +166,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 124 {
-		t.Errorf("head migration = %d, want 124", got)
+	if got := store.LatestMigrationVersion(); got != 125 {
+		t.Errorf("head migration = %d, want 125", got)
 	}
 }
 

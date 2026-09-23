@@ -113,6 +113,14 @@ type Loader struct {
 	// rule.
 	AcceptPartials bool `json:"accept_partials"`
 
+	// AutoPush lets an UNLOADER re-pull its next full when a CLEAR, a PUSH
+	// EMPTY or its own empty-out landing frees a window. It is carried to the
+	// Edge on LoaderInfo, because the stored claim that used to hold it is
+	// retired for Core-owned loaders. Consume only; the service refuses it on a
+	// produce loader. FALSE — the default and what a client omitting it sends —
+	// is every Core-owned unloader's behaviour until a plant turns it on.
+	AutoPush bool `json:"auto_push"`
+
 	// BareBinTypeID is the bin type a blank CLEAR at this UNLOADER stamps on
 	// the carrier it leaves behind: the stage-1 half of a two-stage unloader.
 	// The type must be flagged bare, so no empty finder hands the carrier out
@@ -171,7 +179,7 @@ type Config struct {
 // loaderCols is every loader read's column list. The bare type's code is a
 // scalar subquery on the bin_types primary key, so each reader gets it in the
 // same row; with bare_bin_type_id NULL it matches nothing.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id,
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id, auto_push,
 	COALESCE((SELECT bt.code FROM bin_types bt WHERE bt.id = bin_loaders.bare_bin_type_id), '')`
 
 type scanner interface{ Scan(...any) error }
@@ -182,7 +190,7 @@ func scanLoader(s scanner) (Loader, error) {
 	var bareID sql.NullInt64
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
-		&l.ChangeoverLoadDirective, &l.AcceptPartials, &bareID, &l.BareBinTypeCode)
+		&l.ChangeoverLoadDirective, &l.AcceptPartials, &bareID, &l.AutoPush, &l.BareBinTypeCode)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -199,10 +207,10 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
-			funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+			funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id, auto_push)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID),
+		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID), l.AutoPush,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -265,11 +273,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
-			changeover_load_directive=$7, accept_partials=$8, bare_bin_type_id=$9,
+			changeover_load_directive=$7, accept_partials=$8, bare_bin_type_id=$9, auto_push=$10,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$10`,
+		WHERE id=$11`,
 		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID), l.ID)
+		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID), l.AutoPush, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

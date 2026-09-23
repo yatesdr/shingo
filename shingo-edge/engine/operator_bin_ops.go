@@ -485,8 +485,9 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // place. That property is preserved by capturing hadBin before the clear rather than
 // re-reading the window after it.
 //
-// Post-clear, if the claim has AutoPush enabled, MaybePushUnloader offers the next pull
-// to the reservation seam — a no-inbound drain is gated there too, so it's a no-op.
+// Post-clear, if the claim has AutoPush enabled, rePushOwnUnloader offers the next pull
+// for this node's own unloader to the reservation seam — a no-inbound drain is gated
+// there too, so it's a no-op.
 // ClearBin clears the bin at the consume-unloader window. binTypeCode is the
 // dunnage type the operator selected at the confirm tap; empty string means no
 // change to the carrier's bin_type_id — except at an unloader with a bare type,
@@ -601,10 +602,11 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	log.Printf("bin_ops: CLEAR at node %s discarded %d parts on bin %d (payload=%q, new epoch=%d) — "+
 		"Core holds the ledger row (clear_for_reuse)",
 		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.DeltaEpoch)
-	// Push-driven unloader: bin just left the window, fire the next pull.
-	// Gated inside MaybePushUnloader so non-push claims are no-ops.
+	// Push-driven unloader: bin just left the window, fire the next pull at the
+	// unloader this window belongs to. The AutoPush gate is this condition; see
+	// rePushOwnUnloader for why only the owning unloader is asked.
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
-		e.MaybePushUnloader(nodeID)
+		e.rePushOwnUnloader(node)
 	}
 	// Push-driven loader (transitional): the operator cleared the window, so
 	// stage the next empty. Gated inside MaybePushLoader on transitional.
@@ -666,9 +668,9 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	// See createUnloaderEmptyOut.
 	e.createUnloaderEmptyOut(node, claim)
 	// Re-arm the delivery seam so the next full bin is requested after the
-	// empty departs — mirrors ClearBin's gated MaybePushUnloader at its tail.
+	// empty departs — mirrors ClearBin's gated rePushOwnUnloader at its tail.
 	if claim.AutoPush {
-		e.MaybePushUnloader(nodeID)
+		e.rePushOwnUnloader(node)
 	}
 	return nil
 }

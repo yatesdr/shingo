@@ -635,12 +635,12 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	// the loader replenishment path, not by post-completion kanban auto-requests.
 	//
 	// Push-driven unloader: U2 just landed (empty returned to supermarket),
-	// the unloader window is confirmed free. Fire the next U1 if the claim
-	// is auto-push. MaybePushUnloader gates internally on AutoPush so this
-	// is a no-op for kanban-driven unloaders.
+	// the unloader window is confirmed free. Fire the next U1 at THE UNLOADER
+	// THIS NODE BELONGS TO when the claim is auto-push — the condition below is
+	// the gate. See rePushOwnUnloader.
 	claim := ctx.Claim() // cached on first access in Match
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
-		e.MaybePushUnloader(ctx.node.ID)
+		e.rePushOwnUnloader(ctx.node)
 	}
 	// Push-driven loader (operator-staged): L2 just landed at the market, so the
 	// loader window is confirmed free — stage the next empty at THE LOADER THIS
@@ -669,6 +669,30 @@ func (e *Engine) rePushOwnLoader(node *processes.Node) {
 		return
 	}
 	e.maybeStageLoaderEmpty(l)
+}
+
+// rePushOwnUnloader offers the next full-in (U1) at the consume loader that owns
+// node, and only that one: one budget-locked snapshot and one Core node-bins read
+// (none when the unloader has no inbound source or no payloads). It is what the
+// three re-pull gates call — CLEAR, PUSH EMPTY and U2-landed — each behind its own
+// AutoPush condition.
+//
+// ONE UNLOADER, NOT THE WALK. The gates used to call the all-unloader sweep, which
+// read Core once per auto-pulling consume loader on this Edge for a tap that frees
+// exactly one window, and pulled a full into any OTHER unloader that happened to
+// have a free window. Each unloader's own taps, the lineside-release event and the
+// startup SweepPushUnloaders are its re-pull triggers; nothing depends on another
+// unloader's tap. A dormant consume threshold loader is skipped, as the sweep
+// skips it. Pinned by TestPinUnloaderGate_*.
+func (e *Engine) rePushOwnUnloader(node *processes.Node) {
+	l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName))
+	if err != nil || l == nil {
+		return
+	}
+	if l.Role() != domain.RoleConsume || l.Replenishment() == domain.ReplenishmentThreshold {
+		return
+	}
+	e.createUnloaderFullIns(l, l.PayloadSet())
 }
 
 // handleNormalReplenishment handles standard retrieve/complex order completion.

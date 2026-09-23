@@ -20,9 +20,9 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 	testutil.MustNoErr(t, db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		LoaderKey: "loader:OPT", Role: "consume", Name: "OPT", Layout: "shared_window",
 		Replenishment: "operator", FunnelWindows: true, ChangeoverLoadDirective: true,
-		BareBinTypeCode: "HALF-TOTE",
-		Positions:       []protocol.LoaderPosition{{CoreNodeName: "OPT-W1", Kind: "window"}},
-		Payloads:        []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
+		BareBinTypeCode: "HALF-TOTE", AutoPush: true,
+		Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-W1", Kind: "window"}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	}}), "write the cache")
 	testutil.MustNoErr(t, db.Close(), "close")
 
@@ -39,11 +39,14 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 	if l.BareBinTypeCode != "HALF-TOTE" {
 		t.Errorf("after re-open bare bin type = %q, want HALF-TOTE", l.BareBinTypeCode)
 	}
+	if !l.AutoPush {
+		t.Error("after re-open auto_push = false, want true")
+	}
 }
 
 // TestCoreLoadersCache_BareColumnReachesAnOlderCache: a core_loaders table that
-// predates bare_bin_type_code gains it on the next open (the idempotent ALTER),
-// and the column reads as "" until the next sync writes it.
+// predates bare_bin_type_code and auto_push gains both on the next open (the
+// idempotent ALTERs), and they read as ""/false until the next sync writes them.
 func TestCoreLoadersCache_BareColumnReachesAnOlderCache(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "older.db")
@@ -51,6 +54,8 @@ func TestCoreLoadersCache_BareColumnReachesAnOlderCache(t *testing.T) {
 	testutil.MustNoErr(t, err, "open")
 	_, err = db.Exec(`ALTER TABLE core_loaders DROP COLUMN bare_bin_type_code`)
 	testutil.MustNoErr(t, err, "drop the column to model an older cache")
+	_, err = db.Exec(`ALTER TABLE core_loaders DROP COLUMN auto_push`)
+	testutil.MustNoErr(t, err, "drop auto_push to model an older cache")
 	_, err = db.Exec(`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment)
 		VALUES ('loader:OLD', 'consume', 'OLD', 'shared_window', 'operator')`)
 	testutil.MustNoErr(t, err, "seed an older row")
@@ -65,5 +70,8 @@ func TestCoreLoadersCache_BareColumnReachesAnOlderCache(t *testing.T) {
 	}
 	if l.BareBinTypeCode != "" {
 		t.Errorf("older row bare bin type = %q, want \"\"", l.BareBinTypeCode)
+	}
+	if l.AutoPush {
+		t.Error("older row auto_push = true, want false")
 	}
 }

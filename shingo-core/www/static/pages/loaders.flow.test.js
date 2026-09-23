@@ -177,6 +177,15 @@ console.log('formShape — the rules, as a pure function of state');
     check('partials: a produce loader never sends true',
         h.ctx.loaderPayload(st({ acceptPartials: true })).accept_partials === false &&
         h.ctx.loaderPayload(st({ role: 'consume', acceptPartials: true })).accept_partials === true);
+    // Re-pulling the next full is an unloader's switch too.
+    check('autoPush: asked of a saved unloader only',
+        shape(st({ role: 'consume' })).autoPush === true &&
+        shape(st({})).autoPush === false &&
+        shape(st({ role: 'consume', id: 0 })).autoPush === false);
+    check('autoPush: a produce loader never sends true; a stored one reads back',
+        h.ctx.loaderPayload(st({ autoPush: true })).auto_push === false &&
+        h.ctx.loaderPayload(st({ role: 'consume', autoPush: true })).auto_push === true &&
+        h.ctx.formStateFromLoader({ id: 3, role: 'consume', auto_push: true }).autoPush === true);
     // The bare type is what an unloader's blank CLEAR stamps: same audience.
     check('bare: asked of a saved unloader only',
         shape(st({ role: 'consume' })).bare === true &&

@@ -3,6 +3,9 @@
 package store_test
 
 import (
+	"encoding/json"
+	"sort"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -596,5 +599,74 @@ func TestBuildLoaderInfos_CarriesTheBareType(t *testing.T) {
 	}
 	if got := findLoaderInfo(t, db, id).BareBinTypeCode; got != "" {
 		t.Errorf("BareBinTypeCode = %q after clearing, want blank", got)
+	}
+}
+
+// TestPinLoaderInfo_WireKeys pins the JSON key set Core sends for an unloader
+// with every optional field at its zero value and no members: every omitempty
+// field (the flow endpoints, funnel_windows, changeover_load_directive,
+// bare_bin_type_code, auto_push, positions, payloads, quota) is absent, so a
+// Core that adds one ships the same bytes for every loader that does not set it.
+func TestPinLoaderInfo_WireKeys(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "WK-UNL", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	raw, err := json.Marshal(findLoaderInfo(t, db, id))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	want := "config_gen,layout,loader_key,name,replenishment,role"
+	if got := strings.Join(keys, ","); got != want {
+		t.Errorf("LoaderInfo keys = %s, want %s", got, want)
+	}
+}
+
+// TestBuildLoaderInfos_CarriesAutoPush: an unloader's auto_push reaches the
+// wire from the loader row; cleared, it is omitted again.
+func TestBuildLoaderInfos_CarriesAutoPush(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "AP-UNL", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	if findLoaderInfo(t, db, id).AutoPush {
+		t.Fatal("a new unloader auto-pushes; the default must be off")
+	}
+	l, err := db.GetLoader(id)
+	if err != nil || l == nil {
+		t.Fatalf("GetLoader: %v", err)
+	}
+	l.AutoPush = true
+	if err := db.UpdateLoader(*l); err != nil {
+		t.Fatalf("UpdateLoader: %v", err)
+	}
+	if !findLoaderInfo(t, db, id).AutoPush {
+		t.Error("LoaderInfo.AutoPush = false after setting it")
+	}
+	l.AutoPush = false
+	if err := db.UpdateLoader(*l); err != nil {
+		t.Fatalf("UpdateLoader clear: %v", err)
+	}
+	if findLoaderInfo(t, db, id).AutoPush {
+		t.Error("LoaderInfo.AutoPush = true after clearing it")
 	}
 }

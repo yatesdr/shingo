@@ -139,6 +139,9 @@ CREATE TABLE core_loaders (
     -- The bin type a blank CLEAR at this unloader stamps on the carrier it
     -- leaves. Core owns it (bin_loaders.bare_bin_type_id); '' = stamps nothing.
     bare_bin_type_code TEXT NOT NULL DEFAULT '',
+    -- 1 = a CLEAR, a PUSH EMPTY or this unloader's own empty-out landing
+    -- re-pulls its next full. Core owns it (bin_loaders.auto_push).
+    auto_push INTEGER NOT NULL DEFAULT 0,
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );

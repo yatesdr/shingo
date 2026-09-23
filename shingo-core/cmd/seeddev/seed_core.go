@@ -515,6 +515,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			ChangeoverLoadDirective: directive[k.node],
 			AcceptPartials:          accept,
 			BareBinTypeID:           bare,
+			AutoPush:                p.LoaderSettings[k.node].AutoPush,
 		})
 		if err != nil {
 			return fmt.Errorf("create loader %s/%s: %w", k.node, k.role, err)
@@ -600,6 +601,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			ChangeoverLoadDirective: directive[id],
 			AcceptPartials:          accept,
 			BareBinTypeID:           bare,
+			AutoPush:                p.LoaderSettings[id].AutoPush,
 		})
 		if err != nil {
 			return fmt.Errorf("create synthetic loader %s/%s: %w", id, lead.Role, err)
@@ -664,6 +666,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			ChangeoverLoadDirective: directive[id],
 			AcceptPartials:          accept,
 			BareBinTypeID:           bare,
+			AutoPush:                p.LoaderSettings[id].AutoPush,
 		})
 		if err != nil {
 			return fmt.Errorf("create dedicated loader %s/%s: %w", id, lead.Role, err)
@@ -718,12 +721,17 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 }
 
 // loaderSettingsFor resolves a loader's loader_settings entry through the
-// admin door's own checks: accept_partials and a bare type are unloader-only,
-// and the bare type must be flagged bare (service.CheckLoaderBareType).
+// admin door's own checks: accept_partials, auto_push and a bare type are
+// unloader-only, and the bare type must be flagged bare
+// (service.CheckLoaderBareType). auto_push is read straight off the entry by
+// the caller once this has passed.
 func loaderSettingsFor(db *store.DB, p *plantspec.Plant, name, role string) (bool, *int64, error) {
 	ls := p.LoaderSettings[name]
 	if ls.AcceptPartials && role != string(protocol.ClaimRoleConsume) {
 		return false, nil, fmt.Errorf("loader_settings %q: %w", name, service.ErrAcceptPartialsProduce)
+	}
+	if ls.AutoPush && role != string(protocol.ClaimRoleConsume) {
+		return false, nil, fmt.Errorf("loader_settings %q: %w", name, service.ErrAutoPushProduce)
 	}
 	if ls.BareBinType == "" {
 		return ls.AcceptPartials, nil, nil

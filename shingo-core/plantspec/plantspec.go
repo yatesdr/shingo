@@ -236,6 +236,10 @@ type LoaderSettings struct {
 	// AcceptPartials → bin_loaders.accept_partials: the unloader may be fed a
 	// partly drained carrier.
 	AcceptPartials bool `yaml:"accept_partials,omitempty"`
+	// AutoPush → bin_loaders.auto_push: the unloader re-pulls its next full
+	// when a window frees. Distinct from a claim's auto_push, which seeds only
+	// the Edge's stored claim and never reaches the Core loader.
+	AutoPush bool `yaml:"auto_push,omitempty"`
 	// BareBinType → bin_loaders.bare_bin_type_id, by code: the bare type this
 	// unloader's blank CLEAR stamps. Must be listed in bare_bin_types.
 	BareBinType string `yaml:"bare_bin_type,omitempty"`

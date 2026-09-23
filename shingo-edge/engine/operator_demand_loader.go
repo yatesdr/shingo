@@ -457,22 +457,21 @@ func (e *Engine) stageOperatorEmpty(loader *domain.Loader, payload domain.Payloa
 	return created, nil
 }
 
-// MaybePushLoader is the loader-side mirror of MaybePushUnloader: the
-// opportunistic empty-staging push for OPERATOR-DRIVEN loaders. When an
+// MaybePushLoader is the opportunistic empty-staging push for OPERATOR-DRIVEN
+// loaders, walking every one of them. When an
 // operator-driven loader's window is free it stages one empty so the operator
 // always has a bin to fill. Threshold loaders are no-ops here — Core decides
 // and creates their empties itself. Opportunistic, one at a time: maybeStageLoaderEmpty fires only when
 // no empty is already in flight, and Core's CheckDropoffCapacity queues the
 // order if the window is still physically occupied, so it can't slam.
 //
-// Trigger sites mirror the unloader:
-//   - applyManualSwap (L2 arrived at the market — window confirmed free).
-//   - ClearBin (operator cleared the window).
-//   - SweepPushLoaders on Edge startup / registration ack.
+// Trigger site: ClearBin (operator cleared a produce window). An L2 landing
+// pushes only the loader that owns the node (rePushOwnLoader, applyManualSwap),
+// and Edge startup runs SweepPushLoaders.
 //
-// The nodeID arg is now vestigial — the reservation seam's never-2N budget makes
+// The nodeID arg is vestigial — the reservation seam's never-2N budget makes
 // the sweep idempotent (already-staged loaders create nothing), so there is no need
-// to filter to a specific loader. Mirrors MaybePushUnloader(_ int64).
+// to filter to a specific loader.
 func (e *Engine) MaybePushLoader(_ int64) {
 	loaders, err := e.loaders().Loaders(domain.RoleProduce)
 	if err != nil {
