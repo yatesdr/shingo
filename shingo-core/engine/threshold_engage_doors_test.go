@@ -153,7 +153,7 @@ func TestThresholdEngage_NotificationDoorsFireOnAUOPReadError(t *testing.T) {
 			t.Errorf("%s decided off a reading of %d, want 0 — the failed read is supposed to fall through to zero",
 				b.stationID, hit.CurrentUOP)
 		}
-		if lines := sink.linesContaining("read for " + b.payloadCode); len(lines) != 1 {
+		if lines := sink.linesContaining("evaluateRebuiltBindings SystemUOPForPayload(" + b.payloadCode); len(lines) != 1 {
 			t.Errorf("%d log lines reporting a failed read for %s, want 1 — without one, the fire above proves nothing about the error branch:\n%s",
 				len(lines), b.payloadCode, strings.Join(lines, "\n"))
 		}

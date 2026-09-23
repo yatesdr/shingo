@@ -414,19 +414,12 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 	// The decision mode picks which one the fire gate decides off; the audit log
 	// records any binding whose firing decision the two totals disagree on, on
 	// every eval, whichever mode is active.
-	edgeTotal, ledgerTotal, usedEdge, err := m.linesideDecisionTotal(context.Background(), payloadCode)
-	if err != nil {
-		if m.eng != nil {
-			m.eng.logFn("threshold_monitor: SystemUOPForPayload(%s): %v", payloadCode, err)
-		}
+	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "evaluate", skipOnReadError)
+	if !ok {
 		return
 	}
-	decisionTotal := ledgerTotal
-	if m.decisionMode() == linesideModeEdgeReports {
-		decisionTotal = edgeTotal
-	}
-	m.auditLinesideDecision(payloadCode, bindings, ledgerTotal, edgeTotal, usedEdge)
-	m.checkBindings(bindings, decisionTotal, reason, usedEdge)
+	m.auditLinesideDecision(payloadCode, bindings, r.ledger, r.edge, r.fresh)
+	m.checkBindings(bindings, r.total, reason, r.usedEdge)
 }
 
 // startupSweep iterates every (loader, payload) with threshold > 0,
@@ -483,13 +476,15 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		total, err := m.readTotal(ctx, payload)
-		if err != nil {
-			m.eng.logFn("threshold_monitor: startup sweep SystemUOPForPayload(%s): %v", payload, err)
+		r, ok := m.decisionTotalFor(ctx, payload, "startup sweep", skipOnReadError)
+		if !ok {
 			continue
 		}
+		total := r.total
 		// Seed the cold-start warm-up allowance, then let checkBindings make the
-		// FIRE decision — it is the only place that decision is made.
+		// FIRE decision against the total decisionTotalFor resolved — the gate is
+		// checkBindings, the input is decisionTotalFor, and neither is decided
+		// anywhere else.
 		//
 		// This block used to compare total < threshold and call fireSignalCached
 		// itself, which meant the startup path silently bypassed every guard
@@ -519,7 +514,7 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 			})
 		}
 		m.mu.Unlock()
-		m.checkBindings(tes, total, "warm_up_startup_sweep", false)
+		m.checkBindings(tes, total, "warm_up_startup_sweep", r.usedEdge)
 	}
 
 	m.mu.Lock()
@@ -589,13 +584,14 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 	if !monitored {
 		return
 	}
-	total, err := m.readTotal(context.Background(), payloadCode)
-	if err != nil {
-		if m.eng != nil {
-			m.eng.logFn("threshold_monitor: NoteSwapRequestContradiction SystemUOPForPayload(%s): %v", payloadCode, err)
-		}
+	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "NoteSwapRequestContradiction", skipOnReadError)
+	if !ok {
 		return
 	}
+	// THE CONTRADICTION IS ABOUT THE LEDGER, so it reads the ledger: a human is
+	// asking for material the ledger says is there. The recheck below is a fire
+	// decision like any other and judges against the resolved total.
+	total := r.ledger
 	maxThreshold := 0
 	for _, b := range bindings {
 		if b.threshold > maxThreshold {
@@ -609,7 +605,7 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 		}
 	}
 	// Immediately re-evaluate — a re-read now. Creates no orders when stocked.
-	m.checkBindings(bindings, total, "manual_swap_recheck", false)
+	m.checkBindings(bindings, r.total, "manual_swap_recheck", r.usedEdge)
 }
 
 // recordSwapContradiction stamps a swap-vs-ledger contradiction for the payload
@@ -1129,11 +1125,6 @@ func (m *ThresholdMonitor) rebuildPayloadBindings(payload string) []thresholdEnt
 // was 31 (Springfield 2026-07-21: the threshold was nudged 120→121→120 and
 // nothing fired) is gone, so "re-baseline" collapsed to "read".
 func (m *ThresholdMonitor) evaluateRebuiltBindings(payload string, tes []thresholdEntry) {
-	total, err := m.readTotal(context.Background(), payload)
-	if err != nil {
-		m.eng.logFn("threshold_monitor: evaluateRebuiltBindings read for %s: %v", payload, err)
-		total = 0
-	}
-
-	m.checkBindings(tes, total, "below_threshold", false)
+	r, _ := m.decisionTotalFor(context.Background(), payload, "evaluateRebuiltBindings", zeroOnReadError)
+	m.checkBindings(tes, r.total, "below_threshold", r.usedEdge)
 }

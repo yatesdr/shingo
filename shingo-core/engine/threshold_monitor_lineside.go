@@ -34,6 +34,61 @@ import (
 // the ledger for that node (no adjustment) and flags the stale report.
 const linesideReportStaleness = 3 * time.Minute
 
+// readErrPolicy is what a fire path does when the authoritative in-loop total
+// cannot be read. It is a parameter of decisionTotalFor, not a property of it,
+// because the paths genuinely differ today and the resolver is not the place
+// to change that.
+type readErrPolicy int
+
+const (
+	// skipOnReadError logs and evaluates nothing; the next trigger re-reads.
+	skipOnReadError readErrPolicy = iota
+	// zeroOnReadError logs and evaluates against a total of 0.
+	zeroOnReadError
+)
+
+// decisionReading is one fire path's answer to "which total is this judged
+// against": total is the number checkBindings decides off, ledger and edge are
+// the two readings it was chosen from, fresh is whether a fresh Edge report
+// moved edge away from ledger (what the audit wants), and usedEdge is whether
+// the edge-adjusted total is the one that decided (what used_edge_reports
+// records). fresh and usedEdge differ in exactly one case: ledger mode with a
+// fresh report, where the reports were read and the ledger decided.
+type decisionReading struct {
+	total    int
+	ledger   int
+	edge     int
+	fresh    bool
+	usedEdge bool
+}
+
+// decisionTotalFor resolves the total a fire is judged against, honouring
+// decisionMode(). It is the ONLY place that choice is made: every path into
+// checkBindings calls it, so the boot pass, a manual-swap recheck and the
+// notification doors judge a payload against the same number the delta path
+// does. They used to decide off bare readTotal and stamp used_edge_reports=false
+// by construction, which ignored the configured mode on three of four fire
+// paths — a human's swap request was re-checked against the very ledger number
+// R1 exists to distrust — and made the persisted stamp lie on those three.
+//
+// ok=false means "evaluate nothing". site names the caller in the log line.
+func (m *ThresholdMonitor) decisionTotalFor(ctx context.Context, payload, site string, onErr readErrPolicy) (decisionReading, bool) {
+	edge, ledger, fresh, err := m.linesideDecisionTotal(ctx, payload)
+	if err != nil {
+		if m.eng != nil {
+			m.eng.logFn("threshold_monitor: %s SystemUOPForPayload(%s): %v", site, payload, err)
+		}
+		// A zero reading decides off the ledger's absence, not the Edge's.
+		return decisionReading{}, onErr == zeroOnReadError
+	}
+	r := decisionReading{total: ledger, ledger: ledger, edge: edge, fresh: fresh}
+	if m.decisionMode() == linesideModeEdgeReports {
+		r.total = edge
+		r.usedEdge = fresh
+	}
+	return r, true
+}
+
 // linesideDecisionTotal computes, for one payload, the Edge-report-adjusted
 // in-loop total (edgeAdjusted) alongside the pure ledger total (ledgerTotal), and
 // whether fresh Edge reports actually moved the total (usedEdge).
@@ -44,8 +99,9 @@ const linesideReportStaleness = 3 * time.Minute
 // log. When no fresh report exists for the payload, edgeAdjusted == ledgerTotal and
 // usedEdge is false.
 //
-// The ledger read error is propagated so the caller SKIPS the evaluation rather
-// than firing off a zero (the same contract the old readTotal path had). A failure
+// The ledger read error is propagated, and what happens next is the caller's
+// readErrPolicy (see decisionTotalFor) — this function never invents a total.
+// A failure
 // to read the reports table or the per-node ledger degrades SAFELY to the pure
 // ledger (log + usedEdge=false) rather than suppressing a legitimate ledger-based
 // fire — an Edge-side read blip must never take replenishment down.
