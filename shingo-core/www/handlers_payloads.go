@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"shingocore/domain"
+	"shingocore/store"
 )
 
 func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
@@ -45,12 +46,29 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Containment state per payload code — the table's Containment column.
+	// The map's values are POINTERS deliberately: Go template's index on a
+	// missing key returns the element type's zero value, and a zero STRUCT is
+	// truthy — every payload without a row would render the "inactive" branch
+	// with empty fields and a form posting an empty payload_code. A missing
+	// pointer is nil, which is what {{with}}'s else branch needs.
+	containment, err := h.engine.PayloadService().ListContainment()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	containmentState := make(map[string]*store.PayloadContainmentRow, len(containment))
+	for i := range containment {
+		containmentState[containment[i].PayloadCode] = &containment[i]
+	}
+
 	data := map[string]any{
-		"Page":            "payloads",
-		"Payloads":        payloads,
-		"BinTypes":        binTypes,
-		"CompatNodes":     compatNodes,
-		"PayloadBinTypes": payloadBinTypes,
+		"Page":             "payloads",
+		"Payloads":         payloads,
+		"BinTypes":         binTypes,
+		"CompatNodes":      compatNodes,
+		"PayloadBinTypes":  payloadBinTypes,
+		"ContainmentState": containmentState,
 	}
 	h.render(w, r, "payloads.html", data)
 }

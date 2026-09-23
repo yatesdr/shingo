@@ -146,6 +146,57 @@ export function uiConfirm(message) {
   });
 }
 
+// uiConfirmWithInput — uiConfirm with an OPTIONAL free-text field inside the
+// confirm box: one dialog, Confirm/Cancel, and the typed value travels with
+// the answer. The payloads screen's containment toggles use it so the quality
+// reason is typed where the decision is made, not in a field that sits on the
+// page year-round. Resolves {ok, value}: ok=false on cancel (Escape or the
+// button); value is the possibly-empty input text on confirm.
+export function uiConfirmWithInput(message, opts) {
+  opts = opts || {};
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active confirm-overlay';
+    var box = document.createElement('div');
+    box.className = 'modal confirm-box';
+    box.style.maxWidth = '440px';
+    var p = document.createElement('p');
+    p.textContent = message;
+    p.style.margin = '0 0 0.75rem';
+    box.appendChild(p);
+    var input = document.createElement('input');
+    input.className = 'form-input';
+    input.type = 'text';
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    input.style.marginBottom = '1rem';
+    box.appendChild(input);
+    var done = function(ok) {
+      var v = input.value;
+      overlay.remove();
+      resolve({ ok: ok, value: v });
+    };
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = function() { done(false); };
+    var okBtn = document.createElement('button');
+    okBtn.className = 'btn btn-danger';
+    okBtn.textContent = 'Confirm';
+    okBtn.onclick = function() { done(true); };
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') done(true);
+      else if (e.key === 'Escape') done(false);
+    });
+    row.appendChild(cancelBtn); row.appendChild(okBtn);
+    box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    setTimeout(function() { input.focus(); }, 0);
+  });
+}
+
 export function uiPrompt(message, opts) {
   opts = opts || {};
   return new Promise(function(resolve) {
@@ -372,13 +423,52 @@ export async function confirmDeleteForm(el, evt) {
   el.submit();                                    // bypasses the listener
 }
 
+// containmentForm — for `data-action-submit="containmentForm"` on the
+// payloads screen's quality-containment toggles. Unlike the delete forms'
+// native resubmit, this one POSTs via fetch so a REFUSAL — activating
+// containment for a payload whose claims declare no containment route —
+// surfaces as a red toast on the screen the operator is looking at, instead
+// of navigating the browser to a raw JSON error body. Success reloads the
+// page, which re-renders the payload's new containment state.
+export async function containmentForm(el, evt) {
+  if (!el || !evt) return;
+  evt.preventDefault();
+  var data = new FormData(el);
+  var msg = el.dataset.confirmMsg || 'Are you sure?';
+  // A form declaring data-confirm-input gets the confirm dialog WITH a text
+  // field inside it, and the typed value rides the POST as `reason` — set
+  // unconditionally: the form itself no longer carries a reason input (it
+  // lives in the dialog now), so a has() guard would never fire and the
+  // typed value would be silently dropped.
+  if (el.dataset.confirmInput !== undefined) {
+    var answer = await uiConfirmWithInput(msg, { placeholder: el.dataset.confirmInput || 'Reason (optional)' });
+    if (!answer.ok) return;
+    data.set('reason', answer.value);
+  } else {
+    if (!await uiConfirm(msg)) return;
+  }
+  try {
+    var res = await fetch(el.action, { method: 'POST', body: new URLSearchParams(data) });
+    if (!res.ok) {
+      var text = await res.text();
+      var parsed = null;
+      try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+      toast((parsed && parsed.error) || text || ('HTTP ' + res.status), 'error');
+      return;
+    }
+    window.location.reload();
+  } catch (e) {
+    toast('Request failed: ' + e, 'error');
+  }
+}
+
 // Register the shared submit-gate handler on document.body once, here in the
 // always-loaded module, so every page's data-action-submit="confirmDeleteForm"
 // delete form is actually guarded. delegateActions merges per (root, event), so
 // page modules still add their own handlers on top. Previously each page had to
 // remember to register confirmDeleteForm and most didn't, so destructive delete
 // forms (payloads, bin-types) submitted with no confirmation at all.
-delegateActions(document.body, { confirmDeleteForm }, { events: ['submit'] });
+delegateActions(document.body, { confirmDeleteForm, containmentForm }, { events: ['submit'] });
 
 // All exports above are declared inline (`export function …`). The
 // trailing `export { … }` block that used to live here was removed in

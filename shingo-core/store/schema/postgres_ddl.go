@@ -52,6 +52,24 @@ CREATE TABLE IF NOT EXISTS payloads (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- payload_containment: the per-payload quality containment flag. A quality
+-- alert on a part sets active, and every FG-bound delivery of that payload
+-- diverts to its claim's containment destination instead of the FG drop zone.
+-- The audit columns are written by the store on every set/clear — containment
+-- nobody can attribute is containment nobody can defend. One row per payload
+-- code; the row persists after deactivation so the history (who, when, why)
+-- survives the alert clearing.
+CREATE TABLE IF NOT EXISTS payload_containment (
+    payload_code    TEXT PRIMARY KEY,
+    active          BOOLEAN NOT NULL DEFAULT FALSE,
+    reason          TEXT NOT NULL DEFAULT '',
+    activated_by    TEXT NOT NULL DEFAULT '',
+    activated_at    TIMESTAMPTZ,
+    deactivated_by  TEXT NOT NULL DEFAULT '',
+    deactivated_at  TIMESTAMPTZ,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- load_sequences: the advanced-load-sequence registry. One row per sequence
 -- name; task_names is a JSON array of binTask names in execution order. Editable
 -- data (a plant names its RDS-side binTask keys differently); seeded by v50 with
@@ -85,6 +103,13 @@ CREATE TABLE IF NOT EXISTS bins (
     last_counted_by    TEXT NOT NULL DEFAULT '',
     loaded_at          TIMESTAMPTZ,
     anomaly_at         TIMESTAMPTZ,
+    -- Quality containment: the per-bin hold marker an operator's "Send to
+    -- Quality Hold" sets. A held bin is not re-sourceable and not re-releasable
+    -- to FG while it waits for (or sits in) containment. Default false = today's
+    -- behaviour for every existing bin.
+    quality_hold       BOOLEAN NOT NULL DEFAULT FALSE,
+    hold_by            TEXT NOT NULL DEFAULT '',
+    hold_at            TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

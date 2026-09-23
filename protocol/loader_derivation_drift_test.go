@@ -68,8 +68,10 @@ var loaderModeReaders = map[string]modeReader{
 		"IsLoaderNode answers 'is this claim a loader' about a claim already in hand; this asks the " +
 		"database which rows carry the value at all, which is the one question that cannot be asked " +
 		"of an object because the rows are what it is looking for"},
-	"shingo-edge/store/processes/styles.go": {1, "write", "cloneStyleTx's filter, WRITTEN into SQL: " +
-		"a clone or a generated style must not copy a stored loader claim onto a new style. Same case " +
+	"shingo-edge/store/processes/styles.go": {2, "write", "cloneStyleTx's filter and CopyStyleClaims's verbatim copy, both WRITTEN into SQL: " +
+		"a clone or a generated style must not copy a stored loader claim onto a new style (cloneStyleTx), " +
+		"and CopyStyleClaims copies a style's WHOLE live claim set onto a sibling verbatim — loader claims " +
+		"included, because the copy is the choreography, not a curated subset. Same case " +
 		"as claim_quarantine.go above — the subject is the PERSISTED COLUMN, and the rows are what the " +
 		"query is looking for"},
 

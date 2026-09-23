@@ -492,6 +492,15 @@ const (
 	// carrying the partner's refusal (complex_pair.go failForRefusedPartner).
 	CauseSwapHold QueueCause = "swap-hold"
 
+	// CauseContainmentCapacity — quality containment wants this order diverted
+	// to its claim's containment destination, and that node is full (occupied,
+	// or has inbound already committed). The order parks rather than delivering
+	// to FG: a contained payload must not reach the FG drop zone because its
+	// containment area ran out of room — fail-closed is the whole point of the
+	// divert. Releaser: a containment move completing or a release clearing a
+	// position at the containment node.
+	CauseContainmentCapacity QueueCause = "containment-capacity"
+
 	// ── The finder's tiers (source_finder.go) ─────────────────────────────
 	//
 	// FOUND BY THE OBSERVED-VS-DECLARED CHECK, ON THE RIG, NOT BY THE GREP.

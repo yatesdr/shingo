@@ -4234,7 +4234,6 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "payloads", "near_empty_threshold_pct") &&
 					schema.ColumnExists(q, "bin_types", "required_robot_group")
 			}},
-
 		{117, "bins.undeclared_carrier_at — the produce door records a finding instead of refusing a load that already happened",
 			v117BinsUndeclaredCarrierAt,
 			func(q schema.Querier) bool {
@@ -4327,6 +4326,30 @@ func migrationList() []migration {
 		{132, "drop demand_origins.used_edge_reports — it recorded whether the Edge-adjusted total decided a fire, and no total but Core's decides",
 			v132DropUsedEdgeReports,
 			func(q schema.Querier) bool { return schema.ColumnAbsent(q, "demand_origins", "used_edge_reports") }},
+		// v133 carries the plant-claims mirror's new column: the claim's quality
+		// containment destination (where a contained payload's bins divert
+		// instead of the ordinary FG outbound destination). Blank = unconfigured
+		// = the divert is inert, so every existing mirrored claim reads as it
+		// did before the column existed. Mirror-owned: the handler DELETEs and
+		// re-INSERTs a process's rows on every message, so no backfill is needed.
+		// (Renumbered twice while parked: 99, then 126, as the team's work
+		// claimed each number.)
+		{133, "style_claims.containment_destination (quality containment route)",
+			v133StyleClaimsContainmentDestination,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "style_claims", "containment_destination") }},
+
+		// v134 is the quality-containment state: the per-payload containment flag
+		// (with its own activation audit) and the per-bin hold marker. The flag is
+		// what dispatch's divert reads; the marker is what keeps a held bin from
+		// being re-sourced or re-released to FG while it waits for its containment
+		// move. Both default to "nothing contained", so existing plants read as
+		// they always did. (Renumbered the same way: 100, then 127.)
+		{134, "quality containment: payload_containment table + bins quality-hold marker",
+			v134QualityContainment,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "payload_containment") &&
+					schema.ColumnExists(q, "bins", "quality_hold")
+			}},
 	}
 }
 
@@ -5824,6 +5847,61 @@ func v98LoaderChangeoverLoadDirective(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE bin_loaders
 		ADD COLUMN IF NOT EXISTS changeover_load_directive BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
 		return fmt.Errorf("v98 bin_loaders.changeover_load_directive: %w", err)
+	}
+	return nil
+}
+
+// v133StyleClaimsContainmentDestination adds the plant-claims mirror's quality
+// containment route: where a contained payload's bins divert instead of the
+// claim's ordinary FG outbound destination. Blank = unconfigured = the divert
+// is inert, so every existing mirrored claim reads exactly as it did before
+// the column existed. The mirror is owned by the plant.claims feed (the
+// handler DELETEs and re-INSERTs a process's rows per message), so there is
+// no backfill and nothing to preserve.
+func v133StyleClaimsContainmentDestination(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE style_claims
+		ADD COLUMN IF NOT EXISTS containment_destination TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v133 style_claims.containment_destination: %w", err)
+	}
+	return nil
+}
+
+// v134QualityContainment creates the quality-containment state.
+//
+// payload_containment is the per-PAYLOAD flag (one row per payload code):
+// a quality alert on a part turns `active` on, and every FG-bound delivery of
+// that payload diverts to its claim's containment destination instead. The
+// audit columns name who activated/deactivated and when — a containment that
+// nobody can attribute is a containment nobody can defend, so they are NOT
+// optional columns someone fills later; the store writes them on every set.
+//
+// bins.quality_hold is the per-BIN marker an operator's "Send to Quality
+// Hold" sets: it holds THAT bin (its containment move is created by the
+// station action) and keeps it from being re-sourced or re-released to FG
+// while it waits. hold_by/hold_at are the same audit discipline as the flag.
+//
+// All three default to "nothing contained" — an existing plant reads as it
+// always did the moment this migration lands.
+func v134QualityContainment(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS payload_containment (
+			payload_code    TEXT PRIMARY KEY,
+			active          BOOLEAN NOT NULL DEFAULT FALSE,
+			reason          TEXT NOT NULL DEFAULT '',
+			activated_by    TEXT NOT NULL DEFAULT '',
+			activated_at    TIMESTAMPTZ,
+			deactivated_by  TEXT NOT NULL DEFAULT '',
+			deactivated_at  TIMESTAMPTZ,
+			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`ALTER TABLE bins ADD COLUMN IF NOT EXISTS quality_hold BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE bins ADD COLUMN IF NOT EXISTS hold_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE bins ADD COLUMN IF NOT EXISTS hold_at TIMESTAMPTZ`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v134 quality containment: %w", err)
+		}
 	}
 	return nil
 }

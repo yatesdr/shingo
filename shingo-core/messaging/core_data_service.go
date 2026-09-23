@@ -838,16 +838,17 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 		})
 		for i, c := range st.Claims {
 			claims = append(claims, plantclaims.ClaimRow{
-				ProcessID:           report.ProcessID,
-				StyleID:             st.StyleID,
-				CoreNodeName:        c.CoreNodeName,
-				Role:                c.Role,
-				SwapMode:            c.SwapMode,
-				PayloadCode:         c.PayloadCode,
-				AllowedPayloadCodes: c.AllowedPayloadCodes,
-				UOPCapacity:         c.UOPCapacity,
-				ReorderPoint:        c.ReorderPoint,
-				Seq:                 i,
+				ProcessID:              report.ProcessID,
+				StyleID:                st.StyleID,
+				CoreNodeName:           c.CoreNodeName,
+				Role:                   c.Role,
+				SwapMode:               c.SwapMode,
+				PayloadCode:            c.PayloadCode,
+				ContainmentDestination: c.ContainmentDestination,
+				AllowedPayloadCodes:    c.AllowedPayloadCodes,
+				UOPCapacity:            c.UOPCapacity,
+				ReorderPoint:           c.ReorderPoint,
+				Seq:                    i,
 				// The legs, mirrored as sent. An Edge too old to publish them
 				// sends no such keys, the decoder leaves these at "", and the
 				// mirror's empty-string-defaulted columns take that — which is

@@ -429,6 +429,15 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	// widening) — a resolution-time read, so the swap supply leg is never gated.
 	d.placeForDedicatedLoader(order, resolvedSteps)
 
+	// Quality containment: an FG-bound leg of a contained payload re-points to
+	// its claim's containment destination (or parks, containment full). Runs
+	// AFTER the dedicated-loader park so both authorities agree on the plan
+	// this tick; a non-nil step means the order was parked and the orchestrator
+	// returns it verbatim.
+	if st := d.placeForContainment(order, resolvedSteps); st != nil {
+		return nil, *st
+	}
+
 	return resolvedSteps, dispatchStep{}
 }
 

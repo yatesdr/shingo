@@ -471,6 +471,130 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	}
 }
 
+// placeForContainment is quality containment's divert (v100): when a payload's
+// containment flag is ACTIVE in Core, an FG-bound delivery leg of that payload
+// re-points to the producing claim's containment_destination instead of the
+// claim's ordinary OutboundDestination.
+//
+// ── WHY CORE, WHY HERE ────────────────────────────────────────────────────
+// The Edge authors the removal leg with the FG drop already named, but the
+// containment decision is QUALITY-CRITICAL state: a stale Edge-side copy of
+// the flag could deliver a contained bin to FG, which is the exact escape the
+// feature exists to prevent. Core is the single authority (the same LOCUS
+// rule the loader park runs on): the flag lives in Core, the divert rides
+// Core dispatch, and the re-point reaches the fleet through the same
+// redirect machinery the park uses (applyFinalDeliveryNode).
+//
+// ── SCOPE, THREE WAYS ─────────────────────────────────────────────────────
+//   - Payload-keyed: only the payload flag gates the divert here. A held BIN
+//     does not need this hook — its containment move is created explicitly by
+//     the station action the moment it is held, while the bin is standing at
+//     the produce node.
+//   - Claim-scoped: the lookup keys on the order's ProcessNode (the producing
+//     node), takes the mirrored claim that DECLARES a containment route, and
+//     diverts only when the leg's final dropoff IS that claim's outbound
+//     destination. Swap returns, changeover evac legs and supermarket refills
+//     drop somewhere else and pass through untouched — diverting a swap's
+//     return would strand the supermarket home and stall the whole cell.
+//   - Fail-closed on capacity, fail-open on read: a FULL containment node
+//     parks the order (queue, waiting_for_slot, containment-capacity) rather
+//     than letting the bin continue to FG — a contained payload must not
+//     reach FG because containment ran out of room. A DATABASE READ ERROR,
+//     on the other hand, logs and lets the order through: the scanner
+//     re-evaluates every tick, the read is a PK lookup on a tiny table, and
+//     parking the line on a flaky read trades a bounded quality risk for an
+//     unbounded production one. The asymmetry is deliberate and recorded
+//     here because the next person will look for it.
+//
+// Ambiguous route (two claims on one node disagreeing about containment) and
+// a containment destination that does not resolve to a node both WARN and
+// leave the leg alone — misconfiguration is visible, not guessed. A GROUP
+// destination is the expected multi-spot shape: the divert re-points to the
+// group and the NGRP resolution spreads across its free children, parking on
+// full; only a CONCRETE node's capacity gate parks here.
+func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedStep) *dispatchStep {
+	payload := order.PayloadCode
+	if payload == "" {
+		return nil
+	}
+	contained, err := d.db.PayloadContainmentActive(payload)
+	if err != nil {
+		log.Printf("dispatch: containment read for %s failed — order %d continues (fail-open on read): %v",
+			payload, order.ID, err)
+		return nil
+	}
+	if !contained {
+		return nil
+	}
+	outbound, containment, ambiguous, err := d.db.ContainmentRouteForNode(order.ProcessNode)
+	if err != nil {
+		log.Printf("dispatch: containment route read for node %s failed — order %d continues: %v",
+			order.ProcessNode, order.ID, err)
+		return nil
+	}
+	if ambiguous {
+		log.Printf("WARN: containment route for node %s is ambiguous (claims disagree on the destination) — "+
+			"order %d continues to its authored destination. Fix the claims: one node, one containment route.",
+			order.ProcessNode, order.ID)
+		return nil
+	}
+	if containment == "" {
+		// The flag is on but this node's claim declares no route: visible, not
+		// guessed. The toggle's guard refuses activation when NO claim for the
+		// payload has a route, so reaching here means a route existed and was
+		// edited away (or the claim's payload binding changed) mid-containment.
+		log.Printf("WARN: payload %s is contained but node %s's claim declares no containment destination — "+
+			"order %d continues to its authored destination", payload, order.ProcessNode, order.ID)
+		return nil
+	}
+	// Scope check: this leg must be the claim's own FG flow. Anything else
+	// (swap return, evac, refill) passes through — see the header.
+	final := ""
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Action == protocol.ActionDropoff {
+			final = steps[i].Node
+			break
+		}
+	}
+	if final == "" || final != outbound {
+		d.dbg("containment: order %d's final dropoff %q is not the claim's outbound %q — not an FG leg, no divert",
+			order.ID, final, outbound)
+		return nil
+	}
+	// The destination must resolve. A GROUP is the expected shape for a
+	// containment area with several spots: the re-pointed dropoff re-enters
+	// the NGRP resolution on the next tick, which spreads bins across the
+	// free children (round-robin to vacancies) and parks the order on
+	// ngrp-full — so for a group the local capacity gate is deliberately
+	// SKIPPED: capacity is the group resolver's business, and this hook
+	// cannot see children yet anyway. A concrete node keeps the gate: a full
+	// containment node parks the order here, fail-closed.
+	destNode, err := d.db.GetNodeByDotName(containment)
+	if err != nil || destNode == nil {
+		log.Printf("WARN: containment destination %q for node %s does not resolve to a node — "+
+			"order %d continues to its authored destination", containment, order.ProcessNode, order.ID)
+		return nil
+	}
+	if destNode.NodeTypeCode != protocol.NodeClassNGRP {
+		if blocked, _ := CheckDropoffCapacity(d.db, containment, order.ID); blocked {
+			log.Printf("dispatch: order %d parked — containment node %s is full (payload %s is contained; "+
+				"FG delivery refuses to run while containment has no room)", order.ID, containment, payload)
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseContainmentCapacity,
+				QueueParams{Destination: containment, Payload: payload})
+			return &dispatchStep{done: true, err: fmt.Errorf("containment node %s is full", containment)}
+		}
+	}
+	if order.DeliveryNode == containment {
+		return nil // already re-pointed (scanner replay) — idempotent
+	}
+	if err := applyFinalDeliveryNode(d.db, order, containment); err != nil {
+		log.Printf("dispatch: containment re-point order %d → %s: %v", order.ID, containment, err)
+		return nil
+	}
+	d.dbg("containment: order %d (payload %s, contained) diverted → %s", order.ID, payload, containment)
+	return nil
+}
+
 // orderDeliversTo reports whether any dropoff step in this order targets node. Used
 // to catch the single-robot-swap case where the SAME order delivers the new style to
 // the home — that bin claims the home, so the returning partial must go to buffer.

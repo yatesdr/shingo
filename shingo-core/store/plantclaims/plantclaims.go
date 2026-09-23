@@ -34,6 +34,10 @@ type StyleRow struct {
 // AllowedPayloadCodes is the effective payload set (mirrors
 // PlantClaim.AllowedPayloadCodes on the wire).
 //
+// ContainmentDestination mirrors PlantClaim.ContainmentDestination: where a
+// contained payload's bins divert instead of the claim's ordinary FG outbound
+// destination; blank = unconfigured.
+//
 // The last four are the claim's LEGS — the nodes it draws from, ships to, and
 // is paired with. They are mirrored for the demand loop compiler, which needs
 // the edges between nodes and not just the nodes; the sourceability recompute
@@ -42,20 +46,21 @@ type StyleRow struct {
 // to publish them leaves behind — and Core must read both as "unknown", never
 // as a node whose name is empty.
 type ClaimRow struct {
-	ProcessID            string
-	StyleID              string
-	CoreNodeName         string
-	Role                 protocol.ClaimRole
-	SwapMode             protocol.SwapMode
-	PayloadCode          string
-	AllowedPayloadCodes  []string
-	UOPCapacity          int
-	ReorderPoint         int
-	Seq                  int
-	InboundSource        string
-	OutboundDestination  string
-	PairedCoreNode       string
-	SecondPairedCoreNode string
+	ProcessID              string
+	StyleID                string
+	CoreNodeName           string
+	Role                   protocol.ClaimRole
+	SwapMode               protocol.SwapMode
+	PayloadCode            string
+	ContainmentDestination string
+	AllowedPayloadCodes    []string
+	UOPCapacity            int
+	ReorderPoint           int
+	Seq                    int
+	InboundSource          string
+	OutboundDestination    string
+	PairedCoreNode         string
+	SecondPairedCoreNode   string
 }
 
 // ReplaceProcess replaces the mirror for one process in a single transaction.
@@ -132,9 +137,9 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 	styleInsert, err := tx.Prepare(
 		`INSERT INTO style_claims
 		 (process_id, style_id, core_node_name, role, swap_mode, payload_code,
-		  allowed_payload_codes, uop_capacity, reorder_point, seq,
+		  containment_destination, allowed_payload_codes, uop_capacity, reorder_point, seq,
 		  inbound_source, outbound_destination, paired_core_node, second_paired_core_node)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`)
 	if err != nil {
 		return fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
 	}
@@ -150,7 +155,7 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 		}
 		if _, err := styleInsert.Exec(
 			c.ProcessID, c.StyleID, c.CoreNodeName, string(c.Role), string(c.SwapMode),
-			c.PayloadCode, string(allowed), c.UOPCapacity, c.ReorderPoint, c.Seq,
+			c.PayloadCode, c.ContainmentDestination, string(allowed), c.UOPCapacity, c.ReorderPoint, c.Seq,
 			c.InboundSource, c.OutboundDestination, c.PairedCoreNode, c.SecondPairedCoreNode,
 		); err != nil {
 			return fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)

@@ -849,6 +849,19 @@ var causeReleasers = []causeReleaser{
 		what:        "the remaining destination slots free",
 	},
 	{
+		cause:       CauseContainmentCapacity,
+		populations: []WaitPopulation{PopAcquiring},
+		// Quality containment parked the order because its containment node is
+		// full, and the order REFUSES to continue to FG while containment has
+		// no room — fail-closed is the divert's whole point. So the wait ends
+		// only when a position at the containment node frees, which happens
+		// exactly two ways: the containment move of an earlier bin completes
+		// (its robot places and departs), or a verified bin's release walks one
+		// out to the FG drop. Nothing else may end it — a timer, a retry or a
+		// fallback-to-FG would each be a quality escape.
+		what: "a bin leaves the containment node — an earlier containment move completes, or a verified bin's release walks one out",
+	},
+	{
 		cause:       CauseDropoffCapacity,
 		populations: []WaitPopulation{PopAcquiring},
 		// LEGACY VALUE, NO LIVE WRITER. The two complex arms that wrote it now

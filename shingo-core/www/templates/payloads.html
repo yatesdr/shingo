@@ -57,6 +57,7 @@
         <th>Bin Types</th>
         <th>Notes</th>
         <th>Compatible Nodes</th>
+        <th>Containment</th>
         {{if .Authenticated}}<th>Actions</th>{{end}}
       </tr>
     </thead>
@@ -70,6 +71,37 @@
         <td class="text-muted" style="font-size:0.8rem">{{with index $.PayloadBinTypes .ID}}{{range $i, $bt := .}}{{if $i}}, {{end}}{{$bt}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
+        <td>
+          {{with index $.ContainmentState .Code}}
+            {{if .Active}}
+              <span class="badge badge-quality_hold" title="Contained since {{.ActivatedAt}} by {{.ActivatedBy}}{{if .Reason}} — {{.Reason}}{{end}}">CONTAINED</span>
+              {{if $.Authenticated}}
+              <form method="POST" action="/payloads/containment" style="display:inline" data-action-submit="containmentForm" data-confirm-msg="Release payload {{.PayloadCode}} from containment? Bins already in containment stay until each is verified.">
+                <input type="hidden" name="payload_code" value="{{.PayloadCode}}">
+                <input type="hidden" name="active" value="false">
+                <button type="submit" class="btn btn-danger btn-sm">Release</button>
+              </form>
+              {{end}}
+            {{else}}
+              
+              {{if $.Authenticated}}
+              <form method="POST" action="/payloads/containment" style="display:inline;align-items:center;gap:0.4rem" data-action-submit="containmentForm" data-confirm-input="Reason (optional)" data-confirm-msg="Activate quality containment for {{.PayloadCode}}? Every finished-goods delivery of this payload diverts to its claims' containment destination until released.">
+                <input type="hidden" name="payload_code" value="{{.PayloadCode}}">
+                <input type="hidden" name="active" value="true">
+                <button type="submit" class="btn btn-sm">Contain</button>
+              </form>
+              {{end}}
+            {{end}}
+          {{else}}
+            {{if $.Authenticated}}
+            <form method="POST" action="/payloads/containment" style="display:inline;align-items:center;gap:0.4rem" data-action-submit="containmentForm" data-confirm-input="Reason (optional)" data-confirm-msg="Activate quality containment for {{.Code}}? Every finished-goods delivery of this payload diverts to its claims' containment destination until released.">
+              <input type="hidden" name="payload_code" value="{{.Code}}">
+              <input type="hidden" name="active" value="true">
+              <button type="submit" class="btn btn-sm">Contain</button>
+            </form>
+            {{else}}<span class="text-muted">-</span>{{end}}
+          {{end}}
+        </td>
         {{if $.Authenticated}}
         <td>
           <button class="btn btn-sm" data-action="openEditPayloadModal"

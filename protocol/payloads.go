@@ -1661,6 +1661,12 @@ type PlantClaim struct {
 	// PayloadCode is the binding payload for non-manual_swap claims. For a
 	// single-payload claim this is the value the netting matches against.
 	PayloadCode string `json:"payload_code"`
+	// ContainmentDestination is where a contained payload's bins divert
+	// instead of the claim's ordinary FG outbound destination (quality
+	// containment). Blank = unconfigured = the divert is inert for this
+	// claim. Core resolves the divert at dispatch against its own
+	// authoritative containment state; this field only names WHERE.
+	ContainmentDestination string `json:"containment_destination,omitempty"`
 	// AllowedPayloadCodes is the effective payload set this claim accepts
 	// (ClaimAllowedPayloads on Edge). For most claims this is just
 	// [PayloadCode]; carried as the canonical set the netting reads.

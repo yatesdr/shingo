@@ -228,10 +228,24 @@ CREATE TABLE public.bins (
     last_counted_by text DEFAULT ''::text NOT NULL,
     loaded_at timestamp with time zone,
     anomaly_at timestamp with time zone,
+    quality_hold boolean DEFAULT false NOT NULL,
+    hold_by text DEFAULT ''::text NOT NULL,
+    hold_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     anomaly_note text DEFAULT ''::text NOT NULL,
     undeclared_carrier_at timestamp with time zone
+);
+
+CREATE TABLE public.payload_containment (
+    payload_code text NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    activated_by text DEFAULT ''::text NOT NULL,
+    activated_at timestamp with time zone,
+    deactivated_by text DEFAULT ''::text NOT NULL,
+    deactivated_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE SEQUENCE public.bins_id_seq
@@ -1286,6 +1300,7 @@ CREATE TABLE public.style_claims (
     role text NOT NULL,
     swap_mode text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
+    containment_destination text DEFAULT ''::text NOT NULL,
     allowed_payload_codes text DEFAULT '[]'::text NOT NULL,
     uop_capacity integer DEFAULT 0 NOT NULL,
     reorder_point integer DEFAULT 0 NOT NULL,

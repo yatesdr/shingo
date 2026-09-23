@@ -138,6 +138,42 @@ func (s *PayloadService) List() ([]*payloads.Payload, error) {
 
 // --- Manifest items -------------------------------------------------------
 
+// SetContainment activates or deactivates quality containment for a payload.
+// The guard is the feature's honesty check: activating containment for a
+// payload whose mirrored claims name NO containment destination would set a
+// flag that changes nothing — the floor would believe the part is held while
+// every FG delivery keeps flowing. Zero routed claims refuses the activation
+// with a readable reason; deactivation always passes.
+func (s *PayloadService) SetContainment(payloadCode, reason, by string, active bool) error {
+	if active {
+		routed, err := s.db.CountContainmentRoutedPayloads(payloadCode)
+		if err != nil {
+			return err
+		}
+		if routed == 0 {
+			return fmt.Errorf("no claim for payload %s declares a containment destination — configure the producing cell's claim (Quality Containment section) before activating", payloadCode)
+		}
+	}
+	return s.db.SetPayloadContainment(payloadCode, reason, by, active)
+}
+
+// ListContainment returns every containment row (active first).
+func (s *PayloadService) ListContainment() ([]store.PayloadContainmentRow, error) {
+	return s.db.ListPayloadContainment()
+}
+
+// SetBinHold sets or clears a bin's quality-hold marker. Called by the Edge's
+// station action (Send to Quality Hold) and by the containment screen's
+// release (which clears the hold as it sends the bin to FG).
+func (s *PayloadService) SetBinHold(binID int64, hold bool, by string) error {
+	return s.db.SetBinQualityHold(binID, hold, by)
+}
+
+// ListHeldBins returns every bin carrying the hold marker.
+func (s *PayloadService) ListHeldBins() ([]store.HeldBinRow, error) {
+	return s.db.ListHeldBins()
+}
+
 // ListManifest returns the manifest items defined for a payload
 // template.
 func (s *PayloadService) ListManifest(payloadID int64) ([]*payloads.ManifestItem, error) {

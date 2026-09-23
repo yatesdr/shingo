@@ -347,6 +347,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/parts/lookup", h.apiGetPart)
 			r.Get("/payloads/templates/bin-types", h.apiGetPayloadBinTypes)
 			r.Get("/payloads", h.apiListPayloads)
+			// Quality containment: the flag rows + held bins (public read —
+			// the Edge's containment screens render state, they do not hold
+			// Core credentials). The write is session-gated below.
+			r.Get("/containment", h.apiGetContainment)
 			r.Get("/payloads/detail", h.apiGetPayload)
 			r.Get("/payloads/manifest", h.apiListManifest)
 			r.Get("/payloads/by-node", h.apiPayloadsByNode)
@@ -363,6 +367,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/telemetry/bin-load", h.apiBinLoad)
 			r.Post("/telemetry/bin-clear", h.apiBinClear)
 			r.Post("/telemetry/bin-count", h.apiBinCount)
+			// Quality containment: the per-bin hold marker, set by the Edge's
+			// station action when its operator sends a bin to containment.
+			// Machine path (telemetry group), like bin-load/bin-clear.
+			r.Post("/telemetry/bin-quality-hold", h.apiBinQualityHold)
 			r.Get("/telemetry/e-maint", h.apiEMaintRobotTelemetry)
 			r.Get("/telemetry/e-maint/download", h.apiEMaintRobotTelemetryDownload)
 
@@ -458,6 +466,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 				// Payload templates
 				r.Post("/payloads/templates/create", h.apiCreatePayloadTemplate)
+				// Quality containment: the per-payload flag write. Core-owned
+				// state; the dispatch divert is its only reader. See
+				// handlers_containment.go for the shape and the no-route guard.
+				r.Post("/containment/payload", h.apiSetPayloadContainment)
 				r.Post("/payloads/templates/update", h.apiUpdatePayloadTemplate)
 				// Bulk import (.csv/.xlsx): one row per manifest part, code
 				// repeated. Skips duplicates, reports per-row results.
@@ -569,6 +581,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/payloads/create", h.handlePayloadCreate)
 			r.Post("/payloads/update", h.handlePayloadUpdate)
 			r.Post("/payloads/delete", h.handlePayloadDelete)
+			// Quality containment toggle — the payloads screen's form POST.
+			r.Post("/payloads/containment", h.handlePayloadContainment)
 
 			// Bin & bin-type CRUD
 			r.Post("/bin-types/create", h.handleBinTypeCreate)
