@@ -3,7 +3,9 @@ package engine
 import (
 	"log"
 
+	"shingoedge/domain"
 	"shingoedge/orders"
+	"shingoedge/store/processes"
 )
 
 // ── ONE BIN LEAVES A LOADER ONCE ──────────────────────────────────────────
@@ -38,6 +40,46 @@ import (
 // create two U2 orders for the same physical bin". Same statement, same slot,
 // same order type — the loader side simply never got it.
 
+// outboundFor resolves where a side-cycle move leaving node goes, for all three
+// creators of one: LoadBin's no-L1 fallback and applyLoaderEmptyIn (the L2,
+// RoleProduce) and createUnloaderEmptyOut (the U2, RoleConsume).
+//
+// THE AGGREGATE WINS, THE CLAIM IS THE FALLBACK: Core's loader for role, when it
+// names an outbound, overrides the claim's. The two L2 creators must resolve
+// alike or they can send one carrier to two places — a loader whose outbound was
+// edited in Core, or retired and recreated, used to route the LOAD's move to the
+// old destination and the L1-completion's to the new one.
+//
+// ok is false for a blank outbound (nowhere to send it) and for one equal to the
+// node itself (a same-node move), each logged in the sentence that site has
+// always printed. LoadBin's fallback used to skip the same-node check and file a
+// move from the window to itself. Pinned by TestPinOutbound_* and
+// TestLoadFallback_RefusesASameNodeL2.
+func (e *Engine) outboundFor(node *processes.Node, claim *processes.NodeClaim, role domain.LoaderRole) (string, bool) {
+	outbound := ""
+	if claim != nil {
+		outbound = claim.OutboundDestination
+	}
+	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), role); err == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	who, leg, what := "loader", "L2", "filled"
+	if role == domain.RoleConsume {
+		who, leg, what = "unloader", "U2", "empty"
+	}
+	switch outbound {
+	case "":
+		e.logFn("side-cycle: %s %s has no OutboundDestination — cannot create %s (%s bin will sit until operator manually moves it)",
+			who, node.Name, leg, what)
+		return "", false
+	case node.CoreNodeName:
+		e.logFn("side-cycle: %s %s OutboundDestination same as CoreNode — skipping %s (would be a same-node move)",
+			who, node.Name, leg)
+		return "", false
+	}
+	return outbound, true
+}
+
 // outboundMoveInFlight reports whether this loader already owes an outbound
 // move.
 //
@@ -46,7 +88,7 @@ import (
 // process_node rows, and an L2 filed against a sibling row is still that slot's
 // bin leaving. Scoping to the process node alone is the exact miss that orphaned
 // L1s at `delivered` on a shared loader (plant 2026-06-01, see
-// confirmLoaderL1OnLoad) — the same lesson, applied to the move instead of the
+// confirmDeliveredAt) — the same lesson, applied to the move instead of the
 // retrieve.
 //
 // FAILS CLOSED-ISH: a read error returns "in flight" so the caller skips

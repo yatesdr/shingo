@@ -293,7 +293,7 @@ export function renderModal(entry) {
             // fires but Core queues it (dropoff-capacity gate) until the
             // parked bin clears — so the demand-card sits in 'queued', not
             // 'delivered', while the bin is right there ready to fill.
-            // LoadBin's no-L1 fallback (operator_bin_ops.go:94) creates the
+            // LoadBin's no-L1 fallback (engine.LoadBin) creates the
             // L2 move-out directly, so any allowed payload is a valid pick.
             // Treat each card as if it were delivered for the purpose of
             // click-handling.

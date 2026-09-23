@@ -166,7 +166,7 @@ func (e *Engine) synthLoaderClaim(coreNodeName string) *processes.NodeClaim {
 // as code for an unreachable case; if this ever fires wrong, fix the caller's
 // expectation, do not widen this resolver.
 // IT RETURNS THE REQUESTED CLAIM, AND THE NAME NOW SAYS SO. It was
-// findActiveClaim, which reads as "the claim that is active at this node" — i.e.
+// findActiveClaim (renamed), which reads as "the claim that is active at this node" — i.e.
 // the one describing whatever is standing there. It is not that. It resolves
 // from the PROCESS's active style, so it answers "what does this node's current
 // style say should be here", and it moves the instant a changeover moves the

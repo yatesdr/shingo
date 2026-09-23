@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
+
 	"shingoedge/domain"
 	"shingoedge/orders"
 )
@@ -39,7 +41,7 @@ func corruptProcessNodeRow(t *testing.T, eng *Engine, coreNode string) {
 	if err != nil {
 		t.Fatalf("corrupt %s: %v", coreNode, err)
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	if n, rerr := res.RowsAffected(); rerr != nil || n != 1 {
 		t.Fatalf("corrupt %s: %d rows affected, want 1", coreNode, n)
 	}
 	if _, gerr := eng.db.GetProcessNodeByCoreNodeName(coreNode); gerr == nil {
@@ -153,7 +155,8 @@ func TestStageOperatorEmpty_ResolveReadErrorAbortsLoop(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), wantErr) {
 				t.Errorf("err = %v, want it to contain %q", err, wantErr)
 			}
-			list, _ := db.ListActiveOrdersByDeliveryNodeSet(windows)
+			list, lerr := db.ListActiveOrdersByDeliveryNodeSet(windows)
+			testutil.MustNoErr(t, lerr, "list active orders")
 			at := map[string]int{}
 			for _, o := range list {
 				at[o.DeliveryNode]++

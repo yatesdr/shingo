@@ -257,8 +257,9 @@ func TestUnloaderSweep_PayloadSpecificGuard(t *testing.T) {
 
 // TestUnloaderSweep_UnreachableFiresNothing: Core configured but answering 500
 // — no U1 for any payload of the loader, one loader_budget line per payload
-// (each occupancy=http_error, to_fire=0), and the call count that the per-payload
-// shape costs today: P·(W+1) = 2·(2+1) = 6.
+// (each occupancy=http_error, to_fire=0), ONE node-bins call for the loader
+// (it was P·(W+1) = 6 before the one-pass sweep), and one debug line saying
+// the parked-full guard could not see.
 func TestUnloaderSweep_UnreachableFiresNothing(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -290,11 +291,11 @@ func TestUnloaderSweep_UnreachableFiresNothing(t *testing.T) {
 			t.Errorf("line %d = %q, want payload=%q occupancy=http_error to_fire=0", i, l, p)
 		}
 	}
-	if got := stub.hits.Load(); got != 6 {
-		t.Errorf("node-bins calls = %d, want 6 at base (P=2 · (W=2 guard reads + 1 seam read))", got)
+	if got := stub.hits.Load(); got != 1 {
+		t.Errorf("node-bins calls = %d, want 1 (one read per unloader)", got)
 	}
-	if got := guardBlind.Load(); got != 4 {
-		t.Errorf("guard-could-not-see debug lines = %d, want 4 at base (one per window per payload)", got)
+	if got := guardBlind.Load(); got != 1 {
+		t.Errorf("guard-could-not-see debug lines = %d, want 1 (one per unloader)", got)
 	}
 }
 
@@ -458,13 +459,16 @@ func TestUnloaderSweep_SeamMatchesOccupancyByNodeName(t *testing.T) {
 	}
 }
 
-// TestUnloaderSweep_GuardReadsFirstRowNotNodeName pins a fixture-shape fact at
-// base: the parked-full guard asks for one node at a time and reads bins[0]
-// without checking its node_name. A Core answer with no node_name (the shape
-// fakeCoreBinServer serves) therefore still suppresses the U1 through the guard.
-// A guard that matches by NodeName ignores such a row; the seam's own count
-// still charges it to the budget under the empty name.
-func TestUnloaderSweep_GuardReadsFirstRowNotNodeName(t *testing.T) {
+// TestUnloaderSweep_GuardMatchesRowsByNodeName: the parked-full guard attributes
+// a row to a window by its node_name. A row with no node_name (the shape
+// fakeCoreBinServer used to serve) belongs to no window, so it cannot suppress
+// the U1; the count still charges it to the budget under the empty name, which
+// leaves one of the two windows free, and the U1 fires at FR-W1.
+//
+// Before the one-pass sweep the guard asked for one node at a time and read
+// bins[0] without checking its name, so this row suppressed the U1. Core names
+// every row, so that arm was never reachable on real data.
+func TestUnloaderSweep_GuardMatchesRowsByNodeName(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -479,23 +483,26 @@ func TestUnloaderSweep_GuardReadsFirstRowNotNodeName(t *testing.T) {
 
 	eng.MaybeCreateUnloaderFullIn("PART-A")
 
-	if got := fullsByWindow(t, eng, windows); len(got) != 0 {
-		t.Fatalf("nameless occupied row: U1s = %v, want none at base (guard reads bins[0])", got)
+	want := map[string][]string{"FR-W1": {"PART-A"}}
+	if got := fullsByWindow(t, eng, windows); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("nameless occupied row: U1s = %v, want %v (the row matches no window)", got, want)
 	}
 }
 
-// TestUnloaderSweep_NodeBinsCallCount pins the sweep's Core read cost at base.
-// Per auto consume loader with an inbound source, per payload p: one guard read
-// per node of ReservationTarget(p) plus one seam read — Σ P·(W+1) with W the
-// target-node count (all windows when spreading, 1 when funnelled). A threshold
-// consume loader and a no-inbound loader cost nothing.
+// TestUnloaderSweep_NodeBinsCallCount pins the sweep's Core read cost: one
+// node-bins GET per unloader in L_auto — operator replenishment, an inbound
+// source, and at least one payload — over its whole DeliveryNodes set, however
+// many payloads and windows it has. A threshold consume loader and a no-inbound
+// loader cost nothing.
 //
-//	spread loader: P=2, W=2 → 2·3 = 6
-//	funnel loader: P=2, W=1 → 2·2 = 4
+//	spread loader: P=2, W=2 → 1
+//	funnel loader: P=2, W=1 → 1 (reads both windows, counts the first)
 //	threshold / no-inbound  → 0
-//	sweep total             → 10
+//	sweep total             → 2 = L_auto
 //
-// MaybeCreateUnloaderFullIn on the spread loader is the P=1 case: 1·3 = 3.
+// Before the one-pass sweep it was Σ P·(W+1) = 6 + 4 = 10: one guard read per
+// target window per payload plus one seam read per payload.
+// MaybeCreateUnloaderFullIn is the P=1 case: 1 (it was W+1 = 3).
 func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -515,10 +522,13 @@ func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 
 	eng.pushUnloadersViaSeam()
 
-	if got := stub.hits.Load(); got != 10 {
-		t.Errorf("sweep node-bins calls = %d, want 10 at base", got)
+	// Upper bound: L_auto. Nothing in the sweep may read Core more than once
+	// per auto unloader.
+	const lAuto = 2
+	if got := stub.hits.Load(); got > lAuto {
+		t.Errorf("sweep node-bins calls = %d, exceeds the bound L_auto = %d", got, lAuto)
 	}
-	// Every read names nodes of the spread or funnel loader only.
+	// Every read names one auto unloader's whole window set.
 	stub.mu.Lock()
 	var seen []string
 	for _, req := range stub.requests {
@@ -526,7 +536,7 @@ func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 	}
 	stub.mu.Unlock()
 	sort.Strings(seen)
-	want := []string{"FU-W1", "FU-W1", "FU-W1", "FU-W1", "SP-W1", "SP-W1", "SP-W1,SP-W2", "SP-W1,SP-W2", "SP-W2", "SP-W2"}
+	want := []string{"FU-W1,FU-W2", "SP-W1,SP-W2"}
 	if fmt.Sprint(seen) != fmt.Sprint(want) {
 		t.Errorf("node-bins requests = %v, want %v", seen, want)
 	}
@@ -539,8 +549,8 @@ func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 	stub2 := newSweepBinsStub(t, nil, "", false)
 	eng2.coreClient = NewCoreClient(stub2.srv.URL)
 	eng2.MaybeCreateUnloaderFullIn("PART-A")
-	if got := stub2.hits.Load(); got != 3 {
-		t.Errorf("MaybeCreateUnloaderFullIn node-bins calls = %d, want 3 at base (W=2 guard + 1 seam)", got)
+	if got := stub2.hits.Load(); got > 1 {
+		t.Errorf("MaybeCreateUnloaderFullIn node-bins calls = %d, exceeds the bound of 1", got)
 	}
 }
 

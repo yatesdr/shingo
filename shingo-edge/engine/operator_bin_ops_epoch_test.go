@@ -15,7 +15,7 @@ import (
 // TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse pins the fix in
 // 6630c85: engine.LoadBin must thread Core's LoadBin DeltaEpoch into the runtime
 // write rather than drop it. Pre-fix, manually-loaded bins landed at epoch 0, so
-// Core rejected their BinUOPDeltas via the epoch-aware dedup guard.
+// Core rejected their BinUOPDelta messages via the epoch-aware dedup guard.
 //
 // This exercises the fallback (ManualLoad) path — no L1 retrieve_empty is in
 // flight — and asserts the epoch reached the inventory-delta sink. Downstream L2

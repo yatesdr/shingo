@@ -530,20 +530,11 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	claim := ctx.Claim() // cached in Match
 	// L2 outbound routing comes from the loader AGGREGATE (the config source of truth),
 	// not the legacy style_node_claim — this severs the completion handler's dependency
-	// on style_node_claims-as-loader-config (keystone step 5). Fall back to the claim
-	// when the loader can't be resolved (cutover flag off / cache cold), so this is
-	// behaviour-preserving across the cutover (loader.OutboundDest() == the claim's
-	// outbound under both the aggregate and the legacy claim projection).
-	outbound := claim.OutboundDestination
-	if l, err := e.loaders().LoaderAt(domain.NodeID(ctx.node.CoreNodeName), domain.RoleProduce); err == nil && l != nil && l.OutboundDest() != "" {
-		outbound = l.OutboundDest()
-	}
-	if outbound == "" {
-		e.logFn("side-cycle: loader %s has no OutboundDestination — cannot create L2 (filled bin will sit until operator manually moves it)", ctx.node.Name)
-		return false
-	}
-	if outbound == ctx.node.CoreNodeName {
-		e.logFn("side-cycle: loader %s OutboundDestination same as CoreNode — skipping L2 (would be a same-node move)", ctx.node.Name)
+	// on style_node_claims-as-loader-config (keystone step 5). See outboundFor. A blank
+	// or same-node outbound reports unhandled, so the cascade falls through to
+	// handleNormalReplenishment for default cleanup.
+	outbound, ok := e.outboundFor(ctx.node, claim, domain.RoleProduce)
+	if !ok {
 		return false
 	}
 	nodeID := ctx.node.ID
@@ -902,7 +893,7 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 // isNoBinFailure recognizes Core's bin-claim failure shape on
 // OrderFailedEvent.Reason for PICKUP-side bin unavailability — the
 // "slot was already vacant" semantics where the drop can be auto-
-// cleared as LineCleared because there's nothing physically to move.
+// cleared as NodeTaskLineCleared because there's nothing physically to move.
 //
 // Core's planning error codes ("no_bin", "no_source_bin") are not
 // preserved end-to-end through the wire — only the detail string is —
@@ -928,7 +919,7 @@ func isNoBinFailure(reason string) bool {
 // These are operationally retriable: the changeover hasn't failed,
 // the system is waiting for storage capacity to open up. The HMI
 // renders these as amber tiles (NodeTaskCapacityBlocked), distinct
-// from green (LineCleared/Switched) and red (Error).
+// from green (NodeTaskLineCleared/NodeTaskSwitched) and red (NodeTaskError).
 //
 // Substrings match the dispatch error shapes produced by:
 //   - dispatch/binresolver/group_resolver.go:440,518

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -16,9 +17,9 @@ import (
 
 // TestConfirmUnloaderU1OnClear_HappyPath verifies the helper finds the
 // delivered U1 retrieve_full at the unloader and confirms it. This is the
-// symmetric piece to confirmLoaderL1OnLoad — without it, the U1 sits at
-// `delivered` after the operator's clear tap and handleUnloaderFullInCompletion
-// never fires.
+// symmetric piece to the loader-side confirm — without it, the U1 sits at
+// `delivered` after the operator's clear tap (the U1-completion handler that
+// once reacted to it is removed; the CLEAR itself fires the U2).
 func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -34,9 +35,9 @@ func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set U1 delivered")
 
 	eng := testEngine(t, db)
-	gotID, ok := eng.confirmUnloaderU1OnClear("U1-CONF-MSWAP-NODE")
+	gotID, ok := eng.confirmDeliveredAt("U1-CONF-MSWAP-NODE", false, 0)
 	if !ok {
-		t.Fatalf("confirmUnloaderU1OnClear returned ok=false; want true (delivered U1 should be found)")
+		t.Fatalf("confirmDeliveredAt(U1) returned ok=false; want true (delivered U1 should be found)")
 	}
 	if gotID != orderID {
 		t.Errorf("returned orderID = %d, want %d", gotID, orderID)
@@ -68,9 +69,9 @@ func TestConfirmUnloaderU1OnClear_IgnoresL1(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set L1 delivered")
 
 	eng := testEngine(t, db)
-	_, ok := eng.confirmUnloaderU1OnClear("U1-IGN-L1-MSWAP-NODE")
+	_, ok := eng.confirmDeliveredAt("U1-IGN-L1-MSWAP-NODE", false, 0)
 	if ok {
-		t.Error("confirmUnloaderU1OnClear returned ok=true on an L1 (retrieve_empty=true); want false")
+		t.Error("confirmDeliveredAt(U1) returned ok=true on an L1 (retrieve_empty=true); want false")
 	}
 	after, _ := db.GetOrder(orderID)
 	if after.Status != orders.StatusDelivered {
@@ -96,27 +97,34 @@ func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set U1 in_transit")
 
 	eng := testEngine(t, db)
-	_, ok := eng.confirmUnloaderU1OnClear("U1-NDLV-MSWAP-NODE")
+	_, ok := eng.confirmDeliveredAt("U1-NDLV-MSWAP-NODE", false, 0)
 	if ok {
-		t.Error("confirmUnloaderU1OnClear returned ok=true on an in_transit U1; want false (only delivered confirms)")
+		t.Error("confirmDeliveredAt(U1) returned ok=true on an in_transit U1; want false (only delivered confirms)")
 	}
 }
 
 // fakeCoreBinServer stands in for Core's telemetry API in the ClearBin tests.
 // It serves /api/telemetry/node-bins (the FetchNodeBins call ClearBin uses to
-// decide whether a bin is physically present) with one bin of the given
-// occupancy/payload, and answers {"status":"ok"} to everything else (notably
-// the /api/telemetry/bin-clear POST ClearBin proxies). Without it, FetchNodeBins
-// returns nothing → ClearBin treats the window as empty → no empty-out.
+// decide whether a bin is physically present) with ONE ROW PER REQUESTED NODE,
+// each carrying its node_name and the given occupancy/payload — the shape Core
+// answers in, so a caller that matches rows by NodeName (the unloader sweep) sees
+// the same thing it sees in production rather than a nameless bins[0]. Everything
+// else (notably the /api/telemetry/bin-clear POST ClearBin proxies) gets
+// {"status":"ok"}. Without it, FetchNodeBins returns nothing → ClearBin treats
+// the window as empty → no empty-out.
 func fakeCoreBinServer(t *testing.T, occupied bool, payload string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/telemetry/node-bins" {
-			bin := map[string]any{"occupied": occupied}
-			if occupied {
-				bin["payload_code"] = payload
+			var rows []map[string]any
+			for _, node := range strings.Split(r.URL.Query().Get("nodes"), ",") {
+				bin := map[string]any{"node_name": node, "occupied": occupied}
+				if occupied {
+					bin["payload_code"] = payload
+				}
+				rows = append(rows, bin)
 			}
-			json.NewEncoder(w).Encode([]map[string]any{bin})
+			json.NewEncoder(w).Encode(rows)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

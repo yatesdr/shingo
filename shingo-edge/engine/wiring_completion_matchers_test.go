@@ -69,7 +69,7 @@ func TestIsCapacityBlocked(t *testing.T) {
 // TestMatcherOrdering pins the in-order resolution contract: when both
 // matchers would match (pickup-shaped reason that also matches the
 // looser capacity prefix), isNoBinFailure must be checked first. This
-// mirrors the branch order in handleChangeoverOrderFailure so a
+// mirrors the branch order in handleNodeOrderFailed so a
 // regression on either side will surface here.
 func TestMatcherOrdering(t *testing.T) {
 	t.Parallel()
@@ -81,7 +81,7 @@ func TestMatcherOrdering(t *testing.T) {
 	if !isCapacityBlocked(pickupOverlap) {
 		t.Fatalf("precondition: isCapacityBlocked should also match %q (overlap is intentional)", pickupOverlap)
 	}
-	// In the call site (handleChangeoverOrderFailure), the switch's
+	// In the call site (handleNodeOrderFailed), the switch's
 	// first arm is isNoBinFailure, so the pickup-shaped reason wins.
 	// This test exists so a future "swap the order of arms" refactor
 	// fails loudly.

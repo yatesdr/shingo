@@ -70,7 +70,8 @@ func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 // THERE IS ONE NAME NOW, and there used to be two: CreateRetrieveOrder and
 // CreateRetrieveOrderWithOrigin, wrapping one unexported body. This census
 // carried both needles because counting either alone undercounted —
-// fireThresholdL1 and the unloader U1 went through the attributed name and were
+// the loader L1 (then fireThresholdL1, since retired into stageOperatorEmpty) and
+// the unloader U1 went through the attributed name and were
 // invisible to a grep for the plain one.
 //
 // The unattributed twin is deleted (origin is a required argument now), so the

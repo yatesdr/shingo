@@ -35,7 +35,7 @@ func inFlightEmpties(t *testing.T, db *store.DB, nodes []string) int {
 }
 
 // TestRace_LoaderBudget_ConcurrentSignalsAndOperator is the seam's concurrency
-// gate. A demand signal (Kafka path → fireThresholdL1) and an operator REQUEST (HTTP
+// gate. An L1 push (stageOperatorEmpty) and an operator REQUEST (HTTP
 // path → RequestEmptyBin) hammer ONE loader from many goroutines. The seam must
 // serialise count→fire per loader so the loader's in-flight empties never exceed
 // its budget (1 here — a single delivery node). Run under -race: the
@@ -46,7 +46,7 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "RACE", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 2, false)
-	// Seed the Core-loader cache so BOTH the automatic path (fireThresholdL1) and the
+	// Seed the Core-loader cache so BOTH the L1 push (stageOperatorEmpty) and the
 	// operator path (RequestEmptyBin) resolve the SAME aggregate loader — and lock
 	// the same loader_key mutex. (Without this both paths no-op/error and the race
 	// would be vacuous.)
@@ -63,7 +63,7 @@ func TestRace_LoaderBudget_ConcurrentSignalsAndOperator(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			if g%2 == 0 {
-				// automatic/threshold path: wants 2, seam caps to the budget (1)
+				// L1 push: wants 2, seam caps to the budget (1)
 				_, _ = eng.stageOperatorEmpty(dl, "P1", 2, "", orders.Origin{})
 			} else {
 				// operator path: a single empty request through the same seam
@@ -230,7 +230,7 @@ func (s *occupancyStub) isOccupied(node string) bool {
 //	    property can take: a bin arriving at a window that already has an empty
 //	    inbound is legitimate and must not fail the run.
 //
-// Demands go through fireThresholdL1, the production caller, rather than a
+// Demands go through stageOperatorEmpty, the production caller, rather than a
 // hand-rolled fire closure — same idiom as the multi-window tests. Occupancy
 // flips between steps, so the run exercises bins arriving and leaving underneath
 // in-flight orders rather than a fixed world.
@@ -265,7 +265,7 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 			payload := payloads[rng.Intn(len(payloads))]
 			_, before := windowCounts(t, db, windows)
 			if _, err := eng.stageOperatorEmpty(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", orders.Origin{}); err != nil {
-				t.Fatalf("step %d: fireThresholdL1: %v", step, err)
+				t.Fatalf("step %d: stageOperatorEmpty: %v", step, err)
 			}
 			_, after := windowCounts(t, db, windows)
 			for _, w := range windows { // property B
@@ -351,7 +351,7 @@ func nodeBinsPayloadStub(t *testing.T, resident map[string]string) *httptest.Ser
 //
 // unloaderHasUsableFullPresent is payload-specific: it suppresses only when the
 // resident full matches the payload asked for. But it is not the only gate. The
-// seam's resident-bin count (operator_demand_loader.go) is payload-AGNOSTIC — it
+// seam's resident-bin count (decideLoaderBudget) is payload-AGNOSTIC — it
 // charges ANY occupied window against the budget. So the payload-specific guard
 // is only observable where the loader has a free window left to route to.
 //
@@ -427,15 +427,14 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 // TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails pins that the consume
 // side inherits the fail-closed rule rather than needing its own copy of it.
 //
-// The U1 runs its own parked-full guard and then goes through withLoaderBudget,
-// which makes the same occupancy read. Only the second one refuses. A refusal in
-// the guard as well would be unreachable in practice — both reads hit the same
-// endpoint through the same client, so whatever fails one fails the other — and
-// this test is what says so: the U1 holds with the guard NOT refusing.
+// The U1 makes one occupancy read per unloader. The parked-full guard reads it
+// and does not refuse; decideLoaderBudget's caller, sharing withLoaderBudget's
+// rule, refuses on it. This test is what says the refusal lives there: the U1
+// holds with the guard NOT refusing.
 //
 // It is also the guard against the shortcut. If someone later routes a U1 around
-// withLoaderBudget for speed, this goes red, and the missing refusal has to be
-// put back where the shortcut is.
+// that refusal for speed, this goes red, and the missing refusal has to be put
+// back where the shortcut is.
 //
 // The not-configured arm is deliberately excluded and covered separately: an
 // Edge with no Core telemetry has nobody to be out of touch with, permanently,

@@ -40,7 +40,7 @@ import (
 // RequestFullBin, whose claim is guarded to consume. It was WRONG for
 // RequestEmptyBin, whose claim is guarded to produce (`only produce nodes
 // request empty bins`) — so a produce cell asking for an empty opened a second
-// episode in the consume vocabulary, alongside the one FinalizeProduceNode opens
+// episode in the consume vocabulary, alongside the one RequestProduceSwap opens
 // for the very same cell and payload. One cell, one circle, two open episodes,
 // and neither could see the other's orders.
 //
@@ -294,7 +294,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2.
 	e.recordLinesideCarrier(node.ID, node.CoreNodeName,
 		domain.KnownCarrier(domain.LinesidePayloadCode(payloadCode)), domain.CarrierFromOperator)
-	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(node.CoreNodeName, seatedUOP); l1Confirmed {
+	if l1ID, l1Confirmed := e.confirmDeliveredAt(node.CoreNodeName, true, seatedUOP); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
 		// Belt-and-suspenders: set active_bin_id directly from Core's LoadBin
 		// response. The L1-completion path will also try to set it
@@ -364,13 +364,15 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	//
 	// A consume window reaching LoadBin (the modal's delivered-card tap) misses
 	// the produce lookup and keeps the claim's outbound, exactly as today.
-	outbound := claim.OutboundDestination
-	if l, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleProduce); lerr == nil && l != nil && l.OutboundDest() != "" {
-		outbound = l.OutboundDest()
-	}
-	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, outbound, payloadCode, "load-fallback"); created {
-		if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &orderID); err != nil {
-			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+	//
+	// outboundFor also refuses a blank or same-node outbound here, as the other
+	// two creators always did; this door alone used to file a move from the
+	// window to itself.
+	if outbound, ok := e.outboundFor(node, claim, domain.RoleProduce); ok {
+		if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, outbound, payloadCode, "load-fallback"); created {
+			if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &orderID); err != nil {
+				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+			}
 		}
 	}
 
@@ -392,35 +394,52 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	return nil
 }
 
-// confirmLoaderL1OnLoad confirms the inbound retrieve_empty (L1) at this
-// loader, treating the operator's LOAD tap as the receipt acknowledgement.
-// Returns (orderID, true) when an L1 was actually confirmed; (0, false)
-// otherwise (no delivered L1 found, or the confirm transition itself failed).
+// confirmDeliveredAt confirms the oldest delivered side-cycle retrieve at this
+// core node, treating the operator's tap as the receipt acknowledgement: LOAD at
+// a loader confirms the empty-in (L1, retrieveEmpty=true) with the count Core
+// seated, CLEAR at an unloader confirms the full-in (U1, retrieveEmpty=false)
+// with 0 — the bin is empty once the operator has processed the contents.
+// Direction and count are the caller's, stated at the call, because the two taps
+// differ in exactly those two facts and nothing else.
 //
-// Looks the L1 up by the loader's CORE NODE (delivery_node), NOT by the
-// process_node the operator loaded at. On a loader shared across styles/cells
-// one core node has many process_node rows, and the staged empty may be tracked
-// against a different row than the operator's station — a process-node-scoped
-// query then misses it, LoadBin falls through to its direct-L2 fallback, and the
-// L1 orphans at `delivered` while the full bin still ships (plant 2026-06-01).
-// A core node is one physical slot, so there is at most one delivered empty
-// there to confirm. Querying delivery_node also sidesteps a drifted
-// runtime.ActiveOrderID (a prior fallback overwrites it with the L2 move ID).
-func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int64, bool) {
-	delivered, err := e.db.ListDeliveredRetrieveByDeliveryNode(coreNodeName, true)
+// Returns (orderID, true) when an order was actually confirmed; (0, false)
+// otherwise (none delivered, or the confirm transition itself failed).
+//
+// Looks the order up by the CORE NODE (delivery_node), NOT by the process_node
+// the operator acted at. On a loader shared across styles/cells one core node
+// has many process_node rows, and the staged order may be tracked against a
+// different row than the operator's station — a process-node-scoped query then
+// misses it, the tap falls through, and the order orphans at `delivered` while
+// the bin still ships (plant 2026-06-01). A core node is one physical slot, so
+// there is at most one delivered bin there to confirm. Querying delivery_node
+// also sidesteps a drifted runtime.ActiveOrderID (a prior fallback overwrites it
+// with the L2 move ID).
+//
+// The lookup matches either spelling of the empty-in's type — Core's echo
+// rewrites retrieve to retrieve_empty (see ListDeliveredRetrieveByDeliveryNode).
+// Pinned by TestPinConfirmL1_OldestDeliveredAtTheCoreNode_WithTheSeatedCount,
+// TestPinConfirmL1_FindsTheEchoedTypeSpelling and the TestConfirmUnloaderU1OnClear
+// family.
+func (e *Engine) confirmDeliveredAt(coreNodeName string, retrieveEmpty bool, finalCount int64) (int64, bool) {
+	what, tap := "full-ins", "clear"
+	leg := "U1"
+	if retrieveEmpty {
+		what, tap, leg = "empties", "load", "L1"
+	}
+	delivered, err := e.db.ListDeliveredRetrieveByDeliveryNode(coreNodeName, retrieveEmpty)
 	if err != nil {
-		log.Printf("bin_ops: list delivered empties for node %s: %v", coreNodeName, err)
+		log.Printf("bin_ops: list delivered %s for node %s: %v", what, coreNodeName, err)
 		return 0, false
 	}
 	if len(delivered) == 0 {
 		return 0, false
 	}
-	l1ID := delivered[0].ID // oldest delivered empty at this slot
-	if err := e.orderMgr.ConfirmDelivery(l1ID, uopCount); err != nil {
-		log.Printf("bin_ops: confirm L1 %d on load: %v", l1ID, err)
+	id := delivered[0].ID // oldest delivered at this slot
+	if err := e.orderMgr.ConfirmDelivery(id, finalCount); err != nil {
+		log.Printf("bin_ops: confirm %s %d on %s: %v", leg, id, tap, err)
 		return 0, false
 	}
-	return l1ID, true
+	return id, true
 }
 
 // seatManuallyLoadedBin writes what a hand-load just put on a node: the runtime
@@ -493,7 +512,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		// Confirm any AMR-fed inbound (U1) — the operator's CLEAR tap IS the receipt
 		// ack. A press/forklift-fed drain has no U1; the helper returns ok=false and
 		// we proceed to the empty-out regardless (it no longer depends on a U1).
-		if u1ID, ok := e.confirmUnloaderU1OnClear(node.CoreNodeName); ok {
+		if u1ID, ok := e.confirmDeliveredAt(node.CoreNodeName, false, 0); ok {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
 	}
@@ -523,11 +542,11 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		// missed empty-out strands one carrier at a window the operator can still
 		// tap PUSH EMPTY on; a duplicate sends two robots for one bin, and the
 		// second finds nothing there.
-		if existing, lerr := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove); lerr != nil {
+		if existingID, inFlight, lerr := e.emptyOutInFlight(nodeID); lerr != nil {
 			log.Printf("bin_ops: check in-flight move for node %s: %v", node.Name, lerr)
-		} else if len(existing) > 0 {
+		} else if inFlight {
 			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
-				node.Name, existing[0].ID)
+				node.Name, existingID)
 		} else {
 			e.createUnloaderEmptyOut(node, claim)
 		}
@@ -622,14 +641,12 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	}
 	// Double-tap guard: the order layer has no dedup for move orders, so two
 	// rapid taps would each call createUnloaderEmptyOut and create two U2
-	// orders for the same physical bin. Check for an active move before
-	// creating another — same style as confirmUnloaderU1OnClear's delivered
-	// retrieve lookup.
-	existing, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove)
-	if err != nil {
+	// orders for the same physical bin. Here the empty-out IS the operation, so
+	// an active move — or a read that could not say — refuses it; ClearBin runs
+	// the same check and skips instead. See emptyOutInFlight for what it keys on.
+	if _, inFlight, err := e.emptyOutInFlight(nodeID); err != nil {
 		return fmt.Errorf("check in-flight move for node %s: %w", node.Name, err)
-	}
-	if len(existing) > 0 {
+	} else if inFlight {
 		return fmt.Errorf("node %s already has an empty-out in flight", node.Name)
 	}
 	// Same empty-out as ClearBin's door, and it names no part either: the U2 is a
@@ -644,32 +661,26 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	return nil
 }
 
-// confirmUnloaderU1OnClear confirms the inbound retrieve_full (U1) at this
-// unloader, treating the operator's CLEAR tap as the receipt acknowledgement.
-// Returns (orderID, true) when a U1 was actually confirmed; (0, false)
-// otherwise (no delivered U1 found, or the confirm transition itself failed).
+// emptyOutInFlight is the double-tap check shared by ClearBin and PushEmptyOut:
+// is any non-terminal MOVE tracked at this process_node? It returns the oldest
+// one's ID for the log line. The CALLERS decide what a hit means — PushEmptyOut
+// refuses, ClearBin skips its U2 (its clear has already committed) — and both
+// treat a read error as "do not create".
 //
-// Mirror of confirmLoaderL1OnLoad, including the core-node lookup: the
-// discriminator vs L1 is RetrieveEmpty (U1 = retrieve with RetrieveEmpty=false).
-// Looks up by the unloader's CORE NODE so a shared unloader's U1 is found even
-// when it's tracked against a sibling process_node (same orphan-at-delivered bug
-// as the loader side). Passes 0 for finalCount: the bin is empty after the
-// operator processes the contents, matching the inventoryDelta zero-out below.
-func (e *Engine) confirmUnloaderU1OnClear(coreNodeName string) (int64, bool) {
-	delivered, err := e.db.ListDeliveredRetrieveByDeliveryNode(coreNodeName, false)
+// KEYED ON THE PROCESS NODE AND THE ORDER TYPE, and it counts a move ARRIVING
+// here as readily as one leaving. That is the opposite shape from
+// outboundMoveInFlight (core node, departures only, loader side), which is why
+// the two are not one function: merged, one of them would change which taps it
+// refuses. Pinned by TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode.
+func (e *Engine) emptyOutInFlight(nodeID int64) (existingID int64, inFlight bool, err error) {
+	existing, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove)
 	if err != nil {
-		log.Printf("bin_ops: list delivered full-ins for node %s: %v", coreNodeName, err)
-		return 0, false
+		return 0, false, err
 	}
-	if len(delivered) == 0 {
-		return 0, false
+	if len(existing) == 0 {
+		return 0, false, nil
 	}
-	u1ID := delivered[0].ID // oldest delivered full-in at this slot
-	if err := e.orderMgr.ConfirmDelivery(u1ID, 0); err != nil {
-		log.Printf("bin_ops: confirm U1 %d on clear: %v", u1ID, err)
-		return 0, false
-	}
-	return u1ID, true
+	return existing[0].ID, true, nil
 }
 
 // createUnloaderEmptyOut fires the side-cycle empty-out (U2): a move of the now-empty
@@ -706,16 +717,8 @@ func (e *Engine) confirmUnloaderU1OnClear(coreNodeName string) (int64, bool) {
 // TestEmptyOut_EnvelopeNamesNoPart and, Core side,
 // TestPayloadlessEmptyOut_SourcesAResidentThePartCouldNotCarry.
 func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim) {
-	outbound := claim.OutboundDestination
-	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume); err == nil && l != nil && l.OutboundDest() != "" {
-		outbound = l.OutboundDest()
-	}
-	if outbound == "" {
-		e.logFn("side-cycle: unloader %s has no OutboundDestination — cannot create U2 (empty bin will sit until operator manually moves it)", node.Name)
-		return
-	}
-	if outbound == node.CoreNodeName {
-		e.logFn("side-cycle: unloader %s OutboundDestination same as CoreNode — skipping U2 (would be a same-node move)", node.Name)
+	outbound, ok := e.outboundFor(node, claim, domain.RoleConsume)
+	if !ok {
 		return
 	}
 	nodeID := node.ID
@@ -762,17 +765,19 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	//
 	//   - manual_swap (bin loader): an empty is a generic carrier, so the
 	//     operator-initiated request is payload-AGNOSTIC. A blank payloadCode is
-	//     the normal case — the order ships untagged, Core's planRetrieveEmpty
+	//     the normal case — the order ships untagged, Core's planTransport
 	//     sources any compatible empty, and LoadBin binds the real payload when
 	//     the operator fills it. A non-blank code (direct API caller, or a
 	//     future carrier picker) is still validated against the loadable set.
 	//
-	//     Blank sourcing assumes the loader is SINGLE-CARRIER: planRetrieveEmpty's
-	//     bin-type advisory clause is permissive when the order names no payload,
-	//     so on a loader spanning multiple carrier types it could fetch the wrong
-	//     container. TODO: add a bin_type/carrier field to OrderRequest so a
-	//     multi-carrier loader can request "an empty of carrier X" without naming
-	//     a payload (today payload_code is the only carrier proxy on the wire).
+	//     Blank sourcing assumes the loader is SINGLE-CARRIER unless it declares
+	//     a carrier mix. Which carrier type an empty going to a loader window
+	//     should be is Core's call, from the loader's declared mix and the
+	//     window's capability (wantedBinType, dispatch/source_finder_want.go), so
+	//     the order needs no carrier field. A loader that declares no mix — every
+	//     loader today — gets "" from wantedBinType and takes the first compatible
+	//     empty, which on a loader spanning several carrier types can be the
+	//     wrong container.
 	//
 	//   - simple / multi-step (press swap) nodes: the empty rides the same robot
 	//     choreography as the part it precedes, so a payload is still required.
@@ -1012,7 +1017,7 @@ func (e *Engine) requestEmptyForSwapModes(
 	//
 	// Source group is the loader's claim.InboundSource (the supermarket the
 	// operator is configured to pull empties from). Without this, Core's
-	// planRetrieveEmpty falls back to a global FIFO scan and can return a
+	// planTransport falls back to a global FIFO scan and can return a
 	// payload-matching empty bin from anywhere — including the empty-tote
 	// return area (Hopkinsville, 2026-05-14, Mission #51 pulled SMN_07
 	// instead of from Supermarket Area).
@@ -1077,7 +1082,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	// sent to a window that already holds one.
 	//
 	// Source stays claim.InboundSource (the FG supermarket the unloader pulls
-	// from; without it Core's planRetrieve falls back to global FIFO and can pull
+	// from; without it Core's planTransport falls back to global FIFO and can pull
 	// from the wrong supermarket).
 	//
 	// THE CLAIM WINS HERE, AND IT IS NOT EQUAL TO THE AGGREGATE. This comment used
@@ -1106,7 +1111,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	// SO FLIPPING THIS TO PREFER THE AGGREGATE IS A LIVE ROUTING CHANGE, not a
 	// severing: it would move which supermarket a real unloader pulls from at any
 	// plant holding such a row. A blank or wrong source here is the shape of
-	// Hopkinsville 2026-05-14 — planRetrieveEmpty falls back to a global FIFO scan
+	// Hopkinsville 2026-05-14 — planTransport falls back to a global FIFO scan
 	// and pulls from the wrong market. That decision wants plant data behind it,
 	// so it is stated rather than taken.
 	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume)

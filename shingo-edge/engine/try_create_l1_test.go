@@ -18,13 +18,13 @@ func resolveLoader(t *testing.T, eng *Engine, payload string) *domain.Loader {
 	return l
 }
 
-// These tests pin fireThresholdL1's contract by asserting the returned created
+// These tests pin stageOperatorEmpty's contract by asserting the returned created
 // count and the orders DB — not log strings (the review flagged the existing
 // log-scraping tests as brittle). They cover the in-flight clamp and the
 // transitional allowlist gate.
 
 // TestTryCreateL1_BoundedByNodeWindowCapAndReturnsCreated pins the post-PR-0
-// chokepoint contract: fireThresholdL1 fires (desired - inFlight) for the payload
+// chokepoint contract: stageOperatorEmpty fires (desired - inFlight) for the payload
 // BUT never lets total in-flight empties at the core node exceed the window's
 // physical slot count (manualSwapWindowSlots). At a one-window loader that means
 // at most one empty inbound at a time — a desired > 1 is serialized over the

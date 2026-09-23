@@ -153,7 +153,7 @@ func scLoaderEngine(t *testing.T, window string) (*Engine, *store.DB, *scCore, *
 	testutil.MustNoErr(t, err, "ensure runtime")
 	seedCoreLoader(t, eng, sharedLoaderInfo(window, "produce", "operator", "PART-SC", 0, 0))
 
-	if _, _, claim, _ := eng.loadActiveNode(nodeID); claim == nil || claim.ID != 0 {
+	if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || claim.ID != 0 {
 		t.Fatalf("fixture: want a synthesized claim (ID 0) at %s, got %+v", window, claim)
 	}
 	return eng, db, core, logs, nodeID
@@ -438,7 +438,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 				ProcessID: otherProc, CoreNodeName: other, Code: "RO", Name: other, Sequence: 1, Enabled: true,
 			})
 			testutil.MustNoErr(t, err, "create other node")
-			if _, _, claim, _ := eng.loadActiveNode(nodeID); claim == nil || (claim.ID != 0) != stored {
+			if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || (claim.ID != 0) != stored {
 				t.Fatalf("fixture: claim at %s = %+v, want stored=%v", own, claim, stored)
 			}
 			core.set(own, true, "")
@@ -494,17 +494,20 @@ func TestPinConfirmL1_OldestDeliveredAtTheCoreNode_WithTheSeatedCount(t *testing
 	newer := scDeliveredRetrieve(t, db, "cl1-new", orders.TypeRetrieve, nodeID, true, core)
 
 	eng := testEngine(t, db)
-	got, ok := eng.confirmLoaderL1OnLoad(core, 55)
+	got, ok := eng.confirmDeliveredAt(core, true, 55)
 	if !ok || got != oldest {
-		t.Fatalf("confirmLoaderL1OnLoad = (%d, %v), want (%d, true): the oldest delivered empty-in "+
+		t.Fatalf("confirmDeliveredAt(L1) = (%d, %v), want (%d, true): the oldest delivered empty-in "+
 			"at the core node, even though a sibling process_node tracks it", got, ok, oldest)
 	}
-	o, _ := db.GetOrder(oldest)
+	o, err := db.GetOrder(oldest)
+	testutil.MustNoErr(t, err, "get order")
 	if o.Status != orders.StatusConfirmed || o.FinalCount == nil || *o.FinalCount != 55 {
 		t.Errorf("confirmed L1 = status %q final %v, want confirmed with 55", o.Status, o.FinalCount)
 	}
 	for _, id := range []int64{u1, newer} {
-		if o, _ := db.GetOrder(id); o.Status != orders.StatusDelivered {
+		if o, err := db.GetOrder(id); err != nil {
+			t.Fatalf("get order %d: %v", id, err)
+		} else if o.Status != orders.StatusDelivered {
 			t.Errorf("order %d status = %q, want delivered (one confirm per tap, never the U1)", id, o.Status)
 		}
 	}
@@ -522,11 +525,13 @@ func TestPinConfirmL1_FindsTheEchoedTypeSpelling(t *testing.T) {
 	id := scDeliveredRetrieve(t, db, "cl1-echo", protocol.OrderTypeRetrieveEmpty, nodeID, true, core)
 
 	eng := testEngine(t, db)
-	if got, ok := eng.confirmLoaderL1OnLoad(core, 10); !ok || got != id {
-		t.Errorf("confirmLoaderL1OnLoad = (%d, %v), want (%d, true) — the echo spelled the type "+
+	if got, ok := eng.confirmDeliveredAt(core, true, 10); !ok || got != id {
+		t.Errorf("confirmDeliveredAt(L1) = (%d, %v), want (%d, true) — the echo spelled the type "+
 			"retrieve_empty and the flag says empty-in", got, ok, id)
 	}
-	if o, _ := db.GetOrder(id); o.Status != orders.StatusConfirmed {
+	if o, err := db.GetOrder(id); err != nil {
+		t.Fatalf("get order %d: %v", id, err)
+	} else if o.Status != orders.StatusConfirmed {
 		t.Errorf("echoed L1 status = %q, want confirmed", o.Status)
 	}
 }
@@ -541,10 +546,11 @@ func TestPinConfirmU1_RecordsAZeroFinalCount(t *testing.T) {
 	id := scDeliveredRetrieve(t, db, "cu1-zero", orders.TypeRetrieve, nodeID, false, core)
 
 	eng := testEngine(t, db)
-	if got, ok := eng.confirmUnloaderU1OnClear(core); !ok || got != id {
-		t.Fatalf("confirmUnloaderU1OnClear = (%d, %v), want (%d, true)", got, ok, id)
+	if got, ok := eng.confirmDeliveredAt(core, false, 0); !ok || got != id {
+		t.Fatalf("confirmDeliveredAt(U1) = (%d, %v), want (%d, true)", got, ok, id)
 	}
-	o, _ := db.GetOrder(id)
+	o, err := db.GetOrder(id)
+	testutil.MustNoErr(t, err, "get order")
 	if o.FinalCount == nil || *o.FinalCount != 0 {
 		t.Errorf("U1 final count = %v, want 0", o.FinalCount)
 	}
@@ -616,7 +622,7 @@ func scStoredWithCore(t *testing.T, prefix string, role protocol.ClaimRole, clai
 		seedCoreLoader(t, eng, info)
 	}
 	nodeID, _ := seedManualSwapClaim(t, db, prefix, role, "PART-OB", claimDest)
-	if _, _, claim, _ := eng.loadActiveNode(nodeID); claim == nil || claim.ID == 0 {
+	if _, _, claim, err := eng.loadActiveNode(nodeID); err != nil || claim == nil || claim.ID == 0 {
 		t.Fatalf("fixture: want the STORED claim at %s, got %+v", core, claim)
 	}
 	return eng, db, nodeID, core
@@ -724,8 +730,8 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 
 // TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites: an outbound equal
 // to the window's own node is refused by createUnloaderEmptyOut and
-// applyLoaderEmptyIn. LoadBin's fallback has no such check — see
-// TestFailingFirst_LoadFallback_RefusesASameNodeL2 (not a pin: red at base).
+// applyLoaderEmptyIn, as it was at c0c525c0. The third site is
+// TestLoadFallback_RefusesASameNodeL2.
 func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 	t.Parallel()
 
@@ -755,4 +761,19 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 			t.Errorf("L2 destinations = %v, want none (same-node)", got)
 		}
 	})
+}
+
+// TestLoadFallback_RefusesASameNodeL2: LoadBin's fallback refuses an outbound
+// that resolves to the window's own name, like the other two creators. At
+// c0c525c0 it filed a move from the window to itself (flat bug).
+func TestLoadFallback_RefusesASameNodeL2(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID, core := scStoredWithCore(t, "OBSF", protocol.ClaimRoleProduce, "OBSF-MSWAP-NODE", "")
+	c := newSCCore(t)
+	c.set(core, true, "")
+	eng.coreClient = NewCoreClient(c.srv.URL)
+	testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
+	if got := scDestsFrom(t, db, core); len(got) != 0 {
+		t.Errorf("L2 destinations = %v, want none — a same-node move is refused at every creator", got)
+	}
 }
