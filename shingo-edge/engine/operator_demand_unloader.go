@@ -67,9 +67,19 @@ func occupancyUnverifiable(outcome string) bool {
 // lineside release). The consume DemandSignal caller is gone (2026-08) with
 // the kanban demand-signal route; fulls landing at FG storage no longer
 // auto-trigger a U1. The seam still applies (never-2N).
+//
+// LOCAL FIRST. The released payload is usually already covered — in an auto_push
+// unloader the pickup gate pulled its next full before the release arrived — and
+// then the seam's Core read can only answer to_fire=0. unloaderPullsCovered answers
+// that from the order table for this payload alone, and the Core read happens only
+// when a pull is possible (TestPinFold_ProduceRelease).
 func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	loader, err := e.loaderStore.LoaderForPayload(domain.PayloadCode(payloadCode), domain.RoleConsume, true)
 	if err != nil || loader == nil {
+		return
+	}
+	if e.unloaderPullsCovered(loader, []domain.PayloadCode{domain.PayloadCode(payloadCode)}, "") {
+		e.debugFn("side-cycle: unloader %s — a full-in of %s is already in flight; release offers nothing", loader.ID(), payloadCode)
 		return
 	}
 	e.createUnloaderFullInViaSeam(loader, payloadCode)

@@ -143,6 +143,40 @@ func orderWorksTheCell(o *domain.Order) bool {
 // pickup at some other node. Best-effort throughout: a failed read leaves the
 // leg undeparted, and fail-closed is the only safe direction, because a wrong
 // "departed" admits a second swap into a cell a robot is standing in.
+// rePullOnEmptyOutPickup is the re-pull gate for an auto_push unloader at the
+// moment its empty-out (U2) lifts the carrier: the next full is pulled while the
+// U2 is still travelling, not after it lands.
+//
+// THE WINDOW IS FREE ON CORE BY NOW. Core's pickup block handler moves the carrier
+// to _TRANSIT before it sends BinPickedUp (shingo-core
+// TestU2Pickup_WindowReadsEmptyBeforeTheLanding), so the seam's occupancy read
+// sees the window empty. Pulling at the landing instead left the window idle for
+// the whole U2 trip — a median of 38 s per cycle in the B5 sim.
+//
+// Fires for a move LEAVING a consume loader window whose claim (stored, else the
+// loader's synthesized one) has AutoPush: tracked at the window, sourced from it,
+// and lifted there. Any carrier leaving such a window frees it, so this is not
+// specific to the half loader. Edge-local reads until it fires, then one Core
+// read (rePushOwnUnloader). Pinned by TestAutoPushCycle_SingleWindow_RefillsAtThePickup.
+func (e *Engine) rePullOnEmptyOutPickup(order *domain.Order, location string) {
+	if order == nil || order.ProcessNodeID == nil || order.OrderType != orders.TypeMove {
+		return
+	}
+	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
+	if err != nil || node == nil {
+		return
+	}
+	here := strings.TrimSpace(node.CoreNodeName)
+	if here == "" || strings.TrimSpace(location) != here || strings.TrimSpace(order.SourceNode) != here {
+		return
+	}
+	claim := e.claimAtNode(node)
+	if claim == nil || !claim.IsLoaderNode() || claim.Role != protocol.ClaimRoleConsume || !claim.AutoPush {
+		return
+	}
+	e.rePushOwnUnloader(node)
+}
+
 func (e *Engine) stampDepartureIfLeftCell(order *domain.Order, location string) {
 	if order == nil || order.ProcessNodeID == nil {
 		return

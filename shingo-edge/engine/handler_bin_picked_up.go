@@ -69,6 +69,9 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	// It touches no runtime slot, so it cannot interact with anything below,
 	// and the gate's own early returns stay exactly where they are.
 	e.stampDepartureIfLeftCell(order, location)
+	// And the auto_push unloader's re-pull, for the same reason it sits here: it
+	// reads the order and the window's claim and touches no runtime slot.
+	e.rePullOnEmptyOutPickup(order, location)
 
 	// === Location gate (inverted; fails closed) ===
 	//

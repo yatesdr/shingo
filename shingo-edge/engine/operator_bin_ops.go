@@ -602,11 +602,13 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	log.Printf("bin_ops: CLEAR at node %s discarded %d parts on bin %d (payload=%q, new epoch=%d) — "+
 		"Core holds the ledger row (clear_for_reuse)",
 		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.DeltaEpoch)
-	// Push-driven unloader: bin just left the window, fire the next pull at the
-	// unloader this window belongs to. The AutoPush gate is this condition; see
-	// rePushOwnUnloader for why only the owning unloader is asked.
+	// Push-driven unloader: offer the next pull at the unloader this window
+	// belongs to. The AutoPush gate is this condition. The carrier is still on the
+	// window (it leaves at the U2's pickup), so it is counted held and the offer
+	// goes to Core only when the order table shows a pull the seam could make —
+	// see rePushOwnUnloaderIfUncovered.
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
-		e.rePushOwnUnloader(node)
+		e.rePushOwnUnloaderIfUncovered(node, node.CoreNodeName)
 	}
 	// Push-driven loader (transitional): the operator cleared the window, so
 	// stage the next empty. Gated inside MaybePushLoader on transitional.
@@ -667,10 +669,10 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	// removal of whatever carrier stands on the window, never a fetch for a part.
 	// See createUnloaderEmptyOut.
 	e.createUnloaderEmptyOut(node, claim)
-	// Re-arm the delivery seam so the next full bin is requested after the
-	// empty departs — mirrors ClearBin's gated rePushOwnUnloader at its tail.
+	// Re-arm the delivery seam — mirrors ClearBin's gate at its tail, with the
+	// tapped window counted held for the same reason.
 	if claim.AutoPush {
-		e.rePushOwnUnloader(node)
+		e.rePushOwnUnloaderIfUncovered(node, node.CoreNodeName)
 	}
 	return nil
 }
