@@ -16,10 +16,6 @@ func (db *DB) SyncDemandRegistry(stationID string, entries []demands.RegistryEnt
 	return demands.SyncRegistry(db.DB, stationID, entries)
 }
 
-func (db *DB) LookupDemandRegistry(payloadCode string) ([]demands.RegistryEntry, error) {
-	return demands.LookupRegistry(db.DB, payloadCode)
-}
-
 // LookupDemandThresholdsByPayload returns demand_registry entries
 // for the given payload whose replenish_uop_threshold > 0 — the
 // monitored set for C-push.
@@ -31,8 +27,4 @@ func (db *DB) LookupDemandThresholdsByPayload(payloadCode string) ([]demands.Reg
 // across all payloads. Used by the threshold-monitor startup sweep.
 func (db *DB) ListDemandThresholds() ([]demands.RegistryEntry, error) {
 	return demands.ListThresholds(db.DB)
-}
-
-func (db *DB) ListDemandRegistry() ([]demands.RegistryEntry, error) {
-	return demands.ListRegistry(db.DB)
 }

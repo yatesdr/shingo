@@ -464,14 +464,12 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 
 	// Derive demand_registry for this station from the Core-owned loader aggregate
 	// on (re)connect, so a plant configured entirely through the UI gets live
-	// demand routing without an out-of-band seeddev run. Idempotent
-	// — SyncDemandRegistry diffs against the current rows. (The Edge pushes no
+	// demand routing without an out-of-band seeddev run. Idempotent: the sync
+	// replaces the station's rows with the same derivation. (The Edge pushes no
 	// claim config over the wire; the aggregate is the sole source.)
-	if entries, derr := s.db.BuildDemandRegistryFromAggregate(p.StationID); derr != nil {
-		log.Printf("core_handler: build demand_registry for %s: %v", p.StationID, derr)
-	} else if _, serr := s.db.SyncDemandRegistry(p.StationID, entries); serr != nil {
-		log.Printf("core_handler: seed demand_registry for %s: %v", p.StationID, serr)
-	}
+	// DeriveDemandRegistry prints the station's derive line, a failure included.
+	// Its change list is discarded: Resync below re-engages the station whole.
+	_, _, _ = s.db.DeriveDemandRegistry(p.StationID)
 
 	// Re-engage the threshold monitor for this station's loader bindings: the
 	// monitor sweeps demand_registry once at Core startup, so a (re)connect after

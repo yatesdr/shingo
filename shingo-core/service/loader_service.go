@@ -10,6 +10,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log"
 
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -262,7 +263,8 @@ func CheckLoaderBareType(db *store.DB, role string, id int64) (*int64, error) {
 	return &id, nil
 }
 
-// Delete removes a loader (cascades its homes + payloads) and re-derives.
+// Delete archives a loader (a soft delete: its homes and payloads stay, and
+// ListLoaders stops returning it) and re-derives.
 func (s *LoaderService) Delete(id int64) error {
 	if err := s.db.DeleteLoader(id); err != nil {
 		return err
@@ -403,24 +405,28 @@ func (s *LoaderService) RemovePayload(loaderID int64, payloadCode string) error 
 // station with zero rows yet, which is exactly what left a UI-authored loader
 // with no demand routing until an edge reconnect/seed. Per-station scoping by
 // node_stations is a documented refinement.
+//
+// DeriveDemandRegistry prints one line per station, a failure included, so a
+// station that errors is skipped here without a second line. A refused
+// derivation returns no changes, so the monitor is told nothing about it.
 func (s *LoaderService) rederive() {
 	stationSet := map[string]struct{}{}
-	if stations, err := s.db.DemandRegistryStations(); err == nil {
+	if stations, err := s.db.DemandRegistryStations(); err != nil {
+		log.Printf("loader_service: rederive: list registry stations: %v", err)
+	} else {
 		for _, st := range stations {
 			stationSet[st] = struct{}{}
 		}
 	}
-	if edges, err := s.db.ListEdges(); err == nil {
+	if edges, err := s.db.ListEdges(); err != nil {
+		log.Printf("loader_service: rederive: list edges: %v", err)
+	} else {
 		for _, e := range edges {
 			stationSet[e.StationID] = struct{}{}
 		}
 	}
 	for st := range stationSet {
-		entries, err := s.db.BuildDemandRegistryFromAggregate(st)
-		if err != nil {
-			continue
-		}
-		changes, err := s.db.SyncDemandRegistry(st, entries)
+		_, changes, err := s.db.DeriveDemandRegistry(st)
 		if err != nil {
 			continue
 		}

@@ -7,7 +7,10 @@ package store
 // builder carries BuildLoaderInfos' output down to the Edge.
 
 import (
+	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/store/demands"
@@ -160,6 +163,90 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 	return out, nil
 }
 
+// DemandDeriveSkips counts the aggregate rows one derivation passed over, by
+// reason. NodeGone and WindowUnresolved are inputs the derivation could not
+// resolve; the rest are config that genuinely carries no demand.
+type DemandDeriveSkips struct {
+	Buffer           int // BUFFER home: fed by parked returns, drives no threshold demand
+	NoPayload        int // dedicated home with no payload assigned yet
+	NodeGone         int // payload-bearing home whose position node no longer exists
+	NoWindows        int // loader with payloads and no windows at all (not yet configured)
+	WindowUnresolved int // loader with payloads and windows, none of which resolves to a node
+}
+
+// Unresolved is how many inputs the derivation could not resolve.
+func (s DemandDeriveSkips) Unresolved() int { return s.NodeGone + s.WindowUnresolved }
+
+// String lists the skips that fired, as name=count, in a fixed order.
+func (s DemandDeriveSkips) String() string {
+	var parts []string
+	for _, f := range []struct {
+		name string
+		n    int
+	}{
+		{"buffer", s.Buffer}, {"no_payload", s.NoPayload}, {"node_gone", s.NodeGone},
+		{"no_windows", s.NoWindows}, {"window_unresolved", s.WindowUnresolved},
+	} {
+		if f.n > 0 {
+			parts = append(parts, f.name+"="+strconv.Itoa(f.n))
+		}
+	}
+	return "skips{" + strings.Join(parts, " ") + "}"
+}
+
+// DemandDeriveReport is one station's derive: what went in, what came out, and
+// what the sync did with it.
+type DemandDeriveReport struct {
+	Station           string
+	LoadersIn         int // active loaders read (ListLoaders is plant-wide)
+	RowsOut           int // entries derived
+	RowsWithThreshold int // entries with replenish_uop_threshold > 0
+	PriorRows         int // rows the station held before the sync
+	Changes           int // threshold changes the sync reported
+	Skips             DemandDeriveSkips
+	Refused           bool
+}
+
+// String is the derive line's body.
+func (r DemandDeriveReport) String() string {
+	outcome := "committed"
+	if r.Refused {
+		outcome = "refused"
+	}
+	return fmt.Sprintf("station=%s outcome=%s loaders=%d rows=%d thresholded=%d prior=%d changes=%d %s",
+		r.Station, outcome, r.LoadersIn, r.RowsOut, r.RowsWithThreshold, r.PriorRows, r.Changes, r.Skips)
+}
+
+// DeriveDemandRegistry re-derives stationID's demand_registry from the loader
+// aggregate and syncs it, printing exactly one line for the station whatever
+// the outcome. It is the single writer path for both triggers, a loader config
+// edit (LoaderService.rederive) and an edge (re)connect (HandleEdgeRegister);
+// nothing on a timer calls it.
+//
+// A derivation that produced no rows while skipping an input it could not
+// resolve is refused by the sync (see demands.SyncDerivedRegistry): the
+// station's rows are kept and no change is returned, so the monitor is told
+// nothing. An empty derivation with nothing unresolved (every loader archived,
+// no payload-bearing home) commits.
+//
+// The returned changes are exactly SyncRegistry's; a caller that errors gets
+// none.
+func (db *DB) DeriveDemandRegistry(stationID string) (DemandDeriveReport, []demands.RegistryChange, error) {
+	entries, rep, err := db.buildDemandRegistry(stationID)
+	if err != nil {
+		log.Printf("demand registry derive: station=%s outcome=error stage=build: %v", stationID, err)
+		return rep, nil, err
+	}
+	out, err := demands.SyncDerivedRegistry(db.DB, stationID, entries, rep.Skips.Unresolved() > 0)
+	if err != nil {
+		log.Printf("demand registry derive: station=%s outcome=error stage=sync %s: %v", stationID, rep.Skips, err)
+		return rep, nil, err
+	}
+	rep.PriorRows, rep.Changes, rep.Refused = out.PriorRows, len(out.Changes), out.Refused
+	log.Printf("demand registry derive: %s", rep)
+	return rep, out.Changes, nil
+}
+
 // BuildDemandRegistryFromAggregate derives the manual_swap demand_registry
 // entries for stationID from the Core-owned bin_loaders aggregate — the
 // Core-authored replacement for the Edge ClaimSync that used to populate the
@@ -167,113 +254,154 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 // consumes the ReplenishUOPThreshold values. CoreNodeName is the position node
 // (dedicated_positions) or the loader's first window node (shared_window) — a real
 // node, since the loader has no node identity of its own; the Edge resolves the loader
-// by LoaderKey on the LoopBelowThresholdSignal. Callers pass
-// the result to SyncDemandRegistry (and, at runtime, the monitor's
-// OnThresholdChanges) so Core becomes the single writer of the registry.
+// by LoaderKey on the LoopBelowThresholdSignal. The runtime writers go through
+// DeriveDemandRegistry, which adds the skip counts and the refusal; this bare
+// form is for seeddev, which syncs the result itself.
 func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.RegistryEntry, error) {
+	entries, _, err := db.buildDemandRegistry(stationID)
+	return entries, err
+}
+
+// buildDemandRegistry is the derivation, with its counts. ListLoaders is
+// plant-wide, so every station derives every active loader.
+func (db *DB) buildDemandRegistry(stationID string) ([]demands.RegistryEntry, DemandDeriveReport, error) {
+	rep := DemandDeriveReport{Station: stationID}
 	ls, err := db.ListLoaders()
+	if err != nil {
+		return nil, rep, err
+	}
+	rep.LoadersIn = len(ls)
+	var out []demands.RegistryEntry
+	for _, l := range ls {
+		entries, err := db.deriveLoaderEntries(stationID, l, &rep.Skips)
+		if err != nil {
+			return nil, rep, err
+		}
+		out = append(out, entries...)
+	}
+	rep.RowsOut = len(out)
+	for _, e := range out {
+		if e.ReplenishUOPThreshold > 0 {
+			rep.RowsWithThreshold++
+		}
+	}
+	return out, rep, nil
+}
+
+// deriveLoaderEntries derives one loader's registry entries, counting what it
+// skips into skips.
+func (db *DB) deriveLoaderEntries(stationID string, l loaders.Loader, skips *DemandDeriveSkips) ([]demands.RegistryEntry, error) {
+	role := protocol.ClaimRole(l.Role)
+
+	// A consume loader drains; nothing on either side acts on a threshold it
+	// carries. The service refuses the combination at the door now, so this is
+	// for the row that predates that refusal or arrived by a direct database
+	// edit: derive the entry, but with NO threshold, so the monitor does not
+	// fire signals the Edge is guaranteed to drop.
+	//
+	// Zeroed rather than skipped. The registry entry does more than carry a
+	// threshold — dropping the loader from it entirely would take away the
+	// manual_swap binding too, trading an inert threshold for a broken swap.
+	consumeThreshold := l.Role == loaders.RoleConsume && l.Replenishment == loaders.ReplenishmentThreshold
+	if consumeThreshold {
+		log.Printf("demand registry: loader %q (%s) is consume+threshold, which nothing acts on — deriving its entries with no threshold; fix the loader's replenishment mode", l.Name, loaders.Key(l.ID))
+	}
+	thresholdFor := func(v int) int {
+		if consumeThreshold {
+			return 0
+		}
+		return v
+	}
+
+	homes, err := db.ListLoaderHomes(l.ID)
+	if err != nil {
+		return nil, err
+	}
+	// One query for every member name, same as BuildLoaderInfos above. Both
+	// loops below resolved a name per home; the second did it only to find
+	// the first resolvable one.
+	names, err := db.LoaderMemberNodeNames(l.ID)
 	if err != nil {
 		return nil, err
 	}
 	var out []demands.RegistryEntry
-	for _, l := range ls {
-		role := protocol.ClaimRole(l.Role)
+	for _, h := range homes {
+		// A BUFFER slot holds kept partials and pins no payload — it drives no
+		// threshold demand of its own (it is fed by parked returns, not the
+		// monitor). Skip it by KIND, not by blank payload, so it is no longer
+		// conflated with an unconfigured position.
+		if h.Kind == loaders.HomeKindBuffer {
+			skips.Buffer++
+			continue
+		}
+		// A HOME with no payload yet also drives no demand, but for a different
+		// reason: a shared_window loader's homes are physical WINDOWS (the payload
+		// set in bin_loader_payloads governs), and a just-dropped dedicated
+		// position is unassigned until the operator picks a payload. Emitting an
+		// empty-payload registry entry would be junk. Only the unassigned
+		// position is counted: a window without a payload is its normal shape.
+		if h.PayloadCode == "" {
+			if l.Layout != loaders.LayoutSharedWindow {
+				skips.NoPayload++
+			}
+			continue
+		}
+		name, ok := names[h.PositionNodeID]
+		if !ok {
+			skips.NodeGone++
+			continue
+		}
+		out = append(out, demands.RegistryEntry{
+			StationID:             stationID,
+			CoreNodeName:          name,
+			LoaderID:              l.ID,
+			Role:                  role,
+			PayloadCode:           h.PayloadCode,
+			OutboundDest:          l.OutboundDest,
+			ReplenishUOPThreshold: thresholdFor(h.UOPThreshold),
+		})
+	}
 
-		// A consume loader drains; nothing on either side acts on a threshold it
-		// carries. The service refuses the combination at the door now, so this is
-		// for the row that predates that refusal or arrived by a direct database
-		// edit: derive the entry, but with NO threshold, so the monitor does not
-		// fire signals the Edge is guaranteed to drop.
-		//
-		// Zeroed rather than skipped. The registry entry does more than carry a
-		// threshold — dropping the loader from it entirely would take away the
-		// manual_swap binding too, trading an inert threshold for a broken swap.
-		consumeThreshold := l.Role == loaders.RoleConsume && l.Replenishment == loaders.ReplenishmentThreshold
-		if consumeThreshold {
-			log.Printf("demand registry: loader %q (%s) is consume+threshold, which nothing acts on — deriving its entries with no threshold; fix the loader's replenishment mode", l.Name, loaders.Key(l.ID))
+	payloads, err := db.ListLoaderPayloads(l.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(payloads) == 0 {
+		return out, nil
+	}
+	// A shared_window loader has no node of its own (core_node_name is gone), so
+	// address its pooled demand at the first window node — a real node. The binding
+	// key (station, node, payload) and the signal's address both use it; the Edge
+	// resolves the loader by LoaderKey and spreads the empty across every window,
+	// so any stable member node serves. A window-less shared loader (admin-created,
+	// not yet configured) is not operable and drives no demand. One whose windows
+	// all point at vanished nodes is different: it is configured, and the
+	// derivation could not resolve it.
+	addr := ""
+	for _, h := range homes {
+		if n, ok := names[h.PositionNodeID]; ok {
+			addr = n
+			break
 		}
-		thresholdFor := func(v int) int {
-			if consumeThreshold {
-				return 0
-			}
-			return v
+	}
+	if addr == "" {
+		if len(homes) == 0 {
+			skips.NoWindows++
+		} else {
+			skips.WindowUnresolved++
 		}
-
-		homes, err := db.ListLoaderHomes(l.ID)
-		if err != nil {
-			return nil, err
-		}
-		// One query for every member name, same as BuildLoaderInfos above. Both
-		// loops below resolved a name per home; the second did it only to find
-		// the first resolvable one.
-		names, err := db.LoaderMemberNodeNames(l.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, h := range homes {
-			// A BUFFER slot holds kept partials and pins no payload — it drives no
-			// threshold demand of its own (it is fed by parked returns, not the
-			// monitor). Skip it by KIND, not by blank payload, so it is no longer
-			// conflated with an unconfigured position.
-			if h.Kind == loaders.HomeKindBuffer {
-				continue
-			}
-			// A HOME with no payload yet also drives no demand, but for a different
-			// reason: a shared_window loader's homes are physical WINDOWS (the payload
-			// set in bin_loader_payloads governs), and a just-dropped dedicated
-			// position is unassigned until the operator picks a payload. Emitting an
-			// empty-payload registry entry would be junk.
-			if h.PayloadCode == "" {
-				continue
-			}
-			name, ok := names[h.PositionNodeID]
-			if !ok {
-				continue
-			}
-			out = append(out, demands.RegistryEntry{
-				StationID:             stationID,
-				CoreNodeName:          name,
-				LoaderID:              l.ID,
-				Role:                  role,
-				PayloadCode:           h.PayloadCode,
-				OutboundDest:          l.OutboundDest,
-				ReplenishUOPThreshold: thresholdFor(h.UOPThreshold),
-			})
-		}
-
-		payloads, err := db.ListLoaderPayloads(l.ID)
-		if err != nil {
-			return nil, err
-		}
-		if len(payloads) > 0 {
-			// A shared_window loader has no node of its own (core_node_name is gone), so
-			// address its pooled demand at the first window node — a real node. The binding
-			// key (station, node, payload) and the signal's address both use it; the Edge
-			// resolves the loader by LoaderKey and spreads the empty across every window,
-			// so any stable member node serves. A window-less shared loader (admin-created,
-			// not yet configured) is not operable and drives no demand.
-			addr := ""
-			for _, h := range homes {
-				if n, ok := names[h.PositionNodeID]; ok {
-					addr = n
-					break
-				}
-			}
-			if addr == "" {
-				continue
-			}
-			for _, p := range payloads {
-				out = append(out, demands.RegistryEntry{
-					StationID:             stationID,
-					CoreNodeName:          addr,
-					LoaderID:              l.ID,
-					Role:                  role,
-					PayloadCode:           p.PayloadCode,
-					OutboundDest:          l.OutboundDest,
-					ReplenishUOPThreshold: thresholdFor(p.UOPThreshold),
-				})
-			}
-		}
+		return out, nil
+	}
+	for _, p := range payloads {
+		out = append(out, demands.RegistryEntry{
+			StationID:             stationID,
+			CoreNodeName:          addr,
+			LoaderID:              l.ID,
+			Role:                  role,
+			PayloadCode:           p.PayloadCode,
+			OutboundDest:          l.OutboundDest,
+			ReplenishUOPThreshold: thresholdFor(p.UOPThreshold),
+		})
 	}
 	return out, nil
 }

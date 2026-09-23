@@ -71,44 +71,6 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	}
 }
 
-func TestCoverage_LookupDemandRegistry(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-
-	demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "N1", Role: "consume", PayloadCode: "P-1", OutboundDest: ""},
-	})
-	demands.SyncRegistry(db.DB, "line-2", []demands.RegistryEntry{
-		{StationID: "line-2", CoreNodeName: "N2", Role: "produce", PayloadCode: "P-1", OutboundDest: ""},
-	})
-	demands.SyncRegistry(db.DB, "line-3", []demands.RegistryEntry{
-		{StationID: "line-3", CoreNodeName: "N3", Role: "consume", PayloadCode: "P-OTHER", OutboundDest: ""},
-	})
-
-	hits, err := demands.LookupRegistry(db.DB, "P-1")
-	if err != nil {
-		t.Fatalf("LookupRegistry: %v", err)
-	}
-	if len(hits) != 2 {
-		t.Fatalf("hits len = %d, want 2", len(hits))
-	}
-	stations := map[string]bool{}
-	for _, e := range hits {
-		stations[e.StationID] = true
-	}
-	if !stations["line-1"] || !stations["line-2"] {
-		t.Errorf("hit stations = %+v, want line-1+line-2", stations)
-	}
-
-	none, err := demands.LookupRegistry(db.DB, "P-NONEXISTENT")
-	if err != nil {
-		t.Fatalf("LookupRegistry miss: %v", err)
-	}
-	if len(none) != 0 {
-		t.Errorf("miss returned %d entries, want 0", len(none))
-	}
-}
-
 // TestCoverage_SyncRegistry_ThresholdChangeDetection — SyncRegistry
 // returns a RegistryChange for any (loader, payload) whose
 // replenish_uop_threshold value moved. New rows (old=0 → new>0),

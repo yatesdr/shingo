@@ -77,35 +77,54 @@ type RegistryChange struct {
 // shifted. Threshold-monitor consumes this to reset its in-memory
 // debounce timers so the new threshold engages without waiting out the
 // debounce window.
+//
+// It never refuses: an empty entries slice empties the station. The loader
+// derive goes through SyncDerivedRegistry, which can.
 func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]RegistryChange, error) {
+	out, err := SyncDerivedRegistry(db, stationID, entries, false)
+	return out.Changes, err
+}
+
+// SyncOutcome is what SyncDerivedRegistry did to one station.
+type SyncOutcome struct {
+	Changes   []RegistryChange
+	PriorRows int  // rows the station held before this sync
+	Refused   bool // an unresolved empty derivation; nothing was written
+}
+
+// SyncDerivedRegistry is SyncRegistry for a derivation that knows whether it
+// resolved all of its inputs.
+//
+// inputsUnresolved says the derivation skipped something it could not resolve
+// (a home whose node is gone, a shared_window loader with no resolvable window).
+// When that derivation also produced NO entries and the station holds rows, the
+// sync is refused: the rows stay, nothing is written, and no change is reported.
+// An empty result the derivation cannot vouch for is not evidence that the
+// station has no demand, and replacing the station with it deletes every
+// binding in one statement. Any prior row counts, not only thresholded ones:
+// the derivation that failed to resolve cannot say which of them are still
+// configured.
+//
+// The check reads the rows this transaction already snapshots for change
+// detection, so it costs no statement, and no other writer's commit can land
+// between the check and the DELETE.
+func SyncDerivedRegistry(db *sql.DB, stationID string, entries []RegistryEntry, inputsUnresolved bool) (SyncOutcome, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return SyncOutcome{}, err
 	}
 	defer tx.Rollback()
 
-	// Snapshot existing thresholds for change detection. Keyed by
-	// (core_node_name, payload_code) — the natural composite that a
-	// loader binding is identified by.
-	prior := make(map[string]int)
-	priorKey := func(node, payload string) string { return node + "\x00" + payload }
-	rows, err := tx.Query(`SELECT core_node_name, payload_code, replenish_uop_threshold FROM demand_registry WHERE station_id = $1`, stationID)
+	prior, priorRows, err := snapshotThresholds(tx, stationID)
 	if err != nil {
-		return nil, err
+		return SyncOutcome{}, err
 	}
-	for rows.Next() {
-		var n, p string
-		var thr int
-		if err := rows.Scan(&n, &p, &thr); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		prior[priorKey(n, p)] = thr
+	if inputsUnresolved && len(entries) == 0 && priorRows > 0 {
+		return SyncOutcome{PriorRows: priorRows, Refused: true}, nil
 	}
-	rows.Close()
 
 	if _, err := tx.Exec(`DELETE FROM demand_registry WHERE station_id = $1`, stationID); err != nil {
-		return nil, err
+		return SyncOutcome{}, err
 	}
 
 	var changes []RegistryChange
@@ -126,7 +145,7 @@ func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]Regi
 		}
 		if _, err := tx.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			stationID, e.CoreNodeName, e.Role, e.PayloadCode, e.OutboundDest, e.ReplenishUOPThreshold, lid); err != nil {
-			return nil, err
+			return SyncOutcome{}, err
 		}
 		key := priorKey(e.CoreNodeName, e.PayloadCode)
 		seen[key] = true
@@ -141,20 +160,50 @@ func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]Regi
 			})
 		}
 	}
-	// Deleted rows whose old threshold was non-zero: clear the
-	// debounce timer so a future re-create at a different threshold
-	// (or any value) engages cleanly.
+	changes = append(changes, vanishedThresholds(stationID, prior, seen)...)
+
+	if err := tx.Commit(); err != nil {
+		return SyncOutcome{}, err
+	}
+	return SyncOutcome{Changes: changes, PriorRows: priorRows}, nil
+}
+
+// priorKey is the (core_node_name, payload_code) composite a loader binding is
+// identified by.
+func priorKey(node, payload string) string { return node + "\x00" + payload }
+
+// snapshotThresholds reads a station's existing thresholds for change
+// detection, keyed by priorKey, and counts its rows.
+func snapshotThresholds(tx *sql.Tx, stationID string) (map[string]int, int, error) {
+	rows, err := tx.Query(`SELECT core_node_name, payload_code, replenish_uop_threshold FROM demand_registry WHERE station_id = $1`, stationID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	prior := make(map[string]int)
+	n := 0
+	for rows.Next() {
+		var node, payload string
+		var thr int
+		if err := rows.Scan(&node, &payload, &thr); err != nil {
+			return nil, 0, err
+		}
+		prior[priorKey(node, payload)] = thr
+		n++
+	}
+	return prior, n, rows.Err()
+}
+
+// vanishedThresholds reports the deleted rows whose old threshold was non-zero,
+// so the monitor clears their debounce timers and a future re-create at any
+// threshold engages cleanly.
+func vanishedThresholds(stationID string, prior map[string]int, seen map[string]bool) []RegistryChange {
+	var changes []RegistryChange
 	for k, old := range prior {
 		if seen[k] || old == 0 {
 			continue
 		}
-		sep := -1
-		for i := 0; i < len(k); i++ {
-			if k[i] == 0 {
-				sep = i
-				break
-			}
-		}
+		sep := strings.IndexByte(k, 0)
 		if sep < 0 {
 			continue
 		}
@@ -166,31 +215,7 @@ func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]Regi
 			NewThreshold: 0,
 		})
 	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return changes, nil
-}
-
-// LookupRegistry returns all demand_registry entries for a given payload code.
-func LookupRegistry(db *sql.DB, payloadCode string) ([]RegistryEntry, error) {
-	rows, err := db.Query(`SELECT `+registrySelectCols+`
-		FROM demand_registry WHERE payload_code = $1`, payloadCode)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var entries []RegistryEntry
-	for rows.Next() {
-		e, err := scanRegistryEntry(rows)
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, e)
-	}
-	return entries, rows.Err()
+	return changes
 }
 
 // LookupThresholdsByPayload returns every demand_registry binding for
