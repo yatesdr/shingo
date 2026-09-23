@@ -875,3 +875,45 @@ func TestFindSource_MaintainedTypeReadFailureDoesNotGuess(t *testing.T) {
 		t.Errorf("typed finder called despite an unreadable episode: %d calls", db.typedGroupCalls)
 	}
 }
+
+// A move of an EMPTY carrier is not refused by the part's carrier rule: the move
+// relocates the carrier as it stands, and the part tag is the station's context.
+// Hopkinsville orders 2233/2234, 2026-09-23 — 45x48 KD empties at SMN_01/02 moved under a
+// TOTE-2415-only part parked as "Waiting for material" with the carrier present.
+// A bin that HOLDS the part in a carrier the rule excludes is still refused.
+func TestFindSource_MoveOfEmptyIgnoresPartCarrierRule(t *testing.T) {
+	t.Parallel()
+	const (
+		kd   = int64(1) // 45x48 KD
+		tote = int64(2) // TOTE-2415
+	)
+	cases := []struct {
+		name    string
+		payload string
+		want    Outcome
+	}{
+		{"empty_kd_moves", "", OutcomeFound},
+		{"full_kd_of_tote_only_part_refused", "KK21", OutcomeWait},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := newFakeFinderDB()
+			srcID := int64(11)
+			db.addNode(&nodes.Node{ID: srcID, Name: "SMN_01"})
+			db.addNode(&nodes.Node{ID: 69, Name: "SMN_011"})
+			db.binTypeRule = map[string][]int64{"KK21": {tote}}
+			db.addBin(&bins.Bin{ID: 8, BinTypeID: kd, PayloadCode: tc.payload, Status: domain.BinStatusAvailable, NodeID: &srcID})
+			finder := NewSourceFinder(db, nil, nil)
+			order := &orders.Order{ID: 2233, OrderType: OrderTypeMove, SourceIntent: SourceIntentLocal,
+				SourceNode: "SMN_01", DeliveryNode: "SMN_011", PayloadCode: "KK21"}
+			res := finder.FindSource(order, IntentFull)
+			if res.Outcome != tc.want {
+				t.Fatalf("outcome = %v, want %v (cause %q)", res.Outcome, tc.want, res.QueueCause)
+			}
+			if tc.want == OutcomeFound && (res.Bin == nil || res.Bin.ID != 8) {
+				t.Errorf("bin = %v, want the KD carrier at the source node", res.Bin)
+			}
+		})
+	}
+}

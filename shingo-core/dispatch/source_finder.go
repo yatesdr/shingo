@@ -599,7 +599,20 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			}
 		}
 		for _, b := range candidates {
-			if BinUnavailableReason(b, claimPayload, binTypes) != "" {
+			// AN EMPTY CARRIER ON A MOVE IS NOT BEING TAKEN FOR THE PART. The
+			// carrier rule guards "may this part travel in this carrier", and a
+			// move relocates the carrier as it stands — an empty one leaves
+			// empty. The order's part tag is only the station's context. Judging
+			// the empty against it parks the move as "Waiting for material" with
+			// the carrier standing at the source node the whole time: Hopkinsville
+			// orders 2233/2234, 2026-09-23, 45x48 KD empties moved off the
+			// supermarket under a TOTE-2415-only part. A bin that HOLDS the part
+			// is still judged against the rule.
+			rule := binTypes
+			if b.PayloadCode == "" {
+				rule = domain.BinTypeRule{}
+			}
+			if BinUnavailableReason(b, claimPayload, rule) != "" {
 				continue
 			}
 			bin, binNode = b, srcNode
