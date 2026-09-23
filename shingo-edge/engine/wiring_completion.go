@@ -81,12 +81,13 @@ type orderCompletionCtx struct {
 	fromClaimResolved bool
 }
 
-// Claim returns the active NodeClaim at ctx.node, caching the lookup so
-// repeated calls within one cascade don't re-query. Returns nil if no
-// active claim is set (no active style, or the claim row is missing).
+// Claim returns the claim governing ctx.node, caching the lookup so repeated
+// calls within one cascade don't re-query. Resolved by claimAtNode — the stored
+// claim, else the claim synthesized from the node's Core loader — the same
+// resolver the operator doors use. nil when neither exists.
 func (c *orderCompletionCtx) Claim() *processes.NodeClaim {
 	if !c.claimResolved {
-		c.claim = requestedClaimAtNode(c.e.db, c.node)
+		c.claim = c.e.claimAtNode(c.node)
 		c.claimResolved = true
 	}
 	return c.claim
@@ -546,36 +547,7 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 		return false
 	}
 	nodeID := ctx.node.ID
-	// Resolve the loaded payload code so the L2 carries the operator's pick
-	// rather than the claim's primary payload. A manual_swap loader's claim
-	// can list several allowed_payload_codes; LoadBin set Core's bin to
-	// whichever one the operator selected before confirming the L1, so
-	// Core's bin state is the authoritative source at this point. Falling
-	// back to claim.PayloadCode (via lookupPayloadMeta's empty-code path)
-	// is acceptable for single-payload claims but mis-tags the L2 on
-	// multi-payload loaders, which then fails to drive the per-tile
-	// IN_TRANSIT render in operator-station (tiles filter active orders by
-	// o.payload_code === code).
-	//
-	// THE DECISION IS THE SAME EITHER WAY AND THE RECORD IS NOT. This is the one
-	// census site where an unreachable Core neither refuses nor over-orders: the
-	// L2 is created regardless, with a blank payload, and the mis-tag is durable
-	// on the order row. Nothing distinguishes it afterwards from "Core said the
-	// window is genuinely blank", which is a legitimate state after a race. Say
-	// which one it was.
-	loadedPayloadCode := ""
-	if e.coreClient != nil && e.coreClient.Available() {
-		bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName})
-		switch {
-		case len(bins) > 0:
-			loadedPayloadCode = bins[0].PayloadCode
-		case !reachable:
-			e.logFn("side-cycle: loader %s — could not read the loaded payload (Core %s); the L2 "+
-				"is tagged from the claim's primary payload, which mis-renders the IN_TRANSIT "+
-				"chip on a multi-payload loader",
-				ctx.node.Name, OccupancyOutcome(reachable, ferr))
-		}
-	}
+	loadedPayloadCode := e.loadedPayloadForL2(ctx)
 	// L2 always auto-confirms: OutboundDestination is an unattended
 	// supermarket node, so without auto-confirm the order sits at
 	// `delivered` forever (no operator to tap CONFIRM there). This is
@@ -603,6 +575,47 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
 	}
 	return true
+}
+
+// loadedPayloadForL2 is the part the L2 carries: the operator's pick, not the
+// claim's primary payload. A loader can list several payloads, and the board
+// matches the L2 to a tile by o.payload_code, so a mis-tag mis-renders the
+// IN_TRANSIT chip on a multi-payload loader.
+//
+// FROM LOAD'S HAND FIRST. LoadBin records the part it loaded on this node's
+// runtime row immediately before it confirms the L1, and the completion runs
+// synchronously inside that confirm, so ctx.runtime already holds it — the
+// answer costs no round trip. A carrier's identity leaves with the carrier
+// (handler_bin_picked_up records it unknown at departure), so a known part here
+// is the bin standing on the window.
+//
+// A confirm that did not come from LOAD (the modal's CONFIRM DELIVERY) finds no
+// known part and asks Core for the bin, as before.
+//
+// THE DECISION IS THE SAME EITHER WAY AND THE RECORD IS NOT. This is the one
+// census site where an unreachable Core neither refuses nor over-orders: the
+// L2 is created regardless, with a blank payload, and the mis-tag is durable
+// on the order row. Nothing distinguishes it afterwards from "Core said the
+// window is genuinely blank", which is a legitimate state after a race. Say
+// which one it was.
+func (e *Engine) loadedPayloadForL2(ctx *orderCompletionCtx) string {
+	if rt := ctx.runtime; rt != nil && rt.LinesidePayloadKnown && rt.LinesidePayloadCode != "" {
+		return string(rt.LinesidePayloadCode)
+	}
+	if e.coreClient == nil || !e.coreClient.Available() {
+		return ""
+	}
+	bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName})
+	switch {
+	case len(bins) > 0:
+		return bins[0].PayloadCode
+	case !reachable:
+		e.logFn("side-cycle: loader %s — could not read the loaded payload (Core %s); the L2 "+
+			"is tagged from the claim's primary payload, which mis-renders the IN_TRANSIT "+
+			"chip on a multi-payload loader",
+			ctx.node.Name, OccupancyOutcome(reachable, ferr))
+	}
+	return ""
 }
 
 // matchManualSwap matches a move order completion on a manual_swap node.
@@ -638,14 +651,33 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.MaybePushUnloader(ctx.node.ID)
 	}
-	// Push-driven loader (transitional): L2 just landed at the market, so the
-	// loader window is confirmed free — stage the next empty. MaybePushLoader
-	// gates internally on transitional, so this is a no-op for ordinary
-	// (threshold/legacy-supplied) loaders.
+	// Push-driven loader (operator-staged): L2 just landed at the market, so the
+	// loader window is confirmed free — stage the next empty at THE LOADER THIS
+	// NODE BELONGS TO, and only that one. MaybePushLoader walks every
+	// operator-staged produce loader with a Core read each; one loader's landing
+	// frees only its own window, so the walk was that many GETs for one fact.
+	// Threshold loaders are Core's to feed and are skipped here, as they are in
+	// MaybePushLoader. Every loader's own landing re-pushes it —
+	// TestLanding_RePushesOnlyItsOwnLoader.
 	if claim.Role == protocol.ClaimRoleProduce {
-		e.MaybePushLoader(ctx.node.ID)
+		e.rePushOwnLoader(ctx.node)
 	}
 	return true
+}
+
+// rePushOwnLoader stages one empty at the operator-staged produce loader that
+// owns node, through the same seam MaybePushLoader uses (maybeStageLoaderEmpty):
+// one budget-locked count and one Core occupancy read. A node that belongs to no
+// loader, or to a threshold one, stages nothing.
+func (e *Engine) rePushOwnLoader(node *processes.Node) {
+	l, err := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName))
+	if err != nil || l == nil {
+		return
+	}
+	if l.Role() != domain.RoleProduce || !l.UsesOperatorStaging() {
+		return
+	}
+	e.maybeStageLoaderEmpty(l)
 }
 
 // handleNormalReplenishment handles standard retrieve/complex order completion.

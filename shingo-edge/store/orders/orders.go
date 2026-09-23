@@ -740,6 +740,15 @@ func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType p
 // orders matching retrieveEmpty whose delivery_node is the given (core) node
 // name — regardless of which process_node row they're tracked at.
 //
+// EITHER TYPE SPELLING, AND THE FLAG DISCRIMINATES. An Edge-created empty-in is
+// written as retrieve + retrieve_empty=1; Core promotes it to retrieve_empty and
+// projects it back to this station, and UpsertProjection overwrites the stored
+// order_type. Matching order_type='retrieve' alone lost every L1 once its echo
+// landed: LOAD took the fallback and the L1 stayed `delivered` for good, counted
+// as in flight by the loader budget, so that window never got another empty.
+// retrieve_empty is the column that says which direction the order is; the type
+// only has to be one of the two retrieve spellings.
+//
 // The loader/unloader confirm-on-action paths use this. On a loader or unloader
 // shared across styles or cells, one core node has many process_node rows (one
 // per style/process). The side-cycle order (L1 empty-in / U1 full-in) is staged
@@ -751,8 +760,9 @@ func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType p
 // most one bin — one delivered order — there to confirm.
 func ListDeliveredRetrieveByDeliveryNode(db *sql.DB, deliveryNode string, retrieveEmpty bool) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.delivery_node = ? AND o.order_type = ? AND o.retrieve_empty = ? AND o.status = ?
-		ORDER BY o.created_at`, deliveryNode, protocol.OrderTypeRetrieve, retrieveEmpty, protocol.StatusDelivered)
+		WHERE o.delivery_node = ? AND o.order_type IN (?, ?) AND o.retrieve_empty = ? AND o.status = ?
+		ORDER BY o.created_at`, deliveryNode, protocol.OrderTypeRetrieve, protocol.OrderTypeRetrieveEmpty,
+		retrieveEmpty, protocol.StatusDelivered)
 	if err != nil {
 		return nil, err
 	}

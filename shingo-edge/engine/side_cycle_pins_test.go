@@ -20,10 +20,10 @@ import (
 // side_cycle_pins_test.go — characterisation pins for the loader/unloader side
 // cycle at c0c525c0, written before the half-loader work changes any of it.
 //
-// EVERY ASSERTION HERE IS TODAY'S BEHAVIOUR, including behaviour that is a
-// defect. The D3 pins below assert the defect (an L1 that never confirms, an L1
-// confirm that creates no L2); when D3 is fixed they flip, and the flip is the
-// predicted test diff. They are not a statement that the behaviour is right.
+// Written as characterisation pins at c0c525c0. The D3 pins asserted the defect
+// there (an L1 that never confirms, an L1 confirm that files no L2, a landing
+// that neither clears nor re-pushes) and were flipped by the D3 fix; each says
+// what it asserted before.
 //
 // The Core-owned-loader cases use the shape every loader has after the first
 // node-list sync: a Core loader in the cache and NO stored style_node_claim, so
@@ -42,9 +42,17 @@ type scWindow struct {
 // scCore serves node-bins, bin-load and bin-clear from a per-node map the test
 // mutates as the physical world changes (empty arrives, bin leaves).
 type scCore struct {
-	mu      sync.Mutex
-	windows map[string]*scWindow
-	srv     *httptest.Server
+	mu       sync.Mutex
+	windows  map[string]*scWindow
+	srv      *httptest.Server
+	binReads int
+}
+
+// nodeBinReads is how many node-bins requests Core has served so far.
+func (c *scCore) nodeBinReads() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.binReads
 }
 
 func newSCCore(t *testing.T) *scCore {
@@ -66,6 +74,7 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 	defer c.mu.Unlock()
 	switch r.URL.Path {
 	case "/api/telemetry/node-bins":
+		c.binReads++
 		var out []NodeBinInfo
 		for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 			win := c.windows[n]
@@ -223,20 +232,19 @@ var scManifest = []protocol.IngestManifestItem{{PartNumber: "PN-SC", Quantity: 4
 
 // ── D3a: LOAD after the echo ─────────────────────────────────────────────
 
-// TestPinD3a_LoadAfterEcho_TakesTheFallbackAndStrandsTheL1 is D3's first pin,
-// in the shape the plants run: the Edge creates the L1, Core's projection echoes
-// it back as retrieve_empty, it is delivered, and the operator LOADs at a
-// Core-owned window.
+// TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2 is D3 in the shape the
+// plants run: the Edge creates the L1, Core's projection echoes it back as
+// retrieve_empty, it is delivered, and the operator LOADs at a Core-owned window.
 //
-// AT BASE: confirmLoaderL1OnLoad looks for order_type='retrieve' only, so the
-// echoed L1 is invisible to it. LOAD takes the fallback, which files the L2
-// (bins still flow), and the L1 stays `delivered` for good. After the L2 lands
-// and the window is empty, the next push computes to_fire=0 because
-// withLoaderBudget counts the stranded L1 as in flight.
+// LOAD confirms the L1; the completion chain files exactly one L2 carrying the
+// part LOAD held (from the runtime row, no Core re-read); when the L2 lands the
+// runtime pointer clears and the loader is re-pushed an empty.
 //
-// FLIPS WITH D3: the L1 confirms, the L2 comes from the completion chain
-// (via L1-completion), and the push fires.
-func TestPinD3a_LoadAfterEcho_TakesTheFallbackAndStrandsTheL1(t *testing.T) {
+// BEFORE D3 (pinned at c0c525c0 as ..._TakesTheFallbackAndStrandsTheL1): the
+// lookup filtered order_type='retrieve', so the echoed L1 was invisible. LOAD
+// took the fallback, the L1 stayed `delivered` for good, and the next push after
+// the L2 landed computed to_fire=0 because the stranded L1 counted as in flight.
+func TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2(t *testing.T) {
 	t.Parallel()
 	const window = "SC-D3A-W1"
 	eng, db, core, logs, nodeID := scLoaderEngine(t, window)
@@ -256,54 +264,62 @@ func TestPinD3a_LoadAfterEcho_TakesTheFallbackAndStrandsTheL1(t *testing.T) {
 
 	core.set(window, true, "") // the empty lands
 	scDeliver(t, eng, db, l1)
+	readsBefore := core.nodeBinReads()
 	testutil.MustNoErr(t, eng.LoadBin(nodeID, "", nil, scManifest), "LoadBin")
+	if n := core.nodeBinReads() - readsBefore; n != 1 {
+		t.Errorf("node-bins reads during LOAD = %d, want 1 (the occupancy check) — the L2's part "+
+			"comes from LOAD's hand, not a second read", n)
+	}
 
 	after, err := db.GetOrder(l1.ID)
 	testutil.MustNoErr(t, err, "reload L1 after LOAD")
-	if after.Status != orders.StatusDelivered {
-		t.Fatalf("PREMISE CHECK: L1 status after LOAD = %q, want delivered (D3a). If it confirmed, "+
-			"the echoed type is already found and D3's premise is wrong — stop.", after.Status)
+	if after.Status != orders.StatusConfirmed {
+		t.Fatalf("L1 status after LOAD = %q, want confirmed (the echoed type is found)", after.Status)
 	}
 	moves := scMovesFrom(t, db, window)
-	if len(moves) != 1 || moves[0].DeliveryNode != "FG-MARKET" {
-		t.Fatalf("moves leaving %s = %+v, want exactly one L2 to FG-MARKET from LOAD's fallback", window, moves)
+	if len(moves) != 1 {
+		t.Fatalf("L2s leaving %s = %d, want exactly 1 (from L1-completion)", window, len(moves))
 	}
-	// The L2 lands; the window is empty; the stranded L1 still counts.
-	core.set(window, false, "")
+	if moves[0].DeliveryNode != "FG-MARKET" || moves[0].PayloadCode != "PART-SC" {
+		t.Errorf("L2 = to %q payload %q, want FG-MARKET / PART-SC (the part LOAD held)",
+			moves[0].DeliveryNode, moves[0].PayloadCode)
+	}
+
+	core.set(window, false, "") // the bin leaves
 	scLand(t, eng, db, moves[0])
-	if n := scActiveEmptiesTo(t, db, window); n != 1 {
-		t.Fatalf("active empties at %s after the L2 landed = %d, want 1 (the stranded L1)", window, n)
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read runtime")
+	if rt.ActiveOrderID != nil {
+		t.Errorf("runtime active order after the L2 landed = %d, want cleared (applyManualSwap)", *rt.ActiveOrderID)
 	}
-	eng.MaybePushLoader(nodeID)
+	active, err := db.ListActiveOrdersByDeliveryNodeSet([]string{window})
+	testutil.MustNoErr(t, err, "list active")
+	fresh := 0
+	for _, o := range active {
+		if o.RetrieveEmpty && o.ID != l1.ID {
+			fresh++
+		}
+	}
+	if fresh != 1 {
+		t.Errorf("new empties staged by the L2 landing = %d, want 1 (the produce re-push)", fresh)
+	}
 	decisions := logs.matching("loader_budget loader=loader:" + window)
-	if len(decisions) == 0 {
-		t.Fatalf("no loader_budget decision recorded for %s", window)
-	}
-	last := decisions[len(decisions)-1]
-	if !strings.Contains(last, "to_fire=0") || !strings.Contains(last, "in_flight_total=1") {
-		t.Errorf("next push decision = %q, want to_fire=0 with in_flight_total=1 — the stranded L1 holds the window", last)
-	}
-	if n := scActiveEmptiesTo(t, db, window); n != 1 {
-		t.Errorf("active empties after the push = %d, want 1 (nothing new staged)", n)
+	if len(decisions) == 0 || !strings.Contains(decisions[len(decisions)-1], "to_fire=1") {
+		t.Errorf("landing push decisions = %q, want the last to fire 1 — nothing stranded holds the window", decisions)
 	}
 }
 
 // ── D3b: the confirmed branch at a Core-owned loader ─────────────────────
 
-// TestPinD3b_ConfirmedL1AtACoreOwnedLoader_CreatesNoL2 is D3's second pin: what
-// LOAD's confirmed branch does once the lookup can see the L1. The lookup is
-// made to see it here by leaving the row's type as the Edge wrote it (no echo),
-// which is exactly the row a type-agnostic lookup finds after the echo.
+// TestPinD3b_ConfirmedL1AtACoreOwnedLoader_FilesOneL2: LOAD's confirmed branch
+// at a loader with no stored claim. The completion ctx resolves the claim through
+// claimAtNode (stored, else SynthClaim), so loader_empty_in matches and files
+// exactly one L2 with the loaded part.
 //
-// AT BASE: LOAD confirms the L1 and returns, expecting the completion chain to
-// file the L2. matchLoaderEmptyIn reads orderCompletionCtx.Claim(), which
-// resolves stored claims only; a Core-owned loader has none, IsLoaderNode() on
-// nil is false, the row never matches, and NO L2 is created. The loaded bin
-// would sit on the window.
-//
-// FLIPS WITH D3: one claim resolver (stored claim, else SynthClaim) serves the
-// completion ctx, so loader_empty_in matches and files exactly one L2.
-func TestPinD3b_ConfirmedL1AtACoreOwnedLoader_CreatesNoL2(t *testing.T) {
+// BEFORE D3 (pinned at c0c525c0 as ..._CreatesNoL2): the ctx read stored claims
+// only, IsLoaderNode() on nil was false, and the confirmed branch filed NO L2 —
+// the loaded bin would have sat on the window.
+func TestPinD3b_ConfirmedL1AtACoreOwnedLoader_FilesOneL2(t *testing.T) {
 	t.Parallel()
 	const window = "SC-D3B-W1"
 	eng, db, core, _, nodeID := scLoaderEngine(t, window)
@@ -318,33 +334,28 @@ func TestPinD3b_ConfirmedL1AtACoreOwnedLoader_CreatesNoL2(t *testing.T) {
 	after, err := db.GetOrder(l1.ID)
 	testutil.MustNoErr(t, err, "reload L1")
 	if after.Status != orders.StatusConfirmed {
-		t.Fatalf("L1 status = %q, want confirmed (the un-echoed row is found by today's lookup)", after.Status)
+		t.Fatalf("L1 status = %q, want confirmed", after.Status)
 	}
 	if after.FinalCount == nil || *after.FinalCount != 40 {
 		t.Errorf("L1 final count = %v, want 40 (Core's LoadBin answer, not the argument)", after.FinalCount)
 	}
-	if moves := scMovesFrom(t, db, window); len(moves) != 0 {
-		t.Errorf("moves leaving %s = %d, want 0 at base — the completion ctx cannot see a Core-owned "+
-			"loader, so the confirmed branch files no L2 (D3b)", window, len(moves))
+	moves := scMovesFrom(t, db, window)
+	if len(moves) != 1 || moves[0].PayloadCode != "PART-SC" {
+		t.Errorf("L2s leaving %s = %+v, want exactly one carrying PART-SC", window, moves)
 	}
 }
 
-// ── Core-owned loader: what an L2 landing does ───────────────────────────
+// ── an L2 landing ────────────────────────────────────────────────────────
 
-// TestPinCoreOwnedLoader_L2LandingNeitherClearsNorRePushes pins the two
-// applyManualSwap effects a Core-owned loader does not get at base, because
-// matchManualSwap reads the same stored-claim-only ctx.Claim():
+// TestPinCoreOwnedLoader_L2LandingClearsAndRePushes: an L2 landing at a
+// Core-owned loader runs applyManualSwap — the runtime order pointer is cleared
+// and the loader is re-pushed one empty. The control push afterwards finds that
+// empty in flight and fires nothing.
 //
-//   - the runtime order pointer is NOT cleared (ClearProcessNodeRuntimeOrders
-//     never runs), so it still names the landed L2;
-//   - the produce re-push (MaybePushLoader) does NOT run, so a free window with
-//     nothing in flight gets no empty until something else pushes.
-//
-// The control at the end calls MaybePushLoader directly and it stages one empty,
-// proving the window was free and the push would have fired.
-//
-// FLIPS WITH D3b: the pointer is cleared and the empty is staged on the landing.
-func TestPinCoreOwnedLoader_L2LandingNeitherClearsNorRePushes(t *testing.T) {
+// BEFORE D3 (pinned at c0c525c0 as ..._NeitherClearsNorRePushes): matchManualSwap
+// read stored claims only, so the pointer kept naming the landed L2 and nothing
+// was staged until something else pushed.
+func TestPinCoreOwnedLoader_L2LandingClearsAndRePushes(t *testing.T) {
 	t.Parallel()
 	const window = "SC-L2-W1"
 	eng, db, core, _, nodeID := scLoaderEngine(t, window)
@@ -366,17 +377,92 @@ func TestPinCoreOwnedLoader_L2LandingNeitherClearsNorRePushes(t *testing.T) {
 
 	rt, err = db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime after landing")
-	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != moves[0].ID {
-		t.Errorf("runtime active order after the L2 landed = %v, want still %d at base "+
-			"(applyManualSwap's pointer clear does not run for a Core-owned loader)", rt.ActiveOrderID, moves[0].ID)
+	if rt.ActiveOrderID != nil {
+		t.Errorf("runtime active order after the L2 landed = %d, want cleared", *rt.ActiveOrderID)
 	}
-	if n := scActiveEmptiesTo(t, db, window); n != 0 {
-		t.Errorf("empties staged by the landing = %d, want 0 at base (no produce re-push)", n)
+	if n := scActiveEmptiesTo(t, db, window); n != 1 {
+		t.Errorf("empties staged by the landing = %d, want 1 (the produce re-push)", n)
 	}
 
 	eng.MaybePushLoader(nodeID)
 	if n := scActiveEmptiesTo(t, db, window); n != 1 {
-		t.Errorf("control: MaybePushLoader on the free window staged %d empties, want 1", n)
+		t.Errorf("control: MaybePushLoader after the re-push left %d empties, want still 1", n)
+	}
+}
+
+// TestLanding_RePushesOnlyItsOwnLoader: an L2 landing re-pushes the loader that
+// owns the node and no other, at a cost of ONE Core occupancy read — for a
+// Core-owned loader and for one still holding a stored claim alike. The push
+// used to walk every operator-staged produce loader (MaybePushLoader), one read
+// each, for a landing that frees exactly one window.
+func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
+	t.Parallel()
+	for _, stored := range []bool{false, true} {
+		name := "core_owned"
+		if stored {
+			name = "stored_claim"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
+			eng.wireEventHandlers()
+			core := newSCCore(t)
+			eng.coreClient = NewCoreClient(core.srv.URL)
+
+			prefix := "RP-" + name
+			own := prefix + "-MSWAP-NODE"
+			other := prefix + "-OTHER"
+			seedCoreLoader(t, eng,
+				sharedLoaderInfo(own, "produce", "operator", "PART-RP", 0, 0),
+				sharedLoaderInfo(other, "produce", "operator", "PART-RP", 0, 0))
+			var nodeID int64
+			if stored {
+				nodeID, _ = seedManualSwapClaim(t, db, prefix, protocol.ClaimRoleProduce, "PART-RP", "FG-MARKET")
+			} else {
+				procID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+				testutil.MustNoErr(t, err, "create process")
+				nodeID, err = db.CreateProcessNode(processes.NodeInput{
+					ProcessID: procID, CoreNodeName: own, Code: "RP", Name: own, Sequence: 1, Enabled: true,
+				})
+				testutil.MustNoErr(t, err, "create node")
+				_, err = db.EnsureProcessNodeRuntime(nodeID)
+				testutil.MustNoErr(t, err, "ensure runtime")
+			}
+			// The other loader's window: a process node here, free, nothing in
+			// flight — a push that walked every loader would stage an empty there.
+			otherProc, err := db.CreateProcess(prefix+"-OTHER-PROC", "", "active_production", "", "", false)
+			testutil.MustNoErr(t, err, "create other process")
+			_, err = db.CreateProcessNode(processes.NodeInput{
+				ProcessID: otherProc, CoreNodeName: other, Code: "RO", Name: other, Sequence: 1, Enabled: true,
+			})
+			testutil.MustNoErr(t, err, "create other node")
+			if _, _, claim, _ := eng.loadActiveNode(nodeID); claim == nil || (claim.ID != 0) != stored {
+				t.Fatalf("fixture: claim at %s = %+v, want stored=%v", own, claim, stored)
+			}
+			core.set(own, true, "")
+			core.set(other, false, "")
+
+			testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-RP", nil, scManifest), "LoadBin")
+			moves := scMovesFrom(t, db, own)
+			if len(moves) != 1 {
+				t.Fatalf("L2s leaving %s = %d, want 1", own, len(moves))
+			}
+			core.set(own, false, "")
+			readsBefore := core.nodeBinReads()
+			scLand(t, eng, db, moves[0])
+
+			if n := scActiveEmptiesTo(t, db, own); n != 1 {
+				t.Errorf("empties staged at the landing loader = %d, want 1 (its own landing re-pushes it)", n)
+			}
+			if n := scActiveEmptiesTo(t, db, other); n != 0 {
+				t.Errorf("empties staged at the OTHER loader = %d, want 0 (a landing frees only its own window)", n)
+			}
+			if n := core.nodeBinReads() - readsBefore; n != 1 {
+				t.Errorf("node-bins reads on the landing = %d, want 1", n)
+			}
+		})
 	}
 }
 
@@ -424,10 +510,11 @@ func TestPinConfirmL1_OldestDeliveredAtTheCoreNode_WithTheSeatedCount(t *testing
 	}
 }
 
-// TestPinConfirmL1_MissesTheEchoedTypeSpelling is D3a at the store query: a
-// delivered empty-in whose stored type is `retrieve_empty` (what the echo
-// writes) is not found. FLIPS WITH D3a: the lookup keys on retrieve_empty.
-func TestPinConfirmL1_MissesTheEchoedTypeSpelling(t *testing.T) {
+// TestPinConfirmL1_FindsTheEchoedTypeSpelling is D3a at the store query: a
+// delivered empty-in whose stored type is `retrieve_empty` (what the echo writes)
+// is found and confirmed. Before D3a the lookup filtered order_type='retrieve'
+// and missed it.
+func TestPinConfirmL1_FindsTheEchoedTypeSpelling(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, _ := seedManualSwapClaim(t, db, "CL1-ECHO", "produce", "PART-CE", "FG-MARKET")
@@ -435,12 +522,12 @@ func TestPinConfirmL1_MissesTheEchoedTypeSpelling(t *testing.T) {
 	id := scDeliveredRetrieve(t, db, "cl1-echo", protocol.OrderTypeRetrieveEmpty, nodeID, true, core)
 
 	eng := testEngine(t, db)
-	if got, ok := eng.confirmLoaderL1OnLoad(core, 10); ok {
-		t.Errorf("confirmLoaderL1OnLoad found order %d at base; want a miss — the lookup filters "+
-			"order_type='retrieve' and the echo spelled it retrieve_empty (D3a)", got)
+	if got, ok := eng.confirmLoaderL1OnLoad(core, 10); !ok || got != id {
+		t.Errorf("confirmLoaderL1OnLoad = (%d, %v), want (%d, true) — the echo spelled the type "+
+			"retrieve_empty and the flag says empty-in", got, ok, id)
 	}
-	if o, _ := db.GetOrder(id); o.Status != orders.StatusDelivered {
-		t.Errorf("echoed L1 status = %q, want delivered", o.Status)
+	if o, _ := db.GetOrder(id); o.Status != orders.StatusConfirmed {
+		t.Errorf("echoed L1 status = %q, want confirmed", o.Status)
 	}
 }
 

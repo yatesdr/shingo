@@ -278,16 +278,26 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// The operator's tap on LOAD is the explicit confirmation that the L1
 	// retrieve_empty arrived and has been filled. Confirming the L1 here
 	// transitions it delivered → confirmed, sends a delivery receipt to Core,
-	// and emits the OrderCompleted event that handleLoaderEmptyInCompletion
-	// is wired to — that handler creates the L2 (filled-bin → outbound) move
-	// order and updates the loader's runtime. Pre-fix the L1 stayed at
-	// `delivered` indefinitely (Core would auto-confirm on its side, but
-	// Edge had no continuous status sync) and L2 was created here directly,
-	// duplicating the side-cycle handler's responsibility.
+	// and emits the EventOrderCompleted that applyLoaderEmptyIn is wired to —
+	// that handler creates the L2 (filled-bin → outbound) move order and
+	// updates the loader's runtime. Pre-fix the L1 stayed at `delivered`
+	// indefinitely (Core would auto-confirm on its side, but Edge had no
+	// continuous status sync) and L2 was created here directly, duplicating the
+	// side-cycle handler's responsibility.
+	//
+	// THE LOADED PART IS HANDED OVER ON THE RUNTIME ROW, before the confirm. The
+	// completion runs synchronously inside ConfirmDelivery and already reads this
+	// node's runtime row, so applyLoaderEmptyIn takes the L2's part from there
+	// instead of asking Core what it just wrote — no second round trip. It is the
+	// same write the fallback below makes (seatManuallyLoadedBin), and the
+	// operator is the instrument either way. Pinned by
+	// TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2.
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName,
+		domain.KnownCarrier(domain.LinesidePayloadCode(payloadCode)), domain.CarrierFromOperator)
 	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(node.CoreNodeName, seatedUOP); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
 		// Belt-and-suspenders: set active_bin_id directly from Core's LoadBin
-		// response. handleLoaderEmptyInCompletion will also try to set it
+		// response. The L1-completion path will also try to set it
 		// from the L1 order's BinID, but if Core's order.delivered envelope
 		// arrived without bin_id (multi-bin order, or pre-fix Core build)
 		// the event handler ends up with nil. The LoadBin response is the

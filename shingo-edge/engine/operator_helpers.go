@@ -47,14 +47,41 @@ func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.Run
 // gone — SMN_001 among them — stops being a loader after it, and LOAD, CLEAR
 // and the loader requests refuse with "no active claim" (requireLoaderClaim).
 func (e *Engine) loadActiveNode(nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
-	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
-	if err != nil || claim != nil || node == nil {
-		return node, runtime, claim, err
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	if synth := e.synthLoaderClaim(node.CoreNodeName); synth != nil {
-		claim = synth
+	runtime, err := e.db.EnsureProcessNodeRuntime(nodeID)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	return node, runtime, claim, nil
+	return node, runtime, e.claimAtNode(node), nil
+}
+
+// claimAtNode is THE claim resolver for a node the engine acts on: the stored
+// per-style claim when one exists, otherwise the claim synthesized from the Core
+// loader the node belongs to, otherwise nil. The operator doors (loadActiveNode)
+// and the order-completion chain (orderCompletionCtx.Claim) both read it, so a
+// node is a loader to one exactly when it is a loader to the other.
+//
+// THE COMPLETION CHAIN USED TO READ STORED CLAIMS ONLY. After the claim
+// quarantine every loader window is Core-owned and has no stored row, so
+// loader_empty_in and manual_swap never matched anywhere: a LOAD that confirmed
+// its L1 filed no L2, and an L2 landing neither cleared the runtime order
+// pointer nor re-pushed the loader. Pinned by
+// TestPinD3b_ConfirmedL1AtACoreOwnedLoader_FilesOneL2 and
+// TestPinCoreOwnedLoader_L2LandingClearsAndRePushes.
+//
+// The synthesized arm is a lookup in the loader store's in-memory snapshot — no
+// SQLite read, no Core round trip — and runs only when no stored claim exists.
+func (e *Engine) claimAtNode(node *processes.Node) *processes.NodeClaim {
+	if node == nil {
+		return nil
+	}
+	if claim := requestedClaimAtNode(e.db, node); claim != nil {
+		return claim
+	}
+	return e.synthLoaderClaim(node.CoreNodeName)
 }
 
 // requireLoaderClaim is the shared precondition of every operator action that
