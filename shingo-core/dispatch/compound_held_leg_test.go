@@ -75,8 +75,15 @@ func TestCompound_HeldLegResumesWhenTheLaneClears(t *testing.T) {
 	// same cause with these same params; if a door renders differently, an operator
 	// reading the board learns which code path parked the order rather than what
 	// the plant is doing.
+	//
+	// The lane is the one that REFUSED, as the other doors name it — it used to
+	// be the leg's DeliveryNode (TestCompound_HeldLegSentence_NamesTheRefusingLane).
+	laneNode, err := db.GetNode(lane)
+	if err != nil {
+		t.Fatalf("get lane: %v", err)
+	}
 	if want := FormatQueueSentence(protocol.QueueStorageRearranging,
-		QueueParams{Lane: held.DeliveryNode, Payload: held.PayloadCode}); held.QueueReason != want {
+		QueueParams{Lane: laneNode.Name, Payload: held.PayloadCode}); held.QueueReason != want {
 		t.Errorf("the compound door renders %q; the reshuffle door renders %q for the same cause, "+
 			"lane and payload. One cause, one sentence.", held.QueueReason, want)
 	}

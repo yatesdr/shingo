@@ -324,8 +324,9 @@ func TestFinderReads_ConcreteSourceUnchanged(t *testing.T) {
 // Measured at 1bb689bc by running these two tests against that tree's finder:
 // NGRP 9 (the drain-window question asked twice, 3 reads each), concrete 9 (a
 // FIFO scan and the found bin's node in place of the candidate list and the
-// carrier rule).
+// carrier rule). The concrete count is 8 since tier 2 stopped looking the
+// source name up a second time (the node resolved at the top is passed in).
 const (
 	wantNGRPReads     = 6
-	wantConcreteReads = 9
+	wantConcreteReads = 8
 )

@@ -65,6 +65,21 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "PRESS-BUFFER-A is kept for other equipment — waiting for an empty from elsewhere",
 		},
 		{
+			// A NAMED SOURCE THAT DOES NOT EXIST. "Waiting for material: PANEL-A
+			// in FG-DROP-09" would send someone to look in a place that is not on
+			// the map; what ends this wait is a config change.
+			name:   "a missing source says so instead of claiming a shortage",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Payload: "PANEL-A", Group: "FG-DROP-09", SourceMissing: true},
+			want:   "Source FG-DROP-09 no longer exists — waiting for its configuration to be fixed",
+		},
+		{
+			name:   "a missing source with no name still says what happened",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Kind: "empty", SourceMissing: true},
+			want:   "The source this order names no longer exists — waiting for its configuration to be fixed",
+		},
+		{
 			// AT LEVEL IS NOT OUT OF ROOM. "Waiting for a slot" sends an operator
 			// to find space at a group that has space.
 			name:   "an at-level group says so instead of claiming no room",

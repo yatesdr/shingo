@@ -819,7 +819,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		//
 		// So the disposition keys on whether anyone is coming for the obstruction.
 		if v.Cause() == CauseLaneTargetBuried {
-			return d.handleStaleDigLeg(parentOrderID, next, sourceNode, destNode)
+			return d.handleStaleDigLeg(parentOrderID, next, sourceNode, v.Lane())
 		}
 		// NAME THE OCCUPANT. This line printed the CAUSE and nothing else, and the
 		// cause is the one thing a reader already knows — they are reading a
@@ -863,8 +863,15 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// cause this arm can carry is a fact about a corridor, and QueueWaitingForSlot
 		// rendered "Waiting for a slot" for a leg waiting on a lane. Lane and Payload
 		// because rearrangingSentence reads those; Destination was slotSentence's.
+		//
+		// THE LANE IS THE ONE THAT REFUSED (v.Lane()), not the leg's destination.
+		// It used to be destName, so a leg held out of a busy market lane was
+		// described as rearranging wherever it was delivering to — the B5 board read
+		// "Rearranging lane HLU_S1" for an unloader window
+		// (TestCompound_HeldLegSentence_NamesTheRefusingLane). A verdict with no lane
+		// renders "Rearranging storage…".
 		d.setQueueReason(next, protocol.QueueStorageRearranging, v.Cause(),
-			QueueParams{Lane: destName, Payload: next.PayloadCode})
+			QueueParams{Lane: v.Lane(), Payload: next.PayloadCode})
 		return nil
 	}
 
@@ -1551,7 +1558,7 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 // UNREADABLE COUNTS AS "someone is coming". A dissolve throws away a plan and
 // re-plans; doing that on a read that failed would turn a database hiccup into
 // churn across every held leg at once. Holding costs one redrive.
-func (d *Dispatcher) handleStaleDigLeg(parentOrderID int64, leg *orders.Order, sourceNode, destNode *nodes.Node) error {
+func (d *Dispatcher) handleStaleDigLeg(parentOrderID int64, leg *orders.Order, sourceNode *nodes.Node, lane string) error {
 	// ── THE SENTENCE NAMES THE REFUSAL, WHICH IS ON THE SOURCE SIDE ───────
 	//
 	// This arm is reached on a SOURCE-side reachability refusal: the leg's PICKUP
@@ -1561,14 +1568,11 @@ func (d *Dispatcher) handleStaleDigLeg(parentOrderID int64, leg *orders.Order, s
 	// that nil into the literal string "(unbound)", so the board named a slot
 	// that does not exist and never did (§R.98 stage D; the builder's FINDING 2).
 	//
-	// The destination is now passed only when there IS one, and it is passed as
-	// the LANE being dug rather than as a slot being waited for. A nil
-	// destination contributes nothing, which is the honest rendering of a
-	// destination that has not been chosen yet.
-	lane := ""
-	if destNode != nil {
-		lane = destNode.Name
-	}
+	// The lane named is the one admission refused on — the pickup's lane, the
+	// corridor actually in the way (GateVerdict.Lane). It used to be the leg's
+	// DESTINATION, which is not the lane being dug and, for a reshuffle's last
+	// leg, is the station it delivers to (the B5 "Rearranging lane HLU_S1"). A
+	// verdict with no lane contributes nothing and the sentence says "storage".
 	claimed, err := d.obstructionIsSpokenFor(leg, sourceNode)
 	if err != nil {
 		log.Printf("dispatch: compound %d child %d is walled and its obstruction could not be read: %v "+

@@ -22,7 +22,8 @@ import (
 // delete it or render it — do not leave it populated and ignored.
 //
 // Field use is per code:
-//   - QueueWaitingForMaterial: Payload + Kind + Partial + Group (+ Step)
+//   - QueueWaitingForMaterial: Payload + Kind + Partial + Group + Reserved +
+//     SourceMissing (+ Step)
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
 //     DestUnresolved (+ Step)
 //   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
@@ -127,6 +128,14 @@ type QueueParams struct {
 	// it is adding this process to the group's supported list, or sourcing from
 	// somewhere else. Those are different actions, so it is a different sentence.
 	Reserved bool
+	// SourceMissing marks a material wait whose named source node does not
+	// exist — deleted, renamed, or never there (a typo). Group carries the name.
+	//
+	// "Waiting for material in GONE-NODE" would send someone to look for
+	// material in a place that is not on the map. Nothing arriving clears this;
+	// a person re-creates the node or changes the source, so it is its own
+	// sentence (CauseFinderSourceMissing).
+	SourceMissing bool
 	// AtLevel marks a slot wait where the group is holding the number of empties
 	// it was configured to hold, rather than being physically out of space.
 	//
@@ -206,6 +215,15 @@ func materialSentence(p QueueParams) string {
 			s = fmt.Sprintf("%s is kept for other equipment — waiting for an empty from elsewhere", p.Group)
 		} else {
 			s = "That group's empties are kept for other equipment — waiting"
+		}
+	}
+	// SOURCE MISSING REPLACES IT TOO: the place the sentence would name is not
+	// on the map.
+	if p.SourceMissing {
+		if p.Group != "" {
+			s = fmt.Sprintf("Source %s no longer exists — waiting for its configuration to be fixed", p.Group)
+		} else {
+			s = "The source this order names no longer exists — waiting for its configuration to be fixed"
 		}
 	}
 	if p.Partial {

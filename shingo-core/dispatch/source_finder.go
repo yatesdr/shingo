@@ -326,12 +326,45 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		}
 	}
 
-	// Source node resolved once (tiers 1–4). A lookup miss leaves it nil; tiers
-	// gate on nil and fall through to the plant-wide scan (retrieve) or queue
-	// (move — no plant-wide fallback).
+	// Source node resolved ONCE, here, for every tier (tier 2 used to look the
+	// name up a second time). A blank source names nothing and stays plant-wide.
+	//
+	// A NAMED SOURCE THAT DOES NOT RESOLVE WAITS, and says which of two things
+	// happened. The error used to be discarded, so every tier that keys on the
+	// node skipped, and tier 2's second lookup filed the miss as
+	// loader-source-unreadable — a read failure's cause, for a node that is
+	// simply not there, so the histogram promised a retry would clear what only
+	// a person can fix (TestMissingSourcePin_*). The store answers no row with
+	// sql.ErrNoRows and anything else with a wrapped error; readFailed is that
+	// split.
+	//   - A FAILED READ keeps the disposition tier 2 always gave it,
+	//     loader-source-unreadable (whose doc names the source node among its
+	//     reads). Moves and part-less fulls used to report it as an empty plant.
+	//   - NO SUCH NODE is a configuration wait, finder-source-missing, naming the
+	//     node. It never widens: a named source never does (P5).
 	var srcNode *nodes.Node
 	if need.SourceNode != "" {
-		srcNode, _ = f.db.GetNodeByDotName(need.SourceNode)
+		n, err := f.db.GetNodeByDotName(need.SourceNode)
+		if readFailed(err) {
+			f.debug("finder: source node %s unreadable (%v) — holding", need.SourceNode, err)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  CauseLoaderSourceUnreadable,
+				QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
+			}
+		}
+		if n == nil {
+			f.debug("finder: source node %s does not exist — waiting", need.SourceNode)
+			return SourceResult{
+				Outcome:    OutcomeWait,
+				QueueCode:  protocol.QueueWaitingForMaterial,
+				QueueCause: CauseFinderSourceMissing,
+				QueueParams: QueueParams{Kind: nodeLocalKind(intent), Payload: payloadCode,
+					Group: need.SourceNode, SourceMissing: true},
+			}
+		}
+		srcNode = n
 	}
 
 	var (
@@ -436,21 +469,20 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// bin at the position, handled by the concrete-node tier below. That is the
 	// `payloadCode != ""` arm of the gate on the next line; a retrieve and a
 	// retrieve_empty always carry a payload/intent that reaches here.
-	if bin == nil && need.SourceNode != "" && (intent == IntentEmpty || payloadCode != "") {
+	if bin == nil && srcNode != nil && (intent == IntentEmpty || payloadCode != "") {
 		loaderIntent := binsource.Drain
 		if intent == IntentEmpty {
 			loaderIntent = binsource.Fill
 		}
-		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(need.SourceNode, payloadCode, loaderIntent)
+		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(srcNode, payloadCode, loaderIntent)
 		if lerr != nil {
 			// WAIT, NOT FAIL, and this arm is the callee's own stated disposition
 			// finally being honoured. Every error sourceFromDedicatedLoader returns
-			// wraps a database read — the source node, the loader home, the loader,
-			// its members, the bins across them — and each of those returns says so
-			// in a comment: "Propagate so the order queues instead", "propagates →
-			// the order queues". This site did the opposite, mapping all five to a
-			// structural terminal, so a momentary read failure while sourcing from a
-			// dedicated loader KILLED the order.
+			// wraps a database read — the loader home, the loader,
+			// its members, the bins across them — and the callee says so in a comment:
+			// "propagates → the order queues". This site did the opposite, mapping
+			// every one of them to a structural terminal, so a momentary read failure
+			// while sourcing from a dedicated loader KILLED the order.
 			//
 			// A read that failed is not a fact about the plant. The releaser is the
 			// ordinary one — the scanner re-runs on its event set and on the sweep,
@@ -890,7 +922,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 
 // sourceFromDedicatedLoader is the dedicated-home-loader source path, moved onto
 // the finder (from PlanningService) so the loader tier is compile-time
-// unreachable from anywhere else. If sourceNodeName is a position on a
+// unreachable from anywhere else. If srcNode is a position on a
 // dedicated_positions loader, it ranks the loader's WHOLE pool — its
 // payload-pinned home positions AND its buffer slots (home_kind=buffer) — with
 // binsource.Source and returns the chosen bin plus the node it sits at. That is
@@ -904,17 +936,12 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 //   - isLoaderPos=true, bin=nil → a loader position but no eligible bin of X in
 //     the pool; the caller QUEUES (must not fall through to the global scan).
 //   - isLoaderPos=true, bin!=nil → the chosen bin and the node it is parked at.
-func (f *SourceFinder) sourceFromDedicatedLoader(sourceNodeName, payloadCode string, intent binsource.Intent) (bin *bins.Bin, binNode *nodes.Node, isLoaderPos bool, err error) {
-	srcNode, err := f.db.GetNodeByDotName(sourceNodeName)
-	if err != nil {
-		// A real lookup error must NOT be reported as "not a loader position" —
-		// that would fall the caller through to the plant-wide scan (the very
-		// bug this path fixes). Propagate so the order queues instead.
-		return nil, nil, false, fmt.Errorf("resolve source node %s: %w", sourceNodeName, err)
-	}
-	if srcNode == nil {
-		return nil, nil, false, nil // name doesn't resolve to a node → not a loader position
-	}
+func (f *SourceFinder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode string, intent binsource.Intent) (bin *bins.Bin, binNode *nodes.Node, isLoaderPos bool, err error) {
+	// The source node is the one FindSourceForNeed already resolved. This used
+	// to look the name up a second time, and filed a name matching no node as a
+	// read failure (TestMissingSourcePin_*); both answers are now given once, at
+	// the top of the cascade, and a missing source never reaches this tier.
+	sourceNodeName := srcNode.Name
 	home, err := f.db.GetLoaderHomeByPositionNode(srcNode.ID)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("resolve loader for node %s: %w", sourceNodeName, err)

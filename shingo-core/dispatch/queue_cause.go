@@ -585,6 +585,18 @@ const (
 	// histogram must be able to say "Core declined to answer" apart from "the
 	// plant is out of material", or an outage reads as a shortage.
 	CauseFinderSourceUnreadable QueueCause = "finder-source-unreadable"
+	// CauseFinderSourceMissing — the need NAMED a source node that does not exist:
+	// deleted or renamed since a loader's or claim's inbound source was saved, or
+	// typed wrong on an order door that does not check it. A CONFIGURATION wait:
+	// nothing arriving clears it; a person re-creates the node or changes the
+	// source.
+	//
+	// It used to be filed under loader-source-unreadable — tier 2 re-read the
+	// name, got sql.ErrNoRows and reported the miss as a failed read — which put
+	// it in the undetermined family and promised a retry would clear it. NEVER
+	// WIDENED: a named source does not fall through to the plant-wide scan, for
+	// the reason CauseFinderGroupFenced gives.
+	CauseFinderSourceMissing QueueCause = "finder-source-missing"
 	// CauseFinderNoEmptyOfType — the group has empties, none of the TYPE a loader
 	// declared. It waits rather than taking another: "a declared mix that is
 	// abandoned when inconvenient is not a mix".

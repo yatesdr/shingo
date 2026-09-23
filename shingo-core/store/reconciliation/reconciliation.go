@@ -110,8 +110,9 @@ const materialWaitAge = 2 * time.Hour
 //   - claim-failed, held-bin-missing, lock-race: a broken or lost hold. These
 //     have no releaser that arrives on a truck, and the record names a resting
 //     claim-failed as the anomaly.
-//   - finder-group-fenced, ngrp-at-level, group-holds-empties-only: somebody
-//     configured this. group-holds-empties-only says so in as many words — "a
+//   - finder-group-fenced, finder-source-missing, ngrp-at-level,
+//     group-holds-empties-only: somebody configured this.
+//     group-holds-empties-only says so in as many words — "a
 //     lead, not routine backpressure".
 //   - every lane and fleet cause: those are THROUGHPUT waits. A corridor that
 //     has not cleared in half an hour is worth a person's attention.

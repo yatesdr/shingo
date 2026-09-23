@@ -171,7 +171,10 @@ func (f *fakeFinderDB) GetNodeByDotName(name string) (*nodes.Node, error) {
 	if n, ok := f.nodesByName[name]; ok {
 		return n, nil
 	}
-	return nil, errors.New("node not found: " + name)
+	// sql.ErrNoRows, as the store answers a name that matches no node
+	// (nodes.GetByDotName → ScanNode). The finder tells that apart from a
+	// failed read.
+	return nil, sql.ErrNoRows
 }
 
 func (f *fakeFinderDB) GetNode(id int64) (*nodes.Node, error) {

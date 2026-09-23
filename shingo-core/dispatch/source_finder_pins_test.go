@@ -129,29 +129,30 @@ func TestPin_TierToCauseMatrix(t *testing.T) {
 			// THE CASE THE !moveShaped GATE ACTUALLY GUARDS, found by mutating
 			// the gate away and watching every other pin stay green.
 			//
-			// A move-shaped need with an unresolvable source AND a blank payload
-			// threads past every earlier tier: tier 1 needs a synthetic node,
-			// tier 2 gates on `payloadCode != ""`, tier 4 gates on
-			// `srcNode != nil`. It therefore arrives at tier 5 with nothing
-			// found and only `!moveShaped` between it and a plant-wide scan.
-			// Delete the gate and this move sources a carrier from anywhere in
-			// the plant — the node-local widening class, with the order's own
-			// named source silently ignored.
+			// A move-shaped need that names NO source threads past every
+			// earlier tier: tier 1 needs a synthetic node, tier 2 and tier 4
+			// need a resolved source node. It therefore arrives at tier 5 with
+			// nothing found and only `!moveShaped` between it and a plant-wide
+			// scan. Delete the gate and this move sources a carrier from
+			// anywhere in the plant — the node-local widening class.
 			//
-			// The tier-4 case below cannot catch that: it returns Wait before
+			// It used to name an UNRESOLVABLE source with a blank payload,
+			// which reached the gate the same way. A named source that does not
+			// resolve now waits at the top of the cascade as
+			// finder-source-missing (TestMissingSource_*), so that shape no
+			// longer reaches tier 5 at all and cannot make this pin bite.
+			//
+			// The tier-4 case below cannot catch it: it returns Wait before
 			// tier 5 is reachable at all, so its zero counts hold for a reason
-			// that has nothing to do with the gate. Neither can a version of
-			// this case carrying a payload — tier 2 answers first, with
-			// `loader-source-unreadable`. Both were tried; both were mutation-
-			// green. The blank payload is what makes the pin bite.
-			name: "tier 5 gate — move-shaped, unresolvable source, blank payload never widens",
+			// that has nothing to do with the gate.
+			name: "tier 5 gate — move-shaped, no source named, never widens",
 			build: func(t *testing.T) (*SourceFinder, *fakeFinderDB, SourceNeed) {
 				db := newFakeFinderDB()
 				db.addNode(pinNode(35, "PIN-MOVE-DEST"))
 				db.fifoBin = &bins.Bin{ID: 350, Label: "PIN-TEMPTING-BIN"}
 				return NewSourceFinder(db, nil, nil), db, SourceNeed{
-					SourceNode: "PIN-NO-SUCH-NODE", DeliveryNode: "PIN-MOVE-DEST",
-					Intent: IntentFull, NodeLocal: true,
+					DeliveryNode: "PIN-MOVE-DEST",
+					Intent:       IntentFull, NodeLocal: true,
 				}
 			},
 			outcome: OutcomeWait, code: protocol.QueueWaitingForMaterial,

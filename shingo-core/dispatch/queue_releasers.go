@@ -783,6 +783,17 @@ var causeReleasers = []causeReleaser{
 			"standing misconfiguration.",
 	},
 	{
+		cause:       CauseFinderSourceMissing,
+		populations: []WaitPopulation{PopAcquiring},
+		what: "NOTHING IN THE MATERIAL — the named source node does not exist. Somebody " +
+			"re-creates it, or changes the loader's or claim's inbound source, or the order is " +
+			"cancelled",
+		finding: "A CONFIGURATION WAIT, beside finder-group-fenced. It used to be filed as " +
+			"loader-source-unreadable, which is in the undetermined family and reads as a " +
+			"retry that will clear; this one never clears on its own, and a run of them names " +
+			"a deleted or renamed node that config still points at.",
+	},
+	{
 		cause:       CauseFinderSourceUnreadable,
 		populations: []WaitPopulation{PopAcquiring},
 		what: "the source search becomes readable — says nothing about whether material is " +

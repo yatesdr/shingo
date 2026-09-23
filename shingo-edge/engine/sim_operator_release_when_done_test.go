@@ -89,17 +89,6 @@ func (f *machineFixture) setRuntime(t *testing.T, nodeID, claimID, binID int64, 
 	testutil.MustNoErr(t, f.db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, bin, cached), "set runtime")
 }
 
-func (f *machineFixture) claimID(t *testing.T, nodeID int64) int64 {
-	t.Helper()
-	node, err := f.db.GetProcessNode(nodeID)
-	testutil.MustNoErr(t, err, "get node")
-	claim := requestedClaimAtNode(f.db, node)
-	if claim == nil {
-		t.Fatal("no active claim at node")
-	}
-	return claim.ID
-}
-
 // TestSimMachineReady_IsTheSameAnswerTheFakePLCGets pins the sharing itself.
 // makeReadinessGate (cmd/shingoedge) delegates here; if this ever grows a second
 // spelling the two drift, and a drift at the zero boundary is what deadlocks.
