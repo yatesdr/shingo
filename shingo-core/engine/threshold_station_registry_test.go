@@ -21,9 +21,9 @@ import (
 // the monitor. Its bindings live in thresholdsByPayload, in memory, so
 // evaluatePayload kept minting threshold episodes for config that no longer
 // existed; the reconciling sweep closed each mint `threshold_removed` on its
-// next pass, and closeThresholdEpisodeRef cleared belowThresholdSince, which
-// re-armed the mint. Springfield logged 1293 rows for one station over two days
-// — one demand rendered as a stream of instantaneous ones, which is the exact
+// next pass, and closeThresholdEpisodeRef cleared openOrigins, which
+// re-armed the mint. Springfield logged 1293 threshold_removed closes across
+// five close days, twelve nodes and two station ids — one demand rendered as a stream of instantaneous ones, which is the exact
 // failure the episode grain was built to end.
 //
 // What emptied the rows there was the stale-edge reaper, and that path is gone:
@@ -334,9 +334,10 @@ func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone
 // monitor's bindings are in memory and survive the delete, so without a
 // notification every subsequent delta re-evaluates a binding whose config no
 // longer exists; the sweep closes each mint `threshold_removed`, and
-// closeThresholdEpisodeRef clears belowThresholdSince on the way out, which
-// re-arms the falling edge for the next delta. Springfield: 1293 rows over two
-// days for one station.
+// closeThresholdEpisodeRef clears openOrigins on the way out, which
+// re-arms the falling edge for the next delta. Springfield: 1293
+// threshold_removed closes across five close days, twelve nodes and two
+// station ids.
 //
 // One withdrawn config is ONE ending. The assertion is therefore a row count,
 // not a state: counting only open episodes would report a perfectly healthy

@@ -186,29 +186,23 @@ type ThresholdMonitor struct {
 	// payload the ledger read as fully stocked (P2-C9). Keyed by payload_code;
 	// drives the Replenishment Health contradiction chip and throttles the log.
 	swapContradiction map[string]time.Time
-	// belowThresholdSince converts a LEVEL into an EDGE, keyed by bindingKey.
-	//
-	// checkBindings is level-triggered: "total < threshold" is true
-	// continuously, for as long as it is true, and a level has no memory. That
-	// is why 2026-07-21 read as hundreds of unrelated firings rather than one
-	// demand — every incoming delta re-asked the same question and got the same
-	// yes. debounce and warmUp exist to paper over exactly that absence.
-	//
-	// Stamped on the FIRST crossing, cleared on recovery. The episode between
-	// the two edges is the demand.
-	//
-	// IN MEMORY, beside thresholdsByPayload and under the same mutex, because
-	// Core has nowhere free to hang it. Edge could put its equivalent on the
-	// claim row the hot path already loads; here evaluatePayload reads a
-	// computed AGGREGATE (SystemUOPForPayload, a SUM over bins and buckets),
-	// not a row, and it cannot go on demand_registry — SyncRegistry DELETEs and
-	// re-inserts the whole station on every Edge reconnect. A DB read per
-	// below-threshold evaluation would land worst precisely where it matters:
-	// a binding stuck below threshold is re-evaluated on EVERY delta.
-	belowThresholdSince map[string]time.Time
 	// openOrigins is the open episode's id per bindingKey — what every signal
 	// fired for that demand gets stamped with, so the orders Edge mints in
 	// response are children of it.
+	//
+	// ITS PRESENCE IS ALSO THE EDGE. checkBindings is level-triggered: "total <
+	// threshold" is true for as long as it is true, and a level has no memory.
+	// openThresholdEpisode asks this map whether the place is already below and
+	// mints only on the first crossing; the close deletes the entry, which is the
+	// recovery. The episode between the two edges is the demand.
+	//
+	// A second map, belowThresholdSince, used to answer that question. Its key
+	// set equalled this one's at every write and delete, and nothing read its
+	// time.Time — so it was a copy of a copy, and it went. That is the second
+	// copy deleted from this struct, after the uopCache tally (1e8d542c): a field
+	// introduced to save a hot-path read, then fixed at its doors, then bounded
+	// by a reconciler, then removed. Before adding a rehydrate, resync or
+	// reconcile to a field here, `git log -S` the sibling fields first.
 	//
 	// REHYDRATED BY startupSweep, not rebuilt empty. See
 	// rehydrateThresholdEpisodes.
@@ -264,7 +258,6 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		thresholdsByPayload: make(map[string][]thresholdEntry),
 		negativeLogged:      make(map[string]time.Time),
 		swapContradiction:   make(map[string]time.Time),
-		belowThresholdSince: make(map[string]time.Time),
 		openOrigins:         make(map[string]openEpisodeRef),
 		linesideMode:        resolveLinesideMode(rawMode, warnf),
 		now:                 clock.Now,
@@ -907,10 +900,10 @@ func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) 
 // thresholdsByPayload. evaluatePayload would keep minting threshold episodes
 // against config that no longer exists, and reconcileThresholdBindings would
 // close each mint `threshold_removed` on its next pass while
-// closeThresholdEpisodeRef cleared belowThresholdSince on the way out, re-arming
+// closeThresholdEpisodeRef cleared openOrigins on the way out, re-arming
 // the falling edge for the next delta. That shape cost Springfield 1293
-// demand_origins rows for one station over two days when the stale-edge reaper
-// was emptying registries wholesale; the reaper is gone, and this half is what
+// threshold_removed closes, across five close days, twelve nodes and two
+// station ids, while the stale-edge reaper was emptying registries wholesale; the reaper is gone, and this half is what
 // keeps the same shape from returning on the reconnect path.
 //
 // So the affected set is the UNION of what the database says about this station

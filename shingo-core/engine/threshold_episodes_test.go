@@ -35,12 +35,20 @@ func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newUnstartedEngine(t, db, simulator.New())
-	m := NewThresholdMonitor(eng)
+	m, sink := loggingMonitor(t, db)
+	eng := m.eng
 	b := episodeBinding(t, eng, "PANEL-EP1", 18)
 
 	for i := 0; i < 5; i++ {
 		m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	}
+	// NO MINT WAS EVEN ATTEMPTED after the first. The row count below cannot see
+	// this: the partial unique index rejects a second INSERT, and the monitor
+	// keeps the first id either way. What only this line sees is whether the
+	// "already below" check still answers before the write, rather than the
+	// index answering after it on every delta.
+	if n := sink.countContaining("open demand episode key="); n != 0 {
+		t.Errorf("%d failed mint(s) across five evaluations of one open demand, want 0 — the open-episode check must answer before the INSERT", n)
 	}
 
 	open, err := db.ListOpenThresholdEpisodes()
@@ -54,7 +62,7 @@ func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
 	// worth being honest about which one this line tests. The partial unique
 	// index is what makes a duplicate IMPOSSIBLE — verified by breaking the
 	// in-memory edge, which left the count at 1 because the second INSERT was
-	// rejected. So belowThresholdSince is not the correctness mechanism; it is
+	// rejected. So the monitor's open-episode check is not the correctness mechanism; it is
 	// what keeps the invariant from being enforced by a failed write on every
 	// delta, and it is the reason the monitor still HOLDS the origin id. That
 	// is the observable damage of a broken edge: the mint errors, the id is
@@ -130,8 +138,8 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newUnstartedEngine(t, db, simulator.New())
-	m := NewThresholdMonitor(eng)
+	m, sink := loggingMonitor(t, db)
+	eng := m.eng
 	b := episodeBinding(t, eng, "PANEL-EP3", 18)
 
 	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
@@ -146,6 +154,9 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 	restarted := NewThresholdMonitor(eng)
 	restarted.rehydrateThresholdEpisodes()
 	restarted.checkBindings([]thresholdEntry{b}, 38, "below_threshold", false)
+	if n := sink.countContaining("open demand episode key="); n != 0 {
+		t.Errorf("%d failed mint(s) after the restart, want 0 — the restarted monitor must know the demand is open before it tries to write one", n)
+	}
 
 	open, err := db.ListOpenThresholdEpisodes()
 	if err != nil {

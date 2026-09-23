@@ -253,7 +253,7 @@ func injectBinding(t *testing.T, m *ThresholdMonitor, payload string, bindings .
 // A binding sits in the monitor's memory that demand_registry does not have. The
 // level is below threshold and deltas keep arriving, so every evaluation mints;
 // the sweep closes each mint `threshold_removed` because the binding is absent,
-// and closeThresholdEpisodeRef clears belowThresholdSince on the way out, which
+// and closeThresholdEpisodeRef clears openOrigins on the way out, which
 // re-arms the falling edge for the next delta. The sweep is supplying the other
 // half of an oscillator.
 //

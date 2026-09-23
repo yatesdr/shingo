@@ -24,10 +24,11 @@ import (
 // THE STALE-EDGE REAPER USED TO BE THE HEADLINE EXAMPLE HERE AND NO LONGER
 // EXISTS. It emptied a silent station's demand_registry, this sweep read the
 // missing rows as a withdrawn config and closed the station's open demands, and
-// the close cleared belowThresholdSince, which re-armed the falling edge for the
-// next delta: mint, close, re-arm, 1293 rows for one station over two days at
-// Springfield. The wipe is gone — an Edge going quiet says nothing about config
-// Core derives for itself — so this sweep no longer has that fabricated absence
+// the close cleared the monitor's open-episode hold, which re-armed the falling
+// edge for the next delta: mint, close, re-arm — 1293 threshold_removed closes
+// at Springfield, across five close days, twelve nodes and two station ids. The
+// wipe is gone — an Edge going quiet says nothing about config Core derives
+// for itself — so this sweep no longer has that fabricated absence
 // to react to. The lesson is worth keeping in the file: a reconciler underneath
 // a notification path that lies can make a defect LOUDER rather than safer, and
 // the answer is to stop the lie, not to remove the floor.

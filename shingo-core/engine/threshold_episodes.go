@@ -22,10 +22,11 @@ import (
 // threshold" is true continuously, for as long as it is true — and a level has
 // no memory. Mint an origin on the level and you get a fresh "demand" every
 // debounce window: an id per ORDER, which is the paperwork-counting failure the
-// whole grain argument was against. below_threshold_since converts it into an
-// edge, and the period between the edges is the demand.
+// whole grain argument was against. The open episode converts it into an
+// edge: its presence answers "already below", and the period between the edges
+// is the demand.
 //
-// STATE LIVES IN MEMORY, WRITE-THROUGH ON TRANSITION. Both maps sit beside
+// STATE LIVES IN MEMORY, WRITE-THROUGH ON TRANSITION. openOrigins sits beside
 // thresholdsByPayload under the same mutex. Transitions are rare — twice per
 // episode — while evaluations run on every incoming delta, so the write cost is
 // nothing and the read cost must be nothing.
@@ -68,7 +69,7 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 		return
 	}
 	m.mu.Lock()
-	_, alreadyBelow := m.belowThresholdSince[key]
+	_, alreadyBelow := m.openOrigins[key]
 	m.mu.Unlock()
 	if alreadyBelow {
 		// Still below, same episode. Re-stamping would make every demand look
@@ -105,7 +106,6 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 	}
 
 	m.mu.Lock()
-	m.belowThresholdSince[key] = origin.OpenedAt
 	m.openOrigins[key] = openEpisodeRef{originID: origin.OriginID, stationID: b.stationID, payloadCode: b.payloadCode}
 	m.mu.Unlock()
 
@@ -152,7 +152,6 @@ func (m *ThresholdMonitor) closeThresholdEpisodeRef(key string, ref openEpisodeR
 	m.mu.Lock()
 	if held, ok := m.openOrigins[key]; ok && held.originID == ref.originID {
 		delete(m.openOrigins, key)
-		delete(m.belowThresholdSince, key)
 	}
 	m.mu.Unlock()
 
@@ -276,9 +275,10 @@ func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]ope
 // EXISTS. core_handler.go used to delete every binding a silent station had, and
 // what this pass then noticed was not an absence but a fabrication: nobody
 // withdrew that config, so every close it wrote was false, and the close cleared
-// belowThresholdSince and re-armed the mint. That is not a sweep catching an
-// absence, it is a sweep supplying the other half of an oscillator — Springfield,
-// 1293 rows for one station over two days. The floor is only as good as the
+// the monitor's open-episode hold and re-armed the mint. That is not a sweep
+// catching an absence, it is a sweep supplying the other half of an oscillator
+// — Springfield, 1293 threshold_removed closes across five close days, twelve
+// nodes and two station ids. The floor is only as good as the
 // facts under it, which is why the wipe went rather than this pass.
 //
 // IT READS THE DATABASE, NOT openOrigins. The monitor's map is a cache of what
@@ -288,7 +288,7 @@ func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]ope
 // AND IT FINISHES THE RECONCILIATION IT STARTS — see
 // dropAbsentBindingsFromMemory. Closing the episode and leaving the binding in
 // thresholdsByPayload is one half of a reconciliation: the close clears
-// belowThresholdSince, so the next delta mints the same demand again and the
+// openOrigins, so the next delta mints the same demand again and the
 // next pass closes it again. Springfield 2026-08-19 is that shape with no
 // reaper anywhere in it — 411 opens, 411 distinct origins, 405 closes, every
 // binding still matching the registry on station, node, payload and threshold —
@@ -372,7 +372,7 @@ func (m *ThresholdMonitor) reconcileThresholdBindings() int {
 // WHY THE CLOSE ALONE IS NOT A FIX. reconcileThresholdBindings treats
 // demand_registry as the truth about which bindings exist — that is the whole
 // premise — and then leaves thresholdsByPayload holding a binding that truth
-// says is gone. closeThresholdEpisodeRef clears belowThresholdSince on its way
+// says is gone. closeThresholdEpisodeRef clears openOrigins on its way
 // out, which re-arms the falling edge, so the next delta for that payload mints
 // the same demand again and the next pass closes it again. One withdrawn config
 // renders as a stream of instantaneous demands, which is the exact failure the
@@ -625,7 +625,6 @@ func (m *ThresholdMonitor) rehydrateThresholdEpisodes() {
 	for _, o := range open {
 		key := bindingKey(o.StationID, o.CoreNodeName, o.PayloadCode)
 		m.openOrigins[key] = openEpisodeRef{originID: o.OriginID, stationID: o.StationID, payloadCode: o.PayloadCode}
-		m.belowThresholdSince[key] = o.OpenedAt
 	}
 	n := len(open)
 	m.mu.Unlock()
