@@ -34,7 +34,7 @@ func addCATIDList(set map[string]struct{}, list string) {
 }
 
 // parseCATIDList splits a manual expected_catid pin (comma-separated) into a set.
-// A single value yields a one-element set; a two-part pin ("40017111,40017112")
+// A single value yields a one-element set; a two-part pin ("70000011,70000012")
 // yields both.
 func parseCATIDList(pin string) map[string]struct{} {
 	set := map[string]struct{}{}

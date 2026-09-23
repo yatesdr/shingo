@@ -39,8 +39,8 @@ func TestImportPayloadGroups_CreatesPayloadsAndManifests(t *testing.T) {
 	h, db := testHandlers(t)
 
 	rep := h.importPayloadGroups(importRows(
-		[]string{"RAIL-KIT", "40", "40016911", "2"},
-		[]string{"RAIL-KIT", "", "40017250", "1"}, // multi-part: same code, second part; UoP from first row
+		[]string{"RAIL-KIT", "40", "70000001", "2"},
+		[]string{"RAIL-KIT", "", "70000025", "1"}, // multi-part: same code, second part; UoP from first row
 		[]string{"SINGLE", "25", "", ""},          // payload with no manifest parts
 	))
 	mustEq(t, rep.Summary.Created, 2, "created count")
@@ -53,9 +53,9 @@ func TestImportPayloadGroups_CreatesPayloadsAndManifests(t *testing.T) {
 	}
 	items, err := db.ListPayloadManifest(kit.ID)
 	testutil.MustNoErr(t, err, "list manifest")
-	if len(items) != 2 || items[0].PartNumber != "40016911" || items[0].PartsPerCycle != 2 ||
-		items[1].PartNumber != "40017250" || items[1].PartsPerCycle != 1 {
-		t.Errorf("kit manifest = %+v, want 40016911x2 then 40017250x1", items)
+	if len(items) != 2 || items[0].PartNumber != "70000001" || items[0].PartsPerCycle != 2 ||
+		items[1].PartNumber != "70000025" || items[1].PartsPerCycle != 1 {
+		t.Errorf("kit manifest = %+v, want 70000001x2 then 70000025x1", items)
 	}
 
 	single, err := db.GetPayloadByCode("SINGLE")
@@ -77,7 +77,7 @@ func TestImportPayloadGroups_SkipsDuplicates(t *testing.T) {
 	testutil.MustNoErr(t, h.engine.PayloadService().Create(existing), "seed existing")
 
 	rep := h.importPayloadGroups(importRows(
-		[]string{"DUP-PL", "99", "40016911", "1"}, // would overwrite if mishandled
+		[]string{"DUP-PL", "99", "70000001", "1"}, // would overwrite if mishandled
 		[]string{"NEW-PL", "5", "", ""},
 	))
 	mustEq(t, rep.Summary.Created, 1, "created")
@@ -101,9 +101,9 @@ func TestImportPayloadGroups_ValidatesAndWarns(t *testing.T) {
 		[]string{"BAD-UOP", "abc", "", ""},        // failed: UoP not a number
 		[]string{"NEG-UOP", "-3", "", ""},         // failed: negative
 		[]string{"ZERO-UOP", "", "", ""},          // created + warning
-		[]string{"ZERO-QTY", "5", "40016911", ""}, // failed: qty blank, once a warning
-		[]string{"", "5", "40016911", "1"},        // failed: no code
-		[]string{"BAD-QTY", "5", "40016911", "x"}, // failed: qty not a number
+		[]string{"ZERO-QTY", "5", "70000001", ""}, // failed: qty blank, once a warning
+		[]string{"", "5", "70000001", "1"},        // failed: no code
+		[]string{"BAD-QTY", "5", "70000001", "x"}, // failed: qty not a number
 	))
 	// ONE. ZERO-UOP still imports with a warning — a bin that holds nothing is
 	// a configuration an operator may be mid-way through. ZERO-QTY does NOT:
@@ -180,7 +180,7 @@ func TestApiImportPayloadTemplates_MultipartCSV(t *testing.T) {
 	fw, err := w.CreateFormFile("file", "payloads.csv")
 	testutil.MustNoErr(t, err, "CreateFormFile")
 	_, _ = fw.Write([]byte("Payload Code,UoP Capacity,Manifest Part (CATID),Qty\n" +
-		"CSV-PL,30,40016911,3\n"))
+		"CSV-PL,30,70000001,3\n"))
 	testutil.MustNoErr(t, w.Close(), "close multipart writer")
 
 	req := httptest.NewRequest("POST", "/api/payloads/templates/import", strings.NewReader(body.String()))
@@ -294,7 +294,7 @@ func TestImportPayloadGroups_UoPFromLaterRow(t *testing.T) {
 	h, db := testHandlers(t)
 
 	rep := h.importPayloadGroups(importRows(
-		[]string{"LATE-UOP", "", "40016911", "2"},
+		[]string{"LATE-UOP", "", "70000001", "2"},
 		[]string{"LATE-UOP", "40", "", ""},
 	))
 	mustEq(t, rep.Summary.Created, 1, "created")
@@ -325,9 +325,9 @@ func TestImportPayloadGroups_FailureNamesItsRow(t *testing.T) {
 	h, _ := testHandlers(t)
 
 	rep := h.importPayloadGroups(importRows(
-		[]string{"MULTI-BAD", "10", "40016911", "1"},  // line 2: the group's home row, fine
-		[]string{"MULTI-BAD", "", "40017250", "oops"}, // line 3: the offender
-		[]string{"MULTI-BAD", "", "40017300", "2"},    // line 4: never reached — fail-fast
+		[]string{"MULTI-BAD", "10", "70000001", "1"},  // line 2: the group's home row, fine
+		[]string{"MULTI-BAD", "", "70000025", "oops"}, // line 3: the offender
+		[]string{"MULTI-BAD", "", "70000030", "2"},    // line 4: never reached — fail-fast
 	))
 	mustEq(t, rep.Summary.Failed, 1, "failed — one per payload, fail-fast")
 	var failed []importRowResult
@@ -356,7 +356,7 @@ func TestImportPayloadGroups_OverflowGuards(t *testing.T) {
 
 	rep := h.importPayloadGroups(importRows(
 		[]string{"BIG-UOP", "3000000000", "", ""},                   // line 2: > int32
-		[]string{"BIG-QTY", "5", "40016911", "9000000000000000000"}, // line 3: absurd
+		[]string{"BIG-QTY", "5", "70000001", "9000000000000000000"}, // line 3: absurd
 	))
 	mustEq(t, rep.Summary.Created, 0, "created — neither payload may be written")
 	mustEq(t, rep.Summary.Failed, 2, "failed (BIG-UOP, BIG-QTY)")
@@ -393,9 +393,9 @@ func TestImportPayloadGroups_BlankAndZeroRatioFailThePayload(t *testing.T) {
 	h, _ := testHandlers(t)
 
 	rep := h.importPayloadGroups(importRows(
-		[]string{"BLANK-RATIO", "1000", "40016911", ""}, // line 2: cell skipped
-		[]string{"ZERO-RATIO", "1000", "40016912", "0"}, // line 3: explicit zero
-		[]string{"GOOD-RATIO", "1000", "40016913", "1"}, // line 4: the control
+		[]string{"BLANK-RATIO", "1000", "70000001", ""}, // line 2: cell skipped
+		[]string{"ZERO-RATIO", "1000", "70000002", "0"}, // line 3: explicit zero
+		[]string{"GOOD-RATIO", "1000", "70000003", "1"}, // line 4: the control
 	))
 
 	mustEq(t, rep.Summary.Failed, 2, "failed (BLANK-RATIO, ZERO-RATIO)")
@@ -411,8 +411,8 @@ func TestImportPayloadGroups_BlankAndZeroRatioFailThePayload(t *testing.T) {
 		line             int
 		part, wantPhrase string
 	}{
-		{2, "40016911", "the cell is empty"},
-		{3, "40016912", "must be 1 or more"},
+		{2, "70000001", "the cell is empty"},
+		{3, "70000002", "must be 1 or more"},
 	} {
 		r, ok := byLine[tc.line]
 		if !ok {

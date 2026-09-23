@@ -31,8 +31,15 @@ RUN go work sync \
 # commit=unknown", which makes the boot line and the Overview health strip
 # untestable here. safe.directory because the copied .git is root-owned in the
 # build stage; the || fallbacks keep a context without .git building.
+#
+# A .git that is a FILE is a git-worktree (or submodule) pointer to a gitdir
+# outside the context. It cannot resolve here, and every git command, even
+# `git config --global`, dies on it with "not a git repository". Removing it
+# turns a worktree build into the no-.git case: it builds, stamped dev/unknown.
+# A normal clone's .git is a directory and is untouched.
 COPY . .
-RUN git config --global --add safe.directory /src \
+RUN if [ -f .git ]; then rm .git; fi \
+ && git config --global --add safe.directory /src \
  && VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
  && COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
  && LDFLAGS="-X main.Version=${VERSION} -X main.Commit=${COMMIT}" \

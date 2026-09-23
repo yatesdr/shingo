@@ -28,24 +28,24 @@ func TestExpectedCATIDPin_SurvivesACatalogSync(t *testing.T) {
 	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot") // produce claim WIDGET-A
 	eng := testEngine(t, db)
 
-	putCatalog(t, db, 1, "WIDGET-A", "40016911")
-	putCatalog(t, db, 2, "PIA15", "40017111")
+	putCatalog(t, db, 1, "WIDGET-A", "70000001")
+	putCatalog(t, db, 2, "PIA15", "70000011")
 
 	// The shape that used to be deleted: a pin identical to the derived value.
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "40016911"), "pin, matching the derived value")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "70000001"), "pin, matching the derived value")
 
 	// And one that never was: a pin that disagrees.
 	styleDiff, err := db.CreateStyle("DIFF", "", processID)
 	testutil.MustNoErr(t, err, "create diff style")
-	seedProduceClaim(t, db, styleDiff, "N-DIFF", "PIA15") // derives 40017111
+	seedProduceClaim(t, db, styleDiff, "N-DIFF", "PIA15") // derives 70000011
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleDiff, "99999999"), "pin, disagreeing")
 
 	eng.HandlePayloadCatalog([]protocol.CatalogPayloadInfo{
-		{ID: 1, Name: "WIDGET-A", Code: "WIDGET-A", CATID: "40016911"},
-		{ID: 2, Name: "PIA15", Code: "PIA15", CATID: "40017111"},
+		{ID: 1, Name: "WIDGET-A", Code: "WIDGET-A", CATID: "70000001"},
+		{ID: 2, Name: "PIA15", Code: "PIA15", CATID: "70000011"},
 	})
 
-	if got := styleExpected(t, db, styleA); got != "40016911" {
+	if got := styleExpected(t, db, styleA); got != "70000001" {
 		t.Errorf("a pin equal to the derived value was cleared by a catalog sync (got %q). "+
 			"Redundant today is not redundant after the payload's manifest changes, and "+
 			"the style would then have neither a pin nor a derivable value", got)

@@ -43,27 +43,27 @@ func TestPayloadCATIDs(t *testing.T) {
 			PayloadID: pid, PartNumber: partNumber, PartsPerCycle: 1,
 		}, catid), "create manifest item "+partNumber)
 	}
-	line(single.ID, "CID-P-A", "40016911")
-	line(multi.ID, "CID-P-B", "50029999")
-	line(multi.ID, "CID-P-C", "40016911")
+	line(single.ID, "CID-P-A", "70000001")
+	line(multi.ID, "CID-P-B", "70000001")
+	line(multi.ID, "CID-P-C", "50029999")
 	// Two DIFFERENT parts carrying one cat id — allowed by the schema (a
 	// unique index there would turn a data error into a migration that will
 	// not run) and collapsed by the DISTINCT.
-	line(shared.ID, "CID-P-D", "40017111")
-	line(shared.ID, "CID-P-E", "40017111")
+	line(shared.ID, "CID-P-D", "70000011")
+	line(shared.ID, "CID-P-E", "70000011")
 	// none: no manifest rows at all
 
 	catids, err := payloads.PayloadCATIDs(db)
 	testutil.MustNoErr(t, err, "PayloadCATIDs")
 
-	if catids[single.ID] != "40016911" {
-		t.Errorf("single-part payload CATID = %q, want 40016911", catids[single.ID])
+	if catids[single.ID] != "70000001" {
+		t.Errorf("single-part payload CATID = %q, want 70000001", catids[single.ID])
 	}
-	if got, want := catids[multi.ID], "40016911,50029999"; got != want {
+	if got, want := catids[multi.ID], "50029999,70000001"; got != want {
 		t.Errorf("kit CATIDs = %q, want %q — every part it holds, so the guard accepts any "+
 			"of them", got, want)
 	}
-	if got, want := catids[shared.ID], "40017111"; got != want {
+	if got, want := catids[shared.ID], "70000011"; got != want {
 		t.Errorf("two parts sharing a cat id = %q, want %q once", got, want)
 	}
 	if v, ok := catids[none.ID]; ok {

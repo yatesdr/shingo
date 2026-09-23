@@ -23,8 +23,8 @@ func projectedByKey(t *testing.T, eng *Engine, key string, role domain.LoaderRol
 
 // TestProjectCoreLoader_OptionsByBranch: the shared_window branch carries
 // inbound, outbound, funnel_windows, changeover_load_directive, the bare bin
-// type and auto_push; the dedicated_positions branch carries inbound, outbound,
-// the bare bin type and auto_push.
+// type and auto_push; the dedicated_positions branch carries all of those
+// except funnel_windows.
 func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
@@ -71,11 +71,12 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 		t.Error("dedicated AutoPush = false, want true")
 	}
 	// Not passed by the dedicated branch: funnel_windows is meaningless there
-	// (positions never share a budget), and changeover_load_directive is read
-	// off the shared branch only.
-	if dp.FunnelWindows() || dp.ChangeoverLoadDirective() {
-		t.Errorf("dedicated funnel/directive = %v/%v, want false/false (the branch does not pass them)",
-			dp.FunnelWindows(), dp.ChangeoverLoadDirective())
+	// (positions never share a budget). The directive used to be dropped too.
+	if dp.FunnelWindows() {
+		t.Error("dedicated funnel = true, want false (the branch does not pass it)")
+	}
+	if !dp.ChangeoverLoadDirective() {
+		t.Error("dedicated directive = false, want true")
 	}
 }
 

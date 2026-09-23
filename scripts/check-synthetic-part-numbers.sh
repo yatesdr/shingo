@@ -37,12 +37,19 @@
 # JS regex literal spells it that way and a code hidden inside one is still a
 # code — `[\]?` and not `\\?`, which this file had for one revision and which
 # matches NOTHING in ERE, so the guard passed on a tree that still held 137.
+#
+# A PLC STRUCT NAME IS THE SAME KIND OF LEAK. The plants publish one MES struct
+# per process, named for the press number and the station, and a real one sat
+# in the PLC tag-derivation docs and tests. STRUCT is its shape: MES_, a P, the
+# press number, an underscore. Synthetic structs (MES_Press_A1) keep the MES_
+# convention the derivation reads and do not match.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
 SHAPE='[0-9]{5}-[0-9A-Z]{3,6}[\]?\.[0-9]{2}'
+STRUCT='MES_P[0-9]+_'
 
 # LIVENESS FIRST, for the same reason gate.sh asserts that its shot test RAN: a
 # pattern that matches nothing prints the same "ok" as a clean tree, and this
@@ -62,6 +69,20 @@ for tok in $probe_ok; do
     exit 1
   fi
 done
+struct_bad="$(printf 'MES_%s_Line_2.Prod_Counter_01' P42) $(printf 'MES_%s_X' P7)"
+struct_ok="MES_Press_A1 MES_400Ton.Prod_Counter_01 MES_OtherLine_Process MES_PX_1"
+for tok in $struct_bad; do
+  if ! printf '%s\n' "$tok" | grep -qE "$STRUCT"; then
+    echo "FAIL synthetic part numbers: the struct pattern is dead — it does not match $tok" >&2
+    exit 1
+  fi
+done
+for tok in $struct_ok; do
+  if printf '%s\n' "$tok" | grep -qE "$STRUCT"; then
+    echo "FAIL synthetic part numbers: the struct pattern is too broad — it matches $tok" >&2
+    exit 1
+  fi
+done
 
 hits="$(git grep -nE "$SHAPE" -- \
   ':!*.png' ':!*.jpg' ':!*.pdf' 2>/dev/null)"
@@ -73,4 +94,14 @@ if [ -n "$hits" ]; then
   exit 1
 fi
 
-echo "ok   synthetic part numbers (no NNNNN-XXXXX.NN in tracked files; pattern proved live)"
+struct_hits="$(git grep -nE "$STRUCT" -- \
+  ':!*.png' ':!*.jpg' ':!*.pdf' 2>/dev/null)"
+
+if [ -n "$struct_hits" ]; then
+  echo "FAIL synthetic part numbers: a committed file carries a plant PLC struct name." >&2
+  echo "     Shape: MES_P<press>_. Use a synthetic struct (MES_Press_A1)." >&2
+  echo "$struct_hits" >&2
+  exit 1
+fi
+
+echo "ok   synthetic part numbers (no NNNNN-XXXXX.NN or plant MES struct in tracked files; patterns proved live)"

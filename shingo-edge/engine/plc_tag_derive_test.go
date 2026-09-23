@@ -8,8 +8,8 @@ func TestDeriveProcessTagPrefix(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"MES_P42_Spot_Nut_Farm_2.Prod_Counter_01", "MES_P42_Spot_Nut_Farm_2"},
-		{"MES_P42_Spot_Nut_Farm_2.Changeover_Active", "MES_P42_Spot_Nut_Farm_2"},
+		{"MES_Press_A1.Prod_Counter_01", "MES_Press_A1"},
+		{"MES_Press_A1.Changeover_Active", "MES_Press_A1"},
 		{"a.b.c", "a.b"},
 		{"NoStructHere", ""},
 		{"", ""},
@@ -28,7 +28,7 @@ func TestDeriveCutoverTag(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"MES_P42_Spot_Nut_Farm_2.Prod_Counter_01", "MES_P42_Spot_Nut_Farm_2.Changeover_Active"},
+		{"MES_Press_A1.Prod_Counter_01", "MES_Press_A1.Changeover_Active"},
 		{"MES_OtherLine_Process.Prod_Counter_03", "MES_OtherLine_Process.Changeover_Active"},
 		{"NoStruct", ""},
 		{"", ""},

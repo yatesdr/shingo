@@ -47,10 +47,10 @@ func TestPinSeedCore_ClaimAutoPushDoesNotReachTheCoreLoader(t *testing.T) {
 	}
 }
 
-// TestPinSeedCore_AZeroPayloadUnloaderSeeds: the seeder itself already
-// expresses stage 2 — a zero-payload window claim becomes a consume
-// shared_window loader with one window and no payloads. Only Validate refuses
-// the spec (TestPinValidate_AZeroPayloadUnloaderIsRefusedByParity).
+// TestPinSeedCore_AZeroPayloadUnloaderSeeds: stage 2 — a zero-payload window
+// claim validates and becomes a consume shared_window loader with one window
+// and no payloads. (The seeder always built it; Validate used to refuse the
+// spec, see TestValidate_AZeroPayloadUnloaderIsAllowed.)
 func TestPinSeedCore_AZeroPayloadUnloaderSeeds(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -58,6 +58,9 @@ func TestPinSeedCore_AZeroPayloadUnloaderSeeds(t *testing.T) {
 	plant.Stations = append(plant.Stations, plantspec.Station{Name: "S2_W1", Kind: "unloader"})
 	plant.Claims = append(plant.Claims, plantspec.Claim{CoreNode: "S2_W1", Style: "UNLOADER-A-RUN",
 		Role: "consume", SwapMode: "manual_swap", WindowOf: "S2_UNLOADER", OutboundDestination: "SYN_MT_Return"})
+	if err := plant.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
 		t.Fatalf("seedCore: %v", err)
 	}

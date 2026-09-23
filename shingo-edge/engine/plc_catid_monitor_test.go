@@ -13,7 +13,7 @@ import (
 func TestDeriveIdentityTag(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ in, want string }{
-		{"MES_P42_Spot_Nut_Farm_2.Prod_Counter_01", "MES_P42_Spot_Nut_Farm_2.CATID_01"},
+		{"MES_Press_A1.Prod_Counter_01", "MES_Press_A1.CATID_01"},
 		{"MES_400Ton.Prod_Counter_01", "MES_400Ton.CATID_01"},
 		{"NoParentStruct", ""}, // no dot → no parent struct
 		{"", ""},
@@ -34,15 +34,15 @@ func TestApplyCatidEdge_Debounce(t *testing.T) {
 	t0 := time.Unix(0, 0)
 
 	// First successful read → baseline confirm, NOT a change.
-	if confirmed, isChange := applyCatidEdge(st, "40016911", true, t0); !confirmed || isChange {
+	if confirmed, isChange := applyCatidEdge(st, "70000001", true, t0); !confirmed || isChange {
 		t.Fatalf("baseline: got (confirmed=%v,isChange=%v), want (true,false)", confirmed, isChange)
 	}
-	if st.lastConfirmed != "40016911" {
+	if st.lastConfirmed != "70000001" {
 		t.Fatalf("baseline lastConfirmed = %q", st.lastConfirmed)
 	}
 
 	// Same value again → no confirmation, no change.
-	if confirmed, _ := applyCatidEdge(st, "40016911", true, t0.Add(1*time.Second)); confirmed {
+	if confirmed, _ := applyCatidEdge(st, "70000001", true, t0.Add(1*time.Second)); confirmed {
 		t.Fatal("unchanged value must not re-confirm")
 	}
 
@@ -116,18 +116,18 @@ func TestOnConfirmedCATID_RaisesMismatchAlert(t *testing.T) {
 	}
 
 	// Configure a divergent expected value → one alert naming both values.
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "40016911"), "set expected_catid")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "70000001"), "set expected_catid")
 	mon.onConfirmedCATID(processID, mon.states[processID], true)
 	if len(alarms) != 1 {
 		t.Fatalf("divergent CATID must raise exactly one alert, got %d", len(alarms))
 	}
 	a := alarms[0]
-	if a.LiveCATID != "50029999" || a.ExpectedCATID != "40016911" || a.ProcessName != "PRODUCE-PROC" || a.StyleName != "PROD-STYLE" {
-		t.Errorf("alert payload = %+v, want live=50029999 expected=40016911 press=PRODUCE-PROC style=PROD-STYLE", a)
+	if a.LiveCATID != "50029999" || a.ExpectedCATID != "70000001" || a.ProcessName != "PRODUCE-PROC" || a.StyleName != "PROD-STYLE" {
+		t.Errorf("alert payload = %+v, want live=50029999 expected=70000001 press=PRODUCE-PROC style=PROD-STYLE", a)
 	}
 
 	// A matching live value → no further alert.
-	mon.states[processID].lastConfirmed = "40016911"
+	mon.states[processID].lastConfirmed = "70000001"
 	mon.onConfirmedCATID(processID, mon.states[processID], false)
 	if len(alarms) != 1 {
 		t.Fatalf("matching CATID must not add an alert, got %d", len(alarms))
@@ -150,8 +150,8 @@ func TestCATIDChangePrompt_PromptsOnChange(t *testing.T) {
 	// Off-switch: 'prompt' keeps the round-2 prompt-only behavior (no auto-start).
 	testutil.MustNoErr(t, db.SetChangeoverAutoArm(processID, "prompt"), "set prompt mode")
 
-	// Active style runs part 40016911; a second style maps to 50029999.
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "40016911"), "active expected")
+	// Active style runs part 70000001; a second style maps to 50029999.
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "70000001"), "active expected")
 	nextStyleID, err := db.CreateStyle("NEXT-STYLE", "next part", processID)
 	testutil.MustNoErr(t, err, "create next style")
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(nextStyleID, "50029999"), "next expected")
@@ -170,7 +170,7 @@ func TestCATIDChangePrompt_PromptsOnChange(t *testing.T) {
 	st := mon.states[processID]
 
 	// Baseline confirmation (isChange=false) → NO prompt.
-	st.lastConfirmed = "40016911"
+	st.lastConfirmed = "70000001"
 	mon.onConfirmedCATID(processID, st, false)
 	if len(prompts) != 0 {
 		t.Fatalf("baseline read must not prompt, got %d", len(prompts))
@@ -199,7 +199,7 @@ func TestCATIDChangePrompt_PromptsOnChange(t *testing.T) {
 
 	// Change back to the ACTIVE style's part → suppressed (line is now correct
 	// for the running style; nothing to change to).
-	st.lastConfirmed = "40016911"
+	st.lastConfirmed = "70000001"
 	mon.onConfirmedCATID(processID, st, true)
 	if len(prompts) != 2 {
 		t.Fatalf("a change matching the active style must not prompt, got %d", len(prompts))
@@ -275,7 +275,7 @@ func tickAutoCutover(mon *catidMonitor, processID int64, st *catidState, value s
 // across >=3 reads spanning >=60s presses CUTOVER exactly once.
 func TestAutoCutover_CleanFlip_CutsOverOnce(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "", "70000001", "50029999", true)
 
 	if got := mon.eng.processChangeoverAutoArm(processID); got != "auto" {
 		t.Fatalf("default changeover_auto_arm = %q, want auto (default-on everywhere)", got)
@@ -321,7 +321,7 @@ func TestAutoCutover_CleanFlip_CutsOverOnce(t *testing.T) {
 // a style with zero available stock.
 func TestAutoCutover_NoChangeoverInProgress_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", false)
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", false)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 6; i++ {
 		tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
@@ -335,10 +335,10 @@ func TestAutoCutover_NoChangeoverInProgress_NeverFires(t *testing.T) {
 // a part belonging to the ACTIVE style it has not cut over, so neither do we.
 func TestAutoCutover_StillOnActiveStylePart_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 6; i++ {
-		tickAutoCutover(mon, processID, st, "40016911", true, t0.Add(time.Duration(i)*30*time.Second))
+		tickAutoCutover(mon, processID, st, "70000001", true, t0.Add(time.Duration(i)*30*time.Second))
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("cut over while the press was still on the active style's part: got %d, want 0", len(*calls))
@@ -354,7 +354,7 @@ func TestAutoCutover_StillOnActiveStylePart_NeverFires(t *testing.T) {
 // raises the operator flag when they disagree.
 func TestAutoCutover_UnmappedValue_StillCutsOver(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 3; i++ {
 		tickAutoCutover(mon, processID, st, "12345678", true, t0.Add(time.Duration(i)*30*time.Second))
@@ -368,7 +368,7 @@ func TestAutoCutover_UnmappedValue_StillCutsOver(t *testing.T) {
 // accumulates the required stability, even over minutes.
 func TestAutoCutover_BouncingTag_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	values := []string{"50029999", "77777777", "50029999", "88888888", "50029999", "99999999"}
 	for i, v := range values {
@@ -384,7 +384,7 @@ func TestAutoCutover_BouncingTag_NeverFires(t *testing.T) {
 // but the window restarts).
 func TestAutoCutover_ZeroAndUnreadable_NeverFire(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 5; i++ {
 		tickAutoCutover(mon, processID, st, "0", true, t0.Add(time.Duration(i)*30*time.Second))
@@ -406,11 +406,11 @@ func TestAutoCutover_ZeroAndUnreadable_NeverFire(t *testing.T) {
 // holds for the full window after the LAST flip.
 func TestAutoCutover_DoubleFlipWithinWindow_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "auto", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	tickAutoCutover(mon, processID, st, "50029999", true, t0)
 	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(20*time.Second))
-	tickAutoCutover(mon, processID, st, "40016911", true, t0.Add(30*time.Second))
+	tickAutoCutover(mon, processID, st, "70000001", true, t0.Add(30*time.Second))
 	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(45*time.Second))
 	tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(75*time.Second))
 	if len(*calls) != 0 {
@@ -426,7 +426,7 @@ func TestAutoCutover_DoubleFlipWithinWindow_NeverFires(t *testing.T) {
 // on its own — the operator is prompted instead.
 func TestAutoCutover_PromptMode_NeverFires(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "prompt", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "prompt", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 4; i++ {
 		tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))
@@ -440,7 +440,7 @@ func TestAutoCutover_PromptMode_NeverFires(t *testing.T) {
 // over nor prompts.
 func TestAutoCutover_OffMode_Silent(t *testing.T) {
 	t.Parallel()
-	mon, st, processID, _, calls := setupAutoCutover(t, "off", "40016911", "50029999", true)
+	mon, st, processID, _, calls := setupAutoCutover(t, "off", "70000001", "50029999", true)
 	t0 := time.Unix(0, 0)
 	for i := 0; i < 4; i++ {
 		tickAutoCutover(mon, processID, st, "50029999", true, t0.Add(time.Duration(i)*30*time.Second))

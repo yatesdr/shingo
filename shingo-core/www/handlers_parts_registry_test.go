@@ -22,7 +22,7 @@ import (
 func TestApiGetPart_KnownAndUnknown(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	_, err := payloads.UpsertPart(db.DB, "51015-LH", "40016911", "left bracket")
+	_, err := payloads.UpsertPart(db.DB, "51015-LH", "70000001", "left bracket")
 	testutil.MustNoErr(t, err, "seed the part")
 
 	rec := getPlain(t, h.apiGetPart, "/api/parts/lookup?part_number=51015-LH")
@@ -31,8 +31,8 @@ func TestApiGetPart_KnownAndUnknown(t *testing.T) {
 	}
 	var part payloads.Part
 	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &part), "decode")
-	if part.CATID != "40016911" {
-		t.Errorf("catid = %q, want 40016911 — this is the value that saves the operator "+
+	if part.CATID != "70000001" {
+		t.Errorf("catid = %q, want 70000001 — this is the value that saves the operator "+
 			"typing it twice", part.CATID)
 	}
 
@@ -54,7 +54,7 @@ func TestApiSaveManifest_ConflictingCATIDIs409(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	_, err := payloads.UpsertPart(db.DB, "51015-RH", "40016911", "")
+	_, err := payloads.UpsertPart(db.DB, "51015-RH", "70000001", "")
 	testutil.MustNoErr(t, err, "seed the part with its cat id")
 
 	rec := postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update",
@@ -74,7 +74,7 @@ func TestApiSaveManifest_ConflictingCATIDIs409(t *testing.T) {
 	// question.
 	part, err := payloads.GetPartByNumber(db.DB, "51015-RH")
 	testutil.MustNoErr(t, err, "re-read the part")
-	if part.CATID != "40016911" {
+	if part.CATID != "70000001" {
 		t.Errorf("cat id = %q after a refused save, want the original", part.CATID)
 	}
 }
@@ -93,7 +93,7 @@ func TestApiSaveManifest_BlankPartNumberIsRefused(t *testing.T) {
 			"code":         sd.Payload.Code,
 			"uop_capacity": 10,
 			"manifest": []map[string]any{
-				{"part_number": "", "catid": "40016911", "parts_per_cycle": 0},
+				{"part_number": "", "catid": "70000001", "parts_per_cycle": 0},
 			},
 		})
 	if rec.Code != http.StatusBadRequest {

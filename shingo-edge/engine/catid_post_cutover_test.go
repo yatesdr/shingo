@@ -27,11 +27,11 @@ func TestPostCutoverVerify_MatchNoFlag(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "40016911"), "set expected")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "70000001"), "set expected")
 	eng := testEngine(t, db)
 	coID := seedChangeoverTo(t, eng, db, processID, styleA)
 
-	seedCatidMonitor(eng, processID, "PROC", "40016911") // live matches the new style
+	seedCatidMonitor(eng, processID, "PROC", "70000001") // live matches the new style
 	cm := eng.catidMon
 	now := time.Now()
 	cm.openPostCutoverVerify(processID, coID, styleA, now.Add(time.Minute))
@@ -54,7 +54,7 @@ func TestPostCutoverVerify_MismatchMapped(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "40016911"), "expected A")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "70000001"), "expected A")
 	styleB, err := db.CreateStyle("STYLE-B", "b", processID)
 	testutil.MustNoErr(t, err, "create style B")
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleB, "50029999"), "expected B")
@@ -102,7 +102,7 @@ func TestPostCutoverVerify_MismatchUnmapped(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "40016911"), "expected A")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleA, "70000001"), "expected A")
 	eng := testEngine(t, db)
 	coID := seedChangeoverTo(t, eng, db, processID, styleA)
 
@@ -133,13 +133,13 @@ func TestPostCutoverVerify_TwoPartMemberNoFlag(t *testing.T) {
 	db := testEngineDB(t)
 	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot")
 	// Two-position new style: left WIDGET-A / right PIA16, both with catalog CATIDs.
-	putCatalog(t, db, 1, "WIDGET-A", "40017111")
-	putCatalog(t, db, 2, "PIA16", "40017112")
+	putCatalog(t, db, 1, "WIDGET-A", "70000011")
+	putCatalog(t, db, 2, "PIA16", "70000012")
 	seedProduceClaim(t, db, styleA, "N-RIGHT", "PIA16")
 	eng := testEngine(t, db)
 	coID := seedChangeoverTo(t, eng, db, processID, styleA)
 
-	seedCatidMonitor(eng, processID, "PROC", "40017112") // press settled on the RIGHT side
+	seedCatidMonitor(eng, processID, "PROC", "70000012") // press settled on the RIGHT side
 	cm := eng.catidMon
 	now := time.Now()
 	cm.openPostCutoverVerify(processID, coID, styleA, now.Add(time.Minute))

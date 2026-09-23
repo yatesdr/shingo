@@ -148,7 +148,7 @@ func TestV108_DoesNotRefuseItsOwnSeedDeletion(t *testing.T) {
 
 	// A second, ordinary payload alongside it, so the run has real work to verify
 	// and the assertion is not about an otherwise-empty database.
-	otherID := seedUncorrectedPayload(t, db, "V108-SEED-NEIGHBOUR", "40016911")
+	otherID := seedUncorrectedPayload(t, db, "V108-SEED-NEIGHBOUR", "70000001")
 
 	if err := store.RunManifestIdentityCorrection(db); err != nil {
 		t.Fatalf("v108 REFUSED its own seed deletion: %v\n\nThis is the failure that "+
@@ -172,8 +172,8 @@ func TestV108_DoesNotRefuseItsOwnSeedDeletion(t *testing.T) {
 	if len(otherItems) != 1 || otherItems[0].PartNumber != "V108-SEED-NEIGHBOUR" || otherItems[0].PartID == 0 {
 		t.Errorf("the neighbour was not corrected: %+v", otherItems)
 	}
-	if otherItems[0].CATID != "40016911" {
-		t.Errorf("neighbour cat id = %q, want 40016911", otherItems[0].CATID)
+	if otherItems[0].CATID != "70000001" {
+		t.Errorf("neighbour cat id = %q, want 70000001", otherItems[0].CATID)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestV108_RefusesWhenTheGuardWouldChange(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
-	payloadID := seedUncorrectedPayload(t, db, "V108-REFUSE", "40016911")
+	payloadID := seedUncorrectedPayload(t, db, "V108-REFUSE", "70000001")
 	// Somebody entered this part already, with a different controls identity.
 	if _, err := db.Exec(`INSERT INTO parts (part_number, catid) VALUES ('V108-REFUSE', '99999999')`); err != nil {
 		t.Fatalf("seed conflicting part: %v", err)
@@ -200,7 +200,7 @@ func TestV108_RefusesWhenTheGuardWouldChange(t *testing.T) {
 			"across the two plants carry no manual pin to fall back on")
 	}
 	if items, lerr := db.ListPayloadManifest(payloadID); lerr == nil {
-		if len(items) != 1 || items[0].PartNumber != "40016911" {
+		if len(items) != 1 || items[0].PartNumber != "70000001" {
 			t.Errorf("the refused transaction left changes behind: %+v", items)
 		}
 	}

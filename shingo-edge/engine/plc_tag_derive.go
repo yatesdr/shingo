@@ -9,9 +9,9 @@ import "strings"
 // RunTime_Active, DownTime_Active) together. The AMR trial confirmed
 // the convention via WarLink Tag Republisher: a typical struct path is
 //
-//   MES_P42_Spot_Nut_Farm_2.Prod_Counter_01
-//   MES_P42_Spot_Nut_Farm_2.Changeover_Active
-//   MES_P42_Spot_Nut_Farm_2.CATID_01
+//   MES_Press_A1.Prod_Counter_01
+//   MES_Press_A1.Changeover_Active
+//   MES_Press_A1.CATID_01
 //   ...
 //
 // Shingo's process row already configures counter_tag_name (the leaf
@@ -29,9 +29,9 @@ import "strings"
 // PLC tag name, returning the parent struct path. Returns the empty
 // string when the tag has no dot (no parent struct) or is empty.
 //
-// Example: "MES_P42_Spot_Nut_Farm_2.Prod_Counter_01" →
+// Example: "MES_Press_A1.Prod_Counter_01" →
 //
-//	"MES_P42_Spot_Nut_Farm_2"
+//	"MES_Press_A1"
 func deriveProcessTagPrefix(tagName string) string {
 	if idx := strings.LastIndex(tagName, "."); idx > 0 {
 		return tagName[:idx]
@@ -43,9 +43,9 @@ func deriveProcessTagPrefix(tagName string) string {
 // same parent struct as the supplied counter tag. Returns empty when
 // the input has no parent struct.
 //
-// Example: "MES_P42_Spot_Nut_Farm_2.Prod_Counter_01" →
+// Example: "MES_Press_A1.Prod_Counter_01" →
 //
-//	"MES_P42_Spot_Nut_Farm_2.Changeover_Active"
+//	"MES_Press_A1.Changeover_Active"
 func deriveCutoverTag(counterTagName string) string {
 	prefix := deriveProcessTagPrefix(counterTagName)
 	if prefix == "" {
@@ -58,12 +58,12 @@ func deriveCutoverTag(counterTagName string) string {
 // parent struct as the supplied counter tag. Returns empty when the input has
 // no parent struct. Sibling of deriveCutoverTag: the AMR trial confirmed
 // CATID_01 lives in the same MES struct as Prod_Counter_01 / Changeover_Active,
-// and the Hopkinsville live read showed it populated (CATID_01 = 40016911).
+// and the Hopkinsville live read showed it populated with an eight-digit part id.
 // This is the ground-truth part signal the A5 guard reads.
 //
-// Example: "MES_P42_Spot_Nut_Farm_2.Prod_Counter_01" →
+// Example: "MES_Press_A1.Prod_Counter_01" →
 //
-//	"MES_P42_Spot_Nut_Farm_2.CATID_01"
+//	"MES_Press_A1.CATID_01"
 func deriveIdentityTag(counterTagName string) string {
 	prefix := deriveProcessTagPrefix(counterTagName)
 	if prefix == "" {

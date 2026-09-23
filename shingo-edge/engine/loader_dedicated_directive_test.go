@@ -12,8 +12,9 @@ import (
 // row has it set, during a changeover. The two readers of the setting are the
 // station check (stationTakesLoadDirective — the same Loader the station
 // view's copy reads) and the empty-request attribution (changeoverLoadOrigin).
-// At base the dedicated projection branch does not pass the setting, so both
-// read false and an empty requested at a home is the cell's own demand.
+// Both read the setting, so an empty requested at a home during the changeover
+// is the changeover's demand. The dedicated projection branch used to drop the
+// setting, and both read false.
 func TestChangeoverLoadOrigin_DedicatedLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -54,10 +55,11 @@ func TestChangeoverLoadOrigin_DedicatedLoader(t *testing.T) {
 	if claim == nil {
 		t.Fatal("fixture: the home must resolve to a synthesized claim")
 	}
-	if eng.stationTakesLoadDirective("CLD-H1") {
-		t.Error("stationTakesLoadDirective = true at base; want false (the dedicated branch drops the setting)")
+	if !eng.stationTakesLoadDirective("CLD-H1") {
+		t.Error("stationTakesLoadDirective = false; want true (the home's station is opted in)")
 	}
-	if o := eng.changeoverLoadOrigin(node, claim); o.ID != "" {
-		t.Errorf("changeoverLoadOrigin = %+v at base; want no origin (the cell's own demand)", o)
+	o := eng.changeoverLoadOrigin(node, claim)
+	if o.ID != "co-origin-ded" || o.Class != protocol.OriginClassAttached {
+		t.Errorf("changeoverLoadOrigin = %+v; want the changeover's episode, attached", o)
 	}
 }

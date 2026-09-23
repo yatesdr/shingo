@@ -21,6 +21,10 @@ make dev          # build the 3 sim binaries + bring up postgres, kafka, core, e
 make dev-seed     # seed the demo plant (plants/demo.yaml) into core + edge
 ```
 
+A build from a git worktree works, but its binaries report `version=dev commit=unknown`:
+the worktree's `.git` points outside the build context, so Dockerfile.dev drops it. Build
+from a normal clone when the version stamp matters.
+
 Then open the UIs:
 
 | | default (loopback) | LAN / tailnet |

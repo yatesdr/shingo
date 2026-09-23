@@ -49,7 +49,7 @@ func TestGuardCatidMismatch_InertAndBlocking(t *testing.T) {
 	}
 
 	// Configure the active style's expected_catid.
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "40016911"), "set expected_catid")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "70000001"), "set expected_catid")
 
 	// 2. No monitor at all → fail-open (inert).
 	eng.catidMon = nil
@@ -66,21 +66,21 @@ func TestGuardCatidMismatch_InertAndBlocking(t *testing.T) {
 	}
 
 	// 4. Live matches expected → passes.
-	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "40016911")
+	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "70000001")
 	if err := eng.guardCatidMismatch(node, lineClaim); err != nil {
 		t.Errorf("matching CATID must not block, got: %v", err)
 	}
 
 	// 5. Live diverges from expected → BLOCKS, stating BOTH sides (live part +
 	//    active style's expected) and pointing at the pending resolution.
-	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "40016911")
+	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "70000001")
 	eng.catidMon.states[processID].lastConfirmed = "50029999"
 	err = eng.guardCatidMismatch(node, lineClaim)
 	if err == nil {
 		t.Fatal("divergent CATID must block outgoing-style relief")
 	}
-	// "Press reports CATID 50029999; active style is PROD-STYLE (runs CATID 40016911) — ..."
-	for _, want := range []string{"Press reports", "50029999", "40016911", "PROD-STYLE", "changeover"} {
+	// "Press reports CATID 50029999; active style is PROD-STYLE (runs CATID 70000001) — ..."
+	for _, want := range []string{"Press reports", "50029999", "70000001", "PROD-STYLE", "changeover"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("block message %q missing %q", err.Error(), want)
 		}
@@ -102,7 +102,7 @@ func TestRequestProduceSwap_BlockedOnCatidMismatch(t *testing.T) {
 	processID, nodeID, styleID, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "40016911"), "set expected_catid")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "70000001"), "set expected_catid")
 	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "50029999") // wrong part on press
 
 	if _, err := eng.RequestProduceSwap(nodeID); err == nil {
@@ -152,21 +152,21 @@ func TestGuardCatidMismatch_TwoPartMembership(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Make the seeded style two-position: add a second produce claim with a second
-	// payload, and give both payloads catalog CATIDs (left 40017111 / right 40017112).
-	putCatalog(t, db, 1, "WIDGET-A", "40017111") // seedProduceNode's payload → left
-	putCatalog(t, db, 2, "PIA16", "40017112")    // right
+	// payload, and give both payloads catalog CATIDs (left 70000011 / right 70000012).
+	putCatalog(t, db, 1, "WIDGET-A", "70000011") // seedProduceNode's payload → left
+	putCatalog(t, db, 2, "PIA16", "70000012")    // right
 	seedProduceClaim(t, db, styleID, "N-RIGHT", "PIA16")
 
 	lineClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeTwoRobot, StyleID: styleID}
 
 	// Press reports the LEFT part → member → passes.
-	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "40017111")
+	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "70000011")
 	if err := eng.guardCatidMismatch(node, lineClaim); err != nil {
 		t.Errorf("left part is a member of the style's set, must not block, got: %v", err)
 	}
 	// Press reports the RIGHT part → member → passes (the old single-value guard
 	// would have blocked here).
-	eng.catidMon.states[processID].lastConfirmed = "40017112"
+	eng.catidMon.states[processID].lastConfirmed = "70000012"
 	if err := eng.guardCatidMismatch(node, lineClaim); err != nil {
 		t.Errorf("right part is a member of the style's set, must not block, got: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestGuardCatidMismatch_TwoPartMembership(t *testing.T) {
 	if err == nil {
 		t.Fatal("a part in neither side of the set must block")
 	}
-	for _, want := range []string{"40099999", "40017111", "40017112"} {
+	for _, want := range []string{"40099999", "70000011", "70000012"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("block message %q missing %q (both valid parts must be named)", err.Error(), want)
 		}
@@ -196,14 +196,14 @@ func TestGuardCatidMismatch_PinnedTwoPart(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Non-empty pin = use exactly that set (derivation ignored).
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "40017111, 40017112"), "pin two-part")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "70000011, 70000012"), "pin two-part")
 	lineClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeTwoRobot, StyleID: styleID}
 
-	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "40017111")
+	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "70000011")
 	if err := eng.guardCatidMismatch(node, lineClaim); err != nil {
 		t.Errorf("first pinned part must be accepted, got: %v", err)
 	}
-	eng.catidMon.states[processID].lastConfirmed = "40017112"
+	eng.catidMon.states[processID].lastConfirmed = "70000012"
 	if err := eng.guardCatidMismatch(node, lineClaim); err != nil {
 		t.Errorf("second pinned part must be accepted (no false-block), got: %v", err)
 	}

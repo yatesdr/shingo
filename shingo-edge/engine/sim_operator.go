@@ -654,7 +654,12 @@ func (op *simOperator) reconcile() {
 			}
 			pending++
 		case protocol.StatusDelivered:
-			if o.ProcessNodeID != nil {
+			// The test onDelivered makes: a leg whose bin LEFT this node (a U2
+			// empty-out) is not a delivery here, so neither a LOAD/CLEAR nor a
+			// confirm belongs to it.
+			// PIN: TestSimOperator_ReconcileOutboundDeliveryDoesNotScheduleAClear
+			if o.ProcessNodeID != nil &&
+				op.deliveryLandedHere(OrderDeliveredEvent{OrderID: o.ID, ProcessNodeID: o.ProcessNodeID}) {
 				op.schedule(*o.ProcessNodeID)              // LOAD/CLEAR for manual_swap nodes
 				op.scheduleConfirm(o.ID, *o.ProcessNodeID) // confirm delivered-at-line legs
 				pending++

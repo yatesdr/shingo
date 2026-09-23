@@ -589,7 +589,7 @@ func (cm *catidMonitor) liveCATID(processID int64) (string, bool) {
 }
 
 // catidToString normalizes a WarLink CATID tag value to a comparison string.
-// CATID is an integer part id at Hopkinsville (e.g. 40016911) delivered as
+// CATID is an integer part id at Hopkinsville (eight digits) delivered as
 // float64 over JSON, but a plant could publish it as a string tag — handle
 // both so the value compares cleanly against a hand-entered expected_catid.
 func catidToString(v any) (string, bool) {

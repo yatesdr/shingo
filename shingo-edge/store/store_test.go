@@ -333,25 +333,25 @@ func TestStyles_ExpectedCATIDRoundTrip(t *testing.T) {
 	}
 
 	// Set it, then confirm it reads back through every path.
-	testutil.MustNoErr(t, db.SetStyleExpectedCATID(sid, "40016911"), "set catid")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(sid, "70000001"), "set catid")
 	got, _ = db.GetStyle(sid)
-	if got.ExpectedCATID != "40016911" {
-		t.Errorf("GetStyle expected_catid = %q, want 40016911", got.ExpectedCATID)
+	if got.ExpectedCATID != "70000001" {
+		t.Errorf("GetStyle expected_catid = %q, want 70000001", got.ExpectedCATID)
 	}
 	byName, _ := db.GetStyleByName("CATID-STYLE")
-	if byName.ExpectedCATID != "40016911" {
-		t.Errorf("GetStyleByName expected_catid = %q, want 40016911", byName.ExpectedCATID)
+	if byName.ExpectedCATID != "70000001" {
+		t.Errorf("GetStyleByName expected_catid = %q, want 70000001", byName.ExpectedCATID)
 	}
 	list, _ := db.ListStylesByProcess(pid)
-	if len(list) != 1 || list[0].ExpectedCATID != "40016911" {
-		t.Errorf("ListStylesByProcess expected_catid = %+v, want [40016911]", list)
+	if len(list) != 1 || list[0].ExpectedCATID != "70000001" {
+		t.Errorf("ListStylesByProcess expected_catid = %+v, want [70000001]", list)
 	}
 
 	// A plain name/description Update must NOT disturb expected_catid.
 	testutil.MustNoErr(t, db.UpdateStyle(sid, "CATID-STYLE-v2", "renamed", pid), "update")
 	got, _ = db.GetStyle(sid)
-	if got.ExpectedCATID != "40016911" {
-		t.Errorf("expected_catid after name update = %q, want preserved 40016911", got.ExpectedCATID)
+	if got.ExpectedCATID != "70000001" {
+		t.Errorf("expected_catid after name update = %q, want preserved 70000001", got.ExpectedCATID)
 	}
 
 	// Clearing it returns the guard to inert.

@@ -484,7 +484,23 @@ func (p *Plant) Validate() error {
 	// and consumers (unloaders) in the material flow.
 	type payloadFlow struct{ produce, consume int }
 	flowByPayload := make(map[string]*payloadFlow)
-	for _, c := range p.Claims {
+	for i, c := range p.Claims {
+		// A LOADER THAT NAMES NO PAYLOAD. An unloader's shared window may name
+		// none: the second stage of a two-stage unloader is fed an empty carrier
+		// directly by stage 1, has nothing to pull and no part to name, so it is
+		// in no payload's flow and parity has nothing to say about it. Counting
+		// it as a consumer of payload "" refused the shape the Edge allows
+		// (TestValidate_AZeroPayloadUnloaderIsAllowed). A LOADER still needs a
+		// payload, because it is what the loader loads; that is said as its own
+		// finding rather than as parity on "". A dedicated position (home_of) is
+		// one payload by definition and stays under parity.
+		if c.IsLoader() && c.Payload == "" && len(c.AllowedPayloads) == 0 && c.HomeOf == "" {
+			if c.Role == "produce" {
+				add("claim[%d] %s/%s: a loader needs at least one payload — only an unloader's window may declare none",
+					i, c.CoreNode, c.Style)
+			}
+			continue
+		}
 		fl := flowByPayload[c.Payload]
 		if fl == nil {
 			fl = &payloadFlow{}

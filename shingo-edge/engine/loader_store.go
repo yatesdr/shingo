@@ -105,8 +105,12 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 				UOPThreshold: p.UOPThreshold,
 			})
 		}
+		// FunnelWindows is not passed: positions never share a budget, so it is
+		// meaningless here. ChangeoverLoadDirective is: a home-location station
+		// can be opted in like any other (TestChangeoverLoadOrigin_DedicatedLoader).
 		return domain.NewDedicatedPositionsLoader(id, l.Name, role, repl, positions,
 			domain.WithInboundSource(l.InboundSource),
+			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithBareBinType(l.BareBinTypeCode),
 			domain.WithAutoPush(l.AutoPush),
 			domain.WithOutboundDest(l.OutboundDest))

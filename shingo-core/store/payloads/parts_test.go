@@ -27,10 +27,10 @@ func TestUpsertPart_FillsAnUnknownCATID(t *testing.T) {
 		t.Fatalf("a part created without a cat id came back with %q", first.CATID)
 	}
 
-	second, err := payloads.UpsertPart(db, "51015-LH", "40016911", "")
+	second, err := payloads.UpsertPart(db, "51015-LH", "70000001", "")
 	testutil.MustNoErr(t, err, "supply the cat id")
-	if second.CATID != "40016911" {
-		t.Errorf("cat id = %q, want 40016911 — an empty one is an absent answer, not a "+
+	if second.CATID != "70000001" {
+		t.Errorf("cat id = %q, want 70000001 — an empty one is an absent answer, not a "+
 			"statement that the part has none", second.CATID)
 	}
 	if second.Description != "left bracket" {
@@ -49,7 +49,7 @@ func TestUpsertPart_RefusesADifferentCATID(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t).DB
 
-	_, err := payloads.UpsertPart(db, "51015-RH", "40016911", "")
+	_, err := payloads.UpsertPart(db, "51015-RH", "70000001", "")
 	testutil.MustNoErr(t, err, "create the part")
 
 	_, err = payloads.UpsertPart(db, "51015-RH", "99999999", "")
@@ -59,15 +59,15 @@ func TestUpsertPart_RefusesADifferentCATID(t *testing.T) {
 			"controls identities is how a cell's wrong-part guard starts accepting the "+
 			"wrong one, and neither value can be assumed right.", err)
 	}
-	if conflict.Existing != "40016911" || conflict.Incoming != "99999999" {
+	if conflict.Existing != "70000001" || conflict.Incoming != "99999999" {
 		t.Errorf("the conflict does not carry both values: %+v", conflict)
 	}
 
 	// And nothing changed.
 	got, err := payloads.GetPartByNumber(db, "51015-RH")
 	testutil.MustNoErr(t, err, "re-read the part")
-	if got.CATID != "40016911" {
-		t.Errorf("cat id = %q after a refused write, want the original 40016911", got.CATID)
+	if got.CATID != "70000001" {
+		t.Errorf("cat id = %q after a refused write, want the original 70000001", got.CATID)
 	}
 }
 
@@ -78,13 +78,13 @@ func TestSetPartCATID_IsTheAnswerToTheConflict(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t).DB
 
-	_, err := payloads.UpsertPart(db, "51015-CTR", "40016911", "")
+	_, err := payloads.UpsertPart(db, "51015-CTR", "70000001", "")
 	testutil.MustNoErr(t, err, "create the part")
-	testutil.MustNoErr(t, payloads.SetPartCATID(db, "51015-CTR", "40017111"), "answer the conflict")
+	testutil.MustNoErr(t, payloads.SetPartCATID(db, "51015-CTR", "70000011"), "answer the conflict")
 
 	got, err := payloads.GetPartByNumber(db, "51015-CTR")
 	testutil.MustNoErr(t, err, "re-read the part")
-	if got.CATID != "40017111" {
+	if got.CATID != "70000011" {
 		t.Errorf("cat id = %q, want the value the operator confirmed", got.CATID)
 	}
 	if err := payloads.SetPartCATID(db, "NO-SUCH-PART", "1"); err == nil {

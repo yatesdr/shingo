@@ -57,14 +57,14 @@ func TestStyleCATIDSet(t *testing.T) {
 	processID, _, styleA, _ := seedProduceNode(t, db, "two_robot") // produce claim WIDGET-A
 	eng := testEngine(t, db)
 
-	putCatalog(t, db, 1, "WIDGET-A", "40016911")
-	putCatalog(t, db, 2, "PIA15", "40017111")
-	putCatalog(t, db, 3, "PIA16", "40017112")
+	putCatalog(t, db, 1, "WIDGET-A", "70000001")
+	putCatalog(t, db, 2, "PIA15", "70000011")
+	putCatalog(t, db, 3, "PIA16", "70000012")
 
 	// Single-part style: one produce payload → one CATID.
 	sA, _ := db.GetStyle(styleA)
-	if got := formatCATIDSet(eng.styleCATIDSet(sA)); got != "40016911" {
-		t.Errorf("single-part set = %q, want 40016911", got)
+	if got := formatCATIDSet(eng.styleCATIDSet(sA)); got != "70000001" {
+		t.Errorf("single-part set = %q, want 70000001", got)
 	}
 
 	// Two-position style: two produce claims, two payloads → two CATIDs.
@@ -74,8 +74,8 @@ func TestStyleCATIDSet(t *testing.T) {
 	seedProduceClaim(t, db, styleTwo, "N-RIGHT", "PIA16")
 	sTwo, _ := db.GetStyle(styleTwo)
 	set := eng.styleCATIDSet(sTwo)
-	if len(set) != 2 || !catidSetHas(set, "40017111") || !catidSetHas(set, "40017112") {
-		t.Errorf("two-part set = %v, want {40017111, 40017112}", set)
+	if len(set) != 2 || !catidSetHas(set, "70000011") || !catidSetHas(set, "70000012") {
+		t.Errorf("two-part set = %v, want {70000011, 70000012}", set)
 	}
 
 	// Manual comma-list pin overrides derivation verbatim.
@@ -174,9 +174,9 @@ func TestStylesForCATID_MatchesPerStyleDerivation(t *testing.T) {
 	processID, _, _, _ := seedProduceNode(t, db, "two_robot") // PROD-STYLE: produce claim WIDGET-A
 	eng := testEngine(t, db)
 
-	putCatalog(t, db, 1, "WIDGET-A", "40016911")
-	putCatalog(t, db, 2, "PIA15", "40017111")
-	putCatalog(t, db, 6, "KIT", "40017111,40017112")
+	putCatalog(t, db, 1, "WIDGET-A", "70000001")
+	putCatalog(t, db, 2, "PIA15", "70000011")
+	putCatalog(t, db, 6, "KIT", "70000011,70000012")
 
 	kit, err := db.CreateStyle("KIT-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create kit")
@@ -184,7 +184,7 @@ func TestStylesForCATID_MatchesPerStyleDerivation(t *testing.T) {
 
 	pinned, err := db.CreateStyle("PINNED", "", processID)
 	testutil.MustNoErr(t, err, "create pinned")
-	// Derives 40016911 from WIDGET-A, but the pin wins.
+	// Derives 70000001 from WIDGET-A, but the pin wins.
 	seedProduceClaim(t, db, pinned, "N-P", "WIDGET-A")
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(pinned, "40099999, 40088888"), "pin")
 
@@ -209,9 +209,9 @@ func TestStylesForCATID_MatchesPerStyleDerivation(t *testing.T) {
 		catid string
 		want  []string
 	}{
-		{"40016911", []string{"PROD-STYLE"}}, // PINNED is overridden, RETIRED is gone, NOCAT has nothing
-		{"40017111", []string{"KIT-STYLE"}},  // the kit's first member; CONSUME-ONLY's consume claim does not count
-		{"40017112", []string{"KIT-STYLE"}},  // the kit's second member
+		{"70000001", []string{"PROD-STYLE"}}, // PINNED is overridden, RETIRED is gone, NOCAT has nothing
+		{"70000011", []string{"KIT-STYLE"}},  // the kit's first member; CONSUME-ONLY's consume claim does not count
+		{"70000012", []string{"KIT-STYLE"}},  // the kit's second member
 		{"40099999", []string{"PINNED"}},
 		{"40088888", []string{"PINNED"}},
 		{"40000000", nil},
@@ -241,9 +241,9 @@ func TestDerivedSetSplitsMultiPartCatalog(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Single-part payload: unchanged behavior (one-member set).
-	putCatalog(t, db, 1, "WIDGET-A", "40016911")
+	putCatalog(t, db, 1, "WIDGET-A", "70000001")
 	// Multi-part kit: Core sends both distinct parts comma-joined.
-	putCatalog(t, db, 6, "KIT", "40017111,40017112")
+	putCatalog(t, db, 6, "KIT", "70000011,70000012")
 
 	styleKit, err := db.CreateStyle("KIT-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create kit style")
@@ -251,22 +251,22 @@ func TestDerivedSetSplitsMultiPartCatalog(t *testing.T) {
 
 	sKit, _ := db.GetStyle(styleKit)
 	set := eng.styleCATIDSet(sKit)
-	if len(set) != 2 || !catidSetHas(set, "40017111") || !catidSetHas(set, "40017112") {
-		t.Errorf("multi-part kit set = %v, want both {40017111, 40017112}", set)
+	if len(set) != 2 || !catidSetHas(set, "70000011") || !catidSetHas(set, "70000012") {
+		t.Errorf("multi-part kit set = %v, want both {70000011, 70000012}", set)
 	}
 
 	// Whitespace tolerance: Core trims when joining, but be defensive — a
-	// value like "40017111, 40017112" must still yield two members.
-	putCatalog(t, db, 6, "KIT", "40017111, 40017112")
+	// value like "70000011, 70000012" must still yield two members.
+	putCatalog(t, db, 6, "KIT", "70000011, 70000012")
 	sKit, _ = db.GetStyle(styleKit)
 	set = eng.styleCATIDSet(sKit)
-	if len(set) != 2 || !catidSetHas(set, "40017111") || !catidSetHas(set, "40017112") {
+	if len(set) != 2 || !catidSetHas(set, "70000011") || !catidSetHas(set, "70000012") {
 		t.Errorf("spaced multi-part set = %v, want both members", set)
 	}
 
 	// A single-part catalog value still yields exactly one member.
 	sSingle, _ := db.GetStyle(styleSingle)
-	if got := formatCATIDSet(eng.styleCATIDSet(sSingle)); got != "40016911" {
-		t.Errorf("single-part set after multi-part sync = %q, want 40016911", got)
+	if got := formatCATIDSet(eng.styleCATIDSet(sSingle)); got != "70000001" {
+		t.Errorf("single-part set after multi-part sync = %q, want 70000001", got)
 	}
 }
