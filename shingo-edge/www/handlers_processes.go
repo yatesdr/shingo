@@ -9,9 +9,23 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
+
+	"shingoedge/domain"
 )
 
 // --- Processes Admin ---
+
+// processListRow is the list's row shape: the process plus its DERIVED
+// quality-containment state. Embedded, so the JSON stays flat and every
+// existing consumer reads it unchanged. The state is derived from the
+// claims, not stored on the process — the claim is the one source of truth
+// and the divert reads it; these two fields are the settings draft's read.
+type processListRow struct {
+	domain.Process
+	QualityHoldEnabled     bool   `json:"quality_hold_enabled"`
+	QualityHoldDestination string `json:"quality_hold_destination"`
+}
 
 func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 	processes, err := h.engine.ProcessService().List()
@@ -19,7 +33,57 @@ func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, processes)
+	states, err := h.engine.ProcessService().ContainmentStates()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rows := make([]processListRow, len(processes))
+	for i, p := range processes {
+		rows[i] = processListRow{Process: p}
+		if dest, ok := states[p.ID]; ok {
+			rows[i].QualityHoldEnabled = true
+			rows[i].QualityHoldDestination = dest
+		}
+	}
+	writeJSON(w, rows)
+}
+
+// apiProcessContainmentSetting is the settings toggle's write: stamp or clear
+// the containment destination on every live style's produce claims of the
+// process. The claim stays the storage (the divert reads it); this endpoint
+// is the batch editor. Fires the coalesced Core spec sync on any change.
+func (h *Handlers) apiProcessContainmentSetting(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	var req struct {
+		Enabled     bool   `json:"enabled"`
+		Destination string `json:"destination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Enabled && strings.TrimSpace(req.Destination) == "" {
+		writeError(w, http.StatusBadRequest, "a containment destination is required when the hold is enabled")
+		return
+	}
+	by := ""
+	if u, ok := h.sessions.getUser(r); ok {
+		by = u
+	}
+	if by == "" {
+		by = "admin"
+	}
+	if err := h.engine.ProcessService().SetContainment(processID, req.Enabled, req.Destination, by); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.requestSpecChangePublish(processID)
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {

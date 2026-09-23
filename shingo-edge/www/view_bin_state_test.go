@@ -58,7 +58,7 @@ func TestEnrichViewBinState_CopiesTheNodeBinsRow(t *testing.T) {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := []string{"bare", "bin_label", "bin_type_code", "manifest_confirmed", "occupied", "uop_remaining"}
+	want := []string{"bare", "bin_id", "bin_label", "bin_type_code", "manifest_confirmed", "occupied", "uop_remaining"}
 	if len(got) != len(want) {
 		t.Fatalf("bin_state keys = %v, want %v", got, want)
 	}

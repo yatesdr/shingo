@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -596,6 +597,73 @@ func (c *CoreClient) RecordBinCount(nodeName string, actualUOP int, actor string
 		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
 	}
 	return &result, nil
+}
+
+// SetBinQualityHold sets or clears a bin's quality-hold marker on Core
+// (telemetry machine path, same group as bin-load/bin-clear). Best-effort at
+// the call site: the containment move order is the containment; the marker is
+// the audit and the re-release protection, and a failed marker write logs
+// rather than blocks.
+func (c *CoreClient) SetBinQualityHold(binID int64, hold bool, by string) error {
+	if c.baseURL == "" {
+		return fmt.Errorf("core API not configured")
+	}
+	body, _ := json.Marshal(map[string]any{"bin_id": binID, "hold": hold, "by": by})
+	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-quality-hold", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("bin-quality-hold request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bin-quality-hold returned %d: %s", resp.StatusCode, coreErrorText(string(raw), "", resp.StatusCode))
+	}
+	return nil
+}
+
+// GetContainment reads Core's quality-containment state (public read — the
+// containment screens render state; they hold no Core credentials).
+func (c *CoreClient) GetContainment() (*ContainmentState, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("core API not configured")
+	}
+	resp, err := c.http.Get(c.baseURL + "/api/containment")
+	if err != nil {
+		return nil, fmt.Errorf("containment read failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var state ContainmentState
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		return nil, fmt.Errorf("decode containment: %w", err)
+	}
+	return &state, nil
+}
+
+// ContainmentState mirrors Core's /api/containment body.
+type ContainmentState struct {
+	Containment []ContainmentRow `json:"containment"`
+	HeldBins    []HeldBinRow     `json:"held_bins"`
+}
+
+// ContainmentRow is one payload's containment flag state.
+type ContainmentRow struct {
+	PayloadCode   string `json:"payload_code"`
+	Active        bool   `json:"active"`
+	Reason        string `json:"reason"`
+	ActivatedBy   string `json:"activated_by"`
+	ActivatedAt   string `json:"activated_at"`
+	DeactivatedBy string `json:"deactivated_by"`
+	DeactivatedAt string `json:"deactivated_at"`
+}
+
+// HeldBinRow is one bin carrying the hold marker.
+type HeldBinRow struct {
+	BinID       int64  `json:"bin_id"`
+	Label       string `json:"label"`
+	PayloadCode string `json:"payload_code"`
+	NodeName    string `json:"node_name"`
+	HoldBy      string `json:"hold_by"`
+	HoldAt      string `json:"hold_at"`
 }
 
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.

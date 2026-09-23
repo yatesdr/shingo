@@ -7,6 +7,7 @@ import "time"
 // at the corresponding Core node — what's loaded, how full, whether
 // the manifest has been confirmed.
 type NodeBinState struct {
+	BinID       int64  `json:"bin_id,omitempty"`
 	BinLabel    string `json:"bin_label,omitempty"`
 	BinTypeCode string `json:"bin_type_code,omitempty"`
 	// Bare is Core's bin_types.bare for the carrier: it holds no container, so
@@ -82,6 +83,17 @@ type StationNodeView struct {
 	// "CARRIER-XXXX staged Nh at <node>, not bound — Record Count on the bin tab."
 	// Empty when the node has no active stranding alarm.
 	StrandedAlarm string `json:"stranded_alarm,omitempty"`
+	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
+	// position: non-empty when some producing claim names this node as its
+	// containment destination, and carries that claim's OutboundDestination —
+	// where a verified bin walks when the inspector releases it. The tile's
+	// modal renders Verify Good off this field and nothing else: the
+	// containment position itself carries no claim (it must stay inert to
+	// demand and sourcing), so this stamp is the only way the screen knows
+	// what the spot is. Refused-stamp rule: claims DISAGREEING about the
+	// outbound (two producers, two FG drops) leave the field empty — a tile
+	// with no action is the safe rendering of a config problem.
+	ContainmentReleaseTarget string `json:"containment_release_target,omitempty"`
 	// ActiveStylePayloads / AllStylePayloads are the manual_swap loader-board
 	// unions across EVERY active process sharing this node's CoreNodeName (not
 	// just this station's process): active = payloads the running styles need,

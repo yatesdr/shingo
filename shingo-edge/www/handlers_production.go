@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"shingoedge/domain"
@@ -41,6 +42,7 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 			name := views[i].Nodes[j].Node.CoreNodeName
 			if info, ok := binMap[name]; ok {
 				views[i].Nodes[j].BinState = &domain.NodeBinState{
+					BinID:             info.BinID,
 					BinLabel:          info.BinLabel,
 					BinTypeCode:       info.BinTypeCode,
 					Bare:              info.Bare,
@@ -49,6 +51,110 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 					Manifest:          info.Manifest,
 					ManifestConfirmed: info.ManifestConfirmed,
 					Occupied:          info.Occupied,
+				}
+			}
+		}
+	}
+}
+
+// enrichViewContainmentTargets stamps each node whose core node is named as a
+// containment destination by some producing claim, with that claim's outbound
+// destination â€” the release target a verified bin walks to. The claims
+// themselves are read once for the whole call; per-node it's a map lookup.
+// Ambiguous destinations (claims disagreeing about the outbound) stamp
+// nothing: the tile renders without the action, which is the safe face of a
+// config problem â€” the release verb refuses the same shape independently.
+func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStationView) {
+	claims, err := eng.StyleService().ListContainmentClaims()
+	if err != nil {
+		return
+	}
+	// COVERAGE, PER PAYLOAD. A shared hold group is legitimate — several
+	// producers route their contained bins to one spot with different FG
+	// drops — and the BIN'S PAYLOAD is what disambiguates (the release verb
+	// resolves the same way). So the stamp is not per destination: it is
+	// per (destination, payload), and the tile's own bin's payload picks the
+	// outbound shown. Two claims agreeing on payload but not outbound = a
+	// real config error: that payload's entry is killed, not the whole
+	// destination.
+	coverage := map[string]map[string]string{}
+	conflict := map[string]map[string]bool{}
+	for _, c := range claims {
+		dest, out := c.ContainmentDestination, c.OutboundDestination
+		if dest == "" || out == "" {
+			continue
+		}
+		payloads := c.AllowedPayloads() // empty = the wildcard: any payload
+		if len(payloads) == 0 {
+			payloads = []string{""}
+		}
+		for _, p := range payloads {
+			if conflict[dest][p] {
+				continue
+			}
+			if coverage[dest] == nil {
+				coverage[dest] = map[string]string{}
+			}
+			if have, ok := coverage[dest][p]; ok {
+				if have != out {
+					conflict[dest][p] = true
+					delete(coverage[dest], p)
+				}
+				continue
+			}
+			coverage[dest][p] = out
+		}
+	}
+	// GROUP-AWARE MATCHING: a destination may be a node GROUP, whose bins sit
+	// on the group's children (Core mints their names group-prefixed, so the
+	// suffix matches too). One children read per distinct destination,
+	// resolved once for the whole call. CoreAPI may be nil (a test stub, or a
+	// dev edge with no Core configured) — the group half just degrades, the
+	// exact-match half still works.
+	coreAPI := eng.CoreAPI()
+	kids := make(map[string][]string, len(coverage))
+	for dest := range coverage {
+		if coreAPI == nil {
+			continue
+		}
+		children, cerr := coreAPI.FetchNodeChildren(dest, false)
+		if cerr == nil {
+			for _, ch := range children {
+				if ch.NodeType != "NGRP" {
+					kids[dest] = append(kids[dest], ch.Name)
+				}
+			}
+		}
+	}
+	match := func(dest, nodeName string) bool {
+		if dest == nodeName {
+			return true
+		}
+		for _, k := range kids[dest] {
+			if k == nodeName || strings.HasSuffix(k, "."+nodeName) {
+				return true
+			}
+		}
+		return false
+	}
+	for i := range views {
+		for j := range views[i].Nodes {
+			name := views[i].Nodes[j].Node.CoreNodeName
+			// The bin ON the tile picks the outbound shown; a bin-less tile
+			// resolves against the wildcard slot, which is only stamped when
+			// the covering claims agree — nothing renders the target on a
+			// bin-less tile, so this costs nothing either way.
+			var binPayload string
+			if bs := views[i].Nodes[j].BinState; bs != nil {
+				binPayload = bs.PayloadCode
+			}
+			for dest, byPayload := range coverage {
+				if !match(dest, name) {
+					continue
+				}
+				if out, ok := byPayload[binPayload]; ok {
+					views[i].Nodes[j].ContainmentReleaseTarget = out
+					break
 				}
 			}
 		}
@@ -148,6 +254,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		stationViews = buildStationViews(r.Context(), h.engine, activeProcess)
 	}
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
+	enrichViewContainmentTargets(h.engine, stationViews)
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
@@ -254,6 +361,7 @@ func (h *Handlers) handleProductionPartial(w http.ResponseWriter, r *http.Reques
 		stationViews = buildStationViews(r.Context(), h.engine, activeProcess)
 	}
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
+	enrichViewContainmentTargets(h.engine, stationViews)
 
 	var activeProcessID int64
 	if activeProcess != nil {
@@ -296,7 +404,7 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 	// The UI sends the FULL desired shift set: every row still in the
 	// editor at Save time, with the rows the operator removed simply
 	// absent. The previous loop only upserted what arrived and deleted
-	// a shift when its row arrived with blank start/end — the blank-row
+	// a shift when its row arrived with blank start/end â€” the blank-row
 	// path. The DOM-side removeShiftRow drops the row entirely instead
 	// of blanking it, so a removed shift never reached this handler,
 	// and shift 3 sat in the DB forever after the operator Removed it.

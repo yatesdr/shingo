@@ -315,16 +315,22 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 // re-stamped and how a stored claim is put in front of the validator.
 func InputFromClaim(c NodeClaim) NodeClaimInput {
 	return NodeClaimInput{
-		StyleID:                        c.StyleID,
-		CoreNodeName:                   c.CoreNodeName,
-		Role:                           c.Role,
-		SwapMode:                       c.SwapMode,
-		PayloadCode:                    c.PayloadCode,
-		ReorderPoint:                   c.ReorderPoint,
-		InboundStaging:                 c.InboundStaging,
-		OutboundStaging:                c.OutboundStaging,
-		InboundSource:                  c.InboundSource,
-		OutboundDestination:            c.OutboundDestination,
+		StyleID:             c.StyleID,
+		CoreNodeName:        c.CoreNodeName,
+		Role:                c.Role,
+		SwapMode:            c.SwapMode,
+		PayloadCode:         c.PayloadCode,
+		ReorderPoint:        c.ReorderPoint,
+		InboundStaging:      c.InboundStaging,
+		OutboundStaging:     c.OutboundStaging,
+		InboundSource:       c.InboundSource,
+		OutboundDestination: c.OutboundDestination,
+		// Echo-faithful on containment too: a composer claim-save that echoes
+		// a claim through here must carry its containment route, or the save
+		// wipes a field the composer does not render yet — the exact disease
+		// the pointer-typed contract documents for the other editor-less
+		// columns. The process-settings stamp sets it explicitly on top.
+		ContainmentDestination:         c.ContainmentDestination,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
 		AutoRequestPayload:             c.AutoRequestPayload,
 		EvacuateOnChangeover:           c.EvacuateOnChangeover,

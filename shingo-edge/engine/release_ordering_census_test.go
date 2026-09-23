@@ -52,6 +52,11 @@ var releaseSurfacesWithoutGates = map[string]string{
 	"ReleaseNodeWithRemainingUOP":  "wrapper around releaseNodeInternal",
 	"ReleaseChangeoverWait":        "fans out to ReleaseChangeoverWaitForNode",
 	"ReleaseChangeoverWaitForNode": "validates, then releases; no side effect precedes a refusal",
+	// Quality containment's Verify Good (2026-09-14): claim lookup, ambiguity
+	// and bin-still-standing refusals all precede the move creation; the hold
+	// marker clear follows the move as a best-effort audit write, so no side
+	// effect precedes a refusal here either.
+	"ReleaseFromContainment": "validates, then creates the release move; the hold clear follows it",
 }
 
 var engineReleaseFunc = regexp.MustCompile(`func \(e \*Engine\) (Release\w+|FinalizeProduce\w+)\(`)

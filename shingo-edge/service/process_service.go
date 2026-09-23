@@ -1,6 +1,10 @@
 package service
 
 import (
+	"fmt"
+	"strings"
+
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/lineside"
@@ -33,6 +37,72 @@ func NewProcessService(db *store.DB) *ProcessService {
 // List returns all processes ordered by name.
 func (s *ProcessService) List() ([]processes.Process, error) {
 	return s.db.ListProcesses()
+}
+
+// ── Quality containment (process settings) ─────────────────────────
+
+// ContainmentState derives one process's Quality Hold toggle state from its
+// claims: enabled when a live style's produce claim declares a containment
+// destination, with that destination (the first seen, when claims disagree —
+// the save overwrites all of them, which is how a disagreement gets fixed).
+//
+// DERIVED, NOT STORED, and that is the whole design: the claim is the one
+// source of truth — Core's divert reads the claim through the mirror — and
+// a process-level copy of the same fact is exactly the second source that
+// drifts. The settings toggle reads this and writes through SetContainment.
+func (s *ProcessService) ContainmentState(processID int64) (bool, string, error) {
+	dests, err := s.db.ListProduceContainmentDestinations()
+	if err != nil {
+		return false, "", err
+	}
+	dest, ok := dests[processID]
+	return ok, dest, nil
+}
+
+// ContainmentStates is the list read: every process's derived containment
+// state in one query, keyed by process id — what the process list stamps
+// into its rows for the settings draft.
+func (s *ProcessService) ContainmentStates() (map[int64]string, error) {
+	return s.db.ListProduceContainmentDestinations()
+}
+
+// SetContainment stamps or clears the containment destination on every live
+// style's PRODUCE claims of one process — the settings toggle's write, a
+// batch editor over the claims, which remain the storage. Produce claims
+// only: the divert scopes to FG-bound legs, which ride produce claims.
+//
+// Each claim is echoed through InputFromClaim so the stamp touches ONLY the
+// containment route, and called_by records the actor.
+func (s *ProcessService) SetContainment(processID int64, enabled bool, destination, by string) error {
+	dest := strings.TrimSpace(destination)
+	if enabled && dest == "" {
+		return fmt.Errorf("a containment destination is required when the hold is enabled")
+	}
+	styles, err := s.db.ListStylesByProcess(processID)
+	if err != nil {
+		return err
+	}
+	for _, st := range styles {
+		claims, err := s.db.ListStyleNodeClaims(st.ID)
+		if err != nil {
+			return err
+		}
+		for _, c := range claims {
+			if c.Role != protocol.ClaimRoleProduce {
+				continue
+			}
+			if c.ContainmentDestination == dest {
+				continue // already there — idempotent on replays
+			}
+			in := domain.InputFromClaim(c)
+			in.ContainmentDestination = dest
+			in.CalledBy = by
+			if _, err := s.db.UpsertStyleNodeClaim(in); err != nil {
+				return fmt.Errorf("stamp containment on %s (style %s): %w", c.CoreNodeName, st.Name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // Create inserts a new process and returns the new row id.

@@ -43,8 +43,8 @@ func TestStyleCopyClaims_RulesAndResults(t *testing.T) {
 		srcID,          // skipped: is the source
 		otherProcStyle, // failed: different process
 		999999,         // failed: missing
-		tgtID,          // duplicate target â€” collapsed
-	}, true)
+		tgtID,          // duplicate target — collapsed
+	}, true, nil)
 
 	mustCopyStatus(t, results, tgtID, "copied", "")
 	mustCopyStatus(t, results, activeID, "failed", "active style")
@@ -79,4 +79,47 @@ func mustCopyStatus(t *testing.T, results []CopyClaimsResult, styleID int64, wan
 		}
 	}
 	t.Errorf("style %d missing from results: %+v", styleID, results)
+}
+
+// Override notes survive the service boundary and land on the per-target
+// result, and an unmatched node costs a note rather than an error — the
+// copy is still good; the operator just hears about the row that could not
+// attach.
+func TestStyleCopyClaims_OverrideNotes(t *testing.T) {
+	db := testdb.Open(t)
+	svc := NewStyleService(db)
+
+	pid, srcID := seedProcessStyle(t, db, "CopyNotesProc", "SRC")
+	tgtID, err := db.CreateStyle("TGT-NOTES", "", pid)
+	testutil.MustNoErr(t, err, "create TGT-NOTES")
+	_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+		StyleID: srcID, CoreNodeName: "N-1", Role: "produce",
+		SwapMode: protocol.SwapModeSequential, PayloadCode: "P-SRC", UOPCapacity: 10,
+	})
+	testutil.MustNoErr(t, err, "seed source claim")
+
+	results := svc.CopyClaims(srcID, []int64{tgtID}, true, []processes.ClaimOverride{
+		{Node: "N-1", PayloadCode: "P-TGT"}, // applies
+		{Node: "N-GHOST", Role: "produce"},  // matches nothing — a note, not an error
+	})
+	mustCopyStatus(t, results, tgtID, "copied", "")
+	for _, r := range results {
+		if r.StyleID == tgtID {
+			found := false
+			for _, n := range r.Notes {
+				if strings.Contains(n, "N-GHOST") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("result notes = %v, want one naming N-GHOST", r.Notes)
+			}
+		}
+	}
+
+	claims, err := db.ListStyleNodeClaims(tgtID)
+	testutil.MustNoErr(t, err, "list TGT-NOTES claims")
+	if len(claims) != 1 || claims[0].PayloadCode != "P-TGT" {
+		t.Errorf("claims = %+v, want the overridden payload applied", claims)
+	}
 }

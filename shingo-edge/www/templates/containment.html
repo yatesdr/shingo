@@ -1,0 +1,104 @@
+{{template "header" .}}
+
+<main class="container">
+  <div class="page-header mb-2">
+    <h1>Quality Containment</h1>
+    <span class="text-muted-sm">Bins of a contained payload divert here instead of the FG drop zone. Verify each bin good to release it; recall walks landed bins in.</span>
+  </div>
+
+  {{if .Containment}}
+  <div class="card mb-2">
+    <div class="card-header"><strong>Contained payloads</strong></div>
+    <div class="card-body">
+      <table class="table table-compact">
+        <thead><tr><th>Payload</th><th>Since</th><th>By</th><th>Reason</th><th></th></tr></thead>
+        <tbody>
+        {{range .Containment}}
+          {{if .Active}}
+          <tr>
+            <td><code>{{.PayloadCode}}</code></td>
+            <td class="text-muted-sm">{{.ActivatedAt}}</td>
+            <td class="text-muted-sm">{{.ActivatedBy}}</td>
+            <td class="text-muted-sm">{{if .Reason}}{{.Reason}}{{else}}—{{end}}</td>
+            <td>
+              <button class="btn btn-sm" data-action="recallContained"
+                data-payload="{{.PayloadCode}}">Recall landed bins</button>
+            </td>
+          </tr>
+          {{end}}
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="card mb-2"><div class="card-body text-muted">Nothing is currently contained. Set a payload's containment flag on Core's Payloads screen.</div></div>
+  {{end}}
+
+  {{if .Sections}}
+  <div class="card mb-2">
+    <div class="card-header"><strong>Containment locations</strong></div>
+    <div class="card-body">
+    {{range .Sections}}
+      <div class="mb-2">
+        <div class="mb-1"><strong class="mono">{{.NodeName}}</strong>{{if .Children}}
+          <span class="text-muted-xs">({{range $i, $c := .Children}}{{if $i}}, {{end}}<span class="mono">{{$c}}</span>{{end}})</span>{{end}}
+          {{if .Outbounds}}
+            <span class="text-muted-xs">releases to {{range $i, $o := .Outbounds}}{{if $i}}, {{end}}<span class="mono">{{$o}}</span>{{end}}</span>
+          {{else}}
+            <span class="text-muted-xs">(no claim names an outbound — release unavailable)</span>
+          {{end}}
+        </div>
+        {{if .Bins}}
+        <table class="table table-compact">
+          <thead><tr><th>Bin</th><th>Payload</th><th>UoP</th><th></th></tr></thead>
+          <tbody>
+          {{range .Bins}}
+          <tr>
+            <td class="mono">{{if .Label}}{{.Label}}{{else}}#{{.BinID}}{{end}}</td>
+            <td><code>{{.PayloadCode}}</code></td>
+            <td>{{.UOP}}</td>
+            <td>
+              <button class="btn btn-primary btn-sm" data-action="verifyContainmentBin"
+                data-node="{{.NodeName}}" data-bin-id="{{.BinID}}">Verify Good — release to FG</button>
+            </td>
+          </tr>
+          {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <div class="text-muted-sm">No bins at this node.</div>
+        {{end}}
+      </div>
+    {{end}}
+    </div>
+  </div>
+  {{else}}
+  <div class="card mb-2"><div class="card-body text-muted">No claim declares a containment destination yet. Configure a claim's Quality Containment section (Processes → claims editor) and it appears here.</div></div>
+  {{end}}
+
+  {{if .HeldBins}}
+  <div class="card mb-2">
+    <div class="card-header"><strong>Held bins (waiting for their containment move)</strong></div>
+    <div class="card-body">
+      <table class="table table-compact">
+        <thead><tr><th>Bin</th><th>Payload</th><th>At</th><th>Held by</th><th>Since</th></tr></thead>
+        <tbody>
+        {{range .HeldBins}}
+        <tr>
+          <td class="mono">{{if .Label}}{{.Label}}{{else}}#{{.BinID}}{{end}}</td>
+          <td><code>{{.PayloadCode}}</code></td>
+          <td class="mono">{{if .NodeName}}{{.NodeName}}{{else}}in transit{{end}}</td>
+          <td class="text-muted-sm">{{.HoldBy}}</td>
+          <td class="text-muted-sm">{{.HoldAt}}</td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{end}}
+</main>
+
+<script type="module" src="/static/js/pages/containment.js?v={{cacheBust}}"></script>
+{{template "footer" .}}

@@ -619,6 +619,15 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     outbound_staging        TEXT NOT NULL DEFAULT '',
     inbound_source          TEXT NOT NULL DEFAULT '',
     outbound_destination    TEXT NOT NULL DEFAULT '',
+    -- Quality containment: where a bin of this claim's payload goes when
+    -- containment is active for it (a quality alert on the payload, or an
+    -- operator's per-bin quality hold), INSTEAD of the ordinary FG
+    -- outbound_destination. Same vocabulary as outbound_destination (a node
+    -- name); blank = no containment route configured = the divert is inert
+    -- for this claim, which is the default and the common case. Resolved
+    -- Core-side at dispatch (the single-authority dropoff rule) against
+    -- Core's authoritative containment state; the Edge never enforces it.
+    containment_destination TEXT NOT NULL DEFAULT '',
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     keep_staged             INTEGER NOT NULL DEFAULT 0,

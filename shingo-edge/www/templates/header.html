@@ -29,12 +29,13 @@
         <div class="nav-links">
             <a href="/production" class="{{if eq .Page "production"}}active{{end}}">Production</a>
             <div class="nav-dropdown">
-              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "orders") (eq .Page "changeover") (eq .Page "processes") (eq .Page "replenishment")}} active{{end}}">Operations</a>
+              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "orders") (eq .Page "changeover") (eq .Page "processes") (eq .Page "replenishment") (eq .Page "containment")}} active{{end}}">Operations</a>
               <div class="nav-dropdown-menu">
                 <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
                 <a href="/changeover"{{if eq .Page "changeover"}} class="active"{{end}}>Changeover</a>
                 <a href="/processes"{{if eq .Page "processes"}} class="active"{{end}}>Processes</a>
                 <a href="/replenishment"{{if eq .Page "replenishment"}} class="active"{{end}}>Replenishment</a>
+                <a href="/containment"{{if eq .Page "containment"}} class="active"{{end}}>Quality Containment</a>
               </div>
             </div>
             {{if .Authenticated}}

@@ -2760,6 +2760,11 @@ function settingsDraftFor(p) {
         counter_enabled: !!p.counter_enabled,
         changeover_auto_arm: p.changeover_auto_arm || 'auto',
         flow_composer_enabled: !!p.flow_composer_enabled,
+        // Quality containment: DERIVED from the process's produce claims
+        // (stamped on the list rows by the server) — the toggle is a batch
+        // editor over the claims, which stay the storage the divert reads.
+        quality_hold_enabled: !!p.quality_hold_enabled,
+        quality_hold_destination: p.quality_hold_destination || '',
     };
 }
 
@@ -2827,6 +2832,25 @@ function drawSettings() {
         'list an operator would be choosing from. Off is right for a process whose flows are hammered ' +
         'out.</p>';
 
+    // QUALITY HOLD — a per-process opt-in. Off (the default) means every
+    // finished-goods delivery goes to its outbound destination as always; on,
+    // a payload flagged for quality containment diverts its bins to the
+    // destination picked here instead. The toggle stamps or clears the
+    // containment route on this process's produce claims (all live styles —
+    // a changeover inherits the route), and Core's divert reads those claims;
+    // the claim is the one storage, this screen is its batch editor.
+    const holdOn = !!S.settings.quality_hold_enabled;
+    const hold = '<div class="pd-sect"><h2>Quality hold</h2></div>' +
+        stField('Contain finished goods on a quality alert',
+            'off: FG deliveries go to the outbound destination as always · on: a contained payload\'s bins divert to the hold spot instead',
+            stToggle('quality_hold_enabled')) +
+        (holdOn
+            ? stField('Containment destination',
+                'where a contained payload\'s bins go — a node or a node group; the hold is inert until this is picked',
+                '<button class="pd-sel" data-act="st-holddest">' +
+                esc(S.settings.quality_hold_destination || '-- None --') + '<i class="car"></i></button>')
+            : '');
+
     const stylesSect = '<div class="pd-sect"><h2>Styles</h2><span class="pd-dim">' + styles +
         ' live · every part this process runs</span><span class="pd-spacer"></span>' +
         // GENERATE VARIANTS, PORTED. The dialog is not new design: the retired
@@ -2852,7 +2876,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + changeover + hmi + routingSection() + stylesSect + danger +
+        general + counter + changeover + hmi + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -2911,6 +2935,21 @@ async function saveSettings() {
             body: JSON.stringify(B().processGate(S.settings.flow_composer_enabled)),
         });
         if (!g.ok) await fail(g);
+    }
+    // QUALITY HOLD rides its own door too (the gate's pattern): the toggle
+    // stamps/clears the containment route on the process's produce claims, so
+    // it only fires when its two fields actually moved.
+    if (!S.settingsError && (S.settings.quality_hold_enabled !== before.quality_hold_enabled ||
+        S.settings.quality_hold_destination !== before.quality_hold_destination)) {
+        if (S.settings.quality_hold_enabled && !S.settings.quality_hold_destination) {
+            S.settingsError = 'Pick a containment destination before enabling the quality hold.';
+        } else {
+            const c = await fetch('/api/processes/' + S.processID + '/containment-setting', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination)),
+            });
+            if (!c.ok) await fail(c);
+        }
     }
     await reloadProcesses();
     S.settings = settingsDraft();
@@ -4203,8 +4242,41 @@ async function openScreenSheet(stationID) {
 // Its options carry their handler directly rather than a data-act, like every
 // other popover on this page — a second act for "the same list, written
 // somewhere else" is the kind of near-duplicate this page keeps collapsing.
-function openGroupPicker(btn, onPick) {
-    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
+// openContainmentPicker — the Quality Hold destination picker: the Group
+// picker's mechanics over the CORE NODE list instead of the group list. Every
+// node is offered (groups labeled, the claim pickers' convention); "-- None --"
+// is the blank that means "no route yet" — the save refuses an enabled toggle
+// with none picked. The core node list loads lazily (the shared read all four
+// pickers use), so this is async where its sibling is not.
+async function openContainmentPicker(btn) {
+    try {
+        await loadCoreNodes();
+    } catch (e) {
+        S.settingsError = 'Could not load the node list: ' + ((e && e.message) || e);
+        drawSettings();
+        return;
+    }
+    const pop = $('pd-stpop');
+    if (!pop) return;
+    const current = S.settings.quality_hold_destination || '';
+    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).map(n => ({
+        name: n.name,
+        label: n.name + (n.node_type === 'NGRP' ? ' (group)' : ''),
+    })));
+    pop.innerHTML = opts.map(o => '<button data-holdopt="' + esc(o.name) + '" class="' +
+        (current === o.name ? 'on' : '') + '">' + esc(o.label) + '</button>').join('');
+    pop.hidden = false;
+    placePopover(pop, btn);
+    pop.querySelectorAll('[data-holdopt]').forEach(b => b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        pop.hidden = true;
+        pop.innerHTML = '';
+        S.settings.quality_hold_destination = b.dataset.holdopt;
+        drawSettings();
+    }));
+}
+
+function openGroupPicker(btn, onPick) {    const inSheet = !!(btn.closest && btn.closest('.pd-modal'));
     const pop = inSheet ? $('pd-advpop') : $('pd-stpop');
     if (!pop) return;
     const current = onPick ? (S.add ? S.add.groupID : 0) : S.settings.group_id;
@@ -5225,8 +5297,12 @@ async function runPresetApply() {
 }
 
 // ── events ───────────────────────────────────────────────────────────────────
-// The acts that open #pd-pop. See the note in onClick.
-const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1 };
+// The acts that open #pd-pop. See the note in onClick. The SETTINGS tab's two
+// popover acts are here too ('st-group', 'st-holddest'): they open into
+// #pd-stpop, and the document-level closer does not care which popover — a
+// click that does not stop propagating opens the list and hides it before
+// paint, which is the "clickable, nothing happens" report.
+const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1 };
 
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
@@ -5286,6 +5362,7 @@ function onClick(e) {
                 drawSettings();
                 return;
             case 'st-group': openGroupPicker(btn); return;
+        case 'st-holddest': openContainmentPicker(btn); return;
             case 'st-discard': S.settings = settingsDraft(); S.settingsError = ''; drawSettings(); return;
             case 'st-save': saveSettings(); return;
             case 'st-generate': openGenerate(); return;

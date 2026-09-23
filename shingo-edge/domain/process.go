@@ -312,15 +312,22 @@ type NodeClaim struct {
 	//
 	// Written through ON TRANSITION ONLY; the level is read on every consume
 	// tick. Nullable because "not below" is genuinely absent, not a zero time.
-	BelowReorderSince    *time.Time `json:"below_reorder_since,omitempty"`
-	InboundStaging       string     `json:"inbound_staging"`
-	OutboundStaging      string     `json:"outbound_staging"`
-	InboundSource        string     `json:"inbound_source"`
-	OutboundDestination  string     `json:"outbound_destination"`
-	AllowedPayloadCodes  []string   `json:"allowed_payload_codes"`
-	AutoRequestPayload   string     `json:"auto_request_payload"`
-	KeepStaged           bool       `json:"keep_staged"`
-	EvacuateOnChangeover bool       `json:"evacuate_on_changeover"`
+	BelowReorderSince   *time.Time `json:"below_reorder_since,omitempty"`
+	InboundStaging      string     `json:"inbound_staging"`
+	OutboundStaging     string     `json:"outbound_staging"`
+	InboundSource       string     `json:"inbound_source"`
+	OutboundDestination string     `json:"outbound_destination"`
+	// ContainmentDestination is where a bin of this claim's payload goes when
+	// containment is active for it (quality alert on the payload, or an
+	// operator's per-bin quality hold) INSTEAD of OutboundDestination. Blank =
+	// no containment route = the divert is inert for this claim. Resolved
+	// Core-side at dispatch against Core's containment state; the Edge
+	// configures it and never enforces it.
+	ContainmentDestination string   `json:"containment_destination"`
+	AllowedPayloadCodes    []string `json:"allowed_payload_codes"`
+	AutoRequestPayload     string   `json:"auto_request_payload"`
+	KeepStaged             bool     `json:"keep_staged"`
+	EvacuateOnChangeover   bool     `json:"evacuate_on_changeover"`
 	// PairedCoreNode is ONE FIELD CARRYING TWO MEANINGS, and which one you are
 	// reading depends entirely on the swap mode:
 	//
@@ -1087,17 +1094,21 @@ type NodeClaimInput struct {
 	// drop the key, which is the same silence in different clothes — and
 	// Expand and InputFromClaim no longer echo it, because echoing a number
 	// nothing reads is how a dead column looks alive.
-	UOPCapacity          int      `json:"uop_capacity"`
-	ReorderPoint         int      `json:"reorder_point"`
-	InboundStaging       string   `json:"inbound_staging"`
-	OutboundStaging      string   `json:"outbound_staging"`
-	InboundSource        string   `json:"inbound_source"`
-	OutboundDestination  string   `json:"outbound_destination"`
-	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
-	AutoRequestPayload   string   `json:"auto_request_payload"`
-	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
-	PairedCoreNode       string   `json:"paired_core_node"`
-	SecondPairedCoreNode string   `json:"second_paired_core_node"`
+	UOPCapacity         int    `json:"uop_capacity"`
+	ReorderPoint        int    `json:"reorder_point"`
+	InboundStaging      string `json:"inbound_staging"`
+	OutboundStaging     string `json:"outbound_staging"`
+	InboundSource       string `json:"inbound_source"`
+	OutboundDestination string `json:"outbound_destination"`
+	// ContainmentDestination mirrors NodeClaim's field: where a contained
+	// payload's bins divert instead of OutboundDestination. Editor-owned
+	// value type (the editor always renders the control), blank = inert.
+	ContainmentDestination string   `json:"containment_destination"`
+	AllowedPayloadCodes    []string `json:"allowed_payload_codes"`
+	AutoRequestPayload     string   `json:"auto_request_payload"`
+	EvacuateOnChangeover   bool     `json:"evacuate_on_changeover"`
+	PairedCoreNode         string   `json:"paired_core_node"`
+	SecondPairedCoreNode   string   `json:"second_paired_core_node"`
 	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.
 	// See the contract block below, and the same-named fields on NodeClaim for
 	// what each one means.

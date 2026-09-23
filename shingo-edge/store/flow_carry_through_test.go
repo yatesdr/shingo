@@ -33,6 +33,11 @@ var composerSpeaks = map[string]bool{
 	"inbound_source": true, "inbound_staging": true, "outbound_staging": true,
 	"outbound_destination": true, "changeover_evac_destination": true,
 	"changeover_evac_nodes": true, "key_route": true,
+	// Quality containment: the claim's divert destination when containment is
+	// active for its payload. Composer-authored (the Quality Containment
+	// section of the claim editor) exactly like its sibling
+	// outbound_destination; carried through a flow copy for the same reason.
+	"containment_destination": true,
 }
 
 // composerRestamps is what a save is expected to change without being asked:

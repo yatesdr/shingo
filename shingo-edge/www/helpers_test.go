@@ -217,6 +217,19 @@ func (s *stubEngine) PushEmptyOut(int64) error                                  
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)           { return nil, nil }
 
+// Quality containment (v100): the stub answers the happy shape with no
+// order (nil, nil); a handler test that needs the refusal path sets a
+// canned error beside its spy fields.
+func (s *stubEngine) SendBinToQualityHold(int64, string) (*storeorders.Order, error) {
+	return nil, nil
+}
+func (s *stubEngine) ReleaseFromContainment(string, int64, string) (*storeorders.Order, error) {
+	return nil, nil
+}
+func (s *stubEngine) RecallContainedPayload(string, string) (int, []string, error) {
+	return 0, nil, nil
+}
+
 // CreateRetrieveForAPI mirrors the engine's NO-LOADER path, which is what the
 // stub genuinely models: it has an order manager and no loader aggregate, so
 // every destination is one no loader owns. The seam-routed half is exercised
@@ -453,6 +466,8 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Post("/styles/{id}/clone", h.apiCloneStyle)
 			r.Post("/styles/{id}/generate", h.apiGenerateStyles)
 			r.Post("/styles/{id}/claims/copy-to", h.apiCopyStyleClaims)
+			// The Quality Hold settings write (the toggle's stamp/clear).
+			r.Post("/processes/{id}/containment-setting", h.apiProcessContainmentSetting)
 
 			r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
 			r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)

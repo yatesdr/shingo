@@ -119,6 +119,16 @@ function processGate(enabled) {
     return { flow_composer_enabled: !!enabled };
 }
 
+// processContainment — POST /api/processes/{id}/containment-setting. The
+// Quality Hold settings toggle's write: enabled stamps the destination onto
+// the process's produce claims; disabled clears them. The CLAIM stays the
+// storage (the divert reads the claim); this body is the batch editor's
+// intent, and destination is required whenever enabled is true — the server
+// refuses an on-toggle with nowhere to send bins.
+function processContainment(enabled, destination) {
+    return { enabled: !!enabled, destination: String(destination || '') };
+}
+
 // styleWrite — PUT /api/styles/{id}, for both the rename and the Expected
 // CATID sheet. apiUpdateStyle refuses a zero process_id and writes description,
 // so the style as it stands is the base and the sheet's one field is the
@@ -400,7 +410,7 @@ function saveOutcome(status, body) {
 // again.
 (function () {
     const api = {
-        processCreate, processSettings, processGate, processGroupCreate,
+        processCreate, processSettings, processGate, processContainment, processGroupCreate,
         styleCreate, styleWrite, styleClone,
         processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
         routingSet, processPayloads,

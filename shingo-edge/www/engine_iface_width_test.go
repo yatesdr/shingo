@@ -14,8 +14,8 @@ import (
 // package can reach, which is the drift these tests exist to make visible.
 //
 // This REPLACES the tripwire that used to be cited from implementation-plan.md.
-// That document is not in this repo and never was — it lives at
-// docs/plans/implementation-plan.md in the GitHub root — so the ratchet it
+// That document is not in this repo and never was â€” it lives at
+// docs/plans/implementation-plan.md in the GitHub root â€” so the ratchet it
 // described could not run, and did not: edge's ServiceAccess doc comment said 16
 // methods while the interface carried 19, and engine.go called the wide one
 // "35 verbs" where it declares 52 of its own.
@@ -41,12 +41,12 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	for _, m := range want {
 		wantSet[m] = true
 		if !got[m] {
-			t.Errorf("%s: missing method %q — if it was renamed or removed, update the want-list", name, m)
+			t.Errorf("%s: missing method %q â€” if it was renamed or removed, update the want-list", name, m)
 		}
 	}
 	for m := range got {
 		if !wantSet[m] {
-			t.Errorf("%s: undeclared method %q — widening this interface needs an owner conversation, not a want-list edit", name, m)
+			t.Errorf("%s: undeclared method %q â€” widening this interface needs an owner conversation, not a want-list edit", name, m)
 		}
 	}
 	if rt.NumMethod() != len(want) {
@@ -84,8 +84,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 74 methods —
-// ServiceAccess's 20 embedded, plus 54 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 77 methods -
+// ServiceAccess's 20 embedded, plus 57 orchestration verbs of its own.
 //
 // The 51st is SetActivePullSide, added 2026-08-28 under the owner ruling that
 // the operator gets an explicit set/change control for which side of an A/B pair
@@ -113,6 +113,12 @@ func TestServiceAccessWidth(t *testing.T) {
 // (the qty edit is gone), and SetProcessActiveStyle is a MOVE like
 // DeleteProcess: apiSetActiveStyle called ProcessService().SetActiveStyle, and
 // an admin style flip now strands the process's piles through the engine.
+//
+// 55-57 are the quality-containment trio (SendBinToQualityHold,
+// ReleaseFromContainment, RecallContainedPayload), added 2026-09-14: the
+// station hold action, the containment screen's Verify Good, and the recall -
+// each creates robot work keyed on claims, so orchestration for the same
+// reason the release verbs are.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -171,14 +177,17 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		// condition its predecessor was retired for failing: the route exists
 		// because the operator UI calls it. See apiReleaseChangeoverProcess.
 		"ReleaseChangeoverWait",
+		"ReleaseFromContainment",
 		"RequestCatalogSync",
 		"RequestEmptyBin",
 		"RequestFullBin",
 		"RequestNodeMaterial",
 		"RequestNodeSync",
 		"RequestProduceSwap",
+		"RecallContainedPayload",
 		"SaveFlow",
 		"ScenePointNames",
+		"SendBinToQualityHold",
 		"SendEnvelope",
 		"SetActivePullSide",
 		"SetProcessActiveStyle",

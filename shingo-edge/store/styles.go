@@ -70,14 +70,41 @@ func (db *DB) CloneStyle(srcID int64, name, description, calledBy string) (int64
 
 // CopyStyleClaims replaces target's node claims with src's (the clone
 // column list, verbatim). includePayloads=false keeps the target's own
-// payloads on the nodes the two styles share. Callers own the
-// active-style and same-process rules.
-func (db *DB) CopyStyleClaims(srcID, targetID int64, includePayloads bool) error {
-	return processes.CopyStyleClaims(db.DB, srcID, targetID, includePayloads)
+// payloads on the nodes the two styles share; overrides is the optional
+// per-claim adjust layer applied on top of the copy (see
+// processes.ClaimOverride). Returns the notes the override layer produced.
+// Callers own the active-style and same-process rules.
+func (db *DB) CopyStyleClaims(srcID, targetID int64, includePayloads bool, overrides []processes.ClaimOverride) ([]string, error) {
+	return processes.CopyStyleClaims(db.DB, srcID, targetID, includePayloads, overrides)
 }
 
 // GenerateStyles scaffolds a family of styles from one base style, each a
 // clone of base with per-claim payload overrides applied, in one transaction.
 func (db *DB) GenerateStyles(baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
 	return processes.GenerateStyles(db.DB, baseID, variants, calledBy)
+}
+
+// ListClaimsByContainmentDest returns every live claim whose containment
+// destination is dest (the containment release path's claim lookup).
+func (db *DB) ListClaimsByContainmentDest(dest string) ([]processes.NodeClaim, error) {
+	return processes.ListClaimsByContainmentDest(db.DB, dest)
+}
+
+// ListContainmentClaimsForPayload returns every live claim bound to a payload
+// that declares a containment destination (the recall path's work list).
+func (db *DB) ListContainmentClaimsForPayload(payloadCode string) ([]processes.NodeClaim, error) {
+	return processes.ListContainmentClaimsForPayload(db.DB, payloadCode)
+}
+
+// ListAllContainmentClaims returns every live claim that declares a
+// containment destination (the containment screen's node grouping).
+func (db *DB) ListAllContainmentClaims() ([]processes.NodeClaim, error) {
+	return processes.ListAllContainmentClaims(db.DB)
+}
+
+// ListProduceContainmentDestinations returns, per process id, the containment
+// destination its live styles' produce claims declare (the settings toggle's
+// derived read).
+func (db *DB) ListProduceContainmentDestinations() (map[int64]string, error) {
+	return processes.ListProduceContainmentDestinations(db.DB)
 }

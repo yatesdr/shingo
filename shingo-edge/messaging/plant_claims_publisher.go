@@ -201,13 +201,14 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 				continue // loaders/unloaders excluded — pool, not claims
 			}
 			wire.Claims = append(wire.Claims, protocol.PlantClaim{
-				CoreNodeName:        c.CoreNodeName,
-				Role:                c.Role,
-				SwapMode:            c.SwapMode,
-				PayloadCode:         c.PayloadCode,
-				AllowedPayloadCodes: c.AllowedPayloads(),
-				UOPCapacity:         c.UOPCapacity,
-				ReorderPoint:        c.ReorderPoint,
+				CoreNodeName:           c.CoreNodeName,
+				Role:                   c.Role,
+				SwapMode:               c.SwapMode,
+				PayloadCode:            c.PayloadCode,
+				ContainmentDestination: c.ContainmentDestination,
+				AllowedPayloadCodes:    c.AllowedPayloads(),
+				UOPCapacity:            c.UOPCapacity,
+				ReorderPoint:           c.ReorderPoint,
 				// The legs, copied verbatim off the stored claim — the four
 				// node names that say where this cell's material comes from
 				// and where it goes. Core's loop compiler reads them; nothing

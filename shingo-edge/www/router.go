@@ -240,6 +240,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Get("/changeover/partial", h.handleChangeoverPartial)
 		r.Get("/orders/partial", h.handleOrdersPartial)
 		r.Get("/production/partial", h.handleProductionPartial)
+		// Quality containment's kiosk page — public, like the operator
+		// station displays: a shop-floor screen with no login.
+		r.Get("/containment", h.handleContainmentPage)
 
 		// Operator station HMI views are public (shop floor monitors)
 		r.Get("/operator/station/{id}", h.handleOperatorStationDisplay)
@@ -310,6 +313,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 			r.Post("/process-nodes/{id}/set-active-pull", h.apiSetActivePullSide)
+
+			// Quality containment (v100): the containment screen lives at the
+			// ROOT (/containment, public kiosk); the state read + verbs ride
+			// this /api subtree. Hold is process-node-scoped like every
+			// station action; release/recall are containment-scoped.
+			r.Get("/containment/state", h.apiGetContainmentState)
+			r.Post("/process-nodes/{id}/quality-hold", h.apiQualityHoldNode)
+			r.Post("/containment/release", h.apiContainmentRelease)
+			r.Post("/containment/recall", h.apiContainmentRecall)
 
 			// Changeover lifecycle
 			// Read-only gate status behind the live "waiting on:" panel.
@@ -426,6 +438,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// The flow-composer gate is its own PATCH: it is flipped from its
 				// own control after a review, never alongside a name edit.
 				r.Patch("/processes/{id}", h.apiPatchProcess)
+				// Quality containment's settings write: the toggle stamps or
+				// clears the containment destination on the process's produce
+				// claims (the claims stay the storage; the divert reads them).
+				r.Post("/processes/{id}/containment-setting", h.apiProcessContainmentSetting)
 
 				// Routing set — the nodes a process may route through that are
 				// not its positions (handlers_routing_nodes.go).

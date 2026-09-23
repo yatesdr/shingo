@@ -1,4 +1,4 @@
-import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast } from './operator-util.js';
+import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast, stationID } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -503,6 +503,36 @@ export function renderModal(entry) {
             if (btn) {
                 html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action);
             }
+
+            // Quality containment: a produce node whose claim declares a
+            // containment route can park the bin standing here into it. One
+            // button, acts on the present bin (the screens show one bin per
+            // node); the engine refuses when no bin is there. Shows whenever
+            // the route is configured — alongside the card's own action, not
+            // instead of it.
+            if (claim && claim.role === 'produce' && claim.containment_destination &&
+                entry.bin_state && entry.bin_state.occupied) {
+                html += actionBtn('SEND TO QUALITY HOLD', 'empty-tools', true,
+                    '/api/process-nodes/' + entry.node.id + '/quality-hold');
+            }
+        }
+    } else if (entry.containment_release_target) {
+        // CONTAINMENT POSITION: this tile carries no claim by design — it must
+        // stay inert to demand and sourcing — and the view stamped it because
+        // some producing claim names it as a containment destination. Its one
+        // verb is Verify Good: a bin the inspector has checked walks to that
+        // claim's outbound (the FG drop). The release verb re-checks the bin
+        // is still standing here before it creates anything, so a stale
+        // screen cannot move a bin a robot already took.
+        const binState = entry.bin_state;
+        if (binState && binState.occupied && binState.bin_id) {
+            html += '<div style="font-size:12px;color:#999;margin-bottom:8px">Contained bin — releases to <strong style="color:#ccc">' +
+                esc(entry.containment_release_target) + '</strong></div>';
+            html += actionBtn('VERIFY GOOD — RELEASE TO FG', 'request', true,
+                'release-containment:' + esc(entry.node.core_node_name) + '|' + binState.bin_id);
+        } else {
+            html += '<div style="padding:12px 16px;border-radius:8px;background:#1a1a1a;border:1px solid #444;color:#aab;font-size:14px;line-height:1.5">' +
+                'Quality containment position. No bin here — contained bins arrive by the quality divert or a Recall.</div>';
         }
     }
 
@@ -977,6 +1007,23 @@ function actionBtn(label, cls, enabled, action) {
 // the first colon; action is the full data-action string.
 const ACTION_HANDLERS = {
     'close': () => closeModal(),
+
+    // Quality containment: Verify Good on a containment tile. Posts the
+    // release body the endpoint wants (node_name + bin_id) — the default
+    // POST branch only knows how to send a payload_code, so this verb is
+    // its own door. The station id is the actor; the engine stamps it.
+    'release-containment': async (arg) => {
+        const parts = arg.split('|');
+        const nodeName = parts[0];
+        const binID = parseInt(parts[1], 10);
+        if (!nodeName || !binID) return;
+        const ok = await postAction('/api/containment/release', {
+            node_name: nodeName,
+            bin_id: binID,
+            actor: 'station-' + stationID,
+        }, loadViewRef);
+        if (ok) closeModal();
+    },
 
     'demand-card': (code) => {
         const sid = getSelectedNodeID();

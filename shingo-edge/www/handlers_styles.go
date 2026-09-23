@@ -16,6 +16,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 // --- Styles Admin ---
@@ -222,8 +223,9 @@ func (h *Handlers) apiCopyStyleClaims(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		TargetStyleIDs  []int64 `json:"target_style_ids"`
-		IncludePayloads bool    `json:"include_payloads"`
+		TargetStyleIDs  []int64                   `json:"target_style_ids"`
+		IncludePayloads bool                      `json:"include_payloads"`
+		Overrides       []processes.ClaimOverride `json:"overrides"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -233,11 +235,23 @@ func (h *Handlers) apiCopyStyleClaims(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "at least one target style is required")
 		return
 	}
-	if _, err := h.engine.StyleService().Get(srcID); err != nil {
+	// An override without a match key cannot attach to anything, and
+	// describing a per-claim adjustment while naming no claim is an authoring
+	// mistake — refuse it here rather than dropping it silently downstream.
+	// Everything else (blank = inherit, duplicates, node matching) is the
+	// service and store layers' business.
+	for _, ov := range req.Overrides {
+		if strings.TrimSpace(ov.Node) == "" {
+			writeError(w, http.StatusBadRequest, "every claim override needs a node")
+			return
+		}
+	}
+	src, err := h.engine.StyleService().Get(srcID)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "source style not found")
 		return
 	}
-	results := h.engine.StyleService().CopyClaims(srcID, req.TargetStyleIDs, req.IncludePayloads)
+	results := h.engine.StyleService().CopyClaims(srcID, req.TargetStyleIDs, req.IncludePayloads, req.Overrides)
 	copied := 0
 	for _, res := range results {
 		if res.Status == "copied" {
@@ -248,7 +262,7 @@ func (h *Handlers) apiCopyStyleClaims(w http.ResponseWriter, r *http.Request) {
 		// One backup + one coalesced Core sync for the whole batch — a copy
 		// to forty styles is one operator action, not forty.
 		h.requestBackup("claims-copied")
-		h.requestSpecChangePublish()
+		h.requestSpecChangePublish(src.ProcessID)
 	}
 	writeJSON(w, map[string]any{"copied": copied, "results": results})
 }

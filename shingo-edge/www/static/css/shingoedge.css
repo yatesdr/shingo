@@ -506,6 +506,37 @@ textarea.form-input {
 /* Standard modal sizes (replacing inline max-width). */
 .modal-md { max-width: 640px; }
 .modal-wide { max-width: 880px; }
+.modal-xl { max-width: 1150px; }
+
+/* The Copy Node Claims modal grows and SPLITS when its "Adjust copied
+ * claims" pane is on: two columns instead of one tall one — targets on the
+ * left, the per-claim adjust table on the right — because a claims set is
+ * routinely 10+ rows and stacking under a 640px column is exactly how an
+ * operator loses the row they were editing. JS toggles the class on the
+ * card when the checkbox flips, so the unchecked modal keeps .modal-md.
+ * The body stays the one scroll container; the right pane only needs its
+ * own minimum so the crowded table keeps column headers away from the
+ * wrap point. */
+#copy-claims-modal .card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+#copy-claims-modal.copy-claims-split .card-body {
+    flex-direction: row;
+    gap: 1.25rem;
+}
+
+#copy-claims-modal.copy-claims-split #copy-claims-main-pane {
+    flex: 0 0 300px;
+    min-width: 0;
+}
+
+#copy-claims-modal.copy-claims-split #copy-claims-overrides-wrap {
+    flex: 1 1 auto;
+    min-width: 520px;
+}
 
 /* Quiet helper text under a form control. Same voice as Core's
  * .field-help--inline (components.css); processes.html uses this

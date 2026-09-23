@@ -73,18 +73,24 @@ func FlowFingerprintColumns() []string {
 // order. The json tags ARE the column names; a column added to one list and
 // not the other fails the drift test.
 type fingerprintClaim struct {
-	ID                             int64                `json:"id"`
-	CoreNodeName                   string               `json:"core_node_name"`
-	Role                           protocol.ClaimRole   `json:"role"`
-	SwapMode                       protocol.SwapMode    `json:"swap_mode"`
-	PayloadCode                    string               `json:"payload_code"`
-	ReorderPoint                   int                  `json:"reorder_point"`
-	ReorderPointSource             string               `json:"reorder_point_source"`
-	AutoReorder                    bool                 `json:"auto_reorder"`
-	InboundStaging                 string               `json:"inbound_staging"`
-	OutboundStaging                string               `json:"outbound_staging"`
-	InboundSource                  string               `json:"inbound_source"`
-	OutboundDestination            string               `json:"outbound_destination"`
+	ID                  int64              `json:"id"`
+	CoreNodeName        string             `json:"core_node_name"`
+	Role                protocol.ClaimRole `json:"role"`
+	SwapMode            protocol.SwapMode  `json:"swap_mode"`
+	PayloadCode         string             `json:"payload_code"`
+	ReorderPoint        int                `json:"reorder_point"`
+	ReorderPointSource  string             `json:"reorder_point_source"`
+	AutoReorder         bool               `json:"auto_reorder"`
+	InboundStaging      string             `json:"inbound_staging"`
+	OutboundStaging     string             `json:"outbound_staging"`
+	InboundSource       string             `json:"inbound_source"`
+	OutboundDestination string             `json:"outbound_destination"`
+	// Quality containment's divert destination: where a contained payload's
+	// bins go instead of OutboundDestination. IN the fingerprint — a save
+	// that changed it changed what a plan would do (the divert is a routing
+	// fact Core reads), which is exactly what the staleness check exists to
+	// catch.
+	ContainmentDestination         string               `json:"containment_destination"`
 	AllowedPayloadCodes            []string             `json:"allowed_payload_codes"`
 	AutoRequestPayload             string               `json:"auto_request_payload"`
 	KeepStaged                     bool                 `json:"keep_staged"`
@@ -146,7 +152,8 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			ReorderPoint: c.ReorderPoint, ReorderPointSource: c.ReorderPointSource, AutoReorder: c.AutoReorder,
 			InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,
 			InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination,
-			AllowedPayloadCodes: cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
+			ContainmentDestination: c.ContainmentDestination,
+			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
 			KeepStaged: c.KeepStaged, EvacuateOnChangeover: c.EvacuateOnChangeover, PairedCoreNode: c.PairedCoreNode,
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,
 			LinesideSoftThreshold: c.LinesideSoftThreshold, SecondPairedCoreNode: c.SecondPairedCoreNode,

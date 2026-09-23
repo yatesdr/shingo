@@ -883,6 +883,12 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// v39 (2026-09-14, quality containment): where a contained payload's bins go
+	// instead of the claim's ordinary FG outbound_destination. Blank = unconfigured
+	// = the divert is inert, safe on every existing claim. Same definition as the
+	// baseline CREATE; also carried by the rebuild SQL below the call site.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN containment_destination TEXT NOT NULL DEFAULT ''")
+
 	if err := db.rebuildStyleNodeClaims(); err != nil {
 		return err
 	}

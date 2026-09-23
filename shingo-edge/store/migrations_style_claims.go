@@ -12,21 +12,21 @@ import (
 // the current column defaults.
 //
 // THREE CHANGES, ONE REBUILD. SQLite has no ALTER COLUMN DROP DEFAULT, so each
-// of these needs the table recreated — and rebuilding the same table twice in a
+// of these needs the table recreated â€” and rebuilding the same table twice in a
 // week is how a plant deploy goes wrong:
 //
 //	auto_reorder  DEFAULT 1 -> none. b8836528 changed the baseline ("stop the
 //	              claim editor force-arming auto_reorder on every save") and the
 //	              change reached NO plant, because CREATE TABLE IF NOT EXISTS
 //	              no-ops on a table that already exists. Every plant edge in the
-//	              field still defaults a new claim's autoreorder to ON — on the
+//	              field still defaults a new claim's autoreorder to ON â€” on the
 //	              column behind the 2026-07-21 cascade.
 //	swap_mode     DEFAULT 'simple' -> none. Same shape, older.
 //	below_reorder_since  added by the ALTER in migrate(); the rebuild carries it
 //	              so the fresh and upgraded paths land on ONE shape.
 //
-// Both defaults are INERT today — every writer (UpsertStyleNodeClaim,
-// cloneClaimColumns, seed_edge) names its column — so nothing behaves
+// Both defaults are INERT today â€” every writer (UpsertStyleNodeClaim,
+// cloneClaimColumns, seed_edge) names its column â€” so nothing behaves
 // differently after this runs. What changes is that a hand-written INSERT that
 // omits auto_reorder now lands OFF, which is the value a claim nobody armed
 // should have.
@@ -37,13 +37,13 @@ import (
 // rather than the allowlist quietly covering for it.
 //
 // PRAGMA legacy_alter_table IS LOAD-BEARING, not a precaution. Three columns
-// across two tables carry REFERENCES style_node_claims(id) —
+// across two tables carry REFERENCES style_node_claims(id) â€”
 // changeover_node_tasks.from_claim_id / .to_claim_id and
 // process_node_runtime_states.active_claim_id. Since SQLite 3.25 an
 // ALTER TABLE ... RENAME rewrites those clauses in the OTHER tables' stored
 // schemas, so the rename would silently re-point all three at
 // style_node_claims_legacy and the DROP below would leave them dangling
-// (invisibly, because Edge runs with foreign_keys OFF — see store.Open). Legacy
+// (invisibly, because Edge runs with foreign_keys OFF â€” see store.Open). Legacy
 // mode restores the old behaviour: rename the table, touch nothing else, which
 // is exactly what a rename/create/copy/drop rebuild needs.
 //
@@ -68,7 +68,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	// NAME, so that Core's demand_origins.process_id can be the one value
 	// process_styles and plant-claims already use. CREATE TABLE IF NOT EXISTS
 	// cannot change a column's type on a table that already exists, and SQLite
-	// would not have complained anyway — it is dynamically typed, so an INTEGER
+	// would not have complained anyway â€” it is dynamically typed, so an INTEGER
 	// column accepts "SNF2" and stores it as text. That is exactly why this has
 	// to be detected rather than left to fail: nothing breaks, the schema simply
 	// stops describing the data.
@@ -86,7 +86,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	if err != nil || !present {
 		return err
 	}
-	// The target is not "no default" — it is the shape sqlite_ddl.go declares:
+	// The target is not "no default" â€” it is the shape sqlite_ddl.go declares:
 	// auto_reorder keeps DEFAULT 0 (a claim nobody armed lands OFF), and
 	// swap_mode has none. Branching on PRESENCE rather than VALUE would find
 	// auto_reorder's DEFAULT 0 on a correct database and rebuild the table on
@@ -108,7 +108,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	// There is no column-adding step here any more, and there must never be one
 	// again: this function returns early on any database that has already been
 	// rebuilt, so a column added on this side of that return reaches fresh
-	// installs and no plant. That is exactly what happened to six of them —
+	// installs and no plant. That is exactly what happened to six of them â€”
 	// see the block above the call site in migrations.go.
 
 	if _, err := db.Exec(`PRAGMA legacy_alter_table = ON`); err != nil {
@@ -131,7 +131,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	}
 	if legacyMode != 1 {
 		return fmt.Errorf(
-			"style_node_claims rebuild: PRAGMA legacy_alter_table did not take (reads %d, want 1) — "+
+			"style_node_claims rebuild: PRAGMA legacy_alter_table did not take (reads %d, want 1) â€” "+
 				"refusing to rename, because SQLite would rewrite REFERENCES style_node_claims(id) in "+
 				"changeover_node_tasks and process_node_runtime_states to point at the scratch table, "+
 				"and the DROP would then leave all three dangling with foreign_keys OFF to hide it",
@@ -142,7 +142,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	// steps each statement of a multi-statement string in turn with no wrapping
 	// transaction, so a failure part-way commits everything before it. Measured
 	// 2026-07-28 against the Springfield dump: faulting the INSERT leaves the
-	// rename and the CREATE applied — an empty style_node_claims beside a
+	// rename and the CREATE applied â€” an empty style_node_claims beside a
 	// style_node_claims_legacy holding all 35 rows. The data survives; what does
 	// not survive is anyone noticing. assertNoStrandedRebuild above is what turns
 	// that state into a startup failure on the next boot.
@@ -160,7 +160,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 // style_node_claims_legacy behind holding the plant's claims.
 //
 // Nothing else detects that. rebuildStyleNodeClaims decides whether to run by
-// reading the LIVE table's column defaults — and after a half-finished rebuild
+// reading the LIVE table's column defaults â€” and after a half-finished rebuild
 // those defaults are already the new, correct ones, because the CREATE is what
 // wrote them. So the guard returns "already the current shape" and migrate()
 // succeeds. verifySchema then passes too, because every required table and
@@ -170,7 +170,7 @@ func (db *DB) rebuildStyleNodeClaims() error {
 // Measured against the 2026-07-27 Springfield dump, killing the rebuild after
 // statement 1 or 2 leaves 0 live claims and 35 stranded, and Open() returns no
 // error. An interrupted rebuild is therefore indistinguishable from a completed
-// one — a NEVER-migrated database is distinguishable (auto_reorder still
+// one â€” a NEVER-migrated database is distinguishable (auto_reorder still
 // DEFAULT 1), but a half-migrated one is not. The stranded table is the only
 // evidence there is.
 //
@@ -234,6 +234,7 @@ CREATE TABLE style_node_claims (
     outbound_staging        TEXT NOT NULL DEFAULT '',
     inbound_source          TEXT NOT NULL DEFAULT '',
     outbound_destination    TEXT NOT NULL DEFAULT '',
+    containment_destination TEXT NOT NULL DEFAULT '',
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     keep_staged             INTEGER NOT NULL DEFAULT 0,
@@ -273,7 +274,7 @@ CREATE TABLE style_node_claims (
 INSERT INTO style_node_claims (
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
     reorder_point, auto_reorder, inbound_staging, outbound_staging, inbound_source,
-    outbound_destination, allowed_payload_codes, auto_request_payload, keep_staged,
+    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged,
     evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
     lineside_soft_threshold, reuse_compatible_bins, auto_push, reorder_point_source,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
@@ -286,7 +287,7 @@ INSERT INTO style_node_claims (
 SELECT
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
     reorder_point, auto_reorder, inbound_staging, outbound_staging, inbound_source,
-    outbound_destination, allowed_payload_codes, auto_request_payload, keep_staged,
+    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged,
     evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
     lineside_soft_threshold, reuse_compatible_bins, auto_push, reorder_point_source,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
@@ -315,13 +316,13 @@ func hasNarrowDemandOrigins(db *sql.DB) bool {
 }
 
 // hasIntegerProcessIDDemandOrigins reports whether demand_origins_open still
-// declares process_id as INTEGER — the pre-rename shape, keyed on the Edge
+// declares process_id as INTEGER â€” the pre-rename shape, keyed on the Edge
 // SQLite row id rather than on the process name.
 //
 // DROP AND REBUILD IS THE RIGHT MIGRATION HERE, not an ALTER chain, and for the
 // reason the caller states about the other shape: this table holds ONLY OPEN
 // episodes, nothing is deployed carrying it, and Core keeps the history. The
-// worst case is that an episode open at the moment of the upgrade is lost — and
+// worst case is that an episode open at the moment of the upgrade is lost â€” and
 // that case is already covered, because Core's reconciling sweep exists
 // precisely to close an episode whose Edge-side notification never arrives.
 //

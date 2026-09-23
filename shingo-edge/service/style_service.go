@@ -1,6 +1,8 @@
 package service
 
 import (
+	"strings"
+
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -95,10 +97,16 @@ func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVar
 // CopyClaimsResult is one target style's outcome in a CopyClaims batch.
 // Status is "copied", "skipped", or "failed" — the batch never aborts on
 // the first bad target, so a 40-style copy reports every outcome.
+//
+// Notes carries the override layer's report for a copied target: renames it
+// refused (collision or press-index distinctness), role changes it withheld
+// against SwapMode requirements, pair references it auto-fixed after a
+// rename. Empty unless the copy carried overrides that had something to say.
 type CopyClaimsResult struct {
-	StyleID int64  `json:"style_id"`
-	Status  string `json:"status"`
-	Reason  string `json:"reason,omitempty"`
+	StyleID int64    `json:"style_id"`
+	Status  string   `json:"status"`
+	Reason  string   `json:"reason,omitempty"`
+	Notes   []string `json:"notes,omitempty"`
 }
 
 // CopyClaims replaces each target style's node claims with the source's —
@@ -115,11 +123,60 @@ type CopyClaimsResult struct {
 // includePayloads=false preserves each target's own payloads (per node,
 // for nodes the two styles share) — the "copy the choreography, keep my
 // payloads" mode.
-func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads bool) []CopyClaimsResult {
+//
+// overrides (matched by the source claim's node name, blank field =
+// inherit the copied value) ride the same transaction per target, after
+// the copy. They are cleaned up once here so the store layer sees one
+// well-formed row per node: blank match keys dropped, duplicates collapsed
+// last-wins, all-blank rows dropped as the no-ops the modal never sends.
+func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads bool, overrides []processes.ClaimOverride) []CopyClaimsResult {
 	results := make([]CopyClaimsResult, 0, len(targets))
 	if len(targets) == 0 {
 		return results
 	}
+	// One well-formed row per node survives to the store layer: trimmed,
+	// duplicates collapsed last-wins, no-ops (nothing set) dropped. Rows
+	// without a match key cannot attach to anything and are refused here —
+	// a 400 from the handler is the honest answer, and the handler owns it,
+	// so a blank key that still arrives is dropped with the same silence a
+	// blank field would get.
+	clean := make([]processes.ClaimOverride, 0, len(overrides))
+	ovSeen := map[string]bool{}
+	for _, ov := range overrides {
+		ov.Node = strings.TrimSpace(ov.Node)
+		if ov.Node == "" {
+			continue
+		}
+		ov.CoreNodeName = strings.TrimSpace(ov.CoreNodeName)
+		ov.Role = strings.TrimSpace(ov.Role)
+		ov.PayloadCode = strings.TrimSpace(ov.PayloadCode)
+		ov.InboundSource = strings.TrimSpace(ov.InboundSource)
+		ov.OutboundDestination = strings.TrimSpace(ov.OutboundDestination)
+		ov.InboundStaging = strings.TrimSpace(ov.InboundStaging)
+		ov.OutboundStaging = strings.TrimSpace(ov.OutboundStaging)
+		ov.PairedCoreNode = strings.TrimSpace(ov.PairedCoreNode)
+		ov.SecondPairedCoreNode = strings.TrimSpace(ov.SecondPairedCoreNode)
+		if ov.CoreNodeName == "" && ov.Role == "" && ov.PayloadCode == "" &&
+			ov.InboundSource == "" && ov.OutboundDestination == "" &&
+			ov.InboundStaging == "" && ov.OutboundStaging == "" &&
+			ov.PairedCoreNode == "" && ov.SecondPairedCoreNode == "" {
+			continue
+		}
+		key := ov.Node
+		if ovSeen[key] {
+			for i := range clean {
+				if clean[i].Node == key {
+					clean[i] = ov
+					break
+				}
+			}
+			continue
+		}
+		ovSeen[key] = true
+		clean = append(clean, ov)
+	}
+	overrides = clean
+
 	src, err := s.db.GetStyle(srcID)
 	if err != nil || src == nil {
 		return []CopyClaimsResult{{Status: "failed", Reason: "source style not found"}}
@@ -149,10 +206,12 @@ func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads 
 			case tgt.ID == activeStyleID:
 				res.Status, res.Reason = "failed", "active style cannot be a copy target"
 			default:
-				if err := s.db.CopyStyleClaims(srcID, targetID, includePayloads); err != nil {
+				notes, err := s.db.CopyStyleClaims(srcID, targetID, includePayloads, overrides)
+				if err != nil {
 					res.Status, res.Reason = "failed", err.Error()
 				} else {
 					res.Status = "copied"
+					res.Notes = notes
 				}
 			}
 		}
@@ -180,6 +239,14 @@ func (s *StyleService) ListClaims(styleID int64) ([]processes.NodeClaim, error) 
 	// the Core aggregate, not these per-style edge flag tables, and the claim editor
 	// no longer surfaces them — so nothing is populated onto the claims here.
 	return claims, nil
+}
+
+// ListContainmentClaims returns every live claim that declares a containment
+// destination. The containment screen groups its nodes from this: each
+// distinct containment destination is a section, each claim its outbound
+// release target.
+func (s *StyleService) ListContainmentClaims() ([]processes.NodeClaim, error) {
+	return s.db.ListAllContainmentClaims()
 }
 
 // GetClaim returns one claim by id.

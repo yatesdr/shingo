@@ -67,7 +67,7 @@ type (
 // than by each of the readers.
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	` + capacity.SQL("style_node_claims") + `, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
+	inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
@@ -90,7 +90,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var presetID, presetVersion sql.NullInt64
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&resolvedCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
-		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
+		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
@@ -161,6 +161,115 @@ func logUnreachableProduceReorderPoint(c NodeClaim) {
 		"a count the bin can never reach — the cell decides at %d instead. Set a reorder point "+
 		"below capacity to have it ask earlier than full.",
 		c.ID, c.CoreNodeName, c.ReorderPoint, c.UOPCapacity, c.UOPCapacity)
+}
+
+// ListClaimsByContainmentDest returns every live claim whose containment
+// destination is dest. The containment screen's release path uses it to find
+// the claim whose ordinary outbound is where a verified bin goes; more than
+// one DISTINCT outbound among the rows is an ambiguity the caller refuses
+// (the same rule the Core divert applies).
+func ListClaimsByContainmentDest(db *sql.DB, dest string) ([]NodeClaim, error) {
+	rows, err := db.Query(`SELECT `+claimSelect+`
+		FROM style_node_claims
+		WHERE containment_destination = ?
+		AND style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL) AND`+liveClaims+`
+		ORDER BY sequence, core_node_name`, dest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeClaim
+	for rows.Next() {
+		c, err := scanNodeClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListContainmentClaimsForPayload returns every live claim bound to a payload
+// that declares a containment destination — the recall path's work list: for
+// each claim, bins of that payload sitting at the claim's outbound get walked
+// into containment.
+func ListContainmentClaimsForPayload(db *sql.DB, payloadCode string) ([]NodeClaim, error) {
+	rows, err := db.Query(`SELECT `+claimSelect+`
+		FROM style_node_claims
+		WHERE payload_code = ? AND containment_destination <> ''
+		AND style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL) AND`+liveClaims+`
+		ORDER BY sequence, core_node_name`, payloadCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeClaim
+	for rows.Next() {
+		c, err := scanNodeClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListAllContainmentClaims returns every live claim that declares a
+// containment destination, across all styles. The containment screen groups
+// its nodes from this: each distinct containment destination is a screen
+// section, each claim its outbound release target.
+func ListAllContainmentClaims(db *sql.DB) ([]NodeClaim, error) {
+	rows, err := db.Query(`SELECT ` + claimSelect + `
+		FROM style_node_claims
+		WHERE containment_destination <> ''
+		AND style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL) AND` + liveClaims + `
+		ORDER BY containment_destination, sequence, core_node_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeClaim
+	for rows.Next() {
+		c, err := scanNodeClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListProduceContainmentDestinations returns, per process id, the containment
+// destination its live styles' PRODUCE claims declare — the derived state the
+// process settings' Quality Hold toggle reads. Only produce rows count: the
+// divert scopes to FG-bound legs, which ride produce claims; a consume
+// claim's outbound is a swap return, and stamping one would be inert at best.
+// The map carries the FIRST destination seen per process; a process whose
+// claims disagree shows the first, and the settings save overwrites all of
+// them, which is how the disagreement gets fixed.
+func ListProduceContainmentDestinations(db DBTX) (map[int64]string, error) {
+	rows, err := db.Query(`SELECT s.process_id, c.containment_destination
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.role = 'produce' AND c.containment_destination <> ''
+		ORDER BY s.process_id, c.sequence, c.core_node_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var processID int64
+		var dest string
+		if err := rows.Scan(&processID, &dest); err != nil {
+			return nil, err
+		}
+		if _, seen := out[processID]; !seen {
+			out[processID] = dest
+		}
+	}
+	return out, rows.Err()
 }
 
 // ListClaims returns every claim for a style.
@@ -387,6 +496,7 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
 	in.PairedCoreNode = strings.TrimSpace(in.PairedCoreNode)
 	in.SecondPairedCoreNode = strings.TrimSpace(in.SecondPairedCoreNode)
+	in.ContainmentDestination = strings.TrimSpace(in.ContainmentDestination)
 
 	if in.Role != protocol.ClaimRoleProduce {
 		in.Role = protocol.ClaimRoleConsume
@@ -511,17 +621,17 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	}
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
-		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
+		inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes, changeover_evac_destination,
 		index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		        ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
+		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
@@ -687,6 +797,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	sets := []string{
 		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
+		`containment_destination=?`,
 		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
@@ -695,6 +806,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	args := []any{
 		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
+		in.ContainmentDestination,
 		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,

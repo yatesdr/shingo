@@ -11,7 +11,9 @@ package processes
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"shingo/protocol"
@@ -226,7 +228,7 @@ func RestoreStyle(db *sql.DB, id int64) error {
 // A clone that copied it would copy a number nothing reads.
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
+	inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
 	evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,
@@ -377,6 +379,297 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, ca
 	return ids, nil
 }
 
+// ClaimOverride is one per-claim adjustment for a CopyStyleClaims batch,
+// matched by the SOURCE claim's core_node_name — the copied rows carry the
+// source's node names until a rename changes them, which is what makes the
+// key stable for the span this struct is used over. Every other field is
+// optional: blank inherits the copied claim's value, so a row names only
+// what it changes. Shared verbatim with the copy modal, which renders one
+// row per source claim with these same fields as inputs.
+type ClaimOverride struct {
+	Node                 string `json:"node"` // match key; the one required field
+	CoreNodeName         string `json:"core_node"`
+	Role                 string `json:"role"`
+	PayloadCode          string `json:"payload_code"`
+	InboundSource        string `json:"inbound_source"`
+	OutboundDestination  string `json:"outbound_destination"`
+	InboundStaging       string `json:"inbound_staging"`
+	OutboundStaging      string `json:"outbound_staging"`
+	PairedCoreNode       string `json:"paired_core_node"`
+	SecondPairedCoreNode string `json:"second_paired_core_node"`
+}
+
+// copiedClaim is the slice of a freshly copied claim row the override layer
+// reads and rewrites. Read once up front instead of per-override, and
+// updated in memory as each write lands, so collision and distinctness
+// checks in the rename pass see the same truth the earlier writes produced.
+type copiedClaim struct {
+	node                               string
+	swapMode                           protocol.SwapMode
+	payload                            string
+	allowed                            []string
+	inboundSource, outboundDestination string
+	inboundStaging, outboundStaging    string
+	paired, second                     string
+}
+
+// readCopiedClaims loads the just-inserted copies for the override layer.
+// allowed_payload_codes tolerates the column's legacy empty default: an
+// unparseable or empty value reads as no allowed list, which only ever
+// widens what the payload-append pass below writes back.
+func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, error) {
+	gr, err := tx.Query(`SELECT core_node_name, swap_mode, payload_code, allowed_payload_codes,
+		inbound_source, outbound_destination, inbound_staging, outbound_staging,
+		paired_core_node, second_paired_core_node FROM style_node_claims WHERE style_id = ? AND`+liveClaims, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer gr.Close()
+	out := map[string]*copiedClaim{}
+	for gr.Next() {
+		var c copiedClaim
+		var allowed string
+		if err := gr.Scan(&c.node, &c.swapMode, &c.payload, &allowed, &c.inboundSource,
+			&c.outboundDestination, &c.inboundStaging, &c.outboundStaging, &c.paired, &c.second); err != nil {
+			return nil, err
+		}
+		var allowedList []string
+		_ = json.Unmarshal([]byte(allowed), &allowedList)
+		c.allowed = allowedList
+		out[c.node] = &c
+	}
+	return out, gr.Err()
+}
+
+// overrideApplied returns the claim's values as one override row leaves
+// them. Blank fields survive untouched; text fields are trimmed on the same
+// trust as UpsertClaim trims again behind the API's trim. Role is not here:
+// the requirement rules key on the claim's swap mode, never its role, so
+// the role gate reads the final values and keeps its own decision separate.
+func overrideApplied(row copiedClaim, ov ClaimOverride) copiedClaim {
+	out := row
+	if v := strings.TrimSpace(ov.PayloadCode); v != "" {
+		out.payload = v
+	}
+	if v := strings.TrimSpace(ov.InboundSource); v != "" {
+		out.inboundSource = v
+	}
+	if v := strings.TrimSpace(ov.OutboundDestination); v != "" {
+		out.outboundDestination = v
+	}
+	if v := strings.TrimSpace(ov.InboundStaging); v != "" {
+		out.inboundStaging = v
+	}
+	if v := strings.TrimSpace(ov.OutboundStaging); v != "" {
+		out.outboundStaging = v
+	}
+	if v := strings.TrimSpace(ov.PairedCoreNode); v != "" {
+		out.paired = v
+	}
+	if v := strings.TrimSpace(ov.SecondPairedCoreNode); v != "" {
+		out.second = v
+	}
+	return out
+}
+
+// claimSwapModeRequirement restates processes/claims.go UpsertClaim's own
+// SwapMode rules against a claim's final values, for the override layer's
+// validity check. Same rules, same order, same wording. The copy path
+// trusts live claims as they are, so the only route to a violated rule here
+// is an override that was supposed to supply the missing field and didn't.
+// Empty message = the claim passes.
+func claimSwapModeRequirement(mode protocol.SwapMode, c copiedClaim) string {
+	switch mode {
+	case protocol.SwapModeManualSwap:
+		if c.outboundDestination == "" {
+			return "manual_swap claims require outbound_destination to be set"
+		}
+	case protocol.SwapModeTwoRobot:
+		if c.inboundStaging == "" {
+			return "two_robot claims require inbound_staging to be set"
+		}
+	case protocol.SwapModeTwoRobotPressIndex:
+		if c.paired == "" {
+			return "two_robot_press_index claims require paired_core_node (back position) to be set"
+		}
+		if c.outboundDestination == "" {
+			return "two_robot_press_index claims require outbound_destination to be set"
+		}
+	}
+	return ""
+}
+
+// applyClaimOverrides rewrites the freshly copied target claims per the
+// operator's adjust rows, in two passes inside the copy transaction.
+//
+// PASS 1 — field updates, keyed on the claim's current (source) node name.
+// Role is the only field with a validity gate, and the gate is the one
+// agreed for this feature: the SwapMode requirements are evaluated against
+// the claim's POST-override values (the row may supply the missing field
+// beside the role it changes), and a claim that still fails one keeps its
+// copied role while every other field of that row still applies. A
+// two_robot_press_index paired/second override is distinctness-checked the
+// same way and withheld alone — the front, back and third positions must
+// stay distinct (claims.go:246-252).
+//
+// PASS 2 — renames, after the fields, because a rename changes the match
+// key pass 1 keyed on. A rename is refused (with a note, not an error —
+// UNIQUE(style_id, core_node_name) would abort the whole batch otherwise)
+// when the copied set already holds a claim on the new name, or when the
+// renamed claim itself is a press-index cell whose positions the rename
+// would collapse onto each other. A rename that lands ALSO repairs the
+// pairing partner: every PairedCoreNode / SecondPairedCoreNode in the
+// target still holding the old name is pointed at the new one in the same
+// transaction — an A/B pair copied with one side renamed must not end up
+// referencing a node that no longer has a claim.
+//
+// Notes are returned to the caller for the operator's results toast.
+func applyClaimOverrides(tx *sql.Tx, targetID int64, overrides []ClaimOverride) ([]string, error) {
+	notes := make([]string, 0, len(overrides))
+	if len(overrides) == 0 {
+		return notes, nil
+	}
+	rows, err := readCopiedClaims(tx, targetID)
+	if err != nil {
+		return nil, fmt.Errorf("read copied claims for overrides: %w", err)
+	}
+
+	for _, ov := range overrides {
+		node := strings.TrimSpace(ov.Node)
+		if node == "" {
+			notes = append(notes, `an override row is missing its "node" match key — ignored`)
+			continue
+		}
+		row := rows[node]
+		if row == nil {
+			notes = append(notes, fmt.Sprintf("node %q: the source style has no such claim — override ignored", node))
+			continue
+		}
+
+		var sets []string
+		var args []any
+		add := func(col, val string) {
+			sets = append(sets, col+" = ?")
+			args = append(args, val)
+		}
+		if v := strings.TrimSpace(ov.PayloadCode); v != "" {
+			add("payload_code", v)
+			row.payload = v
+			// Keep the allowed list coherent with the payload: sourcing
+			// (walk.go) checks the requested payload against
+			// claim.AllowedPayloads(), so a payload outside the list makes
+			// the claim unsourceable — silently, exactly the failure shape
+			// this layer exists to avoid shipping.
+			if !slices.Contains(row.allowed, v) && !slices.Contains(row.allowed, "*") {
+				row.allowed = append(slices.Clone(row.allowed), v)
+				add("allowed_payload_codes", marshalAllowedPayloads(row.allowed))
+			}
+		}
+		if v := strings.TrimSpace(ov.InboundSource); v != "" {
+			add("inbound_source", v)
+			row.inboundSource = v
+		}
+		if v := strings.TrimSpace(ov.OutboundDestination); v != "" {
+			add("outbound_destination", v)
+			row.outboundDestination = v
+		}
+		if v := strings.TrimSpace(ov.InboundStaging); v != "" {
+			add("inbound_staging", v)
+			row.inboundStaging = v
+		}
+		if v := strings.TrimSpace(ov.OutboundStaging); v != "" {
+			add("outbound_staging", v)
+			row.outboundStaging = v
+		}
+		// Paired-position overrides on a press-index claim answer to the
+		// same validity rule the rename pass enforces: front, back and third
+		// must stay distinct. The offending field is withheld alone, noted,
+		// and everything else in the row still applies.
+		if v := strings.TrimSpace(ov.PairedCoreNode); v != "" {
+			if row.swapMode == protocol.SwapModeTwoRobotPressIndex && v == node {
+				notes = append(notes, fmt.Sprintf("node %q: paired_core_node override refused — it names the claim's own front position", node))
+			} else {
+				add("paired_core_node", v)
+				row.paired = v
+			}
+		}
+		if v := strings.TrimSpace(ov.SecondPairedCoreNode); v != "" {
+			if row.swapMode == protocol.SwapModeTwoRobotPressIndex && (v == node || v == row.paired) {
+				notes = append(notes, fmt.Sprintf("node %q: second_paired_core_node override refused — a press-index claim's positions must stay distinct", node))
+			} else {
+				add("second_paired_core_node", v)
+				row.second = v
+			}
+		}
+		// The role override answers to the SwapMode requirements, evaluated
+		// against the claim's post-override values — supplying the missing
+		// field beside the role change makes it legal. A claim that still
+		// fails keeps its copied role; the other fields apply regardless.
+		if s := strings.TrimSpace(ov.Role); s != "" {
+			want := protocol.ClaimRole(s)
+			if want != protocol.ClaimRoleProduce {
+				want = protocol.ClaimRoleConsume
+			}
+			if msg := claimSwapModeRequirement(row.swapMode, overrideApplied(*row, ov)); msg != "" {
+				notes = append(notes, fmt.Sprintf("node %q: role change withheld — %s", node, msg))
+			} else {
+				add("role", string(want))
+			}
+		}
+		if len(sets) > 0 {
+			args = append(args, targetID, node)
+			if _, err := tx.Exec(`UPDATE style_node_claims SET `+strings.Join(sets, ", ")+`
+				WHERE style_id = ? AND core_node_name = ?`, args...); err != nil {
+				return nil, fmt.Errorf("override node %q: %w", node, err)
+			}
+		}
+	}
+
+	// PASS 2 — renames, after the fields, because a rename changes the match
+	// key pass 1 keyed on.
+	for _, ov := range overrides {
+		oldName := strings.TrimSpace(ov.Node)
+		newName := strings.TrimSpace(ov.CoreNodeName)
+		if oldName == "" || newName == "" || newName == oldName {
+			continue
+		}
+		row := rows[oldName]
+		if row == nil {
+			continue // already noted in pass 1
+		}
+		if clash := rows[newName]; clash != nil {
+			notes = append(notes, fmt.Sprintf("node %q: rename to %q refused — the copied set already has a claim on %q", oldName, newName, newName))
+			continue
+		}
+		if row.swapMode == protocol.SwapModeTwoRobotPressIndex && (newName == row.paired || (row.second != "" && newName == row.second)) {
+			notes = append(notes, fmt.Sprintf("node %q: rename to %q refused — a two_robot_press_index claim's positions must stay distinct", oldName, newName))
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE style_node_claims SET core_node_name = ?
+			WHERE style_id = ? AND core_node_name = ?`, newName, targetID, oldName); err != nil {
+			return nil, fmt.Errorf("rename override %q: %w", oldName, err)
+		}
+		// Auto-fix the pairing partner: the operator renamed one side of an
+		// A/B pair, so references still pointing at the old name follow it.
+		// Rows affected are reported, because a cascade nobody can see is
+		// indistinguishable from a rename that never happened.
+		for _, col := range []string{"paired_core_node", "second_paired_core_node"} {
+			res, err := tx.Exec(`UPDATE style_node_claims SET `+col+` = ?
+				WHERE style_id = ? AND `+col+` = ?`, newName, targetID, oldName)
+			if err != nil {
+				return nil, fmt.Errorf("rename cascade %q: %w", oldName, err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				notes = append(notes, fmt.Sprintf("rename %q → %q: %d claim(s)' %s reference updated", oldName, newName, n, col))
+			}
+		}
+		delete(rows, oldName)
+		row.node = newName
+		rows[newName] = row
+	}
+	return notes, nil
+}
+
 // CopyStyleClaims replaces target's node claims with src's, within one
 // transaction: the clone column list, verbatim. Used by the "Copy Node
 // Claims" action to push one style's choreography onto sibling styles.
@@ -388,19 +681,26 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, ca
 // target arrives with the source's payload — there was nothing of the
 // target's to preserve. Callers enforce the active-style and same-process
 // rules; this function is the mechanical replace.
-func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool) error {
+//
+// overrides is the optional per-claim adjust layer, applied AFTER the copy
+// and after the payload snapshot reapply (an operator asking for a specific
+// payload outranks the keep-mine rule). It returns human-readable notes —
+// overrides it could not match, renames it refused, pair references it
+// auto-fixed, role changes it withheld — because a batch that silently
+// drops part of what was asked for is how the next incident starts.
+func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, overrides []ClaimOverride) ([]string, error) {
 	if srcID == targetID {
-		return fmt.Errorf("source and target are the same style")
+		return nil, fmt.Errorf("source and target are the same style")
 	}
 	if _, err := GetStyle(db, srcID); err != nil {
-		return fmt.Errorf("source style: %w", err)
+		return nil, fmt.Errorf("source style: %w", err)
 	}
 	tgt, err := GetStyle(db, targetID)
 	if err != nil {
-		return fmt.Errorf("target style: %w", err)
+		return nil, fmt.Errorf("target style: %w", err)
 	}
 	if tgt == nil {
-		return fmt.Errorf("target style %d not found", targetID)
+		return nil, fmt.Errorf("target style %d not found", targetID)
 	}
 
 	// The target's payloads per node — snapshotted before the replace when
@@ -412,7 +712,7 @@ func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool) er
 	if !includePayloads {
 		claims, err := ListClaims(db, targetID)
 		if err != nil {
-			return fmt.Errorf("read target claims: %w", err)
+			return nil, fmt.Errorf("read target claims: %w", err)
 		}
 		for _, c := range claims {
 			if c.PayloadCode != "" {
@@ -423,28 +723,35 @@ func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool) er
 
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`DELETE FROM style_node_claims WHERE style_id = ?`, targetID); err != nil {
-		return err
+		return nil, err
 	}
 	// swap_mode is copied verbatim on the same trust as cloneStyleTx: live
 	// claims already hold a configurable mode, nothing stale to re-validate.
 	if _, err := tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
-		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ?`,
+		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ? AND`+liveClaims,
 		targetID, srcID); err != nil {
-		return err
+		return nil, err
 	}
 	if !includePayloads {
 		for node, payload := range savedPayloads {
 			if _, err := tx.Exec(`UPDATE style_node_claims SET payload_code = ?
 				WHERE style_id = ? AND core_node_name = ?`, payload, targetID, node); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return tx.Commit()
+	notes, err := applyClaimOverrides(tx, targetID, overrides)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return notes, nil
 }
 
 // StyleImpact is what a style is carrying, counted so a confirmation dialog can

@@ -127,6 +127,19 @@ type EngineOrchestration interface {
 	PushEmptyOut(nodeID int64) error
 	RequestEmptyBin(nodeID int64, payloadCode string) (*domain.Order, error)
 	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)
+
+	// ── Quality containment (v100) ─────────────────────────────────
+	// SendBinToQualityHold parks the bin standing at a produce node into its
+	// claim's containment destination (the station's Send-to-Quality-Hold
+	// action). ReleaseFromContainment is the containment screen's Verify
+	// Good: the verified bin walks to the claim's ordinary outbound.
+	// RecallContainedPayload walks a contained payload's bins still at their
+	// FG outbound nodes into containment — the in-transit/landed-before-the-
+	// flag window the divert deliberately does not chase. See
+	// engine/operator_quality_hold.go.
+	SendBinToQualityHold(nodeID int64, actor string) (*domain.Order, error)
+	ReleaseFromContainment(containmentNodeName string, binID int64, actor string) (*domain.Order, error)
+	RecallContainedPayload(payloadCode, actor string) (int, []string, error)
 	// CreateRetrieveForAPI is the HTTP order API's creation path. It routes
 	// through the reservation seam when a loader owns the destination, so the
 	// one door that never counted in-flight now does.
