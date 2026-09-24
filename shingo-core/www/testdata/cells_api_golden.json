@@ -87,12 +87,12 @@
           }
         ],
         "metrics": {
-          "effective_parts_per_hour": 151.57894736842104,
+          "effective_parts_per_hour": 170.52631578947367,
           "longest_stop_ms": 300000,
           "mtbf_minutes": 3.1666666666666665,
           "mttr_minutes": 5,
-          "parts": 8,
-          "parts_lost": 16,
+          "parts": 9,
+          "parts_lost": 15,
           "run_minutes": 3.1666666666666665,
           "stop_count": 1,
           "total_downtime_ms": 300000
@@ -134,12 +134,12 @@
           }
         ],
         "metrics": {
-          "effective_parts_per_hour": 22.040816326530614,
+          "effective_parts_per_hour": 29.38775510204082,
           "longest_stop_ms": 0,
           "mtbf_minutes": 0,
           "mttr_minutes": 0,
-          "parts": 3,
-          "parts_lost": 7,
+          "parts": 4,
+          "parts_lost": 6,
           "run_minutes": 8.166666666666666,
           "stop_count": 0,
           "total_downtime_ms": 0
@@ -183,7 +183,7 @@
     "primary": {
       "current_cycle_ms": 20000,
       "last_fire": "2026-01-15T08:07:00Z",
-      "parts_last_hour": 8,
+      "parts_last_hour": 9,
       "process_id": 7,
       "since_last_ms": 10000,
       "state": "running",
@@ -194,7 +194,7 @@
       {
         "current_cycle_ms": 45000,
         "last_fire": "2026-01-15T08:01:35Z",
-        "parts_last_hour": 3,
+        "parts_last_hour": 4,
         "process_id": 9,
         "since_last_ms": 335000,
         "state": "micro-stop",
@@ -214,11 +214,11 @@
     "primary": {
       "current_cycle_ms": 20000,
       "last_fire": "2026-01-15T08:07:00Z",
-      "parts_last_hour": 11,
+      "parts_last_hour": 13,
       "process_id": 0,
       "since_last_ms": 10000,
       "state": "running",
-      "target_cycle_ms": 15000
+      "target_cycle_ms": 10000
     },
     "station": "stn-p7",
     "sub_processes": []
@@ -226,6 +226,12 @@
   "stops_configured": {
     "cell_id": "cell-cfg",
     "stops": [
+      {
+        "duration_ms": 35000,
+        "end": "2026-01-15T08:01:35Z",
+        "kind": "micro-stop",
+        "start": "2026-01-15T08:01:00Z"
+      },
       {
         "duration_ms": 300000,
         "end": "2026-01-15T08:06:40Z",
@@ -237,6 +243,12 @@
   "stops_unconfigured": {
     "cell_id": "stn-p7",
     "stops": [
+      {
+        "duration_ms": 35000,
+        "end": "2026-01-15T08:01:35Z",
+        "kind": "micro-stop",
+        "start": "2026-01-15T08:01:00Z"
+      },
       {
         "duration_ms": 300000,
         "end": "2026-01-15T08:06:40Z",

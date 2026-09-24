@@ -155,15 +155,15 @@
           }
         ],
         "metrics": {
-          "parts": 13,
+          "parts": 14,
           "run_minutes": 4.5,
           "stop_count": 2,
           "total_downtime_ms": 1020000,
           "mtbf_minutes": 2.25,
           "mttr_minutes": 8.5,
           "longest_stop_ms": 760000,
-          "effective_parts_per_hour": 173.33333333333334,
-          "parts_lost": 51
+          "effective_parts_per_hour": 186.66666666666669,
+          "parts_lost": 50
         }
       },
       {
@@ -227,15 +227,15 @@
           }
         ],
         "metrics": {
-          "parts": 5,
+          "parts": 6,
           "run_minutes": 21.5,
           "stop_count": 0,
           "total_downtime_ms": 0,
           "mtbf_minutes": 0,
           "mttr_minutes": 0,
           "longest_stop_ms": 0,
-          "effective_parts_per_hour": 13.953488372093023,
-          "parts_lost": 23
+          "effective_parts_per_hour": 16.74418604651163,
+          "parts_lost": 22
         }
       }
     ]
@@ -246,15 +246,15 @@
     "since_last_ms": 10000,
     "current_cycle_ms": 20000,
     "target_cycle_ms": 20000,
-    "parts_last_hour": 13
+    "parts_last_hour": 14
   },
   "cell_state_after_triple": {
     "state": "running",
     "last_fire": "2026-01-15T08:01:20Z",
     "since_last_ms": 1000,
-    "current_cycle_ms": 20000,
+    "current_cycle_ms": 6666,
     "target_cycle_ms": 20000,
-    "parts_last_hour": 5
+    "parts_last_hour": 7
   },
   "cell_state_mid_stop": {
     "state": "micro-stop",
@@ -262,7 +262,7 @@
     "since_last_ms": 260000,
     "current_cycle_ms": 20000,
     "target_cycle_ms": 20000,
-    "parts_last_hour": 11,
+    "parts_last_hour": 12,
     "stop_active": {
       "start": "2026-01-15T08:07:20Z",
       "end": "2026-01-15T08:11:40Z",
@@ -272,15 +272,15 @@
   },
   "estimate_target_ms": 20000,
   "metrics": {
-    "parts": 13,
+    "parts": 14,
     "run_minutes": 4.5,
     "stop_count": 2,
     "total_downtime_ms": 1020000,
     "mtbf_minutes": 2.25,
     "mttr_minutes": 8.5,
     "longest_stop_ms": 760000,
-    "effective_parts_per_hour": 173.33333333333334,
-    "parts_lost": 51
+    "effective_parts_per_hour": 186.66666666666669,
+    "parts_lost": 50
   },
   "resolved_cell_state": {
     "cell_id": "cell-test",
@@ -293,7 +293,7 @@
       "since_last_ms": 10000,
       "current_cycle_ms": 20000,
       "target_cycle_ms": 20000,
-      "parts_last_hour": 13
+      "parts_last_hour": 14
     },
     "sub_processes": [
       {
@@ -303,7 +303,7 @@
         "since_last_ms": 1040000,
         "current_cycle_ms": 45000,
         "target_cycle_ms": 45000,
-        "parts_last_hour": 5,
+        "parts_last_hour": 6,
         "stop_active": {
           "start": "2026-01-15T08:03:10Z",
           "end": "2026-01-15T08:20:30Z",

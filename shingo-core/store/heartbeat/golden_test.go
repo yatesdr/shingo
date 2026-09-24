@@ -73,17 +73,17 @@ func primaryOnly(evs []PartEvent) []PartEvent {
 // stream, byte for byte: ComputeCellState, ComputeStops, ComputeMetrics,
 // ComputeResolvedCellState and ComputeCellHeartbeat, as JSON.
 //
-// In its current form it pins two things a builder could otherwise "fix"
-// quietly:
-//   - Parts and PartsLastHour count ROWS, not ΣDelta — the delta = 3 tick is
-//     one part (heartbeat.go ComputeMetrics `Parts: len(events)`, and the
-//     PartsLastHour loop).
-//   - A jump counts as a part and as an ordinary gap in cycle, target and stop
-//     math.
+// It pins the two things the stream is ambiguous about:
+//   - Parts and PartsLastHour are ΣDelta over fires — the delta = 3 tick is
+//     three parts — and CurrentCycleMS and EstimateTarget divide a fire's gap
+//     by its delta.
+//   - A jump is not a fire: it counts toward no part, cycle, target or stop
+//     math (the drill still lists it among the events).
 //
-// INVERTS when Parts are counted by delta and jumps are excluded until
-// confirmed (the "count by delta, not by row" change); the golden's diff is the
-// named fix. Regenerate with -update and read the diff.
+// INVERTED by "count by delta, not by row". It used to pin the opposite:
+// Parts = len(events) and a jump counting as a part and an ordinary gap. The
+// golden's diff in that change is the fix. Regenerate with -update and read
+// the diff.
 func TestHeartbeatMath_Golden(t *testing.T) {
 	t.Parallel()
 	evs := goldenEvents()
