@@ -739,6 +739,8 @@ func (e *Engine) wireEventHandlers() {
 
 		var opts []notify.SendOption
 		var timeFaulted string
+		var subject string
+		threaded := false
 
 		faultSentMu.Lock()
 		if info, ok := faultSent[ev.OrderID]; ok {
@@ -749,6 +751,12 @@ func (e *Engine) wireEventHandlers() {
 				notify.WithReferences(info.messageID),
 				notify.WithMessageID(notify.GenerateMessageID(fmt.Sprintf("cleared-%d", ev.OrderID))),
 			}
+			// The subject is the FAULT's, replied-to: subject-grouping clients
+			// fold "Re: X" under "X" even where the header chain alone would
+			// not. The stored robotID is the one the fault email's subject
+			// was built from, so the reply subject matches it exactly.
+			subject = notify.ReplySubject(notify.FaultSubject(info.robotID))
+			threaded = true
 			delete(faultSent, ev.OrderID)
 			if ev.EdgeUUID == "" {
 				ev.EdgeUUID = info.edgeUUID
@@ -759,8 +767,24 @@ func (e *Engine) wireEventHandlers() {
 		}
 		faultSentMu.Unlock()
 
+		// SUPPRESSION: no fault email was ever sent for this order — the
+		// fault recovered inside the buffer, or it began before the notifier
+		// was enabled — so nobody was ever alerted and there is nothing to
+		// clear. Sending a CLEARED for an alert nobody received is noise with
+		// no referent; send nothing.
+		//
+		// KNOWN HOLE (accepted, 2026-09-24): faultSent is in-memory, so a Core
+		// restart between the fault email and the recovery also lands here and
+		// suppresses a clear that WAS preceded by an alert. The fix is
+		// persisting the fault-email state (plan item: fault_email_message_id on
+		// the order) — deliberately deferred so the in-memory state's shape
+		// stays untouched for now.
+		if !threaded {
+			return
+		}
+
 		_ = e.notifier.SendWithHeaders(
-			notify.FaultClearedSubject(robotID),
+			subject,
 			notify.FaultClearedAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, robotID, timeFaulted),
 			opts...,
 		)

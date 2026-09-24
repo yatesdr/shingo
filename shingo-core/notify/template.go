@@ -99,6 +99,15 @@ func FaultClearedSubject(robotID string) string {
 	return "Shingo Fault Cleared"
 }
 
+// ReplySubject prefixes a base subject as a reply. Threaded emails (the
+// cleared/fail/grace-expired notes that answer a fault alert) carry it so
+// subject-grouping clients (Outlook's conversation view chiefly) fold the
+// reply under the original — the In-Reply-To/References header chain is not
+// enough on its own for the clients that matter at a plant.
+func ReplySubject(base string) string {
+	return "Re: " + base
+}
+
 func FaultClearedAlert(orderID int64, edgeUUID, stationID, robotID, timeFaulted string) string {
 	var b strings.Builder
 	b.WriteString("SHINGO FAULT CLEARED\n")
