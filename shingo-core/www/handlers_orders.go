@@ -475,6 +475,14 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		FaultLine string `json:"fault_line,omitempty"`
 	}
 
+	// A WAIT THAT ENDED IS NOT SHOWN AS ONE. queue_reason is not cleared when a
+	// park ends well (see orderIsWaiting), and the modal printed it bare: SPR
+	// order 6903 read "Waiting for partner robot" for half an hour after its
+	// release, with AMR-10 mid-unload. Same predicate as the page's counts.
+	if !orderIsWaiting(order) {
+		order.QueueReason = ""
+	}
+
 	result := enrichedOrder{
 		Order:          order,
 		CanCancel:      canCancelStatus(order.Status),

@@ -27,12 +27,33 @@ import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/s
 // "AMR-05:robot is not dispatchable" — a robot in a state somebody may need to
 // clear, buried in ten identical siblings. So the roll-call entries are dropped
 // and anything else is kept; a notice that is nothing but roll-call disappears.
-function meaningfulNotices(items) {
+//
+// THE ROLL-CALL HAS FIVE SPELLINGS, not one. SPR's stored notices, 14 days to
+// 2026-09-24: "no joining order" (6674 entries), "order is not complete" (517),
+// "no free container current" (292), "cannot append current task: not load task
+// or container_count < ..." (157) — each a robot that is busy or full — and
+// "robot is not dispatchable" (188), the one kept. All five ride orders that
+// finished normally.
+//
+// AND NONE OF IT MATTERS ONCE A ROBOT HAS THE ORDER. The roll-call explains why
+// the OTHER robots did not take it; on an assigned order (6903, AMR-10
+// mid-unload) that is not a question anyone is asking, so the whole 80004
+// notice goes.
+var ROLL_CALL = [
+  /no joining order\s*$/i,
+  /order is not complete\s*$/i,
+  /no free container current\s*$/i,
+  /cannot append current task: not load task or container_count/i
+];
+
+function meaningfulNotices(items, assigned) {
   if (!items || !items.length) return [];
   return items.map(function(m) {
     if (!m || typeof m !== 'object' || !m.desc) return m;
+    if (assigned && String(m.code) === '80004') return null;
     var kept = String(m.desc).split(';').filter(function(part) {
-      return part.trim() !== '' && !/no joining order\s*$/i.test(part.trim());
+      var p = part.trim();
+      return p !== '' && !ROLL_CALL.some(function(re) { return re.test(p); });
     });
     if (kept.length === 0) return null;
     return { code: m.code, desc: kept.join('; '), times: m.times, timestamp: m.timestamp };
@@ -475,7 +496,7 @@ function buildManifest(data, opts) {
     // after "why did it stop" — and this page dropped it on the floor.
     out += fleetMessages('Errors', 'manifest-alert-danger', vd.errors);
     out += fleetMessages('Warnings', 'manifest-alert-warn', vd.warnings);
-    out += fleetMessages('Notices', 'manifest-alert-warn', meaningfulNotices(vd.notices));
+    out += fleetMessages('Notices', 'manifest-alert-warn', meaningfulNotices(vd.notices, !!o.robot_id));
   }
 
   // ── CHILD ORDERS / STEPS ──
