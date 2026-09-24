@@ -228,6 +228,20 @@ func (db *DB) migrate() error {
 	if err := db.migrateCounterSnapshotCascade(); err != nil {
 		return err
 	}
+	// The production tick feed ships from counter_snapshots: the one INSERT the
+	// poll runs binds the tick's own timestamp (ms), process and style, so the
+	// shipper rebuilds the wire event from the row alone. AFTER the cascade
+	// rebuild above, whose CREATE predates these columns. NULL on existing rows,
+	// which were sent through the outbox by the binary that wrote them.
+	for _, stmt := range []string{
+		"ALTER TABLE counter_snapshots ADD COLUMN recorded_ms INTEGER",
+		"ALTER TABLE counter_snapshots ADD COLUMN process_id INTEGER",
+		"ALTER TABLE counter_snapshots ADD COLUMN style_id INTEGER",
+	} {
+		if err := db.addColumnIfMissing(stmt); err != nil {
+			return err
+		}
+	}
 
 	// Remove vestigial loaded_bin_label and loaded_at columns (safe no-ops if absent)
 	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN loaded_bin_label")

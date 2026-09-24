@@ -50,6 +50,11 @@ type Heartbeater struct {
 	// captured: a cache replaced between ticks shows up on the next request.
 	// Nil, or an empty answer, asks Core for the full scene.
 	SceneRevisionFn func() string
+	// TickLagFn, when set, supplies the production tick shipper's lag (pending
+	// rows, age of the oldest in ms) stamped onto every heartbeat, so Core can
+	// flag a station whose feed has stalled without a message of its own. ok
+	// false leaves the fields off. Read at send time. Set post-construction.
+	TickLagFn func() (pending, oldestAgeMS int64, ok bool)
 
 	DebugLog DebugLogFunc
 }
@@ -192,26 +197,33 @@ func (h *Heartbeater) sendCatalogRequest() {
 	}
 }
 
-func (h *Heartbeater) sendHeartbeat() {
-	uptime := int64(time.Since(h.startTime).Seconds())
-	var activeOrders int
+// heartbeatBody builds the periodic heartbeat, every field read at send time.
+func (h *Heartbeater) heartbeatBody() *protocol.EdgeHeartbeat {
+	b := &protocol.EdgeHeartbeat{
+		StationID: h.stationID,
+		Uptime:    int64(time.Since(h.startTime).Seconds()),
+	}
 	if h.orderCountFn != nil {
-		activeOrders = h.orderCountFn()
+		b.Orders = h.orderCountFn()
 	}
-	var tz string
 	if h.TimezoneFn != nil {
-		tz = h.TimezoneFn()
+		b.Timezone = h.TimezoneFn()
 	}
+	if h.TickLagFn != nil {
+		if pending, age, ok := h.TickLagFn(); ok {
+			b.TickPending, b.TickOldestUnsentAgeMS = &pending, &age
+		}
+	}
+	return b
+}
+
+func (h *Heartbeater) sendHeartbeat() {
+	body := h.heartbeatBody()
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.EdgeHeartbeat{
-			StationID: h.stationID,
-			Uptime:    uptime,
-			Orders:    activeOrders,
-			Timezone:  tz,
-		},
+		body,
 	)
 	if err != nil {
 		log.Printf("heartbeater: build heartbeat: %v", err)
@@ -221,7 +233,7 @@ func (h *Heartbeater) sendHeartbeat() {
 	if err := h.sender.PublishEnvelope(env, "heartbeat"); err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
-		h.DebugLog.Log("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
+		h.DebugLog.Log("heartbeat sent uptime=%ds orders=%d", body.Uptime, body.Orders)
 	}
 }
 

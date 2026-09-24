@@ -1,8 +1,8 @@
 package store
 
 // Delegate file: production-heartbeat persistence lives in store/heartbeat/.
-// Preserves the *store.DB method surface for the projection worker
-// (messaging) and the read service (service/heartbeat_service.go).
+// Preserves the *store.DB method surface for the tick handlers (messaging)
+// and the read service (service/heartbeat_service.go).
 
 import (
 	"time"
@@ -10,12 +10,11 @@ import (
 	"shingocore/store/heartbeat"
 )
 
-func (db *DB) TryProductionTickDedup(station string, edgeSnapshotID int64) (bool, error) {
-	return heartbeat.TryDedup(db.DB, station, edgeSnapshotID)
-}
-
-func (db *DB) InsertCellPartEvent(e heartbeat.PartEvent) error {
-	return heartbeat.InsertPartEvent(db.DB, e)
+// InsertCellPartEvents projects ticks in one statement and returns the rows
+// actually inserted (a re-sent tick is skipped by the table's unique key), and
+// the rows the database refused when the page had to be retried row by row.
+func (db *DB) InsertCellPartEvents(events []heartbeat.PartEvent) ([]heartbeat.PartEvent, []heartbeat.RejectedTick) {
+	return heartbeat.InsertPartEvents(db.DB, events)
 }
 
 func (db *DB) ListCellPartEvents(cellID string, since, until time.Time) ([]heartbeat.PartEvent, error) {
@@ -58,12 +57,4 @@ func (db *DB) EnsureHeartbeatPartitionsRange(start, end time.Time) error {
 
 func (db *DB) DropOldHeartbeatPartitions(keepDays int, now time.Time) (int, error) {
 	return heartbeat.DropOldPartitions(db.DB, keepDays, now)
-}
-
-// PurgeOldProductionTickDedup deletes production_tick_dedup rows older
-// than the retention window. Runs alongside DropOldHeartbeatPartitions on
-// the same daily ticker; see heartbeat.PurgeOldDedup for why this one is a
-// DELETE and not a partition drop.
-func (db *DB) PurgeOldProductionTickDedup(keepDays int, now time.Time) (int64, error) {
-	return heartbeat.PurgeOldDedup(db.DB, keepDays, now)
 }

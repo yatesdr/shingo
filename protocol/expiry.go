@@ -61,6 +61,7 @@ var subjectTTLs = map[string]time.Duration{
 	// peaking at 23 hours. The edge marked every one of them sent.
 	SubjectBinUOPDelta:         NoExpiry,
 	SubjectLinesideBucketDelta: NoExpiry,
+	SubjectProductionTicks:     NoExpiry, // keyed on (cell_id, edge_snapshot_id, recorded_at) at Core
 
 	// Core's count announcements to the Edge. One dropped after an outage
 	// longer than TypeData's 5 minutes leaves the station holding a carrier

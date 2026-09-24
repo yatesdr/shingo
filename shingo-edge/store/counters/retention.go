@@ -14,13 +14,18 @@ import (
 // SnapshotRetention is how long the Edge keeps counter_snapshots.
 //
 // FOURTEEN DAYS IS A WORKING WINDOW, NOT AN ARCHIVE, AND IT DIFFERS FROM
-// CORE ON PURPOSE. Core keeps the same observations for 90 days in
-// cell_part_events — the raw stream, field for field, projected from the
-// same production.tick this table's rows generate — on a Proxmox VM with
-// real disk. The Pi keeps only what someone might have to look at without
-// Core: 14× the outbox's own 24-hour retention, and roughly 6.5× the worst
-// realistic Core-outage window (the Kafka no-retry wedge, which is
-// days-scale). Nothing reads a row older than the popover's open anomalies.
+// CORE ON PURPOSE. Core keeps 90 days in cell_part_events on a Proxmox VM
+// with real disk — but NOT the same observations field for field: Core gets
+// only the shippable rows (delta > 0, not a reset, a style), without
+// reporting_point_id or operator_confirmed. The Pi keeps what someone might
+// have to look at without Core, roughly 6.5× the worst realistic Core-outage
+// window (the Kafka no-retry wedge, which is days-scale).
+//
+// THIS TABLE IS ALSO THE PRODUCTION TICK FEED'S QUEUE. The shipper
+// (messaging.TickShipper) sends from it past a cursor, so this window bounds
+// how long the feed can be down and still catch up: a row purged before it
+// shipped is a tick Core never gets. Past the popover's open anomalies,
+// that shipper is the only reader.
 //
 // The size argument is secondary and, at today's six counters, weak: the
 // table is 8.35 MB after 93 days and 35.94 bytes/row. It is the cell

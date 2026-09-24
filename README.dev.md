@@ -86,9 +86,9 @@ binary, not the data, so a migration you just wrote runs against a database that
 it, and a `plants/demo.yaml` edit does nothing until you reseed. `make dev-reset` (`down -v`)
 is the only command here that drops either volume.
 
-**Long-run disk:** `cell_part_events` and `production_tick_dedup` are both
-bounded at 90 days now (a partition drop and a DELETE respectively, on the
-same daily ticker), and the edge's `counter_snapshots` at 14 days. None of
+**Long-run disk:** `cell_part_events` is bounded at 90 days (a partition
+drop on a daily ticker; it carries its own dedup key, so there is no side
+table), and the edge's `counter_snapshots` at 14 days. None of
 those windows help a soak that fast-forwards weeks of production in hours —
 `make dev-reset` periodically.
 

@@ -421,6 +421,8 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 | Station ID | `station_id` | string | Yes | Edge station identifier (must match registration). |
 | Uptime | `uptime_s` | integer | No | Seconds since edge process started. |
 | Active Orders | `active_orders` | integer | No | Number of currently active (non-terminal) orders. |
+| Tick Pending | `tick_pending` | integer | No | Production tick shipper backlog: shippable `counter_snapshots` rows past its cursor. Absent from an edge without the shipper. |
+| Tick Oldest Unsent Age | `tick_oldest_unsent_age_ms` | integer | No | Age in ms of the oldest of those rows (0 when none). Core flags the station on `/inventory` past 5 minutes. |
 
 #### EdgeRegistered
 

@@ -75,9 +75,11 @@ type EventHub struct {
 	// clients holds every subscriber. Each carries its own topic filter: a
 	// set of event names the client wants, nil meaning "all events". Topic
 	// filtering lets the dashboard SSE bus (shared/utils.js onSSE) request
-	// only the event types a tab subscribed to via /events?topics=… so a
-	// /missions admin tab never receives the per-pulse cell-heartbeat
-	// firehose (plan §6).
+	// only the event types a tab subscribed to via /events?topics=…, so a tab
+	// receives the per-pulse cell-heartbeat stream only if it asks for it.
+	// /missions does ask (missions.js subscribes to cell-heartbeat and pulses
+	// its cell dots), contrary to plan §12's note that the pulse would not go
+	// there.
 	clients   map[*sseClient]struct{}
 	broadcast chan SSEEvent
 	stopChan  chan struct{}

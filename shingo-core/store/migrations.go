@@ -4298,7 +4298,93 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "edge_lineside_reports", "flushed_seq") &&
 					schema.ColumnNullable(q, "bin_uop_exception", "bin_id")
 			}},
+
+		{128, "cell_part_events keyed on (cell_id, edge_snapshot_id, recorded_at) — the production tick dedup moves onto the projection, production_tick_dedup and payload_code go, edge_registry keeps each station's tick-feed lag",
+			v128ProductionTickKey,
+			verifyV128ProductionTickKey},
 	}
+}
+
+// verifyV128ProductionTickKey checks all four parts of v128.
+func verifyV128ProductionTickKey(q schema.Querier) bool {
+	return schema.IndexExists(q, "uq_cell_part_events_tick") &&
+		!schema.TableExists(q, "production_tick_dedup") &&
+		!schema.ColumnExists(q, "cell_part_events", "payload_code") &&
+		schema.ColumnExists(q, "edge_registry", "tick_reported_at") &&
+		schema.ColumnExists(q, "edge_registry", "tick_rejected")
+}
+
+// v128ProductionTickKey moves the production-tick dedup onto cell_part_events.
+//
+// THE KEY IS (cell_id, edge_snapshot_id, recorded_at), AS A UNIQUE INDEX ON
+// THE PARTITIONED PARENT. It is legal there because it contains the partition
+// key, recorded_at — exactly what production_tick_dedup could not have: its key
+// was (station, edge_snapshot_id), and Postgres refuses a unique constraint on
+// a partitioned table that leaves the partition key out, which is why that
+// table was a plain one purged by a daily DELETE. With recorded_at in the key,
+// the index is created on every partition, inherited by each new monthly one,
+// and dropped with the partition by the existing 90-day retention. The tick
+// handlers name it in ON CONFLICT … DO NOTHING RETURNING.
+//
+// Why recorded_at belongs in the key: the Edge ships from counter_snapshots, so
+// a re-send carries the timestamp it stored — a conflict, skipped — while a
+// restored Edge that reuses an id writes a new timestamp and is a new tick,
+// which (station, edge_snapshot_id) used to drop as a "replay".
+//
+// REQUIRES POSTGRES 11 OR LATER: unique indexes on partitioned tables, and
+// ON CONFLICT against a partitioned table, both arrived in 11. On 10 this
+// migration fails and Core does not start. Dev runs 16.
+//
+// DUPLICATES ARE COLLAPSED FIRST, so the index build cannot stop Core booting
+// on a plant database. Today's code cannot write one — production_tick_dedup
+// admitted each (station, edge_snapshot_id) once, before the only INSERT, and
+// cell_id is the station — but a unique index that fails to build is a Core
+// that does not start, so the migration does not rely on it. The lowest id of
+// each group is kept. One scan of the table, once.
+//
+// production_tick_dedup GOES, and so does its daily DELETE. So does
+// cell_part_events.payload_code: nothing ever wrote it, and a tick has no single
+// payload to write (one stroke fans out to every node scope its style claims).
+// Its readers went in the same change. The baseline's copies of both go with
+// them (postgres_ddl.go), or schema.Apply would re-create the table on every
+// boot and this migration's verify would fail every boot.
+//
+// edge_registry gains the latest production-tick lag each station reports on
+// its heartbeat (pending rows, age of the oldest unsent, when it said so),
+// written by the UPDATE the heartbeat already runs, and tick_rejected: ticks
+// Core received from the station and could not store, counted only on a
+// failed page.
+//
+// ROLLBACK needs the column back first: an older Core names payload_code in
+// its INSERT and SELECT, so re-add it as TEXT NOT NULL with an empty-string
+// default.
+// Its baseline re-creates production_tick_dedup empty; with the unique index
+// still in place a tick that table no longer remembers errors on INSERT (no
+// ON CONFLICT there) and is logged, never doubled. Drop
+// uq_cell_part_events_tick too for a clean older Core. The edge_registry
+// columns are inert to it.
+func v128ProductionTickKey(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`DELETE FROM cell_part_events WHERE id IN (
+			SELECT id FROM (
+				SELECT id, row_number() OVER (PARTITION BY cell_id, edge_snapshot_id, recorded_at ORDER BY id) AS rn
+				FROM cell_part_events) d
+			WHERE d.rn > 1)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_cell_part_events_tick
+			ON cell_part_events (cell_id, edge_snapshot_id, recorded_at)`,
+		`DROP TABLE IF EXISTS production_tick_dedup`,
+		`ALTER TABLE cell_part_events DROP COLUMN IF EXISTS payload_code`,
+		`ALTER TABLE edge_registry
+			ADD COLUMN IF NOT EXISTS tick_pending              BIGINT,
+			ADD COLUMN IF NOT EXISTS tick_oldest_unsent_age_ms BIGINT,
+			ADD COLUMN IF NOT EXISTS tick_reported_at          TIMESTAMPTZ,
+			ADD COLUMN IF NOT EXISTS tick_rejected             BIGINT NOT NULL DEFAULT 0`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v128 production tick key: %w", err)
+		}
+	}
+	return nil
 }
 
 // v126DedupAppliedNet gives the dedup row the two facts the running net needs

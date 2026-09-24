@@ -11,7 +11,6 @@
             "count_value": 100,
             "delta": 1,
             "edge_snapshot_id": 1,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:00:00Z",
             "style_id": 3
@@ -22,7 +21,6 @@
             "count_value": 101,
             "delta": 1,
             "edge_snapshot_id": 2,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:00:20Z",
             "style_id": 3
@@ -33,7 +31,6 @@
             "count_value": 102,
             "delta": 3,
             "edge_snapshot_id": 3,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:00:40Z",
             "style_id": 3
@@ -44,7 +41,6 @@
             "count_value": 103,
             "delta": 1,
             "edge_snapshot_id": 4,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:01:00Z",
             "style_id": 3
@@ -55,7 +51,6 @@
             "count_value": 104,
             "delta": 700,
             "edge_snapshot_id": 5,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:01:20Z",
             "style_id": 3
@@ -66,7 +61,6 @@
             "count_value": 105,
             "delta": 1,
             "edge_snapshot_id": 6,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:01:40Z",
             "style_id": 3
@@ -77,7 +71,6 @@
             "count_value": 106,
             "delta": 1,
             "edge_snapshot_id": 7,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:06:40Z",
             "style_id": 3
@@ -88,7 +81,6 @@
             "count_value": 107,
             "delta": 1,
             "edge_snapshot_id": 8,
-            "payload_code": "",
             "process_id": 7,
             "recorded_at": "2026-01-15T08:07:00Z",
             "style_id": 3
@@ -116,7 +108,6 @@
             "count_value": 108,
             "delta": 1,
             "edge_snapshot_id": 9,
-            "payload_code": "",
             "process_id": 9,
             "recorded_at": "2026-01-15T08:00:05Z",
             "style_id": 3
@@ -127,7 +118,6 @@
             "count_value": 109,
             "delta": 2,
             "edge_snapshot_id": 10,
-            "payload_code": "",
             "process_id": 9,
             "recorded_at": "2026-01-15T08:00:50Z",
             "style_id": 3
@@ -138,7 +128,6 @@
             "count_value": 110,
             "delta": 1,
             "edge_snapshot_id": 11,
-            "payload_code": "",
             "process_id": 9,
             "recorded_at": "2026-01-15T08:01:35Z",
             "style_id": 3

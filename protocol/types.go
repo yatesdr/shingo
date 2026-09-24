@@ -82,22 +82,32 @@ const (
 	SubjectBinUOPDelta         = "inventory.bin_uop_delta"
 	SubjectLinesideBucketDelta = "inventory.lineside_bucket_delta"
 
-	// ProductionTick — Edge → Core per-PLC-counter-tick heartbeat for the
-	// production-cell dashboards (plan §12). A new envelope SUBJECT on the
-	// existing shingo.orders Kafka topic (NOT a new topic, NOT a new
-	// consumer group — §8 #23), following the SubjectBinUOPDelta precedent.
-	// Carries protocol.CounterSnapshot. Emitted right after Edge's
-	// InsertCounterSnapshot, UPSTREAM of applyHoldAndReplay/accumulator
-	// coalescing, so per-tick timing is preserved across bin swaps (the
-	// property bin_uop_delta destroys, §8 #13). Core dedups on
-	// (station, edge_snapshot_id) and projects async to cell_part_events.
-	//
-	// NOTE: not yet in CoreInboundSubjects() — that entry + the
-	// HandleProductionTick registration at the composition root land
-	// together with the Core handler (see slice-implementation-questions
-	// SLICE 5 NOTES). Adding it here without a handler would trip the
-	// boot-time coverage assertion.
+	// ProductionTick — Edge → Core, one PLC counter tick per envelope, carried
+	// as protocol.CounterSnapshot. The feed an Edge from before the
+	// counter_snapshots shipper sends, through its outbox. Core keeps it
+	// registered for those mixed-version Edges and projects it through the same
+	// INSERT as production.ticks, so the dedup key covers both. New Edges send
+	// production.ticks instead; removing this subject waits until no plant runs
+	// an Edge that sends it.
 	SubjectProductionTick = "production.tick"
+
+	// ProductionTicks — Edge → Core per-PLC-counter-tick heartbeat for the
+	// production-cell dashboards (plan §12), batched: one envelope per station
+	// per poll pass, carrying protocol.ProductionTicks. A new SUBJECT on the
+	// existing shingo.orders topic (NOT a new topic, NOT a new consumer group —
+	// §8 #23).
+	//
+	// The Edge's counter_snapshots table is the queue. The poll pass writes each
+	// tick's row with the tick's own timestamp, process and style, UPSTREAM of
+	// applyHoldAndReplay/accumulator coalescing, so per-tick timing survives bin
+	// swaps (the property bin_uop_delta destroys, §8 #13). A shipper goroutine
+	// reads past its cursor and publishes; no outbox row. NoExpiry: Core keys each
+	// tick on (cell_id, edge_snapshot_id, recorded_at), so a late or repeated copy
+	// is a no-op, and a dropped one would be a fake stop in MTBF and Lost.
+	//
+	// Deploy Core first: an older Core has no handler for this subject, logs and
+	// returns, and the Edge's cursor has already moved past the ticks.
+	SubjectProductionTicks = "production.ticks"
 
 	// SubjectDemandOrigin — Edge → Core, the demand episodes Edge owns (the
 	// cell and changeover kinds), carried as WHOLE STATE rather than events.
@@ -320,6 +330,7 @@ func CoreInboundSubjects() []string {
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketDelta,
 		SubjectProductionTick,
+		SubjectProductionTicks,
 		SubjectDowntimeEvent,
 		SubjectPlantClaims,
 		SubjectLinesideLevelReport,

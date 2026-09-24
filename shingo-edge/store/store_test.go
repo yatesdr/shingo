@@ -620,12 +620,12 @@ func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
 	rpID, _ := db.CreateReportingPoint("PLC", "TAG", sid)
 
 	// Non-jump snapshot (no anomaly) — should not appear in ListUnconfirmedAnomalies.
-	if _, err := db.InsertCounterSnapshot(rpID, 100, 10, "", false); err != nil {
+	if _, err := db.InsertCounterSnapshot(rpID, 100, 10, "", false, counters.TickStamp{}); err != nil {
 		t.Fatalf("insert clean: %v", err)
 	}
 
 	// Jump anomaly, unconfirmed.
-	anomalyID, err := db.InsertCounterSnapshot(rpID, 200, 100, "jump", false)
+	anomalyID, err := db.InsertCounterSnapshot(rpID, 200, 100, "jump", false, counters.TickStamp{})
 	if err != nil {
 		t.Fatalf("insert anomaly: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
 	}
 
 	// Dismissing a second anomaly deletes it.
-	dismissID, _ := db.InsertCounterSnapshot(rpID, 300, 100, "jump", false)
+	dismissID, _ := db.InsertCounterSnapshot(rpID, 300, 100, "jump", false, counters.TickStamp{})
 	testutil.MustNoErr(t, db.DismissAnomaly(dismissID), "dismiss")
 	list3, _ := db.ListUnconfirmedAnomalies()
 	if len(list3) != 0 {
@@ -672,7 +672,7 @@ func TestCounterSnapshots_DismissOnlyUnconfirmedJump(t *testing.T) {
 	rpID, _ := db.CreateReportingPoint("PLC", "TAG", sid)
 
 	// Insert, then confirm — dismiss should not delete a confirmed row.
-	id, _ := db.InsertCounterSnapshot(rpID, 100, 10, "jump", false)
+	id, _ := db.InsertCounterSnapshot(rpID, 100, 10, "jump", false, counters.TickStamp{})
 	db.ConfirmAnomaly(id)
 
 	testutil.MustNoErr(t, db.DismissAnomaly(id), "dismiss")

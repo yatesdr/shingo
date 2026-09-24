@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/types"
 	"shingoedge/config"
@@ -114,6 +114,22 @@ type Manager struct {
 	// merely unlikely.
 	sseStallTimeoutOverride      time.Duration
 	sseReconcileIntervalOverride time.Duration
+
+	// tickNotify rings the production tick shipper after a poll pass that wrote
+	// at least one shippable snapshot row. Set once at the composition root
+	// (SetProductionTickNotifier), read by the poll goroutine.
+	tickNotify atomic.Pointer[func()]
+}
+
+// SetProductionTickNotifier installs the ring the poll pass sends the
+// production tick shipper when it wrote a shippable row. fn must not block;
+// the shipper's Notify is a non-blocking channel send. nil removes it.
+func (m *Manager) SetProductionTickNotifier(fn func()) {
+	if fn == nil {
+		m.tickNotify.Store(nil)
+		return
+	}
+	m.tickNotify.Store(&fn)
 }
 
 // stallTimeout / reconcileInterval return this manager's SSE timings, falling
@@ -562,8 +578,18 @@ func (m *Manager) pollAllReportingPoints() {
 		return
 	}
 
+	shipped := false
 	for _, rp := range rps {
-		m.pollReportingPointSafe(rp)
+		if m.pollReportingPointSafe(rp) {
+			shipped = true
+		}
+	}
+	// One ring per pass, however many reporting points ticked: the shipper
+	// sends one production.ticks message for everything the pass wrote.
+	if shipped {
+		if fn := m.tickNotify.Load(); fn != nil {
+			(*fn)()
+		}
 	}
 }
 
@@ -572,49 +598,65 @@ func (m *Manager) pollAllReportingPoints() {
 // fix a single bad PLC read or downstream emit could take down the
 // entire counter loop with no log of the failure; the loop is started
 // once at edge startup and never restarts.
-func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) {
+//
+// Reports whether the poll wrote a shippable production-tick row; a panic
+// reports false (a row already written still ships on the next ring).
+func (m *Manager) pollReportingPointSafe(rp counters.ReportingPoint) (shippable bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("plc pollLoop: panic polling reporting point %d (%s/%s): %v\n%s",
 				rp.ID, rp.PLCName, rp.TagName, r, debug.Stack())
 		}
 	}()
-	m.pollReportingPoint(rp)
+	return m.pollReportingPoint(rp)
 }
 
-func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) {
+// pollReportingPoint reads one counter and records any change. It reports
+// whether the snapshot row it wrote is one the production tick shipper sends.
+func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	if !m.IsConnected(rp.PLCName) {
-		return
+		return false
 	}
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)
 	if err != nil {
 		m.DebugLog.Log("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
 		log.Printf("read tag %s/%s (rp %d): %v", rp.PLCName, rp.TagName, rp.ID, err)
 		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, err.Error())
-		return
+		return false
 	}
 
 	newCount, ok := toInt64(val)
 	if !ok {
-		return
+		return false
 	}
 
 	m.emitter.EmitCounterRead(rp.ID, rp.PLCName, rp.TagName, newCount)
 
 	delta, anomaly := CalculateDelta(rp.LastCount, newCount, m.cfg.Counter.JumpThreshold)
 	if delta == 0 && anomaly == "" {
-		return
+		return false
 	}
 
 	m.DebugLog.Log("counter delta: rp=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
 		rp.ID, rp.PLCName, rp.TagName, rp.LastCount, newCount, delta, anomaly)
 
-	// Record snapshot
+	// Record snapshot. The row is also the production tick feed's queue
+	// (plan §12): it carries the tick's own time, process and style, bound by
+	// this one INSERT, and the shipper (messaging.TickShipper) sends it to Core
+	// from here — UPSTREAM of the engine's inventory hold-and-replay and
+	// accumulator coalescing, so per-tick timing survives bin swaps, the
+	// property inventory.bin_uop_delta destroys when it lumps held ticks onto
+	// the next bound bin across a finalize/swap gap (§8 #13).
+	//
+	// The clock is read BEFORE the INSERT, not after it and the reporting-point
+	// UPDATE as the outbox enqueue did: the stored value is what a re-ship after
+	// a reboot or a restore carries, which is what lets Core's key recognise it.
 	confirmed := anomaly != "jump"
-	snapID, err := m.db.InsertCounterSnapshot(rp.ID, newCount, delta, anomaly, confirmed)
+	stamp := counters.TickStamp{RecordedAt: clock.Now().UTC(), ProcessID: rp.ProcessID, StyleID: rp.StyleID}
+	snapID, err := m.db.InsertCounterSnapshot(rp.ID, newCount, delta, anomaly, confirmed, stamp)
 	if err != nil {
 		log.Printf("insert counter snapshot: %v", err)
-		return
+		return false
 	}
 
 	// Update the reporting point's last known count
@@ -628,67 +670,17 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) {
 
 	// Only emit delta for normal counts and resets (not jumps, which need operator confirmation)
 	if rp.StyleID == 0 {
-		return // no style linked
-	}
-
-	// production.tick (plan §12): publish the raw per-tick counter observation
-	// to Core UPSTREAM of the engine's inventory hold-and-replay + accumulator
-	// coalescing, so per-tick timing survives bin swaps — the property
-	// inventory.bin_uop_delta destroys when it lumps held ticks onto the next
-	// bound bin across a finalize/swap gap (§8 #13). Independent of the
-	// inventory EmitCounterDelta below; the production-cell heartbeat dashboards
-	// consume this and the inventory subsystem is unchanged. Emit even when
-	// anomaly == "jump" — the heartbeat must know the cell physically fired even
-	// while inventory attribution is operator-gated (§8 #20); the no-op and
-	// reset cases were already filtered by the early returns above.
-	if delta > 0 && anomaly != "reset" {
-		m.enqueueProductionTick(rp, snapID, newCount, delta, anomaly)
+		return false // no style linked; the shipper's filter (style_id <> 0) skips the row too
 	}
 
 	if anomaly != "jump" && delta > 0 {
 		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, rp.StyleID, delta, newCount, anomaly)
 	}
-}
 
-// enqueueProductionTick builds a production.tick envelope (plan §12) from the
-// counter snapshot just recorded by pollReportingPoint and enqueues it on the
-// outbox for delivery to Core. RecordedAt is stamped here in Go with
-// millisecond-capable precision (time.Now().UTC()), NOT read back from SQLite's
-// second-granularity datetime('now') default, so 22.5s cycle math on the
-// dashboard doesn't pick up ~5% quantization noise (§8 #21). Dedup is Core-side
-// on (Station, EdgeSnapshotID) — never bare EdgeSnapshotID, since Edge-local
-// snapshot ids collide across stations (§8 #22). Best-effort: any failure is
-// logged and swallowed so the counter poll loop is never broken by an outbox
-// problem.
-func (m *Manager) enqueueProductionTick(rp counters.ReportingPoint, snapID, newCount, delta int64, anomaly string) {
-	station := m.cfg.StationID()
-	env, err := protocol.NewDataEnvelope(
-		protocol.SubjectProductionTick,
-		protocol.Address{Role: protocol.RoleEdge, Station: station},
-		protocol.Address{Role: protocol.RoleCore},
-		&protocol.CounterSnapshot{
-			ReportingPointID: rp.ID,
-			EdgeSnapshotID:   snapID,
-			ProcessID:        rp.ProcessID,
-			StyleID:          rp.StyleID,
-			CountValue:       newCount,
-			Delta:            delta,
-			Anomaly:          anomaly,
-			RecordedAt:       clock.Now().UTC(),
-		},
-	)
-	if err != nil {
-		log.Printf("production.tick: build envelope rp=%d: %v", rp.ID, err)
-		return
-	}
-	data, err := env.Encode()
-	if err != nil {
-		log.Printf("production.tick: encode envelope rp=%d: %v", rp.ID, err)
-		return
-	}
-	if _, err := m.db.EnqueueOutbox(data, protocol.SubjectProductionTick); err != nil {
-		log.Printf("production.tick: enqueue outbox rp=%d: %v", rp.ID, err)
-	}
+	// The shipper's filter in the poll's terms (counters.shippableWhere). Jumps
+	// ship — the heartbeat must know the cell physically fired even while
+	// inventory attribution waits on the operator (§8 #20) — resets do not.
+	return delta > 0 && anomaly != "reset"
 }
 
 func connectionErrorFromTags(tags map[string]WarlinkTag) string {

@@ -66,7 +66,7 @@ func TestCoverage_UpdateHeartbeat_UnknownStationIsRefusedAndWritesNothing(t *tes
 	t.Parallel()
 	db := testdb.Open(t)
 
-	found, err := registry.UpdateHeartbeat(db.DB, "stn-never-enrolled-hb", "")
+	found, err := registry.UpdateHeartbeat(db.DB, "stn-never-enrolled-hb", "", registry.TickLag{})
 	if err != nil {
 		t.Fatalf("UpdateHeartbeat: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestCoverage_UpdateHeartbeat_FoundThenNewer(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-fresh")
 
-	found, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "")
+	found, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "", registry.TickLag{})
 	if err != nil {
 		t.Fatalf("UpdateHeartbeat first: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestCoverage_UpdateHeartbeat_FoundThenNewer(t *testing.T) {
 	firstBeat := e.LastHeartbeat
 	// KEEP: timestamp separation — second heartbeat must record a later timestamp.
 	time.Sleep(10 * time.Millisecond)
-	if _, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", ""); err != nil {
+	if _, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "", registry.TickLag{}); err != nil {
 		t.Fatalf("UpdateHeartbeat second: %v", err)
 	}
 	e2, _ := registry.GetByUID(db.DB, "stn-fresh")
@@ -565,10 +565,10 @@ func TestCoverage_MarkStaleEdges(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-stale-1")
 	enrolled(t, db, "stn-stale-2")
-	registry.Register(db.DB, "stn-stale-1", "h1", "i1", "v", "") //nolint:errcheck // fixture
-	registry.UpdateHeartbeat(db.DB, "stn-stale-1", "")           //nolint:errcheck // fixture
-	registry.Register(db.DB, "stn-stale-2", "h2", "i2", "v", "") //nolint:errcheck // fixture
-	registry.UpdateHeartbeat(db.DB, "stn-stale-2", "")           //nolint:errcheck // fixture
+	registry.Register(db.DB, "stn-stale-1", "h1", "i1", "v", "")           //nolint:errcheck // fixture
+	registry.UpdateHeartbeat(db.DB, "stn-stale-1", "", registry.TickLag{}) //nolint:errcheck // fixture
+	registry.Register(db.DB, "stn-stale-2", "h2", "i2", "v", "")           //nolint:errcheck // fixture
+	registry.UpdateHeartbeat(db.DB, "stn-stale-2", "", registry.TickLag{}) //nolint:errcheck // fixture
 	stale, err := registry.MarkStale(db.DB, 0)
 	if err != nil {
 		t.Fatalf("MarkStale: %v", err)

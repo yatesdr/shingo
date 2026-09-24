@@ -48,6 +48,14 @@ type statusResponse struct {
 	KafkaLastPublishOK bool       `json:"kafka_last_publish_ok"`
 	KafkaLastPublishAt *time.Time `json:"kafka_last_publish_at,omitempty"`
 	StationID          string     `json:"station_id"`
+	// ProductionTicksPending / ProductionTicksOldestUnsentAgeMS are the
+	// production tick shipper's backlog: shippable counter_snapshots rows past
+	// its cursor, and the age of the oldest in ms. Zero and zero is caught up. A
+	// shipper is a goroutine that can stall with nothing else saying so; the
+	// same two numbers ride every heartbeat to Core's Inventory page.
+	ProductionTicksPending           int64  `json:"production_ticks_pending"`
+	ProductionTicksOldestUnsentAgeMS int64  `json:"production_ticks_oldest_unsent_age_ms"`
+	ProductionTicksError             string `json:"production_ticks_error,omitempty"`
 }
 
 // statusEngine is the narrow interface the /status handler needs.
@@ -61,6 +69,7 @@ type statusEngine interface {
 	CountPendingOutbox() (int, error)
 	CountDeadLetterOutbox() (int, error)
 	KafkaLastPublish() (bool, time.Time, bool)
+	ProductionTickLag() (pending, oldestAgeMS int64, err error)
 	StationID() string
 }
 
@@ -92,6 +101,11 @@ func (h *Handlers) apiStatus(w http.ResponseWriter, r *http.Request) {
 		resp.KafkaLastPublishOK = ok
 		utc := at.UTC()
 		resp.KafkaLastPublishAt = &utc
+	}
+	if pending, age, err := eng.ProductionTickLag(); err != nil {
+		resp.ProductionTicksError = err.Error()
+	} else {
+		resp.ProductionTicksPending, resp.ProductionTicksOldestUnsentAgeMS = pending, age
 	}
 	writeJSON(w, resp)
 }

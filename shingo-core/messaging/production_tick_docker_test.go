@@ -42,8 +42,8 @@ func newTickHarness(t *testing.T) *tickHarness {
 	if err := db.EnsureHeartbeatPartitions(time.Now().UTC()); err != nil {
 		t.Fatalf("ensure partitions: %v", err)
 	}
-	// At this base the projection is an async worker behind tickCh.
-	h.svc.StartHeartbeatProjection()
+	// The projection is synchronous in the handler; the waits below still
+	// hold for it (they return at once).
 	return h
 }
 
@@ -104,8 +104,7 @@ func msTime(sec int, ms int) time.Time {
 
 // TestProductionTick_ProjectsEveryColumn (P4): one tick becomes one
 // cell_part_events row with every column mapped, and exactly one cell-tick emit
-// carrying {station, process_id, style_id, recorded_at}. payload_code is ”
-// because nothing has ever written it.
+// carrying {station, process_id, style_id, recorded_at}.
 func TestProductionTick_ProjectsEveryColumn(t *testing.T) {
 	t.Parallel()
 	h := newTickHarness(t)
@@ -117,13 +116,13 @@ func TestProductionTick_ProjectsEveryColumn(t *testing.T) {
 	h.waitRow("stn-a", 41)
 
 	var (
-		cell, payload, anomaly      string
+		cell, anomaly               string
 		recorded                    time.Time
 		edgeID, cv, delta, pid, sid int64
 	)
-	if err := h.db.QueryRow(`SELECT cell_id, payload_code, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
+	if err := h.db.QueryRow(`SELECT cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
 		FROM cell_part_events WHERE cell_id='stn-a' AND edge_snapshot_id=41`).
-		Scan(&cell, &payload, &recorded, &edgeID, &cv, &delta, &anomaly, &pid, &sid); err != nil {
+		Scan(&cell, &recorded, &edgeID, &cv, &delta, &anomaly, &pid, &sid); err != nil {
 		t.Fatalf("read row: %v", err)
 	}
 	if cell != "stn-a" || edgeID != 41 || cv != 1234 || delta != 2 || anomaly != "jump" || pid != 7 || sid != 3 {
@@ -131,9 +130,6 @@ func TestProductionTick_ProjectsEveryColumn(t *testing.T) {
 	}
 	if !recorded.Equal(at) {
 		t.Errorf("recorded_at = %v, want %v (ms preserved)", recorded, at)
-	}
-	if payload != "" {
-		t.Errorf("payload_code = %q, want '' — nothing writes it", payload)
 	}
 
 	em := h.waitEmits(1)
@@ -181,17 +177,17 @@ func TestProductionTick_SameIDTwoStationsIsTwoRows(t *testing.T) {
 	}
 }
 
-// TestProductionTick_ReusedIDAfterRestore (P9) characterises what happens when
-// an Edge's SQLite is restored from a backup: counter_snapshots ids rewind, and
-// a NEW tick arrives carrying an edge_snapshot_id Core has already seen, with a
-// new recorded_at.
+// TestProductionTick_ReusedIDAfterRestore (P9) pins what happens when an Edge's
+// SQLite is restored from a backup: counter_snapshots ids rewind, and a NEW
+// tick arrives carrying an edge_snapshot_id Core has already seen, with a new
+// recorded_at.
 //
-// TODAY TryDedup keys on (station, edge_snapshot_id) only, so the new tick is
-// dropped as a "replay" — a silent gap in the stream, which ComputeStops turns
-// into a fake stop, until the Edge's ids pass the old high-water mark.
-//
-// INVERTS when the dedup key becomes (cell_id, edge_snapshot_id, recorded_at)
-// on cell_part_events itself: the new tick is projected.
+// INVERTED by the move of the dedup key onto cell_part_events as
+// (cell_id, edge_snapshot_id, recorded_at). It used to pin the drop: TryDedup
+// keyed on (station, edge_snapshot_id) alone, so the new tick was discarded as a
+// "replay" — a silent gap, which ComputeStops turned into a fake stop, until the
+// Edge's ids passed the old high-water mark. The new tick is projected; a true
+// re-send (same recorded_at, read back from the row) still is not.
 func TestProductionTick_ReusedIDAfterRestore(t *testing.T) {
 	t.Parallel()
 	h := newTickHarness(t)
@@ -202,7 +198,7 @@ func TestProductionTick_ReusedIDAfterRestore(t *testing.T) {
 	h.tick("stn-a", protocol.CounterSnapshot{EdgeSnapshotID: 6, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(901, 0)})
 	h.waitRow("stn-a", 6) // barrier
 
-	if n := h.rows("stn-a", 5); n != 1 {
-		t.Errorf("rows for edge_snapshot_id 5 = %d, want 1 (today the post-restore tick is dropped)", n)
+	if n := h.rows("stn-a", 5); n != 2 {
+		t.Errorf("rows for edge_snapshot_id 5 = %d, want 2 (the post-restore tick is projected)", n)
 	}
 }

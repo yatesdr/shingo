@@ -75,14 +75,12 @@ func TestCoverage_CellConfig(t *testing.T) {
 		t.Fatalf("EnsurePartitions: %v", err)
 	}
 	ticks := []heartbeat.PartEvent{
-		{CellID: "plant-a.line-1", ProcessID: 100, StyleID: 7, PayloadCode: "PART-A", RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 1},
-		{CellID: "plant-a.line-1", ProcessID: 100, StyleID: 7, PayloadCode: "PART-A", RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 2},
-		{CellID: "plant-a.line-1", ProcessID: 200, StyleID: 9, PayloadCode: "SUB-B", RecordedAt: now.Add(-90 * time.Second), EdgeSnapshotID: 3, Delta: 1, CountValue: 1},
+		{CellID: "plant-a.line-1", ProcessID: 100, StyleID: 7, RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 1},
+		{CellID: "plant-a.line-1", ProcessID: 100, StyleID: 7, RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 2},
+		{CellID: "plant-a.line-1", ProcessID: 200, StyleID: 9, RecordedAt: now.Add(-90 * time.Second), EdgeSnapshotID: 3, Delta: 1, CountValue: 1},
 	}
-	for _, e := range ticks {
-		if err := heartbeat.InsertPartEvent(db.DB, e); err != nil {
-			t.Fatalf("InsertPartEvent: %v", err)
-		}
+	if _, rej := heartbeat.InsertPartEvents(db.DB, ticks); rej != nil {
+		t.Fatalf("InsertPartEvents rejected %v", rej)
 	}
 	procs, err := heartbeat.DistinctProcesses(db.DB, "plant-a.line-1")
 	if err != nil {
@@ -92,8 +90,8 @@ func TestCoverage_CellConfig(t *testing.T) {
 		t.Fatalf("DistinctProcesses len = %d, want 2", len(procs))
 	}
 	// Ordered by ticks DESC → process 100 (2 ticks) first.
-	if procs[0].ProcessID != 100 || procs[0].Ticks != 2 || procs[0].PayloadCode != "PART-A" {
-		t.Errorf("top process = %+v, want process 100 / 2 ticks / PART-A", procs[0])
+	if procs[0].ProcessID != 100 || procs[0].Ticks != 2 || procs[0].StyleID != 7 {
+		t.Errorf("top process = %+v, want process 100 / 2 ticks / style 7", procs[0])
 	}
 
 	// Delete.

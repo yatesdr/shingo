@@ -54,7 +54,7 @@ func TestConfirmAnomaly_ReleasesJumpDeltaDownstream(t *testing.T) {
 	procID, styleID, rpID := seedCounterFixture(t, db)
 
 	// A jump as the poll loop records one: confirmed=false, delta withheld.
-	snapID, err := db.InsertCounterSnapshot(rpID, 5000, 2432, "jump", false)
+	snapID, err := db.InsertCounterSnapshot(rpID, 5000, 2432, "jump", false, counters.TickStamp{})
 	if err != nil {
 		t.Fatalf("insert snapshot: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestConfirmAnomaly_SecondConfirmEmitsNothing(t *testing.T) {
 	db := testdb.Open(t)
 	_, _, rpID := seedCounterFixture(t, db)
 
-	snapID, err := db.InsertCounterSnapshot(rpID, 900, 400, "jump", false)
+	snapID, err := db.InsertCounterSnapshot(rpID, 900, 400, "jump", false, counters.TickStamp{})
 	if err != nil {
 		t.Fatalf("insert snapshot: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestConfirmAnomaly_NonJumpSnapshotEmitsNothing(t *testing.T) {
 	_, _, rpID := seedCounterFixture(t, db)
 
 	// A normal tick: no anomaly, already confirmed by the poll loop.
-	snapID, err := db.InsertCounterSnapshot(rpID, 101, 1, "", true)
+	snapID, err := db.InsertCounterSnapshot(rpID, 101, 1, "", true, counters.TickStamp{})
 	if err != nil {
 		t.Fatalf("insert snapshot: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestConfirmAnomaly_NoEmitterStillConfirms(t *testing.T) {
 	db := testdb.Open(t)
 	_, _, rpID := seedCounterFixture(t, db)
 
-	snapID, err := db.InsertCounterSnapshot(rpID, 900, 400, "jump", false)
+	snapID, err := db.InsertCounterSnapshot(rpID, 900, 400, "jump", false, counters.TickStamp{})
 	if err != nil {
 		t.Fatalf("insert snapshot: %v", err)
 	}

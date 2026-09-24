@@ -63,4 +63,19 @@ type RegistryEdge struct {
 	// guessed zone is exactly the wrongness this column exists to surface.
 	// Written only from the wire, never by a human.
 	Timezone string `json:"timezone"`
+
+	// TickPending / TickOldestUnsentAgeMS are the production tick shipper's lag
+	// as the edge last reported it on a heartbeat: shippable counter_snapshots
+	// rows past its cursor, and the age of the oldest in ms. TickReportedAt is
+	// when Core received that report. All nil until an edge with the shipper
+	// has reported; a heartbeat without the fields (an older edge) leaves the
+	// last report, and its time, as they were.
+	TickPending           *int64     `json:"tick_pending"`
+	TickOldestUnsentAgeMS *int64     `json:"tick_oldest_unsent_age_ms"`
+	TickReportedAt        *time.Time `json:"tick_reported_at"`
+	// TickRejected counts production ticks from this station that Core could
+	// not store (the database refused the row — e.g. a recorded_at outside
+	// every partition). The Edge had already moved past them, so they are lost;
+	// each one is also logged with its edge_snapshot_id and recorded_at.
+	TickRejected int64 `json:"tick_rejected"`
 }

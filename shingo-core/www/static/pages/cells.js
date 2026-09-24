@@ -86,7 +86,6 @@ function field(label, control) {
 function procLabel(p) {
   var bits = ['Process ' + p.process_id];
   if (p.style_id) bits.push('style ' + p.style_id);
-  if (p.payload_code) bits.push(p.payload_code);
   bits.push((p.ticks || 0) + ' ticks');
   return bits.join(' · ');
 }

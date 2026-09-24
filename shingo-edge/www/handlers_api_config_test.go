@@ -889,7 +889,7 @@ func seedReportingPoint(t *testing.T, styleID int64, plcName, tagName string) in
 
 func seedAnomalySnapshot(t *testing.T, rpID int64) int64 {
 	t.Helper()
-	id, err := testDB.InsertCounterSnapshot(rpID, 100, 50, "jump", false)
+	id, err := testDB.InsertCounterSnapshot(rpID, 100, 50, "jump", false, counters.TickStamp{})
 	if err != nil {
 		t.Fatalf("seed anomaly snapshot: %v", err)
 	}

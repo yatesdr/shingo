@@ -81,6 +81,14 @@ type EdgeHeartbeat struct {
 	// process that actually renders the new zone comes up — Core's table
 	// shows what each edge is ON, never "saved but not yet restarted".
 	Timezone string `json:"timezone,omitempty"`
+	// TickPending and TickOldestUnsentAgeMS are the production-tick shipper's
+	// lag at send time: shippable counter_snapshots rows past its cursor, and
+	// the age of the oldest of them in ms (0 when none). Core keeps the latest
+	// per station and flags one whose feed has stalled. Absent from an Edge
+	// without the shipper, or when the read failed — never a zero nobody
+	// measured.
+	TickPending           *int64 `json:"tick_pending,omitempty"`
+	TickOldestUnsentAgeMS *int64 `json:"tick_oldest_unsent_age_ms,omitempty"`
 }
 
 // EdgeRegistered acknowledges edge registration.
@@ -1362,21 +1370,25 @@ type BinUOPDelta struct {
 }
 
 // CounterSnapshot is the production.tick payload (plan §12): one PLC counter
-// tick observed at an Edge reporting point, captured upstream of the
-// inventory hold-and-replay/accumulator logic so per-tick timing survives bin
-// swaps. Sent on SubjectProductionTick. Core dedups on
-// (Station, EdgeSnapshotID) — never bare EdgeSnapshotID, since Edge-local
-// SQLite autoincrements collide across stations (§8 #22, Round-3 Obs 8).
+// tick per envelope, as sent through the outbox by an Edge from before the
+// counter_snapshots shipper. Current Edges send ProductionTicks instead. Core
+// projects both through one INSERT keyed on
+// (cell_id = Envelope.Src.Station, EdgeSnapshotID, RecordedAt) — never bare
+// EdgeSnapshotID, since Edge-local SQLite autoincrements collide across
+// stations (§8 #22, Round-3 Obs 8), and never without RecordedAt, since a
+// restored Edge reuses ids.
 //
-// RecordedAt MUST be stamped in Go with millisecond precision
-// (time.Now().UTC()) at insert time, NOT pulled from SQLite's
-// datetime('now') default, whose second granularity injects ~5%
-// quantization noise on 22.5s cycle math (§8 #21).
+// RecordedAt is stamped in Go (ms precision and finer) when the tick is
+// ENQUEUED, after the snapshot INSERT and the reporting-point UPDATE — not at
+// the INSERT, and not read back from the row, whose recorded_at column is
+// SQLite's second-granularity datetime('now') default on these Edges.
 //
-// Anomaly carries "" or "jump"; Edge emits even for "jump" ticks (the
-// heartbeat needs to know the cell physically fired even when inventory
-// attribution is operator-gated) and downstream decides whether jumps count
-// toward MTBF/cycle math (§8 #20).
+// Anomaly carries "" or "jump"; the Edge sends jump ticks too (the heartbeat
+// needs to know the cell physically fired even when inventory attribution is
+// operator-gated). Core's heartbeat math leaves jump rows out of Parts, MTBF,
+// cycle and target math: an unconfirmed PLC gap is not evidence of parts, and
+// an operator's confirmation on the Edge does not reach Core (§8 #20).
+//
 // THE PAYLOAD COPY OF THE STATION IS GONE (identity change). Every one of
 // these envelopes carried the station twice — once in Envelope.Src.Station,
 // where the transport put it, and once in the body, where the Edge put it —
@@ -1392,14 +1404,46 @@ type BinUOPDelta struct {
 // field, an OLD core reads "" and takes env.Src.Station — the fallback this
 // change deletes is what makes deleting it survivable.
 type CounterSnapshot struct {
-	ReportingPointID int64     `json:"reporting_point_id"` // Edge-local; provenance only, not a Core join key
-	EdgeSnapshotID   int64     `json:"edge_snapshot_id"`   // counter_snapshots.id — composite with Station for dedup
+	ReportingPointID int64     `json:"reporting_point_id"` // Edge-local; Core drops it
+	EdgeSnapshotID   int64     `json:"edge_snapshot_id"`   // counter_snapshots.id — part of Core's key with station and RecordedAt
 	ProcessID        int64     `json:"process_id"`         // enriched at emit time from rp.ProcessID
 	StyleID          int64     `json:"style_id"`           // enriched at emit time from rp.StyleID
-	CountValue       int64     `json:"count_value"`        // absolute counter value (rollover detection on Core)
+	CountValue       int64     `json:"count_value"`        // absolute counter value; projected, read by no computation
 	Delta            int64     `json:"delta"`              // count change (typically 1)
 	Anomaly          string    `json:"anomaly"`            // "" or "jump"
-	RecordedAt       time.Time `json:"recorded_at"`        // Edge wall-clock at insert, ms precision (NOT SQLite default)
+	RecordedAt       time.Time `json:"recorded_at"`        // Go clock at enqueue, after the snapshot INSERT (see above)
+}
+
+// ProductionTickEvent is one counter_snapshots row on the production.ticks
+// feed: a shippable tick (delta > 0, not a reset, a real style) projected to
+// the fields Core stores. ReportingPointID stays off the wire; Core never used
+// it.
+//
+// RecordedAt is the row's recorded_ms: the Edge's clock read just BEFORE the
+// snapshot INSERT and written by it, so a re-ship after a reboot or a restore
+// carries the same value and Core's (cell_id, edge_snapshot_id, recorded_at)
+// key makes it a no-op. ProcessID and StyleID are the row's too, captured at
+// stroke time, so a backlog that spans a changeover still attributes each tick
+// to the style it was made on.
+//
+// Anomaly is "" or "jump", as for CounterSnapshot, and Core treats a jump the
+// same way.
+type ProductionTickEvent struct {
+	EdgeSnapshotID int64     `json:"edge_snapshot_id"`
+	ProcessID      int64     `json:"process_id"`
+	StyleID        int64     `json:"style_id"`
+	CountValue     int64     `json:"count_value"`
+	Delta          int64     `json:"delta"`
+	Anomaly        string    `json:"anomaly,omitempty"`
+	RecordedAt     time.Time `json:"recorded_at"`
+}
+
+// ProductionTicks is the production.ticks payload: every shippable tick one
+// Edge's poll pass wrote, in counter_snapshots id order — or, while the Edge
+// catches up after an outage, one page of its backlog. The station is
+// Envelope.Src.Station.
+type ProductionTicks struct {
+	Ticks []ProductionTickEvent `json:"ticks"`
 }
 
 // DowntimeEvent carries a persisted downtime start or end event (G9).

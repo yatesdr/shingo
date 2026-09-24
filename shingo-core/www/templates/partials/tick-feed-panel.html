@@ -1,0 +1,36 @@
+{{define "tick-feed-panel"}}
+<!-- Production tick feed — one row per station: the lag its edge last reported
+     on a heartbeat (shippable counter_snapshots rows past the shipper's cursor,
+     and the age of the oldest). "lagging" = an unsent tick older than
+     service.TickFeedLagThreshold; "no report" = nothing within
+     service.TickFeedReportStaleAfter, or never (an edge from before the
+     shipper). "Rejected" counts ticks Core received and could not store (lost;
+     each is logged with its edge_snapshot_id and recorded_at). Server-rendered. -->
+<section class="card mb-2" id="tick-feed">
+  <div class="section-head">
+    <h2>Production Tick Feed</h2>
+    <span class="text-muted-sm">Heartbeat-dashboard ticks each edge has not yet sent to Core, as of its last heartbeat</span>
+  </div>
+  <div class="table-scroll-y">
+    <table class="rh-table">
+      <thead>
+        <tr><th>Station</th><th class="rh-num">Pending</th><th class="rh-num">Oldest unsent</th><th>Reported</th><th class="rh-num">Rejected</th><th>Flag</th></tr>
+      </thead>
+      <tbody>
+        {{range .}}
+        <tr>
+          <td>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.StationID}}{{end}}</td>
+          <td class="rh-num">{{with .Pending}}{{.}}{{end}}</td>
+          <td class="rh-num">{{.OldestUnsentAge}}</td>
+          <td>{{with .ReportedAt}}{{timeAgo .}}{{end}}</td>
+          <td class="rh-num">{{if .Rejected}}{{.Rejected}}{{end}}</td>
+          <td>{{if .Lagging}}<span class="chip chip-err">lagging</span>{{end}}{{if .ReportStale}} <span class="chip chip-warn">no report</span>{{end}}{{if .Rejected}} <span class="chip chip-err">ticks rejected</span>{{end}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6" class="dash-empty">No stations registered</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}

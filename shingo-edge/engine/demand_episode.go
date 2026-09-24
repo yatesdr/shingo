@@ -369,9 +369,10 @@ func (e *Engine) closeEpisode(key, reason, closedBy string) error {
 		// episode stays open, the reconciler closes it again at a higher
 		// revision, and the re-send is a no-op under Core's guard.
 		//
-		// production.tick does the same thing in its own shape — it restores
-		// the delta snapshot when the enqueue fails, rather than trusting the
-		// outbox with something that never got there.
+		// (The production tick feed is NOT a precedent for this: it never kept
+		// anything back on a failed enqueue. It now has no enqueue at all — its
+		// durable record is the counter_snapshots row, which the shipper sends
+		// from.)
 		e.logFn("demand_episode: close %s kept open — state not enqueued: %v", key, err)
 		return fmt.Errorf("enqueue close for episode %s: %w", key, err)
 	}

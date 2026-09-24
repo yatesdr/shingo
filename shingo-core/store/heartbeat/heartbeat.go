@@ -16,7 +16,6 @@ import (
 type PartEvent struct {
 	ID             int64     `json:"id"`
 	CellID         string    `json:"cell_id"`
-	PayloadCode    string    `json:"payload_code"`
 	RecordedAt     time.Time `json:"recorded_at"`
 	EdgeSnapshotID int64     `json:"edge_snapshot_id"`
 	CountValue     int64     `json:"count_value"`

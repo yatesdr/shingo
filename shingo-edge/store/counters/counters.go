@@ -36,14 +36,32 @@ type (
 
 // --- counter snapshots ---
 
-// InsertSnapshot writes one counter_snapshots row.
-func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly string, confirmed bool) (int64, error) {
+// TickStamp is what the poll knows about a tick at stroke time and the
+// snapshot row keeps for the production tick shipper: the Go clock read just
+// before the INSERT, and the reporting point's process and style. A zero
+// RecordedAt stores NULL (a row the shipper's filter never selects).
+type TickStamp struct {
+	RecordedAt time.Time
+	ProcessID  int64
+	StyleID    int64
+}
+
+// InsertSnapshot writes one counter_snapshots row, stamp included, in one
+// statement.
+func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly string, confirmed bool, stamp TickStamp) (int64, error) {
 	var anomalyPtr *string
 	if anomaly != "" {
 		anomalyPtr = &anomaly
 	}
-	res, err := db.Exec(`INSERT INTO counter_snapshots (reporting_point_id, count_value, delta, anomaly, operator_confirmed) VALUES (?, ?, ?, ?, ?)`,
-		rpID, countValue, delta, anomalyPtr, confirmed)
+	var recordedMS *int64
+	if !stamp.RecordedAt.IsZero() {
+		ms := stamp.RecordedAt.UnixMilli()
+		recordedMS = &ms
+	}
+	res, err := db.Exec(`INSERT INTO counter_snapshots
+		(reporting_point_id, count_value, delta, anomaly, operator_confirmed, recorded_ms, process_id, style_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		rpID, countValue, delta, anomalyPtr, confirmed, recordedMS, stamp.ProcessID, stamp.StyleID)
 	if err != nil {
 		return 0, err
 	}
@@ -112,10 +130,12 @@ type ConfirmedJump struct {
 // and store.Open pins MaxOpenConns(1) besides.
 //
 // The style is read from the reporting point AS IT IS NOW, not as it was
-// when the jump was recorded: counter_snapshots stores no style. A jump
-// confirmed after a changeover is therefore attributed to the new style.
-// That is the same identity the live poll path uses and the only one the
-// schema can answer — a known limitation, not an oversight.
+// when the jump was recorded, so a jump confirmed after a changeover is
+// attributed to the new style. That is the same identity the live poll path
+// uses. The row now carries the stroke-time style too (style_id, for the
+// production tick shipper); moving confirmation onto it would change which
+// style an operator's confirmed units count against, which is a counting
+// decision this read does not make on its own.
 func ConfirmAnomaly(db *sql.DB, id int64) (*ConfirmedJump, error) {
 	res, err := db.Exec(`UPDATE counter_snapshots SET operator_confirmed = 1
 		WHERE id = ? AND anomaly = 'jump' AND operator_confirmed = 0`, id)

@@ -255,7 +255,6 @@ CREATE TABLE public.cell_config (
 CREATE TABLE public.cell_part_events (
     id bigint NOT NULL,
     cell_id text NOT NULL,
-    payload_code text DEFAULT ''::text NOT NULL,
     recorded_at timestamp with time zone NOT NULL,
     edge_snapshot_id bigint NOT NULL,
     count_value bigint DEFAULT 0 NOT NULL,
@@ -475,7 +474,11 @@ CREATE TABLE public.edge_registry (
     conflict_hostname text DEFAULT ''::text NOT NULL,
     conflict_count bigint DEFAULT 0 NOT NULL,
     conflict_at timestamp with time zone,
-    timezone text DEFAULT ''::text NOT NULL
+    timezone text DEFAULT ''::text NOT NULL,
+    tick_pending bigint,
+    tick_oldest_unsent_age_ms bigint,
+    tick_reported_at timestamp with time zone,
+    tick_rejected bigint DEFAULT 0 NOT NULL
 );
 
 CREATE SEQUENCE public.edge_registry_id_seq
@@ -959,12 +962,6 @@ CREATE TABLE public.process_styles (
     config_gen bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     is_active boolean DEFAULT false NOT NULL
-);
-
-CREATE TABLE public.production_tick_dedup (
-    station text NOT NULL,
-    edge_snapshot_id bigint NOT NULL,
-    applied_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.recovery_actions (
@@ -1649,9 +1646,6 @@ ALTER TABLE ONLY public.plant_confidence_daily
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
-ALTER TABLE ONLY public.production_tick_dedup
-    ADD CONSTRAINT production_tick_dedup_pkey PRIMARY KEY (station, edge_snapshot_id);
-
 ALTER TABLE ONLY public.recovery_actions
     ADD CONSTRAINT recovery_actions_pkey PRIMARY KEY (id);
 
@@ -1873,6 +1867,8 @@ CREATE INDEX idx_tte_samples_process_time ON public.tte_samples USING btree (pro
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
 
 CREATE UNIQUE INDEX order_bins_order_bin_uniq ON public.order_bins USING btree (order_id, bin_id);
+
+CREATE UNIQUE INDEX uq_cell_part_events_tick ON ONLY public.cell_part_events USING btree (cell_id, edge_snapshot_id, recorded_at);
 
 CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btree (bin_id) WHERE ((resource_kind = 'bin'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 

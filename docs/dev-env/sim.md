@@ -60,7 +60,7 @@ hardware seams.
 ```
             ┌─────────────────────── Docker (docker-compose.dev.yml) ───────────────────────┐
             │                                                                               │
-  fake PLC ─┼─▶ shingo-edge ──counter deltas / production.tick──▶ Kafka ──▶ shingo-core ────┼─▶ dashboards
+  fake PLC ─┼─▶ shingo-edge ──counter deltas / production.ticks─▶ Kafka ──▶ shingo-core ────┼─▶ dashboards
  (simwarlink)│   (SQLite)        ◀── orders / node-list sync ──              (Postgres)      │   (HTTP/SSE)
             │      ▲                                                            │            │
  sim operator│     │ LOAD/CLEAR on delivery                    fleet simulator ─┘            │
@@ -81,7 +81,7 @@ hardware seams.
 - **The material-flow loops** then run on their own: produce → finalize → swap;
   consume → drain → reorder; loader infeed; unloader / customer outfeed.
 - **The data flow** worth validating end-to-end: a fake PLC tick → edge counter
-  delta (applied to the bound bin's UOP) → `production.tick` / `cell_part_events`
+  delta (applied to the bound bin's UOP) → `production.ticks` / `cell_part_events`
   over Kafka → core → Postgres → the dashboard HTTP/SSE surfaces.
 
 ---

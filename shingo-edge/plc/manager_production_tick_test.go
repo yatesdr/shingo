@@ -27,8 +27,8 @@ import (
 // The DESTRUCTIVE half (the BinUOPDelta stream lumping the gap ticks) is proven
 // in engine/wiring_counter_delta_holdreplay_test.go.
 //
-// Survives the move off the outbox: the assertion is on the wire event, and
-// only shippedTicks changes with the transport.
+// Survived the move off the outbox unchanged: the assertion is on the wire
+// event, and only shippedTicks changed with the transport.
 func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 	t.Parallel()
 	r := newTickRig(t)
@@ -134,13 +134,27 @@ func TestProductionTick_ShipFilter(t *testing.T) {
 // cell with a sub-6 s target read "slowed" or "micro-stop" on the tile
 // (heartbeat.go state thresholds), so the hold is the regression this blocks.
 //
-// No clock is advanced and nothing sleeps: the pass returns and the tick is
-// already there.
+// The transport is now the shipper goroutine, rung by the pass: the running
+// shipper, woken by the pass's ring and nothing else, has published the tick
+// well inside one poll interval. (It used to be the outbox row, written inside
+// the pass.)
 func TestProductionTick_ReachesTransportWithinThePass(t *testing.T) {
 	t.Parallel()
 	r := newTickRig(t)
+	s := r.ship()
+	s.Start()
+	t.Cleanup(s.Stop)
+	// Start ships what is already pending; let that settle so the ring below is
+	// the only thing that can deliver the tick.
+	time.Sleep(50 * time.Millisecond)
+	r.mgr.SetProductionTickNotifier(s.Notify)
+
 	r.pass(1)
-	if got := r.shippedTicks(); len(got) != 1 {
-		t.Fatalf("after one pass: %d ticks at the transport, want 1 — the tick waited for something", len(got))
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(r.decodeSent()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := r.decodeSent(); len(got) != 1 {
+		t.Fatalf("500 ms after one pass: %d ticks at the transport, want 1 — the tick waited for something", len(got))
 	}
 }

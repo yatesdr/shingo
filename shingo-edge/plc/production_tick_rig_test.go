@@ -3,12 +3,14 @@ package plc
 import (
 	"encoding/json"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingoedge/config"
 	"shingoedge/internal/testdb"
+	"shingoedge/messaging"
 	"shingoedge/store"
 	"shingoedge/store/counters"
 )
@@ -24,6 +26,36 @@ type tickRig struct {
 	rpID int64
 	proc int64
 	sty  int64
+
+	// The transport: a production tick shipper over the rig's store, with a
+	// publisher that records every message.
+	shipper *messaging.TickShipper
+	mu      sync.Mutex
+	sent    [][]byte
+}
+
+// ship returns the rig's shipper, creating it on first use.
+func (r *tickRig) ship() *messaging.TickShipper {
+	r.t.Helper()
+	if r.shipper == nil {
+		s, err := messaging.NewTickShipper(r.db, func(b []byte) error {
+			r.mu.Lock()
+			r.sent = append(r.sent, append([]byte(nil), b...))
+			r.mu.Unlock()
+			return nil
+		}, r.mgr.cfg.StationID())
+		if err != nil {
+			r.t.Fatalf("NewTickShipper: %v", err)
+		}
+		r.shipper = s
+	}
+	return r.shipper
+}
+
+func (r *tickRig) messages() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]byte(nil), r.sent...)
 }
 
 const (
@@ -100,38 +132,43 @@ type wireTick struct {
 
 // shippedTicks returns every tick that has reached the transport, in id order.
 //
-// At this base the transport is the outbox: one production.tick row per tick.
+// The transport is the production tick shipper: it is run once here, and every
+// production.ticks message it has published is decoded.
 func (r *tickRig) shippedTicks() []wireTick {
 	r.t.Helper()
-	msgs, err := r.db.ListPendingOutbox(1000)
-	if err != nil {
-		r.t.Fatalf("list outbox: %v", err)
+	if err := r.ship().ShipPending(); err != nil {
+		r.t.Fatalf("ShipPending: %v", err)
 	}
+	return r.decodeSent()
+}
+
+// decodeSent decodes every message published so far, without shipping.
+func (r *tickRig) decodeSent() []wireTick {
+	r.t.Helper()
 	var out []wireTick
-	for _, m := range msgs {
-		if m.MsgType != protocol.SubjectProductionTick {
-			continue
-		}
+	for i, m := range r.messages() {
 		var env protocol.Envelope
-		if err := json.Unmarshal(m.Payload, &env); err != nil {
-			r.t.Fatalf("decode envelope (outbox id %d): %v", m.ID, err)
+		if err := json.Unmarshal(m, &env); err != nil {
+			r.t.Fatalf("decode envelope %d: %v", i, err)
 		}
 		var data protocol.Data
 		if err := env.DecodePayload(&data); err != nil {
-			r.t.Fatalf("decode data (outbox id %d): %v", m.ID, err)
+			r.t.Fatalf("decode data %d: %v", i, err)
 		}
-		if data.Subject != protocol.SubjectProductionTick {
-			r.t.Errorf("envelope subject=%q, want %q", data.Subject, protocol.SubjectProductionTick)
+		if data.Subject != protocol.SubjectProductionTicks {
+			r.t.Errorf("envelope subject=%q, want %q", data.Subject, protocol.SubjectProductionTicks)
 		}
-		var snap protocol.CounterSnapshot
-		if err := json.Unmarshal(data.Body, &snap); err != nil {
-			r.t.Fatalf("decode CounterSnapshot (outbox id %d): %v", m.ID, err)
+		var body protocol.ProductionTicks
+		if err := json.Unmarshal(data.Body, &body); err != nil {
+			r.t.Fatalf("decode ProductionTicks %d: %v", i, err)
 		}
-		out = append(out, wireTick{
-			EdgeSnapshotID: snap.EdgeSnapshotID, ProcessID: snap.ProcessID, StyleID: snap.StyleID,
-			CountValue: snap.CountValue, Delta: snap.Delta, Anomaly: snap.Anomaly,
-			RecordedAt: snap.RecordedAt, Station: env.Src.Station,
-		})
+		for _, tk := range body.Ticks {
+			out = append(out, wireTick{
+				EdgeSnapshotID: tk.EdgeSnapshotID, ProcessID: tk.ProcessID, StyleID: tk.StyleID,
+				CountValue: tk.CountValue, Delta: tk.Delta, Anomaly: tk.Anomaly,
+				RecordedAt: tk.RecordedAt, Station: env.Src.Station,
+			})
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EdgeSnapshotID < out[j].EdgeSnapshotID })
 	return out

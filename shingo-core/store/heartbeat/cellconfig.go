@@ -35,14 +35,17 @@ func (c CellConfig) AllProcessIDs() []int64 {
 
 // ProcessOption is one selectable Process for the /admin/cells picker —
 // surfaced from the live cell_part_events stream so the operator configures
-// against processes that are actually ticking, with a style/payload hint to
-// recognize which is which (process_id alone is opaque).
+// against processes that are actually ticking, with a style and tick-count
+// hint to recognize which is which (process_id alone is opaque).
+//
+// No payload hint: a tick has no single payload (one stroke on a reporting
+// point fans out to every node scope the style claims), and the column the
+// hint read was never written.
 type ProcessOption struct {
-	ProcessID   int64     `json:"process_id"`
-	Ticks       int64     `json:"ticks"`
-	LastSeen    time.Time `json:"last_seen"`
-	StyleID     int64     `json:"style_id"`
-	PayloadCode string    `json:"payload_code"`
+	ProcessID int64     `json:"process_id"`
+	Ticks     int64     `json:"ticks"`
+	LastSeen  time.Time `json:"last_seen"`
+	StyleID   int64     `json:"style_id"`
 }
 
 // ListCellConfigs returns every configured cell, ordered by cell_id.
@@ -108,15 +111,12 @@ func DeleteCellConfig(db *sql.DB, cellID string) error {
 }
 
 // DistinctProcesses lists the Processes that have ticked for a station in the
-// last 30 days, with a style/payload hint for the picker. The window keeps the
-// scan partition-friendly (cell_part_events is monthly-partitioned) and hides
+// last 30 days, with a style hint for the picker. The window keeps the scan
+// partition-friendly (cell_part_events is monthly-partitioned) and hides
 // long-retired processes.
 func DistinctProcesses(db *sql.DB, station string) ([]ProcessOption, error) {
 	rows, err := db.Query(`SELECT e.process_id, count(*) AS ticks, max(e.recorded_at) AS last_seen,
-		max(e.style_id) AS style_id,
-		(SELECT payload_code FROM cell_part_events e2
-		   WHERE e2.cell_id=$1 AND e2.process_id=e.process_id
-		   ORDER BY e2.recorded_at DESC LIMIT 1) AS payload_code
+		max(e.style_id) AS style_id
 		FROM cell_part_events e
 		WHERE e.cell_id=$1 AND e.recorded_at >= NOW() - INTERVAL '30 days'
 		GROUP BY e.process_id
@@ -128,11 +128,9 @@ func DistinctProcesses(db *sql.DB, station string) ([]ProcessOption, error) {
 	out := []ProcessOption{}
 	for rows.Next() {
 		var p ProcessOption
-		var payload sql.NullString
-		if err := rows.Scan(&p.ProcessID, &p.Ticks, &p.LastSeen, &p.StyleID, &payload); err != nil {
+		if err := rows.Scan(&p.ProcessID, &p.Ticks, &p.LastSeen, &p.StyleID); err != nil {
 			return nil, err
 		}
-		p.PayloadCode = payload.String
 		out = append(out, p)
 	}
 	return out, rows.Err()

@@ -16,6 +16,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -207,6 +208,9 @@ type Engine struct {
 	// attempt. Injected like kafkaConnFn so the engine keeps no hard
 	// dependency on the messaging package.
 	kafkaLastPublishFn func() (bool, time.Time, bool)
+	// productionTickLagFn reports the production tick shipper's backlog for
+	// /status. Injected for the same reason.
+	productionTickLagFn func() (pending, oldestAgeMS int64, err error)
 
 	// homeConsolidations tracks pending two-order consolidation sequences
 	// initiated by ClearLoaderHome. Key = Order A's UUID. When Order A's robot
@@ -492,6 +496,34 @@ func (e *Engine) SetKafkaConnFunc(fn func() bool) {
 // closure. Same indirection as SetKafkaConnFunc.
 func (e *Engine) SetKafkaLastPublishFunc(fn func() (bool, time.Time, bool)) {
 	e.kafkaLastPublishFn = fn
+}
+
+// SetProductionTickNotifier wires the PLC poll pass to the production tick
+// shipper: the pass rings fn when it wrote a shippable counter_snapshots row.
+// Call after Start (the PLC manager exists from then on).
+func (e *Engine) SetProductionTickNotifier(fn func()) {
+	if e.plcMgr != nil {
+		e.plcMgr.SetProductionTickNotifier(fn)
+	}
+}
+
+// SetProductionTickLagFunc injects the production tick shipper's Lag, for
+// /status.
+func (e *Engine) SetProductionTickLagFunc(fn func() (pending, oldestAgeMS int64, err error)) {
+	e.productionTickLagFn = fn
+}
+
+// errNoTickShipper is what /status shows before the shipper is wired.
+var errNoTickShipper = errors.New("production tick shipper not running")
+
+// ProductionTickLag reports the shipper's shippable rows past its cursor and
+// the age in ms of the oldest of them. A shipper that stalls says so nowhere
+// else.
+func (e *Engine) ProductionTickLag() (pending, oldestAgeMS int64, err error) {
+	if e.productionTickLagFn == nil {
+		return 0, 0, errNoTickShipper
+	}
+	return e.productionTickLagFn()
 }
 
 // KafkaLastPublish reports the outcome of the most recent publish attempt:

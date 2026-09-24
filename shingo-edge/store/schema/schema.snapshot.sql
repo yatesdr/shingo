@@ -153,7 +153,17 @@ CREATE TABLE counter_snapshots (
     delta              INTEGER NOT NULL DEFAULT 0,
     anomaly            TEXT,
     operator_confirmed INTEGER NOT NULL DEFAULT 0,
-    recorded_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    recorded_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    -- The production tick feed ships from this table (messaging.TickShipper),
+    -- so the row carries what the wire event needs, bound by the one INSERT the
+    -- poll already runs: recorded_ms is the Go clock read just before that
+    -- INSERT (unix ms; recorded_at above has second granularity), and
+    -- process_id / style_id are the reporting point's at stroke time. NULL on
+    -- rows written before the shipper existed; those were sent through the
+    -- outbox.
+    recorded_ms        INTEGER,
+    process_id         INTEGER,
+    style_id           INTEGER
 );
 
 CREATE TABLE demand_origins_open (
@@ -581,6 +591,12 @@ CREATE TABLE processes (
     -- off, so a reviewed set is never silently re-seeded.
     flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE production_tick_cursor (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    last_id    INTEGER NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE reporting_points (

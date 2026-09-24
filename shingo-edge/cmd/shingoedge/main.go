@@ -294,6 +294,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return ""
 	}
 
+	// The production tick shipper's lag on every heartbeat, so Core's Inventory
+	// page can flag a station whose tick feed has stalled — no message of its
+	// own. A failed read (or no shipper) leaves the fields off.
+	hb.TickLagFn = func() (int64, int64, bool) {
+		pending, age, err := eng.ProductionTickLag()
+		return pending, age, err == nil
+	}
+
 	// Quote the scene geometry the Edge already holds on every node-list
 	// request, so Core sends the geometry only when the map changed.
 	hb.SceneRevisionFn = eng.SceneRevision
@@ -749,6 +757,25 @@ func main() {
 	defer storemessaging.SetEnqueueNotifier(nil)
 	drainer.Start()
 	defer drainer.Stop()
+
+	// ── Production tick shipper ────────────────────────────────────────
+	// The heartbeat dashboards' feed ships from counter_snapshots: the poll
+	// pass writes each tick's row and rings the shipper, which publishes one
+	// production.ticks message per pass straight to Kafka — no outbox row. Its
+	// cursor persists at most once a minute. A shipper that cannot start (its
+	// cursor unreadable) leaves the feed off and says so on /status rather
+	// than stopping the Edge over a dashboard feed.
+	if tickShipper, err := messaging.NewTickShipper(db, func(b []byte) error {
+		return msgClient.Publish(cfg.Messaging.OrdersTopic, b)
+	}, stationID); err != nil {
+		log.Printf("WARNING production tick shipper not started: %v — the heartbeat dashboards get no ticks from this edge", err)
+	} else {
+		tickShipper.DebugLog = messaging.DebugLogFunc(dbg.Func("production_ticks"))
+		tickShipper.Start()
+		defer tickShipper.Stop()
+		eng.SetProductionTickNotifier(tickShipper.Notify)
+		eng.SetProductionTickLagFunc(tickShipper.Lag)
+	}
 
 	// ── Production reporter ────────────────────────────────────────────
 	reporter := messaging.NewProductionReporter(db, stationID)

@@ -12,7 +12,8 @@ import (
 
 // TestCoverage_HeartbeatStore exercises the partitioned cell_part_events path
 // end-to-end against real Postgres (the DDL the local build can't validate):
-// partition creation, projection insert, ordered read, dedup, and retention.
+// partition creation, projection insert, ordered read, the unique-key dedup,
+// and retention.
 func TestCoverage_HeartbeatStore(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -28,11 +29,8 @@ func TestCoverage_HeartbeatStore(t *testing.T) {
 
 	e1 := heartbeat.PartEvent{CellID: "STN-A", RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 100}
 	e2 := heartbeat.PartEvent{CellID: "STN-A", RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 101}
-	if err := heartbeat.InsertPartEvent(db.DB, e1); err != nil {
-		t.Fatalf("InsertPartEvent e1: %v", err)
-	}
-	if err := heartbeat.InsertPartEvent(db.DB, e2); err != nil {
-		t.Fatalf("InsertPartEvent e2: %v", err)
+	if got, rej := heartbeat.InsertPartEvents(db.DB, []heartbeat.PartEvent{e1, e2}); rej != nil || len(got) != 2 {
+		t.Fatalf("InsertPartEvents: %d rows, rejected %v, want 2/none", len(got), rej)
 	}
 
 	got, err := heartbeat.ListEvents(db.DB, "STN-A", now.Add(-time.Hour), now)
@@ -46,16 +44,18 @@ func TestCoverage_HeartbeatStore(t *testing.T) {
 		t.Error("ListEvents not ascending by recorded_at")
 	}
 
-	// Dedup: first is new, second is a duplicate.
-	if isNew, err := heartbeat.TryDedup(db.DB, "STN-A", 42); err != nil || !isNew {
-		t.Fatalf("TryDedup first: isNew=%v err=%v, want true/nil", isNew, err)
+	// Dedup is the table's unique key: the same tick again inserts nothing; the
+	// same edge id from another station, or with a new recorded_at (a restored
+	// edge), is a new row.
+	if got, rej := heartbeat.InsertPartEvents(db.DB, []heartbeat.PartEvent{e1}); rej != nil || len(got) != 0 {
+		t.Fatalf("re-sent tick: %d rows, rejected %v, want 0/none", len(got), rej)
 	}
-	if isNew, err := heartbeat.TryDedup(db.DB, "STN-A", 42); err != nil || isNew {
-		t.Fatalf("TryDedup dup: isNew=%v err=%v, want false/nil", isNew, err)
-	}
-	// Same Edge ID, different station → not a duplicate (composite key, §8 #22).
-	if isNew, err := heartbeat.TryDedup(db.DB, "STN-B", 42); err != nil || !isNew {
-		t.Fatalf("TryDedup cross-station: isNew=%v err=%v, want true/nil", isNew, err)
+	other := e1
+	other.CellID = "STN-B"
+	restored := e1
+	restored.RecordedAt = now.Add(-30 * time.Second)
+	if got, rej := heartbeat.InsertPartEvents(db.DB, []heartbeat.PartEvent{other, restored}); rej != nil || len(got) != 2 {
+		t.Fatalf("cross-station + restored: %d rows, rejected %v, want 2/none", len(got), rej)
 	}
 
 	// Retention: a partition 200 days old should drop with keepDays=90.

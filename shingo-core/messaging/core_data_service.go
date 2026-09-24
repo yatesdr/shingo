@@ -64,13 +64,8 @@ type CoreDataService struct {
 	linesideDivergence *service.LinesideDivergenceService
 	resp               coreDataResponder
 	thresholdMonitor   ThresholdMonitor
-	// tickCh buffers production.tick projections for the async worker started
-	// by StartHeartbeatProjection. HandleProductionTick only enqueues
-	// (non-blocking), so a slow/locked cell_part_events table can never
-	// back-pressure the inventory hot path (plan §12).
-	tickCh chan heartbeat.PartEvent
 	// downtimeCh buffers downtime event projections for the async worker
-	// started by StartDowntimeProjection (G9). Mirrors tickCh pattern.
+	// started by StartDowntimeProjection (G9).
 	downtimeCh chan downtime.DowntimeEvent
 	// plantTimezone is the EXPLICITLY configured plant zone, echoed to every
 	// edge on its heartbeat ack so a site is configured in one place instead of
@@ -82,10 +77,10 @@ type CoreDataService struct {
 	// which is the same as an unconfigured Core — so forgetting the call fails
 	// safe rather than shipping a wrong clock to the fleet.
 	plantTimezone string
-	// cellTickEmitter, if set, fires after a tick is projected so the
-	// composition root can fan it out — the SSE cell-heartbeat broadcast
-	// (Phase E). Optional; nil in tests and headless runs. Set once before
-	// StartHeartbeatProjection, so the worker reads it race-free.
+	// cellTickEmitter, if set, fires once per tick row actually inserted, so
+	// the composition root can fan it out — the SSE cell-heartbeat broadcast
+	// (Phase E). Optional; nil in tests and headless runs. Set once at the
+	// composition root before the Kafka subscription starts delivering.
 	cellTickEmitter func(station string, processID, styleID int64, recordedAt time.Time)
 	// faultGrace / faultNoticeAfter are config durations echoed onto faulted
 	// order snapshots so a reconciling Edge can render the fault line and its
@@ -115,10 +110,10 @@ func (s *CoreDataService) SetFaultWindow(grace, noticeAfter time.Duration) {
 	s.faultGrace, s.faultNoticeAfter = grace, noticeAfter
 }
 
-// SetCellTickEmitter wires a callback invoked after each production.tick is
-// projected into cell_part_events (Phase E). The composition root points it at
-// the engine event bus, which SetupEngineListeners rebroadcasts as the SSE
-// cell-heartbeat. Optional; may be nil. Set before StartHeartbeatProjection.
+// SetCellTickEmitter wires a callback invoked for each tick row inserted into
+// cell_part_events (Phase E). The composition root points it at the engine
+// event bus, which SetupEngineListeners rebroadcasts as the SSE
+// cell-heartbeat. Optional; may be nil. Set before messages are consumed.
 func (s *CoreDataService) SetCellTickEmitter(fn func(station string, processID, styleID int64, recordedAt time.Time)) {
 	s.cellTickEmitter = fn
 }
@@ -138,7 +133,6 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 		inventoryDelta:     service.NewInventoryDeltaService(db, service.NewBinManifestService(db, announce), announce),
 		linesideDivergence: service.NewLinesideDivergenceService(db),
 		resp:               resp,
-		tickCh:             make(chan heartbeat.PartEvent, 4096),
 		downtimeCh:         make(chan downtime.DowntimeEvent, 1024),
 	}
 }
@@ -148,27 +142,16 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 // stay empty so an unconfigured Core propagates nothing.
 func (s *CoreDataService) SetPlantTimezone(tz string) { s.plantTimezone = tz }
 
-// StartHeartbeatProjection launches the async cell_part_events projection
-// worker and the monthly-partition manager (plan §12). Call once at the
-// composition root after subject registration. The projection is decoupled
-// from inventory: HandleProductionTick only enqueues; this worker does the
-// INSERT, so a slow/locked projection table never back-pressures the delta
-// hot path. Goroutines live for the process lifetime (daemon model).
-func (s *CoreDataService) StartHeartbeatProjection() {
+// StartHeartbeatMaintenance creates the cell_part_events partitions for this
+// month and next, then launches the daily pass: partitions ahead, the 90-day
+// partition drop, and the bin_uop_delta roll-up and purge that ride the same
+// ticker (plan §12). Call once at the composition root. The projection itself
+// is synchronous in the tick handlers. The goroutine lives for the process
+// lifetime (daemon model).
+func (s *CoreDataService) StartHeartbeatMaintenance() {
 	if err := s.db.EnsureHeartbeatPartitions(clock.Now().UTC()); err != nil {
 		log.Printf("core_handler: ensure heartbeat partitions at boot: %v", err)
 	}
-	go func() {
-		for e := range s.tickCh {
-			if err := s.db.InsertCellPartEvent(e); err != nil {
-				log.Printf("core_handler: project cell_part_event cell=%s edge_id=%d: %v", e.CellID, e.EdgeSnapshotID, err)
-				continue
-			}
-			if s.cellTickEmitter != nil {
-				s.cellTickEmitter(e.CellID, e.ProcessID, e.StyleID, e.RecordedAt)
-			}
-		}
-	}()
 	go func() {
 		t := time.NewTicker(24 * time.Hour)
 		defer t.Stop()
@@ -181,17 +164,6 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 				log.Printf("core_handler: drop old heartbeat partitions: %v", err)
 			} else if dropped > 0 {
 				log.Printf("core_handler: dropped %d expired heartbeat partition(s)", dropped)
-			}
-			// The dedup guard rides the same ticker and the same window as
-			// the projection it guards. It grew at exactly the rate of
-			// cell_part_events — same event, same function, identical row
-			// count — while only one of the two was bounded, which at 40
-			// cells is 2.2 MB/day forever. It cannot be partitioned (see
-			// heartbeat.PurgeOldDedup), so it is a DELETE.
-			if purged, err := s.db.PurgeOldProductionTickDedup(heartbeatRetentionDays, now); err != nil {
-				log.Printf("core_handler: purge old production tick dedup: %v", err)
-			} else if purged > 0 {
-				log.Printf("core_handler: purged %d expired production.tick dedup row(s)", purged)
 			}
 			// The bin_uop_delta_daily roll-up (v94) rides the same daily
 			// ticker as the purges — it must run while the raw delta rows
@@ -220,14 +192,47 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 	}()
 }
 
-// HandleProductionTick projects an Edge production.tick (one PLC counter
-// observation) into cell_part_events for the heartbeat dashboards (plan §12).
-// Dedup on (station, edge_snapshot_id) is synchronous and runs first (§8 #22);
-// the projection is enqueued non-blocking so it can never back-pressure the
-// inventory hot path. Emits even for anomaly=="jump" (§8 #20). Because dedup
-// commits before the (best-effort) projection, projection is at-most-once — an
-// acceptable trade for a dashboard that is not an inventory truth source; a
-// dropped/failed projection is logged, not retried.
+// HandleProductionTicks projects one Edge poll pass's ticks (production.ticks,
+// plan §12) into cell_part_events for the heartbeat dashboards: ONE multi-row
+// INSERT, synchronously, keyed on (cell_id, edge_snapshot_id, recorded_at), and
+// one cell-tick emit per row it actually inserted. A re-sent page is a no-op;
+// a restored Edge's reused ids carry new timestamps and are new rows.
+//
+// Synchronous on purpose. The projection used to be a non-blocking send to a
+// 4096-deep queue that dropped ticks when full, and a dropped tick is not a
+// missing dot: ComputeStops turns the gap into a stop, and MTBF and Lost are
+// computed from it. The cost is one statement per message on the read loop.
+//
+// A page the INSERT refuses is retried row by row (heartbeat.InsertPartEvents),
+// because the Edge has already moved past it: one tick with a bad clock must
+// not take the good ones with it. Each row still refused is logged with its
+// station, edge_snapshot_id and recorded_at, and counted on the station's
+// edge_registry.tick_rejected, which the Inventory page shows.
+//
+// THE STATION COMES FROM THE ENVELOPE, FULL STOP — see HandleProductionTick.
+func (s *CoreDataService) HandleProductionTicks(env *protocol.Envelope, p *protocol.ProductionTicks) {
+	station := env.Src.Station
+	events := make([]heartbeat.PartEvent, len(p.Ticks))
+	for i, t := range p.Ticks {
+		events[i] = heartbeat.PartEvent{
+			CellID:         station,
+			RecordedAt:     t.RecordedAt,
+			EdgeSnapshotID: t.EdgeSnapshotID,
+			CountValue:     t.CountValue,
+			Delta:          t.Delta,
+			Anomaly:        t.Anomaly,
+			ProcessID:      t.ProcessID,
+			StyleID:        t.StyleID,
+		}
+	}
+	s.projectTicks(station, events)
+}
+
+// HandleProductionTick projects one production.tick — the per-tick subject an
+// Edge from before the counter_snapshots shipper still sends through its
+// outbox — through the same INSERT as HandleProductionTicks, so one key
+// dedups both. ReportingPointID is dropped: nothing on Core reads it.
+//
 // THE STATION COMES FROM THE ENVELOPE, FULL STOP. It used to come from the
 // payload with the envelope as a fallback, which is a rule with two possible
 // answers that only ever produced one because a plant had exactly one station.
@@ -235,16 +240,7 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 // payload copy is gone and this reads the source the transport carried.
 func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *protocol.CounterSnapshot) {
 	station := env.Src.Station
-	isNew, err := s.db.TryProductionTickDedup(station, snap.EdgeSnapshotID)
-	if err != nil {
-		log.Printf("core_handler: production.tick dedup station=%s edge_id=%d: %v", station, snap.EdgeSnapshotID, err)
-		return
-	}
-	if !isNew {
-		s.resp.dbg("production.tick replay station=%s edge_id=%d — already projected", station, snap.EdgeSnapshotID)
-		return
-	}
-	ev := heartbeat.PartEvent{
+	s.projectTicks(station, []heartbeat.PartEvent{{
 		CellID:         station,
 		RecordedAt:     snap.RecordedAt,
 		EdgeSnapshotID: snap.EdgeSnapshotID,
@@ -253,29 +249,33 @@ func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *pro
 		Anomaly:        snap.Anomaly,
 		ProcessID:      snap.ProcessID,
 		StyleID:        snap.StyleID,
-	}
-	select {
-	case s.tickCh <- ev:
-	default:
-		log.Printf("core_handler: production.tick projection queue full, dropped station=%s edge_id=%d", station, snap.EdgeSnapshotID)
-	}
-
-	// §14 production.report retirement. The gate (isProductionTick) says which
-	// ticks are production events; the counter they were going to feed is gone
-	// (v106 — the demands table held zero rows at both plants for its whole
-	// life and nothing read it), so this branch only reports.
-	if isProductionTick(snap) {
-		s.resp.dbg("production.tick is a production event station=%s style=%d delta=%d",
-			station, snap.StyleID, snap.Delta)
-	}
+	}})
 }
 
-// isProductionTick reports whether a tick should increment the produced
-// counter per §14's filter (Delta > 0, a real style, not an unconfirmed jump).
-// Mirrors Edge's old EmitCounterDelta production guard. Ready for the §14
-// retirement once the cat_id source is resolved (Q-024).
-func isProductionTick(snap *protocol.CounterSnapshot) bool {
-	return snap.Delta > 0 && snap.StyleID != 0 && snap.Anomaly != "jump"
+// projectTicks inserts and emits for the rows that were new.
+func (s *CoreDataService) projectTicks(station string, events []heartbeat.PartEvent) {
+	if len(events) == 0 {
+		return
+	}
+	inserted, rejected := s.db.InsertCellPartEvents(events)
+	for _, r := range rejected {
+		log.Printf("core_handler: production tick rejected station=%s edge_snapshot_id=%d recorded_at=%s: %v",
+			station, r.Event.EdgeSnapshotID, r.Event.RecordedAt.UTC().Format(time.RFC3339Nano), r.Err)
+	}
+	if len(rejected) > 0 {
+		if err := s.db.AddTickRejected(station, len(rejected)); err != nil {
+			log.Printf("core_handler: count %d rejected production tick(s) station=%s: %v", len(rejected), station, err)
+		}
+	}
+	if replays := len(events) - len(inserted) - len(rejected); replays > 0 {
+		s.resp.dbg("production ticks station=%s: %d new, %d already projected", station, len(inserted), replays)
+	}
+	if s.cellTickEmitter == nil {
+		return
+	}
+	for _, e := range inserted {
+		s.cellTickEmitter(e.CellID, e.ProcessID, e.StyleID, e.RecordedAt)
+	}
 }
 
 // HandleBinUOPDelta routes a count message to the InventoryDeltaService,
@@ -501,7 +501,8 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 // found=false drives the same edge.register_request the old isNew flag did;
 // the difference is that the request is now the only outcome.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
-	found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone)
+	found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone,
+		store.TickLag{Pending: p.TickPending, OldestUnsentAgeMS: p.TickOldestUnsentAgeMS})
 	if err != nil {
 		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
 		return
@@ -873,8 +874,9 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 
 // StartDowntimeProjection launches the async downtime_events projection worker
 // and partition manager (G9). Call once at the composition root after subject
-// registration. Mirrors StartHeartbeatProjection: HandleDowntimeEvent enqueues,
-// this worker does the INSERT.
+// registration. HandleDowntimeEvent enqueues, this worker does the INSERT.
+// (The production-tick projection that this used to mirror is synchronous
+// now; see HandleProductionTicks.)
 //
 // downtime_events is scaffolding for the sim's downtime model — deliberate,
 // and not currently fed by any plant (0 rows at Springfield; the only producer
@@ -893,7 +895,7 @@ func (s *CoreDataService) StartDowntimeProjection() {
 			}
 		}
 	}()
-	// Daily maintenance, mirroring StartHeartbeatProjection. Two things were
+	// Daily maintenance, mirroring StartHeartbeatMaintenance. Two things were
 	// missing here, not one: EnsurePartitions only creates the current and next
 	// month, so with no daily tick a Core up longer than two months runs out of
 	// partitions; and the copy that became store/downtime dropped

@@ -454,11 +454,18 @@ func SetDisplayName(db *sql.DB, uid, displayName string) (bool, error) {
 // edge.register_request. The difference is that the request is now the ONLY
 // outcome, rather than a notification about a row heartbeating itself into
 // existence.
-func UpdateHeartbeat(db *sql.DB, uid, timezone string) (found bool, err error) {
+//
+// lag rides the same statement: the production tick shipper's backlog as the
+// heartbeat reported it. A nil Pending (an edge without the shipper, or a
+// failed read on the edge) leaves the stored report and its time alone.
+func UpdateHeartbeat(db *sql.DB, uid, timezone string, lag TickLag) (found bool, err error) {
 	res, err := db.Exec(`
-		UPDATE edge_registry SET last_heartbeat = NOW(), status = 'active', timezone = $2
+		UPDATE edge_registry SET last_heartbeat = NOW(), status = 'active', timezone = $2,
+			tick_pending              = COALESCE($3, tick_pending),
+			tick_oldest_unsent_age_ms = COALESCE($4, tick_oldest_unsent_age_ms),
+			tick_reported_at          = CASE WHEN $3::BIGINT IS NULL THEN tick_reported_at ELSE NOW() END
 		WHERE station_uid = $1
-	`, uid, timezone)
+	`, uid, timezone, lag.Pending, lag.OldestUnsentAgeMS)
 	if err != nil {
 		return false, err
 	}
@@ -466,11 +473,28 @@ func UpdateHeartbeat(db *sql.DB, uid, timezone string) (found bool, err error) {
 	return n > 0, err
 }
 
+// AddTickRejected adds n to a station's count of production ticks Core could
+// not store (edge_registry.tick_rejected). Runs only on a failed page, never
+// in the steady state. A station with no registry row counts nowhere; the log
+// line the caller writes per tick is the record then.
+func AddTickRejected(db *sql.DB, uid string, n int) error {
+	_, err := db.Exec(`UPDATE edge_registry SET tick_rejected = tick_rejected + $2 WHERE station_uid = $1`, uid, n)
+	return err
+}
+
+// TickLag is the production tick shipper's lag an edge reports on its
+// heartbeat. Both nil means the heartbeat carried no report.
+type TickLag struct {
+	Pending           *int64
+	OldestUnsentAgeMS *int64
+}
+
 const edgeColumns = `id, station_uid, display_name, station_id, hostname, version,
 	       registered_at, last_heartbeat, status,
 	       bound_hostname, bound_instance, prev_instance, bound_at, claimed_at,
 	       conflict_hostname, conflict_count, conflict_at,
-	       timezone`
+	       timezone,
+	       tick_pending, tick_oldest_unsent_age_ms, tick_reported_at, tick_rejected`
 
 func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 	var e Edge
@@ -478,7 +502,8 @@ func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 		&e.RegisteredAt, &e.LastHeartbeat, &e.Status,
 		&e.BoundHostname, &e.BoundInstance, &e.PrevInstance, &e.BoundAt, &e.ClaimedAt,
 		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt,
-		&e.Timezone)
+		&e.Timezone,
+		&e.TickPending, &e.TickOldestUnsentAgeMS, &e.TickReportedAt, &e.TickRejected)
 	return e, err
 }
 

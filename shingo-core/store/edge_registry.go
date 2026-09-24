@@ -45,8 +45,8 @@ func (db *DB) RenameEdge(uid, displayName string) (bool, error) {
 // The timezone is the zone the edge process reports being on — written from
 // the wire on every heartbeat so the /edges table tracks a restart even when
 // no register follows it.
-func (db *DB) UpdateHeartbeat(uid, timezone string) (found bool, err error) {
-	return registry.UpdateHeartbeat(db.DB, uid, timezone)
+func (db *DB) UpdateHeartbeat(uid, timezone string, lag TickLag) (found bool, err error) {
+	return registry.UpdateHeartbeat(db.DB, uid, timezone, lag)
 }
 
 func (db *DB) ListEdges() ([]registry.Edge, error) { return registry.List(db.DB) }
@@ -70,4 +70,13 @@ func (db *DB) IntroduceEdge(uid, hostname, version string) (*registry.Edge, erro
 // ClaimEdge records a human's answer to "what is this station?".
 func (db *DB) ClaimEdge(uid, displayName string) (bool, error) {
 	return registry.Claim(db.DB, uid, displayName)
+}
+
+// TickLag is the production tick shipper's lag an edge reports on its
+// heartbeat; see registry.TickLag.
+type TickLag = registry.TickLag
+
+// AddTickRejected counts production ticks Core refused for a station.
+func (db *DB) AddTickRejected(uid string, n int) error {
+	return registry.AddTickRejected(db.DB, uid, n)
 }

@@ -62,6 +62,13 @@ func (h *Handlers) handleInventory(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page": "inventory",
 	}
+	// The production tick feed panel (partials/tick-feed-panel.html). A failed
+	// read renders the panel's empty state rather than failing the page.
+	if feed, err := h.engine.HeartbeatService().TickFeedStatus(clock.Now().UTC()); err != nil {
+		log.Printf("inventory: tick feed status: %v", err)
+	} else {
+		data["TickFeed"] = feed
+	}
 	h.render(w, r, "inventory.html", data)
 }
 

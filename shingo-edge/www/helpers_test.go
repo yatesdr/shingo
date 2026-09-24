@@ -110,6 +110,8 @@ type stubEngine struct {
 	statusLastPublishOK    bool
 	statusLastPublishAt    time.Time
 	statusLastPublishEver  bool
+	statusTickPending      int64
+	statusTickOldestMS     int64
 
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
@@ -693,6 +695,10 @@ func (s *stubEngine) CountDeadLetterOutbox() (int, error) { return s.db.CountDea
 
 func (s *stubEngine) KafkaLastPublish() (bool, time.Time, bool) {
 	return s.statusLastPublishOK, s.statusLastPublishAt, s.statusLastPublishEver
+}
+
+func (s *stubEngine) ProductionTickLag() (int64, int64, error) {
+	return s.statusTickPending, s.statusTickOldestMS, nil
 }
 
 // ptr is a pointer to a literal, for the fields whose zero value and absence

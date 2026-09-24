@@ -1,52 +1,107 @@
 package heartbeat
 
 // SQL shell for the production-heartbeat data layer (plan §12). Thin
-// persistence around the cell_part_events projection + production_tick_dedup
-// guard + cell_targets + monthly partition lifecycle. All analytical math is
-// in heartbeat.go's pure functions; this file only reads/writes.
+// persistence around the cell_part_events projection, cell_targets and the
+// monthly partition lifecycle. All analytical math is in heartbeat.go's pure
+// functions; this file only reads/writes.
 
 import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
-// TryDedup records (station, edge_snapshot_id) and reports whether it was NEW
-// (true) or a duplicate (false). Called BEFORE projection so a redelivered
-// production.tick never double-projects (plan §8 #22). One UPSERT, no SELECT.
-func TryDedup(db *sql.DB, station string, edgeSnapshotID int64) (bool, error) {
-	res, err := db.Exec(
-		`INSERT INTO production_tick_dedup (station, edge_snapshot_id) VALUES ($1, $2)
-		 ON CONFLICT (station, edge_snapshot_id) DO NOTHING`,
-		station, edgeSnapshotID)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+// partEventCols is the INSERT column list's width; InsertPartEvents binds this
+// many parameters per row.
+const partEventCols = 8
+
+// RejectedTick is a tick the database refused on its own — typically a
+// recorded_at outside every partition, from an Edge with a wrong clock.
+type RejectedTick struct {
+	Event PartEvent
+	Err   error
 }
 
-// InsertPartEvent appends one projected tick to cell_part_events. The target
-// month partition must exist (EnsurePartitions runs at boot + daily).
-func InsertPartEvent(db *sql.DB, e PartEvent) error {
-	_, err := db.Exec(
-		`INSERT INTO cell_part_events
-		 (cell_id, payload_code, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		e.CellID, e.PayloadCode, e.RecordedAt, e.EdgeSnapshotID,
-		e.CountValue, e.Delta, e.Anomaly, e.ProcessID, e.StyleID)
-	if err != nil {
-		return fmt.Errorf("insert cell_part_event: %w", err)
+// InsertPartEvents projects ticks into cell_part_events in ONE statement and
+// returns the rows it actually inserted.
+//
+// ONLY WHEN THAT STATEMENT FAILS it retries the page row by row, so one bad
+// tick does not take the good ones with it: the Edge moved its cursor when the
+// publish succeeded and will not send the page again. The rows the database
+// refuses one at a time come back as rejected. The steady state stays one
+// statement; the fallback costs one per row, and only on a failed page.
+//
+// The dedup key is the table's own unique index,
+// (cell_id, edge_snapshot_id, recorded_at): a re-sent tick carries the
+// recorded_at read back from the Edge's snapshot row, so it conflicts and is
+// skipped; a restored Edge that reuses an id carries a new recorded_at, so it
+// is a new row. (cell_id, edge_snapshot_id) alone would drop that row, and
+// edge_snapshot_id alone would merge stations (Edge ids collide across
+// stations, §8 #22). The partition for each recorded_at must exist
+// (EnsurePartitions runs at boot and daily).
+func InsertPartEvents(db *sql.DB, events []PartEvent) (inserted []PartEvent, rejected []RejectedTick) {
+	if len(events) == 0 {
+		return nil, nil
 	}
-	return nil
+	inserted, err := insertPartEventRows(db, events)
+	if err == nil {
+		return inserted, nil
+	}
+	if len(events) == 1 {
+		return nil, []RejectedTick{{Event: events[0], Err: err}}
+	}
+	for _, e := range events {
+		got, err := insertPartEventRows(db, []PartEvent{e})
+		if err != nil {
+			rejected = append(rejected, RejectedTick{Event: e, Err: err})
+			continue
+		}
+		inserted = append(inserted, got...)
+	}
+	return inserted, rejected
+}
+
+// insertPartEventRows is the one multi-row INSERT ... ON CONFLICT DO NOTHING
+// RETURNING.
+func insertPartEventRows(db *sql.DB, events []PartEvent) ([]PartEvent, error) {
+	var q strings.Builder
+	q.WriteString(`INSERT INTO cell_part_events
+		(cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id) VALUES `)
+	args := make([]any, 0, len(events)*partEventCols)
+	for i, e := range events {
+		if i > 0 {
+			q.WriteString(",")
+		}
+		n := i * partEventCols
+		fmt.Fprintf(&q, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)", n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8)
+		args = append(args, e.CellID, e.RecordedAt, e.EdgeSnapshotID, e.CountValue, e.Delta, e.Anomaly, e.ProcessID, e.StyleID)
+	}
+	q.WriteString(` ON CONFLICT (cell_id, edge_snapshot_id, recorded_at) DO NOTHING
+		RETURNING id, cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id`)
+	rows, err := db.Query(q.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("insert cell_part_events: %w", err)
+	}
+	defer rows.Close()
+	var out []PartEvent
+	for rows.Next() {
+		var e PartEvent
+		if err := rows.Scan(&e.ID, &e.CellID, &e.RecordedAt, &e.EdgeSnapshotID,
+			&e.CountValue, &e.Delta, &e.Anomaly, &e.ProcessID, &e.StyleID); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // ListEvents returns events for a cell in [since, until], ascending. Backs the
 // analytical queries and the run/stop strip (composite index (cell_id, recorded_at)).
 func ListEvents(db *sql.DB, cellID string, since, until time.Time) ([]PartEvent, error) {
 	rows, err := db.Query(
-		`SELECT id, cell_id, payload_code, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
+		`SELECT id, cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
 		 FROM cell_part_events
 		 WHERE cell_id=$1 AND recorded_at >= $2 AND recorded_at <= $3
 		 ORDER BY recorded_at`, cellID, since, until)
@@ -57,7 +112,7 @@ func ListEvents(db *sql.DB, cellID string, since, until time.Time) ([]PartEvent,
 	var out []PartEvent
 	for rows.Next() {
 		var e PartEvent
-		if err := rows.Scan(&e.ID, &e.CellID, &e.PayloadCode, &e.RecordedAt, &e.EdgeSnapshotID,
+		if err := rows.Scan(&e.ID, &e.CellID, &e.RecordedAt, &e.EdgeSnapshotID,
 			&e.CountValue, &e.Delta, &e.Anomaly, &e.ProcessID, &e.StyleID); err != nil {
 			return nil, err
 		}
@@ -129,52 +184,6 @@ func partitionName(monthStart time.Time) string {
 }
 
 var partitionRe = regexp.MustCompile(`^cell_part_events_(\d{4})_(\d{2})$`)
-
-// PurgeOldDedup deletes production_tick_dedup rows applied before
-// now-keepDays. Returns the number deleted.
-//
-// THE DEDUP TABLE CANNOT BE PARTITIONED LIKE ITS SIBLING, AND THIS IS THE
-// WHOLE REASON IT GETS A DELETE INSTEAD. cell_part_events and this table
-// are fed by the same event in the same function (HandleProductionTick)
-// and hold the same row count, so "partition it the same way and drop old
-// partitions" is the obvious move — but it is not available. Postgres
-// requires every column of the partition key to appear in any unique
-// constraint on a partitioned table, so PARTITION BY RANGE (applied_at)
-// would force the primary key to become (station, edge_snapshot_id,
-// applied_at). That key does not constrain anything this table exists to
-// constrain: a redelivered tick arriving at a different applied_at would
-// no longer conflict, TryDedup's `ON CONFLICT (station, edge_snapshot_id)`
-// would have no matching unique index to name, and the guard would report
-// every replay as new. The composite PK IS the dedup guarantee; time
-// partitioning trades it away. A DELETE keeps it.
-//
-// The cost of doing it the plain way is small and bounded, and measured
-// rather than assumed. There is no index on applied_at and none is added.
-// Against the restored Springfield database, deleting 70,569 of 151,026
-// rows takes 102.6 ms — a sequential scan of 1,152 buffers, 32.6 ms of it
-// the scan itself. Extrapolated to 40 cells, where a full 90-day table is
-// ~1.9M rows and ~200 MB, that is a second or so once a day, against an
-// index that would have to be maintained on every tick insert on the hot
-// path. The Edge's exact parallel — an index on counter_snapshots
-// .recorded_at — measures 2.2x the size of the table it would serve, which
-// is the argument that survives re-measurement there and the one being
-// borrowed here. Declined for that reason, and revisitable if the daily
-// pass ever shows up in Core's logs.
-//
-// Ninety days is deliberately the same number as heartbeatRetentionDays
-// rather than a tighter one derived from the retry window (24-hour outbox
-// retention × MaxRetries, which would justify about seven days). The two
-// tables answer the same question about the same events; a second, shorter
-// number here would only be something to explain later. At 90 days the
-// table is ~198 MB at 40 cells, which is not a problem Core has.
-func PurgeOldDedup(db *sql.DB, keepDays int, now time.Time) (int64, error) {
-	cutoff := now.UTC().AddDate(0, 0, -keepDays)
-	res, err := db.Exec(`DELETE FROM production_tick_dedup WHERE applied_at < $1`, cutoff)
-	if err != nil {
-		return 0, fmt.Errorf("purge production_tick_dedup: %w", err)
-	}
-	return res.RowsAffected()
-}
 
 // DropOldPartitions drops cell_part_events partitions whose month ends before
 // now-keepDays (plan §12: 90-day retention via DROP TABLE on old partitions —

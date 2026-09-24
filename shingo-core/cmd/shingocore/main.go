@@ -431,16 +431,17 @@ func main() {
 		log.Fatalf("shingocore: %v — composition root is incomplete", err)
 	}
 	// Fan projected ticks out to the engine event bus so the SSE layer can
-	// rebroadcast them as cell-heartbeat (Phase E). Set before the projection
-	// worker starts so it reads the emitter race-free.
+	// rebroadcast them as cell-heartbeat (Phase E). Set before the ingestor
+	// subscribes, so every handler call reads it race-free.
 	coreDataService.SetCellTickEmitter(func(station string, processID, styleID int64, recordedAt time.Time) {
 		eng.Events.Emit(engine.Event{Type: engine.EventCellTick, Payload: engine.CellTickEvent{
 			Station: station, ProcessID: processID, StyleID: styleID, RecordedAt: recordedAt,
 		}})
 	})
-	// Launch the async cell_part_events projection worker + partition manager
-	// (plan §12). Must follow registration; the handler only enqueues.
-	coreDataService.StartHeartbeatProjection()
+	// cell_part_events partitions now and daily, plus the daily retention
+	// passes (plan §12). The tick handlers project synchronously and need this
+	// month's partition before the first message.
+	coreDataService.StartHeartbeatMaintenance()
 	coreDataService.StartDowntimeProjection()
 
 	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })

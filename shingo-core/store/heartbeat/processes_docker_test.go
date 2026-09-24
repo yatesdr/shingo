@@ -16,6 +16,10 @@ import (
 // (DistinctProcesses) and the Overview's "processes managed" count (Footprint).
 // The rows go in by plain SQL naming only the columns every shape of the table
 // has, so the fixture does not depend on the projection path under change.
+//
+// Unchanged by the move onto counter_snapshots except for one arm: the
+// picker's payload hint read cell_part_events.payload_code, which nothing ever
+// wrote, and went with the column.
 func TestProcessPickerAndFootprint_OverFixture(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -65,9 +69,6 @@ func TestProcessPickerAndFootprint_OverFixture(t *testing.T) {
 		g := got[i]
 		if g.ProcessID != w.pid || g.Ticks != w.ticks || g.StyleID != w.style || !g.LastSeen.Equal(w.last) {
 			t.Errorf("option %d = %+v, want pid=%d ticks=%d style=%d last=%v", i, g, w.pid, w.ticks, w.style, w.last)
-		}
-		if g.PayloadCode != "" {
-			t.Errorf("option %d payload_code = %q, want '' (never written)", i, g.PayloadCode)
 		}
 	}
 
