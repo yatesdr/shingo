@@ -557,6 +557,34 @@ func TestBinService_Move_HappyPath(t *testing.T) {
 	}
 }
 
+// A HAND MOVE CANNOT PUT A BIN AT _TRANSIT. SPR bin 146 (2026-09-23) was
+// moved there to free its slot, and the stranded inference then blamed the
+// robot of its last order. A normal destination still moves.
+func TestBinService_MoveByHand_RefusesTransit(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	transit, err := db.GetNodeByName(domain.TransitNodeName)
+	testutil.MustNoErr(t, err, "lookup _TRANSIT")
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-MBH-1", "", 0)
+	if _, err := svc.MoveByHand(bin, transit.ID); err == nil || !strings.Contains(err.Error(), "not a location") {
+		t.Fatalf("MoveByHand to _TRANSIT: err = %v, want a refusal", err)
+	}
+	got, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin")
+	if got.NodeID == nil || *got.NodeID != sd.StorageNode.ID {
+		t.Errorf("bin moved to %v despite the refusal", got.NodeID)
+	}
+
+	to := &nodes.Node{Name: "MBH-TO", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(to), "create to")
+	if _, err := svc.MoveByHand(bin, to.ID); err != nil {
+		t.Fatalf("MoveByHand to a real node: %v", err)
+	}
+}
+
 func TestBinService_Move_RejectsZeroNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

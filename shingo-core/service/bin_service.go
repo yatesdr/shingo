@@ -305,6 +305,22 @@ type MoveResult struct {
 	DestNode *nodes.Node
 }
 
+// MoveByHand is Move for a person on the bins page, and refuses the two nodes
+// that are not places: `_TRANSIT` and a robot's carrier node.
+//
+// A bin gets to either only by a robot lifting it, and the stranded inference
+// reads a bin there as one a robot dropped. SPR bin 146 (2026-09-23) was moved
+// to `_TRANSIT` by hand to free its slot, and the inference then blamed the
+// robot of its last order for losing it. The engine's own carrier parking
+// calls Move directly and is unaffected.
+func (s *BinService) MoveByHand(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
+	if dest, err := s.db.GetNode(toNodeID); err == nil && wasUnlocated(dest.Name) {
+		return nil, fmt.Errorf("%s is not a location — a bin goes there only when a robot picks it up; "+
+			"to take a bin out of a slot, move it to where it physically went", dest.Name)
+	}
+	return s.Move(b, toNodeID)
+}
+
 // Move relocates a bin to a new node. Validates:
 //   - bin is not already at the destination
 //   - destination node exists

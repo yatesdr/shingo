@@ -248,7 +248,7 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	res, err := h.engine.BinService().Move(b, p.NodeID)
+	res, err := h.engine.BinService().MoveByHand(b, p.NodeID)
 	if err != nil {
 		return err
 	}

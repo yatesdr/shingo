@@ -273,6 +273,9 @@ async function renderActions(data) {
   html += '<div class="form-group"><label>Destination</label><select id="bd-move-node" style="width:200px"><option value="">-- Select --</option>';
   (PAGE_NODES || []).forEach(function(n) {
     if (b.node_id && n.id === b.node_id) return; // skip current location
+    // _TRANSIT and robot decks are not places; a bin reaches them only by a
+    // robot lifting it (BinService.MoveByHand refuses them too).
+    if (n.name === '_TRANSIT' || n.name.indexOf('_ROBOT:') === 0) return;
     html += '<option value="' + n.id + '">' + esc(n.name) + '</option>';
   });
   html += '</select></div>';
