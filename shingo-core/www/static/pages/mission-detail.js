@@ -1,5 +1,6 @@
 import { api, debounce, el, h } from '/static/app.js';
 import { formatTime, onSSE } from '/static/shared/utils.js';
+import { relevantNotices } from '/static/pages/fleet-notices.js';
 
 (function() {
   var orderID = document.getElementById('mission-order-id').textContent;
@@ -114,7 +115,7 @@ import { formatTime, onSSE } from '/static/shared/utils.js';
       renderSummary(data);
       renderDurationBar(data.events || [], data.telemetry);
       renderTimeline(data.events || []);
-      renderMessages(data.telemetry);
+      renderMessages(data.telemetry, (data.telemetry && data.telemetry.robot_id) || (data.order && data.order.robot_id) || '');
       renderEventLog(data.events || []);
     }).catch(function(err) {
       document.getElementById('mission-loading').textContent = 'Failed to load mission: ' + err.message;
@@ -523,13 +524,16 @@ import { formatTime, onSSE } from '/static/shared/utils.js';
     el.innerHTML = html;
   }
 
-  function renderMessages(telemetry) {
+  // Notices go through relevantNotices (fleet-notices.js): only what concerns
+  // this order's robot, not the fleet's roll-call of why every other robot
+  // passed. Errors and warnings are about the order and are shown as sent.
+  function renderMessages(telemetry, robotID) {
     if (!telemetry) return;
     var msgs = [];
     try {
       var errors = JSON.parse(telemetry.errors_json || '[]');
       var warnings = JSON.parse(telemetry.warnings_json || '[]');
-      var notices = JSON.parse(telemetry.notices_json || '[]');
+      var notices = relevantNotices(JSON.parse(telemetry.notices_json || '[]'), robotID);
       for (var i = 0; i < errors.length; i++) msgs.push({type: 'error', msg: errors[i]});
       for (var j = 0; j < warnings.length; j++) msgs.push({type: 'warning', msg: warnings[j]});
       for (var k = 0; k < notices.length; k++) msgs.push({type: 'notice', msg: notices[k]});

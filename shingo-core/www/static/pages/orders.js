@@ -1,5 +1,6 @@
 import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
 import { formatTime } from '/static/shared/utils.js';
+import { relevantNotices } from '/static/pages/fleet-notices.js';
 import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
@@ -10,56 +11,6 @@ import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/s
 // Auth comes from the wrapper's data-authenticated, set by the Go template.
 // The manifest is drawn by JS on two surfaces, neither of which is a
 // template, so {{if .Authenticated}} can't gate the controls.
-// meaningfulNotices drops the fleet's routine roll-call and keeps the exceptions.
-//
-// SEER stamps notice 80004 on essentially EVERY order — a list of every robot
-// that did not take the job, which is all of them but the one that did. It
-// rides orders that delivered perfectly: 2209 and 2211 at Hopkinsville both
-// FINISHED carrying the identical eleven-robot line. So it is chatter, not a
-// fault, and rendering it verbatim puts a wall of robot names under a healthy
-// order and teaches an operator that this panel cries wolf.
-//
-// It was shown verbatim for about an hour on 2026-09-22 because the first place
-// anybody read it was a STOPPED order, where it looked like the explanation. It
-// was not; it was on the successful ones too.
-//
-// THE EXCEPTION IS THE SIGNAL. That same stopped order's notice also carried
-// "AMR-05:robot is not dispatchable" — a robot in a state somebody may need to
-// clear, buried in ten identical siblings. So the roll-call entries are dropped
-// and anything else is kept; a notice that is nothing but roll-call disappears.
-//
-// THE ROLL-CALL HAS FIVE SPELLINGS, not one. SPR's stored notices, 14 days to
-// 2026-09-24: "no joining order" (6674 entries), "order is not complete" (517),
-// "no free container current" (292), "cannot append current task: not load task
-// or container_count < ..." (157) — each a robot that is busy or full — and
-// "robot is not dispatchable" (188), the one kept. All five ride orders that
-// finished normally.
-//
-// AND NONE OF IT MATTERS ONCE A ROBOT HAS THE ORDER. The roll-call explains why
-// the OTHER robots did not take it; on an assigned order (6903, AMR-10
-// mid-unload) that is not a question anyone is asking, so the whole 80004
-// notice goes.
-var ROLL_CALL = [
-  /no joining order\s*$/i,
-  /order is not complete\s*$/i,
-  /no free container current\s*$/i,
-  /cannot append current task: not load task or container_count/i
-];
-
-function meaningfulNotices(items, assigned) {
-  if (!items || !items.length) return [];
-  return items.map(function(m) {
-    if (!m || typeof m !== 'object' || !m.desc) return m;
-    if (assigned && String(m.code) === '80004') return null;
-    var kept = String(m.desc).split(';').filter(function(part) {
-      var p = part.trim();
-      return p !== '' && !ROLL_CALL.some(function(re) { return re.test(p); });
-    });
-    if (kept.length === 0) return null;
-    return { code: m.code, desc: kept.join('; '), times: m.times, timestamp: m.timestamp };
-  }).filter(function(m) { return m !== null; });
-}
-
 // fleetMessages renders one class of vendor message — errors, warnings or
 // notices — as the fleet actually worded it.
 //
@@ -491,12 +442,13 @@ function buildManifest(data, opts) {
     // message two ways is how an operator learns to trust one screen and not the
     // other. If that spelling changes, change it here too.
     //
-    // NOTICES ARE SHOWN NOW TOO. The same incident's notice named every robot and
-    // why each declined the job — which is the second question an operator asks
-    // after "why did it stop" — and this page dropped it on the floor.
+    // NOTICES, ONLY THE ONES ABOUT THIS ORDER. Most are a per-robot roll-call of
+    // why the other robots passed; relevantNotices (fleet-notices.js) keeps what
+    // concerns this order's robot, or summarises the roll-call while none is
+    // assigned.
     out += fleetMessages('Errors', 'manifest-alert-danger', vd.errors);
     out += fleetMessages('Warnings', 'manifest-alert-warn', vd.warnings);
-    out += fleetMessages('Notices', 'manifest-alert-warn', meaningfulNotices(vd.notices, !!o.robot_id));
+    out += fleetMessages('Notices', 'manifest-alert-warn', relevantNotices(vd.notices, o.robot_id || ''));
   }
 
   // ── CHILD ORDERS / STEPS ──
