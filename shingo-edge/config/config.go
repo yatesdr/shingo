@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -54,6 +55,7 @@ type Config struct {
 	Counter   CounterConfig   `yaml:"counter"`
 	Backup    BackupConfig    `yaml:"backup"`
 	Sim       SimConfig       `yaml:"sim"`
+	Logging   LoggingConfig   `yaml:"logging"`
 
 	// LoadersMultiWindow — DEPRECATED. The setting moved onto the loader itself:
 	// Core's bin_loaders.funnel_windows, synced down and read by
@@ -381,6 +383,57 @@ type SimOperatorsConfig struct {
 }
 
 // Defaults returns a Config with sane defaults.
+// LoggingConfig gates what reaches stderr — under systemd, journald. The same
+// key and semantics as Core's (shingo-core/config.LoggingConfig).
+//
+// debuglog mirrors every dbg() call to stderr, and on the Edge nothing
+// restricted that mirror: at Hopkinsville on 2026-09-24 shingo-edge wrote
+// 13,092 journal lines an hour, 82% of them from outbox, inventory_delta,
+// kafka and reporter, which log per tick and per flush. journald was the
+// Pi's largest SD writer (55 KB/s) and rsyslog stored every line again.
+//
+// The ring buffer, the browser log UI and the --log-debug file are NOT gated
+// by this. A muted subsystem is still fully readable in the UI and the file;
+// only the journal is quieter.
+type LoggingConfig struct {
+	// StderrSubsystems is the allow-list of debuglog subsystems mirrored to
+	// stderr:
+	//
+	//   absent          — the DefaultStderrSubsystems() list below
+	//   ["all"]         — mirror everything (the incident escape hatch:
+	//                     restore the full firehose without a rebuild)
+	//   []  or  null    — mirror nothing; ring buffer, UI and file only
+	//   ["a","b"]       — mirror exactly those
+	//
+	// An allow-list, as on Core: a subsystem added later stays out of the
+	// journal until someone opts it in, and the Edge logs the effective list
+	// at boot so its absence is visible.
+	StderrSubsystems []string `yaml:"stderr_subsystems"`
+}
+
+// DefaultStderrSubsystems is the allow-list applied when logging config is
+// absent: every Edge subsystem except the four that log per tick and per
+// flush (outbox, inventory_delta, kafka, reporter). Ruled by the orc on
+// 2026-09-24; those four stay in the ring buffer, the UI and the debug file.
+func DefaultStderrSubsystems() []string {
+	return []string{"edge_handler", "engine", "heartbeat", "orders", "plant_claims",
+		"plc", "production_ticks", "protocol", "release"}
+}
+
+// ResolveStderrSubsystems maps the YAML into debuglog.SetStderrSubsystems'
+// argument: nil for "no restriction", otherwise the explicit allow-list.
+func (l LoggingConfig) ResolveStderrSubsystems() []string {
+	if slices.Contains(l.StderrSubsystems, "all") {
+		return nil
+	}
+	if l.StderrSubsystems == nil {
+		// Only reachable via an explicit `stderr_subsystems:` / `null` in the
+		// YAML, since Defaults() prefills the field. Reads as "none".
+		return []string{}
+	}
+	return l.StderrSubsystems
+}
+
 func Defaults() *Config {
 	return &Config{
 		// NO Namespace / LineID DEFAULTS. They were `plant-a` and `line-1`,
@@ -438,6 +491,7 @@ func Defaults() *Config {
 				SwapRelease:       3 * time.Second,
 			},
 		},
+		Logging: LoggingConfig{StderrSubsystems: DefaultStderrSubsystems()},
 	}
 }
 

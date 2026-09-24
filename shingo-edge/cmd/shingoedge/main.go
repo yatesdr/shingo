@@ -122,6 +122,27 @@ func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
 	return dbg
 }
 
+// applyLogGate restricts debuglog's stderr mirror (journald, under systemd) to
+// logging.stderr_subsystems. Lines logged before config load reach the journal
+// unconditionally: that window is where a fatal config or DB error lands.
+//
+// The effective list is logged because the allow-list is default-deny: a
+// subsystem added later is silently absent from the journal until someone
+// opts it in, and this line is where that becomes visible.
+func applyLogGate(dbg *debuglog.Logger, cfg *config.Config) {
+	allow := cfg.Logging.ResolveStderrSubsystems()
+	dbg.SetStderrSubsystems(allow)
+	switch {
+	case allow == nil:
+		log.Printf("shingoedge: debug log mirroring ALL subsystems to stderr (logging.stderr_subsystems: all)")
+	case len(allow) == 0:
+		log.Printf("shingoedge: debug log stderr mirror disabled (ring buffer, log UI and debug file unaffected)")
+	default:
+		log.Printf("shingoedge: debug log mirroring to stderr: %s (the rest: ring buffer, log UI and debug file only)",
+			strings.Join(allow, ","))
+	}
+}
+
 func mustLoadConfig(path string, portOverride int) *config.Config {
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -646,6 +667,7 @@ func main() {
 	defer dbg.Close()
 
 	cfg := mustLoadConfig(flags.configPath, flags.port)
+	applyLogGate(dbg, cfg)
 	if cfg.Sim.Enabled {
 		simGuard() // sim_enabled.go (sim build) / sim_disabled.go (!sim build)
 	}

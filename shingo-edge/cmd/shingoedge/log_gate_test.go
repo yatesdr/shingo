@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"shingoedge/config"
+)
 
 // log_gate_test.go — what the Edge mirrors to stderr, which under systemd is
 // the journal (memory close-out addendum A, 2026-09-24).
@@ -11,15 +15,18 @@ var edgeSubsystems = []string{
 	"outbox", "plant_claims", "plc", "production_ticks", "protocol", "release", "reporter",
 }
 
-// EVERY SUBSYSTEM REACHES THE JOURNAL. PIN: the Edge never restricts the
-// stderr mirror, so at Hopkinsville 13,092 lines an hour reached journald,
-// 82% of them outbox, inventory_delta, kafka and reporter.
-func TestPin_A_EveryEdgeSubsystemReachesStderr(t *testing.T) {
+// THE DEFAULT KEEPS THE PER-TICK CHATTER OUT OF THE JOURNAL. outbox,
+// inventory_delta, kafka and reporter were 82% of Hopkinsville's 13,092
+// journal lines an hour; every other subsystem still reaches it. Inverts the
+// pin that every subsystem did.
+func TestLogGate_DefaultMutesThePerTickSubsystems(t *testing.T) {
 	dbg := mustInitDebugLog(nil)
 	defer dbg.Close()
+	applyLogGate(dbg, config.Defaults())
+	muted := map[string]bool{"outbox": true, "inventory_delta": true, "kafka": true, "reporter": true}
 	for _, s := range edgeSubsystems {
-		if !dbg.StderrMirrors(s) {
-			t.Errorf("%s does not reach stderr; at the base every subsystem does", s)
+		if got := dbg.StderrMirrors(s); got == muted[s] {
+			t.Errorf("%s reaches stderr = %t, want %t", s, got, !muted[s])
 		}
 	}
 }

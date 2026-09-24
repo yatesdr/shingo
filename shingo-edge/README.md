@@ -58,6 +58,13 @@ Enable subsystem-filtered debug output:
 
 Without a filter (`--log-debug`), all subsystems are logged.
 
+`--log-debug` controls the optional **file** (`shingo-debug.log`) only. What
+reaches **stderr**, and so journald under systemd, is `logging.stderr_subsystems`
+in the YAML, with Core's semantics: absent is the default list (every subsystem
+except `outbox`, `inventory_delta`, `kafka` and `reporter`), `[all]` mirrors
+everything, `[]` mirrors nothing. The browser log UI shows every subsystem
+either way.
+
 | Subsystem | Description |
 |-----------|-------------|
 | `engine` | Engine lifecycle events |

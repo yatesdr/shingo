@@ -21,6 +21,7 @@ database_path = shingoedge.db
 demand.hysteresis_percent = <unset>
 line_id = 
 loaders_multi_window = <unset>
+logging.stderr_subsystems = [edge_handler engine heartbeat orders plant_claims plc production_ticks protocol release]
 messaging.dispatch_topic = shingo.dispatch
 messaging.kafka.brokers = <empty>
 messaging.orders_topic = shingo.orders
