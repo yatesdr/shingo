@@ -430,7 +430,9 @@ function renderLedgerExceptions() {
 //
 // TWO FIGURES, AND THEY MUST NOT BE MIXED.
 //
-//   UoP lost      — stale_epoch_dropped + payload_mismatch_dropped ONLY.
+//   UoP lost      — stale_epoch_dropped + payload_mismatch_dropped ONLY, less
+//                    uop_recovered: mismatch-refused units the running net
+//                    landed with the bin's next accepted count.
 //   Mixed contents — payload_rebound_with_inventory, as a COUNT with no UoP
 //                    total. A rebind is not a drop: the applier rebinds the
 //                    payload and APPLIES the delta, so the tote's unit total
@@ -486,6 +488,8 @@ function renderDeltaIntegrity() {
         + 'Dropped credits ' + num(r.credits_dropped)
         + ', dropped consumes ' + num(r.consumes_dropped)
         + ', across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.'
+        + (r.uop_recovered ? ' Recovered ' + num(Math.abs(r.uop_recovered))
+          + ' refused UoP that landed with a later count, already taken off the figure.' : '')
         + (causes.length ? ' Cause: ' + causes.join(', ') + '.' : '');
       uopCell = '<span class="di-uop" title="' + escapeHtml(tip) + '">'
         + num(Math.abs(r.uop_lost))
@@ -574,8 +578,18 @@ const DIVERGENCE_CLASS = {
   epoch: 'Edge counting an old load',
   not_at_seat: 'Edge carrier not here in Core',
   unbound_carrier: 'Core carrier not bound at the Edge',
+  empty_seat: 'Core carrier where the Edge has nothing',
   bucket: 'lineside bucket differs',
 };
+
+// openFor prints how long an episode has been open in its two largest units,
+// the same wording the homepage uses: "12m", "1h 30m", "3d 4h".
+function openFor(iso) {
+  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  if (m < 60) return m + 'm';
+  if (m < 24 * 60) return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+  return Math.floor(m / (24 * 60)) + 'd ' + Math.floor((m % (24 * 60)) / 60) + 'h';
+}
 
 function renderReportDivergence() {
   const host = document.getElementById('rh-report-divergence');
@@ -595,13 +609,14 @@ function renderReportDivergence() {
       + ' — ' + escapeHtml(DIVERGENCE_CLASS[d.class] || d.class)
       + ': Edge <b>' + num(d.edge_count) + '</b>, Core <b>' + num(d.core_count) + '</b>'
       + escapeHtml(epoch)
-      + ' <span class="text-muted-xs">' + escapeHtml(d.station || '') + ', since ' + escapeHtml(formatTime(d.opened_at)) + '</span>'
+      + ' <span class="text-muted-xs">' + escapeHtml(d.station || '') + ', open ' + escapeHtml(openFor(d.opened_at))
+    + ' (since ' + escapeHtml(formatTime(d.opened_at)) + ')</span>'
       + '</li>';
   }).join('');
 
   host.innerHTML = '<div class="ledger-exceptions">'
     + '<div class="ledger-exceptions__head">'
-    + '<span class="chip chip-warn">Edge and Core disagree</span> '
+    + '<span class="chip chip-warn">Inventory count anomalies</span> '
     + rows.length + ' open'
     + '</div>'
     + '<div class="ledger-exceptions__why">Ordering reads the Core count. Recount the carrier to correct.</div>'

@@ -2037,6 +2037,13 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .cs-note { font-size: 0.72rem; color: var(--danger); }
 .cs-note:empty { display: none; }
 
+/* Inventory count anomalies, named under the strip. Rendered only when one is
+   open, so a good day costs no height. */
+.cs-anomalies { flex-basis: 100%; margin: 0; padding: 0.4rem 0 0; list-style: none;
+  border-top: 1px solid var(--border); font-size: 0.8rem; }
+.cs-anomalies li { padding: 0.1rem 0; }
+a.cs-fig { color: inherit; text-decoration: none; }
+
 @media (max-width: 900px) {
   .core-strip { gap: 0.75rem; }
   .core-strip .cs-zone + .cs-zone { border-left: 0; padding-left: 0; }

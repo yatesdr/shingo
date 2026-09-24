@@ -50,6 +50,18 @@ import (
 // much, which is the shape that produces a negative in-loop total — so the
 // number can be read directly against the ledger total beside it.
 //
+// RECOVERED IS SUBTRACTED. A payload-mismatch drop rolls its transaction back
+// without consuming the scope's dedup seq, so the running net carries the
+// refused units into the next accepted message for that bin, and that
+// message's ledger row (op bin_uop_delta) records them in metadata.healed. The
+// drop happened and stays counted in drop_rows; its units are not lost. For
+// each bin with a mismatch drop in the window, recovered is the healed units
+// on that bin's applied rows since its first drop, capped at what the drops
+// carried and in their direction: a heal can also cover a delta that was lost
+// in transport rather than refused, and that is not this panel's to claim.
+// The drop row carries the WIRE payload and the heal row the bin's, so the two
+// are joined by bin, and the recovery is reported under the drop's payload.
+//
 // Payloads with no drops in the window are omitted. Blank on a good day, like
 // its neighbour.
 func deltaIntegrityByPayload(db *sql.DB, since time.Time) ([]domain.DeltaIntegrity, error) {
@@ -68,8 +80,28 @@ func deltaIntegrityByPayload(db *sql.DB, since time.Time) ([]domain.DeltaIntegri
 		   WHERE op IN ($1, $2, $3)
 		     AND applied_at >= $4
 		     AND payload_code <> ''
+		), mismatch AS (
+		  SELECT bin_id, payload_code, SUM(delta) AS dropped, MIN(applied_at) AS first_at
+		    FROM drops
+		   WHERE op = $2
+		   GROUP BY bin_id, payload_code
+		), healed AS (
+		  SELECT m.payload_code, m.dropped,
+		         COALESCE(SUM((l.metadata->>'healed')::INTEGER), 0) AS healed
+		    FROM mismatch m
+		    LEFT JOIN bin_uop_ledger l
+		      ON l.bin_id = m.bin_id AND l.op = $5 AND l.applied_at >= m.first_at
+		     AND l.metadata ? 'healed'
+		   GROUP BY m.bin_id, m.payload_code, m.dropped
+		), recovered AS (
+		  SELECT payload_code,
+		         SUM(CASE WHEN dropped > 0 THEN LEAST(GREATEST(healed, 0), dropped)
+		                  WHEN dropped < 0 THEN GREATEST(LEAST(healed, 0), dropped)
+		                  ELSE 0 END)::INTEGER AS recovered
+		    FROM healed
+		   GROUP BY payload_code
 		)
-		SELECT payload_code,
+		SELECT d.payload_code,
 		       COALESCE(SUM(delta)      FILTER (WHERE op <> $3 AND delta > 0), 0)::INTEGER AS credits_dropped,
 		       COALESCE(SUM(-delta)     FILTER (WHERE op <> $3 AND delta < 0), 0)::INTEGER AS consumes_dropped,
 		       COUNT(*)                 FILTER (WHERE op <> $3)::INTEGER                   AS drop_rows,
@@ -78,12 +110,14 @@ func deltaIntegrityByPayload(db *sql.DB, since time.Time) ([]domain.DeltaIntegri
 		       COUNT(*)                 FILTER (WHERE op = $3)::INTEGER                    AS mixed_contents,
 		       COUNT(DISTINCT bin_id)   FILTER (WHERE op <> $3)::INTEGER                   AS bins,
 		       MIN(applied_at),
-		       MAX(applied_at)
-		  FROM drops
-		 GROUP BY payload_code
-		 ORDER BY payload_code`,
+		       MAX(applied_at),
+		       COALESCE(MAX(r.recovered), 0)
+		  FROM drops d
+		  LEFT JOIN recovered r ON r.payload_code = d.payload_code
+		 GROUP BY d.payload_code
+		 ORDER BY d.payload_code`,
 		audit.OpStaleEpochDropped, audit.OpPayloadMismatchDropped, audit.OpPayloadReboundWithInventory,
-		since.UTC())
+		since.UTC(), audit.OpBinUOPDelta)
 	if err != nil {
 		return nil, fmt.Errorf("delta integrity by payload: %w", err)
 	}
@@ -96,10 +130,10 @@ func deltaIntegrityByPayload(db *sql.DB, since time.Time) ([]domain.DeltaIntegri
 		if err := rows.Scan(&d.PayloadCode,
 			&d.CreditsDropped, &d.ConsumesDropped,
 			&d.DropRows, &d.StaleEpochRows, &d.PayloadMismatchRows,
-			&d.MixedContents, &d.Bins, &first, &last); err != nil {
+			&d.MixedContents, &d.Bins, &first, &last, &d.UOPRecovered); err != nil {
 			return nil, fmt.Errorf("scan delta integrity: %w", err)
 		}
-		d.UOPLost = d.CreditsDropped - d.ConsumesDropped
+		d.UOPLost = d.CreditsDropped - d.ConsumesDropped - d.UOPRecovered
 		if first.Valid {
 			t := first.Time
 			d.FirstAt = &t

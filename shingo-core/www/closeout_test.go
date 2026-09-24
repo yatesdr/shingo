@@ -14,7 +14,7 @@ import (
 	"shingocore/store/nodes"
 )
 
-// closeout_pins_test.go — owner ruling 2c of the memory close-out
+// closeout_test.go — owner ruling 2c of the memory close-out
 // (2026-09-24): a report_divergence episode is an inventory count anomaly, shown
 // on Core's homepage as well as on the Inventory page.
 
@@ -33,10 +33,10 @@ func seedCountAnomaly(t *testing.T, db *store.DB) string {
 	return b.Label
 }
 
-// AN OPEN COUNT ANOMALY IS NOT ON THE HOMEPAGE. The Inventory page lists it;
-// the homepage's health strip does not know it exists. PIN; the change names
-// the carrier, the seat, both counts and how long it has been open there.
-func TestPin_2c_HomepageDoesNotShowACountAnomaly(t *testing.T) {
+// AN OPEN COUNT ANOMALY IS ON THE HOMEPAGE, in the health strip beside the
+// other anomaly tile: the carrier, the seat, both counts, and how long it has
+// been open. Inverts the pin that the homepage did not know it existed.
+func TestCloseout_2c_HomepageNamesTheCountAnomaly(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForPages(t)
 	label := seedCountAnomaly(t, db)
@@ -47,7 +47,10 @@ func TestPin_2c_HomepageDoesNotShowACountAnomaly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
-	if body := rec.Body.String(); strings.Contains(body, label) {
-		t.Errorf("the homepage names %s; at the base it knows nothing of count anomalies", label)
+	body := rec.Body.String()
+	for _, want := range []string{label, "ALN_HOME_ANOM", "Edge <b>10</b>", "Core <b>150</b>", "open 1h 30m", "Count anomalies"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the homepage does not show %q", want)
+		}
 	}
 }

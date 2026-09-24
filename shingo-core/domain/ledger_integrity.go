@@ -32,6 +32,13 @@ type DeltaIntegrity struct {
 	// ledger total sitting next to it. The two directions are broken out below
 	// for anyone who needs to see how it was arrived at.
 	UOPLost int `json:"uop_lost"`
+	// UOPRecovered is the part of the payload-mismatch drops that later landed
+	// anyway: the running net carries a refused delta's units into the scope's
+	// next accepted message, whose ledger row records them as healed. Signed
+	// like UOPLost, and already subtracted from it — a refused delta that
+	// landed is recovered, not lost. A stale-epoch drop never heals (its
+	// generation's later deltas are dropped too), so only mismatches count.
+	UOPRecovered int `json:"uop_recovered"`
 	// CreditsDropped is the units of INBOUND count that never landed — the
 	// ledger reads low by this much.
 	CreditsDropped int `json:"credits_dropped"`
