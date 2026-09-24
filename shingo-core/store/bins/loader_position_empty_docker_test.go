@@ -118,3 +118,130 @@ func TestEmptyScan_SkipsALiveLoadersOwnPosition(t *testing.T) {
 		})
 	}
 }
+
+// ownBufferFixture is Springfield's supermarket: a group whose slots are ALL
+// loader positions. Dedicated loader OWN has two homes and a buffer in it; a
+// second dedicated loader FOREIGN has a buffer in it too. Every slot but the
+// requesting home holds an empty.
+type ownBufferFixture struct {
+	grpID                                  int64
+	home                                   *nodes.Node
+	ownBuffer, ownOtherHome, foreignBuffer *bins.Bin
+}
+
+func loaderOwnBufferFixture(t *testing.T, db *store.DB) ownBufferFixture {
+	t.Helper()
+	grpID, err := nodes.CreateGroup(db.DB, "OWNBUF-GRP")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	slot := func(name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true, ParentID: &grpID}
+		if err := db.CreateNode(n); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return n
+	}
+	loader := func(name string) int64 {
+		id, err := db.CreateLoader(store.Loader{
+			Name: name, Role: loaders.RoleProduce, Layout: loaders.LayoutDedicatedPositions, Replenishment: "threshold",
+		})
+		if err != nil {
+			t.Fatalf("create loader %s: %v", name, err)
+		}
+		return id
+	}
+	member := func(loaderID int64, pos *nodes.Node, kind string) {
+		if err := db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: pos.ID, Kind: kind}); err != nil {
+			t.Fatalf("member %s: %v", pos.Name, err)
+		}
+	}
+	own, foreign := loader("OWNBUF-OWN"), loader("OWNBUF-FOREIGN")
+	home, otherHome, buf, fbuf := slot("OWNBUF-HOME-1"), slot("OWNBUF-HOME-2"), slot("OWNBUF-BUF-1"), slot("OWNBUF-FBUF-1")
+	member(own, home, loaders.HomeKindHome)
+	member(own, otherHome, loaders.HomeKindHome)
+	member(own, buf, loaders.HomeKindBuffer)
+	member(foreign, fbuf, loaders.HomeKindBuffer)
+	return ownBufferFixture{
+		grpID:         grpID,
+		home:          home,
+		ownBuffer:     testdb.CreateBinAtNode(t, db, "", buf.ID, "BIN-OWNBUF-BUF"),
+		ownOtherHome:  testdb.CreateBinAtNode(t, db, "", otherHome.ID, "BIN-OWNBUF-HOME-2"),
+		foreignBuffer: testdb.CreateBinAtNode(t, db, "", fbuf.ID, "BIN-OWNBUF-FBUF"),
+	}
+}
+
+// TestEmptyScan_AHomeDrawsFromItsOwnLoadersBuffer is the Springfield 2026-09-24
+// regression: a retrieve_empty sourced from the supermarket group and delivered
+// to one of the supermarket loader's homes queued "Waiting for an empty bin"
+// beside empties on that loader's own buffers, because the loader arm hid every
+// live loader position from every asker.
+//
+// Asked on behalf of the home, each finder offers exactly the OWN loader's
+// buffer: not the foreign loader's buffer, and not the empty waiting on the own
+// loader's other home. Asked on behalf of nobody, it still offers none of them,
+// and the keeper's count still counts none of them.
+func TestEmptyScan_AHomeDrawsFromItsOwnLoadersBuffer(t *testing.T) {
+	t.Parallel()
+	finders := map[string]func(db *store.DB, f ownBufferFixture, dest int64) func() (*bins.Bin, error){
+		"FindEmptyCompatibleInGroup": func(db *store.DB, f ownBufferFixture, dest int64) func() (*bins.Bin, error) {
+			return func() (*bins.Bin, error) {
+				return db.FindEmptyCompatibleBinInGroup("", f.grpID, dest, reservations.DigAsker{})
+			}
+		},
+		"FindEmptyOfTypeInGroup": func(db *store.DB, f ownBufferFixture, dest int64) func() (*bins.Bin, error) {
+			return func() (*bins.Bin, error) {
+				return db.FindEmptyBinOfTypeInGroup("DEFAULT", f.grpID, dest, reservations.DigAsker{})
+			}
+		},
+		"FindEmptyCompatible": func(db *store.DB, _ ownBufferFixture, dest int64) func() (*bins.Bin, error) {
+			return func() (*bins.Bin, error) {
+				return db.FindEmptyCompatibleBin("", "", dest, bins.EmptyFence{}, reservations.DigAsker{})
+			}
+		},
+		"FindEmptyOfType": func(db *store.DB, _ ownBufferFixture, dest int64) func() (*bins.Bin, error) {
+			return func() (*bins.Bin, error) {
+				return db.FindEmptyBinOfType("DEFAULT", "", dest, bins.EmptyFence{}, reservations.DigAsker{})
+			}
+		},
+	}
+	for name, mk := range finders {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			db := testdb.Open(t)
+			f := loaderOwnBufferFixture(t, db)
+
+			found := drainEmpties(t, db, mk(db, f, f.home.ID))
+			if !found[f.ownBuffer.ID] {
+				t.Errorf("%s for home %s offered %v, want the empty on its own loader's buffer (bin %d)",
+					name, f.home.Name, found, f.ownBuffer.ID)
+			}
+			if found[f.foreignBuffer.ID] {
+				t.Errorf("%s for home %s took bin %d on ANOTHER loader's buffer", name, f.home.Name, f.foreignBuffer.ID)
+			}
+			if found[f.ownOtherHome.ID] {
+				t.Errorf("%s for home %s took bin %d waiting on its loader's OTHER home", name, f.home.Name, f.ownOtherHome.ID)
+			}
+
+			if _, err := db.Exec(`UPDATE bins SET locked=false`); err != nil {
+				t.Fatalf("unlock: %v", err)
+			}
+			if nobody := drainEmpties(t, db, mk(db, f, 0)); len(nobody) != 0 {
+				t.Errorf("%s with no destination offered %v, want none: every slot is a live loader's", name, nobody)
+			}
+		})
+	}
+
+	t.Run("CountEmptyOfTypeInGroup", func(t *testing.T) {
+		t.Parallel()
+		db := testdb.Open(t)
+		f := loaderOwnBufferFixture(t, db)
+		n, err := db.CountEmptyBinsOfTypeInGroup("DEFAULT", f.grpID)
+		if err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("CountEmptyOfTypeInGroup = %d, want 0: a loader's buffer is not group stock", n)
+		}
+	})
+}

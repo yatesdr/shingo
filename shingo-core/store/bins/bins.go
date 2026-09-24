@@ -426,7 +426,36 @@ func NotFencedArm() string {
 // COST: a filter on the bin_types row the join already reads; no new join.
 //
 // It opens the WHERE. Arms append to it; nothing composes in front of it.
-const EmptyCarrierWhere = `
+//
+// This spelling names no requester, so it excludes EVERY live loader position.
+// A finder that knows the node it is delivering to composes EmptyCarrierWhereFor
+// instead, which hands a dedicated loader's homes their own buffers back.
+var EmptyCarrierWhere = emptyCarrierWhere("NULL")
+
+// EmptyCarrierWhereFor is EmptyCarrierWhere asked on behalf of the delivery node
+// in parameter destParam (0 = no destination, which exempts nothing).
+//
+// ── A HOME DRAWS FROM ITS OWN LOADER'S BUFFERS ────────────────────────────────
+//
+// A dedicated loader's buffer slots hold the empties its homes are refilled
+// from, and its inbound source is usually the very group those slots stand in.
+// Springfield's "Supermarket Dedicated Locations" is exactly that: every SMN
+// slot is one of its homes or buffers and it sources from AMR Supermarket. The
+// refill is a retrieve_empty whose SOURCE is the group and whose DELIVERY is the
+// home, so it never reaches the loader-pool tier (keyed on the source node) and
+// lands here. When the loader arm excluded every loader position, the group had
+// nothing left in it and every supermarket refill queued "Waiting for an empty
+// bin" beside empties on its own buffers (SPR 2026-09-24).
+//
+// So the exemption is narrow: a BUFFER of the loader that owns the destination.
+// Another loader's homes and buffers stay off-limits, and so do the requesting
+// loader's own other homes — an empty on a home is waiting to be loaded there.
+func EmptyCarrierWhereFor(destParam int) string {
+	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam))
+}
+
+func emptyCarrierWhere(destExpr string) string {
+	return `
 	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
 	  AND ` + BinUnheldSQL + `
 	  AND b.node_id IS NOT NULL
@@ -434,8 +463,11 @@ const EmptyCarrierWhere = `
 	  AND COALESCE(b.payload_code, '') = ''
 	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
 	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
-	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL)
+	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL
+	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (
+	                            SELECT d.loader_id FROM bin_loader_homes d WHERE d.position_node_id = ` + destExpr + `)))
 	  AND NOT bt.bare`
+}
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
 //
@@ -545,7 +577,12 @@ func ExcludeNodeArm(nodeParam int) string {
 // finder has always matched on code. An id-keyed count would be equivalent and
 // would be a SECOND SPELLING of "of this type" — precisely the thing this
 // fragment exists to prevent.
-var EmptyOfTypeInGroupWhere = EmptyCarrierWhere +
+//
+// The loader arm reads the same $3 as the exclude arm: the finder passes its
+// destination, so a dedicated home sees its own loader's buffers
+// (EmptyCarrierWhereFor); the count passes 0 and so counts no loader's buffers
+// as group stock, which is the level a keeper should fill against.
+var EmptyOfTypeInGroupWhere = EmptyCarrierWhereFor(3) +
 	OfTypeArm(1) + InGroupArm() + ExcludeNodeArm(3)
 
 // SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
@@ -1217,11 +1254,12 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 	// type name.
 	build := func(withZone bool) (string, []any) {
 		a := &emptyQueryArgs{}
-		where := EmptyCarrierWhere + OfTypeArm(a.add(binTypeCode))
+		destP := a.add(excludeNodeID)
+		where := EmptyCarrierWhereFor(destP) + OfTypeArm(a.add(binTypeCode))
 		if withZone {
 			where += InZoneArm(a.add(preferZone))
 		}
-		where += ExcludeNodeArm(a.add(excludeNodeID))
+		where += ExcludeNodeArm(destP)
 		cte := ""
 		if !fence.Empty() {
 			cte = FencedNodesCTE(a.add(fence.ProcessNode), a.add(fence.OriginGroup))
@@ -1258,7 +1296,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 
 	a := &emptyQueryArgs{vals: []any{payloadCode, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + BinJoinQuery +
-		EmptyCarrierWhere + InGroupArm() + ExcludeNodeArm(3) +
+		EmptyCarrierWhereFor(3) + InGroupArm() + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner)) +
 		PayloadBinTypeRuleArm("$1") + AccessibleEmptyOrder
@@ -1273,11 +1311,12 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		// The bin-type rule names the payload by parameter; adding it first keeps
 		// the position stable whether or not the zone arm follows.
 		payloadP := a.add(payloadCode)
-		where := EmptyCarrierWhere
+		destP := a.add(excludeNodeID)
+		where := EmptyCarrierWhereFor(destP)
 		if withZone {
 			where += InZoneArm(a.add(preferZone))
 		}
-		where += ExcludeNodeArm(a.add(excludeNodeID))
+		where += ExcludeNodeArm(destP)
 		cte := ""
 		if !fence.Empty() {
 			cte = FencedNodesCTE(a.add(fence.ProcessNode), a.add(fence.OriginGroup))

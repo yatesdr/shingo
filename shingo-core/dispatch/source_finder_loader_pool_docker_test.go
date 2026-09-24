@@ -42,6 +42,45 @@ func TestFinderPin_LoaderPoolFillTakesAnEmptyOnItsOwnHome(t *testing.T) {
 	}
 }
 
+// TIER 3, the Springfield 2026-09-24 shape: the supermarket IS a dedicated
+// loader. Its home and buffer both stand in the group it sources from, and a
+// home's refill is a retrieve_empty whose SOURCE is the group and whose
+// DELIVERY is the home — so tier 2 (keyed on the source node) never sees it and
+// the group-scoped empty search answers. That search must hand the home the
+// empty on its own loader's buffer; it queued "Waiting for an empty bin" instead.
+func TestFinderPin_HomeRefillFromGroupTakesItsLoadersBufferEmpty(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	grpID, err := nodes.CreateGroup(db.DB, "SPR-SMKT")
+	testutil.MustNoErr(t, err, "create group")
+	slot := func(name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true, ParentID: &grpID}
+		testutil.MustNoErr(t, db.CreateNode(n), "create "+name)
+		return n
+	}
+	home, buffer := slot("SPR-SMN-015"), slot("SPR-SMN-004")
+	loaderID, err := db.CreateLoader(store.Loader{
+		Name: "SPR-DEDICATED", Role: loaders.RoleProduce, Layout: loaders.LayoutDedicatedPositions,
+		Replenishment: "threshold", InboundSource: "SPR-SMKT",
+	})
+	testutil.MustNoErr(t, err, "create loader")
+	testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: home.ID, Kind: loaders.HomeKindHome}), "home")
+	testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: buffer.ID, Kind: loaders.HomeKindBuffer}), "buffer")
+	empty := makeEmptyBin(t, db, buffer.ID, "spr-buffer-empty")
+
+	f := NewSourceFinder(db, nil, nil)
+	res := f.FindSource(&orders.Order{
+		OrderType: OrderTypeRetrieveEmpty, PayloadCode: "",
+		SourceNode: "SPR-SMKT", DeliveryNode: home.Name,
+		SourceIntent: SourceIntentForType(OrderTypeRetrieveEmpty),
+	}, IntentEmpty)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != empty.ID {
+		t.Fatalf("outcome=%v cause=%q bin=%v, want the empty %d on the loader's own buffer %s",
+			res.Outcome, res.QueueCause, res.Bin, empty.ID, buffer.Name)
+	}
+}
+
 // TIER 4: a payload-less move naming a shared-window loader's window takes the
 // empty standing on it.
 func TestFinderPin_MoveTakesTheEmptyOnALoaderWindow(t *testing.T) {
