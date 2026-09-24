@@ -65,12 +65,19 @@ const (
 
 func newTickRig(t *testing.T) *tickRig {
 	t.Helper()
+	return newTickRigEmitting(t, &mockEmitter{})
+}
+
+// newTickRigEmitting is newTickRig with the manager's event sink supplied, for
+// the pins that read what the poll emits as well as what it ships.
+func newTickRigEmitting(t *testing.T, em EventEmitter) *tickRig {
+	t.Helper()
 	db := testdb.Open(t)
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "stn-test"
 	// A small threshold so a jump is cheap to produce.
 	cfg.Counter.JumpThreshold = 100
-	mgr := NewManager(db, cfg, &mockEmitter{}, nil)
+	mgr := NewManager(db, cfg, em, nil)
 
 	proc, err := db.CreateProcess("PROC-A", "", "", "", "", false)
 	if err != nil {
