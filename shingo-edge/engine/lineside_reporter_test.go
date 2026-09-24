@@ -85,9 +85,11 @@ func TestReportLinesideLevels_WithholdsAnUnidentifiedCarrier(t *testing.T) {
 	}
 }
 
-// A cleared carrier is KNOWN and has no part number to report under, so it
-// ships nothing rather than reporting zero on-hand of the requested part.
-func TestReportLinesideLevels_WithholdsAKnownEmptyCarrier(t *testing.T) {
+// A CLEARED CARRIER IS KNOWN, AND IT IS REPORTED AS WHAT IT IS: a carrier
+// bound at the seat with nothing in it and no part to report under. It used to
+// ship nothing, which left Core unable to tell it from a seat the Edge does not
+// run; since the 2026-09-24 ruling every seat the Edge runs is in the report.
+func TestReportLinesideLevels_ShipsAKnownEmptyCarrier(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -98,30 +100,70 @@ func TestReportLinesideLevels_WithholdsAKnownEmptyCarrier(t *testing.T) {
 
 	eng.reportLinesideLevels()
 
-	for _, e := range reportedEntries(t, db) {
-		t.Errorf("shipped %+v for an empty carrier", e)
+	entries := reportedEntries(t, db)
+	if len(entries) != 1 {
+		t.Fatalf("shipped %d entries, want 1 for the seat: %+v", len(entries), entries)
+	}
+	e := entries[0]
+	if e.CoreNodeName != "ALN_007" || e.PayloadCode != "" || e.BinUOP != 0 || e.BinID == nil || *e.BinID != 17 {
+		t.Errorf("shipped %+v, want ALN_007 with carrier 17 bound, 0 in it, no part", e)
 	}
 }
 
-// A STATION WITH NOTHING AT ANY SEAT SENDS NOTHING. The seat is configured and
-// runs, but no carrier is bound and no bucket holds parts, so the level query
-// returns no row and the reporter returns before building a message. Core then
-// hears nothing from the station at all. PIN (memory close-out, owner ruling
-// 2a): the change sends every interval, and names this seat as empty.
-func TestPin_2a_NothingAtAnySeatSendsNoReport(t *testing.T) {
+// EVERY SEAT THE EDGE RUNS IS IN THE REPORT, AND THE REPORT GOES EVERY
+// INTERVAL. The owner, 2026-09-24: "the edges should always report even if
+// nothing is happening". A seat the running style consumes at, with no carrier
+// bound and no bucket, is a row that says so: no carrier, 0, 0. Core compares a
+// carrier it places there against that row. Inverts the pin that the station
+// sent nothing at all.
+func TestReportLinesideLevels_AnEmptySeatIsReportedEmpty(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	seedDirectChangeover(t, db)
+	_, nodeID, _, _, _ := seedDirectChangeover(t, db)
+	// The fixture leaves the from-claim's count on the row with no carrier;
+	// the row must not carry it.
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read runtime")
+	if rt.ActiveBinID != nil {
+		t.Fatalf("fixture has carrier %d bound; the case needs none", *rt.ActiveBinID)
+	}
+
+	eng.reportLinesideLevels()
+
+	entries := reportedEntries(t, db)
+	if len(entries) != 1 {
+		t.Fatalf("shipped %d entries, want 1 (the empty seat): %+v", len(entries), entries)
+	}
+	e := entries[0]
+	if e.CoreNodeName != "ALN_007" || e.BinID != nil || e.BinCount != 0 || e.BinUOP != 0 || e.BucketQty != 0 {
+		t.Errorf("shipped %+v, want ALN_007 with nothing bound: no carrier, 0, 0", e)
+	}
+}
+
+// A STATION THAT RUNS NO CONSUME SEAT STILL REPORTS, with no rows. An empty
+// report is the Edge saying it runs none right now, and it is what lets Core
+// close the station's open episodes.
+func TestReportLinesideLevels_NoSeatsStillSendsAnEmptyReport(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
 
 	eng.reportLinesideLevels()
 
 	msgs, err := db.ListPendingOutbox(50)
 	testutil.MustNoErr(t, err, "list outbox")
+	n := 0
 	for _, m := range msgs {
 		if m.MsgType == string(protocol.SubjectLinesideLevelReport) {
-			t.Errorf("a report went out for a station with nothing at any seat: %s", m.Payload)
+			n++
 		}
+	}
+	if n != 1 {
+		t.Fatalf("%d report(s) in the outbox, want 1 with no rows", n)
+	}
+	if entries := reportedEntries(t, db); len(entries) != 0 {
+		t.Errorf("the report carries %d rows, want none: %+v", len(entries), entries)
 	}
 }
 

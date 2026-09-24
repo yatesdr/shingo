@@ -88,6 +88,22 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err er
 	return n > 0, nil
 }
 
+// LatestLinesideReportAt returns the newest reported_at the station has stored,
+// and whether it has stored any row. A report with no rows moves no row, so the
+// handler compares one only when it is newer than this: a late or redelivered
+// empty report must not close what a current report found.
+func (db *DB) LatestLinesideReportAt(station string) (time.Time, bool, error) {
+	var at *time.Time
+	if err := db.QueryRow(`SELECT MAX(reported_at) FROM edge_lineside_reports WHERE station = $1`,
+		station).Scan(&at); err != nil {
+		return time.Time{}, false, fmt.Errorf("latest lineside report %s: %w", station, err)
+	}
+	if at == nil {
+		return time.Time{}, false, nil
+	}
+	return *at, true, nil
+}
+
 // LinesideReportRetentionPeriod is how long a per-(station, node, payload) row
 // is kept after its last report.
 //

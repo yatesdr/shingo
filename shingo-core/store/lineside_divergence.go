@@ -52,9 +52,10 @@ type LinesideCoreCarrier struct {
 	Payload  string
 	Epoch    int64
 	UOP      int
-	// AtSeat: the bin is at one of the station's consume seats — a node the
-	// station has reported (edge_lineside_reports) that an active style claims
-	// as a consume node in the plant-claims mirror — AND it counts: it holds a
+	// AtSeat: the bin is at one of the station's consume seats — a node this
+	// report names, or a node the station has reported before
+	// (edge_lineside_reports) that an active style claims as a consume node in
+	// the plant-claims mirror — AND it counts: it holds a
 	// payload and a non-zero count, in a live status (bins.SourceableStatusSQL:
 	// available or staged). That allow-list is narrower than the reject-list
 	// SystemUOPForPayload still uses (frozen, awaiting its own ruling — see
@@ -79,7 +80,14 @@ type LinesideCoreSide struct {
 // LinesideCoreSide reads, in ONE statement, what Core holds for one station's
 // report: the carriers the report names with their dedup high-water mark, the
 // counted carriers at the station's consume seats, and the bucket mirror for
-// the report's (seat, part) pairs. The sets travel as JSON so the statement
+// the report's (seat, part) pairs.
+//
+// THE REPORT NAMES ITS OWN SEATS. The Edge sends every seat it runs (owner
+// ruling, 2026-09-24), so a node in seats is a consume seat by the Edge's own
+// configuration and needs no mirror lookup. The mirror-checked history stays
+// in the set as well, so a seat the Edge withholds for want of an identity is
+// still checked while it has reported within the retention window. The sets
+// travel as JSON so the statement
 // has three parameters however many rows the report has.
 func (db *DB) LinesideCoreSide(station string, carriers []LinesideReportCarrier, seats []LinesideReportSeat) (LinesideCoreSide, error) {
 	out := LinesideCoreSide{Buckets: map[LinesideReportSeat]int{}}
@@ -101,7 +109,9 @@ func (db *DB) LinesideCoreSide(station string, carriers []LinesideReportCarrier,
 		WITH r AS (
 			SELECT * FROM jsonb_to_recordset($2::jsonb) AS r(bin_id bigint, epoch bigint)
 		), seats AS (
-			SELECT DISTINCT e.core_node_name AS name
+			SELECT p.node AS name FROM jsonb_to_recordset($3::jsonb) AS p(node text, payload text)
+			UNION
+			SELECT e.core_node_name
 			FROM edge_lineside_reports e
 			WHERE e.station = $1
 			  AND EXISTS (

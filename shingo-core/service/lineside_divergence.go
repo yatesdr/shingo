@@ -25,7 +25,7 @@ import (
 // is fixed on the delta path. A second writer from the report would be a
 // reconciler, which round 4 ruled out.
 //
-// THE FIVE CLASSES, per report row or per Core carrier:
+// THE SIX CLASSES, per report row or per Core carrier:
 //
 //   - count: the Edge's bound carrier and Core's bin agree on the seat and the
 //     generation, the counts differ, and Core has applied exactly the deltas
@@ -44,11 +44,18 @@ import (
 //     the unknown sentinel that Core always applies, and is not a divergence.
 //   - not_at_seat: the Edge's bound carrier is one Core places at another node,
 //     or does not know.
-//   - unbound_carrier: a counted Core carrier (a payload, a non-zero count, a
-//     status SystemUOPForPayload sums) sits at one of the station's consume
-//     seats and no row of the report binds it — the SNF3 shape. The station's
-//     seats are the nodes it has reported (edge_lineside_reports) that an
-//     active style claims as consume nodes in the plant-claims mirror.
+//   - empty_seat: a counted Core carrier (a payload, a non-zero count, a live
+//     status) sits at a seat this report names with nothing bound — the SNF3
+//     shape, Core reading 150 where the Edge has no carrier. Decided from the
+//     report's own rows, with no station-to-seat map: since the owner's
+//     2026-09-24 ruling the Edge sends every seat it runs, an empty one as a
+//     row with nothing bound.
+//   - unbound_carrier: a counted Core carrier sits at one of the station's
+//     consume seats that the report does not show as empty, and no row binds
+//     it: a second carrier at a seat where the Edge has bound another, or a
+//     seat the report leaves out. The station's seats are the nodes its report
+//     names, and the nodes it has reported before (edge_lineside_reports) that
+//     an active style claims as consume nodes in the plant-claims mirror.
 //   - bucket: the Edge's active bucket for the seat's part differs from Core's
 //     lineside_buckets sum for that station, seat and part. The report carries
 //     no bucket seq, so there is no in-flight test. The Edge states the bucket
@@ -60,9 +67,11 @@ import (
 // WHAT IS NOT COMPARED. A row from an Edge that predates the carrier keys
 // (BinCount 1, BinID nil) says a carrier is bound and not which: no carrier
 // class runs for it, and Core carriers at that seat are not called unbound.
-// Its bucket figure is still compared. A station that sends no report compares
-// nothing, so its open episodes stay open until it reports again: the Edge
-// sends no report when it has nothing at any consume seat.
+// Its bucket figure is still compared. A row with no part (an empty seat, or a
+// carrier known to be empty) has no bucket to compare. A station that sends no
+// report compares nothing, so its open episodes stay open until it reports
+// again; the Edge sends one every interval, with no rows when it runs no
+// consume seat, and that closes them.
 //
 // Episode opens and closes are logged, one line each, so the journal carries
 // the same record as the page.
@@ -74,6 +83,7 @@ const (
 	ReportDivergenceEpoch          = "epoch"
 	ReportDivergenceNotAtSeat      = "not_at_seat"
 	ReportDivergenceUnboundCarrier = "unbound_carrier"
+	ReportDivergenceEmptySeat      = "empty_seat"
 	ReportDivergenceBucket         = "bucket"
 )
 
@@ -104,7 +114,7 @@ func (s *LinesideDivergenceService) CheckReport(station string, entries []protoc
 	var carriers []store.LinesideReportCarrier
 	var seats []store.LinesideReportSeat
 	for _, e := range entries {
-		if e.CoreNodeName == "" || e.PayloadCode == "" {
+		if e.CoreNodeName == "" {
 			continue
 		}
 		seats = append(seats, store.LinesideReportSeat{Node: e.CoreNodeName, Payload: e.PayloadCode})
@@ -162,6 +172,10 @@ func ClassifyLinesideReport(entries []protocol.LinesideLevelEntry, core store.Li
 	}
 	bound := map[int64]bool{}
 	unidentifiedSeat := map[string]bool{}
+	// A seat is empty when the report names it and no row there has anything
+	// bound; a seat with any bound row is occupied.
+	emptySeat := map[string]bool{}
+	occupiedSeat := map[string]bool{}
 	seen := map[string]bool{}
 	add := func(d store.ReportDivergence) {
 		if !seen[d.Key] {
@@ -170,8 +184,13 @@ func ClassifyLinesideReport(entries []protocol.LinesideLevelEntry, core store.Li
 		}
 	}
 	for _, e := range entries {
-		if e.CoreNodeName == "" || e.PayloadCode == "" {
+		if e.CoreNodeName == "" {
 			continue
+		}
+		if e.BinCount == 0 && e.BinID == nil {
+			emptySeat[e.CoreNodeName] = true
+		} else {
+			occupiedSeat[e.CoreNodeName] = true
 		}
 		if e.BinCount > 0 && e.BinID == nil {
 			unidentifiedSeat[e.CoreNodeName] = true
@@ -185,6 +204,10 @@ func ClassifyLinesideReport(entries []protocol.LinesideLevelEntry, core store.Li
 			if inFlight != "" {
 				undecided[inFlight] = true
 			}
+		}
+		// A row with no part has no bucket to compare.
+		if e.PayloadCode == "" {
+			continue
 		}
 		coreQty := core.Buckets[store.LinesideReportSeat{Node: e.CoreNodeName, Payload: e.PayloadCode}]
 		if e.BucketQty != coreQty {
@@ -200,10 +223,14 @@ func ClassifyLinesideReport(entries []protocol.LinesideLevelEntry, core store.Li
 		if !c.AtSeat || bound[c.BinID] || unidentifiedSeat[c.NodeName] {
 			continue
 		}
+		class := ReportDivergenceUnboundCarrier
+		if emptySeat[c.NodeName] && !occupiedSeat[c.NodeName] {
+			class = ReportDivergenceEmptySeat
+		}
 		id, uop, epoch := c.BinID, c.UOP, c.Epoch
 		add(store.ReportDivergence{
-			Key:   divergenceKey(ReportDivergenceUnboundCarrier, c.NodeName, c.Payload, &id),
-			Class: ReportDivergenceUnboundCarrier, BinID: &id, Node: c.NodeName, Payload: c.Payload,
+			Key:   divergenceKey(class, c.NodeName, c.Payload, &id),
+			Class: class, BinID: &id, Node: c.NodeName, Payload: c.Payload,
 			CoreCount: &uop, CoreEpoch: &epoch,
 		})
 	}

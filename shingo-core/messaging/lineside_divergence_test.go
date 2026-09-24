@@ -250,15 +250,18 @@ func TestLinesideDivergence_CarrierNotAtThatSeat(t *testing.T) {
 	r.wantOne("not_at_seat", bin, 150, 150)
 }
 
-// A CORE CARRIER AT A CONSUME SEAT WITH NO BOUND EDGE ROW — the SNF3 shape.
-// Core has a counted carrier staged at the station's seat; the Edge reports the
-// seat with its bucket only, nothing bound. Verify-red at the base.
+// A SECOND CORE CARRIER AT A SEAT WHERE THE EDGE HAS BOUND ANOTHER. Core places
+// two counted carriers at the station's seat; the Edge's row binds one of them,
+// and the counts agree. The other is unbound_carrier. (A Core carrier at a seat
+// the Edge reports with nothing bound — the SNF3 shape this test first pinned —
+// is empty_seat since the 2026-09-24 ruling; see closeout_test.go.)
 func TestLinesideDivergence_CoreCarrierTheEdgeHasNotBound(t *testing.T) {
 	t.Parallel()
 	r := newDivergenceRig(t, "UNBOUND")
+	boundBin, boundEpoch := r.carrier(r.seat.ID, "BIN-DV-BOUND", "PART-A", 90)
 	bin, _ := r.carrier(r.seat.ID, "BIN-DV-UNBOUND", "PART-A", 150)
 
-	r.report(fmt.Sprintf(`{"core_node_name":%q,"payload_code":"PART-A","bin_count":0,"bin_uop":0,"bucket_qty":0}`, r.seat.Name))
+	r.report(row(r.seat.Name, "PART-A", boundBin, boundEpoch, 0, 90, 0))
 	d := r.wantOne("unbound_carrier", bin, -1, 150)
 	if d.edgeCount.Valid {
 		t.Errorf("edge_count = %d, want none — the Edge has no row for this carrier", d.edgeCount.Int64)

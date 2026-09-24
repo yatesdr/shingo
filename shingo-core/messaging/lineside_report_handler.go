@@ -28,22 +28,31 @@ import (
 //
 // An entry whose upsert failed is left out of the comparison as well.
 //
+// EVERY SEAT, EVERY INTERVAL (owner ruling, 2026-09-24). The Edge sends each
+// consume seat it runs, an empty one as a row with nothing bound and no part,
+// and sends a report with no rows when it runs none. A row with no part is
+// stored and compared like any other. A report with no rows moves no row, so
+// latest-wins cannot tell a current one from a late one; it is compared only
+// when it is newer than every row the station has stored, and it then closes
+// what the station's earlier reports found and no longer holds.
+//
 // Cost per message: one upsert per well-formed entry, then — for a report that
 // moved a row — two reads (Core's side, the station's open episodes) and a
-// write only when an episode opens or closes.
+// write only when an episode opens or closes. A report with no rows costs one
+// read (the station's latest row) instead of the upserts.
 func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *protocol.LinesideLevelReport) {
 	station := r.Station
 	if station == "" {
 		station = env.Src.Station
 	}
-	if station == "" || len(r.Entries) == 0 {
+	if station == "" {
 		return
 	}
 
 	moved := false
 	stored := make([]protocol.LinesideLevelEntry, 0, len(r.Entries))
 	for _, e := range r.Entries {
-		if e.CoreNodeName == "" || e.PayloadCode == "" {
+		if e.CoreNodeName == "" {
 			continue
 		}
 		m, err := s.db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
@@ -65,6 +74,14 @@ func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *p
 		}
 		moved = moved || m
 		stored = append(stored, e)
+	}
+	if len(r.Entries) == 0 {
+		latest, ok, err := s.db.LatestLinesideReportAt(station)
+		if err != nil {
+			log.Printf("core_handler: lineside report with no rows station=%s: %v (not compared)", station, err)
+			return
+		}
+		moved = !ok || r.ReportedAt.After(latest)
 	}
 
 	s.resp.dbg("lineside_level_report station=%s entries=%d moved=%t", station, len(r.Entries), moved)

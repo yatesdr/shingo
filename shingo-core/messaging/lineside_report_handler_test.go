@@ -155,12 +155,29 @@ func TestLinesideReport_StatementsPerEnvelope(t *testing.T) {
 	// A newer report whose one bucket disagrees with Core's (empty) mirror
 	// opens one episode: the same 3 + 2, then the transition's transaction —
 	// BEGIN, one INSERT, COMMIT. The counter sees the BEGIN and COMMIT
-	// (store/query_count.go says it does not; measured here, it does).
+	// (store/query_count.go).
 	r.ReportedAt = r.ReportedAt.Add(time.Minute)
 	r.Entries[0].BucketQty = 40
 	counter.Reset()
 	svc.HandleLinesideLevelReport(linesideEnvelope(station), r)
 	if got := counter.Count(); got != 8 {
 		t.Errorf("a report opening one episode: %d statements, want 8", got)
+	}
+
+	// A newer report with no rows (the station runs no consume seat now) costs
+	// one read of the station's latest row instead of the upserts, then the
+	// comparison's two reads, and closes the episode: BEGIN, one UPDATE,
+	// COMMIT. The next one finds nothing to close and costs the three reads.
+	empty := &protocol.LinesideLevelReport{Station: station, ReportedAt: r.ReportedAt.Add(time.Minute)}
+	for _, c := range []struct {
+		report string
+		want   int64
+	}{{"no rows, closing one episode", 6}, {"no rows, nothing to close", 3}} {
+		counter.Reset()
+		svc.HandleLinesideLevelReport(linesideEnvelope(station), empty)
+		if got := counter.Count(); got != c.want {
+			t.Errorf("%s: %d statements, want %d", c.report, got, c.want)
+		}
+		empty.ReportedAt = empty.ReportedAt.Add(time.Minute)
 	}
 }

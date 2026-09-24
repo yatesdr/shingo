@@ -199,15 +199,25 @@ func TestListLinesideLevels_ExistenceFollowsConfigNotThePointer(t *testing.T) {
 	}
 }
 
-// Nothing bound and no bucket: there is no on-hand to report, and a zero would
-// assert something about a slot nobody has looked at.
-func TestListLinesideLevels_EmptySlotShipsNothing(t *testing.T) {
+// NOTHING BOUND AND NO BUCKET IS STILL A SEAT THE EDGE RUNS, and the row says
+// so: no carrier, 0 in it, 0 in the bucket. The count the departed carrier
+// left on the runtime row does not come with it. It used to be left out, which
+// made an empty seat indistinguishable from one the Edge does not run.
+func TestListLinesideLevels_EmptySlotIsListedEmpty(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	_, _, _, _ = linesideFixture(t, db, "ALN_011")
+	_, _, nodeID, claimID := linesideFixture(t, db, "ALN_011")
+	bindCarrier(t, db, nodeID, claimID, 44, 250)
+	if err := db.SetProcessNodeActiveBinID(nodeID, nil); err != nil {
+		t.Fatalf("clear bin pointer: %v", err)
+	}
 
-	if got := levelFor(t, db, "ALN_011"); got != nil {
-		t.Errorf("got a row %+v for a node with no carrier and no bucket", got)
+	got := levelFor(t, db, "ALN_011")
+	if got == nil {
+		t.Fatal("no row for a seat the running style consumes at")
+	}
+	if got.BinID != nil || got.BinCount != 0 || got.BinUOP != 0 || got.BucketQty != 0 {
+		t.Errorf("got %+v, want no carrier, 0, 0 (250 is the departed carrier's count)", got)
 	}
 }
 

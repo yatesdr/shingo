@@ -18,6 +18,12 @@ import "time"
 // correction), and a recurring cause is fixed on the delta path. A report that
 // does not arrive changes no decision.
 //
+// EVERY SEAT, EVERY INTERVAL (owner ruling, 2026-09-24). The Edge sends a row
+// for every consume seat it runs, an empty one as a row with nothing bound, no
+// count and no part, and sends the report every interval, with no rows when it
+// runs no consume seat. A seat whose carrier nobody identified is still left
+// out.
+//
 // It decided replenishment from 2026-07-24 (the lineside_decision_mode knob,
 // default edge_reports) until the seat-count ruling of 2026-09-23 made Core's
 // replica the one count. The ruling is recorded in the lineside comparison on
@@ -27,6 +33,8 @@ const SubjectLinesideLevelReport = "inventory.lineside_level_report"
 // LinesideLevelEntry is one consuming node's lineside on-hand for one payload,
 // as the Edge sees it through its own counters.
 //
+//   - PayloadCode: the bound carrier's part, "" on an empty seat and on a
+//     carrier known to be empty. Never the claim's requested part.
 //   - BinCount: 1 when the Edge has a carrier bound at the node, else 0.
 //   - BinUOP:   the BOUND carrier's count AS OF FlushedSeq — its
 //     remaining_uop_cached minus the counts the Edge's accumulator holds for it

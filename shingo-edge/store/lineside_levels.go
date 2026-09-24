@@ -65,7 +65,7 @@ type LinesideLevel struct {
 // JOIN on inventory_delta_seq's primary key (scope_kind, scope_key, epoch), with
 // scope_key the bin id as text — the same key the accumulator allocates under.
 //
-// ── THREE GATES, AND EACH USED TO BE THE SAME ONE ────────────────────────
+// ── TWO GATES, AND EACH USED TO BE THE SAME ONE ──────────────────────────
 //
 // WHETHER a node reports is a question about configuration: does the style this
 // process is running consume at this node. That comes from the process's active
@@ -75,14 +75,18 @@ type LinesideLevel struct {
 // written only by the doorway, only from a delivery envelope or a person, and
 // cleared when the carrier leaves.
 //
-// WHETHER THERE IS ANYTHING TO SAY is active_bin_id or a live bucket. A node
-// with neither has no on-hand to report and shipping a zero for it would assert
-// something about a slot nobody has looked at.
-//
-// All three used to hang off r.active_claim_id, a single mutable pointer that
+// Both used to hang off r.active_claim_id, a single mutable pointer that
 // eighteen paths write and most of them fill from the process's active style.
 // One wrong pointer therefore changed the row's existence, its identity and its
 // role filter together — which is why a stale pointer was not a cosmetic bug.
+//
+// AN EMPTY SEAT IS A ROW. There was a third gate, "is there anything to say":
+// a node with no carrier bound and no bucket was left out. The owner ruled it
+// out on 2026-09-24 ("the edges should always report even if nothing is
+// happening"): an empty seat is something to say, and it is what lets Core see
+// a carrier it places at a seat the Edge has nothing bound at. The runtime row
+// is LEFT JOINed for the same reason, so a configured seat with no runtime row
+// yet is listed as the empty seat it is.
 //
 // NO COALESCE TO THE CLAIM, deliberately, and this is the one site where that
 // rule is load-bearing rather than stylistic. A fallback here does not degrade
@@ -102,20 +106,20 @@ type LinesideLevel struct {
 func (db *DB) ListLinesideLevels() ([]LinesideLevel, error) {
 	rows, err := db.Query(`
 		SELECT pn.id, pn.core_node_name,
-		       r.lineside_payload_code,
-		       r.lineside_payload_known,
+		       COALESCE(r.lineside_payload_code, ''),
+		       COALESCE(r.lineside_payload_known, 0),
 		       CASE WHEN r.active_bin_id IS NOT NULL THEN 1 ELSE 0 END AS bin_count,
 		       CASE WHEN r.active_bin_id IS NOT NULL THEN r.remaining_uop_cached ELSE 0 END AS bin_uop,
 		       COALESCE(bk.qty, 0) AS bucket_qty,
 		       r.active_bin_id,
-		       r.active_bin_epoch,
+		       COALESCE(r.active_bin_epoch, 0),
 		       COALESCE(sq.next_seq, 0) AS flushed_seq
-		FROM process_node_runtime_states r
-		JOIN process_nodes pn ON pn.id = r.process_node_id AND pn.deleted_at IS NULL
+		FROM process_nodes pn
 		JOIN processes p ON p.id = pn.process_id
 		JOIN style_node_claims c
 		  ON c.style_id = p.active_style_id AND c.core_node_name = pn.core_node_name
 		 AND c.retired_at IS NULL
+		LEFT JOIN process_node_runtime_states r ON r.process_node_id = pn.id
 		LEFT JOIN (
 			SELECT node_id, payload_code, SUM(qty) AS qty
 			FROM node_lineside_bucket
@@ -126,8 +130,8 @@ func (db *DB) ListLinesideLevels() ([]LinesideLevel, error) {
 		  ON sq.scope_kind = ? AND sq.scope_key = CAST(r.active_bin_id AS TEXT)
 		 AND sq.epoch = r.active_bin_epoch
 		WHERE c.role = 'consume'
-		  AND pn.core_node_name != ''
-		  AND (r.active_bin_id IS NOT NULL OR COALESCE(bk.qty, 0) > 0)`, protocol.InvDeltaScopeBin)
+		  AND pn.deleted_at IS NULL
+		  AND pn.core_node_name != ''`, protocol.InvDeltaScopeBin)
 	if err != nil {
 		return nil, fmt.Errorf("list lineside levels: %w", err)
 	}

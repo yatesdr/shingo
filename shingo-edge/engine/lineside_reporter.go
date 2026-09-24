@@ -20,6 +20,14 @@ import (
 // It decided under lineside_decision_mode=edge_reports from 2026-07-24 until
 // then; the knob is deleted, and rolling back is the previous build.
 //
+// EVERY SEAT, EVERY INTERVAL (owner ruling, 2026-09-24: "the edges should
+// always report even if nothing is happening"). Each consume seat the running
+// styles claim is a row; a seat with nothing bound is a row that says so (no
+// carrier, 0, 0). A station with no consume seat sends a report with no rows,
+// which tells Core it runs none right now. So Core closes an episode when its
+// seat reports empty, and sees a carrier it places at a seat the Edge has
+// nothing bound at, from the report alone.
+//
 // A report that does not arrive changes no decision; it only leaves Core's
 // comparison for this station where the last report put it.
 
@@ -82,15 +90,12 @@ func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
 	if err != nil {
 		return fmt.Errorf("list levels: %w", err)
 	}
-	if len(levels) == 0 {
-		return nil
-	}
 
 	station := e.cfg.StationID()
 	entries := make([]protocol.LinesideLevelEntry, 0, len(levels))
 	var unknown []string
 	for _, l := range levels {
-		// A NODE WHOSE CARRIER NOBODY COULD IDENTIFY SHIPS NO ROW.
+		// A CARRIER NOBODY COULD IDENTIFY SHIPS NO ROW.
 		//
 		// There is no safe guess to make here. The old one — fall back to the
 		// claim — is what put a part number of which zero existed plant-wide on
@@ -100,9 +105,17 @@ func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
 		// Absence is the designed degradation. Core sees the seat with no bound
 		// carrier, so a carrier Core has placed there opens an unbound_carrier
 		// episode — which is true: nobody has identified what the Edge has bound.
-		if !l.PayloadKnown || l.PayloadCode == "" {
+		//
+		// An EMPTY seat is not this case: nothing is there to identify, so it
+		// ships as a row with no part. A carrier known to be empty ships too,
+		// bound, with no part.
+		if !l.PayloadKnown && (l.BinID != nil || l.BucketQty > 0) {
 			unknown = append(unknown, l.CoreNodeName)
 			continue
+		}
+		payload := l.PayloadCode
+		if !l.PayloadKnown {
+			payload = ""
 		}
 		binUOP := l.BinUOP
 		if l.BinID != nil {
@@ -110,10 +123,10 @@ func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
 		}
 		entries = append(entries, protocol.LinesideLevelEntry{
 			CoreNodeName: l.CoreNodeName,
-			PayloadCode:  l.PayloadCode,
+			PayloadCode:  payload,
 			BinCount:     l.BinCount,
 			BinUOP:       binUOP,
-			BucketQty:    l.BucketQty - pending.Bucket(l.NodeID, l.PayloadCode),
+			BucketQty:    l.BucketQty - pending.Bucket(l.NodeID, payload),
 			BinID:        l.BinID,
 			BinEpoch:     l.BinEpoch,
 			FlushedSeq:   l.FlushedSeq,
@@ -126,9 +139,6 @@ func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
 	if len(unknown) > 0 {
 		log.Printf("lineside-reporter: %d node(s) withheld — no established carrier identity: %v",
 			len(unknown), unknown)
-	}
-	if len(entries) == 0 {
-		return nil
 	}
 
 	env, err := protocol.NewDataEnvelope(

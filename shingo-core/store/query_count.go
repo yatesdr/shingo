@@ -20,11 +20,14 @@ package store
 // because the driver is: Core reaches Postgres through stdlib.GetConnector on a
 // *pgx.ConnConfig, so the tracer is a field on the config the store already
 // builds, and using it means this file does not have to restate the connection
-// setup. TraceQueryStart fires once where the application hands pgx a
-// statement — Query, Exec, and each execution of a prepared statement alike —
-// and not for the protocol traffic pgx does on its own behalf (Parse/Describe
-// on a statement-cache miss, the BEGIN/COMMIT of a Tx). Those are per
-// connection or per transaction; they are not what scales with the plant.
+// setup. TraceQueryStart fires once for every statement pgx sends as a query —
+// Query, Exec, and each execution of a prepared statement alike — and that
+// includes a transaction's BEGIN and its COMMIT or ROLLBACK, which pgx issues
+// as statements of their own: a transaction with one INSERT counts 3
+// (measured by messaging.TestLinesideReport_StatementsPerEnvelope). It does
+// not fire for the protocol traffic pgx does without a statement (Parse and
+// Describe on a statement-cache miss). A budget pin that opens a transaction
+// therefore counts its two brackets; every budget in this repo does.
 //
 // TEST FIXTURES ONLY. Production opens must use Open.
 //
