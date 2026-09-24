@@ -46,7 +46,19 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	newStatus := protocol.Status(e.fleet.MapState(ev.NewStatus))
 	if newStatus == order.Status {
-		// Idempotent path: status unchanged, check if robot ID changed
+		// Idempotent path: status unchanged, check if robot ID changed.
+		//
+		// THE VENDOR STATE STILL MOVED, and it is recorded. A complex release
+		// marks the order in_transit itself, so the fleet's WAITING -> RUNNING
+		// that follows maps to the status the order already has — and this
+		// return used to skip the write, leaving vendor_state WAITING for the
+		// whole last leg of every staged order (SPR 6903, 2026-09-24).
+		if ev.NewStatus != order.VendorState {
+			if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
+				e.logFn("engine: update order %d vendor state: %v", order.ID, err)
+			}
+			return
+		}
 		if effectiveRobotID != order.RobotID {
 			if err := e.db.UpdateOrderRobotID(order.ID, effectiveRobotID); err != nil {
 				e.logFn("engine: update order %d robot: %v", order.ID, err)

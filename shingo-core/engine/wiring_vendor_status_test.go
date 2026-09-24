@@ -71,6 +71,28 @@ func TestVendorStatus_IdempotentStatus(t *testing.T) {
 	testdb.AssertOrderStatus(t, db, "vs-order-1", "in_transit")
 }
 
+// A RELEASE MOVES THE STATUS BEFORE THE FLEET DOES. The complex release marks
+// the order in_transit, so the fleet's WAITING -> RUNNING that follows maps to
+// the status the order already has; the vendor state must still be recorded
+// (SPR 6903 read WAITING for its whole last leg).
+func TestVendorStatus_RunningAfterReleaseRecordsVendorState(t *testing.T) {
+	t.Parallel()
+	db, eng, sim, order, _, _ := dispatchRetrieveOrder(t)
+
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-01")
+	sim.DriveState(order.VendorOrderID, "WAITING")
+	staged := testdb.RequireOrderStatus(t, db, "vs-order-1", "staged")
+	if err := eng.Dispatcher().Lifecycle().Release(staged, "test"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+
+	got := testdb.RequireOrderStatus(t, db, "vs-order-1", "in_transit")
+	if got.VendorState != "RUNNING" {
+		t.Errorf("vendor_state = %q after the fleet reported RUNNING, want RUNNING", got.VendorState)
+	}
+}
+
 // FINISHED terminal state → order delivered, bin moved to dest.
 func TestVendorStatus_FinishedDelivers(t *testing.T) {
 	t.Parallel()
