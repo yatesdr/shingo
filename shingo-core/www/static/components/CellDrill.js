@@ -108,6 +108,12 @@ function procRow(p, since, span) {
         stat('Eff/hr', m.effective_parts_per_hour ? m.effective_parts_per_hour.toFixed(0) : '—'),
         stat('Lost', m.parts_lost || 0),
     ]);
+    // Gaps that ended in a counter jump or reset: the parts were made and are
+    // counted above, only their timing is unknown — so neither a stop nor
+    // downtime.
+    if (m.counter_offline_count) {
+        stats.appendChild(stat('Counter offline', fmtMin(m.counter_offline_ms) + ' (' + m.counter_offline_count + ')'));
+    }
 
     return el('div', { className: 'cell-drill__proc' + (p.primary ? ' cell-drill__proc--primary' : '') }, [
         el('div', { className: 'cell-drill__proc-head flex flex-between' }, [

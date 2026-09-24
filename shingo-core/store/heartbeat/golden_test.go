@@ -18,7 +18,7 @@ var goldenT0 = time.Date(2026, 1, 15, 8, 0, 0, 0, time.UTC)
 // goldenEvents is a fixed stream for one cell with two Processes (7 primary,
 // 9 sub). It carries the two shapes the heartbeat math is ambiguous about:
 //   - a tick with delta = 3 (three strokes inside one poll interval), and
-//   - a jump (an unconfirmed PLC gap, delta 592).
+//   - a jump (the counter leapt 592 in one poll; its gap is counter offline).
 //
 // Plus an ordinary ~20 s rhythm, a micro-stop and a stop, so every output
 // field is exercised.
@@ -33,7 +33,7 @@ func goldenEvents() []PartEvent {
 		{0, 7, 1, ""}, {20, 7, 1, ""}, {40, 7, 1, ""}, {60, 7, 1, ""},
 		{80, 7, 3, ""},        // three strokes in one poll
 		{100, 7, 1, ""},       //
-		{120, 7, 592, "jump"}, // unconfirmed PLC gap
+		{120, 7, 592, "jump"}, // counter leapt past the threshold
 		{140, 7, 1, ""},
 		{400, 7, 1, ""}, // 260 s gap: micro-stop at a 20 s target
 		{420, 7, 1, ""},
@@ -77,13 +77,14 @@ func primaryOnly(evs []PartEvent) []PartEvent {
 //   - Parts and PartsLastHour are ΣDelta over fires — the delta = 3 tick is
 //     three parts — and CurrentCycleMS and EstimateTarget divide a fire's gap
 //     by its delta.
-//   - A jump is not a fire: it counts toward no part, cycle, target or stop
-//     math (the drill still lists it among the events).
+//   - A jump is parts: its delta counts toward Parts and PartsLastHour, and
+//     the gap that ends in it is counter offline — not a stop, a cycle or a
+//     target sample (close-out 2b: the PLC is the truth).
 //
-// INVERTED by "count by delta, not by row". It used to pin the opposite:
-// Parts = len(events) and a jump counting as a part and an ordinary gap. The
-// golden's diff in that change is the fix. Regenerate with -update and read
-// the diff.
+// INVERTED twice. "Count by delta, not by row" replaced Parts = len(events);
+// close-out 2b replaced "a jump is not a fire", under which the jump counted
+// toward nothing. Each golden diff is the change. Regenerate with -update and
+// read the diff.
 func TestHeartbeatMath_Golden(t *testing.T) {
 	t.Parallel()
 	evs := goldenEvents()

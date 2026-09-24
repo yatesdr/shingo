@@ -1383,11 +1383,8 @@ type BinUOPDelta struct {
 // the INSERT, and not read back from the row, whose recorded_at column is
 // SQLite's second-granularity datetime('now') default on these Edges.
 //
-// Anomaly carries "" or "jump"; the Edge sends jump ticks too (the heartbeat
-// needs to know the cell physically fired even when inventory attribution is
-// operator-gated). Core's heartbeat math leaves jump rows out of Parts, MTBF,
-// cycle and target math: an unconfirmed PLC gap is not evidence of parts, and
-// an operator's confirmation on the Edge does not reach Core (§8 #20).
+// Anomaly carries "" or "jump" from an old Edge (the old subject never carried
+// a reset). A jump is parts, as for ProductionTickEvent.
 //
 // THE PAYLOAD COPY OF THE STATION IS GONE (identity change). Every one of
 // these envelopes carried the station twice — once in Envelope.Src.Station,
@@ -1410,14 +1407,13 @@ type CounterSnapshot struct {
 	StyleID          int64     `json:"style_id"`           // enriched at emit time from rp.StyleID
 	CountValue       int64     `json:"count_value"`        // absolute counter value; projected, read by no computation
 	Delta            int64     `json:"delta"`              // count change (typically 1)
-	Anomaly          string    `json:"anomaly"`            // "" or "jump"
+	Anomaly          string    `json:"anomaly"`            // "" or "jump" (see above)
 	RecordedAt       time.Time `json:"recorded_at"`        // Go clock at enqueue, after the snapshot INSERT (see above)
 }
 
 // ProductionTickEvent is one counter_snapshots row on the production.ticks
-// feed: a shippable tick (delta > 0, not a reset, a real style) projected to
-// the fields Core stores. ReportingPointID stays off the wire; Core never used
-// it.
+// feed: a shippable tick (delta > 0, a real style) projected to the fields
+// Core stores. ReportingPointID stays off the wire; Core never used it.
 //
 // RecordedAt is the row's recorded_ms: the Edge's clock read just BEFORE the
 // snapshot INSERT and written by it, so a re-ship after a reboot or a restore
@@ -1426,8 +1422,12 @@ type CounterSnapshot struct {
 // stroke time, so a backlog that spans a changeover still attributes each tick
 // to the style it was made on.
 //
-// Anomaly is "" or "jump", as for CounterSnapshot, and Core treats a jump the
-// same way.
+// Anomaly is "", "jump" (the counter leapt past the Edge's jump threshold in
+// one poll) or "reset" (it went backward; Delta is the new count). A record of
+// how the counter moved, nothing more: the PLC is the truth (close-out 2b), so
+// the Edge counts the delta at the read and Core's heartbeat counts it as
+// parts. The gap that ends in a jump or a reset is counter offline on Core,
+// not a stop.
 type ProductionTickEvent struct {
 	EdgeSnapshotID int64     `json:"edge_snapshot_id"`
 	ProcessID      int64     `json:"process_id"`

@@ -51,38 +51,3 @@ func TestEstimateTarget_DividesByDelta(t *testing.T) {
 		t.Errorf("EstimateTarget = %v, want 1s", got)
 	}
 }
-
-// A jump is an unconfirmed PLC gap: not evidence of parts. It counts toward
-// neither Parts nor MTBF nor any cycle math. An operator confirms a jump on
-// the Edge (counters.ConfirmAnomaly), but that confirmation does not reach
-// Core, so on Core a jump never counts.
-func TestHeartbeatMath_JumpsDoNotCount(t *testing.T) {
-	t.Parallel()
-	th := DefaultThresholds()
-	target := 20 * time.Second
-	// A jump sits inside a 300 s silence. Without it the silence is one stop;
-	// counted as a fire, the jump would split it into two gaps of 150 s.
-	events := []PartEvent{ev(0, 1, ""), ev(20, 1, ""), ev(170, 900, "jump"), ev(320, 1, ""), ev(340, 1, "")}
-	m := ComputeMetrics(events, base, base.Add(360*time.Second), target, th)
-	if m.Parts != 4 {
-		t.Errorf("Parts = %d, want 4 (the jump is not parts)", m.Parts)
-	}
-	if m.StopCount != 1 || m.LongestStopMS != 300000 {
-		t.Errorf("stops = %d longest %d ms, want 1 of 300000 (the jump is not a fire)", m.StopCount, m.LongestStopMS)
-	}
-	stops := ComputeStops(events, target, th)
-	if len(stops) != 1 {
-		t.Errorf("ComputeStops = %+v, want one 300 s stop", stops)
-	}
-	// Live state: a jump as the latest row is not the last fire.
-	cs := ComputeCellState(events[:3], target, base.Add(171*time.Second), th)
-	if cs.LastFire == nil || !cs.LastFire.Equal(base.Add(20*time.Second)) {
-		t.Errorf("LastFire = %v, want the fire at +20s, not the jump", cs.LastFire)
-	}
-	if cs.PartsLastHour != 2 {
-		t.Errorf("PartsLastHour = %d, want 2", cs.PartsLastHour)
-	}
-	if got := EstimateTarget(events); got != 20*time.Second {
-		t.Errorf("EstimateTarget = %v, want 20s (gaps around the jump are not cycles)", got)
-	}
-}

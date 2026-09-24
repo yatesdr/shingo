@@ -155,15 +155,17 @@
           }
         ],
         "metrics": {
-          "parts": 14,
+          "parts": 606,
           "run_minutes": 4.5,
           "stop_count": 2,
           "total_downtime_ms": 1020000,
           "mtbf_minutes": 2.25,
           "mttr_minutes": 8.5,
           "longest_stop_ms": 760000,
-          "effective_parts_per_hour": 186.66666666666669,
-          "parts_lost": 50
+          "effective_parts_per_hour": 8080,
+          "parts_lost": 0,
+          "counter_offline_count": 1,
+          "counter_offline_ms": 20000
         }
       },
       {
@@ -235,7 +237,9 @@
           "mttr_minutes": 0,
           "longest_stop_ms": 0,
           "effective_parts_per_hour": 16.74418604651163,
-          "parts_lost": 22
+          "parts_lost": 22,
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0
         }
       }
     ]
@@ -246,7 +250,7 @@
     "since_last_ms": 10000,
     "current_cycle_ms": 20000,
     "target_cycle_ms": 20000,
-    "parts_last_hour": 14
+    "parts_last_hour": 606
   },
   "cell_state_after_triple": {
     "state": "running",
@@ -262,7 +266,7 @@
     "since_last_ms": 260000,
     "current_cycle_ms": 20000,
     "target_cycle_ms": 20000,
-    "parts_last_hour": 12,
+    "parts_last_hour": 604,
     "stop_active": {
       "start": "2026-01-15T08:07:20Z",
       "end": "2026-01-15T08:11:40Z",
@@ -272,15 +276,17 @@
   },
   "estimate_target_ms": 20000,
   "metrics": {
-    "parts": 14,
+    "parts": 606,
     "run_minutes": 4.5,
     "stop_count": 2,
     "total_downtime_ms": 1020000,
     "mtbf_minutes": 2.25,
     "mttr_minutes": 8.5,
     "longest_stop_ms": 760000,
-    "effective_parts_per_hour": 186.66666666666669,
-    "parts_lost": 50
+    "effective_parts_per_hour": 8080,
+    "parts_lost": 0,
+    "counter_offline_count": 1,
+    "counter_offline_ms": 20000
   },
   "resolved_cell_state": {
     "cell_id": "cell-test",
@@ -293,7 +299,7 @@
       "since_last_ms": 10000,
       "current_cycle_ms": 20000,
       "target_cycle_ms": 20000,
-      "parts_last_hour": 14
+      "parts_last_hour": 606
     },
     "sub_processes": [
       {

@@ -79,37 +79,51 @@ type CellMetrics struct {
 	LongestStopMS         int64   `json:"longest_stop_ms"`
 	EffectivePartsPerHour float64 `json:"effective_parts_per_hour"`
 	PartsLost             int64   `json:"parts_lost"`
+	// CounterOfflineCount and CounterOfflineMS are the gaps that ended in a
+	// jump or a reset (ComputeCounterOffline): not stops, not downtime.
+	CounterOfflineCount int   `json:"counter_offline_count"`
+	CounterOfflineMS    int64 `json:"counter_offline_ms"`
 }
 
-// AnomalyJump marks an unconfirmed PLC gap: the counter leapt by more than
-// the Edge's jump threshold in one poll.
-const AnomalyJump = "jump"
+// The anomalies a tick can carry (the Edge's plc.CalculateDelta). AnomalyJump:
+// the counter leapt past the Edge's jump threshold in one poll. AnomalyReset:
+// it went backward with no plausible rollover, and its delta is the new count.
+const (
+	AnomalyJump  = "jump"
+	AnomalyReset = "reset"
+)
 
-// sortedFires returns the events that count as production, sorted ascending
-// by RecordedAt. Callers pass store-ordered slices, but the pure functions
-// don't trust ordering.
+// KindCounterOffline is the Kind of a gap that ended in a jump or a reset.
+const KindCounterOffline = "counter-offline"
+
+// sortedFires returns the events sorted ascending by RecordedAt. Callers pass
+// store-ordered slices, but the pure functions don't trust ordering.
 //
-// A JUMP IS NOT A FIRE. It is an unconfirmed PLC gap — a counter that leapt
-// past the jump threshold in one poll — so it is evidence of neither parts nor
-// a cycle nor the end of a stop. It counts toward nothing here: not Parts, not
-// MTBF or stops, not the cycle or target. An operator confirms a jump on the
-// Edge (counters.ConfirmAnomaly), which releases its units to inventory; that
-// confirmation does not reach Core, so on Core a jump never counts. The drill
-// still draws it (ComputeCellHeartbeat's Events).
+// EVERY TICK IS A FIRE, JUMPS AND RESETS INCLUDED (close-out 2b, owner ruling
+// 2026-09-24: "these are industrial PLCs … the Pi should expect it as truth").
+// A jump or a reset is parts the counter really counted; what nobody saw is
+// when, inside the gap before it, they were made. So its delta counts toward
+// Parts like any tick's, and the gap that ENDS in it is counter offline
+// (endsOffline): not a stop, not downtime, not a cycle and not a target
+// sample. The Edge counts the same units at the read, so both sides agree. A
+// jump used to count toward nothing here, waiting on an Edge operator's
+// Confirm that never reached Core.
 func sortedFires(events []PartEvent) []PartEvent {
-	out := make([]PartEvent, 0, len(events))
-	for _, e := range events {
-		if e.Anomaly != AnomalyJump {
-			out = append(out, e)
-		}
-	}
+	out := append([]PartEvent(nil), events...)
 	sort.Slice(out, func(i, j int) bool { return out[i].RecordedAt.Before(out[j].RecordedAt) })
 	return out
 }
 
+// endsOffline reports whether the gap before e is counter offline: e is a jump
+// or a reset, so its parts were made at times the counter did not report.
+func endsOffline(e PartEvent) bool {
+	return e.Anomaly == AnomalyJump || e.Anomaly == AnomalyReset
+}
+
 // partsIn counts parts by delta, not by row: a poll pass that saw three
 // strokes is one row with delta = 3, and it is three parts. Counting rows made
-// every part count depend on the poll rate.
+// every part count depend on the poll rate. A jump's or a reset's delta counts
+// the same way.
 func partsIn(fires []PartEvent) int64 {
 	var n int64
 	for _, e := range fires {
@@ -131,9 +145,9 @@ func perPartGap(gap time.Duration, delta int64) time.Duration {
 // no cell_targets row is configured (§8 #11: auto-derive vs admin-set). Uses
 // the MEDIAN per-part gap — the gap before a fire, divided by the parts it
 // carried — which is robust to the long stop gaps in the stream (a healthy
-// 22.5s cell with occasional stops still medians ≈ 22.5s). Jumps are not
-// fires (sortedFires). Returns 0 for < 2 fires; configured targets always
-// take precedence.
+// 22.5s cell with occasional stops still medians ≈ 22.5s). A gap that ended in
+// a jump or a reset is not a sample (endsOffline). Returns 0 for < 2 fires;
+// configured targets always take precedence.
 func EstimateTarget(events []PartEvent) time.Duration {
 	ev := sortedFires(events)
 	if len(ev) < 2 {
@@ -141,6 +155,9 @@ func EstimateTarget(events []PartEvent) time.Duration {
 	}
 	gaps := make([]time.Duration, 0, len(ev)-1)
 	for i := 1; i < len(ev); i++ {
+		if endsOffline(ev[i]) {
+			continue
+		}
 		if g := perPartGap(ev[i].RecordedAt.Sub(ev[i-1].RecordedAt), ev[i].Delta); g > 0 {
 			gaps = append(gaps, g)
 		}
@@ -155,8 +172,9 @@ func EstimateTarget(events []PartEvent) time.Duration {
 // ComputeCellState derives the live state from the event stream and the target
 // cycle, as of `now`. No fires → no-data. State is set by time since the last
 // fire relative to the target (running/slowed/micro-stop/stopped). The current
-// cycle is the last fire's per-part gap; parts in the last hour are counted by
-// delta. Jumps are not fires (sortedFires).
+// cycle is the last fire's per-part gap, and 0 (unknown) when that gap ended in
+// a jump or a reset (endsOffline); parts in the last hour are counted by delta,
+// a jump's or a reset's included.
 func ComputeCellState(events []PartEvent, target time.Duration, now time.Time, th Thresholds) CellState {
 	ev := sortedFires(events)
 	if len(ev) == 0 || target <= 0 {
@@ -169,7 +187,7 @@ func ComputeCellState(events []PartEvent, target time.Duration, now time.Time, t
 		SinceLastMS:   sinceLast.Milliseconds(),
 		TargetCycleMS: target.Milliseconds(),
 	}
-	if n := len(ev); n >= 2 {
+	if n := len(ev); n >= 2 && !endsOffline(ev[n-1]) {
 		cs.CurrentCycleMS = perPartGap(ev[n-1].RecordedAt.Sub(ev[n-2].RecordedAt), ev[n-1].Delta).Milliseconds()
 	}
 	// Parts in the last hour ending at now, by delta.
@@ -198,7 +216,8 @@ func ComputeCellState(events []PartEvent, target time.Duration, now time.Time, t
 
 // ComputeStops returns every gap between fires that exceeds the micro-stop
 // threshold (plan §12 "Stops"). Each becomes a discrete event with a kind. A
-// jump inside a silence does not split it (sortedFires).
+// gap that ended in a jump or a reset is not a stop: it is counter offline
+// (ComputeCounterOffline), because the parts it ended with were made inside it.
 func ComputeStops(events []PartEvent, target time.Duration, th Thresholds) []StopEvent {
 	ev := sortedFires(events)
 	if len(ev) < 2 || target <= 0 {
@@ -207,6 +226,9 @@ func ComputeStops(events []PartEvent, target time.Duration, th Thresholds) []Sto
 	micro := time.Duration(float64(target) * th.MicroStopMult)
 	var stops []StopEvent
 	for i := 1; i < len(ev); i++ {
+		if endsOffline(ev[i]) {
+			continue
+		}
 		gap := ev[i].RecordedAt.Sub(ev[i-1].RecordedAt)
 		if gap > micro {
 			stops = append(stops, StopEvent{
@@ -220,6 +242,27 @@ func ComputeStops(events []PartEvent, target time.Duration, th Thresholds) []Sto
 	return stops
 }
 
+// ComputeCounterOffline returns every gap that ended in a jump or a reset,
+// Kind KindCounterOffline, whatever its length: the counter did not report
+// those parts one stroke at a time, so the gap is neither running nor stopped.
+func ComputeCounterOffline(events []PartEvent) []StopEvent {
+	ev := sortedFires(events)
+	var out []StopEvent
+	for i := 1; i < len(ev); i++ {
+		if !endsOffline(ev[i]) {
+			continue
+		}
+		gap := ev[i].RecordedAt.Sub(ev[i-1].RecordedAt)
+		out = append(out, StopEvent{
+			Start:      ev[i-1].RecordedAt,
+			End:        ev[i].RecordedAt,
+			DurationMS: gap.Milliseconds(),
+			Kind:       KindCounterOffline,
+		})
+	}
+	return out
+}
+
 func stopKind(gap, target time.Duration, th Thresholds) string {
 	if float64(gap) > float64(target)*th.StoppedMult {
 		return StateStopped
@@ -228,14 +271,23 @@ func stopKind(gap, target time.Duration, th Thresholds) string {
 }
 
 // ComputeMetrics aggregates the window [since,until] into the loss numbers
-// (plan §12). Parts are counted by delta over fires (partsIn, sortedFires);
+// (plan §12). Parts are counted by delta over every fire (partsIn, sortedFires);
 // RunMinutes excludes downtime; MTBF/MTTR are over detected stops;
 // PartsLost = expected-at-target − actual (clamped ≥ 0).
+//
+// Counter offline (ComputeCounterOffline) is reported beside the stops and is
+// neither downtime nor excluded from the wall: the parts made inside it are in
+// Parts, so the time they were made in stays in RunMinutes and in the
+// expected-at-target count they are measured against.
 func ComputeMetrics(events []PartEvent, since, until time.Time, target time.Duration, th Thresholds) CellMetrics {
 	m := CellMetrics{Parts: partsIn(sortedFires(events))}
 	wall := until.Sub(since)
 	if wall <= 0 {
 		return m
+	}
+	for _, g := range ComputeCounterOffline(events) {
+		m.CounterOfflineCount++
+		m.CounterOfflineMS += g.DurationMS
 	}
 	stops := ComputeStops(events, target, th)
 	m.StopCount = len(stops)
