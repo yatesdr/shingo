@@ -23,16 +23,14 @@ func withManualClock(t *testing.T) *clock.Manual {
 	return m
 }
 
-// TestPin_P0h_RepairIsOncePerGenerationUntilRestart pins V9's second half at
-// base: once a reply for (bin, epoch) is recorded, no later discard of that
-// carrier's counts at that generation is ever answered again, however much time
-// passes, until Core restarts and the in-memory map is empty. A reply that is
-// lost (a dead-lettered or expired BinEpochRefresh) leaves the station behind
-// for good.
+// TestRepairIsOncePerGenerationPerMinute is S5b. A reply for (bin, epoch) holds
+// back the next one for that pair for 60 s, not until Core restarts. A reply
+// that is lost (the station was down, or an older build ignored it) is sent
+// again on the first discarded count after the window.
 //
-// Verify-red: S5b (at most once per (bin, epoch) per 60 s) inverts the 61 s
-// assertion — the window expires and the next discard is answered again.
-func TestPin_P0h_RepairIsOncePerGenerationUntilRestart(t *testing.T) {
+// Inverted pin: at base (TestPin_P0h_RepairIsOncePerGenerationUntilRestart) the
+// pair stayed answered forever, 61 s later included.
+func TestRepairIsOncePerGenerationPerMinute(t *testing.T) {
 	m := withManualClock(t)
 	s := &InventoryDeltaService{}
 
@@ -43,13 +41,38 @@ func TestPin_P0h_RepairIsOncePerGenerationUntilRestart(t *testing.T) {
 
 	m.Advance(30 * time.Second)
 	if !s.alreadyRepaired(7, 2) {
-		t.Error("30 s after a reply, the same (bin, epoch) is answered again; want held back")
+		t.Error("30 s after a reply, the same (bin, epoch) is answered again; want held back for 60 s")
 	}
 	m.Advance(31 * time.Second)
-	if !s.alreadyRepaired(7, 2) {
-		t.Error("61 s after a reply, the same (bin, epoch) is answered again; at base it never is")
+	if s.alreadyRepaired(7, 2) {
+		t.Error("61 s after a reply, the same (bin, epoch) is still held back; a lost reply is never resent")
 	}
 	if s.alreadyRepaired(7, 3) {
 		t.Error("a new generation of the carrier reads as already answered")
+	}
+
+	// Answered again, and held again.
+	s.markRepaired(7, 2)
+	if !s.alreadyRepaired(7, 2) {
+		t.Error("a fresh reply does not hold back the next one")
+	}
+}
+
+// TestRepairMapIsBounded: the debounce keeps no entry older than its window
+// once it is next written, so a plant that cycles thousands of carriers does
+// not grow it for the life of the process.
+func TestRepairMapIsBounded(t *testing.T) {
+	m := withManualClock(t)
+	s := &InventoryDeltaService{}
+
+	for bin := int64(1); bin <= 100; bin++ {
+		s.markRepaired(bin, 1)
+	}
+	m.Advance(61 * time.Second)
+	s.markRepaired(101, 1)
+
+	if n := len(s.repaired); n != 1 {
+		t.Errorf("debounce holds %d entries after the window passed, want 1 — expired entries "+
+			"must go when the map is next written", n)
 	}
 }

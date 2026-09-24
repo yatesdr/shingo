@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
@@ -130,8 +132,9 @@ func TestQuietPlant_TheDropAnswers(t *testing.T) {
 // a day at one plant — and a reply per discarded count would be a flood aimed
 // at a station that is not listening.
 //
-// One reply per generation. If the station never adopts, the next reset makes a
-// new generation and the reply goes out again.
+// One reply per generation per 60 s (TestQuietPlant_TheRepairIsResentAfterTheWindow
+// covers the window). If the station never adopts, the next reset makes a new
+// generation and the reply goes out again at once.
 func TestQuietPlant_TheRepairDoesNotStorm(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -193,5 +196,58 @@ func TestRepairNotSentForACarrierAtNoNode(t *testing.T) {
 	}
 	if n := len(outboxRefreshes(t, db, bin.ID)); n != 0 {
 		t.Errorf("outbox holds %d repairs for a carrier at no node, want 0", n)
+	}
+}
+
+// TestQuietPlant_TheRepairIsResentAfterTheWindow is S5b end to end. The first
+// reply can be lost: it expired in transit, or the station was down, or it was
+// dead-lettered in Core's outbox. The debounce used to hold the (bin, epoch)
+// until Core restarted, so a lost reply left the station discarding every count
+// for good. Now it holds for 60 s: a discard inside the window is not answered,
+// the first one after it is.
+//
+// NOT PARALLEL: it steps the process clock (clock.Now), which the debounce
+// reads. Go runs sequential tests before it releases parallel ones, and the
+// clock is restored before they run.
+func TestQuietPlant_TheRepairIsResentAfterTheWindow(t *testing.T) {
+	prev := clock.Default()
+	m := clock.NewManual(time.Now())
+	clock.SetDefault(m)
+	t.Cleanup(func() { clock.SetDefault(prev) })
+
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := repairingService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-QUIET-4", "PART-A", 100)
+	_, err := db.Exec(`UPDATE bins SET delta_epoch=2 WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "advance a generation")
+
+	discard := func(seq int64) {
+		t.Helper()
+		d := makeBinDelta(bin.ID, "PART-A", -1, seq, protocol.ReasonConsumeTick)
+		d.Epoch = 1
+		if err := svc.ApplyBinUOPDelta(testStation, d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+			t.Fatalf("tick %d = %v, want ErrInventoryDeltaSkipped", seq, err)
+		}
+	}
+
+	discard(1)
+	m.Advance(30 * time.Second)
+	discard(2)
+	if n := len(outboxRefreshes(t, db, bin.ID)); n != 1 {
+		t.Fatalf("outbox holds %d repairs 30 s after the first, want 1 — inside the window the "+
+			"reply is held back", n)
+	}
+
+	m.Advance(31 * time.Second)
+	discard(3)
+	refreshes := outboxRefreshes(t, db, bin.ID)
+	if len(refreshes) != 2 {
+		t.Fatalf("outbox holds %d repairs 61 s after the first, want 2 — a lost reply must be "+
+			"sent again, or the station discards every count until Core restarts", len(refreshes))
+	}
+	if refreshes[1].Epoch != 2 {
+		t.Errorf("resent repair carries generation %d, want 2", refreshes[1].Epoch)
 	}
 }

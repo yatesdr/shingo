@@ -61,18 +61,16 @@ func (s *ackingStore) AckOutbox(id int64) error {
 	return nil
 }
 
-// TestPin_CountSubjectFailedPublishSpendsARetry pins P0a's drainer half at base:
-// a failed publish of either count subject increments the row's retry counter,
-// exactly as any other subject does, so a count row dead-letters after
-// MaxRetries (10) failures.
+// TestCountSubjectFailedPublishKeepsItsBudget is S1 (SYNTH-round2 §4). A failed
+// publish of either count subject does not spend a retry, so the row can never
+// reach MaxRetries and never dead-letters: it retries until the broker takes
+// it. Every other subject still spends one.
 //
-// Verify-red: S1 (count subjects never dead-letter) inverts this. publishOne
-// skips IncrementOutboxRetries for these two subjects, so retried stays empty.
-func TestPin_CountSubjectFailedPublishSpendsARetry(t *testing.T) {
+// Inverted pin: at base (TestPin_CountSubjectFailedPublishSpendsARetry) a count
+// row's failure incremented its retries like any other, and the tenth
+// dead-lettered it.
+func TestCountSubjectFailedPublishKeepsItsBudget(t *testing.T) {
 	t.Parallel()
-	if MaxRetries != 10 {
-		t.Fatalf("MaxRetries = %d, want 10 — the retry budget this pin describes", MaxRetries)
-	}
 	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketDelta} {
 		store := &mockStore{pending: []Message{
 			{ID: 1, Payload: []byte("count"), MsgType: subject, Retries: MaxRetries - 1},
@@ -80,12 +78,22 @@ func TestPin_CountSubjectFailedPublishSpendsARetry(t *testing.T) {
 		pub := &mockPublisher{connected: true, publishErr: errors.New("broker unreachable")}
 		d := NewDrainer(store, pub, "orders", time.Hour, 50)
 		if !d.drain() {
-			t.Fatalf("%s: drain reported no failure on a failed publish", subject)
+			t.Fatalf("%s: drain reported no failure on a failed publish — muting depends on it", subject)
 		}
-		if len(store.retried) != 1 || store.retried[0] != 1 {
-			t.Errorf("%s: retried = %v, want [1] — at base a failed count publish spends one of "+
-				"its %d attempts, and the tenth dead-letters it", subject, store.retried, MaxRetries)
+		if len(store.retried) != 0 {
+			t.Errorf("%s: retried = %v, want none — a count row that spends retries dead-letters "+
+				"after %d, and the counts it carries are lost", subject, store.retried, MaxRetries)
 		}
+	}
+
+	// Control: an ordinary subject keeps its budget.
+	store := &mockStore{pending: []Message{
+		{ID: 2, Payload: []byte("report"), MsgType: protocol.SubjectProductionReport},
+	}}
+	pub := &mockPublisher{connected: true, publishErr: errors.New("broker unreachable")}
+	NewDrainer(store, pub, "orders", time.Hour, 50).drain()
+	if len(store.retried) != 1 || store.retried[0] != 2 {
+		t.Errorf("ordinary subject: retried = %v, want [2]", store.retried)
 	}
 }
 

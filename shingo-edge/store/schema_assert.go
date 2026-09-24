@@ -131,6 +131,10 @@ var requiredColumns = []requiredColumn{
 	{"process_node_runtime_states", "lineside_payload_known"},
 	{"process_node_runtime_states", "lineside_source"},
 	{"process_node_runtime_states", "lineside_at"},
+	// Every statement that moves active_bin_id writes both, so a failed ALTER
+	// would kill every bind and every clear on the box.
+	{"process_node_runtime_states", "last_bin_id"},
+	{"process_node_runtime_states", "last_bin_epoch"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

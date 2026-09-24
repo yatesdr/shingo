@@ -79,6 +79,14 @@ func (db *DB) SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeCl
 	return processes.SetRuntimeWithBinAndEpoch(db.DB, processNodeID, activeClaimID, activeBinID, deltaEpoch, remainingUOP)
 }
 
+// BindEmptySlotUnlessDeparted binds binID at deltaEpoch into a slot read as
+// empty, unless binID is the bin that last left the slot and deltaEpoch is
+// older than the stamp it left with. Reports whether it bound. See
+// processes.BindEmptySlotUnlessDeparted.
+func (db *DB) BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error) {
+	return processes.BindEmptySlotUnlessDeparted(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
+}
+
 // SetProcessNodeRuntimeForDeliveredBin writes active_claim_id,
 // active_bin_id, active_bin_epoch, and remaining_uop_cached atomically
 // when a bin physically arrives at the slot. deltaEpoch is the arrived

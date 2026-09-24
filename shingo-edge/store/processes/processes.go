@@ -745,7 +745,7 @@ func SetRuntimeClaimCountAndEpoch(db *sql.DB, processNodeID int64, activeClaimID
 // the slot ends up empty.
 func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, remaining_uop_cached=?, updated_at=datetime('now')
+		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeClaimID, activeBinID, remainingUOPCached, processNodeID)
 	return err
@@ -806,6 +806,18 @@ const epochAssignForBoundBin = `active_bin_epoch=CASE
 			WHEN active_bin_id IS ? AND active_bin_epoch < ? THEN ?
 			ELSE active_bin_epoch END`
 
+// rememberDepartedBin records, on every statement that writes active_bin_id,
+// the bin the slot held before the write and that bin's stamp. Right-hand
+// columns read the row as it was, so when the write empties the slot (or
+// replaces the bin) last_bin_id / last_bin_epoch become the carrier that just
+// left, at the generation it left with. When the slot was already empty they
+// keep what they had. It takes no bind parameters and rides the statement that
+// already moves the pointer, so remembering costs no statement.
+//
+// Read by BindEmptySlotUnlessDeparted, and by nothing else.
+const rememberDepartedBin = `last_bin_id=CASE WHEN active_bin_id IS NOT NULL THEN active_bin_id ELSE last_bin_id END,
+		last_bin_epoch=CASE WHEN active_bin_id IS NOT NULL THEN active_bin_epoch ELSE last_bin_epoch END`
+
 // epochArgs supplies either rule's three bind parameters: the bin the write
 // is for, then the incoming stamp twice (once to compare, once to store).
 func epochArgs(activeBinID any, deltaEpoch int64) []any {
@@ -829,9 +841,42 @@ func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, a
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`, args...)
 	return err
+}
+
+// BindEmptySlotUnlessDeparted is SetRuntimeWithBinAndEpoch for a bind into
+// a slot the caller read as empty, refused when the bin is the one that last
+// left this slot and the stamp is older than the one it left with. Reports
+// whether the bind landed.
+//
+// It is the one epoch write the same-bin rule cannot guard. An empty slot has
+// no bound bin to compare with, so epochAssignOnBind sees a change of carrier
+// and takes any stamp. A delayed correction for a carrier that has since left
+// would then rebind it here, under a generation that has ended. The slot's
+// record of what left it (last_bin_id / last_bin_epoch, see
+// rememberDepartedBin) makes the comparison possible. A different bin, or the
+// same bin at an equal or newer stamp, binds as before.
+//
+// The refusal is the WHERE clause of the bind itself, so it costs no
+// statement.
+func BindEmptySlotUnlessDeparted(db *sql.DB, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOPCached int) (bool, error) {
+	args := []any{activeClaimID, binID}
+	args = append(args, epochArgs(binID, deltaEpoch)...)
+	args = append(args, remainingUOPCached, processNodeID, binID, deltaEpoch)
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		WHERE process_node_id=?
+		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)`, args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // SetRuntimeForDeliveredBin is the atomic write used when a bin
@@ -858,7 +903,7 @@ func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *i
 // claim or count.
 func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=?, updated_at=datetime('now')
+		active_bin_id=?, `+rememberDepartedBin+`, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeBinID, processNodeID)
 	return err
@@ -874,7 +919,7 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 // count, which is exactly the state the pickup exists to end.
 func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=NULL, remaining_uop_cached=0, updated_at=datetime('now')
+		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		processNodeID)
 	return err
@@ -891,7 +936,7 @@ func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64,
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=?, `+epochAssignOnBind+`, updated_at=datetime('now')
+		active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, updated_at=datetime('now')
 		WHERE process_node_id=?`, args...)
 	return err
 }

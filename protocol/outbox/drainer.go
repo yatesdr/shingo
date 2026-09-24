@@ -7,10 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/types"
 )
 
-// MaxRetries is the number of delivery attempts before a message is dead-lettered.
+// MaxRetries is the number of delivery attempts before a message is
+// dead-lettered. The two count subjects are exempt; see neverDeadLetter.
 const MaxRetries = 10
 
 const (
@@ -177,14 +179,20 @@ func (d *Drainer) run() {
 	// The wake arm exists for first-attempt latency on the healthy path. Under
 	// a transport failure it stops being a latency feature and becomes a retry
 	// multiplier, because drain() retries every pending row: each enqueue would
-	// spend one of the message's MaxRetries attempts. Springfield enqueues at
-	// ~0.27/s, so the observed cost was ~2.5x faster dead-lettering (~20s
-	// instead of ~50s) and the bound is ~0.5s at the settle window's limit.
+	// spend one of the message's MaxRetries attempts.
 	//
-	// Muting puts the cadence back on the interval, so the tolerance is
-	// MaxRetries x interval exactly as it was before the doorbell existed. Only
-	// a ticker drain clears it: a wake-driven success would let a partially
-	// reachable broker re-arm the multiplier between failures.
+	// Muting puts the cadence back on the ticker: at most one attempt per row
+	// per interval. That is NOT a budget of MaxRetries x interval. A pass walks
+	// up to `limit` rows in series and each failed Publish can itself take the
+	// client's timeout (10 s on Edge, with kafka-go's retries inside it), so a
+	// pass lasts far longer than the interval once rows fail, and how long a
+	// row takes to die depends on how many rows share its passes: modelled
+	// against kafka-go's retry schedule, 74-100 s on a quiet line and 45-75
+	// minutes on a busy one. The two count subjects have no budget at all;
+	// see neverDeadLetter.
+	//
+	// Only a ticker drain clears it: a wake-driven success would let a
+	// partially reachable broker re-arm the multiplier between failures.
 	muted := false
 	for {
 		select {
@@ -261,10 +269,22 @@ func (d *Drainer) drain() (failed bool) {
 	return failed
 }
 
+// neverDeadLetter holds the subjects whose failed publishes do not spend a
+// retry, so they are offered on every pass until the broker takes them.
+//
+// They are the two sequenced count deltas. A dead-lettered count delta is parts
+// that happened and that Core never hears of. The panic path still exhausts
+// them: a payload that panics the publisher on every pass must be stood down.
+var neverDeadLetter = map[string]bool{
+	protocol.SubjectBinUOPDelta:         true,
+	protocol.SubjectLinesideBucketDelta: true,
+}
+
 // publishOne reports whether the message was acked. False means the publish
-// errored (retry incremented, possibly dead-lettered) or panicked — both are
-// failures for muting purposes, since a poison pill that panics every pass
-// would otherwise let wakes keep spending the budget of every other row.
+// errored (retry incremented unless the subject is in neverDeadLetter,
+// possibly dead-lettered) or panicked — both are failures for muting purposes,
+// since a poison pill that panics every pass would otherwise let wakes keep
+// spending the budget of every other row.
 func (d *Drainer) publishOne(msg Message) (ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -282,6 +302,11 @@ func (d *Drainer) publishOne(msg Message) (ok bool) {
 		topic = d.topic
 	}
 	if err := d.publisher.Publish(topic, msg.Payload); err != nil {
+		if neverDeadLetter[msg.MsgType] {
+			log.Printf("outbox: publish to %s failed (type=%s, retried until delivered): %v", topic, msg.MsgType, err)
+			d.DebugLog.Log("retry: msg %d type=%s no budget err=%v", msg.ID, msg.MsgType, err)
+			return false
+		}
 		d.store.IncrementOutboxRetries(msg.ID)
 		if msg.Retries+1 >= MaxRetries {
 			log.Printf("outbox: msg %d dead-lettered after %d retries (type=%s): %v", msg.ID, msg.Retries+1, msg.MsgType, err)

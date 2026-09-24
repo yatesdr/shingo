@@ -153,8 +153,25 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// door that repairs a wrong tile — required per §4b-6. (A Released
 		// correction on an already-unbound node has nothing to clear; it falls
 		// through to the guard below and no-ops.)
-		if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(node.ID, rt.ActiveClaimID, &adj.BinID, adj.Epoch, adj.NewRemaining); err != nil {
+		//
+		// NOT FOR THE CARRIER THAT JUST LEFT, AT AN OLDER STAMP. An empty slot
+		// has no bound bin, so the store's same-bin epoch rule has nothing to
+		// compare with and would take any stamp. These announcements carry no
+		// expiry, so a correction delayed through an outage can arrive after
+		// its carrier has moved on a generation and left; binding it would put
+		// a departed carrier back on this slot under a generation that has
+		// ended. The slot remembers the bin that left it and that bin's stamp,
+		// and the bind is refused in its own WHERE clause when this is that
+		// bin at an older stamp. A different bin, or the same one at an equal
+		// or newer stamp, binds as before.
+		bound, err := e.db.BindEmptySlotUnlessDeparted(node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
+		if err != nil {
 			log.Printf("uop_adjustment: bind staged bin %d to node %s via count correction: %v", adj.BinID, adj.CoreNodeName, err)
+			return
+		}
+		if !bound {
+			log.Printf("uop_adjustment: bin %d at epoch %d left node %s at a newer epoch — a late correction, "+
+				"not rebinding a carrier that has left", adj.BinID, adj.Epoch, adj.CoreNodeName)
 			return
 		}
 		log.Printf("uop_adjustment: bound staged bin %d to node %s via count correction (remaining=%d epoch=%d)",

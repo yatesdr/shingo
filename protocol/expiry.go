@@ -35,26 +35,25 @@ var defaultTTLs = map[string]time.Duration{
 // to produce — stamps exp = now, which expires on the very next clock tick and
 // is the exact opposite of the intent.
 //
-// Reserve it for subjects where a LATE copy is harmless and a DROPPED copy is
-// not. That is a property of the receiving handler, not of the sender, so do
-// not add a subject here without checking Core's handler for a dedup key and an
-// ordering guard.
+// Reserve it for subjects where a DROPPED copy costs more than a LATE one.
+// That is a property of the receiving handler, not of the sender, so do not add
+// a subject here without checking what the receiving side's handler does with
+// a copy that arrives after newer ones (its dedup key and ordering guard).
 const NoExpiry time.Duration = 0
 
 // Subject-specific TTLs for data channel messages.
 var subjectTTLs = map[string]time.Duration{
 	// The two sequenced inventory deltas carry information nothing else
-	// resupplies. Every other data subject is a snapshot whose successor
+	// resupplies. Most other data subjects are snapshots whose successor
 	// carries the same truth a few seconds later, so dropping a late copy costs
 	// nothing; these are increments, and a dropped one is a permanently wrong
 	// count that never self-corrects.
 	//
-	// Safe to arrive late because Core guards both ends of the problem:
-	// ApplyBinUOPDelta dedups on SequenceID via inventory_delta_dedup, so a
-	// replay is a no-op, and the stale-epoch guard routes a delta from a
-	// superseded epoch to the discrepancy audit rather than applying it. So a
-	// late copy is either applied exactly once or recorded as a discrepancy —
-	// never silently wrong.
+	// A late copy is not always harmless. Core dedups on a per-scope high-water
+	// SequenceID, so a replay is a no-op, but a delta that arrives after a
+	// higher seq of its scope is skipped with no ledger row; and a delta from a
+	// superseded epoch goes to the discrepancy audit, not the count. Expiring
+	// them would lose more: a dropped delta is lost with no record at all.
 	//
 	// Measured at Springfield 2026-08-21, before the edge was hardwired: ~17
 	// bin_uop_delta a day arrived past the 5-minute default and were discarded
@@ -62,6 +61,19 @@ var subjectTTLs = map[string]time.Duration{
 	// peaking at 23 hours. The edge marked every one of them sent.
 	SubjectBinUOPDelta:         NoExpiry,
 	SubjectLinesideBucketDelta: NoExpiry,
+
+	// Core's count announcements to the Edge. One dropped after an outage
+	// longer than TypeData's 5 minutes leaves the station holding a carrier
+	// under a generation that has ended, so every count it reports is
+	// discarded at Core. A late copy cannot walk a carrier's epoch backward:
+	// every Edge write they reach goes through the store's epochAssignOnBind,
+	// which moves a bound carrier's stamp forward only, and a bind into an
+	// empty slot is refused for the carrier that last left it at an older
+	// stamp (BindEmptySlotUnlessDeparted). What a late UOPAdjustment still
+	// does is write its count as sent, over any ticks the Edge counted after
+	// Core sent it.
+	SubjectUOPAdjustment:   NoExpiry,
+	SubjectBinEpochRefresh: NoExpiry,
 
 	SubjectEdgeHeartbeat:    90 * time.Second,
 	SubjectEdgeHeartbeatAck: 90 * time.Second,

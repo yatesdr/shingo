@@ -475,6 +475,13 @@ CREATE TABLE process_node_runtime_states (
     -- BinEpochRefresh push. Every FetchNodeBins call site discards the
     -- epoch it is handed.
     active_bin_epoch   INTEGER NOT NULL DEFAULT 0,
+    -- last_bin_id / last_bin_epoch are the bin that last left this slot and
+    -- the stamp it left with, written by every statement that moves
+    -- active_bin_id. An empty slot's active_bin_epoch belongs to no bound bin;
+    -- these say whose it was, so a late correction for a carrier that has
+    -- left cannot rebind it under an ended generation.
+    last_bin_id        INTEGER,
+    last_bin_epoch     INTEGER NOT NULL DEFAULT 0,
     -- lineside_payload_code is what the carrier standing here actually is,
     -- as opposed to what this node's style says should be here. Core sends
     -- it on OrderDelivered, off the same bin row it already reads for the

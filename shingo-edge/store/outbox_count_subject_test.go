@@ -37,13 +37,15 @@ func outboxRowExists(t *testing.T, db *DB, id int64) bool {
 	return n == 1
 }
 
-// TestPin_P0a_PurgeDeletesAnExhaustedCountRow pins PurgeOld at base: an
-// undelivered, exhausted bin_uop_delta or lineside_bucket_delta row older than
-// the dead-letter retention is deleted like any other dead letter. It is the
-// only record of counts Core never received, and after 7 days it is gone.
+// TestPurgeKeepsAnUndeliveredCountRow is S1's purge half. An undelivered
+// bin_uop_delta or lineside_bucket_delta row is never deleted, whatever its age
+// or retries: it is the only record of counts Core has not received. (A count
+// row is exhausted only by the drainer's panic boundary, or by a failure budget
+// spent before S1 deployed.)
 //
-// Verify-red: S1 (PurgeOld never deletes an undelivered count row) inverts it.
-func TestPin_P0a_PurgeDeletesAnExhaustedCountRow(t *testing.T) {
+// Inverted pin: at base (TestPin_P0a_PurgeDeletesAnExhaustedCountRow) such a
+// row was deleted once past the 7-day dead-letter retention.
+func TestPurgeKeepsAnUndeliveredCountRow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	bin := agedOutboxRow(t, db, protocol.SubjectBinUOPDelta, true, false)
@@ -52,8 +54,8 @@ func TestPin_P0a_PurgeDeletesAnExhaustedCountRow(t *testing.T) {
 	_, err := db.PurgeOldOutbox(outbox.MessageRetentionPeriod, outbox.DeadLetterRetentionPeriod)
 	testutil.MustNoErr(t, err, "purge")
 
-	if outboxRowExists(t, db, bin) || outboxRowExists(t, db, bucket) {
-		t.Errorf("an exhausted count row past retention survived the purge; at base it is deleted")
+	if !outboxRowExists(t, db, bin) || !outboxRowExists(t, db, bucket) {
+		t.Errorf("the purge deleted an undelivered count row; its counts are then lost for good")
 	}
 }
 

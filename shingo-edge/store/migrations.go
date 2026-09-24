@@ -259,6 +259,16 @@ func (db *DB) migrate() error {
 	// FetchNodeBins call site discards the epoch.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_epoch INTEGER NOT NULL DEFAULT 0")
 
+	// What the slot last held: the bin that left it and the stamp it left
+	// with, written by every statement that moves active_bin_id (see
+	// processes.rememberDepartedBin). A correction that arrives late for a
+	// carrier that has since left must not rebind it under a generation that
+	// has ended, and an empty slot has no other record of whose stamp its
+	// active_bin_epoch was. Existing rows land NULL / 0, which refuses
+	// nothing: the first departure after upgrade fills them.
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN last_bin_id INTEGER")
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN last_bin_epoch INTEGER NOT NULL DEFAULT 0")
+
 	// Hold-and-replay: pending tick counts accumulated while no bin is
 	// bound at the slot (pickup->delivery gap). Replaces the cached_bin_id
 	// gap-window. Old rows land at 0 (no pending). Idempotent ADD COLUMN.

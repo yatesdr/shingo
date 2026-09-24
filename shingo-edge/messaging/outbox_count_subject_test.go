@@ -77,34 +77,31 @@ func failedCountPublishes(t *testing.T, subject string, passes int64) (db *store
 	return db, pub.count(), counter.Count() - st.lists.Load()
 }
 
-// TestPin_P0a_CountRowDeadLettersAfterTenFailures pins P0a's Edge half at base:
-// a bin_uop_delta or lineside_bucket_delta row is dead-lettered by the retry
-// budget. After exactly 10 refused publishes it stops matching the pending
-// query and is never sent again, and each refusal cost one statement
-// (IncrementOutboxRetries) on top of the pass's list.
+// TestCountRowRetriesPastTheBudget is S1 on the Edge's real outbox. A
+// bin_uop_delta or lineside_bucket_delta row the broker refuses is offered on
+// every pass, past MaxRetries, and stays pending rather than dead. A refusal
+// costs no statement beyond the pass's own list: one fewer than before.
 //
-// Verify-red: S1 (count subjects never dead-letter) inverts it. The row keeps
-// retrying past 10, stays pending, and a refusal costs no statement beyond the
-// list.
-func TestPin_P0a_CountRowDeadLettersAfterTenFailures(t *testing.T) {
+// Inverted pin: at base (TestPin_P0a_CountRowDeadLettersAfterTenFailures) the
+// row died after exactly 10 refusals, each costing an IncrementOutboxRetries.
+func TestCountRowRetriesPastTheBudget(t *testing.T) {
 	t.Parallel()
 	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketDelta} {
-		// 15 passes: five more than the budget, so a row that dies at 10 has
-		// had five passes in which it was not offered again.
 		db, attempts, failureStatements := failedCountPublishes(t, subject, 15)
-		if attempts != 10 {
-			t.Errorf("%s: %d publish attempts before the row died, want exactly 10 (outbox.MaxRetries)", subject, attempts)
+		if attempts < 15 {
+			t.Errorf("%s: %d publish attempts over at least 15 passes, want one per pass — "+
+				"the row stopped being offered", subject, attempts)
 		}
-		if failureStatements != int64(attempts) {
-			t.Errorf("%s: failures cost %d statements over %d attempts, want one IncrementOutboxRetries each",
-				subject, failureStatements, attempts)
+		if failureStatements != 0 {
+			t.Errorf("%s: failures cost %d statements over %d attempts, want 0 — a refused count "+
+				"publish writes nothing", subject, failureStatements, attempts)
 		}
 		pending, err := db.CountPendingOutbox()
 		testutil.MustNoErr(t, err, "count pending")
 		dead, err := db.CountDeadLetterOutbox()
 		testutil.MustNoErr(t, err, "count dead letters")
-		if pending != 0 || dead != 1 {
-			t.Errorf("%s: pending=%d dead=%d, want 0 and 1 — the count row is dead-lettered", subject, pending, dead)
+		if pending != 1 || dead != 0 {
+			t.Errorf("%s: pending=%d dead=%d, want 1 and 0 — a count row is never dead-lettered", subject, pending, dead)
 		}
 	}
 }

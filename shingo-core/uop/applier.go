@@ -106,23 +106,41 @@ type InventoryDeltaService struct {
 	announce messaging.EpochAnnounce
 
 	// repairedMu/repaired is the debounce: bin id → the generation the last
-	// reply for that carrier carried. Process-lifetime and deliberately not
-	// persisted — a Core restart may re-send one reply per carrier, which is
-	// cheap, and the alternative is a table whose only job is to suppress a
-	// message that costs nothing to repeat.
+	// reply for that carrier carried, and when it was queued. In memory and
+	// deliberately not persisted — a Core restart may re-send one reply per
+	// carrier, which is cheap, and the alternative is a table whose only job is
+	// to suppress a message that costs nothing to repeat.
 	//
-	// One reply per generation. The reply is fire-and-forget and the station
-	// may be an older build that does not know the message at all, in which
-	// case the discarded counts keep arriving — 3,200 in a day at one plant —
-	// and a reply per discarded count would be a flood aimed at something that
-	// is not listening. If the station never adopts, the next reset makes a new
-	// generation and the reply goes out again.
+	// One reply per generation per repairWindow. The reply is fire-and-forget:
+	// it can be lost in transit, and the station may be an older build that
+	// does not know the message at all. Either way the discarded counts keep
+	// arriving — 3,200 in a day at one plant — and a reply per discarded count
+	// would be a flood aimed at something that is not listening. So a reply
+	// holds back the next one for the same (bin, generation) for the window,
+	// and a lost reply is re-sent on the first discard after it. A new
+	// generation is answered at once.
+	//
+	// Bounded: markRepaired deletes every entry older than the window each time
+	// it writes, so the map holds at most the carriers answered in the last
+	// window, plus one.
 	//
 	// NOT keyed off bins.anomaly_at. That column is a latch: it is set on the
 	// first drop and stays set, so using it as the gate would suppress the
 	// repair forever after the first one.
 	repairedMu sync.Mutex
-	repaired   map[int64]int64
+	repaired   map[int64]repairedReply
+}
+
+// repairWindow is how long a reply for one (bin, generation) holds back the
+// next. At a plant's tick rate a station that ignored or lost a reply is told
+// again within a minute; one that is not listening costs one message a minute
+// per carrier.
+const repairWindow = 60 * time.Second
+
+// repairedReply is one debounce entry: the generation replied with, and when.
+type repairedReply struct {
+	epoch int64
+	at    time.Time
 }
 
 // NewInventoryDeltaService constructs the delta apply service.
@@ -137,7 +155,7 @@ func NewInventoryDeltaService(db *store.DB, binManifest ManifestClearer, announc
 		db:          db,
 		binManifest: binManifest,
 		announce:    announce,
-		repaired:    make(map[int64]int64),
+		repaired:    make(map[int64]repairedReply),
 	}
 }
 
@@ -186,22 +204,30 @@ func (s *InventoryDeltaService) repairEpoch(tx *sql.Tx, binID, currentEpoch int6
 }
 
 // alreadyRepaired reports whether a reply for this carrier's current
-// generation has already gone out — see the repaired map's comment.
+// generation went out within repairWindow — see the repaired map's comment.
 func (s *InventoryDeltaService) alreadyRepaired(binID, epoch int64) bool {
 	s.repairedMu.Lock()
 	defer s.repairedMu.Unlock()
-	return s.repaired[binID] == epoch
+	r, ok := s.repaired[binID]
+	return ok && r.epoch == epoch && clock.Now().Sub(r.at) < repairWindow
 }
 
-// markRepaired records a queued reply. Called after the commit, so a
-// transaction that rolls back does not suppress the next attempt.
+// markRepaired records a queued reply, and drops every entry whose window has
+// passed. Called after the commit, so a transaction that rolls back does not
+// suppress the next attempt.
 func (s *InventoryDeltaService) markRepaired(binID, epoch int64) {
 	s.repairedMu.Lock()
 	defer s.repairedMu.Unlock()
+	now := clock.Now()
 	if s.repaired == nil {
-		s.repaired = make(map[int64]int64)
+		s.repaired = make(map[int64]repairedReply)
 	}
-	s.repaired[binID] = epoch
+	for id, r := range s.repaired {
+		if now.Sub(r.at) >= repairWindow {
+			delete(s.repaired, id)
+		}
+	}
+	s.repaired[binID] = repairedReply{epoch: epoch, at: now}
 }
 
 // ApplyBinUOPDelta applies a BinUOPDelta against bins.uop_remaining.

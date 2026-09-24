@@ -32,25 +32,29 @@ func announcementAged(t *testing.T, subject string, age time.Duration) []byte {
 	return raw
 }
 
-// TestPin_P0i_LateAnnouncementIsDroppedAtTheEdge pins V9 at base: the two
-// announcements carry no subjectTTLs entry, so they take TypeData's 5 minutes,
-// and one delivered 6 minutes late is dropped by the ingestor before any
-// handler runs. A load, clear or count announced during an outage longer than
-// that never reaches the Edge.
+// TestLateAnnouncementReachesTheEdge is S5a. UOPAdjustment and BinEpochRefresh
+// carry no exp, so one delivered after an outage of any length reaches the
+// Edge's handler. Safe to arrive late because every epoch write they reach
+// refuses to move a bound carrier's stamp backward
+// (shingo-edge/engine/epoch_monotonic_test.go).
 //
-// Verify-red: S5a (UOPAdjustment and BinEpochRefresh become NoExpiry) inverts
-// it — the envelope carries no exp and reaches Dispatch at any age.
-func TestPin_P0i_LateAnnouncementIsDroppedAtTheEdge(t *testing.T) {
+// Inverted pin: at base (TestPin_P0i_LateAnnouncementIsDroppedAtTheEdge) they
+// took TypeData's 5 minutes and the ingestor dropped one delivered 6 minutes
+// late.
+func TestLateAnnouncementReachesTheEdge(t *testing.T) {
 	for _, subject := range []string{SubjectUOPAdjustment, SubjectBinEpochRefresh} {
-		if got := DataTTLFor(subject); got != 5*time.Minute {
-			t.Errorf("DataTTLFor(%s) = %v, want 5m (TypeData's default)", subject, got)
+		if got := DataTTLFor(subject); got != NoExpiry {
+			t.Errorf("DataTTLFor(%s) = %v, want NoExpiry", subject, got)
 		}
-		ing := NewIngestor(nil)
-		dispatched := false
-		ing.Dispatch = func(*Envelope) { dispatched = true }
-		ing.HandleRaw(announcementAged(t, subject, 6*time.Minute))
-		if dispatched {
-			t.Errorf("%s delivered 6 minutes late reached Dispatch; at base the ingestor drops it", subject)
+		for _, age := range []time.Duration{6 * time.Minute, 24 * time.Hour} {
+			ing := NewIngestor(nil)
+			dispatched := false
+			ing.Dispatch = func(*Envelope) { dispatched = true }
+			ing.HandleRaw(announcementAged(t, subject, age))
+			if !dispatched {
+				t.Errorf("%s delivered %v late was dropped at the ingestor; the station keeps "+
+					"counting under a generation that has ended", subject, age)
+			}
 		}
 	}
 }

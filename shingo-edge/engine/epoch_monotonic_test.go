@@ -174,18 +174,17 @@ func departedSlotFixture(t *testing.T, eng *Engine, coreNode string, binID int64
 	return node
 }
 
-// TestPin_EmptySlotBindOfADepartedCarrierTakesItsOldStamp pins the third site
-// at base. It is the one site the same-bin rule does not cover. Bin X was
-// bound at 4, moved on to 5, then left the slot. A person's correction for X
-// at epoch 4, delayed in transit, arrives at the empty slot, rebinds the
-// carrier that left, and stamps it 4. The store sees a bind from no bin to a
-// bin, which counts as a change of carrier, and any stamp binds on a change of
-// carrier. The row keeps no record of which bin the orphaned 5 belonged to.
+// TestEmptySlotBind_RefusesADepartedCarriersOldStamp is the empty-slot guard
+// (the S5a precondition). Bin X was bound at 4, moved on to 5, then left the
+// slot. A late correction for X at 4 must not rebind the carrier that left or
+// stamp it with a generation that has ended. The slot remembers X at 5 from the
+// statement that emptied it, and the bind is refused: the slot stays empty, its
+// stamp and its blanked count unchanged.
 //
-// Verify-red: the empty-slot guard (lane T, the ruling on S5a) inverts it. The
-// slot remembers the last bin and its epoch, and an adjustment for that bin at
-// an older epoch is refused.
-func TestPin_EmptySlotBindOfADepartedCarrierTakesItsOldStamp(t *testing.T) {
+// Inverted pin: at base
+// (TestPin_EmptySlotBindOfADepartedCarrierTakesItsOldStamp) the correction
+// rebound X at 4.
+func TestEmptySlotBind_RefusesADepartedCarriersOldStamp(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
 	const binX = int64(7103)
@@ -195,11 +194,14 @@ func TestPin_EmptySlotBindOfADepartedCarrierTakesItsOldStamp(t *testing.T) {
 		BinID: binX, CoreNodeName: "EPOCH-SITE-EMPTY", NewRemaining: 11, Epoch: 4,
 		Actor: "admin-under-test",
 	})
-	if rt.ActiveBinID == nil || *rt.ActiveBinID != binX {
-		t.Fatalf("active bin = %v, want %d — at base the late correction rebinds the departed carrier", rt.ActiveBinID, binX)
+	if rt.ActiveBinID != nil {
+		t.Fatalf("active bin = %d, want none — a late correction rebound a carrier that left", *rt.ActiveBinID)
 	}
-	if rt.ActiveBinEpoch != 4 {
-		t.Errorf("epoch = %d, want 4 — at base the empty-slot bind takes the adjustment's stamp", rt.ActiveBinEpoch)
+	if rt.ActiveBinEpoch != 5 {
+		t.Errorf("epoch = %d, want 5 — the refused bind moved the stamp", rt.ActiveBinEpoch)
+	}
+	if rt.RemainingUOPCached != 0 {
+		t.Errorf("remaining = %d, want 0 — the refused bind wrote its count", rt.RemainingUOPCached)
 	}
 }
 

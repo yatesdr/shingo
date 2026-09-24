@@ -275,12 +275,15 @@ func Requeue(db *sql.DB, id int64) error {
 	return err
 }
 
-// PurgeOld deletes sent messages older than the given duration, and
-// dead-lettered messages (retries >= MaxRetries) older than the given
-// duration.
 // PurgeOld deletes delivered rows past the delivered cutoff and dead-lettered
 // rows past their own, longer one. See Core's PurgeOldOutbox for why the
 // statement splits (the cutoffs differ; it is not a performance change).
+//
+// An undelivered row of a count subject (bin_uop_delta, lineside_bucket_delta)
+// is never deleted, at any age. The drainer does not dead-letter those, so one
+// is exhausted only by the panic boundary or by a budget spent before that
+// rule existed, and either way it is the only record of counts Core has not
+// received.
 func PurgeOld(db *sql.DB, delivered, deadLetter time.Duration) (int64, error) {
 	// .UTC() is load-bearing: created_at defaults to datetime('now') and
 	// sent_at is written as datetime('now'), both of which SQLite produces in
@@ -302,8 +305,9 @@ func PurgeOld(db *sql.DB, delivered, deadLetter time.Duration) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	deadRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NULL AND retries >= ? AND created_at < ?`,
-		MaxRetries, deadCutoff)
+	deadRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NULL AND retries >= ? AND created_at < ?
+		AND msg_type NOT IN (?, ?)`,
+		MaxRetries, deadCutoff, protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketDelta)
 	if err != nil {
 		return 0, err
 	}
