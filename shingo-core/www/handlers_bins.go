@@ -34,6 +34,12 @@ type binRow struct {
 	// the bin an operator most needs to identify was the one the page said
 	// least about.
 	Stranded bool
+	// TransitOrderID and TransitOrderStatus name the order the route above
+	// came from. On a stranded row that order is over — cancelled or failed —
+	// and without them the row read "ALN_006 → SMN_0013 … (in transit)",
+	// indistinguishable from a bin a robot is carrying right now.
+	TransitOrderID     int64
+	TransitOrderStatus string
 	// CarriedBy is the robot whose deck this bin is riding (_ROBOT:<vehicle>).
 	CarriedBy string
 }
@@ -112,6 +118,8 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 				row.TransitPayload = o.PayloadCode
 				row.TransitSource = o.SourceNode
 				row.TransitDest = o.DeliveryNode
+				row.TransitOrderID = o.ID
+				row.TransitOrderStatus = string(o.Status)
 			}
 		}
 		rows[i] = row

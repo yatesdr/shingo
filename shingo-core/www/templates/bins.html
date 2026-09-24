@@ -134,7 +134,8 @@
         </td>
         <td>{{.BinTypeCode}}</td>
         <td data-sort-value="{{if .InTransit}}{{.TransitSource}} → {{.TransitDest}}{{else}}{{.NodeName}}{{end}}">
-          {{if .InTransit}}<span title="In transit">{{if .TransitSource}}{{.TransitSource}} &rarr; {{.TransitDest}}{{else}}in transit{{end}}</span>
+          {{if .Stranded}}{{if .TransitOrderID}}<span title="The order this route came from is over; the bin is not moving">last order #{{.TransitOrderID}} ({{.TransitOrderStatus}}): {{.TransitSource}} &rarr; {{.TransitDest}}</span>{{else}}lost in transit{{end}}
+          {{else if .InTransit}}<span title="In transit">{{if .TransitSource}}{{.TransitSource}} &rarr; {{.TransitDest}}{{else}}in transit{{end}}</span>
           {{else if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}
           {{/* Where it actually is. A bin on a robot names the robot; a stranded
                one carries the position inferred from that robot's last telemetry,
@@ -159,7 +160,7 @@
         </td>
         <td data-sort-value="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}">
           {{if .PayloadCode}}<code>{{.PayloadCode}}</code>
-          {{else if .TransitPayload}}<code>{{.TransitPayload}}</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>
+          {{else if .TransitPayload}}<code>{{.TransitPayload}}</code> <span class="text-muted" style="font-size:0.85em">{{if .Stranded}}(last order){{else}}(in transit){{end}}</span>
           {{else}}<span class="text-muted">-</span>{{end}}
         </td>
         <td data-sort-value="{{.UOPRemaining}}">
