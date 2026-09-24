@@ -4302,7 +4302,32 @@ func migrationList() []migration {
 		{128, "cell_part_events keyed on (cell_id, edge_snapshot_id, recorded_at) — the production tick dedup moves onto the projection, production_tick_dedup and payload_code go, edge_registry keeps each station's tick-feed lag",
 			v128ProductionTickKey,
 			verifyV128ProductionTickKey},
+
+		{129, "scene_map_versions.confirmed_at — an unchanged map fetch records that the version was confirmed, and the daily floor is measured from it",
+			v129MapVersionConfirmedAt,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "scene_map_versions", "confirmed_at")
+			}},
 	}
+}
+
+// v129MapVersionConfirmedAt adds scene_map_versions.confirmed_at: when a map
+// fetch last found the robot's map identical to that version. The map sync's
+// daily floor is measured from the later of it and synced_at, which stays the
+// archive time because the diff history reads it.
+//
+// Without it an unchanged fetch wrote nothing, the floor stayed measured from
+// the first archive, and every 5-minute pass after the first day pulled the
+// full .smap from a robot: 156 a day at Hopkinsville (16 MB each), 233 at
+// Springfield (~9 MB).
+//
+// ROLLBACK: one nullable column; a pre-v129 binary never reads it.
+func v129MapVersionConfirmedAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE scene_map_versions
+		ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ NULL`); err != nil {
+		return fmt.Errorf("v129 scene_map_versions.confirmed_at: %w", err)
+	}
+	return nil
 }
 
 // verifyV128ProductionTickKey checks all four parts of v128.

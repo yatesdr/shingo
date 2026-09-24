@@ -68,23 +68,24 @@ func passes(t *testing.T, db *store.DB, raw []byte, start time.Time, n int) int 
 
 const passesPerDay = int(24 * time.Hour / mapSyncInterval)
 
-// A STABLE MAP, TWO DAYS OF PASSES. PIN: the first pass archives it; from the
-// 24 h floor on, every pass fetches it again, because an unchanged fetch writes
-// nothing and the floor is still measured from the first sync. 1 + 288 of the
-// 576 passes fetch.
-func TestPin_B_StableMapIsFetchedEveryPassAfterTheFloor(t *testing.T) {
+// A STABLE MAP, TWO DAYS OF PASSES: ONE FETCH PER FLOOR. The first pass
+// archives it; the fetch at the 24 h floor finds it unchanged and records it
+// confirmed, and the floor is measured from that. 2 of the 576 passes fetch.
+// Inverts the pin that 289 did (1 + every pass after the floor).
+func TestMapSync_StableMapIsFetchedOncePerFloor(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if got := passes(t, db, testSmap("PIN_STABLE", "A"), start, 2*passesPerDay); got != 1+passesPerDay {
-		t.Errorf("%d fetches in two days, want %d at the base", got, 1+passesPerDay)
+	if got := passes(t, db, testSmap("PIN_STABLE", "A"), start, 2*passesPerDay); got != 2 {
+		t.Errorf("%d fetches in two days, want 2 (one archive, one confirmation at the floor)", got)
 	}
 }
 
-// A MAP EDITED AND EDITED BACK (A, then B, then A again). PIN: the robot is on
-// A, the newest row is B, and A's row already exists, so every fetch is
-// Unchanged and the hash never matches: every pass of the hour fetches.
-func TestPin_B_EditedBackMapIsFetchedEveryPass(t *testing.T) {
+// A MAP EDITED AND EDITED BACK (A, then B, then A again): ONE FETCH. The fetch
+// finds A's content in an older row, makes that row the current version again
+// and supersedes B, so the next pass's latest version matches the robot. Inverts
+// the pin that every pass of the hour fetched.
+func TestMapSync_EditedBackMapIsFetchedOnce(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -93,7 +94,18 @@ func TestPin_B_EditedBackMapIsFetchedEveryPass(t *testing.T) {
 	passes(t, db, b, start.Add(time.Hour), 1)
 
 	const hour = int(time.Hour / mapSyncInterval)
-	if got := passes(t, db, a, start.Add(2*time.Hour), hour); got != hour {
-		t.Errorf("%d fetches in the hour after the edit back, want %d at the base", got, hour)
+	if got := passes(t, db, a, start.Add(2*time.Hour), hour); got != 1 {
+		t.Errorf("%d fetches in the hour after the edit back, want 1", got)
+	}
+	latest, found, err := db.LatestMapVersion("PIN_ABA")
+	testutil.MustNoErr(t, err, "latest map version")
+	if !found || latest.MapMD5 != wireMD5(a) {
+		t.Errorf("latest version is %q, want A's %q", latest.MapMD5, wireMD5(a))
+	}
+	var open int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM scene_map_versions
+		WHERE map_name = 'PIN_ABA' AND superseded_at IS NULL`).Scan(&open), "count open versions")
+	if open != 1 {
+		t.Errorf("%d open versions of PIN_ABA, want 1", open)
 	}
 }

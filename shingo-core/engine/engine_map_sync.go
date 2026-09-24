@@ -173,11 +173,24 @@ func mapFetchReason(prev sceneversion.MapVersionState, found bool, wireMD5 strin
 		return "no version archived yet", true
 	case prev.MapMD5 != wireMD5:
 		return "map hash moved", true
-	case now.Sub(prev.SyncedAt) >= mapSyncFloor:
+	case now.Sub(lastSeen(prev)) >= mapSyncFloor:
 		return "daily floor", true
 	default:
 		return "", false
 	}
+}
+
+// lastSeen is when the current version was last known to be what the robot
+// runs: archived, or confirmed identical by a later fetch. The floor is
+// measured from it. Until 2026-09-24 it was measured from the archive time
+// alone, and an unchanged fetch recorded nothing, so after the first day every
+// 5-minute pass pulled the full .smap from a robot and threw it away: 156 a
+// day at Hopkinsville (16 MB each), 233 at Springfield.
+func lastSeen(prev sceneversion.MapVersionState) time.Time {
+	if prev.ConfirmedAt.After(prev.SyncedAt) {
+		return prev.ConfirmedAt
+	}
+	return prev.SyncedAt
 }
 
 // mapSyncPass fetches the fleet's map when its hash has moved, or when the

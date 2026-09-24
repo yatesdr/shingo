@@ -1193,7 +1193,8 @@ CREATE TABLE public.scene_map_versions (
     raw_bytes bigint DEFAULT 0 NOT NULL,
     synced_at timestamp with time zone NOT NULL,
     superseded_at timestamp with time zone,
-    diff_id bigint
+    diff_id bigint,
+    confirmed_at timestamp with time zone
 );
 
 CREATE SEQUENCE public.scene_map_versions_id_seq

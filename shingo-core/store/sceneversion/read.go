@@ -166,12 +166,20 @@ type MapVersionState struct {
 	// MapMD5 is the robot-reported hash of the newest stored version of this
 	// map. Empty when a version was archived without one.
 	MapMD5 string
-	// SyncedAt is when that version was observed. The daily floor is measured
-	// from here, so a plant whose hash never moves still re-reads once a day.
+	// SyncedAt is when that version was first archived.
 	SyncedAt time.Time
+	// ConfirmedAt is when a fetch last found the robot's map identical to
+	// this version (confirmed_at, v129), or SyncedAt if none has. The daily
+	// floor is measured from here, so a plant whose hash never moves re-reads
+	// once a day and not on every pass after the first day.
+	ConfirmedAt time.Time
 }
 
-// LatestMapVersion returns the newest archived version of one named map.
+// LatestMapVersion returns the current version of one named map: its open
+// row (superseded_at IS NULL), else the newest. The open row is not always the
+// newest: a map edited back to earlier content re-opens that content's older
+// row (ApplyMapSnapshot), and "newest by synced_at" would then name the version
+// the robot has left, and the map would be refetched on every pass.
 //
 // FALSE MEANS "NEVER FETCHED", NOT "UNCHANGED", and the caller must not
 // conflate them — a plant that has never pulled a map has no areas and no
@@ -184,9 +192,9 @@ type MapVersionState struct {
 func LatestMapVersion(db *sql.DB, mapName string) (MapVersionState, bool, error) {
 	var st MapVersionState
 	err := db.QueryRow(
-		`SELECT map_md5, synced_at FROM scene_map_versions
+		`SELECT map_md5, synced_at, COALESCE(confirmed_at, synced_at) FROM scene_map_versions
 		  WHERE map_name = $1
-		  ORDER BY synced_at DESC, id DESC LIMIT 1`, mapName).Scan(&st.MapMD5, &st.SyncedAt)
+		  ORDER BY (superseded_at IS NULL) DESC, synced_at DESC, id DESC LIMIT 1`, mapName).Scan(&st.MapMD5, &st.SyncedAt, &st.ConfirmedAt)
 	if err == sql.ErrNoRows {
 		return MapVersionState{}, false, nil
 	}

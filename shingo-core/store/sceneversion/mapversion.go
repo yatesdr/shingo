@@ -37,9 +37,12 @@ type MapSnapshot struct {
 type MapSyncResult struct {
 	DiffResult
 	MapVersionID int64
-	// Unchanged is true when the content hash matched the newest stored
-	// version, so nothing was written at all.
+	// Unchanged is true when the content hash matched the current version:
+	// nothing was archived, and the version was stamped confirmed.
 	Unchanged bool
+	// Reopened is true when the content hash matched an OLDER version — the
+	// map was edited back — and that version became current again.
+	Reopened bool
 	// StoredBytes and CloudBytes are what the archive actually cost, after
 	// compression and after the scan cloud was split out.
 	StoredBytes int
@@ -53,6 +56,10 @@ func (r MapSyncResult) String() string {
 	if r.Unchanged {
 		return "map unchanged"
 	}
+	if r.Reopened {
+		return fmt.Sprintf("map_version=%d reopened (edited back) %s empty_reflector_areas=%d",
+			r.MapVersionID, r.DiffResult.String(), r.EmptyReflectorAreas)
+	}
 	return fmt.Sprintf("map_version=%d %s body=%dB cloud=%dB empty_reflector_areas=%d",
 		r.MapVersionID, r.DiffResult.String(), r.StoredBytes, r.CloudBytes,
 		r.EmptyReflectorAreas)
@@ -65,7 +72,16 @@ func (r MapSyncResult) String() string {
 // rather than of polls, and it is why the content hash is taken over the RAW
 // BYTES the robot sent rather than any re-marshalled form — a canonical
 // re-encoding would change with Go's map iteration order and fire the change
-// trigger on every single sync.
+// trigger on every single sync. A second observation of the current version
+// stamps confirmed_at (v129), which is what the daily floor reads.
+//
+// AN EDIT BACK RE-OPENS THE OLDER VERSION. Content that matches an older,
+// superseded row (A, then B, then A again) is an edit: it opens a diff,
+// supersedes the current row, and makes the older row current again, with the
+// areas and reflectors re-versioned against it. No new row, because the
+// content already has one and the (map_name, content_sha) key is unique.
+// Before 2026-09-24 this returned Unchanged and wrote nothing, so the newest
+// row stayed B while the robot ran A, and every pass refetched the map.
 func ApplyMapSnapshot(db *sql.DB, snap MapSnapshot, previousSync *time.Time) (MapSyncResult, error) {
 	var res MapSyncResult
 	if snap.Parsed == nil {
@@ -76,23 +92,31 @@ func ApplyMapSnapshot(db *sql.DB, snap MapSnapshot, previousSync *time.Time) (Ma
 
 	// Already have this exact map?
 	var existingID int64
+	var current bool
 	err := db.QueryRow(
-		`SELECT id FROM scene_map_versions WHERE map_name=$1 AND content_sha=$2`,
-		snap.MapName, contentSHA).Scan(&existingID)
-	if err == nil {
+		`SELECT id, superseded_at IS NULL FROM scene_map_versions WHERE map_name=$1 AND content_sha=$2`,
+		snap.MapName, contentSHA).Scan(&existingID, &current)
+	if err == nil && current {
+		if _, err := db.Exec(`UPDATE scene_map_versions SET confirmed_at=$1
+			WHERE id=$2 AND (confirmed_at IS NULL OR confirmed_at < $1)`, snap.ObservedAt, existingID); err != nil {
+			return res, fmt.Errorf("sceneversion: confirm map version: %w", err)
+		}
 		res.Unchanged = true
 		res.MapVersionID = existingID
 		return res, nil
 	}
-	if err != sql.ErrNoRows {
+	reopen := err == nil
+	if err != nil && err != sql.ErrNoRows {
 		return res, fmt.Errorf("sceneversion: look up map version: %w", err)
 	}
 
-	body, cloud, err := splitAndCompress(snap.Raw)
-	if err != nil {
-		return res, err
+	var body, cloud []byte
+	if !reopen {
+		if body, cloud, err = splitAndCompress(snap.Raw); err != nil {
+			return res, err
+		}
+		res.StoredBytes, res.CloudBytes = len(body), len(cloud)
 	}
-	res.StoredBytes, res.CloudBytes = len(body), len(cloud)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -118,7 +142,14 @@ func ApplyMapSnapshot(db *sql.DB, snap MapSnapshot, previousSync *time.Time) (Ma
 		return res, fmt.Errorf("sceneversion: supersede map version: %w", err)
 	}
 
-	if err := tx.QueryRow(
+	if reopen {
+		if _, err := tx.Exec(
+			`UPDATE scene_map_versions SET superseded_at=NULL, confirmed_at=$1 WHERE id=$2`,
+			snap.ObservedAt, existingID); err != nil {
+			return res, fmt.Errorf("sceneversion: reopen map version: %w", err)
+		}
+		res.MapVersionID, res.Reopened = existingID, true
+	} else if err := tx.QueryRow(
 		`INSERT INTO scene_map_versions
 		   (map_name, content_sha, map_md5, source_robot, body_gz, scan_cloud_gz,
 		    raw_bytes, synced_at, diff_id)
