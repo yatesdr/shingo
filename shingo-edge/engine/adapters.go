@@ -19,14 +19,6 @@ func (e *plcEmitter) EmitCounterDelta(rpID, processID, styleID, delta, newCount 
 	}})
 }
 
-func (e *plcEmitter) EmitCounterAnomaly(snapshotID, rpID int64, plcName, tagName string, oldVal, newVal int64, anomalyType string) {
-	e.bus.Emit(Event{Type: EventCounterAnomaly, Payload: CounterAnomalyEvent{
-		SnapshotID: snapshotID, ReportingPointID: rpID,
-		PLCName: plcName, TagName: tagName,
-		OldValue: oldVal, NewValue: newVal, AnomalyType: anomalyType,
-	}})
-}
-
 func (e *plcEmitter) EmitPLCConnected(plcName string) {
 	e.bus.Emit(Event{Type: EventPLCConnected, Payload: PLCEvent{PLCName: plcName}})
 }

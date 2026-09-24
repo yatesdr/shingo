@@ -322,8 +322,7 @@ func TestPlcEmitter_AllEvents(t *testing.T) {
 
 	em := &plcEmitter{bus: bus}
 	em.EmitCounterRead(7, "plc-1", "tag-1", 42)
-	em.EmitCounterDelta(7, 1, 2, 3, 42, "")
-	em.EmitCounterAnomaly(100, 7, "plc-1", "tag-1", 40, 42, "jump")
+	em.EmitCounterDelta(7, 1, 2, 3, 42, "jump")
 	em.EmitPLCConnected("plc-1")
 	em.EmitPLCDisconnected("plc-1", fmt.Errorf("timeout"))
 	em.EmitPLCDisconnected("plc-2", nil) // nil-error branch
@@ -335,7 +334,7 @@ func TestPlcEmitter_AllEvents(t *testing.T) {
 	em.EmitWarLinkDisconnected(nil) // nil-error branch
 
 	wantTypes := []EventType{
-		EventCounterRead, EventCounterDelta, EventCounterAnomaly,
+		EventCounterRead, EventCounterDelta,
 		EventPLCConnected, EventPLCDisconnected,
 		EventPLCHealthAlert, EventPLCHealthRecover,
 		EventCounterReadError, EventWarLinkConnected, EventWarLinkDisconnected,
@@ -352,10 +351,10 @@ func TestPlcEmitter_AllEvents(t *testing.T) {
 	} else if cr.Value != 42 || cr.PLCName != "plc-1" {
 		t.Errorf("CounterRead payload = %+v", cr)
 	}
-	if ca, ok := received[EventCounterAnomaly].(CounterAnomalyEvent); !ok {
-		t.Error("CounterAnomaly payload wrong type")
-	} else if ca.AnomalyType != "jump" || ca.OldValue != 40 || ca.NewValue != 42 {
-		t.Errorf("CounterAnomaly payload = %+v", ca)
+	if cd, ok := received[EventCounterDelta].(CounterDeltaEvent); !ok {
+		t.Error("CounterDelta payload wrong type")
+	} else if cd.Anomaly != "jump" || cd.Delta != 3 || cd.NewCount != 42 {
+		t.Errorf("CounterDelta payload = %+v", cd)
 	}
 	if wl, ok := received[EventWarLinkDisconnected].(WarLinkEvent); !ok {
 		t.Error("WarLinkDisconnected payload wrong type")

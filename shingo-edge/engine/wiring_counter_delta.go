@@ -82,9 +82,9 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			delta.ProcessID, delta.StyleID, delta.Delta)
 		return
 	}
-	if delta.Anomaly == "reset" {
-		return
-	}
+	// A jump or a reset is counted like any tick (close-out 2b: the PLC is
+	// the truth). A reset's delta is newCount, the strokes since the counter
+	// restarted, and it used to be dropped here.
 
 	nodes, err := e.db.ListProcessNodesByProcess(delta.ProcessID)
 	if err != nil {

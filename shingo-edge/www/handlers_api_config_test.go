@@ -14,59 +14,6 @@ import (
 )
 
 // ═══════════════════════════════════════════════════════════════════════
-// Anomalies — apiConfirmAnomaly, apiDismissAnomaly
-// DB call sites: ConfirmAnomaly, DismissAnomaly
-// ═══════════════════════════════════════════════════════════════════════
-
-func TestApiConfig_ConfirmAnomaly(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	// Seed a reporting point + snapshot with anomaly
-	styleID := seedStyle(t, "Style-A", seedProcess(t, "Line A"))
-	rpID := seedReportingPoint(t, styleID, "plc1", "tag1")
-	snapID := seedAnomalySnapshot(t, rpID)
-
-	resp := doRequest(t, router, "POST", "/api/confirm-anomaly/"+itoa(snapID), nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-
-	// Verify DB state: operator_confirmed should be true
-	var confirmed bool
-	testDB.QueryRow("SELECT operator_confirmed FROM counter_snapshots WHERE id=?", snapID).Scan(&confirmed)
-	if !confirmed {
-		t.Error("expected operator_confirmed=true after confirm")
-	}
-}
-
-func TestApiConfig_ConfirmAnomaly_BadID(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	resp := doRequest(t, router, "POST", "/api/confirm-anomaly/notanumber", nil, cookie)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "invalid snapshot ID")
-}
-
-func TestApiConfig_DismissAnomaly(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	styleID := seedStyle(t, "Style-B", seedProcess(t, "Line B"))
-	rpID := seedReportingPoint(t, styleID, "plc2", "tag2")
-	snapID := seedAnomalySnapshot(t, rpID)
-
-	resp := doRequest(t, router, "POST", "/api/dismiss-anomaly/"+itoa(snapID), nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-
-	// Verify DB state: row should be deleted
-	var count int
-	testDB.QueryRow("SELECT COUNT(*) FROM counter_snapshots WHERE id=?", snapID).Scan(&count)
-	if count != 0 {
-		t.Error("expected snapshot to be deleted after dismiss")
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════
 // Processes — List, Create, Update, Delete, SetActiveStyle, ListStylesByProcess
 // DB call sites: ListProcesses, CreateProcess, UpdateProcess, DeleteProcess,
 //                SetActiveStyle, ListStylesByProcess
@@ -877,24 +824,6 @@ func TestApiConfig_BadPathParams(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 // Test helpers (seeding, conversion)
 // ═══════════════════════════════════════════════════════════════════════
-
-func seedReportingPoint(t *testing.T, styleID int64, plcName, tagName string) int64 {
-	t.Helper()
-	id, err := testDB.CreateReportingPoint(plcName, tagName, styleID)
-	if err != nil {
-		t.Fatalf("seed reporting point: %v", err)
-	}
-	return id
-}
-
-func seedAnomalySnapshot(t *testing.T, rpID int64) int64 {
-	t.Helper()
-	id, err := testDB.InsertCounterSnapshot(rpID, 100, 50, "jump", false, counters.TickStamp{})
-	if err != nil {
-		t.Fatalf("seed anomaly snapshot: %v", err)
-	}
-	return id
-}
 
 func itoa(v int64) string {
 	return strconv.FormatInt(v, 10)

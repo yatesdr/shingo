@@ -48,18 +48,12 @@ func snapshotIDs(t *testing.T, db *DB) map[int64]bool {
 	return out
 }
 
-// TestPurgeOldCounterSnapshots_KeepsWindowAndUnconfirmedJumps is the main
-// retention contract: everything older than the window goes, everything
-// inside it stays, and an unconfirmed jump survives at any age because it
-// is the operator's popover.
-//
-// Verified red twice, once against each clause of the predicate:
-//   - `WHERE recorded_at < ?` widened to `(recorded_at < ? OR 1=1)` →
-//     "purged 4 rows, want 3" / "recent normal row was purged".
-//   - the NOT(...) term replaced by `1=1` → "purged 4 rows, want 3" /
-//     "ancient unconfirmed jump was purged — that row is the operator's
-//     popover".
-func TestPurgeOldCounterSnapshots_KeepsWindowAndUnconfirmedJumps(t *testing.T) {
+// TestPurgeOldCounterSnapshots_KeepsTheWindowOnly is the retention contract:
+// everything older than the window goes, everything inside it stays. A jump
+// is no exception any more — it is counted at the poll (close-out 2b), so an
+// unconfirmed one a previous build left behind is a record like any row. It
+// used to be kept at any age as the operator's popover.
+func TestPurgeOldCounterSnapshots_KeepsTheWindowOnly(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
@@ -72,80 +66,35 @@ func TestPurgeOldCounterSnapshots_KeepsWindowAndUnconfirmedJumps(t *testing.T) {
 	old := now.Add(-30 * 24 * time.Hour)
 	recent := now.Add(-1 * time.Hour)
 
-	oldNormal := insertSnapshotAt(t, db, rpID, old, "", true)
-	oldReset := insertSnapshotAt(t, db, rpID, old, "reset", true)
-	oldConfirmedJump := insertSnapshotAt(t, db, rpID, old, "jump", true)
-	oldOpenJump := insertSnapshotAt(t, db, rpID, old, "jump", false)
-	recentNormal := insertSnapshotAt(t, db, rpID, recent, "", true)
-	recentOpenJump := insertSnapshotAt(t, db, rpID, recent, "jump", false)
+	oldRows := []int64{
+		insertSnapshotAt(t, db, rpID, old, "", true),
+		insertSnapshotAt(t, db, rpID, old, "reset", true),
+		insertSnapshotAt(t, db, rpID, old, "jump", true),
+		insertSnapshotAt(t, db, rpID, old, "jump", false), // left unconfirmed by a previous build
+		insertSnapshotAt(t, db, rpID, old, "", false),
+	}
+	recentRows := []int64{
+		insertSnapshotAt(t, db, rpID, recent, "", true),
+		insertSnapshotAt(t, db, rpID, recent, "jump", false),
+	}
 
 	n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention)
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
-	if n != 3 {
-		t.Errorf("purged %d rows, want 3", n)
+	if n != int64(len(oldRows)) {
+		t.Errorf("purged %d rows, want %d", n, len(oldRows))
 	}
-
 	left := snapshotIDs(t, db)
-	if len(left) != 3 {
-		t.Errorf("kept %d rows, want 3", len(left))
+	for _, id := range oldRows {
+		if left[id] {
+			t.Errorf("old row %d survived the purge", id)
+		}
 	}
-	if left[oldNormal] {
-		t.Error("old normal row survived the purge")
-	}
-	if left[oldReset] {
-		t.Error("old reset row survived the purge")
-	}
-	if left[oldConfirmedJump] {
-		t.Error("old CONFIRMED jump survived the purge — confirmation is what releases it, nothing reads it after")
-	}
-	if !left[oldOpenJump] {
-		t.Error("ancient unconfirmed jump was purged — that row is the operator's popover")
-	}
-	if !left[recentNormal] {
-		t.Error("recent normal row was purged")
-	}
-	if !left[recentOpenJump] {
-		t.Error("recent unconfirmed jump was purged")
-	}
-}
-
-// TestPurgeOldCounterSnapshots_DeletesNullAnomalyUnconfirmed pins the
-// three-valued-logic hole in the predicate as originally proposed.
-//
-// `NOT (anomaly = 'jump' AND operator_confirmed = 0)` evaluates to NULL —
-// not TRUE — for a row with anomaly NULL and operator_confirmed = 0, so
-// that row fails the WHERE and is retained forever with no way to tell
-// from the outside. The column's schema DEFAULT is 0 and only
-// plc/manager.go's `confirmed := anomaly != "jump"` keeps such rows off
-// today's plants.
-//
-// Verified red: unwrapping the COALESCE so the predicate reads a bare
-// anomaly column — the predicate exactly as originally proposed — makes
-// this fail with "purged 0 rows, want 1" and "an old anomaly-NULL,
-// unconfirmed row survived".
-func TestPurgeOldCounterSnapshots_DeletesNullAnomalyUnconfirmed(t *testing.T) {
-	t.Parallel()
-	db := coverageDB(t)
-	_, sid := seedProcessStyle(t, db, "P", "S")
-	rpID, err := db.CreateReportingPoint("PLC", "TAG", sid)
-	if err != nil {
-		t.Fatalf("create rp: %v", err)
-	}
-
-	old := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	id := insertSnapshotAt(t, db, rpID, old, "", false)
-
-	n, err := counters.PurgeOldSnapshots(db.DB, counters.SnapshotRetention)
-	if err != nil {
-		t.Fatalf("purge: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("purged %d rows, want 1", n)
-	}
-	if snapshotIDs(t, db)[id] {
-		t.Error("an old anomaly-NULL, unconfirmed row survived — SQLite's NULL AND TRUE is NULL, not FALSE")
+	for _, id := range recentRows {
+		if !left[id] {
+			t.Errorf("recent row %d was purged", id)
+		}
 	}
 }
 

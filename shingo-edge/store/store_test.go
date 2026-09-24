@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -613,74 +614,29 @@ func TestReportingPoints_LookupMissingReturnsError(t *testing.T) {
 // counter_snapshots.go
 // ============================================================================
 
-func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
+// TestCounterSnapshots_InsertKeepsTheAnomalyAsARecord: every row is written
+// with operator_confirmed = 1 — there is nothing to confirm (close-out 2b),
+// and 1 keeps a rolled-back build's bell from offering units this build
+// already counted — and the anomaly is stored as given, NULL for none.
+func TestCounterSnapshots_InsertKeepsTheAnomalyAsARecord(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	rpID, _ := db.CreateReportingPoint("PLC", "TAG", sid)
 
-	// Non-jump snapshot (no anomaly) — should not appear in ListUnconfirmedAnomalies.
-	if _, err := db.InsertCounterSnapshot(rpID, 100, 10, "", false, counters.TickStamp{}); err != nil {
-		t.Fatalf("insert clean: %v", err)
-	}
-
-	// Jump anomaly, unconfirmed.
-	anomalyID, err := db.InsertCounterSnapshot(rpID, 200, 100, "jump", false, counters.TickStamp{})
-	if err != nil {
-		t.Fatalf("insert anomaly: %v", err)
-	}
-
-	list, err := db.ListUnconfirmedAnomalies()
-	if err != nil || len(list) != 1 {
-		t.Fatalf("list: %v len=%d", err, len(list))
-	}
-	if list[0].ID != anomalyID {
-		t.Errorf("anomaly id = %d, want %d", list[0].ID, anomalyID)
-	}
-	if list[0].Anomaly == nil || *list[0].Anomaly != "jump" {
-		t.Errorf("anomaly field = %v", list[0].Anomaly)
-	}
-
-	// Confirming the anomaly removes it from the unconfirmed list and hands
-	// back the accounting fields the caller releases downstream.
-	cj, err := db.ConfirmAnomaly(anomalyID)
-	testutil.MustNoErr(t, err, "confirm")
-	if cj == nil {
-		t.Fatalf("confirm returned no ConfirmedJump")
-	}
-	if cj.Delta != 100 || cj.CountValue != 200 || cj.ReportingPointID != rpID || cj.StyleID != sid {
-		t.Errorf("confirmed jump = %+v, want delta 100 count 200 rp %d style %d", cj, rpID, sid)
-	}
-	list2, _ := db.ListUnconfirmedAnomalies()
-	if len(list2) != 0 {
-		t.Errorf("after confirm: %d", len(list2))
-	}
-
-	// Dismissing a second anomaly deletes it.
-	dismissID, _ := db.InsertCounterSnapshot(rpID, 300, 100, "jump", false, counters.TickStamp{})
-	testutil.MustNoErr(t, db.DismissAnomaly(dismissID), "dismiss")
-	list3, _ := db.ListUnconfirmedAnomalies()
-	if len(list3) != 0 {
-		t.Errorf("after dismiss: %d", len(list3))
-	}
-}
-
-func TestCounterSnapshots_DismissOnlyUnconfirmedJump(t *testing.T) {
-	t.Parallel()
-	db := coverageDB(t)
-	_, sid := seedProcessStyle(t, db, "P", "S")
-	rpID, _ := db.CreateReportingPoint("PLC", "TAG", sid)
-
-	// Insert, then confirm — dismiss should not delete a confirmed row.
-	id, _ := db.InsertCounterSnapshot(rpID, 100, 10, "jump", false, counters.TickStamp{})
-	db.ConfirmAnomaly(id)
-
-	testutil.MustNoErr(t, db.DismissAnomaly(id), "dismiss")
-	// Row should still exist (dismiss is a no-op for confirmed).
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM counter_snapshots WHERE id=?`, id).Scan(&count)
-	if count != 1 {
-		t.Errorf("confirmed anomaly row count = %d, want 1 (dismiss should skip confirmed)", count)
+	for _, anomaly := range []string{"", "jump", "reset"} {
+		id, err := db.InsertCounterSnapshot(rpID, 100, 10, anomaly, counters.TickStamp{})
+		testutil.MustNoErr(t, err, "insert "+anomaly)
+		var stored sql.NullString
+		var confirmed bool
+		testutil.MustNoErr(t, db.QueryRow(`SELECT anomaly, operator_confirmed FROM counter_snapshots WHERE id = ?`, id).
+			Scan(&stored, &confirmed), "read back")
+		if stored.String != anomaly || stored.Valid != (anomaly != "") {
+			t.Errorf("anomaly %q stored as %+v", anomaly, stored)
+		}
+		if !confirmed {
+			t.Errorf("anomaly %q: operator_confirmed = false, want true", anomaly)
+		}
 	}
 }
 

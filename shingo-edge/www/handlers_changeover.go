@@ -213,7 +213,6 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		changeoverHistory = filtered
 	}
 
-	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]any{
 		"Page":              "changeover",
 		"Processes":         processList,
@@ -228,8 +227,6 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		"AllNodesComplete":  d.AllNodesComplete,
 		"SourcingByStyle":   d.SourcingByStyle,
 		"ChangeoverHistory": changeoverHistory,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
 	}
 	h.renderTemplate(w, r, "changeover.html", data)
 }

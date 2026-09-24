@@ -233,6 +233,10 @@ type KafkaConfig struct {
 
 // CounterConfig defines counter anomaly thresholds.
 type CounterConfig struct {
+	// JumpThreshold is read by plc.CalculateDelta twice: a delta above it is
+	// labelled "jump", and a backward read is taken as a 16/32-bit rollover
+	// only when the wrap delta is at or under it (otherwise it is a "reset").
+	// Neither label gates the count any more (close-out 2b).
 	JumpThreshold int64 `yaml:"jump_threshold"`
 }
 

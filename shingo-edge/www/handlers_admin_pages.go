@@ -23,7 +23,6 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 		plcStatus[name] = plcStatuses[name] == "Connected"
 	}
 
-	anomalies, rpMap := loadAnomalyData(h)
 	shiftList, _ := h.engine.ShiftService().List()
 	if shiftList == nil {
 		shiftList = []domain.Shift{}
@@ -31,16 +30,14 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	shiftsJSON, _ := json.Marshal(shiftList)
 
 	data := map[string]any{
-		"Page":              "config",
-		"PLCStatus":         plcStatus,
-		"PLCStatuses":       plcStatuses,
-		"Config":            cfg,
-		"PLCNames":          plcNames,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
-		"WarLinkConnected":  mgr.IsWarLinkConnected(),
-		"Shifts":            shiftList,
-		"ShiftsJSON":        template.JS(shiftsJSON),
+		"Page":             "config",
+		"PLCStatus":        plcStatus,
+		"PLCStatuses":      plcStatuses,
+		"Config":           cfg,
+		"PLCNames":         plcNames,
+		"WarLinkConnected": mgr.IsWarLinkConnected(),
+		"Shifts":           shiftList,
+		"ShiftsJSON":       template.JS(shiftsJSON),
 	}
 	h.renderTemplate(w, r, "config.html", data)
 }
@@ -136,26 +133,23 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		log.Printf("loader board gaps: %v", err)
 	}
 
-	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]any{
-		"LoaderBoardGaps":   loaderBoardGaps,
-		"Page":              "processes",
-		"ProcessNodeNames":  processNodeNames,
-		"Processes":         processList,
-		"ProcessGroups":     groupList,
-		"Styles":            styles,
-		"Stations":          stationList,
-		"CoreNodes":         coreNodes,
-		"PLCNames":          plcNames,
-		"ActiveProcess":     activeProcess,
-		"ActiveProcessID":   activeProcessID,
-		"ProcessStyles":     processStyles,
-		"ProcessStations":   processStations,
-		"ProcessNodes":      processNodes,
-		"StationNodeMap":    stationNodeMap,
-		"ClaimedByStation":  claimedByStation,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
+		"LoaderBoardGaps":  loaderBoardGaps,
+		"Page":             "processes",
+		"ProcessNodeNames": processNodeNames,
+		"Processes":        processList,
+		"ProcessGroups":    groupList,
+		"Styles":           styles,
+		"Stations":         stationList,
+		"CoreNodes":        coreNodes,
+		"PLCNames":         plcNames,
+		"ActiveProcess":    activeProcess,
+		"ActiveProcessID":  activeProcessID,
+		"ProcessStyles":    processStyles,
+		"ProcessStations":  processStations,
+		"ProcessNodes":     processNodes,
+		"StationNodeMap":   stationNodeMap,
+		"ClaimedByStation": claimedByStation,
 	}
 	h.renderTemplate(w, r, "processes.html", data)
 }

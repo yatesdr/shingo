@@ -274,10 +274,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// (sim_routes_stub.go).
 			h.registerSimRoutes(r)
 
-			// Delivery confirmation & anomalies
+			// Delivery confirmation
 			r.Post("/confirm-delivery/{orderID}", h.apiConfirmDelivery)
-			r.Post("/confirm-anomaly/{snapshotID}", h.apiConfirmAnomaly)
-			r.Post("/dismiss-anomaly/{snapshotID}", h.apiDismissAnomaly)
 
 			// Operator station views
 			r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)

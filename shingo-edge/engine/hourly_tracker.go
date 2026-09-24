@@ -54,14 +54,12 @@ func NewHourlyTracker(db *store.DB) *HourlyTracker {
 	return &HourlyTracker{db: db}
 }
 
-// HandleDelta records a counter delta into the current UTC hour bucket.
-// Reset anomaly deltas are skipped to avoid counting PLC reset artifacts as production.
+// HandleDelta records a counter delta into the current UTC hour bucket. A jump
+// or a reset is production like any delta (close-out 2b: the PLC is the
+// truth); resets used to be skipped here.
 func (ht *HourlyTracker) HandleDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 {
 		return
-	}
-	if delta.Anomaly == "reset" {
-		return // skip reset-derived deltas
 	}
 
 	bucket := counters.HourBucket(time.Now())

@@ -23,7 +23,6 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType})
 		coreNodeNames = append(coreNodeNames, name)
 	}
-	anomalies, rpMap := loadAnomalyData(h)
 
 	// Build lightweight node list for JS dropdown merge logic.
 	type edgeNode struct {
@@ -41,13 +40,11 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	coreNodesJSON, _ := json.Marshal(coreNodeOpts)
 
 	data := map[string]any{
-		"Page":              "manual-order",
-		"ProcessNodes":      processNodes,
-		"CoreNodes":         coreNodeNames,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
-		"NodesJSON":         string(nodesJSON),
-		"CoreNodesJSON":     string(coreNodesJSON),
+		"Page":          "manual-order",
+		"ProcessNodes":  processNodes,
+		"CoreNodes":     coreNodeNames,
+		"NodesJSON":     string(nodesJSON),
+		"CoreNodesJSON": string(coreNodesJSON),
 	}
 
 	h.renderTemplate(w, r, "manual-order.html", data)

@@ -879,8 +879,8 @@ func main() {
 	//
 	// counter_snapshots is the table with a real growth driver: roughly one
 	// row per part produced, 472 per counter per calendar day, and no purge
-	// until now. Unconfirmed jumps survive that window at any age because
-	// they are the operator's popover.
+	// until now. Every row ages out, jumps included: a jump is counted at
+	// the poll, so there is no operator's popover left to keep.
 	//
 	// A DEDICATED TICKER, NOT A SECOND COUNTER ON THE OUTBOX DRAINER.
 	// PurgeOldOutbox rides Drainer.run() every hundredth cycle, and bolting

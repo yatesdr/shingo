@@ -171,7 +171,6 @@ async function syncNodes() {
 }
 
 createSSE('/events', {
-    onCounterAnomaly: function() { location.reload(); },
     onCoreNodes: function(data) {
         var nodes = (data.nodes || []).map(function(n) {
             if (typeof n === 'string') return n;

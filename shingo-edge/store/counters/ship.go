@@ -10,11 +10,12 @@ import (
 	"errors"
 )
 
-// shippableWhere is the ship filter, the one the poll applied inline before
-// the feed moved here: a count moved (delta > 0), not a reset, and the
-// reporting point had a style. NULL style_id (a row written before the shipper
-// existed) fails `style_id <> 0` and is never selected.
-const shippableWhere = `delta > 0 AND (anomaly IS NULL OR anomaly <> 'reset') AND style_id <> 0`
+// shippableWhere is the ship filter, the one the poll applies inline: a count
+// moved (delta > 0) and the reporting point had a style. A jump and a reset
+// ship like any tick, their anomaly on the row (close-out 2b: the PLC is the
+// truth). NULL style_id (a row written before the shipper existed) fails
+// `style_id <> 0` and is never selected.
+const shippableWhere = `delta > 0 AND style_id <> 0`
 
 // ShippableTick is one counter_snapshots row projected for the wire.
 type ShippableTick struct {

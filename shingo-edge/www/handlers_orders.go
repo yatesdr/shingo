@@ -68,17 +68,13 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		knownNodes = append(knownNodes, name)
 	}
 
-	anomalies, rpMap := loadAnomalyData(h)
-
 	data := map[string]any{
-		"Page":              "orders",
-		"Processes":         processes,
-		"ActiveProcessID":   activeProcessID,
-		"FilterStatus":      filterStatus,
-		"ActiveOrders":      orders,
-		"KnownNodes":        knownNodes,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
+		"Page":            "orders",
+		"Processes":       processes,
+		"ActiveProcessID": activeProcessID,
+		"FilterStatus":    filterStatus,
+		"ActiveOrders":    orders,
+		"KnownNodes":      knownNodes,
 		// How long each still-acquiring order has been waiting. The board has
 		// always shown WHY a parked order waits; without a duration beside it the
 		// sentence reads the same at forty seconds and at four hours.

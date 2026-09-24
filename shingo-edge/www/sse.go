@@ -315,10 +315,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.UOPAdjustedEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-update", Data: p}
 			}
-		case engine.EventCounterAnomaly:
-			if p, ok := evt.Payload.(engine.CounterAnomalyEvent); ok {
-				sseEvt = SSEEvent{Type: "counter-anomaly", Data: p}
-			}
 		case engine.EventCounterRead:
 			if p, ok := evt.Payload.(engine.CounterReadEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-read", Data: p}

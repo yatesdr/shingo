@@ -14,7 +14,6 @@ const (
 	// Counter events
 	EventCounterRead EventType = iota + 1
 	EventCounterDelta
-	EventCounterAnomaly
 	EventCounterReadError
 
 	// Order events
@@ -148,12 +147,15 @@ type CounterReadEvent struct {
 // CounterDeltaEvent is emitted when production count increases.
 type CounterDeltaEvent struct {
 	eventbus.PayloadBase
-	ReportingPointID int64  `json:"reporting_point_id"`
-	ProcessID        int64  `json:"process_id"`
-	StyleID          int64  `json:"style_id"`
-	Delta            int64  `json:"delta"`
-	NewCount         int64  `json:"new_count"`
-	Anomaly          string `json:"anomaly"` // "reset" if from a PLC counter reset, "" for normal
+	ReportingPointID int64 `json:"reporting_point_id"`
+	ProcessID        int64 `json:"process_id"`
+	StyleID          int64 `json:"style_id"`
+	Delta            int64 `json:"delta"`
+	NewCount         int64 `json:"new_count"`
+	// Anomaly is how the counter moved: "" for normal, "jump" past the jump
+	// threshold, "reset" backward (Delta is then the new count). A record
+	// only; every consumer counts the delta whatever it says.
+	Anomaly string `json:"anomaly"`
 }
 
 // ProducedReportEvent is emitted once per produce-node tick. PayloadCode is
@@ -166,18 +168,6 @@ type ProducedReportEvent struct {
 	eventbus.PayloadBase
 	PayloadCode string `json:"payload_code"`
 	Delta       int64  `json:"delta"`
-}
-
-// CounterAnomalyEvent is emitted for counter resets or jumps.
-type CounterAnomalyEvent struct {
-	eventbus.PayloadBase
-	ReportingPointID int64  `json:"reporting_point_id"`
-	SnapshotID       int64  `json:"snapshot_id"`
-	PLCName          string `json:"plc_name"`
-	TagName          string `json:"tag_name"`
-	OldValue         int64  `json:"old_value"`
-	NewValue         int64  `json:"new_value"`
-	AnomalyType      string `json:"anomaly_type"` // "reset" or "jump"
 }
 
 // OrderCreatedEvent is emitted when a new order is placed.

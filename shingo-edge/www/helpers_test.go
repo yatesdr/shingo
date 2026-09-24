@@ -396,9 +396,6 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	h, r := newTestHandlers(t)
 
 	r.Route("/api", func(r chi.Router) {
-		// Public anomaly endpoints
-		r.Post("/confirm-anomaly/{snapshotID}", h.apiConfirmAnomaly)
-		r.Post("/dismiss-anomaly/{snapshotID}", h.apiDismissAnomaly)
 		// Public lookups
 		r.Get("/core-nodes", h.apiGetCoreNodes)
 		r.Get("/payload-catalog", h.apiListPayloadCatalog)

@@ -1,4 +1,4 @@
-import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+import { api, delegateActions, toast } from '/static/js/shingoedge.js';
 
 var _pd = document.getElementById('page-data').dataset;
 var _stationID = _pd.stationId;
@@ -150,10 +150,6 @@ async function sendMessage() {
 
 // Init
 updateMessageForm();
-
-createSSE('/events', {
-    onCounterAnomaly: function() { location.reload(); }
-});
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions

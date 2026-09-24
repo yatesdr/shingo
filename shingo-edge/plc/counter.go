@@ -9,6 +9,12 @@ const (
 // CalculateDelta computes the production delta between two counter readings.
 // Returns the delta and any anomaly type ("reset", "jump", or "").
 // Detects 16-bit and 32-bit counter rollover (wrap-around) vs genuine PLC resets.
+//
+// The anomaly labels how the counter moved; it does not gate the delta. A jump
+// is its whole difference and a reset is newCount (the counter restarted from
+// zero), and both are counted like any other delta: the PLC is the truth. The
+// jump threshold is what tells a plausible rollover from a reset, and what the
+// label is judged against.
 func CalculateDelta(lastCount, newCount, jumpThreshold int64) (delta int64, anomaly string) {
 	if newCount == lastCount {
 		return 0, ""

@@ -278,8 +278,8 @@ the falling edge is stamped (`style_node_claims.below_reorder_since`); no
 demand episode opens and no order exists, and nothing retries until the next
 tick, an A/B flip, or an operator request. A cell that then drains out and
 stops cycling never asks again — the level trigger is only as live as the
-tick stream that evaluates it. (Ticks are also skipped entirely on a PLC
-counter `reset` anomaly.)
+tick stream that evaluates it. (A PLC counter `reset` or `jump` is a tick
+like any other since close-out 2b: its delta is counted at the read.)
 
 Three v6 additions, all still present:
 

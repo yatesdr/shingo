@@ -5,7 +5,6 @@ package plc
 type EventEmitter interface {
 	EmitCounterRead(rpID int64, plcName, tagName string, value int64)
 	EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string)
-	EmitCounterAnomaly(snapshotID, rpID int64, plcName, tagName string, oldVal, newVal int64, anomalyType string)
 	EmitPLCConnected(plcName string)
 	EmitPLCDisconnected(plcName string, err error)
 	EmitPLCHealthAlert(plcName string, errMsg string)

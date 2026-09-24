@@ -16,16 +16,15 @@ import (
 // FOURTEEN DAYS IS A WORKING WINDOW, NOT AN ARCHIVE, AND IT DIFFERS FROM
 // CORE ON PURPOSE. Core keeps 90 days in cell_part_events on a Proxmox VM
 // with real disk — but NOT the same observations field for field: Core gets
-// only the shippable rows (delta > 0, not a reset, a style), without
-// reporting_point_id or operator_confirmed. The Pi keeps what someone might
+// only the shippable rows (delta > 0, a style), without reporting_point_id or
+// operator_confirmed. The Pi keeps what someone might
 // have to look at without Core, roughly 6.5× the worst realistic Core-outage
 // window (the Kafka no-retry wedge, which is days-scale).
 //
 // THIS TABLE IS ALSO THE PRODUCTION TICK FEED'S QUEUE. The shipper
 // (messaging.TickShipper) sends from it past a cursor, so this window bounds
 // how long the feed can be down and still catch up: a row purged before it
-// shipped is a tick Core never gets. Past the popover's open anomalies,
-// that shipper is the only reader.
+// shipped is a tick Core never gets. That shipper is the only reader.
 //
 // The size argument is secondary and, at today's six counters, weak: the
 // table is 8.35 MB after 93 days and 35.94 bytes/row. It is the cell
@@ -34,29 +33,14 @@ import (
 // 80,846 of 232,392 rows.
 const SnapshotRetention = 14 * 24 * time.Hour
 
-// PurgeOldSnapshots deletes counter_snapshots older than olderThan,
-// preserving unconfirmed jumps at ANY age. Returns the number deleted.
+// PurgeOldSnapshots deletes counter_snapshots older than olderThan. Returns
+// the number deleted.
 //
-// The preserved rows are the operator's popover: an unconfirmed jump is
-// the only counter_snapshot with a live UI affordance
-// (ListUnconfirmedAnomalies → loadAnomalyData → the navbar bell), and
-// aging one out would silently discard units nobody has accepted or
-// rejected. There is no age cap on them — the backlog on the Springfield
-// dump was two rows, both a day old, five of seven jumps ever recorded
-// having been confirmed, so there is no stale tail to cap.
-//
-// COALESCE IS NOT DECORATION. anomaly is a nullable TEXT column and
-// SQLite's `NOT (anomaly = 'jump' AND operator_confirmed = 0)` is
-// three-valued: for a row with anomaly NULL and operator_confirmed = 0 the
-// inner AND is (NULL AND true) = NULL, NOT NULL is NULL, and the row fails
-// the WHERE — retained forever, invisibly. Such rows do not exist on the
-// dump only because plc/manager.go inserts `confirmed := anomaly != "jump"`
-// while the column's schema DEFAULT is 0; any future writer that takes the
-// default would seed rows this purge could never remove. COALESCE collapses
-// it back to two-valued logic. Demonstrated against the restored
-// Springfield database: both forms delete 151,546 rows as the data stands,
-// and after seeding a single anomaly-NULL, unconfirmed row the bare form
-// still deletes 151,546 while the COALESCE form deletes 151,547.
+// EVERY ROW AGES OUT, JUMPS INCLUDED. This used to keep unconfirmed jumps at
+// any age, because they were the operator's popover: units nobody had
+// accepted or rejected. A jump is now counted at the poll like any delta
+// (close-out 2b), so there is nothing left to accept, and the jumps a
+// previous build left unconfirmed are a record like every other row.
 //
 // NO INDEX ON recorded_at, DELIBERATELY — and on the size argument only.
 // Re-measured against the restored Springfield database rather than taken
@@ -82,9 +66,7 @@ func PurgeOldSnapshots(db *sql.DB, olderThan time.Duration) (int64, error) {
 	// second-granularity, 'YYYY-MM-DD HH:MM:SS'. That format sorts
 	// lexicographically, so a string comparison is a chronological one, but
 	// only if the bound value is rendered in the same shape and zone.
-	res, err := db.Exec(`DELETE FROM counter_snapshots
-		WHERE recorded_at < ?
-		  AND NOT (COALESCE(anomaly, '') = 'jump' AND operator_confirmed = 0)`,
+	res, err := db.Exec(`DELETE FROM counter_snapshots WHERE recorded_at < ?`,
 		cutoff.UTC().Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return 0, err

@@ -212,7 +212,6 @@ If the backup is 2 hours old, expect:
 - local counts may be stale
 - local order state may be behind
 - hourly production counts may be incomplete
-- anomaly confirmations/dismissals may be rolled back
 - recent operator screen edits may be missing
 - recent local configuration changes may be missing
 

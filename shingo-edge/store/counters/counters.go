@@ -19,17 +19,16 @@ import (
 	"shingoedge/store/internal/helpers"
 )
 
-// Snapshot, HourlyCount, and ReportingPoint are the counter-aggregate
-// data types. The structs live in shingoedge/domain (Stage 2A.2);
-// these aliases keep the unprefixed counters.X names used by every
-// scan helper, Insert/Upsert call site, and the outer store/
-// re-exports.
+// HourlyCount and ReportingPoint are the counter-aggregate data types.
+// The structs live in shingoedge/domain (Stage 2A.2); these aliases keep
+// the unprefixed counters.X names used by every scan helper,
+// Insert/Upsert call site, and the outer store/ re-exports.
 //
-// The domain rename `Snapshot` → `CounterSnapshot` exists so the
-// type is self-describing once outside this package; the alias here
-// keeps the local counters.Snapshot name for backward compatibility.
+// There is no snapshot struct: the only read that scanned a whole
+// counter_snapshots row was the unconfirmed-jump list behind the navbar
+// bell, deleted with it (close-out 2b). The shipper reads its own
+// projection (ShippableTick).
 type (
-	Snapshot       = domain.CounterSnapshot
 	HourlyCount    = domain.HourlyCount
 	ReportingPoint = domain.ReportingPoint
 )
@@ -48,7 +47,14 @@ type TickStamp struct {
 
 // InsertSnapshot writes one counter_snapshots row, stamp included, in one
 // statement.
-func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly string, confirmed bool, stamp TickStamp) (int64, error) {
+//
+// operator_confirmed is written 1 on every row. Nothing reads it any more: a
+// jump is counted at the poll like any delta, so there is nothing to confirm.
+// The column stays because SQLite keeps it, and 1 is the value that keeps a
+// previous build honest after a rollback — that build's navbar bell lists
+// `anomaly = 'jump' AND operator_confirmed = 0`, and a Confirm there would
+// release units this build already counted.
+func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly string, stamp TickStamp) (int64, error) {
 	var anomalyPtr *string
 	if anomaly != "" {
 		anomalyPtr = &anomaly
@@ -60,116 +66,12 @@ func InsertSnapshot(db *sql.DB, rpID int64, countValue, delta int64, anomaly str
 	}
 	res, err := db.Exec(`INSERT INTO counter_snapshots
 		(reporting_point_id, count_value, delta, anomaly, operator_confirmed, recorded_ms, process_id, style_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		rpID, countValue, delta, anomalyPtr, confirmed, recordedMS, stamp.ProcessID, stamp.StyleID)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+		rpID, countValue, delta, anomalyPtr, recordedMS, stamp.ProcessID, stamp.StyleID)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
-}
-
-// ListUnconfirmedAnomalies returns every counter snapshot tagged as a
-// "jump" anomaly that the operator has not yet confirmed.
-func ListUnconfirmedAnomalies(db *sql.DB) ([]Snapshot, error) {
-	rows, err := db.Query(`
-		SELECT id, reporting_point_id, count_value, delta, anomaly, operator_confirmed, recorded_at
-		FROM counter_snapshots
-		WHERE anomaly = 'jump' AND operator_confirmed = 0
-		ORDER BY recorded_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var snaps []Snapshot
-	for rows.Next() {
-		var s Snapshot
-		var recordedAt string
-		if err := rows.Scan(&s.ID, &s.ReportingPointID, &s.CountValue, &s.Delta, &s.Anomaly, &s.OperatorConfirmed, &recordedAt); err != nil {
-			return nil, err
-		}
-		s.RecordedAt = helpers.ScanTime(recordedAt)
-		snaps = append(snaps, s)
-	}
-	return snaps, rows.Err()
-}
-
-// ConfirmedJump carries what a confirmation that actually flipped a row
-// hands back: everything the counter-delta path needs to account for the
-// units the operator just accepted. ProcessID and StyleID are resolved
-// through the reporting point exactly as ListEnabledReportingPoints
-// resolves them for the live poll.
-type ConfirmedJump struct {
-	ReportingPointID int64
-	ProcessID        int64
-	StyleID          int64
-	Delta            int64
-	CountValue       int64
-}
-
-// ConfirmAnomaly marks an unconfirmed jump snapshot as operator-confirmed
-// and returns the row's accounting fields so the caller can release the
-// delta downstream. Returns (nil, nil) when nothing was flipped.
-//
-// The UPDATE is now guarded on `anomaly = 'jump' AND operator_confirmed = 0`
-// — the same predicate ListUnconfirmedAnomalies selects on and
-// DismissAnomaly deletes on. It was a bare `WHERE id = ?`, which would
-// happily "confirm" an ordinary snapshot and reported success when
-// re-confirming a row already at 1. Once confirmation has a downstream
-// effect, that second case is a double-count: the popover button is a
-// plain POST with no client-side debounce (static/js/anomaly-handlers.js,
-// confirmAnomaly), so a double-tap or a retried request is the ordinary
-// case rather than the exotic one. RowsAffected is the idempotency token
-// — only the caller that actually moved the row 0 → 1 gets a
-// *ConfirmedJump back.
-//
-// The read-back deliberately runs outside a transaction. After a winning
-// UPDATE the row holds operator_confirmed = 1, which is exactly the state
-// that excludes it from a concurrent DismissAnomaly's DELETE and from a
-// second ConfirmAnomaly's UPDATE, and nothing else writes these columns.
-// So the row this SELECT reads cannot change or vanish underneath it —
-// and store.Open pins MaxOpenConns(1) besides.
-//
-// The style is read from the reporting point AS IT IS NOW, not as it was
-// when the jump was recorded, so a jump confirmed after a changeover is
-// attributed to the new style. That is the same identity the live poll path
-// uses. The row now carries the stroke-time style too (style_id, for the
-// production tick shipper); moving confirmation onto it would change which
-// style an operator's confirmed units count against, which is a counting
-// decision this read does not make on its own.
-func ConfirmAnomaly(db *sql.DB, id int64) (*ConfirmedJump, error) {
-	res, err := db.Exec(`UPDATE counter_snapshots SET operator_confirmed = 1
-		WHERE id = ? AND anomaly = 'jump' AND operator_confirmed = 0`, id)
-	if err != nil {
-		return nil, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, nil
-	}
-	var cj ConfirmedJump
-	// COALESCE(s.process_id, 0) mirrors ListEnabledReportingPoints: a
-	// reporting point whose style row is missing yields process_id 0, which
-	// every downstream consumer already treats as unattributable.
-	err = db.QueryRow(`SELECT cs.reporting_point_id, cs.delta, cs.count_value,
-			COALESCE(s.process_id, 0), rp.style_id
-		FROM counter_snapshots cs
-		JOIN reporting_points rp ON rp.id = cs.reporting_point_id
-		LEFT JOIN styles s ON s.id = rp.style_id
-		WHERE cs.id = ?`, id).
-		Scan(&cj.ReportingPointID, &cj.Delta, &cj.CountValue, &cj.ProcessID, &cj.StyleID)
-	if err != nil {
-		return nil, err
-	}
-	return &cj, nil
-}
-
-// DismissAnomaly deletes an unconfirmed anomaly snapshot.
-func DismissAnomaly(db *sql.DB, id int64) error {
-	_, err := db.Exec(`DELETE FROM counter_snapshots WHERE id = ? AND anomaly = 'jump' AND operator_confirmed = 0`, id)
-	return err
 }
 
 // --- hourly counts ---

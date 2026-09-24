@@ -2,22 +2,7 @@ package domain
 
 import "time"
 
-// CounterSnapshot is one row in the counter_snapshots table — a single
-// reading from a PLC counter tag, with the delta over the previous
-// reading so downstream code doesn't have to recompute it. Renamed
-// from `counters.Snapshot` during Stage 2A.2 lift to disambiguate
-// from any future "Snapshot" types.
-type CounterSnapshot struct {
-	ID                int64     `json:"id"`
-	ReportingPointID  int64     `json:"reporting_point_id"`
-	CountValue        int64     `json:"count_value"`
-	Delta             int64     `json:"delta"`
-	Anomaly           *string   `json:"anomaly"`
-	OperatorConfirmed bool      `json:"operator_confirmed"`
-	RecordedAt        time.Time `json:"recorded_at"`
-}
-
-// HourlyCount aggregates CounterSnapshot deltas into per-hour buckets
+// HourlyCount aggregates counter_snapshots deltas into per-hour buckets
 // keyed by Process + Style + date + hour. Driven by a periodic roll-up
 // from the snapshots table.
 // BucketStart is the unix second at the start of the UTC hour this count

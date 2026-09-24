@@ -17,9 +17,8 @@ import (
 // ship filter are all on the path. The sequence has three ticks "while bin A is
 // bound", two in "the finalize→new-empty-bin gap" (the engine is not involved
 // here, which is the point: nothing upstream of hold-and-replay can lump them),
-// a tick carrying three strokes, and a jump — which still ships, because the
-// heartbeat must know the cell fired while inventory attribution waits on the
-// operator (§8 #20).
+// a tick carrying three strokes, and a jump — which ships like any tick, its
+// anomaly on it: the PLC is the truth (close-out 2b).
 //
 // Each wire event carries all seven fields; recorded_at is stamped in Go at
 // poll time with sub-second precision.
@@ -46,7 +45,7 @@ func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 		{1, 1, ""}, {2, 1, ""}, {3, 1, ""}, // bin A bound
 		{4, 1, ""}, {5, 1, ""}, // swap gap
 		{8, 3, ""},         // three strokes inside one poll interval
-		{600, 592, "jump"}, // unconfirmed PLC gap
+		{600, 592, "jump"}, // the counter leapt past the threshold in one poll
 	}
 	before := clock.Now().UTC()
 	for _, s := range steps {
@@ -100,17 +99,19 @@ func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 }
 
 // TestProductionTick_ShipFilter (P2) pins what does NOT reach the wire: a
-// reset, a pass with no change, and a reporting point with no style
-// (manager.go: the early return on delta == 0, the StyleID gate, and the
-// `delta > 0 && anomaly != "reset"` guard). A shipper that reads
-// counter_snapshots must apply the same filter the poll applied inline.
+// pass with no change, a reset to zero (its row is written, with delta 0),
+// and a reporting point with no style (manager.go: the early return on
+// delta == 0, the StyleID gate, and the `delta > 0` guard). A reset to a
+// non-zero count ships like any tick (TestPLCTruth_ResetShipsAsATick). A
+// shipper that reads counter_snapshots must apply the same filter the poll
+// applies inline.
 func TestProductionTick_ShipFilter(t *testing.T) {
 	t.Parallel()
 	r := newTickRig(t)
 
 	r.pass(10) // shippable: delta 10
 	r.pass(10) // no change: no snapshot, no tick
-	r.pass(3)  // backward: reset, snapshot written, no tick
+	r.pass(0)  // backward to zero: reset, snapshot written with delta 0, no tick
 
 	// Style 0: the poll's gate. Driven with the struct because the stored
 	// reporting point always names a style.

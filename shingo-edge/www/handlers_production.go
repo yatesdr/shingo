@@ -208,8 +208,6 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		hourlyCountsJSON = []byte("{}")
 	}
 
-	anomalies, rpMap := loadAnomalyData(h)
-
 	processNodes, _ := h.engine.ProcessService().ListNodes()
 	coreNodes := h.engine.CoreNodes()
 	type coreNodeOpt struct {
@@ -232,22 +230,20 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	coreNodesJSON, _ := json.Marshal(coreNodeOpts)
 
 	data := map[string]any{
-		"Page":              "production",
-		"Processes":         processes,
-		"ActiveProcessID":   activeProcessID,
-		"IsAll":             isAll,
-		"StationViews":      stationViews,
-		"CurrentStyle":      currentStyleName,
-		"TargetStyle":       targetStyleName,
-		"LinesideRows":      linesideRows,
-		"ShiftsJSON":        template.JS(shiftsJSON),
-		"HourlyCountsJSON":  template.JS(hourlyCountsJSON),
-		"TodayDate":         todayStr,
-		"ProcessNodes":      processNodes,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
-		"NodesJSON":         string(nodesJSON),
-		"CoreNodesJSON":     string(coreNodesJSON),
+		"Page":             "production",
+		"Processes":        processes,
+		"ActiveProcessID":  activeProcessID,
+		"IsAll":            isAll,
+		"StationViews":     stationViews,
+		"CurrentStyle":     currentStyleName,
+		"TargetStyle":      targetStyleName,
+		"LinesideRows":     linesideRows,
+		"ShiftsJSON":       template.JS(shiftsJSON),
+		"HourlyCountsJSON": template.JS(hourlyCountsJSON),
+		"TodayDate":        todayStr,
+		"ProcessNodes":     processNodes,
+		"NodesJSON":        string(nodesJSON),
+		"CoreNodesJSON":    string(coreNodesJSON),
 	}
 	h.renderTemplate(w, r, "production.html", data)
 }

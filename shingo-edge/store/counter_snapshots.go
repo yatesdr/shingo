@@ -8,8 +8,8 @@ import "shingoedge/store/counters"
 
 // InsertCounterSnapshot writes one counter_snapshots row, the tick's stamp
 // included.
-func (db *DB) InsertCounterSnapshot(rpID int64, countValue, delta int64, anomaly string, confirmed bool, stamp counters.TickStamp) (int64, error) {
-	return counters.InsertSnapshot(db.DB, rpID, countValue, delta, anomaly, confirmed, stamp)
+func (db *DB) InsertCounterSnapshot(rpID int64, countValue, delta int64, anomaly string, stamp counters.TickStamp) (int64, error) {
+	return counters.InsertSnapshot(db.DB, rpID, countValue, delta, anomaly, stamp)
 }
 
 // ListShippableTicks returns up to limit production-tick rows past afterID,
@@ -39,22 +39,4 @@ func (db *DB) SetProductionTickCursor(id int64) error {
 // starts: after the last row written before the shipper existed.
 func (db *DB) InitialProductionTickCursor() (int64, error) {
 	return counters.InitialShipCursor(db.DB)
-}
-
-// ListUnconfirmedAnomalies returns every counter snapshot tagged as a
-// "jump" anomaly that the operator has not yet confirmed.
-func (db *DB) ListUnconfirmedAnomalies() ([]counters.Snapshot, error) {
-	return counters.ListUnconfirmedAnomalies(db.DB)
-}
-
-// ConfirmAnomaly marks an unconfirmed jump snapshot as operator-confirmed,
-// returning its accounting fields when the row actually moved (nil when it
-// did not — already confirmed, or not a jump).
-func (db *DB) ConfirmAnomaly(id int64) (*counters.ConfirmedJump, error) {
-	return counters.ConfirmAnomaly(db.DB, id)
-}
-
-// DismissAnomaly deletes an unconfirmed anomaly snapshot.
-func (db *DB) DismissAnomaly(id int64) error {
-	return counters.DismissAnomaly(db.DB, id)
 }

@@ -15,7 +15,6 @@ Displays the current material inventory for the station's production lines. Each
 - Payload description and manifest contents
 - Current UOP remaining and total capacity
 - Reorder status (threshold, auto-reorder enabled/disabled)
-- Active anomaly flags from PLC counter jumps (requiring operator confirmation)
 
 When PLC integration is active, UOP remaining decrements automatically as production counters advance. If UOP remaining drops below the configured reorder threshold and auto-reorder is enabled, a replacement bin is ordered without operator intervention.
 

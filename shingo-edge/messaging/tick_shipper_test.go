@@ -78,7 +78,7 @@ func (r *shipRig) messages() [][]byte {
 // tick writes one snapshot row the way the poll does.
 func (r *shipRig) tick(count, delta int64, anomaly string, at time.Time, styleID int64) int64 {
 	r.t.Helper()
-	id, err := r.db.InsertCounterSnapshot(r.rpID, count, delta, anomaly, anomaly != "jump",
+	id, err := r.db.InsertCounterSnapshot(r.rpID, count, delta, anomaly,
 		counters.TickStamp{RecordedAt: at, ProcessID: r.proc, StyleID: styleID})
 	if err != nil {
 		r.t.Fatalf("insert snapshot: %v", err)
@@ -124,9 +124,9 @@ func TestTickShipper_OneMessagePerPass(t *testing.T) {
 	s := r.shipper()
 	t0 := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC).Add(123 * time.Millisecond)
 	id1 := r.tick(1, 1, "", t0, r.sty)
-	r.tick(0, 1, "reset", t0.Add(time.Second), r.sty) // filtered
-	r.tick(5, 0, "", t0.Add(2*time.Second), r.sty)    // filtered: no delta
-	r.tick(6, 1, "", t0.Add(3*time.Second), 0)        // filtered: no style
+	idR := r.tick(3, 3, "reset", t0.Add(time.Second), r.sty) // ships: the counter restarted and made 3
+	r.tick(5, 0, "", t0.Add(2*time.Second), r.sty)           // filtered: no delta
+	r.tick(6, 1, "", t0.Add(3*time.Second), 0)               // filtered: no style
 	id2 := r.tick(900, 894, "jump", t0.Add(4*time.Second), r.sty)
 
 	if err := s.ShipPending(); err != nil {
@@ -143,16 +143,19 @@ func TestTickShipper_OneMessagePerPass(t *testing.T) {
 	if !env.ExpiresAt.IsZero() {
 		t.Errorf("exp = %v, want none: production.ticks is NoExpiry", env.ExpiresAt)
 	}
-	if len(body.Ticks) != 2 {
-		t.Fatalf("ticks = %+v, want the two shippable rows", body.Ticks)
+	if len(body.Ticks) != 3 {
+		t.Fatalf("ticks = %+v, want the three shippable rows", body.Ticks)
 	}
 	w := body.Ticks[0]
 	if w.EdgeSnapshotID != id1 || w.ProcessID != r.proc || w.StyleID != r.sty || w.CountValue != 1 ||
 		w.Delta != 1 || w.Anomaly != "" || !w.RecordedAt.Equal(t0) {
 		t.Errorf("tick 0 = %+v", w)
 	}
-	if j := body.Ticks[1]; j.EdgeSnapshotID != id2 || j.Anomaly != "jump" || j.Delta != 894 {
-		t.Errorf("tick 1 = %+v, want the jump", j)
+	if rs := body.Ticks[1]; rs.EdgeSnapshotID != idR || rs.Anomaly != "reset" || rs.Delta != 3 {
+		t.Errorf("tick 1 = %+v, want the reset", rs)
+	}
+	if j := body.Ticks[2]; j.EdgeSnapshotID != id2 || j.Anomaly != "jump" || j.Delta != 894 {
+		t.Errorf("tick 2 = %+v, want the jump", j)
 	}
 	if strings.Contains(string(msgs[0]), "reporting_point") {
 		t.Errorf("wire carries reporting_point_id; Core drops it, so it stays off the wire")
@@ -344,7 +347,7 @@ func TestTickShipper_Lag(t *testing.T) {
 	}
 	now := clock.Now().UTC()
 	r.tick(1, 1, "", now.Add(-90*time.Second), r.sty)
-	r.tick(0, 1, "reset", now.Add(-80*time.Second), r.sty) // not shippable
+	r.tick(0, 1, "", now.Add(-80*time.Second), 0) // not shippable: no style
 	r.tick(2, 1, "", now.Add(-10*time.Second), r.sty)
 	p, age, err := s.Lag()
 	if err != nil {

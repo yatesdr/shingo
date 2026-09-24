@@ -273,8 +273,8 @@ func (m *Manager) warlinkPollLoop() {
 	// warlink.mode is `poll` on the dev stack, so ReadTag serves from the cache
 	// only this loop refreshes — the fake PLC counts at sim rate and this is
 	// what samples it. Left at wall rate, a rising multiplier packs more counts
-	// into each sample until one crosses CalculateDelta JumpThreshold and the
-	// delta is suppressed as an operator-gated jump.
+	// into each sample until one crosses CalculateDelta JumpThreshold, and every
+	// sample after that lands as one jump instead of its strokes.
 	ticker := clock.Default().NewTicker(getPollRate())
 	defer ticker.Stop()
 
@@ -651,10 +651,8 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 	// The clock is read BEFORE the INSERT, not after it and the reporting-point
 	// UPDATE as the outbox enqueue did: the stored value is what a re-ship after
 	// a reboot or a restore carries, which is what lets Core's key recognise it.
-	confirmed := anomaly != "jump"
 	stamp := counters.TickStamp{RecordedAt: clock.Now().UTC(), ProcessID: rp.ProcessID, StyleID: rp.StyleID}
-	snapID, err := m.db.InsertCounterSnapshot(rp.ID, newCount, delta, anomaly, confirmed, stamp)
-	if err != nil {
+	if _, err := m.db.InsertCounterSnapshot(rp.ID, newCount, delta, anomaly, stamp); err != nil {
 		log.Printf("insert counter snapshot: %v", err)
 		return false
 	}
@@ -664,23 +662,23 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 		log.Printf("update reporting point counter: %v", err)
 	}
 
-	if anomaly != "" {
-		m.emitter.EmitCounterAnomaly(snapID, rp.ID, rp.PLCName, rp.TagName, rp.LastCount, newCount, anomaly)
-	}
-
-	// Only emit delta for normal counts and resets (not jumps, which need operator confirmation)
 	if rp.StyleID == 0 {
 		return false // no style linked; the shipper's filter (style_id <> 0) skips the row too
 	}
 
-	if anomaly != "jump" && delta > 0 {
+	// THE PLC IS THE TRUTH (close-out 2b, owner ruling 2026-09-24). A jump and
+	// a reset are counts like any other, emitted in the pass that read them, so
+	// their units are charged to the carrier bound at the read. They used to
+	// wait: a jump for an operator's Confirm, which charged whatever carrier
+	// was bound by then, and a reset forever, dropped downstream. The anomaly
+	// rides the event and the row as a record of how the counter moved;
+	// nothing gates on it.
+	if delta > 0 {
 		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, rp.StyleID, delta, newCount, anomaly)
 	}
 
-	// The shipper's filter in the poll's terms (counters.shippableWhere). Jumps
-	// ship — the heartbeat must know the cell physically fired even while
-	// inventory attribution waits on the operator (§8 #20) — resets do not.
-	return delta > 0 && anomaly != "reset"
+	// The shipper's filter in the poll's terms (counters.shippableWhere).
+	return delta > 0
 }
 
 func connectionErrorFromTags(tags map[string]WarlinkTag) string {
