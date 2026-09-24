@@ -263,6 +263,14 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		return fmt.Errorf("persist %s→%s: %w", from, to, err)
 	}
 	ord.Status = to
+	// The store cleared the wait in the same write (waitEndsSQL; terminalize
+	// always). Mirror it, or the copy in hand still holds the old sentence and
+	// setQueueReason's unchanged-cause short-circuit would refuse to re-write it
+	// when the order parks again under the same cause — a fleet refusal demoting
+	// dispatched→sourcing is exactly that — leaving a waiting order blank.
+	if !protocol.CanHoldWait(protocol.Status(to)) {
+		ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
+	}
 
 	// Futility accounting. Placed here because transition() is the one
 	// chokepoint every status write goes through, so the detector cannot be

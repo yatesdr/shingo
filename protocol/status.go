@@ -583,6 +583,28 @@ func IsAcquiring(s Status) bool {
 // IsAcquiring is the method form.
 func (s Status) IsAcquiring() bool { return IsAcquiring(s) }
 
+// CanHoldWait reports whether an order in this status can be WAITING on
+// something right now — whether a queue reason on it can still be true.
+//
+// Wider than IsAcquiring, and that is the point: three of the five wait
+// populations sit outside it. A robot parked at a lane's mark or at a station
+// wait is `staged`, a compound parent whose chapter stopped is `reshuffling`,
+// and a dig leg holding in place is `pending`. Every other non-terminal status
+// is an order that is MOVING — handed to the fleet, driving, delivered, or
+// faulted (which has its own fault line) — and a wait sentence on one of those
+// describes a moment that is over.
+//
+// The store clears the queue columns when an order transitions OUT of this set,
+// so the live column only ever answers "what is it waiting for now". The
+// history row keeps each wait's code; ending a wait does not unmake it.
+func CanHoldWait(s Status) bool {
+	switch s {
+	case StatusQueued, StatusSourcing, StatusPending, StatusStaged, StatusReshuffling:
+		return true
+	}
+	return false
+}
+
 // IsRuntimeStuckCandidate reports whether an order whose updated_at is
 // far in the past should be flagged as runtime-stuck. Excludes Faulted
 // (intentional grace-period non-terminal), Delivered (waits for operator
@@ -835,6 +857,7 @@ var (
 	vendorTrackedStatusSQLList         = buildStatusSQLList(IsVendorTracked)
 	preDispatchStatusSQLList           = buildStatusSQLList(IsPreDispatch)
 	acquiringStatusSQLList             = buildStatusSQLList(IsAcquiring)
+	canHoldWaitStatusSQLList           = buildStatusSQLList(CanHoldWait)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
 	stuckSweepStatusSQLList            = buildStatusSQLList(IsStuckSweepCandidate)
 	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
@@ -906,6 +929,10 @@ func PreDispatchStatusSQLList() string { return preDispatchStatusSQLList }
 // AcquiringStatusSQLList returns 'queued','sourcing' — the fulfillment scanner's
 // retry set. Use in `status IN (AcquiringStatusSQLList())`.
 func AcquiringStatusSQLList() string { return acquiringStatusSQLList }
+
+// CanHoldWaitStatusSQLList returns 'pending','queued','reshuffling','sourcing',
+// 'staged' — the statuses in which a queue reason can still be live.
+func CanHoldWaitStatusSQLList() string { return canHoldWaitStatusSQLList }
 
 // RuntimeStuckCandidateStatusSQLList returns the non-terminal subset
 // that should be watched for stale updated_at — excludes faulted,

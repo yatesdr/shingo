@@ -261,11 +261,13 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 //
 // ── AND IT IS NOT "CARRIES A CAUSE" EITHER ───────────────────────────────
 //
-// The obvious widening — any row with a queue_cause — is wrong, because a cause
-// is cleared ONLY on terminalize (store/orders.go) and on ResumeCompound.
-// Nothing clears it when a park ENDS successfully, so an order that waited for a
-// slot and then dispatched carries that cause all the way to delivery. Selecting
-// on the cause alone would print a wait clock beside a robot that is driving.
+// The obvious widening — any row with a queue_cause — was wrong while a cause
+// was cleared only on terminalize and on ResumeCompound: an order that waited
+// for a slot and then dispatched carried that cause all the way to delivery.
+// The store now clears it on every move out of protocol.CanHoldWait
+// (store/orders/orders.go waitEndsSQL), so the cause alone is honest for new
+// transitions; this check stays because rows parked before that change still
+// carry theirs until they next move, and it costs nothing.
 //
 // ── AND `pending` IS THE FOURTH POPULATION, FOR THE SAME REASON ──────────
 //
@@ -317,8 +319,8 @@ func orderIsWaiting(o *domain.Order) bool {
 // value because that is the one that says a wait is live (see orderIsWaiting);
 // the tally has to be the coarse one because the code is what queueCodeLabels
 // renders and what an operator can act on. Selecting on the code would readmit
-// every dispatched order that ever parked, since neither column is cleared when
-// a park ends well.
+// any row that parked before the store began clearing the columns on a move
+// (waitEndsSQL).
 func countQueueCodes(orders []*domain.Order) map[string]int {
 	counts := make(map[string]int)
 	for _, o := range orders {
@@ -475,10 +477,11 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		FaultLine string `json:"fault_line,omitempty"`
 	}
 
-	// A WAIT THAT ENDED IS NOT SHOWN AS ONE. queue_reason is not cleared when a
-	// park ends well (see orderIsWaiting), and the modal printed it bare: SPR
-	// order 6903 read "Waiting for partner robot" for half an hour after its
-	// release, with AMR-10 mid-unload. Same predicate as the page's counts.
+	// A WAIT THAT ENDED IS NOT SHOWN AS ONE. queue_reason was not cleared when a
+	// park ended well, and the modal printed it bare: SPR order 6903 read
+	// "Waiting for partner robot" for half an hour after its release, with AMR-10
+	// mid-unload. The store clears it on the move now (waitEndsSQL); this stays
+	// for rows parked before that. Same predicate as the page's counts.
 	if !orderIsWaiting(order) {
 		order.QueueReason = ""
 	}

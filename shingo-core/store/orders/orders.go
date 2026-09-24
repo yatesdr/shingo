@@ -293,13 +293,39 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 	if status == "failed" || status == "cancelled" {
 		errDetail = detail
 	}
-	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$4 WHERE id=$3`, status, errDetail, id, clock.Now().UTC()); err != nil {
+	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$4`+waitEndsSQL(status)+` WHERE id=$3`,
+		status, errDetail, id, clock.Now().UTC()); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, id, status, detail, clock.Now().UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// waitEndsSQL is the SET fragment that clears an order's wait when it moves to
+// a status that cannot hold one (protocol.CanHoldWait), and "" otherwise.
+//
+// ── THE WAIT ENDS WHEN THE ORDER MOVES, NOT ONLY WHEN IT ENDS ─────────────────
+//
+// queue_reason/code/cause answer "what is this order waiting for RIGHT NOW".
+// TerminalizeOrder clears them at the end, but nothing cleared them when a wait
+// ended WELL: an order that waited for an empty bin and then dispatched went on
+// reading "Waiting for an empty bin" on every board that prints the column —
+// the orders list, the dashboard, the detail page — until it finished (SPR
+// 2026-09-24, orders 6908/6913; 6903 read "Waiting for partner robot" mid-unload).
+// Each surface was left to re-derive liveness from the status, and the ones that
+// did not printed a wait that was over.
+//
+// So the column is made true instead: a transition into a moving status clears
+// it, in the same write as the status. A transition between waiting statuses
+// (queued→sourcing, a demote back to sourcing) keeps it — that wait is still on.
+// The history row that opened the episode keeps its code either way.
+func waitEndsSQL(to string) string {
+	if protocol.CanHoldWait(protocol.Status(to)) {
+		return ""
+	}
+	return `, queue_reason='', queue_code=NULL, queue_cause=NULL`
 }
 
 // UpdateStatusFrom is the compare-and-swap form of UpdateStatus: the row moves
@@ -346,7 +372,7 @@ func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, ac
 	// error_detail is cleared exactly as UpdateStatus does on this path: its
 	// failed/cancelled branch is unreachable here because both are terminal
 	// and refused above.
-	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail='', updated_at=$3 WHERE id=$2 AND status=$4`,
+	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail='', updated_at=$3`+waitEndsSQL(to)+` WHERE id=$2 AND status=$4`,
 		to, id, clock.Now().UTC(), from)
 	if err != nil {
 		return false, err

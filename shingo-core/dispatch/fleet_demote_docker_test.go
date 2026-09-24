@@ -250,6 +250,40 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 	}
 }
 
+// TestFleetRefusal_ASecondRefusalStillNamesItsWait: the store clears an order's
+// wait when it moves to `dispatched`, and the copy in hand must be cleared with
+// it. Otherwise an order that parked under fleet-refused, was sent again, and was
+// refused again carries the old cause IN MEMORY while the row is blank — and
+// setQueueReason's unchanged-cause short-circuit declines to write it back, so
+// the order waits with nothing saying why.
+func TestFleetRefusal_ASecondRefusalStillNamesItsWait(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
+	order, _ := armedOrderAwaitingFleet(t, db, d, "refused-twice")
+	srcNode, lineNode, _ := setupTestData(t, db)
+
+	// The first refusal's wait, as the scanner left it.
+	d.SetQueueReason(order, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+
+	// Sent again on the SAME copy, refused again, parked again under the same cause.
+	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {
+		t.Fatal("the fleet refused the create; DispatchDirect must report it")
+	}
+	d.DemoteAfterFleetRefusal(order, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+
+	got, err := db.GetOrder(order.ID)
+	got = testutil.Must(t, got, err, "db.GetOrder(order.ID)")
+	if !protocol.CanHoldWait(got.Status) {
+		t.Fatalf("setup: the refused order is %s, want it parked", got.Status)
+	}
+	if got.QueueCause != string(CauseFleetRefusedCreate) || got.QueueReason == "" {
+		t.Errorf("the re-refused order is %s with cause=%q reason=%q, want cause %q and a sentence — "+
+			"a waiting order must say what it is waiting for", got.Status, got.QueueCause, got.QueueReason,
+			CauseFleetRefusedCreate)
+	}
+}
+
 // TestFleetRefusal_TheDoubleInvocationIsANoOp pins clause 6.
 //
 // The plain path invokes the rollback TWICE per refusal: DispatchDirect's own
