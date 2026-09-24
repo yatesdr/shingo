@@ -3,7 +3,9 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
-## 2026-09-24 — The threshold monitor reads the database
+## 2026-09-24 — One count per carrier, a count feed that heals itself, and stranded bins told the truth
+
+Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps working against the new Core).
 
 - The threshold monitor keeps no copy of `demand_registry` or `demand_origins`: every evaluation reads
   the payload's bindings and each place's open episode, one index probe each, and memory holds only timers
@@ -12,11 +14,70 @@ belongs in the commit message or in `docs/` — this file is the index.
 - A read error at any fire path decides nothing; the config-edit and reconnect doors no longer fire off
   a total of zero
 - No episode, no order: a fire whose mint failed is refused rather than sent with a blank origin
-- Every fire path judges against the configured R1 mode's total, and `used_edge_reports` says which
-  total decided
+- Every fire path decides off Core's count (`SystemUOPForPayload`). R1 is deleted: the edge-adjusted
+  total, `lineside_decision_mode`, and the lineside report as a fire trigger. `used_edge_reports` is no
+  longer written
 - The childless pass leaves threshold episodes alone, as it already did maintain
 - The registry derive logs one line per station and refuses to empty a station it could not resolve
-- A duplicate or older lineside report no longer re-runs the fire gate
+- Every count message carries its scope's running net, and Core applies the net minus what it has
+  applied (migration 126): a lost, late, duplicated or reordered delta heals on the next one, and the
+  ledger row says how much it healed. An old Edge's deltas apply as before
+- A redelivered delta is a duplicate before it is a stale epoch: no stale-drop exception for a delta
+  Core already applied
+- A count that went backward (an Edge restored from backup) records `edge_rollback` and starts the bin
+  a new generation; a bucket records the exception only
+- The Edge keys bucket scopes by `core_node_name`, as Core does: two nodes with one core name no longer
+  mute each other
+- Count deltas never dead-letter and are never purged undelivered
+- Core commits a Kafka offset after handling the message, not before
+- Load and count announcements (`UOPAdjustment`, `BinEpochRefresh`) no longer expire; an empty slot
+  refuses a late bind of the carrier that just left it. `repairEpoch` answers once a minute per
+  carrier, not once until Core restarts
+- A dispatch claim of a partly consumed carrier starts a new generation and tells the station
+- A count carries Core's applied net and seq, and the counting station rebases on it instead of
+  overwriting ticks in flight. A count taken at the line now reaches the station too
+- The lineside report is a per-carrier checksum (migration 127): a count, epoch, placement or bucket
+  divergence opens an episode on the Inventory page. The report states each count as of the last
+  flushed seq, at no extra cost on the Pi
+- The production tick feed ships from `counter_snapshots`, one message per station per poll pass, with
+  no outbox row and no expiry (migration 128). `production_tick_dedup` and the unwritten
+  `cell_part_events.payload_code` are gone; a tick with a bad timestamp no longer sinks its page
+- Parts are counted by delta, not by row, and cycle time divides by it
+- The PLC is the truth: a counter jump and a counter reset are counted at the read, charged to the
+  carrier bound then, and shipped on the tick feed. The operator confirm/dismiss gate is gone, with
+  the Edge's anomaly bell; `counter_snapshots.anomaly` stays as a record
+- The heartbeat counts a jump or a reset as parts, and shows the gap it ends as counter offline, not
+  as a stop; cycle time and target math skip that gap
+- The tick feed's lag (unsent ticks, the oldest one's age) and rejected ticks show on the Edge status
+  page and on Core's Inventory page
+- The Edge reports every consume seat it runs, an empty one as a row with nothing bound, every interval,
+  with no rows when it runs none. An episode closes when its seat reports empty, and a counted Core
+  carrier at a seat the Edge reports empty opens `empty_seat`
+- A report divergence is an inventory count anomaly: a tile and a list on Core's homepage, and the same
+  name on the Inventory page, each giving the carrier, the seat, both counts and how long it has been open
+- Delta integrity counts a refused delta that the running net later landed as recovered, not lost
+- Unregister `production.tick` (the old per-tick subject) in the first change after both plants' Edges
+  run this build
+- The Edge journal gets Core's `logging.stderr_subsystems` allow-list; by default `outbox`,
+  `inventory_delta`, `kafka` and `reporter` stay out of it (and in the log UI and the debug file)
+- An unchanged map fetch records the version confirmed (migration 129), so a stable map is fetched once a
+  day instead of every 5 minutes after the first day; a map edited back re-opens its older version
+- A superseded map version keeps its map but not its laser scan (migration 130)
+- The fault-email buffer is 3 minutes, as documented; the constant said 1
+- A cleared email threads under its fault alert (the fault's own subject, replied to), and a recovery
+  with no fault email behind it sends nothing
+- A stranded bin is blamed on a robot only if that robot's pickup leg is on record; otherwise the note
+  says to find it on the floor. "In transit" (RDS RUNNING) is not a lift
+- A bin cannot be hand-moved to `_TRANSIT` or onto a robot; the Move dropdown no longer offers them
+- A stranded bin's row names its last order instead of reading "in transit"
+- The vendor state is recorded when a complex release already moved the order's status: it no longer
+  sticks at WAITING for a staged order's last leg
+- An order's wait ends when the order moves, not only when it ends: a dispatched order no longer shows
+  its old "Waiting for …" on the orders list, the dashboard or the detail page
+- The order modal drops an ended wait, and fleet notices show only what concerns the order's robot;
+  the per-robot roll-call collapses to one line until a robot is assigned
+- A dedicated loader's home draws empties from its own loader's buffers: Springfield's supermarket
+  refills had queued "Waiting for an empty bin" beside empties on those buffers
 
 ## 2026-09-23 — The half loader, and an unloader that refills itself
 
