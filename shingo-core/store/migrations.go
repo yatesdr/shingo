@@ -4308,6 +4308,17 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "scene_map_versions", "confirmed_at")
 			}},
+
+		{130, "scene_map_versions: a superseded version keeps its map but not its laser scan — scan_cloud_gz cleared on every superseded row",
+			v130SupersededMapScans,
+			func(q schema.Querier) bool {
+				var n int
+				if err := q.QueryRow(`SELECT count(*) FROM scene_map_versions
+					WHERE superseded_at IS NOT NULL AND scan_cloud_gz IS NOT NULL`).Scan(&n); err != nil {
+					return false
+				}
+				return n == 0
+			}},
 	}
 }
 
@@ -4326,6 +4337,30 @@ func v129MapVersionConfirmedAt(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE scene_map_versions
 		ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ NULL`); err != nil {
 		return fmt.Errorf("v129 scene_map_versions.confirmed_at: %w", err)
+	}
+	return nil
+}
+
+// v130SupersededMapScans clears scan_cloud_gz on every superseded map version,
+// once. From here ApplyMapSnapshot clears it as it supersedes.
+//
+// THE RULE (orc ruling, 2026-09-24; the owner may overrule): a superseded
+// version keeps its map but not its laser scan. scan_cloud_gz has no reader —
+// nothing in Core selects it — and was 90-92% of the table at both plants
+// (Hopkinsville 148 of 165 MB of blobs, Springfield 101 of 110 MB). The row,
+// body_gz, the diff and the area and reflector links all stay, so no FK is
+// touched and the content-hash dedup is unchanged. The current version of each
+// map name keeps its scan, and so does a retired name's last open row.
+//
+// DISK: the cleared TOAST chunks become free space inside the table for later
+// rows to reuse; the file shrinks only under a VACUUM FULL, which this does not
+// run (it takes an exclusive lock).
+//
+// ROLLBACK: nothing to undo; a pre-v130 binary never reads the column.
+func v130SupersededMapScans(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE scene_map_versions SET scan_cloud_gz = NULL
+		WHERE superseded_at IS NOT NULL AND scan_cloud_gz IS NOT NULL`); err != nil {
+		return fmt.Errorf("v130 clear superseded map scans: %w", err)
 	}
 	return nil
 }

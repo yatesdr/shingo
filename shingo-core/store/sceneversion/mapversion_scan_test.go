@@ -52,10 +52,11 @@ func hasCloud(t *testing.T, db *store.DB, name string) map[string]bool {
 	return out
 }
 
-// EVERY VERSION KEEPS ITS SCAN. PIN: A is superseded by B and still holds its
-// cloud; B, the current version, holds its own; a retired map name's single
-// open row holds its own.
-func TestPin_C_SupersededVersionKeepsItsScan(t *testing.T) {
+// A SUPERSEDED VERSION KEEPS ITS MAP BUT NOT ITS LASER SCAN. A is superseded
+// by B and loses scan_cloud_gz, keeping its row and body_gz; B, the current
+// version, keeps its scan; a retired map name's single open row keeps its own.
+// Inverts the pin that every version kept its scan.
+func TestMapScan_SupersededVersionLosesOnlyItsScan(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -63,10 +64,32 @@ func TestPin_C_SupersededVersionKeepsItsScan(t *testing.T) {
 	archive(t, db, "PIN_SCAN", "B", at.Add(time.Hour))
 	archive(t, db, "PIN_SCAN_RETIRED", "A", at)
 
-	if got := hasCloud(t, db, "PIN_SCAN"); !got["A"] || !got["B"] {
-		t.Errorf("clouds held %v, want both at the base", got)
+	if got := hasCloud(t, db, "PIN_SCAN"); got["A"] || !got["B"] {
+		t.Errorf("clouds held %v, want A dropped and B kept", got)
 	}
 	if got := hasCloud(t, db, "PIN_SCAN_RETIRED"); !got["A"] {
 		t.Errorf("the retired name's open row lost its cloud: %v", got)
+	}
+	var bodies int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM scene_map_versions
+		WHERE map_name = 'PIN_SCAN' AND body_gz IS NOT NULL`).Scan(&bodies), "count bodies")
+	if bodies != 2 {
+		t.Errorf("%d versions keep their map body, want both", bodies)
+	}
+}
+
+// AN EDIT BACK GETS ITS SCAN BACK. A, then B, then A again: A is current once
+// more, and the current version holds its scan, taken again from the bytes the
+// robot just sent. B is superseded and loses its own.
+func TestMapScan_EditedBackVersionGetsItsScanBack(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	archive(t, db, "PIN_SCAN_ABA", "A", at)
+	archive(t, db, "PIN_SCAN_ABA", "B", at.Add(time.Hour))
+	archive(t, db, "PIN_SCAN_ABA", "A", at.Add(2*time.Hour))
+
+	if got := hasCloud(t, db, "PIN_SCAN_ABA"); !got["A"] || got["B"] {
+		t.Errorf("clouds held %v, want A (current again) kept and B dropped", got)
 	}
 }

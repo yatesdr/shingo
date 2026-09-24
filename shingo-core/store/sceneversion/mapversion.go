@@ -110,13 +110,16 @@ func ApplyMapSnapshot(db *sql.DB, snap MapSnapshot, previousSync *time.Time) (Ma
 		return res, fmt.Errorf("sceneversion: look up map version: %w", err)
 	}
 
-	var body, cloud []byte
-	if !reopen {
-		if body, cloud, err = splitAndCompress(snap.Raw); err != nil {
-			return res, err
-		}
-		res.StoredBytes, res.CloudBytes = len(body), len(cloud)
+	// Split even on a re-open: the version becoming current gets back the scan
+	// it lost when it was superseded.
+	body, cloud, err := splitAndCompress(snap.Raw)
+	if err != nil {
+		return res, err
 	}
+	if !reopen {
+		res.StoredBytes = len(body)
+	}
+	res.CloudBytes = len(cloud)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -135,8 +138,13 @@ func ApplyMapSnapshot(db *sql.DB, snap MapSnapshot, previousSync *time.Time) (Ma
 	// argument is that the map's history IS the finding, and the question
 	// "when did these nine polygons appear" is only answerable if every
 	// version before them survives.
+	//
+	// A SUPERSEDED VERSION KEEPS ITS MAP BUT NOT ITS LASER SCAN (orc ruling,
+	// 2026-09-24). scan_cloud_gz has no reader and is 90-92% of the table at
+	// both plants; the row, body_gz, the diff and the area and reflector links
+	// all stay. No age window: the rule is the version's state, not its age.
 	if _, err := tx.Exec(
-		`UPDATE scene_map_versions SET superseded_at=$1
+		`UPDATE scene_map_versions SET superseded_at=$1, scan_cloud_gz=NULL
 		  WHERE map_name=$2 AND superseded_at IS NULL`,
 		snap.ObservedAt, snap.MapName); err != nil {
 		return res, fmt.Errorf("sceneversion: supersede map version: %w", err)
@@ -144,8 +152,9 @@ func ApplyMapSnapshot(db *sql.DB, snap MapSnapshot, previousSync *time.Time) (Ma
 
 	if reopen {
 		if _, err := tx.Exec(
-			`UPDATE scene_map_versions SET superseded_at=NULL, confirmed_at=$1 WHERE id=$2`,
-			snap.ObservedAt, existingID); err != nil {
+			`UPDATE scene_map_versions SET superseded_at=NULL, confirmed_at=$1,
+			        scan_cloud_gz=COALESCE(scan_cloud_gz, $3) WHERE id=$2`,
+			snap.ObservedAt, existingID, cloud); err != nil {
 			return res, fmt.Errorf("sceneversion: reopen map version: %w", err)
 		}
 		res.MapVersionID, res.Reopened = existingID, true
@@ -348,8 +357,8 @@ func applyReflectors(tx *sql.Tx, snap MapSnapshot, diffID, mapVersionID int64) (
 // is essentially all of it, and the whole file gzips to 1.11 MB. Everything
 // except the cloud — areas, reflectors, points, curves, annotation lines — is
 // about 1 MB gzipped at the 5x map, which is a COMPLETE history for roughly
-// 365 MB a year. Splitting them is what lets a byte cap age out the residue
-// while the record itself is kept, instead of a cap that quietly governs both.
+// 365 MB a year. Splitting them is what lets the cloud go while the record is
+// kept: since v130 a superseded version drops its cloud and keeps its body.
 //
 // BYTEA of gzipped bytes rather than JSONB: this column is never queried into
 // — the parsed tables are what queries read — and JSONB stores per-object keys
