@@ -639,6 +639,11 @@ type BinCountResponse struct {
 	Discrepancy  bool   `json:"discrepancy"`
 	Warning      string `json:"warning,omitempty"`
 	DeltaEpoch   int64  `json:"delta_epoch,omitempty"`
+	// The record-count fence, the same as on the UOPAdjustment Core enqueues
+	// for this count; nil/"" from a Core that predates it or could not fence.
+	AsOfNet     *int64 `json:"as_of_net,omitempty"`
+	AsOfSeq     *int64 `json:"as_of_seq,omitempty"`
+	AsOfStation string `json:"as_of_station,omitempty"`
 }
 
 // RecordBinCount declares a count an operator made at the line to Core.

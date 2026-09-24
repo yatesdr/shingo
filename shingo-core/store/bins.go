@@ -137,7 +137,8 @@ func (db *DB) RecoverBinToNode(binID, toNodeID int64) error {
 
 // RecordBinCount updates UOP and records the count timestamp.
 func (db *DB) RecordBinCount(binID int64, actualUOP int, actor string) error {
-	return bins.RecordCount(db.DB, binID, actualUOP, actor)
+	_, _, err := bins.RecordCount(db.DB, binID, actualUOP, actor)
+	return err
 }
 
 // UnconfirmBinManifest resets the manifest confirmation flag.

@@ -1524,13 +1524,17 @@ type LinesideBucketDelta struct {
 	Net *int64 `json:"net,omitempty"`
 }
 
-// UOPAdjustment carries an absolute UOP value set by an admin via Core's
-// Bins record-count action. Core validates the value is within [0,
-// payload.UOPCapacity] before propagating. Edge writes the value
-// directly to process_node_runtime_states.remaining_uop_cached and
-// emits EventUOPAdjusted so the operator screen refreshes via the
-// existing counter-update SSE channel. PLC ticks accumulate from the
-// new value with no accumulator involvement.
+// UOPAdjustment carries an absolute UOP value Core has set for a carrier: a
+// count (the bins-page record-count and the count taken at the line), a
+// load, a clear, or a lifecycle reset announced by bumpEpoch. Edge writes it
+// to process_node_runtime_states.remaining_uop_cached and emits
+// EventUOPAdjusted so the operator screen refreshes via the existing
+// counter-update SSE channel.
+//
+// A count carries a fence (AsOfNet, AsOfSeq, AsOfStation): where in the
+// counting station's own stream of count messages Core was when it wrote the
+// number. That station rebases instead of overwriting, so the windows Core
+// had not applied yet are not lost on either side; see AsOfNet.
 //
 // CoreNodeName allows Edge to look up the target process node without
 // scanning — it is the canonical cross-system identifier carried on
@@ -1565,6 +1569,24 @@ type UOPAdjustment struct {
 	// resumed delta stream is accepted instead of dropped as epoch-0. Zero on
 	// the Released path and from older Cores.
 	Epoch int64 `json:"epoch,omitempty"`
+	// AsOfNet and AsOfSeq are Core's applied_net and last_seq for
+	// (AsOfStation, BinID, Epoch), read in the transaction that wrote
+	// NewRemaining: how much of that station's running net Core had applied
+	// when it set the count. The station named, holding BinID at Epoch,
+	// rebases:
+	//
+	//   remaining = NewRemaining + (flushed_net - AsOfNet) + unflushed
+	//
+	// and ignores an adjustment whose AsOfSeq is below the one it last took
+	// for the same (bin, epoch). Set only by a count, and only when exactly
+	// one station has an anchored cursor for the carrier in this generation;
+	// nil otherwise, and then the station writes NewRemaining as is, which is
+	// also what an Edge that predates the fields does.
+	AsOfNet *int64 `json:"as_of_net,omitempty"`
+	AsOfSeq *int64 `json:"as_of_seq,omitempty"`
+	// AsOfStation is the station whose stream AsOfNet measures. Any other
+	// station modelling the node takes NewRemaining as is.
+	AsOfStation string `json:"as_of_station,omitempty"`
 }
 
 // BinEpochRefresh is the body of a SubjectBinEpochRefresh message: the

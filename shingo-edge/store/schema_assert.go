@@ -136,6 +136,11 @@ var requiredColumns = []requiredColumn{
 	// would kill every bind and every clear on the box.
 	{"process_node_runtime_states", "last_bin_id"},
 	{"process_node_runtime_states", "last_bin_epoch"},
+	// Written by the fenced count; a failed ALTER would fail every fenced
+	// count adjustment (the handler then logs and keeps the old count).
+	{"process_node_runtime_states", "adj_bin_id"},
+	{"process_node_runtime_states", "adj_bin_epoch"},
+	{"process_node_runtime_states", "adj_as_of_seq"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

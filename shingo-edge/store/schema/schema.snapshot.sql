@@ -493,6 +493,13 @@ CREATE TABLE process_node_runtime_states (
     -- left cannot rebind it under an ended generation.
     last_bin_id        INTEGER,
     last_bin_epoch     INTEGER NOT NULL DEFAULT 0,
+    -- adj_bin_id / adj_bin_epoch / adj_as_of_seq are the carrier, generation
+    -- and AsOfSeq of the last fenced count this slot took (the record-count
+    -- fence). A count for the same carrier and generation taken earlier in
+    -- the station's stream, delivered later, is refused.
+    adj_bin_id         INTEGER,
+    adj_bin_epoch      INTEGER NOT NULL DEFAULT 0,
+    adj_as_of_seq      INTEGER NOT NULL DEFAULT 0,
     -- lineside_payload_code is what the carrier standing here actually is,
     -- as opposed to what this node's style says should be here. Core sends
     -- it on OrderDelivered, off the same bin row it already reads for the

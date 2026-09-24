@@ -846,6 +846,40 @@ func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, a
 	return err
 }
 
+// SetCountFenced writes a count Core fenced (protocol.UOPAdjustment.AsOfNet)
+// for the carrier bound at this slot, and records the count's AsOfSeq with the
+// carrier and generation it belongs to, in the same statement. Reports whether
+// it landed.
+//
+// It does not land when the slot no longer holds binID at deltaEpoch (the
+// caller read the runtime row before computing the count), or when the slot
+// has already taken a fenced count for the same carrier and generation at a
+// higher AsOfSeq: that count was taken later in the station's stream, and this
+// one is a late delivery of an older count. An equal AsOfSeq lands (a
+// redelivery, or two counts with no message applied between them). Both
+// refusals are the WHERE clause of the write, so they cost no statement.
+//
+// The seq is kept with its (bin, epoch) rather than alone because the carrier
+// at a slot changes through writers that know nothing of it: a seq recorded for
+// one carrier's stream says nothing about another's.
+func SetCountFenced(db *sql.DB, processNodeID, binID, deltaEpoch int64, remainingUOPCached int, asOfSeq int64) (bool, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		remaining_uop_cached=?, adj_bin_id=?, adj_bin_epoch=?, adj_as_of_seq=?, updated_at=datetime('now')
+		WHERE process_node_id=? AND active_bin_id=? AND active_bin_epoch=?
+		  AND NOT (adj_bin_id IS ? AND adj_bin_epoch=? AND adj_as_of_seq > ?)`,
+		remainingUOPCached, binID, deltaEpoch, asOfSeq,
+		processNodeID, binID, deltaEpoch,
+		binID, deltaEpoch, asOfSeq)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // BindEmptySlotUnlessDeparted is SetRuntimeWithBinAndEpoch for a bind into
 // a slot the caller read as empty, refused when the bin is the one that last
 // left this slot and the stamp is older than the one it left with. Reports

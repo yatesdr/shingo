@@ -1492,8 +1492,8 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 }
 
 // RecordCount updates UOP and records the count timestamp. Accepts
-// any Execer (*sql.DB or *sql.Tx) so the service layer can wrap the
-// count + bin_uop_ledger insert in one transaction. Item 19: cycle
+// *sql.DB or *sql.Tx so the service layer can wrap the count, its
+// bin_uop_ledger insert and its announcement in one transaction. Item 19: cycle
 // counts now write a bin_uop_ledger row (OpCycleCount) — see
 // BinService.RecordCount.
 // A SUCCESSFUL COUNT CLEARS anomaly_at, and that is the point of the flag.
@@ -1511,24 +1511,37 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 // layer: the two cannot then disagree, and every caller of RecordCount gets it
 // without having to remember.
 //
-// Deliberately NOT a delta_epoch bump. A count corrects the number in the
-// carrier; it does not end the carrier's load lifecycle, and bumping here would
-// open a stale-epoch drop window against an Edge that has no way to learn the
-// new value (see the epoch-resync gap: the "next bin-state refresh" the drop
-// path names does not exist).
-func RecordCount(db RecordCountExecer, binID int64, actualUOP int, actor string) error {
-	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=$4, last_counted_by=$2,
-		anomaly_at=NULL, updated_at=$4 WHERE id=$3`,
-		actualUOP, actor, binID, clock.Now().UTC())
-	return err
+// NOT a delta_epoch bump, and the reason is the in-flight window. A count
+// corrects the number inside the carrier's current life; the station holding
+// it keeps counting while the count is taken, and some of its count messages
+// are still on the wire when Core writes the number. Bumping would stale-drop
+// every one of them: Core would discard windows the station had already taken
+// off its own count, and both sides would stay high by them for the rest of
+// the carrier's life. Keeping the epoch lets those windows apply on top of the
+// counted number at Core, and the fence (BinService.RecordCount reads the
+// counting station's applied_net and last_seq in this transaction and sends
+// them on the UOPAdjustment) lets the station subtract the same windows from
+// its own copy, so both sides agree.
+//
+// (This used to say a bump would strand "an Edge that has no way to learn the
+// new value". That stopped being true when bumpEpoch began announcing every
+// bump; it was never the reason that holds.)
+//
+// Returns the bin's delta_epoch and the name of the node it is at ("" when at
+// none), read in the same statement, so the caller's announcement and cursor
+// read name the generation this count was written into.
+func RecordCount(db RecordCountQuerier, binID int64, actualUOP int, actor string) (epoch int64, nodeName string, err error) {
+	err = db.QueryRow(`UPDATE bins SET uop_remaining=$1, last_counted_at=$4, last_counted_by=$2,
+		anomaly_at=NULL, updated_at=$4 WHERE id=$3
+		RETURNING delta_epoch, COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), '')`,
+		actualUOP, actor, binID, clock.Now().UTC()).Scan(&epoch, &nodeName)
+	return epoch, nodeName, err
 }
 
-// RecordCountExecer is the minimal interface satisfied by *sql.DB
-// and *sql.Tx — same shape as audit.BinUOPExecer, kept package-local
-// so callers don't need to import the audit package just to get the
-// interface name.
-type RecordCountExecer interface {
-	Exec(query string, args ...any) (sql.Result, error)
+// RecordCountQuerier is the minimal interface satisfied by *sql.DB and
+// *sql.Tx, so the service layer can run the count inside its transaction.
+type RecordCountQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // UnconfirmManifest resets the manifest confirmation flag.

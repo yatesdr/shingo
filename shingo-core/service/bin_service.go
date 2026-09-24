@@ -1,9 +1,11 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
+	"shingocore/store/inventory"
 	"shingocore/store/nodes"
 )
 
@@ -411,6 +414,14 @@ type CountResult struct {
 	// recorded count exceeded the payload's UOP capacity. The count is still
 	// accepted; the warning flags a possible mis-set capacity config.
 	Warning string
+	// Epoch is the bin's delta_epoch the count was written into. AsOfNet,
+	// AsOfSeq and AsOfStation are the fence the count's UOPAdjustment carries
+	// (see protocol.UOPAdjustment.AsOfNet); the line door returns them in its
+	// reply so the station that took the count rebases on the same point.
+	Epoch       int64
+	AsOfNet     *int64
+	AsOfSeq     *int64
+	AsOfStation string
 }
 
 // RecordCount writes a cycle count for the bin and returns the expected vs.
@@ -453,8 +464,13 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 	}
 	defer tx.Rollback()
 
-	if err := bins.RecordCount(tx, b.ID, actualUOP, actor); err != nil {
+	epoch, nodeName, err := bins.RecordCount(tx, b.ID, actualUOP, actor)
+	if err != nil {
 		return nil, fmt.Errorf("record count bin %d: %w", b.ID, err)
+	}
+	fence, err := countFence(tx, b.ID, epoch)
+	if err != nil {
+		return nil, err
 	}
 	expectedCopy := expected
 	uopCtx, err := resolveBinUOPContext(tx, b.ID, nil)
@@ -474,6 +490,9 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 			return nil, fmt.Errorf("audit over-capacity count bin %d: %w", b.ID, err)
 		}
 	}
+	if err := s.announceCount(tx, b.ID, nodeName, actualUOP, epoch, actor, fence); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit cycle count bin %d: %w", b.ID, err)
 	}
@@ -481,6 +500,10 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 		Expected:    expected,
 		Actual:      actualUOP,
 		Discrepancy: expected != actualUOP,
+		Epoch:       epoch,
+		AsOfNet:     fence.net,
+		AsOfSeq:     fence.seq,
+		AsOfStation: fence.station,
 	}
 	if overCapacity {
 		result.Warning = fmt.Sprintf(
@@ -488,6 +511,71 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 			actualUOP, pl.UOPCapacity)
 	}
 	return result, nil
+}
+
+// countFenceValue is where in the counting station's stream a count was taken.
+// The zero value is "no fence".
+type countFenceValue struct {
+	net, seq *int64
+	station  string
+}
+
+// countFence reads the record-count fence inside the count's transaction: Core's
+// applied_net and last_seq for the one station counting this carrier in this
+// generation (SYNTH-round2 S7, citrine-kestrel §8 S4).
+//
+// THE READ IS CONSISTENT WITH THE APPLIER BY LOCK ORDER. The count's UPDATE
+// has already locked the bin row; the applier locks the same row (FOR UPDATE)
+// before it reads or advances the cursor. So every count message committed
+// before the count is in the cursor read here, and every one after it waits for
+// this transaction and lands on top of the counted number. The fence names
+// exactly the windows that are in Core's number.
+//
+// No fence (all zero) when no station has a cursor, when two do, or when the
+// one cursor has no applied_net (an Edge built before the running net): the
+// station then takes the number as is, which is what it did before.
+func countFence(tx *sql.Tx, binID, epoch int64) (countFenceValue, error) {
+	station, cur, n, err := inventory.SoleBinCursor(tx, binID, epoch)
+	if err != nil {
+		return countFenceValue{}, fmt.Errorf("record count bin %d: %w", binID, err)
+	}
+	if n != 1 || cur.AppliedNet == nil {
+		return countFenceValue{}, nil
+	}
+	seq := cur.LastSeq
+	return countFenceValue{net: cur.AppliedNet, seq: &seq, station: station}, nil
+}
+
+// announceCount enqueues the count's UOPAdjustment in the count's transaction:
+// the counted number, the generation it was written into, and the fence. Both
+// doors that count (the bins page and the line) come through here, so a count
+// is announced once, and the row commits or rolls back with the count.
+//
+// The line door used to announce nothing and the bins page announced after the
+// commit; see www binRecordCount and apiBinCount.
+func (s *BinService) announceCount(tx *sql.Tx, binID int64, nodeName string, n int, epoch int64, actor string, f countFenceValue) error {
+	if nodeName == "" || s.manifest == nil {
+		return nil
+	}
+	if !s.manifest.announce.Wired() {
+		log.Printf("bin_service: count on bin %d at node %s with no announce topic wired — "+
+			"the stations modelling the node keep their old count", binID, nodeName)
+		return nil
+	}
+	if err := s.manifest.announce.Send(tx, protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{
+		BinID:        binID,
+		CoreNodeName: nodeName,
+		NewRemaining: n,
+		Epoch:        epoch,
+		Actor:        actor,
+		AdjustedAt:   time.Now().UTC(),
+		AsOfNet:      f.net,
+		AsOfSeq:      f.seq,
+		AsOfStation:  f.station,
+	}); err != nil {
+		return fmt.Errorf("announce count for bin %d: %w", binID, err)
+	}
+	return nil
 }
 
 // --- Notes ----------------------------------------------------------------

@@ -67,10 +67,10 @@ func TestRecordCount_ClearsTheAnomalyFlag(t *testing.T) {
 // fix above.
 //
 // A count corrects the number inside a carrier; it does not end that carrier's
-// load lifecycle. Bumping delta_epoch here would open a stale-epoch drop window
-// against an Edge with no way to learn the new value — the "next bin-state
-// refresh" the drop path names does not exist, which is the live gap that has
-// Hopkinsville discarding about half its counts.
+// load lifecycle. Bumping delta_epoch here would stale-drop every count message
+// the station had in flight when the count was written, and both sides would
+// stay high by them; the record-count fence splices those windows in instead
+// (see store/bins.RecordCount).
 func TestRecordCount_DoesNotBumpTheEpoch(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

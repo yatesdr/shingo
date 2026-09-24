@@ -385,13 +385,18 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 //
 // It is the same act as the cycle count on the bins page and it goes through
 // the same service, so it lands the same audit rows, clears the same
-// go-count-this flag, and broadcasts the same correction back down. The only
-// difference is who is standing where when they say it.
+// go-count-this flag, and enqueues the same UOPAdjustment to every station,
+// inside the count's transaction. (Until the record-count fence it broadcast
+// nothing, and this comment said it did.) The only difference is who is
+// standing where when they say it.
 //
-// Not an epoch bump. A count correction fixes a number INSIDE a carrier's
-// current life; it does not start a new one. Bumping here would retire a
-// generation that is still running and make the station's next report look
-// stale — the exact failure this whole surface exists to remove.
+// The reply carries the fence (as_of_net, as_of_seq, as_of_station) along with
+// the count and epoch, so the station that took the count rebases on the same
+// point in its stream as the broadcast will, whichever of the two it applies
+// first. Writing the reply's number over its count would lose the ticks it
+// consumed while the request was out.
+//
+// Not an epoch bump; see store/bins.RecordCount for why.
 func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeName  string `json:"node_name"`
@@ -463,7 +468,10 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 		"uop_remaining": res.Actual,
 		"discrepancy":   res.Discrepancy,
 		"warning":       res.Warning,
-		"delta_epoch":   bin.DeltaEpoch,
+		"delta_epoch":   res.Epoch,
+		"as_of_net":     res.AsOfNet,
+		"as_of_seq":     res.AsOfSeq,
+		"as_of_station": res.AsOfStation,
 	})
 }
 

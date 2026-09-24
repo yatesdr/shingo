@@ -79,6 +79,12 @@ func (db *DB) SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeCl
 	return processes.SetRuntimeWithBinAndEpoch(db.DB, processNodeID, activeClaimID, activeBinID, deltaEpoch, remainingUOP)
 }
 
+// SetProcessNodeCountFenced writes a fenced count for the carrier bound at
+// the slot. Reports whether it landed. See processes.SetCountFenced.
+func (db *DB) SetProcessNodeCountFenced(processNodeID, binID, deltaEpoch int64, remainingUOP int, asOfSeq int64) (bool, error) {
+	return processes.SetCountFenced(db.DB, processNodeID, binID, deltaEpoch, remainingUOP, asOfSeq)
+}
+
 // BindEmptySlotUnlessDeparted binds binID at deltaEpoch into a slot read as
 // empty, unless binID is the bin that last left the slot and deltaEpoch is
 // older than the stamp it left with. Reports whether it bound. See

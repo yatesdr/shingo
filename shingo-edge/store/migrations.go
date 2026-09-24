@@ -283,6 +283,14 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN last_bin_id INTEGER")
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN last_bin_epoch INTEGER NOT NULL DEFAULT 0")
 
+	// The record-count fence (see processes.SetCountFenced): the carrier, the
+	// generation and the AsOfSeq of the last fenced count this slot took, so a
+	// count taken earlier in the same stream, delivered later, is refused.
+	// Existing rows land NULL / 0 / 0, which refuses nothing.
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN adj_bin_id INTEGER")
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN adj_bin_epoch INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN adj_as_of_seq INTEGER NOT NULL DEFAULT 0")
+
 	// Hold-and-replay: pending tick counts accumulated while no bin is
 	// bound at the slot (pickup->delivery gap). Replaces the cached_bin_id
 	// gap-window. Old rows land at 0 (no pending). Idempotent ADD COLUMN.

@@ -6,13 +6,16 @@ import (
 	"shingo/protocol"
 )
 
-// HandleUOPAdjustment processes Core's admin-originated UOP adjustment.
-// Core validates the value is within [0, payload.UOPCapacity] before
-// sending. Edge writes the absolute value directly to the runtime cache
-// and emits EventUOPAdjusted so the operator screen refreshes via SSE.
+// HandleUOPAdjustment processes a count Core has set for a carrier: a count
+// (bins page or line), a load, a clear, or a lifecycle announcement. Edge
+// writes it to the runtime cache and emits EventUOPAdjusted so the operator
+// screen refreshes via SSE.
 //
-// PLC ticks accumulate from the new value naturally — no accumulator
-// involvement.
+// A count Core fenced for THIS station, on the carrier bound here at the same
+// generation, is rebased rather than written as is: the windows this station
+// flushed or recorded after the point Core counted at are added to Core's
+// number (fencedCount). Every other adjustment is written as is, and PLC ticks
+// accumulate from it.
 //
 // When adj.Released is set (Core moved the bin off this node via admin
 // Move), Edge instead CLEARS the node's active_bin_id so its PLC ticks stop
@@ -219,6 +222,22 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 			NewRemaining:  0,
 			Actor:         adj.Actor,
 		}})
+		return
+	}
+
+	// The record-count fence. Handled means the count was rebased, or refused
+	// as older than the one the slot holds; either way the absolute write
+	// below must not run.
+	if handled, applied, remaining := e.fencedCount(node.ID, rt, adj); handled {
+		if applied {
+			e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
+				ProcessNodeID: node.ID,
+				CoreNodeName:  adj.CoreNodeName,
+				BinID:         adj.BinID,
+				NewRemaining:  remaining,
+				Actor:         adj.Actor,
+			}})
+		}
 		return
 	}
 

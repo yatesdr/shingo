@@ -61,10 +61,10 @@ func consumeDelta(binID, epoch, seq int64, delta int) *protocol.BinUOPDelta {
 // top: Core ends at N-5. The Edge, which takes N from the broadcast, ends at N.
 // Both sides believe their number.
 //
-// VERIFY-RED: the record-count fence (SYNTH-round2 S7, second half) keeps
-// Core's number here (N-5 is right: the -5 happened after the count was read)
-// and moves the Edge to it. What inverts in THIS test is the announcement:
-// RecordCount enqueues one UOPAdjustment, inside its transaction, carrying the
+// The record-count fence (SYNTH-round2 S7, second half) keeps Core's number
+// here (N-5 is right: the -5 happened after the count was read) and moves the
+// Edge to it. What inverted in THIS test is the announcement: RecordCount
+// enqueues one UOPAdjustment, inside its transaction, carrying the
 // applied_net and last_seq Core held when it wrote N.
 func TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop(t *testing.T) {
 	t.Parallel()
@@ -92,8 +92,11 @@ func TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop(t *testing.T) {
 	if got := binEpoch(t, db, bin.ID); got != epoch {
 		t.Fatalf("RecordCount moved delta_epoch %d -> %d; the pin is that it does not bump", epoch, got)
 	}
-	if adj := outboxAdjustments(t, db, bin.ID); len(adj) != 0 {
-		t.Errorf("RecordCount enqueued %d UOPAdjustment rows; the service path announces nothing", len(adj))
+	// Inverted by the fence: the count announces itself, in its transaction.
+	// These deltas carry no net, so the cursor is unanchored and the fence is
+	// nil (record_count_fence_test.go covers the fenced case).
+	if adj := outboxAdjustments(t, db, bin.ID); len(adj) != 1 {
+		t.Errorf("RecordCount enqueued %d UOPAdjustment rows, want 1 from inside its transaction", len(adj))
 	}
 
 	// The in-flight delta arrives after the count, same epoch.
