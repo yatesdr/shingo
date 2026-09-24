@@ -1,6 +1,7 @@
 package store
 
 import (
+	"path/filepath"
 	"testing"
 
 	"shingo/protocol"
@@ -305,4 +306,41 @@ func upsertClaimRetiredMode(t *testing.T, db *DB, in processes.NodeClaimInput) (
 	}
 	_, err = db.DB.Exec(`UPDATE style_node_claims SET swap_mode=? WHERE id=?`, string(want), id)
 	return id, err
+}
+
+// THE REPORT COSTS ONE STATEMENT, WHATEVER THE SEAT COUNT. PIN, green before
+// and after lane A of the memory build: lane A puts the carrier's bin id, epoch
+// and flushed seq on each row as columns of this same SELECT (the flushed seq by
+// a JOIN to inventory_delta_seq), so the count must stay 1. A second statement
+// per seat would be one per row per minute on a Pi whose store is a single
+// SQLite connection.
+func TestListLinesideLevels_OneStatementForEverySeat(t *testing.T) {
+	t.Parallel()
+	db, counter, err := OpenCounting(filepath.Join(t.TempDir(), "levels.db"))
+	if err != nil {
+		t.Fatalf("open counting db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	for i, node := range []string{"ALN_020", "ALN_021", "ALN_022"} {
+		_, styleID, nodeID, claimID := linesideFixture(t, db, node)
+		bindCarrier(t, db, nodeID, claimID, int64(60+i), 100+i)
+		if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "PART-A", true, "delivery"); err != nil {
+			t.Fatalf("record carrier: %v", err)
+		}
+		if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "PART-A", 5); err != nil {
+			t.Fatalf("capture bucket: %v", err)
+		}
+	}
+
+	counter.Reset()
+	levels, err := db.ListLinesideLevels()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(levels) != 3 {
+		t.Fatalf("got %d rows, want 3: %+v", len(levels), levels)
+	}
+	if got := counter.Count(); got != 1 {
+		t.Errorf("ListLinesideLevels issued %d statements for 3 seats, want 1", got)
+	}
 }

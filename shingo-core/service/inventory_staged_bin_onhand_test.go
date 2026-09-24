@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/store/nodes"
 )
@@ -67,5 +68,46 @@ func TestSystemUOPForPayload_StagedBinCountsTowardOnHand(t *testing.T) {
 	if got.TotalUOP != 164 {
 		t.Errorf("TotalUOP = %d, want 164 — the staged phantom keeps on-hand >= a 160 threshold, so the empty-to-SM signal stays suppressed while the line starves",
 			got.TotalUOP)
+	}
+}
+
+// A STAGED CARRIER THAT TAKES COUNTS IS BOUND AND CONSUMING, NOT A PHANTOM.
+// PIN (round-1 seat-count S0 P0b), green before and after lane A of the memory
+// build. Core's `staged` at a seat is the ordinary state of a carrier the Edge
+// has bound: its accepted deltas land on bins.uop_remaining, and the total the
+// threshold monitor decides off moves with them. Lane A makes that total the
+// only one every fire path reads, so this is the property the decision stands
+// on; round 1 found all six staged carriers at Springfield's seats in exactly
+// this state.
+func TestSystemUOPForPayload_StagedCarrierTakesAcceptedDeltas(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewInventoryService(db)
+	deltas := NewInventoryDeltaService(db, NewBinManifestService(db, EpochAnnounce{}), EpochAnnounce{})
+
+	const payload = "PART-STAGED-CONSUMING"
+	line := &nodes.Node{Name: "ALN_P0B", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(line), "create line node")
+	carrier := createTestBin(t, db, line.ID, "CARRIER-P0B", payload, 150)
+	if _, err := db.Exec(`UPDATE bins SET status='staged' WHERE id=$1`, carrier.ID); err != nil {
+		t.Fatalf("stage carrier: %v", err)
+	}
+	var epoch int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, carrier.ID).Scan(&epoch), "read epoch")
+
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta("stn-p0b", &protocol.BinUOPDelta{
+		Station: "stn-p0b", BinID: carrier.ID, PayloadCode: payload, Delta: -10,
+		Reason: protocol.ReasonConsumeTick, SequenceID: 1, Epoch: epoch,
+	}), "apply consume delta to the staged carrier")
+
+	var remaining int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, carrier.ID).Scan(&remaining), "read uop")
+	if remaining != 140 {
+		t.Errorf("staged carrier uop_remaining = %d after a -10 delta, want 140", remaining)
+	}
+	res, err := svc.SystemUOPForPayload(context.Background(), []string{payload})
+	testutil.MustNoErr(t, err, "SystemUOPForPayload")
+	if len(res.Counts) != 1 || res.Counts[0].TotalUOP != 140 {
+		t.Errorf("SystemUOPForPayload = %+v, want a total of 140 — the staged carrier counts, at its consumed level", res.Counts)
 	}
 }

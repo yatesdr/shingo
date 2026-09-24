@@ -319,6 +319,13 @@ func TestThresholdMonitor_SwapContradiction_NoChipWhenBelow(t *testing.T) {
 // CHANGE-DETECTOR: this replaces TestThresholdMonitor_R1Shadow_DisagreesButDecidesNothing,
 // which asserted the shadow fired NOTHING. R1 going live inverts that: the whole
 // point of R1 is that this exact SNF3 shape now orders replenishment.
+//
+// CHARACTERISATION PIN, TO BE INVERTED by lane A of the memory build (decisions
+// read Core's count; seat-count round 1 S3). The inversion: the same bound
+// ledger bin at 150 with an Edge report of 10 HOLDS on every fire path, because
+// the decision reads SystemUOPForPayload alone, and the report instead opens a
+// report_divergence episode for that carrier (Edge 10, Core 150). Lane A's
+// change commit rewrites this test to assert both and names the inversion.
 func TestThresholdMonitor_R1Live_FiresOffEdgeAdjustedTotal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

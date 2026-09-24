@@ -104,3 +104,36 @@ func TestReportLinesideLevels_WithholdsAKnownEmptyCarrier(t *testing.T) {
 		t.Errorf("shipped %+v for an empty carrier", e)
 	}
 }
+
+// WHAT ONE 60 s REPORT COSTS THE PI. PIN of the statement count, green before
+// and after lane A of the memory build: the report is the level SELECT and one
+// snapshot enqueue, whatever lane A adds to each row. Lane A also flushes the
+// delta accumulator before the SELECT; that flush is the accumulator's own work
+// brought forward (it costs statements only for a scope with counts pending,
+// which the 5 s loop would have flushed anyway), and the fake sink here issues
+// none, so this count is the report's own. The message size is logged, not
+// pinned: it is the number statements.md compares before and after.
+func TestReportLinesideLevels_StatementsPerReport(t *testing.T) {
+	t.Parallel()
+	db, counter := testEngineDBCounting(t)
+	eng := testEngine(t, db)
+	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
+	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
+
+	counter.Reset()
+	eng.reportLinesideLevels()
+	got := counter.Count()
+
+	msgs, err := db.ListPendingOutbox(50)
+	testutil.MustNoErr(t, err, "list outbox")
+	for _, m := range msgs {
+		if m.MsgType == string(protocol.SubjectLinesideLevelReport) {
+			t.Logf("report message: %d bytes for 1 row", len(m.Payload))
+		}
+	}
+	if got != 3 {
+		t.Errorf("one report issued %d statements, want 3 (the level SELECT, and the snapshot "+
+			"enqueue's delete of the unsent predecessor and its insert)", got)
+	}
+}

@@ -156,6 +156,12 @@ func TestLinesideReport_UpsertErrorSkipsOnlyThatEntry(t *testing.T) {
 // the delivery turns out to be. A blank entry costs nothing. The monitor here
 // is the fake, so this counts the handler's own statements, not the
 // evaluation's.
+//
+// PIN of Core's report-ingest cost per message. Lane A of the memory build adds
+// the divergence check on ingest (seat-count round 1 S2): a constant number of
+// batched reads per message, never one per row, plus a write only when an
+// episode opens or closes. Its change commit moves this number by exactly that
+// constant and says so.
 func TestLinesideReport_StatementsPerEnvelope(t *testing.T) {
 	t.Parallel()
 	_, cfg := testdb.OpenWithConfig(t)
