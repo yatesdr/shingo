@@ -103,6 +103,28 @@ func TestReportLinesideLevels_WithholdsAKnownEmptyCarrier(t *testing.T) {
 	}
 }
 
+// A STATION WITH NOTHING AT ANY SEAT SENDS NOTHING. The seat is configured and
+// runs, but no carrier is bound and no bucket holds parts, so the level query
+// returns no row and the reporter returns before building a message. Core then
+// hears nothing from the station at all. PIN (memory close-out, owner ruling
+// 2a): the change sends every interval, and names this seat as empty.
+func TestPin_2a_NothingAtAnySeatSendsNoReport(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	seedDirectChangeover(t, db)
+
+	eng.reportLinesideLevels()
+
+	msgs, err := db.ListPendingOutbox(50)
+	testutil.MustNoErr(t, err, "list outbox")
+	for _, m := range msgs {
+		if m.MsgType == string(protocol.SubjectLinesideLevelReport) {
+			t.Errorf("a report went out for a station with nothing at any seat: %s", m.Payload)
+		}
+	}
+}
+
 // WHAT ONE 60 s REPORT COSTS THE PI. PIN of the statement count, green before
 // and after lane A of the memory build: the report is the level SELECT and one
 // snapshot enqueue, whatever lane A adds to each row. Lane A states each count
