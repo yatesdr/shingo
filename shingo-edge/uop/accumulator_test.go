@@ -285,14 +285,15 @@ func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
 }
 
 // TestInventoryDeltaReporter_BucketScopeKeyComposite pins the
-// pipe-delimited composite scope key for buckets — this format
-// matches the Core-side dedup key on inventory_delta_dedup. A drift
-// between the two sides would make every bucket delta look like a
-// new scope, defeating dedup.
+// pipe-delimited composite scope key for buckets, led by the core node
+// name — the format of the Core-side dedup key on inventory_delta_dedup
+// (shingo-core/uop bucketScopeKey). Until the one-bucket-key change this
+// pinned a key led by the local node id, which did NOT match Core's, and
+// the comment above it said it did.
 func TestInventoryDeltaReporter_BucketScopeKeyComposite(t *testing.T) {
 	t.Parallel()
-	got := bucketScopeKey(5, "L1|U1", 100, "PART-A")
-	want := "5|L1|U1|100|PART-A"
+	got := bucketScopeKey("CORE-NODE-1", "L1|U1", 100, "PART-A")
+	want := "CORE-NODE-1|L1|U1|100|PART-A"
 	if got != want {
 		t.Errorf("bucketScopeKey = %q, want %q (Core's dedup expects this exact format)", got, want)
 	}
@@ -301,6 +302,5 @@ func TestInventoryDeltaReporter_BucketScopeKeyComposite(t *testing.T) {
 // Pending-delta guard tests removed alongside the reconciler deletion
 // (bin-ownership flip): with no reconciler healing, there is no caller
 // for IsPendingBinDelta / IsPendingBucketDelta.
-// Outbox health is now signaled exclusively via FlushFailures + Kafka
-// consumer-lag dashboards; correctness lives in inventory_delta_dedup
-// at Core.
+// Correctness lives at Core: inventory_delta_dedup guards order and the
+// running net carried on each message heals a lost or reordered one.

@@ -1102,16 +1102,21 @@ CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
 -- scope_kind ∈ {"bin", "bucket"}.
 -- scope_key:
 --   bin scope    → strconv(BinID)
---   bucket scope → "<NodeID>|<PairKey>|<StyleID>|<PayloadCode>"
+--   bucket scope → "<CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>", the
+--                  key Core's dedup row uses (it was the local process node
+--                  id until the 2026-09-24 re-key)
 -- epoch labels the bin's load-lifecycle for bins (0 for buckets).
 -- Per-epoch counters mean a new bin load starts seq=1, immune to
 -- prior-epoch counter drift surviving across Edge restarts / DB
 -- restores. Old-epoch rows linger harmlessly.
+-- net is the running sum of every delta flushed for the scope, advanced in the
+-- same UPSERT that allocates the seq and carried on each count message.
 CREATE TABLE IF NOT EXISTS inventory_delta_seq (
     scope_kind TEXT NOT NULL,
     scope_key  TEXT NOT NULL,
     epoch      INTEGER NOT NULL DEFAULT 0,
     next_seq   INTEGER NOT NULL DEFAULT 1,
+    net        INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (scope_kind, scope_key, epoch)
 );

@@ -293,6 +293,46 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 	return newEpoch, nil
 }
 
+// RebaseAfterEdgeRollbackTx starts the carrier's next count generation because
+// the station counting it went backward (SYNTH-round2 S6): the applier saw a
+// message at or below the scope's last applied seq whose window ends after the
+// last applied one, which a duplicate or a late message cannot produce and a
+// restored or reinstalled station does. Returns the new delta_epoch.
+//
+// THE COUNT IS NOT TOUCHED. Core's number is the one that stands; the bump's
+// announcement carries it, the station adopts it under the new generation, and
+// its seq stream and running net start over there. Whatever the station
+// re-sends under the old generation is then a stale-epoch drop, which is
+// recorded. Nobody declared anything, so DeclaredByLifecycle: the station must
+// not bind an empty slot to the carrier on the strength of this.
+//
+// The ledger row (edge_rollback, before == after) is the boundary the bump
+// makes, and AppendBinUOP writes its boundary exception; the applier writes
+// the edge_rollback exception with the seqs and windows.
+func (s *BinManifestService) RebaseAfterEdgeRollbackTx(tx *sql.Tx, binID int64, payloadCode, station string) (int64, error) {
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return 0, err
+	}
+	if before == nil {
+		return 0, fmt.Errorf("rebase after edge rollback: bin %d does not exist", binID)
+	}
+	newEpoch, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle)
+	if err != nil {
+		return 0, err
+	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return 0, err
+	}
+	uopCtx.Station = station
+	if err := audit.AppendBinUOP(tx, binID, before, *before, audit.OpEdgeRollback,
+		"service/bin_manifest.go:RebaseAfterEdgeRollback", nil, payloadCode, station, uopCtx); err != nil {
+		return 0, err
+	}
+	return newEpoch, nil
+}
+
 // (Item 14 D8: SyncUOP deleted — zero production callers. Partial-
 // consumption sync goes through ApplyBinUOPDelta in the post-bin-as-
 // truth flow; SyncUOPAndClaim covers the claim-with-uop case

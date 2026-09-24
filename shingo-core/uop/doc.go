@@ -2,9 +2,10 @@
 // state mutations.
 //
 // Today's surface is the Applier — receives BinUOPDelta and
-// LinesideBucketDelta envelopes from Edge, dedups against
-// inventory_delta_dedup, applies the signed delta to
-// bins.uop_remaining / lineside_buckets, writes the audit row, and
+// LinesideBucketDelta envelopes from Edge, guards order against
+// inventory_delta_dedup, applies what each message's running net says
+// has not landed to bins.uop_remaining / lineside_buckets, writes the
+// audit row, and
 // fires the post-update ClearForReuse hook when a capture_reduction
 // drives the bin count to zero.
 //

@@ -30,11 +30,6 @@ type fakeDeltaSink struct {
 	pendingBins    map[int64]struct{}
 	pendingBuckets map[fakePendingBucketKey]struct{}
 
-	// flushFailures is a configurable stand-in for the production
-	// reporter's atomic counter — tests that exercise the metrics
-	// surface stuff a value here.
-	flushFailures int64
-
 	// flushCount counts Flush + MarkAttributionBoundary invocations.
 	// boundaryCalls records the nodeIDs MarkAttributionBoundary was
 	// called with so tests can assert FlipABNode flushed before
@@ -463,15 +458,6 @@ func (s *fakeDeltaSink) IsPendingBucketDelta(nodeID, styleID int64, partNumber s
 		}
 	}
 	return false
-}
-
-// FlushFailures lets tests stuff a configured count via the
-// flushFailures field on fakeDeltaSink — defaults to 0, matching the
-// production no-failures steady state.
-func (s *fakeDeltaSink) FlushFailures() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.flushFailures
 }
 
 // fakePendingBucketKey is the test-side equivalent of

@@ -497,7 +497,9 @@ CREATE TABLE public.inventory_delta_dedup (
     scope_key text NOT NULL,
     epoch bigint DEFAULT 0 NOT NULL,
     last_seq bigint NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    applied_net bigint,
+    applied_window_end timestamp with time zone
 );
 
 CREATE TABLE public.lane_confidence_daily (

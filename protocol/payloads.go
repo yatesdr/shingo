@@ -1258,11 +1258,18 @@ type NodeStructureChanged struct {
 // shape stayed because the wire format and consumer code already
 // committed to it.
 //
-// Dedup is at the message level via a (station, scope_kind, scope_key,
-// last_seq) table on Core — distinct from inbox dedup which gates
-// at-most-once order processing. SequenceID is monotonically increasing
-// per (station, scope_key); Core ignores any envelope whose SequenceID
-// is ≤ last_seen for its scope.
+// Order is guarded per scope by Core's inventory_delta_dedup, keyed
+// (station, scope_kind, scope_key, epoch) with last_seq as a high-water mark —
+// distinct from inbox dedup, which gates at-most-once order processing.
+// SequenceID increases per (scope_kind, scope_key, epoch) on the Edge, and Core
+// skips any envelope whose SequenceID is at or below last_seq for its scope.
+//
+// A SKIP IS NOT A LOSS WHEN THE MESSAGE CARRIES Net. The high-water mark cannot
+// tell a duplicate from a reordered, requeued or post-restore message, and
+// before Net each of those lost its count silently. Net is the scope's running
+// total; Core applies Net minus what it has already applied for the scope, so
+// whatever a skipped message carried lands with the next one that is applied
+// (uop.InventoryDeltaService, the apply rule).
 
 // BinUOPDeltaReason names the cause of a BinUOPDelta. Stable strings —
 // Core dedup and audit rows reference them, so renames must come with a
@@ -1325,8 +1332,9 @@ const (
 //
 // PayloadCode lets Core reject mismatched envelopes (a bin's payload
 // shouldn't change underfoot). WindowStart/WindowEnd bracket the
-// accumulator window the delta covers — telemetry and forensics can
-// align deltas to PLC-tick timestamps.
+// accumulator window the delta covers, in Edge time. Core records both on the
+// ledger row, and compares WindowEnd against the last applied window to tell a
+// rolled-back Edge (restore, reinstall) from a duplicate or a late message.
 type BinUOPDelta struct {
 	Station     string            `json:"station"`
 	BinID       int64             `json:"bin_id"`
@@ -1345,6 +1353,12 @@ type BinUOPDelta struct {
 	Epoch       int64     `json:"epoch"`
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`
+	// Net is the running total of every Delta this Edge has flushed for the
+	// scope (station, bin, epoch), this one included. Core applies Net minus
+	// what it has already applied for the scope, so a lost, late, duplicated or
+	// reordered message is healed by the next one. Nil from an Edge built before
+	// the field existed; Core then applies Delta exactly as it used to.
+	Net *int64 `json:"net,omitempty"`
 }
 
 // CounterSnapshot is the production.tick payload (plan §12): one PLC counter
@@ -1408,13 +1422,15 @@ type DowntimeEvent struct {
 
 // LinesideBucketDelta carries a count change against a specific
 // lineside bucket. Sent on subject SubjectLinesideBucketDelta. Core
-// routes on subject, dedups against
+// routes on subject, guards order against
 // inventory_delta_dedup(station, "bucket",
-// "<NodeID>|<PairKey>|<StyleID>|<PayloadCode>"), and applies via UPSERT
-// to the lineside_buckets row keyed on
-// (station, node_id, pair_key, style_id, payload_code). When qty hits
-// zero Core deletes the row — Option C: active/inactive is computed
-// at query time, so empty buckets carry no useful information.
+// "<CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>", epoch 0) — the same key
+// the Edge allocates its seq under — and applies via UPSERT to the
+// lineside_buckets row keyed on (core_node_name, pair_key, style_id,
+// payload_code). When qty hits zero Core deletes the row — Option C:
+// active/inactive is computed at query time, so empty buckets carry no useful
+// information. The dedup row outlives that delete, which is what keeps the
+// scope's applied net anchored.
 //
 // PayloadCode (UOP-threshold replenishment) lets Core associate a
 // bucket with the payload its parts came from so SystemUOPForPayload
@@ -1459,6 +1475,9 @@ type LinesideBucketDelta struct {
 	SequenceID  int64                     `json:"sequence_id"`
 	WindowStart time.Time                 `json:"window_start"`
 	WindowEnd   time.Time                 `json:"window_end"`
+	// Net is the scope's running total, as on BinUOPDelta; the scope is
+	// (station, bucket key). Nil from an older Edge.
+	Net *int64 `json:"net,omitempty"`
 }
 
 // UOPAdjustment carries an absolute UOP value set by an admin via Core's

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 	"time"
 
 	"shingo/protocol"
@@ -280,15 +281,20 @@ func isProductionTick(snap *protocol.CounterSnapshot) bool {
 	return snap.Delta > 0 && snap.StyleID != 0 && snap.Anomaly != "jump"
 }
 
-// HandleBinUOPDelta routes a Phase 1 inventory delta envelope to the
-// InventoryDeltaService. Errors land in the log loud (no Edge reply
-// channel exists for these — they're fire-and-forget from Edge's
-// outbox); a missing target bin or payload mismatch is the
-// dead-letter signal. Replays (already-applied SequenceID) are
-// silently dropped at the dedup step.
+// HandleBinUOPDelta routes a count message to the InventoryDeltaService,
+// which applies it to bins.uop_remaining. Errors land in the log (the Edge
+// sends these from its outbox and gets no reply); a payload mismatch and a
+// stale generation are also recorded on the ledger by the applier.
 //
-// Core applies deltas authoritatively against bins.uop_remaining;
-// Edge's runtime cache trails authoritative state via the reconciler.
+// A skip is not one thing, and the log line says which it was: a message at
+// or below its scope's high-water mark (a duplicate, or a late, reordered or
+// requeued one, whose count the running net carried when the scope has one),
+// a station whose counter went backward, or a retired generation. The applier
+// words the reason; this only prints it.
+//
+// There is no reconciler. Core's count is the Edge's stream applied; the
+// Edge's own count is the durable one for a bin at its node, and nothing
+// writes Core's number back to it except a generation change's announcement.
 func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
 	// The station is the ENVELOPE's, which is the one the transport carried
 	// rather than the one the sender asserted in its own body. See
@@ -296,16 +302,16 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 	station := env.Src.Station
 	if err := s.inventoryDelta.ApplyBinUOPDelta(station, d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
-			s.resp.dbg("bin_uop_delta replay station=%s bin=%d seq=%d — already applied",
-				station, d.BinID, d.SequenceID)
+			s.resp.dbg("bin_uop_delta skipped station=%s bin=%d seq=%d epoch=%d: %v",
+				station, d.BinID, d.SequenceID, d.Epoch, err)
 			return
 		}
 		log.Printf("core_handler: apply BinUOPDelta station=%s bin=%d seq=%d delta=%d reason=%s: %v",
 			station, d.BinID, d.SequenceID, d.Delta, d.Reason, err)
 		return
 	}
-	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d delta=%d reason=%s",
-		station, d.BinID, d.SequenceID, d.Delta, d.Reason)
+	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d wire_delta=%d net=%s reason=%s",
+		station, d.BinID, d.SequenceID, d.Delta, netString(d.Net), d.Reason)
 
 	// Notify the UOP-threshold monitor so the delta is applied to the
 	// cached UOP total and thresholds are checked. The monitor does
@@ -337,6 +343,15 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 	}
 }
 
+// netString renders a count message's running net for a log line: "none" for
+// a message from an Edge that does not send one.
+func netString(net *int64) string {
+	if net == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*net, 10)
+}
+
 // isProductionReason reports whether a bin_uop_delta reason represents a part
 // being produced for the demand counter (§14). Both directions count, keyed by
 // payload_code: produce_tick (a part is made), consume_tick and its A/B-cycling
@@ -353,25 +368,24 @@ func isProductionReason(reason protocol.BinUOPDeltaReason) bool {
 	}
 }
 
-// HandleLinesideBucketDelta routes a Phase 1 inventory delta envelope
-// to the InventoryDeltaService. Same dead-letter / authoritative-write notes
-// as HandleBinUOPDelta apply. Manual-swap nodes never emit bucket
+// HandleLinesideBucketDelta routes a bucket count message to the
+// InventoryDeltaService. The notes on HandleBinUOPDelta apply. Manual-swap nodes never emit bucket
 // deltas (no PLC) — a delta arriving from a manual-swap node would
 // indicate an Edge bug.
 func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *protocol.LinesideBucketDelta) {
 	station := env.Src.Station
 	if err := s.inventoryDelta.ApplyLinesideBucketDelta(station, d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
-			s.resp.dbg("lineside_bucket_delta replay station=%s core_node=%q payload=%q seq=%d — already applied",
-				station, d.CoreNodeName, d.PayloadCode, d.SequenceID)
+			s.resp.dbg("lineside_bucket_delta skipped station=%s core_node=%q payload=%q seq=%d: %v",
+				station, d.CoreNodeName, d.PayloadCode, d.SequenceID, err)
 			return
 		}
 		log.Printf("core_handler: apply LinesideBucketDelta station=%s core_node=%q payload=%q seq=%d delta=%d reason=%s: %v",
 			station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, d.Reason, err)
 		return
 	}
-	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q payload=%q seq=%d delta=%d reason=%s",
-		station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, d.Reason)
+	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q payload=%q seq=%d wire_delta=%d net=%s reason=%s",
+		station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, netString(d.Net), d.Reason)
 
 	// Notify the UOP-threshold monitor so a bucket drain or capture
 	// re-evaluates loop totals. The monitor's debounce + opt-in gating

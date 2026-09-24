@@ -357,8 +357,8 @@ func (s *flushTrackingSink) OnBinPickedUp(nodeID *int64) error {
 
 // Pending-delta release guard test removed alongside the reconciler
 // deletion (bin-ownership flip). Trust-the-bus model: Flush enqueues
-// the deltas synchronously, Kafka delivery + Core's inventory_delta_dedup
-// handle ordering. FlushFailures surfaces real outbox wedging.
+// the deltas synchronously, and Core's running-net apply heals a message
+// that arrives late or out of order.
 
 // TestRegression_ReleaseAcceptsAfterFlush is the positive companion:
 // when the bin is not pending after Flush, the release proceeds

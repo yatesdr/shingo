@@ -695,6 +695,21 @@ func (db *DB) migrate() error {
 		db.Exec(`ALTER TABLE inventory_delta_seq_new RENAME TO inventory_delta_seq`)
 	}
 
+	// 2026-09-24, the running net: inventory_delta_seq.net is the signed
+	// sum of every delta flushed for the scope, advanced in the seq UPSERT and
+	// carried on each count message so Core can heal a lost or reordered one
+	// (SYNTH-round2 §3). 0 on every existing row: nothing has been sent with a
+	// net yet, and Core applies the first net-bearing message on a row it
+	// already has by its delta, anchoring to the net it carried.
+	db.Exec("ALTER TABLE inventory_delta_seq ADD COLUMN net INTEGER NOT NULL DEFAULT 0")
+
+	// The same change, and AFTER the column: bucket seq rows move to the key
+	// Core has always used (core_node_name, not process_nodes.id), merging the
+	// rows two process nodes with one core name kept apart (SYNTH-round2 S4).
+	if err := db.rekeyBucketDeltaSeq(); err != nil {
+		return err
+	}
+
 	// v27: queue_reason on orders — mirrors Core's orders.queue_reason so
 	// the operator HMI can show WHY an order is waiting instead of just "IN QUEUE".
 	// Populated via the OrderUpdate push when Core's dispatcher leaves an order

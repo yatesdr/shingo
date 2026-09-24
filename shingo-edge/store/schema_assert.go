@@ -91,6 +91,7 @@ var requiredTables = []string{
 type requiredColumn struct{ table, column string }
 
 var requiredColumns = []requiredColumn{
+	{"inventory_delta_seq", "net"},
 	{"orders", "payload_code"},
 	{"orders", "sibling_order_id"},
 	{"orders", "queue_reason"},

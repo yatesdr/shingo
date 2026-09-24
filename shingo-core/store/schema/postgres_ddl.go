@@ -724,10 +724,11 @@ CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payl
 -- carried by the envelope. last_seq is the highest SequenceID Core has
 -- applied for the (station, scope_kind, scope_key) tuple.
 -- epoch is the bin's delta_epoch at the time the delta was emitted.
--- Bins-only column on the wire; bucket-scope deltas carry epoch=0 and
--- Core treats that as the pre-migration cohort (the bucket scope
--- relies on the existing qty→0 GC + admin-delete to clear its dedup
--- rows; see store/inventory/inventory.go).
+-- Bins-only column on the wire; bucket-scope deltas carry epoch=0.
+-- A bucket's dedup row is NOT cleared by the qty→0 GC, and must not be:
+-- since v126 (applied_net) an absent row applies the station's whole
+-- running net. The admin delete resets the row instead of deleting it
+-- (store/inventory/inventory.go).
 CREATE TABLE IF NOT EXISTS inventory_delta_dedup (
     station TEXT NOT NULL,
     scope_kind TEXT NOT NULL,

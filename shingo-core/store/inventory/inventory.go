@@ -299,8 +299,17 @@ ORDER BY payload_code`
 }
 
 // DeleteLinesideBucket removes one lineside_buckets row by primary
-// key, atomically with the matching inventory_delta_dedup row so the
-// dedup table doesn't shadow future deltas for the same scope.
+// key, and in the same transaction resets the matching
+// inventory_delta_dedup row so it doesn't shadow future deltas for the
+// same scope.
+//
+// RESET, NOT DELETED, SINCE THE RUNNING NET (v126). An absent dedup row
+// tells the applier that nothing for the scope was ever applied, so the
+// next message would apply the station's whole running net — every delta
+// it has flushed for the bucket — onto the bucket this Clear just emptied.
+// Resetting last_seq to 0 keeps what deleting the row did (any seq applies
+// next), and a NULL applied_net makes the next message apply its own delta
+// and re-anchor, which is what that message did before the net existed.
 //
 // Round-3 Obs 10: powers the operator-driven "Clear" button on the
 // Core admin "Lineside Buckets" table — the path for clearing the
@@ -345,9 +354,10 @@ func DeleteLinesideBucket(db *sql.DB, id int64) (int, error) {
 	// store/inventory/ doesn't depend on shingocore/uop just for the
 	// helper.
 	scopeKey := fmt.Sprintf("%s|%s|%d|%s", coreNodeName, pairKey, styleID, payloadCode)
-	if _, err := tx.Exec(`DELETE FROM inventory_delta_dedup
+	if _, err := tx.Exec(`UPDATE inventory_delta_dedup
+		SET last_seq=0, applied_net=NULL, applied_window_end=NULL, updated_at=NOW()
 		WHERE station=$1 AND scope_kind='bucket' AND scope_key=$2`, station, scopeKey); err != nil {
-		return 0, fmt.Errorf("delete dedup row for bucket %d (scope_key=%s): %w", id, scopeKey, err)
+		return 0, fmt.Errorf("reset dedup row for bucket %d (scope_key=%s): %w", id, scopeKey, err)
 	}
 
 	if err := tx.Commit(); err != nil {

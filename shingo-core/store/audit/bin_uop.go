@@ -117,6 +117,15 @@ const (
 	// shape. The bin is also anomaly-flagged (once) so the drop is visible on
 	// the bins page, not only in the core_handler log (HK 2026-07-16).
 	OpPayloadMismatchDropped = "payload_mismatch_dropped"
+
+	// OpEdgeRollback tags the epoch bump Core makes when a station's count
+	// stream went BACKWARD: a message at or below the scope's last applied seq
+	// whose window ends after the last applied window (a restore or reinstall
+	// rolled the station's seq table back). before_uop == after_uop — the count
+	// is not changed — and the bump announces Core's number under a fresh
+	// generation, which the station adopts. The applier writes the matching
+	// edge_rollback exception (ExcEdgeRollback) with the seqs and windows.
+	OpEdgeRollback = "edge_rollback"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
@@ -147,7 +156,7 @@ var ReleaseFamilyOps = []string{
 // against that belief. It is the grain the 5.11 stale-binding candidates are
 // measured on (store/bins.CarrierBindings), and it is derivable from
 // bin_uop_ledger alone because a bump always writes one of these rows in the same
-// transaction (service/bin_manifest.go — bumpEpoch is called from six places and
+// transaction (service/bin_manifest.go — bumpEpoch is called from seven places and
 // each one appends an op below).
 //
 // A SUPERSET OF ReleaseFamilyOps, AND THE DIFFERENCE IS THE POINT. That set
@@ -176,7 +185,12 @@ var ReleaseFamilyOps = []string{
 //     ALONGSIDE a release that has its own row in this set; counting them would
 //     double a boundary rather than add one.
 //
-// TestEpochBumpOpsCoversEveryBumpSite pins the six call sites, so a seventh
+// edge_rollback IS included although the carrier's payload does not change:
+// the count does start over. The station adopts Core's number under the new
+// generation and its stream restarts at seq 1, which is the question this set
+// answers.
+//
+// TestEpochBumpOpsCoversEveryBumpSite pins the seven call sites, so an eighth
 // arrives as a failing test pointing here rather than as a binding age that is
 // silently too long.
 var EpochBumpOps = []string{
@@ -190,6 +204,7 @@ var EpochBumpOps = []string{
 	OpReleasedPartialFallback,
 	OpReleasedCaptureEmpty,
 	OpReleasedUnderpack,
+	OpEdgeRollback,
 }
 
 // BinUOPExecer is the minimal interface satisfied by *sql.Tx and *sql.DB.

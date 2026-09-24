@@ -239,6 +239,7 @@ CREATE TABLE inventory_delta_seq (
     scope_key  TEXT NOT NULL,
     epoch      INTEGER NOT NULL DEFAULT 0,
     next_seq   INTEGER NOT NULL DEFAULT 1,
+    net        INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (scope_kind, scope_key, epoch)
 );

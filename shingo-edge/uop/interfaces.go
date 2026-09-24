@@ -57,8 +57,8 @@ type Backfiller interface {
 	Backfill(force bool) (int, error)
 }
 
-// Sink composes every sub-interface plus the legacy four-method shim
-// (RecordBin/RecordBucket/Flush/FlushFailures). This is the umbrella
+// Sink composes every sub-interface plus the legacy three-method shim
+// (RecordBin/RecordBucket/Flush). This is the umbrella
 // the engine holds; sub-interfaces are for finer-grained depend-on
 // surfaces at call sites or in test fakes.
 //
@@ -73,7 +73,7 @@ type Sink interface {
 	Boundary
 	Backfiller
 
-	// Legacy four-method surface — carried for backward compat with
+	// Legacy three-method surface — carried for backward compat with
 	// the original InventoryDeltaSink contract. New emission sites
 	// should not call these; the archtest enforces no direct
 	// RecordBin/RecordBucket calls outside this package.
@@ -84,5 +84,4 @@ type Sink interface {
 	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64)
 	RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
 	Flush()
-	FlushFailures() int64
 }

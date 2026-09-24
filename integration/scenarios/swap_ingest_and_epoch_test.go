@@ -17,6 +17,7 @@
 package scenarios
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -293,7 +294,7 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 
 	// ── Late delta carrying the pre-release (load) epoch: dropped. ──
 	adjustmentsBeforeStale := announced(protocol.SubjectUOPAdjustment)
-	if err := consume(loadEpoch, -5, 2); err != uop.ErrInventoryDeltaSkipped {
+	if err := consume(loadEpoch, -5, 2); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Fatalf("stale-epoch consume err = %v, want ErrInventoryDeltaSkipped", err)
 	}
 	if got := uopOf(); got != 0 {

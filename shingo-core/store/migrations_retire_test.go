@@ -155,6 +155,11 @@ import (
 // window frees. DEFAULT false is every Core-owned unloader's live behaviour.
 // Inert to a pre-v125 binary; rollback is DROP COLUMN.
 //
+// v126 ADDS inventory_delta_dedup.applied_net and applied_window_end — the
+// running net's anchor and the rollback detector's last applied window. NULL
+// on every existing row, which is the mixed-version anchor. Inert to a
+// pre-v126 binary; rollback is DROP COLUMN on both.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -166,8 +171,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 125 {
-		t.Errorf("head migration = %d, want 125", got)
+	if got := store.LatestMigrationVersion(); got != 126 {
+		t.Errorf("head migration = %d, want 126", got)
 	}
 }
 

@@ -25,7 +25,7 @@ import (
 // TestEpochBumpOpsCoversEveryBumpSite pins the number of bumpEpoch call sites.
 //
 // It cannot prove that each site writes an op in the set — that would need to
-// follow control flow — but it can make a SIXTH site impossible to add quietly.
+// follow control flow — but it can make a new site impossible to add quietly.
 // The failure lands on the person adding the bump, in a diff, with this comment
 // in view, which is the same instrument the provenance registry uses for its
 // SME exemptions.
@@ -44,14 +44,16 @@ func TestEpochBumpOpsCoversEveryBumpSite(t *testing.T) {
 	sites := regexp.MustCompile(`(?m)^\s*(?:if\s+)?(?:_|\w+)?(?:,\s*\w+)?\s*(?::?=\s*)?s\.bumpEpoch\(tx,`).
 		FindAllIndex(src, -1)
 
-	// SIX SITES, TEN OPS — the two are not the same number and that is fine.
+	// SEVEN SITES, ELEVEN OPS — the two are not the same number and that is fine.
 	// The clear-manifest site takes its op as a PARAMETER, so clear_for_reuse and
 	// released_capture_empty both reach it; the released-empty site branches
-	// across three ops and the released-partial site across two. Counting sites
-	// rather than ops is deliberate: a new op routed through an existing site is
-	// already covered, and it is a NEW SITE that can introduce a boundary this set
-	// has never heard of.
-	const wantSites = 6
+	// across three ops and the released-partial site across two. The sixth site
+	// is the dispatch claim of a partly consumed carrier (sync_uop_and_claim); the
+	// seventh is the rebase after a station's count stream went backward, which
+	// writes edge_rollback. Counting sites rather than ops is deliberate: a new op
+	// routed through an existing site is already covered, and it is a NEW SITE
+	// that can introduce a boundary this set has never heard of.
+	const wantSites = 7
 	if len(sites) != wantSites {
 		t.Errorf("service/bin_manifest.go has %d s.bumpEpoch(tx, …) call sites; this test is "+
 			"pinned at %d.\n\nIf a site was ADDED, find which audit op its function writes "+

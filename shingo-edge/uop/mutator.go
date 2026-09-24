@@ -2,7 +2,7 @@
 //
 // Phase 1 scope: a thin shell over the package-private accumulator
 // satisfying the engine's InventoryDeltaSink interface
-// (RecordBin/RecordBucket/Flush/FlushFailures). Later phases grow this
+// (RecordBin/RecordBucket/Flush). Later phases grow this
 // surface into segregated interfaces (Ticker, SlotWriter, Capturer,
 // Pickup, Boundary, Backfiller) without further changes to the
 // composition root.
@@ -96,11 +96,6 @@ func (m *Mutator) RecordBucket(nodeID int64, coreNodeName, pairKey string, style
 // Satisfies engine.InventoryDeltaSink.
 func (m *Mutator) Flush() { m.acc.flush() }
 
-// FlushFailures returns the cumulative count of EnqueueOutbox failures
-// across the bin and bucket flush paths since process start. Surfaces
-// via engine metrics for outbox-health dashboards.
-func (m *Mutator) FlushFailures() int64 { return m.acc.flushFailures.Load() }
-
 // OnBinPickedUp flushes pending deltas at the bin-pickup boundary.
 // Today's caller is HandleBinPickedUp at handler_bin_picked_up.go:108,
 // called before the runtime row's order pointer + active_bin_id are
@@ -129,8 +124,8 @@ func (m *Mutator) OnBinPickedUp(nodeID *int64) error {
 // MUST flush synchronously. The error signature is the forward-shape
 // for when the accumulator flush gains error propagation; the current
 // implementation returns nil unconditionally (the underlying flush
-// logs failures and increments FlushFailures rather than returning
-// them). Callers should treat a returned error as "flush failed — do
+// logs failures and leaves the entry for the next flush rather than
+// returning them). Callers should treat a returned error as "flush failed — do
 // not proceed with the downstream attribution change."
 //
 // nodeID identifies the boundary the caller is about to cross.

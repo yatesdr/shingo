@@ -26,8 +26,8 @@
 // a tick or two recorded after the physical pickup but before the
 // flush may attribute to a bin that's no longer at the slot. Post-flip
 // (commit 6d226d1) no reconciler exists to heal this; the miscount is
-// bounded by the pickup-to-restart window and surfaces via
-// FlushFailures if it ever causes a Core-side delta rejection.
+// bounded by the pickup-to-restart window, and a Core-side delta rejection
+// it causes is recorded at Core as a refused-delta ledger row.
 package engine
 
 import (
@@ -39,8 +39,8 @@ import (
 // HandleBinPickedUp processes a Core BinPickedUp notification.
 // Best-effort — failures log and continue rather than rejecting the
 // envelope. Post-flip there is no reconciler to heal silent failures;
-// the FlushFailures gauge is the operational signal if attribution
-// goes wrong.
+// attribution that goes wrong shows at Core as refused-delta ledger rows,
+// not here.
 //
 // location is the Core node name where the pickup occurred (BinPickedUp.Location
 // on the wire envelope). Used to gate the runtime-mutation branches below:

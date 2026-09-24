@@ -40,11 +40,12 @@ import (
 // The plan specifies one ("~1,779/day stale-epoch drops + ~1,779/day replays
 // produce phantom gaps"). It must not be built, for two independent reasons:
 //
-//  1. The two figures are ONE POPULATION COUNTED TWICE. The stale-epoch branch
+//  1. The two figures were ONE POPULATION COUNTED TWICE. The stale-epoch branch
 //     logs "BinUOPDelta stale epoch DROPPED" and then returns
-//     ErrInventoryDeltaSkipped, whose caller logs "replay — already applied".
-//     Every drop emits both lines, so the counts are necessarily equal, and
-//     adding them invents a replay population that does not exist.
+//     ErrInventoryDeltaSkipped, whose caller logged every skip as "replay —
+//     already applied". Every drop emitted both lines, so the counts were
+//     necessarily equal, and adding them invented a replay population that did
+//     not exist. (The caller's line now prints the applier's reason instead.)
 //
 //  2. A GENUINE REPLAY WRITES NO AUDIT ROW AT ALL. The applier returns before
 //     the INSERT when the dedup sequence has already been consumed. Replays are

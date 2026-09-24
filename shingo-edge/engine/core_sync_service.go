@@ -20,8 +20,9 @@ func (s *CoreSyncService) StartupReconcile() error {
 	// Bin/bucket reconciliation removed with the bin-ownership flip:
 	// Edge owns the count for any bin physically at lineside, ships
 	// deltas to Core via the outbox, and trusts the Kafka pipeline.
-	// No reverse heal; FlushFailures + consumer-lag dashboards surface
-	// pipeline health instead.
+	// No reverse heal. Each count message carries its scope's running
+	// net, so Core heals a lost or reordered one on the next message and
+	// records the heal on its ledger row.
 	return s.RequestOrderStatusSync()
 }
 

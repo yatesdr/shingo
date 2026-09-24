@@ -262,8 +262,8 @@ func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, rows)
 }
 
-// apiBucketDelete removes one lineside_buckets row + its
-// inventory_delta_dedup row by primary key. Round-3 Obs 10 — the
+// apiBucketDelete removes one lineside_buckets row by primary key and
+// resets its inventory_delta_dedup row. Round-3 Obs 10 — the
 // operator-driven recovery hatch for the cross-namespace orphan
 // shape that the Obs 8 protocol fix made impossible to create going
 // forward. Auth-gated via requireAuth (binary in this codebase; no

@@ -4281,7 +4281,49 @@ func migrationList() []migration {
 		{125, "bin_loaders.auto_push — an unloader re-pulls its next full when a window frees, set on the loader Core owns instead of the retired stored claim",
 			v125LoaderAutoPush,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "auto_push") }},
+
+		{126, "inventory_delta_dedup.applied_net + applied_window_end — Core applies a count message's running net minus what it has applied, and can tell a rolled-back Edge from a late message",
+			v126DedupAppliedNet,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "inventory_delta_dedup", "applied_net") &&
+					schema.ColumnExists(q, "inventory_delta_dedup", "applied_window_end")
+			}},
 	}
+}
+
+// v126DedupAppliedNet gives the dedup row the two facts the running net needs
+// (SYNTH-round2 §3, S6).
+//
+// applied_net is the net of the last message Core applied for the scope. Every
+// count message now carries its scope's running total, and Core applies that
+// total minus applied_net, so a message lost, reordered or muted by the
+// last_seq high-water mark is healed by the next one instead of vanishing.
+//
+// NULL, NOT 0, ON EVERY EXISTING ROW, AND THAT IS THE MIXED-VERSION RULE. A row
+// that exists has applied deltas from messages that carried no net, so the
+// first net-bearing message on it cannot apply its net (that would re-apply
+// everything the row already holds). It applies its delta and anchors
+// applied_net to the net it carried. 0 would be a claim that nothing has been
+// applied, which is the absent-row case, not this one.
+//
+// applied_window_end is the Edge-time end of the last applied window. A
+// message at or below last_seq whose window ends LATER than that was not sent
+// before the applied one: the Edge's counter went backward (restore,
+// reinstall), and Core records it instead of skipping it silently.
+//
+// ROLLBACK: two nullable columns; a pre-v126 binary never reads or writes them.
+// Its UPSERT leaves them as they are, and a later v126 binary treats a stale
+// applied_net the way it treats one an old Edge left: the next net-bearing
+// message re-anchors only if the value is NULL, so a downgrade-then-upgrade
+// window can mis-apply by the deltas applied while downgraded. Drop both
+// columns (ALTER TABLE ... DROP COLUMN) to roll back cleanly.
+func v126DedupAppliedNet(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE inventory_delta_dedup
+		ADD COLUMN IF NOT EXISTS applied_net        BIGINT NULL,
+		ADD COLUMN IF NOT EXISTS applied_window_end TIMESTAMPTZ NULL`); err != nil {
+		return fmt.Errorf("v126 inventory_delta_dedup applied_net: %w", err)
+	}
+	return nil
 }
 
 // v116NearEmptyRobotGroup adds the near-empty relaxation to payload templates
@@ -6737,6 +6779,7 @@ var bumpOpsForBackfill = []string{
 	"set_for_production", "clear_and_claim", "clear_for_reuse",
 	"released_empty", "released_partial", "released_empty_fallback",
 	"released_partial_fallback", "released_capture_empty", "released_underpack",
+	"edge_rollback",
 }
 
 // pgTextArraySQL renders a Go string slice as a QUOTED Postgres array literal

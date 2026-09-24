@@ -302,8 +302,8 @@ func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.Run
 // write is the durable truth for at-node bins, not a write-through
 // cache — there is no reconciler healing back from Core. Core mirrors
 // via the bucket and bin deltas published below. If a delta is rejected
-// at Core (e.g., payload_code mismatch), FlushFailures surfaces the
-// drift; no automatic heal exists.
+// at Core (e.g., payload_code mismatch), Core records the refusal on its
+// ledger; nothing on the Edge heals it.
 //
 // Per SME lock (open-items.md §"Process semantics"): bins can go
 // negative. A real bin nominally rated 1000 might overpack to 1005

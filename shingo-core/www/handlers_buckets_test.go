@@ -127,12 +127,15 @@ func TestHandleInventory_ListsBucketsSection(t *testing.T) {
 	}
 }
 
-// TestApiBucketDelete_RemovesRowAndDedup pins Round-3 Obs 10's admin
+// TestApiBucketDelete_RemovesRowAndResetsDedup pins Round-3 Obs 10's admin
 // recovery path. Seed a bucket + a matching inventory_delta_dedup row,
-// hit POST /api/buckets/delete with the bucket's id, assert both rows
-// are gone afterward. This is the cleanup hatch for Core-only orphan
-// buckets the cross-namespace bugs in pre-Obs-8 builds left behind.
-func TestApiBucketDelete_RemovesRowAndDedup(t *testing.T) {
+// hit POST /api/buckets/delete with the bucket's id, assert the bucket is
+// gone and the dedup row is reset (last_seq 0, applied_net NULL) rather
+// than deleted — an absent row would make the next message apply the
+// station's whole running net (inventory.DeleteLinesideBucket). This is the
+// cleanup hatch for Core-only orphan buckets the cross-namespace bugs in
+// pre-Obs-8 builds left behind.
+func TestApiBucketDelete_RemovesRowAndResetsDedup(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -163,11 +166,13 @@ func TestApiBucketDelete_RemovesRowAndDedup(t *testing.T) {
 		t.Errorf("bucket row count after delete = %d, want 0", bucketCount)
 	}
 
-	var dedupCount int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM inventory_delta_dedup
-		WHERE station='STATION-DEL' AND scope_kind='bucket' AND scope_key=$1`, scopeKey).Scan(&dedupCount)
-	if dedupCount != 0 {
-		t.Errorf("dedup row count after delete = %d, want 0 (deletion must clear both rows atomically)", dedupCount)
+	var lastSeq int64
+	var nullNet bool
+	testutil.MustNoErr(t, db.QueryRow(`SELECT last_seq, applied_net IS NULL FROM inventory_delta_dedup
+		WHERE station='STATION-DEL' AND scope_kind='bucket' AND scope_key=$1`, scopeKey).Scan(&lastSeq, &nullNet),
+		"read dedup row")
+	if lastSeq != 0 || !nullNet {
+		t.Errorf("dedup row after delete: last_seq=%d applied_net NULL=%v, want 0 / true", lastSeq, nullNet)
 	}
 }
 

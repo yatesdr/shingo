@@ -75,13 +75,12 @@ func seqDelta(binID int64, delta int, seq, epoch int64, windowEnd time.Time) *pr
 	}
 }
 
-// P0a, Core half. A bin_uop_delta that dead-lettered on the Edge and is
-// requeued after a later seq of its scope has applied is skipped silently.
-//
-// Verify-red: the running-net change (SYNTH-round2 §3, S3) inverts the COUNT
-// half: seq 3 carries the scope's net, so seq 2's parts land with it and the
-// requeue is a harmless skip. The skip itself (no row, no exception) stays.
-func TestRunningNet_P0a_RequeueAfterLaterSeqIsSkippedSilently(t *testing.T) {
+// P0a, Core half, inverted. A bin_uop_delta that dead-lettered on the Edge and
+// is requeued after a later seq of its scope has applied is still skipped with
+// no ledger row and no exception, but its parts are no longer lost: seq 3
+// carried the scope's net, which already held seq 2's 4 parts (SYNTH-round2
+// §3, S3). At the base the count read 95.
+func TestRunningNet_P0a_RequeueAfterLaterSeqIsHarmless(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -89,18 +88,18 @@ func TestRunningNet_P0a_RequeueAfterLaterSeqIsSkippedSilently(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-NET-P0A", "PART-A", 100)
 	t0 := time.Now().UTC()
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -2, 1, 0, t0)), "seq 1")
-	// seq 2 (-4) dead-letters on the Edge; seq 3 goes through.
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -3, 3, 0, t0.Add(10*time.Second))), "seq 3")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, netDelta(bin.ID, -2, -2, 1, 0, t0)), "seq 1")
+	// seq 2 (-4, net -6) dead-letters on the Edge; seq 3 goes through.
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, netDelta(bin.ID, -3, -9, 3, 0, t0.Add(10*time.Second))), "seq 3")
 	rowsBefore, excBefore := deltaLedgerRows(t, db, bin.ID), exceptionRows(t, db, bin.ID)
 
 	// The hand requeue.
-	err := svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -4, 2, 0, t0.Add(5*time.Second)))
+	err := svc.ApplyBinUOPDelta(testStation, netDelta(bin.ID, -4, -6, 2, 0, t0.Add(5*time.Second)))
 	if !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Fatalf("requeued seq 2: err = %v, want ErrInventoryDeltaSkipped", err)
 	}
-	if got := binUOP(t, db, bin.ID); got != 95 {
-		t.Errorf("uop_remaining = %d, want 95 (100-2-3: seq 2's 4 parts are lost at the base)", got)
+	if got := binUOP(t, db, bin.ID); got != 91 {
+		t.Errorf("uop_remaining = %d, want 91 (100-2-3-4: seq 3's net carried seq 2)", got)
 	}
 	if got := deltaLedgerRows(t, db, bin.ID); got != rowsBefore {
 		t.Errorf("delta ledger rows = %d, want %d (the skip writes no row)", got, rowsBefore)
@@ -110,12 +109,13 @@ func TestRunningNet_P0a_RequeueAfterLaterSeqIsSkippedSilently(t *testing.T) {
 	}
 }
 
-// P0b. Seq 2 then seq 1 for one (station, bin, epoch) scope: seq 1 is muted
-// and writes no ledger row.
+// P0b, inverted. Seq 2 then seq 1 for one (station, bin, epoch) scope. Seq 2
+// carries the net of both, so the total lands on its arrival and seq 1 is then
+// a harmless skip (S3). At the base only seq 2's -3 landed.
 //
-// Verify-red: the running-net change (S3) inverts it. Seq 2 carries the net of
-// both, so the total is applied and seq 1's late arrival is a harmless skip.
-func TestRunningNet_P0b_ReorderMutesTheOlderMessage(t *testing.T) {
+// The one ledger row says what happened: delta is what was applied (-8),
+// wire_delta what seq 2 said (-3), healed the difference (-5).
+func TestRunningNet_P0b_ReorderAppliesTheTotal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -123,28 +123,43 @@ func TestRunningNet_P0b_ReorderMutesTheOlderMessage(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-NET-P0B", "PART-A", 100)
 	t0 := time.Now().UTC()
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -3, 2, 0, t0.Add(5*time.Second))), "seq 2")
-	err := svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -5, 1, 0, t0))
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, netDelta(bin.ID, -3, -8, 2, 0, t0.Add(5*time.Second))), "seq 2")
+	err := svc.ApplyBinUOPDelta(testStation, netDelta(bin.ID, -5, -5, 1, 0, t0))
 	if !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Fatalf("seq 1 after seq 2: err = %v, want ErrInventoryDeltaSkipped", err)
 	}
-	if got := binUOP(t, db, bin.ID); got != 97 {
-		t.Errorf("uop_remaining = %d, want 97 (only seq 2's -3 lands at the base)", got)
+	if got := binUOP(t, db, bin.ID); got != 92 {
+		t.Errorf("uop_remaining = %d, want 92 (the total, -8)", got)
 	}
 	if got := deltaLedgerRows(t, db, bin.ID); got != 1 {
-		t.Errorf("delta ledger rows = %d, want 1 (the muted seq 1 writes none)", got)
+		t.Errorf("delta ledger rows = %d, want 1", got)
+	}
+	m := lastDeltaMeta(t, db, bin.ID)
+	if m.Delta != -8 || m.WireDelta != -3 || m.Healed != -5 || m.Net == nil || *m.Net != -8 || m.SequenceID != 2 {
+		t.Errorf("metadata = %+v, want delta -8, wire_delta -3, healed -5, net -8, sequence_id 2", m)
+	}
+	if m.WindowStart == "" || m.WindowEnd == "" {
+		t.Errorf("metadata = %+v, want window_start and window_end", m)
+	}
+	var before, after int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT before_uop, after_uop FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='bin_uop_delta'`, bin.ID).Scan(&before, &after), "read before/after")
+	if before != 100 || after != 92 {
+		t.Errorf("before/after = %d/%d, want 100/92 (the applied delta, not the wire one)", before, after)
 	}
 }
 
-// P0d. Restore: the Edge's seq table rolled back, so seqs 6-10 are re-sent with
-// NEW content (later windows) under last_seq = 10. Every one is skipped
-// silently: no ledger row, no exception, the generation unchanged.
+// P0d, inverted. Restore: the Edge's seq table rolled back, so seqs 6-10 are
+// re-sent with NEW content (later windows) under last_seq = 10.
 //
-// Verify-red: the rollback rule (SYNTH-round2 S6) inverts it. The first re-sent
-// message is detected (seq <= last_seq and window_end > applied_window_end),
-// writes an edge_rollback exception and bumps the bin's generation; the rest
-// are then stale-epoch drops.
-func TestRunningNet_P0d_RestoreReplayIsSkippedSilently(t *testing.T) {
+// At the base every one was skipped silently. Under the rollback rule
+// (SYNTH-round2 S6) the first re-sent message is detected — seq <= last_seq AND
+// window_end > applied_window_end — and writes an edge_rollback exception, then
+// bumps the bin's generation so the Edge adopts Core's number under a fresh
+// scope. The rest carry the retired generation and are stale-epoch drops. The
+// restored Edge's counts are not applied: its seq table and its net both went
+// backward, so nothing it re-sends in the old generation can be trusted.
+func TestRunningNet_P0d_RestoreIsDetectedAndBumps(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -158,7 +173,7 @@ func TestRunningNet_P0d_RestoreReplayIsSkippedSilently(t *testing.T) {
 		testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 			seqDelta(bin.ID, -1, seq, 1, t0.Add(time.Duration(seq)*5*time.Second))), "original seq")
 	}
-	rowsBefore, excBefore := deltaLedgerRows(t, db, bin.ID), exceptionRows(t, db, bin.ID)
+	rowsBefore := deltaLedgerRows(t, db, bin.ID)
 
 	// The restored Edge re-numbers from 6 with counts it took after the backup.
 	later := time.Now().UTC()
@@ -169,16 +184,25 @@ func TestRunningNet_P0d_RestoreReplayIsSkippedSilently(t *testing.T) {
 		}
 	}
 	if got := binUOP(t, db, bin.ID); got != 90 {
-		t.Errorf("uop_remaining = %d, want 90 (the restored Edge's 10 parts never land)", got)
+		t.Errorf("uop_remaining = %d, want 90 (a rolled-back stream is not applied)", got)
 	}
 	if got := deltaLedgerRows(t, db, bin.ID); got != rowsBefore {
 		t.Errorf("delta ledger rows = %d, want %d", got, rowsBefore)
 	}
-	if got := exceptionRows(t, db, bin.ID); got != excBefore {
-		t.Errorf("exception rows = %d, want %d (nothing records the rollback at the base)", got, excBefore)
+	var rollbacks int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_exception
+		WHERE bin_id=$1 AND kind='edge_rollback'`, bin.ID).Scan(&rollbacks), "count rollback exceptions")
+	if rollbacks != 1 {
+		t.Errorf("edge_rollback exception rows = %d, want 1 (detected once; the rest are stale-epoch drops)", rollbacks)
 	}
-	if got := binEpoch(t, db, bin.ID); got != 1 {
-		t.Errorf("delta_epoch = %d, want 1 (no bump at the base)", got)
+	if got := binEpoch(t, db, bin.ID); got != 2 {
+		t.Errorf("delta_epoch = %d, want 2 (the rollback bumps the generation)", got)
+	}
+	var stale int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='stale_epoch_dropped'`, bin.ID).Scan(&stale), "count stale drops")
+	if stale != 4 {
+		t.Errorf("stale_epoch_dropped rows = %d, want 4 (seqs 7-10 after the bump)", stale)
 	}
 }
 
@@ -231,8 +255,10 @@ func TestRunningNet_P0g_TwoEdgeStreamsOnOneCoreBucketKey(t *testing.T) {
 // bin read, the UPDATE, the ledger INSERT, commit); a skipped duplicate is 4
 // (begin, epoch read, UPSERT, rollback); a bucket delta is 6 (the node lookup
 // outside the tx, begin, the dedup UPSERT, the bucket UPSERT, the GC DELETE,
-// commit). The running-net change must not move any of them (SYNTH-round2 §3:
-// the prior dedup read folds into the dedup statement).
+// commit). The running-net change must not raise any of them (SYNTH-round2 §3:
+// the prior dedup read folds into an existing statement). It lowers one: the
+// cursor rides the epoch read, so a skipped duplicate is decided there, before
+// the UPSERT, and costs 3 (begin, the read, rollback).
 func TestRunningNet_CoreStatementsPerDelta(t *testing.T) {
 	t.Parallel()
 	_, cfg := testdb.OpenWithConfig(t)
@@ -243,39 +269,59 @@ func TestRunningNet_CoreStatementsPerDelta(t *testing.T) {
 	t.Cleanup(func() { cdb.Close() })
 	sd := testdb.SetupStandardData(t, cdb)
 	svc := netTestService(cdb)
-	bin := createTestBin(t, cdb, sd.StorageNode.ID, "BIN-NET-COUNT", "PART-A", 100)
 	t0 := time.Now().UTC()
 
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -1, 1, 0, t0)), "seq 1")
-	counter.Reset()
-	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -1, 2, 0, t0.Add(5*time.Second))), "seq 2")
-	if got := counter.Count(); got != wantBinDeltaStatements {
-		t.Errorf("bin delta: %d statements, want %d", got, wantBinDeltaStatements)
-	}
+	// Both wire shapes: an old Edge's (no net) and a new one's.
+	for _, withNet := range []bool{false, true} {
+		label := "BIN-NET-COUNT-OLD"
+		part := "PART-C"
+		if withNet {
+			label, part = "BIN-NET-COUNT-NEW", "PART-D"
+		}
+		bin := createTestBin(t, cdb, sd.StorageNode.ID, label, "PART-A", 100)
+		mk := func(seq int64) *protocol.BinUOPDelta {
+			d := seqDelta(bin.ID, -1, seq, 0, t0.Add(time.Duration(seq)*5*time.Second))
+			if withNet {
+				d.Net = int64p(-seq)
+			}
+			return d
+		}
+		testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, mk(1)), "seq 1")
+		counter.Reset()
+		testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, mk(2)), "seq 2")
+		if got := counter.Count(); got != wantBinDeltaStatements {
+			t.Errorf("net=%v bin delta: %d statements, want %d", withNet, got, wantBinDeltaStatements)
+		}
 
-	counter.Reset()
-	err = svc.ApplyBinUOPDelta(testStation, seqDelta(bin.ID, -1, 2, 0, t0.Add(5*time.Second)))
-	if !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
-		t.Fatalf("duplicate: err = %v, want ErrInventoryDeltaSkipped", err)
-	}
-	if got := counter.Count(); got != wantBinSkipStatements {
-		t.Errorf("bin duplicate: %d statements, want %d", got, wantBinSkipStatements)
-	}
+		counter.Reset()
+		err = svc.ApplyBinUOPDelta(testStation, mk(2))
+		if !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+			t.Fatalf("net=%v duplicate: err = %v, want ErrInventoryDeltaSkipped", withNet, err)
+		}
+		if got := counter.Count(); got != wantBinSkipStatements {
+			t.Errorf("net=%v bin duplicate: %d statements, want %d", withNet, got, wantBinSkipStatements)
+		}
 
-	nodeName := sd.StorageNode.Name
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation,
-		makeBucketDelta(nodeName, "L1|U1", 100, "PART-C", 10, 1, protocol.ReasonCaptureFill)), "bucket seq 1")
-	counter.Reset()
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation,
-		makeBucketDelta(nodeName, "L1|U1", 100, "PART-C", 5, 2, protocol.ReasonCaptureFill)), "bucket seq 2")
-	if got := counter.Count(); got != wantBucketDeltaStatements {
-		t.Errorf("bucket delta: %d statements, want %d", got, wantBucketDeltaStatements)
+		nodeName := sd.StorageNode.Name
+		mkb := func(seq int64) *protocol.LinesideBucketDelta {
+			d := makeBucketDelta(nodeName, "L1|U1", 100, part, 5, seq, protocol.ReasonCaptureFill)
+			if withNet {
+				d.Net = int64p(5 * seq)
+			}
+			return d
+		}
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, mkb(1)), "bucket seq 1")
+		counter.Reset()
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, mkb(2)), "bucket seq 2")
+		if got := counter.Count(); got != wantBucketDeltaStatements {
+			t.Errorf("net=%v bucket delta: %d statements, want %d", withNet, got, wantBucketDeltaStatements)
+		}
 	}
 }
 
 // The measured budgets. See TestRunningNet_CoreStatementsPerDelta.
 const (
 	wantBinDeltaStatements    = 7
-	wantBinSkipStatements     = 4
+	wantBinSkipStatements     = 3
 	wantBucketDeltaStatements = 6
 )

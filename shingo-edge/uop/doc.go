@@ -11,9 +11,10 @@
 // Architecture context: post-May-4 commit 6d226d1, Edge is authoritative
 // for the count of any bin physically at one of its nodes. The deltas
 // emitted from this package are how Core mirrors Edge's authoritative
-// state. There is no reconciler healing back from Core; if a delta is
-// rejected at Core (payload mismatch, dedup hit, etc.), FlushFailures
-// surfaces the drift.
+// state. There is no reconciler healing back from Core. Each count message
+// carries its scope's running net, so a message lost, duplicated or
+// reordered on the way is healed by the next one; a delta Core refuses
+// (payload mismatch, stale epoch) is recorded at Core.
 //
 // See shingo-uop-refactor-plan.md (GitHub root) for the full plan.
 package uop

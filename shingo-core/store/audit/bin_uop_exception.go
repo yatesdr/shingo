@@ -44,6 +44,12 @@ const (
 	// crossing directly after a boundary is the release-race shape) and the
 	// join key the daily roll-up segments on.
 	ExcBoundary = "boundary"
+	// ExcEdgeRollback: a station's count stream went backward — a message at
+	// or below the scope's last applied seq, with a window that ends after the
+	// last applied one (SYNTH-round2 S6). Bins only: this table's bin_id is
+	// NOT NULL, so a bucket scope has no row to write. Detail carries the
+	// seqs, the windows and the nets. Followed by an edge_rollback boundary.
+	ExcEdgeRollback = "edge_rollback"
 )
 
 // AppendBinUOPException records one exception at event time, on the caller's
