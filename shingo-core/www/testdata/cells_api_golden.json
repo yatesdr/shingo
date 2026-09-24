@@ -1,0 +1,259 @@
+{
+  "heartbeat_configured": {
+    "cell_id": "cell-cfg",
+    "display_name": "Cell P7",
+    "processes": [
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 100,
+            "delta": 1,
+            "edge_snapshot_id": 1,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:00:00Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 101,
+            "delta": 1,
+            "edge_snapshot_id": 2,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:00:20Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 102,
+            "delta": 3,
+            "edge_snapshot_id": 3,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:00:40Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 103,
+            "delta": 1,
+            "edge_snapshot_id": 4,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:01:00Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "jump",
+            "cell_id": "stn-p7",
+            "count_value": 104,
+            "delta": 700,
+            "edge_snapshot_id": 5,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:01:20Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 105,
+            "delta": 1,
+            "edge_snapshot_id": 6,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:01:40Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 106,
+            "delta": 1,
+            "edge_snapshot_id": 7,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:06:40Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 107,
+            "delta": 1,
+            "edge_snapshot_id": 8,
+            "payload_code": "",
+            "process_id": 7,
+            "recorded_at": "2026-01-15T08:07:00Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "effective_parts_per_hour": 151.57894736842104,
+          "longest_stop_ms": 300000,
+          "mtbf_minutes": 3.1666666666666665,
+          "mttr_minutes": 5,
+          "parts": 8,
+          "parts_lost": 16,
+          "run_minutes": 3.1666666666666665,
+          "stop_count": 1,
+          "total_downtime_ms": 300000
+        },
+        "primary": true,
+        "process_id": 7
+      },
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 108,
+            "delta": 1,
+            "edge_snapshot_id": 9,
+            "payload_code": "",
+            "process_id": 9,
+            "recorded_at": "2026-01-15T08:00:05Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 109,
+            "delta": 2,
+            "edge_snapshot_id": 10,
+            "payload_code": "",
+            "process_id": 9,
+            "recorded_at": "2026-01-15T08:00:50Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-p7",
+            "count_value": 110,
+            "delta": 1,
+            "edge_snapshot_id": 11,
+            "payload_code": "",
+            "process_id": 9,
+            "recorded_at": "2026-01-15T08:01:35Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "effective_parts_per_hour": 22.040816326530614,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 3,
+          "parts_lost": 7,
+          "run_minutes": 8.166666666666666,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": false,
+        "process_id": 9
+      }
+    ],
+    "since": "2026-01-15T07:59:00Z",
+    "station": "stn-p7",
+    "until": "2026-01-15T08:07:10Z"
+  },
+  "heartbeat_unconfigured": {
+    "cell_id": "stn-p7",
+    "display_name": "stn-p7",
+    "processes": [
+      {
+        "events": [],
+        "metrics": {
+          "effective_parts_per_hour": 0,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 0,
+          "parts_lost": 0,
+          "run_minutes": 8.166666666666666,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": true,
+        "process_id": 0
+      }
+    ],
+    "since": "2026-01-15T07:59:00Z",
+    "station": "stn-p7",
+    "until": "2026-01-15T08:07:10Z"
+  },
+  "state_configured": {
+    "cell_id": "cell-cfg",
+    "display_name": "Cell P7",
+    "primary": {
+      "current_cycle_ms": 20000,
+      "last_fire": "2026-01-15T08:07:00Z",
+      "parts_last_hour": 8,
+      "process_id": 7,
+      "since_last_ms": 10000,
+      "state": "running",
+      "target_cycle_ms": 20000
+    },
+    "station": "stn-p7",
+    "sub_processes": [
+      {
+        "current_cycle_ms": 45000,
+        "last_fire": "2026-01-15T08:01:35Z",
+        "parts_last_hour": 3,
+        "process_id": 9,
+        "since_last_ms": 335000,
+        "state": "micro-stop",
+        "stop_active": {
+          "duration_ms": 335000,
+          "end": "2026-01-15T08:07:10Z",
+          "kind": "micro-stop",
+          "start": "2026-01-15T08:01:35Z"
+        },
+        "target_cycle_ms": 45000
+      }
+    ]
+  },
+  "state_unconfigured": {
+    "cell_id": "stn-p7",
+    "display_name": "stn-p7",
+    "primary": {
+      "current_cycle_ms": 20000,
+      "last_fire": "2026-01-15T08:07:00Z",
+      "parts_last_hour": 11,
+      "process_id": 0,
+      "since_last_ms": 10000,
+      "state": "running",
+      "target_cycle_ms": 15000
+    },
+    "station": "stn-p7",
+    "sub_processes": []
+  },
+  "stops_configured": {
+    "cell_id": "cell-cfg",
+    "stops": [
+      {
+        "duration_ms": 300000,
+        "end": "2026-01-15T08:06:40Z",
+        "kind": "micro-stop",
+        "start": "2026-01-15T08:01:40Z"
+      }
+    ]
+  },
+  "stops_unconfigured": {
+    "cell_id": "stn-p7",
+    "stops": [
+      {
+        "duration_ms": 300000,
+        "end": "2026-01-15T08:06:40Z",
+        "kind": "micro-stop",
+        "start": "2026-01-15T08:01:40Z"
+      }
+    ]
+  }
+}

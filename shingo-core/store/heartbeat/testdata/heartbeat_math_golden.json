@@ -1,0 +1,348 @@
+{
+  "cell_heartbeat": {
+    "cell_id": "cell-test",
+    "station": "stn-test",
+    "display_name": "Cell Test",
+    "since": "2026-01-15T07:59:00Z",
+    "until": "2026-01-15T08:20:30Z",
+    "processes": [
+      {
+        "process_id": 7,
+        "primary": true,
+        "events": [
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:00:00Z",
+            "edge_snapshot_id": 1,
+            "count_value": 1000,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:00:20Z",
+            "edge_snapshot_id": 2,
+            "count_value": 1001,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:00:40Z",
+            "edge_snapshot_id": 3,
+            "count_value": 1002,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:01:00Z",
+            "edge_snapshot_id": 4,
+            "count_value": 1003,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:01:20Z",
+            "edge_snapshot_id": 5,
+            "count_value": 1004,
+            "delta": 3,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:01:40Z",
+            "edge_snapshot_id": 6,
+            "count_value": 1005,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:02:00Z",
+            "edge_snapshot_id": 7,
+            "count_value": 1006,
+            "delta": 592,
+            "anomaly": "jump",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:02:20Z",
+            "edge_snapshot_id": 8,
+            "count_value": 1007,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:06:40Z",
+            "edge_snapshot_id": 9,
+            "count_value": 1008,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:07:00Z",
+            "edge_snapshot_id": 10,
+            "count_value": 1009,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:07:20Z",
+            "edge_snapshot_id": 11,
+            "count_value": 1010,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:20:00Z",
+            "edge_snapshot_id": 12,
+            "count_value": 1011,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:20:20Z",
+            "edge_snapshot_id": 13,
+            "count_value": 1012,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 7,
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "parts": 13,
+          "run_minutes": 4.5,
+          "stop_count": 2,
+          "total_downtime_ms": 1020000,
+          "mtbf_minutes": 2.25,
+          "mttr_minutes": 8.5,
+          "longest_stop_ms": 760000,
+          "effective_parts_per_hour": 173.33333333333334,
+          "parts_lost": 51
+        }
+      },
+      {
+        "process_id": 9,
+        "primary": false,
+        "events": [
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:00:10Z",
+            "edge_snapshot_id": 14,
+            "count_value": 1013,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 9,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:00:55Z",
+            "edge_snapshot_id": 15,
+            "count_value": 1014,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 9,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:01:40Z",
+            "edge_snapshot_id": 16,
+            "count_value": 1015,
+            "delta": 2,
+            "anomaly": "",
+            "process_id": 9,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:02:25Z",
+            "edge_snapshot_id": 17,
+            "count_value": 1016,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 9,
+            "style_id": 3
+          },
+          {
+            "id": 0,
+            "cell_id": "stn-test",
+            "payload_code": "",
+            "recorded_at": "2026-01-15T08:03:10Z",
+            "edge_snapshot_id": 18,
+            "count_value": 1017,
+            "delta": 1,
+            "anomaly": "",
+            "process_id": 9,
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "parts": 5,
+          "run_minutes": 21.5,
+          "stop_count": 0,
+          "total_downtime_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "longest_stop_ms": 0,
+          "effective_parts_per_hour": 13.953488372093023,
+          "parts_lost": 23
+        }
+      }
+    ]
+  },
+  "cell_state": {
+    "state": "running",
+    "last_fire": "2026-01-15T08:20:20Z",
+    "since_last_ms": 10000,
+    "current_cycle_ms": 20000,
+    "target_cycle_ms": 20000,
+    "parts_last_hour": 13
+  },
+  "cell_state_after_triple": {
+    "state": "running",
+    "last_fire": "2026-01-15T08:01:20Z",
+    "since_last_ms": 1000,
+    "current_cycle_ms": 20000,
+    "target_cycle_ms": 20000,
+    "parts_last_hour": 5
+  },
+  "cell_state_mid_stop": {
+    "state": "micro-stop",
+    "last_fire": "2026-01-15T08:07:20Z",
+    "since_last_ms": 260000,
+    "current_cycle_ms": 20000,
+    "target_cycle_ms": 20000,
+    "parts_last_hour": 11,
+    "stop_active": {
+      "start": "2026-01-15T08:07:20Z",
+      "end": "2026-01-15T08:11:40Z",
+      "duration_ms": 260000,
+      "kind": "micro-stop"
+    }
+  },
+  "estimate_target_ms": 20000,
+  "metrics": {
+    "parts": 13,
+    "run_minutes": 4.5,
+    "stop_count": 2,
+    "total_downtime_ms": 1020000,
+    "mtbf_minutes": 2.25,
+    "mttr_minutes": 8.5,
+    "longest_stop_ms": 760000,
+    "effective_parts_per_hour": 173.33333333333334,
+    "parts_lost": 51
+  },
+  "resolved_cell_state": {
+    "cell_id": "cell-test",
+    "station": "stn-test",
+    "display_name": "Cell Test",
+    "primary": {
+      "process_id": 7,
+      "state": "running",
+      "last_fire": "2026-01-15T08:20:20Z",
+      "since_last_ms": 10000,
+      "current_cycle_ms": 20000,
+      "target_cycle_ms": 20000,
+      "parts_last_hour": 13
+    },
+    "sub_processes": [
+      {
+        "process_id": 9,
+        "state": "micro-stop",
+        "last_fire": "2026-01-15T08:03:10Z",
+        "since_last_ms": 1040000,
+        "current_cycle_ms": 45000,
+        "target_cycle_ms": 45000,
+        "parts_last_hour": 5,
+        "stop_active": {
+          "start": "2026-01-15T08:03:10Z",
+          "end": "2026-01-15T08:20:30Z",
+          "duration_ms": 1040000,
+          "kind": "micro-stop"
+        }
+      }
+    ]
+  },
+  "stops": [
+    {
+      "start": "2026-01-15T08:02:20Z",
+      "end": "2026-01-15T08:06:40Z",
+      "duration_ms": 260000,
+      "kind": "micro-stop"
+    },
+    {
+      "start": "2026-01-15T08:07:20Z",
+      "end": "2026-01-15T08:20:00Z",
+      "duration_ms": 760000,
+      "kind": "stopped"
+    }
+  ]
+}

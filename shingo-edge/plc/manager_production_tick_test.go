@@ -1,135 +1,146 @@
 package plc
 
 import (
-	"encoding/json"
-	"sort"
 	"testing"
 	"time"
 
-	"shingo/protocol"
-	"shingoedge/config"
-	"shingoedge/internal/testdb"
-	"shingoedge/store/counters"
+	"shingo/protocol/clock"
 )
 
-// TestProductionTick_PreservesPerTickAcrossBinSwapGap proves the PRESERVING
-// half of the §8 #13 / §12 premise: production.tick emits exactly one envelope
-// per PLC counter tick, each carrying its own RecordedAt and CountValue, and it
-// does so regardless of bin-binding state — because it is published in the PLC
-// manager UPSTREAM of the engine's inventory hold-and-replay.
+// TestProductionTick_PreservesPerTickAcrossBinSwapGap (P1) proves the
+// PRESERVING half of the §8 #13 / §12 premise: the heartbeat feed carries
+// exactly one wire event per shippable counter tick, each with its own
+// recorded_at and count value, regardless of bin-binding state — because it is
+// taken in the PLC poll UPSTREAM of the engine's inventory hold-and-replay.
 //
-// The DESTRUCTIVE half (the inventory BinUOPDelta stream lumping the same gap
-// ticks into a single delta) is proven in
-// engine/wiring_counter_delta_holdreplay_test.go. Together the two tests are the
-// code substitute for the unrun live "tap bin_uop_delta across a changeover"
-// spike (§8 #13): per-tick timing IS destroyed on the inventory channel and IS
-// preserved on production.tick.
+// It drives the real poll pass, so the snapshot INSERT, the style gate and the
+// ship filter are all on the path. The sequence has three ticks "while bin A is
+// bound", two in "the finalize→new-empty-bin gap" (the engine is not involved
+// here, which is the point: nothing upstream of hold-and-replay can lump them),
+// a tick carrying three strokes, and a jump — which still ships, because the
+// heartbeat must know the cell fired while inventory attribution waits on the
+// operator (§8 #20).
+//
+// Each wire event carries all seven fields; recorded_at is stamped in Go at
+// poll time with sub-second precision.
+//
+// The DESTRUCTIVE half (the BinUOPDelta stream lumping the gap ticks) is proven
+// in engine/wiring_counter_delta_holdreplay_test.go.
+//
+// Survives the move off the outbox: the assertion is on the wire event, and
+// only shippedTicks changes with the transport.
 func TestProductionTick_PreservesPerTickAcrossBinSwapGap(t *testing.T) {
 	t.Parallel()
-	db := testdb.Open(t)
-	cfg := config.Defaults()
-	cfg.Messaging.StationID = "STN-TEST"
-	mgr := NewManager(db, cfg, &mockEmitter{}, nil)
-
-	rp := counters.ReportingPoint{
-		ID: 1, PLCName: "logix", TagName: "Cell_A_Count",
-		ProcessID: 7, StyleID: 3,
+	r := newTickRig(t)
+	rp := r.rp()
+	if rp.ProcessID != r.proc || rp.StyleID != r.sty {
+		t.Fatalf("rig reporting point = process %d style %d, want %d/%d", rp.ProcessID, rp.StyleID, r.proc, r.sty)
 	}
 
-	// Six counter ticks. The first three model "while bin A is bound"; the last
-	// three model the finalize→new-empty-bin gap that lumps the BinUOPDelta
-	// stream. production.tick is upstream of bin binding, so all six must emit —
-	// including the final jump tick (§8 #20). The per-tick EdgeSnapshotID /
-	// CountValue are the identity that proves no lumping occurred.
-	const ticks = 6
-	for i := int64(1); i <= ticks; i++ {
-		anomaly := ""
-		if i == ticks {
-			anomaly = "jump" // a jump must still emit a heartbeat tick
-		}
-		mgr.enqueueProductionTick(rp, i /*snapID*/, i /*newCount*/, 1 /*delta*/, anomaly)
+	type step struct {
+		count   int64
+		delta   int64
+		anomaly string
 	}
-
-	msgs, err := db.ListPendingOutbox(100)
-	if err != nil {
-		t.Fatalf("list outbox: %v", err)
+	steps := []step{
+		{1, 1, ""}, {2, 1, ""}, {3, 1, ""}, // bin A bound
+		{4, 1, ""}, {5, 1, ""}, // swap gap
+		{8, 3, ""},         // three strokes inside one poll interval
+		{600, 592, "jump"}, // unconfirmed PLC gap
 	}
-
-	var snaps []protocol.CounterSnapshot
-	for _, m := range msgs {
-		if m.MsgType != protocol.SubjectProductionTick {
-			continue
-		}
-		var env protocol.Envelope
-		if err := json.Unmarshal(m.Payload, &env); err != nil {
-			t.Fatalf("decode envelope (outbox id %d): %v", m.ID, err)
-		}
-		var data protocol.Data
-		if err := env.DecodePayload(&data); err != nil {
-			t.Fatalf("decode data (outbox id %d): %v", m.ID, err)
-		}
-		if data.Subject != protocol.SubjectProductionTick {
-			t.Errorf("envelope subject=%q, want %q", data.Subject, protocol.SubjectProductionTick)
-		}
-		// THE STATION IS ON THE ENVELOPE, and the payload no longer carries a
-		// second copy. Asserting it here rather than on the decoded body is
-		// the point of the identity change: one source, and it is the one the
-		// transport stamped.
-		if env.Src.Station != "STN-TEST" {
-			t.Errorf("outbox id %d: envelope Src.Station=%q, want STN-TEST", m.ID, env.Src.Station)
-		}
-		var snap protocol.CounterSnapshot
-		if err := json.Unmarshal(data.Body, &snap); err != nil {
-			t.Fatalf("decode CounterSnapshot (outbox id %d): %v", m.ID, err)
-		}
-		snaps = append(snaps, snap)
+	before := clock.Now().UTC()
+	for _, s := range steps {
+		r.pass(s.count)
 	}
+	after := clock.Now().UTC()
 
-	// One envelope per tick — NOT lumped. This is the whole point: 6 ticks → 6
-	// production.tick events (contrast the 4 BinUOPDelta events in the engine
-	// test, where the 3 gap ticks collapse into 1).
-	if len(snaps) != ticks {
-		t.Fatalf("production.tick envelopes=%d, want %d (one per tick, no lumping)", len(snaps), ticks)
+	got := r.shippedTicks()
+	if len(got) != len(steps) {
+		t.Fatalf("wire events = %d, want %d (one per shippable tick, no lumping)", len(got), len(steps))
 	}
-
-	// Order-independent: sort by EdgeSnapshotID (== tick order) before checking.
-	sort.Slice(snaps, func(i, j int) bool { return snaps[i].EdgeSnapshotID < snaps[j].EdgeSnapshotID })
-
+	subSecond := false
 	var last time.Time
-	for i, s := range snaps {
-		want := int64(i + 1)
-		if s.CountValue != want {
-			t.Errorf("tick %d: CountValue=%d, want %d (per-tick value preserved)", i, s.CountValue, want)
+	for i, w := range got {
+		s := steps[i]
+		if w.CountValue != s.count || w.Delta != s.delta || w.Anomaly != s.anomaly {
+			t.Errorf("tick %d: count/delta/anomaly = %d/%d/%q, want %d/%d/%q",
+				i, w.CountValue, w.Delta, w.Anomaly, s.count, s.delta, s.anomaly)
 		}
-		if s.EdgeSnapshotID != want {
-			t.Errorf("tick %d: EdgeSnapshotID=%d, want %d (distinct per tick)", i, s.EdgeSnapshotID, want)
+		if w.EdgeSnapshotID <= 0 {
+			t.Errorf("tick %d: EdgeSnapshotID = %d, want the counter_snapshots id", i, w.EdgeSnapshotID)
 		}
-		if s.Delta != 1 {
-			t.Errorf("tick %d: Delta=%d, want 1 (per-tick unit delta, not a lumped sum)", i, s.Delta)
+		if i > 0 && w.EdgeSnapshotID == got[i-1].EdgeSnapshotID {
+			t.Errorf("tick %d: EdgeSnapshotID repeats %d", i, w.EdgeSnapshotID)
 		}
-		if s.ProcessID != 7 || s.StyleID != 3 {
-			t.Errorf("tick %d: ProcessID/StyleID=%d/%d, want 7/3 (enriched from rp)", i, s.ProcessID, s.StyleID)
+		if w.ProcessID != r.proc || w.StyleID != r.sty {
+			t.Errorf("tick %d: process/style = %d/%d, want %d/%d", i, w.ProcessID, w.StyleID, r.proc, r.sty)
 		}
-		// RecordedAt must be Go-stamped (non-zero, UTC) — NOT SQLite's
-		// second-granularity datetime('now') default (§8 #21). Successive
-		// wall-clock reads can be equal at coarse OS resolution, so assert
-		// non-decreasing, not strictly increasing.
-		if s.RecordedAt.IsZero() {
-			t.Errorf("tick %d: RecordedAt is zero — must be stamped in Go via time.Now().UTC()", i)
+		if w.Station != "stn-test" {
+			t.Errorf("tick %d: envelope station = %q, want stn-test", i, w.Station)
 		}
-		if loc := s.RecordedAt.Location(); loc != time.UTC {
-			t.Errorf("tick %d: RecordedAt location=%v, want UTC", i, loc)
+		if w.RecordedAt.IsZero() {
+			t.Fatalf("tick %d: recorded_at is zero", i)
 		}
-		if !last.IsZero() && s.RecordedAt.Before(last) {
-			t.Errorf("tick %d: RecordedAt %v before previous %v (per-tick timestamps must be monotonic)", i, s.RecordedAt, last)
+		// Millisecond precision on the wire: the stamp lies inside the poll
+		// window at ms resolution.
+		if w.RecordedAt.Before(before.Truncate(time.Millisecond)) || w.RecordedAt.After(after) {
+			t.Errorf("tick %d: recorded_at %v outside the poll window [%v, %v]", i, w.RecordedAt, before, after)
 		}
-		last = s.RecordedAt
+		if w.RecordedAt.Nanosecond()/int(time.Millisecond) != 0 {
+			subSecond = true
+		}
+		if !last.IsZero() && w.RecordedAt.Before(last) {
+			t.Errorf("tick %d: recorded_at %v before previous %v", i, w.RecordedAt, last)
+		}
+		last = w.RecordedAt
 	}
+	if !subSecond {
+		t.Errorf("no tick carried a non-zero millisecond — recorded_at is being truncated to the second")
+	}
+}
 
-	// The jump tick (last) must be present and carry Anomaly=="jump": the
-	// heartbeat records that the cell physically fired even though inventory
-	// attribution gates jumps for operator confirmation (§8 #20).
-	if got := snaps[ticks-1].Anomaly; got != "jump" {
-		t.Errorf("final tick Anomaly=%q, want %q (jumps still emit a production.tick)", got, "jump")
+// TestProductionTick_ShipFilter (P2) pins what does NOT reach the wire: a
+// reset, a pass with no change, and a reporting point with no style
+// (manager.go: the early return on delta == 0, the StyleID gate, and the
+// `delta > 0 && anomaly != "reset"` guard). A shipper that reads
+// counter_snapshots must apply the same filter the poll applied inline.
+func TestProductionTick_ShipFilter(t *testing.T) {
+	t.Parallel()
+	r := newTickRig(t)
+
+	r.pass(10) // shippable: delta 10
+	r.pass(10) // no change: no snapshot, no tick
+	r.pass(3)  // backward: reset, snapshot written, no tick
+
+	// Style 0: the poll's gate. Driven with the struct because the stored
+	// reporting point always names a style.
+	rp := r.rp()
+	rp.StyleID = 0
+	r.setCount(7)
+	r.mgr.pollReportingPoint(rp)
+
+	got := r.shippedTicks()
+	if len(got) != 1 {
+		t.Fatalf("wire events = %d (%+v), want 1: only the first pass is shippable", len(got), got)
+	}
+	if got[0].CountValue != 10 || got[0].Delta != 10 {
+		t.Errorf("shipped tick count/delta = %d/%d, want 10/10", got[0].CountValue, got[0].Delta)
+	}
+}
+
+// TestProductionTick_ReachesTransportWithinThePass (P10) guards the live
+// display: a tick must reach the transport within the poll pass that saw it,
+// with no flush interval in between. A 5 s coalescing hold would make every
+// cell with a sub-6 s target read "slowed" or "micro-stop" on the tile
+// (heartbeat.go state thresholds), so the hold is the regression this blocks.
+//
+// No clock is advanced and nothing sleeps: the pass returns and the tick is
+// already there.
+func TestProductionTick_ReachesTransportWithinThePass(t *testing.T) {
+	t.Parallel()
+	r := newTickRig(t)
+	r.pass(1)
+	if got := r.shippedTicks(); len(got) != 1 {
+		t.Fatalf("after one pass: %d ticks at the transport, want 1 — the tick waited for something", len(got))
 	}
 }
