@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingocore/config"
@@ -17,7 +16,6 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
-	"shingocore/store/orders"
 )
 
 // stranded_fixround_docker_test.go — the four holes the round-2 dev review found
@@ -111,17 +109,6 @@ func newEngineWithSweepInterval(t *testing.T, db *store.DB, d time.Duration) *En
 	cfg.Messaging.DispatchTopic = "shingo.dispatch"
 	cfg.Staging.SweepInterval = d
 	return New(Config{AppConfig: cfg, DB: db, Fleet: simulator.New(), MsgClient: nil, LogFunc: t.Logf})
-}
-
-// appendOrderHistory adds a history row WITHOUT removing the ones already
-// there — pickupOrderAt replaces, and a replan is a second arrival at the same
-// status rather than a correction of the first.
-func appendOrderHistory(t *testing.T, db *store.DB, ord *orders.Order, status protocol.Status, at time.Time) {
-	t.Helper()
-	_, err := db.DB.Exec(
-		`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1,$2,$3,$4)`,
-		ord.ID, string(status), "test replan", at)
-	testutil.MustNoErr(t, err, "append order history")
 }
 
 // ── P1: the observation expires; the answer is not re-taken ────────────────
@@ -285,7 +272,7 @@ func TestStrandedBin_TransitDeclineIsByteStableAcrossPasses(t *testing.T) {
 	// taken belongs on the line that records a placement, which is written
 	// once. In a note the sweep rewrites, it is the one field guaranteed to
 	// differ next pass.
-	if strings.Contains(first.AnomalyNote, "deck read empty") {
+	if strings.Contains(first.AnomalyNote, "set down") {
 		t.Errorf("note %q carries the instant the reading was taken; on this path that "+
 			"reading is taken fresh every pass, so the note can never be twice the same",
 			first.AnomalyNote)
@@ -405,13 +392,12 @@ func TestStrandedBin_ReStrandAfterAnOperatorRecoveryIsStampedAndLogged(t *testin
 
 // ── P4: a replan is not a pickup ───────────────────────────────────────────
 
-// THE PICKUP IS THE FIRST TIME THE ORDER WENT IN_TRANSIT, NOT THE LAST.
+// THE PICKUP IS THE ORDER'S FIRST PICKUP LEG, NOT THE LAST.
 //
-// `faulted -> in_transit` is a legal transition (dispatch/lifecycle.go), so an
-// order that faulted and replanned carries two in_transit rows — and the bin
-// was picked up once, at the first. Reading the latest row lets a twenty-hour
-// -old pickup wear a five-minute-old timestamp, which is exactly the guard
-// E-prime exists to be.
+// A replanned order can report more blocks after the bin left the floor — and
+// the bin was picked up once, at the first. Reading the latest leg lets a
+// twenty-hour-old pickup wear a five-minute-old timestamp, which is exactly the
+// guard E-prime exists to be.
 func TestBranchA_AReplanDoesNotLaunderAStalePickup(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -426,7 +412,7 @@ func TestBranchA_AReplanDoesNotLaunderAStalePickup(t *testing.T) {
 	pickupOrderAt(t, db, ord, clock.Now().UTC().Add(-21*time.Hour))
 	// The replan: five minutes ago, and no bin moved — the robot was already
 	// carrying it.
-	appendOrderHistory(t, db, ord, protocol.StatusInTransit, clock.Now().UTC().Add(-5*time.Minute))
+	appendPickupLeg(t, db, ord, clock.Now().UTC().Add(-5*time.Minute))
 	strandOrderAt(t, db, ord, clock.Now().UTC())
 
 	cacheRobot(eng, atPoint("AMR-REPLAN", "AP247", -1.1, -2.2))
@@ -437,7 +423,7 @@ func TestBranchA_AReplanDoesNotLaunderAStalePickup(t *testing.T) {
 			"only the REPLAN is recent, so where this robot is standing now says nothing "+
 			"about where it put the bin", got)
 	}
-	if note := binNote(t, db, bin.ID); !strings.Contains(note, "picked up longer ago") {
+	if note := binNote(t, db, bin.ID); !strings.Contains(note, "picked up over") {
 		t.Errorf("note = %q, want the pickup age named", note)
 	}
 }

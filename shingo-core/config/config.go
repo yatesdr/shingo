@@ -408,7 +408,7 @@ type RDSConfig struct {
 	//	1  the terminal window: how long after the order ended the sweep will
 	//	   still run the inference at all (engine.terminalWithin);
 	//	2  the pickup window: how long after the bin LEFT THE FLOOR branch A
-	//	   will believe the robot's current position (engine.pickupWithin) —
+	//	   will believe the robot's current position (engine.pickupAt) —
 	//	   the terminal row cannot bound this, because on the event path it is
 	//	   milliseconds old by construction;
 	//	3  the observation window: how long a FROZEN drop reading stays worth

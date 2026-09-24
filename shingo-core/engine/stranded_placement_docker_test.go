@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/scene"
 )
 
@@ -553,7 +555,7 @@ func TestBranchA_DeclinesAStalePickupThatTheTerminalWindowWouldHaveAllowed(t *te
 			"jobs since and where it stands now is unrelated to where that bin went", got)
 	}
 	note := binNote(t, db, bin.ID)
-	if !strings.Contains(note, "picked up longer ago") {
+	if !strings.Contains(note, "picked up over") {
 		t.Errorf("note = %q, want the pickup age named", note)
 	}
 	if strings.Contains(note, "x=") {
@@ -583,9 +585,11 @@ func TestBranchA_FreshPickupStillPlaces(t *testing.T) {
 	}
 }
 
-// NO in_transit ROW FAILS CLOSED. An order that never reached in_transit cannot
-// have had its bin picked up by that robot, and a missing row must never read
-// as "recent".
+// NO PICKUP LEG FAILS CLOSED, AND BLAMES NO ROBOT. SPR bin 146 and HK bin 13
+// (2026-09-23) reached _TRANSIT by a hand move and a ghost eviction; the robot
+// of their last order never lifted them. A robot parked at a resolvable node
+// must not place the bin, a loaded deck must not adopt it, and the note must
+// not name the robot.
 func TestBranchA_MissingPickupRowFailsClosed(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -595,15 +599,59 @@ func TestBranchA_MissingPickupRowFailsClosed(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
 	seedScenePoint(t, db, "Area-01", "SMN_028", "GeneralLocation", "AP226")
 
-	bin, ord := seedStranded(t, db, "AMR-NOPICKUP")
-	_, err := db.DB.Exec(`DELETE FROM order_history WHERE order_id=$1 AND status='in_transit'`, ord.ID)
-	testutil.MustNoErr(t, err, "remove the pickup row")
+	parked, parkedOrd := seedStranded(t, db, "AMR-NOPICKUP")
+	loaded, loadedOrd := seedStranded(t, db, "AMR-NOPICKUP-LOADED")
+	for _, ord := range []*orders.Order{parkedOrd, loadedOrd} {
+		_, err := db.DB.Exec(`DELETE FROM mission_events WHERE order_id=$1`, ord.ID)
+		testutil.MustNoErr(t, err, "remove the pickup leg")
+	}
 
 	cacheRobot(eng, atPoint("AMR-NOPICKUP", "AP226", -3.5, -18.6))
-	eng.inferStrandedTransitBin(ord.ID)
+	cacheRobot(eng, loadedDeck("AMR-NOPICKUP-LOADED"))
+	eng.inferStrandedTransitBin(parkedOrd.ID)
+	eng.inferStrandedTransitBin(loadedOrd.ID)
 
-	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
-		t.Errorf("bin was placed at %q with no record of ever being picked up", got)
+	for _, c := range []struct {
+		bin   *bins.Bin
+		ord   *orders.Order
+		robot string
+	}{{parked, parkedOrd, "AMR-NOPICKUP"}, {loaded, loadedOrd, "AMR-NOPICKUP-LOADED"}} {
+		if got := binNodeName(t, db, c.bin.ID); got != "_TRANSIT" {
+			t.Errorf("%s: bin moved to %q with no record of ever being picked up", c.robot, got)
+		}
+		note := binNote(t, db, c.bin.ID)
+		if want := fmt.Sprintf("no robot pickup on record for order %d", c.ord.ID); !strings.Contains(note, want) {
+			t.Errorf("%s: note = %q, want it to say %q", c.robot, note, want)
+		}
+		if strings.Contains(note, c.robot) {
+			t.Errorf("note %q names %s, a robot that never touched this bin", note, c.robot)
+		}
+	}
+}
+
+// THE FIRST NOTE OF AN EPISODE IS KEPT. The sweep crosses the pickup window
+// while the terminal window is still open, and it used to replace a note
+// written while the robot's position still meant something with one saying it
+// no longer does (SPR bins 24, 32, 147).
+func TestBranchA_AgeDoesNotOverwriteTheEpisodesFirstNote(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	bin, ord := seedStranded(t, db, "AMR-KEEP")
+	pickupOrderAt(t, db, ord, clock.Now().UTC().Add(-time.Hour))
+	cacheRobot(eng, atPoint("AMR-KEEP", "PP-NOWHERE", 1.06, 29.58))
+	eng.inferStrandedTransitBin(ord.ID)
+	first := binNote(t, db, bin.ID)
+	if !strings.Contains(first, "PP-NOWHERE") {
+		t.Fatalf("setup: first note = %q, want the robot's point", first)
+	}
+
+	// Time passes: the pickup is now older than the window.
+	pickupOrderAt(t, db, ord, clock.Now().UTC().Add(-3*time.Hour))
+	eng.inferStrandedTransitBin(ord.ID)
+	if got := binNote(t, db, bin.ID); got != first {
+		t.Errorf("note was overwritten: %q -> %q", first, got)
 	}
 }
 

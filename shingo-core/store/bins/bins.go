@@ -1360,9 +1360,15 @@ func Unlock(db *sql.DB, binID int64) error {
 // errors on a no-op same-node move) because vendor pickup events legitimately
 // retry. Does not touch claimed_by or status — see BinService.MoveToTransit
 // for the design rationale.
+//
+// A PICKUP STARTS A NEW EPISODE, so the anomaly note goes. Arrival does not
+// clear it, and the stranded inference keeps the first note of an episode
+// rather than overwriting it — a note left over from a bin's last loss would
+// otherwise be kept as this one's. anomaly_at is left alone: that stamp has
+// its own writers and readers, and nothing here needs it changed.
 func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 	_, err := db.Exec(
-		`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
+		`UPDATE bins SET node_id=$1, anomaly_note='', updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
 		transitNodeID, binID, clock.Now().UTC())
 	return err
 }

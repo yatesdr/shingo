@@ -21,6 +21,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -81,6 +82,33 @@ const transitNodeName = "_TRANSIT"
 
 // placeStrandedBin is the decision for one bin.
 func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.RobotStatus, haveRobot bool) {
+	// THE ROBOT MUST HAVE LIFTED THE BIN, or nothing below is about this bin.
+	//
+	// Every branch reads the robot of the last order that claimed the bin, and
+	// every branch assumed that robot put the bin at _TRANSIT. Two other doors
+	// lead there — ghost eviction, and a hand Move before the bins page stopped
+	// offering the node — and through both the robot never touched it. SPR bin
+	// 146 (2026-09-23): moved there by hand, AMR-12's JackLoad never finished,
+	// and the note blamed AMR-12. SPR bin 18 (2026-09-14): evicted, its order
+	// never even ran, and it was told it had been "picked up longer ago than 2h".
+	//
+	// Checked BEFORE branch B as well: a deck that is loaded now is loaded with
+	// something else if this order never lifted anything.
+	ord, _, haveOrder := e.lastClaimingOrder(binID)
+	var pickedUpAt time.Time
+	lifted := false
+	if haveOrder {
+		pickedUpAt, lifted = e.pickupAt(ord)
+	}
+	if !lifted {
+		why := "no robot pickup on record"
+		if haveOrder {
+			why = fmt.Sprintf("no robot pickup on record for order %d", ord.ID)
+		}
+		e.strandedAnomaly(binID, "", fleet.RobotStatus{}, false, why+" — find it on the floor")
+		return
+	}
+
 	if !haveRobot {
 		// No robot in the cache — an order that never dispatched, or a fleet
 		// Core has not heard from. There is nothing to infer from.
@@ -126,56 +154,78 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 	// not done other work since. Bin 37's cancel came 20 h 54 m after its
 	// pickup, and the robot's position by then described a charging bay.
 	//
-	// MEASURED FROM THE `in_transit` ROW, not the terminal one, because
+	// MEASURED FROM THE PICKUP LEG, not the terminal row, because
 	// terminalWithin cannot bound this: on the event path the terminal row is
 	// milliseconds old by construction, so that window always passes. The two
-	// clauses bound different intervals and both are kept — see pickupWithin.
+	// clauses bound different intervals and both are kept — see pickupAt.
 	//
 	// Branch B and the carried-bin watch stay exempt: the jack is the jack.
-	ord, _, haveOrder := e.lastClaimingOrder(binID)
-	if !haveOrder || !e.pickupWithin(ord, e.strandedSweepWindow()) {
-		// NO POSITION ON THIS NOTE, and the reason is the note's own sentence:
-		// the robot's coordinates do not describe this bin any more, so
-		// printing them would be handing an operator a pin to walk to while
-		// telling them the pin means nothing. It also keeps the note CONSTANT,
-		// which is what lets the log dedup suppress a decline the sweep repeats
-		// every two seconds for as long as the terminal window lasts.
+	if clock.Now().UTC().Sub(pickedUpAt) > e.strandedSweepWindow() {
+		// THE FIRST NOTE OF THIS EPISODE WINS. The sweep crosses this line
+		// exactly one window after the pickup, and it used to overwrite a note
+		// written while the robot's position still meant something with one
+		// saying it no longer does — SPR bins 24, 32 and 147 each lost their
+		// pin that way. anomaly_at is COALESCEd to the first stamp, so a stamp
+		// at or after the pickup is this episode's; an older or absent one is
+		// a leftover and is replaced.
+		if b, err := e.BinService().GetBin(binID); err == nil && b != nil &&
+			b.AnomalyNote != "" && b.AnomalyAt != nil && !b.AnomalyAt.Before(pickedUpAt) {
+			return
+		}
+		// NO POSITION ON THIS NOTE: the robot's coordinates do not describe
+		// this bin any more. It also keeps the note CONSTANT, so the log dedup
+		// suppresses a decline the sweep repeats every tick.
 		e.strandedAnomaly(binID, robotID, fleet.RobotStatus{}, false,
-			"the bin was picked up longer ago than "+e.strandedSweepWindow().String()+
-				", so where this robot is standing now says nothing about where it left the bin")
+			"picked up over "+e.strandedSweepWindow().String()+" ago — too old to locate from the robot")
 		return
 	}
 	e.placeInferred(binID, robotID, observeDrop(robotID, robot, clock.Now().UTC()), false)
 }
 
-// pickupWithin reports whether the bin left its source recently enough for the
-// robot's current position to still describe where it went.
+// pickupAt reports when the order's robot lifted its bin, and whether it ever
+// did.
 //
-// The `in_transit` history row is the pickup: it is written when the fleet
-// first reports the order under way, and it is the only durable record of when
-// the bin left the floor. FAIL CLOSED for the same reason terminalWithin does —
-// an unreadable row, a missing one, or an order that never reached in_transit
-// all report false, because this gates a write that moves a bin.
+// THE PICKUP LEG, NOT THE `in_transit` ROW. `in_transit` is RDS reporting the
+// order RUNNING — a robot assigned and driving toward the source — and it was
+// read as the lift for a month. The lift is the pickup block completing:
+// handleBlockCompleted records that leg in mission_events and then, for a
+// pickup-shaped binTask, moves the bin to _TRANSIT. Same predicate
+// (IsPickupBlock), same event, recorded first — so a bin a robot put at
+// _TRANSIT has this row, and a bin that got there any other way does not.
+// Checked against every inferred placement at SPR and HK up to 2026-09-24:
+// all 50 had one; the three bins that reached _TRANSIT without a robot had none.
 //
-// THE FIRST SUCH ROW, NOT THE LAST. `faulted -> in_transit` is a legal
-// transition (dispatch/lifecycle.go), so a replanned order carries several —
-// and the bin was picked up once, at the first. Reading the latest let a
-// twenty-hour-old pickup wear a five-minute-old timestamp and walk straight
-// through the one gate written to stop it, which is the opposite of failing
-// closed. The robot does not re-collect a bin it is already carrying.
-func (e *Engine) pickupWithin(ord *orders.Order, window time.Duration) bool {
+// THE FIRST SUCH LEG. A replanned order may report more blocks later; the bin
+// left the floor once. Known limit: a complex order with pickups of several
+// bins answers for all of them with its first.
+//
+// FAIL CLOSED. An unreadable or missing row reports false: this gates writes
+// that move a bin, and "no pickup on record" sends an operator to look, where a
+// wrong answer would send the floor to fetch a bin that is not there.
+func (e *Engine) pickupAt(ord *orders.Order) (time.Time, bool) {
 	if ord == nil {
-		return false
+		return time.Time{}, false
 	}
-	h, err := e.db.EarliestOrderHistoryForStatus(ord.ID, protocol.StatusInTransit)
+	events, err := e.db.ListMissionEvents(ord.ID)
 	if err != nil {
-		e.logFn("engine: stranded transit: pickup row for order %d: %v", ord.ID, err)
-		return false
+		e.logFn("engine: stranded transit: pickup leg for order %d: %v", ord.ID, err)
+		return time.Time{}, false
 	}
-	if h == nil {
-		return false
+	for _, ev := range events {
+		if ev.NewState != BlockLegState {
+			continue
+		}
+		var legs []blockLeg
+		if json.Unmarshal([]byte(ev.BlocksJSON), &legs) != nil {
+			continue
+		}
+		for _, leg := range legs {
+			if IsPickupBlock(leg.BinTask) {
+				return ev.CreatedAt, true
+			}
+		}
 	}
-	return clock.Now().UTC().Sub(h.CreatedAt) <= window
+	return time.Time{}, false
 }
 
 // placeInferred is THE placement gate, shared by both inference paths.
@@ -217,9 +267,9 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 
 	node, point, resolved := service.ResolveReportedPoints(e.NodeService(), obs.CurrentStation, obs.LastStation)
 	if !resolved {
-		lead := "robot is not at a node we know"
+		lead := "robot not at a known node"
 		if watchedUnload {
-			lead = "deck emptied somewhere we cannot name"
+			lead = "set down at an unknown spot"
 		}
 		e.declineInferred(binID, robotID, obs, intent, lead+": "+
 			service.DescribeUnresolvedPoints(e.NodeService(), obs.CurrentStation, obs.LastStation),
@@ -262,7 +312,7 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 // emptied and stops moving as the robot drives on.
 //
 // THE DROP INSTANT IS PRINTED ONLY WHEN THERE WAS A DROP TO INSTANT. On the
-// sweep path the sample is frozen, so "deck read empty 21:02:23Z" is both true
+// sweep path the sample is frozen, so "set down 21:02:23Z" is both true
 // and the same bytes next pass. On the `_TRANSIT` path there is no freeze —
 // the reading is taken fresh on every pass — so the same field would carry
 // clock.Now(), and a note that changes every pass is a note neither dedup can
@@ -272,7 +322,7 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 func (e *Engine) declineInferred(binID int64, robotID string, obs dropObservation, intent, why string, watchedUnload bool) {
 	parts := []string{why, intentPhrase(intent)}
 	if watchedUnload {
-		parts = append(parts, "deck read empty "+obs.At.Format(time.RFC3339))
+		parts = append(parts, "set down "+obs.At.Format(time.RFC3339))
 	}
 	e.strandedAnomaly(binID, robotID, obs.status(), true, strings.Join(parts, "; "))
 }
@@ -292,9 +342,9 @@ func (e *Engine) placementIntent(binID int64) string {
 
 func intentPhrase(intent string) string {
 	if intent == "" {
-		return "no order on record names where it was going"
+		return "destination unknown"
 	}
-	return "its order was taking it to " + intent
+	return "bound for " + intent
 }
 
 // binTypeRefusal reports why a node will not accept this bin, or "" when it
@@ -550,9 +600,7 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// the sweep repeats every two seconds forever prints one line and not
 		// 43,200 a day.
 		e.strandedAnomaly(bin.ID, robotID, fleet.RobotStatus{}, false,
-			"the deck was already empty when Core first looked — Core restarted after the "+
-				"unload, so the drop was not observed and this robot's position does not "+
-				"describe where the bin is")
+			"deck already empty when Core first looked (Core restarted) — drop not observed")
 		return
 	case dropGapped:
 		// A DIFFERENT SENTENCE, because it is a different fact. Core did not
@@ -566,10 +614,8 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// Positionless for the same reason as the restart case, and constant for
 		// the same reason.
 		e.strandedAnomaly(bin.ID, robotID, fleet.RobotStatus{}, false,
-			"the deck last read loaded more than "+e.deckWitnessRecency().String()+
-				" before it read empty — Core heard nothing about this robot in between, so "+
-				"the drop was not observed and this robot's position does not describe "+
-				"where the bin is")
+			"deck last read loaded over "+e.deckWitnessRecency().String()+
+				" before it read empty, nothing heard between — drop not observed")
 		return
 	case dropExpired:
 		// The drop WAS watched, and the sentence says so — this is the only one
@@ -579,8 +625,7 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// have moved the bin themselves. The sample is kept rather than dropped
 		// so that this stays the answer instead of a fresh reading becoming one.
 		e.declineInferred(bin.ID, robotID, obs, e.placementIntent(bin.ID),
-			"the drop was observed more than "+window.String()+" ago and could not be placed "+
-				"in that time, so it is no longer safe to record it from that reading", true)
+			"drop observed more than "+window.String()+" ago, never placed — too old to record", true)
 		return
 	}
 
@@ -808,7 +853,11 @@ func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotS
 	if unchanged {
 		return
 	}
-	e.logFn("engine: stranded transit: bin %d left at _TRANSIT — %s", binID, note)
+	detail := ""
+	if haveRobot {
+		detail = " [" + strandedDetail(robot) + "]"
+	}
+	e.logFn("engine: stranded transit: bin %d left at _TRANSIT — %s%s", binID, note, detail)
 }
 
 // ForgetStrandedNote re-arms the log for a bin an OPERATOR has just resolved.
@@ -843,28 +892,46 @@ func (e *Engine) forgetStrandedNote(binID int64) {
 	e.strandedNotesMu.Unlock()
 }
 
-// strandedNote renders the robot's last known position as one line an operator
-// can read and walk to.
+// strandedNote is the line an operator reads on the bins page: why, then which
+// robot and where it stood. SHORT ON PURPOSE — the reason, the robot, the
+// point it reported and its x/y. Angle, the other station field and the
+// jack reading are for whoever debugs the inference, and they go to the log
+// line (strandedDetail), not onto the row.
 //
-// Coordinates lead because they are the map pin; the station names follow
-// because either may be the answer and neither is reliably present. Ordered by
-// CORE POLL TIME implicitly — this is the cache's latest sample, and the robot's
-// own clock is never consulted, because robot clocks at Springfield are off by
-// days (FINDING-seer-jackunload-vs-block-completion-2026-08-12.md).
+// The position is the cache's latest sample, ordered by CORE POLL TIME; the
+// robot's own clock is never consulted, because robot clocks at Springfield are
+// off by days (FINDING-seer-jackunload-vs-block-completion-2026-08-12.md).
 func strandedNote(robotID string, robot fleet.RobotStatus, haveRobot bool, why string) string {
-	parts := []string{why}
-	if robotID != "" {
-		parts = append(parts, "robot "+robotID)
+	if robotID == "" {
+		return why
 	}
+	where := robotID
 	if haveRobot {
-		parts = append(parts, fmt.Sprintf("at x=%.2f y=%.2f angle=%.2f", robot.X, robot.Y, robot.Angle))
-		if robot.CurrentStation != "" {
-			parts = append(parts, "station "+robot.CurrentStation)
+		if st := robot.CurrentStation; st != "" {
+			where += " at " + st
+		} else if robot.LastStation != "" {
+			where += " near " + robot.LastStation
 		}
-		if robot.LastStation != "" && robot.LastStation != robot.CurrentStation {
-			parts = append(parts, "last station "+robot.LastStation)
-		}
-		parts = append(parts, fmt.Sprintf("jack_state=%d height=%.4f", robot.JackState, robot.LiftHeight))
+		where += fmt.Sprintf(" (x=%.2f y=%.2f)", robot.X, robot.Y)
 	}
+	return why + "; " + where
+}
+
+// strandedDetail is the rest of the reading, for the log line only.
+//
+// NEGATIVE ZERO IS PRINTED AS ZERO. A resting jack reports heights like
+// -0.00001, which %.4f renders "-0.0000"; HK bin 13's note alternated between
+// that and "0.0000" on successive ticks, defeating both dedups and re-logging
+// the same stranding every few minutes.
+func strandedDetail(robot fleet.RobotStatus) string {
+	height := fmt.Sprintf("%.4f", robot.LiftHeight)
+	if height == "-0.0000" {
+		height = "0.0000"
+	}
+	parts := []string{fmt.Sprintf("angle=%.2f", robot.Angle)}
+	if robot.LastStation != "" && robot.LastStation != robot.CurrentStation {
+		parts = append(parts, "last station "+robot.LastStation)
+	}
+	parts = append(parts, fmt.Sprintf("jack_state=%d height=%s", robot.JackState, height))
 	return strings.Join(parts, "; ")
 }

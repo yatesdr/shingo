@@ -56,11 +56,9 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	// at "now" so the default fixture is a freshly stranded bin — the case the
 	// inference is for. strandOrderAt backdates it for the cases it is not.
 	strandOrderAt(t, db, ord, clock.Now().UTC())
-	// AND THE PICKUP ROW. A bin at _TRANSIT got there by being picked up, so an
-	// order without an `in_transit` row is not a state the plant can produce —
-	// and branch A now measures from it (Engine.pickupWithin), failing closed
-	// when it is absent. A fixture missing it would make every branch-A test
-	// pass or fail for the wrong reason.
+	// AND THE PICKUP LEG. Every branch now requires the order to have lifted the
+	// bin (Engine.pickupAt) and fails closed without it, so a fixture missing it
+	// would make every test here pass or fail for the wrong reason.
 	pickupOrderAt(t, db, ord, clock.Now().UTC())
 	return bin, ord
 }
@@ -79,18 +77,26 @@ func strandOrderAt(t *testing.T, db *store.DB, ord *orders.Order, at time.Time) 
 	testutil.MustNoErr(t, err, "write terminal history")
 }
 
-// pickupOrderAt sets when the bin left its source, by writing (or moving) the
-// order's `in_transit` history row. Branch A reads that row and nothing else —
-// see Engine.pickupWithin for why the terminal row cannot bound the same thing.
+// pickupOrderAt sets when the order's robot lifted the bin, by replacing the
+// order's pickup legs with one JackLoad leg at `at`. That leg is what
+// handleBlockCompleted records before it moves the bin to _TRANSIT, and it is
+// what Engine.pickupAt reads.
 func pickupOrderAt(t *testing.T, db *store.DB, ord *orders.Order, at time.Time) {
 	t.Helper()
-	_, err := db.DB.Exec(`DELETE FROM order_history WHERE order_id=$1 AND status=$2`,
-		ord.ID, string(protocol.StatusInTransit))
-	testutil.MustNoErr(t, err, "clear pickup history")
-	_, err = db.DB.Exec(
-		`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1,$2,$3,$4)`,
-		ord.ID, string(protocol.StatusInTransit), "test pickup", at)
-	testutil.MustNoErr(t, err, "write pickup history")
+	_, err := db.DB.Exec(`DELETE FROM mission_events WHERE order_id=$1 AND new_state=$2`,
+		ord.ID, BlockLegState)
+	testutil.MustNoErr(t, err, "clear pickup legs")
+	appendPickupLeg(t, db, ord, at)
+}
+
+// appendPickupLeg records one more completed JackLoad block for the order.
+func appendPickupLeg(t *testing.T, db *store.DB, ord *orders.Order, at time.Time) {
+	t.Helper()
+	_, err := db.DB.Exec(
+		`INSERT INTO mission_events (order_id, old_state, new_state, blocks_json, detail, created_at)
+		 VALUES ($1, '', $2, $3, 'test pickup', $4)`,
+		ord.ID, BlockLegState, `[{"blockId":"b1","location":"SRC","binTask":"JackLoad"}]`, at)
+	testutil.MustNoErr(t, err, "write pickup leg")
 }
 
 // cacheRobot writes a robot into the engine's cache, which is what the
