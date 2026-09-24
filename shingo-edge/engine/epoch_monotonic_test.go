@@ -1,6 +1,11 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+
+	"shingo/protocol"
+	"shingoedge/store/processes"
+)
 
 // The Edge's active_bin_epoch is a copy of Core's bins.delta_epoch. Until now
 // it was written last-write-wins by five separate paths, which is only safe
@@ -81,5 +86,173 @@ func TestActiveBinEpoch_ZeroIsSimplyNotGreater(t *testing.T) {
 	}
 	if rt.RemainingUOPCached != 3 {
 		t.Errorf("remaining = %d, want 3 — refusing the older stamp must not refuse the count", rt.RemainingUOPCached)
+	}
+}
+
+// ── HandleUOPAdjustment, site by site ─────────────────────────────────────
+//
+// S5 makes UOPAdjustment and BinEpochRefresh NoExpiry, so an announcement can
+// now arrive hours late, behind newer ones. That is safe only if no write
+// reached from either handler can walk a carrier's stamp backward. Each
+// HandleUOPAdjustment branch that writes an epoch is pinned here: the Bound
+// bind, the bind of a staged carrier into an empty slot, and the count
+// correction of the carrier already bound. All three write through
+// epochAssignOnBind: for the same bound bin the stamp only moves forward. The
+// empty-slot bind is the exception at base, because an empty slot has no bound
+// bin to compare with; its pins are below.
+
+// adjustmentEpoch applies adj and returns the node's runtime afterwards.
+func adjustmentEpoch(t *testing.T, eng *Engine, node int64, adj protocol.UOPAdjustment) *processes.RuntimeState {
+	t.Helper()
+	eng.HandleUOPAdjustment(adj)
+	rt, err := eng.db.GetProcessNodeRuntime(node)
+	if err != nil || rt == nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	return rt
+}
+
+// TestUOPAdjustmentEpoch_BoundSiteNeverGoesBackward: the Bound branch (Core
+// moved the bin onto this node) names a bin already bound here at a newer
+// generation. The stale announcement lands its count, not its stamp.
+func TestUOPAdjustmentEpoch_BoundSiteNeverGoesBackward(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	node, binID := boundNodeFixture(t, eng, "EPOCH-SITE-BOUND", 7101, 9)
+
+	rt := adjustmentEpoch(t, eng, node, protocol.UOPAdjustment{
+		BinID: binID, CoreNodeName: "EPOCH-SITE-BOUND", NewRemaining: 11, Epoch: 4,
+		Bound: true, Actor: "admin-under-test",
+	})
+	if rt.ActiveBinEpoch != 9 {
+		t.Errorf("epoch = %d, want 9 — a late Bound announcement walked the stamp backward", rt.ActiveBinEpoch)
+	}
+	if rt.RemainingUOPCached != 11 {
+		t.Errorf("remaining = %d, want 11 — the Bound write ran; only its stamp is refused", rt.RemainingUOPCached)
+	}
+}
+
+// TestUOPAdjustmentEpoch_CorrectionSiteNeverGoesBackward: the count correction
+// of the bin bound here (neither Bound nor Released), carrying an older stamp.
+func TestUOPAdjustmentEpoch_CorrectionSiteNeverGoesBackward(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	node, binID := boundNodeFixture(t, eng, "EPOCH-SITE-CORR", 7102, 9)
+
+	rt := adjustmentEpoch(t, eng, node, protocol.UOPAdjustment{
+		BinID: binID, CoreNodeName: "EPOCH-SITE-CORR", NewRemaining: 11, Epoch: 4,
+		Actor: "admin-under-test",
+	})
+	if rt.ActiveBinEpoch != 9 {
+		t.Errorf("epoch = %d, want 9 — a late correction walked the stamp backward", rt.ActiveBinEpoch)
+	}
+	if rt.RemainingUOPCached != 11 {
+		t.Errorf("remaining = %d, want 11 — the guard is on the stamp, the count still lands", rt.RemainingUOPCached)
+	}
+}
+
+// departedSlotFixture binds bin X at epoch 4, moves it on to epoch 5 (Core
+// cleared it for reuse and the station adopted the new stamp), then empties the
+// slot the way Core's admin Move does (a Released adjustment). The slot's
+// active_bin_epoch still reads 5 afterwards, but the row no longer says whose
+// 5 it is.
+func departedSlotFixture(t *testing.T, eng *Engine, coreNode string, binID int64) int64 {
+	t.Helper()
+	node, _ := boundNodeFixture(t, eng, coreNode, binID, 4)
+	eng.HandleBinEpochRefresh(protocol.BinEpochRefresh{BinID: binID, CoreNodeName: coreNode, Epoch: 5})
+	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+		BinID: binID, CoreNodeName: coreNode, Released: true, Epoch: 5, Actor: "admin-under-test",
+	})
+	rt, err := eng.db.GetProcessNodeRuntime(node)
+	if err != nil || rt == nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if rt.ActiveBinID != nil || rt.ActiveBinEpoch != 5 {
+		t.Fatalf("fixture: active bin = %v epoch = %d, want an empty slot whose stamp still reads 5",
+			rt.ActiveBinID, rt.ActiveBinEpoch)
+	}
+	return node
+}
+
+// TestPin_EmptySlotBindOfADepartedCarrierTakesItsOldStamp pins the third site
+// at base. It is the one site the same-bin rule does not cover. Bin X was
+// bound at 4, moved on to 5, then left the slot. A person's correction for X
+// at epoch 4, delayed in transit, arrives at the empty slot, rebinds the
+// carrier that left, and stamps it 4. The store sees a bind from no bin to a
+// bin, which counts as a change of carrier, and any stamp binds on a change of
+// carrier. The row keeps no record of which bin the orphaned 5 belonged to.
+//
+// Verify-red: the empty-slot guard (lane T, the ruling on S5a) inverts it. The
+// slot remembers the last bin and its epoch, and an adjustment for that bin at
+// an older epoch is refused.
+func TestPin_EmptySlotBindOfADepartedCarrierTakesItsOldStamp(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	const binX = int64(7103)
+	node := departedSlotFixture(t, eng, "EPOCH-SITE-EMPTY", binX)
+
+	rt := adjustmentEpoch(t, eng, node, protocol.UOPAdjustment{
+		BinID: binX, CoreNodeName: "EPOCH-SITE-EMPTY", NewRemaining: 11, Epoch: 4,
+		Actor: "admin-under-test",
+	})
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != binX {
+		t.Fatalf("active bin = %v, want %d — at base the late correction rebinds the departed carrier", rt.ActiveBinID, binX)
+	}
+	if rt.ActiveBinEpoch != 4 {
+		t.Errorf("epoch = %d, want 4 — at base the empty-slot bind takes the adjustment's stamp", rt.ActiveBinEpoch)
+	}
+}
+
+// TestEmptySlotBind_ADifferentCarrierBindsAtItsOwnStamp: the empty-slot bind
+// is a real repair for a staged carrier the Edge never bound. A different bin
+// binds at its own stamp however old the departed bin's was. Green before and
+// after the guard.
+func TestEmptySlotBind_ADifferentCarrierBindsAtItsOwnStamp(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	node := departedSlotFixture(t, eng, "EPOCH-SITE-OTHER", 7105)
+
+	const binY = int64(7106)
+	rt := adjustmentEpoch(t, eng, node, protocol.UOPAdjustment{
+		BinID: binY, CoreNodeName: "EPOCH-SITE-OTHER", NewRemaining: 11, Epoch: 2,
+		Actor: "admin-under-test",
+	})
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != binY || rt.ActiveBinEpoch != 2 {
+		t.Errorf("active bin = %v epoch = %d, want %d at 2", rt.ActiveBinID, rt.ActiveBinEpoch, binY)
+	}
+}
+
+// TestEmptySlotBind_TheSameCarrierAtItsCurrentStampBinds: the carrier that
+// left, corrected at the stamp the slot last held, binds. An equal stamp is
+// not older. Green before and after the guard.
+func TestEmptySlotBind_TheSameCarrierAtItsCurrentStampBinds(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	const binX = int64(7107)
+	node := departedSlotFixture(t, eng, "EPOCH-SITE-SAME", binX)
+
+	rt := adjustmentEpoch(t, eng, node, protocol.UOPAdjustment{
+		BinID: binX, CoreNodeName: "EPOCH-SITE-SAME", NewRemaining: 11, Epoch: 5,
+		Actor: "admin-under-test",
+	})
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != binX || rt.ActiveBinEpoch != 5 {
+		t.Errorf("active bin = %v epoch = %d, want %d at 5", rt.ActiveBinID, rt.ActiveBinEpoch, binX)
+	}
+}
+
+// TestBinEpochRefreshEpoch_NeverGoesBackward: the other announcement S5 makes
+// NoExpiry. A refresh that lost a race to a newer stamp leaves the newer one.
+func TestBinEpochRefreshEpoch_NeverGoesBackward(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	node, binID := boundNodeFixture(t, eng, "EPOCH-SITE-REFRESH", 7104, 9)
+
+	eng.HandleBinEpochRefresh(protocol.BinEpochRefresh{BinID: binID, CoreNodeName: "EPOCH-SITE-REFRESH", Epoch: 4})
+	rt, err := eng.db.GetProcessNodeRuntime(node)
+	if err != nil || rt == nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if rt.ActiveBinEpoch != 9 {
+		t.Errorf("epoch = %d, want 9 — a late refresh walked the stamp backward", rt.ActiveBinEpoch)
 	}
 }
