@@ -3,6 +3,68 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-23 — The half loader, and an unloader that refills itself
+
+- A move of an empty carrier is not judged by the part's carrier rule — Hopkinsville 2233/2234
+  parked "Waiting for material" with the carrier standing at the source
+- The Bin Types table shows which robots move an empty carrier, picked from the fleet's own groups:
+  every carrier type was blank, so every empty in the plant was open to any robot
+- Automatic unloader pulls (U1) take fulls again: 2163e51c's exemption also covered them, since
+  every U1 is no_demand. Only the carrier standing on a named source node escapes the drain-window
+  rule; choosing from a group or a pool is still a selection. `bin_loaders.accept_partials`
+  (migration 123) lets a consume loader take partials by config
+- The empty-out (U2) names no part: the stale tag drove a home-location removal as a pool Drain
+  (the wrong bin) and gated the destination on the cleared part
+- LOAD confirms its L1 again — Core's echo renamed the order type and the confirm lookup missed it,
+  so the L1 stayed `delivered` and that window never got another. Completion now reads the loader
+  Core owns (stored claim, else SynthClaim), so `loader_empty_in` and `manual_swap` match at
+  Core-owned loaders
+- The echo keeps the Edge's own process node: since cdc95c55 it re-credited a cross-node Edge move
+  to its destination, which wedged a stage-2 window and blinded stage 1's double-tap guard
+- A carrier on a live loader's own position belongs to that loader: an empty dropped at a loader
+  window was free for any plant-wide empty request. `NOT IN` over live homes, hashed once
+- **Bare bin type** (migration 124): stage 1 of a two-stage unloader CLEARs its carrier as the
+  loader's bare type, the U2 takes it to stage 2, and PUSH AS re-stamps it. No empty finder, count
+  or soak invariant ever offers a bare carrier, and a bare type can never be in a payload rule
+- A consume shared-window loader may declare no payloads (the stage-2 window), in the domain and in
+  plantspec
+- `bin_loaders.auto_push` (migration 125) replaces the retired claim's flag, which SynthClaim never
+  set — every Core-owned unloader's re-pull gates were off, so stage 1 sat empty with fulls in the
+  market until an Edge restart
+- An auto_push unloader re-pulls when its U2 lifts the carrier, not when it lands; the landing
+  stays as a local-check fallback. A stage-1 cycle costs one Core read, down from four
+- Every re-pull gate asks only its own loader or unloader, one read each; `MaybePushLoader` and
+  `MaybePushUnloader`, which walked them all, are deleted
+- CLEAR learns that a carrier was there from the clear itself: a failed pre-read no longer strands
+  the cleared carrier without its U2
+- A delivery at a Core-owned window binds its bin, count and lineside carrier: the remaining
+  stored-claim-only readers use `claimAtNode`
+- A LANE or single-node source for a full stays in that source and queues if empty; it no longer
+  falls through to a plant-wide pull from another cell's group
+- A named source that no longer exists waits with `finder-source-missing` instead of being filed as
+  a transient read failure; a held compound leg names the lane that refused, not its delivery node
+- A home-location loader keeps its changeover load directive
+- `scripts/check-dead-identifiers.sh` fails a comment citing a Go identifier that no longer exists;
+  the citations it found are repointed
+- Plant PLC names and CATIDs in comments and test literals are synthetic now, and the part-number
+  guard also refuses a `MES_P<digits>_` struct name
+- `Dockerfile.dev` builds from a git worktree; the sim operator no longer CLEARs a node whose
+  delivery went elsewhere
+
+## 2026-09-22 — The Allowed Bin Types fence, in service
+
+- The per-node Allowed Bin Types fence refuses things now: five of seven store call sites passed a
+  nil carrier type, so it never had. The resolver derives the type from the order it is placing
+- A resolution states which bin type it is placing, or that it could not tell — "anywhere" and
+  "unknown" were one nil, and a KD went to a TOTE-2415-only slot at Hopkinsville
+- The Allowed Bin Types picker works (every row read "undefined", and a type could be added twice)
+  and is a checkbox list with every option visible, not a type-ahead
+- The nodes page comes back where you left it after a save
+- The orders page shows the fleet's own error text instead of "[object Object]", and drops the
+  every-robot 80004 roll-call while keeping the exception inside it
+- An operator's move of an empty carrier onto a drain window is not a selection (Hopkinsville 2213)
+- `PUSH AS <type>`: the empty-carrier panel lets the operator correct a carrier's type on the way out
+
 ## 2026-09-21 — A quiet Edge keeps its thresholds
 
 - Core no longer wipes a silent Edge's `demand_registry`: those rows are Core's own derivation from
