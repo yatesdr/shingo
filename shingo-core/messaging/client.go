@@ -90,7 +90,8 @@ type kafkaState struct {
 // interface so a test can put a fake reader under readLoop and see, without a
 // broker, whether the offset is committed before or after the handler runs.
 type kafkaReader interface {
-	ReadMessage(ctx context.Context) (kafka.Message, error)
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
 	Close() error
 }
 
@@ -252,7 +253,10 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 	c.mu.RUnlock()
 
 	for {
-		msg, err := reader.ReadMessage(context.Background())
+		// Fetch, handle, then commit. ReadMessage committed before returning,
+		// so a crash inside the handler lost the message; now the offset moves
+		// only after the handler has run, and a crash redelivers it once.
+		msg, err := reader.FetchMessage(context.Background())
 		if err != nil {
 			select {
 			case <-stop:
@@ -305,6 +309,14 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 			}()
 			handler(msg.Topic, msg.Value)
 		}()
+		// Committed whether the handler returned or panicked: MessageHandler
+		// reports no error, and a message that panics every time must not
+		// wedge the partition. A failed commit is not a loss: the message was
+		// handled, the next message's commit moves the offset past it, and if
+		// the process dies first the message is delivered once more.
+		if err := reader.CommitMessages(context.Background(), msg); err != nil {
+			log.Printf("kafka commit error: topic=%s offset=%d: %v", topic, msg.Offset, err)
+		}
 	}
 }
 

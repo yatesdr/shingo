@@ -131,10 +131,10 @@ func TestSetForProduction_AnnouncementRollsBackWithTheReset(t *testing.T) {
 }
 
 // TestClearForReuse_AnnouncesTheNewGeneration: the operator's clear on Core's
-// admin screen. One of five reset routes; the whole point of putting the
+// admin screen. One of six reset routes; the whole point of putting the
 // announcement inside the shared bump is that naming them individually stops
 // being necessary, so this covers a second route to show the shape holds and
-// leaves the other three to the census.
+// leaves the other four to the census.
 func TestClearForReuse_AnnouncesTheNewGeneration(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

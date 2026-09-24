@@ -3,6 +3,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/audit"
 )
 
 // Characterisation pins for the two Core-side writers that set uop_remaining
@@ -102,20 +104,26 @@ func TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop(t *testing.T) {
 	}
 }
 
-// TestSyncUOPAndClaim_WritesAbsoluteWithNoBumpAndNoAnnounce pins V7.
+// TestSyncUOPAndClaim_StartsANewGenerationAndAnnouncesIt is the V7 pin,
+// inverted by SYNTH-round2 S7 ("syncUOPAndClaimTx goes through bumpEpoch").
 //
 // The partial-consumption claim (dispatch/store_slot.go ConfirmClaim with
 // order.RemainingUOP > 0 -> claimAndConfirm -> claimUnderReservationTx ->
-// syncUOPAndClaimTx) writes uop_remaining absolutely, does not bump
-// delta_epoch and enqueues no UOPAdjustment. A delta stamped with the epoch
-// the station held before the sync is therefore still current, and it applies
-// on top of the synced number.
+// syncUOPAndClaimTx) writes uop_remaining absolutely. Before S7 it did not
+// bump delta_epoch and told nobody, so a late delta stamped with the old epoch
+// was still current and applied on top of the synced number. It is a lifecycle
+// transition like release-partial, so it now ends the generation and announces
+// the new one in the same transaction:
 //
-// VERIFY-RED: SYNTH-round2 S7 ("syncUOPAndClaimTx goes through bumpEpoch")
-// inverts all three halves: the epoch moves by one, one UOPAdjustment carrying
-// the synced count and the new epoch is enqueued in the same transaction, and
-// the old-epoch delta is stale-dropped (the count stays at the synced number).
-func TestSyncUOPAndClaim_WritesAbsoluteWithNoBumpAndNoAnnounce(t *testing.T) {
+//   - delta_epoch moves by one;
+//   - one UOPAdjustment carrying the synced count, the new epoch and the node is
+//     enqueued (the station learns the new epoch), with a lifecycle actor so an
+//     Edge with an empty slot does not bind to it;
+//   - a delta stamped with the old epoch is stale-dropped and the count stays at
+//     the synced number;
+//   - the ledger row is a binding boundary (audit.EpochBumpOps), so a boundary
+//     exception row is written with it.
+func TestSyncUOPAndClaim_StartsANewGenerationAndAnnouncesIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -132,20 +140,40 @@ func TestSyncUOPAndClaim_WritesAbsoluteWithNoBumpAndNoAnnounce(t *testing.T) {
 	if got := binRemaining(t, db, bin.ID); got != 37 {
 		t.Fatalf("after the sync uop_remaining = %d, want 37 (an absolute write)", got)
 	}
-	if got := binEpoch(t, db, bin.ID); got != epoch {
-		t.Errorf("syncUOPAndClaimTx moved delta_epoch %d -> %d; the pin is that it does not bump", epoch, got)
+	if got := binEpoch(t, db, bin.ID); got != epoch+1 {
+		t.Errorf("syncUOPAndClaimTx left delta_epoch at %d, want %d: the sync is a lifecycle "+
+			"transition and must start a new generation", got, epoch+1)
 	}
-	if adj := outboxAdjustments(t, db, bin.ID); len(adj) != 0 {
-		t.Errorf("syncUOPAndClaimTx enqueued %d UOPAdjustment rows; the pin is that it announces nothing", len(adj))
+	adj := outboxAdjustments(t, db, bin.ID)
+	if len(adj) != 1 {
+		t.Fatalf("outbox holds %d announcements for the sync, want 1: a bump nobody hears about "+
+			"leaves the station stamping deltas with a retired epoch", len(adj))
+	}
+	if adj[0].Epoch != epoch+1 || adj[0].NewRemaining != 37 || adj[0].CoreNodeName != sd.StorageNode.Name {
+		t.Errorf("announcement = {epoch %d, remaining %d, node %q}, want {epoch %d, remaining 37, node %q}",
+			adj[0].Epoch, adj[0].NewRemaining, adj[0].CoreNodeName, epoch+1, sd.StorageNode.Name)
+	}
+	if !protocol.IsLifecycleActor(adj[0].Actor) {
+		t.Errorf("announcement actor = %q, want a lifecycle actor: a dispatch claim is nobody "+
+			"declaring a count, so an empty slot must not bind to it", adj[0].Actor)
 	}
 
 	// A late delta from the station, stamped with the epoch it held before.
 	err := deltas.ApplyBinUOPDelta(pinStation, consumeDelta(bin.ID, epoch, 1, -2))
-	if err != nil {
-		t.Fatalf("old-epoch delta after the sync: %v, want nil (applied)", err)
+	if !errors.Is(err, ErrInventoryDeltaSkipped) {
+		t.Errorf("old-epoch delta after the sync: err = %v, want ErrInventoryDeltaSkipped (stale-dropped)", err)
 	}
-	if got := binRemaining(t, db, bin.ID); got != 35 {
-		t.Errorf("after the old-epoch delta uop_remaining = %d, want 35: with no bump the "+
-			"delta is still current and applies on top of the synced 37", got)
+	if got := binRemaining(t, db, bin.ID); got != 37 {
+		t.Errorf("after the old-epoch delta uop_remaining = %d, want 37: a delta from the "+
+			"retired generation must not land on the synced count", got)
+	}
+
+	var boundaries int
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT count(*) FROM bin_uop_exception WHERE bin_id=$1 AND kind='boundary' AND op=$2`,
+		bin.ID, audit.OpSyncUOPAndClaim).Scan(&boundaries), "count boundary rows")
+	if boundaries != 1 {
+		t.Errorf("boundary exception rows for the sync = %d, want 1: an epoch bump that is not "+
+			"in EpochBumpOps joins two bindings into one", boundaries)
 	}
 }

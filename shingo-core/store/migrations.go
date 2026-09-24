@@ -6717,14 +6717,18 @@ func v93BinUOPException(tx *sql.Tx) error {
 	return nil
 }
 
-// bumpOpsForBackfill is EpochBumpOps spelled for the v93 backfill. It is
-// spelled out rather than referenced because migrations.go cannot import
-// store/audit (store/audit imports store-level helpers; the dependency
-// direction would cycle). The audit-side set is pinned by
-// TestEpochBumpOpsCoversEveryBumpSite, and THIS copy is pinned to that one by
-// TestV93BackfillOpsMatchEpochBumpOps, so a sixth bump op arrives as two
-// failing tests pointing at each other rather than as a silently short
-// backfill.
+// bumpOpsForBackfill is EpochBumpOps as it stood when v93 was written, spelled
+// for the v93 backfill. It is spelled out rather than referenced because
+// migrations.go cannot import store/audit (store/audit imports store-level
+// helpers; the dependency direction would cycle). The audit-side set is pinned
+// by TestEpochBumpOpsCoversEveryBumpSite, and THIS copy is pinned to that one by
+// TestV93BackfillOpsMatchEpochBumpOps, so a new bump op arrives as two failing
+// tests pointing at each other rather than as a silently short backfill.
+//
+// An op that STARTED bumping after v93 does not belong here: its rows written
+// before that change did not bump, so they are not boundaries, and backfilling
+// them as boundaries would invent history. sync_uop_and_claim is the one such
+// op; the test names it.
 // BumpOpsForBackfill exports the set for TestV93BackfillOpsMatchEpochBumpOps;
 // see that test for why the pin exists.
 var BumpOpsForBackfill = bumpOpsForBackfill

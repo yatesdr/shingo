@@ -44,14 +44,14 @@ func TestEpochBumpOpsCoversEveryBumpSite(t *testing.T) {
 	sites := regexp.MustCompile(`(?m)^\s*(?:if\s+)?(?:_|\w+)?(?:,\s*\w+)?\s*(?::?=\s*)?s\.bumpEpoch\(tx,`).
 		FindAllIndex(src, -1)
 
-	// FIVE SITES, NINE OPS — the two are not the same number and that is fine.
+	// SIX SITES, TEN OPS — the two are not the same number and that is fine.
 	// The clear-manifest site takes its op as a PARAMETER, so clear_for_reuse and
 	// released_capture_empty both reach it; the released-empty site branches
 	// across three ops and the released-partial site across two. Counting sites
 	// rather than ops is deliberate: a new op routed through an existing site is
 	// already covered, and it is a NEW SITE that can introduce a boundary this set
 	// has never heard of.
-	const wantSites = 5
+	const wantSites = 6
 	if len(sites) != wantSites {
 		t.Errorf("service/bin_manifest.go has %d s.bumpEpoch(tx, …) call sites; this test is "+
 			"pinned at %d.\n\nIf a site was ADDED, find which audit op its function writes "+
@@ -128,7 +128,7 @@ func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 
 	// The two ops that are in this set and NOT in the release family, named
 	// explicitly so the difference between the sets stays deliberate.
-	for _, op := range []string{OpSetForProduction, OpClearAndClaim} {
+	for _, op := range []string{OpSetForProduction, OpClearAndClaim, OpSyncUOPAndClaim} {
 		if !bump[op] {
 			t.Errorf("%q is missing from EpochBumpOps. It is not an unload — which is why "+
 				"ReleaseFamilyOps excludes it — but it does start the count over.", op)

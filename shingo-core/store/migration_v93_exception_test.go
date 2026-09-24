@@ -170,10 +170,18 @@ func TestV93_IdempotentOnReapply(t *testing.T) {
 // bump call sites by TestEpochBumpOpsCoversEveryBumpSite; this closes the
 // other direction, so a sixth bump op arrives as failing tests rather than as
 // a silently short backfill (and, post-retention, a permanently short ledger).
+//
+// bumpedAfterV93 are ops that became epoch bumps after v93 was written. Their
+// earlier rows did not bump, so they are not historical boundaries and the
+// backfill must not treat them as ones. sync_uop_and_claim started bumping when
+// syncUOPAndClaimTx was routed through bumpEpoch (SYNTH-round2 S7).
 func TestV93BackfillOpsMatchEpochBumpOps(t *testing.T) {
+	bumpedAfterV93 := map[string]bool{audit.OpSyncUOPAndClaim: true}
 	want := map[string]bool{}
 	for _, op := range audit.EpochBumpOps {
-		want[op] = true
+		if !bumpedAfterV93[op] {
+			want[op] = true
+		}
 	}
 	got := map[string]bool{}
 	for _, op := range store.BumpOpsForBackfill {

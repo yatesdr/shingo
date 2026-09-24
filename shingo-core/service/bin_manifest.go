@@ -99,7 +99,7 @@ func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName
 // could not tell them from live ticks.
 //
 // The announcement is here for the same reason the bump is. Five reset paths
-// bump; before this, ONE of them told the Edge, and the Edge went on reporting
+// bumped; before this, ONE of them told the Edge, and the Edge went on reporting
 // counts under a generation that had ended while Core discarded every one —
 // half of all production counts at Hopkinsville, continuously. A shared body
 // plus a census test already existed for the bump and were not enough, because
@@ -746,7 +746,8 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 }
 
 // SyncUOPAndClaim atomically syncs remaining UOP and claims the bin.
-// For partial consumption: manifest preserved, only uop_remaining updated.
+// For partial consumption: manifest preserved, uop_remaining set, and the
+// bin's generation bumped and announced (see syncUOPAndClaimTx).
 func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP int) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -778,6 +779,17 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
+	}
+	// A dispatch claim of a partly consumed carrier is a lifecycle transition,
+	// like the partial release: the count is set absolutely from the order's
+	// remaining UOP, so a delta the station stamped before it belongs to the
+	// generation that just ended. Without the bump that delta was still current
+	// and landed on top of the synced number, and without the announcement the
+	// station never learned the count Core had set. Nobody declared a count —
+	// the sync is a consequence of the claim — so the station must not bind an
+	// empty slot to it.
+	if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
+		return err
 	}
 	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
 	if err != nil {

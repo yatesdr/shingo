@@ -147,14 +147,15 @@ var ReleaseFamilyOps = []string{
 // against that belief. It is the grain the 5.11 stale-binding candidates are
 // measured on (store/bins.CarrierBindings), and it is derivable from
 // bin_uop_ledger alone because a bump always writes one of these rows in the same
-// transaction (service/bin_manifest.go — bumpEpoch is called from five places and
+// transaction (service/bin_manifest.go — bumpEpoch is called from six places and
 // each one appends an op below).
 //
 // A SUPERSET OF ReleaseFamilyOps, AND THE DIFFERENCE IS THE POINT. That set
 // answers "was the carrier emptied" and deliberately excludes clear_and_claim,
 // because a clear that immediately re-assigns the bin is a re-purpose rather than
 // an unload. This set answers "did the count start over", and clear_and_claim
-// does start it over — so does set_for_production, which is not an unload at all.
+// does start it over — so does set_for_production, which is not an unload at all,
+// and so does sync_uop_and_claim, the dispatch claim of a partly consumed carrier.
 // Two questions, two sets; folding them would make one of the two answers wrong.
 //
 // NOT included, and each for a checked reason:
@@ -175,12 +176,13 @@ var ReleaseFamilyOps = []string{
 //     ALONGSIDE a release that has its own row in this set; counting them would
 //     double a boundary rather than add one.
 //
-// TestEpochBumpOpsCoversEveryBumpSite pins the five call sites, so a sixth
+// TestEpochBumpOpsCoversEveryBumpSite pins the six call sites, so a seventh
 // arrives as a failing test pointing here rather than as a binding age that is
 // silently too long.
 var EpochBumpOps = []string{
 	OpSetForProduction,
 	OpClearAndClaim,
+	OpSyncUOPAndClaim,
 	OpClearForReuse,
 	OpReleasedEmpty,
 	OpReleasedPartial,

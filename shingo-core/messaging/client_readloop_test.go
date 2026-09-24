@@ -16,10 +16,8 @@ import (
 // orderRecordingReader is a kafkaReader that serves a fixed list of messages,
 // records every call readLoop makes on it, and then blocks until released.
 //
-// ReadMessage is recorded as "read+commit" because that is what it is on a
-// consumer-group reader: kafka-go v0.4.50 reader.go ReadMessage calls
-// FetchMessage and then, when a GroupID is set (Core always sets one),
-// CommitMessages before it returns the message.
+// FetchMessage and CommitMessages are recorded separately so the test sees
+// where the commit falls relative to the handler.
 type orderRecordingReader struct {
 	mu      sync.Mutex
 	events  []string
@@ -54,14 +52,21 @@ func (r *orderRecordingReader) next() (kafka.Message, bool) {
 	return m, true
 }
 
-func (r *orderRecordingReader) ReadMessage(context.Context) (kafka.Message, error) {
+func (r *orderRecordingReader) FetchMessage(context.Context) (kafka.Message, error) {
 	if m, ok := r.next(); ok {
-		r.record("read+commit:" + string(m.Value))
+		r.record("fetch:" + string(m.Value))
 		return m, nil
 	}
 	r.once.Do(func() { close(r.drained) })
 	<-r.release
 	return kafka.Message{}, errors.New("reader released")
+}
+
+func (r *orderRecordingReader) CommitMessages(_ context.Context, msgs ...kafka.Message) error {
+	for _, m := range msgs {
+		r.record("commit:" + string(m.Value))
+	}
+	return nil
 }
 
 func (r *orderRecordingReader) Close() error { return nil }
@@ -96,20 +101,16 @@ func runReadLoopOver(t *testing.T, r *orderRecordingReader, handler MessageHandl
 	}
 }
 
-// TestReadLoop_CommitsBeforeTheHandlerRuns pins the offset order Core's
-// readLoop has today: the offset is committed BEFORE the handler runs, because
-// readLoop calls ReadMessage, which fetches and commits in one call. A Core
-// crash, or a handler that fails (a Postgres blip inside a delta apply), after
-// that commit loses the message: the broker has recorded it as consumed and
-// nothing redelivers it.
+// TestReadLoop_CommitsAfterTheHandlerRuns holds SYNTH-round2 S2 ("Core commits
+// after handling"): readLoop fetches, runs the handler, then commits. It used
+// to call ReadMessage, which on a consumer-group reader fetches AND commits
+// before returning (kafka-go v0.4.50 reader.go ReadMessage), so a Core crash
+// inside the handler lost the message. Now the offset moves only after the
+// handler has run, and a crash between the two delivers the message once more.
 //
-// The recorded order is [read+commit:m1, handle:m1, read+commit:m2, handle:m2].
-//
-// VERIFY-RED: SYNTH-round2 S2 ("Core commits after handling") changes readLoop
-// to FetchMessage, then the handler, then CommitMessages. That change inverts
-// this pin: the order becomes [fetch:m1, handle:m1, commit:m1, ...], and this
-// test's assertion is flipped in the same commit.
-func TestReadLoop_CommitsBeforeTheHandlerRuns(t *testing.T) {
+// The recorded order is [fetch:m1, handle:m1, commit:m1, fetch:m2, ...].
+// Before S2 it was [read+commit:m1, handle:m1, read+commit:m2, handle:m2].
+func TestReadLoop_CommitsAfterTheHandlerRuns(t *testing.T) {
 	t.Parallel()
 	r := newOrderRecordingReader(
 		kafka.Message{Topic: "shingo.orders", Value: []byte("m1")},
@@ -119,20 +120,17 @@ func TestReadLoop_CommitsBeforeTheHandlerRuns(t *testing.T) {
 		r.record("handle:" + string(payload))
 	})
 
-	want := []string{"read+commit:m1", "handle:m1", "read+commit:m2", "handle:m2"}
+	want := []string{"fetch:m1", "handle:m1", "commit:m1", "fetch:m2", "handle:m2", "commit:m2"}
 	if got := r.snapshot(); !reflect.DeepEqual(got, want) {
 		t.Errorf("readLoop call order = %v, want %v", got, want)
 	}
 }
 
-// TestReadLoop_HandlerPanicIsRecoveredAndTheLoopMovesOn pins what a failing
-// handler does today. MessageHandler returns nothing, so the only failure the
-// loop can see is a panic; readLoop recovers it, logs, and reads the next
-// message. The panicking message's offset was already committed by
-// ReadMessage, so it is never seen again.
-//
-// S2 keeps "move on" (a poison message must not wedge the partition) but moves
-// the commit after the handler; the panic case then commits after the recover.
+// TestReadLoop_HandlerPanicIsRecoveredAndTheLoopMovesOn: MessageHandler
+// returns nothing, so the only failure the loop can see is a panic. readLoop
+// recovers it, commits the message anyway, and reads the next one. Committing
+// after a panic is deliberate: a message that panics every time must not wedge
+// the partition.
 func TestReadLoop_HandlerPanicIsRecoveredAndTheLoopMovesOn(t *testing.T) {
 	t.Parallel()
 	r := newOrderRecordingReader(
@@ -146,7 +144,7 @@ func TestReadLoop_HandlerPanicIsRecoveredAndTheLoopMovesOn(t *testing.T) {
 		}
 	})
 
-	want := []string{"read+commit:poison", "handle:poison", "read+commit:m2", "handle:m2"}
+	want := []string{"fetch:poison", "handle:poison", "commit:poison", "fetch:m2", "handle:m2", "commit:m2"}
 	if got := r.snapshot(); !reflect.DeepEqual(got, want) {
 		t.Errorf("readLoop call order = %v, want %v", got, want)
 	}
