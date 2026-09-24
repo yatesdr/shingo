@@ -82,8 +82,16 @@ type Client struct {
 }
 
 type kafkaState struct {
-	readers map[string]*kafka.Reader
+	readers map[string]kafkaReader
 	writer  *kafka.Writer
+}
+
+// kafkaReader is the part of *kafka.Reader that readLoop drives. It is an
+// interface so a test can put a fake reader under readLoop and see, without a
+// broker, whether the offset is committed before or after the handler runs.
+type kafkaReader interface {
+	ReadMessage(ctx context.Context) (kafka.Message, error)
+	Close() error
 }
 
 func NewClient(cfg *config.MessagingConfig) *Client {
@@ -132,7 +140,7 @@ func (c *Client) Connect() error {
 	conn.Close()
 
 	c.kafka = &kafkaState{
-		readers: make(map[string]*kafka.Reader),
+		readers: make(map[string]kafkaReader),
 		writer: &kafka.Writer{
 			Addr:         kafka.TCP(c.cfg.Kafka.Brokers...),
 			Balancer:     &kafka.Hash{},
@@ -231,7 +239,7 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 
 // readLoop reads messages from Kafka, reconnecting on errors with
 // exponential backoff (500ms base, capped at 5s, with ±20% jitter).
-func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHandler) {
+func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandler) {
 	bo := backoff.New(500*time.Millisecond, 5*time.Second)
 
 	// Capture our stop channel once under the lock. Reconfigure swaps c.stopChan
