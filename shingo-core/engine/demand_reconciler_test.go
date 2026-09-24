@@ -175,7 +175,7 @@ func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
 	b := episodeBinding(t, eng, "PANEL-RC1", 18)
 	registerBinding(t, db, b)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open, err := db.ListOpenThresholdEpisodes()
 	if err != nil || len(open) != 1 {
 		t.Fatalf("no episode opened: %d (%v)", len(open), err)
@@ -212,7 +212,7 @@ func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
 	}
 	// And the place is free again: the next crossing mints a fresh episode
 	// instead of failing against the partial unique index forever.
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	if next, err := db.OpenOriginForKey(placeKey(b.coreNodeName, b.payloadCode)); err != nil || next == "" || next == originID {
 		t.Errorf("after the sweep's close the next crossing opened %q (err %v), want a fresh episode", next, err)
 	}
@@ -243,7 +243,7 @@ func TestDemandReconciler_LeavesAnEpisodeWhosePreconditionHolds(t *testing.T) {
 	registerBinding(t, db, b)
 	registerActiveEdge(t, db, b.stationID)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {
 		t.Fatalf("no episode opened: %d", len(open))

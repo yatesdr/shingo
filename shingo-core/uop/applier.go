@@ -933,12 +933,12 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	}
 	if !applied {
 		// At or below the scope's high-water mark. A newer window here is the
-		// rollback shape (SYNTH-round2 S6), and it is NOT recorded:
-		// bin_uop_exception.bin_id is NOT NULL, so a bucket scope has no row to
-		// write. The skip is still named for what it is.
+		// rollback shape (SYNTH-round2 S6): recorded as an edge_rollback
+		// exception with no bin (v127 made bin_id nullable), and nothing else —
+		// a bucket has no generation to start, so unlike a bin nothing is
+		// bumped. The message is not applied.
 		if cur.wentBackward(d.SequenceID, d.WindowEnd) {
-			return fmt.Errorf("%w: seq %d at or below last_seq %d with a newer window: the station's counter went backward "+
-				"(not recorded: bucket scopes have no exception row)", ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
+			return recordBucketRollback(tx, station, d, cur)
 		}
 		return fmt.Errorf("%w: seq %d at or below last_seq %d: a duplicate or a late message",
 			ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
@@ -1156,6 +1156,45 @@ func (s *InventoryDeltaService) atOrBelowHighWater(tx *sql.Tx, station string, d
 		return true, fmt.Errorf("%w: seq %d at or below last_seq %d: a duplicate, or a late message whose count no net carries",
 			ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
 	}
+}
+
+// recordBucketRollback writes the edge_rollback exception for a bucket scope
+// that went backward, on the caller's transaction, and commits it. Exception
+// only: no bin, no generation. Returns ErrInventoryDeltaSkipped (wrapped).
+func recordBucketRollback(tx *sql.Tx, station string, d *protocol.LinesideBucketDelta, cur scopeCursor) error {
+	var appliedNet *int64
+	if cur.appliedNet.Valid {
+		appliedNet = &cur.appliedNet.Int64
+	}
+	detail, err := json.Marshal(struct {
+		CoreNodeName     string    `json:"core_node_name"`
+		PairKey          string    `json:"pair_key"`
+		StyleID          int64     `json:"style_id"`
+		SequenceID       int64     `json:"sequence_id"`
+		LastSeq          int64     `json:"last_seq"`
+		WindowEnd        time.Time `json:"window_end"`
+		AppliedWindowEnd time.Time `json:"applied_window_end"`
+		WireDelta        int       `json:"wire_delta"`
+		Net              *int64    `json:"net,omitempty"`
+		AppliedNet       *int64    `json:"applied_net,omitempty"`
+	}{d.CoreNodeName, d.PairKey, d.StyleID, d.SequenceID, cur.lastSeq, d.WindowEnd, cur.appliedWindowEnd.Time,
+		d.Delta, d.Net, appliedNet})
+	if err != nil {
+		return fmt.Errorf("marshal bucket edge-rollback detail node=%s part=%s: %w", d.CoreNodeName, d.PayloadCode, err)
+	}
+	if err := audit.AppendBucketUOPException(tx, audit.ExcEdgeRollback, d.PayloadCode, station,
+		clock.Now().UTC(), audit.OpEdgeRollback, detail); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit bucket edge rollback node=%s part=%s: %w", d.CoreNodeName, d.PayloadCode, err)
+	}
+	log.Printf("LinesideBucketDelta EDGE ROLLBACK station=%s node=%s part=%s seq=%d last_seq=%d window_end=%s applied_window_end=%s — "+
+		"the station's counter went backward; recorded, not applied",
+		station, d.CoreNodeName, d.PayloadCode, d.SequenceID, cur.lastSeq,
+		d.WindowEnd.Format(time.RFC3339Nano), cur.appliedWindowEnd.Time.Format(time.RFC3339Nano))
+	return fmt.Errorf("%w: seq %d at or below last_seq %d with a newer window: the station's counter went backward (recorded)",
+		ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
 }
 
 // recordEdgeRollback writes the edge_rollback exception and starts the bin's

@@ -378,12 +378,14 @@ func Drain(db Execer, nodeID int64, payloadCode string, delta int) (drained int,
 }
 
 // SetForReconcile overwrites the bucket qty for (node, pair, style,
-// payload) to exactly qty — used by the UOP reconciler's bucket
-// self-heal path to bring Edge in lockstep with Core. qty==0 deletes
-// the row (Option C — empty buckets carry no useful information);
-// positive qty UPSERTs to that exact value (no add — this is a write,
-// not a delta apply). state stays Active because Core's snapshot is
-// already filtered to current-style attribution.
+// payload) to exactly qty. Its only caller is the admin bucket adjustment
+// (uop.Mutator.AdjustBucket, from engine/admin_lineside.go), which records the
+// difference as a lineside bucket delta and flushes it, so Core's mirror moves
+// by the same amount. There is no reconciler: nothing writes Core's number back
+// into this table. qty==0 deletes the row (empty buckets carry no useful
+// information); positive qty UPSERTs to that exact value (a write, not a delta
+// apply) and marks the row Active, because a person adjusting a bucket at a
+// node is asserting it is on the line now.
 func SetForReconcile(db Execer, nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) error {
 	if qty <= 0 {
 		if _, err := db.Exec(`DELETE FROM node_lineside_bucket

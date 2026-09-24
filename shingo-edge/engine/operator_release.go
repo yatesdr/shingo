@@ -461,7 +461,12 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		if runtime != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == resolvedBinID {
 			binEpoch = runtime.ActiveBinEpoch
 		}
-		if _, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
+		// The capture writes the buckets and records their deltas and the
+		// bin's reduction: one change to the seat for the lineside report
+		// (countMu). Held for the capture only; the absolute finalize below
+		// has no accumulator half.
+		e.countMu.Lock()
+		_, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
 			NodeID:           node.ID,
 			StyleID:          toClaim.StyleID,
 			PairKey:          toClaim.PairedCoreNode,
@@ -471,7 +476,9 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 			PayloadCode:      order.PayloadCode,
 			BinEpoch:         binEpoch,
 			SuppressBinDelta: isSupply,
-		}); err != nil {
+		})
+		e.countMu.Unlock()
+		if err != nil {
 			return err
 		}
 	}

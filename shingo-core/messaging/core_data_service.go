@@ -53,21 +53,17 @@ type ThresholdMonitor interface {
 	// while the station was away engages without a Core restart and a binding
 	// retired while it was away stops minting against config that is gone.
 	Resync(stationID string)
-	// OnLinesideReports is the R1 report-arrival trigger for the payloads of a
-	// just-arrived Edge report that moved at least one row (a duplicate or older
-	// report moves none and is not passed on). R1 is LIVE: in edge_reports mode
-	// a fresh report is a fire trigger (decide off the edge-adjusted total); in
-	// ledger mode it stays audit-only. Either way it logs the ledger-vs-edge
-	// disagreement audit line.
-	OnLinesideReports(payloadCodes []string)
 }
 
 type CoreDataService struct {
-	db               *store.DB
-	tagVerify        *service.TagVerifyService
-	inventoryDelta   *service.InventoryDeltaService
-	resp             coreDataResponder
-	thresholdMonitor ThresholdMonitor
+	db             *store.DB
+	tagVerify      *service.TagVerifyService
+	inventoryDelta *service.InventoryDeltaService
+	// linesideDivergence compares each lineside report against Core's replica
+	// (the report is a checksum and triggers no evaluation).
+	linesideDivergence *service.LinesideDivergenceService
+	resp               coreDataResponder
+	thresholdMonitor   ThresholdMonitor
 	// tickCh buffers production.tick projections for the async worker started
 	// by StartHeartbeatProjection. HandleProductionTick only enqueues
 	// (non-blocking), so a slow/locked cell_part_events table can never
@@ -137,12 +133,13 @@ func (s *CoreDataService) SetCellTickEmitter(fn func(station string, processID, 
 // reader can see every Subject Core handles by grepping cmd/shingocore.
 func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.EpochAnnounce) *CoreDataService {
 	return &CoreDataService{
-		db:             db,
-		tagVerify:      service.NewTagVerifyService(db),
-		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db, announce), announce),
-		resp:           resp,
-		tickCh:         make(chan heartbeat.PartEvent, 4096),
-		downtimeCh:     make(chan downtime.DowntimeEvent, 1024),
+		db:                 db,
+		tagVerify:          service.NewTagVerifyService(db),
+		inventoryDelta:     service.NewInventoryDeltaService(db, service.NewBinManifestService(db, announce), announce),
+		linesideDivergence: service.NewLinesideDivergenceService(db),
+		resp:               resp,
+		tickCh:             make(chan heartbeat.PartEvent, 4096),
+		downtimeCh:         make(chan downtime.DowntimeEvent, 1024),
 	}
 }
 

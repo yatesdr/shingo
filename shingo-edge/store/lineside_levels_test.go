@@ -8,14 +8,16 @@ import (
 	"shingoedge/store/processes"
 )
 
-// lineside_levels_test.go — the R1 report's three gates, one test each.
+// lineside_levels_test.go — the lineside report's three gates, one test each.
 //
 // SPRINGFIELD, 2026-09-02 TO 2026-09-05. Core's audit line printed once a
 // minute for three days: "payload=SYN-PART09D.06 … ledger total=0 would FIRE,
 // edge-adjusted total=7032 would hold; DECIDING OFF edge_reports". The carrier
 // at ALN_007 held SYN-PART01E.06. Of SYN-PART09D.06 there were zero plant-wide.
 // Replenishment of the part that was actually running had been suppressed for
-// three days by a report naming a part that was not there.
+// three days by a report naming a part that was not there. (The report decided
+// replenishment then; since the 2026-09-23 seat-count ruling it is a checksum
+// Core compares, and a wrong name now points that comparison at the wrong part.)
 //
 // Everything the report said came off one mutable pointer — active_claim_id —
 // which eighteen paths write and most of them fill from the process's active

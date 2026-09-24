@@ -150,6 +150,7 @@ function renderAll() {
   renderAlerts();
   renderLedgerExceptions();
   renderDeltaIntegrity();
+  renderReportDivergence();
   renderHealth();
   renderMaintained();
   renderBuckets();
@@ -558,6 +559,53 @@ function renderDeltaIntegrity() {
     + '<span class="di-drops">Drops</span><span class="di-flags">Ledger</span>'
     + '</div>'
     + items + '</div></div>';
+}
+
+// ── report divergence ─────────────────────────────────────────────────────
+//
+// The lineside report is a checksum: each minute the Edge says which carrier
+// it has bound at each consume seat and what it counts, and Core compares that
+// against its own count. A disagreement is an episode, open until a later
+// report agrees. Replenishment is decided off Core's count either way, so a
+// row here is a count to go and check, not an order that did or did not go.
+// Blank on a good day. Values are as first seen when the episode opened.
+const DIVERGENCE_CLASS = {
+  count: 'count differs',
+  epoch: 'Edge counting an old load',
+  not_at_seat: 'Edge carrier not here in Core',
+  unbound_carrier: 'Core carrier not bound at the Edge',
+  bucket: 'lineside bucket differs',
+};
+
+function renderReportDivergence() {
+  const host = document.getElementById('rh-report-divergence');
+  if (!host) return;
+  const rows = (ledgerExceptions && ledgerExceptions.report_divergences) || [];
+  if (!rows.length) { host.innerHTML = ''; return; }
+
+  const items = rows.map((d) => {
+    const bin = d.bin_id ? (d.bin_label || ('bin ' + d.bin_id)) : 'bucket';
+    const epoch = d.edge_epoch !== null && d.edge_epoch !== undefined
+      && d.core_epoch !== null && d.core_epoch !== undefined && d.edge_epoch !== d.core_epoch
+      ? ' · epoch Edge ' + d.edge_epoch + ' / Core ' + d.core_epoch
+      : (d.core_epoch !== null && d.core_epoch !== undefined ? ' · epoch ' + d.core_epoch : '');
+    return '<li><code>' + escapeHtml(bin) + '</code>'
+      + ' <span class="text-muted-xs">' + escapeHtml(d.payload_code || '') + '</span>'
+      + (d.node ? ' at ' + escapeHtml(d.node) : '')
+      + ' — ' + escapeHtml(DIVERGENCE_CLASS[d.class] || d.class)
+      + ': Edge <b>' + num(d.edge_count) + '</b>, Core <b>' + num(d.core_count) + '</b>'
+      + escapeHtml(epoch)
+      + ' <span class="text-muted-xs">' + escapeHtml(d.station || '') + ', since ' + escapeHtml(formatTime(d.opened_at)) + '</span>'
+      + '</li>';
+  }).join('');
+
+  host.innerHTML = '<div class="ledger-exceptions">'
+    + '<div class="ledger-exceptions__head">'
+    + '<span class="chip chip-warn">Edge and Core disagree</span> '
+    + rows.length + ' open'
+    + '</div>'
+    + '<div class="ledger-exceptions__why">Ordering reads the Core count. Recount the carrier to correct.</div>'
+    + '<ul class="ledger-exceptions__list">' + items + '</ul></div>';
 }
 
 // renderDeltaDaily draws the drop trend as one bar per plant-local day.

@@ -228,12 +228,12 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 // memory, and this pass was written not to depend on where that copy's
 // reconciliation happened to be. The copy is gone, and the rule is the same.
 //
-// THE TOTAL IS THE LEDGER'S, not the R1 edge-adjusted one. SystemUOPForPayload
-// sums bins plus lineside buckets — what Core believes is in the loop — and the
-// R1 adjustment reconciles that against what the Edge reports. The gap between
-// the two is part of what a scored forecast is meant to expose, so the sample
-// records the number the threshold decision itself is made against and lets the
-// score show the difference rather than hiding it inside the numerator.
+// THE TOTAL IS THE LEDGER'S. SystemUOPForPayload sums bins plus lineside
+// buckets — what Core believes is in the loop — and it is the number every
+// threshold decision is made against (seat-count round 1 §5: one count, Core's).
+// Where the Edge disagrees, the lineside report opens a report_divergence
+// episode; the sample does not fold that in, so the score shows the difference
+// rather than hiding it inside the numerator.
 //
 // ONE CALL WITH EVERY PAYLOAD, not one per payload: SystemUOPForPayload is two
 // statements whatever the list length (one bins sum, one buckets sum), so the

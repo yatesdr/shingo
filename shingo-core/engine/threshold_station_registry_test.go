@@ -177,7 +177,7 @@ func TestThresholdEpisode_ResyncReadErrorIsNotAnEmptyBindingSet(t *testing.T) {
 	b := stationBinding(t, eng, "PLANT.LINE1", "SLN_102", "PANEL-SR2", 18)
 	registerBinding(t, db, b)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open := openThresholdEpisodes(t, db)
 	if len(open) != 1 {
 		t.Fatalf("no episode opened: %d", len(open))
@@ -208,7 +208,7 @@ func TestThresholdEpisode_SweepReadErrorIsNotAnEmptyBindingSet(t *testing.T) {
 	b := stationBinding(t, eng, "PLANT.LINE1", "SLN_103", "PANEL-SR3", 18)
 	registerBinding(t, db, b)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open := openThresholdEpisodes(t, db)
 	if len(open) != 1 {
 		t.Fatalf("no episode opened: %d", len(open))
@@ -246,7 +246,7 @@ func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone
 	registerBinding(t, db, withdrawn)
 	registerBinding(t, db, survivor)
 
-	m.checkBindings([]thresholdEntry{withdrawn, survivor}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{withdrawn, survivor}, 40, "below_threshold")
 	open := openThresholdEpisodes(t, db)
 	if len(open) != 2 {
 		t.Fatalf("two below-threshold bindings should open two episodes, got %d", len(open))

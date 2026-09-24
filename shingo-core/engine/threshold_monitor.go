@@ -104,34 +104,6 @@ const warmUpFloor = 2
 // binding is enough to keep the condition visible without becoming the noise.
 const negativeLogWindow = 60 * time.Second
 
-// Lineside decision modes (R1). Select which in-loop total the fire gate decides
-// off — see config.ReplenishmentConfig.LinesideDecisionMode.
-const (
-	// linesideModeEdgeReports decides off the Edge-report-adjusted total (R1 LIVE,
-	// the default). linesideModeLedger decides off Core's ledger alone (the revert
-	// knob — pre-R1 behavior).
-	linesideModeEdgeReports = "edge_reports"
-	linesideModeLedger      = "ledger"
-)
-
-// resolveLinesideMode validates a configured lineside_decision_mode value. An
-// empty or "edge_reports" value resolves to edge_reports (the default); "ledger"
-// resolves to ledger; any other value falls back to edge_reports and warns via
-// warnf (called at most once, at construction). Pure so it is unit-testable.
-func resolveLinesideMode(raw string, warnf func(string, ...any)) string {
-	switch raw {
-	case "", linesideModeEdgeReports:
-		return linesideModeEdgeReports
-	case linesideModeLedger:
-		return linesideModeLedger
-	default:
-		if warnf != nil {
-			warnf("threshold_monitor: unknown lineside_decision_mode %q; falling back to %q", raw, linesideModeEdgeReports)
-		}
-		return linesideModeEdgeReports
-	}
-}
-
 // swapContradictionWindow is how long a manual-swap-vs-ledger contradiction
 // (P2-C9) stays surfaced as a Replenishment Health chip, and the throttle
 // window for its log line. A human requesting a swap for a payload the ledger
@@ -207,12 +179,6 @@ type ThresholdMonitor struct {
 	// drives the Replenishment Health contradiction chip and throttles the log.
 	swapContradiction map[string]time.Time
 
-	// linesideMode is the resolved R1 decision mode (edge_reports | ledger),
-	// validated once at construction from config. Read on every evaluation to
-	// pick which in-loop total the fire gate decides off. Empty is treated as the
-	// edge_reports default (the nil-eng unit harness leaves it unset).
-	linesideMode string
-
 	// now supplies every timestamp this monitor measures an interval against.
 	//
 	// It exists because all four of them used to call bare time.Now() while
@@ -234,17 +200,6 @@ type ThresholdMonitor struct {
 // NewThresholdMonitor constructs the monitor. Call Run() to perform
 // the startup sweep.
 func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
-	// Resolve the R1 decision mode once, at construction — deployment config, not a
-	// hot-reload knob. Validating here means unknown values warn exactly once
-	// instead of on every evaluation.
-	rawMode := ""
-	var warnf func(string, ...any)
-	if e != nil {
-		warnf = e.logFn
-		if e.cfg != nil {
-			rawMode = e.cfg.Replenishment.LinesideDecisionMode
-		}
-	}
 	return &ThresholdMonitor{
 		eng:               e,
 		debounce:          make(map[string]time.Time),
@@ -252,7 +207,6 @@ func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 		negativeLogged:    make(map[string]time.Time),
 		duplicateLogged:   make(map[string]time.Time),
 		swapContradiction: make(map[string]time.Time),
-		linesideMode:      resolveLinesideMode(rawMode, warnf),
 		now:               clock.Now,
 	}
 }
@@ -267,17 +221,6 @@ func (m *ThresholdMonitor) nowFn() time.Time {
 		return m.now()
 	}
 	return clock.Now()
-}
-
-// decisionMode reports the resolved R1 lineside decision mode. Any value other
-// than the explicit ledger mode (including the unset unit-harness default) reads
-// as edge_reports — the value is validated at construction, so this is a plain
-// read with a safe default.
-func (m *ThresholdMonitor) decisionMode() string {
-	if m.linesideMode == linesideModeLedger {
-		return linesideModeLedger
-	}
-	return linesideModeEdgeReports
 }
 
 // MonitorBinding is one monitored (station, node, payload) threshold binding,
@@ -408,8 +351,9 @@ func (m *ThresholdMonitor) readTotal(ctx context.Context, payloadCode string) (i
 
 // evaluatePayload reads a payload's monitored places and, if it has any, the
 // authoritative total, and checks each place — the single entry point the
-// delta hot path, the non-delta bin-update path, a lineside report and both
-// notification doors funnel through. An unmonitored payload costs one indexed
+// delta hot path, the bucket path, the non-delta bin-update path and both
+// notification doors funnel through (a lineside report is not one of them: it
+// is a checksum, compared on ingest). An unmonitored payload costs one indexed
 // lookup that returns nothing and stops BEFORE the total is read.
 //
 // A READ ERROR IS SIDE-EFFECT-FREE: a failed bindings lookup or a failed total
@@ -427,12 +371,41 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 	if len(places) == 0 {
 		return
 	}
-	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "evaluate")
+	total, ok := m.decisionTotalFor(context.Background(), payloadCode, "evaluate")
 	if !ok {
 		return
 	}
-	m.auditLinesideDecision(payloadCode, places, r.ledger, r.edge, r.fresh)
-	m.checkBindings(places, r.total, reason, r.usedEdge)
+	m.checkBindings(places, total, reason)
+}
+
+// decisionTotalFor reads the total a fire is judged against: Core's count,
+// SystemUOPForPayload — bins plus non-stranded lineside buckets, the replica
+// the Edge's deltas keep. Every path into checkBindings calls it, so the boot
+// pass, a manual-swap recheck, the notification doors and the delta path judge
+// a payload against the same number.
+//
+// ONE COUNT, AND IT IS CORE'S (seat-count round 1 §5, 2026-09-23; the owner
+// ruled that loaders are a Core function). From 2026-07-24 the default was to
+// decide off an Edge-report-adjusted total instead (R1, the
+// lineside_decision_mode knob). That blend is deleted: the Edge's count is
+// Core's seed plus the Edge's ticks, and the ticks are what the delta stream
+// carries into this total. The Edge's lineside report is now a checksum Core
+// compares on ingest (service/lineside_divergence.go); a disagreement opens a
+// report_divergence episode and decides nothing. Rolling back is the previous
+// build, not a knob.
+//
+// ok=false means "evaluate nothing": a total that could not be read decides
+// nothing — no open, no close, no order — at every path. site names the caller
+// in the log line.
+func (m *ThresholdMonitor) decisionTotalFor(ctx context.Context, payload, site string) (int, bool) {
+	total, err := m.readTotal(ctx, payload)
+	if err != nil {
+		if m.eng != nil {
+			m.eng.logFn("threshold_monitor: %s SystemUOPForPayload(%s): %v (deciding nothing)", site, payload, err)
+		}
+		return 0, false
+	}
+	return total, true
 }
 
 // monitoredPlaces reads the payload's bindings from demand_registry (one
@@ -560,7 +533,7 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 			return
 		}
 		places := m.collapsePlaces(byPayload[payload])
-		r, ok := m.decisionTotalFor(ctx, payload, "startup sweep")
+		total, ok := m.decisionTotalFor(ctx, payload, "startup sweep")
 		if !ok {
 			continue
 		}
@@ -575,12 +548,12 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 		// dispatch.ReplenishLoader subtracts the first from the second.
 		m.mu.Lock()
 		for _, b := range places {
-			if r.total < b.threshold {
+			if total < b.threshold {
 				m.warmUp[placeKey(b.coreNodeName, b.payloadCode)] = warmUpFloor
 			}
 		}
 		m.mu.Unlock()
-		m.decide(places, r.total, "warm_up_startup_sweep", r.usedEdge, openByKey)
+		m.decide(places, total, "warm_up_startup_sweep", openByKey)
 	}
 	m.eng.logFn("threshold_monitor: startup sweep complete — evaluating from authoritative DB reads")
 }
@@ -648,14 +621,13 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 	if len(bindings) == 0 {
 		return
 	}
-	r, ok := m.decisionTotalFor(context.Background(), payloadCode, "NoteSwapRequestContradiction")
+	total, ok := m.decisionTotalFor(context.Background(), payloadCode, "NoteSwapRequestContradiction")
 	if !ok {
 		return
 	}
-	// THE CONTRADICTION IS ABOUT THE LEDGER, so it reads the ledger: a human is
-	// asking for material the ledger says is there. The recheck below is a fire
-	// decision like any other and judges against the resolved total.
-	total := r.ledger
+	// THE CONTRADICTION IS ABOUT THE LEDGER: a human is asking for material the
+	// ledger says is there. The ledger is also the total every fire decision
+	// reads, so the chip and the recheck below judge the same number.
 	maxThreshold := 0
 	for _, b := range bindings {
 		if b.threshold > maxThreshold {
@@ -669,7 +641,7 @@ func (m *ThresholdMonitor) NoteSwapRequestContradiction(payloadCode string) {
 		}
 	}
 	// Immediately re-evaluate — a re-read now. Creates no orders when stocked.
-	m.checkBindings(bindings, r.total, "manual_swap_recheck", r.usedEdge)
+	m.checkBindings(bindings, total, "manual_swap_recheck")
 }
 
 // recordSwapContradiction stamps a swap-vs-ledger contradiction for the payload
@@ -690,14 +662,14 @@ func (m *ThresholdMonitor) recordSwapContradiction(payloadCode string) bool {
 // checkBindings evaluates all threshold bindings for a given total and
 // fires signals for any that are below threshold and past debounce, reading
 // each place's open episode from demand_origins as it goes.
-func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string, usedEdgeReports bool) {
-	m.decide(bindings, total, reason, usedEdgeReports, nil)
+func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, reason string) {
+	m.decide(bindings, total, reason, nil)
 }
 
 // decide is checkBindings with an optional open set. A nil open set means
 // "probe demand_origins per place" — every caller but the startup sweep, which
 // has read the whole open set once and passes it for its one pass.
-func (m *ThresholdMonitor) decide(bindings []thresholdEntry, total int, reason string, usedEdgeReports bool, open map[string]string) {
+func (m *ThresholdMonitor) decide(bindings []thresholdEntry, total int, reason string, open map[string]string) {
 	// No database, no episode, and so no decision: every edge below reads
 	// demand_origins, and an order with no episode is refused anyway. Only the
 	// pure unit harness builds a monitor without one.
@@ -777,7 +749,7 @@ func (m *ThresholdMonitor) decide(bindings []thresholdEntry, total int, reason s
 		// then stayed suppressed for hours would look like it lasted an
 		// instant. The episode opens when the place goes hungry.
 		if originID == "" {
-			originID = m.openThresholdEpisode(key, b, total, usedEdgeReports)
+			originID = m.openThresholdEpisode(key, b, total)
 		}
 		// NO EPISODE, NO ORDER. An order with no origin is one the next ask
 		// cannot subtract — dispatch.ReplenishLoader counts the episode's live

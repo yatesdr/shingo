@@ -79,9 +79,11 @@ const (
 //
 // ON UPDATE IT TOUCHES ONLY WHAT EDGE AUTHORS. signal_count and uop_delivered
 // are MEANT to be accumulated on Core from its own signals and its own audit
-// trail, and used_edge_reports records which total decided a Core-side
-// threshold. Listing them in the SET clause would zero Core's own facts on every
-// Edge message — silently, and only for episodes that get more than one.
+// trail, and used_edge_reports recorded which total decided a Core-side
+// threshold (see OpenCoreEpisode: nothing has written it since decisions read
+// Core's count alone). Listing them in the SET clause would zero Core's own
+// facts on every Edge message — silently, and only for episodes that get more
+// than one.
 //
 // "MEANT TO BE" IS DOING WORK IN THAT SENTENCE, and it used to read as a
 // statement of fact. `uop_delivered` has no writer anywhere in this repository
@@ -184,8 +186,8 @@ func (db *DB) SupersedeOpenEpisode(episodeKey, newOriginID string, at time.Time)
 // and changeover episodes are authored on Edge and arrive through the
 // state-transfer seam. One line over OpenCoreEpisode; kept as a name because the
 // threshold monitor and its tests read better asking for the thing they mean.
-func (db *DB) OpenThresholdEpisode(o DemandOrigin, usedEdgeReports bool) error {
-	return db.OpenCoreEpisode(o, usedEdgeReports)
+func (db *DB) OpenThresholdEpisode(o DemandOrigin) error {
+	return db.OpenCoreEpisode(o)
 }
 
 // OpenCoreEpisode mints a Core-owned episode of any kind at revision 1.
@@ -200,7 +202,13 @@ func (db *DB) OpenThresholdEpisode(o DemandOrigin, usedEdgeReports bool) error {
 // to mint the same episode do not need a lock between them: the loser's INSERT
 // fails, and a failed mint must leave NOTHING stamped so the next tick retries.
 // A failure to record must never look like a recording.
-func (db *DB) OpenCoreEpisode(o DemandOrigin, usedEdgeReports bool) error {
+//
+// used_edge_reports IS NOT WRITTEN, so every new row takes the column's
+// DEFAULT false. It recorded whether the Edge-report-adjusted total decided a
+// threshold fire; since the seat-count ruling (2026-09-23) every fire path
+// decides off Core's count, so the answer is always no. The column stays for the
+// rows written before, which can say yes; this build deletes no schema.
+func (db *DB) OpenCoreEpisode(o DemandOrigin) error {
 	var expected any
 	if o.ExpectedOrders != nil {
 		expected = *o.ExpectedOrders
@@ -209,11 +217,11 @@ func (db *DB) OpenCoreEpisode(o DemandOrigin, usedEdgeReports bool) error {
 		INSERT INTO demand_origins (
 		    origin_id, revision, episode_key, kind, trigger_ref, station_id,
 		    core_node_name, payload_code, opened_at, opened_total, threshold,
-		    used_edge_reports, expected_orders, expected_reason, signal_count
-		) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0)`,
+		    expected_orders, expected_reason, signal_count
+		) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)`,
 		o.OriginID, o.EpisodeKey, o.Kind, o.TriggerRef, o.StationID,
 		o.CoreNodeName, o.PayloadCode, o.OpenedAt, o.OpenedTotal, o.Threshold,
-		usedEdgeReports, expected, o.ExpectedUnknownReason)
+		expected, o.ExpectedUnknownReason)
 	if isOpenKeyViolation(err) {
 		return fmt.Errorf("open core episode %s (%s): %w: %w", o.OriginID, o.EpisodeKey, ErrEpisodeAlreadyOpen, err)
 	}

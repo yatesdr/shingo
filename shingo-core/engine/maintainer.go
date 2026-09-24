@@ -267,7 +267,7 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 				OpenedTotal:  resident,
 				Threshold:    lv.Want,
 			}
-			if oerr := m.eng.db.OpenCoreEpisode(origin, false); oerr != nil {
+			if oerr := m.eng.db.OpenCoreEpisode(origin); oerr != nil {
 				m.eng.logFn("maintainer: open episode %s: %v", key, oerr)
 				return st
 			}

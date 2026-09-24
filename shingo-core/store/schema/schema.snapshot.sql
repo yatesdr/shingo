@@ -156,7 +156,7 @@ CREATE TABLE public.bin_uop_delta_daily (
 CREATE TABLE public.bin_uop_exception (
     id bigint NOT NULL,
     kind text NOT NULL,
-    bin_id bigint NOT NULL,
+    bin_id bigint,
     payload_code text DEFAULT ''::text NOT NULL,
     actor text DEFAULT ''::text NOT NULL,
     epoch_seq bigint,
@@ -451,7 +451,10 @@ CREATE TABLE public.edge_lineside_reports (
     bin_uop integer DEFAULT 0 NOT NULL,
     bucket_qty integer DEFAULT 0 NOT NULL,
     reported_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    bin_id bigint,
+    bin_epoch bigint,
+    flushed_seq bigint
 );
 
 CREATE TABLE public.edge_registry (

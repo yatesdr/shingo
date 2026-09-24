@@ -309,3 +309,55 @@ func TestApiInventoryExport_LinesideBucketSheet(t *testing.T) {
 		}
 	}
 }
+
+// --- apiInventoryLedgerExceptions: report divergences -----------------------
+
+// TestApiInventoryLedgerExceptions_ListsOpenReportDivergences pins where the
+// lineside checksum's findings are read (the owner ruled the placement: beside
+// the delta-integrity panel on /inventory, in the same fetch). An open
+// report_divergence episode is listed by bin with its class, epoch, the two
+// counts and when it opened; a recovered one is not listed. Verify-red at the
+// base: the response has no report_divergences key.
+func TestApiInventoryLedgerExceptions_ListsOpenReportDivergences(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-DIVERGE")
+	for _, recovered := range []string{"NULL", "now()"} {
+		_, err := db.Exec(`INSERT INTO bin_uop_exception
+			(kind, bin_id, payload_code, actor, occurred_at, op, recovered_at, detail)
+			VALUES ('report_divergence', $1, $2, 'stn-page', now(), 'count', `+recovered+`,
+			        jsonb_build_object('node', $3::text, 'edge_epoch', 4, 'core_epoch', 4,
+			                           'edge_count', 10, 'core_count', 150))`,
+			bin.ID, sd.Payload.Code, sd.LineNode.Name)
+		testutil.MustNoErr(t, err, "seed divergence episode")
+	}
+
+	rec := getPlain(t, h.apiInventoryLedgerExceptions, "/api/inventory/ledger-exceptions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ReportDivergences []map[string]any `json:"report_divergences"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&body), "decode")
+	if !strings.Contains(rec.Body.String(), `"report_divergences"`) {
+		t.Fatalf("no report_divergences in the ledger-exceptions response: %s", rec.Body.String())
+	}
+	if len(body.ReportDivergences) != 1 {
+		t.Fatalf("%d divergences listed, want 1 (the open one): %+v", len(body.ReportDivergences), body.ReportDivergences)
+	}
+	d := body.ReportDivergences[0]
+	for key, want := range map[string]any{
+		"class": "count", "bin_id": float64(bin.ID), "edge_epoch": float64(4),
+		"edge_count": float64(10), "core_count": float64(150), "station": "stn-page",
+		"node": sd.LineNode.Name, "payload_code": sd.Payload.Code,
+	} {
+		if d[key] != want {
+			t.Errorf("%s = %v, want %v", key, d[key], want)
+		}
+	}
+	if d["opened_at"] == nil || d["opened_at"] == "" {
+		t.Error("opened_at is missing")
+	}
+}

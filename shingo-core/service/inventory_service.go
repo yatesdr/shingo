@@ -1,6 +1,7 @@
 package service
 
 import (
+	"shingocore/store"
 	"shingocore/store/inventory"
 )
 
@@ -47,4 +48,17 @@ func (s *InventoryService) ListLinesideBuckets() ([]inventory.BucketRow, error) 
 // existing wedge plus any future operator-corrected drift.
 func (s *InventoryService) DeleteLinesideBucket(id int64) (int, error) {
 	return s.db.DeleteLinesideBucket(id)
+}
+
+// OpenReportDivergences lists every open report_divergence episode, oldest
+// first: a carrier or bucket where the Edge's lineside report and Core's
+// replica still disagree (see lineside_divergence.go). Blank on a good day.
+// Read by the /inventory ledger panels. Never nil on success, so the page's
+// JSON carries [] rather than null.
+func (s *InventoryService) OpenReportDivergences() ([]store.OpenReportDivergence, error) {
+	out, err := s.db.ListOpenReportDivergences()
+	if err == nil && out == nil {
+		out = []store.OpenReportDivergence{}
+	}
+	return out, err
 }

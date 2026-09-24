@@ -33,8 +33,8 @@
       <h2>Replenishment Health</h2>
       <span class="text-muted-sm">On-hand = bins + lineside (what the threshold monitor sums) · click a row to tune thresholds</span>
     </div>
-    <!-- The two ledger panels sit SIDE BY SIDE, not stacked, because they are
-         read as a pair: the left names a broken count ("this payload is
+    <!-- The ledger panels sit SIDE BY SIDE, not stacked, because they are
+         read together: the left names a broken count ("this payload is
          negative"), the right names the mechanism ("and here is the count that
          never landed"). Stacked, the comparison cost a scroll.
 
@@ -48,6 +48,9 @@
       <!-- Read-side only — every drop is already an observation row in
            bin_uop_ledger with the dropped quantity in its metadata. -->
       <div id="rh-delta-integrity"></div>
+      <!-- Open report_divergence episodes: where the Edge's lineside report and
+           Core's count still disagree, by carrier. Same fetch as the two above. -->
+      <div id="rh-report-divergence"></div>
     </div>
     <div class="table-scroll-y">
       <table class="rh-table">

@@ -77,8 +77,9 @@ func (db *DB) DrainLinesideBucket(nodeID int64, payloadCode string, delta int) (
 }
 
 // SetLinesideBucketForReconcile overwrites the bucket qty to exactly
-// the given value (UPSERT for positive; DELETE for zero). Used by
-// the UOP reconciler's bucket self-heal path; do NOT use for normal
+// the given value (UPSERT for positive; DELETE for zero). Its only caller is
+// the admin bucket adjustment (uop.Mutator.AdjustBucket), which emits the
+// difference as a delta; there is no reconciler. Do NOT use for normal
 // production flows — Capture / Drain are the delta-style mutators.
 func (db *DB) SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) error {
 	return lineside.SetForReconcile(db.DB, nodeID, pairKey, styleID, payloadCode, qty)

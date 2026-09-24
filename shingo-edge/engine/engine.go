@@ -62,6 +62,16 @@ type InventoryDeltaSink = uop.Sink
 
 // Engine centralizes all business logic and orchestrates subsystems.
 type Engine struct {
+	// countMu serialises every path that moves a seat's count in the
+	// database AND records the same change in the delta accumulator (a PLC
+	// tick's drain, hold-and-replay and record; a release capture; an admin
+	// bucket adjustment) against the lineside report's snapshot, which reads
+	// the database and the accumulator's unflushed counts as one instant. It
+	// guards no data of its own and is held for a local write or one SELECT,
+	// never across a network call. Order: countMu before the accumulator's
+	// flush lock, everywhere.
+	countMu sync.Mutex
+
 	cfg         *config.Config
 	configPath  string
 	db          *store.DB

@@ -66,6 +66,11 @@ type Backfiller interface {
 // continues to reference `engine.InventoryDeltaSink` and any new
 // engine code can prefer the narrower sub-interfaces.
 type Sink interface {
+	// WithPending runs fn with a snapshot of the accumulator's unflushed
+	// counts, under the flush lock (see pending.go). The lineside report reads
+	// and enqueues inside it so its counts are stated as of FlushedSeq.
+	WithPending(fn func(Pending) error) error
+
 	Ticker
 	SlotWriter
 	Capturer

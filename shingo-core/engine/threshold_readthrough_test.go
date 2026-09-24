@@ -500,7 +500,6 @@ var rtFeeders = []struct {
 	drive func(r *rtRig)
 }{
 	{"delta", true, func(r *rtRig) { r.delta() }},
-	{"lineside_report", true, func(r *rtRig) { r.m.OnLinesideReports([]string{r.b.payloadCode}) }},
 	{"manual_swap", true, func(r *rtRig) { r.m.NoteSwapRequestContradiction(r.b.payloadCode) }},
 	{"startup_sweep", false, func(r *rtRig) { r.boot() }},
 	{"resync", false, func(r *rtRig) { r.m.Resync(r.b.stationID) }},
@@ -644,69 +643,69 @@ var rtCountCases = []rtCountCase{
 	{name: "unmonitored", payload: "PANEL-RT-NOBODY"},
 }
 
-// measureStatements returns, per lineside mode and case, the statements one
-// delta costs.
+// measureStatements returns, per case, the statements one delta costs.
 func measureStatements(t *testing.T) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, mode := range []string{linesideModeEdgeReports, linesideModeLedger} {
-		for _, c := range rtCountCases {
-			_, cfg := testdb.OpenWithConfig(t)
-			cdb, counter, err := store.OpenCounting(cfg)
-			testutil.MustNoErr(t, err, "open counting db")
-			t.Cleanup(func() { cdb.Close() })
+	for _, c := range rtCountCases {
+		_, cfg := testdb.OpenWithConfig(t)
+		cdb, counter, err := store.OpenCounting(cfg)
+		testutil.MustNoErr(t, err, "open counting db")
+		t.Cleanup(func() { cdb.Close() })
 
-			sink := &logSink{}
-			eng := newLoggingEngine(t, cdb, sink)
-			m := eng.thresholdMonitor
-			m.linesideMode = mode
-			clk := &rtClock{now: time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC)}
-			m.now = clk.Now
-			fires := captureThresholdFires(t, eng)
-			payload := "PANEL-RT-N-" + c.name
-			b := stationBinding(t, eng, "PLANT.RT", "SLN_RT", payload, 18)
-			b.threshold = rtThreshold
-			registerBinding(t, cdb, b)
-			sd := testdb.SetupStandardData(t, cdb)
-			bin := testdb.CreateBinAtNode(t, cdb, payload, sd.LineNode.ID, "BIN-"+payload)
-			r := &rtRig{t: t, eng: eng, m: m, sink: sink, fires: fires, b: b, binID: bin.ID, clock: clk}
-			r.setUOP(500)
-			r.boot()
-			if c.setup != nil {
-				c.setup(r, sd.LineNode.Name)
-			}
-			target := c.payload
-			if target == "" {
-				target = payload
-			}
-			counter.Reset()
-			m.OnBinUOPDelta(target, -1)
-			out[mode+"/"+c.name] = counter.Count()
+		sink := &logSink{}
+		eng := newLoggingEngine(t, cdb, sink)
+		m := eng.thresholdMonitor
+		clk := &rtClock{now: time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC)}
+		m.now = clk.Now
+		fires := captureThresholdFires(t, eng)
+		payload := "PANEL-RT-N-" + c.name
+		b := stationBinding(t, eng, "PLANT.RT", "SLN_RT", payload, 18)
+		b.threshold = rtThreshold
+		registerBinding(t, cdb, b)
+		sd := testdb.SetupStandardData(t, cdb)
+		bin := testdb.CreateBinAtNode(t, cdb, payload, sd.LineNode.ID, "BIN-"+payload)
+		r := &rtRig{t: t, eng: eng, m: m, sink: sink, fires: fires, b: b, binID: bin.ID, clock: clk}
+		r.setUOP(500)
+		r.boot()
+		if c.setup != nil {
+			c.setup(r, sd.LineNode.Name)
 		}
+		target := c.payload
+		if target == "" {
+			target = payload
+		}
+		counter.Reset()
+		m.OnBinUOPDelta(target, -1)
+		out[c.name] = counter.Count()
 	}
 	return out
 }
 
 // TestReadThrough_StatementsPerEvaluation pins what one delta costs in each
-// shape and mode. Reading the tables instead of copies of them costs two
-// single-row index probes per evaluation of a monitored payload — the bindings
-// lookup and the open-episode probe — and one lookup that returns nothing for
-// an unmonitored one. Measured before the copies were deleted: 3, 5, 3 and 0.
-// The total read itself is 2 statements, the lineside report list 1, and the
-// per-node ledger 2 more when a fresh report exists.
+// shape. Reading the tables instead of copies of them costs two single-row
+// index probes per evaluation of a monitored payload — the bindings lookup and
+// the open-episode probe — and one lookup that returns nothing for an
+// unmonitored one. The total read itself is 2 statements.
+//
+// A lineside report no longer costs the fire path anything: decisions read
+// Core's count alone (seat-count round 1 §5), so the report list and the
+// two-query per-node ledger are gone. Measured before that change, in either
+// mode: 5, 7, 5 and 1 (the report list on every evaluation, the per-node
+// ledger when a fresh report existed). Measured before the copies were deleted:
+// 3, 5, 3 and 0.
 func TestReadThrough_StatementsPerEvaluation(t *testing.T) {
 	want := map[string]int64{
-		"healthy_no_report":    5,
-		"healthy_fresh_report": 7,
-		"below_open_debounced": 5,
+		"healthy_no_report":    4,
+		"healthy_fresh_report": 4,
+		"below_open_debounced": 4,
 		"unmonitored":          1,
 	}
 	got := measureStatements(t)
 	for k, v := range got {
 		t.Logf("statements %s = %d", k, v)
-		c := k[strings.Index(k, "/")+1:]
-		if v != want[c] {
-			t.Errorf("statements %s = %d, want %d", k, v, want[c])
+		if v != want[k] {
+			t.Errorf("statements %s = %d, want %d", k, v, want[k])
 		}
 	}
 }

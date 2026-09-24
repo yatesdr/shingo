@@ -48,11 +48,16 @@ func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearB
 		if err != nil || node == nil {
 			return fmt.Errorf("resolve process_node %d for bucket %d: %w", bucket.NodeID, bucketID, err)
 		}
-		if err := e.inventoryDelta.AdjustBucket(
+		// Record, write and flush are one change to the seat for the lineside
+		// report (countMu); AdjustBucket takes the flush lock inside it.
+		e.countMu.Lock()
+		err = e.inventoryDelta.AdjustBucket(
 			bucket.NodeID, node.CoreNodeName, bucket.PairKey, bucket.StyleID, bucket.PayloadCode,
 			bucket.Qty, targetQty,
 			protocol.ReasonOperatorCorrectionBucket,
-		); err != nil {
+		)
+		e.countMu.Unlock()
+		if err != nil {
 			return fmt.Errorf("adjust bucket %d: %w", bucketID, err)
 		}
 	}

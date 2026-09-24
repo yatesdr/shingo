@@ -73,7 +73,7 @@ func TestDemandReconciler_LeavesThresholdEpisodesToTheMonitor(t *testing.T) {
 	registerBinding(t, db, b)
 	registerActiveEdge(t, db, b.stationID)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {
 		t.Fatalf("setup: no threshold episode opened: %d", len(open))

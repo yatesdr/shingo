@@ -50,7 +50,7 @@ import (
 //
 // CALLED WITH m.mu NOT HELD. A mint is a write to Postgres, and holding the
 // monitor's mutex across it would serialise every evaluation behind one INSERT.
-func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, total int, usedEdgeReports bool) string {
+func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, total int) string {
 	if m.eng == nil || m.eng.db == nil {
 		return ""
 	}
@@ -71,7 +71,7 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 		ExpectedOrders:        expected,
 		ExpectedUnknownReason: reason,
 	}
-	err := m.eng.db.OpenThresholdEpisode(origin, usedEdgeReports)
+	err := m.eng.db.OpenThresholdEpisode(origin)
 	if errors.Is(err, store.ErrEpisodeAlreadyOpen) {
 		winner, rerr := m.eng.db.OpenOriginForKey(key)
 		if rerr == nil && winner != "" {

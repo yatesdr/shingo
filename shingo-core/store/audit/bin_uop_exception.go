@@ -46,9 +46,11 @@ const (
 	ExcBoundary = "boundary"
 	// ExcEdgeRollback: a station's count stream went backward — a message at
 	// or below the scope's last applied seq, with a window that ends after the
-	// last applied one (SYNTH-round2 S6). Bins only: this table's bin_id is
-	// NOT NULL, so a bucket scope has no row to write. Detail carries the
-	// seqs, the windows and the nets. Followed by an edge_rollback boundary.
+	// last applied one (SYNTH-round2 S6). On a bin: detail carries the seqs,
+	// the windows and the nets, and an edge_rollback boundary follows. On a
+	// bucket scope: bin_id is NULL (v127 made it nullable), the station,
+	// payload and core node name are on the row and in detail, and nothing
+	// follows — a bucket has no generation to start.
 	ExcEdgeRollback = "edge_rollback"
 )
 
@@ -97,6 +99,29 @@ func AppendBinUOPException(execer BinUOPExecer, kind string, binID int64, payloa
 		kind, binID, payloadCode, actor, epoch, occurredAt.UTC(), before, after,
 		deepest, recovered, op, det); err != nil {
 		return fmt.Errorf("append bin_uop_exception bin=%d kind=%s: %w", binID, kind, err)
+	}
+	return nil
+}
+
+// AppendBucketUOPException records one exception that belongs to a lineside
+// bucket scope, not a bin: bin_id is NULL (v127). Same transaction contract as
+// AppendBinUOPException; no counts, since a bucket's qty is not a bin's.
+// Every reader of this table filters on a kind; the kinds written here
+// (edge_rollback for a bucket stream) are read by none of them, so none meets
+// the NULL.
+func AppendBucketUOPException(execer BinUOPExecer, kind, payloadCode, actor string, occurredAt time.Time, op string, detail []byte) error {
+	if occurredAt.IsZero() {
+		return fmt.Errorf("append bucket exception kind=%s: occurred_at is required", kind)
+	}
+	var det any
+	if len(detail) > 0 {
+		det = detail
+	}
+	if _, err := execer.Exec(`INSERT INTO bin_uop_exception
+		(kind, bin_id, payload_code, actor, occurred_at, op, detail)
+		VALUES ($1, NULL, $2, $3, $4, $5, $6)`,
+		kind, payloadCode, actor, occurredAt.UTC(), op, det); err != nil {
+		return fmt.Errorf("append bucket exception kind=%s payload=%s: %w", kind, payloadCode, err)
 	}
 	return nil
 }

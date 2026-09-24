@@ -98,8 +98,9 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 // handful of points is worse than nothing, and a list that is empty until
 // something is wrong is the right instrument.
 //
-// Read-side only — every value comes from bins and bin_uop_ledger, which are
-// already on disk. No new table.
+// Read-side only — every value comes from bins, bin_uop_ledger and
+// bin_uop_exception (the open report_divergence episodes the lineside report's
+// comparison records), which are already on disk. No new table.
 //
 // ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,
 // 200 rows). Excursions are the forensics; the two lists above are the
@@ -160,6 +161,17 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// The lineside checksum's open findings, beside the delta panel (the owner
+	// ruled the placement). The delta panel says which counts never landed;
+	// this says which carriers the Edge and Core still disagree about, which is
+	// where a count that never landed shows up next. Open episodes only: a
+	// recovered one is history, and the page is blank on a good day.
+	divergences, err := h.engine.InventoryService().OpenReportDivergences()
+	if err != nil {
+		h.jsonError(w, "report divergences: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if openBins == nil {
 		openBins = []domain.OpenNegativeBin{}
 	}
@@ -173,13 +185,14 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		deltaDaily = []domain.DeltaDay{}
 	}
 	h.jsonOK(w, map[string]any{
-		"since":             since,
-		"open_bins":         openBins,
-		"negative_payloads": payloads,
-		"excursions":        excursions,
-		"delta_integrity":   deltaIntegrity,
-		"delta_daily":       deltaDaily,
-		"delta_daily_since": dailySince,
+		"since":              since,
+		"open_bins":          openBins,
+		"negative_payloads":  payloads,
+		"excursions":         excursions,
+		"delta_integrity":    deltaIntegrity,
+		"delta_daily":        deltaDaily,
+		"delta_daily_since":  dailySince,
+		"report_divergences": divergences,
 	})
 }
 

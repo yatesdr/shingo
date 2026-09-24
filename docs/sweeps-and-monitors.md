@@ -16,11 +16,10 @@ this machinery.
 |---|---|---|---|---|
 | `startupSweep` | `engine/threshold_monitor.go` | boot | one-shot, 3s after Start | rebuilds threshold map, rehydrates episodes, evaluates every binding |
 | `checkBindings` + debounce | `engine/threshold_monitor.go` | every eval path | per pass, 15s debounce | the single fire gate; emits the below-threshold signal |
-| `evaluatePayload` | `engine/threshold_monitor.go` | six callers below | per event | re-reads the authoritative sum, audits, funnels to `checkBindings` |
+| `evaluatePayload` | `engine/threshold_monitor.go` | the callers below | per event | re-reads the authoritative sum (`decisionTotalFor` = `SystemUOPForPayload`), funnels to `checkBindings` |
 | `OnBinUOPDelta` | `engine/threshold_monitor.go` | Edge UOP delta | per delta | → `evaluatePayload` |
 | `OnBucketApplied` | `engine/threshold_monitor.go` | bucket delta | per delta | → `evaluatePayload` |
 | `handleBinUpdated` | `engine/threshold_monitor.go` | `EventBinUpdated` | every bin move | → `evaluatePayload` |
-| `OnLinesideReports` | `engine/threshold_monitor_lineside.go` | Edge report | ~60s | decides in `edge_reports` mode, audits only in `ledger` mode |
 | `NoteSwapRequestContradiction` | `engine/threshold_monitor.go` | complex order received | per order | contradiction re-check |
 | `OnThresholdChanges` | `engine/threshold_monitor.go` | loader config edit | per registry change | clears debounce so a new threshold takes effect at once |
 | `Resync` | `engine/threshold_monitor.go` | station resync | per resync | clears the station's timers and evaluates its payloads |
@@ -31,7 +30,7 @@ The threshold monitor reads `demand_registry` and `demand_origins` on every eval
 
 **The plant-claims snapshot is a safety net, not the delivery mechanism.** Changes reach Core via `PublishChanged` on every style/claim edit, and a full snapshot goes out on every registration — including the re-register Core asks for after it restarts. The ticker only has to catch a change whose publish was lost outright, which is why it moved from 5 minutes to 60: at 5 it was ~65 messages an hour of unchanged config and 66% of everything Core discarded for expiry.
 
-**The lineside read-model decides, it does not shadow.** In `edge_reports` mode — the default — the Edge reports carry the adjustment the fire gate acts on. The file was named `threshold_monitor_shadow.go` until 2026-08-22; it is now `threshold_monitor_lineside.go`.
+**Every fire path reads Core's count, and the Edge's lineside report decides nothing.** The report is a per-carrier checksum: `HandleLinesideLevelReport` (`messaging/lineside_report_handler.go`) upserts it and, when a row moved, `service/lineside_divergence.go` compares it against Core's replica and opens or closes `report_divergence` episodes in `bin_uop_exception` (listed on `/inventory`). It triggers no evaluation. From 2026-07-24 until the seat-count ruling of 2026-09-23 the report did decide (`lineside_decision_mode`, default `edge_reports`, in `engine/threshold_monitor_lineside.go`); the knob and the file are deleted, and rolling back is the previous build.
 
 ## Core — sweeps
 
@@ -97,7 +96,7 @@ none of them will notice a problem on their own if the path is never taken.
 | `recordL1Burst` | `engine/loader_burst.go` | every in-bin order | 60s window, >8 warns |
 | stranded-carrier monitor | `engine/uop_stranded_monitor.go` | Start | 60s |
 | demand reconciler | `engine/demand_reconciler.go` | Start | 60s |
-| lineside reporter | `engine/lineside_reporter.go` | Start | 60s |
+| lineside reporter | `engine/lineside_reporter.go` | Start | 60s — one SELECT and one snapshot enqueue, under the accumulator's flush lock; counts stated as of each carrier's flushed seq |
 | plant-claims snapshot | `messaging/plant_claims_publisher.go` | Start | **60m** (was 5m until 2026-08-22) |
 | CATID monitor | `engine/plc_catid_monitor.go` | Start | 500ms |
 | `restoreChangeoverState` | `engine/changeover_restore.go` | Start | boot once |

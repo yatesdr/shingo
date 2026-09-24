@@ -315,6 +315,10 @@ func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.Run
 // against Core (which doesn't clamp) and noisy reconciliation logs
 // as the heal/clamp/heal/clamp loop ping-pongs forever.
 func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
+	// The drain, the count write and the record are one change to the seat;
+	// the lineside report must see all of it or none (countMu).
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
 	// Lineside first: drain the active bucket for this node's primary part
 	// before touching the node counter. The bucket represents parts the
 	// operator pulled to lineside during the last swap, which physically
@@ -354,6 +358,10 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// produced parts in pending and replay onto the next empty bin when it
 	// binds. The finished-good production tally (EventProducedReport below)
 	// is bin-independent and fires every tick regardless.
+	//
+	// The count write and the record are one change to the seat; the lineside
+	// report must see both or neither (countMu). The event below is outside it.
+	e.countMu.Lock()
 	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, delta, +1)
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -368,6 +376,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 			BinRemainder: binAttributed, // this tick + any replayed held parts
 		})
 	}
+	e.countMu.Unlock()
 
 	// Report finished-good production to Core keyed by this produce node's
 	// payload (the catalog part code demands match on), resolved per node so
@@ -395,6 +404,8 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
 	log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
 		processID, node.Name)
+	e.countMu.Lock() // one change to the seat, as in handleConsumeTick
+	defer e.countMu.Unlock()
 
 	// claim is the one captured in handleCounterDelta's loop, which
 	// already passed the claim.StyleID == delta.StyleID guard. Do NOT

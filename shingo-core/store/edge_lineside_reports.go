@@ -6,22 +6,18 @@ import (
 )
 
 // EdgeLinesideReport is one persisted per-(station, node, payload) lineside
-// level as Edge reported it — the R1 lineside read-model row. Its own table
-// (edge_lineside_reports, v52); nothing here touches bins.uop_remaining.
+// level as the Edge reported it. Its own table (edge_lineside_reports, v52;
+// carrier columns v127); nothing here touches bins.uop_remaining.
 //
-// These rows are read by the fire gate, not just logged: under the default
-// lineside_decision_mode=edge_reports they carry the adjustment the
-// replenishment decision is made on. See
-// shingo-core/engine/threshold_monitor_lineside.go.
+// A CHECKSUM, NOT A DECISION INPUT. Nothing on a fire path reads this table:
+// every replenishment decision reads Core's count (SystemUOPForPayload). The
+// report handler compares each report against Core's replica on ingest
+// (service/lineside_divergence.go) and records a disagreement as a
+// report_divergence episode. The table keeps the latest report per seat, and
+// which seats a station has reported is the seat set that comparison checks.
 //
-// The v52 TABLE COMMENT in the database still calls this a shadow read-model.
-// Correcting it needs a migration and a schema-snapshot regeneration for one
-// string, so it was deliberately left; this comment is the accurate one.
-//
-// OWED WITH THE NEXT CORE MIGRATION that touches this area, whatever it is for.
-// The deferral is about not opening a migration for one string, not about the
-// comment being tolerable: somebody reading the database rather than this file
-// is told the feed is a shadow of a decision it in fact makes.
+// BinID is nil on a row an Edge that predates the carrier keys wrote (and on
+// any row with no carrier bound); BinEpoch and FlushedSeq are then unset too.
 type EdgeLinesideReport struct {
 	Station      string
 	CoreNodeName string
@@ -29,6 +25,9 @@ type EdgeLinesideReport struct {
 	BinCount     int
 	BinUOP       int
 	BucketQty    int
+	BinID        *int64
+	BinEpoch     int64
+	FlushedSeq   int64
 	ReportedAt   time.Time
 }
 
@@ -38,11 +37,9 @@ type EdgeLinesideReport struct {
 //
 // LATEST-WINS on Edge's reported_at. The upsert used to overwrite
 // unconditionally, which let an out-of-order or replayed report move a row
-// BACKWARDS in time — and reported_at is what the monitor's freshness test
-// reads. A row pushed behind linesideReportStaleness stops contributing its
-// adjustment, so that node falls back to the pure ledger for up to the next
-// report interval: exactly the "ledger reads STOCKED while the line starves"
-// case this feed exists to correct.
+// BACKWARDS in time. The comparison on ingest runs only for a report that
+// moved a row, so an old report written over a current one would also re-open
+// divergences a current report had closed.
 //
 // Replay is not hypothetical. The outbox is at-least-once by construction and
 // a requeued dead letter re-delivers whatever it was carrying, so a report from
@@ -53,24 +50,34 @@ type EdgeLinesideReport struct {
 //
 // moved reports whether the row was inserted or updated — false when the
 // condition turned the write into a no-op (a duplicate, an older report, or a
-// report stamped at the stored instant). The handler evaluates only payloads
-// with a moved row, because the inbox dedup does not gate data envelopes and
-// this condition is the only thing that tells a redelivery from a report.
-// RowsAffected reads the count from the statement's own CommandComplete tag
-// (pgx stdlib), so it is not another round trip.
+// report stamped at the stored instant). The handler compares a report only
+// when at least one of its rows moved, because the inbox dedup does not gate
+// data envelopes and this condition is the only thing that tells a redelivery
+// or a late report from a current one. RowsAffected reads the count from the
+// statement's own CommandComplete tag (pgx stdlib), so it is not another round
+// trip.
 func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err error) {
+	var binID, binEpoch, flushed any
+	if r.BinID != nil {
+		binID, binEpoch, flushed = *r.BinID, r.BinEpoch, r.FlushedSeq
+	}
 	res, err := db.Exec(`
 		INSERT INTO edge_lineside_reports
-			(station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty, reported_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
+			(station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty,
+			 bin_id, bin_epoch, flushed_seq, reported_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
 		ON CONFLICT (station, core_node_name, payload_code) DO UPDATE SET
 			bin_count   = EXCLUDED.bin_count,
 			bin_uop     = EXCLUDED.bin_uop,
 			bucket_qty  = EXCLUDED.bucket_qty,
+			bin_id      = EXCLUDED.bin_id,
+			bin_epoch   = EXCLUDED.bin_epoch,
+			flushed_seq = EXCLUDED.flushed_seq,
 			reported_at = EXCLUDED.reported_at,
 			updated_at  = NOW()
 		WHERE edge_lineside_reports.reported_at < EXCLUDED.reported_at`,
-		r.Station, r.CoreNodeName, r.PayloadCode, r.BinCount, r.BinUOP, r.BucketQty, r.ReportedAt)
+		r.Station, r.CoreNodeName, r.PayloadCode, r.BinCount, r.BinUOP, r.BucketQty,
+		binID, binEpoch, flushed, r.ReportedAt)
 	if err != nil {
 		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
 	}
@@ -84,23 +91,21 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err er
 // LinesideReportRetentionPeriod is how long a per-(station, node, payload) row
 // is kept after its last report.
 //
-// Seven days, chosen against the two windows that bracket it: the monitor stops
-// trusting a row after 3 minutes (linesideReportStaleness), so anything at this
-// age has long since stopped contributing an adjustment, and a week is inside
-// any plausible "that station came back" story.
+// Seven days: a week is inside any plausible "that station came back" story,
+// and a seat a station stopped reporting a week ago is no longer one of the
+// seats the comparison on ingest checks for it. The divergence episodes
+// themselves live in bin_uop_exception, which has no retention.
 //
 // It exists because latest-wins cannot clear a row nothing will ever update
-// again. Springfield carried two rows for station stn-4c2bcb20ebfac90f — an id
-// that no longer exists, the live station being plant-a.line-1 — reported
-// 2026-07-29 and still logging an R1 STALE fallback on every monitor cycle
-// 570 hours later.
+// again. Springfield carried two rows for a station id that no longer exists,
+// reported 2026-07-29 and still read by every monitor cycle 570 hours later.
 const LinesideReportRetentionPeriod = 7 * 24 * time.Hour
 
 // PurgeStaleLinesideReports deletes rows whose last report is older than
 // olderThan, and returns how many went.
 //
-// Deliberately keyed on reported_at (EDGE's clock, the same field the monitor's
-// freshness test reads) rather than updated_at, so a row that keeps being
+// Deliberately keyed on reported_at (EDGE's clock, the same field the
+// latest-wins condition reads) rather than updated_at, so a row that keeps being
 // rewritten with an unchanging old timestamp still ages out.
 func (db *DB) PurgeStaleLinesideReports(olderThan time.Duration) (int64, error) {
 	// Bind a time.Time, not a formatted string: reported_at is TIMESTAMPTZ and
@@ -111,29 +116,4 @@ func (db *DB) PurgeStaleLinesideReports(olderThan time.Duration) (int64, error) 
 		return 0, fmt.Errorf("purge stale lineside reports: %w", err)
 	}
 	return res.RowsAffected()
-}
-
-// ListLinesideReportsForPayload returns every edge_lineside_reports row for a
-// payload across all stations/nodes. The caller (the lineside read-model) splits
-// fresh from stale by comparing reported_at to now − staleness window, which is
-// why UpsertEdgeLinesideReport must never let reported_at move backwards.
-func (db *DB) ListLinesideReportsForPayload(payloadCode string) ([]EdgeLinesideReport, error) {
-	rows, err := db.Query(`
-		SELECT station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty, reported_at
-		FROM edge_lineside_reports
-		WHERE payload_code = $1`, payloadCode)
-	if err != nil {
-		return nil, fmt.Errorf("list edge_lineside_reports for %s: %w", payloadCode, err)
-	}
-	defer rows.Close()
-	var out []EdgeLinesideReport
-	for rows.Next() {
-		var r EdgeLinesideReport
-		if err := rows.Scan(&r.Station, &r.CoreNodeName, &r.PayloadCode,
-			&r.BinCount, &r.BinUOP, &r.BucketQty, &r.ReportedAt); err != nil {
-			return nil, fmt.Errorf("scan edge_lineside_report: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }

@@ -40,7 +40,7 @@ func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
 	b := episodeBinding(t, eng, "PANEL-EP1", 18)
 
 	for i := 0; i < 5; i++ {
-		m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+		m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	}
 	// NO MINT WAS EVEN ATTEMPTED after the first. The row count below cannot see
 	// this: the partial unique index rejects a second INSERT, and the monitor
@@ -88,14 +88,14 @@ func TestThresholdEpisode_RisingEdgeCloses(t *testing.T) {
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP2", 18)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {
 		t.Fatalf("no episode opened: %d", len(open))
 	}
 	originID := open[0].OriginID
 
-	m.checkBindings([]thresholdEntry{b}, 120, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 120, "below_threshold")
 
 	got, err := db.GetDemandOrigin(originID)
 	if err != nil || got == nil {
@@ -108,7 +108,7 @@ func TestThresholdEpisode_RisingEdgeCloses(t *testing.T) {
 		t.Errorf("close_reason = %q, want %q", got.CloseReason, protocol.CloseReasonRecovered)
 	}
 	// And the place is reusable: the next crossing is a NEW demand.
-	m.checkBindings([]thresholdEntry{b}, 30, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 30, "below_threshold")
 	open, _ = db.ListOpenThresholdEpisodes()
 	if len(open) != 1 || open[0].OriginID == originID {
 		t.Errorf("the next falling edge must open a fresh episode, got %d open, id reused=%v",
@@ -132,7 +132,7 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 	eng := m.eng
 	b := episodeBinding(t, eng, "PANEL-EP3", 18)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {
 		t.Fatalf("no episode opened: %d", len(open))
@@ -142,7 +142,7 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 	// The restart: a whole new monitor over the same database, seeing the same
 	// still-breached level. No rehydrate — it reads the open row.
 	restarted := NewThresholdMonitor(eng)
-	restarted.checkBindings([]thresholdEntry{b}, 38, "below_threshold", false)
+	restarted.checkBindings([]thresholdEntry{b}, 38, "below_threshold")
 	if n := sink.countContaining("open demand episode key="); n != 0 {
 		t.Errorf("%d failed mint(s) after the restart, want 0 — the restarted monitor must know the demand is open before it tries to write one", n)
 	}
@@ -177,7 +177,7 @@ func TestThresholdEpisode_UnknowableDenominatorIsNull(t *testing.T) {
 	// No catalog payload at all — the capacity is unknowable.
 	b := episodeBinding(t, eng, "PANEL-EP4-ABSENT", 0)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {
@@ -213,7 +213,7 @@ func TestThresholdEpisode_ThresholdChangeClosesAndReopens(t *testing.T) {
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP6", 18)
 
-	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {
 		t.Fatalf("no episode opened: %d", len(open))
@@ -256,7 +256,7 @@ func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing
 		stationID: "PLANT.LINE2", coreNodeName: "SLN_009",
 		payloadCode: gone.payloadCode, threshold: 100,
 	}
-	m.checkBindings([]thresholdEntry{gone, survivor}, 40, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{gone, survivor}, 40, "below_threshold")
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 2 {
 		t.Fatalf("two bindings below threshold should open two episodes, got %d", len(open))
@@ -299,7 +299,7 @@ func TestThresholdEpisode_NegativeTotalClampsTheDenominator(t *testing.T) {
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP5", 18)
 
-	m.checkBindings([]thresholdEntry{b}, -443, "below_threshold", false)
+	m.checkBindings([]thresholdEntry{b}, -443, "below_threshold")
 
 	open, _ := db.ListOpenThresholdEpisodes()
 	if len(open) != 1 {

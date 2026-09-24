@@ -223,8 +223,8 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 		Kind: protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}
-	testutil.MustNoErr(t, db.OpenCoreEpisode(thr, false), "mint threshold")
-	testutil.MustNoErr(t, db.OpenCoreEpisode(mnt, false), "mint maintain")
+	testutil.MustNoErr(t, db.OpenCoreEpisode(thr), "mint threshold")
+	testutil.MustNoErr(t, db.OpenCoreEpisode(mnt), "mint maintain")
 
 	gotMnt, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
 	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind maintain")
@@ -277,7 +277,7 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 		EpisodeKey: protocol.MaintainEpisodeKey("SYN_EMPTIES", "45x58x32"),
 		Kind:       protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
-	}, false), "mint maintain")
+	}), "mint maintain")
 
 	group, got, err := db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
 	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin")
@@ -305,7 +305,7 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 		EpisodeKey: protocol.ThresholdEpisodeKey("SLN_002", "PANEL-A"),
 		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
-	}, false), "mint threshold")
+	}), "mint threshold")
 	group, got, err = db.MaintainedEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
 	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin threshold origin")
 	if got != "" || group != "" {

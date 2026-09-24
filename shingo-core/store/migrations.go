@@ -1640,13 +1640,14 @@ func v69ReservationsMouthMode(tx *sql.Tx) error {
 	return nil
 }
 
-// v52EdgeLinesideReports creates the R1 shadow read-model table: Edge's
-// periodic per-consuming-node lineside on-hand. One row per
-// (station, core_node_name, payload_code), upserted on each 60s report. Core
-// reads the fresh (< 3 min) rows to shadow the monitor's lineside term against
-// the ledger and log firing-decision disagreements. Its OWN table — NOT bins —
-// and nothing here writes bins.uop_remaining; the delta path stays that
-// column's only writer.
+// v52EdgeLinesideReports creates edge_lineside_reports: the Edge's periodic
+// per-consuming-node lineside on-hand. One row per
+// (station, core_node_name, payload_code), upserted on each 60s report. It was
+// built as a shadow read-model, decided replenishment from 2026-07-24, and since
+// the 2026-09-23 seat-count ruling is a checksum: Core compares each report
+// against its replica on ingest (v127 adds the carrier columns) and decides
+// nothing from it. Its OWN table — NOT bins — and nothing here writes
+// bins.uop_remaining; the delta path stays that column's only writer.
 func v52EdgeLinesideReports(tx *sql.Tx) error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS edge_lineside_reports (
 		station         TEXT NOT NULL,
@@ -3597,10 +3598,10 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "process_styles", "is_active")
 			}},
-		// v52: R1 shadow read-model. Edge's periodic per-consuming-node lineside
-		// on-hand, its OWN table (NOT bins), so Core can compute the monitor's
-		// lineside term both ways (ledger vs Edge reports) and log
-		// firing-decision disagreements — SHADOW, deciding off the ledger.
+		// v52: edge_lineside_reports, the Edge's periodic per-consuming-node
+		// lineside on-hand, its OWN table (NOT bins). Built as a shadow, it
+		// decided replenishment from 2026-07-24 and is a checksum Core compares
+		// on ingest since 2026-09-23 (v127 gives it the carrier).
 		//
 		// NUMBERING: v52 was claimed HERE on branch monitor-collapse-r1, and the
 		// lane campaign's competing v52 (the pending_restocks drop) was renumbered
@@ -3608,7 +3609,7 @@ func migrationList() []migration {
 		// v51. This migration is a pure additive CREATE TABLE with no dependency on
 		// any constraint, so it would have renumbered trivially had it been the one
 		// to move; it did not have to.
-		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
+		{52, "add edge_lineside_reports (the Edge's per-seat lineside report)",
 			v52EdgeLinesideReports,
 			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
 		{53, "backfill mission_telemetry.robot_id from orders (was written blank)",
@@ -4288,6 +4289,15 @@ func migrationList() []migration {
 				return schema.ColumnExists(q, "inventory_delta_dedup", "applied_net") &&
 					schema.ColumnExists(q, "inventory_delta_dedup", "applied_window_end")
 			}},
+
+		{127, "edge_lineside_reports carrier columns + bin_uop_exception.bin_id nullable — the lineside report is a per-carrier checksum, and a bucket divergence has no bin",
+			v127LinesideReportCarrier,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_lineside_reports", "bin_id") &&
+					schema.ColumnExists(q, "edge_lineside_reports", "bin_epoch") &&
+					schema.ColumnExists(q, "edge_lineside_reports", "flushed_seq") &&
+					schema.ColumnNullable(q, "bin_uop_exception", "bin_id")
+			}},
 	}
 }
 
@@ -4596,6 +4606,41 @@ func v120LinesideDrainLedger(tx *sql.Tx) error {
 //
 // INERT TO AN OLDER BINARY, which never names the column. ROLLBACK is DROP
 // COLUMN.
+// v127LinesideReportCarrier gives the lineside report its carrier, and the
+// exceptions ledger room for a divergence that has none.
+//
+// edge_lineside_reports gains the carrier the Edge has bound at the seat
+// (bin_id, bin_epoch) and the last delta seq the Edge allocated for it
+// (flushed_seq). All three are NULL on a row an Edge that predates them wrote,
+// which is how Core knows to compare no carrier for it.
+//
+// bin_uop_exception.bin_id DROPS NOT NULL. The lineside comparison records its
+// findings there as kind report_divergence (seat-count round 1 S2 names this
+// table and forbids building another beside it), and one of its five classes —
+// a bucket that disagrees with Core's mirror — belongs to a (seat, part), not
+// to a bin. Every reader of the table filters on kind and every one of them
+// reads a kind that always carries a bin, so none of them meets a NULL; kind
+// has no CHECK, so report_divergence needs no DDL.
+//
+// Both are catalog-only changes: no rewrite, no backfill. INERT TO AN OLDER
+// BINARY, which never names the new columns and never writes a NULL bin_id.
+// ROLLBACK is the previous build; restoring NOT NULL would first need the
+// bucket rows deleted, and nothing requires it.
+func v127LinesideReportCarrier(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE edge_lineside_reports
+			ADD COLUMN IF NOT EXISTS bin_id      BIGINT NULL,
+			ADD COLUMN IF NOT EXISTS bin_epoch   BIGINT NULL,
+			ADD COLUMN IF NOT EXISTS flushed_seq BIGINT NULL`,
+		`ALTER TABLE bin_uop_exception ALTER COLUMN bin_id DROP NOT NULL`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v127 lineside report carrier: %w", err)
+		}
+	}
+	return nil
+}
+
 func v125LoaderAutoPush(tx *sql.Tx) error {
 	if _, err := tx.Exec(
 		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS auto_push BOOLEAN NOT NULL DEFAULT false`); err != nil {

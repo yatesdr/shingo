@@ -40,7 +40,7 @@ func TestThresholdSweep_ClosesTheWithdrawnAndOrdersForNothing(t *testing.T) {
 			// The withdrawn place: an episode whose binding exists nowhere.
 			withdrawn := r.b
 			withdrawn.coreNodeName = "SLN_GONE"
-			r.m.checkBindings([]thresholdEntry{withdrawn}, 40, "below_threshold", false)
+			r.m.checkBindings([]thresholdEntry{withdrawn}, 40, "below_threshold")
 			if len(r.openRows()) != 1 {
 				t.Fatal("setup: the withdrawn place's episode did not open")
 			}

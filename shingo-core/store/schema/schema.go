@@ -180,6 +180,20 @@ func IndexExists(c Querier, indexName string) bool {
 	return exists
 }
 
+// ColumnNullable reports whether the named column exists and accepts NULL.
+// False on a query error, so a verify predicate built on it re-runs an
+// idempotent DROP NOT NULL rather than recording a check that never ran.
+func ColumnNullable(c Querier, table, column string) bool {
+	var nullable string
+	if err := c.QueryRow(
+		`SELECT is_nullable FROM information_schema.columns WHERE table_name=$1 AND column_name=$2`,
+		table, column,
+	).Scan(&nullable); err != nil {
+		return false
+	}
+	return nullable == "YES"
+}
+
 // ColumnType returns the SQL data type of the named column (e.g.
 // "boolean", "integer", "text"), or an empty string if the column
 // does not exist or any query error occurs.

@@ -160,6 +160,11 @@ import (
 // on every existing row, which is the mixed-version anchor. Inert to a
 // pre-v126 binary; rollback is DROP COLUMN on both.
 //
+// v127 ADDS edge_lineside_reports.bin_id/bin_epoch/flushed_seq (the report's
+// carrier, all NULL on an old Edge's row) and DROPS NOT NULL on
+// bin_uop_exception.bin_id, so a bucket report_divergence can be recorded.
+// Catalog-only; inert to a pre-v127 binary.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -171,8 +176,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 126 {
-		t.Errorf("head migration = %d, want 126", got)
+	if got := store.LatestMigrationVersion(); got != 127 {
+		t.Errorf("head migration = %d, want 127", got)
 	}
 }
 

@@ -1,35 +1,32 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/uop"
 )
 
-// R1 lineside reporter (Edge side).
+// Lineside reporter (Edge side): a per-carrier checksum.
 //
-// Edge is authoritative for lineside counts after the bin-ownership flip. When
-// a bin strands `staged` at the line without binding, Core's own ledger keeps
-// the delivered count and reads STOCKED while Edge's counters drain to the
-// truth (the SNF3 CARRIER-0024 shape: Core 150 vs the tile at 46), so Core
-// silently suppresses ordering while the line starves. This reporter pushes
-// Edge's per-consuming-node lineside on-hand to Core every 60s so Core can
-// correct for that.
+// Every 60s the Edge sends Core, per consuming node, which carrier it has bound
+// (bin id and generation), that carrier's count, the node's bucket for the
+// carrier's part, and the last delta seq it allocated for the carrier. Core
+// compares each row against its own replica on ingest and records a
+// disagreement as a report_divergence episode. The report DECIDES NOTHING: every
+// replenishment decision reads Core's count (seat-count round 1, 2026-09-23).
+// It decided under lineside_decision_mode=edge_reports from 2026-07-24 until
+// then; the knob is deleted, and rolling back is the previous build.
 //
-// ⚠️ NOT reporting-only, and it has not been since c20cf5aa (2026-07-24). Under
-// the default lineside_decision_mode=edge_reports these reports DECIDE
-// replenishment on Core; lineside_decision_mode=ledger reverts to the pure
-// ledger, which is config rather than code. A report that does not arrive is
-// not a missed log line — Core's staleness window is 3 minutes, and a node with
-// no fresh report falls back to the ledger term for the interval.
+// A report that does not arrive changes no decision; it only leaves Core's
+// comparison for this station where the last report put it.
 
-// linesideReportInterval is the R1 reporter cadence. Core trusts a report for
-// linesideReportStaleness (3 minutes), so this is deliberate 3x margin: two
-// consecutive reports can be lost before a node drops out of the adjustment.
+// linesideReportInterval is the reporter cadence.
 const linesideReportInterval = 60 * time.Second
 
-// startLinesideReporter spawns the R1 lineside reporter goroutine.
+// startLinesideReporter spawns the lineside reporter goroutine.
 func (e *Engine) startLinesideReporter() {
 	go e.runLinesideReporter()
 }
@@ -48,13 +45,45 @@ func (e *Engine) runLinesideReporter() {
 }
 
 func (e *Engine) reportLinesideLevels() {
-	levels, err := e.db.ListLinesideLevels()
-	if err != nil {
-		log.Printf("lineside-reporter: list levels: %v", err)
+	// AS OF FLUSHEDSEQ, AT NO COST. A tick moves the runtime row's count at
+	// once and reaches the outbox up to one accumulator interval later, so a
+	// raw count would show Core a gap its FlushedSeq says was sent: a
+	// divergence on every running seat. Each row instead states its count
+	// minus what the accumulator holds unflushed for that carrier (and its
+	// bucket minus what is unflushed for that seat and part), which is the
+	// number Core holds once it has applied every seq up to FlushedSeq.
+	//
+	// ONE INSTANT. The unflushed snapshot, the level SELECT (counts and
+	// FlushedSeq) and the report's enqueue happen together: under the
+	// accumulator's flush lock (WithPending), so no flush lands between them
+	// and every delta the counts include is ahead of the report in the outbox;
+	// and under countMu, which every path that writes a seat's count and
+	// records the change holds across both, so no tick lands between them
+	// either. No flush, no statement and no message is added: the same SELECT
+	// and the same snapshot enqueue as before, a few milliseconds under lock.
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	if e.inventoryDelta == nil {
+		if err := e.buildAndEnqueueLinesideReport(uop.Pending{}); err != nil {
+			log.Printf("lineside-reporter: %v", err)
+		}
 		return
 	}
+	if err := e.inventoryDelta.WithPending(e.buildAndEnqueueLinesideReport); err != nil {
+		log.Printf("lineside-reporter: %v", err)
+	}
+}
+
+// buildAndEnqueueLinesideReport reads the levels, states each as of its
+// FlushedSeq, and enqueues the report. Runs under countMu and, when there is an
+// accumulator, its flush lock.
+func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
+	levels, err := e.db.ListLinesideLevels()
+	if err != nil {
+		return fmt.Errorf("list levels: %w", err)
+	}
 	if len(levels) == 0 {
-		return
+		return nil
 	}
 
 	station := e.cfg.StationID()
@@ -68,32 +97,38 @@ func (e *Engine) reportLinesideLevels() {
 		// a carrier holding 7032 of something else, and because the payload is
 		// the join key on Core it took the real part's correction down with it.
 		//
-		// Absence is the designed degradation and Core is already written for
-		// it: past the 3-minute staleness window a node with no fresh report
-		// falls back to its ledger term and makes no adjustment. That is a
-		// less-corrected number, which is a different thing from a wrong one.
+		// Absence is the designed degradation. Core sees the seat with no bound
+		// carrier, so a carrier Core has placed there opens an unbound_carrier
+		// episode — which is true: nobody has identified what the Edge has bound.
 		if !l.PayloadKnown || l.PayloadCode == "" {
 			unknown = append(unknown, l.CoreNodeName)
 			continue
+		}
+		binUOP := l.BinUOP
+		if l.BinID != nil {
+			binUOP -= pending.Bin(*l.BinID, l.BinEpoch)
 		}
 		entries = append(entries, protocol.LinesideLevelEntry{
 			CoreNodeName: l.CoreNodeName,
 			PayloadCode:  l.PayloadCode,
 			BinCount:     l.BinCount,
-			BinUOP:       l.BinUOP,
-			BucketQty:    l.BucketQty,
+			BinUOP:       binUOP,
+			BucketQty:    l.BucketQty - pending.Bucket(l.NodeID, l.PayloadCode),
+			BinID:        l.BinID,
+			BinEpoch:     l.BinEpoch,
+			FlushedSeq:   l.FlushedSeq,
 		})
 	}
-	// Loud, because a node dropping out of the adjustment is a real change in
-	// what Core is deciding on and the operator-visible symptom is nothing at
-	// all. A node that stays here across many reports has a carrier no delivery
-	// envelope and no person has ever identified.
+	// Loud, because a node dropping out of the report is a seat Core can no
+	// longer check, and the operator-visible symptom is nothing at all. A node
+	// that stays here across many reports has a carrier no delivery envelope and
+	// no person has ever identified.
 	if len(unknown) > 0 {
 		log.Printf("lineside-reporter: %d node(s) withheld — no established carrier identity: %v",
 			len(unknown), unknown)
 	}
 	if len(entries) == 0 {
-		return
+		return nil
 	}
 
 	env, err := protocol.NewDataEnvelope(
@@ -107,19 +142,18 @@ func (e *Engine) reportLinesideLevels() {
 		},
 	)
 	if err != nil {
-		log.Printf("lineside-reporter: build envelope: %v", err)
-		return
+		return fmt.Errorf("build envelope: %w", err)
 	}
 	data, err := env.Encode()
 	if err != nil {
-		log.Printf("lineside-reporter: encode envelope: %v", err)
-		return
+		return fmt.Errorf("encode envelope: %w", err)
 	}
 	// Snapshot enqueue: this report carries EVERY consuming node, so an unsent
 	// predecessor is worthless. Without this, an outage leaves an hour of
 	// superseded reports to publish in a burst on recovery — and Core discards
 	// most of them for expiry on arrival anyway.
 	if err := e.db.EnqueueSnapshotOutbox([][]byte{data}, protocol.SubjectLinesideLevelReport); err != nil {
-		log.Printf("lineside-reporter: enqueue: %v", err)
+		return fmt.Errorf("enqueue: %w", err)
 	}
+	return nil
 }

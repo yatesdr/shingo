@@ -109,6 +109,11 @@ func (s *fakeDeltaSink) RecordBucket(nodeID int64, coreNodeName, pairKey string,
 	s.mu.Unlock()
 }
 
+// WithPending runs fn; the fake holds no unflushed counts.
+func (s *fakeDeltaSink) WithPending(fn func(uop.Pending) error) error {
+	return fn(uop.Pending{})
+}
+
 func (s *fakeDeltaSink) Flush() {
 	s.mu.Lock()
 	s.flushCount++

@@ -18,27 +18,26 @@ import (
 // Four entry points reach checkBindings: the delta hot path (evaluatePayload),
 // the boot pass (startupSweep), a human's manual-swap request
 // (NoteSwapRequestContradiction), and the two notification doors (Resync
-// here). They must all judge the same payload
-// against the same number, and that number is the one the configured R1 mode
-// names. The persisted used_edge_reports stamp must say which one decided.
+// here). They all judge a payload against one number: Core's count,
+// SystemUOPForPayload — the bins and lineside buckets the Edge's deltas keep
+// (seat-count round 1 §5; the owner ruled that loaders are a Core function).
 //
 // The fixture is the SNF3 shape in miniature: the ledger holds 150 at the line
-// node, the Edge reports that node drained to 10, and the threshold is 100. So
-// the two totals straddle the trigger, and whichever one a path decides off is
-// visible in whether it fires and in the reading it fires with.
+// node, a fresh Edge report says that node drained to 10, and the threshold is
+// 100. The report no longer moves the total on any path; it is a checksum,
+// compared on ingest (messaging/lineside_divergence_test.go).
 
 const decisionThreshold = 100
 
 // decisionFixture is one monitored binding with a ledger bin of ledgerUOP at the
 // line node, and, when edgeUOP >= 0, a FRESH Edge report of edgeUOP for that
 // node.
-func decisionFixture(t *testing.T, mode, payload string, ledgerUOP, edgeUOP int) (*ThresholdMonitor, *fireLog, thresholdEntry) {
+func decisionFixture(t *testing.T, payload string, ledgerUOP, edgeUOP int) (*ThresholdMonitor, *fireLog, thresholdEntry) {
 	t.Helper()
 	db := testDB(t)
 	sink := &logSink{}
 	eng := newLoggingEngine(t, db, sink)
 	m := eng.thresholdMonitor
-	m.linesideMode = mode
 	fires := captureThresholdFires(t, eng)
 
 	b := stationBinding(t, eng, "PLANT.DT", "SLN_DT", payload, 18)
@@ -123,91 +122,33 @@ func assertDecision(t *testing.T, m *ThresholdMonitor, fires *fireLog, b thresho
 	}
 }
 
-// WITH NO EDGE REPORT THE TWO TOTALS ARE ONE NUMBER, so every entry point in
-// either mode decides off the ledger: fire below, hold above, stamp false.
-func TestDecisionTotal_LedgerOnlyIsTheSameEverywhere(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{linesideModeEdgeReports, linesideModeLedger} {
-		for _, ep := range decisionEntryPoints {
-			for _, c := range []struct {
-				ledger   int
-				wantFire bool
-			}{{50, true}, {150, false}} {
-				t.Run(mode+"/"+ep.name, func(t *testing.T) {
-					t.Parallel()
-					payload := "PANEL-DT-L" + itoa(c.ledger) + "-" + ep.tag + "-" + mode[:3]
-					m, fires, b := decisionFixture(t, mode, payload, c.ledger, -1)
-					ep.drive(m, b)
-					assertDecision(t, m, fires, b, c.wantFire, c.ledger, false)
-				})
-			}
-		}
-	}
-}
-
-// IN LEDGER MODE A FRESH EDGE REPORT DECIDES NOTHING, at any entry point. The
-// ledger reads 150, above the trigger, so nothing fires wherever it came in.
-func TestDecisionTotal_LedgerModeIgnoresTheEdgeEverywhere(t *testing.T) {
-	t.Parallel()
-	for _, ep := range decisionEntryPoints {
-		t.Run(ep.name, func(t *testing.T) {
-			t.Parallel()
-			m, fires, b := decisionFixture(t, linesideModeLedger, "PANEL-DT-LM-"+ep.tag, 150, 10)
-			ep.drive(m, b)
-			assertDecision(t, m, fires, b, false, 0, false)
-		})
-	}
-}
-
-// IN LEDGER MODE THE STAMP SAYS LEDGER, even when a fresh report exists. The
-// ledger reads 50 (below), the Edge reports 10; the ledger decided, at 50, so
-// used_edge_reports is false. evaluatePayload used to stamp true here, because
-// it passed "a fresh report moved the Edge total" where the column records
-// "the Edge total decided".
-func TestDecisionTotal_LedgerModeStampsLedgerWithAFreshReport(t *testing.T) {
-	t.Parallel()
-	for _, ep := range decisionEntryPoints {
-		t.Run(ep.name, func(t *testing.T) {
-			t.Parallel()
-			m, fires, b := decisionFixture(t, linesideModeLedger, "PANEL-DT-LS-"+ep.tag, 50, 10)
-			ep.drive(m, b)
-			assertDecision(t, m, fires, b, true, 50, false)
-		})
-	}
-}
-
-// IN EDGE_REPORTS MODE EVERY ENTRY POINT DECIDES OFF THE EDGE-ADJUSTED TOTAL.
-// The ledger reads 150 (would hold), the fresh report puts the adjusted total at
-// 10 (below), so every path fires off 10 and stamps true.
+// EVERY ENTRY POINT DECIDES OFF CORE'S COUNT, report or no report: fire below
+// at the ledger's reading, hold above, and the used_edge_reports stamp is false
+// on every row because no Edge-adjusted total exists to decide.
 //
-// Only evaluatePayload did this. The boot pass, the manual-swap recheck and the
-// notification doors judged against the bare ledger and stamped false by
-// construction — so three of four fire paths ignored the configured mode, and
-// the manual-swap recheck re-checked a human's "this place is empty" against
-// the very number it had just logged as a phantom.
-func TestDecisionTotal_EdgeModeDecidesOffTheEdgeEverywhere(t *testing.T) {
+// Verify-red at the base on the rows with a report: under the default
+// edge_reports mode the ledger at 150 with a report of 10 fired off 10 on all
+// four paths, and the ledger at 50 with a report of 170 held on all four.
+func TestDecisionTotal_EveryPathReadsCoresCount(t *testing.T) {
 	t.Parallel()
 	for _, ep := range decisionEntryPoints {
-		t.Run(ep.name, func(t *testing.T) {
-			t.Parallel()
-			m, fires, b := decisionFixture(t, linesideModeEdgeReports, "PANEL-DT-EM-"+ep.tag, 150, 10)
-			ep.drive(m, b)
-			assertDecision(t, m, fires, b, true, 10, true)
-		})
-	}
-}
-
-// AND THE OTHER DIRECTION: the ledger reads 50 (would fire), the fresh report
-// puts the adjusted total at 170 (holds). In edge_reports mode nothing fires,
-// wherever it came in.
-func TestDecisionTotal_EdgeModeHoldsOffTheEdgeEverywhere(t *testing.T) {
-	t.Parallel()
-	for _, ep := range decisionEntryPoints {
-		t.Run(ep.name, func(t *testing.T) {
-			t.Parallel()
-			m, fires, b := decisionFixture(t, linesideModeEdgeReports, "PANEL-DT-EH-"+ep.tag, 50, 170)
-			ep.drive(m, b)
-			assertDecision(t, m, fires, b, false, 0, false)
-		})
+		for _, c := range []struct {
+			tag      string
+			ledger   int
+			edge     int
+			wantFire bool
+		}{
+			{"L50", 50, -1, true},
+			{"L150", 150, -1, false},
+			{"L150E10", 150, 10, false},
+			{"L50E170", 50, 170, true},
+		} {
+			t.Run(ep.name+"/"+c.tag, func(t *testing.T) {
+				t.Parallel()
+				m, fires, b := decisionFixture(t, "PANEL-DT-"+c.tag+"-"+ep.tag, c.ledger, c.edge)
+				ep.drive(m, b)
+				assertDecision(t, m, fires, b, c.wantFire, c.ledger, false)
+			})
+		}
 	}
 }

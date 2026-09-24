@@ -93,17 +93,19 @@ func TestSourcingReadersSpellNothingThemselves(t *testing.T) {
 // default. The 2026-09-14 ruling deleted every reject-list in the SOURCING
 // readers in favour of the SourceableStatusSQL allow-list.
 //
-// THREE SURVIVE, DELIBERATELY, AND ARE LISTED HERE RATHER THAN FIXED. They are
+// TWO SURVIVE, DELIBERATELY, AND ARE LISTED HERE RATHER THAN FIXED. They are
 // not eligibility readers — they are physical-inventory totals (the system bin
-// count, the system UOP total, the lineside ledger's bin term). For a sourcing
+// count and the system UOP total, both in inventory_system_count.go). A third,
+// the lineside ledger's per-node bin term, was deleted with the R1 read-model
+// it fed (seat-count round 1, lane A of the memory build). For a sourcing
 // reader, failing closed on an unrecognised status is right: do not send a
 // robot there. For a count of what is physically in the plant, failing closed
 // means under-reporting stock that is really there, which is the opposite of
 // what a cycle-count surface is for. That is a different decision from the one
 // the ruling made, so it is reported and left, not quietly taken.
 //
-// The list is frozen: a fourth reject-list fails this test, and removing one of
-// these three means deleting its line here. Either way nobody adds one by
+// The list is frozen: a third reject-list fails this test, and removing one of
+// these two means deleting its line here. Either way nobody adds one by
 // copying a neighbour.
 //
 // Scoped to BIN statuses by the literals it matches — order and leg statuses
@@ -116,8 +118,7 @@ func TestNoBinStatusRejectListSurvives(t *testing.T) {
 	// Known, reported, awaiting a ruling of their own: inventory totals, never
 	// sourcing.
 	frozen := map[string]bool{
-		"inventory_system_count.go":    true,
-		"inventory_lineside_ledger.go": true,
+		"inventory_system_count.go": true,
 	}
 
 	rejectList := regexp.MustCompile(`status NOT IN \([^)]*'(maintenance|flagged|retired|quality_hold)'`)
