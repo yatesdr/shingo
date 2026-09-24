@@ -49,18 +49,21 @@ func consumeDelta(binID, epoch, seq int64, delta int) *protocol.BinUOPDelta {
 }
 
 // TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop pins P0f, the Core
-// half of the in-flight-delta race.
+// half of the in-flight-delta race. The Edge half is shingo-edge engine
+// TestPin_P0f_EdgeTakesCoresNumberOverItsInFlightTicks; what Core tells the
+// station in between is www TestPin_AdminCount_BroadcastsCoresNumberUnfenced.
 //
 // The Edge has a -5 delta in flight when an operator counts N at Core.
 // RecordCount writes N absolutely and does NOT bump delta_epoch, so the delta
 // (stamped with the same epoch) is not stale when it arrives and applies on
-// top: Core ends at N-5. The Edge, which adopted N from the count, ends at N.
+// top: Core ends at N-5. The Edge, which takes N from the broadcast, ends at N.
 // Both sides believe their number.
 //
-// VERIFY-RED: phase 2 of lane C (SYNTH-round2 S7, the RecordCount fence:
-// UOPAdjustment.AsOfNet/AsOfSeq read in the RecordCount transaction and the
-// Edge rebasing onto them) is the change that inverts this pin. It rewrites
-// RecordCount; this pin's expectation is re-derived there.
+// VERIFY-RED: the record-count fence (SYNTH-round2 S7, second half) keeps
+// Core's number here (N-5 is right: the -5 happened after the count was read)
+// and moves the Edge to it. What inverts in THIS test is the announcement:
+// RecordCount enqueues one UOPAdjustment, inside its transaction, carrying the
+// applied_net and last_seq Core held when it wrote N.
 func TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
