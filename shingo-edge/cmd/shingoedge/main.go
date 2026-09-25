@@ -1021,6 +1021,16 @@ func main() {
 	srv := startHTTPServer(addr, router)
 
 	awaitShutdown(srv, stopWeb)
+
+	// Stop the engine before the deferred stops run. Defers run last in,
+	// first out, so the deferred eng.Stop above would run after
+	// uopMutator.Stop and reporter.Stop: their final flush would happen
+	// while the PLC poll was still recording ticks, and a tick recorded
+	// after it never reached Core. Stop joins the poll goroutine, and a tick
+	// is handled synchronously inside the poll pass, so once it returns the
+	// accumulators are quiet and their final flush carries every tick. The
+	// deferred call is then a no-op.
+	eng.Stop()
 }
 
 // ── Interactive restore flow (--restore flag) ───────────────────────
