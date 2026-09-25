@@ -672,12 +672,16 @@ function renderGrid() {
 // left untouched: a slot is differentiated by its teal outline, not by ringing the node.
 function markLinkedTiles() {
   const STATE = ['tile-has-payload', 'tile-empty-bin', 'tile-staged', 'tile-maintenance', 'tile-claimed', 'tile-disabled', 'tile-synthetic'];
-  // Walk every rendered slot tile (both kinds carry .node-tile[data-id]); scope the
-  // canonical lookup to #tile-grid so it never matches a slot tile, then copy the grid
-  // tile's state classes onto the slot.
+  // Walk every rendered slot tile (both kinds carry .node-tile[data-id]) and copy the
+  // canonical tile's state classes onto the slot. The canonical tile is NOT always in
+  // #tile-grid: buildHierarchy moves a group's child tiles out of the grid into the
+  // group card, so a lookup scoped to #tile-grid found nothing for any grouped node and
+  // its slot rendered stateless. Springfield's buffer slots are all children of the
+  // AMR Supermarket group, so every buffer showed uncoloured while the ungrouped homes
+  // coloured. Exclude the slot kinds instead of scoping by container.
   document.querySelectorAll('.loader-member[data-id], .loader-group-slot[data-id]').forEach(function (m) {
     const id = m.dataset.id;
-    const grid = document.querySelector('#tile-grid .node-tile[data-id="' + id + '"]');
+    const grid = document.querySelector('.node-tile[data-id="' + id + '"]:not(.loader-member):not(.loader-group-slot)');
     STATE.forEach(function (c) { m.classList.remove(c); });
     if (grid) STATE.forEach(function (c) { if (grid.classList.contains(c)) m.classList.add(c); });
   });
