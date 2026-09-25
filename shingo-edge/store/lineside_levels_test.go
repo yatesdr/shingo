@@ -297,6 +297,38 @@ func TestListLinesideLevels_BucketOfAnotherPartIsNotSummedIn(t *testing.T) {
 	}
 }
 
+// The bucket term sums ACTIVE piles of the carrier's part only: an inactive pile
+// of that same part at the seat is not in the report, although Core's mirror
+// still counts it today.
+// Stays: the report sums active rows only; under change #2 the excluded row is
+// the stranded one.
+func TestListLinesideLevels_InactivePileIsNotSummedIn(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, styleID, nodeID, claimID := linesideFixture(t, db, "SYN-SEAT-16")
+	bindCarrier(t, db, nodeID, claimID, 61, 300)
+	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "REAL-PART", true, "delivery"); err != nil {
+		t.Fatalf("record carrier: %v", err)
+	}
+	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "REAL-PART", 25); err != nil {
+		t.Fatalf("capture active pile: %v", err)
+	}
+	// An inactive pile of the same part, left by an earlier style's run.
+	if _, err := db.DB.Exec(`INSERT INTO node_lineside_bucket
+		(node_id, pair_key, style_id, payload_code, qty, state) VALUES (?, '', ?, 'REAL-PART', 400, 'inactive')`,
+		nodeID, styleID+1); err != nil {
+		t.Fatalf("seed inactive pile: %v", err)
+	}
+
+	got := levelFor(t, db, "SYN-SEAT-16")
+	if got == nil {
+		t.Fatal("no row for the seat")
+	}
+	if got.BucketQty != 25 {
+		t.Errorf("BucketQty = %d, want 25. 425 means the inactive pile was summed in.", got.BucketQty)
+	}
+}
+
 // upsertClaimRetiredMode upserts a claim carrying a swap mode the allowlist no
 // longer accepts, by upserting with a configurable placeholder and rewriting the
 // column — the pre-lockdown row shape the read paths still tolerate.

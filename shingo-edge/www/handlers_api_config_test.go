@@ -145,6 +145,42 @@ func TestApiConfig_SetActiveStyle(t *testing.T) {
 	}
 }
 
+// The admin style flip does not touch lineside piles: a pile captured under the
+// outgoing style stays active with its qty.
+// Flips under change #2: the flip strands every pile at the process's nodes.
+func TestApiConfig_SetActiveStyleLeavesPilesActive(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+
+	pid := seedProcess(t, "PileFlipLine")
+	fromID := seedStyle(t, "PileFlipFrom", pid)
+	toID := seedStyle(t, "PileFlipTo", pid)
+	if err := testDB.SetActiveStyle(pid, &fromID); err != nil {
+		t.Fatalf("SetActiveStyle: %v", err)
+	}
+	nodeID, err := testDB.CreateProcessNode(processes.NodeInput{
+		ProcessID: pid, CoreNodeName: "PILE-FLIP-SEAT", Code: "PF1",
+		Name: "PILE-FLIP-SEAT", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateProcessNode: %v", err)
+	}
+	if _, err := testDB.CaptureLinesideBucket(nodeID, "", fromID, "SYN-PART-1", 9); err != nil {
+		t.Fatalf("CaptureLinesideBucket: %v", err)
+	}
+
+	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid)+"/active-style", map[string]any{"style_id": toID}, cookie)
+	assertStatus(t, resp, http.StatusOK)
+
+	rows, err := testDB.ListLinesideBuckets(nodeID)
+	if err != nil {
+		t.Fatalf("ListLinesideBuckets: %v", err)
+	}
+	if len(rows) != 1 || rows[0].State != "active" || rows[0].Qty != 9 || rows[0].StyleID != fromID {
+		t.Errorf("piles after the flip = %+v, want one active pile of 9 still stamped style %d", rows, fromID)
+	}
+}
+
 func TestApiConfig_ListProcessStyles(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
