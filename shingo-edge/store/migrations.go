@@ -445,7 +445,16 @@ func (db *DB) migrate() error {
 		PRIMARY KEY (loader_key, bin_type_code))`)
 
 	// 6. Data fixups
-	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
+	//
+	// There used to be one here, unguarded on every Edge start:
+	//   UPDATE orders SET status='pending' WHERE status='queued'
+	// It turned an order Core was holding under a cause into one that read as
+	// not yet acknowledged, beside a queue reason that no longer matched its
+	// status, until Core's next update happened to arrive. `queued` is Core's
+	// word for a waiting order and the Edge mirrors it; a restart does not change
+	// what Core is doing with the order. Removed (Stage A2), with no reader that
+	// depended on the reset: the anomaly board reads `queued` as it stands, and
+	// the release guard never covered it.
 
 	// Legacy catalog renames
 	db.Exec("ALTER TABLE style_catalog RENAME TO blueprint_catalog")

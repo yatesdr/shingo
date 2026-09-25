@@ -5,6 +5,7 @@ package engine
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
@@ -30,12 +31,16 @@ func TestSourceabilityMonitor_PublishOnChangeOnly(t *testing.T) {
 
 	eng := newTestEngine(t, db, simulator.New())
 	m := eng.SourceabilityMonitor()
+	// The snapshot goes to each station, and this plant has one Edge. (It went
+	// to every station, whole-plant, on every full pass until the per-station
+	// feed — Stage A2, a ruling; see TestSourcingFeed_EachStationGetsItsOwnProcesses.)
+	m.stationsFn = func() ([]string, error) { return []string{"edge-1"}, nil }
 
 	var (
 		mu      sync.Mutex
 		reports []protocol.SourcingStateReport
 	)
-	m.publishFn = func(r protocol.SourcingStateReport) {
+	m.publishFn = func(_ string, r protocol.SourcingStateReport) {
 		mu.Lock()
 		reports = append(reports, r)
 		mu.Unlock()
@@ -50,7 +55,12 @@ func TestSourceabilityMonitor_PublishOnChangeOnly(t *testing.T) {
 
 	styleKey := []plantclaims.ProcessKey{{ProcessID: "SNF2", StyleID: "A"}}
 
-	// Full recompute → a snapshot carrying the green style + its reason.
+	// A full recompute with the snapshot due (the engine's own first pass took
+	// the first one; make the backstop due again) → a snapshot carrying the
+	// green style + its reason.
+	m.mu.Lock()
+	m.lastSnapshot = time.Time{}
+	m.mu.Unlock()
 	m.recomputeAll()
 	snap := drain()
 	if len(snap) != 1 || !snap[0].Snapshot {
@@ -121,7 +131,7 @@ func TestSourceabilityMonitor_SSEOnVerdictChangeOnly(t *testing.T) {
 
 	eng := newTestEngine(t, db, simulator.New())
 	m := eng.SourceabilityMonitor()
-	m.publishFn = func(protocol.SourcingStateReport) {} // silence the wire
+	m.publishFn = func(string, protocol.SourcingStateReport) {} // silence the wire
 
 	var (
 		mu     sync.Mutex

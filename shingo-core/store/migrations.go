@@ -4362,6 +4362,12 @@ func migrationList() []migration {
 		{143, "plant_claims_reports — per process, the station whose plant-claims report the mirror holds and the digest it carried, quoted back on the heartbeat ack",
 			v143PlantClaimsReports,
 			func(q schema.Querier) bool { return schema.TableExists(q, "plant_claims_reports") }},
+
+		{144, "process_styles.station_id — the station that published a process's claims, so Core can send each Edge only its own sourcing verdicts",
+			v144ProcessStation,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "process_styles", "station_id")
+			}},
 	}
 }
 
@@ -4478,6 +4484,27 @@ func v131LinesideBucketLevel(tx *sql.Tx) error {
 func v132DropUsedEdgeReports(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE demand_origins DROP COLUMN IF EXISTS used_edge_reports`); err != nil {
 		return fmt.Errorf("v132 drop demand_origins.used_edge_reports: %w", err)
+	}
+	return nil
+}
+
+// v144ProcessStation adds process_styles.station_id: the station whose
+// plant.claims report last wrote the process's mirror rows (the envelope's
+// Src.Station, recorded by plantclaims.ReplaceProcessFromStation).
+//
+// It is how the sourceability feed addresses each Edge with only its own
+// processes' verdicts instead of broadcasting the whole plant to every Pi, where
+// the other stations' rows were written and read by nothing (SYNTH §4). A loader
+// or unloader process has no PLC cell and so no edge_cells row, which is why the
+// catalog could not answer this; every process arrives in plant.claims.
+//
+// NULLABLE, AND NULL IS THE FALLBACK. A process whose station is unknown — every
+// process in the minutes after this migration, until each Edge next publishes
+// its claims, and every process an older Edge publishes — keeps going to every
+// station, as all of them did before.
+func v144ProcessStation(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE process_styles ADD COLUMN IF NOT EXISTS station_id TEXT`); err != nil {
+		return fmt.Errorf("v144 process_styles.station_id: %w", err)
 	}
 	return nil
 }

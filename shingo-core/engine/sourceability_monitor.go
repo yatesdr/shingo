@@ -20,6 +20,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,12 @@ const (
 	sourceabilityDebounceWindow = 300 * time.Millisecond
 	// sourceabilityFullInterval is the safety-net full recompute cadence.
 	sourceabilityFullInterval = 2 * time.Minute
+	// sourceabilitySnapshotInterval is the backstop for the full per-station
+	// snapshot. The 2-minute pass still computes (it takes the samples) and
+	// publishes what changed; a full replace of each Edge's cache goes out on the
+	// first pass, on this cadence, on an Edge's (re)registration, and when a
+	// style disappears — a delta cannot say "gone".
+	sourceabilitySnapshotInterval = 30 * time.Minute
 )
 
 // SourceabilityMonitor recomputes per-(process, style) sourceability on change,
@@ -53,10 +60,16 @@ type SourceabilityMonitor struct {
 	// the debounce logic can be unit-tested without a database; production wiring
 	// points it at recomputeKeys.
 	recomputeFn func(keys []plantclaims.ProcessKey)
-	// publishFn ships a sourcing-state report to the edges. A field so the
+	// publishFn ships a sourcing-state report to one station (or to every
+	// station, protocol.StationBroadcast). A field so the per-station and
 	// change-only publish logic can be tested with a capturing stub; production
-	// wiring points it at the broadcast to SubjectSourcingState.
-	publishFn func(protocol.SourcingStateReport)
+	// wiring points it at SubjectSourcingState on the outbox.
+	publishFn func(station string, r protocol.SourcingStateReport)
+	// stationsFn lists the stations to send a full snapshot to: every enrolled
+	// Edge's routing id. A field so tests can name their stations.
+	stationsFn func() ([]string, error)
+	// snapshotEvery is the full-snapshot backstop (sourceabilitySnapshotInterval).
+	snapshotEvery time.Duration
 
 	mu sync.Mutex
 	// dirty is the set of (process, style) awaiting recompute; drained per window.
@@ -66,6 +79,12 @@ type SourceabilityMonitor struct {
 	// index is payload → the styles that require it, cached from the last full
 	// recompute so an event maps to affected styles without a per-event query.
 	index map[string][]plantclaims.ProcessKey
+	// stations is process → the station that published it (process_styles.
+	// station_id), refreshed on every full pass. A process absent from it has no
+	// recorded station and goes to every station.
+	stations map[string]string
+	// lastSnapshot is when the full per-station snapshot last went out.
+	lastSnapshot time.Time
 	// timer arms the debounced flush; nil when idle.
 	timer *time.Timer
 	// recomputes counts recompute passes (full + dirty) for the batching test.
@@ -88,18 +107,168 @@ func NewSourceabilityMonitor(e *Engine) *SourceabilityMonitor {
 	}
 	m.recomputeFn = m.recomputeKeys
 	m.publishFn = m.broadcast
+	m.stationsFn = m.enrolledStations
+	m.snapshotEvery = sourceabilitySnapshotInterval
 	return m
 }
 
-// broadcast ships a sourcing-state report to every edge on SubjectSourcingState.
-// Best-effort: a send failure is logged, not fatal — the next change or the
-// periodic snapshot re-sends, and each edge's persisted cache carries it over a
-// Core partition.
-func (m *SourceabilityMonitor) broadcast(report protocol.SourcingStateReport) {
-	if err := m.eng.SendDataToEdge(protocol.SubjectSourcingState, protocol.StationBroadcast, report); err != nil {
-		m.eng.logFn("sourceability: publish (snapshot=%v, %d states): %v",
-			report.Snapshot, len(report.States), err)
+// broadcast ships a sourcing-state report to one station — or to every station,
+// protocol.StationBroadcast — on SubjectSourcingState. Best-effort: a send
+// failure is logged, not fatal — the next change or snapshot re-sends, and each
+// edge's persisted cache carries it over a Core partition.
+func (m *SourceabilityMonitor) broadcast(station string, report protocol.SourcingStateReport) {
+	if err := m.eng.SendDataToEdge(protocol.SubjectSourcingState, station, report); err != nil {
+		m.eng.logFn("sourceability: publish to %s (snapshot=%v, %d states): %v",
+			station, report.Snapshot, len(report.States), err)
 	}
+}
+
+// enrolledStations is every enrolled Edge's routing id (protocol.Address.
+// Station), the stations a full snapshot goes to.
+func (m *SourceabilityMonitor) enrolledStations() ([]string, error) {
+	edges, err := m.eng.db.ListEdges()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range edges {
+		if e.StationID != "" {
+			out = append(out, e.StationID)
+		}
+	}
+	return out, nil
+}
+
+// ── WHERE A VERDICT GOES ──────────────────────────────────────────────────
+//
+// Each Edge reads the sourcing verdicts of its OWN processes and nothing else
+// (ListSourcingStateForProcess), and it used to be sent the whole plant's every
+// two minutes — a DELETE of its cache plus an INSERT per style in the plant,
+// on every Pi, for rows nothing there reads (SYNTH §4). Now a verdict goes to
+// the station that published its process (process_styles.station_id). A process
+// with no recorded station — every one in the first minutes after the
+// migration, and every one an older Edge publishes — goes to every station, as
+// before; it is in every station's snapshot too, so each Edge's full replace
+// stays complete for what it reads.
+
+// stationOf is where a process's verdicts go: its recorded station, or every
+// station when none is recorded. Caller holds m.mu.
+func (m *SourceabilityMonitor) stationOf(process string) string {
+	if st, ok := m.stations[process]; ok && st != "" {
+		return st
+	}
+	return protocol.StationBroadcast
+}
+
+// publishDeltas sends each station the change delta for its own processes, and
+// every station the delta for unrouted ones. Change-only by construction: a
+// station with nothing changed is sent nothing.
+func (m *SourceabilityMonitor) publishDeltas(changed []sourceability.StyleState) {
+	if len(changed) == 0 || m.publishFn == nil {
+		return
+	}
+	m.mu.Lock()
+	byStation := map[string][]sourceability.StyleState{}
+	var order []string
+	for _, s := range changed {
+		st := m.stationOf(s.ProcessID)
+		if _, seen := byStation[st]; !seen {
+			order = append(order, st)
+		}
+		byStation[st] = append(byStation[st], s)
+	}
+	m.mu.Unlock()
+	for _, st := range order {
+		m.publishFn(st, toReport(byStation[st], false))
+	}
+}
+
+// publishSnapshots sends each named station a full snapshot of its own
+// processes plus every unrouted one. only == nil means every station: the
+// enrolled Edges and every station a process is recorded against.
+//
+// If the enrolled stations cannot be read, it falls back to the whole plant to
+// every station — today's snapshot, which every Edge applies correctly — rather
+// than send nothing.
+func (m *SourceabilityMonitor) publishSnapshots(states []sourceability.StyleState, only map[string]bool) {
+	if m.publishFn == nil {
+		return
+	}
+	targets := map[string]bool{}
+	if only != nil {
+		for st := range only {
+			targets[st] = true
+		}
+	} else {
+		enrolled, err := m.stationsFn()
+		if err != nil {
+			m.eng.logFn("sourceability: list stations for the snapshot: %v — sending the whole plant to every station", err)
+			m.publishFn(protocol.StationBroadcast, toReport(states, true))
+			return
+		}
+		for _, st := range enrolled {
+			targets[st] = true
+		}
+		m.mu.Lock()
+		for _, st := range m.stations {
+			targets[st] = true
+		}
+		m.mu.Unlock()
+	}
+	if targets[protocol.StationBroadcast] {
+		// A snapshot "to every station" is the whole plant — the fallback, and
+		// what an unrouted removal asks for.
+		m.publishFn(protocol.StationBroadcast, toReport(states, true))
+		return
+	}
+	names := make([]string, 0, len(targets))
+	for st := range targets {
+		names = append(names, st)
+	}
+	sort.Strings(names)
+	for _, st := range names {
+		m.publishFn(st, toReport(m.snapshotFor(st, states), true))
+	}
+}
+
+// snapshotFor is one station's view of the plant: its own processes' verdicts
+// and every unrouted process's.
+func (m *SourceabilityMonitor) snapshotFor(station string, states []sourceability.StyleState) []sourceability.StyleState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []sourceability.StyleState
+	for _, s := range states {
+		if st := m.stationOf(s.ProcessID); st == station || st == protocol.StationBroadcast {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// SnapshotStation sends one station its full snapshot now — on an Edge's
+// (re)registration, so a Pi that reconnects is current at once rather than at
+// the next backstop. Nothing is sent before the monitor's first pass has run.
+func (m *SourceabilityMonitor) SnapshotStation(station string) {
+	if station == "" || m.publishFn == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.lastSnapshot.IsZero() {
+		m.mu.Unlock()
+		return
+	}
+	states := make([]sourceability.StyleState, 0, len(m.state))
+	for _, s := range m.state {
+		states = append(states, s)
+	}
+	m.mu.Unlock()
+	sort.Slice(states, func(i, j int) bool {
+		if states[i].ProcessID != states[j].ProcessID {
+			return states[i].ProcessID < states[j].ProcessID
+		}
+		return states[i].StyleID < states[j].StyleID
+	})
+	m.publishFn(station, toReport(m.snapshotFor(station, states), true))
 }
 
 // Run does a startup full recompute, then runs the periodic full recompute until
@@ -204,10 +373,9 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 	m.mu.Unlock()
 
 	// Change-only publish: nothing moved → nothing on the wire (no steady-state
-	// chatter). Only the styles whose verdict actually changed go out, as a delta.
-	if len(changed) > 0 && m.publishFn != nil {
-		m.publishFn(toReport(changed, false))
-	}
+	// chatter). Only the styles whose verdict actually changed go out, as a
+	// delta, each to the station its process belongs to.
+	m.publishDeltas(changed)
 	// This is the path that runs on a real plant change — the debounced,
 	// scoped recompute. recomputeAll is the periodic safety net. Both persist,
 	// or the history only ever records what the two-minute sweep happened to
@@ -346,6 +514,17 @@ func (m *SourceabilityMonitor) recomputeAll() {
 		return
 	}
 
+	// Where each process's verdicts go, read with the plant. It is swapped in
+	// AFTER the diff below, so a style that disappeared is routed by where it
+	// was being sent, not by a map that no longer names its process. A failed
+	// read keeps the last map: a wrong route for two minutes is a delta to the
+	// wrong Pi's unread rows, not a lost one, and a process it cannot place
+	// still goes to every station.
+	stations, serr := m.eng.db.ProcessStations()
+	if serr != nil {
+		m.eng.logFn("sourceability: read process stations: %v — keeping the last routing", serr)
+	}
+
 	// THE RUNNING STYLE IS READ HERE, not in BuildInputs, because only this path
 	// uses it — it scopes the kept cell samples and no verdict consults it. Read
 	// on the debounced path it was a query per bin movement for an answer that
@@ -410,10 +589,12 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	// written outside it — a DB round trip must not hold the monitor's mutex,
 	// which the SSE broadcast and every read path also take.
 	var persist []verdictChange
+	var moved []sourceability.StyleState
 	for k, s := range newState {
 		old, existed := m.state[k]
 		if !existed || wireChanged(old, s) {
 			changed++
+			moved = append(moved, s)
 			prev := ""
 			if existed {
 				prev = string(old.Status)
@@ -421,31 +602,62 @@ func (m *SourceabilityMonitor) recomputeAll() {
 			persist = append(persist, verdictChange{k.ProcessID, k.StyleID, s, prev})
 		}
 	}
+	// A style that disappeared cannot be said with a delta — the Edge upserts
+	// deltas — so the stations it was sent to get a fresh snapshot now.
+	var gone map[string]bool
 	for k := range m.state {
 		if _, still := newState[k]; !still {
 			changed++
+			if gone == nil {
+				gone = map[string]bool{}
+			}
+			gone[m.stationOf(k.ProcessID)] = true
 		}
 	}
 	m.state = newState
 	m.index = newIndex
+	if serr == nil {
+		m.stations = stations
+	}
 	m.recomputes++
+	now := time.Now()
+	due := m.lastSnapshot.IsZero() || now.Sub(m.lastSnapshot) >= m.snapshotEvery
+	if due {
+		m.lastSnapshot = now
+	}
 	m.mu.Unlock()
 
-	// The periodic + startup full recompute publishes a full snapshot: a
-	// late-joining or restarted edge reads it and is current, and it refreshes
-	// any at-risk time-to-empty values the change-only delta path intentionally
-	// leaves alone (membership drives deltas, not TTE jitter).
-	//
-	// Skip an empty snapshot unless it clears a previously non-empty cache: a
-	// plant (or a just-booted Core) with no styles yet has nothing to broadcast,
-	// so it does not spam every edge — or every test engine's outbox — on start.
-	if m.publishFn != nil && (len(states) > 0 || prevCount > 0) {
-		m.publishFn(toReport(states, true))
+	if len(states) > 0 || prevCount > 0 {
+		m.publishFullPass(states, moved, gone, due)
 	}
 
 	m.persistChanges(persist)
 
 	m.emitSourcingUpdated(changed)
+}
+
+// publishFullPass is what the full pass publishes. It used to publish a
+// whole-plant snapshot to every Edge every two minutes. Now:
+//   - the first pass, and every sourceabilitySnapshotInterval after it, sends
+//     each station its own snapshot (publishSnapshots) — the backstop that
+//     also refreshes the at-risk time-to-empty values deltas leave alone;
+//   - between backstops, what changed goes out as per-station deltas, and a
+//     station whose style disappeared gets its snapshot at once;
+//   - an Edge that (re)registers gets its snapshot then (SnapshotStation), so
+//     a reconnecting Pi does not wait for the backstop.
+//
+// The caller skips it entirely when there is nothing and never was: a plant
+// (or a just-booted Core) with no styles has nothing to send, so it does not
+// spam every edge — or every test engine's outbox — on start.
+func (m *SourceabilityMonitor) publishFullPass(states, moved []sourceability.StyleState, gone map[string]bool, due bool) {
+	if due {
+		m.publishSnapshots(states, nil)
+		return
+	}
+	m.publishDeltas(moved)
+	if gone != nil {
+		m.publishSnapshots(states, gone)
+	}
 }
 
 // wireChanged reports whether the operator-visible verdict changed between two

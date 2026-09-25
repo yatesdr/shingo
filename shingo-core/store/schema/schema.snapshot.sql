@@ -984,7 +984,8 @@ CREATE TABLE public.process_styles (
     style_id text NOT NULL,
     config_gen bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    is_active boolean DEFAULT false NOT NULL
+    is_active boolean DEFAULT false NOT NULL,
+    station_id text
 );
 
 CREATE TABLE public.recovery_actions (

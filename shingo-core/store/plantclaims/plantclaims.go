@@ -73,39 +73,61 @@ type ClaimRow struct {
 // styles with no sourceability-relevant claims still get a process_styles row
 // (so an all-styles recompute knows the style exists) and an empty claim set.
 func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []ClaimRow, staleGuardConfigGen int64) error {
+	_, err := ReplaceProcessFromStation(db, processID, "", styles, claims, staleGuardConfigGen)
+	return err
+}
+
+// ReplaceProcessFromStation is ReplaceProcess recording WHICH station published
+// the process: process_styles.station_id, the address the sourceability feed
+// sends that process's verdicts to. stationID "" records NULL — the station is
+// unknown, and the feed then sends the process to every station, as before.
+//
+// It returns the station the mirror named for this process BEFORE the replace
+// ("" when none). A different, non-empty previous station means two stations
+// are publishing one process: the caller logs it, and this write — the last
+// writer — is what the mirror keeps.
+func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles []StyleRow, claims []ClaimRow, staleGuardConfigGen int64) (previousStation string, err error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("plantclaims replace %s: begin: %w", processID, err)
+		return "", fmt.Errorf("plantclaims replace %s: begin: %w", processID, err)
 	}
 	defer tx.Rollback()
+
+	var prev sql.NullString
+	if err := tx.QueryRow(
+		`SELECT MAX(station_id) FROM process_styles WHERE process_id = $1`, processID,
+	).Scan(&prev); err != nil {
+		return "", fmt.Errorf("plantclaims replace %s: read station: %w", processID, err)
+	}
+	previousStation = prev.String
 
 	if staleGuardConfigGen > 0 {
 		var have sql.NullInt64
 		if err := tx.QueryRow(
 			`SELECT MAX(config_gen) FROM process_styles WHERE process_id = $1`, processID,
 		).Scan(&have); err != nil {
-			return fmt.Errorf("plantclaims replace %s: stale-guard read: %w", processID, err)
+			return previousStation, fmt.Errorf("plantclaims replace %s: stale-guard read: %w", processID, err)
 		}
 		if have.Valid && have.Int64 > staleGuardConfigGen {
 			// A newer snapshot already landed for this process. Drop this one.
-			return nil
+			return previousStation, nil
 		}
 	}
 
 	if _, err := tx.Exec(`DELETE FROM process_styles WHERE process_id = $1`, processID); err != nil {
-		return fmt.Errorf("plantclaims replace %s: delete styles: %w", processID, err)
+		return previousStation, fmt.Errorf("plantclaims replace %s: delete styles: %w", processID, err)
 	}
 	if _, err := tx.Exec(`DELETE FROM style_claims WHERE process_id = $1`, processID); err != nil {
-		return fmt.Errorf("plantclaims replace %s: delete claims: %w", processID, err)
+		return previousStation, fmt.Errorf("plantclaims replace %s: delete claims: %w", processID, err)
 	}
 
 	for _, s := range styles {
 		if _, err := tx.Exec(
-			`INSERT INTO process_styles (process_id, style_id, config_gen, is_active)
-			 VALUES ($1, $2, $3, $4)`,
-			s.ProcessID, s.StyleID, s.ConfigGen, s.IsActive,
+			`INSERT INTO process_styles (process_id, style_id, config_gen, is_active, station_id)
+			 VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
+			s.ProcessID, s.StyleID, s.ConfigGen, s.IsActive, stationID,
 		); err != nil {
-			return fmt.Errorf("plantclaims replace %s: insert style %s: %w", processID, s.StyleID, err)
+			return previousStation, fmt.Errorf("plantclaims replace %s: insert style %s: %w", processID, s.StyleID, err)
 		}
 	}
 
@@ -146,14 +168,14 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 		  inbound_source, outbound_destination, paired_core_node, second_paired_core_node)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`)
 	if err != nil {
-		return fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
+		return previousStation, fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
 	}
 	defer styleInsert.Close()
 
 	for _, c := range claims {
 		allowed, err := json.Marshal(c.AllowedPayloadCodes)
 		if err != nil {
-			return fmt.Errorf("plantclaims replace %s: marshal allowed for %s: %w", processID, c.CoreNodeName, err)
+			return previousStation, fmt.Errorf("plantclaims replace %s: marshal allowed for %s: %w", processID, c.CoreNodeName, err)
 		}
 		if c.AllowedPayloadCodes == nil {
 			allowed = []byte("[]")
@@ -163,11 +185,11 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 			c.PayloadCode, c.ContainmentDestination, string(allowed), c.UOPCapacity, c.ReorderPoint, c.Seq,
 			c.InboundSource, c.OutboundDestination, c.PairedCoreNode, c.SecondPairedCoreNode,
 		); err != nil {
-			return fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)
+			return previousStation, fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)
 		}
 	}
 
-	return tx.Commit()
+	return previousStation, tx.Commit()
 }
 
 // WipeAll deletes every mirror row. Used by the full-snapshot rebuild path
@@ -257,4 +279,25 @@ func ListProcessNodeOptions(db *sql.DB) ([]ProcessNodeOption, error) {
 		return nil, fmt.Errorf("plantclaims process node options: rows: %w", err)
 	}
 	return out, nil
+}
+
+// ProcessStations maps each process to the station that published it
+// (process_styles.station_id). A process with no recorded station is absent:
+// the sourceability feed sends those to every station.
+func ProcessStations(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(`SELECT process_id, MAX(station_id) FROM process_styles
+		WHERE station_id IS NOT NULL GROUP BY process_id`)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims process stations: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var process, station string
+		if err := rows.Scan(&process, &station); err != nil {
+			return nil, fmt.Errorf("plantclaims process stations: scan: %w", err)
+		}
+		out[process] = station
+	}
+	return out, rows.Err()
 }

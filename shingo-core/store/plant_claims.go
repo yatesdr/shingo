@@ -15,6 +15,19 @@ func (db *DB) ReplacePlantClaims(processID string, styles []plantclaims.StyleRow
 	return plantclaims.ReplaceProcess(db.DB, processID, styles, claims, staleGuardConfigGen)
 }
 
+// ReplacePlantClaimsFromStation is ReplacePlantClaims recording the publishing
+// station; it returns the station the mirror named before (see
+// plantclaims.ReplaceProcessFromStation).
+func (db *DB) ReplacePlantClaimsFromStation(processID, stationID string, styles []plantclaims.StyleRow, claims []plantclaims.ClaimRow, staleGuardConfigGen int64) (string, error) {
+	return plantclaims.ReplaceProcessFromStation(db.DB, processID, stationID, styles, claims, staleGuardConfigGen)
+}
+
+// ProcessStations maps each process to the station that published it. See
+// plantclaims.ProcessStations.
+func (db *DB) ProcessStations() (map[string]string, error) {
+	return plantclaims.ProcessStations(db.DB)
+}
+
 // WipePlantClaims drops every plant-claims mirror row. See plantclaims.WipeAll.
 func (db *DB) WipePlantClaims() error {
 	return plantclaims.WipeAll(db.DB)

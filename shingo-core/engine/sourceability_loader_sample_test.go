@@ -134,7 +134,7 @@ func TestLoaderSample_DebouncedVerdictSurvivesAnUnreadableActiveStyle(t *testing
 	m := eng.SourceabilityMonitor()
 
 	var published int
-	m.publishFn = func(protocol.SourcingStateReport) { published++ }
+	m.publishFn = func(string, protocol.SourcingStateReport) { published++ }
 
 	_, err := db.DB.Exec(`ALTER TABLE process_styles DROP COLUMN is_active`)
 	testutil.MustNoErr(t, err, "drop is_active")

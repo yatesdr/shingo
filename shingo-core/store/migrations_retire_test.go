@@ -181,6 +181,11 @@ import (
 // binary). v138 is DATA ONLY: bins in the retired quality_hold status become
 // flagged (zero rows at both plants); an older binary reads flagged fine.
 //
+// v144 ADDS process_styles.station_id — the station that published the
+// process's claims, where the sourcing feed sends its verdicts. NULL on every
+// existing row means "every station", today's behaviour. Inert to a pre-v144
+// binary; rollback is DROP COLUMN.
+//
 // The hard-coded head number that used to close this test is gone (orc ruling,
 // 2026-09-28): it conflicted with every stream that adds a migration. What it
 // guarded, a migration added below the head, is now TestMigrationList_Shape's

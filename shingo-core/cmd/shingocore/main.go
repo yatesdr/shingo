@@ -412,6 +412,9 @@ func main() {
 	// re-evaluation. Engine.Start() has already constructed the monitor
 	// and kicked its startup-sweep goroutine.
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
+	if sm := eng.SourceabilityMonitor(); sm != nil {
+		coreDataService.SetSourcingSnapshotter(sm.SnapshotStation)
+	}
 	// The plant clock, configured once here and inherited by every edge at this
 	// site rather than typed into each box's yaml. The zone Core was explicitly
 	// told (PLANT_TIMEZONE, else the yaml), the same one Core's screens use, but

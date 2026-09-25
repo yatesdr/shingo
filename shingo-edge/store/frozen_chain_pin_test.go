@@ -34,16 +34,26 @@ import (
 // the edit this test exists to stop. Revert it, ship the change as a
 // versioned migration with Version > edgeBaselineVersion instead.
 //
-// ONE KIND OF FROZEN-STEP EDIT IS SANCTIONED: a step that re-creates what a
-// versioned migration drops is removed WITH the drop, in the same change.
-// Otherwise the chain, which re-runs on every boot, undoes the migration on
-// the next start. First use: 2026-09-28, the payload_catalog.cycle_seconds
-// ALTER removed with Edge v3 (wantTotal 165 -> 164). Second use:
-// 2026-10-05, the processes.production_state ALTER removed with Edge v16 —
-// that one lived in the migrateProcessColumns helper (migrate() calls it on
-// every boot), so the body count is unchanged. Removal only: a re-creating
-// step is never rewritten in place, and nothing else qualifies.
-// The chain's retirement condition is unchanged: every deployed Edge
+// TWO KINDS OF FROZEN-STEP EDIT ARE SANCTIONED, both removals:
+//
+//   - A step that re-creates what a versioned migration drops is removed WITH
+//     the drop, in the same change. Otherwise the chain, which re-runs on
+//     every boot, undoes the migration on the next start. First use:
+//     2026-09-28, the payload_catalog.cycle_seconds ALTER removed with Edge
+//     v3 (wantTotal 165 -> 164). Second use: 2026-10-05, the
+//     processes.production_state ALTER removed with Edge v16 — that one lived
+//     in the migrateProcessColumns helper (migrate() calls it on every boot),
+//     so the body count is unchanged.
+//   - A DATA step that rewrites live rows on every boot is removed, with a pin
+//     of the behaviour it broke. No versioned migration can retire it: the
+//     chain runs before the versioned runner on every start, so the step
+//     would undo any fix the next time the Edge boots. First use: the
+//     `queued -> pending` order reset, which made an order Core holds under
+//     a cause read as unacknowledged after every restart; pinned by
+//     boot_keeps_queued_test.go (wantTotal 164 -> 163).
+//
+// Removal only: a frozen step is never rewritten in place, and nothing else
+// qualifies. The chain's retirement condition is unchanged: every deployed Edge
 // reports schema version >= 1.
 //
 // The runtime half of the pin — that a fresh Open seeds exactly the
@@ -68,7 +78,7 @@ func TestFrozenChainIsPinned(t *testing.T) {
 		t.Fatalf("no migrate() FuncDecl found in migrations.go")
 	}
 
-	const wantTotal = 164 // statements in migrate(): frozen chain + the runVersioned tail
+	const wantTotal = 163 // statements in migrate(): frozen chain + the runVersioned tail
 	if got := len(mig.Body.List); got != wantTotal {
 		t.Errorf("migrate() has %d statements, want %d — the frozen chain's shape changed. "+
 			"New schema changes go in edgeMigrations(), not here; frozen steps are never edited. "+

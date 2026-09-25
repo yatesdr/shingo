@@ -63,6 +63,8 @@ type CoreDataService struct {
 	linesideDivergence *service.LinesideDivergenceService
 	resp               coreDataResponder
 	thresholdMonitor   ThresholdMonitor
+	// sourcingSnapshot sends one station its sourcing snapshot on registration.
+	sourcingSnapshot func(station string)
 	// downtimeCh buffers downtime event projections for the async worker
 	// started by StartDowntimeProjection (G9).
 	downtimeCh chan downtime.DowntimeEvent
@@ -98,6 +100,13 @@ type CoreDataService struct {
 // path can skip it.
 func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 	s.thresholdMonitor = tm
+}
+
+// SetSourcingSnapshotter installs what an Edge's (re)registration calls to send
+// that station its full sourcing snapshot (engine.SourceabilityMonitor.
+// SnapshotStation). nil = no registration snapshot.
+func (s *CoreDataService) SetSourcingSnapshotter(fn func(station string)) {
+	s.sourcingSnapshot = fn
 }
 
 // SetFaultWindow wires the two config durations the boot reconcile needs to
@@ -504,6 +513,13 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.Resync(p.StationID)
 	}
+
+	// The station's own sourcing verdicts, now: the feed sends each Edge only
+	// its own processes, and full snapshots only on a 30-minute backstop, so a
+	// Pi that reconnects is brought current here rather than waiting for it.
+	if s.sourcingSnapshot != nil {
+		s.sourcingSnapshot(p.StationID)
+	}
 }
 
 // HandleEdgeHeartbeat marks an enrolled station alive.
@@ -725,11 +741,27 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 		}
 	}
 
-	if err := s.db.ReplacePlantClaims(report.ProcessID, styles, claims, report.ConfigGen); err != nil {
+	// The publishing station is recorded with the process (process_styles.
+	// station_id): it is where the sourceability feed sends this process's
+	// verdicts. A process is a plant name and belongs to one station; two
+	// stations publishing one is a configuration mistake, named here, and the
+	// last writer is what the mirror keeps — the same thing it did with the
+	// claims before station was recorded.
+	station := ""
+	if env != nil {
+		station = env.Src.Station
+	}
+	previous, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.ConfigGen)
+	if err != nil {
 		log.Printf("core_handler: plant.claims mirror %s: %v", report.ProcessID, err)
 		return
 	}
 	s.recordClaimsReport(env, report)
+	if previous != "" && station != "" && previous != station {
+		log.Printf("core_handler: plant.claims — process %s is published by two stations, %s and now %s; "+
+			"keeping %s's (the last writer). A process belongs to one station: fix the plant spec on one of them",
+			report.ProcessID, previous, station, station)
+	}
 	log.Printf("core_handler: plant.claims mirrored %s: %d styles, %d claims (config_gen=%d)",
 		report.ProcessID, len(styles), len(claims), report.ConfigGen)
 }

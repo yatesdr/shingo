@@ -57,9 +57,11 @@ func main() {
 	// WITHOUT MIGRATING. soakstat reads the database of the Core it measures,
 	// and that Core owns its schema. store.Open migrates to whatever this binary
 	// was built with, so a soakstat newer than the Core under test rewrote its
-	// schema mid-run (Stage A, 2026-09-25: v131 applied at the first sample of
-	// two A1 runs whose Core stops at v130). An instrument does not write to
-	// what it measures.
+	// schema mid-run (Stage A, 2026-09-25: the station-id migration, numbered
+	// v131 at the time, v137 once Stage A moved onto main's 131-136, v140 once
+	// it moved past main's 137-139, and v142 once it moved past main's 140-141,
+	// applied at the first sample of two A1 runs whose Core stops at v130). An instrument
+	// does not write to what it measures.
 	db, err := store.OpenWithoutMigrate(&cfg.Database)
 	if err != nil {
 		log.Fatalf("open core db: %v", err)

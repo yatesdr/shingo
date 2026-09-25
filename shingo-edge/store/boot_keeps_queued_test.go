@@ -7,21 +7,16 @@ import (
 	"shingo/protocol/testutil"
 )
 
-// TestBoot_AQueuedOrderStaysQueuedWithItsReason — VERIFY-RED at the base.
+// TestBoot_AQueuedOrderStaysQueuedWithItsReason — red at the base, green since
+// the Pi-diet phase deleted the boot fixup.
 //
-// The migration chain runs on every Edge start, and its data fixups include
+// The migration chain runs on every Edge start, and its data fixups included
 // `UPDATE orders SET status='pending' WHERE status='queued'`, unguarded. So an
-// Edge restarted while one of its orders is waiting at Core under a cause shows
-// that order as `pending` until Core's next update happens to arrive: the word
-// that says "Core has it and is waiting on something" is replaced by the one
-// that says "not yet acknowledged", and the reason beside it reads against the
-// wrong status.
-//
-// The Pi-diet phase deletes the fixup (SYNTH §0, the boot-fixup row; §4, "−1
-// statement per boot; the cause survives a restart"). This pin is written before
-// that, and is committed passing-while-red: it logs the reset while the fixup
-// stands and fails the moment it is gone, so whoever deletes the fixup turns it
-// into the plain assertion in the same commit.
+// Edge restarted while one of its orders was waiting at Core under a cause
+// showed that order as `pending` until Core's next update happened to arrive:
+// the word that says "Core has it and is waiting on something" replaced by the
+// one that says "not yet acknowledged", and the reason beside it read against
+// the wrong status. Flat bug, SYNTH §0 (the boot-fixup row).
 //
 // The first open is the one that creates the schema; the order is written
 // between the two opens, as a running Edge would have left it.
@@ -49,14 +44,9 @@ func TestBoot_AQueuedOrderStaysQueuedWithItsReason(t *testing.T) {
 			"moves — rebuild it", reason, code)
 	}
 
-	// VERIFY-RED: predicted `pending` while the fixup stands.
-	if status == "queued" {
-		t.Fatalf("VERIFY-RED boot fixup is GREEN: the order came back `queued`. If the fixup was deleted, " +
-			"replace this block with an assertion that status is `queued`; if not, the fixture no longer " +
-			"reaches it and has to be rebuilt.")
+	if status != "queued" {
+		t.Fatalf("a queued order came back %q after a restart, want queued: a restart does not change what "+
+			"Core is doing with the order, and the reason beside it (%q) has to read against its own status",
+			status, reason)
 	}
-	if status != "pending" {
-		t.Fatalf("the restart moved a queued order to %q; the predicted red is `pending`", status)
-	}
-	t.Logf("VERIFY-RED boot fixup, as predicted: a queued order came back %q beside the reason %q", status, reason)
 }

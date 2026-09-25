@@ -131,6 +131,12 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
 		eng.HandleBinReturn(*br)
 	})
+	// Core's sourceability feed, as the production composition root routes it
+	// (cmd/shingoedge/main.go). Without it a cross-module scenario could not see
+	// what the per-station feed does to an Edge's cache.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSourcingState, func(_ *protocol.Envelope, r *protocol.SourcingStateReport) {
+		eng.HandleSourcingState(*r)
+	})
 
 	ingestor := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {
 		return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
