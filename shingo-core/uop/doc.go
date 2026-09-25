@@ -1,13 +1,14 @@
 // Package uop holds the Core-side chokepoint for Unit-of-Production
 // state mutations.
 //
-// Today's surface is the Applier — receives BinUOPDelta and
-// LinesideBucketDelta envelopes from Edge, guards order against
-// inventory_delta_dedup, applies what each message's running net says
-// has not landed to bins.uop_remaining / lineside_buckets, writes the
-// audit row, and
-// fires the post-update ClearForReuse hook when a capture_reduction
-// drives the bin count to zero.
+// Today's surface is the Applier. For bins it receives BinUOPDelta
+// envelopes from Edge, guards order against inventory_delta_dedup,
+// applies what each message's running net says has not landed to
+// bins.uop_remaining, writes the audit row, and fires the post-update
+// ClearForReuse hook when a capture_reduction drives the bin count to
+// zero. For lineside piles it receives LinesideBucketLevel envelopes and
+// sets its mirror row in lineside_buckets to the Edge's level under a
+// seq guard: the Edge is a pile's only writer, and Core never writes one.
 //
 // Edge has the symmetric package at shingoedge/uop (post-May-4 Edge
 // is authoritative for at-node bin counts; Core's row is the

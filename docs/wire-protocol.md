@@ -266,7 +266,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `order.projected` | Core -> Edge | `OrderProjected` | A projected order, ahead of it being real |
 | `demand.origin` | Edge -> Core | `DemandOrigin` | The demand episodes the Edge owns |
 | `inventory.bin_uop_delta` | Edge -> Core | `BinUOPDelta` | A bin's UoP moved |
-| `inventory.lineside_bucket_delta` | Edge -> Core | `LinesideBucketDelta` | A lineside bucket's count moved |
+| `inventory.lineside_bucket_level` | Edge -> Core | `LinesideBucketLevel` | A lineside pile row's level after a change (the Edge is its only writer; Core mirrors it) |
 | `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
 
 The sixteen rows with linked schemas carry full field tables below. The fourteen
@@ -302,13 +302,16 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `node.list_request` | 5 minutes | Sync request |
 | `node.list_response` | 5 minutes | Sync response |
 | `inventory.bin_uop_delta` | **none** | Sequenced increment — see below |
-| `inventory.lineside_bucket_delta` | **none** | Sequenced increment — see below |
+| `inventory.lineside_bucket_level` | **none** | Sequenced level of one row — see below |
 | Unknown subjects | 5 minutes | Safe general default |
 
 **Two subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22). Every other data
 subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
-copy costs nothing. The two inventory deltas are *increments*: a dropped one is a permanently
-wrong count that never self-corrects.
+copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
+that never self-corrects. The lineside bucket level is a snapshot of one pile row, but its
+successor comes only when that pile next changes (for a stranded row, never), so a dropped one
+leaves Core's mirror wrong until then. Core applies a level only above the row's high-water
+`SequenceID`, so a late copy is a no-op.
 
 They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
 dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
@@ -397,7 +400,7 @@ column is dropped from `edge_registry` too.
 
 **Payload copies of the station are gone** from `production.tick`
 (`CounterSnapshot`), `production.downtime` (`DowntimeEvent`),
-`lineside_bucket_delta` (`LinesideBucketDelta` — which carried it twice in one
+the retired `lineside_bucket_delta` (which carried it twice in one
 envelope) and `bin_uop_delta` (`BinUOPDelta`). Every handler now reads
 `Envelope.Src.Station`. The old `if station == "" { station = env.Src.Station }`
 reconciliation was a rule with two possible answers that only ever produced one

@@ -18,7 +18,7 @@ The system manages two separate threshold knobs, in series along the supply path
 
 When **total in-loop UOP for a payload** drops below this value, Core creates an L1 retrieve_empty order (directly — no wire signal; Edge only executes).
 
-- *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the kanban lifecycle (`available`, `staged`, in-transit) and every lineside bucket carrying captured parts of that payload that the node's ACTIVE style still claims. Excludes `flagged`, `maintenance`, `quality_hold`, `retired` bins. Stranded buckets (captured under a prior style the node no longer consumes) are EXCLUDED — real inventory, but not available to the running style; counting them suppressed replenishment at Springfield (74576). A node with no known active style has its buckets counted: only positively-proven-stranded inventory is left out.
+- *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the kanban lifecycle (`available`, `staged`, in-transit) and every **active** lineside pile of that payload. Excludes `flagged`, `maintenance`, `quality_hold`, `retired` bins. A pile is active from the pull until its process's next cutover (every active-style flip: the changeover cutover and the admin style flip); at the cutover every pile at the process's nodes becomes **stranded**, a count-anomaly record that never drains, never counts on either side and never revives when the style comes back. Stranded is a state on the row, set by the Edge, not a claims lookup at Core (the 2026-07-23 claims-derived rule is gone). Operators run out what they pull, so a leftover at cutover is most likely the size of a declaration error, not parts on the bench.
 - *Lives at*: Core-owned loader config — `bin_loader_homes.uop_threshold` per (loader position, payload), derived into `demand_registry.replenish_uop_threshold` by `BuildDemandRegistryFromAggregate` and re-derived on every loader config edit (`service/loader_service.go` `rederive()`). The Edge `loader_payload_thresholds` table was dropped 2026-07-21; the Edge page's loader-threshold section was deleted with it.
 - *Owned by*: Core. The loader aggregate (`bin_loaders` and its payload rows) is the source of truth, and `demand_registry.replenish_uop_threshold` is derived from it. Edge receives loader configuration on the node-list sync, not by pushing it up.
 - *Default*: `0` — Core doesn't monitor this loader/payload pair. What feeds it then depends on the loader's replenishment mode: an operator-driven loader is stocked by the window-free push (`rePushOwnLoader` / `SweepPushLoaders`); a threshold-mode loader with threshold 0 is fed by NOTHING, and the startup push logs a warning saying exactly that.
@@ -50,11 +50,10 @@ Edge                                      Core
   windows, payloads and thresholds          thresholds; demand_registry
                                             is derived from it
 
-LinesideBucketDelta                   →   lineside_buckets
-  PayloadCode populated by                  UPSERT applies qty delta
-  capture.go at emit time                   and latches payload_code
-                                            (empty incoming keeps
-                                            previously-latched value)
+LinesideBucketLevel                   →   lineside_buckets
+  one per changed pile row per flush,       sets the (node, payload,
+  and every row at Edge boot                state) row to the level;
+                                            0 deletes it
 
 BinUpdatedEvent, BinUOPDelta, or      →   threshold_monitor subscribes
 LinesideBucketApplied                       to all three.
@@ -291,9 +290,9 @@ Three v6 additions, all still present:
 
 There's a gap between physical pickup of the old bin at the cell and delivery of the new bin to the slot during which no bin is bound (`active_bin_id` is nil) and `remaining_uop_cached` doesn't update — the new bin's UOP isn't credited until its `OrderDelivered` envelope binds it. Under the single-pointer hold-and-replay model, the bin portion of each tick during this gap accumulates in `pending_uop_delta` and replays onto the next bin when it binds; the cache value isn't touched while unbound, so autoreorder evaluation naturally doesn't fire against a stale count during the gap — firing then would over-order, since the in-flight bin lands shortly. The v6 addition is a debug log on the held-tick path.
 
-### Backfill: there isn't one
+### Core's piles are a mirror
 
-There is no payload-code backfill for pre-existing `lineside_buckets` rows. Springfield is a fresh install; all future plants get correct `payload_code` from day 1 because `capture.go` writes it from the order context at emit time. If a plant ever upgrades from a pre-feature version with existing buckets, the right design is `bin_uop_ledger` correlation (the audit table records every `capture_reduction` operation with the bin's `order_id` and `payload_code`, so joining gives correct payload attribution). That work is deferred until a real plant needs it. Pre-existing empty `payload_code` rows are excluded from `SystemUOPForPayload` — conservative undercount, never overcount.
+The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed by levels, never by deltas: after every change the Edge sends the row's level, and Core sets its row to it under a per-row sequence guard. Core never writes a pile. A lost or late message cannot drift the mirror, because the next level replaces it, and the Edge re-sends every row at boot. This replaced a delta-fed copy keyed by style, which drifted high whenever the Edge re-stamped a pile's style (FINDINGS-lineside-bucket-drift, 2026-09-24).
 
 ---
 
@@ -324,7 +323,7 @@ There is no payload-code backfill for pre-existing `lineside_buckets` rows. Spri
 
 ### Protocol
 
-- `protocol/payloads.go` — `LinesideBucketDelta.PayloadCode`. (Threshold values now ride `LoaderInfo` on the node-list sync, not a ClaimSync payload. `LoopBelowThresholdSignal` was deleted — Core orders directly.)
+- `protocol/payloads.go` — `LinesideBucketLevel`. (Threshold values now ride `LoaderInfo` on the node-list sync, not a ClaimSync payload. `LoopBelowThresholdSignal` was deleted — Core orders directly.)
 
 ---
 

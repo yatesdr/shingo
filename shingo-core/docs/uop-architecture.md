@@ -22,16 +22,19 @@ Two tables carry the entire physical-inventory picture. Edge's runtime cache is 
 |---|---|---|---|
 | `process_node_runtime_states.remaining_uop_cached` (Edge SQLite) | Count of parts in the bin currently at this Edge node | Signed; can go negative | At-node bins, this Edge |
 | `bins.uop_remaining` (Core Postgres) | Count of parts in a physical bin, mirrored from Edge's delta stream | Signed; can go negative | Bins in transit / at supermarket / cross-station |
-| `lineside_buckets.qty` (Core Postgres) | Count of parts on a lineside bench, captured during release | Non-negative | Plant-wide |
+| `node_lineside_bucket.qty` (Edge SQLite) | Count of parts on a lineside bench (a pile), per (node, payload, state) | Non-negative | Piles; the Edge is the only writer |
+| `lineside_buckets.qty` (Core Postgres) | Core's mirror of the Edge's piles, per (core node, payload, state), set from the Edge's levels | Non-negative | Nothing: a mirror |
 
 Bins can go negative because real-world bins overpack and underpack. A nominal-1000 bin might physically hold 1005; the next nominal-1000 might hold 995. The system tracks reality, not the nominal. Over time, the discrepancies wash out at the inventory aggregate level.
 
-Buckets stay non-negative because they're real-time counts of physical parts on a bench — you can't have a negative number of parts in front of you. `drainLinesideFirst` clamps bucket draws at zero by construction.
+Piles stay non-negative because they're counts of parts on a bench — you can't have a negative number of parts in front of you. A tick drains the active pile first and never below zero; the rest goes to the bin.
+
+A pile is **active** from the pull until its process's next cutover (every active-style flip: the changeover cutover and the admin style flip). At the cutover every active pile at the process's nodes becomes **stranded**: a permanent record, labelled a count anomaly at cutover, that never drains, never counts on either side and never revives when the style comes back. Operators run out what they pull, so a leftover at cutover is most likely the size of a declaration error. The next pull of that part makes a new active pile.
 
 The plant-wide inventory invariant is approximate:
 
 ```
-total physical UOP ≈ sum(bins.uop_remaining) + sum(lineside_buckets.qty)
+total physical UOP ≈ sum(bins.uop_remaining) + sum(lineside_buckets.qty WHERE state = 'active')
 ```
 
 The bin-sum term drifts signed in either direction over time as overpack/underpack accumulates and washes out. `GET /api/inventory/invariant` reports both terms and the signed total; trends matter more than instantaneous values.
@@ -44,17 +47,17 @@ UOP state mutations route through dedicated packages on each side. The packages 
 
 The Edge-side mutator. Holds:
 
-- `Mutator` — the public type carrying the intent verbs, grouped by concern into the interfaces in `interfaces.go` (Ticker, SlotWriter, Capturer, Pickup, Boundary, Backfiller). Read `interfaces.go` for the roster rather than a count here; a number in prose is the first thing to rot, and this line has already carried a wrong one.
-- `accumulator` (unexported) — per-bin and per-bucket signed-delta accumulation, periodic flush to outbox, restore-on-failure.
-- Narrow store interfaces (`runtimeWriter`, `bucketStore`, `nodeStore`) so the package never imports engine. `*store.DB` satisfies all three at the composition root.
-- The files are `mutator.go` (most verbs — `BindActiveBin`, `ClearActiveBin`, `ClearActiveAndReset`, `SetClaimAndCount`, `SetClaimCountAndEpoch`, `OnDelivered`, `ManualLoad`, `OnBinPickedUp`, `MarkAttributionBoundary`, `AdjustBucket`, plus `RecordBin` / `RecordBucket` and the lifecycle methods), `tick.go` (`Consumed` / `Produced` / `Fallthrough`), `capture.go` (`CaptureToLineside`), `backfill.go` (`Backfill`), `release.go` (`ReleaseDisposition` + pure functions), and `accumulator.go`. There is no `slot.go`, `pickup.go`, `boundary.go` or `admin.go` — that split was proposed and never made.
-- `archtest_test.go` — CI test that fails if any production file outside `uop/` calls `RecordBin` or `RecordBucket` directly. Every delta emission must route through a named verb.
+- `Mutator` — the public type carrying the intent verbs, grouped by concern into the interfaces in `interfaces.go` (Ticker, SlotWriter, Capturer, Piles, Pickup, Boundary). Read `interfaces.go` for the roster rather than a count here; a number in prose is the first thing to rot, and this line has already carried a wrong one.
+- `accumulator` (unexported) — per-bin signed-delta accumulation, and per-pile dirty marks: each flush sends one level per changed pile row, read from the table at flush. Periodic flush to the outbox; an entry is cleared only after its enqueue succeeds.
+- Narrow store interfaces (`runtimeWriter`, `bucketStore`) so the package never imports engine. `*store.DB` satisfies both at the composition root.
+- The files are `mutator.go` (most verbs — `BindActiveBin`, `ClearActiveBin`, `ClearActiveAndReset`, `SetClaimAndCount`, `SetClaimCountAndEpoch`, `OnDelivered`, `ManualLoad`, `OnBinPickedUp`, `MarkAttributionBoundary` and the lifecycle methods), `tick.go` (`Consumed` / `Produced` / `Fallthrough`), `capture.go` (`CaptureToLineside`), `piles.go` (`PilesChanged` / `ResendLevels`), `release.go` (`ReleaseDisposition` + pure functions), and `accumulator.go`. There is no `slot.go`, `pickup.go`, `boundary.go` or `admin.go` — that split was proposed and never made.
+- `archtest_test.go` — CI tests: no production file outside `uop/` records a delta directly (every emission routes through a named verb), and only the known files write `node_lineside_bucket` (the pile store, process delete and the migrations), so every pile write marks its level.
 
 ### `shingo-core/uop/`
 
 The Core-side applier. Holds:
 
-- `InventoryDeltaService` — receives `BinUOPDelta` and `LinesideBucketDelta` envelopes from Edge, dedups against `inventory_delta_dedup`, applies the signed delta to `bins.uop_remaining` / `lineside_buckets`, writes the audit row, fires `ClearForReuse` when a `capture_reduction` drives `uop_remaining` to zero.
+- `InventoryDeltaService` — receives `BinUOPDelta` envelopes from Edge, dedups against `inventory_delta_dedup`, applies the signed delta to `bins.uop_remaining`, writes the audit row, fires `ClearForReuse` when a `capture_reduction` drives `uop_remaining` to zero. It also receives `LinesideBucketLevel` envelopes and sets the `lineside_buckets` mirror row to the level under a seq guard (one UPSERT, or a DELETE at 0), writing a `lineside_drain_ledger` row when the level carries drains. Core never writes a pile.
 - `ManifestClearer` narrow interface — the `*sql.Tx`-taking method used to fire `BinManifestService.ClearForReuse` atomically inside the delta-apply transaction. Atomicity is load-bearing; a crash between the bin update and manifest clear would leave a bin with `uop_remaining=0` but a stale manifest.
 
 Audit table writes (`bin_uop_ledger`) live in `shingo-core/store/audit/`. The audit package is shared infrastructure: the uop applier writes it, but so does `BinManifestService` (manifest imprint, manifest clear, partial-back sync, release override). Audit consolidation is a deferred follow-up; see `SHINGO_TODO.md`.
@@ -67,9 +70,9 @@ Engine and other callers route every UOP state mutation through a named verb on 
 
 | Verb | Reasons emitted | Call site |
 |---|---|---|
-| `Consumed` | `consume_drain` (bucket) + `consume_tick` (bin) | `wiring_counter_delta.go` |
+| `Consumed` | active pile drained first (level marked, drains counted) + `consume_tick` (bin) | `wiring_counter_delta.go` |
 | `Produced` | `produce_tick` (bin only) | `wiring_counter_delta.go` |
-| `Fallthrough` | `consume_drain` (bucket) + `ab_fallthrough` (bin) | `wiring_counter_delta.go` |
+| `Fallthrough` | active pile drained first + `ab_fallthrough` (bin) | `wiring_counter_delta.go` |
 
 **SlotWriter** — `process_node_runtime_states` mutations.
 
@@ -82,12 +85,18 @@ Engine and other callers route every UOP state mutation through a named verb on 
 | `OnDelivered` | `active_claim_id` + `active_bin_id` + `active_bin_epoch` + `remaining_uop_cached` atomic (delivery binds the arrived bin from its OrderDelivered envelope) |
 | `ManualLoad` | claim + active_bin + count atomic (operator imprint via loader fallback) |
 
-**Capturer** — release-click capture + admin bucket adjust.
+**Capturer** — release-click capture.
 
 | Verb | Effect |
 |---|---|
-| `CaptureToLineside` | Loop over captures: bucket writes + `capture_fill` deltas + paired `capture_reduction` bin delta. Atomic. |
-| `AdjustBucket` | Set bucket qty to exact value + emit operator-correction delta + flush. |
+| `CaptureToLineside` | Loop over captures: add each part's qty to its active pile (never a stranded one), mark its level, and emit the paired `capture_reduction` bin delta. The supply leg of a two-robot swap captures nothing. |
+
+**Piles** — pile writes made outside the capture and the tick.
+
+| Verb | Effect |
+|---|---|
+| `PilesChanged` | The caller wrote the rows (the cutover's strand, the admin Clear, a process delete); mark each key's level and flush. |
+| `ResendLevels` | Boot: mark every pile row and flush, re-seeding Core's mirror unconditionally. |
 
 **Pickup** — bin-pickup boundary.
 
@@ -100,12 +109,6 @@ Engine and other callers route every UOP state mutation through a named verb on 
 | Verb | Effect |
 |---|---|
 | `MarkAttributionBoundary` | Flush before a SetActivePull swap (A/B flip). Engine owns the swap; UOP owns the flush. |
-
-**Backfiller** — one-shot seeding for fresh Core deployments.
-
-| Verb | Effect |
-|---|---|
-| `Backfill` | Walk every node's lineside buckets, emit `capture_fill` deltas to seed Core's table. |
 
 ## Wire envelopes
 
@@ -131,11 +134,23 @@ Subject: `inventory.bin_uop_delta`. Edge emits one envelope per accumulated delt
 
 `PayloadCode` carries the bin's actual current payload at the moment of delta emission, not the target style's template payload. Core's `ApplyBinUOPDelta` validates this against the bin row and rejects mismatches.
 
-### `LinesideBucketDelta` — Edge to Core
+### `LinesideBucketLevel` — Edge to Core
 
-Same shape as `BinUOPDelta` but keyed on `(node_id, pair_key, style_id, part_number)` instead of bin ID. Subject `inventory.lineside_bucket_delta`. Reasons: `capture_fill` (operator pulled parts to lineside on release), `consume_drain` (PLC tick drained the bucket), `operator_correction_bucket` (admin engineer override).
+```go
+type LinesideBucketLevel struct {
+    CoreNodeName string
+    PayloadCode  string
+    State        LinesideBucketState // active / stranded
+    Qty          int                 // the row's level after the change; 0 = gone
+    Drained      int                 // consume drains in the flush window (drain ledger)
+    SequenceID   int64               // per (station, "<core>|<payload>|<state>")
+    WindowEnd    time.Time
+}
+```
 
-Manual-swap nodes have no PLC and never emit bucket deltas. Their state changes are operator-driven and audited via direct insert.
+Subject `inventory.lineside_bucket_level`. The level, not the change: Qty is the sum over every Edge process node carrying that core node name. Core sets its row to it, so a lost or late message cannot drift the mirror; a seq that went backward with a later window (a restored Edge) is applied and re-anchors. A pull (bin to bench) and a strand (a count correction) are not consumption and carry `Drained` 0.
+
+Manual-swap nodes have no PLC and never have piles.
 
 ### `BinPickedUp` — Core to Edge
 
@@ -166,27 +181,27 @@ These are SME-locked and treated as ground truth across the codebase.
 
 **The PLC counter is infinite.** Edge calculates per-tick deltas from the last-seen counter value. There is no "lost ticks on counter reset" failure mode.
 
-**Bin transition for tick attribution is the bin physically leaving the slot, not the operator's release click.** On the consume side, the boundary is the `BinPickedUp` envelope. The operator's release click commits the bin's final-state intent — PARTIAL count, RELEASE EMPTY, or capture-to-lineside — but does not stop tick attribution. Cells routinely finish in-flight cycles between release click and physical pickup; those ticks legitimately belong to the released bin. If the operator pulled parts to a lineside container, those parts are captured into a bucket via the release disposition, and subsequent ticks decrement the bucket first via `drainLinesideFirst` before touching any bin's count. The bucket is location-bound (lives at the slot, not the bin), so it correctly continues to drain across the bin transition while the cell keeps running. On the produce/manual_swap loader side, the bin-loader confirm IS the boundary — there is no release/pickup gap on that side because the loader physically loads the bin at confirm time. For A/B cycling pairs, the boundary is a runtime state flip (active-pull change), preceded by `uop.Mutator.MarkAttributionBoundary` to ship pending deltas under the outgoing attribution context.
+**Bin transition for tick attribution is the bin physically leaving the slot, not the operator's release click.** On the consume side, the boundary is the `BinPickedUp` envelope. The operator's release click commits the bin's final-state intent — PARTIAL count, RELEASE EMPTY, or capture-to-lineside — but does not stop tick attribution. Cells routinely finish in-flight cycles between release click and physical pickup; those ticks legitimately belong to the released bin. If the operator pulled parts to a lineside container, those parts are captured into the node's active pile via the release disposition, and subsequent ticks decrement the pile first before touching any bin's count. The pile is location-bound (lives at the slot, not the bin), so it correctly continues to drain across the bin transition, and through a changeover window, until the process's cutover strands it. On the produce/manual_swap loader side, the bin-loader confirm IS the boundary — there is no release/pickup gap on that side because the loader physically loads the bin at confirm time. For A/B cycling pairs, the boundary is a runtime state flip (active-pull change), preceded by `uop.Mutator.MarkAttributionBoundary` to ship pending deltas under the outgoing attribution context.
 
-**Manual swap nodes have no PLC.** All state changes on manual-swap nodes (loaders, unloaders) are operator-driven. They write through Core's HTTP API (e.g., `LoadBin`) and audit via direct insert. They do not emit `LinesideBucketDelta` envelopes. This is a legitimate exception to "deltas are the only mutation path" — operator actions are conceptually different from automated PLC events.
+**Manual swap nodes have no PLC.** All state changes on manual-swap nodes (loaders, unloaders) are operator-driven. They write through Core's HTTP API (e.g., `LoadBin`) and audit via direct insert. They have no lineside piles. This is a legitimate exception to "deltas are the only mutation path" — operator actions are conceptually different from automated PLC events.
 
 **Cycle count is admin-only.** Operators do not cycle-count bins during production; SCO uses the Bins admin page on Core. Cycle count writes the new value to `bins.uop_remaining` directly and bumps the dedup sequence to invalidate in-flight deltas.
 
 **Operator-trusted measurements.** SEND PARTIAL BACK count is ground truth — overrides the runtime cache. Produce-ingest count uses the operator-measured runtime value at finalize time, not the template's `UOPCapacity`.
 
-**Hold-and-replay gap handling.** The Edge runtime row carries a single bin pointer, `active_bin_id`. Release click finalizes the *outgoing* bin per its disposition and does **not** pre-load or stamp the incoming supply bin — the new bin's count and epoch arrive later on its `OrderDelivered` envelope, which binds `active_bin_id`. Between physical pickup of the old bin and delivery of the new one, no bin is bound: PLC ticks during this gap still drain lineside as usual, but the bin portion of each tick is accumulated into `pending_uop_delta` (a durable column) rather than charged to a departed bin or lost. When the next bin binds, the first tick applies `current + pending` and resets the pending pile to zero, replaying the held consumption onto the new bin. The lineside bucket — location-bound at the slot — covers the parts the operator runs during the gap.
+**Hold-and-replay gap handling.** The Edge runtime row carries a single bin pointer, `active_bin_id`. Release click finalizes the *outgoing* bin per its disposition and does **not** pre-load or stamp the incoming supply bin — the new bin's count and epoch arrive later on its `OrderDelivered` envelope, which binds `active_bin_id`. Between physical pickup of the old bin and delivery of the new one, no bin is bound: PLC ticks during this gap still drain lineside as usual, but the bin portion of each tick is accumulated into `pending_uop_delta` (a durable column) rather than charged to a departed bin or lost. When the next bin binds, the first tick applies `current + pending` and resets the pending pile to zero, replaying the held consumption onto the new bin. The active pile — location-bound at the slot — covers the parts the operator runs during the gap.
 
 ## Release UI dispositions
 
 The operator station's release modal exposes three buttons (per commit `0becc04`, 2026-04-30):
 
-| Button | When shown | Bin / bucket effect |
+| Button | When shown | Bin / pile effect |
 |---|---|---|
-| `PULL PARTS LINESIDE, RELEASE` | Always (primary) | Bin reduced by `sum(captures)` via delta; lineside bucket increased; bin returns to supermarket |
+| `PULL PARTS LINESIDE, RELEASE` | Always (primary) | Bin reduced by `sum(captures)` via delta; each part's active pile increased; bin returns to supermarket |
 | `RELEASE PARTIAL` | When `runtime.RemainingUOPCached > 0` | Bin returns to supermarket as-is; manifest preserved; count synced via `OrderRelease.RemainingUOP=&N` |
 | `RELEASE EMPTY` | When `runtime.RemainingUOPCached == 0` | Bin returns empty; manifest cleared; count synced via `OrderRelease.RemainingUOP=&0` |
 
-The capture path emits `BinUOPDelta(reason=capture_reduction, delta=-sum(captures))` via `uop.Mutator.CaptureToLineside` — atomic with the per-part `capture_fill` bucket emissions. For partial-back and explicit-empty paths, the `OrderRelease` envelope carries the operator's count directly to Core's `BinManifestService.SyncOrClearForReleased`. There is a known dual-write at the release path (legacy `RemainingUOP=&0` send alongside the `capture_reduction` delta) that's flagged for cleanup but produces correct results because both target the same `bins.uop_remaining` row.
+The capture path emits `BinUOPDelta(reason=capture_reduction, delta=-sum(captures))` via `uop.Mutator.CaptureToLineside` — together with each captured part's pile level. For partial-back and explicit-empty paths, the `OrderRelease` envelope carries the operator's count directly to Core's `BinManifestService.SyncOrClearForReleased`. There is a known dual-write at the release path (legacy `RemainingUOP=&0` send alongside the `capture_reduction` delta) that's flagged for cleanup but produces correct results because both target the same `bins.uop_remaining` row.
 
 ## Manifest-clearing trigger
 
@@ -276,19 +291,20 @@ Pre-flip, this was healed by the reconciler. Post-flip, no heal mechanism exists
 | Path | Purpose |
 |---|---|
 | `shingo-edge/uop/mutator.go` | Public `Mutator` type + verb methods (slot-lifecycle + boundary + admin live here) |
-| `shingo-edge/uop/interfaces.go` | Segregated sub-interfaces (Ticker / SlotWriter / Capturer / Pickup / Boundary / Backfiller) + Sink umbrella |
-| `shingo-edge/uop/accumulator.go` | Per-bin / per-bucket signed-delta accumulator + outbox flush (internal) |
+| `shingo-edge/uop/interfaces.go` | Segregated sub-interfaces (Ticker / SlotWriter / Capturer / Piles / Pickup / Boundary) + Sink umbrella |
+| `shingo-edge/uop/accumulator.go` | Per-bin signed-delta accumulator and per-pile level marks + outbox flush (internal) |
 | `shingo-edge/uop/tick.go` | Consumed / Produced / Fallthrough verb implementations + TickEvent |
-| `shingo-edge/uop/capture.go` | CaptureToLineside verb (atomic bucket fills + bin reduction) + CaptureEvent |
+| `shingo-edge/uop/capture.go` | CaptureToLineside verb (pile gains + bin reduction) + CaptureEvent |
+| `shingo-edge/uop/piles.go` | PilesChanged / ResendLevels: pile writes outside the capture and the tick, and the boot resend |
 | `shingo-edge/uop/release.go` | ReleaseDisposition + ComputeReleaseRemainingUOP + BuildProtocolDisposition (pure functions; Phase 2 lift) |
-| `shingo-edge/uop/backfill.go` | One-shot bucket seeding for fresh Core deployments |
-| `shingo-edge/uop/store_iface.go` | Narrow store interfaces (runtimeWriter / bucketStore / nodeStore) |
-| `shingo-edge/uop/archtest_test.go` | CI invariant: no direct RecordBin/RecordBucket outside uop/ |
+| `shingo-edge/uop/store_iface.go` | Narrow store interfaces (runtimeWriter / bucketStore) |
+| `shingo-edge/uop/archtest_test.go` | CI invariants: no direct delta recording outside uop/; only known files write node_lineside_bucket |
 | `shingo-edge/engine/wiring_counter_delta.go` | PLC tick path; resolves context + calls Consumed/Produced/Fallthrough |
 | `shingo-edge/engine/operator_release.go` | Release dispositions; finalizes the outgoing bin and calls CaptureToLineside (does not pre-load the incoming bin) |
 | `shingo-edge/engine/operator_ab_cycling.go` | A/B flip; calls MarkAttributionBoundary before SetActivePull swap |
+| `shingo-edge/engine/lineside_strand.go` | The cutover's strand: every active pile at the process's nodes becomes stranded; called from completeCutover and SetProcessActiveStyle |
 | `shingo-edge/engine/handler_bin_picked_up.go` | Edge handler for BinPickedUp envelope; calls OnBinPickedUp + ClearActiveBin |
-| `shingo-core/uop/applier.go` | InventoryDeltaService — apply bin/bucket deltas; manifest-clearing trigger |
+| `shingo-core/uop/applier.go` | InventoryDeltaService — apply bin deltas and pile levels; manifest-clearing trigger |
 | `shingo-core/store/audit/bin_uop.go` | Audit insert helpers (shared with manifest service) |
 | `shingo-core/rds/poller.go` | RDS poll → block-state diff → BinPickedUp |
 | `shingo-core/engine/wiring_block_completed.go` | Bin-transit-state handler |
@@ -299,7 +315,7 @@ Pre-flip, this was healed by the reconciler. Post-flip, no heal mechanism exists
 ```go
 const (
     SubjectBinUOPDelta         = "inventory.bin_uop_delta"
-    SubjectLinesideBucketDelta = "inventory.lineside_bucket_delta"
+    SubjectLinesideBucketLevel = "inventory.lineside_bucket_level"
     SubjectBinPickedUp         = "transit.bin_picked_up"
 )
 ```
@@ -317,19 +333,17 @@ Reconciler-related config (`reconcile_interval`, `tolerance.*`) was removed in c
 
 | Side | Method | Path | Purpose |
 |---|---|---|---|
-| Core | GET | `/api/inventory/invariant` | Plant-wide invariant probe (signed bin sum + bucket sum) |
+| Core | GET | `/api/inventory/invariant` | Plant-wide invariant probe (signed bin sum + active pile sum) |
 | Core | GET | `/api/audit/bin/{id}` | Per-bin audit timeline |
 | Core | GET | `/api/audit/discrepancies` | Discrepancy report |
-| **Edge** | POST | `/api/admin/uop/backfill[?force=true]` | Manual bucket backfill trigger |
 
-Routes: `shingo-core/www/router.go:379,386-387` and `shingo-edge/www/router.go:370`.
+Routes: `shingo-core/www/router.go`.
 
 `/api/reconciliation/uop` was removed alongside the reconciler.
 `/api/audit/operator/{name}` and `/api/audit/station/{station}` were removed on
 2026-08-22 — both had zero callers and were the only queries filtering the audit
 table on an unindexed `actor` column (`shingo-core/store/audit/bin_uop.go:390-398`).
 
-**The backfill trigger is an Edge endpoint, not a Core one**, and it takes no
-`station` parameter — an edge instance is one station by construction. `force`
-is the only query parameter it reads
-(`shingo-edge/www/handlers_api_admin_uop.go:25-26`).
+The Edge's bucket backfill (`/api/admin/uop/backfill` and the boot probe of
+Core's copy) is gone: the Edge re-sends every pile's level at boot, and Core's
+seq guard makes that idempotent.

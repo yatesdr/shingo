@@ -42,7 +42,6 @@ Everything is existence-checked, so re-seeding is idempotent.
 | **Payload / Bin** | `payloads[]`, `bins[]` | A part (`uop_capacity`) and a physical container holding some UOP of a payload at a slot/node. |
 | **Demand** | `demands[]` | A demand-registry entry (payload wanted at a node). Drives C-push loader replenishment via a per-(loader, payload) UOP threshold. |
 | **Reporting point** | `reporting_points[]` | Ties a PLC counter tag to a node. `plc_name`/`tag_name` MUST match the edge sim process entries in `shingoedge.dev.yaml`. |
-| **Lineside bucket** | `lineside_buckets[]` | Pre-staged lineside inventory a consume tick drains. |
 
 ---
 
