@@ -421,13 +421,23 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 
 	// Dedicated home loader PARK: when this is a changeover return from a
 	// dedicated-loader home (order.SourceNode = the evac pickup), Core decides where
-	// the bin lands — HOME if free, else a buffer slot, else drain — and rewrites
-	// DeliveryNode. The Edge shipped DeliveryNode="" and named no target, so Core is
-	// the single authority; the release-time redirect overlay (patchRedirectSegments)
-	// carries the choice to the fleet. A non-dedicated / non-loader source is left
-	// untouched (drains as today). NOT a dispatch gate (no isConcreteStorageDropoff
-	// widening) — a resolution-time read, so the swap supply leg is never gated.
-	d.placeForDedicatedLoader(order, resolvedSteps)
+	// the bin lands — HOME if free, else a buffer slot — and rewrites DeliveryNode.
+	// The Edge shipped DeliveryNode="" and named no target, so Core is the single
+	// authority; the release-time redirect overlay (patchRedirectSegments) carries
+	// the choice to the fleet. A non-dedicated / non-loader source is left untouched.
+	//
+	// When neither can take the bin and the only destination left is the home just
+	// found unavailable, the order WAITS here rather than being dispatched onto it.
+	// Only a leg whose drop is a loader home can reach that answer, so a supply leg
+	// bound for the line is never held by it.
+	if waitHome := d.placeForDedicatedLoader(order, resolvedSteps); waitHome != "" {
+		if d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLoaderParkNoSlot,
+			QueueParams{Destination: waitHome}) {
+			log.Printf("dispatch: complex order %d waits — loader home %s cannot take its bin and no buffer is free",
+				order.ID, waitHome)
+		}
+		return nil, dispatchStep{done: true, err: fmt.Errorf("loader home %s unavailable and no buffer free", waitHome)}
+	}
 
 	// Quality containment: an FG-bound leg of a contained payload re-points to
 	// its claim's containment destination (or parks, containment full). Runs

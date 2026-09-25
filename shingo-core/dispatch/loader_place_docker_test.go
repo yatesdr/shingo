@@ -874,3 +874,68 @@ func TestPlaceForDedicatedLoader_SpentCarrier_BlankPayload_HoldsHome(t *testing.
 			ret.DeliveryNode, home.Name, buffer.Name)
 	}
 }
+
+// ── NO SAFE DESTINATION: WAIT, DO NOT DRIVE INTO THE HOME ───────────────────
+//
+// Springfield order 6985, 2026-09-25: a changeover evac returned its carrier to
+// home SMN_034, which held a full carrier nobody was coming for, and all ten
+// buffer slots were taken. It was dispatched onto the occupied home anyway and
+// AMR-10 faulted 60011 there, while SMN_0012 freed seventeen minutes before the
+// robot arrived. The leg must wait for a home or buffer instead.
+func TestPlaceForDedicatedLoader_ForeignCarrier_BufferFull_Waits(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "LX-LINE-WAIT", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	makeLoaderBin(t, db, "PART-X", home.ID, "wait-foreign-full", 100, time.Now().UTC())
+	parked := makeLoaderBin(t, db, "PART-X", buffer.ID, "wait-buffer-partial", 40, time.Now().UTC())
+
+	// No sibling link: nothing in this swap lifts the carrier on the home.
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, false)
+	if got := d.placeForDedicatedLoader(ret, retSteps); got != home.Name {
+		t.Fatalf("waitHome = %q, want %q — the home holds a carrier nobody is lifting and the only "+
+			"buffer is full, so the leg must wait rather than be dispatched onto the home", got, home.Name)
+	}
+
+	// The buffer frees; the next scanner pass must take it.
+	if err := db.DeleteBin(parked.ID); err != nil {
+		t.Fatalf("free the buffer: %v", err)
+	}
+	if got := d.placeForDedicatedLoader(ret, retSteps); got != "" {
+		t.Fatalf("waitHome = %q after the buffer freed, want \"\" (placed)", got)
+	}
+	if ret.DeliveryNode != buffer.Name {
+		t.Fatalf("DeliveryNode = %q, want BUFFER %q once it frees", ret.DeliveryNode, buffer.Name)
+	}
+}
+
+// The plain swap at a dedicated home with no free buffer must NOT wait: the full
+// on the home is the one this swap's own supply leg lifts, so the home is the
+// return's destination and nothing needs a buffer.
+func TestPlaceForDedicatedLoader_SiblingLifting_BufferFull_HoldsHomeWithoutWaiting(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "LX-LINE-SWAP", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	makeLoaderBin(t, db, "PART-X", home.ID, "swap-sibling-lifts", 100, time.Now().UTC())
+	makeLoaderBin(t, db, "PART-X", buffer.ID, "swap-buffer-full", 40, time.Now().UTC())
+
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
+	if got := d.placeForDedicatedLoader(ret, retSteps); got != "" {
+		t.Fatalf("waitHome = %q, want \"\" — the sibling lifts the carrier on the home, so a full "+
+			"buffer is irrelevant and a plain swap must never queue", got)
+	}
+	if ret.DeliveryNode != home.Name {
+		t.Fatalf("DeliveryNode = %q, want HOME %q", ret.DeliveryNode, home.Name)
+	}
+}

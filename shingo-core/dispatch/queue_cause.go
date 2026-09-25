@@ -401,6 +401,11 @@ const (
 	// about the plant that an operator can act on, this is a failed read that
 	// says nothing about whether material is there.
 	CauseLoaderSourceUnreadable QueueCause = "loader-source-unreadable"
+	// CauseLoaderParkNoSlot — a leg returning a bin to a dedicated loader found its
+	// home unable to take it and every buffer slot full, so its only destination was
+	// an occupied home. It waits for either to free instead of driving there
+	// (placeForLoader).
+	CauseLoaderParkNoSlot QueueCause = "loader-park-no-slot"
 
 	// ── Sourcing and reservation contention (fulfillment/) ────────────────
 	// The pre-dispatch family. Every one of these parks an order in the

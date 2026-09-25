@@ -18,13 +18,14 @@ import (
 // already pools). Source and park use the SAME Core representation, so a parked
 // partial is re-sourced by the same pool and the loop closes end-to-end.
 //
-// THERE IS NO THIRD BRANCH, and this header used to promise one — "else drain (the
-// configured outbound)". No code in dispatch/ reads bin_loaders.outbound_dest, and
-// a produce loader has none to read: fulls leave by order, not to a configured
-// pool. When neither home nor buffer is free, placeForLoader writes nothing and the
-// order keeps the delivery node it arrived with, which for these legs is the home
-// that was just found occupied. "Draining" is a no-op with a log line, and on
-// 2026-08-26 it delivered two carriers onto occupied homes at SMN_016 and SMN_035.
+// THE THIRD BRANCH IS A WAIT, not a drain. No code in dispatch/ reads
+// bin_loaders.outbound_dest, and a produce loader has none to read: fulls leave by
+// order, not to a configured pool. When neither home nor buffer is free, an order
+// already pointed at some OTHER node keeps it; an order whose only destination is
+// the home just found unavailable is QUEUED (CauseLoaderParkNoSlot) and re-placed
+// every scanner pass until a home or buffer frees. It used to be dispatched onto
+// the occupied home, which delivered two carriers onto occupied homes at SMN_016
+// and SMN_035 on 2026-08-26 and faulted AMR-10 at SMN_034 on 2026-09-25.
 //
 // LOCUS — Core is the single authority. The Edge ships the evac order with
 // DeliveryNode="" and holds no authoritative bin-landing record; Core resolves the
@@ -69,7 +70,13 @@ import (
 // destination is authored on the Edge from the style being requested rather than
 // the carrier being lifted, and that is fixed there. Core is simply the only place
 // that holds both facts at once, so it is the only place the question can be asked.
-func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep) {
+//
+// Returns the name of the home the order must WAIT for, or "" when placement
+// left it with a destination it can drive to. A non-empty return means neither
+// the home nor any buffer can take the bin and the only destination left is the
+// home just found occupied; the caller queues the order rather than dispatching
+// it there (see placeForLoader).
+func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep) (waitHome string) {
 	// Pattern A: SourceNode is a home position (produce-side return).
 	// Pattern B: DeliveryNode is a home position (consume-side removal leg).
 	// Both route to the same home/buffer/drain logic; the only structural
@@ -86,8 +93,8 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// DeliveryNode WAS a home. tryPlaceFromHomeSource reports whether it took
 	// ownership; "false" means "not mine", never "done".
 	if order.SourceNode != "" && !hasWaitStep(steps) {
-		if d.tryPlaceFromHomeSource(order, steps) {
-			return
+		if owned, wait := d.tryPlaceFromHomeSource(order, steps); owned {
+			return wait
 		}
 	}
 
@@ -101,15 +108,15 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		//     home routes to buffer instead of faulting on arrival.
 		destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 		if err != nil || destNode == nil {
-			return
+			return ""
 		}
 		home, err := d.db.GetLoaderHomeByPositionNode(destNode.ID)
 		if err != nil || home == nil {
-			return
+			return ""
 		}
 		loader, err := d.db.GetLoader(home.LoaderID)
 		if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
-			return
+			return ""
 		}
 		homeName := destNode.Name
 		// PAYLOAD BEFORE CAPACITY, because both arms below only ever answer "is
@@ -133,8 +140,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// — what the carrier is, and what the home is for — so it is the only
 		// place that can answer the question at all.
 		if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
-			d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
-			return
+			return d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
 		}
 		// A RETURN leg landing on a home whose only occupant this swap is
 		// already lifting takes the in-flight check alone: the bin standing
@@ -155,20 +161,19 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 				order.ID, homeName, inFlight, ierr)
 			if ierr == nil && inFlight == 0 {
 				d.setParkDestination(order, homeName, "home")
-				return
+				return ""
 			}
-			d.placeForLoader(order, home.LoaderID, homeName)
-			return
+			return d.placeForLoader(order, home.LoaderID, homeName)
 		}
 		blocked, block := CheckDropoffCapacity(d.db, homeName, order.ID)
 		d.dbg("place: order %d takes the physical gate on home %s (return=%v, clear=%v) — blocked=%v cause=%s",
 			order.ID, homeName, isReturn, clear, blocked, block.Cause)
 		if blocked {
-			d.placeForLoader(order, home.LoaderID, homeName)
-		} else {
-			d.setParkDestination(order, homeName, "home")
+			return d.placeForLoader(order, home.LoaderID, homeName)
 		}
+		d.setParkDestination(order, homeName, "home")
 	}
+	return ""
 }
 
 // tryPlaceFromHomeSource is Pattern A: the order lifts its bin AT a
@@ -182,20 +187,21 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 // lookup failures below returned from placeForDedicatedLoader and silently
 // skipped the delivery-side branch.
 //
-// `true` covers the drain outcome too — if placeForLoader finds no free buffer
-// and drains, Pattern A still owned and answered the question.
-func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolvedStep) bool {
+// `owned` covers the drain and the wait outcomes too — if placeForLoader finds
+// no free buffer, Pattern A still owned and answered the question; waitHome
+// carries placeForLoader's answer through.
+func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolvedStep) (owned bool, waitHome string) {
 	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
 	if err != nil || srcNode == nil {
-		return false
+		return false, ""
 	}
 	home, err := d.db.GetLoaderHomeByPositionNode(srcNode.ID)
 	if err != nil || home == nil {
-		return false // source is not a loader home — Pattern B may still apply
+		return false, "" // source is not a loader home — Pattern B may still apply
 	}
 	loader, err := d.db.GetLoader(home.LoaderID)
 	if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
-		return false
+		return false, ""
 	}
 	homeName := srcNode.Name
 	// Same gate as Pattern B, and inert in the ordinary case: this leg lifts AT
@@ -204,18 +210,16 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 	// already holding a carrier that does not belong to it. Putting that one back
 	// where it was found is not a repair, and this is the only pass that notices.
 	if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
-		d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
-		return true
+		return true, d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
 	}
 	if !orderDeliversTo(steps, homeName) {
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 		if ierr == nil && inFlight == 0 {
 			d.setParkDestination(order, homeName, "home")
-			return true
+			return true, ""
 		}
 	}
-	d.placeForLoader(order, home.LoaderID, homeName)
-	return true
+	return true, d.placeForLoader(order, home.LoaderID, homeName)
 }
 
 // carrierPayloadFor reports the payload of the carrier THIS LEG IS MOVING, and
@@ -344,28 +348,33 @@ func (d *Dispatcher) homeForPayload(loaderID int64, payload string, orderID int6
 // what is on a cell, and that is worth a line whether or not the recovery was
 // clean — the recovery hides the disagreement, which is how this one survived a
 // full shift.
-func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64, homeName, carrierPayload string) {
+func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64, homeName, carrierPayload string) (waitHome string) {
 	if own := d.homeForPayload(loaderID, carrierPayload, order.ID); own != "" {
 		log.Printf("WARN: order %d carries %s, which does not belong on home %s — routing to %s, "+
 			"the carrier's own home. Something upstream picked this destination from the style being "+
 			"requested rather than the carrier being lifted; the park is corrected but the disagreement is not.",
 			order.ID, carrierPayload, homeName, own)
 		d.setParkDestination(order, own, "home")
-		return
+		return ""
 	}
 	log.Printf("WARN: order %d carries %s, which does not belong on home %s, and its own home is "+
 		"occupied or unconfigured — falling back to a buffer.",
 		order.ID, carrierPayload, homeName)
-	d.placeForLoader(order, loaderID, homeName)
+	return d.placeForLoader(order, loaderID, homeName)
 }
 
-// placeForLoader routes to a free buffer slot for the given loader, or drains.
-// Shared by Pattern A and Pattern B after the home-first check fails.
-func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string) {
+// placeForLoader routes to a free buffer slot for the given loader. Shared by
+// Pattern A and Pattern B after the home-first check fails.
+//
+// Returns homeName when the order must WAIT: no buffer is free and the only
+// destination left is the home the caller just found unable to take the bin.
+// Returns "" when the order has somewhere to go — a buffer, or a drain to a
+// different node it was already pointed at.
+func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string) (waitHome string) {
 	members, merr := d.db.ListLoaderHomes(loaderID)
 	if merr != nil {
-		log.Printf("dispatch: place loader %d members: %v — draining order %d", loaderID, merr, order.ID)
-		return
+		log.Printf("dispatch: place loader %d members: %v — order %d waits", loaderID, merr, order.ID)
+		return homeName
 	}
 	for _, m := range members {
 		if m.Kind != loaders.HomeKindBuffer {
@@ -379,96 +388,44 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 			continue
 		}
 		d.setParkDestination(order, bn.Name, "buffer")
-		return
+		return ""
 	}
-	// NOT A GATE, DELIBERATELY. The placeForDedicatedLoader call site in
-	// complex_dispatch.go is a resolution-time read precisely so the swap supply
-	// leg is never gated, and a hold on this path gates claiming rather than
-	// fleet-create — c43ecf38's reasoning, which 5/5 reviewers reached
-	// independently. Queueing the order here would make this a gate. So the bin
-	// still goes where it was already pointed, which is the home just found
-	// occupied, and what changes is only that somebody can find out.
+	// NO BUFFER IS FREE. Two cases, told apart by where the order already points.
 	//
-	// ── WHAT ACTUALLY HAPPENS NEXT, BECAUSE TWO SENTENCES HAVE BEEN WRONG ──
-	//
-	// This branch has now carried two different false endings, in opposite
-	// directions, and the truth is that there are TWO outcomes and which one you
-	// get depends on something this function cannot see: whether the fleet ever
-	// reports the arrival.
-	//
-	//   ARRIVAL REPORTED. helpers.PlaceBinTx reconciles occupancy before placing
-	//   the newcomer (place_bin.go:119 → EvictStaleGhostBinsTx), so the RECORD
-	//   standing on the home is thrown to _TRANSIT. The record moves; the carrier
-	//   does not. That is what happened at SMN_016 and SMN_035 on 2026-08-26 and
-	//   it is written up sixty lines below — two carriers lost their placement to
-	//   a delivery that landed on top of them.
-	//
-	//   ARRIVAL NEVER REPORTED. A robot cannot physically lower a carrier onto an
-	//   occupied position, so it stands there holding it. Sim 2026-08-30: order
-	//   297 took this branch on PLK_H1 and AMR-11 stood at the home for the rest
-	//   of the run. Nothing was evicted, because nothing arrived.
-	//
-	// So "the record already there is evicted to _TRANSIT on arrival" was true of
-	// the first outcome and read as if it were the only one — and as if a record
-	// moving were a recovery, which it is not. The correction that replaced it
-	// ("a robot cannot lower onto an occupied position, so nothing was evicted")
-	// was true of the second and false of the first. Both are reachable. Neither
-	// is good.
-	//
-	// AND THE CELL STAYS PINNED EITHER WAY, which is the part that makes this
-	// worth a WARN rather than a fix here: the Edge writes its runtime pointers at
-	// order creation, so the consuming cell holds this order in its slot whether
-	// the leg drives, stands, or waits.
-	//
-	// ── WHY THIS IS NOT CLOSED BY GATING THE HOME ─────────────────────────
-	//
-	// IT WAS TRIED AND REVERTED, 2026-08-31 (WALL), and never reached origin:
-	// make a loader home part of the drop-off capacity gate's role test, so a leg
-	// pointed at an occupied home queues instead of driving. It makes this worse. Holding the home is what
-	// makes the return leg IN-FLIGHT to it, and in-flight is the only state the
-	// replenishment loop's yield check can see. The in-flight counts read
-	// orders.InFlightForDropoffSQL — an order HOLDING a claimed bin bound for the
-	// home, whatever its status (when this was tried they excluded `queued` by
-	// status instead) — and a leg the gate parks has claimed nothing yet. The
-	// Springfield incident test pins the yield
-	// (TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields). A parked leg is
-	// invisible, the loop refills the home, and the gate then refuses on the
-	// carrier it caused to be put there.
-	//
-	// THE THIRD BRANCH IS THE FIX, and this file's header has promised it from the
-	// start: home, then buffer, then DRAIN — decided at release rather than here,
-	// carried to the fleet by patchRedirectSegments (see the header). That is
-	// group-mouth work, not a gate.
-	//
-	// ── ONE ARGUMENT WORTH KEEPING FROM THE REVERTED ATTEMPT ──────────────
-	//
-	// SPEC-intermediate-dropoff-capacity-2026-08-15 §4 is headed "Why it cannot be
-	// fixed by widening the predicate", and it is right about the widening it
-	// names: "also accept parentless STATION nodes" sweeps in every LINE node, and
-	// gating a line dropoff re-creates the 2b05dce deadlock where a two-robot
-	// supply leg is held on the node its own sibling evac is coming to clear.
-	//
-	// A loader home is NOT that widening, and the next person to weigh this should
-	// start from that rather than re-deriving it. bin_loader_homes is a CORE table
-	// keyed on position_node_id, so a home is distinguishable by a lookup, and no
-	// line node has a row in it. The spec's objection does not reach it. That does
-	// not make gating the home correct — see the paragraph above, which is a
-	// different objection the spec never considered — but it does mean the spec is
-	// not the reason to refuse it.
-	//
-	// LOUD, because dbg is debug-only. Without --log-debug this branch said
-	// nothing at all, and the only trace of either outcome was a line nobody reads.
-	log.Printf("WARN: loader %d home %s is occupied and no buffer is free — order %d keeps %s as its "+
-		"destination and is dispatched anyway. If the robot reports arrival the occupant's RECORD is "+
-		"evicted to _TRANSIT while the carrier stays put; if it cannot lower, it stands at the home "+
-		"holding its bin. Either way the cell stays pinned. The pool is out of room, or a return leg "+
-		"yielded a home it should have held (see legReturnsToHome).",
-		loaderID, homeName, order.ID, order.DeliveryNode)
-	if err := d.db.RecordRecoveryAction("loader_park_no_slot", "order", order.ID,
-		fmt.Sprintf("home %s occupied and every buffer full — delivering onto an occupied position", homeName),
-		"system"); err != nil {
-		log.Printf("dispatch: record loader_park_no_slot for order %d: %v", order.ID, err)
+	// DRAIN: it points somewhere other than this home (an outbound the Edge named).
+	// That node is not the one just found unable to take the bin, so the order
+	// keeps it. Recorded, because a drain is still the pool running out of room.
+	if order.DeliveryNode != "" && order.DeliveryNode != homeName {
+		log.Printf("WARN: loader %d home %s cannot take order %d and no buffer is free — it drains to %s",
+			loaderID, homeName, order.ID, order.DeliveryNode)
+		if err := d.db.RecordRecoveryAction("loader_park_no_slot", "order", order.ID,
+			fmt.Sprintf("home %s unavailable and every buffer full — draining to %s", homeName, order.DeliveryNode),
+			"system"); err != nil {
+			log.Printf("dispatch: record loader_park_no_slot for order %d: %v", order.ID, err)
+		}
+		return ""
 	}
+	// WAIT: the only destination left is the home just found unable to take the
+	// bin. This used to dispatch anyway, and both outcomes were bad: if the robot
+	// reported arrival, PlaceBinTx evicted the occupant's RECORD to _TRANSIT while
+	// the carrier stayed put (SMN_016 and SMN_035, 2026-08-26); if it could not
+	// lower, it stood at the home holding its bin until someone cancelled it
+	// (Springfield order 6985, 2026-09-25: AMR-10 faulted 60011 at SMN_034, which
+	// held a full carrier, while SMN_0012 had been free for seventeen minutes).
+	// The caller queues the order instead, and the scanner re-runs this placement
+	// every pass, so the first home or buffer that frees takes it.
+	//
+	// Waiting cannot recreate the 2026-08-31 reverted attempt. That one gated a
+	// leg whose only option was its home, so a queued leg — invisible to the
+	// replenishment yield because it holds no claim — let the loop refill the home
+	// and then waited on the refill forever. Here the wait ends at ANY free buffer
+	// as well as the home, and a return whose home is free (or held only by this
+	// swap's own supply carrier) never reaches this branch at all.
+	//
+	// A two-robot swap is safe to hold on its evac leg: the Edge offers RELEASE
+	// only once the evac is staged (store.ComputeSwapReady), so the supply waits at
+	// its staging node rather than racing a fresh bin onto an occupied line.
+	return homeName
 }
 
 // placeForContainment is quality containment's divert (v100): when a payload's

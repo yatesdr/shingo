@@ -834,6 +834,11 @@ var causeReleasers = []causeReleaser{
 
 	// ── Complex-order preflight ───────────────────────────────────────────
 	{
+		cause:       CauseLoaderParkNoSlot,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the loader's home or one of its buffer slots frees",
+	},
+	{
 		cause:       CauseNGRPResolve,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "a child of the node group frees",
