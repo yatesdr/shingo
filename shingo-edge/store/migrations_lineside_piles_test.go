@@ -126,3 +126,73 @@ func TestMigrate_LinesidePilesFoldToOneIdentity(t *testing.T) {
 		t.Error("a second stranded SYN-PART-1 row was accepted; UNIQUE(node_id, payload_code, state) is missing")
 	}
 }
+
+// The migration strands, once, every active pile whose part the process's
+// active style does not claim at that node (owner decision, 2026-09-25): such
+// a pile has already crossed a cutover, and the old code only never stranded
+// it. The seat's active style claims SYN-CLAIMED as its payload and
+// SYN-ALLOWED among its allowed payloads; both piles stay active. The
+// unclaimed SYN-OTHER pile ends stranded, folded into the inactive SYN-OTHER
+// row the old shape already had (9 + 4). A second seat the active style does
+// not claim at all keeps its SYN-OTHER pile active, as Core's old count did.
+func TestMigrate_LinesidePilesStrandsWhatTheActiveStyleDoesNotClaim(t *testing.T) {
+	t.Parallel()
+	var idleNodeID int64
+	path, _ := legacyPileDB(t, func(db *DB, nodeID int64) {
+		var procID int64
+		testutil.MustNoErr(t, db.QueryRow(`SELECT process_id FROM process_nodes WHERE id = ?`, nodeID).Scan(&procID), "read process")
+		styleID, err := db.CreateStyle("MIG-PILE-STYLE", "", procID)
+		testutil.MustNoErr(t, err, "create style")
+		testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleID), "set active style")
+		idleNodeID, err = db.CreateProcessNode(processes.NodeInput{
+			ProcessID: procID, CoreNodeName: "MIG-PILE-IDLE", Code: "C2", Name: "MIG-PILE-IDLE", Enabled: true,
+		})
+		testutil.MustNoErr(t, err, "create unclaimed node")
+		_, err = db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, swap_mode, payload_code, allowed_payload_codes)
+			VALUES (?, 'MIG-PILE-SEAT', 'simple', 'SYN-CLAIMED', '["SYN-ALLOWED"]')`, styleID)
+		testutil.MustNoErr(t, err, "seed the active style's claim")
+		_, err = db.Exec(`INSERT INTO node_lineside_bucket
+			(node_id, pair_key, style_id, payload_code, qty, state) VALUES
+			(?, '', ?, 'SYN-CLAIMED', 7, 'active'),
+			(?, '', ?, 'SYN-ALLOWED', 3, 'active'),
+			(?, '', ?, 'SYN-OTHER',   9, 'active'),
+			(?, '', 1, 'SYN-OTHER',   4, 'inactive'),
+			(?, '', ?, 'SYN-OTHER',   5, 'active')`,
+			nodeID, styleID, nodeID, styleID, nodeID, styleID, nodeID, idleNodeID, styleID)
+		testutil.MustNoErr(t, err, "seed legacy piles")
+	})
+
+	db, err := Open(path)
+	testutil.MustNoErr(t, err, "reopen (migrate)")
+	t.Cleanup(func() { db.Close() })
+
+	got := map[string]int{}
+	rows, err := db.Query(`SELECT node_id, payload_code, state, qty FROM node_lineside_bucket`)
+	testutil.MustNoErr(t, err, "read piles")
+	for rows.Next() {
+		var node int64
+		var payload, state string
+		var qty int
+		testutil.MustNoErr(t, rows.Scan(&node, &payload, &state, &qty), "scan pile")
+		seat := "seat"
+		if node == idleNodeID {
+			seat = "idle"
+		}
+		got[seat+"/"+payload+"/"+state] = qty
+	}
+	rows.Close()
+	want := map[string]int{
+		"seat/SYN-CLAIMED/active": 7,
+		"seat/SYN-ALLOWED/active": 3,
+		"seat/SYN-OTHER/stranded": 13,
+		"idle/SYN-OTHER/active":   5,
+	}
+	if len(got) != len(want) {
+		t.Errorf("piles = %v, want %v", got, want)
+	}
+	for k, q := range want {
+		if got[k] != q {
+			t.Errorf("%s = %d, want %d (all piles: %v)", k, got[k], q, got)
+		}
+	}
+}
