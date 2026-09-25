@@ -19,8 +19,12 @@ import (
 // The message must still round-trip the envelope codec (a new subject on the
 // existing shingo.orders topic, a data envelope) so a future Core that DOES
 // register it decodes it cleanly — but the old Core's router just drops it.
+// NOT PARALLEL, deliberately: it points the process-global logger at a local
+// buffer, so any parallel test's goroutine that logs meanwhile writes into that
+// buffer while this reads it — CI's docker+race job caught readLoop's
+// handler-panic log doing exactly that. A non-parallel top-level test runs
+// before every parallel one, so nothing else can be logging.
 func TestPlantClaims_MixedVersionNoOp(t *testing.T) {
-	t.Parallel()
 
 	// An "old Core" router: nothing registered for plant.claims.
 	oldCoreRouter := router.NewSubject()
