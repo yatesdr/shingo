@@ -176,7 +176,7 @@ func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	if _, err := db.Exec(
-		`UPDATE demand_origins SET signal_count = 7, uop_delivered = 350, used_edge_reports = true
+		`UPDATE demand_origins SET signal_count = 7, uop_delivered = 350
 		  WHERE origin_id = $1`, o.OriginID); err != nil {
 		t.Fatalf("seed core-owned fields: %v", err)
 	}
@@ -189,15 +189,14 @@ func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 	}
 
 	var signals, uop int
-	var usedEdge bool
 	if err := db.QueryRow(
-		`SELECT signal_count, uop_delivered, used_edge_reports FROM demand_origins WHERE origin_id = $1`,
-		o.OriginID).Scan(&signals, &uop, &usedEdge); err != nil {
+		`SELECT signal_count, uop_delivered FROM demand_origins WHERE origin_id = $1`,
+		o.OriginID).Scan(&signals, &uop); err != nil {
 		t.Fatalf("read core-owned fields: %v", err)
 	}
-	if signals != 7 || uop != 350 || !usedEdge {
-		t.Errorf("an Edge message zeroed Core's own fields: signal_count=%d uop_delivered=%d used_edge_reports=%v",
-			signals, uop, usedEdge)
+	if signals != 7 || uop != 350 {
+		t.Errorf("an Edge message zeroed Core's own fields: signal_count=%d uop_delivered=%d",
+			signals, uop)
 	}
 }
 

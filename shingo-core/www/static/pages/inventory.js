@@ -34,9 +34,6 @@ let expanded = null;    // payload_code of the currently-open RH row
 let drillPayload = null;
 let drillDays = 14;
 
-const page = document.querySelector('.inv-page');
-const isAuth = !!page && page.dataset.authenticated === 'true';
-
 const STALE_WARN_MS = 7 * 24 * 3600 * 1000;
 const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
 
@@ -213,7 +210,7 @@ function renderKpis() {
     tile('Below threshold', String(belowN), 'of ' + monitored + ' monitored payloads',
       belowN ? 'kpi-tile--bad kpi-tile--clickable' : 'kpi-tile--clickable', '', 'scrollTo:rh'),
     lifecycleTile(stocked, prodEmpty, idle, binTot),
-    tile('Stale buckets', String(staleBk), 'untouched &gt; 30 d — ghost risk',
+    tile('Stale buckets', String(staleBk), 'active piles untouched &gt; 30 d',
       (staleBk ? 'kpi-tile--warn ' : '') + 'kpi-tile--clickable', '', 'scrollTo:buckets'),
   ].join('');
 }
@@ -797,6 +794,7 @@ function holdingBinsHtml(pc) {
 }
 
 function bucketAgeMs(b) {
+  if (b.state === 'stranded') return 0;
   const t = b.updated_at ? new Date(b.updated_at).getTime() : NaN;
   return isFinite(t) ? (serverNow() - t) : 0;
 }
@@ -812,25 +810,30 @@ function renderBuckets() {
       || (b.node_name || '').toLowerCase().includes(t);
   });
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8" class="dash-empty">'
+    body.innerHTML = '<tr><td colspan="7" class="dash-empty">'
       + (buckets.length ? 'No buckets match the filter.' : 'No lineside buckets.') + '</td></tr>';
     return;
   }
   body.innerHTML = rows.map((b) => {
+    const stranded = b.state === 'stranded';
     const age = bucketAgeMs(b);
     const stale = age > STALE_BAD_MS;
     const ageCls = stale ? 'stale-30' : age > STALE_WARN_MS ? 'stale-7' : '';
     const ageText = b.updated_at ? timeAgo(b.updated_at) : '—';
+    // A stranded row is a count anomaly recorded at the node's cutover: it never
+    // counts and never changes again, so its age is not a ghost risk.
+    const stateCell = stranded
+      ? '<span class="badge badge-flagged" title="What was left of the pile when the style changed. Not counted.">count anomaly at cutover</span>'
+      : '<span class="badge badge-available">active</span>';
     return '<tr' + (stale ? ' class="row-stale"' : '') + '>'
       + '<td>' + hl(b.group_name || '—') + '</td>'
       + '<td>' + hl(b.station || '') + '</td>'
       + '<td><code>' + hl(b.node_name || '') + '</code></td>'
       + '<td><code>' + hl(b.payload_code || '') + '</code></td>'
-      + '<td><span class="badge ' + (b.state === 'stranded' ? 'badge-flagged' : 'badge-available') + '">' + escapeHtml(b.state || 'active') + '</span></td>'
+      + '<td>' + stateCell + '</td>'
       + '<td class="rh-num">' + num(b.qty) + '</td>'
       + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(formatTime(b.updated_at)) + '"' : '')
       + '>' + escapeHtml(ageText) + (stale ? ' · <b>stale</b>' : '') + '</td>'
-      + (isAuth ? '<td><button class="btn btn-sm btn-danger" data-action="deleteBucket:' + b.id + '">Delete</button></td>' : '<td></td>')
       + '</tr>';
   }).join('');
 }
@@ -934,17 +937,6 @@ function applyCalc(value, el) {
   closeCalcPop(tr);
 }
 function dismissCalc(el) { closeCalcPop(el.closest('tr')); }
-
-async function deleteBucket(id) {
-  if (!await uiConfirm('Delete this lineside bucket row? This clears a Core-only ghost record.')) return;
-  try {
-    await apiPost('/api/buckets/delete', { id: Number(id) });
-    toast('Bucket deleted', 'success');
-    await loadAll(true);
-  } catch (e) {
-    toast('Delete failed: ' + (e.message || e), 'error', { sticky: true });
-  }
-}
 
 // ── consumption / cover drill ──────────────────────────────────────────────
 function openDrill(pc) {
@@ -1085,7 +1077,7 @@ async function showRejectedDeltas() {
 delegateActions(document.body, {
   onSearch, onSearchKey, onFilter, refresh, exportInventory, scrollTo,
   toggleRow, onThrInput, saveThr, discardThr, calcThr, applyCalc, dismissCalc,
-  deleteBucket, openDrill, drillRange, showOnMap, showRejectedDeltas,
+  openDrill, drillRange, showOnMap, showRejectedDeltas,
   'close-modal': closeDrill,
 }, { events: ['click', 'change', 'input', 'keydown'] });
 

@@ -15,8 +15,8 @@ import (
 // DemandOrigin is one demand episode: a continuous period during which a
 // specific place needed material.
 //
-// It carries only what Edge authors. signal_count, uop_delivered,
-// used_edge_reports and parent_origin_id are CORE-OWNED columns and are
+// It carries only what Edge authors. signal_count, uop_delivered and
+// parent_origin_id are CORE-OWNED columns and are
 // deliberately absent — see store.UpsertDemandOrigin, which must not zero them.
 //
 // ── uop_delivered HAS NO WRITER. READ THIS BEFORE BUILDING 5.3. ──────────────

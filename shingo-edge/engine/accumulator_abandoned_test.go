@@ -35,7 +35,7 @@ func TestPin_P0j_AbandonedAccumulatorMovedTheRuntimeAndWroteNoRow(t *testing.T) 
 	eng.wireEventHandlers()
 	// The production accumulator, never started and never stopped: its
 	// memory is what a crash throws away.
-	acc := uop.New(db, "stn-test", db, db, db)
+	acc := uop.New(db, "stn-test", db, db)
 	eng.SetInventoryDeltaSink(acc)
 
 	before, err := db.GetProcessNodeRuntime(nodeAID)

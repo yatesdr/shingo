@@ -55,7 +55,7 @@ func redirectLegAway(t *testing.T, db *store.DB, orderID int64, coreNodeName, de
 func TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL", PayloadCode: "PART-R", UOPCapacity: 100, InitialUOP: 8,
 	})
 
@@ -78,16 +78,9 @@ func TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets(t *testing.T) {
 		t.Errorf("RemainingUOP = %d, want 0 (release zeroes the slot; new-bin-drop flips to capacity)", runtime.RemainingUOPCached)
 	}
 
-	// Bucket should exist with 12 active units.
-	b, err := db.GetActiveLinesideBucket(nodeID, styleID, "PART-R")
-	if err != nil {
-		t.Fatalf("GetActiveLinesideBucket: %v", err)
-	}
-	if b.Qty != 12 {
-		t.Errorf("bucket qty = %d, want 12", b.Qty)
-	}
-	if b.State != store.LinesideStateActive {
-		t.Errorf("bucket state = %q, want %q", b.State, store.LinesideStateActive)
+	// Pile should exist with 12 active units.
+	if qty, ok := activePile(t, db, nodeID, "PART-R"); !ok || qty != 12 {
+		t.Errorf("active pile = %d (present %v), want 12", qty, ok)
 	}
 
 	// Order should be in_transit (release dispatched).
@@ -120,20 +113,21 @@ func TestReleaseOrderWithLineside_EmptyMapZeroesUOP(t *testing.T) {
 	}
 }
 
-// TestReleaseOrderWithLineside_DeactivatesStrandedStyles verifies that
-// when the release click happens, any active buckets on the node that
-// belong to a different style are flipped to inactive.
-func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
+// TestReleaseOrderWithLineside_LeavesOtherPilesActive verifies that a
+// release leaves the node's other piles as they are: they stay active until the
+// cutover strands them.
+// Flipped under change #2: the release used to flip other-style piles
+// inactive (DeactivateOtherStyles, deleted).
+func TestReleaseOrderWithLineside_LeavesOtherPilesActive(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL3", PayloadCode: "PART-R3", UOPCapacity: 80, InitialUOP: 5,
 	})
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 5), "seed runtime")
 
-	// Seed a leftover active bucket from a different style on this node.
-	otherStyleID := styleID + 999
-	if _, err := db.CaptureLinesideBucket(nodeID, "", otherStyleID, "PART-OLD", 4); err != nil {
+	// A pile of another part already at the node.
+	if _, err := db.CaptureLinesideBucket(nodeID, "PART-OLD", 4); err != nil {
 		t.Fatalf("seed leftover bucket: %v", err)
 	}
 
@@ -145,25 +139,11 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 	}
 	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
-	// Leftover bucket should now be inactive.
-	inactive, err := db.ListInactiveLinesideBuckets(nodeID)
-	if err != nil {
-		t.Fatalf("ListInactiveLinesideBuckets: %v", err)
+	if qty, ok := activePile(t, db, nodeID, "PART-OLD"); !ok || qty != 4 {
+		t.Errorf("leftover pile = %d (present %v), want still active 4", qty, ok)
 	}
-	if len(inactive) != 1 {
-		t.Fatalf("inactive buckets = %d, want 1", len(inactive))
-	}
-	if inactive[0].StyleID != otherStyleID || inactive[0].PayloadCode != "PART-OLD" {
-		t.Errorf("unexpected inactive bucket: %+v", inactive[0])
-	}
-
-	// New-style bucket should be active.
-	b, err := db.GetActiveLinesideBucket(nodeID, styleID, "PART-R3")
-	if err != nil {
-		t.Fatalf("GetActiveLinesideBucket: %v", err)
-	}
-	if b.Qty != 2 {
-		t.Errorf("active bucket qty = %d, want 2", b.Qty)
+	if qty, ok := activePile(t, db, nodeID, "PART-R3"); !ok || qty != 2 {
+		t.Errorf("captured pile = %d (present %v), want active 2", qty, ok)
 	}
 }
 
@@ -214,19 +194,18 @@ func TestComputeReleaseRemainingUOP(t *testing.T) {
 // the SEND PARTIAL BACK disposition: no bucket capture happens (so the
 // operator's leftover stays on the bin instead of being kitted lineside),
 // runtime UOP is preserved (delivery completion will reset, not release),
-// and stranded other-style buckets are still deactivated.
+// and the node's other piles are left as they are.
+// The last clause flipped under change #2: other-style piles used to be
+// deactivated here too.
 func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-PARTIAL", PayloadCode: "PART-PB", UOPCapacity: 1200, InitialUOP: 800,
 	})
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 800), "seed runtime")
-	// Stranded bucket from a previous style — should be deactivated even
-	// on the partial-back path because the deactivation reflects "this
-	// node is now running this style," not bucket capture.
-	otherStyleID := styleID + 999
-	if _, err := db.CaptureLinesideBucket(nodeID, "", otherStyleID, "PART-OLD-PB", 7); err != nil {
+	// A pile of another part already at the node; the release leaves it.
+	if _, err := db.CaptureLinesideBucket(nodeID, "PART-OLD-PB", 7); err != nil {
 		t.Fatalf("seed leftover bucket: %v", err)
 	}
 
@@ -249,18 +228,14 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 			runtime.RemainingUOPCached)
 	}
 
-	// No active bucket for the operator's part — capture skipped.
-	if b, err := db.GetActiveLinesideBucket(nodeID, styleID, "PART-PB"); err == nil && b != nil && b.Qty > 0 {
-		t.Errorf("send_partial_back should not capture lineside bucket; got bucket %+v", b)
+	// No active pile for the operator's part — capture skipped.
+	if qty, ok := activePile(t, db, nodeID, "PART-PB"); ok {
+		t.Errorf("send_partial_back should not capture lineside; got a pile of %d", qty)
 	}
 
-	// Stranded other-style bucket should be deactivated.
-	inactive, err := db.ListInactiveLinesideBuckets(nodeID)
-	if err != nil {
-		t.Fatalf("ListInactiveLinesideBuckets: %v", err)
-	}
-	if len(inactive) != 1 || inactive[0].StyleID != otherStyleID {
-		t.Errorf("expected one inactive bucket for the other style; got %+v", inactive)
+	// The other pile is left active.
+	if qty, ok := activePile(t, db, nodeID, "PART-OLD-PB"); !ok || qty != 7 {
+		t.Errorf("leftover pile = %d (present %v), want still active 7", qty, ok)
 	}
 
 	// Order in_transit (release dispatched).

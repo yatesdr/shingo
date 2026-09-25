@@ -33,11 +33,11 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	}
 
 	// Seed three buckets across two stations.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
 		VALUES
-		  ('STATION-B', $1, '', 1, 'PAY-2', 22),
-		  ('STATION-A', $1, '', 1, 'PAY-1', 11),
-		  ('STATION-A', $2, '', 2, 'PAY-3', 33)`,
+		  ('STATION-B', $1, 'PAY-2', 'active', 22),
+		  ('STATION-A', $1, 'PAY-1', 'active', 11),
+		  ('STATION-A', $2, 'PAY-3', 'active', 33)`,
 		nodeA.Name, nodeB.Name); err != nil {
 		t.Fatalf("seed buckets: %v", err)
 	}
@@ -65,8 +65,8 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	if r1.NodeName != "BKT-NODE-A" {
 		t.Errorf("PART-1 node = %q, want BKT-NODE-A", r1.NodeName)
 	}
-	if r1.StyleID != 1 {
-		t.Errorf("PART-1 style_id = %d, want 1", r1.StyleID)
+	if r1.State != "active" {
+		t.Errorf("PART-1 state = %q, want active", r1.State)
 	}
 
 	// Ordering: cell → station → node → part. With nodes that have
@@ -80,11 +80,16 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	}
 }
 
-// TestListLinesideBuckets_MarksStranded pins the derived State: a bucket whose node
-// runs an active style that no longer covers the bucket's payload is "stranded" (the
-// "Core showed active on a stranded one" bug — State used to be hardcoded "active");
-// a bucket the active style does consume stays "active".
-func TestListLinesideBuckets_MarksStranded(t *testing.T) {
+// TestListLinesideBuckets_StateIsTheStoredColumn pins the listing's State:
+// the pile's stored state, as the Edge's level set it.
+//
+// This was TestListLinesideBuckets_MarksStranded, which pinned State derived
+// from the plant-claims mirror (a pile whose node's active style no longer
+// covered its payload read "stranded"). FLIPPED BY BRIEF v7 EXPECTED CHANGE
+// #3: stranded is the state set at cutover, so the claims seeded below no
+// longer enter into it: an active row of a part the style does not claim lists
+// as active, and the stranded row lists as stranded beside it.
+func TestListLinesideBuckets_StateIsTheStoredColumn(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
@@ -108,10 +113,11 @@ func TestListLinesideBuckets_MarksStranded(t *testing.T) {
 		t.Fatalf("seed plant claims: %v", err)
 	}
 
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
 		VALUES
-		  ('ST', $1, '', 1, 'PAY-ACTIVE', 100),
-		  ('ST', $1, '', 2, 'PAY-OLD', 250)`,
+		  ('ST', $1, 'PAY-ACTIVE', 'active', 100),
+		  ('ST', $1, 'PAY-OLD', 'active', 250),
+		  ('ST', $1, 'PAY-OLD', 'stranded', 40)`,
 		node.Name); err != nil {
 		t.Fatalf("seed buckets: %v", err)
 	}
@@ -120,15 +126,18 @@ func TestListLinesideBuckets_MarksStranded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListLinesideBuckets: %v", err)
 	}
-	state := map[string]string{}
+	got := map[string]int{}
 	for _, r := range rows {
-		state[r.PayloadCode] = r.State
+		got[r.PayloadCode+"|"+r.State] = r.Qty
 	}
-	if state["PAY-ACTIVE"] != "active" {
-		t.Errorf("PAY-ACTIVE state = %q, want active (node's active style consumes it)", state["PAY-ACTIVE"])
+	want := map[string]int{"PAY-ACTIVE|active": 100, "PAY-OLD|active": 250, "PAY-OLD|stranded": 40}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %v, want %v", got, want)
 	}
-	if state["PAY-OLD"] != "stranded" {
-		t.Errorf("PAY-OLD state = %q, want stranded (prior style, active style no longer covers it)", state["PAY-OLD"])
+	for k, q := range want {
+		if got[k] != q {
+			t.Errorf("%s = %d, want %d", k, got[k], q)
+		}
 	}
 }
 

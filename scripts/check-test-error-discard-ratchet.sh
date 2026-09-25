@@ -90,9 +90,12 @@ cd "$(dirname "$0")/.."
 # orders, so there is nothing to complete), and its four discard sites went with
 # it. Deletion again, not conversion.
 #
+# 1473 → 1471: the lineside level change deleted the bucket-delta tests with
+# the code they pinned, and wrote its new pins without discards.
+#
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1473
+FROZEN=1471
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

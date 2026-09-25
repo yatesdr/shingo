@@ -13,24 +13,19 @@ func TestListForNodes_MatchesPerNodeCalls(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 
-	// Node 100: two active buckets (two parts) plus a stranded one from StyleB.
-	// Node 101: one active bucket only. A third id is asked for that has no
-	// buckets at all, to pin the "absent from the map" case.
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("capture 100/P-500: %v", err)
+	// Node 100: two active piles (two parts) plus a stranded one.
+	// Node 101: one active pile only. A third id is asked for that has no
+	// piles at all, to pin the "absent from the map" case.
+	for _, c := range []struct {
+		node int64
+		part string
+		qty  int
+	}{{100, "P-500", 60}, {100, "P-501", 25}, {101, "P-700", 40}} {
+		if _, err := Capture(db, c.node, c.part, c.qty); err != nil {
+			t.Fatalf("capture %d/%s: %v", c.node, c.part, err)
+		}
 	}
-	if _, err := Capture(db, 100, "", 10, "P-501", 25); err != nil {
-		t.Fatalf("capture 100/P-501: %v", err)
-	}
-	if _, err := Capture(db, 100, "", 20, "P-900", 12); err != nil {
-		t.Fatalf("capture 100/P-900: %v", err)
-	}
-	if err := DeactivateOtherStyles(db, 100, 10); err != nil {
-		t.Fatalf("DeactivateOtherStyles: %v", err)
-	}
-	if _, err := Capture(db, 101, "", 10, "P-700", 40); err != nil {
-		t.Fatalf("capture 101/P-700: %v", err)
-	}
+	seedStranded(t, db, 100, "P-900", 12)
 
 	nodeIDs := []int64{100, 101, 999}
 
@@ -38,33 +33,55 @@ func TestListForNodes_MatchesPerNodeCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveForNodes: %v", err)
 	}
-	inactive, err := ListInactiveForNodes(db, nodeIDs)
+	stranded, err := ListStrandedForNodes(db, nodeIDs)
 	if err != nil {
-		t.Fatalf("ListInactiveForNodes: %v", err)
+		t.Fatalf("ListStrandedForNodes: %v", err)
 	}
 
 	for _, id := range nodeIDs {
-		wantActive, err := ListActiveForNode(db, id)
+		all, err := ListForNode(db, id)
 		if err != nil {
-			t.Fatalf("ListActiveForNode(%d): %v", id, err)
+			t.Fatalf("ListForNode(%d): %v", id, err)
 		}
-		if !equalBuckets(active[id], wantActive) {
-			t.Errorf("active buckets for node %d:\n batched = %+v\n per-node = %+v", id, active[id], wantActive)
+		var wantActive, wantStranded []Bucket
+		for _, b := range all {
+			if b.State == StateActive {
+				wantActive = append(wantActive, b)
+			} else {
+				wantStranded = append(wantStranded, b)
+			}
 		}
-		wantInactive, err := ListInactiveForNode(db, id)
-		if err != nil {
-			t.Fatalf("ListInactiveForNode(%d): %v", id, err)
+		if !sameSet(active[id], wantActive) {
+			t.Errorf("active piles for node %d:\n batched = %+v\n per-node = %+v", id, active[id], wantActive)
 		}
-		if !equalBuckets(inactive[id], wantInactive) {
-			t.Errorf("inactive buckets for node %d:\n batched = %+v\n per-node = %+v", id, inactive[id], wantInactive)
+		if !sameSet(stranded[id], wantStranded) {
+			t.Errorf("stranded piles for node %d:\n batched = %+v\n per-node = %+v", id, stranded[id], wantStranded)
 		}
 	}
 
-	// A node with no buckets must simply be absent, which reads the same as the
+	// A node with no piles must simply be absent, which reads the same as the
 	// per-node form's empty slice at the call site.
 	if got, ok := active[999]; ok {
-		t.Errorf("node 999 has no buckets but appears in the active map: %+v", got)
+		t.Errorf("node 999 has no piles but appears in the active map: %+v", got)
 	}
+}
+
+// sameSet compares two pile lists regardless of order (the batched form orders
+// by updated_at, which ties within one second).
+func sameSet(a, b []Bucket) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byID := make(map[int64]Bucket, len(a))
+	for _, x := range a {
+		byID[x.ID] = x
+	}
+	for _, y := range b {
+		if x, ok := byID[y.ID]; !ok || !reflect.DeepEqual(x, y) {
+			return false
+		}
+	}
+	return true
 }
 
 // A repeated node id must not duplicate that node's buckets. A station can list
@@ -74,7 +91,7 @@ func TestListForNodes_DeduplicatesNodeIDs(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
+	if _, err := Capture(db, 100, "P-500", 60); err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 

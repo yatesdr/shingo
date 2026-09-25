@@ -1309,30 +1309,6 @@ const (
 	ReasonOperatorCorrection BinUOPDeltaReason = "operator_correction"
 )
 
-// LinesideBucketDeltaReason names the cause of a LinesideBucketDelta.
-// Note: NO changeover_deactivate — buckets are location-only (Option C),
-// activation is computed at query time from the active claim, no state
-// to flip. NEVER emitted by manual_swap nodes (no PLC).
-type LinesideBucketDeltaReason string
-
-const (
-	// ReasonCaptureFill — operator pulled parts to lineside on release.
-	// Positive delta. Emitted by ReleaseOrderWithLineside's capture
-	// path, one per (style, payload_code) captured.
-	ReasonCaptureFill LinesideBucketDeltaReason = "capture_fill"
-	// ReasonConsumeDrain — PLC consume tick drained the bucket before
-	// reaching the bin. Always negative. Emitted by drainLinesideFirst's
-	// bucket-side return.
-	ReasonConsumeDrain LinesideBucketDeltaReason = "consume_drain"
-	// ReasonOperatorCorrectionBucket — engineer/team-leader override
-	// from the edge "Lineside Buckets" admin page (clear or edit qty).
-	// Sign matches the delta (negative for clears / qty reductions,
-	// positive for upward adjustments). Mirrors the bin-side
-	// ReasonOperatorCorrection in intent: a deliberate human correction,
-	// not automated state.
-	ReasonOperatorCorrectionBucket LinesideBucketDeltaReason = "operator_correction"
-)
-
 // BinUOPDelta carries a count change against a specific physical bin.
 // Sent on subject SubjectBinUOPDelta. Core's HandleData routes on
 // subject and applies the delta after dedup against
@@ -1464,64 +1440,52 @@ type DowntimeEvent struct {
 	EdgeEventID int64     `json:"edge_event_id"` // monotonic counter for dedup (Edge-local)
 }
 
-// LinesideBucketDelta carries a count change against a specific
-// lineside bucket. Sent on subject SubjectLinesideBucketDelta. Core
-// routes on subject, guards order against
-// inventory_delta_dedup(station, "bucket",
-// "<CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>", epoch 0) — the same key
-// the Edge allocates its seq under — and applies via UPSERT to the
-// lineside_buckets row keyed on (core_node_name, pair_key, style_id,
-// payload_code). When qty hits zero Core deletes the row — Option C:
-// active/inactive is computed at query time, so empty buckets carry no useful
-// information. The dedup row outlives that delete, which is what keeps the
-// scope's applied net anchored.
+// LinesideBucketState is a lineside pile's state, on the Edge and in Core's
+// mirror alike.
+type LinesideBucketState string
+
+const (
+	// LinesideBucketActive — parts the operator pulled from a bin to the bench.
+	// Ticks drain it before the bin, and Core counts it as on-hand, from the
+	// pull until the node's cutover.
+	LinesideBucketActive LinesideBucketState = "active"
+	// LinesideBucketStranded — what was left of an active pile at a cutover
+	// (every active-style flip on the process). A permanent record of a count
+	// anomaly: operators run out what they pull, so a leftover is most likely
+	// the size of a declaration error, not parts on the bench. It never
+	// drains, never counts on either side, and never revives.
+	LinesideBucketStranded LinesideBucketState = "stranded"
+)
+
+// LinesideBucketLevel is one lineside pile row as the Edge holds it after a
+// change: the level, not the change. Sent on subject SubjectLinesideBucketLevel.
 //
-// PayloadCode (UOP-threshold replenishment) lets Core associate a
-// bucket with the payload its parts came from so SystemUOPForPayload
-// can sum bins + buckets for the same payload. Edge populates this at
-// capture time from the order context. Empty string means "unknown"
-// (orphan bucket whose claim was deleted before the capture event
-// could resolve a payload). Orphans are excluded from
-// SystemUOPForPayload — conservative undercount, never overcount.
-// Round-3 Obs 8 (2026-05-21): NodeID dropped, CoreNodeName added.
-// The Edge-local int64 process_nodes.id and Core-side nodes.id share
-// a namespace but mean different things at each end. Pre-fix
-// LinesideBucketDelta sent Edge's process_nodes.id; Core's applier
-// then UPSERT'd against that integer under the assumption it
-// referenced Core's nodes table, producing the cross-plant bucket
-// drift that surfaced as the Springfield 6883 stuck-bucket and the
-// Hopkinsville-vs-plant-a Core-only orphan. Switching to CoreNodeName
-// is translation-free at the wire: Edge populates from
-// process_nodes.core_node_name; Core's applier resolves to nodes.id
-// via GetNodeByName before insert, and drops the delta with a loud
-// log if the name doesn't resolve. The precedent is the
-// NodeStructureChanged sibling at protocol/payloads.go:484 (still
-// Core's authoritative ID — safe direction Core→Edge) and the
-// earlier Item 14 (D6) drop of NodeID on another envelope.
+// The Edge is the pile's only writer, so Core's copy is a mirror fed by
+// levels: Core sets its (CoreNodeName, PayloadCode, State) row to Qty, and a
+// Qty of 0 means the row is gone. A lost or reordered message cannot drift the
+// mirror, because the next level for the row replaces it, and the Edge re-sends
+// every row's level at boot. Core never writes a pile.
 //
-// The payload copy of the station is deleted — see CounterSnapshot. This one
-// carried it TWICE in one envelope, and Core's dedup scope key is Edge-local
-// (`claimDeltaSequence`), so which copy answers "whose sequence counter space
-// is this" is not a cosmetic question.
-type LinesideBucketDelta struct {
-	CoreNodeName string `json:"core_node_name"`
-	PairKey      string `json:"pair_key"`
-	StyleID      int64  `json:"style_id"`
-	// PayloadCode identifies the bucket, and it is required — the pile is a pile
-	// OF this payload. It used to sit beside a second identifier (part_number,
-	// itself holding a payload code) which was the actual key, while this field
-	// was latched from whichever BIN was at the node. On a node that allows
-	// several payloads those are different answers, and the latched one filed
-	// one payload's stock under another. One field now, and it is the key.
-	PayloadCode string                    `json:"payload_code"`
-	Delta       int                       `json:"delta"`
-	Reason      LinesideBucketDeltaReason `json:"reason"`
-	SequenceID  int64                     `json:"sequence_id"`
-	WindowStart time.Time                 `json:"window_start"`
-	WindowEnd   time.Time                 `json:"window_end"`
-	// Net is the scope's running total, as on BinUOPDelta; the scope is
-	// (station, bucket key). Nil from an older Edge.
-	Net *int64 `json:"net,omitempty"`
+// Qty is the sum over every Edge process node that carries CoreNodeName, since
+// two local nodes with one core name are one place at Core.
+//
+// Drained is the sum of the consume drains the row took in the flush window
+// (0 for a stranded row, a capture or a clear), for Core's drain ledger: a
+// drain is consumption, a pull and a strand are not.
+//
+// SequenceID orders the row's levels, allocated by the Edge under
+// (InvDeltaScopeBucketLevel, "<CoreNodeName>|<PayloadCode>|<State>"). Core
+// applies a level only above the row's high-water seq, except when the seq went
+// backward with a later WindowEnd, which is a restored Edge: then it applies
+// and re-anchors. WindowEnd is when the Edge's flush window closed.
+type LinesideBucketLevel struct {
+	CoreNodeName string              `json:"core_node_name"`
+	PayloadCode  string              `json:"payload_code"`
+	State        LinesideBucketState `json:"state"`
+	Qty          int                 `json:"qty"`
+	Drained      int                 `json:"drained"`
+	SequenceID   int64               `json:"sequence_id"`
+	WindowEnd    time.Time           `json:"window_end"`
 }
 
 // UOPAdjustment carries an absolute UOP value Core has set for a carrier: a

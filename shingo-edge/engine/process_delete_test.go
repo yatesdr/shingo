@@ -1,12 +1,10 @@
 package engine
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	"shingo/protocol"
-	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -140,54 +138,47 @@ func TestDeleteProcess_ClosesEveryOpenEpisode(t *testing.T) {
 	}
 }
 
-// A REFUSED DELETE CLOSES NOTHING. ErrProcessHasStock is a precondition the
-// operator clears and retries; a close is an outbox message that cannot be
-// recalled. So the refusal has to land before the first close, not after it —
-// otherwise clearing the stock and retrying would be a retry of a delete whose
-// episodes already ended, for a process that never stopped running.
-func TestDeleteProcess_RefusedWhileStockedClosesNothing(t *testing.T) {
+// A PILE NO LONGER BLOCKS THE DELETE. The process's episodes close, the
+// process goes, and its lineside pile goes with it.
+// Flipped under the brief's U3 (EnsureNoLinesideStock is deleted; deleting a
+// process deletes its piles): this was TestDeleteProcess_
+// RefusedWhileStockedClosesNothing, which pinned ErrProcessHasStock refusing the
+// delete before any close.
+func TestDeleteProcess_DeletesItsPilesAndClosesItsEpisodes(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
 	pid := newProcess(t, db, "DEL-STOCKED")
-	styleID, err := db.CreateStyle("DEL-STOCKED-RUN", "", pid)
-	if err != nil {
-		t.Fatalf("create style: %v", err)
-	}
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "SYN_NODE01", Code: "N1", Name: "N1", Sequence: 1, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, style_id, payload_code, qty)
-		VALUES (?, ?, 'SYN-PANEL-A', 240)`, nodeID, styleID); err != nil {
-		t.Fatalf("insert bucket: %v", err)
+	if _, err := db.CaptureLinesideBucket(nodeID, "SYN-PANEL-A", 240); err != nil {
+		t.Fatalf("capture pile: %v", err)
 	}
 	openEpisodesFor(t, db, "DEL-STOCKED", 2)
 
-	err = eng.DeleteProcess(pid)
-	if !errors.Is(err, service.ErrProcessHasStock) {
-		t.Fatalf("DeleteProcess = %v, want ErrProcessHasStock", err)
+	if err := eng.DeleteProcess(pid); err != nil {
+		t.Fatalf("DeleteProcess = %v, want nil: a pile is deleted with its process", err)
 	}
-	if _, err := db.GetProcess(pid); err != nil {
-		t.Errorf("the process was deleted despite the refusal: %v", err)
+	if _, err := db.GetProcess(pid); err == nil {
+		t.Error("the process survived its delete")
 	}
 	open, err := db.ListOpenDemandOriginsForProcess("DEL-STOCKED")
 	if err != nil {
 		t.Fatalf("list open episodes: %v", err)
 	}
-	if len(open) != 2 {
-		t.Errorf("%d episode(s) still open after a refused delete, want 2", len(open))
+	if len(open) != 0 {
+		t.Errorf("%d episode(s) still open after the delete, want 0", len(open))
 	}
-	for _, ep := range open {
-		if ep.Revision != 1 {
-			t.Errorf("episode %s is at revision %d — a refused delete must not have touched it",
-				ep.EpisodeKey, ep.Revision)
-		}
+	rows, err := db.ListLinesideBuckets(nodeID)
+	if err != nil {
+		t.Fatalf("list piles: %v", err)
 	}
-	if states := decodeOriginStates(t, db); len(states) != 0 {
-		t.Errorf("a refused delete put %d message(s) on the outbox, want 0", len(states))
+	if len(rows) != 0 {
+		t.Errorf("piles after the delete = %+v, want none", rows)
 	}
 }
 

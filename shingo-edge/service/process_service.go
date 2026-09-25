@@ -45,19 +45,12 @@ func (s *ProcessService) Update(id int64, name, description, productionState, co
 	return s.db.UpdateProcess(id, name, description, productionState, counterPLC, counterTag, counterEnabled)
 }
 
-// ErrProcessHasStock re-exports the store's refusal so www can classify it
-// without importing the store package directly — the `www-no-direct-store`
-// depguard rule. The sentinel is the store's; this is a name, not a copy, so
-// errors.Is matches either spelling.
-var ErrProcessHasStock = processes.ErrProcessHasStock
-
 // ErrDuplicateGroupName re-exports the store's UNIQUE-constraint refusal on
 // process_groups.name, for the same www classification pattern.
 var ErrDuplicateGroupName = process_groups.ErrDuplicateGroupName
 
 // Delete removes a process row by id, retiring the rows that are meaningless
-// without it. Returns ErrProcessHasStock when lineside stock is still booked at
-// the process's nodes — a precondition the operator can clear, not a fault.
+// without it, its lineside piles included.
 //
 // ITS ONE CALLER IS Engine.DeleteProcess, and a second one would be a bug. This
 // is the delete's LAST step: the engine closes the process's open demand
@@ -97,7 +90,7 @@ func (s *ProcessService) SetFlowComposerEnabled(processID int64, enabled bool) e
 //
 // The nodes a process may route material through that are not its own
 // positions (domain/routing_set.go). The store's refusals are re-exported
-// here, like ErrProcessHasStock, so www can classify them without importing
+// here, like ErrDuplicateGroupName, so www can classify them without importing
 // the store package.
 
 var (

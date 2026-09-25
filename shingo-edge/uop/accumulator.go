@@ -1,12 +1,20 @@
-// accumulator.go — bin-as-truth signed-delta accumulator.
+// accumulator.go — bin-as-truth signed-delta accumulator, and the lineside
+// pile levels.
 //
 // Internal implementation of UOP delta accumulation. The public surface
 // is in mutator.go; this file owns the per-scope sync.Map state, the
 // periodic flush goroutine, and the outbox enqueue path.
 //
+// Bins accumulate signed deltas. Lineside piles do not: a pile write marks its
+// (core node, payload, state) dirty, and the flush reads that row's level from
+// the database and sends it (flushBuckets). Reading at flush, rather than
+// carrying a qty from the write, is what keeps the level right when a capture
+// on the HTTP goroutine races a drain on the poll goroutine, and when two local
+// nodes share one core name.
+//
 // Concurrency: sync.Map for the per-scope accumulator with a
 // per-entry sync.Mutex protecting the composite metadata. Hot path
-// is recordBin / recordBucket; flush goroutine ranges across the map
+// is recordBin / markBucket; flush goroutine ranges across the map
 // using send-then-sweep: snapshot the entry's state, do the DB work
 // without the lock, commit a subtract on success. The mutex is
 // contended only briefly during snapshot and commit.
@@ -26,6 +34,7 @@
 package uop
 
 import (
+	"fmt"
 	"log"
 	"runtime/debug"
 	"strconv"
@@ -39,13 +48,13 @@ import (
 )
 
 const (
-	// invDeltaScopeBin / invDeltaScopeBucket — scope_kind values used
-	// when allocating sequence-ids and when Core dedups. Renames must
+	// invDeltaScopeBin / invDeltaScopeBucketLevel — scope_kind values used
+	// when allocating sequence-ids and when Core guards order. Renames must
 	// come with a coordinated migration on both sides, which is why the
 	// strings are single-sourced in protocol/ rather than spelled here
 	// and again in shingo-core/uop.
-	invDeltaScopeBin    = protocol.InvDeltaScopeBin
-	invDeltaScopeBucket = protocol.InvDeltaScopeBucket
+	invDeltaScopeBin         = protocol.InvDeltaScopeBin
+	invDeltaScopeBucketLevel = protocol.InvDeltaScopeBucketLevel
 
 	// defaultInventoryDeltaInterval is the periodic flush cadence used
 	// when the caller leaves interval unset. 5s matches the original
@@ -96,48 +105,41 @@ type binDeltaEntry struct {
 	nettedEpoch int64
 }
 
-// bucketDeltaEntry is the per-bucket accumulator. Composite key is
-// (nodeID, pairKey, styleID, payloadCode); these fields are immutable
-// for the lifetime of an entry (a different composite key produces a
-// different sync.Map entry).
-//
-// ONE PAYLOAD CODE, WHICH IS ALSO THE KEY. There used to be two: the bucket's
-// own identifier (called partNumber, holding a payload code) and a second
-// payloadCode latched from whichever BIN was at the node, which
-// SystemUOPForPayload summed the bucket's stock against. On a node that
-// allows several payloads those are different answers — the operator can pull
-// payload B off a bin of payload A — and the latched one attributed B's stock
-// to A. The bucket's own code is the one it is a pile OF, so the latch is gone
-// and the key answers both questions.
-type bucketDeltaEntry struct {
+// bucketLevelEntry is one pile level the Edge owes Core: a dirty flag and the
+// drains of the flush window, keyed by (core node, payload, state). It holds
+// no qty of its own; the flush reads the level (see flushBuckets).
+type bucketLevelEntry struct {
 	mu sync.Mutex
-	// nodeID is Edge's local process_nodes.id — kept so flush-time
-	// logging and the louder drain diagnostic still work, but NOT on
-	// the wire post-Round-3-Obs-8.
-	nodeID int64
-	// coreNodeName is the cross-system identifier Core resolves to
-	// nodes.id at apply time. Populated by the engine when recording
-	// the delta; Edge no longer leaks its local int64 namespace.
+	// nodeID is a local process node carrying the key, kept so a flush can
+	// resolve a core_node_name the mark did not carry.
+	nodeID       int64
 	coreNodeName string
-	pairKey      string
-	styleID      int64
 	payloadCode  string
-	delta        int
-	reason       protocol.LinesideBucketDeltaReason
-	windowStart  time.Time
-	windowEnd    time.Time
-	lastTouched  time.Time
+	state        protocol.LinesideBucketState
+
+	// marks counts every write to the key; sentMarks is marks as of the
+	// last level enqueued. The key is dirty while they differ, so a write
+	// that lands while a flush is sending stays dirty for the next one.
+	marks     uint64
+	sentMarks uint64
+	// drained is the consume drains recorded since the last level enqueued,
+	// for Core's drain ledger (LinesideBucketLevel.Drained).
+	drained     int
+	lastTouched time.Time
+
+	// sent / sentQty are the last level enqueued for the key: what Core
+	// holds once it has applied everything ahead of it in the outbox. The
+	// lineside report states the bucket as that (Pending.Bucket).
+	sent    bool
+	sentQty int
 
 	// evicted: see binDeltaEntry.evicted — same lost-update guard
 	// (R68-1) for the bucket eviction path.
 	evicted bool
-
-	// netted: see binDeltaEntry.netted. Buckets have one epoch (0).
-	netted int
 }
 
-// accumulator accumulates BinUOPDelta and LinesideBucketDelta count
-// changes and flushes them to the outbox on a periodic cadence.
+// accumulator accumulates BinUOPDelta count changes and dirty lineside pile
+// levels, and flushes them to the outbox on a periodic cadence.
 // Package-private — exposed through Mutator (see mutator.go).
 type accumulator struct {
 	db        *store.DB
@@ -146,16 +148,15 @@ type accumulator struct {
 
 	// Two sync.Maps. Keys are stable strings:
 	//   bin entry:    strconv(BinID), which is also the bin seq scope key
-	//   bucket entry: bucketEntryKey(...), keyed by the LOCAL node id. The
-	//                 seq scope a bucket entry flushes under is
-	//                 bucketScopeKey(core_node_name, ...), so two local nodes
-	//                 with one core name are two entries and one scope.
+	//   bucket entry: bucketLevelKey(core_node_name, payload, state), which
+	//                 is also the level's seq scope key; "#<node id>" stands
+	//                 in for a core name the mark did not carry.
 	bins    sync.Map // map[string]*binDeltaEntry
-	buckets sync.Map // map[string]*bucketDeltaEntry
+	buckets sync.Map // map[string]*bucketLevelEntry
 
 	// flushMu serializes flush passes against each other (stop's final
 	// flush must not race with the periodic loop). recordBin /
-	// recordBucket do not take this lock.
+	// markBucket do not take this lock.
 	flushMu sync.Mutex
 
 	stopOnce sync.Once
@@ -301,36 +302,29 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 		binID, delta, reason, payloadCode, epoch)
 }
 
-// recordBucket accumulates a signed delta against a specific lineside
-// bucket. NEVER called from manual_swap nodes — the plan locks
-// "manual swap nodes never emit bucket deltas" because they have no
-// PLC and their count-change events are operator actions on the bin,
-// not the bucket.
+// markBucket records that a write changed the pile row(s) under (core node,
+// payload, state), so the next flush sends that key's level. drained is the
+// consume drain the write took (0 for anything but a drain), summed into the
+// window for Core's drain ledger. Every writer of node_lineside_bucket calls
+// this after its write, including a delete (the level it sends is then 0).
 //
-// coreNodeName is the cross-system identifier that goes on the wire
-// (Round-3 Obs 8). Edge's local nodeID stays only for the in-memory
-// dedup key and flush-time logging — Core no longer sees Edge's
-// process_nodes.id namespace.
-func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
-	if delta == 0 {
+// coreNodeName may be empty when the caller could not resolve it; the flush
+// resolves it from nodeID. The mark never reads the database.
+func (r *accumulator) markBucket(nodeID int64, coreNodeName, payloadCode string, state protocol.LinesideBucketState, drained int) {
+	if payloadCode == "" || (coreNodeName == "" && nodeID <= 0) {
 		return
 	}
-	if nodeID <= 0 || payloadCode == "" {
-		return
-	}
-	key := bucketEntryKey(nodeID, pairKey, styleID, payloadCode)
+	key := bucketLevelKey(coreNodeName, nodeID, payloadCode, state)
 	now := r.clock()
 
 	for {
-		v, _ := r.buckets.LoadOrStore(key, &bucketDeltaEntry{
+		v, _ := r.buckets.LoadOrStore(key, &bucketLevelEntry{
 			nodeID:       nodeID,
 			coreNodeName: coreNodeName,
-			pairKey:      pairKey,
-			styleID:      styleID,
 			payloadCode:  payloadCode,
-			windowStart:  now,
+			state:        state,
 		})
-		e := v.(*bucketDeltaEntry)
+		e := v.(*bucketLevelEntry)
 
 		e.mu.Lock()
 		if e.evicted {
@@ -339,19 +333,15 @@ func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, s
 			r.buckets.CompareAndDelete(key, e)
 			continue
 		}
-		if e.delta == 0 {
-			e.windowStart = now
-		}
-		e.delta += delta
-		e.reason = reason
-		e.windowEnd = now
+		e.marks++
+		e.drained += drained
 		e.lastTouched = now
 		e.mu.Unlock()
 		break
 	}
 
-	r.debugLog.Log("inventory_delta: bucket node=%d payload=%q delta=%+d reason=%s",
-		nodeID, payloadCode, delta, reason)
+	r.debugLog.Log("inventory_delta: pile dirty node=%d core=%q payload=%q state=%s drained=%d",
+		nodeID, coreNodeName, payloadCode, state, drained)
 }
 
 // flush performs one synchronous flush pass. Boundary triggers call
@@ -531,12 +521,17 @@ func (r *accumulator) flushBins() {
 	})
 }
 
-// flushBuckets is the bucket-side mirror of flushBins. Same
-// send-then-sweep shape; see flushBins above for the design rationale.
+// flushBuckets sends one LinesideBucketLevel per dirty pile key. Same
+// send-then-sweep shape as flushBins (nothing is cleared until the enqueue
+// succeeds), with one difference: the qty is not carried by the entry but READ
+// here, as the sum over every process node with the key's core name
+// (lineside.Level). One read per dirty key per flush; a clean key costs
+// nothing.
 func (r *accumulator) flushBuckets() {
+	windowEnd := r.clock()
 	r.buckets.Range(func(key, value any) bool {
 		k := key.(string)
-		e := value.(*bucketDeltaEntry)
+		e := value.(*bucketLevelEntry)
 
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -547,129 +542,97 @@ func (r *accumulator) flushBuckets() {
 
 		// SNAPSHOT.
 		e.mu.Lock()
-		if e.delta == 0 {
+		if e.marks == e.sentMarks {
 			e.mu.Unlock()
 			return true
 		}
-		sNodeID := e.nodeID
-		sCoreNodeName := e.coreNodeName
-		sPairKey := e.pairKey
-		sStyleID := e.styleID
-		sPayloadCode := e.payloadCode
-		sDelta := e.delta
-		sReason := e.reason
-		sWindowStart := e.windowStart
-		sWindowEnd := e.windowEnd
-		netAdd := sDelta - e.netted
+		sMarks, sDrained := e.marks, e.drained
+		sNodeID, sCoreNodeName := e.nodeID, e.coreNodeName
+		sPayloadCode, sState := e.payloadCode, e.state
 		e.mu.Unlock()
 
-		// Defensive: if the entry pre-dates the Round-3 Obs 8 change
-		// and was buffered without coreNodeName, resolve from the DB.
-		// In normal operation recordBucket populates this at write
-		// time so we never hit the lookup.
 		if sCoreNodeName == "" {
 			if node, lookupErr := r.db.GetProcessNode(sNodeID); lookupErr == nil && node != nil {
 				sCoreNodeName = node.CoreNodeName
 			}
 		}
 		if sCoreNodeName == "" {
-			// Drop the delta loudly rather than emit a wire envelope
-			// with an empty CoreNodeName — Core's applier validates
-			// the field at insert time and would drop the delta
-			// anyway. Logging here surfaces the problem at the
-			// source. Note: this is a permanent drop (we don't
-			// retry on the next flush) because the underlying state
-			// won't change. Bin delta loss is bounded by the entry's
-			// own delta value.
-			log.Printf("ERROR: uop accumulator: drop bucket delta key=%s — no core_node_name resolvable for nodeID=%d (process_node row missing?)",
+			// Core keys a pile by core_node_name and would refuse a level
+			// without one. The row it names cannot become resolvable later
+			// (the process node is gone or unnamed), so the mark is dropped
+			// loudly instead of retried every flush.
+			log.Printf("ERROR: uop accumulator: drop pile level key=%s — no core_node_name resolvable for nodeID=%d (process_node row missing?)",
 				k, sNodeID)
-			// Commit a full reset to clear the unsendable delta.
 			e.mu.Lock()
-			e.delta -= sDelta
-			if e.delta == 0 {
-				e.reason = ""
-				e.windowStart = time.Time{}
-				e.windowEnd = time.Time{}
-			} else {
-				e.windowStart = sWindowEnd
-			}
+			e.sentMarks = sMarks
+			e.drained -= sDrained
 			e.mu.Unlock()
 			return true
 		}
 
-		// SEND. The seq scope is keyed by core_node_name, as Core keys its
-		// dedup row, NOT by the entry's local node id: two local nodes with
-		// one core name are one stream (SYNTH-round2 S4). Bucket scope stays
-		// on epoch=0 — see the matching note in shingo-core/uop/applier.go's
-		// ApplyLinesideBucketDelta.
-		scope := bucketScopeKey(sCoreNodeName, sPairKey, sStyleID, sPayloadCode)
-		seq, net, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBucket, scope, 0, int64(netAdd))
+		// SEND. The level is read after the snapshot, so it includes at
+		// least every write the snapshot's marks counted.
+		level, err := r.db.LinesidePileLevel(sCoreNodeName, sPayloadCode, string(sState))
 		if err != nil {
-			log.Printf("uop accumulator: allocate bucket seq key=%s: %v", scope, err)
+			log.Printf("uop accumulator: read pile level key=%s: %v", k, err)
 			return true
 		}
-		markNetted := func() {
-			e.mu.Lock()
-			e.netted = sDelta
-			e.mu.Unlock()
-		}
-		env, encErr := protocol.NewDataEnvelope(
-			protocol.SubjectLinesideBucketDelta,
-			protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
-			protocol.Address{Role: protocol.RoleCore},
-			&protocol.LinesideBucketDelta{
-				CoreNodeName: sCoreNodeName,
-				PairKey:      sPairKey,
-				StyleID:      sStyleID,
-				PayloadCode:  sPayloadCode,
-				Delta:        sDelta,
-				Reason:       sReason,
-				SequenceID:   seq,
-				WindowStart:  sWindowStart,
-				WindowEnd:    sWindowEnd,
-				Net:          &net,
-			},
-		)
-		if encErr != nil {
-			markNetted()
-			log.Printf("uop accumulator: build bucket envelope key=%s: %v", k, encErr)
+		scope := bucketLevelKey(sCoreNodeName, sNodeID, sPayloadCode, sState)
+		seq, err := r.db.AllocateInventoryLevelSeq(invDeltaScopeBucketLevel, scope)
+		if err != nil {
+			log.Printf("uop accumulator: allocate pile level seq key=%s: %v", scope, err)
 			return true
 		}
-		data, encErr := env.Encode()
-		if encErr != nil {
-			markNetted()
-			log.Printf("uop accumulator: encode bucket envelope key=%s: %v", k, encErr)
-			return true
-		}
-		if _, err := r.db.EnqueueOutbox(data, protocol.SubjectLinesideBucketDelta); err != nil {
-			markNetted()
-			log.Printf("ERROR: uop accumulator: enqueue bucket envelope key=%s: %v (entry intact, next flush retries)", k, err)
+		if err := r.enqueueBucketLevel(&protocol.LinesideBucketLevel{
+			CoreNodeName: sCoreNodeName,
+			PayloadCode:  sPayloadCode,
+			State:        sState,
+			Qty:          level,
+			Drained:      sDrained,
+			SequenceID:   seq,
+			WindowEnd:    windowEnd,
+		}); err != nil {
+			log.Printf("ERROR: uop accumulator: enqueue pile level key=%s: %v (entry intact, next flush retries)", scope, err)
 			return true
 		}
 
-		// COMMIT.
+		// COMMIT. A mark that arrived during the send leaves marks ahead of
+		// sentMarks, so the key goes out again next flush.
 		e.mu.Lock()
-		e.delta -= sDelta
-		e.netted = 0
+		e.sentMarks = sMarks
+		e.drained -= sDrained
+		e.sent, e.sentQty = true, level
 		e.lastTouched = time.Now().UTC()
-		if e.delta == 0 {
-			e.reason = ""
-			e.windowStart = time.Time{}
-			e.windowEnd = time.Time{}
-		} else {
-			e.windowStart = sWindowEnd
-		}
 		e.mu.Unlock()
 
-		r.debugLog.Log("uop accumulator: flushed bucket node=%d part=%q delta=%+d seq=%d reason=%s",
-			sNodeID, sPayloadCode, sDelta, seq, sReason)
+		r.debugLog.Log("uop accumulator: flushed pile level core=%q payload=%q state=%s qty=%d drained=%d seq=%d",
+			sCoreNodeName, sPayloadCode, sState, level, sDrained, seq)
 		return true
 	})
 }
 
+// enqueueBucketLevel encodes one level and puts it on the outbox.
+func (r *accumulator) enqueueBucketLevel(lvl *protocol.LinesideBucketLevel) error {
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectLinesideBucketLevel,
+		protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
+		protocol.Address{Role: protocol.RoleCore},
+		lvl,
+	)
+	if err != nil {
+		return fmt.Errorf("build envelope: %w", err)
+	}
+	data, err := env.Encode()
+	if err != nil {
+		return fmt.Errorf("encode envelope: %w", err)
+	}
+	_, err = r.db.EnqueueOutbox(data, protocol.SubjectLinesideBucketLevel)
+	return err
+}
+
 // evictIdle removes entries from the bins/buckets sync.Maps whose
-// delta is zero and whose last touch was more than maxIdle ago. An entry
-// whose netted is non-zero is kept: its records summed to zero after a
+// delta is zero (for a pile key: clean) and whose last touch was more than
+// maxIdle ago. A bin entry whose netted is non-zero is kept: its records summed to zero after a
 // failed enqueue, and the part the scope's net already holds must still be
 // subtracted from the next window, which a fresh entry would not know.
 // Bounded slow-leak prevention: without eviction every bin or
@@ -704,9 +667,9 @@ func (r *accumulator) evictIdle(maxIdle time.Duration) {
 		return true
 	})
 	r.buckets.Range(func(key, value any) bool {
-		e := value.(*bucketDeltaEntry)
+		e := value.(*bucketLevelEntry)
 		e.mu.Lock()
-		idle := e.delta == 0 && e.netted == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
+		idle := e.marks == e.sentMarks && e.drained == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
 		if idle {
 			e.evicted = true
 		}
@@ -730,32 +693,25 @@ func (r *accumulator) clock() time.Time {
 	return time.Now().UTC()
 }
 
-// bucketScopeKey builds the seq scope_key for a LinesideBucketDelta:
-// "<core_node_name>|<pair>|<style>|<payload>", byte-identical to Core's
-// same-named helper in shingo-core/uop/applier.go, because Core guards order on
-// that key. The Edge used to key it by its local process_nodes.id, so two local
-// nodes carrying one core_node_name numbered two streams into one Core
-// high-water row and Core muted the lower (SYNTH-round2 V8, S4). The store's
-// rekeyBucketDeltaSeq moved the existing rows when the key changed.
+// bucketLevelKey is a pile level's key: "<core_node_name>|<payload>|<state>",
+// which is also its seq scope_key (InvDeltaScopeBucketLevel), byte-identical
+// to the key Core guards the level's order on. A mark with no core name keys
+// under "#<local node id>" in its place; the flush resolves the name and sends
+// under the real key.
 //
-// The pipe-delimited format is stable; renames break in-flight Edge replays,
-// so any change must come with a coordinated migration on both sides.
-func bucketScopeKey(coreNodeName, pairKey string, styleID int64, payloadCode string) string {
+// The pipe-delimited format is stable; a rename must come with a coordinated
+// migration on both sides.
+func bucketLevelKey(coreNodeName string, nodeID int64, payloadCode string, state protocol.LinesideBucketState) string {
 	var sb strings.Builder
-	sb.WriteString(coreNodeName)
-	sb.WriteByte('|')
-	sb.WriteString(pairKey)
-	sb.WriteByte('|')
-	sb.WriteString(strconv.FormatInt(styleID, 10))
+	if coreNodeName != "" {
+		sb.WriteString(coreNodeName)
+	} else {
+		sb.WriteByte('#')
+		sb.WriteString(strconv.FormatInt(nodeID, 10))
+	}
 	sb.WriteByte('|')
 	sb.WriteString(payloadCode)
+	sb.WriteByte('|')
+	sb.WriteString(string(state))
 	return sb.String()
-}
-
-// bucketEntryKey is the accumulator's in-memory key for a bucket entry, by the
-// local node id. It is not a scope key and never leaves the process; the entry
-// keeps the node id so a flush can resolve a core_node_name the record did not
-// carry.
-func bucketEntryKey(nodeID int64, pairKey string, styleID int64, payloadCode string) string {
-	return bucketScopeKey(strconv.FormatInt(nodeID, 10), pairKey, styleID, payloadCode)
 }

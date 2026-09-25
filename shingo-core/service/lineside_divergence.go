@@ -15,8 +15,8 @@ import (
 //
 // THE RULING (seat-count round 1 §5, 2026-09-23; round 2 S8, 2026-09-24).
 // There is one count per carrier. The Edge counts consumption and sends it as
-// sequenced deltas; Core's replica (bins.uop_remaining, lineside_buckets) is
-// what every replenishment decision reads. The Edge's 60s lineside report
+// sequenced deltas and pile levels; Core's replica (bins.uop_remaining,
+// lineside_buckets) is what every replenishment decision reads. The Edge's 60s lineside report
 // decides nothing: Core compares it against the replica on ingest and records
 // each disagreement as a report_divergence episode in bin_uop_exception,
 // opened when first seen and recovered when a later report no longer shows it.
@@ -56,11 +56,10 @@ import (
 //     seat the report leaves out. The station's seats are the nodes its report
 //     names, and the nodes it has reported before (edge_lineside_reports) that
 //     an active style claims as consume nodes in the plant-claims mirror.
-//   - bucket: the Edge's active bucket for the seat's part differs from Core's
-//     lineside_buckets sum for that station, seat and part. The report carries
-//     no bucket seq, so there is no in-flight test. The Edge states the bucket
-//     as of its flushed deltas (the qty minus what its accumulator has not
-//     flushed) and enqueues the report behind every one of them; the
+//   - bucket: the Edge's active pile for the seat's part differs from Core's
+//     active mirror row for that seat and part. The report carries no pile
+//     seq, so there is no in-flight test. The Edge states the pile as of its
+//     flushed levels and enqueues the report behind every one of them; the
 //     per-station partition delivers them in that order, so Core has applied
 //     them by the time it compares. Only a transport reorder breaks that.
 //

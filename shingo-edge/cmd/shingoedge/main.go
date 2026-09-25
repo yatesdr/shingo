@@ -552,28 +552,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.
 
-	// Item 3: auto-fire bucket backfill when Core is fresh. Detects
-	// "Core has zero buckets for this station and Edge has rows" —
-	// idempotent re-runs return false once Core is populated. Best
-	// effort; failures (Core unreachable at boot, partial responses)
-	// just log and defer to the next startup or to the admin endpoint.
-	goSafe("engine-autoBackfill", func() {
-		needed, err := eng.BucketBackfillNeeded()
-		if err != nil {
-			log.Printf("auto-backfill: probe: %v", err)
-			return
-		}
-		if !needed {
-			return
-		}
-		emitted, err := eng.BackfillBucketsForStation(true)
-		if err != nil {
-			log.Printf("auto-backfill: %v", err)
-			return
-		}
-		log.Printf("auto-backfill: seeded %d bucket deltas to Core", emitted)
-	})
-
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
 	// Says what this build does NOT do, on purpose. Threshold replenishment moved
@@ -810,20 +788,24 @@ func main() {
 	reporter.Start()
 	defer reporter.Stop()
 
-	// ── UOP mutator (Phase 1: accumulator wrapper) ─────────────────────
-	// Accumulates per-bin / per-bucket UOP changes from the PLC tick
-	// path and the operator release path; flushes through the same
-	// outbox as the production reporter on a 5s cadence plus the
-	// release-click / loader-confirm / A/B-flip flush triggers. Core
-	// applies the deltas authoritatively to bins.uop_remaining /
-	// lineside_buckets via InventoryDeltaService. Phase 3 will grow
-	// this Mutator with intent verbs (Consumed, Produced, CaptureToLineside,
-	// etc.) — wiring here does not change.
-	uopMutator := uop.New(db, stationID, db, db, db)
+	// ── UOP mutator ────────────────────────────────────────────────────
+	// Accumulates per-bin UOP deltas and dirty lineside pile levels from
+	// the PLC tick path, the operator release path and the pile writes;
+	// flushes through the same outbox as the production reporter on a 5s
+	// cadence plus the release-click / loader-confirm / A/B-flip flush
+	// triggers. Core applies bin deltas to bins.uop_remaining and sets its
+	// lineside_buckets mirror to each pile level.
+	uopMutator := uop.New(db, stationID, db, db)
 	uopMutator.SetDebugLog(uop.DebugLogFunc(dbg.Func("inventory_delta")))
 	eng.SetInventoryDeltaSink(uopMutator)
 	uopMutator.Start()
 	defer uopMutator.Stop()
+	// Boot: re-send every pile row's level, unconditionally. Core applies
+	// each under its seq guard, so a Core that already has them changes
+	// nothing and one that lost them (or never had them) is re-seeded.
+	if _, err := uopMutator.ResendLevels(); err != nil {
+		log.Printf("uop: boot resend of lineside pile levels: %v", err)
+	}
 
 	// ── Kafka connect & subscribe ───────────────────────────────────────
 	//

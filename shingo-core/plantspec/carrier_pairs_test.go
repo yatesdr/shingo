@@ -45,7 +45,6 @@ func abPlant(t *testing.T, pairedClaims int, carriers int) *Plant {
 	}
 	p.Claims = claims
 	p.Demands = []Demand{{Payload: "PART-A", Node: "LOADER-1"}}
-	p.LinesideBuckets = []LinesideBucket{{Node: "LINE1-IN", Payload: "PART-A", Qty: 50}}
 
 	// Exactly `carriers` bins of STANDARD, the payload's bin type — one slot
 	// each, distinct names, the count is the whole point.

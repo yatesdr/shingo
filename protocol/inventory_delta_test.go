@@ -70,54 +70,52 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestLinesideBucketDelta_RoundTrip pins the wire shape of the
-// LinesideBucketDelta envelope. Crucial: there is NO State field
-// (Option C — buckets are location-only, active/inactive computed at
-// query time). A future regression that adds it back will fail this
-// test via the unmarshal assertion.
-func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
+// TestLinesideBucketLevel_RoundTrip pins the wire shape of the lineside
+// bucket level: the row's state and level, the window's drains, and no delta,
+// reason, style or pair.
+func TestLinesideBucketLevel_RoundTrip(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 5, 1, 14, 30, 0, 0, time.UTC)
-	t1 := t0.Add(5 * time.Second)
 	for _, tc := range []struct {
 		name string
-		d    LinesideBucketDelta
+		l    LinesideBucketLevel
 	}{
 		{
-			name: "capture_fill_positive",
-			d: LinesideBucketDelta{
-				CoreNodeName: "LOADER-A1", PairKey: "L1|U1",
-				StyleID: 100, PayloadCode: "PAY-A",
-				Delta: 47, Reason: ReasonCaptureFill,
-				SequenceID: 17, WindowStart: t0, WindowEnd: t0,
+			name: "active_after_drains",
+			l: LinesideBucketLevel{
+				CoreNodeName: "LOADER-A1", PayloadCode: "PAY-A", State: LinesideBucketActive,
+				Qty: 44, Drained: 3, SequenceID: 17, WindowEnd: t0,
 			},
 		},
 		{
-			name: "consume_drain_negative",
-			d: LinesideBucketDelta{
-				CoreNodeName: "LOADER-B2", PairKey: "L2|U2",
-				StyleID: 200, PayloadCode: "PAY-B",
-				Delta: -3, Reason: ReasonConsumeDrain,
-				SequenceID: 42, WindowStart: t0, WindowEnd: t1,
+			name: "stranded_at_cutover",
+			l: LinesideBucketLevel{
+				CoreNodeName: "LOADER-B2", PayloadCode: "PAY-B", State: LinesideBucketStranded,
+				Qty: 20, SequenceID: 3, WindowEnd: t0,
+			},
+		},
+		{
+			name: "row_gone",
+			l: LinesideBucketLevel{
+				CoreNodeName: "LOADER-B2", PayloadCode: "PAY-B", State: LinesideBucketActive,
+				Qty: 0, SequenceID: 42, WindowEnd: t0,
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b, err := json.Marshal(tc.d)
+			b, err := json.Marshal(tc.l)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
-			// Defensive: prove no "state" field leaks onto the wire.
-			// Option C is the load-bearing architectural decision here;
-			// a refactor that adds back a state column must fail this
-			// test before it ships.
-			if strings.Contains(string(b), `"state"`) {
-				t.Errorf("LinesideBucketDelta carries a state field on the wire — Option C requires location-only buckets: %s", string(b))
+			for _, gone := range []string{`"delta"`, `"reason"`, `"style_id"`, `"pair_key"`, `"net"`} {
+				if strings.Contains(string(b), gone) {
+					t.Errorf("level carries %s on the wire: %s", gone, string(b))
+				}
 			}
-			var got LinesideBucketDelta
+			var got LinesideBucketLevel
 			testutil.MustNoErr(t, json.Unmarshal(b, &got), "unmarshal")
-			if got != tc.d {
-				t.Errorf("round-trip differs:\ngot:  %+v\nwant: %+v", got, tc.d)
+			if got != tc.l {
+				t.Errorf("round-trip differs:\ngot:  %+v\nwant: %+v", got, tc.l)
 			}
 		})
 	}
@@ -131,7 +129,7 @@ func TestInventoryDelta_SubjectsStable(t *testing.T) {
 	if SubjectBinUOPDelta != "inventory.bin_uop_delta" {
 		t.Errorf("SubjectBinUOPDelta = %q; the wire string is part of Core's HandleData router, do not rename without a migration plan", SubjectBinUOPDelta)
 	}
-	if SubjectLinesideBucketDelta != "inventory.lineside_bucket_delta" {
-		t.Errorf("SubjectLinesideBucketDelta = %q; same caveat as SubjectBinUOPDelta", SubjectLinesideBucketDelta)
+	if SubjectLinesideBucketLevel != "inventory.lineside_bucket_level" {
+		t.Errorf("SubjectLinesideBucketLevel = %q; same caveat as SubjectBinUOPDelta", SubjectLinesideBucketLevel)
 	}
 }

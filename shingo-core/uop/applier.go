@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,25 +20,26 @@ import (
 	"shingocore/store/messaging"
 )
 
-// Core-side delta apply service. Receives BinUOPDelta and
-// LinesideBucketDelta envelopes from Edge, guards order against
-// inventory_delta_dedup, validates against the bin row, and applies
-// to bins.uop_remaining / lineside_buckets what the message's running
-// net says has not landed yet (effectiveDelta).
+// Core-side count apply service. Receives BinUOPDelta and
+// LinesideBucketLevel envelopes from Edge and guards order against
+// inventory_delta_dedup. A bin delta is validated against the bin row and
+// applies to bins.uop_remaining what the message's running net says has not
+// landed yet (effectiveDelta). A bucket level sets Core's mirror row of one
+// lineside pile to the Edge's level.
 //
 // Dedup scope keys (stable; renames break in-flight Edge replays):
 //
-//   - bin scope:    strconv(BinID)
-//   - bucket scope: "<CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>"
+//   - bin scope:          strconv(BinID)
+//   - bucket_level scope: "<CoreNodeName>|<PayloadCode>|<State>"
 //
 // Either-order arrival tolerance: capture-on-release fires both a bin
-// delta and one bucket delta per part, atomically on Edge's outbox tx.
+// delta and one bucket level per part, atomically on Edge's outbox tx.
 // Core's handler ordering is independent — the dedup table guards each
-// scope independently, so a bucket delta arriving before its sibling
-// bin delta still applies cleanly.
+// scope independently, so a level arriving before its sibling bin delta
+// still applies cleanly.
 
 const (
-	// invDeltaScopeBin / invDeltaScopeBucket — scope_kind values for the
+	// invDeltaScopeBin / invDeltaScopeBucketLevel — scope_kind values for the
 	// inventory_delta_dedup table.
 	//
 	// NOT a Core-internal partition, which is what this comment used to claim.
@@ -47,8 +47,8 @@ const (
 	// the value it receives, so the two sides must agree; a rename on one side
 	// alone stops deduplication silently. Single-sourced in protocol/ for that
 	// reason.
-	invDeltaScopeBin    = protocol.InvDeltaScopeBin
-	invDeltaScopeBucket = protocol.InvDeltaScopeBucket
+	invDeltaScopeBin         = protocol.InvDeltaScopeBin
+	invDeltaScopeBucketLevel = protocol.InvDeltaScopeBucketLevel
 )
 
 // ErrInventoryDeltaSkipped indicates the message was not applied and that this
@@ -87,9 +87,9 @@ type ManifestClearer interface {
 	RebaseAfterEdgeRollbackTx(tx *sql.Tx, binID int64, payloadCode, station string) (int64, error)
 }
 
-// InventoryDeltaService applies BinUOPDelta and LinesideBucketDelta
-// envelopes against the authoritative bins / lineside_buckets tables
-// with at-most-once semantics (dedup via inventory_delta_dedup).
+// InventoryDeltaService applies BinUOPDelta envelopes against the
+// authoritative bins table and LinesideBucketLevel envelopes against
+// Core's lineside_buckets mirror, ordered by inventory_delta_dedup.
 //
 // binManifest is held so a capture_reduction delta that drives
 // uop_remaining to zero can fire ClearForReuse atomically inside the
@@ -847,71 +847,46 @@ func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error
 	return out, rows.Err()
 }
 
-// ApplyLinesideBucketDelta applies a LinesideBucketDelta against the
-// lineside_buckets row keyed on (core_node_name, pair_key, style_id,
-// payload_code). Creates the row on first sight via UPSERT; deletes when
-// qty reaches zero (Option C — empty buckets carry no useful information).
+// ApplyLinesideBucketLevel sets Core's mirror of one lineside pile row to the
+// level the Edge sent: the row (core_node_name, payload_code, state) after the
+// change, with a Qty of 0 meaning the row is gone.
 //
-// ONE PAYLOAD COLUMN, WHICH IS ALSO THE KEY (v105). The table used to carry
-// two: the key, called part_number and holding a payload code, and a separate
-// payload_code latched from whichever BIN the reporting Edge had at the node.
-// SystemUOPForPayload sums against the latch, so on a node that allows several
-// payloads — where an operator can pull payload B off a bin of payload A —
-// B's stock was counted toward A's on-hand and suppressed A's replenishment.
-// The bucket's own code is the answer to both questions.
+// THE EDGE IS THE PILE'S ONLY WRITER. Core stores the level under a seq guard
+// and never writes a pile of its own, so there is nothing to refuse and
+// nothing to orphan: a lost or reordered level is replaced by the row's next
+// one, and the Edge re-sends every row's level at boot. On-hand counts the
+// active rows only (SystemUOPForPayload); a stranded row is a count-anomaly
+// record from a cutover.
 //
-// TWO USES OF station IN ONE FUNCTION, AND THEY ARE NOT THE SAME KIND OF
-// THING — this is the distinction v65 turns on:
+// TWO USES OF station, AND THEY ARE NOT THE SAME KIND OF THING (v65):
 //
-//   - claimBucketSequence(tx, station, ...) — station STAYS. SequenceID is an
-//     Edge-local counter, so "which edge's counter space" is exactly what
-//     makes the at-most-once guard correct. Per-edge identity FIXES this one:
-//     two edges sharing a station id today share a sequence space they are
-//     each numbering independently.
-//   - The lineside_buckets row itself — station is NOT a predicate. The row is
-//     a physical fact about a Core node, and the reporting edge is not part of
+//   - The dedup row — station STAYS. SequenceID is an Edge-local counter, so
+//     "which edge's counter space" is what makes the order guard correct.
+//   - The lineside_buckets row — station is written, never matched on. The row
+//     is a physical fact about a Core node; the reporting edge is not part of
 //     where the parts are.
 //
-// A change that treated both the same way would get one of them wrong.
+// ORDER. A level at or below the row's high-water seq is skipped (a duplicate
+// or a late message; the level that passed it is newer). The exception is a
+// seq that went backward with a LATER window end: a restored Edge numbering
+// new levels with old seqs. That level is applied, and the dedup row is
+// re-anchored to its seq and window so the restored Edge's next levels apply.
 //
-// Round-3 Obs 8: validates d.CoreNodeName resolves to a known node via
-// GetNodeByName before insert. If the name doesn't resolve, the delta
-// is dropped with a loud log and metric — bad data never enters the
-// table, closing the cross-namespace orphan failure mode that
-// Springfield 6883 exhibited.
+// THE DRAIN LEDGER. Drained is the sum of the consume drains the row took in
+// the Edge's flush window. When it is positive on an active row, one
+// lineside_drain_ledger row records it (before = Qty + Drained, after = Qty):
+// the consumption rate's drain arm. A pull and a strand are not consumption,
+// and the Edge sends them with Drained 0.
 //
-// Returns ErrInventoryDeltaSkipped (wrapped, saying why) for a message at or
-// below its scope's high-water mark. Returns an error if the
-// applied delta would drive qty below zero (the CHECK constraint
-// catches this; we surface it as a typed error so the caller can log
-// without confusing a genuine SQL fault for a delta bug).
-func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *protocol.LinesideBucketDelta) error {
-	if d == nil {
-		return fmt.Errorf("nil LinesideBucketDelta")
-	}
-	if station == "" {
-		return fmt.Errorf("LinesideBucketDelta missing station")
-	}
-	if d.CoreNodeName == "" {
-		return fmt.Errorf("LinesideBucketDelta missing core_node_name (station=%s style=%d part=%q)",
-			station, d.StyleID, d.PayloadCode)
-	}
-	if d.PayloadCode == "" {
-		return fmt.Errorf("LinesideBucketDelta missing payload_code (station=%s core_node_name=%s style=%d)",
-			station, d.CoreNodeName, d.StyleID)
-	}
-
-	// Insert-time validation: refuse to land a delta on a name Core
-	// doesn't recognize. Pre-Obs-8 the (then int64) NodeID was applied
-	// blindly, producing rows attributed to whatever ID Edge happened
-	// to send — which on Core's side could resolve to a different node
-	// entirely, or to no node at all (the Hopkinsville orphan shape).
-	// GetNodeByName returns sql.ErrNoRows when the row is absent;
-	// drop the delta loudly and let the operator investigate.
-	node, err := s.db.GetNodeByName(d.CoreNodeName)
+// Round-3 Obs 8: the core node name must resolve to a Core node, or the level
+// is refused with a loud error, so bad data never enters the table.
+//
+// Returns ErrInventoryDeltaSkipped (wrapped) for a level at or below its row's
+// high-water seq that is not a restored Edge.
+func (s *InventoryDeltaService) ApplyLinesideBucketLevel(station string, l *protocol.LinesideBucketLevel) error {
+	nodeID, err := s.validateBucketLevel(station, l)
 	if err != nil {
-		return fmt.Errorf("LinesideBucketDelta core_node_name=%q does not resolve to a Core node (station=%s part=%q): %w",
-			d.CoreNodeName, station, d.PayloadCode, err)
+		return err
 	}
 
 	tx, err := s.db.Begin()
@@ -920,122 +895,91 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(station string, d *prot
 	}
 	defer tx.Rollback()
 
-	scopeKey := bucketScopeKey(d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode)
-	// Buckets stay on epoch=0 — bucket lifecycle is Edge-observed (qty
-	// zeroing) rather than Core-controlled. The dedup row OUTLIVES the qty=0
-	// GC below, and under the running net it must: an absent row applies the
-	// station's whole net, so a GC that deleted it would re-apply every delta
-	// the bucket ever had on the next capture. DeleteLinesideBucket resets the
-	// row rather than deleting it, for the same reason.
-	applied, cur, err := claimBucketSequence(tx, station, scopeKey, d.SequenceID, d.Net, d.WindowEnd)
+	scopeKey := bucketLevelScopeKey(l.CoreNodeName, l.PayloadCode, l.State)
+	applied, cur, err := claimBucketSequence(tx, station, scopeKey, l.SequenceID, l.WindowEnd)
 	if err != nil {
 		return err
 	}
 	if !applied {
-		// At or below the scope's high-water mark. A newer window here is the
-		// rollback shape (SYNTH-round2 S6): recorded as an edge_rollback
-		// exception with no bin (v127 made bin_id nullable), and nothing else —
-		// a bucket has no generation to start, so unlike a bin nothing is
-		// bumped. The message is not applied.
-		if cur.wentBackward(d.SequenceID, d.WindowEnd) {
-			return recordBucketRollback(tx, station, d, cur)
+		if !cur.wentBackward(l.SequenceID, l.WindowEnd) {
+			return fmt.Errorf("%w: seq %d at or below last_seq %d: a duplicate or a late level",
+				ErrInventoryDeltaSkipped, l.SequenceID, cur.lastSeq)
 		}
-		return fmt.Errorf("%w: seq %d at or below last_seq %d: a duplicate or a late message",
-			ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
-	}
-	// The apply rule, as for bins (effectiveDelta). Every statement below
-	// works on the effective delta: what the scope's net says has not landed.
-	delta := effectiveDelta(cur, d.Delta, d.Net)
-
-	// A reduction (negative delta) only makes sense against an existing bucket.
-	// On the first-sight INSERT path GREATEST(delta,0) clamps it to a 0 row,
-	// silently dropping the reduction (R22-1). Surface that case as an error —
-	// symmetric with the existing-row underflow the CHECK below rejects — so the
-	// count can't quietly drift up. The error rolls the claim back, so the seq
-	// and the net stay unconsumed and the reduction rides the next message.
-	if delta < 0 {
-		var exists bool
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM lineside_buckets
-			WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND payload_code=$4)`,
-			d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode).Scan(&exists); err != nil {
-			return fmt.Errorf("check bucket exists for negative LinesideBucketDelta (core_node_name=%q payload=%q): %w",
-				d.CoreNodeName, d.PayloadCode, err)
+		if err := reanchorBucketSequence(tx, station, scopeKey, l.SequenceID, l.WindowEnd); err != nil {
+			return err
 		}
-		if !exists {
-			return fmt.Errorf("LinesideBucketDelta reduction of %d for non-existent bucket (core_node_name=%q payload=%q)",
-				delta, d.CoreNodeName, d.PayloadCode)
-		}
+		log.Printf("LinesideBucketLevel EDGE RESTORED station=%s node=%s payload=%s state=%s seq=%d last_seq=%d "+
+			"window_end=%s applied_window_end=%s — the station's counter went backward; level applied, seq re-anchored",
+			station, l.CoreNodeName, l.PayloadCode, l.State, l.SequenceID, cur.lastSeq,
+			l.WindowEnd.Format(time.RFC3339Nano), cur.appliedWindowEnd.Time.Format(time.RFC3339Nano))
 	}
 
-	// UPSERT-and-clamp: ON CONFLICT updates qty; CHECK (qty >= 0) at
-	// the schema level rejects under-zero results. Treat that
-	// constraint violation as a typed error so the handler can log
-	// without spamming the SQL fault line.
-	//
-	// STATION IS WRITTEN, NEVER MATCHED ON (v65). The conflict target is the
-	// physical bucket — node, pair, style, part — and the station rides along
-	// as "who last reported this". Matching on it would mean a bucket reported
-	// by a second edge inserts a SECOND row for one physical place, which the
-	// station-blind SUM in SystemUOPForPayload would then count twice.
-	// RETURNING (v120) answers the drain ledger's before/after from the qty
-	// arithmetic this statement already performs: qty_before = qty - delta is
-	// the bucket's prior qty on the DO UPDATE arm and 0 on the first-sight
-	// INSERT arm (a negative delta cannot take that arm - the exists-guard
-	// above rejected it - and GREATEST(delta,0) - delta = 0 for delta >= 0).
-	// The old RowsAffected==0 check folds into the scan: an UPSERT with
-	// RETURNING yields exactly one row or an error.
-	var qtyBefore, qtyAfter int
-	err = tx.QueryRow(`
-		INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
-		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0))
-		ON CONFLICT (core_node_name, pair_key, style_id, payload_code)
-		DO UPDATE SET
-			qty = lineside_buckets.qty + $6,
-			station = $1,
-			updated_at = NOW()
-		RETURNING qty - $6 AS qty_before, qty AS qty_after`,
-		station, d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode, delta).Scan(&qtyBefore, &qtyAfter)
-	if err != nil {
-		// Most likely cause: CHECK (qty >= 0) violation when the
-		// DO UPDATE branch tried to drive qty negative. Wrap.
-		return fmt.Errorf("apply LinesideBucketDelta core_node_name=%q payload=%q delta=%d: %w",
-			d.CoreNodeName, d.PayloadCode, delta, err)
+	if err := setBucketLevel(tx, station, l); err != nil {
+		return err
 	}
 
-	// THE DRAIN LEDGER ROW (v120): one row per APPLIED consume_drain - the
-	// consumption rate's drain arm. Only consume_drain: capture_fill is parts
-	// arriving at a pile and operator_correction is bookkeeping; neither is
-	// consumption and neither may set a cell's velocity. before/after are the
-	// qty facts the UPSERT just returned, recorded here because the bucket row
-	// this drained may be deleted by the GC two statements below - the ledger
-	// row is what survives (lineside_buckets keeps no history; Option C).
-	if d.Reason == protocol.ReasonConsumeDrain && qtyAfter < qtyBefore {
-		if _, err := tx.Exec(`INSERT INTO lineside_drain_ledger
-			(station, node_id, pair_key, style_id, payload_code, before_qty, after_qty, reason)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			station, node.ID, d.PairKey, d.StyleID, d.PayloadCode, qtyBefore, qtyAfter,
-			string(d.Reason)); err != nil {
+	if l.Drained > 0 && l.State == protocol.LinesideBucketActive {
+		if _, err := tx.Exec(`INSERT INTO lineside_drain_ledger (node_id, payload_code, before_qty, after_qty)
+			VALUES ($1, $2, $3, $4)`,
+			nodeID, l.PayloadCode, l.Qty+l.Drained, l.Qty); err != nil {
 			return fmt.Errorf("audit lineside drain core_node_name=%q payload=%q: %w",
-				d.CoreNodeName, d.PayloadCode, err)
+				l.CoreNodeName, l.PayloadCode, err)
 		}
-	}
-
-	// Garbage-collect rows that have hit zero. Option C — empty
-	// buckets carry no useful information.
-	// Station-free, matching the conflict target above. A station-scoped GC is
-	// how an emptied bucket survives its own emptying once two edges exist:
-	// the edge that zeroed it is not the edge whose station is on the row, so
-	// the DELETE matches nothing and a qty=0 row lingers as an orphan.
-	if _, err := tx.Exec(`DELETE FROM lineside_buckets
-		WHERE core_node_name=$1 AND pair_key=$2 AND style_id=$3 AND payload_code=$4
-		AND qty=0`,
-		d.CoreNodeName, d.PairKey, d.StyleID, d.PayloadCode); err != nil {
-		return fmt.Errorf("gc empty bucket core_node_name=%q payload=%q: %w", d.CoreNodeName, d.PayloadCode, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit LinesideBucketDelta core_node_name=%q payload=%q: %w",
-			d.CoreNodeName, d.PayloadCode, err)
+		return fmt.Errorf("commit LinesideBucketLevel core_node_name=%q payload=%q state=%s: %w",
+			l.CoreNodeName, l.PayloadCode, l.State, err)
+	}
+	return nil
+}
+
+// validateBucketLevel checks a level's fields and resolves its core node name
+// to the node id the drain ledger records.
+func (s *InventoryDeltaService) validateBucketLevel(station string, l *protocol.LinesideBucketLevel) (int64, error) {
+	switch {
+	case l == nil:
+		return 0, fmt.Errorf("nil LinesideBucketLevel")
+	case station == "":
+		return 0, fmt.Errorf("LinesideBucketLevel missing station")
+	case l.CoreNodeName == "":
+		return 0, fmt.Errorf("LinesideBucketLevel missing core_node_name (station=%s payload=%q)", station, l.PayloadCode)
+	case l.PayloadCode == "":
+		return 0, fmt.Errorf("LinesideBucketLevel missing payload_code (station=%s core_node_name=%s)", station, l.CoreNodeName)
+	case l.State != protocol.LinesideBucketActive && l.State != protocol.LinesideBucketStranded:
+		return 0, fmt.Errorf("LinesideBucketLevel state %q is neither %q nor %q (station=%s core_node_name=%s payload=%q)",
+			l.State, protocol.LinesideBucketActive, protocol.LinesideBucketStranded, station, l.CoreNodeName, l.PayloadCode)
+	case l.Qty < 0 || l.Drained < 0:
+		return 0, fmt.Errorf("LinesideBucketLevel qty %d / drained %d below zero (station=%s core_node_name=%s payload=%q)",
+			l.Qty, l.Drained, station, l.CoreNodeName, l.PayloadCode)
+	}
+	node, err := s.db.GetNodeByName(l.CoreNodeName)
+	if err != nil {
+		return 0, fmt.Errorf("LinesideBucketLevel core_node_name=%q does not resolve to a Core node (station=%s payload=%q): %w",
+			l.CoreNodeName, station, l.PayloadCode, err)
+	}
+	return node.ID, nil
+}
+
+// setBucketLevel writes one level in one statement: a positive Qty upserts the
+// row to it, 0 deletes the row. The conflict target is the physical pile, never
+// the station, which rides along as the last reporter.
+func setBucketLevel(tx *sql.Tx, station string, l *protocol.LinesideBucketLevel) error {
+	var err error
+	if l.Qty > 0 {
+		_, err = tx.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (core_node_name, payload_code, state)
+			DO UPDATE SET qty = EXCLUDED.qty, station = EXCLUDED.station, updated_at = NOW()`,
+			station, l.CoreNodeName, l.PayloadCode, string(l.State), l.Qty)
+	} else {
+		_, err = tx.Exec(`DELETE FROM lineside_buckets
+			WHERE core_node_name=$1 AND payload_code=$2 AND state=$3`,
+			l.CoreNodeName, l.PayloadCode, string(l.State))
+	}
+	if err != nil {
+		return fmt.Errorf("set lineside bucket level core_node_name=%q payload=%q state=%s qty=%d: %w",
+			l.CoreNodeName, l.PayloadCode, l.State, l.Qty, err)
 	}
 	return nil
 }
@@ -1158,45 +1102,6 @@ func (s *InventoryDeltaService) atOrBelowHighWater(tx *sql.Tx, station string, d
 	}
 }
 
-// recordBucketRollback writes the edge_rollback exception for a bucket scope
-// that went backward, on the caller's transaction, and commits it. Exception
-// only: no bin, no generation. Returns ErrInventoryDeltaSkipped (wrapped).
-func recordBucketRollback(tx *sql.Tx, station string, d *protocol.LinesideBucketDelta, cur scopeCursor) error {
-	var appliedNet *int64
-	if cur.appliedNet.Valid {
-		appliedNet = &cur.appliedNet.Int64
-	}
-	detail, err := json.Marshal(struct {
-		CoreNodeName     string    `json:"core_node_name"`
-		PairKey          string    `json:"pair_key"`
-		StyleID          int64     `json:"style_id"`
-		SequenceID       int64     `json:"sequence_id"`
-		LastSeq          int64     `json:"last_seq"`
-		WindowEnd        time.Time `json:"window_end"`
-		AppliedWindowEnd time.Time `json:"applied_window_end"`
-		WireDelta        int       `json:"wire_delta"`
-		Net              *int64    `json:"net,omitempty"`
-		AppliedNet       *int64    `json:"applied_net,omitempty"`
-	}{d.CoreNodeName, d.PairKey, d.StyleID, d.SequenceID, cur.lastSeq, d.WindowEnd, cur.appliedWindowEnd.Time,
-		d.Delta, d.Net, appliedNet})
-	if err != nil {
-		return fmt.Errorf("marshal bucket edge-rollback detail node=%s part=%s: %w", d.CoreNodeName, d.PayloadCode, err)
-	}
-	if err := audit.AppendBucketUOPException(tx, audit.ExcEdgeRollback, d.PayloadCode, station,
-		clock.Now().UTC(), audit.OpEdgeRollback, detail); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit bucket edge rollback node=%s part=%s: %w", d.CoreNodeName, d.PayloadCode, err)
-	}
-	log.Printf("LinesideBucketDelta EDGE ROLLBACK station=%s node=%s part=%s seq=%d last_seq=%d window_end=%s applied_window_end=%s — "+
-		"the station's counter went backward; recorded, not applied",
-		station, d.CoreNodeName, d.PayloadCode, d.SequenceID, cur.lastSeq,
-		d.WindowEnd.Format(time.RFC3339Nano), cur.appliedWindowEnd.Time.Format(time.RFC3339Nano))
-	return fmt.Errorf("%w: seq %d at or below last_seq %d with a newer window: the station's counter went backward (recorded)",
-		ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
-}
-
 // recordEdgeRollback writes the edge_rollback exception and starts the bin's
 // next generation, on the caller's transaction, then commits it. Returns
 // ErrInventoryDeltaSkipped (wrapped): the message itself is not applied.
@@ -1293,18 +1198,19 @@ func claimDeltaSequence(tx *sql.Tx, station, scopeKind, scopeKey string, epoch, 
 	return n > 0, nil
 }
 
-// claimBucketSequence is claimDeltaSequence for a bucket scope, returning the
-// cursor as it stood before the claim, in the same statement: the prior row is
-// read in a CTE beside the UPSERT, and both see the statement's snapshot, so
-// the read costs no statement.
+// claimBucketSequence advances a lineside bucket level's dedup row (epoch 0)
+// past seq, returning the cursor as it stood before the claim, in the same
+// statement: the prior row is read in a CTE beside the UPSERT, and both see the
+// statement's snapshot, so the read costs no statement. Seq only: a level
+// carries no running net, because it replaces the row rather than adding to it.
 //
-// NO ROW LOCK PRECEDES IT, unlike the bin path, because a bucket may have no
+// NO ROW LOCK PRECEDES IT, unlike the bin path, because a pile may have no
 // row to lock. Core applies count messages one at a time (one reader
-// goroutine per topic, handler inline), so two applies for one bucket scope do
-// not run concurrently. If they ever did, the case this can see — the UPSERT
+// goroutine per topic, handler inline), so two applies for one scope do not
+// run concurrently. If they ever did, the case this can see — the UPSERT
 // updated a row the snapshot did not have — is refused rather than applied
-// with a wrong cursor, and the next message of the scope carries it.
-func claimBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, net *int64, windowEnd time.Time) (bool, scopeCursor, error) {
+// with a wrong cursor, and the row's next level carries the pile.
+func claimBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, windowEnd time.Time) (bool, scopeCursor, error) {
 	var (
 		cur      scopeCursor
 		inserted sql.NullBool
@@ -1312,125 +1218,61 @@ func claimBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, net *i
 	)
 	err := tx.QueryRow(`
 		WITH prior AS (
-			SELECT last_seq, applied_net, applied_window_end FROM inventory_delta_dedup
+			SELECT last_seq, applied_window_end FROM inventory_delta_dedup
 			WHERE station=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=0
 		), up AS (
-			INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, applied_net, applied_window_end, updated_at)
-			VALUES ($1, $2, $3, 0, $4, $5, $6, NOW())
+			INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, applied_window_end, updated_at)
+			VALUES ($1, $2, $3, 0, $4, $5, NOW())
 			ON CONFLICT (station, scope_kind, scope_key, epoch)
 			DO UPDATE SET last_seq = EXCLUDED.last_seq,
-				applied_net = COALESCE(EXCLUDED.applied_net, inventory_delta_dedup.applied_net),
 				applied_window_end = GREATEST(EXCLUDED.applied_window_end, inventory_delta_dedup.applied_window_end),
 				updated_at = NOW()
 			WHERE inventory_delta_dedup.last_seq < EXCLUDED.last_seq
 			RETURNING (xmax = 0) AS inserted
 		)
-		SELECT (SELECT inserted FROM up),
-		       (SELECT last_seq FROM prior), (SELECT applied_net FROM prior), (SELECT applied_window_end FROM prior)`,
-		station, invDeltaScopeBucket, scopeKey, seq, nullNet(net), nullWindowEnd(windowEnd)).
-		Scan(&inserted, &lastSeq, &cur.appliedNet, &cur.appliedWindowEnd)
+		SELECT (SELECT inserted FROM up), (SELECT last_seq FROM prior), (SELECT applied_window_end FROM prior)`,
+		station, invDeltaScopeBucketLevel, scopeKey, seq, nullWindowEnd(windowEnd)).
+		Scan(&inserted, &lastSeq, &cur.appliedWindowEnd)
 	if err != nil {
-		return false, cur, fmt.Errorf("dedup upsert station=%s scope=bucket/%s seq=%d: %w", station, scopeKey, seq, err)
+		return false, cur, fmt.Errorf("dedup upsert station=%s scope=%s/%s seq=%d: %w",
+			station, invDeltaScopeBucketLevel, scopeKey, seq, err)
 	}
 	cur.found, cur.lastSeq = lastSeq.Valid, lastSeq.Int64
 	if inserted.Valid && !inserted.Bool && !cur.found {
-		return false, cur, fmt.Errorf("dedup upsert station=%s scope=bucket/%s seq=%d: the row appeared under a concurrent apply; "+
-			"not applied, the scope's next message carries it", station, scopeKey, seq)
+		return false, cur, fmt.Errorf("dedup upsert station=%s scope=%s/%s seq=%d: the row appeared under a concurrent apply; "+
+			"not applied, the row's next level carries the pile", station, invDeltaScopeBucketLevel, scopeKey, seq)
 	}
 	return inserted.Valid, cur, nil
 }
 
-// bucketScopeKey builds the dedup scope_key for a LinesideBucketDelta.
-// Round-3 Obs 8: keys on CoreNodeName instead of NodeID — translation-
-// free against Core's nodes table and stable across the Edge↔Core
-// boundary. The format is pipe-delimited and stable; renames break
-// in-flight Edge replays, so any change must come with a coordinated
-// migration. The v21 migration TRUNCATEs inventory_delta_dedup for
-// scope_kind='bucket' as part of the cutover so old keys can't
-// shadow new ones.
-func bucketScopeKey(coreNodeName, pairKey string, styleID int64, payloadCode string) string {
-	var sb strings.Builder
-	sb.WriteString(coreNodeName)
-	sb.WriteByte('|')
-	sb.WriteString(pairKey)
-	sb.WriteByte('|')
-	sb.WriteString(strconv.FormatInt(styleID, 10))
-	sb.WriteByte('|')
-	sb.WriteString(payloadCode)
-	return sb.String()
+// reanchorBucketSequence moves a level scope's dedup row DOWN to a restored
+// Edge's seq and window, so that Edge's next levels, numbered from where its
+// restored counter stands, apply. Only for the wentBackward shape: a lower seq
+// with a later window.
+func reanchorBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, windowEnd time.Time) error {
+	if _, err := tx.Exec(`UPDATE inventory_delta_dedup
+		SET last_seq = $4, applied_window_end = $5, updated_at = NOW()
+		WHERE station=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=0`,
+		station, invDeltaScopeBucketLevel, scopeKey, seq, nullWindowEnd(windowEnd)); err != nil {
+		return fmt.Errorf("re-anchor dedup station=%s scope=%s/%s seq=%d: %w",
+			station, invDeltaScopeBucketLevel, scopeKey, seq, err)
+	}
+	return nil
 }
 
-// BinUOPRow is one row of the per-bin authoritative state returned
-// by ListBinUOPForNodes. Edge's reconciler reads these to compute
-// "local cache vs Core authoritative" drift and self-heal.
-type BinUOPRow struct {
-	BinID        int64  `json:"bin_id"`
-	NodeName     string `json:"node_name"`
-	PayloadCode  string `json:"payload_code"`
-	UOPRemaining int    `json:"uop_remaining"`
-	// DeltaEpoch lets Edge populate its bin-state cache with the
-	// current load's epoch on startup / periodic refresh. Without
-	// this, an Edge restart with bins already on the line would have
-	// no epoch context for its first post-restart BinUOPDelta. Pre-
-	// migration responses don't carry it; deserialization defaults to
-	// 0 and the next bin lifecycle event (set_for_production / clear)
-	// repopulates Edge with the post-bump value.
-	DeltaEpoch int64 `json:"delta_epoch"`
-}
-
-// LinesideBucketRow is one row of the per-bucket authoritative state
-// returned by ListBucketsForStation. Edge compares against its local
-// node_lineside_bucket table to detect bucket-side drift.
-//
-// Round-3 Obs 8: NodeID dropped from the wire row. The bucket table
-// is keyed on core_node_name post-v21 migration; NodeName (same as
-// CoreNodeName here since we LEFT JOIN against Core's nodes by name)
-// is the only node-shaped field a reconciling Edge needs.
-type LinesideBucketRow struct {
-	NodeName    string `json:"node_name"`
-	PairKey     string `json:"pair_key"`
-	StyleID     int64  `json:"style_id"`
-	PayloadCode string `json:"payload_code"`
-	Qty         int    `json:"qty"`
-}
-
-// ListBinUOPForNodes returns the authoritative uop_remaining for
-// every bin currently sitting at any of the requested nodes. Empty
-// input returns an empty slice.
-func (s *InventoryDeltaService) ListBinUOPForNodes(nodeNames []string) ([]BinUOPRow, error) {
-	if len(nodeNames) == 0 {
-		return nil, nil
-	}
-	args := make([]any, len(nodeNames))
-	placeholders := make([]string, len(nodeNames))
-	for i, name := range nodeNames {
-		args[i] = name
-		placeholders[i] = "$" + strconv.Itoa(i+1)
-	}
-	q := `SELECT b.id, COALESCE(n.name, ''), b.payload_code, b.uop_remaining, b.delta_epoch
-		FROM bins b
-		LEFT JOIN nodes n ON n.id = b.node_id
-		WHERE n.name IN (` + strings.Join(placeholders, ",") + `)`
-	rows, err := s.db.Query(q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query bin uop rows: %w", err)
-	}
-	defer rows.Close()
-	var out []BinUOPRow
-	for rows.Next() {
-		var r BinUOPRow
-		if err := rows.Scan(&r.BinID, &r.NodeName, &r.PayloadCode, &r.UOPRemaining, &r.DeltaEpoch); err != nil {
-			return nil, fmt.Errorf("scan bin uop row: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+// bucketLevelScopeKey builds the dedup scope_key for a LinesideBucketLevel:
+// "<CoreNodeName>|<PayloadCode>|<State>", the key the Edge allocates the seq
+// under (protocol.InvDeltaScopeBucketLevel). Stable: a rename on one side
+// alone silently stops ordering the levels.
+func bucketLevelScopeKey(coreNodeName, payloadCode string, state protocol.LinesideBucketState) string {
+	return coreNodeName + "|" + payloadCode + "|" + string(state)
 }
 
 // InventoryInvariant carries the plant-wide running totals that
 // Item 13's invariant probe endpoint exposes. BinSum is signed (per
 // SME lock; bins can go negative on overpack). BucketSum stays
-// non-negative by schema CHECK constraint. Total is the rolled-up
+// non-negative by schema CHECK constraint and sums active piles only.
+// Total is the rolled-up
 // sum: useful as a trend indicator, not a hard equation, since
 // overpack/underpack drift and operator corrections move the
 // signed bin sum in either direction over time.
@@ -1441,7 +1283,8 @@ type InventoryInvariant struct {
 }
 
 // SumInvariant returns the plant-wide running totals across all bins
-// and lineside_buckets rows. Item 13. Both queries are aggregates
+// and the ACTIVE lineside piles (the ones on-hand counts; a stranded row is
+// a count anomaly, not stock). Item 13. Both queries are aggregates
 // against the authoritative tables on Core; the empty-table case
 // returns zero via COALESCE rather than NULL.
 func (s *InventoryDeltaService) SumInvariant() (InventoryInvariant, error) {
@@ -1458,62 +1301,4 @@ func (s *InventoryDeltaService) SumInvariant() (InventoryInvariant, error) {
 		BinSum:    binSum,
 		BucketSum: bucketSum,
 	}, nil
-}
-
-// ListBucketsForNodes returns every authoritative bucket row at the given
-// Core nodes. This is the drift reconciler's read.
-//
-// IT USED TO FILTER ON `station`, AND THAT WAS THE SIXTH STATION-KEYED SITE.
-// After v65 `station` on a bucket row is the LAST REPORTER, not an ownership
-// claim, so the old filter answered "buckets some edge most recently
-// mentioned" while the caller was asking "buckets at the nodes I own". Those
-// coincide only while every edge shares one station string — which is the
-// condition the identity change ends. With distinct ids, a bucket at one of
-// edge A's nodes that edge B last touched becomes invisible to A's
-// reconciliation: the drift detector stops seeing exactly the drift it exists
-// for, and silently, because an empty result and a clean result look the same.
-//
-// IT WAS DEFERRED ON THE GROUNDS THAT FIXING IT WOULD CHANGE WHAT EDGE SENDS.
-// It does not. Edge already sends the node set on this same request —
-// CoreClient.FetchUOPState puts BOTH `station=` and `nodes=` on the query
-// string, and its only caller (Engine.BucketBackfillNeeded) builds `nodes`
-// from ListProcessNodes()'s core_node_name, which is the literal definition of
-// "the nodes I own". Both halves of the answer were already on the wire; only
-// the server was reading the wrong one. So this is a server-side correction
-// with no protocol change and no Edge deploy ordering attached to it.
-//
-// The shape was already sitting next to it: ListBinUOPForNodes takes node
-// names, and the SAME handler builds that list for the bins half of the same
-// response.
-func (s *InventoryDeltaService) ListBucketsForNodes(names []string) ([]LinesideBucketRow, error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
-	// Explicit placeholders rather than pq.Array, matching ListBinUOPForNodes
-	// directly above: this package takes a bare *sql.DB and does not import the
-	// driver package, and the two halves of one response should not disagree
-	// about how a node list is bound.
-	args := make([]any, len(names))
-	placeholders := make([]string, len(names))
-	for i, name := range names {
-		args[i] = name
-		placeholders[i] = "$" + strconv.Itoa(i+1)
-	}
-	rows, err := s.db.Query(`SELECT b.core_node_name, b.pair_key, b.style_id, b.payload_code, b.qty
-		FROM lineside_buckets b
-		WHERE b.core_node_name IN (`+strings.Join(placeholders, ",")+`)
-		ORDER BY b.core_node_name, b.payload_code`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query bucket rows: %w", err)
-	}
-	defer rows.Close()
-	var out []LinesideBucketRow
-	for rows.Next() {
-		var r LinesideBucketRow
-		if err := rows.Scan(&r.NodeName, &r.PairKey, &r.StyleID, &r.PayloadCode, &r.Qty); err != nil {
-			return nil, fmt.Errorf("scan bucket row: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }

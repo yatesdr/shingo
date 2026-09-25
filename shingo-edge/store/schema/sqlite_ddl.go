@@ -1100,27 +1100,22 @@ CREATE TABLE IF NOT EXISTS changeover_participants (
 CREATE INDEX IF NOT EXISTS idx_cp_changeover_id ON changeover_participants(process_changeover_id);
 CREATE INDEX IF NOT EXISTS idx_cp_node_name ON changeover_participants(core_node_name);
 
+-- A lineside pile: parts an operator pulled from a bin to the bench at a
+-- node, one row per (node, payload, state). 'active' drains lineside-first
+-- and counts as on-hand until the node's cutover; 'stranded' is what an active
+-- pile had left at a cutover, a permanent count-anomaly record that never
+-- drains, never counts and never revives. The Edge is the only writer; Core
+-- mirrors each row by its level (protocol.LinesideBucketLevel).
 CREATE TABLE IF NOT EXISTS node_lineside_bucket (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
-    pair_key     TEXT NOT NULL DEFAULT '',
-    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
     payload_code TEXT NOT NULL,
     qty          INTEGER NOT NULL DEFAULT 0,
-    state        TEXT NOT NULL DEFAULT 'active',
+    state        TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'stranded')),
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (node_id, payload_code, state)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, payload_code)
-    WHERE state = 'active';
-
-CREATE INDEX IF NOT EXISTS idx_lineside_node_state
-    ON node_lineside_bucket(node_id, state);
-
-CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
-    ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
 
 -- Phase 1d of the UOP bin-as-truth refactor — sequence-id allocator
 -- for inventory delta envelopes. One row per (scope_kind, scope_key);
@@ -1128,18 +1123,18 @@ CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
 -- non-zero delta for that scope. Edge guarantees monotonic SequenceID
 -- per scope; Core uses inventory_delta_dedup to drop replays.
 --
--- scope_kind ∈ {"bin", "bucket"}.
+-- scope_kind ∈ {"bin", "bucket_level"}.
 -- scope_key:
---   bin scope    → strconv(BinID)
---   bucket scope → "<CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>", the
---                  key Core's dedup row uses (it was the local process node
---                  id until the 2026-09-24 re-key)
--- epoch labels the bin's load-lifecycle for bins (0 for buckets).
+--   bin scope          → strconv(BinID)
+--   bucket_level scope → "<CoreNodeName>|<PayloadCode>|<State>", the key Core
+--                        guards a pile level's order on
+-- epoch labels the bin's load-lifecycle for bins (0 for pile levels).
 -- Per-epoch counters mean a new bin load starts seq=1, immune to
 -- prior-epoch counter drift surviving across Edge restarts / DB
 -- restores. Old-epoch rows linger harmlessly.
--- net is the running sum of every delta flushed for the scope, advanced in the
--- same UPSERT that allocates the seq and carried on each count message.
+-- net is the running sum of every delta flushed for a bin scope, advanced in
+-- the same UPSERT that allocates the seq and carried on each count message. A
+-- pile level carries its whole row, so its scope's net stays 0.
 CREATE TABLE IF NOT EXISTS inventory_delta_seq (
     scope_kind TEXT NOT NULL,
     scope_key  TEXT NOT NULL,

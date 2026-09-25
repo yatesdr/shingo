@@ -267,8 +267,9 @@ func TestReportLinesideLevels_RowNamesItsCarrierAndFlushedSeq(t *testing.T) {
 // once, the accumulator holds -5 for the next flush, and nothing has been
 // allocated. The report must say 7032 at flushed seq 0 — what Core holds once
 // it has applied everything up to that seq — and must issue no statement and
-// no message beyond its own. A bucket drained by 3 on the same tick reports its
-// pre-drain qty the same way. Verify-red against the reporter that flushed
+// no message beyond its own. A pile drained by 3 on the same tick reports the
+// level last sent for it (20, sent at boot) the same way. Verify-red against
+// the reporter that flushed
 // first (lane A's first cut): its flush allocated and enqueued the bin and the
 // bucket windows, so the report cost 7 statements and two delta messages, and
 // said 7027 / 17 at seq 1.
@@ -276,32 +277,27 @@ func TestReportLinesideLevels_CountIsAsOfFlushedSeqWithoutFlushing(t *testing.T)
 	t.Parallel()
 	db, counter := testEngineDBCounting(t)
 	eng := testEngine(t, db)
-	mut := uop.New(db, "stn-test", db, db, db)
+	mut := uop.New(db, "stn-test", db, db)
 	eng.SetInventoryDeltaSink(mut)
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "read node")
-	rt, err := db.GetProcessNodeRuntime(nodeID)
-	testutil.MustNoErr(t, err, "read runtime")
-	styleID := int64(0)
-	if rt.ActiveClaimID != nil {
-		c, cerr := db.GetStyleNodeClaim(*rt.ActiveClaimID)
-		testutil.MustNoErr(t, cerr, "read claim")
-		styleID = c.StyleID
-	}
-	_, err = db.CaptureLinesideBucket(nodeID, "", styleID, "PART-A", 20)
+	_, err = db.CaptureLinesideBucket(nodeID, "PART-A", 20)
 	testutil.MustNoErr(t, err, "seed bucket")
+	// The boot resend: Core holds the pile's 20 from here.
+	_, err = mut.ResendLevels()
+	testutil.MustNoErr(t, err, "boot resend")
 
 	// One tick, as the tick path does it: the database first, then the record.
 	testutil.MustNoErr(t, db.UpdateProcessNodeUOP(nodeID, 7027), "tick: runtime count")
-	_, _, err = db.DrainLinesideBucket(nodeID, "PART-A", 3)
+	_, err = db.DrainLinesideBucket(nodeID, "PART-A", 3)
 	testutil.MustNoErr(t, err, "tick: bucket drain")
 	testutil.MustNoErr(t, mut.Consumed(uop.TickEvent{
-		NodeID: nodeID, StyleID: styleID, CoreNodeName: node.CoreNodeName,
+		NodeID: nodeID, CoreNodeName: node.CoreNodeName,
 		BinID: 15, PayloadCode: "PART-A", BinEpoch: 1, BinRemainder: 5,
-		Drains: map[string]uop.LinesideDrain{"PART-A": {Qty: 3, StyleID: styleID}},
+		Drains: map[string]int{"PART-A": 3},
 	}), "tick: record")
 
 	counter.Reset()
@@ -325,7 +321,8 @@ func TestReportLinesideLevels_CountIsAsOfFlushedSeqWithoutFlushing(t *testing.T)
 	msgs, err := db.ListPendingOutbox(50)
 	testutil.MustNoErr(t, err, "list outbox")
 	for _, m := range msgs {
-		if m.MsgType != string(protocol.SubjectLinesideLevelReport) {
+		// The boot resend's one level went out before the report.
+		if m.MsgType != string(protocol.SubjectLinesideLevelReport) && m.MsgType != string(protocol.SubjectLinesideBucketLevel) {
 			t.Errorf("the report put a %s message in the outbox; it must add none", m.MsgType)
 		}
 	}
@@ -352,7 +349,7 @@ func TestReportLinesideLevels_TicksRacingReportsNeverMoveTheStatedCount(t *testi
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mut := uop.New(db, "stn-test", db, db, db)
+	mut := uop.New(db, "stn-test", db, db)
 	eng.SetInventoryDeltaSink(mut)
 	processID, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 	claim, err := db.GetStyleNodeClaim(fromClaimID)
@@ -402,7 +399,7 @@ func TestReportLinesideLevels_FlushesRacingReportsStateTheNetAtFlushedSeq(t *tes
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mut := uop.New(db, "stn-test", db, db, db)
+	mut := uop.New(db, "stn-test", db, db)
 	eng.SetInventoryDeltaSink(mut)
 	processID, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 	claim, err := db.GetStyleNodeClaim(fromClaimID)

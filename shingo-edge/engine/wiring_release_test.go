@@ -84,7 +84,7 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 
 // TestRegression_CaptureReleaseFlushBoundary pins the release-click
 // flush trigger: when the operator submits PULL PARTS LINESIDE, any
-// per-part captures emit LinesideBucketDelta(capture_fill), the
+// per-part captures send their piles' levels, the
 // summed bin reduction emits BinUOPDelta(capture_reduction), and
 // Flush is called after the OrderRelease envelope is queued. Without
 // the explicit flush, an Edge restart between release and the next
@@ -119,12 +119,13 @@ func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
 	}
 	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
-	// Bucket fill: one capture_fill record for 30.
+	// Pile: one dirty mark for the captured part, carrying no drain (a pull
+	// is not consumption).
 	if len(sink.bucketCalls) != 1 {
 		t.Fatalf("bucket calls = %d, want 1: %+v", len(sink.bucketCalls), sink.bucketCalls)
 	}
 	bc := sink.bucketCalls[0]
-	if bc.Delta != 30 || bc.Reason != protocol.ReasonCaptureFill || bc.PayloadCode != "PART-CAP" {
+	if bc.Drained != 0 || bc.State != "active" || bc.PayloadCode != "PART-CAP" {
 		t.Errorf("bucket call mismatch: %+v", bc)
 	}
 
@@ -189,9 +190,8 @@ func TestRegression_ReleasePartialEmitsNoBinDelta(t *testing.T) {
 // supply-bin guard at the delta layer. For Order A in a two-robot
 // swap, the manifestUOP suppression also suppresses the
 // capture_reduction bin delta — applying it would corrupt the shadow
-// count for a fresh supply bin. Bucket fills still fire (the parts
-// physically went to lineside regardless of which order triggered
-// the release).
+// count for a fresh supply bin. Since change #4 the leg makes no pile
+// either: a pile exists only for parts a bin paid for.
 func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -242,10 +242,11 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 	}
 	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderA, disp), "release")
 
-	// Bucket fill ships — the parts physically left wherever they
-	// came from and went to lineside.
-	if len(sink.bucketCalls) != 1 {
-		t.Errorf("bucket calls = %d, want 1 (capture_fill rides regardless of supply guard): %+v",
+	// No pile either: a pile exists only for parts a bin paid for.
+	// Flipped under change #4: the capture_fill used to ride regardless of
+	// the supply guard, minting parts on the bench no bin gave up.
+	if len(sink.bucketCalls) != 0 {
+		t.Errorf("bucket calls = %d, want 0 (the supply leg makes no pile): %+v",
 			len(sink.bucketCalls), sink.bucketCalls)
 	}
 	// Bin reduction does NOT — supply bin must not be reduced.

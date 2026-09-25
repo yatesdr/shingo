@@ -69,8 +69,9 @@ const (
 	// route followed (2026-08). Edge's only replenishment writers are the
 	// operator request, the operator push, and the unloader auto-push.
 
-	// Inventory delta envelopes. Edge → Core. Carry signed count
-	// changes against bins and lineside buckets. Routed on subject
+	// Inventory count envelopes. Edge → Core. The bin delta carries a
+	// signed count change against a bin; the lineside bucket level carries
+	// a pile row's level (LinesideBucketLevel). Routed on subject
 	// via CoreDataService's SubjectRouter — chosen over new typed
 	// envelope types when the bin-as-truth refactor shipped (the
 	// pre-router rationale was that new MessageHandler methods would
@@ -79,8 +80,13 @@ const (
 	// it was already on the wire). Dedup is at the message level
 	// via the inventory_delta_dedup table keyed on
 	// (station, scope_kind, scope_key).
+	//
+	// Deploy Core first for the level: an older Core keeps its delta-fed
+	// piles frozen inside its thresholds. A newer Core facing an older Edge
+	// has no handler for inventory.lineside_bucket_delta, logs it, and
+	// counts no piles until that Edge updates.
 	SubjectBinUOPDelta         = "inventory.bin_uop_delta"
-	SubjectLinesideBucketDelta = "inventory.lineside_bucket_delta"
+	SubjectLinesideBucketLevel = "inventory.lineside_bucket_level"
 
 	// ProductionTick — Edge → Core, one PLC counter tick per envelope, carried
 	// as protocol.CounterSnapshot. The feed an Edge from before the
@@ -328,7 +334,7 @@ func CoreInboundSubjects() []string {
 		SubjectCatalogPayloadsRequest,
 		SubjectOrderStatusRequest,
 		SubjectBinUOPDelta,
-		SubjectLinesideBucketDelta,
+		SubjectLinesideBucketLevel,
 		SubjectProductionTick,
 		SubjectProductionTicks,
 		SubjectDowntimeEvent,
@@ -418,8 +424,12 @@ const (
 // identically; a rename on one side alone silently stops deduplication, which
 // is the failure this single definition exists to prevent.
 const (
-	InvDeltaScopeBin    = "bin"
-	InvDeltaScopeBucket = "bucket"
+	InvDeltaScopeBin = "bin"
+	// InvDeltaScopeBucketLevel is the lineside bucket level's scope, keyed
+	// "<core_node_name>|<payload_code>|<state>". It is not the retired
+	// "bucket" scope of the delta it replaced: the migrations delete that
+	// scope's rows on both sides.
+	InvDeltaScopeBucketLevel = "bucket_level"
 )
 
 // OrderType is the typed kind-of-order for fulfillment orders. Used by

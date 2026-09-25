@@ -40,12 +40,12 @@ type coreDataResponder interface {
 
 // ThresholdMonitor is the minimal surface CoreDataService needs from the
 // engine's threshold monitor. The monitor is notified directly by the
-// Kafka delta handlers (OnBinUOPDelta, OnBucketApplied) which carry the
-// payload code and delta — no DB queries on the hot path.
+// Kafka count handlers (OnBinUOPDelta, OnBucketApplied) with the payload
+// code; the monitor re-reads the authoritative total for it.
 type ThresholdMonitor interface {
 	OnThresholdChanges(changes []demands.RegistryChange)
 	OnBinUOPDelta(payloadCode string, delta int)
-	OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
+	OnBucketApplied(payloadCode string)
 	// Resync makes the monitor's in-memory bindings for one station agree with
 	// demand_registry — engaging what was added, dropping what was deleted. It
 	// is called on (re)connect, right after the station's registry has been
@@ -310,10 +310,9 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d wire_delta=%d net=%s reason=%s",
 		station, d.BinID, d.SequenceID, d.Delta, netString(d.Net), d.Reason)
 
-	// Notify the UOP-threshold monitor so the delta is applied to the
-	// cached UOP total and thresholds are checked. The monitor does
-	// zero DB queries on this path — it applies the delta directly
-	// to its in-memory cache.
+	// Notify the UOP-threshold monitor, which re-reads the payload's
+	// authoritative total (the just-applied write included) and checks its
+	// thresholds. An unmonitored payload stops at the bindings lookup.
 	if s.thresholdMonitor != nil && d.PayloadCode != "" {
 		s.thresholdMonitor.OnBinUOPDelta(d.PayloadCode, d.Delta)
 	}
@@ -365,31 +364,30 @@ func isProductionReason(reason protocol.BinUOPDeltaReason) bool {
 	}
 }
 
-// HandleLinesideBucketDelta routes a bucket count message to the
-// InventoryDeltaService. The notes on HandleBinUOPDelta apply. Manual-swap nodes never emit bucket
-// deltas (no PLC) — a delta arriving from a manual-swap node would
-// indicate an Edge bug.
-func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *protocol.LinesideBucketDelta) {
+// HandleLinesideBucketLevel routes a lineside pile level to the
+// InventoryDeltaService, which sets Core's mirror row to it. A skip (a
+// duplicate or a late level) is debug-logged; any other refusal is logged.
+// Manual-swap nodes never emit pile levels (no PLC).
+func (s *CoreDataService) HandleLinesideBucketLevel(env *protocol.Envelope, l *protocol.LinesideBucketLevel) {
 	station := env.Src.Station
-	if err := s.inventoryDelta.ApplyLinesideBucketDelta(station, d); err != nil {
+	if err := s.inventoryDelta.ApplyLinesideBucketLevel(station, l); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
-			s.resp.dbg("lineside_bucket_delta skipped station=%s core_node=%q payload=%q seq=%d: %v",
-				station, d.CoreNodeName, d.PayloadCode, d.SequenceID, err)
+			s.resp.dbg("lineside_bucket_level skipped station=%s core_node=%q payload=%q state=%s seq=%d: %v",
+				station, l.CoreNodeName, l.PayloadCode, l.State, l.SequenceID, err)
 			return
 		}
-		log.Printf("core_handler: apply LinesideBucketDelta station=%s core_node=%q payload=%q seq=%d delta=%d reason=%s: %v",
-			station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, d.Reason, err)
+		log.Printf("core_handler: apply LinesideBucketLevel station=%s core_node=%q payload=%q state=%s seq=%d qty=%d: %v",
+			station, l.CoreNodeName, l.PayloadCode, l.State, l.SequenceID, l.Qty, err)
 		return
 	}
-	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q payload=%q seq=%d wire_delta=%d net=%s reason=%s",
-		station, d.CoreNodeName, d.PayloadCode, d.SequenceID, d.Delta, netString(d.Net), d.Reason)
+	s.resp.dbg("lineside_bucket_level applied station=%s core_node=%q payload=%q state=%s seq=%d qty=%d drained=%d",
+		station, l.CoreNodeName, l.PayloadCode, l.State, l.SequenceID, l.Qty, l.Drained)
 
-	// Notify the UOP-threshold monitor so a bucket drain or capture
-	// re-evaluates loop totals. The monitor's debounce + opt-in gating
-	// inside is what keeps this from being noisy. An unknown payload
-	// short-circuits inside the monitor.
+	// A level changes on-hand (an active pile counts), so the payload is
+	// re-evaluated. A stranded level changes nothing the count reads; its
+	// evaluation is one bindings lookup and keeps this path branch-free.
 	if s.thresholdMonitor != nil {
-		s.thresholdMonitor.OnBucketApplied(station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
+		s.thresholdMonitor.OnBucketApplied(l.PayloadCode)
 	}
 }
 

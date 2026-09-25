@@ -56,11 +56,11 @@ func pendingOutboxByType[T any](t *testing.T, db *store.DB, subject string) []T 
 func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "ALN_001", nil, nil, nil)
+	r := New(db, "ALN_001", nil, nil)
 
-	r.RecordBin(42, "PART-A", -3, protocol.ReasonConsumeTick, 1)
-	r.RecordBin(42, "PART-A", -2, protocol.ReasonConsumeTick, 1)
-	r.RecordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(42, "PART-A", -3, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(42, "PART-A", -2, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -88,45 +88,6 @@ func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 	}
 }
 
-// TestInventoryDeltaReporter_BucketAccumulation pins the bucket path
-// mirror: per-(node, pair_key, style, part) keying, capture_fill +
-// consume_drain accumulate, sequence advances monotonically.
-func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
-	t.Parallel()
-	db := newReporterTestDB(t)
-	r := New(db, "SMN_003", nil, nil, nil)
-
-	r.RecordBucket(5, "CORE-LOADER-1", "L1|U1", 100, "WIDGET-A", 47, protocol.ReasonCaptureFill)
-	r.Flush()
-	r.RecordBucket(5, "CORE-LOADER-1", "L1|U1", 100, "WIDGET-A", -3, protocol.ReasonConsumeDrain)
-	r.RecordBucket(5, "CORE-LOADER-1", "L1|U1", 100, "WIDGET-A", -2, protocol.ReasonConsumeDrain)
-	r.Flush()
-
-	deltas := pendingOutboxByType[protocol.LinesideBucketDelta](t, db, protocol.SubjectLinesideBucketDelta)
-	if len(deltas) != 2 {
-		t.Fatalf("queued %d bucket envelopes, want 2 (one per flush)", len(deltas))
-	}
-	if deltas[0].Delta != 47 || deltas[0].Reason != protocol.ReasonCaptureFill {
-		t.Errorf("first envelope: delta=%d reason=%q, want 47 / capture_fill",
-			deltas[0].Delta, deltas[0].Reason)
-	}
-	if deltas[1].Delta != -5 || deltas[1].Reason != protocol.ReasonConsumeDrain {
-		t.Errorf("second envelope: delta=%d reason=%q, want -5 / consume_drain",
-			deltas[1].Delta, deltas[1].Reason)
-	}
-	if deltas[0].SequenceID != 1 || deltas[1].SequenceID != 2 {
-		t.Errorf("seq sequence = %d, %d, want 1, 2", deltas[0].SequenceID, deltas[1].SequenceID)
-	}
-	if deltas[0].PayloadCode != "WIDGET-A" {
-		t.Errorf("PayloadCode = %q, want WIDGET-A", deltas[0].PayloadCode)
-	}
-	// Round-3 Obs 8: wire envelope must carry the cross-system identifier,
-	// not Edge's local process_nodes.id.
-	if deltas[0].CoreNodeName != "CORE-LOADER-1" {
-		t.Errorf("CoreNodeName = %q, want CORE-LOADER-1 (Obs 8 — node ID namespace fix)", deltas[0].CoreNodeName)
-	}
-}
-
 // TestInventoryDeltaReporter_ZeroDeltaNoFlush pins a no-op invariant:
 // when net delta in a window cancels to zero (record +5 then -5), the
 // flush emits nothing and the SequenceID does not advance — gaps are
@@ -138,10 +99,10 @@ func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "ALN_001", nil, nil, nil)
+	r := New(db, "ALN_001", nil, nil)
 
-	r.RecordBin(7, "PART-X", 5, protocol.ReasonProduceTick, 1)
-	r.RecordBin(7, "PART-X", -5, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(7, "PART-X", 5, protocol.ReasonProduceTick, 1)
+	r.acc.recordBin(7, "PART-X", -5, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -165,11 +126,11 @@ func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
 func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "ALN_001", nil, nil, nil)
+	r := New(db, "ALN_001", nil, nil)
 
-	r.RecordBin(11, "PART-A", -1, protocol.ReasonConsumeTick, 1)
-	r.RecordBin(22, "PART-B", -2, protocol.ReasonConsumeTick, 1)
-	r.RecordBin(33, "PART-C", -3, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(11, "PART-A", -1, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(22, "PART-B", -2, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(33, "PART-C", -3, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -203,9 +164,9 @@ func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 func TestInventoryDeltaReporter_FailedEnqueueLeavesEntryIntact(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "ALN_001", nil, nil, nil)
+	r := New(db, "ALN_001", nil, nil)
 
-	r.RecordBin(99, "PART-Z", -7, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(99, "PART-Z", -7, protocol.ReasonConsumeTick, 1)
 
 	// Close the DB so EnqueueOutbox / AllocateInventoryDeltaSeq fail.
 	db.Close()
@@ -233,7 +194,7 @@ func TestInventoryDeltaReporter_FailedEnqueueLeavesEntryIntact(t *testing.T) {
 func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "ALN_001", nil, nil, nil)
+	r := New(db, "ALN_001", nil, nil)
 
 	const goroutines = 100
 	const perGoroutine = 10
@@ -243,7 +204,7 @@ func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
-				r.RecordBin(50, "PART-CONC", 1, protocol.ReasonProduceTick, 1)
+				r.acc.recordBin(50, "PART-CONC", 1, protocol.ReasonProduceTick, 1)
 			}
 		}()
 	}
@@ -268,11 +229,11 @@ func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "ALN_001", nil, nil, nil)
+	r := New(db, "ALN_001", nil, nil)
 	r.SetInterval(1 * time.Hour) // never auto-flush
 	r.Start()
 
-	r.RecordBin(60, "PART-S", -4, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(60, "PART-S", -4, protocol.ReasonConsumeTick, 1)
 	r.Stop()
 
 	deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -284,18 +245,19 @@ func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
 	}
 }
 
-// TestInventoryDeltaReporter_BucketScopeKeyComposite pins the
-// pipe-delimited composite scope key for buckets, led by the core node
-// name — the format of the Core-side dedup key on inventory_delta_dedup
-// (shingo-core/uop bucketScopeKey). Until the one-bucket-key change this
-// pinned a key led by the local node id, which did NOT match Core's, and
-// the comment above it said it did.
+// TestInventoryDeltaReporter_BucketScopeKeyComposite pins the pile level's
+// key: "<core_node_name>|<payload>|<state>", the scope Core guards a level's
+// order on (InvDeltaScopeBucketLevel). A mark without a core name keys under
+// "#<node id>" until the flush resolves it; that key never reaches the wire.
+// Changed under change #1: it was "<core>|<pair>|<style>|<payload>", the delta
+// scope, and the style and pair left the pile's identity.
 func TestInventoryDeltaReporter_BucketScopeKeyComposite(t *testing.T) {
 	t.Parallel()
-	got := bucketScopeKey("CORE-NODE-1", "L1|U1", 100, "PART-A")
-	want := "CORE-NODE-1|L1|U1|100|PART-A"
-	if got != want {
-		t.Errorf("bucketScopeKey = %q, want %q (Core's dedup expects this exact format)", got, want)
+	if got, want := bucketLevelKey("CORE-NODE-1", 7, "PART-A", protocol.LinesideBucketStranded), "CORE-NODE-1|PART-A|stranded"; got != want {
+		t.Errorf("bucketLevelKey = %q, want %q (Core guards order on this exact format)", got, want)
+	}
+	if got, want := bucketLevelKey("", 7, "PART-A", protocol.LinesideBucketActive), "#7|PART-A|active"; got != want {
+		t.Errorf("bucketLevelKey without a core name = %q, want %q", got, want)
 	}
 }
 

@@ -43,7 +43,7 @@ const NoExpiry time.Duration = 0
 
 // Subject-specific TTLs for data channel messages.
 var subjectTTLs = map[string]time.Duration{
-	// The two sequenced inventory deltas carry information nothing else
+	// The sequenced inventory counts carry information nothing else
 	// resupplies. Most other data subjects are snapshots whose successor
 	// carries the same truth a few seconds later, so dropping a late copy costs
 	// nothing; these are increments, and a dropped one is a permanently wrong
@@ -59,8 +59,13 @@ var subjectTTLs = map[string]time.Duration{
 	// bin_uop_delta a day arrived past the 5-minute default and were discarded
 	// by the ingestor before any handler ran, averaging 142 minutes late and
 	// peaking at 23 hours. The edge marked every one of them sent.
+	//
+	// The lineside bucket level is a snapshot, but of one row, and its successor
+	// comes only when the pile next changes, which for a stranded row is never.
+	// A late copy is harmless: Core applies it only above the row's high-water
+	// seq.
 	SubjectBinUOPDelta:         NoExpiry,
-	SubjectLinesideBucketDelta: NoExpiry,
+	SubjectLinesideBucketLevel: NoExpiry,
 	SubjectProductionTicks:     NoExpiry, // keyed on (cell_id, edge_snapshot_id, recorded_at) at Core
 
 	// Core's count announcements to the Edge. One dropped after an outage

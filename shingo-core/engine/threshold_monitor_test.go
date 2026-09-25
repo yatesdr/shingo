@@ -107,7 +107,7 @@ func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
 	tm.eng = &Engine{Events: NewEventBus()}
-	tm.OnBucketApplied("s1", "LOADER", "", -5, "capture") // should not panic
+	tm.OnBucketApplied("") // should not panic
 }
 
 // The fire decision needs a database now — every edge reads the place's open

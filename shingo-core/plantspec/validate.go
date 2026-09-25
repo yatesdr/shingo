@@ -415,7 +415,7 @@ func (p *Plant) Validate() error {
 		}
 	}
 
-	// --- demands / reporting points / cell configs / lineside buckets ---
+	// --- demands / reporting points / cell configs ---
 	for _, d := range p.Demands {
 		if !payloads[d.Payload] {
 			add("demand references unknown payload %q", d.Payload)
@@ -466,14 +466,6 @@ func (p *Plant) Validate() error {
 			add("operator station %q is declared but nothing builds it — add a cell_config for "+
 				"its process, or pin a claim to it with operator_station; a station that is not "+
 				"created binds no node and renders nothing", s)
-		}
-	}
-	for _, lb := range p.LinesideBuckets {
-		if !ref(lb.Node) {
-			add("lineside bucket references unknown node %q", lb.Node)
-		}
-		if !payloads[lb.Payload] {
-			add("lineside bucket at %q references unknown payload %q", lb.Node, lb.Payload)
 		}
 	}
 

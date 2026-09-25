@@ -358,7 +358,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Telemetry
 			r.Get("/telemetry/node-bins", h.apiTelemetryNodeBins)
-			r.Get("/telemetry/uop-state", h.apiTelemetryUOPState)
 			r.Get("/telemetry/payload/{code}/manifest", h.apiTelemetryPayloadManifest)
 			r.Get("/telemetry/node/{name}/children", h.apiTelemetryNodeChildren)
 			r.Post("/telemetry/bin-load", h.apiBinLoad)
@@ -380,7 +379,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/inventory/preflight", h.apiInventoryPreflight)
 			r.Post("/inventory/system-count", h.apiInventorySystemCount)
 			r.Get("/buckets", h.apiBuckets)
-			r.Post("/buckets/delete", h.apiBucketDelete)
 
 			// Audit (Item 10) — bin_uop_ledger read endpoints
 			r.Get("/audit/bin/{id}", h.apiAuditBinTimeline)

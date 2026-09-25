@@ -3,7 +3,6 @@
 package uop_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -239,88 +238,22 @@ func TestRunningNet_BinDeltaCursor(t *testing.T) {
 	}
 }
 
-func netBucket(nodeName string, delta int, net *int64, seq int64) *protocol.LinesideBucketDelta {
-	d := makeBucketDelta(nodeName, "L1|U1", 100, "PART-N", delta, seq, protocol.ReasonCaptureFill)
-	if delta < 0 {
-		d.Reason = protocol.ReasonConsumeDrain
-	}
-	d.Net = net
-	return d
-}
-
-func bucketQty(t *testing.T, db *store.DB, nodeName string) (int, bool) {
-	t.Helper()
-	var qty int
-	err := db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND payload_code='PART-N'`, nodeName).Scan(&qty)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false
-	}
-	testutil.MustNoErr(t, err, "read bucket")
-	return qty, true
-}
-
-// Buckets carry the net too: a lost middle message heals on the next.
-func TestRunningNet_BucketLostMiddleHeals(t *testing.T) {
+// A pile carries no net: a level replaces the row. A lost middle level costs
+// nothing, because the next level is the row as it stands. (This was
+// TestRunningNet_BucketLostMiddleHeals, which healed a lost delta through the
+// running net; the net is gone from the bucket stream, and the shape it pinned
+// holds by construction.)
+func TestBucketLevel_LostMiddleLevelCostsNothing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := netTestService(db)
 	node := sd.StorageNode.Name
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, 10, int64p(10), 1)), "seq 1")
-	// seq 2 (+5, net 15) is lost.
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, -2, int64p(13), 3)), "seq 3")
-	if qty, ok := bucketQty(t, db, node); !ok || qty != 13 {
-		t.Errorf("bucket qty = %d (exists %v), want 13", qty, ok)
-	}
-}
-
-// V8: the qty=0 GC deletes the bucket row but keeps its dedup row, and under the
-// net that is what stops the next capture re-applying the Edge's whole net. The
-// anchor survives the GC, so the next message applies only its own content.
-// (The anchor here came from a NULL row, so the full net, 54, and the right
-// answer, 4, differ.)
-func TestRunningNet_BucketGCKeepsTheAnchor(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc := netTestService(db)
-	node := sd.StorageNode.Name
-
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, 10, nil, 1)), "old-Edge seq 1")
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, -10, int64p(50), 2)), "first net: drain to 0")
-	if _, ok := bucketQty(t, db, node); ok {
-		t.Fatal("bucket row survived qty 0; the GC should have deleted it")
-	}
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, 4, int64p(54), 3)), "capture after GC")
-	if qty, ok := bucketQty(t, db, node); !ok || qty != 4 {
-		t.Errorf("bucket qty = %d (exists %v), want 4 (not the full net 54)", qty, ok)
-	}
-}
-
-// The admin Clear resets the bucket's dedup row instead of deleting it, so the
-// next message applies its own delta, as it did before the net, and not the
-// Edge's whole net.
-func TestRunningNet_AdminBucketDeleteDoesNotReapplyTheNet(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc := netTestService(db)
-	node := sd.StorageNode.Name
-
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, 10, int64p(10), 1)), "seq 1")
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, 5, int64p(15), 2)), "seq 2")
-	var id int64
-	testutil.MustNoErr(t, db.QueryRow(`SELECT id FROM lineside_buckets
-		WHERE core_node_name=$1 AND payload_code='PART-N'`, node).Scan(&id), "bucket id")
-	n, err := inventory.DeleteLinesideBucket(db.DB, id)
-	testutil.MustNoErr(t, err, "admin delete")
-	if n != 1 {
-		t.Fatalf("deleted %d rows, want 1", n)
-	}
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, netBucket(node, 2, int64p(17), 3)), "seq 3")
-	if qty, ok := bucketQty(t, db, node); !ok || qty != 2 {
-		t.Errorf("bucket qty = %d (exists %v), want 2 (the delta, not the net 17)", qty, ok)
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation, makeBucketLevel(node, "PART-N", active, 10, 0, 1)), "seq 1")
+	// seq 2 (15) is lost.
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation, makeBucketLevel(node, "PART-N", active, 13, 2, 3)), "seq 3")
+	if qty, _, ok := pileRow(t, db, node, "PART-N", active); !ok || qty != 13 {
+		t.Errorf("pile qty = %d (exists %v), want 13", qty, ok)
 	}
 }

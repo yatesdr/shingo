@@ -1,17 +1,14 @@
 // mutator.go — public surface of the uop package.
 //
-// Phase 1 scope: a thin shell over the package-private accumulator
-// satisfying the engine's InventoryDeltaSink interface
-// (RecordBin/RecordBucket/Flush). Later phases grow this
-// surface into segregated interfaces (Ticker, SlotWriter, Capturer,
-// Pickup, Boundary, Backfiller) without further changes to the
-// composition root.
+// A shell over the package-private accumulator satisfying the engine's
+// InventoryDeltaSink interface, organised into segregated interfaces
+// (Ticker, SlotWriter, Capturer, Piles, Pickup, Boundary; see
+// interfaces.go).
 package uop
 
 import (
 	"time"
 
-	"shingo/protocol"
 	"shingo/protocol/types"
 	"shingoedge/store"
 )
@@ -22,31 +19,27 @@ import (
 type DebugLogFunc = types.DebugLogFunc
 
 // Mutator is the engine's chokepoint for UOP state mutations. Wraps a
-// private accumulator (for delta emission) plus narrow store
-// interfaces (runtimeWriter for runtime-row writes, bucketStore for
-// lineside-bucket reads/writes, nodeStore for process_node reads).
-// Phase 3a grows this type with intent verbs that own the per-call-
-// site decisions the engine makes today.
+// private accumulator (bin deltas and pile levels) plus narrow store
+// interfaces (runtimeWriter for runtime-row writes, bucketStore for the
+// lineside pile writes and reads its verbs make).
 type Mutator struct {
 	acc     *accumulator
 	rw      runtimeWriter
 	buckets bucketStore
-	nodes   nodeStore
 }
 
 // New constructs a Mutator for the given Edge identity. Caller wires
 // DebugLog / interval (or leaves them defaulted) before calling Start.
 //
-// rw, buckets, and nodes are the narrow store surfaces. *store.DB
-// satisfies all three. Pass nil only in tests that don't exercise
-// the corresponding verbs — verbs that need a nil dependency will
-// panic with a nil dereference rather than silently misbehave.
-func New(db *store.DB, stationID string, rw runtimeWriter, buckets bucketStore, nodes nodeStore) *Mutator {
+// rw and buckets are the narrow store surfaces. *store.DB satisfies
+// both. Pass nil only in tests that don't exercise the corresponding
+// verbs — verbs that need a nil dependency will panic with a nil
+// dereference rather than silently misbehave.
+func New(db *store.DB, stationID string, rw runtimeWriter, buckets bucketStore) *Mutator {
 	return &Mutator{
 		acc:     newAccumulator(db, stationID),
 		rw:      rw,
 		buckets: buckets,
-		nodes:   nodes,
 	}
 }
 
@@ -68,32 +61,8 @@ func (m *Mutator) Start() { m.acc.start() }
 // Stop halts the periodic loop and runs one final flush. Idempotent.
 func (m *Mutator) Stop() { m.acc.stop() }
 
-// RecordBin accumulates a signed delta against a specific bin under
-// the given reason. Satisfies engine.InventoryDeltaSink. epoch is the
-// bin's load-lifecycle epoch — caller resolves it from the runtime
-// bin-state cache so Core's epoch-aware dedup accepts the delta.
-func (m *Mutator) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64) {
-	m.acc.recordBin(binID, payloadCode, delta, reason, epoch)
-}
-
-// RecordBucket accumulates a signed delta against a specific lineside
-// bucket. Satisfies engine.InventoryDeltaSink.
-//
-// coreNodeName is the cross-system identifier that goes on the wire
-// (Round-3 Obs 8). Empty values are dropped at flush rather than
-// emitted into the (Core-rejected) cross-namespace translation hole.
-//
-// payloadCode identifies the bucket — the payload this pile is a pile OF — and
-// is what Core's SystemUOPForPayload sums against. It is required: a bucket
-// with no payload has no place in that sum and no key to accumulate under, so
-// the accumulator drops it rather than opening a row nothing can attribute.
-func (m *Mutator) RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
-	m.acc.recordBucket(nodeID, coreNodeName, pairKey, styleID, payloadCode, delta, reason)
-}
-
 // Flush performs one synchronous flush pass. Boundary triggers
 // (operator release, A/B flip, bin pickup, loader confirm) call this.
-// Satisfies engine.InventoryDeltaSink.
 func (m *Mutator) Flush() { m.acc.flush() }
 
 // OnBinPickedUp flushes pending deltas at the bin-pickup boundary.
@@ -237,34 +206,6 @@ func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop 
 // to-style on changeover).
 func (m *Mutator) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error {
 	return m.rw.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, deltaEpoch, uop)
-}
-
-// AdjustBucket sets a lineside bucket to an exact quantity (not a
-// delta), emitting the signed-delta envelope so Core's mirror stays
-// in step, and flushing immediately so the audit timeline reflects
-// the operator action without waiting for the periodic flush window.
-//
-// Today's caller is admin_lineside.go (engineer/team-leader override
-// for the "Lineside Buckets" admin page). currentQty is passed in so
-// the verb doesn't need a separate read against the bucket store;
-// the caller already has the bucket row in hand for validation.
-// reason is required and explicit per Dev A's review — the
-// admin/correction reason is different from capture_fill /
-// consume_drain and must not be mixed up.
-//
-// Skips delta emission when newQty == currentQty (no-op write).
-// Still writes the row to update updated_at and refresh the audit
-// row, matching pre-refactor behaviour.
-func (m *Mutator) AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
-	delta := newQty - currentQty
-	if delta != 0 {
-		m.acc.recordBucket(nodeID, coreNodeName, pairKey, styleID, payloadCode, delta, reason)
-	}
-	if err := m.buckets.SetLinesideBucketForReconcile(nodeID, pairKey, styleID, payloadCode, newQty); err != nil {
-		return err
-	}
-	m.acc.flush()
-	return nil
 }
 
 // ManualLoad atomically writes claim + active_bin_id + epoch + count

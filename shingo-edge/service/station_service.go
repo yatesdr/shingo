@@ -908,7 +908,7 @@ type boardData struct {
 	refusals            map[string]map[string]domain.SupplyRefusal
 	byPayload           map[string]domain.CellSupplyRefusal
 	activeBuckets       map[int64][]lineside.Bucket
-	inactiveBuckets     map[int64][]lineside.Bucket
+	strandedBuckets     map[int64][]lineside.Bucket
 }
 
 // prefetchBoardData performs every board-wide read the tile loop depends on.
@@ -1016,9 +1016,9 @@ func (s *StationService) prefetchBoardData(
 	if err != nil {
 		activeBuckets = nil // best-effort, as the per-node call was
 	}
-	inactiveBuckets, err := lineside.ListInactiveForNodes(s.db.DB, nodeIDs)
+	strandedBuckets, err := lineside.ListStrandedForNodes(s.db.DB, nodeIDs)
 	if err != nil {
-		inactiveBuckets = nil
+		strandedBuckets = nil
 	}
 	return &boardData{
 		loaderPayloads:      loaderPayloads,
@@ -1032,7 +1032,7 @@ func (s *StationService) prefetchBoardData(
 		refusals:            refusals,
 		byPayload:           byPayload,
 		activeBuckets:       activeBuckets,
-		inactiveBuckets:     inactiveBuckets,
+		strandedBuckets:     strandedBuckets,
 	}
 }
 
@@ -1334,11 +1334,11 @@ func (s *StationService) buildNodeTile(
 	nodeView.Orders = b.boardOrders[node.ID]
 	nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
 	nodeView.ReleasesAsPair = store.ReleasesAsPair(nodeView.ActiveClaim)
-	// Lineside buckets power the active-bar and stranded-chip UI on
+	// Lineside piles power the active-bar and count-anomaly chip UI on
 	// the operator station modal. Best-effort — absence of buckets
 	// just means the node has nothing pulled to lineside yet.
 	nodeView.LinesideActive = b.activeBuckets[node.ID]
-	nodeView.LinesideInactive = b.inactiveBuckets[node.ID]
+	nodeView.LinesideStranded = b.strandedBuckets[node.ID]
 	// Surface any pending release-time error that's been rolled back to
 	// Staged for the operator to retry. Prefetched for the board above; a
 	// node whose runtime the batch read missed falls back to the per-node

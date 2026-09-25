@@ -6,8 +6,7 @@
 // lanes → depth-ordered slots — load-bearing, kanban only sees nodes under that
 // hierarchy), non-storage stations (line/press/weld/loader/unloader/staging),
 // payloads + bin types, initial bin placement, the edge process/style/claim
-// topology, demand registry, reporting points, cell configs, and lineside
-// buckets. Validate() rejects the mistakes that silently break the demo
+// topology, demand registry, reporting points and cell configs. Validate() rejects the mistakes that silently break the demo
 // (dangling node references, missing swap staging, no LANE/NGRP hierarchy,
 // payloads with no bin type).
 //
@@ -46,7 +45,6 @@ type Plant struct {
 	Demands            []Demand          `yaml:"demands"`
 	ReportingPoints    []ReportingPoint  `yaml:"reporting_points"`
 	CellConfigs        []CellConfig      `yaml:"cell_configs"`
-	LinesideBuckets    []LinesideBucket  `yaml:"lineside_buckets"`
 	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
 	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
 	// BareBinTypes lists the bin types flagged bare (→ bin_types.bare): the label
@@ -489,14 +487,6 @@ type ReportingPoint struct {
 type CellConfig struct {
 	Process string `yaml:"process"`
 	Station string `yaml:"station"`
-}
-
-// LinesideBucket pre-stages lineside inventory at a consume node so consume
-// ticks drain the bucket (exercises DrainLinesideBucket) before bin UOP drops.
-type LinesideBucket struct {
-	Node    string `yaml:"node"`
-	Payload string `yaml:"payload"`
-	Qty     int64  `yaml:"qty"`
 }
 
 // Load reads and parses a plant spec YAML file. It does NOT validate — call

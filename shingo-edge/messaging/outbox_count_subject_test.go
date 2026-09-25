@@ -78,7 +78,7 @@ func failedCountPublishes(t *testing.T, subject string, passes int64) (db *store
 }
 
 // TestCountRowRetriesPastTheBudget is S1 on the Edge's real outbox. A
-// bin_uop_delta or lineside_bucket_delta row the broker refuses is offered on
+// bin_uop_delta or lineside_bucket_level row the broker refuses is offered on
 // every pass, past MaxRetries, and stays pending rather than dead. A refusal
 // costs no statement beyond the pass's own list: one fewer than before.
 //
@@ -86,7 +86,7 @@ func failedCountPublishes(t *testing.T, subject string, passes int64) (db *store
 // row died after exactly 10 refusals, each costing an IncrementOutboxRetries.
 func TestCountRowRetriesPastTheBudget(t *testing.T) {
 	t.Parallel()
-	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketDelta} {
+	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketLevel} {
 		db, attempts, failureStatements := failedCountPublishes(t, subject, 15)
 		if attempts < 15 {
 			t.Errorf("%s: %d publish attempts over at least 15 passes, want one per pass — "+

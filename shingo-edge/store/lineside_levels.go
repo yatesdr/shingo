@@ -27,8 +27,9 @@ import (
 // that did not exist, and it silently removed the real part from the correction
 // this feed exists to make.
 type LinesideLevel struct {
-	// NodeID is the Edge's process_nodes.id: the key the delta accumulator
-	// holds this seat's unflushed bucket counts under.
+	// NodeID is the Edge's process_nodes.id. (The reporter states the bucket
+	// by CoreNodeName, the key the accumulator holds a pile's sent level
+	// under.)
 	NodeID       int64
 	CoreNodeName string
 	PayloadCode  string
@@ -39,7 +40,7 @@ type LinesideLevel struct {
 	PayloadKnown bool
 	BinCount     int // 1 if a bin is bound at the node, else 0
 	BinUOP       int // remaining_uop_cached for the bound bin; 0 when none is bound
-	BucketQty    int // active lineside bucket parts at the node, for THIS payload
+	BucketQty    int // active lineside pile parts at the node, for THIS payload (stranded piles never count)
 	// BinID and BinEpoch are the bound carrier and its generation
 	// (active_bin_id, active_bin_epoch); BinID is nil when none is bound.
 	BinID    *int64

@@ -58,8 +58,9 @@ func (e *Engine) reportLinesideLevels() {
 	// raw count would show Core a gap its FlushedSeq says was sent: a
 	// divergence on every running seat. Each row instead states its count
 	// minus what the accumulator holds unflushed for that carrier (and its
-	// bucket minus what is unflushed for that seat and part), which is the
-	// number Core holds once it has applied every seq up to FlushedSeq.
+	// active pile as the last level the accumulator sent for that seat and
+	// part), which is the number Core holds once it has applied every seq up
+	// to FlushedSeq.
 	//
 	// ONE INSTANT. The unflushed snapshot, the level SELECT (counts and
 	// FlushedSeq) and the report's enqueue happen together: under the
@@ -121,12 +122,19 @@ func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
 		if l.BinID != nil {
 			binUOP -= pending.Bin(*l.BinID, l.BinEpoch)
 		}
+		// The seat's active pile level as Core holds it: the last level the
+		// accumulator enqueued for it, when it has one; otherwise the table,
+		// which nothing has changed unsent.
+		bucketQty := l.BucketQty
+		if sent, ok := pending.Bucket(l.CoreNodeName, payload); ok {
+			bucketQty = sent
+		}
 		entries = append(entries, protocol.LinesideLevelEntry{
 			CoreNodeName: l.CoreNodeName,
 			PayloadCode:  payload,
 			BinCount:     l.BinCount,
 			BinUOP:       binUOP,
-			BucketQty:    l.BucketQty - pending.Bucket(l.NodeID, payload),
+			BucketQty:    bucketQty,
 			BinID:        l.BinID,
 			BinEpoch:     l.BinEpoch,
 			FlushedSeq:   l.FlushedSeq,

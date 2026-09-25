@@ -145,10 +145,11 @@ func TestApiConfig_SetActiveStyle(t *testing.T) {
 	}
 }
 
-// The admin style flip does not touch lineside piles: a pile captured under the
-// outgoing style stays active with its qty.
-// Flips under change #2: the flip strands every pile at the process's nodes.
-func TestApiConfig_SetActiveStyleLeavesPilesActive(t *testing.T) {
+// The admin style flip is a cutover: the pile at the process's node is
+// stranded with its qty.
+// Flipped under change #2: the flip used to leave the pile active, still
+// stamped with the outgoing style.
+func TestApiConfig_SetActiveStyleStrandsThePiles(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
@@ -165,7 +166,7 @@ func TestApiConfig_SetActiveStyleLeavesPilesActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProcessNode: %v", err)
 	}
-	if _, err := testDB.CaptureLinesideBucket(nodeID, "", fromID, "SYN-PART-1", 9); err != nil {
+	if _, err := testDB.CaptureLinesideBucket(nodeID, "SYN-PART-1", 9); err != nil {
 		t.Fatalf("CaptureLinesideBucket: %v", err)
 	}
 
@@ -176,8 +177,8 @@ func TestApiConfig_SetActiveStyleLeavesPilesActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListLinesideBuckets: %v", err)
 	}
-	if len(rows) != 1 || rows[0].State != "active" || rows[0].Qty != 9 || rows[0].StyleID != fromID {
-		t.Errorf("piles after the flip = %+v, want one active pile of 9 still stamped style %d", rows, fromID)
+	if len(rows) != 1 || rows[0].State != "stranded" || rows[0].Qty != 9 {
+		t.Errorf("piles after the flip = %+v, want one stranded pile of 9", rows)
 	}
 }
 

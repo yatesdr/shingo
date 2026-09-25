@@ -103,29 +103,6 @@ func AppendBinUOPException(execer BinUOPExecer, kind string, binID int64, payloa
 	return nil
 }
 
-// AppendBucketUOPException records one exception that belongs to a lineside
-// bucket scope, not a bin: bin_id is NULL (v127). Same transaction contract as
-// AppendBinUOPException; no counts, since a bucket's qty is not a bin's.
-// Every reader of this table filters on a kind; the kinds written here
-// (edge_rollback for a bucket stream) are read by none of them, so none meets
-// the NULL.
-func AppendBucketUOPException(execer BinUOPExecer, kind, payloadCode, actor string, occurredAt time.Time, op string, detail []byte) error {
-	if occurredAt.IsZero() {
-		return fmt.Errorf("append bucket exception kind=%s: occurred_at is required", kind)
-	}
-	var det any
-	if len(detail) > 0 {
-		det = detail
-	}
-	if _, err := execer.Exec(`INSERT INTO bin_uop_exception
-		(kind, bin_id, payload_code, actor, occurred_at, op, detail)
-		VALUES ($1, NULL, $2, $3, $4, $5, $6)`,
-		kind, payloadCode, actor, occurredAt.UTC(), op, det); err != nil {
-		return fmt.Errorf("append bucket exception kind=%s payload=%s: %w", kind, payloadCode, err)
-	}
-	return nil
-}
-
 // RecoverBinUOPOpenCrossing closes the still-open negative_crossing for one
 // bin — the event-time complement of the backfill's recovered_at. Called from
 // the apply path whenever a delta lands the bin back at >= 0; a plain UPDATE

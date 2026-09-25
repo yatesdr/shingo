@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 )
 
 // plantCoreBucket writes one lineside_buckets row at the rig's seat.
-func (r *divergenceRig) plantCoreBucket(station string, styleID int64, payload string, qty int) {
+func (r *divergenceRig) plantCoreBucket(station string, state protocol.LinesideBucketState, payload string, qty int) {
 	r.t.Helper()
-	_, err := r.db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
-		VALUES ($1, $2, 'PK', $3, $4, $5)`, station, r.seat.Name, styleID, payload, qty)
+	_, err := r.db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+		VALUES ($1, $2, $3, $4, $5)`, station, r.seat.Name, payload, string(state), qty)
 	testutil.MustNoErr(r.t, err, "plant core bucket")
 }
 
@@ -21,43 +22,49 @@ func bucketRow(node, payload string, qty int) string {
 	return fmt.Sprintf(`{"core_node_name":%q,"payload_code":%q,"bin_count":0,"bin_uop":0,"bucket_qty":%d}`, node, payload, qty)
 }
 
-// THE BUCKET ARM COMPARES THE SUM OF EVERY STYLE ROW, AND IGNORES THE STRANDED
-// RULE. Core's side of a (seat, part) is SUM(qty) over the station's rows, so
-// the two rows a style re-stamp leaves (30 + 10) agree with an Edge pile of 40.
-// A part the seat's active style does not consume (PART-B: claims-stranded, so
-// SystemUOPForPayload leaves it out of on-hand) is still compared here.
+// THE BUCKET ARM COMPARES CORE'S ACTIVE PILE, AND IGNORES THE CLAIMS. Core's
+// side of a (seat, part) is its active row; a stranded row of the same part is
+// not compared (the Edge's report carries active piles only). A part the
+// seat's active style does not consume (PART-B) is an active pile and is
+// compared.
 //
-// Flips under brief v7 expected change #1 as a fixture (two rows for one pile
-// cannot exist); the comparison of Core's active qty against the Edge's pile
-// stays. PART-B stays compared (it is an active pile after the change, #3).
-func TestLinesideDivergence_BucketArmSumsEveryStyleRowAndIgnoresClaims(t *testing.T) {
+// This was TestLinesideDivergence_BucketArmSumsEveryStyleRowAndIgnoresClaims,
+// whose fixture was two style rows for one pile (30 + 10 against an Edge 40).
+// FLIPPED BY BRIEF v7 EXPECTED CHANGE #1 as a fixture: one row per (node,
+// part, state), so the pile is one active row of 40, and the stranded 10 of
+// the same part beside it is the new half of the pin. PART-B stays compared
+// (#3: it is an active pile).
+func TestLinesideDivergence_BucketArmComparesTheActivePileAndIgnoresClaims(t *testing.T) {
 	t.Parallel()
 	r := newDivergenceRig(t, "BKTSUM")
-	r.plantCoreBucket(r.station, 12, "PART-A", 30)
-	r.plantCoreBucket(r.station, 19, "PART-A", 10)
-	r.plantCoreBucket(r.station, 12, "PART-B", 25)
+	r.plantCoreBucket(r.station, protocol.LinesideBucketActive, "PART-A", 40)
+	r.plantCoreBucket(r.station, protocol.LinesideBucketStranded, "PART-A", 10)
+	r.plantCoreBucket(r.station, protocol.LinesideBucketActive, "PART-B", 25)
 
 	r.report(bucketRow(r.seat.Name, "PART-A", 40), bucketRow(r.seat.Name, "PART-B", 25))
 	if open := r.open(); len(open) != 0 {
-		t.Errorf("open divergences = %+v, want none: PART-A 30+10 = 40 and PART-B 25 both agree", open)
+		t.Errorf("open divergences = %+v, want none: PART-A active 40 and PART-B 25 both agree", open)
 	}
 
 	r.report(bucketRow(r.seat.Name, "PART-A", 40), bucketRow(r.seat.Name, "PART-B", 20))
 	r.wantOne("bucket", 0, 20, 25)
 }
 
-// THE BUCKET ARM READS ONLY THE REPORTING STATION'S ROWS
-// (store/lineside_divergence.go, `WHERE lb.station = $1`). A row another
-// station last stamped compares as 0.
+// THE BUCKET ARM READS THE PILE WHOEVER LAST SENT IT. Core's mirror row is a
+// fact about the node; its station is the last reporter, so a row another
+// station last sent compares at its qty.
 //
-// Flips under brief v7 U4 ("the checksum's bucket arm ... minus the lb.station
-// predicate"). Not one of the seven numbered changes: inert while each plant
-// runs one station.
-func TestLinesideDivergence_BucketArmReadsOnlyTheReportingStation(t *testing.T) {
+// This was TestLinesideDivergence_BucketArmReadsOnlyTheReportingStation
+// (`WHERE lb.station = $1`: another station's row compared as 0, and 40 vs 0
+// opened a divergence). Flipped by the U4 predicate drop in the checksum's
+// bucket arm (store/lineside_divergence.go), not by a numbered change.
+func TestLinesideDivergence_BucketArmReadsThePileWhoeverLastSentIt(t *testing.T) {
 	t.Parallel()
 	r := newDivergenceRig(t, "BKTSTN")
-	r.plantCoreBucket("stn-some-other-edge", 12, "PART-A", 40)
+	r.plantCoreBucket("stn-some-other-edge", protocol.LinesideBucketActive, "PART-A", 40)
 
 	r.report(bucketRow(r.seat.Name, "PART-A", 40))
-	r.wantOne("bucket", 0, 40, 0)
+	if open := r.open(); len(open) != 0 {
+		t.Errorf("open divergences = %+v, want none: the pile reads 40 whichever station last sent it", open)
+	}
 }

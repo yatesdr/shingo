@@ -1019,7 +1019,7 @@ func TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter(t *testing.T) {
 	})
 
 	// Capture 60 parts to lineside for this (node, style, part).
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "P-500", 60); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "P-500", 60); err != nil {
 		t.Fatalf("CaptureLinesideBucket: %v", err)
 	}
 
@@ -1038,12 +1038,8 @@ func TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter(t *testing.T) {
 		t.Errorf("RemainingUOP = %d, want 100 (drain came from lineside)", runtime.RemainingUOPCached)
 	}
 
-	b, err := db.GetActiveLinesideBucket(nodeID, styleID, "P-500")
-	if err != nil {
-		t.Fatalf("GetActiveLinesideBucket: %v", err)
-	}
-	if b.Qty != 45 {
-		t.Errorf("bucket qty = %d, want 45 (60 - 15)", b.Qty)
+	if qty, ok := activePile(t, db, nodeID, "P-500"); !ok || qty != 45 {
+		t.Errorf("bucket qty = %d (present %v), want 45 (60 - 15)", qty, ok)
 	}
 }
 
@@ -1056,7 +1052,7 @@ func TestWiring_CounterDelta_CarriesRemainderToNodeCounter(t *testing.T) {
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-CARRY", PayloadCode: "P-600", UOPCapacity: 100, InitialUOP: 100,
 	})
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "P-600", 10); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "P-600", 10); err != nil {
 		t.Fatalf("CaptureLinesideBucket: %v", err)
 	}
 
@@ -1076,8 +1072,8 @@ func TestWiring_CounterDelta_CarriesRemainderToNodeCounter(t *testing.T) {
 	}
 
 	// Bucket should be gone.
-	if _, err := db.GetActiveLinesideBucket(nodeID, styleID, "P-600"); err != sql.ErrNoRows {
-		t.Errorf("expected drained bucket to be deleted, got err=%v", err)
+	if qty, ok := activePile(t, db, nodeID, "P-600"); ok {
+		t.Errorf("expected drained bucket to be deleted, still holds %d", qty)
 	}
 }
 

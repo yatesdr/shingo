@@ -2,7 +2,6 @@ package lineside
 
 import (
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -11,8 +10,10 @@ import (
 )
 
 // openTestDB creates a fresh SQLite DB, runs just enough of the edge
-// schema to satisfy the FK constraints on node_lineside_bucket, and
-// seeds a process, style, and node.
+// schema to satisfy node_lineside_bucket, and seeds two processes and their
+// nodes. Nodes 100 and 101 are process 1; node 102 is process 1 too and
+// carries the same core name as node 100 (two local nodes, one place at
+// Core); node 200 is process 2.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "lineside.db")
@@ -28,13 +29,6 @@ CREATE TABLE processes (
     name TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE styles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id INTEGER REFERENCES processes(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    UNIQUE(process_id, name)
-);
 CREATE TABLE process_nodes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -45,25 +39,20 @@ CREATE TABLE process_nodes (
 CREATE TABLE node_lineside_bucket (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
-    pair_key     TEXT NOT NULL DEFAULT '',
-    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    payload_code  TEXT NOT NULL,
+    payload_code TEXT NOT NULL,
     qty          INTEGER NOT NULL DEFAULT 0,
-    state        TEXT NOT NULL DEFAULT 'active',
+    state        TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'stranded')),
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (node_id, payload_code, state)
 );
-CREATE UNIQUE INDEX idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, style_id, payload_code)
-    WHERE state = 'active';
-CREATE INDEX idx_lineside_node_state ON node_lineside_bucket(node_id, state);
-CREATE INDEX idx_lineside_pair_state ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
 
-INSERT INTO processes (id, name) VALUES (1, 'Line 1');
-INSERT INTO styles (id, process_id, name) VALUES (10, 1, 'StyleA'), (20, 1, 'StyleB');
+INSERT INTO processes (id, name) VALUES (1, 'Line 1'), (2, 'Line 2');
 INSERT INTO process_nodes (id, process_id, core_node_name, code, name)
     VALUES (100, 1, 'ALN_002', 'aln-002', 'ALN_002'),
-           (101, 1, 'ALN_003', 'aln-003', 'ALN_003');
+           (101, 1, 'ALN_003', 'aln-003', 'ALN_003'),
+           (102, 1, 'ALN_002', 'aln-002b', 'ALN_002 B'),
+           (200, 2, 'ALN_900', 'aln-900', 'ALN_900');
 `
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("seed schema: %v", err)
@@ -71,37 +60,49 @@ INSERT INTO process_nodes (id, process_id, core_node_name, code, name)
 	return db
 }
 
+// pile reads one row by (node, payload, state); ok is false when there is none.
+func pile(t *testing.T, db *sql.DB, nodeID int64, payload, state string) (qty int, ok bool) {
+	t.Helper()
+	err := db.QueryRow(`SELECT qty FROM node_lineside_bucket WHERE node_id=? AND payload_code=? AND state=?`,
+		nodeID, payload, state).Scan(&qty)
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+	testutil.MustNoErr(t, err, "read pile")
+	return qty, true
+}
+
+func seedStranded(t *testing.T, db *sql.DB, nodeID int64, payload string, qty int) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state) VALUES (?, ?, ?, ?)`,
+		nodeID, payload, qty, StateStranded)
+	testutil.MustNoErr(t, err, "seed stranded pile")
+}
+
 func TestCaptureCreatesActiveBucket(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 
-	b, err := Capture(db, 100, "", 10, "P-500", 60)
-	if err != nil {
-		t.Fatalf("Capture: %v", err)
+	qty, err := Capture(db, 100, "P-500", 60)
+	testutil.MustNoErr(t, err, "Capture")
+	if qty != 60 {
+		t.Fatalf("Capture returned qty %d, want 60", qty)
 	}
-	if b == nil {
-		t.Fatal("Capture returned nil bucket")
-	}
-	if b.State != StateActive || b.Qty != 60 {
-		t.Fatalf("bucket state=%s qty=%d, want active/60", b.State, b.Qty)
-	}
-	if b.StyleID != 10 || b.PayloadCode != "P-500" || b.NodeID != 100 {
-		t.Fatalf("bucket identifiers wrong: %+v", b)
+	if got, ok := pile(t, db, 100, "P-500", StateActive); !ok || got != 60 {
+		t.Fatalf("active pile = %d (present %v), want 60", got, ok)
 	}
 }
 
 func TestCaptureZeroIsNoop(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	b, err := Capture(db, 100, "", 10, "P-500", 0)
-	if err != nil {
-		t.Fatalf("Capture 0: %v", err)
-	}
-	if b != nil {
-		t.Fatalf("expected nil bucket for zero qty, got %+v", b)
+	qty, err := Capture(db, 100, "P-500", 0)
+	testutil.MustNoErr(t, err, "Capture 0")
+	if qty != 0 {
+		t.Fatalf("Capture 0 returned %d, want 0", qty)
 	}
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count)
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count), "count")
 	if count != 0 {
 		t.Fatalf("expected no rows inserted, got %d", count)
 	}
@@ -110,344 +111,256 @@ func TestCaptureZeroIsNoop(t *testing.T) {
 func TestCaptureMergesWithExistingActive(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("first Capture: %v", err)
+	_, err := Capture(db, 100, "P-500", 60)
+	testutil.MustNoErr(t, err, "first Capture")
+	qty, err := Capture(db, 100, "P-500", 25)
+	testutil.MustNoErr(t, err, "merge Capture")
+	if qty != 85 {
+		t.Fatalf("merged qty = %d, want 85", qty)
 	}
-	if _, err := Capture(db, 100, "", 10, "P-500", 25); err != nil {
-		t.Fatalf("merge Capture: %v", err)
-	}
-
-	b, err := GetActive(db, 100, 10, "P-500")
-	if err != nil {
-		t.Fatalf("GetActive: %v", err)
-	}
-	if b.Qty != 85 {
-		t.Fatalf("merged qty=%d, want 85", b.Qty)
-	}
-
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count)
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count), "count")
 	if count != 1 {
 		t.Fatalf("expected 1 row after merge, got %d", count)
 	}
 }
 
-// R58-2: capturing more of a part under a DIFFERENT style while the prior
-// style's bucket is still active must fold into the one physical pile (and
-// re-stamp the style), not silently drop the qty.
-func TestCaptureCrossStyleFoldsNotDrops(t *testing.T) {
+// A capture never reads or writes a stranded row: a part stranded at an earlier
+// cutover stays stranded with its qty, and the pull is a new active pile beside
+// it.
+// Replaces TestCaptureReactivatesInactive, which flipped under change #2 (a
+// stranded pile never revives).
+func TestCapture_NeverTouchesAStrandedPile(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture style A: %v", err)
-	}
-	// No DeactivateOtherStyles first — style A's bucket is still active.
-	if _, err := Capture(db, 100, "", 20, "P-500", 25); err != nil {
-		t.Fatalf("cross-style Capture style B: %v", err)
-	}
+	seedStranded(t, db, 100, "P-500", 30)
 
-	b, err := GetActive(db, 100, 20, "P-500")
-	if err != nil {
-		t.Fatalf("GetActive style B: %v", err)
+	qty, err := Capture(db, 100, "P-500", 4)
+	testutil.MustNoErr(t, err, "Capture")
+	if qty != 4 {
+		t.Errorf("Capture returned %d, want 4: the new active pile, not 34", qty)
 	}
-	if b.Qty != 85 {
-		t.Errorf("cross-style merged qty=%d, want 85 (60+25, none dropped)", b.Qty)
+	if got, _ := pile(t, db, 100, "P-500", StateStranded); got != 30 {
+		t.Errorf("stranded pile = %d, want 30 untouched", got)
 	}
-
-	var active int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket WHERE node_id=100 AND payload_code='P-500' AND state='active'`).Scan(&active)
-	if active != 1 {
-		t.Errorf("active bucket count=%d, want 1 (one physical pile per node+part)", active)
-	}
-}
-
-func TestCaptureReactivatesInactive(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-
-	// Style A runs, captures 60 of P-500.
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture A: %v", err)
-	}
-	// Switch to Style B — A's bucket goes inactive.
-	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "DeactivateOtherStyles")
-	// A's bucket is now inactive with qty 60.
-	b, err := Find(db, 100, 10, "P-500")
-	if err != nil {
-		t.Fatalf("Find inactive: %v", err)
-	}
-	if b.State != StateInactive || b.Qty != 60 {
-		t.Fatalf("inactive bucket wrong: state=%s qty=%d", b.State, b.Qty)
-	}
-
-	// Switch back to Style A — operator captures another 10 to lineside.
-	if _, err := Capture(db, 100, "", 10, "P-500", 10); err != nil {
-		t.Fatalf("Capture reactivate: %v", err)
-	}
-	b2, err := GetActive(db, 100, 10, "P-500")
-	if err != nil {
-		t.Fatalf("GetActive after reactivate: %v", err)
-	}
-	if b2.Qty != 70 {
-		t.Fatalf("reactivated merged qty=%d, want 70 (60 stranded + 10 fresh)", b2.Qty)
-	}
-
-	// Still exactly one row for this (node, style, part).
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket
-		WHERE node_id=? AND style_id=? AND payload_code=?`,
-		100, 10, "P-500").Scan(&count)
-	if count != 1 {
-		t.Fatalf("expected 1 row after reactivate, got %d", count)
-	}
-}
-
-func TestDeactivateOtherStylesLeavesKeptStyleUntouched(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture A: %v", err)
-	}
-	if _, err := Capture(db, 100, "", 20, "P-600", 40); err != nil {
-		// Both active is legal here because payload_code differs —
-		// matters under either the legacy (node, style, part) index
-		// or the Round-3 A* narrowed (node, part) index. Per-style
-		// transient overlap on the *same* part is no longer allowed
-		// post-A*; that's intentional, and DeactivateOtherStyles
-		// (called inside the release transaction) makes the
-		// "previous style still active" intermediate state
-		// disappear before the transaction commits.
-		t.Fatalf("Capture B: %v", err)
-	}
-
-	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "DeactivateOtherStyles")
-
-	a, err := Find(db, 100, 10, "P-500")
-	if err != nil {
-		t.Fatalf("Find A: %v", err)
-	}
-	if a.State != StateInactive {
-		t.Fatalf("A bucket should be inactive, got %s", a.State)
-	}
-
-	b, err := GetActive(db, 100, 20, "P-600")
-	if err != nil {
-		t.Fatalf("GetActive B: %v", err)
-	}
-	if b.Qty != 40 {
-		t.Fatalf("B bucket qty=%d, want 40", b.Qty)
+	if got, _ := pile(t, db, 100, "P-500", StateActive); got != 4 {
+		t.Errorf("active pile = %d, want 4", got)
 	}
 }
 
 func TestDrainDecrementsBucketFirst(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture: %v", err)
-	}
+	_, err := Capture(db, 100, "P-500", 60)
+	testutil.MustNoErr(t, err, "Capture")
 
-	drained, matchedStyleID, err := Drain(db, 100, "P-500", 15)
-	if err != nil {
-		t.Fatalf("Drain 15: %v", err)
-	}
+	drained, err := Drain(db, 100, "P-500", 15)
+	testutil.MustNoErr(t, err, "Drain 15")
 	if drained != 15 {
 		t.Fatalf("drained=%d, want 15", drained)
 	}
-	if matchedStyleID != 10 {
-		t.Fatalf("matchedStyleID=%d, want 10 (Round-3 A* return value — Core dedup needs the bucket's style, not the caller's)", matchedStyleID)
-	}
-	b, _ := GetActive(db, 100, 10, "P-500")
-	if b.Qty != 45 {
-		t.Fatalf("qty after drain=%d, want 45", b.Qty)
+	if got, _ := pile(t, db, 100, "P-500", StateActive); got != 45 {
+		t.Fatalf("qty after drain=%d, want 45", got)
 	}
 }
 
 func TestDrainCarriesRemainderWhenBucketEmpty(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 10); err != nil {
-		t.Fatalf("Capture: %v", err)
-	}
+	_, err := Capture(db, 100, "P-500", 10)
+	testutil.MustNoErr(t, err, "Capture")
 
-	drained, matchedStyleID, err := Drain(db, 100, "P-500", 25)
-	if err != nil {
-		t.Fatalf("Drain 25: %v", err)
-	}
+	drained, err := Drain(db, 100, "P-500", 25)
+	testutil.MustNoErr(t, err, "Drain 25")
 	if drained != 10 {
-		t.Fatalf("drained=%d, want 10 (the bucket qty)", drained)
+		t.Fatalf("drained=%d, want 10 (the pile's qty)", drained)
 	}
-	if matchedStyleID != 10 {
-		t.Fatalf("matchedStyleID=%d, want 10", matchedStyleID)
-	}
-	// Bucket was deleted because it hit zero.
-	_, err = GetActive(db, 100, 10, "P-500")
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected ErrNoRows after drain-to-zero, got %v", err)
+	if _, ok := pile(t, db, 100, "P-500", StateActive); ok {
+		t.Fatal("the pile was not deleted when it reached zero")
 	}
 }
 
 func TestDrainWithNoBucketReturnsZero(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	drained, matchedStyleID, err := Drain(db, 100, "P-500", 5)
-	if err != nil {
-		t.Fatalf("Drain empty: %v", err)
-	}
-	if drained != 0 || matchedStyleID != 0 {
-		t.Fatalf("drained=%d styleID=%d, want 0,0 on no-match", drained, matchedStyleID)
+	drained, err := Drain(db, 100, "P-500", 5)
+	testutil.MustNoErr(t, err, "Drain empty")
+	if drained != 0 {
+		t.Fatalf("drained=%d, want 0 on no match", drained)
 	}
 }
 
 func TestDrainZeroIsNoop(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture: %v", err)
-	}
-	drained, _, err := Drain(db, 100, "P-500", 0)
-	if err != nil {
-		t.Fatalf("Drain 0: %v", err)
-	}
+	_, err := Capture(db, 100, "P-500", 10)
+	testutil.MustNoErr(t, err, "Capture")
+	drained, err := Drain(db, 100, "P-500", 0)
+	testutil.MustNoErr(t, err, "Drain 0")
 	if drained != 0 {
 		t.Fatalf("drained=%d, want 0", drained)
 	}
-	b, _ := GetActive(db, 100, 10, "P-500")
-	if b.Qty != 60 {
-		t.Fatalf("qty should be untouched, got %d", b.Qty)
+	if got, _ := pile(t, db, 100, "P-500", StateActive); got != 10 {
+		t.Fatalf("qty=%d, want 10 unchanged", got)
 	}
 }
 
-// TestDrainAcrossStyleCutover pins the Round-3 A* fix: a bucket
-// captured under style A must continue to drain after the process
-// flips to style B (operator already pulled the parts before the
-// swap). Pre-A* the style_id-gated WHERE left the bucket stuck and
-// the caller's binRemainder absorbed the full tick, producing a
-// chronic over-decrement against the bin counter. Post-A* the WHERE
-// is (node, part, state='active') only; the matched style_id flows
-// back to the caller so downstream LinesideBucketDelta attribution
-// stays consistent with Core's dedup scope_key.
-func TestDrainAcrossStyleCutover(t *testing.T) {
+// A stranded pile never drains: the tick flows through to the bin.
+// Replaces TestDrainAcrossStyleCutover, whose style half went with change #1;
+// the changeover-window drain it pinned is pinned end to end in
+// engine/lineside_bucket_pins_test.go.
+func TestDrain_NeverDrainsAStrandedPile(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
+	seedStranded(t, db, 100, "P-500", 30)
 
-	// Capture 50 parts under style 10.
-	if _, err := Capture(db, 100, "pair-1", 10, "P-500", 50); err != nil {
-		t.Fatalf("Capture under style 10: %v", err)
+	drained, err := Drain(db, 100, "P-500", 5)
+	testutil.MustNoErr(t, err, "Drain")
+	if drained != 0 {
+		t.Errorf("drained=%d from a stranded pile, want 0", drained)
 	}
-
-	// Process flips to style 20. Drain runs with no style context.
-	drained, matchedStyleID, err := Drain(db, 100, "P-500", 30)
-	if err != nil {
-		t.Fatalf("Drain across cutover: %v", err)
-	}
-	if drained != 30 {
-		t.Fatalf("drained=%d, want 30 — bucket must keep draining across the cutover", drained)
-	}
-	if matchedStyleID != 10 {
-		t.Fatalf("matchedStyleID=%d, want 10 — Drain must surface the bucket's actual style, not the caller's", matchedStyleID)
-	}
-	b, err := GetActive(db, 100, 10, "P-500")
-	if err != nil {
-		t.Fatalf("GetActive style 10 P-500: %v", err)
-	}
-	if b.Qty != 20 {
-		t.Fatalf("residual qty=%d, want 20", b.Qty)
+	if got, _ := pile(t, db, 100, "P-500", StateStranded); got != 30 {
+		t.Errorf("stranded pile = %d, want 30 untouched", got)
 	}
 }
 
 func TestListForNodeActiveFirst(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture A: %v", err)
-	}
-	// DeactivateOtherStyles: leaves no active rows for style 10 — but we
-	// simulate a stranded bucket by flipping state directly then starting
-	// a new active style.
-	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "Deactivate")
-	if _, err := Capture(db, 100, "", 20, "P-600", 40); err != nil {
-		t.Fatalf("Capture B: %v", err)
-	}
+	seedStranded(t, db, 100, "P-500", 60)
+	_, err := Capture(db, 100, "P-600", 40)
+	testutil.MustNoErr(t, err, "Capture")
 
 	list, err := ListForNode(db, 100)
-	if err != nil {
-		t.Fatalf("ListForNode: %v", err)
-	}
+	testutil.MustNoErr(t, err, "ListForNode")
 	if len(list) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(list))
 	}
-	if list[0].State != StateActive {
-		t.Fatalf("first row should be active, got %s", list[0].State)
-	}
-	if list[1].State != StateInactive {
-		t.Fatalf("second row should be inactive, got %s", list[1].State)
+	if list[0].State != StateActive || list[1].State != StateStranded {
+		t.Fatalf("order = %s, %s; want active first", list[0].State, list[1].State)
 	}
 }
 
-func TestListForPair(t *testing.T) {
+// One pile per (node, payload, state), enforced by the schema.
+// Was TestUniqueActivePerNodeStylePart; the style left the key under change #1.
+func TestUniquePerNodePayloadState(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	if _, err := Capture(db, 100, "pair-1", 10, "P-500", 60); err != nil {
-		t.Fatalf("Capture node A: %v", err)
+	_, err := Capture(db, 100, "P-500", 60)
+	testutil.MustNoErr(t, err, "Capture")
+	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state) VALUES (100, 'P-500', 5, 'active')`); err == nil {
+		t.Error("a second active P-500 pile at node 100 was accepted")
 	}
-	if _, err := Capture(db, 101, "pair-1", 10, "P-500", 20); err != nil {
-		t.Fatalf("Capture node B: %v", err)
-	}
-
-	list, err := ListForPair(db, "pair-1")
-	if err != nil {
-		t.Fatalf("ListForPair: %v", err)
-	}
-	if len(list) != 2 {
-		t.Fatalf("expected 2 rows for pair, got %d", len(list))
+	seedStranded(t, db, 100, "P-500", 5) // the other state is a different row
+	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state) VALUES (100, 'P-500', 5, 'inactive')`); err == nil {
+		t.Error("state 'inactive' was accepted; the CHECK allows active and stranded only")
 	}
 }
 
-func TestListForPairEmptyKey(t *testing.T) {
+// THE CUTOVER. Every active pile at any node of the process folds into its
+// (node, payload) stranded row, summed into one already there, and the active
+// row goes. A node with no part change (101) is stranded too; another
+// process's pile (200) is not.
+func TestStrandProcess_FoldsEveryActivePileIntoItsStrandedRow(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	list, err := ListForPair(db, "")
-	if err != nil {
-		t.Fatalf("ListForPair empty: %v", err)
+	for _, c := range []struct {
+		node int64
+		part string
+		qty  int
+	}{{100, "P-500", 10}, {101, "P-700", 8}, {200, "P-900", 3}} {
+		_, err := Capture(db, c.node, c.part, c.qty)
+		testutil.MustNoErr(t, err, "Capture")
 	}
-	if len(list) != 0 {
-		t.Fatalf("expected 0 rows, got %d", len(list))
+	seedStranded(t, db, 100, "P-500", 5) // from an earlier cutover
+
+	stranded, err := StrandProcess(db, 1)
+	testutil.MustNoErr(t, err, "StrandProcess")
+
+	if len(stranded) != 2 {
+		t.Fatalf("stranded = %+v, want the two piles of process 1", stranded)
+	}
+	if got, _ := pile(t, db, 100, "P-500", StateStranded); got != 15 {
+		t.Errorf("node 100 stranded P-500 = %d, want 15 (5 + 10)", got)
+	}
+	if got, _ := pile(t, db, 101, "P-700", StateStranded); got != 8 {
+		t.Errorf("node 101 stranded P-700 = %d, want 8", got)
+	}
+	for _, n := range []struct {
+		node int64
+		part string
+	}{{100, "P-500"}, {101, "P-700"}} {
+		if _, ok := pile(t, db, n.node, n.part, StateActive); ok {
+			t.Errorf("node %d still has an active %s pile after the strand", n.node, n.part)
+		}
+	}
+	if got, ok := pile(t, db, 200, "P-900", StateActive); !ok || got != 3 {
+		t.Errorf("process 2's pile = %d (present %v), want active 3: another process's cutover", got, ok)
+	}
+	for _, s := range stranded {
+		if s.NodeID == 100 && (s.CoreNodeName != "ALN_002" || s.Qty != 10) {
+			t.Errorf("stranded record %+v, want core ALN_002 and the 10 folded (not the row's 15)", s)
+		}
 	}
 }
 
-func TestUniqueActivePerNodeStylePart(t *testing.T) {
+// Two local nodes with one core name are one place at Core: the level is the
+// sum over both.
+func TestLevel_SumsNodesSharingACoreName(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	// Two direct inserts of "active" for the same (node, style, part)
-	// must be rejected by the unique index — Capture always merges so
-	// this exercises the index itself.
-	if _, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, payload_code, qty, state)
-		VALUES (100, '', 10, 'P-500', 60, 'active')`); err != nil {
-		t.Fatalf("first insert: %v", err)
+	_, err := Capture(db, 100, "P-500", 10)
+	testutil.MustNoErr(t, err, "Capture 100")
+	_, err = Capture(db, 102, "P-500", 7)
+	testutil.MustNoErr(t, err, "Capture 102")
+	seedStranded(t, db, 100, "P-500", 40)
+
+	got, err := Level(db, "ALN_002", "P-500", StateActive)
+	testutil.MustNoErr(t, err, "Level")
+	if got != 17 {
+		t.Errorf("active level = %d, want 17 (10 + 7)", got)
 	}
-	_, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, payload_code, qty, state)
-		VALUES (100, '', 10, 'P-500', 10, 'active')`)
-	if err == nil {
-		t.Fatal("expected unique-index violation on second active insert, got nil")
+	got, err = Level(db, "ALN_002", "P-500", StateStranded)
+	testutil.MustNoErr(t, err, "Level stranded")
+	if got != 40 {
+		t.Errorf("stranded level = %d, want 40", got)
+	}
+	got, err = Level(db, "ALN_002", "P-999", StateActive)
+	testutil.MustNoErr(t, err, "Level of a payload with no row")
+	if got != 0 {
+		t.Errorf("level of a payload with no row = %d, want 0", got)
 	}
 }
 
-func TestDeactivateDeletesZeroQtyRows(t *testing.T) {
+// ListKeys names every row once, with its core name; ListKeysForProcess only
+// the process's.
+func TestListKeys_NamesEveryRow(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	// Manually seed a zero-qty active row (wouldn't normally exist, but
-	// we want to confirm the cleanup happens).
-	if _, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, payload_code, qty, state)
-		VALUES (100, '', 10, 'P-500', 0, 'active')`); err != nil {
-		t.Fatalf("seed zero row: %v", err)
+	_, err := Capture(db, 100, "P-500", 10)
+	testutil.MustNoErr(t, err, "Capture")
+	seedStranded(t, db, 101, "P-700", 2)
+	_, err = Capture(db, 200, "P-900", 3)
+	testutil.MustNoErr(t, err, "Capture")
+
+	all, err := ListKeys(db)
+	testutil.MustNoErr(t, err, "ListKeys")
+	want := []Key{
+		{NodeID: 100, CoreNodeName: "ALN_002", PayloadCode: "P-500", State: StateActive},
+		{NodeID: 101, CoreNodeName: "ALN_003", PayloadCode: "P-700", State: StateStranded},
+		{NodeID: 200, CoreNodeName: "ALN_900", PayloadCode: "P-900", State: StateActive},
 	}
-	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "Deactivate")
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count)
-	if count != 0 {
-		t.Fatalf("expected zero-qty row to be deleted, got %d rows", count)
+	if len(all) != len(want) {
+		t.Fatalf("ListKeys = %+v, want %+v", all, want)
+	}
+	for i := range want {
+		if all[i] != want[i] {
+			t.Errorf("ListKeys[%d] = %+v, want %+v", i, all[i], want[i])
+		}
+	}
+	proc, err := ListKeysForProcess(db, 1)
+	testutil.MustNoErr(t, err, "ListKeysForProcess")
+	if len(proc) != 2 {
+		t.Errorf("ListKeysForProcess(1) = %+v, want the two process-1 rows", proc)
 	}
 }

@@ -46,6 +46,21 @@ func TestSubjectRouter_CoversEveryInboundSubject(t *testing.T) {
 	}
 }
 
+// TestSubjectRouter_BucketLevelReplacesTheDelta: the pile level has a handler
+// and the retired bucket delta has none, so an older Edge's delta is logged as
+// unhandled instead of applied (brief v7: deploy Core first; the new Core
+// counts no piles from that Edge until it updates).
+func TestSubjectRouter_BucketLevelReplacesTheDelta(t *testing.T) {
+	t.Parallel()
+	r := testSubjectRouter(t)
+	if !r.Has(protocol.SubjectLinesideBucketLevel) {
+		t.Errorf("subject %q has no handler", protocol.SubjectLinesideBucketLevel)
+	}
+	if r.Has("inventory.lineside_bucket_delta") {
+		t.Error("the retired inventory.lineside_bucket_delta still has a handler")
+	}
+}
+
 // TestSubjectRouter_DemandOriginIsWired names seam 3's subject on its own.
 //
 // The loop above would catch its absence too, but only for as long as

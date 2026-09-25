@@ -18,7 +18,7 @@ func TestNewDataEnvelope_DeltaSubjectsCarryNoExpiry(t *testing.T) {
 	src := Address{Role: RoleEdge, Station: "plant-a.line-1"}
 	dst := Address{Role: RoleCore}
 
-	for _, subject := range []string{SubjectBinUOPDelta, SubjectLinesideBucketDelta} {
+	for _, subject := range []string{SubjectBinUOPDelta, SubjectLinesideBucketLevel} {
 		env, err := NewDataEnvelope(subject, src, dst, map[string]any{"bin_id": 27, "delta": -3})
 		if err != nil {
 			t.Fatalf("NewDataEnvelope(%s): %v", subject, err)

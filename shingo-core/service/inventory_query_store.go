@@ -9,7 +9,7 @@ import (
 )
 
 // InventoryQueryStore is the narrow DB surface InventoryService depends on.
-// No transactions; its one mutation is DeleteLinesideBucket.
+// Read-only: no transactions and no mutations.
 //
 // The four QueryContext call sites use dynamically-built IN-clause SQL
 // (the placeholder construction is the query's business logic). Exposing
@@ -21,12 +21,6 @@ type InventoryQueryStore interface {
 
 	// Typed wrapper for the lineside_buckets read-side listing.
 	ListLinesideBuckets() ([]inventory.BucketRow, error)
-
-	// DeleteLinesideBucket removes one bucket row + its matching
-	// inventory_delta_dedup row. Powers the Round-3 Obs 10
-	// admin clear-orphan capability. Returns the number of bucket
-	// rows deleted (0 or 1).
-	DeleteLinesideBucket(id int64) (int, error)
 
 	// ListOpenReportDivergences lists the open report_divergence episodes —
 	// where the Edge's lineside report and Core's replica still disagree.

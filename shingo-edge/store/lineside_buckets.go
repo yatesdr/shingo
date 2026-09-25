@@ -1,86 +1,64 @@
 package store
 
-// Delegate file: lineside bucket CRUD lives in store/lineside/. This
-// file preserves the *store.DB method surface so external callers do
-// not need to change.
+// Delegate file: lineside pile persistence lives in store/lineside/. This
+// file keeps the *store.DB method surface so callers outside the store do not
+// import the sub-package for the common calls.
 
 import "shingoedge/store/lineside"
 
-// Bucket states re-exported for callers outside the store package.
+// Pile states re-exported for callers outside the store package.
 const (
 	LinesideStateActive   = lineside.StateActive
-	LinesideStateInactive = lineside.StateInactive
+	LinesideStateStranded = lineside.StateStranded
 )
 
-// GetActiveLinesideBucket returns the active bucket for (node, style,
-// part) or sql.ErrNoRows if none exists.
-func (db *DB) GetActiveLinesideBucket(nodeID, styleID int64, payloadCode string) (*lineside.Bucket, error) {
-	return lineside.GetActive(db.DB, nodeID, styleID, payloadCode)
-}
-
-// FindLinesideBucket returns any bucket (active or inactive) for
-// (node, style, part) or sql.ErrNoRows.
-func (db *DB) FindLinesideBucket(nodeID, styleID int64, payloadCode string) (*lineside.Bucket, error) {
-	return lineside.Find(db.DB, nodeID, styleID, payloadCode)
-}
-
-// GetLinesideBucket returns one bucket by id.
+// GetLinesideBucket returns one pile by id.
 func (db *DB) GetLinesideBucket(id int64) (*lineside.Bucket, error) {
 	return lineside.GetByID(db.DB, id)
 }
 
-// ListLinesideBuckets returns every bucket on a node, active-first.
+// ListLinesideBuckets returns every pile on a node, active-first.
 func (db *DB) ListLinesideBuckets(nodeID int64) ([]lineside.Bucket, error) {
 	return lineside.ListForNode(db.DB, nodeID)
 }
 
-// ListActiveLinesideBuckets returns only the active buckets on a node.
-func (db *DB) ListActiveLinesideBuckets(nodeID int64) ([]lineside.Bucket, error) {
-	return lineside.ListActiveForNode(db.DB, nodeID)
+// CaptureLinesideBucket adds qty to the node's active pile of the payload
+// (creating it) and returns the pile's new qty. Never touches a stranded row.
+func (db *DB) CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error) {
+	return lineside.Capture(db.DB, nodeID, payloadCode, qty)
 }
 
-// ListInactiveLinesideBuckets returns only the stranded buckets on a
-// node (the ones that render as stacked chips).
-func (db *DB) ListInactiveLinesideBuckets(nodeID int64) ([]lineside.Bucket, error) {
-	return lineside.ListInactiveForNode(db.DB, nodeID)
-}
-
-// ListLinesideBucketsForPair returns every bucket keyed to a pair.
-func (db *DB) ListLinesideBucketsForPair(pairKey string) ([]lineside.Bucket, error) {
-	return lineside.ListForPair(db.DB, pairKey)
-}
-
-// CaptureLinesideBucket records parts pulled to lineside for (node,
-// style, part). Merges into an existing bucket when present (reactivating
-// an inactive one) or creates a fresh active bucket otherwise. Zero qty
-// is a no-op.
-func (db *DB) CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) (*lineside.Bucket, error) {
-	return lineside.Capture(db.DB, nodeID, pairKey, styleID, payloadCode, qty)
-}
-
-// DeactivateOtherLinesideStyles flips any other active buckets on the
-// node (different style) to inactive. Call inside the same transaction
-// as CaptureLinesideBucket.
-func (db *DB) DeactivateOtherLinesideStyles(nodeID, keepStyleID int64) error {
-	return lineside.DeactivateOtherStyles(db.DB, nodeID, keepStyleID)
-}
-
-// DrainLinesideBucket decrements the active bucket for (node, part)
-// by up to delta. Returns (drained, matchedStyleID); the caller
-// passes the remainder (delta - drained) to the node-level
-// RemainingUOP decrement and attributes the resulting LinesideBucketDelta
-// to matchedStyleID so Core's dedup scope_key keys on the bucket's
-// actual style, not the caller's claim.StyleID. Round-3 A* dropped
-// style_id from the WHERE clause — see lineside.Drain doc.
-func (db *DB) DrainLinesideBucket(nodeID int64, payloadCode string, delta int) (drained int, matchedStyleID int64, err error) {
+// DrainLinesideBucket decrements the node's active pile of the payload by up
+// to delta and returns what it took; the caller passes the remainder to the
+// node's bin count.
+func (db *DB) DrainLinesideBucket(nodeID int64, payloadCode string, delta int) (int, error) {
 	return lineside.Drain(db.DB, nodeID, payloadCode, delta)
 }
 
-// SetLinesideBucketForReconcile overwrites the bucket qty to exactly
-// the given value (UPSERT for positive; DELETE for zero). Its only caller is
-// the admin bucket adjustment (uop.Mutator.AdjustBucket), which emits the
-// difference as a delta; there is no reconciler. Do NOT use for normal
-// production flows — Capture / Drain are the delta-style mutators.
-func (db *DB) SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) error {
-	return lineside.SetForReconcile(db.DB, nodeID, pairKey, styleID, payloadCode, qty)
+// DeleteLinesideBucket removes one pile by id (the admin Clear).
+func (db *DB) DeleteLinesideBucket(id int64) error {
+	return lineside.DeleteByID(db.DB, id)
+}
+
+// StrandLinesidePiles folds every active pile at the process's nodes into
+// its stranded row, in one transaction. See lineside.StrandProcess.
+func (db *DB) StrandLinesidePiles(processID int64) ([]lineside.Stranded, error) {
+	return lineside.StrandProcess(db.DB, processID)
+}
+
+// ListLinesidePileKeys returns the Key of every pile row (the boot resend).
+func (db *DB) ListLinesidePileKeys() ([]lineside.Key, error) {
+	return lineside.ListKeys(db.DB)
+}
+
+// ListLinesidePileKeysForProcess returns the Key of every pile row at the
+// process's nodes.
+func (db *DB) ListLinesidePileKeysForProcess(processID int64) ([]lineside.Key, error) {
+	return lineside.ListKeysForProcess(db.DB, processID)
+}
+
+// LinesidePileLevel returns the summed qty Core mirrors for one
+// (core node, payload, state). See lineside.Level.
+func (db *DB) LinesidePileLevel(coreNodeName, payloadCode, state string) (int, error) {
+	return lineside.Level(db.DB, coreNodeName, payloadCode, state)
 }

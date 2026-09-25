@@ -272,12 +272,13 @@ func (d *Drainer) drain() (failed bool) {
 // neverDeadLetter holds the subjects whose failed publishes do not spend a
 // retry, so they are offered on every pass until the broker takes them.
 //
-// They are the two sequenced count deltas. A dead-lettered count delta is parts
-// that happened and that Core never hears of. The panic path still exhausts
+// They are the two sequenced count messages. A dead-lettered bin delta is parts
+// that happened and that Core never hears of; a dead-lettered pile level leaves
+// Core's mirror of the pile wrong until the pile next changes. The panic path still exhausts
 // them: a payload that panics the publisher on every pass must be stood down.
 var neverDeadLetter = map[string]bool{
 	protocol.SubjectBinUOPDelta:         true,
-	protocol.SubjectLinesideBucketDelta: true,
+	protocol.SubjectLinesideBucketLevel: true,
 }
 
 // publishOne reports whether the message was acked. False means the publish

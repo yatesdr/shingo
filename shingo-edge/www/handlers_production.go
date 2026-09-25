@@ -97,7 +97,6 @@ func buildLinesideRows(eng ServiceAccess) []linesideBucketRow {
 	processList, _ := eng.ProcessService().List()
 	allNodes, _ := eng.ProcessService().ListNodes()
 	stations, _ := eng.StationService().List()
-	allStyles, _ := eng.StyleService().List()
 
 	processName := make(map[int64]string, len(processList))
 	for _, p := range processList {
@@ -106,10 +105,6 @@ func buildLinesideRows(eng ServiceAccess) []linesideBucketRow {
 	stationName := make(map[int64]string, len(stations))
 	for _, s := range stations {
 		stationName[s.ID] = s.Name
-	}
-	styleName := make(map[int64]string, len(allStyles))
-	for _, s := range allStyles {
-		styleName[s.ID] = s.Name
 	}
 
 	rows := make([]linesideBucketRow, 0)
@@ -124,9 +119,7 @@ func buildLinesideRows(eng ServiceAccess) []linesideBucketRow {
 				NodeID:      n.ID,
 				NodeName:    n.Name,
 				ProcessName: processName[n.ProcessID],
-				StyleName:   styleName[b.StyleID],
 				PayloadCode: b.PayloadCode,
-				PairKey:     b.PairKey,
 				Qty:         b.Qty,
 				State:       b.State,
 			}

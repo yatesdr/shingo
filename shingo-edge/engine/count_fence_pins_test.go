@@ -28,7 +28,7 @@ func fenceFixture(t *testing.T, coreNode string) (*Engine, int64, *uop.Mutator, 
 	t.Helper()
 	eng := newCoverageEngine(t)
 	nodeID, binID := boundNodeFixture(t, eng, coreNode, 4401, 3)
-	acc := uop.New(eng.db, eng.cfg.StationID(), eng.db, eng.db, eng.db)
+	acc := uop.New(eng.db, eng.cfg.StationID(), eng.db, eng.db)
 	eng.SetInventoryDeltaSink(acc)
 	return eng, nodeID, acc, binID
 }
@@ -64,9 +64,9 @@ func TestP0f_EdgeRebasesOnCoresCursor(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, acc, binID := fenceFixture(t, "FENCE-P0F")
 
-	acc.RecordBin(binID, "PART-A", -10, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 10, BinEpoch: 3})
 	acc.Flush()
-	acc.RecordBin(binID, "PART-A", -5, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 5, BinEpoch: 3})
 	acc.Flush()
 
 	eng.HandleUOPAdjustment(fenced(eng, binID, "FENCE-P0F", 50, -10, 1))
@@ -83,9 +83,9 @@ func TestFence_UnflushedTicksStayOnTheEdge(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, acc, binID := fenceFixture(t, "FENCE-UNFLUSHED")
 
-	acc.RecordBin(binID, "PART-A", -10, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 10, BinEpoch: 3})
 	acc.Flush()
-	acc.RecordBin(binID, "PART-A", -2, protocol.ReasonConsumeTick, 3) // not flushed
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 2, BinEpoch: 3}) // not flushed
 
 	eng.HandleUOPAdjustment(fenced(eng, binID, "FENCE-UNFLUSHED", 50, -10, 1))
 
@@ -122,7 +122,7 @@ func TestFence_OlderAdjustmentIsIgnored(t *testing.T) {
 func TestFence_OldCoreKeepsTheAbsoluteWrite(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, acc, binID := fenceFixture(t, "FENCE-OLD")
-	acc.RecordBin(binID, "PART-A", -10, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 10, BinEpoch: 3})
 	acc.Flush()
 
 	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
@@ -138,7 +138,7 @@ func TestFence_OldCoreKeepsTheAbsoluteWrite(t *testing.T) {
 func TestFence_AnotherStationsCursorIsNotRebasedOn(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, acc, binID := fenceFixture(t, "FENCE-FOREIGN")
-	acc.RecordBin(binID, "PART-A", -10, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 10, BinEpoch: 3})
 	acc.Flush()
 
 	adj := fenced(eng, binID, "FENCE-FOREIGN", 50, -99, 7)
@@ -177,7 +177,7 @@ func TestFence_EmptySlotGuardStillHolds(t *testing.T) {
 func TestLineCount_TicksAfterTheReplyAreNotLost(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, acc, binID := fenceFixture(t, "FENCE-LINE")
-	acc.RecordBin(binID, "PART-A", -10, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 10, BinEpoch: 3})
 	acc.Flush() // seq 1, net -10, applied at Core
 
 	station := eng.cfg.StationID()
@@ -198,7 +198,7 @@ func TestLineCount_TicksAfterTheReplyAreNotLost(t *testing.T) {
 	// Three parts consumed after the reply: the runtime moves, the
 	// accumulator records them, and a flush sends them.
 	testutil.MustNoErr(t, eng.db.UpdateProcessNodeUOP(nodeID, 47), "tick")
-	acc.RecordBin(binID, "PART-A", -3, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 3, BinEpoch: 3})
 	acc.Flush()
 
 	eng.HandleUOPAdjustment(fenced(eng, binID, "FENCE-LINE", 50, -10, 1))
@@ -215,9 +215,9 @@ func TestFence_Statements(t *testing.T) {
 	t.Parallel()
 	eng, counter := newCountingCoverageEngine(t)
 	nodeID, binID := boundNodeFixture(t, eng, "FENCE-COST", 4401, 3)
-	acc := uop.New(eng.db, eng.cfg.StationID(), eng.db, eng.db, eng.db)
+	acc := uop.New(eng.db, eng.cfg.StationID(), eng.db, eng.db)
 	eng.SetInventoryDeltaSink(acc)
-	acc.RecordBin(binID, "PART-A", -10, protocol.ReasonConsumeTick, 3)
+	_ = acc.Consumed(uop.TickEvent{BinID: binID, PayloadCode: "PART-A", BinRemainder: 10, BinEpoch: 3})
 	acc.Flush()
 
 	counter.Reset()
@@ -256,7 +256,7 @@ func TestFence_AdjustmentsRacingTicksAndFlushesKeepTheInvariant(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	mut := uop.New(db, "stn-test", db, db, db)
+	mut := uop.New(db, "stn-test", db, db)
 	eng.SetInventoryDeltaSink(mut)
 	processID, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 	claim, err := db.GetStyleNodeClaim(fromClaimID)

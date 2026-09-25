@@ -78,7 +78,7 @@
 <div class="card mt-4">
     <div class="card-header card-header-row">
         <strong>Lineside Buckets</strong>
-        <span class="text-muted-sm">Payload chips currently kitted at nodes</span>
+        <span class="text-muted-sm">Parts pulled to lineside at nodes. A stranded row is a count anomaly at cutover: it does not drain or count.</span>
     </div>
     <div class="card-body" style="padding:0;overflow-x:auto">
         <table class="table table-compact" id="lineside-table">
@@ -87,11 +87,9 @@
                     <th>Process</th>
                     <th>Station</th>
                     <th>Node</th>
-                    <th>Style</th>
                     <th>Payload</th>
                     <th>State</th>
                     <th style="text-align:right;">Qty</th>
-                    <th style="width:220px;">Edit Qty</th>
                     <th style="width:120px;">Clear</th>
                 </tr>
             </thead>
@@ -101,25 +99,17 @@
                     <td>{{.ProcessName}}</td>
                     <td>{{.StationName}}</td>
                     <td>{{.NodeName}}</td>
-                    <td>{{.StyleName}}</td>
                     <td class="mono">{{.PayloadCode}}</td>
                     <td>
-                        {{if eq .State "active"}}<span class="badge">active</span>{{else}}<span class="badge text-muted">{{.State}}</span>{{end}}
+                        {{if eq .State "active"}}<span class="badge">active</span>{{else}}<span class="badge text-muted">count anomaly at cutover</span>{{end}}
                     </td>
                     <td style="text-align:right;" class="mono">{{.Qty}}</td>
-                    <td>
-                        <div class="flex gap-1">
-                            <input type="number" min="0" value="{{.Qty}}" class="lineside-qty-input" style="width:90px;">
-                            <button class="btn btn-sm btn-primary" data-action="editLinesideBucket">Apply</button>
-                        </div>
-                        <div class="lineside-warn text-muted-xs" style="display:none;"></div>
-                    </td>
                     <td>
                         <button class="btn btn-sm btn-danger" data-action="clearLinesideBucket">Clear</button>
                     </td>
                 </tr>
                 {{else}}
-                <tr><td colspan="9" class="empty-cell" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>
+                <tr><td colspan="7" class="empty-cell" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>
                 {{end}}
             </tbody>
         </table>

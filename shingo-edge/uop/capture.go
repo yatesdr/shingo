@@ -1,19 +1,16 @@
 // capture.go — operator release-click capture verb.
 //
-// CaptureToLineside owns the operator's release-click capture path:
-// loops over disposition.LinesideCapture (qty per part), writes each
-// captured qty to the active bucket, deactivates buckets for other
-// styles on the node, emits the paired bin capture_reduction delta
-// for the released bin.
+// CaptureToLineside owns the operator's release-click capture path: loops
+// over disposition.LinesideCapture (qty per part), adds each captured qty to
+// the node's ACTIVE pile of that part, marks each pile's level dirty, and
+// records the paired bin capture_reduction delta for the released bin.
 //
-// Atomic across the bin and bucket deltas — emit happens after the
-// bucket DB writes succeed, so a partial DB failure doesn't ship
-// inconsistent envelopes. (The accumulator doesn't fire deltas to
-// Core until the next flush; the engine's release-click path
-// triggers a flush separately at operator_release.go:374.)
+// A pull is a transfer (bin -> bench), not consumption: the bin loses what the
+// pile gains, in the same call. The supply leg of a two-robot swap has no bin
+// that gave anything up, so it makes no pile at all.
 //
-// Moved from engine/operator_release.go's captureLinesideOnRelease in
-// Phase 3a.
+// Nothing reaches Core until the next flush; the engine's release-click path
+// triggers one separately.
 package uop
 
 import (
@@ -27,19 +24,15 @@ import (
 // populates from the resolved order + disposition + node state at
 // release time.
 type CaptureEvent struct {
-	NodeID  int64
-	StyleID int64 // the to-style claim's style (target style after release)
-	PairKey string
+	NodeID int64
 
-	// CoreNodeName is the cross-system identifier the wire envelope
-	// uses (Round-3 Obs 8). Engine populates from the process node
-	// row that drives the capture.
+	// CoreNodeName is the cross-system identifier the pile level is keyed
+	// by at Core. Engine populates from the process node row that drives the
+	// capture.
 	CoreNodeName string
 
 	// Disposition carries Mode + LinesideCapture map + other operator
-	// intent fields. Only Mode == DispositionCaptureLineside drives
-	// the bucket capture loop; other modes still call this verb to
-	// get the deactivate-other-styles side effect.
+	// intent fields. Only Mode == DispositionCaptureLineside captures.
 	Disposition ReleaseDisposition
 
 	// BinID + PayloadCode identify the bin being released (source of
@@ -58,53 +51,43 @@ type CaptureEvent struct {
 
 	// SuppressBinDelta is true for the supply leg (Order A) of a
 	// two-robot swap. The supply bin is fresh and had nothing pulled
-	// from it; emitting capture_reduction would corrupt the
-	// authoritative count.
+	// from it, so the leg captures nothing: no pile (a pile exists only
+	// for parts a bin paid for) and no capture_reduction.
 	SuppressBinDelta bool
 }
 
 // CaptureToLineside performs the operator's release-click capture:
 //
-//  1. For each non-zero (part, qty) in disposition.LinesideCapture:
-//     write the qty into the active bucket via
-//     bucketStore.CaptureLinesideBucket; emit
-//     LinesideBucketDelta(capture_fill, +qty) per part.
-//  2. Always (regardless of disposition mode): deactivate other
-//     styles on this node so future drains resolve to the right
-//     active bucket.
-//  3. If capturedTotal > 0 AND !SuppressBinDelta AND BinID > 0:
-//     emit BinUOPDelta(capture_reduction, -capturedTotal) for the
-//     released bin.
+//  1. Supply leg (SuppressBinDelta): nothing. No bin paid for the parts.
+//  2. For each non-zero (part, qty) in disposition.LinesideCapture: add qty
+//     to the node's active pile of the part and mark its level dirty. A
+//     stranded pile of the part is left as it is.
+//  3. If capturedTotal > 0 AND BinID > 0: record BinUOPDelta(
+//     capture_reduction, -capturedTotal) for the released bin.
 //
-// Returns capturedTotal so the caller can record it for logging /
-// auditing. Errors short-circuit — a failure during bucket capture
-// returns without emitting the bin reduction (preserving the
-// invariant that capture_reduction's magnitude matches the sum of
-// capture_fill emissions).
+// Returns capturedTotal. A failure writing a pile returns without the bin
+// reduction, so capture_reduction's magnitude always matches the piles'
+// gain.
 func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err error) {
-	if ev.Disposition.Mode == DispositionCaptureLineside {
-		for part, qty := range ev.Disposition.LinesideCapture {
-			if qty <= 0 || part == "" {
-				continue
-			}
-			if _, err := m.buckets.CaptureLinesideBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, qty); err != nil {
-				return capturedTotal, fmt.Errorf("capture lineside bucket (node=%d style=%d part=%s): %w",
-					ev.NodeID, ev.StyleID, part, err)
-			}
-			// The CHIP's payload, not the bin's. They are the same on a
-			// single-payload node and different the moment an operator pulls
-			// one of several allowed payloads off a bin holding another —
-			// which is the case that used to file B's stock under A.
-			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, ev.StyleID, part, qty, protocol.ReasonCaptureFill)
-			capturedTotal += qty
+	if ev.SuppressBinDelta || ev.Disposition.Mode != DispositionCaptureLineside {
+		return 0, nil
+	}
+	for part, qty := range ev.Disposition.LinesideCapture {
+		if qty <= 0 || part == "" {
+			continue
 		}
+		if _, err := m.buckets.CaptureLinesideBucket(ev.NodeID, part, qty); err != nil {
+			return capturedTotal, fmt.Errorf("capture lineside pile (node=%d part=%s): %w",
+				ev.NodeID, part, err)
+		}
+		// The CHIP's payload, not the bin's. They are the same on a
+		// single-payload node and different the moment an operator pulls
+		// one of several allowed payloads off a bin holding another.
+		m.acc.markBucket(ev.NodeID, ev.CoreNodeName, part, protocol.LinesideBucketActive, 0)
+		capturedTotal += qty
 	}
 
-	if err := m.buckets.DeactivateOtherLinesideStyles(ev.NodeID, ev.StyleID); err != nil {
-		return capturedTotal, fmt.Errorf("deactivate other lineside styles on node %d: %w", ev.NodeID, err)
-	}
-
-	if capturedTotal > 0 && !ev.SuppressBinDelta {
+	if capturedTotal > 0 {
 		if ev.BinID > 0 {
 			m.acc.recordBin(ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction, ev.BinEpoch)
 		} else {
@@ -115,8 +98,8 @@ func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err err
 			// release-path now falls back to a legacy RemainingUOP=&0
 			// wipe in this case, but a recurrence must remain
 			// visible in operator logs instead of vanishing.
-			log.Printf("ERROR: uop capture: capture_reduction skipped (BinID=0) node=%d style=%d payload=%q captured_total=%d disposition=%q",
-				ev.NodeID, ev.StyleID, ev.PayloadCode, capturedTotal, ev.Disposition.Mode)
+			log.Printf("ERROR: uop capture: capture_reduction skipped (BinID=0) node=%d payload=%q captured_total=%d disposition=%q",
+				ev.NodeID, ev.PayloadCode, capturedTotal, ev.Disposition.Mode)
 		}
 	}
 	return capturedTotal, nil

@@ -227,12 +227,12 @@ func TestListLinesideLevels_EmptySlotIsListedEmpty(t *testing.T) {
 func TestListLinesideLevels_BucketWithoutBinReportsZeroBinUOP(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	_, styleID, nodeID, claimID := linesideFixture(t, db, "ALN_013")
+	_, _, nodeID, claimID := linesideFixture(t, db, "ALN_013")
 	bindCarrier(t, db, nodeID, claimID, 41, 640)
 	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "REAL-PART", true, "delivery"); err != nil {
 		t.Fatalf("record carrier: %v", err)
 	}
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "REAL-PART", 90); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "REAL-PART", 90); err != nil {
 		t.Fatalf("capture bucket: %v", err)
 	}
 	// The carrier goes. The count it left behind stays on the row.
@@ -262,15 +262,15 @@ func TestListLinesideLevels_BucketWithoutBinReportsZeroBinUOP(t *testing.T) {
 func TestListLinesideLevels_BucketOfAnotherPartIsNotSummedIn(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	_, styleID, nodeID, claimID := linesideFixture(t, db, "ALN_015")
+	_, _, nodeID, claimID := linesideFixture(t, db, "ALN_015")
 	bindCarrier(t, db, nodeID, claimID, 51, 300)
 	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "REAL-PART", true, "delivery"); err != nil {
 		t.Fatalf("record carrier: %v", err)
 	}
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "REAL-PART", 25); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "REAL-PART", 25); err != nil {
 		t.Fatalf("capture matching bucket: %v", err)
 	}
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "SOME-OTHER-PART", 400); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "SOME-OTHER-PART", 400); err != nil {
 		t.Fatalf("capture foreign bucket: %v", err)
 	}
 
@@ -297,27 +297,26 @@ func TestListLinesideLevels_BucketOfAnotherPartIsNotSummedIn(t *testing.T) {
 	}
 }
 
-// The bucket term sums ACTIVE piles of the carrier's part only: an inactive pile
-// of that same part at the seat is not in the report, although Core's mirror
-// still counts it today.
-// Stays: the report sums active rows only; under change #2 the excluded row is
-// the stranded one.
-func TestListLinesideLevels_InactivePileIsNotSummedIn(t *testing.T) {
+// The bucket term sums ACTIVE piles of the carrier's part only: a stranded pile
+// of that same part at the seat is not in the report.
+// Stays (the report sums active rows only); the excluded row is the stranded
+// one now, where it was an inactive one before change #2.
+func TestListLinesideLevels_StrandedPileIsNotSummedIn(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
-	_, styleID, nodeID, claimID := linesideFixture(t, db, "SYN-SEAT-16")
+	_, _, nodeID, claimID := linesideFixture(t, db, "SYN-SEAT-16")
 	bindCarrier(t, db, nodeID, claimID, 61, 300)
 	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "REAL-PART", true, "delivery"); err != nil {
 		t.Fatalf("record carrier: %v", err)
 	}
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "REAL-PART", 25); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "REAL-PART", 25); err != nil {
 		t.Fatalf("capture active pile: %v", err)
 	}
-	// An inactive pile of the same part, left by an earlier style's run.
+	// A stranded pile of the same part, left by an earlier cutover.
 	if _, err := db.DB.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, payload_code, qty, state) VALUES (?, '', ?, 'REAL-PART', 400, 'inactive')`,
-		nodeID, styleID+1); err != nil {
-		t.Fatalf("seed inactive pile: %v", err)
+		(node_id, payload_code, qty, state) VALUES (?, 'REAL-PART', 400, 'stranded')`,
+		nodeID); err != nil {
+		t.Fatalf("seed stranded pile: %v", err)
 	}
 
 	got := levelFor(t, db, "SYN-SEAT-16")
@@ -325,7 +324,7 @@ func TestListLinesideLevels_InactivePileIsNotSummedIn(t *testing.T) {
 		t.Fatal("no row for the seat")
 	}
 	if got.BucketQty != 25 {
-		t.Errorf("BucketQty = %d, want 25. 425 means the inactive pile was summed in.", got.BucketQty)
+		t.Errorf("BucketQty = %d, want 25. 425 means the stranded pile was summed in.", got.BucketQty)
 	}
 }
 
@@ -366,12 +365,12 @@ func TestListLinesideLevels_OneStatementForEverySeat(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	for i, node := range []string{"ALN_020", "ALN_021", "ALN_022"} {
-		_, styleID, nodeID, claimID := linesideFixture(t, db, node)
+		_, _, nodeID, claimID := linesideFixture(t, db, node)
 		bindCarrier(t, db, nodeID, claimID, int64(60+i), 100+i)
 		if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "PART-A", true, "delivery"); err != nil {
 			t.Fatalf("record carrier: %v", err)
 		}
-		if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "PART-A", 5); err != nil {
+		if _, err := db.CaptureLinesideBucket(nodeID, "PART-A", 5); err != nil {
 			t.Fatalf("capture bucket: %v", err)
 		}
 	}

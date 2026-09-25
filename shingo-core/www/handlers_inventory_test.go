@@ -198,9 +198,11 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 		testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-INV-B").ID); err != nil {
 		t.Fatalf("seed bin B: %v", err)
 	}
-	// One bucket of 11.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
-		VALUES ('STATION-INV', $1, '', 0, 'PAY-INV', 11)`, sd.StorageNode.Name); err != nil {
+	// One active pile of 11, and a stranded row of 5 that does not count: the
+	// invariant's bucket term is the active piles, as on-hand is.
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+		VALUES ('STATION-INV', $1, 'PAY-INV', 'active', 11), ('STATION-INV', $1, 'PAY-INV', 'stranded', 5)`,
+		sd.StorageNode.Name); err != nil {
 		t.Fatalf("seed bucket: %v", err)
 	}
 
@@ -214,7 +216,7 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 		t.Errorf("BinSum = %d, want 70 (30 + 40)", got.BinSum)
 	}
 	if got.BucketSum != 11 {
-		t.Errorf("BucketSum = %d, want 11", got.BucketSum)
+		t.Errorf("BucketSum = %d, want 11 (the stranded 5 is not stock)", got.BucketSum)
 	}
 	if got.Total != 81 {
 		t.Errorf("Total = %d, want 81 (70 + 11)", got.Total)
@@ -280,7 +282,8 @@ func TestCellHelper(t *testing.T) {
 func TestApiInventoryExport_LinesideBucketSheet(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
+	seedBucket(t, db, "STATION-EXP", sd.StorageNode.ID, "stranded", "PAY-EXP", 6)
 
 	rec := getPlain(t, h.apiInventoryExport, "/api/inventory/export")
 	if rec.Code != http.StatusOK {
@@ -299,7 +302,7 @@ func TestApiInventoryExport_LinesideBucketSheet(t *testing.T) {
 	if len(rows) < 1 {
 		t.Fatal("lineside sheet has no header row")
 	}
-	want := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Payload Code", "State", "Qty"}
+	want := []string{"Cell", "Process", "Station", "Node", "Zone", "Payload Code", "State", "Qty"}
 	if len(rows[0]) != len(want) {
 		t.Fatalf("lineside header has %d columns, want %d: %v", len(rows[0]), len(want), rows[0])
 	}
@@ -307,6 +310,10 @@ func TestApiInventoryExport_LinesideBucketSheet(t *testing.T) {
 		if rows[0][i] != w {
 			t.Errorf("lineside header[%d]: got %q, want %q", i, rows[0][i], w)
 		}
+	}
+	// A stranded row is labelled as the count anomaly it is.
+	if len(rows) != 2 || len(rows[1]) < 7 || rows[1][6] != "count anomaly at cutover" {
+		t.Errorf("lineside rows = %v, want one row whose State reads \"count anomaly at cutover\"", rows[1:])
 	}
 }
 

@@ -38,7 +38,7 @@ func outboxRowExists(t *testing.T, db *DB, id int64) bool {
 }
 
 // TestPurgeKeepsAnUndeliveredCountRow is S1's purge half. An undelivered
-// bin_uop_delta or lineside_bucket_delta row is never deleted, whatever its age
+// bin_uop_delta or lineside_bucket_level row is never deleted, whatever its age
 // or retries: it is the only record of counts Core has not received. (A count
 // row is exhausted only by the drainer's panic boundary, or by a failure budget
 // spent before S1 deployed.)
@@ -49,7 +49,7 @@ func TestPurgeKeepsAnUndeliveredCountRow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	bin := agedOutboxRow(t, db, protocol.SubjectBinUOPDelta, true, false)
-	bucket := agedOutboxRow(t, db, protocol.SubjectLinesideBucketDelta, true, false)
+	bucket := agedOutboxRow(t, db, protocol.SubjectLinesideBucketLevel, true, false)
 
 	_, err := db.PurgeOldOutbox(outbox.MessageRetentionPeriod, outbox.DeadLetterRetentionPeriod)
 	testutil.MustNoErr(t, err, "purge")

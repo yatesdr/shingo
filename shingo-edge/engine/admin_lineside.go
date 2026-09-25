@@ -4,70 +4,49 @@ import (
 	"fmt"
 	"log"
 
-	"shingo/protocol"
+	"shingoedge/store/lineside"
 )
 
-// AdminAdjustLinesideBucket is the engineer / team-leader override for a
-// single lineside bucket, exposed via the edge "Lineside Buckets" admin
-// page. Two ops:
+// AdminClearLinesideBucket is the engineer / team-leader Clear for one
+// lineside pile, exposed on the Production page's lineside table: the row is
+// deleted, active or stranded, and its level (now 0) is sent so Core's mirror
+// loses it too.
 //
-//   - Edit qty (clearBucket=false): set the bucket to targetQty exactly.
-//     Computes a signed delta against the current qty, emits a
-//     LinesideBucketDelta with ReasonOperatorCorrectionBucket so Core's
-//     lineside_buckets mirror tracks, and writes the new qty on edge
-//     (deleting the row when the new qty is 0 — matches the
-//     SetForReconcile contract).
+// Unconditional: the delete does not depend on an inventory sink being wired.
+// With no sink there is no mirror to tell, and the pile still goes.
 //
-//   - Clear bucket (clearBucket=true): targetQty is forced to 0. Same
-//     wire-side mechanics; the bucket row is deleted on edge.
-//
-// The capture/drain pipeline is the normal source of bucket changes;
-// this admin path is for unstuck scenarios where state has drifted
-// (chip lingering on the HMI after operations the bucket layer didn't
-// observe). Audit trail at Core: bin_uop_ledger's bucket equivalent
-// records source, station, and the delta with reason=operator_correction.
-func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error {
+// There is no qty edit. A pile exists only for parts a bin paid for; an edit
+// upward would mint parts no bin gave up, and the capture and the drain are the
+// only writers that move a pile's qty.
+func (e *Engine) AdminClearLinesideBucket(bucketID int64) error {
 	bucket, err := e.db.GetLinesideBucket(bucketID)
 	if err != nil {
-		return fmt.Errorf("get bucket %d: %w", bucketID, err)
+		return fmt.Errorf("get pile %d: %w", bucketID, err)
+	}
+	// The level is keyed by core_node_name. A node that cannot be resolved
+	// leaves it empty and the accumulator resolves it from the node id at
+	// flush (and drops the level loudly if it still cannot).
+	var coreNodeName string
+	if node, err := e.db.GetProcessNode(bucket.NodeID); err == nil && node != nil {
+		coreNodeName = node.CoreNodeName
 	}
 
-	if clearBucket {
-		targetQty = 0
+	// The delete and the mark are one change to the seat for the lineside
+	// report (countMu); PilesChanged takes the flush lock inside it.
+	e.countMu.Lock()
+	err = e.db.DeleteLinesideBucket(bucketID)
+	if err == nil && e.inventoryDelta != nil {
+		e.inventoryDelta.PilesChanged(lineside.Key{
+			NodeID: bucket.NodeID, CoreNodeName: coreNodeName,
+			PayloadCode: bucket.PayloadCode, State: bucket.State,
+		})
 	}
-	if targetQty < 0 {
-		return fmt.Errorf("bucket qty cannot be negative")
-	}
-
-	if e.inventoryDelta != nil {
-		// Resolve core_node_name for the wire envelope (Round-3 Obs 8).
-		// The bucket row doesn't carry it, so look up from the process
-		// node. Missing process_node is fatal for the admin path —
-		// we'd send a delta Core would drop on validation anyway.
-		node, err := e.db.GetProcessNode(bucket.NodeID)
-		if err != nil || node == nil {
-			return fmt.Errorf("resolve process_node %d for bucket %d: %w", bucket.NodeID, bucketID, err)
-		}
-		// Record, write and flush are one change to the seat for the lineside
-		// report (countMu); AdjustBucket takes the flush lock inside it.
-		e.countMu.Lock()
-		err = e.inventoryDelta.AdjustBucket(
-			bucket.NodeID, node.CoreNodeName, bucket.PairKey, bucket.StyleID, bucket.PayloadCode,
-			bucket.Qty, targetQty,
-			protocol.ReasonOperatorCorrectionBucket,
-		)
-		e.countMu.Unlock()
-		if err != nil {
-			return fmt.Errorf("adjust bucket %d: %w", bucketID, err)
-		}
+	e.countMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("clear pile %d: %w", bucketID, err)
 	}
 
-	op := "edited"
-	if clearBucket {
-		op = "cleared"
-	}
-	log.Printf("admin_lineside_bucket: %s bucket %d (node=%d style=%d part=%q): %d → %d delta=%+d",
-		op, bucketID, bucket.NodeID, bucket.StyleID, bucket.PayloadCode,
-		bucket.Qty, targetQty, targetQty-bucket.Qty)
+	log.Printf("admin_lineside_bucket: cleared pile %d (node=%d core_node=%s payload=%q state=%s qty=%d)",
+		bucketID, bucket.NodeID, coreNodeName, bucket.PayloadCode, bucket.State, bucket.Qty)
 	return nil
 }

@@ -70,12 +70,4 @@ func TestRunningNet_WireShape(t *testing.T) {
 		t.Errorf("old-shape decode = %+v, want the same delta, seq, epoch and window", oldCore)
 	}
 
-	bucket := LinesideBucketDelta{CoreNodeName: "N", PayloadCode: "P", Delta: 5, SequenceID: 2, Net: &n}
-	bj, err := json.Marshal(bucket)
-	testutil.MustNoErr(t, err, "marshal bucket")
-	var bb LinesideBucketDelta
-	testutil.MustNoErr(t, json.Unmarshal(bj, &bb), "decode bucket")
-	if bb.Net == nil || *bb.Net != n {
-		t.Errorf("bucket round-trip Net = %v, want %d", bb.Net, n)
-	}
 }

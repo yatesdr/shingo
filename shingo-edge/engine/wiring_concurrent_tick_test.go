@@ -135,7 +135,7 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 // lineside. The operator clicks PULL PARTS LINESIDE → bucket fills →
 // the bin is "released" (waiting for the bot to physically pick it up)
 // while the cell keeps cycling. Each tick during that window must
-// drain the bucket via consume_drain before any consume_tick lands on
+// drain the active pile before any consume_tick lands on
 // a bin. Without bucket-first ordering the post-release ticks would
 // show as bin drains against whatever is at the slot, corrupting
 // attribution.
@@ -184,9 +184,7 @@ func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
 
 	bucketDrained := 0
 	for _, b := range sink.bucketCalls {
-		if b.Reason == protocol.ReasonConsumeDrain {
-			bucketDrained += -b.Delta
-		}
+		bucketDrained += b.Drained
 	}
 	if bucketDrained != 20 {
 		t.Errorf("bucket drained total = %d, want 20 (bucket size); calls = %+v",
@@ -198,8 +196,8 @@ func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
 	// the bin. Attribution at every tick must be one or the other,
 	// never silent.
 	for i, b := range sink.bucketCalls {
-		if b.Delta >= 0 {
-			t.Errorf("bucket call[%d] non-negative delta %d (drains must be negative): %+v", i, b.Delta, b)
+		if b.Drained <= 0 {
+			t.Errorf("bucket call[%d] carries Drained %d (a tick's mark must carry its drain): %+v", i, b.Drained, b)
 		}
 	}
 }

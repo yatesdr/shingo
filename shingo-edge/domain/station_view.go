@@ -60,14 +60,15 @@ type StationNodeView struct {
 	// parent's work from a tile that does not represent it. Empty on ordinary
 	// tiles.
 	ChildOfNode string `json:"child_of_node,omitempty"`
-	// LinesideActive is the set of buckets currently counting toward
-	// remaining UOP on this node (one row per part for the active style).
-	// Rendered as the "active lineside bar" beneath the node fill-bar.
+	// LinesideActive is the node's active piles: pulled parts that drain
+	// before the bin until the node's cutover. Rendered as the "active
+	// lineside bar" beneath the node fill-bar.
 	LinesideActive []LinesideBucket `json:"lineside_active,omitempty"`
-	// LinesideInactive is the set of stranded buckets — parts that were
-	// pulled to lineside under a prior style and haven't been drained or
-	// recalled yet. Rendered as stacked chips that open a detail modal.
-	LinesideInactive []LinesideBucket `json:"lineside_inactive,omitempty"`
+	// LinesideStranded is the node's stranded piles: what active piles had
+	// left at a cutover. A count anomaly, not parts on the bench (operators
+	// run out what they pull), so it never drains or counts. Rendered as chips
+	// labelled "count anomaly at cutover".
+	LinesideStranded []LinesideBucket `json:"lineside_stranded,omitempty"`
 	// LastReleaseError is set when one of the runtime's tracked orders has
 	// been rolled back to StatusStaged after a Core-side release failure
 	// (e.g. manifest_sync_failed). The operator UI surfaces this as a chip

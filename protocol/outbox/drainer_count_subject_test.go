@@ -10,7 +10,7 @@ import (
 )
 
 // drainer_count_subject_test.go — how the drainer treats the two count
-// subjects (bin_uop_delta, lineside_bucket_delta) when a publish fails.
+// subjects (bin_uop_delta, lineside_bucket_level) when a publish fails.
 
 // scriptedPublisher fails a payload as many times as failures says, panics on
 // panicOn, and records every attempt in order with its outcome.
@@ -71,7 +71,7 @@ func (s *ackingStore) AckOutbox(id int64) error {
 // dead-lettered it.
 func TestCountSubjectFailedPublishKeepsItsBudget(t *testing.T) {
 	t.Parallel()
-	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketDelta} {
+	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketLevel} {
 		store := &mockStore{pending: []Message{
 			{ID: 1, Payload: []byte("count"), MsgType: subject, Retries: MaxRetries - 1},
 		}}

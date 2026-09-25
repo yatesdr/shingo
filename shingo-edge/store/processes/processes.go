@@ -107,39 +107,6 @@ func Update(db *sql.DB, id int64, name, description, productionState string, cou
 	return err
 }
 
-// ErrProcessHasStock refuses a process delete while lineside stock is still
-// booked against its nodes.
-//
-// A node_lineside_bucket row is an INVENTORY RECORD — it says how many parts
-// are at a node right now — and a routine config action must not be able to
-// destroy one quietly. Refusing is also the more useful answer: "you still have
-// parts booked here" is a sentence somebody can act on, where a vanished count
-// is not.
-var ErrProcessHasStock = errors.New("process still has lineside stock booked at its nodes: clear or consume it first")
-
-// EnsureNoLinesideStock is the process-delete precondition, named so that the
-// delete's CALLER can ask it before doing anything it cannot take back.
-//
-// Delete still asks it itself — a guard that only runs when somebody remembers
-// to call it is not a guard — so at a delete the COUNT runs twice. That is the
-// price of the ordering Engine.DeleteProcess needs: it closes the process's open
-// demand episodes before the delete, each close is an outbox message that cannot
-// be recalled, and a refusal arriving after them would have ended episodes for a
-// process that is still running. Two reads of one indexed count, at a config
-// action nobody performs twice a shift, against a close that cannot be undone.
-func EnsureNoLinesideStock(db DBTX, id int64) error {
-	var booked int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket b
-		JOIN process_nodes n ON n.id = b.node_id
-		WHERE n.process_id = ? AND b.qty > 0`, id).Scan(&booked); err != nil {
-		return fmt.Errorf("process %d: check lineside stock: %w", id, err)
-	}
-	if booked > 0 {
-		return fmt.Errorf("%w (%d bucket(s) still hold parts)", ErrProcessHasStock, booked)
-	}
-	return nil
-}
-
 // Delete removes a process and retires the rows that are meaningless without it.
 //
 // IT IS REACHED THROUGH Engine.DeleteProcess, which closes the process's open
@@ -176,10 +143,6 @@ func EnsureNoLinesideStock(db DBTX, id int64) error {
 // that stays readable), and style_node_claims (owned by their now-retired style,
 // and kept so that restoring the style is still a restore).
 func Delete(db *sql.DB, id int64) error {
-	if err := EnsureNoLinesideStock(db, id); err != nil {
-		return err
-	}
-
 	// sourcing_state and demand_origins_open key on the process NAME, not its id,
 	// so the name must be read before the row goes.
 	//
@@ -221,6 +184,10 @@ func Delete(db *sql.DB, id int64) error {
 		{`UPDATE styles SET deleted_at = datetime('now') WHERE process_id=? AND` + liveStyles, id},
 		{`UPDATE reporting_points SET enabled = 0 WHERE style_id IN (SELECT id FROM styles WHERE process_id=?)`, id},
 		{`DELETE FROM process_node_runtime_states WHERE process_node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
+		// The process's lineside piles go with it, active and stranded. The
+		// caller sends each one's level as 0 afterwards (Engine.DeleteProcess),
+		// so Core's mirror loses them too.
+		{`DELETE FROM node_lineside_bucket WHERE node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
 		// operator_station_id is cleared because the station row itself goes in
 		// the next statement: a retired node pointing at a deleted station is a
 		// dangling id that RestoreNode would hand back.

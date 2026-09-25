@@ -79,9 +79,7 @@ const (
 //
 // ON UPDATE IT TOUCHES ONLY WHAT EDGE AUTHORS. signal_count and uop_delivered
 // are MEANT to be accumulated on Core from its own signals and its own audit
-// trail, and used_edge_reports recorded which total decided a Core-side
-// threshold (see OpenCoreEpisode: nothing has written it since decisions read
-// Core's count alone). Listing them in the SET clause would zero Core's own
+// trail. Listing them in the SET clause would zero Core's own
 // facts on every Edge message — silently, and only for episodes that get more
 // than one.
 //
@@ -202,12 +200,6 @@ func (db *DB) OpenThresholdEpisode(o DemandOrigin) error {
 // to mint the same episode do not need a lock between them: the loser's INSERT
 // fails, and a failed mint must leave NOTHING stamped so the next tick retries.
 // A failure to record must never look like a recording.
-//
-// used_edge_reports IS NOT WRITTEN, so every new row takes the column's
-// DEFAULT false. It recorded whether the Edge-report-adjusted total decided a
-// threshold fire; since the seat-count ruling (2026-09-23) every fire path
-// decides off Core's count, so the answer is always no. The column stays for the
-// rows written before, which can say yes; this build deletes no schema.
 func (db *DB) OpenCoreEpisode(o DemandOrigin) error {
 	var expected any
 	if o.ExpectedOrders != nil {

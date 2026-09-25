@@ -372,7 +372,6 @@ CREATE TABLE public.demand_origins (
     opened_at timestamp with time zone NOT NULL,
     opened_total integer DEFAULT 0 NOT NULL,
     threshold integer DEFAULT 0 NOT NULL,
-    used_edge_reports boolean DEFAULT false NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
     expected_orders integer,
     expected_reason text DEFAULT ''::text NOT NULL,
@@ -555,13 +554,13 @@ CREATE TABLE public.lineside_buckets (
     id bigint NOT NULL,
     station text NOT NULL,
     core_node_name text NOT NULL,
-    pair_key text NOT NULL,
-    style_id bigint NOT NULL,
     payload_code text NOT NULL,
     qty integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT lineside_buckets_qty_check CHECK ((qty >= 0))
+    state text NOT NULL,
+    CONSTRAINT lineside_buckets_qty_check CHECK ((qty >= 0)),
+    CONSTRAINT lineside_buckets_state_check CHECK ((state = ANY (ARRAY['active'::text, 'stranded'::text])))
 );
 
 CREATE SEQUENCE public.lineside_buckets_id_seq
@@ -575,14 +574,10 @@ ALTER SEQUENCE public.lineside_buckets_id_seq OWNED BY public.lineside_buckets.i
 
 CREATE TABLE public.lineside_drain_ledger (
     id bigint NOT NULL,
-    station text NOT NULL,
     node_id bigint NOT NULL,
-    pair_key text NOT NULL,
-    style_id bigint NOT NULL,
     payload_code text NOT NULL,
     before_qty integer NOT NULL,
     after_qty integer NOT NULL,
-    reason text NOT NULL,
     applied_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -1555,7 +1550,7 @@ ALTER TABLE ONLY public.lane_robot_confidence_daily
     ADD CONSTRAINT lane_robot_confidence_daily_pkey PRIMARY KEY (day, area_name, lane, version_id, vehicle_id);
 
 ALTER TABLE ONLY public.lineside_buckets
-    ADD CONSTRAINT lineside_buckets_node_pair_style_payload_key UNIQUE (core_node_name, pair_key, style_id, payload_code);
+    ADD CONSTRAINT lineside_buckets_node_payload_state_key UNIQUE (core_node_name, payload_code, state);
 
 ALTER TABLE ONLY public.lineside_buckets
     ADD CONSTRAINT lineside_buckets_pkey PRIMARY KEY (id);
@@ -1764,8 +1759,6 @@ CREATE INDEX idx_downtime_events_station_time ON ONLY public.downtime_events USI
 CREATE INDEX idx_edge_cells_station ON public.edge_cells USING btree (station);
 
 CREATE INDEX idx_inbox_processed_at ON public.inbox USING btree (processed_at);
-
-CREATE INDEX idx_lineside_buckets_node_style ON public.lineside_buckets USING btree (core_node_name, style_id);
 
 CREATE INDEX idx_lineside_buckets_payload ON public.lineside_buckets USING btree (payload_code);
 

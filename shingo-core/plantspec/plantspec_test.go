@@ -48,7 +48,6 @@ func validPlant() *Plant {
 		Demands:         []Demand{{Payload: "PART-A", Node: "LOADER-1"}},
 		ReportingPoints: []ReportingPoint{{PLCName: "PRESS-1", TagName: "PRESS-1_COUNTER", Node: "PRESS-1"}},
 		CellConfigs:     []CellConfig{{Process: "PRESS-LINE", Station: "PRESS-OPS"}},
-		LinesideBuckets: []LinesideBucket{{Node: "LINE1-IN", Payload: "PART-A", Qty: 50}},
 	}
 }
 

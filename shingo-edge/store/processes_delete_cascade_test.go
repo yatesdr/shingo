@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -140,37 +139,28 @@ func TestDeleteProcess_LeavesTheProductionRecord(t *testing.T) {
 	}
 }
 
-// A lineside bucket is an inventory record — it says how many parts are at a
-// node right now. Refusing is both the safe answer and the useful one.
-func TestDeleteProcess_RefusesWhileStockIsBooked(t *testing.T) {
+// A process delete takes the process's lineside piles with it, active and
+// stranded, in the same transaction. It used to refuse while a pile held parts
+// (ErrProcessHasStock); the brief's U3 deletes that precondition, and the
+// engine sends each deleted pile's level as 0 so Core's mirror loses it too.
+func TestDeleteProcess_DeletesItsPiles(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	pid, sid, nid, _ := seedProcessWithChildren(t, db, "P-Stocked")
+	pid, _, nid, _ := seedProcessWithChildren(t, db, "P-Stocked")
 
-	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, style_id, payload_code, qty)
-		VALUES (?, ?, 'SYN-PART12E.06', 240)`, nid, sid); err != nil {
-		t.Fatalf("insert bucket: %v", err)
-	}
-
-	err := db.DeleteProcess(pid)
-	if !errors.Is(err, processes.ErrProcessHasStock) {
-		t.Fatalf("expected ErrProcessHasStock, got %v", err)
-	}
-	// The refusal must be total: a half-applied cascade would be worse than
-	// either outcome.
-	if n := count(t, db, `SELECT COUNT(*) FROM processes WHERE id=?`, pid); n != 1 {
-		t.Errorf("process deleted despite the refusal")
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM styles WHERE id=? AND deleted_at IS NULL`, sid); n != 1 {
-		t.Errorf("style retired despite the refusal — the delete was not atomic")
+	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state)
+		VALUES (?, 'SYN-PART12E.06', 240, 'active'), (?, 'SYN-PART12E.06', 7, 'stranded')`, nid, nid); err != nil {
+		t.Fatalf("insert piles: %v", err)
 	}
 
-	// An emptied bucket is not stock. Draining it releases the delete.
-	if _, err := db.Exec(`UPDATE node_lineside_bucket SET qty=0 WHERE node_id=?`, nid); err != nil {
-		t.Fatalf("drain bucket: %v", err)
-	}
 	if err := db.DeleteProcess(pid); err != nil {
-		t.Fatalf("DeleteProcess after draining: %v", err)
+		t.Fatalf("DeleteProcess: %v", err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM processes WHERE id=?`, pid); n != 0 {
+		t.Errorf("process still present after the delete")
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM node_lineside_bucket WHERE node_id=?`, nid); n != 0 {
+		t.Errorf("%d pile(s) survived the process delete, want 0", n)
 	}
 }
 
@@ -255,33 +245,6 @@ func TestDeleteProcess_DropsOpenEpisodesAndTellsCoreNothing(t *testing.T) {
 	// for, and the Edge rows that could have closed them are already gone.
 	if n := count(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
 		t.Errorf("the delete enqueued %d outbox message(s); today it sends Core nothing", n)
-	}
-}
-
-// A refused delete must close nothing. ErrProcessHasStock is checked before any
-// write, so the episode is still open and the outbox still empty — which is the
-// property any close-on-delete has to preserve: the operator clears the stock
-// and tries again, and the episodes are still there to be closed properly.
-func TestDeleteProcess_RefusedWhileStockedClosesNothing(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	pid, sid, nid, _ := seedProcessWithChildren(t, db, "EPI-STOCKED")
-	key := seedOpenEpisode(t, db, "EPI-STOCKED", "SYN-PANEL-B", protocol.ClaimRoleConsume)
-
-	if _, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, style_id, payload_code, qty)
-		VALUES (?, ?, 'SYN-PANEL-B', 240)`, nid, sid); err != nil {
-		t.Fatalf("insert bucket: %v", err)
-	}
-
-	if err := db.DeleteProcess(pid); !errors.Is(err, processes.ErrProcessHasStock) {
-		t.Fatalf("expected ErrProcessHasStock, got %v", err)
-	}
-
-	if _, err := db.GetOpenDemandOrigin(key); err != nil {
-		t.Errorf("a refused delete closed the episode anyway: %v", err)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
-		t.Errorf("a refused delete enqueued %d outbox message(s), want 0", n)
 	}
 }
 

@@ -117,13 +117,6 @@ type stubEngine struct {
 	gateBlockers    []domain.Blocker
 	gateErr         error
 
-	// Item 3: BucketBackfillNeeded / BackfillBucketsForStation spies.
-	backfillNeeded      bool
-	backfillNeededCalls int
-	backfillEmitted     int
-	backfillCalls       int
-	backfillForce       bool
-
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 	lastChangeoverReleaseDisposition   *engine.ReleaseDisposition
 	lastChangeoverReleaseProcessID     int64
@@ -294,17 +287,25 @@ func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error  { return
 func (s *stubEngine) FlipABNode(int64, engine.FlipRequest) error        { return nil }
 func (s *stubEngine) SetActivePullSide(int64, engine.FlipRequest) error { return nil }
 
-func (s *stubEngine) BackfillBucketsForStation(force bool) (int, error) {
-	s.backfillCalls++
-	s.backfillForce = force
-	return s.backfillEmitted, nil
-}
-func (s *stubEngine) BucketBackfillNeeded() (bool, error) {
-	s.backfillNeededCalls++
-	return s.backfillNeeded, nil
-}
+func (s *stubEngine) AdminClearLinesideBucket(int64) error { return nil }
 
-func (s *stubEngine) AdminAdjustLinesideBucket(int64, int, bool) error { return nil }
+// SetProcessActiveStyle mirrors the engine verb's store half: the style is set
+// and, on a real flip, the process's piles are stranded. The stub has no
+// accumulator, so no level goes out; the levels are pinned against the real
+// engine in engine/lineside_bucket_pins_test.go.
+func (s *stubEngine) SetProcessActiveStyle(processID int64, styleID *int64) error {
+	p, err := s.db.GetProcess(processID)
+	if err != nil {
+		return err
+	}
+	if err := s.db.SetActiveStyle(processID, styleID); err != nil {
+		return err
+	}
+	if (p.ActiveStyleID == nil) != (styleID == nil) || (styleID != nil && *p.ActiveStyleID != *styleID) {
+		_, err = s.db.StrandLinesidePiles(processID)
+	}
+	return err
+}
 
 // Cell-side replenishment admin (the loader half was deleted with the
 // dead Edge threshold surface).
@@ -347,8 +348,8 @@ func (s *stubEngine) OrderService() *service.OrderService {
 
 // DeleteProcess mirrors the engine verb's SHAPE, not its demand-episode half:
 // the stub has no engine and therefore no close writer, so what a www test can
-// check here is the handler's own contract — the route, the 409 on
-// ErrProcessHasStock, and the row being gone. The close itself is pinned
+// check here is the handler's own contract — the route and the row being
+// gone. The close itself is pinned
 // against the real engine in engine/process_delete_test.go.
 func (s *stubEngine) DeleteProcess(processID int64) error {
 	return service.NewProcessService(s.db).Delete(processID)

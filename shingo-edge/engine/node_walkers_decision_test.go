@@ -569,9 +569,9 @@ func TestCounterDelta_MultiPartDrainsEachBucketOnce(t *testing.T) {
 
 	nodeID := f.node(t, "CELL")
 	// A holds less than the tick; B holds more; C has no bucket at all.
-	_, err = db.CaptureLinesideBucket(nodeID, "", f.StyleID, "SYN-PART-A", 2)
+	_, err = db.CaptureLinesideBucket(nodeID, "SYN-PART-A", 2)
 	testutil.MustNoErr(t, err, "capture A")
-	_, err = db.CaptureLinesideBucket(nodeID, "", f.StyleID, "SYN-PART-B", 5)
+	_, err = db.CaptureLinesideBucket(nodeID, "SYN-PART-B", 5)
 	testutil.MustNoErr(t, err, "capture B")
 
 	eng := testEngine(t, db)
@@ -579,13 +579,11 @@ func TestCounterDelta_MultiPartDrainsEachBucketOnce(t *testing.T) {
 
 	// A drained its whole 2 and the row went with it; the remaining 1 unit is
 	// what reaches the bin.
-	if b, err := db.GetActiveLinesideBucket(nodeID, f.StyleID, "SYN-PART-A"); err == nil && b != nil {
-		t.Errorf("bucket A still holds %d, want the row gone — it held 2 against a tick of 3", b.Qty)
+	if qty, ok := activePile(t, db, nodeID, "SYN-PART-A"); ok {
+		t.Errorf("bucket A still holds %d, want the row gone — it held 2 against a tick of 3", qty)
 	}
-	b, err := db.GetActiveLinesideBucket(nodeID, f.StyleID, "SYN-PART-B")
-	testutil.MustNoErr(t, err, "read bucket B")
-	if b == nil || b.Qty != 2 {
-		t.Errorf("bucket B = %v, want qty 2 — a secondary drains the full tick independently", b)
+	if qty, ok := activePile(t, db, nodeID, "SYN-PART-B"); !ok || qty != 2 {
+		t.Errorf("bucket B = %d (present %v), want qty 2 — a secondary drains the full tick independently", qty, ok)
 	}
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")

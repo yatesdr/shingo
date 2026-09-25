@@ -176,6 +176,10 @@ type EngineOrchestration interface {
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error
+	// SetProcessActiveStyle is the admin style flip. It is here rather than
+	// on ProcessService because a flip is a cutover: it strands the
+	// process's lineside piles and sends their levels to Core.
+	SetProcessActiveStyle(processID int64, styleID *int64) error
 	// DeleteProcess is the process delete, and it is here rather than on
 	// ProcessService because it spans two subsystems: it closes the process's
 	// open demand episodes through the engine's close writer before the row is
@@ -186,18 +190,11 @@ type EngineOrchestration interface {
 	FlipABNode(nodeID int64, req engine.FlipRequest) error
 	SetActivePullSide(nodeID int64, req engine.FlipRequest) error
 
-	// ── UOP backfill (admin) ───────────────────────────────────────
-	// Item 3: seeds Core's lineside_buckets from Edge state. Auto-fires
-	// at startup via main.go; the admin endpoint exists for re-runs.
-	BackfillBucketsForStation(force bool) (int, error)
-	BucketBackfillNeeded() (bool, error)
-
 	// ── Lineside admin (team leader / engineer override) ───────────
-	// Backs the "Lineside Buckets" admin page. clearBucket=true sets
-	// the bucket qty to 0 (deleting the row); clearBucket=false sets
-	// qty to targetQty exactly. Either way emits a LinesideBucketDelta
-	// with ReasonOperatorCorrectionBucket so Core mirrors.
-	AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error
+	// Backs the Clear button on the Production page's lineside table:
+	// deletes the pile, active or stranded, and sends its level (0) so
+	// Core's mirror loses it too. There is no qty edit.
+	AdminClearLinesideBucket(bucketID int64) error
 
 	// ── UOP-threshold replenishment admin ──────────────────────────
 	// Backs the CELL half of the /replenishment admin page. The loader

@@ -310,7 +310,7 @@ func TestDataTTLForSubjects(t *testing.T) {
 		// The sequenced deltas carry no expiry: a dropped one is a permanently
 		// wrong count. See NoExpiry.
 		{SubjectBinUOPDelta, NoExpiry},
-		{SubjectLinesideBucketDelta, NoExpiry},
+		{SubjectLinesideBucketLevel, NoExpiry},
 		// Nor do Core's count announcements (S5a): a dropped one leaves the
 		// station counting under a generation that has ended.
 		{SubjectUOPAdjustment, NoExpiry},

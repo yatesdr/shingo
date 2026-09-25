@@ -9,68 +9,6 @@ import (
 	"shingoedge/store/counters"
 )
 
-// SeedDemoLinesideBuckets captures a handful of demo lineside buckets on
-// the first process's first few nodes so the Production page's Lineside
-// Buckets table has rows to modify/clear. Sim builds only.
-//
-// Idempotent-ish: Capture merges into an existing active bucket for the
-// same (node, style, part), so re-running the seeder tops up qtys rather
-// than creating duplicates. Uses a fixed part-number set so re-runs hit
-// the same rows.
-func (s *ProcessService) SeedDemoLinesideBuckets() (int, error) {
-	processes, err := s.List()
-	if err != nil {
-		return 0, fmt.Errorf("list processes: %w", err)
-	}
-	if len(processes) == 0 {
-		return 0, fmt.Errorf("no processes configured — create a process first")
-	}
-	p := processes[0]
-
-	nodes, err := s.ListNodesByProcess(p.ID)
-	if err != nil {
-		return 0, fmt.Errorf("list nodes: %w", err)
-	}
-	if len(nodes) == 0 {
-		return 0, fmt.Errorf("no process_nodes on process %q — add nodes first", p.Name)
-	}
-
-	styles, err := s.db.ListStyles()
-	if err != nil {
-		return 0, fmt.Errorf("list styles: %w", err)
-	}
-	var styleID int64
-	if len(styles) > 0 {
-		styleID = styles[0].ID
-	}
-
-	demoBuckets := []struct {
-		nodeIdx    int
-		partNumber string
-		qty        int
-		pairKey    string
-	}{
-		{0, "DEMO-PART-A", 42, ""},
-		{0, "DEMO-PART-B", 17, ""},
-		{1, "DEMO-PART-A", 88, ""},
-		{2, "DEMO-PART-C", 5, ""},
-	}
-
-	inserted := 0
-	for _, d := range demoBuckets {
-		if d.nodeIdx >= len(nodes) {
-			break
-		}
-		nodeID := nodes[d.nodeIdx].ID
-		if _, err := s.db.CaptureLinesideBucket(nodeID, d.pairKey, styleID, d.partNumber, d.qty); err != nil {
-			return inserted, fmt.Errorf("capture bucket on node %d: %w", nodeID, err)
-		}
-		// Mark as active explicitly (Capture already sets active state).
-		inserted++
-	}
-	return inserted, nil
-}
-
 // demoDayBuckets turns a plant-local calendar date into the UTC range covering
 // it plus a hour-of-day -> UTC bucket resolver.
 //

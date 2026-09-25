@@ -11,29 +11,32 @@ import (
 	"shingocore/store/plantclaims"
 )
 
-// insertLinesideBucket seeds one lineside_buckets row directly. style_id is required
-// (BIGINT NOT NULL) but the stranded filter joins on core_node_name + payload_code —
-// NOT style_id (buckets carry the numeric edge style id, the mirror carries the style
-// name) — so its value here is arbitrary.
-func insertLinesideBucket(t *testing.T, db *store.DB, node string, styleID int64, payload string, qty int) {
+// insertLinesideBucket seeds one lineside_buckets row directly, in the given
+// state: Core's mirror of one Edge pile.
+func insertLinesideBucket(t *testing.T, db *store.DB, node string, state protocol.LinesideBucketState, payload string, qty int) {
 	t.Helper()
 	if _, err := db.Exec(
-		`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
-		 VALUES ($1,$2,$3,$4,$5,$6)`,
-		"test-station", node, "PK", styleID, payload, qty,
+		`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+		 VALUES ($1,$2,$3,$4,$5)`,
+		"test-station", node, payload, string(state), qty,
 	); err != nil {
-		t.Fatalf("insert lineside bucket %s@%s: %v", payload, node, err)
+		t.Fatalf("insert lineside bucket %s@%s (%s): %v", payload, node, state, err)
 	}
 }
 
-// TestSystemUOPForPayload_ExcludesStrandedBuckets pins the changeover decision
-// (2026-07-23): a bucket captured under a PRIOR style that the node's current style no
-// longer consumes is STRANDED and must not count toward on-hand — it inflates the
-// payload total and suppresses that payload's replenishment (the Springfield 74576
-// case: a 250-qty stranded bucket held the total >= threshold so no empty was sent).
-// Active lineside still counts, and a bucket at a node with no active-style mirror is
-// left counted (exclude only what we can POSITIVELY prove stranded).
-func TestSystemUOPForPayload_ExcludesStrandedBuckets(t *testing.T) {
+// TestSystemUOPForPayload_CountsActivePilesOnly pins the bucket arm's rule:
+// on-hand counts a pile while it is active and never once it is stranded.
+//
+// This was TestSystemUOPForPayload_ExcludesStrandedBuckets, the changeover
+// decision of 2026-07-23 computed from the plant-claims mirror: a pile at a
+// node whose active style no longer claimed its payload was "stranded" and
+// left out, and a pile at a node with no mirror was counted. FLIPPED BY BRIEF
+// v7 EXPECTED CHANGE #3: stranded is the state the Edge set at the cutover, so
+// the claims no longer enter into it. The 250 below, an active pile of a part
+// the node's style does not claim, now counts (it drains, or the cutover would
+// have stranded it), and the stranded rows of that part never count, mirrored
+// node or not.
+func TestSystemUOPForPayload_CountsActivePilesOnly(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewInventoryService(db)
@@ -41,11 +44,11 @@ func TestSystemUOPForPayload_ExcludesStrandedBuckets(t *testing.T) {
 	const (
 		node       = "ALN-STRAND"
 		unmirrored = "ALN-UNMIRRORED"
-		active     = "P-ACTIVE"
-		stranded   = "P-STRANDED"
+		claimed    = "P-ACTIVE"
+		unclaimed  = "P-STRANDED"
 	)
 
-	// Mirror: node ALN-STRAND runs an active style that consumes P-ACTIVE, not P-STRANDED.
+	// Mirror: node ALN-STRAND runs an active style that consumes P-ACTIVE only.
 	if err := plantclaims.ReplaceProcess(db.DB, "PROC-1",
 		[]plantclaims.StyleRow{{ProcessID: "PROC-1", StyleID: "STYLE-ACTIVE", ConfigGen: 1, IsActive: true}},
 		[]plantclaims.ClaimRow{{
@@ -53,18 +56,19 @@ func TestSystemUOPForPayload_ExcludesStrandedBuckets(t *testing.T) {
 			StyleID:             "STYLE-ACTIVE",
 			CoreNodeName:        node,
 			Role:                protocol.ClaimRoleConsume,
-			PayloadCode:         active,
-			AllowedPayloadCodes: []string{active},
+			PayloadCode:         claimed,
+			AllowedPayloadCodes: []string{claimed},
 		}}, 0,
 	); err != nil {
 		t.Fatalf("seed plant claims: %v", err)
 	}
 
-	insertLinesideBucket(t, db, node, 1, active, 100)        // active style consumes it -> counts
-	insertLinesideBucket(t, db, node, 2, stranded, 250)      // prior style, node dropped it -> excluded
-	insertLinesideBucket(t, db, unmirrored, 3, stranded, 30) // node not in the mirror -> counted (safe default)
+	insertLinesideBucket(t, db, node, protocol.LinesideBucketActive, claimed, 100)
+	insertLinesideBucket(t, db, node, protocol.LinesideBucketActive, unclaimed, 250)
+	insertLinesideBucket(t, db, node, protocol.LinesideBucketStranded, unclaimed, 40)
+	insertLinesideBucket(t, db, unmirrored, protocol.LinesideBucketStranded, unclaimed, 30)
 
-	res, err := svc.SystemUOPForPayload(context.Background(), []string{active, stranded})
+	res, err := svc.SystemUOPForPayload(context.Background(), []string{claimed, unclaimed})
 	if err != nil {
 		t.Fatalf("SystemUOPForPayload: %v", err)
 	}
@@ -72,10 +76,10 @@ func TestSystemUOPForPayload_ExcludesStrandedBuckets(t *testing.T) {
 	for _, c := range res.Counts {
 		got[c.PayloadCode] = c.BucketUOP
 	}
-	if got[active] != 100 {
-		t.Errorf("active payload bucket UOP = %d, want 100 (active-style bucket counts)", got[active])
+	if got[claimed] != 100 {
+		t.Errorf("%s bucket UOP = %d, want 100", claimed, got[claimed])
 	}
-	if got[stranded] != 30 {
-		t.Errorf("stranded payload bucket UOP = %d, want 30 (250 excluded at the mirrored node, 30 kept at the unmirrored node)", got[stranded])
+	if got[unclaimed] != 250 {
+		t.Errorf("%s bucket UOP = %d, want 250 (the active pile counts; both stranded rows do not)", unclaimed, got[unclaimed])
 	}
 }

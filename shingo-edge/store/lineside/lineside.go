@@ -1,20 +1,22 @@
-// Package lineside holds persistence for node_lineside_bucket — the
-// first-class "parts the operator pulled to lineside during a swap"
-// inventory model. A bucket is scoped to a (node-or-pair, style, payload)
-// and has a small lifecycle:
+// Package lineside holds persistence for node_lineside_bucket: the parts an
+// operator pulled from a bin to the bench at a node. A pile is one row per
+// (node, payload, state):
 //
-//   - active:   parts currently on the bench, being decremented by
-//     counter ticks before the node's RemainingUOP.
-//   - inactive: stranded from a prior style run; auto-reactivates and
-//     merges into the fresh capture when the same style runs
-//     at this node again.
+//   - active:   on-hand from the pull until the node's cutover. Consume ticks
+//     drain it before the node's bin (Drain), and Core counts it.
+//   - stranded: what an active pile had left at a cutover (StrandProcess). A
+//     permanent count-anomaly record: operators run out what they pull, so
+//     a leftover is most likely the size of a declaration error. It never
+//     drains, never counts, and never revives; the next pull of that part
+//     makes a new active pile.
 //
-// Buckets with qty == 0 are deleted on Deactivate/Drain; the inactive
-// state always has qty > 0 in practice.
+// A row whose qty reaches 0 is deleted, so a level of 0 means "no row". Core
+// mirrors each (core node, payload, state) by its level (Level), which the
+// delta accumulator reads at flush; every function here that writes a row is
+// one the accumulator must be told about (the Key of the row it wrote).
 //
 // The outer store/ package keeps delegate methods on *store.DB and
-// re-exports the bucket-state constants; callers name this package's
-// types directly.
+// re-exports the state constants; callers name this package's types directly.
 package lineside
 
 import (
@@ -27,24 +29,40 @@ import (
 )
 
 // Bucket is one row of node_lineside_bucket. The struct lives in
-// shingoedge/domain (Stage 2A.2) under the more descriptive name
-// LinesideBucket; this alias keeps the lineside.Bucket name used by
-// every scan helper, Activate/Deactivate/Drain call site, and the
-// outer store/ re-export.
+// shingoedge/domain under the more descriptive name LinesideBucket.
 type Bucket = domain.LinesideBucket
 
-// Bucket states.
+// Pile states.
 const (
 	StateActive   = "active"
-	StateInactive = "inactive"
+	StateStranded = "stranded"
 )
 
-const bucketCols = `id, node_id, pair_key, style_id, payload_code, qty, state, created_at, updated_at`
+// Key names one pile level as Core mirrors it: (CoreNodeName, PayloadCode,
+// State). NodeID is the local process node the row sits on, kept so a missing
+// core name can still be resolved; two local nodes with one core name give two
+// Keys with one level.
+type Key struct {
+	NodeID       int64
+	CoreNodeName string
+	PayloadCode  string
+	State        string
+}
+
+// Stranded is one active pile a cutover folded into its stranded row.
+type Stranded struct {
+	NodeID       int64
+	CoreNodeName string
+	PayloadCode  string
+	Qty          int
+}
+
+const bucketCols = `id, node_id, payload_code, qty, state, created_at, updated_at`
 
 func scanBucket(scanner interface{ Scan(...any) error }) (Bucket, error) {
 	var b Bucket
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&b.ID, &b.NodeID, &b.PairKey, &b.StyleID, &b.PayloadCode,
+	if err := scanner.Scan(&b.ID, &b.NodeID, &b.PayloadCode,
 		&b.Qty, &b.State, &createdAt, &updatedAt); err != nil {
 		return b, err
 	}
@@ -65,36 +83,23 @@ func scanBuckets(rows helpers.RowScanner) ([]Bucket, error) {
 	return out, rows.Err()
 }
 
-// GetActive returns the active bucket for (node, style, payload) or
-// sql.ErrNoRows if none exists.
-func GetActive(db *sql.DB, nodeID, styleID int64, payloadCode string) (*Bucket, error) {
-	b, err := scanBucket(db.QueryRow(`SELECT `+bucketCols+`
-		FROM node_lineside_bucket
-		WHERE node_id=? AND style_id=? AND payload_code=? AND state=?`,
-		nodeID, styleID, payloadCode, StateActive))
-	if err != nil {
-		return nil, err
+func scanKeys(rows *sql.Rows, qErr error) ([]Key, error) {
+	if qErr != nil {
+		return nil, qErr
 	}
-	return &b, nil
+	defer rows.Close()
+	var out []Key
+	for rows.Next() {
+		var k Key
+		if err := rows.Scan(&k.NodeID, &k.CoreNodeName, &k.PayloadCode, &k.State); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }
 
-// Find returns any bucket (active or inactive) for (node, style, payload)
-// or sql.ErrNoRows if none exists. In practice at most one row matches
-// because we merge on reactivate.
-func Find(db *sql.DB, nodeID, styleID int64, payloadCode string) (*Bucket, error) {
-	b, err := scanBucket(db.QueryRow(`SELECT `+bucketCols+`
-		FROM node_lineside_bucket
-		WHERE node_id=? AND style_id=? AND payload_code=?
-		ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END
-		LIMIT 1`,
-		nodeID, styleID, payloadCode))
-	if err != nil {
-		return nil, err
-	}
-	return &b, nil
-}
-
-// GetByID returns one bucket by id.
+// GetByID returns one pile by id.
 func GetByID(db *sql.DB, id int64) (*Bucket, error) {
 	b, err := scanBucket(db.QueryRow(`SELECT `+bucketCols+` FROM node_lineside_bucket WHERE id=?`, id))
 	if err != nil {
@@ -103,8 +108,7 @@ func GetByID(db *sql.DB, id int64) (*Bucket, error) {
 	return &b, nil
 }
 
-// ListForNode returns every bucket on a node, ordered with active rows
-// first. Useful for HMI rendering (active bar + stacked chips).
+// ListForNode returns every pile on a node, active rows first.
 func ListForNode(db *sql.DB, nodeID int64) ([]Bucket, error) {
 	rows, err := db.Query(`SELECT `+bucketCols+`
 		FROM node_lineside_bucket
@@ -118,36 +122,19 @@ func ListForNode(db *sql.DB, nodeID int64) ([]Bucket, error) {
 	return scanBuckets(rows)
 }
 
-// ListActiveForNode returns only the active buckets on a node.
-func ListActiveForNode(db *sql.DB, nodeID int64) ([]Bucket, error) {
-	rows, err := db.Query(`SELECT `+bucketCols+`
-		FROM node_lineside_bucket
-		WHERE node_id=? AND state=?
-		ORDER BY updated_at DESC`,
-		nodeID, StateActive)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBuckets(rows)
-}
-
-// ListActiveForNodes is the batched form of ListActiveForNode: one query for
-// a whole set of nodes, keyed by node id. An operator-station view needs these
-// for every tile, and calling the per-node form in the tile loop cost one query
-// per tile on a connection that serialises every read (store.Open sets
-// SetMaxOpenConns(1)). Nodes with no buckets are simply absent from the map,
-// which reads the same as the per-node form's empty slice.
-//
-// Ordering within each node matches ListActiveForNode (updated_at DESC), so the
-// HMI sees the same bucket order either way.
+// ListActiveForNodes returns the active piles of a whole set of nodes in one
+// query, keyed by node id. An operator-station view needs these for every
+// tile, and a per-node query in the tile loop cost one query per tile on a
+// connection that serialises every read (store.Open sets SetMaxOpenConns(1)).
+// Nodes with no piles are absent from the map.
 func ListActiveForNodes(db *sql.DB, nodeIDs []int64) (map[int64][]Bucket, error) {
 	return listForNodes(db, nodeIDs, StateActive)
 }
 
-// ListInactiveForNodes is the batched form of ListInactiveForNode.
-func ListInactiveForNodes(db *sql.DB, nodeIDs []int64) (map[int64][]Bucket, error) {
-	return listForNodes(db, nodeIDs, StateInactive)
+// ListStrandedForNodes is ListActiveForNodes for the stranded piles, which the
+// HMI shows as count-anomaly chips.
+func ListStrandedForNodes(db *sql.DB, nodeIDs []int64) (map[int64][]Bucket, error) {
+	return listForNodes(db, nodeIDs, StateStranded)
 }
 
 func listForNodes(db *sql.DB, nodeIDs []int64, state string) (map[int64][]Bucket, error) {
@@ -157,7 +144,7 @@ func listForNodes(db *sql.DB, nodeIDs []int64, state string) (map[int64][]Bucket
 	}
 	// Deduplicate: a station can list the same node twice (a changeover
 	// participant adopted as a child tile), and a duplicated id would otherwise
-	// duplicate that node's buckets in the result.
+	// duplicate that node's piles in the result.
 	seen := make(map[int64]bool, len(nodeIDs))
 	args := make([]any, 0, len(nodeIDs)+1)
 	placeholders := make([]byte, 0, len(nodeIDs)*2)
@@ -191,251 +178,174 @@ func listForNodes(db *sql.DB, nodeIDs []int64, state string) (map[int64][]Bucket
 	return out, nil
 }
 
-// ListInactiveForNode returns only the stranded (inactive) buckets on
-// a node — the ones that render as stacked chips.
-func ListInactiveForNode(db *sql.DB, nodeID int64) ([]Bucket, error) {
-	rows, err := db.Query(`SELECT `+bucketCols+`
-		FROM node_lineside_bucket
-		WHERE node_id=? AND state=?
-		ORDER BY updated_at DESC`,
-		nodeID, StateInactive)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBuckets(rows)
-}
-
-// ListForPair returns every bucket keyed to a pair, across both
-// A/B nodes. Empty pairKey returns an empty slice.
-func ListForPair(db *sql.DB, pairKey string) ([]Bucket, error) {
-	if pairKey == "" {
-		return nil, nil
-	}
-	rows, err := db.Query(`SELECT `+bucketCols+`
-		FROM node_lineside_bucket
-		WHERE pair_key=?
-		ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC`,
-		pairKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBuckets(rows)
-}
-
-// Capture records parts pulled to lineside for (node, style, payload). It
-// merges into an existing bucket when one is present (reactivating an
-// inactive one), or creates a fresh active bucket otherwise. A non-zero
-// qty is required — Capture with qty == 0 is a no-op and returns nil.
-//
-// Capture should be called inside a transaction together with
-// DeactivateOtherStyles so the single-active-per-(style,payload) invariant
-// is never transiently violated.
-func Capture(db Execer, nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) (*Bucket, error) {
+// Capture adds qty pulled to lineside to the node's ACTIVE pile of the
+// payload, creating it when there is none, and returns the pile's new qty. It
+// never reads or writes a stranded row: a part stranded at an earlier cutover
+// stays stranded, and this pull is a new active pile beside it. qty <= 0 is a
+// no-op returning 0.
+func Capture(db Execer, nodeID int64, payloadCode string, qty int) (int, error) {
 	if qty <= 0 {
-		return nil, nil
+		return 0, nil
 	}
-
-	// A bucket is a physical pile of parts at a node; style_id is metadata of the
-	// claim in scope at capture time (see Drain's doc above). The active-
-	// uniqueness index is (node_id, payload_code), so merge/promote the single
-	// most-relevant (node, payload) bucket regardless of its style and re-stamp the
-	// captured style — rather than gating the merge on style_id, which silently
-	// dropped a cross-style capture (the style-keyed merge missed the active
-	// bucket and the fresh INSERT collided with the (node, payload) unique index).
-	// R58-2.
-	res, err := db.Exec(`UPDATE node_lineside_bucket
-		SET qty = qty + ?, style_id = ?, state = ?, updated_at = datetime('now')
-		WHERE id = (
-			SELECT id FROM node_lineside_bucket
-			WHERE node_id = ? AND payload_code = ?
-			ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC
-			LIMIT 1
-		)`,
-		qty, styleID, StateActive, nodeID, payloadCode)
-	if err != nil {
-		return nil, fmt.Errorf("lineside: capture merge: %w", err)
+	var newQty int
+	if err := db.QueryRow(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (node_id, payload_code, state)
+		DO UPDATE SET qty = qty + excluded.qty, updated_at = datetime('now')
+		RETURNING qty`,
+		nodeID, payloadCode, qty, StateActive).Scan(&newQty); err != nil {
+		return 0, fmt.Errorf("lineside: capture: %w", err)
 	}
-	if affected, _ := res.RowsAffected(); affected > 0 {
-		return findOne(db, nodeID, styleID, payloadCode)
-	}
-
-	// No row to merge into — insert fresh. INSERT OR IGNORE so that a
-	// concurrent caller that bypassed the documented tx wrapper can't
-	// crash us with a UNIQUE collision on idx_lineside_active_unique;
-	// if our INSERT is ignored the row already exists, and we retry
-	// the merge UPDATE to fold our qty into theirs.
-	res, err = db.Exec(`INSERT OR IGNORE INTO node_lineside_bucket
-		(node_id, pair_key, style_id, payload_code, qty, state)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		nodeID, pairKey, styleID, payloadCode, qty, StateActive)
-	if err != nil {
-		return nil, fmt.Errorf("lineside: capture insert: %w", err)
-	}
-	if affected, _ := res.RowsAffected(); affected > 0 {
-		return findOne(db, nodeID, styleID, payloadCode)
-	}
-	if _, err := db.Exec(`UPDATE node_lineside_bucket
-		SET qty = qty + ?, style_id = ?, state = ?, updated_at = datetime('now')
-		WHERE node_id = ? AND payload_code = ? AND state = ?`,
-		qty, styleID, StateActive, nodeID, payloadCode, StateActive); err != nil {
-		return nil, fmt.Errorf("lineside: capture merge retry: %w", err)
-	}
-	return findOne(db, nodeID, styleID, payloadCode)
+	return newQty, nil
 }
 
-// DeactivateOtherStyles flips any *other* active buckets on this node
-// (different style) to inactive, so the post-release state respects
-// the "one active style per node" rule. Zero-qty rows are deleted.
+// Drain decrements the node's ACTIVE pile of the payload by up to delta and
+// returns the amount it took; the caller passes the remainder (delta -
+// drained) to the node's bin count. No active pile returns (0, nil): the tick
+// flows through to the bin. A stranded pile is never drained.
 //
-// Must be called inside the same transaction as Capture.
-func DeactivateOtherStyles(db Execer, nodeID, keepStyleID int64) error {
-	if _, err := db.Exec(`DELETE FROM node_lineside_bucket
-		WHERE node_id=? AND state=? AND style_id != ? AND qty <= 0`,
-		nodeID, StateActive, keepStyleID); err != nil {
-		return fmt.Errorf("lineside: deactivate delete zeros: %w", err)
-	}
-	_, err := db.Exec(`UPDATE node_lineside_bucket
-		SET state=?, updated_at=datetime('now')
-		WHERE node_id=? AND state=? AND style_id != ?`,
-		StateInactive, nodeID, StateActive, keepStyleID)
-	if err != nil {
-		return fmt.Errorf("lineside: deactivate others: %w", err)
-	}
-	return nil
-}
-
-// Drain decrements the active bucket for (node, style, payload) by up to
-// delta. Returns the amount actually drained from the bucket and the
-// matched bucket's style_id so the caller can attribute the resulting
-// LinesideBucketDelta to the bucket's actual style (Core's dedup
-// scope_key keys off the style id). The caller passes the remainder
-// (delta - drained) to the node-level RemainingUOP decrement. Missing
-// active bucket returns (0, 0, nil) — the counter tick simply flows
-// through to the node counter.
+// Style is not part of the match, and is not part of the pile: during a
+// changeover the pile captured at the release keeps draining while the process
+// still runs the from-style, until the cutover strands it (the 2026-05-19 fix,
+// kept).
 //
-// styleID is intentionally NOT in the WHERE clause. A lineside bucket
-// is a physical pile of parts at a node; the style_id is metadata of
-// which claim was in scope at capture time, not part of the bucket's
-// identity. During a cutover the bucket captured under style A must
-// keep draining even after the process flips to style B — the
-// operator already pulled the parts before the swap. Pre-fix Round-3
-// (plant 2026-05-19) the style_id gate left the bucket stuck while
-// consume ticks continued, mis-attributing the drain to the bin
-// counter and producing a chronic over-decrement.
-//
-// DeactivateOtherLinesideStyles (uop/capture.go:92) plus the schema-
-// enforced (node_id, payload_code) WHERE state='active' unique index
-// (sqlite_ddl.go) keep "at most one active bucket per (node, payload)"
-// — so the read is unambiguous without filtering on style.
-//
-// ORDER BY updated_at DESC LIMIT 1 is defense-in-depth: if a partial
-// transaction temporarily leaves two active rows for the same
-// (node, payload) before DeactivateOtherStyles deactivates the old one,
-// pick the most-recently-touched one rather than a SQLite-undefined
-// "first match." Practically a no-op under the schema invariant.
-//
-// When the bucket hits zero it is deleted so zero-qty rows don't
-// linger in the UI.
-func Drain(db Execer, nodeID int64, payloadCode string, delta int) (drained int, matchedStyleID int64, err error) {
+// A pile that reaches zero is deleted.
+func Drain(db Execer, nodeID int64, payloadCode string, delta int) (int, error) {
 	if delta <= 0 {
-		return 0, 0, nil
+		return 0, nil
 	}
-
-	// Read current qty + matched style_id.
 	var id int64
 	var qty int
-	var styleID int64
-	row := db.QueryRow(`SELECT id, style_id, qty FROM node_lineside_bucket
-		WHERE node_id=? AND payload_code=? AND state=?
-		ORDER BY updated_at DESC
-		LIMIT 1`,
-		nodeID, payloadCode, StateActive)
-	if err := row.Scan(&id, &styleID, &qty); err != nil {
+	if err := db.QueryRow(`SELECT id, qty FROM node_lineside_bucket
+		WHERE node_id=? AND payload_code=? AND state=?`,
+		nodeID, payloadCode, StateActive).Scan(&id, &qty); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, nil
+			return 0, nil
 		}
-		return 0, 0, fmt.Errorf("lineside: drain read: %w", err)
+		return 0, fmt.Errorf("lineside: drain read: %w", err)
 	}
 
-	take := delta
-	if take > qty {
-		take = qty
-	}
-	newQty := qty - take
-	if newQty == 0 {
+	take := min(delta, qty)
+	if qty-take <= 0 {
 		if _, err := db.Exec(`DELETE FROM node_lineside_bucket WHERE id=?`, id); err != nil {
-			return 0, 0, fmt.Errorf("lineside: drain delete: %w", err)
+			return 0, fmt.Errorf("lineside: drain delete: %w", err)
 		}
-		return take, styleID, nil
+		return take, nil
 	}
 	if _, err := db.Exec(`UPDATE node_lineside_bucket
-		SET qty=?, updated_at=datetime('now') WHERE id=?`, newQty, id); err != nil {
-		return 0, 0, fmt.Errorf("lineside: drain update: %w", err)
+		SET qty=?, updated_at=datetime('now') WHERE id=?`, qty-take, id); err != nil {
+		return 0, fmt.Errorf("lineside: drain update: %w", err)
 	}
-	return take, styleID, nil
+	return take, nil
 }
 
-// SetForReconcile overwrites the bucket qty for (node, pair, style,
-// payload) to exactly qty. Its only caller is the admin bucket adjustment
-// (uop.Mutator.AdjustBucket, from engine/admin_lineside.go), which records the
-// difference as a lineside bucket delta and flushes it, so Core's mirror moves
-// by the same amount. There is no reconciler: nothing writes Core's number back
-// into this table. qty==0 deletes the row (empty buckets carry no useful
-// information); positive qty UPSERTs to that exact value (a write, not a delta
-// apply) and marks the row Active, because a person adjusting a bucket at a
-// node is asserting it is on the line now.
-func SetForReconcile(db Execer, nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) error {
-	if qty <= 0 {
-		if _, err := db.Exec(`DELETE FROM node_lineside_bucket
-			WHERE node_id=? AND style_id=? AND payload_code=?`,
-			nodeID, styleID, payloadCode); err != nil {
-			return fmt.Errorf("lineside: reconcile delete: %w", err)
-		}
-		return nil
-	}
-	res, err := db.Exec(`UPDATE node_lineside_bucket
-		SET qty=?, state=?, updated_at=datetime('now')
-		WHERE node_id=? AND style_id=? AND payload_code=?`,
-		qty, StateActive, nodeID, styleID, payloadCode)
-	if err != nil {
-		return fmt.Errorf("lineside: reconcile update: %w", err)
-	}
-	if affected, _ := res.RowsAffected(); affected > 0 {
-		return nil
-	}
-	if _, err := db.Exec(`INSERT INTO node_lineside_bucket
-		(node_id, pair_key, style_id, payload_code, qty, state)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		nodeID, pairKey, styleID, payloadCode, qty, StateActive); err != nil {
-		return fmt.Errorf("lineside: reconcile insert: %w", err)
+// DeleteByID removes one pile, whatever its state: the admin Clear.
+func DeleteByID(db Execer, id int64) error {
+	if _, err := db.Exec(`DELETE FROM node_lineside_bucket WHERE id=?`, id); err != nil {
+		return fmt.Errorf("lineside: delete %d: %w", id, err)
 	}
 	return nil
 }
 
-// --- helpers ---
+// StrandProcess is the cutover: in one transaction, every ACTIVE pile at any
+// of the process's nodes folds into its (node, payload) stranded row (qty
+// summed, updated_at touched) and the active row is deleted. Returns what it
+// folded, so the caller can log each as a count anomaly and send both levels.
+// A node the changeover does not touch is stranded too: the rule is the
+// process's style flip, not the node's swap.
+func StrandProcess(db *sql.DB, processID int64) ([]Stranded, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("lineside: strand process %d: begin: %w", processID, err)
+	}
+	defer tx.Rollback()
+
+	type activePile struct {
+		id int64
+		Stranded
+	}
+	rows, err := tx.Query(`SELECT b.id, b.node_id, pn.core_node_name, b.payload_code, b.qty
+		FROM node_lineside_bucket b
+		JOIN process_nodes pn ON pn.id = b.node_id
+		WHERE pn.process_id = ? AND b.state = ?
+		ORDER BY b.id`, processID, StateActive)
+	if err != nil {
+		return nil, fmt.Errorf("lineside: strand process %d: read: %w", processID, err)
+	}
+	var piles []activePile
+	for rows.Next() {
+		var p activePile
+		if err := rows.Scan(&p.id, &p.NodeID, &p.CoreNodeName, &p.PayloadCode, &p.Qty); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("lineside: strand process %d: scan: %w", processID, err)
+		}
+		piles = append(piles, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lineside: strand process %d: rows: %w", processID, err)
+	}
+
+	out := make([]Stranded, 0, len(piles))
+	for _, p := range piles {
+		if p.Qty > 0 {
+			if _, err := tx.Exec(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state)
+				VALUES (?, ?, ?, ?)
+				ON CONFLICT (node_id, payload_code, state)
+				DO UPDATE SET qty = qty + excluded.qty, updated_at = datetime('now')`,
+				p.NodeID, p.PayloadCode, p.Qty, StateStranded); err != nil {
+				return nil, fmt.Errorf("lineside: strand pile %d: %w", p.id, err)
+			}
+			out = append(out, p.Stranded)
+		}
+		if _, err := tx.Exec(`DELETE FROM node_lineside_bucket WHERE id=?`, p.id); err != nil {
+			return nil, fmt.Errorf("lineside: strand pile %d: delete active: %w", p.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("lineside: strand process %d: commit: %w", processID, err)
+	}
+	return out, nil
+}
+
+// ListKeys returns the Key of every pile row: the boot resend of every level.
+func ListKeys(db *sql.DB) ([]Key, error) {
+	return scanKeys(db.Query(`SELECT b.node_id, COALESCE(pn.core_node_name, ''), b.payload_code, b.state
+		FROM node_lineside_bucket b
+		LEFT JOIN process_nodes pn ON pn.id = b.node_id
+		ORDER BY b.id`))
+}
+
+// ListKeysForProcess returns the Key of every pile row at the process's nodes:
+// what a process delete takes with it, read before the delete so each level
+// can be sent as 0 after it.
+func ListKeysForProcess(db *sql.DB, processID int64) ([]Key, error) {
+	return scanKeys(db.Query(`SELECT b.node_id, pn.core_node_name, b.payload_code, b.state
+		FROM node_lineside_bucket b
+		JOIN process_nodes pn ON pn.id = b.node_id
+		WHERE pn.process_id = ?
+		ORDER BY b.id`, processID))
+}
+
+// Level is the qty Core mirrors for (coreNodeName, payloadCode, state): the sum
+// over every process node carrying that core name, since two local nodes with
+// one core name are one place at Core. 0 when there is no row. One statement;
+// the accumulator reads it once per dirty key per flush.
+func Level(db *sql.DB, coreNodeName, payloadCode, state string) (int, error) {
+	var qty int
+	if err := db.QueryRow(`SELECT COALESCE(SUM(b.qty), 0)
+		FROM node_lineside_bucket b
+		JOIN process_nodes pn ON pn.id = b.node_id
+		WHERE pn.core_node_name = ? AND b.payload_code = ? AND b.state = ?`,
+		coreNodeName, payloadCode, state).Scan(&qty); err != nil {
+		return 0, fmt.Errorf("lineside: level %s/%s/%s: %w", coreNodeName, payloadCode, state, err)
+	}
+	return qty, nil
+}
 
 // Execer is the minimal interface shared by *sql.DB and *sql.Tx.
-// Every mutating function accepts this so callers can wrap a sequence
-// of captures + deactivations in a transaction.
 type Execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
-}
-
-// findOne is the internal single-row fetch used after Capture. Takes
-// an Execer so it works inside a transaction.
-func findOne(db Execer, nodeID, styleID int64, payloadCode string) (*Bucket, error) {
-	b, err := scanBucket(db.QueryRow(`SELECT `+bucketCols+`
-		FROM node_lineside_bucket
-		WHERE node_id=? AND style_id=? AND payload_code=?
-		ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END
-		LIMIT 1`,
-		nodeID, styleID, payloadCode))
-	if err != nil {
-		return nil, err
-	}
-	return &b, nil
 }

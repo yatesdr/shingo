@@ -561,23 +561,3 @@ function closeReleasePrompt() {
     releasePromptState = null;
 }
 
-// Stub view: scrap / repack / recall actions land in a later phase.
-export function openStrandedStub(bucket, handleModalAction) {
-    let html = '';
-    html += '<div class="modal-header">';
-    html += '<div class="modal-node-name">Stranded at lineside</div>';
-    html += '<div class="modal-payload">' + esc(bucket.part_number) + ' — ' + (bucket.qty || 0) + ' unit' + ((bucket.qty || 0) === 1 ? '' : 's') + '</div>';
-    html += '</div>';
-    html += '<div style="padding:12px 0;color:#bbb;font-size:14px;line-height:1.4">';
-    html += 'These parts were captured during a previous changeover and are not counting toward the active style.<br><br>';
-    html += '<strong>Scrap / repack / recall actions will land in a later phase.</strong>';
-    html += '</div>';
-    html += '<div class="modal-actions">';
-    html += '<button type="button" class="os-action-btn close" data-action="close">CLOSE</button>';
-    html += '</div>';
-    nodeModalContent.innerHTML = html;
-    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
-        btn.addEventListener('click', handleModalAction);
-    });
-    nodeModal.classList.add('active');
-}

@@ -223,37 +223,36 @@ func TestCollapseDuplicateProcessNodes_UnboundNodesAreNotDuplicates(t *testing.T
 	}
 }
 
-// TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets pins the
+// TestCollapseDuplicateProcessNodes_MovesPilesThatDoNotCollide pins the
 // collision guard's scope.
 //
-// The unique index on node_lineside_bucket is PARTIAL — UNIQUE(node_id,
-// payload_code) WHERE state='active' — so only ACTIVE buckets can collide. The
-// guard used to test just the survivor's side: "does the survivor hold an active
-// bucket for this part?" If it did, EVERY bucket on the dead row for that part
-// was refused the move and then deleted, including inactive ones that could never
-// have collided with anything. Those carry closed-out operator part counts.
+// A pile is UNIQUE(node_id, payload_code, state), so a dead row's pile collides
+// only with a survivor's pile of the same payload IN THE SAME STATE. The guard
+// used to test just the survivor's side, and every pile on the dead row for
+// that part was refused the move and then deleted, including a stranded one
+// that could never have collided with the survivor's active row.
 //
-// Active collision → dropped (the survivor's row is the live one). Inactive →
-// migrated, always.
-func TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets(t *testing.T) {
+// Same-state collision → dropped (the survivor's row is the live one). A pile
+// of the other state → migrated.
+// Changed under change #2: the moving row is stranded where it was 'captured'
+// (an inactive-class state) under the old partial index; the rule it pins is
+// the same.
+func TestCollapseDuplicateProcessNodes_MovesPilesThatDoNotCollide(t *testing.T) {
 	db := testDB(t)
 	_, live, orphanWithBin, _ := seedDupProcessNodes(t, db)
 
-	if _, err := db.Exec(`INSERT INTO styles (id, process_id, name) VALUES (1, 1, 'STYLE-A')`); err != nil {
-		t.Fatalf("seed style: %v", err)
-	}
 	mkBucket := func(id, nodeID int64, part, state string, qty int) {
-		if _, err := db.Exec(`INSERT INTO node_lineside_bucket (id, node_id, style_id, payload_code, qty, state)
-			VALUES (?, ?, 1, ?, ?, ?)`, id, nodeID, part, qty, state); err != nil {
+		if _, err := db.Exec(`INSERT INTO node_lineside_bucket (id, node_id, payload_code, qty, state)
+			VALUES (?, ?, ?, ?, ?)`, id, nodeID, part, qty, state); err != nil {
 			t.Fatalf("seed bucket %d: %v", id, err)
 		}
 	}
 	// The survivor already holds the live count for PART-A.
 	mkBucket(100, live, "PART-A", "active", 40)
-	// The orphan holds a colliding ACTIVE bucket for the same part (must drop) …
+	// The orphan holds a colliding ACTIVE pile for the same part (must drop) …
 	mkBucket(101, orphanWithBin, "PART-A", "active", 7)
-	// … and a CLOSED one for the same part, which collides with nothing (must move).
-	mkBucket(102, orphanWithBin, "PART-A", "captured", 25)
+	// … and a STRANDED one for the same part, which collides with nothing (must move).
+	mkBucket(102, orphanWithBin, "PART-A", "stranded", 25)
 
 	if err := db.collapseDuplicateProcessNodes(); err != nil {
 		t.Fatalf("collapse: %v", err)
@@ -261,10 +260,10 @@ func TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets(t *testin
 
 	var node int64
 	if err := db.QueryRow(`SELECT node_id FROM node_lineside_bucket WHERE id = 102`).Scan(&node); err != nil {
-		t.Fatalf("the INACTIVE bucket was deleted — it is partial-index-exempt and could never have collided: %v", err)
+		t.Fatalf("the STRANDED pile was deleted — the survivor has no stranded row for it to collide with: %v", err)
 	}
 	if node != live {
-		t.Errorf("inactive bucket node_id = %d, want %d (the survivor)", node, live)
+		t.Errorf("stranded pile node_id = %d, want %d (the survivor)", node, live)
 	}
 
 	// The active collision is gone, and the survivor's own row is untouched.
@@ -273,7 +272,7 @@ func TestCollapseDuplicateProcessNodes_MigratesInactiveLinesideBuckets(t *testin
 		t.Fatalf("count colliding bucket: %v", err)
 	}
 	if n != 0 {
-		t.Error("the colliding ACTIVE bucket should have been dropped — the survivor's row is the live count")
+		t.Error("the colliding ACTIVE pile should have been dropped — the survivor's row is the live count")
 	}
 	var qty int
 	if err := db.QueryRow(`SELECT qty FROM node_lineside_bucket WHERE id = 100`).Scan(&qty); err != nil {

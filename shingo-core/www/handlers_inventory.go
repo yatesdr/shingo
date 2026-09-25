@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/xuri/excelize/v2"
-	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/domain"
 )
@@ -29,8 +28,8 @@ const deltaDailyDays = 30
 // BinSum is signed because the SME lock allows bins to go negative
 // (overpack/underpack); over time the signed sum drifts in either
 // direction as production smooths out, useful as a trend indicator
-// rather than a hard equation. BucketSum stays non-negative by
-// schema CHECK constraint. Total = BinSum + BucketSum, so dashboards
+// rather than a hard equation. BucketSum is the active piles only (the
+// ones on-hand counts) and stays non-negative by schema CHECK constraint. Total = BinSum + BucketSum, so dashboards
 // can present either the components or the rolled-up plant total.
 type InventoryInvariant struct {
 	Total      int64     `json:"total"`
@@ -266,13 +265,9 @@ func (h *Handlers) apiInventoryRejectedDeltas(w http.ResponseWriter, r *http.Req
 	h.jsonOK(w, rows)
 }
 
-// apiBuckets returns every authoritative lineside_buckets row as JSON.
-// Powers the "Lineside Buckets" section on the operator-facing
-// inventory page. Round-3 Obs 10 added the Delete column on top of
-// this read-side: apiBucketDelete (below) is the admin recovery hatch
-// for clearing Core-only orphan rows.
-//
-// See lineside-buckets-investigation-2026-05-18.md.
+// apiBuckets returns every lineside_buckets row as JSON: Core's mirror of the
+// Edge's piles, active and stranded. Powers the "Lineside Buckets" section on
+// the operator-facing inventory page. Read-only; Core never writes a pile.
 func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.engine.InventoryService().ListLinesideBuckets()
 	if err != nil {
@@ -280,47 +275,6 @@ func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, rows)
-}
-
-// apiBucketDelete removes one lineside_buckets row by primary key and
-// resets its inventory_delta_dedup row. Round-3 Obs 10 — the
-// operator-driven recovery hatch for the cross-namespace orphan
-// shape that the Obs 8 protocol fix made impossible to create going
-// forward. Auth-gated via requireAuth (binary in this codebase; no
-// finer role distinction).
-//
-// The audit row records source="ui", actor=session username, so
-// operations can trace which engineer cleared which bucket.
-func (h *Handlers) apiBucketDelete(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID int64 `json:"id"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-	if req.ID <= 0 {
-		h.jsonError(w, "id required", http.StatusBadRequest)
-		return
-	}
-
-	n, err := h.engine.InventoryService().DeleteLinesideBucket(req.ID)
-	if err != nil {
-		h.jsonError(w, "delete lineside bucket: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if n == 0 {
-		h.jsonError(w, "no lineside bucket with that id", http.StatusNotFound)
-		return
-	}
-
-	actor := h.getUsername(r)
-	if actor == "" {
-		actor = protocol.AuditActorUI
-	}
-	if as := h.engine.AuditService(); as != nil {
-		as.Append("lineside_bucket", req.ID, "deleted", "active", "deleted", actor)
-	}
-	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
@@ -406,7 +360,7 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // appendLinesideBucketSheet adds the second sheet of the inventory export, one
-// row per lineside bucket.
+// row per lineside pile, active or stranded.
 //
 // Read failures degrade gracefully and deliberately: the bins sheet still ships,
 // which is the sheet the export is actually for. Same for a NewSheet failure --
@@ -420,7 +374,7 @@ func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) 
 	if _, err := f.NewSheet(bucketSheet); err != nil {
 		return
 	}
-	bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Payload Code", "State", "Qty"}
+	bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Payload Code", "State", "Qty"}
 	for i, hdr := range bucketHeaders {
 		c, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(bucketSheet, c, hdr)
@@ -433,11 +387,19 @@ func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) 
 		f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
 		f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
 		f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
-		f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
-		f.SetCellValue(bucketSheet, cell("G", rn), br.PayloadCode)
-		f.SetCellValue(bucketSheet, cell("H", rn), br.State)
-		f.SetCellValue(bucketSheet, cell("I", rn), br.Qty)
+		f.SetCellValue(bucketSheet, cell("F", rn), br.PayloadCode)
+		f.SetCellValue(bucketSheet, cell("G", rn), bucketStateLabel(br.State))
+		f.SetCellValue(bucketSheet, cell("H", rn), br.Qty)
 	}
+}
+
+// bucketStateLabel is a pile's state as the export sheet shows it: a stranded
+// row is a count anomaly left at a cutover, and is labelled as one.
+func bucketStateLabel(state string) string {
+	if state == "stranded" {
+		return "count anomaly at cutover"
+	}
+	return state
 }
 
 // cell builds a cell reference like "A2" from a column letter and row number.

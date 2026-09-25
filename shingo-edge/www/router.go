@@ -365,7 +365,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 			// Lineside buckets (public — embedded on Production page)
 			r.Post("/lineside/buckets/{id}/clear", h.apiAdminClearLinesideBucket)
-			r.Post("/lineside/buckets/{id}/qty", h.apiAdminEditLinesideBucketQty)
 
 			// ── Admin API (auth required) ───────────────────────
 			r.Group(func(r chi.Router) {
@@ -405,9 +404,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Post("/plcs/read-tag", h.apiReadTag)
 				r.Get("/warlink/status", h.apiWarLinkStatus)
 				r.Put("/config/warlink", h.apiUpdateWarLink)
-
-				// UOP backfill (Item 3)
-				r.Post("/admin/uop/backfill", h.apiBackfillBuckets)
 
 				// Cell-side autoreorder. The loader-threshold routes that sat
 				// here were deleted with the dead Edge threshold surface —

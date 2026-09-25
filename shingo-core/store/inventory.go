@@ -21,16 +21,8 @@ func (db *DB) ListLinesideBuckets() ([]inventory.BucketRow, error) {
 	return inventory.ListLinesideBuckets(db.DB)
 }
 
-// DeleteLinesideBucket removes one lineside_buckets row by id and resets
-// its matching inventory_delta_dedup row (see inventory.DeleteLinesideBucket). Powers the Round-3
-// Obs 10 operator-driven cleanup of Core-only orphan buckets.
-// Returns the count of bucket rows deleted (0 or 1).
-func (db *DB) DeleteLinesideBucket(id int64) (int, error) {
-	return inventory.DeleteLinesideBucket(db.DB, id)
-}
-
 // DistinctStockedPayloads returns every payload_code with current stock on a
-// bin or lineside bucket. Feeds the Replenishment Health rollup so stocked but
+// bin or an active lineside pile. Feeds the Replenishment Health rollup so stocked but
 // unmonitored payloads still appear.
 func (db *DB) DistinctStockedPayloads() ([]string, error) {
 	return inventory.DistinctStockedPayloads(db.DB)
@@ -48,13 +40,13 @@ func (db *DB) SumBinUOP() (int64, error) {
 	return sum, nil
 }
 
-// SumLinesideBuckets returns the unsigned total of lineside_buckets.qty
-// across all rows. Always >= 0 by the schema's CHECK constraint
-// (buckets stay non-negative per SME lock — they are real-time
-// physical drains and can't go below zero).
+// SumLinesideBuckets returns the total of lineside_buckets.qty across the
+// ACTIVE piles, the ones on-hand counts; a stranded row is a count anomaly and
+// is left out, so the invariant's bucket term agrees with SystemUOPForPayload.
+// Always >= 0 by the schema's CHECK constraint.
 func (db *DB) SumLinesideBuckets() (int64, error) {
 	var sum int64
-	err := db.QueryRow(`SELECT COALESCE(SUM(qty), 0) FROM lineside_buckets`).Scan(&sum)
+	err := db.QueryRow(`SELECT COALESCE(SUM(qty), 0) FROM lineside_buckets WHERE state = 'active'`).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("sum lineside_buckets.qty: %w", err)
 	}

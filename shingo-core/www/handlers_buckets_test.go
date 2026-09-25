@@ -15,7 +15,7 @@ import (
 
 // Issue 2 (lineside-buckets-investigation-2026-05-18.md): Core's
 // lineside_buckets table is populated end-to-end by the existing
-// LinesideBucketDelta pipeline, but no operator-facing UI surfaces it.
+// Edge's pile levels, but no operator-facing UI surfaced it.
 // These tests pin the read-only listing endpoint that the inventory
 // page now consumes alongside the existing bins table.
 
@@ -36,14 +36,14 @@ func TestApiBuckets_EmptyDB(t *testing.T) {
 // TestApiBuckets_WithSeededBuckets pins the happy path: rows seeded
 // into lineside_buckets surface in the JSON response with the
 // node-derived cell/lane fields populated from the existing inventory
-// join pattern, plus the bucket's station / style / part / qty.
+// join pattern, plus the pile's station / part / state / qty.
 func TestApiBuckets_WithSeededBuckets(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
-	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "", 1, "PAY-BKT-A", 11)
-	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "", 1, "PAY-BKT-B", 23)
+	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "active", "PAY-BKT-A", 11)
+	seedBucket(t, db, "STATION-BKT", sd.StorageNode.ID, "active", "PAY-BKT-B", 23)
 
 	rec := getPlain(t, h.apiBuckets, "/api/buckets")
 	if rec.Code != http.StatusOK {
@@ -92,8 +92,8 @@ func TestApiBuckets_OrderedByCellStationNode(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	// Two stations on the same node — sort must put STATION-A first.
-	seedBucket(t, db, "STATION-Z", sd.StorageNode.ID, "", 1, "PART-Z", 5)
-	seedBucket(t, db, "STATION-A", sd.StorageNode.ID, "", 1, "PART-A", 9)
+	seedBucket(t, db, "STATION-Z", sd.StorageNode.ID, "active", "PART-Z", 5)
+	seedBucket(t, db, "STATION-A", sd.StorageNode.ID, "active", "PART-A", 9)
 
 	rec := getPlain(t, h.apiBuckets, "/api/buckets")
 	if rec.Code != http.StatusOK {
@@ -127,95 +127,19 @@ func TestHandleInventory_ListsBucketsSection(t *testing.T) {
 	}
 }
 
-// TestApiBucketDelete_RemovesRowAndResetsDedup pins Round-3 Obs 10's admin
-// recovery path. Seed a bucket + a matching inventory_delta_dedup row,
-// hit POST /api/buckets/delete with the bucket's id, assert the bucket is
-// gone and the dedup row is reset (last_seq 0, applied_net NULL) rather
-// than deleted — an absent row would make the next message apply the
-// station's whole running net (inventory.DeleteLinesideBucket). This is the
-// cleanup hatch for Core-only orphan buckets the cross-namespace bugs in
-// pre-Obs-8 builds left behind.
-func TestApiBucketDelete_RemovesRowAndResetsDedup(t *testing.T) {
-	t.Parallel()
-	h, db := testHandlers(t)
-	sd := testdb.SetupStandardData(t, db)
-
-	seedBucket(t, db, "STATION-DEL", sd.StorageNode.ID, "", 1, "PART-DEL", 17)
-
-	var bucketID int64
-	testutil.MustNoErr(t,
-		db.QueryRow(`SELECT id FROM lineside_buckets WHERE station='STATION-DEL'`).Scan(&bucketID),
-		"lookup seeded bucket id")
-
-	// Seed a matching dedup row so we can verify it gets removed too.
-	scopeKey := sd.StorageNode.Name + "||1|PART-DEL"
-	if _, err := db.Exec(`INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, last_seq)
-		VALUES ('STATION-DEL', 'bucket', $1, 42)`, scopeKey); err != nil {
-		t.Fatalf("seed dedup: %v", err)
-	}
-
-	rec := postJSON(t, h.apiBucketDelete, "/api/buckets/delete",
-		map[string]any{"id": bucketID})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-
-	var bucketCount int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets WHERE id=$1`, bucketID).Scan(&bucketCount)
-	if bucketCount != 0 {
-		t.Errorf("bucket row count after delete = %d, want 0", bucketCount)
-	}
-
-	var lastSeq int64
-	var nullNet bool
-	testutil.MustNoErr(t, db.QueryRow(`SELECT last_seq, applied_net IS NULL FROM inventory_delta_dedup
-		WHERE station='STATION-DEL' AND scope_kind='bucket' AND scope_key=$1`, scopeKey).Scan(&lastSeq, &nullNet),
-		"read dedup row")
-	if lastSeq != 0 || !nullNet {
-		t.Errorf("dedup row after delete: last_seq=%d applied_net NULL=%v, want 0 / true", lastSeq, nullNet)
-	}
-}
-
-// TestApiBucketDelete_UnknownIDReturns404 pins the not-found response.
-func TestApiBucketDelete_UnknownIDReturns404(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-
-	rec := postJSON(t, h.apiBucketDelete, "/api/buckets/delete",
-		map[string]any{"id": int64(999999999)})
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestApiBucketDelete_MissingIDReturns400 pins the validation: id is
-// required and must be positive.
-func TestApiBucketDelete_MissingIDReturns400(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-
-	rec := postJSON(t, h.apiBucketDelete, "/api/buckets/delete",
-		map[string]any{})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-// seedBucket inserts one lineside_buckets row. Station / node / pair_key
-// / style_id / payload_code must be set; qty is the count.
+// seedBucket inserts one lineside_buckets row: Core's mirror of one Edge pile
+// in the given state ("active" or "stranded").
 //
-// nodeID is unused since the Round-3 Obs 8 migration; we derive the
-// node name from the row's node_id at seed time so call sites don't
-// have to refactor to the new shape. Pass either sd.StorageNode.ID /
-// sd.LineNode.ID — the lookup happens here.
-func seedBucket(t *testing.T, db *store.DB, station string, nodeID int64, pairKey string, styleID int64, payloadCode string, qty int) {
+// The table keys on core_node_name; the node name is looked up from nodeID
+// here so call sites can pass sd.StorageNode.ID / sd.LineNode.ID.
+func seedBucket(t *testing.T, db *store.DB, station string, nodeID int64, state, payloadCode string, qty int) {
 	t.Helper()
 	var coreNodeName string
 	if err := db.QueryRow(`SELECT name FROM nodes WHERE id=$1`, nodeID).Scan(&coreNodeName); err != nil {
 		t.Fatalf("seedBucket lookup node name for id=%d: %v", nodeID, err)
 	}
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
-		VALUES ($1, $2, $3, $4, $5, $6)`, station, coreNodeName, pairKey, styleID, payloadCode, qty); err != nil {
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, state, payload_code, qty)
+		VALUES ($1, $2, $3, $4, $5)`, station, coreNodeName, state, payloadCode, qty); err != nil {
 		t.Fatalf("seed bucket (%s/%s): %v", station, payloadCode, err)
 	}
 }

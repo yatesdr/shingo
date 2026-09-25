@@ -41,8 +41,7 @@ import (
 //
 // ── THE ORDER IS THE DESIGN, NOT AN ARRANGEMENT ───────────────────────────
 //
-// Refuse first, then close, then delete. Walking the three windows a crash can
-// land in:
+// Close, then delete. Walking the three windows a crash can land in:
 //
 //   - after a close is enqueued, before its open row is deleted. The outbox has
 //     the close and the row is still on disk, so the episode reads as open until
@@ -58,15 +57,20 @@ import (
 //     CANNOT HAPPEN. The delete is reached only from below, after every close
 //     has returned, and a close that failed to enqueue refuses the delete
 //     outright. There is no path that removes the process first.
+//   - after the process row is deleted, before the pile levels are enqueued.
+//     The piles are gone on the Edge and Core's mirror keeps them: the boot
+//     resend sends only rows that exist. The window is the in-memory mark and
+//     one flush after the commit; nothing on the Edge closes it afterwards.
 //
-// The refusal comes first for the same reason: a close is an outbox message and
-// cannot be recalled, so ErrProcessHasStock has to land before any of them.
+// The process's lineside piles go with it (processes.Delete deletes them in its
+// transaction). Their keys are read first, and each level is sent as 0 after
+// the delete, so Core's mirror loses them too.
 //
 // ── THE SINGLE CONNECTION ─────────────────────────────────────────────────
 //
 // store.Open pins the edge to ONE SQLite connection, and processes.Delete holds
 // it for its transaction. Every statement in this file is issued before that
-// transaction begins — the refusal, the name, the list, and all of the closes —
+// transaction begins — the name, the lists, and all of the closes —
 // so nothing here ever calls *sql.DB while the transaction holds the connection.
 // That is not tidiness: a close issued from inside the transaction would wait on
 // a connection the same goroutine is holding, and wait forever. It is the same
@@ -80,13 +84,6 @@ import (
 // `notification` rather than `sweep` because something told us; the operator's
 // delete is the event.
 func (e *Engine) DeleteProcess(id int64) error {
-	// The precondition, ahead of anything irreversible. processes.Delete asks it
-	// again for itself; see EnsureNoLinesideStock for why it is worth asking
-	// twice.
-	if err := processes.EnsureNoLinesideStock(e.db.DB, id); err != nil {
-		return err
-	}
-
 	// The NAME, read here rather than through processName, because the three
 	// answers are three different dispositions and processName collapses two of
 	// them into "". A missing row is a double-click and is not an error — the
@@ -114,7 +111,20 @@ func (e *Engine) DeleteProcess(id int64) error {
 		return err
 	}
 
-	return e.processService.Delete(id)
+	// The piles the delete takes, read while they still exist.
+	piles, err := e.db.ListLinesidePileKeysForProcess(id)
+	if err != nil {
+		return fmt.Errorf("delete process %d: list lineside piles: %w", id, err)
+	}
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	if err := e.processService.Delete(id); err != nil {
+		return err
+	}
+	if len(piles) > 0 && e.inventoryDelta != nil {
+		e.inventoryDelta.PilesChanged(piles...)
+	}
+	return nil
 }
 
 // closeProcessEpisodes closes every episode open for a process name, through the

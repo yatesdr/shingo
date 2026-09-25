@@ -15,11 +15,11 @@ import (
 )
 
 // TestArch_NoDirectRecordBinOrRecordBucket asserts that no production
-// file outside shingo-edge/uop/ calls inventoryDelta.RecordBin or
-// inventoryDelta.RecordBucket directly. Every delta emission must
-// route through a named intent verb (Consumed, Produced, Fallthrough,
-// CaptureToLineside, AdjustBucket, Backfill — see mutator.go and
-// the *.go files in this package).
+// file outside shingo-edge/uop/ records a delta directly through the
+// Sink's old raw record methods (deleted, both of them). Every emission
+// must route through a named intent verb (Consumed, Produced, Fallthrough,
+// CaptureToLineside, PilesChanged, ResendLevels — see mutator.go and
+// the *.go files in this package). This keeps them from coming back.
 //
 // This invariant pins the value of the Phase 3a refactor: surfacing
 // intent at the call site (the verb name documents the plant event)
@@ -75,6 +75,63 @@ func TestArch_NoDirectRecordBinOrRecordBucket(t *testing.T) {
 		t.Errorf("direct RecordBin/RecordBucket calls found outside uop/:\n  %s\n\n"+
 			"Every delta emission must route through a named verb on uop.Mutator.\n"+
 			"Add a new verb if needed; don't bypass.", strings.Join(bad, "\n  "))
+	}
+}
+
+// TestArch_PileWritersAreKnown pins the set of production files that write
+// node_lineside_bucket. Every write to a pile must mark its level dirty so Core's
+// mirror follows (one writer set, one rule): the capture and the tick mark
+// through their verbs, and the strand, the admin Clear and a process delete hand
+// their keys to PilesChanged. The migrations run before the boot resend, which
+// re-sends every row. A new writer outside this set is a pile Core never hears
+// about; add it here only together with its mark.
+func TestArch_PileWritersAreKnown(t *testing.T) {
+	t.Parallel()
+	root := edgeRepoRoot(t)
+	allowed := map[string]bool{
+		filepath.Join("store", "lineside", "lineside.go"):      true, // Capture, Drain, DeleteByID, StrandProcess
+		filepath.Join("store", "processes", "processes.go"):    true, // Delete (engine sends the levels)
+		filepath.Join("store", "migrations.go"):                true, // collapseDuplicateProcessNodes
+		filepath.Join("store", "migrations_lineside_piles.go"): true, // the rebuild
+	}
+	var bad []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if allowed[rel] {
+			return nil
+		}
+		text := string(data)
+		for _, pat := range []string{
+			"INSERT INTO node_lineside_bucket",
+			"UPDATE node_lineside_bucket",
+			"DELETE FROM node_lineside_bucket",
+		} {
+			if strings.Contains(text, pat) {
+				bad = append(bad, rel+" contains "+pat)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(bad) > 0 {
+		t.Errorf("node_lineside_bucket written outside the known writer set:\n  %s\n\n"+
+			"A pile write must mark its level dirty (uop.Mutator.PilesChanged or a capture/tick verb).",
+			strings.Join(bad, "\n  "))
 	}
 }
 

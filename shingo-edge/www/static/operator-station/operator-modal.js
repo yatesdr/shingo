@@ -8,7 +8,7 @@ import {
 } from './operator-state.js';
 import { openLoadBin } from './operator-load-bin.js';
 import { openKeypad } from './operator-keypad.js';
-import { openReleasePrompt, openStrandedStub } from './operator-release.js';
+import { openReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { isOwnEmptyOut } from './operator-window-state.js';
 
@@ -151,21 +151,21 @@ export function renderModal(entry) {
             html += '<div class="os-lineside-chips">';
             activeBuckets.forEach(function(b) {
                 html += '<span class="os-lineside-chip active">' +
-                    esc(b.part_number) + ': <strong>' + (b.qty || 0) + '</strong></span>';
+                    esc(b.payload_code) + ': <strong>' + (b.qty || 0) + '</strong></span>';
             });
             html += '</div></div>';
         }
 
-        // Stranded chips — inactive buckets from prior styles.
-        const strandedBuckets = entry.lineside_inactive || [];
+        // Stranded chips — what active piles had left at a cutover. A count
+        // anomaly, not parts on the bench: they never drain or count.
+        const strandedBuckets = entry.lineside_stranded || [];
         if (strandedBuckets.length > 0) {
             html += '<div class="os-lineside-stranded-row">';
-            html += '<div class="os-lineside-label stranded">Stranded</div>';
+            html += '<div class="os-lineside-label stranded">Count anomaly at cutover</div>';
             html += '<div class="os-lineside-chips">';
             strandedBuckets.forEach(function(b) {
-                html += '<button type="button" class="os-lineside-chip stranded" ' +
-                    'data-action="stranded-chip:' + b.id + '">' +
-                    esc(b.part_number) + ': ' + (b.qty || 0) + '</button>';
+                html += '<span class="os-lineside-chip stranded">' +
+                    esc(b.payload_code) + ': ' + (b.qty || 0) + '</span>';
             });
             html += '</div></div>';
         }
@@ -1017,15 +1017,6 @@ const ACTION_HANDLERS = {
         const entry = sid !== null ? findNodeByID(sid) : null;
         if (!entry) return;
         confirmUndoSupplyRefusal(entry.node.id, code, () => { closeModal(); if (loadViewRef) loadViewRef(); });
-    },
-
-    'stranded-chip': (arg) => {
-        const bucketID = parseInt(arg, 10);
-        const sid = getSelectedNodeID();
-        const entry = sid !== null ? findNodeByID(sid) : null;
-        if (!entry) return;
-        const bucket = (entry.lineside_inactive || []).find(b => b.id === bucketID);
-        if (bucket) openStrandedStub(bucket, handleModalAction);
     },
 };
 

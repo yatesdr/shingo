@@ -11,16 +11,6 @@ CREATE INDEX idx_cp_node_name ON changeover_participants(core_node_name);
 
 CREATE INDEX idx_cst_changeover_id ON changeover_station_tasks(process_changeover_id);
 
-CREATE UNIQUE INDEX idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, payload_code)
-    WHERE state = 'active';
-
-CREATE INDEX idx_lineside_node_state
-    ON node_lineside_bucket(node_id, state);
-
-CREATE INDEX idx_lineside_pair_state
-    ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
-
 CREATE INDEX idx_order_history_order_id ON order_history(order_id);
 
 CREATE INDEX idx_orders_process_node_id ON orders(process_node_id);
@@ -257,13 +247,12 @@ CREATE TABLE inventory_delta_seq (
 CREATE TABLE node_lineside_bucket (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
-    pair_key     TEXT NOT NULL DEFAULT '',
-    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
     payload_code TEXT NOT NULL,
     qty          INTEGER NOT NULL DEFAULT 0,
-    state        TEXT NOT NULL DEFAULT 'active',
+    state        TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'stranded')),
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (node_id, payload_code, state)
 );
 
 CREATE TABLE operator_stations (

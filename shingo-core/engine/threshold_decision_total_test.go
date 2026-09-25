@@ -79,32 +79,24 @@ var decisionEntryPoints = []struct {
 	}},
 }
 
-// usedEdgeStamps returns the used_edge_reports stamp of every threshold episode
-// for the payload, oldest first.
-func usedEdgeStamps(t *testing.T, m *ThresholdMonitor, payload string) []bool {
+// thresholdEpisodes counts the threshold episodes opened for the payload.
+func thresholdEpisodes(t *testing.T, m *ThresholdMonitor, payload string) int {
 	t.Helper()
-	rows, err := m.eng.db.Query(`SELECT used_edge_reports FROM demand_origins
-		WHERE kind = 'threshold' AND payload_code = $1 ORDER BY opened_at`, payload)
-	testutil.MustNoErr(t, err, "read used_edge_reports")
-	defer rows.Close()
-	var out []bool
-	for rows.Next() {
-		var v bool
-		testutil.MustNoErr(t, rows.Scan(&v), "scan used_edge_reports")
-		out = append(out, v)
-	}
-	return out
+	var n int
+	testutil.MustNoErr(t, m.eng.db.QueryRow(`SELECT count(*) FROM demand_origins
+		WHERE kind = 'threshold' AND payload_code = $1`, payload).Scan(&n), "count threshold episodes")
+	return n
 }
 
 // assertDecision checks one entry point's outcome: whether it fired, the
-// reading it fired with, and the stamp on the one episode it opened.
-func assertDecision(t *testing.T, m *ThresholdMonitor, fires *fireLog, b thresholdEntry, wantFire bool, wantUOP int, wantStamp bool) {
+// reading it fired with, and that it opened exactly one episode.
+func assertDecision(t *testing.T, m *ThresholdMonitor, fires *fireLog, b thresholdEntry, wantFire bool, wantUOP int) {
 	t.Helper()
 	got := fires.count(b.stationID)
-	stamps := usedEdgeStamps(t, m, b.payloadCode)
+	episodes := thresholdEpisodes(t, m, b.payloadCode)
 	if !wantFire {
-		if got != 0 || len(stamps) != 0 {
-			t.Errorf("fired %d time(s) and opened %d episode(s), want neither", got, len(stamps))
+		if got != 0 || episodes != 0 {
+			t.Errorf("fired %d time(s) and opened %d episode(s), want neither", got, episodes)
 		}
 		return
 	}
@@ -114,17 +106,15 @@ func assertDecision(t *testing.T, m *ThresholdMonitor, fires *fireLog, b thresho
 	if hit := fires.find(b.stationID); hit.CurrentUOP != wantUOP {
 		t.Errorf("fired off a reading of %d, want %d", hit.CurrentUOP, wantUOP)
 	}
-	if len(stamps) != 1 {
-		t.Fatalf("opened %d episode(s), want 1", len(stamps))
-	}
-	if stamps[0] != wantStamp {
-		t.Errorf("used_edge_reports = %v, want %v — the stamp records which total decided", stamps[0], wantStamp)
+	if episodes != 1 {
+		t.Fatalf("opened %d episode(s), want 1", episodes)
 	}
 }
 
 // EVERY ENTRY POINT DECIDES OFF CORE'S COUNT, report or no report: fire below
-// at the ledger's reading, hold above, and the used_edge_reports stamp is false
-// on every row because no Edge-adjusted total exists to decide.
+// at the ledger's reading, hold above. (The used_edge_reports stamp this pin
+// also read went with its column, v132: no Edge-adjusted total exists to
+// decide, so the stamp could only ever say false.)
 //
 // Verify-red at the base on the rows with a report: under the default
 // edge_reports mode the ledger at 150 with a report of 10 fired off 10 on all
@@ -147,7 +137,7 @@ func TestDecisionTotal_EveryPathReadsCoresCount(t *testing.T) {
 				t.Parallel()
 				m, fires, b := decisionFixture(t, "PANEL-DT-"+c.tag+"-"+ep.tag, c.ledger, c.edge)
 				ep.drive(m, b)
-				assertDecision(t, m, fires, b, c.wantFire, c.ledger, false)
+				assertDecision(t, m, fires, b, c.wantFire, c.ledger)
 			})
 		}
 	}

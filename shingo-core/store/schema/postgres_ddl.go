@@ -694,6 +694,15 @@ CREATE INDEX IF NOT EXISTS idx_demand_registry_payload ON demand_registry(payloa
 -- migrated one agree on the constraint's name and not merely its
 -- columns; the convergence test compares names. store.LinesideBucketsUniqueConstraint
 -- is the single declaration and v65 uses the same constant.
+--
+-- v131 (the level wire): this declaration is the table's frozen vintage, and
+-- the migrations walk it forward — v105 renames part_number to payload_code,
+-- v131 drops pair_key and style_id and adds state ('active' | 'stranded') under
+-- the key (core_node_name, payload_code, state). It is not rewritten to the
+-- final shape because v21, which every database runs once (a fresh one
+-- included), drops the table's keys and re-adds one naming pair_key, style_id
+-- and part_number. No index here may name a column v131 drops: this file runs
+-- on every boot, after v131 has run.
 CREATE TABLE IF NOT EXISTS lineside_buckets (
     id BIGSERIAL PRIMARY KEY,
     -- Attribute data, NOT identity: the station that last reported this
@@ -715,7 +724,6 @@ CREATE TABLE IF NOT EXISTS lineside_buckets (
     CONSTRAINT lineside_buckets_node_pair_style_part_key
         UNIQUE (core_node_name, pair_key, style_id, part_number)
 );
-CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(core_node_name, style_id);
 CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payload_code);
 
 -- Phase 1 of the UOP bin-as-truth refactor — at-most-once dedup table

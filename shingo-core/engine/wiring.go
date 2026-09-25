@@ -607,9 +607,9 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderResumed)
 
 	// ── UOP-threshold replenishment monitor ─────────────────────────────
-	// Combined bin + bucket UOP per payload — the monitor creates retrieve
+	// Combined bin + active pile UOP per payload — the monitor creates retrieve
 	// orders when a monitored (loader, payload) drops below its configured
-	// threshold. Bucket-apply events go through OnBucketApplied from the
+	// threshold. Pile levels go through OnBucketApplied from the
 	// messaging layer; bin updates land via this subscription so cell-side
 	// consume ticks and loader-side bin moves both re-evaluate.
 	if e.thresholdMonitor != nil {

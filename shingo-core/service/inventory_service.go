@@ -32,22 +32,10 @@ func (s *InventoryService) List() ([]inventory.Row, error) {
 
 // ListLinesideBuckets returns every lineside_buckets row joined to
 // node hierarchy so the operator-facing inventory page renders
-// bucket parts alongside the bins table. Phase: read-only view —
-// the admin Delete path below is the Round-3 Obs 10 escape hatch
-// for cleaning up Core-only orphans without a corresponding Edge row.
+// bucket parts alongside the bins table. Read-only: the rows are a
+// mirror of the Edge's piles, and Core never writes a pile.
 func (s *InventoryService) ListLinesideBuckets() ([]inventory.BucketRow, error) {
 	return s.db.ListLinesideBuckets()
-}
-
-// DeleteLinesideBucket removes one Core-side bucket row by primary key
-// along with its dedup row. Round-3 Obs 10: this is the admin
-// recovery action for Core-only orphan buckets that pre-Obs-8
-// cross-namespace bugs created. After Obs 8 lands, the applier
-// rejects unresolvable core_node_name values, so new orphans
-// shouldn't be createable; this stays as the cleanup hatch for the
-// existing wedge plus any future operator-corrected drift.
-func (s *InventoryService) DeleteLinesideBucket(id int64) (int, error) {
-	return s.db.DeleteLinesideBucket(id)
 }
 
 // OpenReportDivergences lists every open report_divergence episode, oldest

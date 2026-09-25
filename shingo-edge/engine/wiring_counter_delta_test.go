@@ -9,26 +9,17 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/lineside"
-	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
 
-// fakeDeltaSink captures every Record* call so tests can assert on the
-// delta stream that the PLC tick path produces. Concurrency-safe — the
-// tick path is single-goroutine in tests but the production reporter
-// hits sync.Map under contention.
+// fakeDeltaSink captures every emission so tests can assert on the stream the
+// PLC tick path and the release path produce. Concurrency-safe — the tick path
+// is single-goroutine in tests but the production accumulator hits sync.Map
+// under contention.
 type fakeDeltaSink struct {
 	mu          sync.Mutex
 	binCalls    []fakeBinCall
 	bucketCalls []fakeBucketCall
-
-	// pendingBins / pendingBuckets let tests pre-stage which scopes
-	// the reconciler should treat as in-flight. Leaving them nil
-	// (default) means IsPending* returns false for everything —
-	// matches pre-Item-2 behavior. (Pre-flip carry-over; the
-	// reconciler is deleted but the test fake methods remain unused.)
-	pendingBins    map[int64]struct{}
-	pendingBuckets map[fakePendingBucketKey]struct{}
 
 	// flushCount counts Flush + MarkAttributionBoundary invocations.
 	// boundaryCalls records the nodeIDs MarkAttributionBoundary was
@@ -49,17 +40,14 @@ type fakeDeltaSink struct {
 	onDeliveredCalls           []fakeOnDeliveredCall
 	manualLoadCalls            []fakeManualLoadCall
 	onBinPickedUpCalls         []*int64
-	adjustBucketCalls          []fakeAdjustBucketCall
-	backfillCalls              int
 	captureToLinesideCalls     []uop.CaptureEvent
 
-	// db (optional) — when set, BindActiveBin / ClearActiveBin also
-	// perform the underlying runtime-row write via *store.DB so tests
-	// asserting on post-state see the side effect. Tests that only
-	// care about the recorded calls can leave this nil. Untyped so
-	// this test file doesn't need to import store; tests construct
-	// with the concrete *store.DB which satisfies the writeActiveBinIDer
-	// behaviour via duck typing.
+	// db (optional) — when set, the slot verbs and the capture also
+	// perform the underlying write via *store.DB so tests asserting on
+	// post-state see the side effect. Tests that only care about the
+	// recorded calls can leave this nil. Untyped so this test file doesn't
+	// need to import store; tests construct with the concrete *store.DB
+	// which satisfies writeActiveBinIDer via duck typing.
 	db writeActiveBinIDer
 }
 
@@ -76,7 +64,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
 	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
-	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error
+	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
 }
 
 type fakeBinCall struct {
@@ -87,26 +75,14 @@ type fakeBinCall struct {
 	Epoch       int64
 }
 
+// fakeBucketCall is one pile level marked dirty: the key, and the drain the
+// mark carried (0 for anything but a consume drain).
 type fakeBucketCall struct {
-	NodeID      int64
-	PairKey     string
-	StyleID     int64
-	PayloadCode string
-	Delta       int
-	Reason      protocol.LinesideBucketDeltaReason
-}
-
-func (s *fakeDeltaSink) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason, epoch int64) {
-	s.mu.Lock()
-	s.binCalls = append(s.binCalls, fakeBinCall{binID, payloadCode, delta, reason, epoch})
-	s.mu.Unlock()
-}
-
-func (s *fakeDeltaSink) RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
-	s.mu.Lock()
-	s.bucketCalls = append(s.bucketCalls, fakeBucketCall{nodeID, pairKey, styleID, payloadCode, delta, reason})
-	_ = coreNodeName // tests assert on the legacy call shape; coreNodeName is wire-only metadata
-	s.mu.Unlock()
+	NodeID       int64
+	CoreNodeName string
+	PayloadCode  string
+	State        string
+	Drained      int
 }
 
 // WithPending runs fn; the fake holds no unflushed counts.
@@ -122,8 +98,7 @@ func (s *fakeDeltaSink) Flush() {
 
 // MarkAttributionBoundary records the boundary-flush call. Tests that
 // want to assert FlipABNode flushed before SetActivePull can read
-// boundaryCalls. The implementation flushes (consistent with the real
-// Mutator) so any deltas accumulated mid-test still flow through.
+// boundaryCalls.
 func (s *fakeDeltaSink) MarkAttributionBoundary(nodeID int64) error {
 	s.mu.Lock()
 	s.boundaryCalls = append(s.boundaryCalls, nodeID)
@@ -262,91 +237,51 @@ func (s *fakeDeltaSink) OnBinPickedUp(nodeID *int64) error {
 	return nil
 }
 
-type fakeAdjustBucketCall struct {
-	NodeID             int64
-	CoreNodeName       string
-	PairKey            string
-	StyleID            int64
-	PayloadCode        string
-	CurrentQty, NewQty int
-	Reason             protocol.LinesideBucketDeltaReason
-}
-
-// CaptureToLineside records the call + mirrors the real verb's
-// emission shape onto bucketCalls / binCalls when db is set.
-// Performs the bucket DB writes via the real *store.DB so tests
-// asserting on post-state see the bucket rows update.
+// CaptureToLineside records the call and mirrors the real verb: nothing on
+// the supply leg; otherwise, when db is set, the pile writes through the real
+// *store.DB, a dirty mark per part, and the bin's capture_reduction.
 func (s *fakeDeltaSink) CaptureToLineside(ev uop.CaptureEvent) (int, error) {
 	s.mu.Lock()
 	s.captureToLinesideCalls = append(s.captureToLinesideCalls, ev)
 	db := s.db
 	s.mu.Unlock()
-	type captureWriter interface {
-		CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) (*lineside.Bucket, error)
-		DeactivateOtherLinesideStyles(nodeID int64, styleID int64) error
-	}
-	var cw captureWriter
-	if db != nil {
-		cw, _ = db.(captureWriter)
+	if ev.SuppressBinDelta || ev.Disposition.Mode != uop.DispositionCaptureLineside {
+		return 0, nil
 	}
 	capturedTotal := 0
-	if ev.Disposition.Mode == uop.DispositionCaptureLineside {
-		for part, qty := range ev.Disposition.LinesideCapture {
-			if qty <= 0 || part == "" {
-				continue
-			}
-			if cw != nil {
-				if _, err := cw.CaptureLinesideBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, qty); err != nil {
-					return capturedTotal, err
-				}
-			}
-			s.mu.Lock()
-			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, ev.StyleID, part, qty, protocol.ReasonCaptureFill})
-			s.mu.Unlock()
-			capturedTotal += qty
+	for part, qty := range ev.Disposition.LinesideCapture {
+		if qty <= 0 || part == "" {
+			continue
 		}
-	}
-	if cw != nil {
-		if err := cw.DeactivateOtherLinesideStyles(ev.NodeID, ev.StyleID); err != nil {
-			return capturedTotal, err
+		if db != nil {
+			if _, err := db.CaptureLinesideBucket(ev.NodeID, part, qty); err != nil {
+				return capturedTotal, err
+			}
 		}
+		s.mu.Lock()
+		s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.CoreNodeName, part, lineside.StateActive, 0})
+		s.mu.Unlock()
+		capturedTotal += qty
 	}
-	if capturedTotal > 0 && !ev.SuppressBinDelta {
+	if capturedTotal > 0 {
 		if ev.BinID > 0 {
 			s.mu.Lock()
 			s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction, ev.BinEpoch})
 			s.mu.Unlock()
 		} else {
 			// Mirror the real verb's loud diagnostic when the caller
-			// couldn't resolve a bin id. The release-path falls back
-			// to a legacy RemainingUOP=&0 wipe but the recurrence
-			// must remain visible in operator logs.
-			log.Printf("ERROR: uop capture: capture_reduction skipped (BinID=0) node=%d style=%d payload=%q captured_total=%d disposition=%q",
-				ev.NodeID, ev.StyleID, ev.PayloadCode, capturedTotal, ev.Disposition.Mode)
+			// couldn't resolve a bin id.
+			log.Printf("ERROR: uop capture: capture_reduction skipped (BinID=0) node=%d payload=%q captured_total=%d disposition=%q",
+				ev.NodeID, ev.PayloadCode, capturedTotal, ev.Disposition.Mode)
 		}
 	}
 	return capturedTotal, nil
 }
 
-// Consumed / Produced / Fallthrough delegate to the underlying
-// accumulator-equivalent: append fakeBinCall / fakeBucketCall entries
-// matching what the real verb would emit. Lets existing tests asserting
-// on binCalls / bucketCalls keep working without modification.
+// Consumed / Produced / Fallthrough append what the real verbs record: a
+// dirty mark with its drain per drained pile, and the bin delta.
 func (s *fakeDeltaSink) Consumed(ev uop.TickEvent) error {
-	s.mu.Lock()
-	for part, d := range ev.Drains {
-		if d.Qty > 0 {
-			styleID := d.StyleID
-			if styleID == 0 {
-				styleID = ev.StyleID
-			}
-			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, styleID, part, -d.Qty, protocol.ReasonConsumeDrain})
-		}
-	}
-	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonConsumeTick, ev.BinEpoch})
-	}
-	s.mu.Unlock()
+	s.recordTick(ev, protocol.ReasonConsumeTick)
 	return nil
 }
 
@@ -360,119 +295,35 @@ func (s *fakeDeltaSink) Produced(ev uop.TickEvent) error {
 }
 
 func (s *fakeDeltaSink) Fallthrough(ev uop.TickEvent) error {
+	s.recordTick(ev, protocol.ReasonABFallthrough)
+	return nil
+}
+
+func (s *fakeDeltaSink) recordTick(ev uop.TickEvent, binReason protocol.BinUOPDeltaReason) {
 	s.mu.Lock()
-	for part, d := range ev.Drains {
-		if d.Qty > 0 {
-			styleID := d.StyleID
-			if styleID == 0 {
-				styleID = ev.StyleID
-			}
-			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, styleID, part, -d.Qty, protocol.ReasonConsumeDrain})
+	defer s.mu.Unlock()
+	for part, qty := range ev.Drains {
+		if qty > 0 {
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.CoreNodeName, part, lineside.StateActive, qty})
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
-		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonABFallthrough, ev.BinEpoch})
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, binReason, ev.BinEpoch})
 	}
-	s.mu.Unlock()
-	return nil
 }
 
-// Backfill mirrors the real Mutator's Backfill when db is set: walk
-// every node's non-empty buckets, record a bucket call per row with
-// reason=capture_fill. When db is unset, returns (0, nil) — tests
-// that don't care about backfill output can leave db unset.
-func (s *fakeDeltaSink) Backfill(force bool) (int, error) {
+// PilesChanged records a dirty mark per key and a flush, as the real verb.
+func (s *fakeDeltaSink) PilesChanged(keys ...lineside.Key) {
 	s.mu.Lock()
-	s.backfillCalls++
-	if force {
-		s.flushCount++
-	}
-	db := s.db
-	s.mu.Unlock()
-	if db == nil {
-		return 0, nil
-	}
-	// Use the same db field for the read surface (writeActiveBinIDer is
-	// a write-shape interface; the listing methods are on *store.DB
-	// directly so we cast through the lister interface below).
-	type backfillLister interface {
-		ListProcessNodes() ([]processes.Node, error)
-		ListLinesideBuckets(nodeID int64) ([]lineside.Bucket, error)
-	}
-	lister, ok := db.(backfillLister)
-	if !ok {
-		return 0, nil
-	}
-	nodes, err := lister.ListProcessNodes()
-	if err != nil {
-		return 0, err
-	}
-	emitted := 0
-	for _, n := range nodes {
-		buckets, err := lister.ListLinesideBuckets(n.ID)
-		if err != nil {
-			continue
-		}
-		for _, b := range buckets {
-			if b.Qty <= 0 {
-				continue
-			}
-			s.mu.Lock()
-			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{b.NodeID, b.PairKey, b.StyleID, b.PayloadCode, b.Qty, protocol.ReasonCaptureFill})
-			s.mu.Unlock()
-			emitted++
-		}
-	}
-	return emitted, nil
-}
-
-func (s *fakeDeltaSink) AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, payloadCode string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
-	s.mu.Lock()
-	s.adjustBucketCalls = append(s.adjustBucketCalls, fakeAdjustBucketCall{nodeID, coreNodeName, pairKey, styleID, payloadCode, currentQty, newQty, reason})
-	delta := newQty - currentQty
-	if delta != 0 {
-		s.bucketCalls = append(s.bucketCalls, fakeBucketCall{nodeID, pairKey, styleID, payloadCode, delta, reason})
+	for _, k := range keys {
+		s.bucketCalls = append(s.bucketCalls, fakeBucketCall{k.NodeID, k.CoreNodeName, k.PayloadCode, k.State, 0})
 	}
 	s.flushCount++
-	db := s.db
 	s.mu.Unlock()
-	if db != nil {
-		return db.SetLinesideBucketForReconcile(nodeID, pairKey, styleID, payloadCode, newQty)
-	}
-	return nil
 }
 
-// IsPendingBinDelta / IsPendingBucketDelta return whatever the test
-// stuffs into pendingBins / pendingBuckets. Tests that don't care
-// about the pending-delta guard leave both nil and the methods return
-// false (the safe default — treat nothing as pending so reconciler
-// heals proceed unblocked, matching pre-Item-2 behavior).
-func (s *fakeDeltaSink) IsPendingBinDelta(binID int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.pendingBins[binID]
-	return ok
-}
-
-func (s *fakeDeltaSink) IsPendingBucketDelta(nodeID, styleID int64, partNumber string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k := range s.pendingBuckets {
-		if k.nodeID == nodeID && k.styleID == styleID && k.partNumber == partNumber {
-			return true
-		}
-	}
-	return false
-}
-
-// fakePendingBucketKey is the test-side equivalent of
-// messaging.bucketScopeKey's parsed shape — matches the reconciler's
-// query signature (no pairKey).
-type fakePendingBucketKey struct {
-	nodeID     int64
-	styleID    int64
-	partNumber string
-}
+// ResendLevels is the boot resend; the fake has nothing to resend.
+func (s *fakeDeltaSink) ResendLevels() (int, error) { return 0, nil }
 
 // TestRegression_RuntimeUOPGoesNegativeOnOverpack pins the Item 5.6
 // signed-bin semantic: the consume tick path no longer clamps the
@@ -546,10 +397,10 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 
 // TestRegression_DrainLinesideAttribution pins the Phase 1 invariant:
 // when a consume tick fires against a node that has a non-empty
-// lineside bucket, the tick splits between a LinesideBucketDelta
-// (consume_drain) and a BinUOPDelta (consume_tick). Without this
-// split the bucket vs bin attribution is implicit and Phase 2's
-// reconciler can't distinguish "bucket drained" from "bin drained".
+// lineside pile, the tick splits between the pile (its level, with the
+// drain counted for Core's drain ledger) and a BinUOPDelta
+// (consume_tick). Without this split the pile vs bin attribution is
+// implicit and Core can't distinguish "pile drained" from "bin drained".
 func TestRegression_DrainLinesideAttribution(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -575,7 +426,7 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 
 	// Seed a lineside bucket with 7 parts. A delta of 10 should drain
 	// 7 from the bucket and 3 from the bin.
-	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "PART-DRAIN", 7); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "PART-DRAIN", 7); err != nil {
 		t.Fatalf("capture bucket: %v", err)
 	}
 
@@ -593,19 +444,16 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 		},
 	})
 
-	// Bucket: one consume_drain call for 7.
+	// Pile: one dirty mark carrying the drain of 7.
 	if len(sink.bucketCalls) != 1 {
 		t.Fatalf("bucket calls = %d, want 1: %+v", len(sink.bucketCalls), sink.bucketCalls)
 	}
 	bc := sink.bucketCalls[0]
-	if bc.NodeID != nodeID || bc.StyleID != styleID || bc.PayloadCode != "PART-DRAIN" {
-		t.Errorf("bucket call routing mismatch: %+v (node=%d style=%d)", bc, nodeID, styleID)
+	if bc.NodeID != nodeID || bc.PayloadCode != "PART-DRAIN" || bc.State != "active" {
+		t.Errorf("bucket call routing mismatch: %+v (node=%d)", bc, nodeID)
 	}
-	if bc.Delta != -7 {
-		t.Errorf("bucket delta = %d, want -7 (bucket had 7, drained all)", bc.Delta)
-	}
-	if bc.Reason != protocol.ReasonConsumeDrain {
-		t.Errorf("bucket reason = %q, want %q", bc.Reason, protocol.ReasonConsumeDrain)
+	if bc.Drained != 7 {
+		t.Errorf("bucket drained = %d, want 7 (bucket had 7, drained all)", bc.Drained)
 	}
 
 	// Bin: one consume_tick call for the 3 remainder.

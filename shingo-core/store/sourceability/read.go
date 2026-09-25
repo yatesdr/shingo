@@ -284,17 +284,19 @@ type nodePayload struct {
 //     an A/B pair: the wire carries no node, node_id comes from the bins row
 //     at apply time, and fallthrough only fires when NO active-pull node
 //     exists (wiring_counter_delta.go: !pairedConsumeHandled). No durable
-//     pair map exists on Core (style_claims excludes pairing by design;
-//     lineside_buckets rows are deleted at qty 0), so "the active node" is
-//     undefined at emit time — it counts in byPayload and is EXCLUDED from
-//     byNode. An under-count on the active node beats a wrong node.
+//     pair map exists on Core (style_claims excludes pairing by design, and
+//     lineside_buckets carries no pair), so "the active node" is undefined at
+//     emit time — it counts in byPayload and is EXCLUDED from byNode. An
+//     under-count on the active node beats a wrong node.
 //   - operator_correction / capture_reduction — NOT consumption (a cycle
 //     count; parts pulled to lineside). Excluded entirely.
 //
 // lineside_drain_ledger (v120) is the third consumption source, joined by a
 // UNION ALL arm below: a drain is consumption at a node from a pile. It got
 // its own table rather than a bin_uop_ledger row because bin_id is NOT NULL
-// there (v17) and a drain is not a bin event — see v120's comment.
+// there (v17) and a drain is not a bin event — see v120's comment. Every row
+// in it is a drain (the level's Drained, v131), so the arm has no reason
+// filter and reports the constant 'consume_drain'.
 //
 // byNode keys on the node NAME (nodes.name), not node_id: lineTTE looks up
 // by CoreNodeName, the claim's own spelling. A NULL node_id (carrier standing
@@ -326,15 +328,14 @@ func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]fl
 			  AND l.applied_at >= NOW() - make_interval(secs => $1)
 			GROUP BY l.payload_code, n.name, l.reason
 			UNION ALL
-			SELECT d.payload_code, n.name, d.reason,
+			SELECT d.payload_code, n.name, 'consume_drain',
 			       COALESCE(SUM(d.before_qty - d.after_qty), 0)
 			FROM lineside_drain_ledger d
 			JOIN nodes n ON n.id = d.node_id
-			WHERE d.reason = 'consume_drain'
-			  AND d.after_qty < d.before_qty
+			WHERE d.after_qty < d.before_qty
 			  AND d.payload_code <> ''
 			  AND d.applied_at >= NOW() - make_interval(secs => $1)
-			GROUP BY d.payload_code, n.name, d.reason
+			GROUP BY d.payload_code, n.name
 		) u`, secs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sourceability: consumption rates: %w", err)

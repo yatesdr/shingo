@@ -284,7 +284,7 @@ func TestRuntimeBinding_PLCTicksAfterPickupOnlyDrainLineside(t *testing.T) {
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, nil, 1200)
 
 	// Seed lineside bucket large enough to absorb the whole delta.
-	if _, err := db.CaptureLinesideBucket(nodeID, "", 0, "PART-GP", 5); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeID, "PART-GP", 5); err != nil {
 		t.Fatalf("seed bucket: %v", err)
 	}
 

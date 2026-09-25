@@ -79,12 +79,12 @@ func TestActivePayloadLineside_SumsAcrossProcesses(t *testing.T) {
 func TestActivePayloadLineside_SumsRuntimeAndBuckets(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	styleID, nodeA := linesideProcess(t, db, "CELL-A", "ALN_001", "aln1", []string{"PART-X"})
+	_, nodeA := linesideProcess(t, db, "CELL-A", "ALN_001", "aln1", []string{"PART-X"})
 
 	if err := db.SetProcessNodeRuntime(nodeA, nil, 25); err != nil {
 		t.Fatalf("set runtime: %v", err)
 	}
-	if _, err := db.CaptureLinesideBucket(nodeA, "", styleID, "PART-X", 15); err != nil {
+	if _, err := db.CaptureLinesideBucket(nodeA, "PART-X", 15); err != nil {
 		t.Fatalf("capture bucket: %v", err)
 	}
 

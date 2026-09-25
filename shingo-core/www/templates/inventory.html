@@ -107,21 +107,21 @@
     </div>
   </section>
 
-  <!-- Lineside Buckets — Core-authoritative rows the monitor sums; stale = ghost risk. -->
+  <!-- Lineside Buckets — Core's mirror of the Edge's piles; the monitor sums the active ones. -->
   <section class="card mb-2" id="buckets">
     <div class="section-head">
       <h2>Lineside Buckets</h2>
-      <span class="text-muted-sm">Stale rows (untouched &gt; 30 d) inflate the in-loop total and never fire a threshold</span>
+      <span class="text-muted-sm">Active piles count toward on-hand; a stranded row is a count anomaly left at a cutover and never counts</span>
     </div>
     <div class="table-scroll-y">
       <table class="rh-table">
         <thead>
           <tr>
             <th>Cell</th><th>Station</th><th>Node</th><th>Payload</th><th>State</th>
-            <th class="rh-num">Qty</th><th>Updated</th><th></th>
+            <th class="rh-num">Qty</th><th>Updated</th>
           </tr>
         </thead>
-        <tbody id="buckets-body"><tr><td colspan="8" class="dash-empty">Loading…</td></tr></tbody>
+        <tbody id="buckets-body"><tr><td colspan="7" class="dash-empty">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>

@@ -71,9 +71,11 @@ type LinesideCoreCarrier struct {
 // LinesideCoreSide is Core's side of one report.
 type LinesideCoreSide struct {
 	Carriers []LinesideCoreCarrier
-	// Buckets is Core's lineside_buckets sum for this station per (node, part),
-	// for the (node, part) pairs the report carries. A pair with no Core row is
-	// absent (and compares as 0).
+	// Buckets is Core's ACTIVE lineside pile per (node, part), for the (node,
+	// part) pairs the report carries, whichever station last sent its level: the
+	// pile is a fact about the node, not about the reporter. A stranded row is
+	// not compared (the report's bucket figure is active piles only). A pair
+	// with no Core row is absent (and compares as 0).
 	Buckets map[LinesideReportSeat]int
 }
 
@@ -139,7 +141,7 @@ func (db *DB) LinesideCoreSide(station string, carriers []LinesideReportCarrier,
 		FROM lineside_buckets lb
 		JOIN jsonb_to_recordset($3::jsonb) AS p(node text, payload text)
 		  ON p.node = lb.core_node_name AND p.payload = lb.payload_code
-		WHERE lb.station = $1
+		WHERE lb.state = 'active'
 		GROUP BY lb.core_node_name, lb.payload_code`,
 		station, string(cj), string(sj), protocol.InvDeltaScopeBin)
 	if err != nil {

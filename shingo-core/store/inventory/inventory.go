@@ -155,35 +155,27 @@ func List(db *sql.DB) ([]Row, error) {
 // BucketRow is the denormalized lineside_buckets listing row used by
 // the Core inventory page. Mirrors the field naming on Row so the JS
 // renderer can reuse the existing cell/lane/node columns alongside
-// the bucket-specific fields (Station, StyleID, PayloadCode, Qty,
-// State).
+// the bucket-specific fields (Station, PayloadCode, State, Qty).
 //
-// State ("active" | "stranded") is derived at query time from the
-// plant-claims active-style mirror (process_styles.is_active +
-// style_claims), NOT stored: a bucket is "stranded" when its node runs
-// an active style whose payload set no longer covers the bucket's
-// payload — real inventory the running style won't consume, surfaced so
-// the operator can recall it. Mirrors Edge's admin Lineside Buckets table.
+// State is the pile's stored state, the one the Edge's level carries:
+// "active" (on-hand, counted) or "stranded" (what was left at the node's
+// cutover, a count anomaly that never counts). Mirrors the Edge's
+// production page.
 type BucketRow struct {
-	// ID is the lineside_buckets.id primary key. Surfaced on the wire
-	// so the Core admin "Lineside Buckets" page can drive the Round-3
-	// Obs 10 delete action against a specific row without ambiguity.
 	ID        int64  `json:"id"`
 	GroupName string `json:"group_name"`
 	LaneName  string `json:"lane_name"`
 	NodeName  string `json:"node_name"`
 	Zone      string `json:"zone"`
 
-	Station string `json:"station"`
-	StyleID int64  `json:"style_id"`
-	// PayloadCode is the bucket's identity and its key. It used to be two
-	// columns — see ApplyLinesideBucketDelta and v105.
+	// Station is the station that last sent this row's level; attribute data,
+	// not identity.
+	Station     string `json:"station"`
 	PayloadCode string `json:"payload_code"`
 	Qty         int    `json:"qty"`
 	State       string `json:"state"`
-	// UpdatedAt is the last time this bucket row's qty changed. Surfaced so the
-	// inventory page can colour stale rows (amber >7d, coral >30d) — a bucket
-	// untouched for a month is a ghost candidate that inflates the in-loop total.
+	// UpdatedAt is the last time this row's level changed. Surfaced so the
+	// inventory page can colour stale active rows (amber >7d, coral >30d).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -205,22 +197,8 @@ SELECT
     CASE WHEN lane_type.code = 'LANE' THEN COALESCE(lane.name, '') ELSE '' END AS lane_name,
     COALESCE(n.name, b.core_node_name) AS node_name,
     COALESCE(n.zone, '') AS zone,
-    b.station, b.style_id, b.payload_code,
-    b.qty, b.updated_at,
-    (
-      EXISTS (
-        SELECT 1 FROM style_claims sc
-        JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-        WHERE sc.core_node_name = b.core_node_name AND ps.is_active
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM style_claims sc
-        JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-        WHERE sc.core_node_name = b.core_node_name AND ps.is_active
-          AND (sc.payload_code = b.payload_code
-               OR jsonb_exists(sc.allowed_payload_codes::jsonb, b.payload_code))
-      )
-    ) AS stranded
+    b.station, b.payload_code, b.state,
+    b.qty, b.updated_at
 FROM lineside_buckets b
 LEFT JOIN nodes n ON n.name = b.core_node_name
 LEFT JOIN nodes lane ON lane.id = n.parent_id
@@ -230,13 +208,13 @@ LEFT JOIN nodes grp ON grp.id = COALESCE(
     n.parent_id
 )
 LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
-ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.payload_code
+ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.payload_code, b.state
 `
 
 // ListLinesideBuckets returns every lineside_buckets row joined to the
 // node hierarchy so the Core inventory page can render them alongside
 // the existing bins table. Rows are ordered by cell → station → node
-// → part for stable on-screen grouping. Empty table returns nil.
+// → part → state for stable on-screen grouping. Empty table returns nil.
 func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 	rows, err := db.Query(linesideBucketsSQL)
 	if err != nil {
@@ -247,22 +225,12 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 	var out []BucketRow
 	for rows.Next() {
 		var r BucketRow
-		var stranded bool
 		if err := rows.Scan(
 			&r.ID,
 			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
-			&r.Station, &r.StyleID, &r.PayloadCode, &r.Qty, &r.UpdatedAt,
-			&stranded,
+			&r.Station, &r.PayloadCode, &r.State, &r.Qty, &r.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
-		}
-		// State is derived from the plant-claims active-style mirror (same rule as
-		// SystemUOPForPayload's stranded exclusion): "stranded" when the bucket's node
-		// runs an active style that no longer covers the bucket's payload — real
-		// inventory the running style won't consume, which the operator should recall.
-		r.State = "active"
-		if stranded {
-			r.State = "stranded"
 		}
 		out = append(out, r)
 	}
@@ -270,7 +238,8 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 }
 
 // DistinctStockedPayloads returns every payload_code with current stock — a
-// non-empty payload on at least one bin (any lifecycle) or one lineside bucket.
+// non-empty payload on at least one bin (any lifecycle) or one active lineside
+// pile. A stranded pile is a count anomaly, not stock.
 // Used to build the Replenishment Health rollup so payloads that are stocked but
 // have no threshold configured still appear (as "no threshold set") next to the
 // monitored ones.
@@ -279,7 +248,7 @@ func DistinctStockedPayloads(db *sql.DB) ([]string, error) {
 SELECT payload_code FROM (
     SELECT DISTINCT payload_code FROM bins WHERE COALESCE(payload_code, '') <> ''
     UNION
-    SELECT DISTINCT payload_code FROM lineside_buckets WHERE COALESCE(payload_code, '') <> ''
+    SELECT DISTINCT payload_code FROM lineside_buckets WHERE state = 'active'
 ) s
 ORDER BY payload_code`
 	rows, err := db.Query(q)
@@ -296,72 +265,4 @@ ORDER BY payload_code`
 		out = append(out, p)
 	}
 	return out, rows.Err()
-}
-
-// DeleteLinesideBucket removes one lineside_buckets row by primary
-// key, and in the same transaction resets the matching
-// inventory_delta_dedup row so it doesn't shadow future deltas for the
-// same scope.
-//
-// RESET, NOT DELETED, SINCE THE RUNNING NET (v126). An absent dedup row
-// tells the applier that nothing for the scope was ever applied, so the
-// next message would apply the station's whole running net — every delta
-// it has flushed for the bucket — onto the bucket this Clear just emptied.
-// Resetting last_seq to 0 keeps what deleting the row did (any seq applies
-// next), and a NULL applied_net makes the next message apply its own delta
-// and re-anchor, which is what that message did before the net existed.
-//
-// Round-3 Obs 10: powers the operator-driven "Clear" button on the
-// Core admin "Lineside Buckets" table — the path for clearing the
-// Core-only orphan rows that pre-Obs-8 cross-namespace bugs left
-// behind. After Obs 8's CoreNodeName validation lands, orphans
-// shouldn't be createable; this remains as the recovery hatch for
-// the existing wedge plus any future operator-corrected drift.
-//
-// Returns the number of rows deleted from lineside_buckets (0 or 1)
-// so callers can surface "no such row" without needing a separate
-// lookup.
-func DeleteLinesideBucket(db *sql.DB, id int64) (int, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	var (
-		station      string
-		coreNodeName string
-		pairKey      string
-		styleID      int64
-		payloadCode  string
-	)
-	if err := tx.QueryRow(`SELECT station, core_node_name, pair_key, style_id, payload_code
-		FROM lineside_buckets WHERE id=$1`, id).Scan(&station, &coreNodeName, &pairKey, &styleID, &payloadCode); err != nil {
-		if err == sql.ErrNoRows {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("lookup bucket %d: %w", id, err)
-	}
-
-	res, err := tx.Exec(`DELETE FROM lineside_buckets WHERE id=$1`, id)
-	if err != nil {
-		return 0, fmt.Errorf("delete lineside_buckets %d: %w", id, err)
-	}
-	n, _ := res.RowsAffected()
-
-	// Matching dedup row uses bucketScopeKey's pipe-delimited shape:
-	// <CoreNodeName>|<PairKey>|<StyleID>|<PayloadCode>. Inline here so
-	// store/inventory/ doesn't depend on shingocore/uop just for the
-	// helper.
-	scopeKey := fmt.Sprintf("%s|%s|%d|%s", coreNodeName, pairKey, styleID, payloadCode)
-	if _, err := tx.Exec(`UPDATE inventory_delta_dedup
-		SET last_seq=0, applied_net=NULL, applied_window_end=NULL, updated_at=NOW()
-		WHERE station=$1 AND scope_kind='bucket' AND scope_key=$2`, station, scopeKey); err != nil {
-		return 0, fmt.Errorf("reset dedup row for bucket %d (scope_key=%s): %w", id, scopeKey, err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit bucket delete %d: %w", id, err)
-	}
-	return int(n), nil
 }

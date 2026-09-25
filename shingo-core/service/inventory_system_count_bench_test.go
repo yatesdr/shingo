@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"testing"
 
-	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/plantclaims"
 )
 
 // BenchmarkSystemUOPForPayload measures the authoritative in-loop-UOP read at
@@ -27,11 +25,9 @@ import (
 //     status mix (available / staged plus a slice of the excluded
 //     flagged/maintenance/quality_hold/retired states so the lifecycle filter
 //     is exercised, not short-circuited)
-//   - lineside buckets on ~half the payloads at consuming nodes
-//   - a plant-claims mirror (process_styles + style_claims) marking an active
-//     style per consuming node, so the stranded-bucket EXISTS/NOT EXISTS
-//     correlated subquery — the expensive half of the query — does real work
-//     instead of collapsing to "no mirror, count everything".
+//   - active lineside piles on ~half the payloads at consuming nodes (the
+//     bucket arm is SUM(qty) over state='active'; it read the plant-claims
+//     mirror through two correlated EXISTS until the level wire, v131)
 //
 // Two sub-benchmarks:
 //   - single_payload: the monitor's hot-path shape — one payload per call,
@@ -136,38 +132,11 @@ func seedPlantScale(b *testing.B, db *store.DB) []string {
 		payload := payloads[i]
 		node := nodeNames[i%6]
 		if _, err := db.Exec(
-			`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, payload_code, qty)
-			 VALUES ($1,$2,$3,$4,$5,$6)`,
-			"bench-station", node, "PK", int64(1), payload, 40+i,
+			`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+			 VALUES ($1,$2,$3,'active',$4)`,
+			"bench-station", node, payload, 40+i,
 		); err != nil {
 			b.Fatalf("insert bucket for %s@%s: %v", payload, node, err)
-		}
-	}
-
-	// Plant-claims mirror: each consuming node runs an active style that claims
-	// a rotating subset of payloads. This makes the stranded-bucket subquery
-	// evaluate a non-trivial EXISTS/NOT EXISTS per bucket row.
-	for i := 0; i < 6; i++ {
-		node := nodeNames[i]
-		procID := fmt.Sprintf("BENCH-PROC-%d", i)
-		styleID := fmt.Sprintf("BENCH-STYLE-%d", i)
-		claims := make([]plantclaims.ClaimRow, 0, 4)
-		for j := 0; j < 4; j++ {
-			pc := payloads[(i*4+j)%numPayloads]
-			claims = append(claims, plantclaims.ClaimRow{
-				ProcessID:           procID,
-				StyleID:             styleID,
-				CoreNodeName:        node,
-				Role:                protocol.ClaimRoleConsume,
-				PayloadCode:         pc,
-				AllowedPayloadCodes: []string{pc},
-			})
-		}
-		if err := plantclaims.ReplaceProcess(db.DB, procID,
-			[]plantclaims.StyleRow{{ProcessID: procID, StyleID: styleID, ConfigGen: 1, IsActive: true}},
-			claims, 0,
-		); err != nil {
-			b.Fatalf("seed plant claims for %s: %v", node, err)
 		}
 	}
 

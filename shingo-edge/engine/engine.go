@@ -48,8 +48,8 @@ type DebugLogFunc = types.DebugLogFunc
 
 // InventoryDeltaSink is the engine's view of the UOP mutator
 // (shingoedge/uop.Mutator). Now aliased to uop.Sink which composes
-// the segregated sub-interfaces (Ticker, SlotWriter, Capturer,
-// Pickup, Boundary, Backfiller) plus the legacy four-method shim.
+// the segregated sub-interfaces (Ticker, SlotWriter, Capturer, Piles,
+// Pickup, Boundary) plus Flush.
 //
 // Engine functions that only consume one slice (e.g., the PLC tick
 // path) can take a uop.Ticker parameter directly rather than the
@@ -65,9 +65,10 @@ type InventoryDeltaSink = uop.Sink
 type Engine struct {
 	// countMu serialises every path that moves a seat's count in the
 	// database AND records the same change in the delta accumulator (a PLC
-	// tick's drain, hold-and-replay and record; a release capture; an admin
-	// bucket adjustment) against the lineside report's snapshot, which reads
-	// the database and the accumulator's unflushed counts as one instant. It
+	// tick's drain, hold-and-replay and record; a release capture; a pile
+	// Clear, strand or process delete) against the lineside report's
+	// snapshot, which reads the database and the accumulator's unflushed
+	// counts and sent pile levels as one instant. It
 	// guards no data of its own and is held for a local write or one SELECT,
 	// never across a network call. Order: countMu before the accumulator's
 	// flush lock, everywhere.

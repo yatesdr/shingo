@@ -9,8 +9,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-
-	"shingoedge/service"
 )
 
 // --- Processes Admin ---
@@ -156,12 +154,6 @@ func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 	// because the close writer does, and this handler does not orchestrate it —
 	// it calls the one verb.
 	if err := h.orchestration.DeleteProcess(id); err != nil {
-		// Stock still booked is a precondition the operator can clear, not a
-		// fault. A 500 would read as "shingo broke" and send them to a log.
-		if errors.Is(err, service.ErrProcessHasStock) {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -182,7 +174,7 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.ProcessService().SetActiveStyle(id, req.StyleID); err != nil {
+	if err := h.orchestration.SetProcessActiveStyle(id, req.StyleID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

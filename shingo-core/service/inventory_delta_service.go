@@ -18,13 +18,9 @@ import (
 // directly.
 type InventoryDeltaService = uop.InventoryDeltaService
 
-// BinUOPRow / LinesideBucketRow / InventoryInvariant: same alias
-// re-exports for the value types the service returns.
-type (
-	BinUOPRow          = uop.BinUOPRow
-	LinesideBucketRow  = uop.LinesideBucketRow
-	InventoryInvariant = uop.InventoryInvariant
-)
+// InventoryInvariant: the same alias re-export for the value type
+// SumInvariant returns.
+type InventoryInvariant = uop.InventoryInvariant
 
 // ErrInventoryDeltaSkipped re-exports the canonical sentinel error
 // from uop. Callers comparing via errors.Is keep working unchanged.

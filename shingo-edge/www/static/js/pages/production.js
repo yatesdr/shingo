@@ -229,26 +229,6 @@ async function submitLoadBin() {
 
 // ─── Lineside bucket handlers ───────────────────────────
 
-async function editLinesideBucket() {
-    var tr = this.closest('tr');
-    var bucketID = tr.getAttribute('data-bucket-id');
-    var input = tr.querySelector('.lineside-qty-input');
-    var warn = tr.querySelector('.lineside-warn');
-    var qty = parseInt(input.value, 10);
-    if (isNaN(qty) || qty < 0) {
-        warn.textContent = 'Qty must be a non-negative number.';
-        warn.style.display = '';
-        return;
-    }
-    warn.style.display = 'none';
-    try {
-        await api.post('/api/lineside/buckets/' + encodeURIComponent(bucketID) + '/qty', { qty: qty });
-        toast('Quantity updated', 'success');
-    } catch(e) {
-        toast('Error: ' + e, 'error');
-    }
-}
-
 async function clearLinesideBucket() {
     var tr = this.closest('tr');
     var bucketID = tr.getAttribute('data-bucket-id');
@@ -709,7 +689,6 @@ delegateActions(document.body, {
     clearLinesideBucket,
     closeLoadBinModal,
     createOrder,
-    editLinesideBucket,
     ensureLoadBinCatalog,
     navigateToProcess,
     onLoadPayloadChanged,

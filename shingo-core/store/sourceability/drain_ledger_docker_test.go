@@ -12,9 +12,9 @@ import (
 	"shingocore/store/plantclaims"
 )
 
-// B7 Fix 2's DB pins: the drain ledger end to end. The bucket deltas go
-// through ApplyLinesideBucketDelta — the real writer — because what is being
-// pinned is the door Core owns: which deltas leave a drain row, with which
+// B7 Fix 2's DB pins: the drain ledger end to end. The pile levels go
+// through ApplyLinesideBucketLevel — the real writer — because what is being
+// pinned is the door Core owns: which levels leave a drain row, with which
 // before/after, and what the rate makes of them.
 
 // drainWorld stages the drain-only fixture: standard data, SNF2 style A
@@ -34,21 +34,20 @@ func drainWorld(t *testing.T) *rateWorld {
 	return w
 }
 
-// bucketDelta builds a LinesideBucketDelta in the wire shape makeBucketDelta
-// uses (uop/applier_test.go), local so this file owns its fixtures.
-func bucketDelta(node, payload string, delta int, seq int64, reason protocol.LinesideBucketDeltaReason) *protocol.LinesideBucketDelta {
-	now := time.Now().UTC()
-	return &protocol.LinesideBucketDelta{
-		CoreNodeName: node, PairKey: "RATE|PAIR", StyleID: 100,
-		PayloadCode: payload, Delta: delta, Reason: reason, SequenceID: seq,
-		WindowStart: now.Add(-5 * time.Second), WindowEnd: now,
+// bucketLevel builds an active pile's LinesideBucketLevel in the wire shape
+// makeBucketLevel uses (uop/applier_test.go), local so this file owns its
+// fixtures: the row's qty after the change, and what drained in the window.
+func bucketLevel(node, payload string, qty, drained int, seq int64) *protocol.LinesideBucketLevel {
+	return &protocol.LinesideBucketLevel{
+		CoreNodeName: node, PayloadCode: payload, State: protocol.LinesideBucketActive,
+		Qty: qty, Drained: drained, SequenceID: seq, WindowEnd: time.Now().UTC(),
 	}
 }
 
-func applyBucket(t *testing.T, w *rateWorld, delta *protocol.LinesideBucketDelta) {
+func applyBucket(t *testing.T, w *rateWorld, level *protocol.LinesideBucketLevel) {
 	t.Helper()
 	svc := service.NewInventoryDeltaService(w.sdb, service.NewBinManifestService(w.sdb, service.EpochAnnounce{}), service.EpochAnnounce{})
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta("ALN_RATE", delta), "apply bucket delta")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel("ALN_RATE", level), "apply bucket level")
 }
 
 func drainRows(t *testing.T, w *rateWorld) (count int, before, after int) {
@@ -67,8 +66,8 @@ func drainRows(t *testing.T, w *rateWorld) (count int, before, after int) {
 // sits at.
 func TestRate_DrainOnlyCellFinallyHasARate(t *testing.T) {
 	w := drainWorld(t)
-	applyBucket(t, w, bucketDelta(w.std.LineNode.Name, "BIN-A", 60, 1, protocol.ReasonCaptureFill))
-	applyBucket(t, w, bucketDelta(w.std.LineNode.Name, "BIN-A", -60, 2, protocol.ReasonConsumeDrain))
+	applyBucket(t, w, bucketLevel(w.std.LineNode.Name, "BIN-A", 60, 0, 1))
+	applyBucket(t, w, bucketLevel(w.std.LineNode.Name, "BIN-A", 0, 60, 2))
 
 	// The writer's own contract: exactly one drain row, before=60 after=0.
 	if n, before, after := drainRows(t, w); n != 1 || before != 60 || after != 0 {
@@ -98,22 +97,17 @@ func TestRate_DrainOnlyCellFinallyHasARate(t *testing.T) {
 }
 
 // TestRate_CaptureFillWritesNoDrainRow pins P9: the ledger door itself.
-// capture_fill is parts arriving at a pile, not consumption — one fill and
-// one drain at the same bucket must leave EXACTLY one row, the drain's,
-// with before/after from the qty arithmetic the UPSERT performed.
+// A capture is parts arriving at a pile, not consumption — one capture level
+// and one drained level at the same pile must leave EXACTLY one row, the
+// drain's, before = Qty + Drained and after = Qty. (The reason column this pin
+// also read went with v131: every row in the ledger is a drain.)
 func TestRate_CaptureFillWritesNoDrainRow(t *testing.T) {
 	w := drainWorld(t)
-	applyBucket(t, w, bucketDelta(w.std.LineNode.Name, "BIN-A", 47, 1, protocol.ReasonCaptureFill))
-	applyBucket(t, w, bucketDelta(w.std.LineNode.Name, "BIN-A", -10, 2, protocol.ReasonConsumeDrain))
+	applyBucket(t, w, bucketLevel(w.std.LineNode.Name, "BIN-A", 47, 0, 1))
+	applyBucket(t, w, bucketLevel(w.std.LineNode.Name, "BIN-A", 37, 10, 2))
 
 	if n, before, after := drainRows(t, w); n != 1 || before != 47 || after != 37 {
-		t.Fatalf("drain ledger = %d rows (before=%d after=%d), want exactly the consume_drain row before=47 after=37", n, before, after)
-	}
-
-	var reason string
-	testutil.MustNoErr(t, w.db.QueryRow(`SELECT reason FROM lineside_drain_ledger`).Scan(&reason), "read reason")
-	if reason != "consume_drain" {
-		t.Errorf("reason = %q, want consume_drain", reason)
+		t.Fatalf("drain ledger = %d rows (before=%d after=%d), want exactly the drain row before=47 after=37", n, before, after)
 	}
 }
 
@@ -124,8 +118,8 @@ func TestRate_CaptureFillWritesNoDrainRow(t *testing.T) {
 func TestRate_DrainsFoldIntoBothGrains(t *testing.T) {
 	w := drainWorld(t)
 	seedRateDelta(t, w.db, w.bin1ID, w.std.LineNode.ID, "BIN-A", "consume_tick", 60, 0)
-	applyBucket(t, w, bucketDelta(w.std.LineNode.Name, "BIN-A", 30, 1, protocol.ReasonCaptureFill))
-	applyBucket(t, w, bucketDelta(w.std.LineNode.Name, "BIN-A", -30, 2, protocol.ReasonConsumeDrain))
+	applyBucket(t, w, bucketLevel(w.std.LineNode.Name, "BIN-A", 30, 0, 1))
+	applyBucket(t, w, bucketLevel(w.std.LineNode.Name, "BIN-A", 0, 30, 2))
 
 	_, samples := buildAndCompute(t, w)
 	s := sampleFor(t, samples, w.std.LineNode.Name)

@@ -180,11 +180,14 @@ func TestCounterDelta_StatementsPerTickWalk(t *testing.T) {
 // move — so the interesting figure is the gap between this and the walk above.
 func TestCounterDelta_StatementsPerTickLanding(t *testing.T) {
 	t.Parallel()
-	// Was 3N+1 walk + 3 per landing node. Now a flat 4 walk + the same 3.
+	// Was 3N+1 walk + 3 per landing node, then a flat 4 walk + the same 3. Now
+	// a flat 4 walk + 2: the per-tick active-bucket visibility read
+	// (logUnexpectedDrainMisses) is deleted with the bucket-level change (the
+	// brief's U3 Delete list and Efficiency section).
 	for _, size := range []walkerBudget{
-		{nodes: 1, want: 7},
-		{nodes: 4, want: 16},
-		{nodes: 12, want: 40},
+		{nodes: 1, want: 6},
+		{nodes: 4, want: 12},
+		{nodes: 12, want: 28},
 	} {
 		t.Run(fmt.Sprintf("%dnodes", size.nodes), func(t *testing.T) {
 			t.Parallel()
@@ -198,8 +201,7 @@ func TestCounterDelta_StatementsPerTickLanding(t *testing.T) {
 				ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 3,
 			})
 			checkBudget(t, size, counter.Count(),
-				"the flat 4-statement walk plus, per landing node: 1 bucket drain + 1 "+
-					"active-bucket visibility read + 1 counter update")
+				"the flat 4-statement walk plus, per landing node: 1 bucket drain + 1 counter update")
 
 			// Every node took it: the landing count is N, not a subset.
 			for suffix, id := range f.NodeIDs {
@@ -220,17 +222,18 @@ func TestCounterDelta_StatementsPerTickLanding(t *testing.T) {
 // A multi-part claim is one assembly built from several staged parts. The node
 // counter is a single integer — one UOP is one assembly — so only the primary
 // part's drain changes the arithmetic; the secondaries drain so the board stays
-// honest. Each of them is its own statement, and each miss asks the node's
-// active buckets whether it should have drained.
+// honest. Each of them is its own statement. The visibility read a miss used
+// to cost (one per tick) is deleted with the bucket-level change (the brief's
+// U3 Delete list), which took one statement off every row below.
 func TestCounterDelta_StatementsPerPart(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		parts int
 		want  int64
 	}{
-		{parts: 1, want: 7},
-		{parts: 3, want: 9},
-		{parts: 6, want: 12},
+		{parts: 1, want: 6},
+		{parts: 3, want: 8},
+		{parts: 6, want: 11},
 	} {
 		t.Run(fmt.Sprintf("%dparts", tc.parts), func(t *testing.T) {
 			t.Parallel()
@@ -246,8 +249,7 @@ func TestCounterDelta_StatementsPerPart(t *testing.T) {
 				ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 3,
 			})
 			if got := counter.Count(); got != tc.want {
-				t.Errorf("%d parts: %d statements, pinned at %d (per part: 1 drain, and ONE "+
-					"active-bucket visibility read for the whole tick however many parts missed)",
+				t.Errorf("%d parts: %d statements, pinned at %d (per part: 1 drain)",
 					tc.parts, got, tc.want)
 			}
 		})

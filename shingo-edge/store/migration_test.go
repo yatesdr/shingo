@@ -301,20 +301,21 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 		t.Fatalf("expected node_lineside_bucket table, got %d", tableCount)
 	}
 
-	// Unique-active index must exist.
+	// One pile per (node, payload, state): the table's own UNIQUE, which
+	// SQLite backs with an autoindex. (It was a partial index on active rows
+	// with style_id and pair_key columns until change #1.)
 	var indexCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
-		WHERE type='index' AND name='idx_lineside_active_unique'`).Scan(&indexCount); err != nil {
-		t.Fatalf("check index exists: %v", err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_index_list('node_lineside_bucket')
+		WHERE "unique" = 1 AND origin = 'u'`).Scan(&indexCount); err != nil {
+		t.Fatalf("check unique constraint: %v", err)
 	}
 	if indexCount != 1 {
-		t.Fatalf("expected idx_lineside_active_unique index, got %d", indexCount)
+		t.Fatalf("expected one UNIQUE constraint on node_lineside_bucket, got %d", indexCount)
 	}
 
-	// Expected columns are present.
+	// Exactly the expected columns are present.
 	expected := map[string]bool{
-		"id": false, "node_id": false, "pair_key": false,
-		"style_id": false, "payload_code": false, "qty": false,
+		"id": false, "node_id": false, "payload_code": false, "qty": false,
 		"state": false, "created_at": false, "updated_at": false,
 	}
 	rows, err := db.Query(`SELECT name FROM pragma_table_info('node_lineside_bucket')`)
@@ -325,9 +326,10 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 	for rows.Next() {
 		var col string
 		testutil.MustNoErr(t, rows.Scan(&col), "scan col")
-		if _, ok := expected[col]; ok {
-			expected[col] = true
+		if _, ok := expected[col]; !ok {
+			t.Errorf("unexpected column %q on node_lineside_bucket", col)
 		}
+		expected[col] = true
 	}
 	for col, seen := range expected {
 		if !seen {

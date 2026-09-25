@@ -421,12 +421,11 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		manifestUOP = nil
 	}
 
-	// Capture lineside buckets (conditional on disposition), always
-	// deactivate other styles on this node, and emit the paired bin
-	// capture_reduction delta when capture happened. The verb owns the
-	// atomic emit-pair (bucket fills + bin reduction) so the magnitude
-	// of capture_reduction always matches the sum of capture_fill
-	// emissions.
+	// Capture lineside piles (conditional on disposition) and emit the
+	// paired bin capture_reduction delta when capture happened. The verb owns
+	// the pair (the piles' gain + the bin's reduction) so the magnitude of
+	// capture_reduction always matches what the piles gained. Other piles at
+	// the node are left alone: only the cutover strands them.
 	//
 	// PayloadCode comes from the order, not the claim. The bin being
 	// captured-from is the order's bin (delivered or evac); its payload
@@ -437,11 +436,10 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	// inventory_delta_service.ApplyBinUOPDelta and the delta would be
 	// silently rejected.
 	//
-	// SuppressBinDelta gates the capture_reduction emit on the supply
-	// leg (Order A in two-robot swaps): a fresh supply bin had nothing
-	// pulled from it, so applying capture_reduction would corrupt the
-	// authoritative count. Same isSupply gate the manifestUOP
-	// suppression uses.
+	// SuppressBinDelta marks the supply leg (Order A in two-robot swaps): a
+	// fresh supply bin had nothing pulled from it, so the leg captures
+	// nothing — no pile, no capture_reduction. Same isSupply gate the
+	// manifestUOP suppression uses.
 	//
 	// IMPORTANT: capture_reduction rides ALONGSIDE the legacy
 	// RemainingUOP=&0 send (which Core's existing manifest-sync still
@@ -468,8 +466,6 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		e.countMu.Lock()
 		_, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
 			NodeID:           node.ID,
-			StyleID:          toClaim.StyleID,
-			PairKey:          toClaim.PairedCoreNode,
 			CoreNodeName:     node.CoreNodeName,
 			Disposition:      disp,
 			BinID:            resolvedBinID,
@@ -502,7 +498,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		}
 	}
 
-	// Flush boundary: drain any accumulated bin/bucket deltas for this
+	// Flush boundary: drain any accumulated bin deltas and pile levels for this
 	// scope to the outbox before shipping the OrderRelease envelope.
 	// Once enqueued, Kafka delivery semantics + Core's inventory_delta_dedup
 	// handle the rest; we trust the bus rather than abort the release on

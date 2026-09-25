@@ -206,46 +206,52 @@ func TestRunningNet_P0d_RestoreIsDetectedAndBumps(t *testing.T) {
 	}
 }
 
-// P0g, Core half. Core keys a bucket scope by core_node_name. Two Edge node ids
-// that share one core_node_name each number their own seq stream (the Edge keys
-// by nodeID), and both land on ONE Core high-water row: the lower stream is
-// muted.
+// P0g, Core half. Core keys a pile's seq scope by core_node_name. Two Edge
+// node ids that share one core_node_name each numbered their own seq stream
+// (the Edge keyed by nodeID), and both landed on ONE Core high-water row.
 //
-// This half stays green: Core's key is the one both sides converge on. The
-// verify-red is the Edge half (shingo-edge/uop running_net_test.go), which the
-// one-bucket-key change (S4) inverts so the two streams are one.
+// Under the delta the lower stream was muted, its parts lost. FLIPPED BY BRIEF
+// v7 EXPECTED CHANGE #1: a lower seq with a later window is the restored-Edge
+// shape, so the second stream's levels apply and re-anchor the row, and the
+// row is whichever level arrived last. That is the right row either way,
+// because the Edge's level is the sum over every local node carrying the core
+// name; and the Edge half (S4, one bucket key) leaves one stream per core name.
 func TestRunningNet_P0g_TwoEdgeStreamsOnOneCoreBucketKey(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := netTestService(db)
 	nodeName := sd.StorageNode.Name
+	t0 := time.Now().UTC().Add(-time.Hour)
+	level := func(seq int64, qty int, at time.Duration) *protocol.LinesideBucketLevel {
+		l := makeBucketLevel(nodeName, "PART-G", active, qty, 0, seq)
+		l.WindowEnd = t0.Add(at)
+		return l
+	}
 
 	// Stream A (Edge node 34) has flushed five times.
 	for seq := int64(1); seq <= 5; seq++ {
-		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation,
-			makeBucketDelta(nodeName, "L1|U1", 100, "PART-G", 10, seq, protocol.ReasonCaptureFill)), "stream A")
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation,
+			level(seq, int(10*seq), time.Duration(seq)*time.Minute)), "stream A")
 	}
-	// Stream B (Edge node 45, same core name) starts at seq 1.
+	// Stream B (Edge node 45, same core name) starts at seq 1, later windows.
 	for seq := int64(1); seq <= 3; seq++ {
-		err := svc.ApplyLinesideBucketDelta(testStation,
-			makeBucketDelta(nodeName, "L1|U1", 100, "PART-G", 7, seq, protocol.ReasonCaptureFill))
-		if !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
-			t.Fatalf("stream B seq %d: err = %v, want ErrInventoryDeltaSkipped", seq, err)
-		}
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation,
+			level(seq, int(7*seq), time.Duration(10+seq)*time.Minute)), "stream B")
 	}
-	var qty int
-	testutil.MustNoErr(t, db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND payload_code='PART-G'`, nodeName).Scan(&qty),
-		"read bucket")
-	if qty != 50 {
-		t.Errorf("bucket qty = %d, want 50 (stream B's 21 parts are muted)", qty)
+	if qty, _, _ := pileRow(t, db, nodeName, "PART-G", active); qty != 21 {
+		t.Errorf("pile qty = %d, want 21 (stream B's last level)", qty)
+	}
+	// Stream A's next level is above the re-anchored seq, so it applies too.
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation, level(6, 60, 20*time.Minute)), "stream A seq 6")
+	if qty, _, _ := pileRow(t, db, nodeName, "PART-G", active); qty != 60 {
+		t.Errorf("pile qty = %d, want 60 (stream A's seq 6)", qty)
 	}
 }
 
-// Core statements per bin delta, and per bucket delta, on the steady-state
-// path (the dedup row exists; a consume tick on a bin at a node, a capture fill
-// on a bucket), counted at pgx's tracer.
+// Core statements per bin delta, and per pile level, on the steady-state
+// path (the dedup row exists; a consume tick on a bin at a node, a capture's
+// level on a pile), counted at pgx's tracer.
 //
 // THE COUNT INCLUDES BEGIN AND COMMIT (or the ROLLBACK a skip ends in). pgx's
 // stdlib BeginTx sends "begin" through the traced Exec, so store/query_count.go's
@@ -259,6 +265,11 @@ func TestRunningNet_P0g_TwoEdgeStreamsOnOneCoreBucketKey(t *testing.T) {
 // the prior dedup read folds into an existing statement). It lowers one: the
 // cursor rides the epoch read, so a skipped duplicate is decided there, before
 // the UPSERT, and costs 3 (begin, the read, rollback).
+//
+// The level wire (brief v7) replaced the bucket delta: a level is 5 (the node
+// lookup outside the tx, begin, the dedup UPSERT, the pile UPSERT, commit). The
+// GC DELETE went, because a level of 0 is the delete; a level with Drained
+// adds the drain-ledger INSERT, which the capture measured here does not.
 func TestRunningNet_CoreStatementsPerDelta(t *testing.T) {
 	t.Parallel()
 	_, cfg := testdb.OpenWithConfig(t)
@@ -303,18 +314,13 @@ func TestRunningNet_CoreStatementsPerDelta(t *testing.T) {
 		}
 
 		nodeName := sd.StorageNode.Name
-		mkb := func(seq int64) *protocol.LinesideBucketDelta {
-			d := makeBucketDelta(nodeName, "L1|U1", 100, part, 5, seq, protocol.ReasonCaptureFill)
-			if withNet {
-				d.Net = int64p(5 * seq)
-			}
-			return d
-		}
-		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, mkb(1)), "bucket seq 1")
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation,
+			makeBucketLevel(nodeName, part, active, 5, 0, 1)), "level seq 1")
 		counter.Reset()
-		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(testStation, mkb(2)), "bucket seq 2")
-		if got := counter.Count(); got != wantBucketDeltaStatements {
-			t.Errorf("net=%v bucket delta: %d statements, want %d", withNet, got, wantBucketDeltaStatements)
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketLevel(testStation,
+			makeBucketLevel(nodeName, part, active, 10, 0, 2)), "level seq 2")
+		if got := counter.Count(); got != wantBucketLevelStatements {
+			t.Errorf("net=%v pile level: %d statements, want %d", withNet, got, wantBucketLevelStatements)
 		}
 	}
 }
@@ -323,5 +329,5 @@ func TestRunningNet_CoreStatementsPerDelta(t *testing.T) {
 const (
 	wantBinDeltaStatements    = 7
 	wantBinSkipStatements     = 3
-	wantBucketDeltaStatements = 6
+	wantBucketLevelStatements = 5
 )

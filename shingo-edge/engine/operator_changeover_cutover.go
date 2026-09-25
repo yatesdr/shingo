@@ -287,6 +287,12 @@ func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
 		return err
 	}
+	// The cutover strands every lineside pile at the process's nodes
+	// (lineside_strand.go). Logged, not returned: the flip has happened, and
+	// failing here would leave the changeover row open on the to-style.
+	if err := e.strandLinesidePiles(processID); err != nil {
+		log.Printf("changeover: cutover on process %d: %v", processID, err)
+	}
 	return e.finalizeChangeoverRow(processID, changeover.ID, triggeredBy)
 }
 

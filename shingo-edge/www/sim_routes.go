@@ -80,19 +80,16 @@ func (h *Handlers) apiSimSetSpeed(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiSimSeedProductionDemo inserts demo lineside buckets and hourly
-// chart data so the /production page has rows to modify/delete and a
-// populated Shift Production graph. Sim builds only — call once via
+// apiSimSeedProductionDemo inserts hourly chart data so the /production page
+// has a populated Shift Production graph. Sim builds only — call once via
 //
 //	//   curl -X POST http://localhost:8081/sim/seed-production-demo
 //
-// Re-running is safe: hourly_counts are wiped+reinserted for today,
-// and lineside buckets merge into any existing active rows for the
-// same (node, style, part).
+// Re-running is safe: hourly_counts are wiped+reinserted for today. It no
+// longer seeds lineside piles: a pile exists only for parts a bin paid for,
+// and a seeded one would be stock no bin gave up.
 func (h *Handlers) apiSimSeedProductionDemo(w http.ResponseWriter, r *http.Request) {
 	today := time.Now().Format("2006-01-02")
-
-	bucketsInserted, bucketErr := h.engine.ProcessService().SeedDemoLinesideBuckets()
 
 	// Make sure 3 default shifts exist so the chart renders even on a
 	// fresh dev DB. Upsert is idempotent.
@@ -105,14 +102,10 @@ func (h *Handlers) apiSimSeedProductionDemo(w http.ResponseWriter, r *http.Reque
 	processesSeeded, countsErr := h.engine.CounterService().SeedDemoHourlyCountsAllProcesses(today)
 
 	resp := map[string]any{
-		"ok":               bucketErr == nil && countsErr == nil,
+		"ok":               countsErr == nil,
 		"date":             today,
-		"buckets":          bucketsInserted,
 		"processes_seeded": processesSeeded,
 		"shifts_seed":      true,
-	}
-	if bucketErr != nil {
-		resp["buckets_error"] = bucketErr.Error()
 	}
 	if countsErr != nil {
 		resp["counts_error"] = countsErr.Error()

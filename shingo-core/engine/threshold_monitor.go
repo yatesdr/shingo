@@ -6,10 +6,10 @@
 //
 //   Core owns loader config (the bin_loaders aggregate) and the per-(loader,
 //   payload) thresholds derived from it. On any activity for a monitored
-//   payload — a BinUOPDelta, a LinesideBucketDelta, or a non-delta bin
+//   payload — a BinUOPDelta, a LinesideBucketLevel, or a non-delta bin
 //   mutation — Core re-reads the AUTHORITATIVE combined in-loop UOP for
 //   that payload (SystemUOPForPayload = SUM(bins.uop_remaining) + active
-//   lineside buckets) and evaluates it against the configured threshold.
+//   lineside piles) and evaluates it against the configured threshold.
 //   When the total is below the threshold for a (loader, payload) pair,
 //   Core creates the retrieve orders itself (see fireSignalCached —
 //   the 2026-07-31 cutover). Nothing replenishment-related crosses the
@@ -330,7 +330,7 @@ func (m *ThresholdMonitor) Run(ctx context.Context) {
 
 // readTotal reads the authoritative in-loop UOP total for one payload straight
 // from the DB (SystemUOPForPayload = SUM(bins.uop_remaining) over the lifecycle
-// filter + active lineside buckets). This is the single source of truth the
+// filter + active lineside piles). This is the single source of truth the
 // monitor evaluates on EVERY firing decision; there is no cached belief that
 // can drift from it. F-1 benchmarked it at ~0.43 ms/payload at plant scale.
 // Returns (0, nil) when there is no engine/inventory service (pure unit
@@ -379,8 +379,8 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 }
 
 // decisionTotalFor reads the total a fire is judged against: Core's count,
-// SystemUOPForPayload — bins plus non-stranded lineside buckets, the replica
-// the Edge's deltas keep. Every path into checkBindings calls it, so the boot
+// SystemUOPForPayload — bins plus active lineside piles, the replica the
+// Edge's bin deltas and pile levels keep; a stranded pile never counts. Every path into checkBindings calls it, so the boot
 // pass, a manual-swap recheck, the notification doors and the delta path judge
 // a payload against the same number.
 //
@@ -388,8 +388,8 @@ func (m *ThresholdMonitor) evaluatePayload(payloadCode, reason string) {
 // ruled that loaders are a Core function). From 2026-07-24 the default was to
 // decide off an Edge-report-adjusted total instead (R1, the
 // lineside_decision_mode knob). That blend is deleted: the Edge's count is
-// Core's seed plus the Edge's ticks, and the ticks are what the delta stream
-// carries into this total. The Edge's lineside report is now a checksum Core
+// Core's seed plus the Edge's ticks, and the ticks are what the delta and
+// level streams carry into this total. The Edge's lineside report is now a checksum Core
 // compares on ingest (service/lineside_divergence.go); a disagreement opens a
 // report_divergence episode and decides nothing. Rolling back is the previous
 // build, not a knob.
@@ -569,19 +569,11 @@ func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 	m.evaluatePayload(payloadCode, "below_threshold")
 }
 
-// OnBucketApplied is invoked by the messaging layer after a successful
-// LinesideBucketDelta apply: it re-reads the authoritative sum and checks
-// thresholds, short-circuiting for unmonitored or empty payloads.
-//
-// It used to also emit an engine event, unconditionally, with a comment saying
-// other subscribers relied on it. There were none — not one production
-// subscriber anywhere, and no catch-all subscriber on Core either — so the only
-// thing that ever received it was a test asserting it was sent. Deleted with
-// the event type. The station and node arguments survive in the signature
-// because the caller has them and a future subscriber would need them; they are
-// unused here and marked so.
-func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
-	_, _, _, _ = station, coreNodeName, delta, reason
+// OnBucketApplied is invoked by the messaging layer after a lineside pile
+// level is applied: a level changes on-hand (an active pile counts), so it
+// re-reads the authoritative sum and checks thresholds, short-circuiting for
+// unmonitored or empty payloads.
+func (m *ThresholdMonitor) OnBucketApplied(payloadCode string) {
 	m.evaluatePayload(payloadCode, "below_threshold")
 }
 

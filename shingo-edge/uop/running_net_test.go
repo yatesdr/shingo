@@ -56,15 +56,11 @@ func TestRunningNet_AllocateSeqIsOneStatement(t *testing.T) {
 func TestRunningNet_FlushStampsTheRunningNet(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "stn-test", nil, nil, nil)
+	r := New(db, "stn-test", nil, nil)
 
-	r.RecordBin(42, "PART-A", -6, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(42, "PART-A", -6, protocol.ReasonConsumeTick, 1)
 	r.Flush()
-	r.RecordBin(42, "PART-A", -4, protocol.ReasonConsumeTick, 1)
-	r.Flush()
-	r.RecordBucket(5, "CORE-NODE-1", "L1|U1", 100, "PART-B", 47, protocol.ReasonCaptureFill)
-	r.Flush()
-	r.RecordBucket(5, "CORE-NODE-1", "L1|U1", 100, "PART-B", -5, protocol.ReasonConsumeDrain)
+	r.acc.recordBin(42, "PART-A", -4, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	bins := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -76,15 +72,8 @@ func TestRunningNet_FlushStampsTheRunningNet(t *testing.T) {
 			t.Errorf("bin message %d: Net = %v, want %d", i, bins[i].Net, want)
 		}
 	}
-	buckets := pendingOutboxByType[protocol.LinesideBucketDelta](t, db, protocol.SubjectLinesideBucketDelta)
-	if len(buckets) != 2 {
-		t.Fatalf("queued %d bucket envelopes, want 2", len(buckets))
-	}
-	for i, want := range []int64{47, 42} {
-		if buckets[i].Net == nil || *buckets[i].Net != want {
-			t.Errorf("bucket message %d: Net = %v, want %d", i, buckets[i].Net, want)
-		}
-	}
+	// The bucket half went under change #1: a pile level carries its whole
+	// row, so there is no net to stamp (bucket_level_test.go pins the level).
 }
 
 // A flush whose seq UPSERT succeeds and whose outbox INSERT fails has already
@@ -94,16 +83,16 @@ func TestRunningNet_FlushStampsTheRunningNet(t *testing.T) {
 func TestRunningNet_FailedEnqueueDoesNotDoubleTheNet(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "stn-test", nil, nil, nil)
+	r := New(db, "stn-test", nil, nil)
 
-	r.RecordBin(42, "PART-A", -6, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(42, "PART-A", -6, protocol.ReasonConsumeTick, 1)
 	_, err := db.Exec(`ALTER TABLE outbox RENAME TO outbox_away`)
 	testutil.MustNoErr(t, err, "take the outbox away")
 	r.Flush() // allocates seq 1 (net -6), then the INSERT fails
 	_, err = db.Exec(`ALTER TABLE outbox_away RENAME TO outbox`)
 	testutil.MustNoErr(t, err, "put the outbox back")
 
-	r.RecordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
+	r.acc.recordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
 	r.Flush()
 
 	bins := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta)
@@ -118,18 +107,20 @@ func TestRunningNet_FailedEnqueueDoesNotDoubleTheNet(t *testing.T) {
 }
 
 // The accumulator's cost on the Pi: a recorded tick issues 0 statements (it is
-// in memory until the flush), a flush issues 2 per dirty scope (the seq UPSERT
-// and the outbox INSERT), and a flush with nothing dirty issues 0. The running
-// net must leave all three unchanged.
+// in memory until the flush), a flush issues 2 per dirty bin scope (the seq
+// UPSERT and the outbox INSERT) and 3 per dirty pile key (the level read, the
+// seq UPSERT and the outbox INSERT), and a flush with nothing dirty issues 0.
+// Changed under change #1: a dirty pile costs the one level read the lead's
+// read-at-flush decision adds (it was 2, carrying a delta).
 func TestRunningNet_AccumulatorStatementsPerTickAndFlush(t *testing.T) {
 	t.Parallel()
 	db, counter := openCountingAccumulatorDB(t)
-	r := New(db, "stn-test", nil, nil, nil)
+	r := New(db, "stn-test", nil, nil)
 
 	counter.Reset()
 	for i := 0; i < 5; i++ {
-		r.RecordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
-		r.RecordBucket(5, "CORE-NODE-1", "L1|U1", 100, "PART-B", -1, protocol.ReasonConsumeDrain)
+		r.acc.recordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 1)
+		r.acc.markBucket(5, "CORE-NODE-1", "PART-B", protocol.LinesideBucketActive, 1)
 	}
 	if got := counter.Count(); got != 0 {
 		t.Errorf("10 recorded ticks: %d statements, want 0", got)
@@ -137,8 +128,8 @@ func TestRunningNet_AccumulatorStatementsPerTickAndFlush(t *testing.T) {
 
 	counter.Reset()
 	r.Flush()
-	if got := counter.Count(); got != 4 {
-		t.Errorf("flush of one bin and one bucket: %d statements, want 4 (2 per dirty scope)", got)
+	if got := counter.Count(); got != 5 {
+		t.Errorf("flush of one bin and one pile: %d statements, want 5 (2 for the bin, 3 for the pile)", got)
 	}
 
 	counter.Reset()
@@ -148,32 +139,32 @@ func TestRunningNet_AccumulatorStatementsPerTickAndFlush(t *testing.T) {
 	}
 }
 
-// P0g, Edge half, inverted. Two Edge process nodes that carry ONE
-// core_node_name used to number their bucket deltas in two separate seq
-// streams (the Edge keyed a bucket scope by its local nodeID, Core by
-// core_node_name), so both went out as seq 1 and Core muted the second.
-//
-// The one-bucket-key change (SYNTH-round2 S4) keys the Edge's seq scope by
-// core_node_name, so the two nodes share one stream: seq 1, then seq 2.
+// P0g, Edge half. Two Edge process nodes that carry ONE core_node_name used to
+// number their bucket deltas in two separate seq streams, so both went out as
+// seq 1 and Core muted the second. A pile level is keyed by core_node_name, so
+// the two nodes share one stream: seq 1, then seq 2 (the level they carry, the
+// sum over both nodes, is pinned in bucket_level_test.go).
+// Changed under change #1: the messages are levels, keyed without pair or
+// style.
 func TestRunningNet_P0g_TwoNodesOneCoreNameShareOneStream(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
-	r := New(db, "stn-test", nil, nil, nil)
+	r := New(db, "stn-test", nil, nil)
 
-	r.RecordBucket(34, "SMN-TEST", "L1|U1", 100, "PART-G", 10, protocol.ReasonCaptureFill)
+	r.acc.markBucket(34, "SMN-TEST", "PART-G", protocol.LinesideBucketActive, 0)
 	r.Flush()
-	r.RecordBucket(45, "SMN-TEST", "L1|U1", 100, "PART-G", 7, protocol.ReasonCaptureFill)
+	r.acc.markBucket(45, "SMN-TEST", "PART-G", protocol.LinesideBucketActive, 0)
 	r.Flush()
 
-	deltas := pendingOutboxByType[protocol.LinesideBucketDelta](t, db, protocol.SubjectLinesideBucketDelta)
-	if len(deltas) != 2 {
-		t.Fatalf("queued %d bucket envelopes, want 2", len(deltas))
+	levels := pendingOutboxByType[protocol.LinesideBucketLevel](t, db, protocol.SubjectLinesideBucketLevel)
+	if len(levels) != 2 {
+		t.Fatalf("queued %d level envelopes, want 2", len(levels))
 	}
-	if deltas[0].CoreNodeName != deltas[1].CoreNodeName {
-		t.Fatalf("core names %q / %q, want one", deltas[0].CoreNodeName, deltas[1].CoreNodeName)
+	if levels[0].CoreNodeName != levels[1].CoreNodeName {
+		t.Fatalf("core names %q / %q, want one", levels[0].CoreNodeName, levels[1].CoreNodeName)
 	}
-	if deltas[0].SequenceID != 1 || deltas[1].SequenceID != 2 {
+	if levels[0].SequenceID != 1 || levels[1].SequenceID != 2 {
 		t.Errorf("seqs = %d, %d, want 1, 2 (one stream per Core scope)",
-			deltas[0].SequenceID, deltas[1].SequenceID)
+			levels[0].SequenceID, levels[1].SequenceID)
 	}
 }

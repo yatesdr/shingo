@@ -4319,7 +4319,132 @@ func migrationList() []migration {
 				}
 				return n == 0
 			}},
+
+		{131, "lineside_buckets is the Edge's pile mirror, fed by levels: keyed (core_node_name, payload_code, state), style and pair gone, re-seeded from the Edge; the drain ledger loses its unread columns",
+			v131LinesideBucketLevel,
+			verifyV131LinesideBucketLevel},
+
+		{132, "drop demand_origins.used_edge_reports — it recorded whether the Edge-adjusted total decided a fire, and no total but Core's decides",
+			v132DropUsedEdgeReports,
+			func(q schema.Querier) bool { return schema.ColumnAbsent(q, "demand_origins", "used_edge_reports") }},
 	}
+}
+
+// LinesideBucketsUniqueConstraintV131 is the uniqueness constraint v131 puts on
+// lineside_buckets: one row per (core_node_name, payload_code, state), the
+// Edge's pile identity.
+const LinesideBucketsUniqueConstraintV131 = "lineside_buckets_node_payload_state_key"
+
+// v131BucketDivergenceClosedReason is what v131 writes into the detail of every
+// bucket report_divergence episode it closes.
+const v131BucketDivergenceClosedReason = "pile mirror re-seeded from the Edge by the level change (v131)"
+
+// verifyV131LinesideBucketLevel checks v131's shape: state present, style and
+// pair gone, the new key in place, and the drain ledger's four columns gone.
+func verifyV131LinesideBucketLevel(q schema.Querier) bool {
+	if !schema.ColumnExists(q, "lineside_buckets", "state") ||
+		!schema.ColumnAbsent(q, "lineside_buckets", "style_id") ||
+		!schema.ColumnAbsent(q, "lineside_buckets", "pair_key") {
+		return false
+	}
+	for _, c := range []string{"station", "pair_key", "style_id", "reason"} {
+		if !schema.ColumnAbsent(q, "lineside_drain_ledger", c) {
+			return false
+		}
+	}
+	var n int
+	if err := q.QueryRow(`SELECT count(*) FROM pg_constraint WHERE conname = $1`,
+		LinesideBucketsUniqueConstraintV131).Scan(&n); err != nil {
+		return false
+	}
+	return n == 1
+}
+
+// v131LinesideBucketLevel reshapes Core's lineside pile mirror for the level
+// wire (protocol.LinesideBucketLevel), which replaced the delta.
+//
+// THE EDGE IS THE PILE'S ONLY WRITER, AND ITS IDENTITY IS (node, payload,
+// state). Core's key carried pair_key and style_id as well, while the Edge
+// re-stamped a pile's style on every capture, so one Edge pile became two Core
+// rows: the old style's quantity orphaned and the new style's drains refused
+// ("reduction for non-existent bucket"), both pushing Core high. Core now keeps
+// the row the Edge sends, keyed as the Edge keys it, with state a column
+// ('active' counts on-hand; 'stranded' is a count anomaly left at a cutover).
+//
+// THE TABLE IS TRUNCATED, NOT CONVERTED. Its rows are the drifted delta sums
+// this change exists to replace, and nothing in them says which are real. The
+// Edge re-sends every pile's level at boot, which re-seeds the mirror exactly.
+// Until the Edge that sends levels is deployed, Core counts no piles: on-hand
+// reads bins only for that window.
+//
+// THE "bucket" DEDUP ROWS GO. They ordered the retired delta's scope; the
+// level orders under its own scope kind ("bucket_level").
+//
+// lineside_drain_ledger LOSES station, pair_key, style_id and reason. No reader
+// ever read the first three, and reason was the constant 'consume_drain': the
+// level's Drained is the only thing written there now.
+//
+// OPEN bucket report_divergence EPISODES CLOSE, with the reason in their detail
+// (closed_reason). Each compared the Edge's pile against the drifted mirror the
+// truncate throws away; the re-seeded mirror is compared afresh by the next
+// report, which opens a new episode if the two still disagree.
+//
+// NO ROLLBACK to the previous build (owner rule 7): it names style_id and
+// pair_key in its UPSERT and would fail every bucket apply.
+func v131LinesideBucketLevel(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`TRUNCATE lineside_buckets`,
+		// Dropping style_id takes the old unique constraint and
+		// idx_lineside_buckets_node_style with it.
+		`ALTER TABLE lineside_buckets DROP COLUMN IF EXISTS style_id, DROP COLUMN IF EXISTS pair_key`,
+		`ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS state TEXT NOT NULL
+			CONSTRAINT lineside_buckets_state_check CHECK (state IN ('active', 'stranded'))`,
+		fmt.Sprintf(`DO $$
+		BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '%[1]s') THEN
+				ALTER TABLE lineside_buckets
+					ADD CONSTRAINT %[1]s UNIQUE (core_node_name, payload_code, state);
+			END IF;
+		END $$`, LinesideBucketsUniqueConstraintV131),
+		`DELETE FROM inventory_delta_dedup WHERE scope_kind = 'bucket'`,
+		`ALTER TABLE lineside_drain_ledger
+			DROP COLUMN IF EXISTS station, DROP COLUMN IF EXISTS pair_key,
+			DROP COLUMN IF EXISTS style_id, DROP COLUMN IF EXISTS reason`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v131 lineside bucket level: %w", err)
+		}
+	}
+	res, err := tx.Exec(`UPDATE bin_uop_exception
+		SET recovered_at = NOW(),
+		    detail = COALESCE(detail, '{}'::jsonb) || jsonb_build_object('closed_reason', $3::text)
+		WHERE kind = $1 AND op = $2 AND recovered_at IS NULL`,
+		ExcReportDivergence, "bucket", v131BucketDivergenceClosedReason)
+	if err != nil {
+		return fmt.Errorf("v131 close open bucket divergences: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("migrations: v131 closed %d open bucket report_divergence episode(s): %s",
+			n, v131BucketDivergenceClosedReason)
+	}
+	return nil
+}
+
+// v132DropUsedEdgeReports drops demand_origins.used_edge_reports.
+//
+// It recorded whether a threshold fire decided off the Edge-report-adjusted
+// total (R1). Since the seat-count ruling (2026-09-23) every fire decides off
+// Core's count, nothing has written it, and nothing reads it. The rows that
+// said true predate the ruling and describe a decision rule that no longer
+// exists.
+//
+// ROLLBACK to a pre-v132 binary needs the column back first (BOOLEAN NOT NULL
+// DEFAULT false): R1's build names it in its INSERT.
+func v132DropUsedEdgeReports(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE demand_origins DROP COLUMN IF EXISTS used_edge_reports`); err != nil {
+		return fmt.Errorf("v132 drop demand_origins.used_edge_reports: %w", err)
+	}
+	return nil
 }
 
 // v129MapVersionConfirmedAt adds scene_map_versions.confirmed_at: when a map

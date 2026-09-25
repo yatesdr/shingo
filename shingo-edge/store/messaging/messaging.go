@@ -62,9 +62,10 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 //     processes — so it uses plain Enqueue.
 //
 // Everything else must NOT be here, and the reasons differ:
-// bin_uop_delta and lineside_bucket_delta are sequenced INCREMENTS — dropping
-// one is a permanently wrong count, which is the whole reason they were given
-// NoExpiry. production.tick and demand.origin are discrete events. Every
+// bin_uop_delta is a sequenced INCREMENT — dropping one is a permanently wrong
+// count, which is the whole reason it was given NoExpiry. A
+// lineside_bucket_level is one pile's level among many, and superseding the
+// subject would drop every other pile's unsent level. production.tick and demand.origin are discrete events. Every
 // order.* is operator intent that exists exactly once.
 var coalescableSubjects = map[string]bool{
 	protocol.SubjectLinesideLevelReport: true,
@@ -279,7 +280,7 @@ func Requeue(db *sql.DB, id int64) error {
 // rows past their own, longer one. See Core's PurgeOldOutbox for why the
 // statement splits (the cutoffs differ; it is not a performance change).
 //
-// An undelivered row of a count subject (bin_uop_delta, lineside_bucket_delta)
+// An undelivered row of a count subject (bin_uop_delta, lineside_bucket_level)
 // is never deleted, at any age. The drainer does not dead-letter those, so one
 // is exhausted only by the panic boundary or by a budget spent before that
 // rule existed, and either way it is the only record of counts Core has not
@@ -307,7 +308,7 @@ func PurgeOld(db *sql.DB, delivered, deadLetter time.Duration) (int64, error) {
 	}
 	deadRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NULL AND retries >= ? AND created_at < ?
 		AND msg_type NOT IN (?, ?)`,
-		MaxRetries, deadCutoff, protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketDelta)
+		MaxRetries, deadCutoff, protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketLevel)
 	if err != nil {
 		return 0, err
 	}
