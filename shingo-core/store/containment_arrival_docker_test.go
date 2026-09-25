@@ -3,6 +3,8 @@
 package store_test
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -53,12 +55,16 @@ func TestStampContainmentArrival(t *testing.T) {
 	testutil.MustNoErr(t, db.SetPayloadContainment("PART-A", "quality alert", "tester", true),
 		"activate containment")
 
+	// CreateBin writes only the carrier (type, label, node, status); the payload,
+	// count and confirmation are the manifest's, written through its own doors as
+	// testdb.CreateBinAtNode does. Setting them on the struct is silently dropped,
+	// and an unconfirmed bin with no payload is never sourceable, so the
+	// before-the-stamp read below would find nothing.
 	newBin := func(label string, nodeID int64) *bins.Bin {
-		b := &bins.Bin{
-			BinTypeID: btID, Label: label, NodeID: &nodeID, Status: "available",
-			PayloadCode: "PART-A", UOPRemaining: 10, ManifestConfirmed: true,
-		}
+		b := &bins.Bin{BinTypeID: btID, Label: label, NodeID: &nodeID, Status: "available"}
 		testutil.MustNoErr(t, db.CreateBin(b), "create bin "+label)
+		testutil.MustNoErr(t, db.SetBinManifest(b.ID, `{"items":[]}`, "PART-A", 10), "manifest "+label)
+		testutil.MustNoErr(t, db.ConfirmBinManifest(b.ID, ""), "confirm "+label)
 		return b
 	}
 
@@ -81,8 +87,12 @@ func TestStampContainmentArrival(t *testing.T) {
 		t.Fatalf("hold = %v by %q, want true by containment-divert", hold, by)
 	}
 
+	// The finder says "nothing" as sql.ErrNoRows (ScanBin's no-match sentinel),
+	// which is exactly the answer wanted here.
 	after, err := db.FindSourceBinFIFO("PART-A", 0)
-	testutil.MustNoErr(t, err, "tier-5 read after the stamp")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("tier-5 read after the stamp: %v", err)
+	}
 	if after != nil {
 		t.Fatalf("after the stamp: tier-5 still sources the contained bin %d - containment leaks", after.ID)
 	}
