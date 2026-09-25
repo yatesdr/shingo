@@ -18,15 +18,15 @@ import (
 	"net/http"
 	"strings"
 
-	"shingocore/store"
+	"shingocore/domain"
 )
 
 // containmentState is the GET's body: the flag rows and the bins currently
 // carrying the hold marker, one read for every screen that needs the
 // picture.
 type containmentState struct {
-	Containment []store.PayloadContainmentRow `json:"containment"`
-	HeldBins    []store.HeldBinRow            `json:"held_bins"`
+	Containment []domain.PayloadContainmentRow `json:"containment"`
+	HeldBins    []domain.HeldBinRow            `json:"held_bins"`
 }
 
 func (h *Handlers) apiGetContainment(w http.ResponseWriter, r *http.Request) {

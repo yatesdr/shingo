@@ -129,7 +129,7 @@ type CopyClaimsResult struct {
 // the copy. They are cleaned up once here so the store layer sees one
 // well-formed row per node: blank match keys dropped, duplicates collapsed
 // last-wins, all-blank rows dropped as the no-ops the modal never sends.
-func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads bool, overrides []processes.ClaimOverride) []CopyClaimsResult {
+func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads bool, overrides []domain.CopiedClaimOverride) []CopyClaimsResult {
 	results := make([]CopyClaimsResult, 0, len(targets))
 	if len(targets) == 0 {
 		return results
@@ -140,7 +140,7 @@ func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads 
 	// a 400 from the handler is the honest answer, and the handler owns it,
 	// so a blank key that still arrives is dropped with the same silence a
 	// blank field would get.
-	clean := make([]processes.ClaimOverride, 0, len(overrides))
+	clean := make([]domain.CopiedClaimOverride, 0, len(overrides))
 	ovSeen := map[string]bool{}
 	for _, ov := range overrides {
 		ov.Node = strings.TrimSpace(ov.Node)

@@ -379,25 +379,11 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, ca
 	return ids, nil
 }
 
-// ClaimOverride is one per-claim adjustment for a CopyStyleClaims batch,
-// matched by the SOURCE claim's core_node_name — the copied rows carry the
-// source's node names until a rename changes them, which is what makes the
-// key stable for the span this struct is used over. Every other field is
-// optional: blank inherits the copied claim's value, so a row names only
-// what it changes. Shared verbatim with the copy modal, which renders one
-// row per source claim with these same fields as inputs.
-type ClaimOverride struct {
-	Node                 string `json:"node"` // match key; the one required field
-	CoreNodeName         string `json:"core_node"`
-	Role                 string `json:"role"`
-	PayloadCode          string `json:"payload_code"`
-	InboundSource        string `json:"inbound_source"`
-	OutboundDestination  string `json:"outbound_destination"`
-	InboundStaging       string `json:"inbound_staging"`
-	OutboundStaging      string `json:"outbound_staging"`
-	PairedCoreNode       string `json:"paired_core_node"`
-	SecondPairedCoreNode string `json:"second_paired_core_node"`
-}
+// ClaimOverride is one per-claim adjustment for a CopyStyleClaims batch.
+// Domain-owned (domain.CopiedClaimOverride, which documents the fields) so
+// the copy-claims handler can decode it without importing store; the name
+// here is kept through the alias so the store callers compile unchanged.
+type ClaimOverride = domain.CopiedClaimOverride
 
 // copiedClaim is the slice of a freshly copied claim row the override layer
 // reads and rewrites. Read once up front instead of per-override, and

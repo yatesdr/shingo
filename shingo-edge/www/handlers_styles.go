@@ -16,7 +16,6 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/store/processes"
 )
 
 // --- Styles Admin ---
@@ -223,9 +222,9 @@ func (h *Handlers) apiCopyStyleClaims(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		TargetStyleIDs  []int64                   `json:"target_style_ids"`
-		IncludePayloads bool                      `json:"include_payloads"`
-		Overrides       []processes.ClaimOverride `json:"overrides"`
+		TargetStyleIDs  []int64                      `json:"target_style_ids"`
+		IncludePayloads bool                         `json:"include_payloads"`
+		Overrides       []domain.CopiedClaimOverride `json:"overrides"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

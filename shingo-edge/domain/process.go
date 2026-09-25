@@ -144,6 +144,31 @@ type ClaimOverride struct {
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
 }
 
+// CopiedClaimOverride is one per-claim adjustment for a CopyStyleClaims batch,
+// matched by the SOURCE claim's core_node_name — the copied rows carry the
+// source's node names until a rename changes them, which is what makes the
+// key stable for the span this struct is used over. Every other field is
+// optional: blank inherits the copied claim's value, so a row names only
+// what it changes. Shared verbatim with the copy modal, which renders one
+// row per source claim with these same fields as inputs.
+//
+// Distinct from ClaimOverride above, which is the style-variant generator's
+// payload-only override: this one is the copy-claims modal's row and can
+// also re-point routing, staging and pairing. The store/processes name for it
+// is ClaimOverride, through an alias.
+type CopiedClaimOverride struct {
+	Node                 string `json:"node"` // match key; the one required field
+	CoreNodeName         string `json:"core_node"`
+	Role                 string `json:"role"`
+	PayloadCode          string `json:"payload_code"`
+	InboundSource        string `json:"inbound_source"`
+	OutboundDestination  string `json:"outbound_destination"`
+	InboundStaging       string `json:"inbound_staging"`
+	OutboundStaging      string `json:"outbound_staging"`
+	PairedCoreNode       string `json:"paired_core_node"`
+	SecondPairedCoreNode string `json:"second_paired_core_node"`
+}
+
 // Node is a process node — one slot in a Process at which material
 // is consumed or produced. ProcessNodeID in other tables refers to
 // this row's ID. Joined fields (StationName, ProcessName) ride along

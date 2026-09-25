@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -158,7 +159,7 @@ func (s *PayloadService) SetContainment(payloadCode, reason, by string, active b
 }
 
 // ListContainment returns every containment row (active first).
-func (s *PayloadService) ListContainment() ([]store.PayloadContainmentRow, error) {
+func (s *PayloadService) ListContainment() ([]domain.PayloadContainmentRow, error) {
 	return s.db.ListPayloadContainment()
 }
 
@@ -170,7 +171,7 @@ func (s *PayloadService) SetBinHold(binID int64, hold bool, by string) error {
 }
 
 // ListHeldBins returns every bin carrying the hold marker.
-func (s *PayloadService) ListHeldBins() ([]store.HeldBinRow, error) {
+func (s *PayloadService) ListHeldBins() ([]domain.HeldBinRow, error) {
 	return s.db.ListHeldBins()
 }
 

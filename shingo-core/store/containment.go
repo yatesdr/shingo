@@ -30,21 +30,15 @@ import (
 	"sort"
 	"time"
 
+	"shingocore/domain"
 	"shingocore/store/internal/nodetree"
 	"shingocore/store/nodes"
 )
 
 // PayloadContainmentRow is one payload's containment state as the UI reads it.
-// The row persists after deactivation so the alert's history survives it.
-type PayloadContainmentRow struct {
-	PayloadCode   string     `json:"payload_code"`
-	Active        bool       `json:"active"`
-	Reason        string     `json:"reason"`
-	ActivatedBy   string     `json:"activated_by"`
-	ActivatedAt   *time.Time `json:"activated_at"`
-	DeactivatedBy string     `json:"deactivated_by"`
-	DeactivatedAt *time.Time `json:"deactivated_at"`
-}
+// Domain-owned so the www handlers can name it without importing store; store
+// callers compile unchanged through the alias (the demand_origins.go pattern).
+type PayloadContainmentRow = domain.PayloadContainmentRow
 
 // SetPayloadContainment activates or deactivates containment for one payload,
 // upserting the row and stamping the audit columns for THIS transition only —
@@ -161,7 +155,7 @@ func (db *DB) BinQualityHold(binID int64) (bool, string, error) {
 // the containment screen's queue of bins an operator parked that have not yet
 // been picked up.
 func (db *DB) ListHeldBins() ([]HeldBinRow, error) {
-	rows, err := db.DB.Query(`SELECT b.id, b.label, b.payload_code, b.node_id,
+	rows, err := db.DB.Query(`SELECT b.id, b.label, b.payload_code,
 		COALESCE(n.name, ''), b.hold_by, b.hold_at
 		FROM bins b LEFT JOIN nodes n ON n.id = b.node_id
 		WHERE b.quality_hold = TRUE ORDER BY b.hold_at ASC`)
@@ -173,7 +167,7 @@ func (db *DB) ListHeldBins() ([]HeldBinRow, error) {
 	for rows.Next() {
 		var r HeldBinRow
 		var holdAt sql.NullTime
-		if err := rows.Scan(&r.BinID, &r.Label, &r.PayloadCode, &r.NodeID, &r.NodeName, &r.HoldBy, &holdAt); err != nil {
+		if err := rows.Scan(&r.BinID, &r.Label, &r.PayloadCode, &r.NodeName, &r.HoldBy, &holdAt); err != nil {
 			return nil, err
 		}
 		if holdAt.Valid {
@@ -185,16 +179,9 @@ func (db *DB) ListHeldBins() ([]HeldBinRow, error) {
 	return out, rows.Err()
 }
 
-// HeldBinRow is one held bin as the containment screens read it.
-type HeldBinRow struct {
-	BinID       int64         `json:"bin_id"`
-	Label       string        `json:"label"`
-	PayloadCode string        `json:"payload_code"`
-	NodeID      sql.NullInt64 `json:"node_id"`
-	NodeName    string        `json:"node_name"`
-	HoldBy      string        `json:"hold_by"`
-	HoldAt      *time.Time    `json:"hold_at"`
-}
+// HeldBinRow is one held bin as the containment screens read it. Domain-owned;
+// see PayloadContainmentRow.
+type HeldBinRow = domain.HeldBinRow
 
 // ContainmentRouteForNode resolves the quality-containment route the dispatch
 // divert reads: the claim rows Core mirrors for one core node, narrowed to

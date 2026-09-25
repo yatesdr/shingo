@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"shingocore/domain"
-	"shingocore/store"
 )
 
 func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +57,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	containmentState := make(map[string]*store.PayloadContainmentRow, len(containment))
+	containmentState := make(map[string]*domain.PayloadContainmentRow, len(containment))
 	for i := range containment {
 		containmentState[containment[i].PayloadCode] = &containment[i]
 	}
