@@ -331,6 +331,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 		return nil
 	}
 	e.noteEvictedGhosts(evicted, "delivery", *order.BinID, order.DeliveryNode)
+	e.stampContainmentArrival(*order.BinID, destNode, order.PayloadCode, "delivery")
 
 	// Re-read bin for the event payload (post-ApplyArrival state). The
 	// guard's earlier read is pre-arrival; the event needs the new node
@@ -664,6 +665,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 	e.noteEvictedGhosts(evicted, "delivery", *order.BinID, order.DeliveryNode)
+	e.stampContainmentArrival(*order.BinID, destNode, order.PayloadCode, "completion")
 
 	// Emit bin contents changed
 	updatedBin, binErr := e.db.GetBin(*order.BinID)

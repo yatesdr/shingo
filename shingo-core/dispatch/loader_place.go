@@ -584,6 +584,28 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 			return &dispatchStep{done: true, err: fmt.Errorf("containment node %s is full", containment)}
 		}
 	}
+	// MULTI-BIN CONSISTENCY: the junction rows are the per-bin placement
+	// truth — applyMultiBinArrivalForOrder places each claimed bin at its
+	// junction dest_node, not at the order's delivery_node — so re-pointing
+	// only the order row would land every FG-bound bin of a multi-bin order
+	// at FG with nothing but a debug line to show for it: the divert a
+	// silent no-op exactly where the plan is most complicated. Every
+	// junction row destined to the diverted node re-points with it.
+	// Updating to the same value is idempotent, so this runs on EVERY pass,
+	// including a replay that skips the order-row write below — a pass that
+	// crashed between the two writes is finished by the next one.
+	if orderBins, berr := d.db.ListOrderBins(order.ID); berr != nil {
+		log.Printf("dispatch: containment junction read for order %d: %v", order.ID, berr)
+	} else {
+		for _, ob := range orderBins {
+			if ob.DestNode != final {
+				continue
+			}
+			if _, uerr := d.db.UpdateOrderBinDestNode(order.ID, ob.BinID, containment); uerr != nil {
+				log.Printf("dispatch: containment junction re-point order %d bin %d: %v", order.ID, ob.BinID, uerr)
+			}
+		}
+	}
 	if order.DeliveryNode == containment {
 		return nil // already re-pointed (scanner replay) — idempotent
 	}

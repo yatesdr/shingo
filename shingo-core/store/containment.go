@@ -29,6 +29,9 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"shingocore/store/internal/nodetree"
+	"shingocore/store/nodes"
 )
 
 // PayloadContainmentRow is one payload's containment state as the UI reads it.
@@ -299,4 +302,95 @@ func (db *DB) ListProducersForPayload(payloadCode string) ([]ProducerRoute, erro
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ProcessID < out[j].ProcessID })
 	return out, nil
+}
+
+// StampContainmentArrival marks a just-landed bin with the quality-hold
+// marker when the place it landed is (inside) a containment destination for
+// its payload and that payload's containment is still active. Returns
+// whether THIS call wrote the marker.
+//
+// WHY THE MARKER, AND NOT LOCATION. The divert (dispatch's
+// placeForContainment) re-points an FG delivery to the containment
+// destination, but arrival is where the bin becomes an ordinary
+// available, unclaimed row again — and every anti-resourcing rule Core
+// owns (the finder's candidate skip, the loader pool read, the
+// empty-carrier fragment, the plant-wide FindSourceFIFO) keys on the
+// marker, not on where the bin stands. An unstamped contained bin is, to
+// the sourcing engine, just another full bin of its payload, and the
+// plant-wide retrieve fallback — which scans every node in the plant —
+// would hand it straight back into production. The station-hold path
+// stamps at hold time; this is the divert path stamping at arrival, so
+// both mechanisms read identically downstream (the recall already stamps
+// the same way).
+//
+// THE MATCH IS SUBTREE-AWARE on purpose. A group destination is the
+// expected shape for a containment area, and the NGRP resolution spreads
+// arrivals across the group's children — the bin lands on a child while
+// the claim names the group. The landed node's ancestor chain (self at
+// depth 0) is matched against the nodes the claims name, so a child
+// landing finds the group's claim. The destination NAMES are resolved
+// through GetByDotName — the exact resolver the divert itself used to
+// re-point the delivery — so the two ends of the trip can never disagree
+// about what a destination name means.
+//
+// THE FLAG IS RE-CHECKED at arrival. Containment deactivated while the
+// diverted order was in flight leaves the bin ordinary stock that happens
+// to stand in the containment area: sourcing it back out is then correct,
+// and stamping it would strand it behind a manual release for nothing.
+//
+// The stamp is conditional (WHERE NOT quality_hold): an operator's hold —
+// hold_by names them — is never overwritten by the mechanism, and a bin
+// stamped twice stamps once.
+func (db *DB) StampContainmentArrival(binID, landedNodeID int64, payloadCode, by string) (bool, error) {
+	if binID <= 0 || landedNodeID <= 0 || payloadCode == "" {
+		return false, nil
+	}
+	active, err := db.PayloadContainmentActive(payloadCode)
+	if err != nil || !active {
+		return false, err
+	}
+	rows, err := db.DB.Query(`SELECT DISTINCT containment_destination FROM style_claims
+		WHERE payload_code = $1 AND containment_destination <> ''`, payloadCode)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	var destIDs []int64
+	for rows.Next() {
+		var dest string
+		if err := rows.Scan(&dest); err != nil {
+			return false, err
+		}
+		dn, err := nodes.GetByDotName(db.DB, dest)
+		if err != nil || dn == nil {
+			continue // a destination that resolves nowhere holds nothing
+		}
+		destIDs = append(destIDs, dn.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if len(destIDs) == 0 {
+		return false, nil
+	}
+	var holds bool
+	err = db.DB.QueryRow(nodetree.AncestorsOf(1)+`
+		SELECT EXISTS (
+			SELECT 1 FROM ancestors a
+			WHERE a.id = ANY($2)
+		)`, landedNodeID, destIDs).Scan(&holds)
+	if err != nil || !holds {
+		return false, err
+	}
+	res, err := db.DB.Exec(`UPDATE bins
+		SET quality_hold = TRUE, hold_by = $2, hold_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND NOT COALESCE(quality_hold, false)`, binID, by)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
