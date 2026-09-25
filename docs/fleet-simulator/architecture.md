@@ -25,6 +25,17 @@ dispatcher.HandleOrderReceipt(...)     (simulates Edge confirmation)
 
 The key detail: the robot finishing (FINISHED) does not move the bin. The Edge station must confirm receipt first. This matches real production behavior and prevents inventory from updating before a human confirms the bin actually arrived.
 
+## Measuring a sim run: the soakstat ledger
+
+A running sim stack is measured by `shingo-core/cmd/soakstat`, which reads Core's database and never writes to it.
+- **The report** (every 5 minutes): the soak's measures and its invariants, including holds-at-rest.
+- **The ledger** (`soakstat -ledger FILE -sample N`, every 30 s): one JSON-lines sample of the books over time.
+  - Every live order, with what it holds in each book: reserved (pending rows), committed (hard, no fleet order yet), claimed (hard, fleet moving).
+  - Every storage slot: stored or lifted bin, claim, slot reservations, the orders naming it as a bare destination, whether it entombs a spoken-for slot, and its lane's dig lock and occupancy.
+  - It costs six statements per sample, one per table.
+
+The ledger's columns are documented once, at the top of `cmd/soakstat/ledger.go`. A hit (an order waiting while it holds something hard) is classified from the ledger after the run, so no hit needs reading by hand.
+
 ## Concurrency testing infrastructure
 
 The simulator harness includes infrastructure for deterministic and statistical concurrency testing:

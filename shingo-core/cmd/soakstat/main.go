@@ -18,6 +18,11 @@
 // and hard tallies, and the dig steal. Pass -log to fold them in; without it
 // those lines read `n/a (no -log)` rather than zero, because a zero nobody
 // measured is the most dangerous number in a soak report.
+//
+// THE LEDGER. `-ledger FILE -sample N` appends one books-over-time sample to
+// FILE and exits instead of reporting: every live order's holds by book and
+// every storage slot's state, for the rig's 30-s cadence. Its format and every
+// column are documented at the top of ledger.go, and nowhere else.
 package main
 
 import (
@@ -48,6 +53,8 @@ func main() {
 	configPath := flag.String("config", "/etc/shingo/shingocore.dev.yaml", "path to the core config YAML")
 	logSource := flag.String("log", "", "core log: a file path, `-` for stdin (the reliable form), or docker:<container>")
 	oneline := flag.Bool("oneline", false, "print the single-line summary and nothing else")
+	ledgerPath := flag.String("ledger", "", "append one ledger sample to this file and exit (see ledger.go)")
+	sampleN := flag.Int("sample", 0, "the ledger sample number (with -ledger)")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -67,6 +74,13 @@ func main() {
 		log.Fatalf("open core db: %v", err)
 	}
 	defer db.Close()
+
+	if *ledgerPath != "" {
+		if err := appendLedger(db.DB, *ledgerPath, *sampleN, simSeconds(cfg)); err != nil {
+			log.Fatalf("ledger: %v", err)
+		}
+		return
+	}
 
 	r := collect(db, *logSource)
 	if *oneline {
