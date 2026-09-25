@@ -200,8 +200,7 @@ func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs
 // rescue it. The durable form of the fix is still a beneficiary column on the
 // row, not a second exemption written somewhere else.
 func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string, laneIDs ...int64) error {
-	lanes := sortedUniqueLanes(laneIDs)
-	if len(lanes) == 0 {
+	if len(sortedUniqueLanes(laneIDs)) == 0 {
 		return nil
 	}
 	tx, err := db.Begin()
@@ -209,7 +208,25 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 		return fmt.Errorf("reservations acquire-lanes: begin: %w", err)
 	}
 	defer tx.Rollback() // no-op once committed; the rollback path is what makes it all-or-nothing
+	if err := AcquireLanesForTx(tx, owner, mode, beneficiary, stagedOutside, reservedBy, laneIDs...); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("reservations acquire-lanes: commit: %w", err)
+	}
+	return nil
+}
 
+// AcquireLanesForTx is AcquireLanesFor on the caller's transaction. The lane's
+// advisory lock is transaction-scoped, so it is held until the CALLER commits or
+// rolls back — for dispatch.acquireHand that is the whole hand, which is the
+// point: the lane is decided together with the slot, the bins and the status,
+// and a refusal anywhere in the hand leaves no mouth row behind.
+//
+// ErrReservationConflict is returned without undoing earlier lanes in the same
+// call; the caller's rollback does that.
+func AcquireLanesForTx(tx *sql.Tx, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string, laneIDs ...int64) error {
+	lanes := sortedUniqueLanes(laneIDs)
 	for _, lane := range lanes {
 		// Transaction-scoped advisory lock on the lane id: serializes concurrent
 		// acquirers of THIS lane. xact-scoped, so a crash cannot strand it.
@@ -303,9 +320,6 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 				return ErrOwnerEnded // the whole call rolls back: nothing is held for an ended order
 			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("reservations acquire-lanes: commit: %w", err)
 	}
 	return nil
 }

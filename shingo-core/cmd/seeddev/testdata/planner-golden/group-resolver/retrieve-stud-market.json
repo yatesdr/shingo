@@ -1,0 +1,11 @@
+{
+  "need": {
+    "group": "SYN_MARKET",
+    "mode": "retrieve",
+    "payload": "STUD"
+  },
+  "decision": {
+    "node": "SMN_016",
+    "bin": "BIN-STUD-01"
+  }
+}

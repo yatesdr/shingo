@@ -1,0 +1,58 @@
+{
+  "need": {
+    "delivery": "SYN_PRESS_EMPTIES",
+    "door": "edge wire intake",
+    "source": "PLN_001",
+    "type": "move"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "dispatched",
+      "queued"
+    ],
+    "fleet": [
+      {
+        "external": "g-move",
+        "blocks": [
+          "PLN_001 JackLoad",
+          "Lane_02-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "move",
+        "status": "in_transit",
+        "source": "PLN_001",
+        "delivery": "SMN_009",
+        "bin": "BIN-ACT-P1F",
+        "steps": [
+          "pickup PLN_001",
+          "wait Lane_02-WAIT",
+          "dropoff SMN_009"
+        ],
+        "hard_bins": [
+          "BIN-ACT-P1F"
+        ],
+        "hard_slots": [
+          "SMN_009"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-ACT-P1F",
+          "occupancy:confirmed:Lane_03",
+          "slot:confirmed:SMN_009"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill",
+      "order.update status=queued"
+    ]
+  }
+}

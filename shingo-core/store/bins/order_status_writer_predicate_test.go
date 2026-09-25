@@ -49,7 +49,7 @@ var orderStatusWriters = []struct {
 		why:             "The id-scoped write. Wait-ends bookkeeping (waitEndsSQL) rides along; the id WHERE is the whole guard — a dropped WHERE would re-stamp every order.",
 	},
 	{
-		file: "../orders/orders.go", fn: "func UpdateStatusFromWithReason(",
+		file: "../orders/orders.go", fn: "func UpdateStatusFromWithReasonTx(",
 		mustStatusGuard: "AND status=$4",
 		why:             "The CAS write transition() rides on. The AND status=$4 arm is the compare-and-swap itself; without it every transition is a blind overwrite and the resurrect incident (stale scanner wrote queued→sourcing over a cancel) is re-opened.",
 	},

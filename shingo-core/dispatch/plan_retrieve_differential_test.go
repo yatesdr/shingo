@@ -60,8 +60,8 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name},
 		{Action: protocol.ActionDropoff, Node: result.DestNode.Name},
 	}
-	if !reflect.DeepEqual(result.Plan, wantPlan) {
-		t.Fatalf("emitted shadow plan = %+v, want %+v", result.Plan, wantPlan)
+	if !reflect.DeepEqual(shadowPlan(result, order), wantPlan) {
+		t.Fatalf("emitted shadow plan = %+v, want %+v", shadowPlan(result, order), wantPlan)
 	}
 
 	// Differential: the scanner (mirrored) claims the staged bin and dispatches;
@@ -80,7 +80,7 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 		t.Fatal("simple no-wait dispatch must create Complete=true, got false")
 	}
 
-	blocks := stepsToBlocks("v-diff", result.Plan, 0, nil)
+	blocks := stepsToBlocks("v-diff", shadowPlan(result, order), 0, nil)
 	if len(blocks) != 2 {
 		t.Fatalf("plan produced %d blocks, want 2", len(blocks))
 	}
@@ -130,10 +130,16 @@ func TestStage1_RetrievePlanDifferential_GatedNoPlan(t *testing.T) {
 	if !result.Queued {
 		t.Fatal("retrieve to an occupied destination must queue")
 	}
-	if result.Plan != nil {
-		t.Fatalf("no plan must be emitted for a queued (non-dispatch) retrieve, got %+v", result.Plan)
-	}
 	if reloaded, err := db.GetOrder(order.ID); err == nil && reloaded.QueueReason == "" {
 		t.Error("queued retrieve must carry a queue_reason (disposition unchanged)")
 	}
+}
+
+// shadowPlan is the plan planTransport used to emit on PlanningResult.Plan — a
+// field nothing but these tests read, deleted with Stage A's dead outputs. The
+// differential it served is unchanged: the transport plan built from the
+// planner's own source and destination is fleet-equivalent to what the scanner
+// dispatches. Built the way dispatchToFleetCore builds it.
+func shadowPlan(result *PlanningResult, order *orders.Order) []resolvedStep {
+	return buildTransportPlan(result.SourceNode.Name, result.DestNode.Name, order.SourceIntent == SourceIntentEmpty)
 }

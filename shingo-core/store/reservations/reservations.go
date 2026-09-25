@@ -231,6 +231,14 @@ var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, o
 //	CreateCompoundChildren     *SELECT the parent FOR UPDATE; child rows; claims;
 //	                           the child's ledger INSERT tests the child, a row
 //	                           this transaction created and no other can lock.
+//	dispatch.acquireHand       the slot claims (*UPDATE nodes), the bin claims
+//	                           (*UPDATE bins), the mouth writers, AcquireOccupancy,
+//	                           in that order, each with the test, so the first of
+//	                           them present takes it; a hand of lanes alone takes
+//	                           the advisory lock first, as AcquireLanesFor does.
+//	                           Last, the status CAS UPDATEs the same order row,
+//	                           which this transaction's own share lock does not
+//	                           block.
 //
 // No transaction holds an order row for update while taking this share lock on
 // a different, existing order's row: CreateCompoundChildren's second order is

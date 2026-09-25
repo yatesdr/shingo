@@ -309,7 +309,7 @@ func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 			{BlockID: "2", Location: mouth.Name},
 		},
 	}
-	err = d.commitToFleet(order, req, "test") // no entering nodes — the bug, in one argument
+	err = d.commitToFleet(order, req, "test", Hand{}) // no entering nodes — the bug, in one argument
 
 	if err == nil {
 		t.Fatalf("the seam accepted a dispatch into lane %s that declared no lane. That order would "+
@@ -380,7 +380,7 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 			{BlockID: "2", Location: grp.Name},
 		},
 	}
-	err = d.commitToFleet(order, req, "test", srcNode, grp)
+	err = d.commitToFleet(order, req, "test", Hand{}, srcNode, grp)
 
 	if err == nil {
 		t.Fatalf("the seam accepted a dispatch to %s, a synthetic group and not a position any robot "+
@@ -431,7 +431,7 @@ func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
 			{BlockID: "2", Location: lineNode.Name},
 		},
 	}
-	err = d.commitToFleet(order, req, "test", srcNode, lineNode)
+	err = d.commitToFleet(order, req, "test", Hand{}, srcNode, lineNode)
 
 	if IsSyntheticLocation(err) {
 		t.Fatalf("the guard refused %s, a concrete node, as synthetic: %v\nThe predicate is too wide "+

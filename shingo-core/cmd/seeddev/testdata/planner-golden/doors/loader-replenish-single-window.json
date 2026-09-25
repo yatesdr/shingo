@@ -1,0 +1,53 @@
+{
+  "need": {
+    "current_uop": 0,
+    "door": "loader replenish",
+    "loader": "PLK_X1",
+    "payload": "CLIP",
+    "threshold": 2
+  },
+  "decision": {
+    "events": null,
+    "fleet": [
+      {
+        "external": "order 1 of this case",
+        "blocks": [
+          "Lane_02-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve_empty",
+        "status": "in_transit",
+        "payload": "CLIP",
+        "source": "UTN_001",
+        "delivery": "PLK_X1",
+        "bin": "BIN-MT-01",
+        "steps": [
+          "wait Lane_02-WAIT",
+          "pickup UTN_001 (empty)",
+          "dropoff PLK_X1"
+        ],
+        "hard_bins": [
+          "BIN-MT-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-MT-01",
+          "mouth:confirmed:Lane_11",
+          "occupancy:confirmed:Lane_11"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": [
+      "want 1"
+    ],
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill"
+    ]
+  }
+}

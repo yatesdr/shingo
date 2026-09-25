@@ -28,10 +28,10 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 func (s *stubDispatcher) ReserveStorageDropoff(o *orders.Order) dispatch.StorageDropoff {
 	return dispatch.StorageDropoff{Node: &nodes.Node{Name: o.DeliveryNode}}
 }
-func (s *stubDispatcher) ConfirmForDispatch(*orders.Order, int64, *nodes.Node, *nodes.Node) error {
-	panic("scanner complex-order branch should not call ConfirmForDispatch")
+func (s *stubDispatcher) DispatchHand(*orders.Order, int64, *nodes.Node, *nodes.Node) (string, error) {
+	panic("scanner complex-order branch should not call DispatchHand")
 }
-func (s *stubDispatcher) AcquireLanesForOrder(*orders.Order, *nodes.Node, *nodes.Node, dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
+func (s *stubDispatcher) AdmitLanesForOrder(*orders.Order, *nodes.Node, *nodes.Node, dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
 	return true, "", "", nil // gate off — the complex branch does not gate lanes here
 }
 func (s *stubDispatcher) ReleaseLanesForOrder(int64) error        { return nil }

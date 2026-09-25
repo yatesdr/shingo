@@ -288,25 +288,46 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// never called, so nothing has answered the reachability question and this
 	// caller must ask it.
 	//
-	// BEFORE ConfirmForDispatch, deliberately. A refusal here leaves the bin SOFT
-	// — reserved, not hard-claimed — which is exactly the state the scanner's
-	// held-bin path expects to pick the order up in, so the retry is the ordinary
-	// machinery rather than a second implementation of it.
-	if admitted, cause, laneName, aerr := e.dispatcher.AcquireLanesForOrder(
+	// BEFORE the hand, deliberately, and with no row written: the admission
+	// verdict only. A refusal here leaves the bin SOFT — reserved, not
+	// hard-claimed — which is exactly the state the scanner's held-bin path
+	// expects to pick the order up in, so the retry is the ordinary machinery
+	// rather than a second implementation of it.
+	if admitted, cause, laneName, aerr := e.dispatcher.AdmitLanesForOrder(
 		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil || !admitted {
 		return e.queueBinMoveForLane(order, bin, sourceNode, destNode, cause, laneName, aerr)
 	}
 
-	// Confirm-at-dispatch: hard-claim the destination slot (if a storage
-	// dropoff) and the bin in one step, immediately before the fleet call.
-	if err := e.dispatcher.ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
+	// THE DESTINATION SLOT, SOFT. This door never reserved it, so a move to a
+	// concrete storage slot could never dispatch: the hard claim is only allowed
+	// where the order already holds a pending slot reservation, and there was
+	// none — the confirm refused "no pending reservation" every time, on an empty
+	// slot in an empty lane as much as anywhere. Every other plain door reserves
+	// the slot first; this one does now. A no-op for a line or consume point.
+	if dest := e.dispatcher.ReserveStorageDropoff(order); dest.Refused() {
+		// The same disposition as the claim refusal below: release the bin's soft
+		// hold and answer the person with a refusal.
+		if rerr := e.db.ReleaseReservation(order.ID, bin.ID); rerr != nil {
+			e.logFn("engine: release reservation for bin %d after slot refusal: %v", bin.ID, rerr)
+		}
+		return nil, refuse(BinMoveConflict, dest.Err, "%s cannot take the bin right now (%s)", destNode.Name, dest.Cause)
+	}
+
+	// THE HAND: the slot, the bin, the lane mouths, the occupancy and the status
+	// in one transaction, then the fleet call. A lane refusal inside the hand is
+	// the same wait as the admission refusal above; a slot or bin refusal, an
+	// ended order or a gone named bin (dispatch.NotAWait) is the fault the old
+	// confirm returned. Either way the hand held nothing.
+	vendorOrderID, err := e.dispatcher.DispatchHand(order, bin.ID, sourceNode, destNode)
+	if r, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
+		if refused && r.Leg == dispatch.HandLegLane && r.Cause != dispatch.CauseLaneAcquireError {
+			return e.queueBinMoveForLane(order, bin, sourceNode, destNode, r.Cause, r.Lane, nil)
+		}
 		if rerr := e.db.ReleaseReservation(order.ID, bin.ID); rerr != nil {
 			e.logFn("engine: release reservation for bin %d after confirm failure: %v", bin.ID, rerr)
 		}
 		return nil, refuse(BinMoveFault, err, "could not claim bin %s at dispatch: %v", bin.Label, err)
 	}
-
-	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		// THIS DOOR FAILS THE ROW, because this door has a person waiting on it.
 		// DispatchDirect no longer terminalizes — a fleet refusal is congestion and

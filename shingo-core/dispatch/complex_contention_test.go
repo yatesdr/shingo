@@ -12,7 +12,6 @@ package dispatch
 
 import (
 	"encoding/json"
-	"shingocore/domain"
 	"sync"
 	"testing"
 
@@ -72,7 +71,7 @@ func TestReserveComplexPlan_ConcurrentContention(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-ready // released simultaneously to maximise the race window
-			plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, srcNode.Name, domain.BinTypeRule{})
+			plan := BuildComplexPlan(steps)
 			_, outcomes[i], errs[i] = d.allocator.reserveComplexPlan(order, plan)
 		}()
 	}

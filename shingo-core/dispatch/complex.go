@@ -144,16 +144,6 @@ type claimedBin struct {
 	nodeName  string
 }
 
-// pickupSkip records why a pickup step in a complex order failed to claim a
-// bin. Surfaced to production logs by ApplyComplexPlan so silent claim
-// failures (the ALN_002 → SMN_003 incident class) become diagnosable from
-// the log instead of only from the late-bind manifest fallback path.
-type pickupSkip struct {
-	stepIndex int
-	nodeName  string
-	reason    string
-}
-
 // joinRejects formats per-bin reject reasons into a single log line. Caps at
 // the first 6 entries so a node with many bins doesn't blow up the log; the
 // summary still notes the count even if entries are truncated.

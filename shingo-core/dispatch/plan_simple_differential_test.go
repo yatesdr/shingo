@@ -82,10 +82,10 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name, Empty: true},
 		{Action: protocol.ActionDropoff, Node: result.DestNode.Name},
 	}
-	if !reflect.DeepEqual(result.Plan, want) {
-		t.Fatalf("emitted shadow plan = %+v, want %+v", result.Plan, want)
+	if !reflect.DeepEqual(shadowPlan(result, order), want) {
+		t.Fatalf("emitted shadow plan = %+v, want %+v", shadowPlan(result, order), want)
 	}
-	if !result.Plan[0].Empty {
+	if !shadowPlan(result, order)[0].Empty {
 		t.Fatal("retrieve_empty pickup must carry Empty=true (intent survives as step data, not OrderType)")
 	}
 	// The scanner (mirrored) claims the empty and dispatches. Assert the claim-moved
@@ -98,7 +98,7 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	if len(reqs) != 1 {
 		t.Fatalf("claim-moved dispatch produced %d create requests, want 1", len(reqs))
 	}
-	assertFleetEquivalent(t, result.Plan, reqs[0])
+	assertFleetEquivalent(t, shadowPlan(result, order), reqs[0])
 }
 
 // TestStage2_MovePlanDifferential_Dispatch: happy-path move — plan emitted,
@@ -140,8 +140,8 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name},
 		{Action: protocol.ActionDropoff, Node: dstNode.Name},
 	}
-	if !reflect.DeepEqual(result.Plan, want) {
-		t.Fatalf("emitted shadow plan = %+v, want %+v", result.Plan, want)
+	if !reflect.DeepEqual(shadowPlan(result, order), want) {
+		t.Fatalf("emitted shadow plan = %+v, want %+v", shadowPlan(result, order), want)
 	}
 	// The scanner (mirrored) claims + dispatches; assert fleet-equivalent to the plan.
 	dispatched := dispatchSimpleViaScanner(t, d, db, order.EdgeUUID)
@@ -152,7 +152,7 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	if len(reqs) != 1 {
 		t.Fatalf("claim-moved dispatch produced %d create requests, want 1", len(reqs))
 	}
-	assertFleetEquivalent(t, result.Plan, reqs[0])
+	assertFleetEquivalent(t, shadowPlan(result, order), reqs[0])
 }
 
 // TestStage2_MovePlanDifferential_SameNode: a same-node move is a terminal
@@ -234,8 +234,8 @@ func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 	if result.DestNode.Name != child.Name {
 		t.Fatalf("dest resolved to %s, want concrete child %s", result.DestNode.Name, child.Name)
 	}
-	if len(result.Plan) != 2 || result.Plan[1].Node != child.Name {
-		t.Fatalf("plan dropoff = %+v, want concrete child %s (never the NGRP)", result.Plan, child.Name)
+	if len(shadowPlan(result, order)) != 2 || shadowPlan(result, order)[1].Node != child.Name {
+		t.Fatalf("plan dropoff = %+v, want concrete child %s (never the NGRP)", shadowPlan(result, order), child.Name)
 	}
 	// The resolved concrete dest must be persisted so the scanner dispatches to the
 	// child, not the group.

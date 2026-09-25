@@ -20,16 +20,6 @@ type PlanningResult struct {
 	Handled    bool
 	Queued     bool // order should be queued — inventory not available
 
-	// Plan is the order-builder plan (a resolvedStep list) for a plan-shaped simple
-	// family. It is EMITTED here but NOT consumed by dispatch and NOT persisted in
-	// this step: the plain path builds its fleet request from the order columns
-	// (SourceNode/DeliveryNode/BinID), and every StepsJSON reader is IsCoordinated-
-	// gated, so a simple plan has no reader. Persisting + consuming the plan is the
-	// follow-up where the dispatch tail unifies and reads it; the discriminator is
-	// the order.Coordinated column, never steps-presence. A differential test pins
-	// the plan fleet-equivalent to the transport tail. nil for non-dispatch
-	// dispositions (queued/handled), which carry no plan.
-	Plan []resolvedStep
 }
 
 type planningError struct {
@@ -328,8 +318,8 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 // QUEUES; the scanner re-finds + claims + reserves + dispatches. Source resolution
 // stays at intake so a WAIT/STRUCTURAL outcome sets the queue reason / terminal
 // error at submit time, and a BURIED source queues under a cause naming the lane
-// — the scanner plans its dig (parkBuried). On Found the resolved sourceNode is ADVISORY (for the shadow plan); the
-// scanner's re-find is authoritative. The one datum the scanner cannot recompute —
+// — the scanner plans its dig (parkBuried). On Found the resolved sourceNode is
+// ADVISORY; the scanner's re-find is authoritative. The one datum the scanner cannot recompute —
 // the operator's declared release-correction count (RemainingUOP, carried only by a
 // move) — is persisted onto the order so the scanner's claim seeds the same
 // manifest sync.
@@ -486,13 +476,11 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// the persisted RemainingUOP), reserves the dropoff, and dispatches — the single
 	// claim point. The reserve asymmetry (only move reserved at intake) closes here
 	// by DELETION: intake reserves nothing; the scanner reserves for every plain
-	// family. The shadow plan rides the queued disposition (advisory; the scanner
-	// re-resolves. The follow-up persists + consumes it — see PlanningResult.Plan).
+	// family.
 	return &PlanningResult{
 		Queued:     true,
 		SourceNode: sourceNode,
 		DestNode:   destNode,
-		Plan:       buildTransportPlan(sourceNode.Name, destNode.Name, isEmpty),
 	}, nil
 }
 

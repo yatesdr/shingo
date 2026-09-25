@@ -1,0 +1,83 @@
+{
+  "need": {
+    "door": "complex intake",
+    "steps": "pickup SYN_MARKET [PANEL-A] → dropoff ALN_002; pickup ALN_001 → dropoff SYN_MARKET"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "dispatched"
+    ],
+    "fleet": [
+      {
+        "external": "order 2 of this case",
+        "blocks": [
+          "Lane_03-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "complex",
+        "status": "reshuffling",
+        "payload": "PANEL-A",
+        "source": "SYN_MARKET",
+        "delivery": "SYN_MARKET",
+        "queue_code": "storage_rearranging",
+        "queue_cause": "intake-buried",
+        "steps": [
+          "pickup SYN_MARKET",
+          "dropoff ALN_002",
+          "pickup ALN_001",
+          "dropoff SYN_MARKET"
+        ],
+        "reservations": [
+          "mouth:confirmed:Lane_01"
+        ]
+      },
+      {
+        "index": 2,
+        "parent": 1,
+        "type": "move",
+        "status": "in_transit",
+        "payload": "PANEL-A",
+        "source": "SMN_001",
+        "bin": "BIN-PA-01",
+        "steps": [
+          "wait Lane_03-WAIT",
+          "pickup SMN_001",
+          "wait SMN_001"
+        ],
+        "hard_bins": [
+          "BIN-PA-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-01",
+          "occupancy:confirmed:Lane_01"
+        ],
+        "to_fleet": true
+      },
+      {
+        "index": 3,
+        "parent": 1,
+        "type": "move",
+        "status": "pending",
+        "payload": "PANEL-A",
+        "source": "SMN_002",
+        "bin": "BIN-PA-02",
+        "hard_bins": [
+          "BIN-PA-02"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-02"
+        ]
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "order.ack",
+      "order.ack"
+    ]
+  }
+}

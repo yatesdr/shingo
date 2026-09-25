@@ -377,6 +377,22 @@ func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, ac
 		return false, err
 	}
 	defer tx.Rollback()
+	moved, err := UpdateStatusFromWithReasonTx(tx, id, from, to, detail, code, actor, refJSON)
+	if err != nil || !moved {
+		return moved, err
+	}
+	return true, tx.Commit()
+}
+
+// UpdateStatusFromWithReasonTx is the status compare-and-swap plus its history
+// row, on the caller's transaction. It returns false (and writes nothing) when
+// the order is no longer in `from` — the caller rolls back and yields, as
+// LifecycleService does on a ConcurrentTransition. Terminal writes are refused
+// here exactly as in the wrapper: they go through TerminalizeOrder.
+func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, actor string, refJSON any) (bool, error) {
+	if protocol.IsTerminal(protocol.Status(to)) {
+		return false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
+	}
 	// error_detail is cleared exactly as UpdateStatus does on this path: its
 	// failed/cancelled branch is unreachable here because both are terminal
 	// and refused above.
@@ -394,7 +410,7 @@ func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, ac
 		id, to, detail, code, actor, refJSON, clock.Now().UTC()); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, nil
 }
 
 // UpdateWaitIndex increments the wait_index for a complex order after
@@ -1517,7 +1533,7 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // dig is kept off a soft-held requester's own destination by planUnbury, not by
 // this count either (TestHeldBinDig_NeverParksOnTheOrdersOwnDestination).
 //
-// Every reader inherits it through the counts below: CheckDropoffCapacityForType
+// Every reader inherits it through the counts below: the dropoff-capacity gate
 // (the node arm and the NGRP arm) and loader_place's two direct reads. The
 // dig's shuffle walk no longer does: it asks nodes.SlotTakeableSQL, whose
 // delivery_node clause counts any live order naming the slot. soakstat's pre-dispatch tallies keep their

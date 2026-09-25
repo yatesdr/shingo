@@ -1,0 +1,10 @@
+{
+  "need": {
+    "group": "SYN_MARKET",
+    "mode": "store",
+    "bin_type": "STANDARD"
+  },
+  "decision": {
+    "node": "SMN_009"
+  }
+}

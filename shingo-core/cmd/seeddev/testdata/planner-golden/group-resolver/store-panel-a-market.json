@@ -1,0 +1,11 @@
+{
+  "need": {
+    "group": "SYN_MARKET",
+    "mode": "store",
+    "payload": "PANEL-A",
+    "bin_type": "STANDARD"
+  },
+  "decision": {
+    "node": "SMN_009"
+  }
+}

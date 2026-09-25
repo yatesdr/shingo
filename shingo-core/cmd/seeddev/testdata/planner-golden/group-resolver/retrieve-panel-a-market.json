@@ -1,0 +1,10 @@
+{
+  "need": {
+    "group": "SYN_MARKET",
+    "mode": "retrieve",
+    "payload": "PANEL-A"
+  },
+  "decision": {
+    "error": true
+  }
+}

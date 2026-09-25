@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "CLIP",
+    "delivery": "ALN_006",
+    "intent": "full",
+    "setup": "BIN-CLIP-01 (the lane front) is locked"
+  },
+  "decision": {
+    "outcome": "reshuffle",
+    "buried_lane": "Lane_05"
+  }
+}

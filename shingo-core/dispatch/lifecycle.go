@@ -20,6 +20,7 @@
 package dispatch
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -262,6 +263,46 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	if err != nil {
 		return fmt.Errorf("persist %s→%s: %w", from, to, err)
 	}
+	s.afterTransition(ord, from, to, ev)
+	return nil
+}
+
+// transitionTx is transition's non-terminal write on the caller's transaction,
+// for a caller that has to commit the status with other work — acquireHand
+// commits slot, bins, lanes and `dispatched` together.
+//
+// It validates and writes; it does NOT touch ord or run the transition's
+// actions, because the caller may still roll back. It returns the function that
+// does both, which the caller runs only after its commit succeeds. A 0-row CAS
+// is a ConcurrentTransition, exactly as in transition: the order moved under us,
+// and the caller rolls back and yields.
+func (s *LifecycleService) transitionTx(tx *sql.Tx, ord *orders.Order, to protocol.Status, ev Event) (func(), error) {
+	from := ord.Status
+	if !protocol.IsValidTransition(from, to) {
+		return nil, IllegalTransition{From: from, To: to}
+	}
+	if protocol.IsTerminal(to) {
+		return nil, fmt.Errorf("transitionTx: %s→%s is terminal; terminal writes go through transition", from, to)
+	}
+	ev.PreviousStatus = from
+	detail := ev.Reason
+	if detail == "" {
+		detail = fmt.Sprintf("%s → %s by %s", from, to, ev.Actor)
+	}
+	moved, err := s.db.UpdateOrderStatusFromWithReasonTx(tx, ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
+	if err != nil {
+		return nil, fmt.Errorf("persist %s→%s: %w", from, to, err)
+	}
+	if !moved {
+		return nil, ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
+	}
+	return func() { s.afterTransition(ord, from, to, ev) }, nil
+}
+
+// afterTransition is what a transition does once its write has committed: the
+// in-memory order catches up, the futility detector sees the step, and the
+// transition's actions run.
+func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.Status, ev Event) {
 	ord.Status = to
 	// The store cleared the wait in the same write (waitEndsSQL; terminalize
 	// always). Mirror it, or the copy in hand still holds the old sentence and
@@ -286,7 +327,6 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 			log.Printf("dispatch: action failed on %s→%s for order %d: %v", from, to, ord.ID, err)
 		}
 	}
-	return nil
 }
 
 // historyReason assembles the typed reason for the order_history row.

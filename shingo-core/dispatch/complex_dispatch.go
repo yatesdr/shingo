@@ -128,11 +128,124 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return d.dispatchPairInOnePass(order, legs)
 	}
 
-	resolvedSteps, _, st := d.acquireComplexPhases(order, nil)
+	resolvedSteps, hand, st := d.prepareComplexHand(order)
 	if st.done {
 		return st.err
 	}
-	return d.dispatchComplexToFleet(order, resolvedSteps)
+	return d.dispatchComplexToFleet(order, resolvedSteps, hand)
+}
+
+// prepareComplexHand is the solo order's acquisition, up to — and not including —
+// anything hard: prepare, the swap gates, the destination's soft reserve, the
+// sources' soft reserve, and the lane admission verdict. It returns the order's
+// HAND — the slots and bins to confirm and the lane mouths to take — which
+// dispatchComplexToFleet commits in one transaction with the occupancy and the
+// status (acquireHand), and only then asks the fleet.
+//
+// ── WHY THE SOLO ORDER NO LONGER CONFIRMS HERE ────────────────────────────
+//
+// It used to (acquireComplexPhases, which the pair still uses): the sources were
+// reserved AND hard-confirmed, and the lanes were asked last, so a lane refusal
+// was a wait taken holding every bin hard. The note that stood above the lane
+// admit defended that on purpose — an order that dropped its claims to wait
+// "would re-race for them every pass and could starve behind an order that
+// arrived later." The owner has since ruled that a wait keeps SOFT reservations
+// only (v4 §2.6), and the starvation argument is answered by the reservation
+// itself: the soft holds survive the wait, and the hand's confirm is guarded by
+// them — a hard claim may only land where this order already holds a live
+// reservation — so a later order cannot take what this one is waiting to confirm.
+func (d *Dispatcher) prepareComplexHand(order *orders.Order) ([]resolvedStep, Hand, dispatchStep) {
+	resolvedSteps, st := d.prepareComplexSteps(order, nil)
+	if st.done {
+		return nil, Hand{}, st
+	}
+	if st := d.applySwapGates(order, resolvedSteps); st.done {
+		return nil, Hand{}, st
+	}
+	if st := d.reserveComplexDestination(order, resolvedSteps, nil); st.done {
+		return nil, Hand{}, st
+	}
+	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps)
+	if st.done {
+		return nil, Hand{}, st
+	}
+	hand, st := d.handFromComplexPlan(order, plan, assigned)
+	if st.done {
+		return nil, Hand{}, st
+	}
+	holds, st := d.admitComplexLanesVerdict(order, resolvedSteps)
+	if st.done {
+		return nil, Hand{}, st
+	}
+	hand.Lanes = holds
+	return resolvedSteps, hand, dispatchStep{}
+}
+
+// handFromComplexPlan turns a complete soft reserve into the hand that confirms
+// it: every slot the plan drops into exclusively (with the bins its own earlier
+// pickups take first), and every reserved pickup bin. It is confirmComplexPlan's
+// walk with the confirms deferred to the hand, and without that function's
+// "already ours, confirm in place" branches — they existed for a crash between
+// the old per-leg transactions, which one transaction removes, and the claim SQL
+// is owner-idempotent besides.
+//
+// The order's bin pointer and its order_bins rows are written here, before the
+// hand, as confirmComplexPlan wrote them before the lanes were asked. They are
+// the plan, not holds: a refused hand leaves them naming soft-held bins, which is
+// the shape a lane-refused complex order already had, and the next pass rewrites
+// them.
+func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan, assigned []reservedPickup) (Hand, dispatchStep) {
+	a := d.allocator
+	steps := plan.ResolvedSteps
+	claimFailed := func(detail string) (Hand, dispatchStep) {
+		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseClaimFailed,
+			QueueParams{Payload: order.PayloadCode})
+		d.dbg("complex: order %d held on claim_failed: %s", order.ID, detail)
+		return Hand{}, dispatchStep{done: true, err: &planningError{Code: codeClaimFailed, Detail: detail}}
+	}
+
+	var hand Hand
+	for _, sn := range a.slotNeeds(steps) {
+		node, gerr := d.db.GetNodeByDotName(sn.nodeName)
+		if gerr != nil || node == nil {
+			return claimFailed(fmt.Sprintf("confirm slot %s for order %d: node unresolved", sn.nodeName, order.ID))
+		}
+		_, takenFirst, oerr := a.binsAtStep(order, steps, sn.stepIndex, sn.nodeName)
+		if oerr != nil {
+			return claimFailed(fmt.Sprintf("read slot %s for order %d: %v", sn.nodeName, order.ID, oerr))
+		}
+		slot := HandSlot{Node: node, TakenFirst: takenFirst}
+		if st := partnerStamp(steps[sn.stepIndex]); st != nil {
+			slot.Partner, slot.PartnerTaken = st.Partner, []int64{st.Bin}
+		}
+		hand.Slots = append(hand.Slots, slot)
+		nodeID, name := node.ID, sn.nodeName
+		hand.AfterCommit = append(hand.AfterCommit, func() {
+			d.db.AppendAudit("node", nodeID, "slot_claimed", "",
+				fmt.Sprintf("complex order %d slot confirm at %s", order.ID, name), "system")
+		})
+	}
+
+	if len(assigned) == 0 {
+		detail := fmt.Sprintf("complex order %d has no source pickup", order.ID)
+		d.failOrderInternal(order, codeNoBin, detail)
+		return Hand{}, dispatchStep{done: true, err: &planningError{Code: codeNoBin, Detail: detail}}
+	}
+	claimed := make([]claimedBin, 0, len(assigned))
+	for _, rp := range assigned {
+		hand.Bins = append(hand.Bins, HandBin{BinID: rp.binID})
+		binID, name := rp.binID, rp.nodeName
+		hand.AfterCommit = append(hand.AfterCommit, func() {
+			d.db.AppendAudit("bin", binID, "claimed", "",
+				fmt.Sprintf("complex order %d confirm at %s", order.ID, name), "system")
+		})
+		claimed = append(claimed, claimedBin{binID: rp.binID, stepIndex: rp.stepIndex, nodeName: rp.nodeName})
+	}
+	if err := a.recordClaimedBins(order, steps, claimed); err != nil {
+		d.dbg("complex: order %d ended before its plan of bins was written: nothing held", order.ID)
+		return Hand{}, dispatchStep{done: true, err: err}
+	}
+	return hand, dispatchStep{}
 }
 
 // acquireComplexPhases runs the ACQUISITION half of complex dispatch — prepare,
@@ -196,16 +309,37 @@ func (d *Dispatcher) acquireComplexPhases(order *orders.Order, pc *pairPass) ([]
 // it. The gated arm's version of this hole is recorded beside
 // skipsForGatedStoreEntry; this is the same hole on the population that exists.
 //
-// LAST, after the sources are claimed and the destination reserved, and that
-// ordering is deliberate. The refusal is a WAIT, so the order must keep what it
-// has while it waits — an order that dropped its claims here would re-race for
-// them every pass and could starve behind an order that arrived later.
+// LAST, after the sources are reserved and the destination reserved. The refusal
+// is a WAIT, and what the order keeps while it waits is its SOFT reservations
+// (v4 §2.6) — never a hard claim. For the solo order that is true by
+// construction: the lane question here is a verdict, and the mouth rows are
+// taken in the hand with the slots, the bins and the status (acquireHand), so a
+// mouth refusal rolls every hard hold back. The starvation this note used to
+// cite as the reason to wait holding hard — an order dropping its claims and
+// re-racing behind a later arrival — is answered by the reservation itself: the
+// soft holds survive the wait, and the hand's confirm is guarded by them.
+//
+// The coordinated pair still confirms its sources before this runs (its phases,
+// acquireComplexPhases) and takes its mouths here; a pair that is refused here
+// has parkPair release every leg's holdings, so it too waits holding nothing.
 //
 // THE RELEASER is the one every lane wait rides: the order stays acquiring, and
 // the scanner re-runs DispatchPreparedComplex on the lane-clearing event set
 // (wiring.go) — a placement completing, a bin entering transit, an order
 // finishing. Nothing new is subscribed for this.
 func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+	holds, st := d.admitComplexLanesVerdict(order, resolvedSteps)
+	if st.done {
+		return st
+	}
+	return d.takeComplexLaneMouths(order, holds)
+}
+
+// admitComplexLanesVerdict is the lane question with no row written: the
+// physical admission (and the dig it proposes for a buried pickup) and the mouth
+// holds the plan needs. The solo order puts the holds in its hand; the pair takes
+// them in its phases (takeComplexLaneMouths).
+func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps []resolvedStep) ([]laneHold, dispatchStep) {
 	v, err := d.admitPlan(order, resolvedSteps, skipsForComplexEntry)
 	if err != nil {
 		// FAIL CLOSED, with a cause that says so. An unreadable lane is a busy
@@ -214,7 +348,7 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 		log.Printf("dispatch: admission for complex order %d: %v (holding)", order.ID, err)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseAdmissionError,
 			QueueParams{Destination: order.DeliveryNode})
-		return dispatchStep{done: true, err: err}
+		return nil, dispatchStep{done: true, err: err}
 	}
 	if !v.Admitted() {
 		d.dbg("complex: order %d held at lane %s (%s)", order.ID, v.Lane(), v.Cause())
@@ -250,7 +384,7 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 		if v.Cause() == CauseLaneTargetBuried {
 			d.proposeDigForBuriedPickup(order, v.Lane())
 		}
-		return dispatchStep{done: true, err: fmt.Errorf("complex order %d held at lane %s: %s",
+		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d held at lane %s: %s",
 			order.ID, v.Lane(), v.Cause())}
 	}
 
@@ -287,14 +421,20 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 	if errors.As(hErr, &revisit) {
 		log.Printf("dispatch: REFUSING complex order %d — %v", order.ID, revisit)
 		d.failOrderInternal(order, codeStructural, revisit.Error())
-		return dispatchStep{done: true, err: hErr}
+		return nil, dispatchStep{done: true, err: hErr}
 	}
 	if hErr != nil {
 		log.Printf("dispatch: resolving lane holds for complex order %d: %v (holding)", order.ID, hErr)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
 			QueueParams{Destination: order.DeliveryNode})
-		return dispatchStep{done: true, err: hErr}
+		return nil, dispatchStep{done: true, err: hErr}
 	}
+	return holds, dispatchStep{}
+}
+
+// takeComplexLaneMouths takes the plan's lane mouths now, in their own
+// transaction — the pair's lane step.
+func (d *Dispatcher) takeComplexLaneMouths(order *orders.Order, holds []laneHold) dispatchStep {
 	adm := d.acquireOrderLanes(order.ID, holds)
 	if adm.err != nil {
 		log.Printf("dispatch: acquiring lanes for complex order %d: %v (holding)", order.ID, adm.err)
@@ -467,6 +607,21 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 // phase. plan and assigned are locals — nothing downstream needs them. Reads the
 // resolved steps read-only.
 func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []resolvedStep) ([]reservedPickup, dispatchStep) {
+	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps)
+	if st.done {
+		return nil, st
+	}
+	if st := d.confirmComplexSources(order, plan, assigned); st.done {
+		return nil, st
+	}
+	return assigned, dispatchStep{}
+}
+
+// reserveComplexSources is the sources' SOFT half, shared by the solo order and
+// the pair: the move to sourcing, the plan, and a pending reservation on every
+// pickup bin. The solo order stops here and confirms in its hand; the pair goes
+// on to confirmComplexSources.
+func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []resolvedStep) (*ComplexPlan, []reservedPickup, dispatchStep) {
 	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
 	// order stays `sourcing` while it holds partials and the scanner retries it
 	// (the acquiring-set widening, complex scope). Idempotent — a retried order
@@ -497,29 +652,15 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		// is no longer ours.
 		if IsConcurrentTransition(err) {
 			log.Printf("dispatch: complex order %d moved under us — another actor owns it now: %v", order.ID, err)
-			return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)}
+			return nil, nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)}
 		}
 		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
 
-	// Plan = ordering + intent. RemainingUOP is nil at complex intake (Edge threads
-	// it at release, not intake). The plan's predicted bins are advisory; reserve and
-	// confirm select/claim against live state, keyed on the plan's distinct needs.
-	processNode := order.ProcessNode
-	if processNode == "" {
-		processNode = order.SourceNode
-	}
-	// The carrier rule for this order's part, read ONCE for the whole plan —
-	// BuildComplexPlan is pure and judges every candidate at every pickup step
-	// against this one value. A read failure is not an empty rule: an
-	// unreadable payload_bin_types would silently widen the plan to carriers
-	// the part may not travel in, so the order queues and the scanner retries.
-	binTypes, err := d.db.LoadBinTypeRule(order.PayloadCode)
-	if err != nil {
-		log.Printf("dispatch: complex order %d — carrier rule for %q unreadable: %v", order.ID, order.PayloadCode, err)
-		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d: load bin-type rule: %w", order.ID, err)}
-	}
-	plan := BuildComplexPlan(resolvedSteps, d.snapshotPickupBins(resolvedSteps), order.PayloadCode, processNode, binTypes)
+	// Plan = the resolved steps. The reserve selects against live state from the
+	// steps alone and reads the carrier rule itself (reserveComplexPlan), so no
+	// snapshot or rule is read here any more — they fed plan fields nothing read.
+	plan := BuildComplexPlan(resolvedSteps)
 
 	// Reserve = reconcile held reservations against the distinct source needs and
 	// soft-hold the gaps (reserveComplexPlan). Runs AFTER the slot-claim loop above,
@@ -534,7 +675,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if ownerEnded(rerr) {
 		d.dbg("complex: order %d ended before its source reserve: nothing held", order.ID)
-		return nil, dispatchStep{done: true, err: rerr}
+		return nil, nil, dispatchStep{done: true, err: rerr}
 	}
 	if rerr != nil {
 		// A DATABASE ERROR, AND THE ROW SAYS SO. This arm parked the order in
@@ -546,7 +687,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReadFailed,
 			QueueParams{Payload: order.PayloadCode})
-		return nil, dispatchStep{done: true, err: rerr}
+		return nil, nil, dispatchStep{done: true, err: rerr}
 	}
 	switch outcome {
 	case reserveMoot:
@@ -556,7 +697,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		// than hold forever: a moot evac is not demand (operator-driven hold-and-retry
 		// does not apply).
 		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
-		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moot — skipped", order.ID)}
+		return nil, nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moot — skipped", order.ID)}
 	case reserveHolding:
 		// Only claim "partial set already held" when the order actually holds part
 		// of its set. Holding NOTHING (zero reserved, blocked on every need) is a
@@ -567,9 +708,15 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReserveHolding,
 			QueueParams{Payload: order.PayloadCode, Partial: holdingPartials})
 		d.dbg("complex: order %d incomplete reserve — holding %d partial(s), retrying next tick", order.ID, len(assigned))
-		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
+		return nil, nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
 	}
 
+	return plan, assigned, dispatchStep{}
+}
+
+// confirmComplexSources is the pair's HARD half: confirmComplexPlan, before
+// either leg commits.
+func (d *Dispatcher) confirmComplexSources(order *orders.Order, plan *ComplexPlan, assigned []reservedPickup) dispatchStep {
 	// Confirm = commit the complete reserved set to hard claims (apply-as-confirm, no
 	// live re-walk). A claim_failed (a pending hold reaped, or a bin claimed by
 	// another order between reserve and confirm) requeues the attempt; a malformed
@@ -577,20 +724,20 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
 		if ownerEnded(cerr) {
 			d.dbg("complex: order %d ended before its claims: nothing claimed", order.ID)
-			return nil, dispatchStep{done: true, err: cerr}
+			return dispatchStep{done: true, err: cerr}
 		}
 		var pe *planningError
 		if errors.As(cerr, &pe) && pe.Code == codeClaimFailed {
 			d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseClaimFailed,
 				QueueParams{Payload: order.PayloadCode})
 			d.dbg("complex: order %d held on claim_failed: %s", order.ID, pe.Detail)
-			return nil, dispatchStep{done: true, err: cerr}
+			return dispatchStep{done: true, err: cerr}
 		}
 		d.failOrderInternal(order, codeNoBin, cerr.Error())
-		return nil, dispatchStep{done: true, err: cerr}
+		return dispatchStep{done: true, err: cerr}
 	}
 
-	return assigned, dispatchStep{}
+	return dispatchStep{}
 }
 
 // ownerEnded reports a reservation refused because its order has ended: a
@@ -607,7 +754,7 @@ func ownerEnded(err error) bool { return errors.Is(err, reservations.ErrOwnerEnd
 // only turns them into a fleet order. Returns a non-nil error on its two failure
 // exits (no actionable blocks before the wait, or the fleet backend rejecting the
 // create), each of which terminal-fails the order via failOrderInternal.
-func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep) error {
+func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep, hand Hand) error {
 	// THE SPLICE, AND THIS IS WHERE IT LIVES FOR COORDINATED ORDERS.
 	//
 	// A coordinated order never reaches dispatchToFleetCore — the scanner branches
@@ -664,7 +811,14 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	if gated {
 		// One valve, shared with the plain path. nil load sequence: F4c is scoped
 		// to the simple transport path and complex has never been expanded.
-		if _, gErr := d.dispatchGated(order, target, spliced, nil); gErr != nil {
+		if _, gErr := d.dispatchGated(order, target, spliced, nil, hand); gErr != nil {
+			if ownerEnded(gErr) {
+				d.dbg("complex: order %d ended before its gated handover: nothing sent", order.ID)
+				return gErr
+			}
+			if d.parkRefusedHand(order, gErr) {
+				return gErr
+			}
 			d.failOrderInternal(order, "fleet_failed", gErr.Error())
 			return gErr
 		}
@@ -726,9 +880,12 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// sent on yet, and taking a row for a lane it may reach in ten minutes would
 	// wall that lane for the whole dwell — the mistake the gated arm exists to
 	// avoid, arrived at from the other direction.
-	if err := d.commitToFleet(order, req, "scanner", d.planNodes(preWait)...); err != nil {
+	if err := d.commitToFleet(order, req, "scanner", hand, d.planNodes(preWait)...); err != nil {
 		if ownerEnded(err) {
 			d.dbg("complex: order %d ended before its fleet handover: nothing sent", order.ID)
+			return err
+		}
+		if d.parkRefusedHand(order, err) {
 			return err
 		}
 		d.failOrderInternal(order, "fleet_failed", err.Error())
@@ -1291,5 +1448,19 @@ func (d *Dispatcher) revertFungibleDropoffToGroup(order *orders.Order, steps []r
 	steps[idx].Node = group
 	steps[idx].Vacate = nil // housekeeping; stampHonoured would ignore it anyway
 	d.persistWidenedPlan(order, steps)
+	return true
+}
+
+// parkRefusedHand parks a complex order whose hand refused, under the cause the
+// refusing leg carries — the same code and cause the split confirm and the lane
+// admit wrote for the same refusal — and reports whether err was one. A refused
+// hand held nothing and the order is still acquiring: it waits, it does not fail.
+func (d *Dispatcher) parkRefusedHand(order *orders.Order, err error) bool {
+	r, ok := AsHandRefusal(err)
+	if !ok {
+		return false
+	}
+	d.setQueueReason(order, r.Code, r.Cause, r.ParkParams(order))
+	d.dbg("complex: order %d held — hand refused at the %s leg (%s): %v", order.ID, r.Leg, r.Cause, r.Err)
 	return true
 }

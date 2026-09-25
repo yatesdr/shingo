@@ -1,0 +1,95 @@
+{
+  "need": {
+    "delivery": "SLN_002",
+    "door": "edge wire intake",
+    "note": "the oldest PANEL-A is the deepest in Lane_01, so strict FIFO plans a dig",
+    "payload": "PANEL-A",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "dispatched"
+    ],
+    "fleet": [
+      {
+        "external": "order 2 of this case",
+        "blocks": [
+          "Lane_03-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve",
+        "status": "reshuffling",
+        "payload": "PANEL-A",
+        "source": "SYN_MARKET",
+        "delivery": "SLN_002",
+        "reservations": [
+          "mouth:confirmed:Lane_01"
+        ]
+      },
+      {
+        "index": 2,
+        "parent": 1,
+        "type": "move",
+        "status": "in_transit",
+        "payload": "PANEL-A",
+        "source": "SMN_001",
+        "bin": "BIN-PA-01",
+        "steps": [
+          "wait Lane_03-WAIT",
+          "pickup SMN_001",
+          "wait SMN_001"
+        ],
+        "hard_bins": [
+          "BIN-PA-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-01",
+          "occupancy:confirmed:Lane_01"
+        ],
+        "to_fleet": true
+      },
+      {
+        "index": 3,
+        "parent": 1,
+        "type": "move",
+        "status": "pending",
+        "payload": "PANEL-A",
+        "source": "SMN_002",
+        "bin": "BIN-PA-02",
+        "hard_bins": [
+          "BIN-PA-02"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-02"
+        ]
+      },
+      {
+        "index": 4,
+        "parent": 1,
+        "type": "move",
+        "status": "pending",
+        "payload": "PANEL-A",
+        "source": "SMN_003",
+        "delivery": "SLN_002",
+        "bin": "BIN-PA-03",
+        "hard_bins": [
+          "BIN-PA-03"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-03"
+        ]
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack"
+    ]
+  }
+}

@@ -503,43 +503,36 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
 	}
 
-	// Lane mouth gate (P4): take the order's lane holds before committing to the
-	// fleet, holding the soft slot+bin reservations on a conflict (Rule 1). No-op
-	// unless a mouth-enforced lane group is on the order's path.
+	// Lane admission (P4): the physical question, with no row written. A dig on
+	// the lane, a buried target or an occupied corridor parks the order here,
+	// holding its soft slot and bin reservations (Rule 1). The mouth rows
+	// themselves are taken in the hand below.
 	if ok, _ := s.admitLanes(order, sourceNode, destNode, dispatch.EntryFreshBin); !ok {
 		return false
 	}
 
-	// Confirm-at-dispatch: hard-claim BOTH the slot (if a storage dropoff) AND the
-	// bin, in one step, immediately before the fleet call. Slots-before-bins (the
-	// complex order). On failure the order keeps its soft holds and parks in
-	// sourcing under the failing leg's code; next tick it re-enters via the BinID
-	// branch and re-confirms (owner-idempotent).
-	if err := s.dispatcher.ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
-		if errors.Is(err, reservations.ErrOwnerEnded) {
-			return false // the order ended after this pass read it: nothing claimed, nothing to requeue
-		}
-		if errors.Is(err, reservations.ErrNotTheNamedBin) {
-			s.skipForNamedBin(order, bin.ID, sourceNode.Name)
+	// THE HAND: the slot (if a storage dropoff), the bin, the lane mouths, the
+	// occupancy and the `dispatched` status in ONE transaction, then the fleet
+	// call (dispatch.DispatchHand). It replaces confirm-then-dispatch, whose two
+	// confirms committed separately: a bin that refused after its slot confirmed
+	// left the order waiting with the slot held hard. A refused hand holds
+	// nothing; the order parks under the refusing leg's cause, keeping its soft
+	// holds, and re-enters via the held-bin arm next tick.
+	vendorOrderID, err := s.dispatcher.DispatchHand(order, bin.ID, sourceNode, destNode)
+	if err != nil {
+		if s.endedOrSkipped(order, err, bin.ID, sourceNode.Name) {
 			return false
 		}
-		s.logFn("fulfillment: confirm-at-dispatch for order %d failed: %v", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseClaimFailed,
-			dispatch.QueueParams{Payload: order.PayloadCode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
-			s.logTransition(order.ID, "→ sourcing after confirm fail", qerr)
+		if r, refused := dispatch.AsHandRefusal(err); refused {
+			s.logFn("fulfillment: hand for order %d refused, re-queuing (soft holds kept): %v", order.ID, err)
+			s.parkRefusedHand(order, r)
+			return false
 		}
-		return false
-	}
-
-	// Dispatch to fleet — use DispatchDirect which handles fleet creation. A fleet
-	// that will not take an order right now is a transient robot-system issue, not
-	// a permanent failure, so the refusal goes through the one demote door below:
-	// armor off, paper DEMOTED rather than deleted, pointer kept. The retry
-	// re-confirms the pending row it kept — it does not re-acquire, which is why
-	// deleting the paper here wedged the order (§8).
-	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
-	if err != nil {
+		// A fleet that will not take an order right now is a transient
+		// robot-system issue, not a permanent failure, so the refusal goes through
+		// the one demote door: armor off, paper DEMOTED rather than deleted,
+		// pointer kept. The retry re-confirms the pending row it kept — it does not
+		// re-acquire, which is why deleting the paper here wedged the order (§8).
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
 		// ONE DOOR. This arm used to call a release that DELETES the reservations
 		// and the order_bins rows while leaving orders.bin_id
@@ -556,6 +549,22 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		order.ID, bin.ID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
 	return true
+}
+
+// endedOrSkipped answers a hand refused with something that is not a wait
+// (dispatch.NotAWait), and reports whether err was one: an order that ended
+// after this pass read it is left alone (nothing claimed, nothing to requeue,
+// its row untouched), and a move whose named bin has left its source is
+// skipped.
+func (s *Scanner) endedOrSkipped(order *orders.Order, err error, found int64, source string) bool {
+	switch {
+	case errors.Is(err, reservations.ErrOwnerEnded):
+		return true
+	case errors.Is(err, reservations.ErrNotTheNamedBin):
+		s.skipForNamedBin(order, found, source)
+		return true
+	}
+	return false
 }
 
 // skipForNamedBin ends a move whose named bin has left its source. The hold or
@@ -652,33 +661,29 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		}
 		s.logTransition(order.ID, "held-bin → sourcing", err)
 	}
-	// Lane mouth gate (P4): same as the fresh path — take the order's lane holds
-	// before the fleet commit, parking on a conflict and keeping the held bin.
-	// EntryHeldBin: this caller skips nothing, because it never called the finder
-	// and so has no answer to the reachability question. A buried verdict is
-	// turned into a dig rather than a permanent park.
+	// Lane admission (P4): same as the fresh path — the physical question with no
+	// row written; the mouth rows are taken in the hand. EntryHeldBin: this caller
+	// skips nothing, because it never called the finder and so has no answer to
+	// the reachability question. A buried verdict is turned into a dig rather
+	// than a permanent park.
 	if ok, cause := s.admitLanes(order, sourceNode, destNode, dispatch.EntryHeldBin); !ok {
 		if cause == dispatch.CauseLaneTargetBuried {
 			return s.digForBuriedHeldBin(order)
 		}
 		return false
 	}
-	// Confirm-at-dispatch: the held bin is still SOFT (pending reservation from the
-	// prior tick). Hard-claim the slot (if a storage dropoff) AND the bin here, one
-	// step, before the fleet call — same Rule-1 step as the fresh path. On failure
-	// keep the soft holds and park in sourcing; next tick re-confirms.
-	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
-		if errors.Is(err, reservations.ErrOwnerEnded) {
-			return false // the order ended after this pass read it: its row is not touched
-		}
-		if errors.Is(err, reservations.ErrNotTheNamedBin) {
-			s.skipForNamedBin(order, *order.BinID, sourceNode.Name)
-			return false
-		}
+	// THE HAND, as on the fresh path: the held bin is still SOFT (pending
+	// reservation from the prior tick); the slot, the bin, the lane mouths, the
+	// occupancy and the status are taken in one transaction, or none of them is.
+	vendorOrderID, err := s.dispatcher.DispatchHand(order, *order.BinID, sourceNode, destNode)
+	if s.endedOrSkipped(order, err, *order.BinID, sourceNode.Name) {
+		return false
+	}
+	if r, refused := dispatch.AsHandRefusal(err); refused {
 		// ── "KEEP THE HOLD AND RETRY" NEEDS THERE TO STILL BE A HOLD ──────
 		//
 		// The sentence above is the whole premise of this arm, and when it is false
-		// the retry is not a wait — it is a loop with no releaser. ConfirmForDispatch
+		// the retry is not a wait — it is a loop with no releaser. the hand's bin leg
 		// runs the claim seatbelt (reservations.HeldByOwnerSQL): a hard claim may
 		// only land where THIS order already holds a live reservation. So an order
 		// whose soft hold has been reaped, but whose orders.bin_id survived, fails
@@ -706,7 +711,11 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// FAIL TOWARD THE RETRY on an unreadable reservations table. A wrong "keep"
 		// costs a tick and asks again; a wrong "forget" throws away a live soft hold
 		// and shops for a second bin the order does not need.
-		if !s.stillHoldsBin(order) {
+		//
+		// A LANE refusal is not this question: the hold is not in doubt, a
+		// corridor is busy. Only a slot or bin refusal asks whether the hold is
+		// still there.
+		if r.Leg != dispatch.HandLegLane && !s.stillHoldsBin(order) {
 			s.logFn("fulfillment: held-bin order %d no longer holds a reservation on bin %d — its soft "+
 				"hold was reaped and only the pointer survived, so the claim seatbelt can never open. "+
 				"Forgetting the bin so the finder picks again.", order.ID, *order.BinID)
@@ -721,15 +730,10 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 			}
 			return false
 		}
-		s.logFn("fulfillment: held-bin order %d confirm-at-dispatch failed, re-queuing (hold kept): %v", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseClaimFailed,
-			dispatch.QueueParams{Payload: order.PayloadCode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
-			s.logTransition(order.ID, "held-bin → sourcing after confirm fail", qerr)
-		}
+		s.logFn("fulfillment: held-bin order %d hand refused, re-queuing (hold kept): %v", order.ID, err)
+		s.parkRefusedHand(order, r)
 		return false
 	}
-	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (paper kept): %v", order.ID, err)
 		// The same one door as the fresh-bin arm above, and this arm needed it
@@ -775,6 +779,24 @@ func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
 	return false
 }
 
+// parkRefusedHand parks an order whose hand refused. The hand held nothing —
+// its transaction rolled back — so the order keeps exactly its soft holds and
+// waits under the refusing leg's code and cause, which are the ones the split
+// confirm and the lane acquire wrote for the same refusals.
+func (s *Scanner) parkRefusedHand(order *orders.Order, r *dispatch.HandRefusal) {
+	s.setQueueReason(order, r.Code, r.Cause, r.ParkParams(order))
+	reason := "confirm failed, retrying"
+	switch {
+	case r.Leg == dispatch.HandLegLane && r.Cause == dispatch.CauseLaneAcquireError:
+		reason = "lane acquire error, retrying"
+	case r.Leg == dispatch.HandLegLane:
+		reason = "lane contended"
+	}
+	if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", reason); qerr != nil {
+		s.logTransition(order.ID, "→ sourcing after a refused hand", qerr)
+	}
+}
+
 // admitLanes takes the order's lane mouth holds before dispatch (P4). Returns
 // true to proceed; false when the order was parked in sourcing (lane contended,
 // or a transient error) so the caller returns false too. A no-op that returns
@@ -789,7 +811,7 @@ func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
 // refusal rather than only on "no". dispatchHeldBin needs that: a buried refusal
 // there has no releaser unless it plans one.
 func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) (bool, dispatch.QueueCause) {
-	admitted, cause, lane, err := s.dispatcher.AcquireLanesForOrder(order, sourceNode, destNode, kind)
+	admitted, cause, lane, err := s.dispatcher.AdmitLanesForOrder(order, sourceNode, destNode, kind)
 	if err != nil {
 		s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneAcquireError,

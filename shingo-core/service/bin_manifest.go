@@ -1063,13 +1063,21 @@ func (s *BinManifestService) claimAndConfirm(binID, orderID int64, remainingUOP 
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if err := s.claimUnderReservationTx(tx, binID, orderID, remainingUOP); err != nil {
-		return err
-	}
-	if err := reservations.Confirm(tx, orderID, binID); err != nil {
+	if err := s.ConfirmClaimTx(tx, binID, orderID, remainingUOP); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ConfirmClaimTx is ConfirmClaim on the caller's transaction: the hard claim (per
+// the remainingUOP disposition) and the reservation's pending → confirmed flip,
+// committed or rolled back with the rest of the caller's work. dispatch.acquireHand
+// uses it so a bin confirmed before a refused lane or slot is not left claimed.
+func (s *BinManifestService) ConfirmClaimTx(tx *sql.Tx, binID, orderID int64, remainingUOP *int) error {
+	if err := s.claimUnderReservationTx(tx, binID, orderID, remainingUOP); err != nil {
+		return err
+	}
+	return reservations.Confirm(tx, orderID, binID)
 }
 
 // ConfirmClaim commits an ALREADY-RESERVED bin to a hard claim, then confirms the
@@ -1113,7 +1121,7 @@ func (s *BinManifestService) ConfirmHeldReservation(orderID, binID int64) error 
 // partial survives across ticks until the order sources or terminalizes
 // (demand is operator-driven, never aged out).
 func (s *BinManifestService) ReserveForDispatch(binID, orderID int64) error {
-	return reservations.Acquire(s.db, orderID, s.laneOwnerOf(orderID), binID, "reserveComplexPlan")
+	return reservations.Acquire(s.db, orderID, s.laneOwnerOf(orderID), binID, "reserveForDispatch")
 }
 
 // laneOwnerOf resolves the order that would hold a lane mouth row on orderID's

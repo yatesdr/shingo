@@ -637,7 +637,8 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) laneAdmi
 				// dweller is waiting on this release — the caller parks and the
 				// ordinary triggers re-ask.
 				_, _ = reservations.ReleaseLanesByOwner(d.db.DB, orderID)
-				return laneAdmission{cause: d.causeForLaneHolds(orderID, holds)}
+				cause, _ := d.laneRefusal(orderID, holds)
+				return laneAdmission{cause: cause}
 			}
 			return laneAdmission{err: aErr}
 		}
@@ -661,6 +662,15 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) laneAdmi
 // no window between reading the mode and deleting the row. Everything else about
 // the handoff is unchanged, which is the point: it is right for plain orders and
 // was wrong only for digs.
+// laneRefusal names a mouth refusal: its cause and the lane to show. It is read
+// ONCE, at the refusal, after this order's half-taken rows are gone — by
+// acquireOrderLanes after its release, and by the hand (acquireHand) after its
+// rollback — so it describes the lane as it stands without this order in it. No
+// caller that already holds the answer reads it again.
+func (d *Dispatcher) laneRefusal(orderID int64, holds []laneHold) (QueueCause, string) {
+	return d.causeForLaneHolds(orderID, holds), d.laneDisplayName(holds)
+}
+
 func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error {
 	if node == nil {
 		return nil
@@ -1057,6 +1067,31 @@ func digAskerFor(o *orders.Order) reservations.DigAsker {
 // beside that boundary map. It has one empty cell — reachability for a held-bin
 // order — declared as skipsForPlainEntry rather than left to be inferred from
 // missing code, and the caller says which of the two it is via EntryKind.
+// AdmitLanesForOrder is AcquireLanesForOrder's physical question with NO row
+// written: admission's verdict (a dig excludes everything, a buried target, an
+// occupied corridor) for this order on this path. The plain dispatch door asks it
+// before building the order's hand, and the hand takes the mouth rows in the same
+// transaction as the slot, the bins and the status (DispatchHand) — so a mouth
+// refusal is a hand refusal, and no mouth row is ever held by a waiting order.
+func (d *Dispatcher) AdmitLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind EntryKind) (admitted bool, cause QueueCause, laneName string, err error) {
+	if order == nil {
+		return false, "", "", fmt.Errorf("lane gate: no order to admit")
+	}
+	v, err := d.admit(admissionSituation{
+		order:      order,
+		sourceNode: sourceNode,
+		destNode:   destNode,
+		skip:       skipsForEntry(kind),
+	})
+	if err != nil {
+		return false, "", "", err
+	}
+	if !v.Admitted() {
+		return false, v.Cause(), v.Lane(), nil
+	}
+	return true, "", "", nil
+}
+
 func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind EntryKind) (admitted bool, cause QueueCause, laneName string, err error) {
 	if order == nil {
 		// A caller bug, not a refusal with a cause: there is no order to park and
@@ -1073,17 +1108,8 @@ func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destN
 	// Asked ahead of the mouth holds because a dig EXCLUDES everything: there is
 	// no point taking holds on a lane that is not open to this order at all, and
 	// the refusal carries its own cause and its own lane name.
-	v, err := d.admit(admissionSituation{
-		order:      order,
-		sourceNode: sourceNode,
-		destNode:   destNode,
-		skip:       skipsForEntry(kind),
-	})
-	if err != nil {
-		return false, "", "", err
-	}
-	if !v.Admitted() {
-		return false, v.Cause(), v.Lane(), nil
+	if admitted, cause, laneName, err := d.AdmitLanesForOrder(order, sourceNode, destNode, kind); err != nil || !admitted {
+		return admitted, cause, laneName, err
 	}
 
 	holds, err := d.resolveOrderLaneHolds(sourceNode, destNode)

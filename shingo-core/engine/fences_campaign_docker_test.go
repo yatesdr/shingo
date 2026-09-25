@@ -195,7 +195,23 @@ func TestFences_F7_AtLevelPushParksWithItsOwnCause(t *testing.T) {
 	// refusing this is refusing on the level alone.
 	landAt(t, db, btID, firstChild(t, db, grpID).ID, "F7-RESIDENT")
 
-	blocked, block := dispatch.CheckDropoffCapacityForType(db, "F7-GRP", 0, &btID)
+	// The push, as production asks it: the asking order holds a carrier of the
+	// group's type, and the gate derives that type from the order it excludes
+	// (BinTypeForOrder). There is no typed door to call with the type in hand.
+	dock := &nodes.Node{Name: "F7-DOCK", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dock), "create the pusher's node")
+	carrier := landAt(t, db, btID, dock.ID, "F7-PUSHED")
+	pusher := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "f7-pusher"
+		o.OrderType = dispatch.OrderTypeMove
+		o.Status = protocol.StatusSourcing
+		o.SourceNode = dock.Name
+		o.DeliveryNode = "F7-GRP"
+		o.BinID = &carrier
+	})
+	// Soft-held, as a pusher waiting on the gate holds its carrier.
+	testdb.ReserveBin(t, db, pusher.ID, carrier)
+	blocked, block := dispatch.CheckDropoffCapacity(db, "F7-GRP", pusher.ID)
 	if !blocked {
 		t.Fatal("a group at its declared level accepted a push while holding what it was " +
 			"told to hold")

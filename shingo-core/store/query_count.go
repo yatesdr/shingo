@@ -45,6 +45,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -59,6 +60,9 @@ import (
 // this instruments run off timers and event goroutines.
 type QueryCounter struct {
 	n atomic.Int64
+
+	mu    sync.Mutex
+	stmts []string // the SQL of each counted statement, for a breakdown by kind
 }
 
 // Count returns the statements issued since the last Reset (or open).
@@ -66,15 +70,32 @@ func (c *QueryCounter) Count() int64 { return c.n.Load() }
 
 // Reset zeroes the count. Call it after fixture seeding and before the call
 // under test, so the count is the call's and not the setup's.
-func (c *QueryCounter) Reset() { c.n.Store(0) }
+func (c *QueryCounter) Reset() {
+	c.mu.Lock()
+	c.n.Store(0)
+	c.stmts = nil
+	c.mu.Unlock()
+}
+
+// Statements returns the SQL of every statement counted since the last Reset,
+// in the order pgx was handed them. It is what a budget breaks down by
+// statement kind and table; the count is still Count.
+func (c *QueryCounter) Statements() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.stmts...)
+}
 
 var _ pgx.QueryTracer = (*QueryCounter)(nil)
 
 // TraceQueryStart is the count. One call per statement the application hands
 // pgx; the context is returned unchanged because nothing here needs per-query
 // state.
-func (c *QueryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+func (c *QueryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	c.mu.Lock()
 	c.n.Add(1)
+	c.stmts = append(c.stmts, data.SQL)
+	c.mu.Unlock()
 	return ctx
 }
 

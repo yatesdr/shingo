@@ -171,15 +171,11 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 }
 
 // CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that knows
-// which carrier type is arriving.
-//
-// A SECOND ENTRY POINT RATHER THAN A WIDER SIGNATURE, because the callers of
-// CheckDropoffCapacity do not know the arriving type; threading a nil through
-// each would be an edit per site that says "I do not know". (This used to say
-// the type was known at "one of the eight call sites". There are more than
-// eight, and at this writing no production caller passes a type here — the
-// only caller is CheckDropoffCapacity, with nil. The entry point stays for the
-// caller that will.)
+// which carrier type is arriving: the cancel-return's chooser (engine), which
+// asks with the carried bin's type. Every other caller goes through
+// CheckDropoffCapacity with nil, and the NGRP arm derives the type from the
+// asking order it excludes (checkNGRPCapacity → BinTypeForOrder), the same way
+// the resolver derives it.
 //
 // The type only changes the LEVEL question — physical occupancy is physical
 // whatever is arriving.

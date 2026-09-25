@@ -40,8 +40,14 @@ func TestOccupancyIsTakenOnlyAtTheKnownSeams(t *testing.T) {
 
 	// The doors themselves, and the seams allowed to open them.
 	writers := map[string]string{
-		"lane_gate.go":          "the two doors: TakeLaneOccupancy (by node) and takeLaneOccupancyByID (the gated append's)",
-		"fleet_handover.go":     "commitToFleet — every create seam funnels here, and its callers pass what they enter",
+		"lane_gate.go":      "the two doors: TakeLaneOccupancy (by node) and takeLaneOccupancyByID (the gated append's)",
+		"fleet_handover.go": "commitToFleet — every create seam funnels here, and its callers pass what they enter",
+		// commitToFleet's take, MOVED rather than added: the occupancy row is one
+		// of the hand's legs now, committed in one transaction with the slot, the
+		// bins, the mouths and the status. It takes exactly the `entering` nodes
+		// commitToFleet is handed, so the rule above — pass what you ENTER — is
+		// still answered at commitToFleet's callers and nowhere else.
+		"hand.go":               "acquireHand — commitToFleet's occupancy take, inside the hand's transaction",
 		"compound.go":           "the compound leg, which filters through enteredAtDispatch (PLAN §R.54)",
 		"lane_gate_dispatch.go": "the gated append, which is the moment a staged robot actually enters",
 		// THE FOURTH SEAM, AND IT ANSWERED THE RULE'S QUESTION BEFORE IT WAS ADDED

@@ -135,33 +135,30 @@ func TestManualRobotMove_RefusesLaneDestinations(t *testing.T) {
 // straight to the fleet. Capacity is "is there room there"; it is not "is
 // someone digging this lane" or "is a robot already inside it".
 //
-// The ORDER matters as much as the presence: the ask has to come before
-// ConfirmForDispatch, because a refusal must leave the bin SOFT — that is the
-// state the scanner's held-bin path expects to pick the order up in, and it is
-// what makes the retry the ordinary machinery instead of a second copy of it.
+// The ORDER matters as much as the presence: the ask has to come before the
+// hand (DispatchHand, which took ConfirmForDispatch's place), because a refusal
+// must leave the bin SOFT — that is the state the scanner's held-bin path
+// expects to pick the order up in, and it is what makes the retry the ordinary
+// machinery instead of a second copy of it. The ask is the verdict with no row
+// written (AdmitLanesForOrder); the mouth rows are the hand's.
 func TestBinMoveDoor_AsksAdmission(t *testing.T) {
 	t.Parallel()
 
 	body := readRepoFile(t, filepath.Join("shingo-core", "engine", "bin_move.go"))
 	fn := funcBody(t, body, "func (e *Engine) CreateBinMove(")
 
-	askAt := strings.Index(fn, "AcquireLanesForOrder(")
+	askAt := strings.Index(fn, "AdmitLanesForOrder(")
 	if askAt < 0 {
 		t.Fatal("CreateBinMove does not ask admission. A core operator's bin move is a robot in a lane " +
 			"exactly as much as a compound leg is")
 	}
-	confirmAt := strings.Index(fn, "ConfirmForDispatch(")
-	if confirmAt < 0 {
-		t.Fatal("CreateBinMove no longer confirms at dispatch; re-derive the ordering rule below")
+	handAt := strings.Index(fn, "DispatchHand(")
+	if handAt < 0 {
+		t.Fatal("CreateBinMove no longer dispatches through the hand; re-derive the ordering rule below")
 	}
-	if askAt > confirmAt {
-		t.Error("admission is asked AFTER ConfirmForDispatch, so a refusal leaves the bin hard-claimed " +
-			"— which is not the state the scanner's held-bin retry expects, and the park would need " +
-			"its own rollback")
-	}
-	dispatchAt := strings.Index(fn, "DispatchDirect(")
-	if dispatchAt >= 0 && askAt > dispatchAt {
-		t.Error("admission is asked after the fleet call, which is not asking")
+	if askAt > handAt {
+		t.Error("admission is asked AFTER the hand, so a refusal would come after the bin was hard-claimed " +
+			"— which is not the state the scanner's held-bin retry expects")
 	}
 }
 
@@ -212,17 +209,25 @@ func TestComplexDispatch_AsksAdmission(t *testing.T) {
 
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_dispatch.go"))
 
+	// The pair's phases (acquireComplexPhases) and the solo order's hand
+	// preparation (prepareComplexHand) each ask admission. The solo order asks
+	// the verdict and takes the mouths in its hand; the pair asks and takes them
+	// in its phases.
 	acquire := funcBody(t, body, "func (d *Dispatcher) acquireComplexPhases(")
 	if !strings.Contains(acquire, "admitComplexLanes(") {
 		t.Fatal("acquireComplexPhases does not ask admission. The gated valve does not cover this: " +
 			"it only stands in front of a gated lane, and neither plant has one")
 	}
+	prep := funcBody(t, body, "func (d *Dispatcher) prepareComplexHand(")
+	if !strings.Contains(prep, "admitComplexLanesVerdict(") {
+		t.Fatal("prepareComplexHand does not ask admission before building the solo order's hand")
+	}
 
-	// Solo path: the acquisition, then the fleet create, in that order.
+	// Solo path: the hand's preparation (which asks), then the fleet create.
 	solo := funcBody(t, body, "func (d *Dispatcher) DispatchPreparedComplex(")
-	askAt := strings.Index(solo, "acquireComplexPhases(")
+	askAt := strings.Index(solo, "prepareComplexHand(")
 	if askAt < 0 {
-		t.Fatal("DispatchPreparedComplex no longer runs the acquisition phases; re-derive this test")
+		t.Fatal("DispatchPreparedComplex no longer prepares the solo order's hand; re-derive this test")
 	}
 	sendAt := strings.Index(solo, "dispatchComplexToFleet(")
 	if sendAt < 0 {

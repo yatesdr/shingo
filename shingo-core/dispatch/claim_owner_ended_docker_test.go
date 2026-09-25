@@ -200,7 +200,7 @@ func TestHandover_AnOrderEndedAfterItsClaimsSendsNothing(t *testing.T) {
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "dest")
 
-	if _, err := d.dispatchToFleetCore(stale, src, dst); err == nil {
+	if _, err := d.dispatchToFleetCore(stale, src, dst, Hand{}); err == nil {
 		t.Fatal("the handover accepted an ended order")
 	}
 	if n := len(backend.CreateRequests()); n != 0 {

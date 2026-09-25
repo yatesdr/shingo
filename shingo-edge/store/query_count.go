@@ -25,6 +25,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"sync"
 	"sync/atomic"
 )
 
@@ -33,6 +34,26 @@ import (
 type QueryCounter struct {
 	n atomic.Int64
 	q atomic.Int64 // of n, the ones sent as a query (rows back): the reads
+
+	mu    sync.Mutex
+	stmts []string // the SQL of each counted statement, for a breakdown by kind
+}
+
+// record counts one statement and keeps its text.
+func (c *QueryCounter) record(query string) {
+	c.mu.Lock()
+	c.n.Add(1)
+	c.stmts = append(c.stmts, query)
+	c.mu.Unlock()
+}
+
+// Statements returns the SQL of every statement counted since the last Reset,
+// in order. It is what a budget breaks down by statement kind and table; the
+// count is still Count.
+func (c *QueryCounter) Statements() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.stmts...)
 }
 
 // Count returns the statements issued since the last Reset (or open).
@@ -48,7 +69,13 @@ func (c *QueryCounter) Writes() int64 { return c.n.Load() - c.q.Load() }
 
 // Reset zeroes the count. Call it after fixture seeding and before the call
 // under test, so the count is the call's and not the setup's.
-func (c *QueryCounter) Reset() { c.n.Store(0); c.q.Store(0) }
+func (c *QueryCounter) Reset() {
+	c.mu.Lock()
+	c.n.Store(0)
+	c.q.Store(0)
+	c.stmts = nil
+	c.mu.Unlock()
+}
 
 // OpenCounting is Open with every statement counted. Same DSN pragmas, same
 // single-connection pin, same migrate + verifySchema — the only difference is
@@ -153,7 +180,7 @@ func (c *countingConn) Prepare(query string) (driver.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &countingStmt{Stmt: s, counter: c.counter}, nil
+	return &countingStmt{Stmt: s, counter: c.counter, query: query}, nil
 }
 
 func (c *countingConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
@@ -169,7 +196,7 @@ func (c *countingConn) PrepareContext(ctx context.Context, query string) (driver
 	if err != nil {
 		return nil, err
 	}
-	return &countingStmt{Stmt: s, counter: c.counter}, nil
+	return &countingStmt{Stmt: s, counter: c.counter, query: query}, nil
 }
 
 func (c *countingConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
@@ -177,7 +204,7 @@ func (c *countingConn) ExecContext(ctx context.Context, query string, args []dri
 	if !ok {
 		return nil, driver.ErrSkip // database/sql falls back to Prepare, counted there
 	}
-	c.counter.n.Add(1)
+	c.counter.record(query)
 	return e.ExecContext(ctx, query, args)
 }
 
@@ -186,8 +213,8 @@ func (c *countingConn) QueryContext(ctx context.Context, query string, args []dr
 	if !ok {
 		return nil, driver.ErrSkip
 	}
-	c.counter.n.Add(1)
 	c.counter.q.Add(1)
+	c.counter.record(query)
 	return q.QueryContext(ctx, query, args)
 }
 
@@ -216,6 +243,7 @@ func (c *countingConn) IsValid() bool {
 type countingStmt struct {
 	driver.Stmt
 	counter *QueryCounter
+	query   string
 }
 
 var (
@@ -224,18 +252,18 @@ var (
 )
 
 func (s *countingStmt) Exec(args []driver.Value) (driver.Result, error) {
-	s.counter.n.Add(1)
+	s.counter.record(s.query)
 	return s.Stmt.Exec(args) //nolint:staticcheck // fallback path for drivers without StmtExecContext
 }
 
 func (s *countingStmt) Query(args []driver.Value) (driver.Rows, error) {
-	s.counter.n.Add(1)
 	s.counter.q.Add(1)
+	s.counter.record(s.query)
 	return s.Stmt.Query(args) //nolint:staticcheck // fallback path for drivers without StmtQueryContext
 }
 
 func (s *countingStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	s.counter.n.Add(1)
+	s.counter.record(s.query)
 	if e, ok := s.Stmt.(driver.StmtExecContext); ok {
 		return e.ExecContext(ctx, args)
 	}
@@ -243,8 +271,8 @@ func (s *countingStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 }
 
 func (s *countingStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	s.counter.n.Add(1)
 	s.counter.q.Add(1)
+	s.counter.record(s.query)
 	if q, ok := s.Stmt.(driver.StmtQueryContext); ok {
 		return q.QueryContext(ctx, args)
 	}

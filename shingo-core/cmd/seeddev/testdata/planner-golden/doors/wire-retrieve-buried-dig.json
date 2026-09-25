@@ -1,0 +1,80 @@
+{
+  "need": {
+    "delivery": "SLN_003",
+    "door": "edge wire intake",
+    "payload": "PANEL-A",
+    "setup": "BIN-PA-01 and BIN-PA-02 claimed; BIN-PA-03 moved to the back of Lane_03 with BIN-CLIP-03 in front of it",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "dispatched"
+    ],
+    "fleet": [
+      {
+        "external": "order 2 of this case",
+        "blocks": [
+          "Lane_04-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve",
+        "status": "reshuffling",
+        "payload": "PANEL-A",
+        "source": "SYN_MARKET",
+        "delivery": "SLN_003",
+        "reservations": [
+          "mouth:confirmed:Lane_03"
+        ]
+      },
+      {
+        "index": 2,
+        "parent": 1,
+        "type": "move",
+        "status": "in_transit",
+        "payload": "CLIP",
+        "source": "SMN_007",
+        "bin": "BIN-CLIP-03",
+        "steps": [
+          "wait Lane_04-WAIT",
+          "pickup SMN_007",
+          "wait SMN_007"
+        ],
+        "hard_bins": [
+          "BIN-CLIP-03"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-CLIP-03",
+          "occupancy:confirmed:Lane_03"
+        ],
+        "to_fleet": true
+      },
+      {
+        "index": 3,
+        "parent": 1,
+        "type": "move",
+        "status": "pending",
+        "payload": "PANEL-A",
+        "source": "SMN_009",
+        "delivery": "SLN_003",
+        "bin": "BIN-PA-03",
+        "hard_bins": [
+          "BIN-PA-03"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-03"
+        ]
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack"
+    ]
+  }
+}

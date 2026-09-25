@@ -52,10 +52,10 @@ func TestHandover_CASLoserNeverCallsTheFleet(t *testing.T) {
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	if _, err := d.dispatchToFleetCore(first, src, dst); err != nil {
+	if _, err := d.dispatchToFleetCore(first, src, dst, Hand{}); err != nil {
 		t.Fatalf("first caller should have won: %v", err)
 	}
-	if _, err := d.dispatchToFleetCore(second, src, dst); err == nil {
+	if _, err := d.dispatchToFleetCore(second, src, dst, Hand{}); err == nil {
 		t.Fatal("second caller was not refused — both callers claimed one order")
 	}
 
@@ -102,7 +102,7 @@ func TestHandover_UnclaimableOrderNeverReachesTheFleet(t *testing.T) {
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	if _, err := d.dispatchToFleetCore(o, src, dst); err == nil {
+	if _, err := d.dispatchToFleetCore(o, src, dst, Hand{}); err == nil {
 		t.Fatal("an order that cannot be claimed must not report a successful dispatch")
 	}
 	if n := len(backend.CreateRequests()); n != 0 {
@@ -137,7 +137,7 @@ func TestHandover_CreateFailureLeavesTheOrderClaimedAndDoesNotRollBack(t *testin
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	if _, err := d.dispatchToFleetCore(o, src, dst); err == nil {
+	if _, err := d.dispatchToFleetCore(o, src, dst, Hand{}); err == nil {
 		t.Fatal("a refusing fleet must surface an error")
 	}
 
@@ -191,7 +191,7 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 		}
 	})
 
-	if _, err := d.dispatchToFleetCore(o, src, dst); err == nil {
+	if _, err := d.dispatchToFleetCore(o, src, dst, Hand{}); err == nil {
 		t.Fatal("a failed vendor-id write must surface an error")
 	}
 
@@ -234,7 +234,7 @@ func TestHandover_RequestShapesUnchanged(t *testing.T) {
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	if _, err := d.dispatchToFleetCore(o, src, dst); err != nil {
+	if _, err := d.dispatchToFleetCore(o, src, dst, Hand{}); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 

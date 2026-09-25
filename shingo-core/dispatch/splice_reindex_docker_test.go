@@ -121,7 +121,7 @@ func TestReindexFailure_ParksTheDemandInsteadOfKillingIt(t *testing.T) {
 	_, err = db.DB.Exec(`ALTER TABLE order_bins RENAME COLUMN step_index TO step_index_broken`)
 	testutil.MustNoErr(t, err, "break the junction read")
 
-	if dErr := d.dispatchComplexToFleet(order, steps); dErr == nil {
+	if dErr := d.dispatchComplexToFleet(order, steps, Hand{}); dErr == nil {
 		t.Fatal("the re-index failure was swallowed — the order would dispatch with a junction " +
 			"describing a different plan than the one that runs, which is the 44-minute wedge")
 	}

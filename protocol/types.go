@@ -497,20 +497,23 @@ var validTransitions = map[Status][]Status{
 	// the bin is already known and resolution can be skipped.
 	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
-	// Sourcing → Dispatched is the immediate write after fleet.CreateOrder
-	// when inventory is available at planning time and the order skips the
-	// Queued state. Sourcing → Reshuffling is the planning-time pivot when
+	// Sourcing → Dispatched is the order's hand committing (dispatch.acquireHand):
+	// the status is written with the slot, bin and lane claims in one transaction,
+	// BEFORE the fleet is asked to create — never after, so a lost race never
+	// commits a robot. Sourcing → Reshuffling is the planning-time pivot when
 	// the resolver detects a buried bin and creates a compound parent.
 	StatusSourcing: {StatusQueued, StatusSubmitted, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
 	StatusSubmitted: {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed, StatusSkipped},
 
-	// Queued → Dispatched is the immediate write after fleet CreateOrder
-	// returns; Acknowledged is reported asynchronously by the vendor later.
+	// Queued → Dispatched is the hand's status write, committed before the fleet
+	// create (as Sourcing → Dispatched above); Acknowledged is reported
+	// asynchronously by the vendor later.
 	// Queued → Sourcing supports the scanner's re-resolve path when an
 	// inflight bin claim becomes invalid.
-	// Queued → Skipped is fired by DispatchPreparedComplex when ApplyComplexPlan
-	// finds zero bins at every pickup node — the work was never needed.
+	// Queued → Skipped is fired by DispatchPreparedComplex when the complex
+	// reserve finds no bin at any pickup node (reserveMoot) — the work was never
+	// needed.
 	// Queued → Reshuffling supports the complex-order buried-source path:
 	// complex intake creates the parent at Queued, then pivots to
 	// Reshuffling when the resolver returns *BuriedError. (Simple

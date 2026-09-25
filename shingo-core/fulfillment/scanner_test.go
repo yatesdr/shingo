@@ -86,8 +86,8 @@ type recordingDispatcher struct {
 	// reserve conflict requeue on both the plain and held-bin paths.
 	reserveErr error
 
-	// confirmCalls records each ConfirmForDispatch (the Rule-1 confirm-at-dispatch
-	// step); confirmErr drives the confirm-failure requeue.
+	// confirmCalls records each hand's confirm (DispatchHand's slot and bin legs);
+	// confirmErr makes the hand refuse at its bin leg — the confirm-failure park.
 	confirmCalls []confirmCall
 	confirmErr   error
 
@@ -96,8 +96,8 @@ type recordingDispatcher struct {
 	reshuffleCalls []int64
 	reshuffleErr   error
 
-	// laneConflict makes AcquireLanesForOrder report the lane contended (the P4
-	// mouth-gate park branch); releaseLaneCalls counts fleet-fail lane releases.
+	// laneConflict makes the hand refuse at its lane leg (a mouth conflict, the
+	// P4 park branch); releaseLaneCalls counts fleet-fail lane releases.
 	laneConflict     bool
 	releaseLaneCalls int
 	buriedErr        error // makes BuriedForHeldBin fail (cannot describe the dig)
@@ -168,23 +168,33 @@ func (d *recordingDispatcher) ReserveStorageDropoff(o *orders.Order) dispatch.St
 	return dispatch.StorageDropoff{Node: &nodes.Node{Name: o.DeliveryNode}}
 }
 
-// ConfirmForDispatch records the Rule-1 confirm-at-dispatch step and honors
-// confirmErr so the confirm-failure requeue is exercisable here.
-func (d *recordingDispatcher) ConfirmForDispatch(o *orders.Order, binID int64, src, dst *nodes.Node) error {
+// DispatchHand models the real one's outcomes in the order the hand takes its
+// legs: it records the confirm (slot and bin), refuses at the bin leg on
+// confirmErr, refuses at the lane leg on laneConflict (a mouth conflict inside
+// the hand), and otherwise dispatches through DispatchDirect's recorder. A
+// refusal is a *dispatch.HandRefusal carrying the cause the real hand uses for
+// that leg, so the scanner's park is exercised against production vocabulary.
+func (d *recordingDispatcher) DispatchHand(o *orders.Order, binID int64, src, dst *nodes.Node) (string, error) {
 	d.confirmCalls = append(d.confirmCalls, confirmCall{orderID: o.ID, binID: binID, source: src.Name, dest: dst.Name})
-	return d.confirmErr
+	if d.confirmErr != nil {
+		return "", &dispatch.HandRefusal{OrderID: o.ID, Leg: dispatch.HandLegBin,
+			Code: protocol.QueueWaitingForMaterial, Cause: dispatch.CauseClaimFailed, Err: d.confirmErr}
+	}
+	if d.laneConflict {
+		return "", &dispatch.HandRefusal{OrderID: o.ID, Leg: dispatch.HandLegLane,
+			Code: protocol.QueueStorageRearranging, Cause: dispatch.CauseLaneHeldTraffic, Lane: "LANE-X",
+			Err: errors.New("mouth conflict")}
+	}
+	return d.DispatchDirect(o, src, dst)
 }
 
-// AcquireLanesForOrder / ReleaseLanesForOrder: the lane mouth gate is OFF in
-// these mock-based tests (admit everything), so behavior is byte-identical to
-// pre-P4. laneConflict lets a test force the contended branch.
-func (d *recordingDispatcher) AcquireLanesForOrder(_ *orders.Order, _, _ *nodes.Node, kind dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
+// AdmitLanesForOrder / ReleaseLanesForOrder: the lane admission verdict is OFF
+// in these mock-based tests (admit everything) except for laneBuried, which
+// forces admission's buried refusal. A mouth conflict is the hand's (above).
+func (d *recordingDispatcher) AdmitLanesForOrder(_ *orders.Order, _, _ *nodes.Node, kind dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
 	d.entryKinds = append(d.entryKinds, kind)
 	if d.laneBuried {
 		return false, dispatch.CauseLaneTargetBuried, "LANE-B", nil
-	}
-	if d.laneConflict {
-		return false, dispatch.CauseLaneHeldTraffic, "LANE-X", nil
 	}
 	return true, "", "", nil
 }
@@ -478,9 +488,6 @@ func TestScannerSimpleSoftReserveFailRequeuesToSourcing(t *testing.T) {
 	}
 	if len(f.claimedBins) != 0 {
 		t.Errorf("a failed soft-reserve must not record a hard claim: %v", f.claimedBins)
-	}
-	if len(f.confirmedBins) != 0 {
-		t.Errorf("a failed soft-reserve must not confirm: %v", f.confirmedBins)
 	}
 	if len(dispatcher.confirmCalls) != 0 {
 		t.Errorf("confirm-at-dispatch must not run when the soft reserve failed: %+v", dispatcher.confirmCalls)

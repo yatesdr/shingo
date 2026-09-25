@@ -470,43 +470,19 @@ func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
 		"was chosen, and the group had somewhere else", order.ID, node.Name, result.Node.Name, lane.Name)
 }
 
-// ConfirmForDispatch is the Rule-1 confirm-at-dispatch step for the plain
-// (single-transport) path: it hard-claims BOTH the destination slot (if a concrete
-// storage dropoff) AND the source bin, in one logical step, immediately before the
-// fleet call. This is the plain analog of the complex path's confirmComplexPlan
-// (slots-then-bins, owner-idempotent, seatbelted). The slot and bin were SOFT-held
-// (pending reservations) by ReserveStorageDropoff and ReserveForDispatch while the
-// order waited; this flips both to confirmed and writes the hard claimed_by columns.
-//
-// Order: slot FIRST, then bin (slots-before-bins, matching the complex path, to
-// keep a slot↔bin cross-type claim cycle from forming). Each leg is owner-idempotent:
-// a resource already hard-claimed by THIS order (a prior tick that crashed between
-// the two legs) is confirmed-in-place rather than re-claimed. A failure returns a
-// non-nil error so the caller parks the order in sourcing under claim_failed and
-// retries next tick — the soft holds are retained, so re-entry re-confirms.
-//
-// A non-storage dropoff (line/consume point) skips the slot leg entirely.
-func (d *Dispatcher) ConfirmForDispatch(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) error {
-	// Slot leg: only a concrete storage dropoff is hard-claimed. A line/consume dest
-	// has no slot reservation to confirm.
-	if isStorageDropoff(d.db, order.DeliveryNode) && destNode != nil {
-		if err := d.confirmDropoffSlot(order, destNode); err != nil {
-			return fmt.Errorf("confirm slot %s for order %d: %w", order.DeliveryNode, order.ID, err)
-		}
-	}
-	// Bin leg: confirm the soft-held bin reservation → hard claim + confirmed, one tx.
-	if err := d.binManifest.ConfirmClaim(binID, order.ID, order.RemainingUOP); err != nil {
-		return fmt.Errorf("confirm bin %d for order %d: %w", binID, order.ID, err)
-	}
-	return nil
-}
+// The plain path's confirm-at-dispatch (ConfirmForDispatch) is gone: the slot and the bin are confirmed in the order's
+// hand now, with its lane mouths, occupancy and status, in one transaction
+// (DispatchHand, hand.go). The split it replaced confirmed the slot and the bin in
+// separate transactions, so a bin that refused after its slot confirmed left the
+// order waiting with the slot held hard.
 
-// confirmDropoffSlot hard-claims the destination slot for a storage dropoff at
-// dispatch. Owner-idempotent: a slot already claimed by THIS order (a prior confirm
-// that crashed before the bin leg) is confirmed-in-place via ConfirmSlotReservation;
-// otherwise ConfirmSlotClaim runs the reservation-guarded hard claim (claim +
-// confirm in one tx, NOT EXISTS bins seatbelt). Mirrors the complex path's per-slot
-// confirm (allocator.confirmComplexPlan).
+// confirmDropoffSlot hard-claims a storage slot for an order that is ALREADY
+// dispatched: the gate release re-aiming a gate-staged order at a new slot
+// (lane_gate_release.go). A pre-dispatch order confirms its slot in its hand
+// (acquireHand) instead. Owner-idempotent: a slot this order already claims is
+// confirmed in place via ConfirmSlotReservation; otherwise ConfirmSlotClaim runs
+// the reservation-guarded hard claim (claim + confirm in one tx, NOT EXISTS bins
+// seatbelt).
 func (d *Dispatcher) confirmDropoffSlot(order *orders.Order, destNode *nodes.Node) error {
 	if destNode.ClaimedBy != nil && *destNode.ClaimedBy == order.ID {
 		// Already ours — confirm any still-pending reservation in place, no re-claim.

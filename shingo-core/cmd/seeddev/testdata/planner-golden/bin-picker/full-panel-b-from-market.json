@@ -1,0 +1,12 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "PANEL-B",
+    "delivery": "ALN_003",
+    "intent": "full"
+  },
+  "decision": {
+    "outcome": "reshuffle",
+    "buried_lane": "Lane_02"
+  }
+}

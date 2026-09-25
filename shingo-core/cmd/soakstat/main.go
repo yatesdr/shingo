@@ -29,6 +29,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,6 +41,7 @@ import (
 	"shingocore/engine"
 	"shingocore/store"
 	"shingocore/store/bins"
+	"shingocore/store/orders"
 )
 
 func main() {
@@ -52,7 +54,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	db, err := store.Open(&cfg.Database)
+	// WITHOUT MIGRATING. soakstat reads the database of the Core it measures,
+	// and that Core owns its schema. store.Open migrates to whatever this binary
+	// was built with, so a soakstat newer than the Core under test rewrote its
+	// schema mid-run (Stage A, 2026-09-25: v131 applied at the first sample of
+	// two A1 runs whose Core stops at v130). An instrument does not write to
+	// what it measures.
+	db, err := store.OpenWithoutMigrate(&cfg.Database)
 	if err != nil {
 		log.Fatalf("open core db: %v", err)
 	}
@@ -61,11 +69,13 @@ func main() {
 	r := collect(db, *logSource)
 	if *oneline {
 		fmt.Println(r.summary())
+		fmt.Println(r.pair.pairLine())
 		return
 	}
 	r.report()
 	fmt.Println()
 	fmt.Println(r.summary())
+	fmt.Println(r.pair.pairLine())
 	if code := r.exitCode(); code != 0 {
 		os.Exit(code)
 	}
@@ -95,6 +105,37 @@ type report struct {
 	// unrunMeasures marks the measure sections whose query failed, so the
 	// report prints FAILED-TO-RUN in place of their (empty) numbers.
 	unrunMeasures map[string]bool
+	pair          pairStats
+}
+
+// pairStats is what a sim pair compares, base tip against phase tip, on the same
+// plant, anchor and duration. One line (PAIR:) so two journals diff by eye.
+//
+//   - dispatches: history rows into `dispatched`, re-dispatches included.
+//   - parks: history rows into an acquiring status (the scanner or the complex
+//     path saying "not yet"), which is what a change to acquiring moves first.
+//   - wedges: orders the stall checker reports, by its per-population budgets,
+//     aged from updated_at.
+//   - hist-wedges: the same populations and budgets, aged from the order's LAST
+//     HISTORY ROW against the sim clock (the newest history row in the table).
+//     updated_at is refreshed by every scanner pass that re-parks an order, so
+//     "wedges" never sees a long material wait; this column does. The oldest
+//     such age is reported beside the count.
+//   - time-to-dispatch: created_at to the FIRST `dispatched`, per order.
+//   - holds-at-rest: orders waiting while holding a hard claim, right now.
+type pairStats struct {
+	dispatches, parks, wedges, holdsAtRest int
+	// digLockAtRest is reported beside holdsAtRest, never gated: a dig parent's
+	// lane lock is C2's to move into the hand (orders.DigLocksAtRestSQL).
+	digLockAtRest int
+	// storage is bins in lane slots over lane slots, per lane group, in group
+	// order. A measurement only: a dig needs a free slot outside its own lane,
+	// and on the lane-stress rig the digs starved near 30 of 37.
+	storage          []groupFill
+	histWedges       int
+	histOldestMin    float64
+	ttdN             int
+	ttdAvgS, ttdP95S float64
 }
 
 // ── failed-to-run ─────────────────────────────────────────────────────────────
@@ -176,6 +217,7 @@ const (
 	measureDepth     = "[8.6] TIME TO COMPLETE BY SOURCE DEPTH"
 	measureDissolves = "[8.4] DISSOLVES"
 	measureCauses    = "WAIT CAUSES SEEN"
+	measurePair      = "PAIR"
 )
 
 type counts struct{ total, completed, failed, cancelled, inFlight, queued reading }
@@ -245,7 +287,18 @@ type dwellStats struct {
 type logStats struct {
 	source                       string
 	softN, hardN, churnN, stealN int
+	// midLiftDissolves counts dig legs a dissolve cancelled after their bin was
+	// lifted and before it was set down: the bin is left in _TRANSIT with no
+	// order (lane-stress 2026-09-25, bin 59). Counted from the log because the
+	// lift is not audited; the dissolve is the rate of a race, so is this.
+	midLiftDissolves int
 }
+
+var (
+	liftRe     = regexp.MustCompile(`transit: bin \d+ entered _TRANSIT \(order (\d+)`)
+	setDownRe  = regexp.MustCompile(`transit: bin \d+ stored at \S+ on dropoff \(order (\d+)`)
+	dissolveRe = regexp.MustCompile(`order (\d+) cancelled: reshuffle dissolved`)
+)
 
 func collect(db *store.DB, logSource string) *report {
 	r := &report{gated: map[bool]flowStats{}}
@@ -269,9 +322,131 @@ func collect(db *store.DB, logSource string) *report {
 	}
 	var checksUnrun []string
 	r.violations, checksUnrun = splitFailedToRun(checkInvariants(db))
+	// After the checks (it counts the stall violations) and before the
+	// failed-to-run lines are gathered, so a pair query that fails is one.
+	r.pair = pairMeasures(db, u, r.violations, r.lanes)
 	r.failedToRun = append(u.lines, checksUnrun...)
 	r.unrunMeasures = u.measures
 	return r
+}
+
+func pairMeasures(db *store.DB, u *unrun, violations []string, lanes []laneShape) pairStats {
+	var p pairStats
+	count := func(q string, args ...any) int {
+		n, err := scalar(db, q, args...)
+		if err != nil {
+			u.fail(measurePair, err)
+			return -1
+		}
+		return n
+	}
+	p.dispatches = count(`SELECT COUNT(*) FROM order_history WHERE status = $1`, string(protocol.StatusDispatched))
+	p.parks = count(fmt.Sprintf(`SELECT COUNT(*) FROM order_history WHERE status IN (%s)`,
+		protocol.StatusSQLList(protocol.IsAcquiring)))
+	for _, v := range violations {
+		if strings.HasPrefix(v, stalledPrefix) {
+			p.wedges++
+		}
+	}
+	var err error
+	if p.histWedges, p.histOldestMin, err = historyWedges(db); err != nil {
+		u.fail(measurePair, err)
+	}
+	if held, err := orders.ListHoldsAtRest(db.DB); err == nil {
+		p.holdsAtRest = len(held)
+	} else {
+		u.fail(measurePair, err)
+		p.holdsAtRest = -1
+	}
+	p.storage = storageFill(lanes)
+	if dug, err := orders.ListDigLocksAtRest(db.DB); err == nil {
+		p.digLockAtRest = len(dug)
+	} else {
+		u.fail(measurePair, err)
+		p.digLockAtRest = -1
+	}
+	if err := db.DB.QueryRow(`
+		WITH first AS (
+			SELECT o.id, EXTRACT(EPOCH FROM (MIN(h.created_at) - o.created_at))::float8 AS s
+			FROM orders o JOIN order_history h ON h.order_id = o.id AND h.status = $1
+			GROUP BY o.id, o.created_at)
+		SELECT COUNT(*), COALESCE(AVG(s), 0),
+		       COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY s), 0)
+		FROM first`, string(protocol.StatusDispatched)).Scan(&p.ttdN, &p.ttdAvgS, &p.ttdP95S); err != nil {
+		u.fail(measurePair, err)
+		p.ttdN = -1
+	}
+	return p
+}
+
+// historyWedges counts the orders, across the stall populations, whose last
+// history row is older than their population's budget, measured against the
+// newest history row (the sim's own clock), and the oldest such age in
+// sim-minutes. -1 when the query fails.
+func historyWedges(db *store.DB) (int, float64, error) {
+	n, oldest := 0, 0.0
+	for _, s := range stallPopulations {
+		var c int
+		var o float64
+		err := db.DB.QueryRow(fmt.Sprintf(`
+			WITH now_sim AS (SELECT MAX(created_at) AS t FROM order_history),
+			     last AS (
+			       SELECT o.id, MAX(h.created_at) AS at
+			       FROM (SELECT id FROM orders WHERE %s) o
+			       JOIN order_history h ON h.order_id = o.id
+			       GROUP BY o.id)
+			SELECT COUNT(*), COALESCE(MAX(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - at)) / 60.0), 0)
+			FROM last WHERE at < (SELECT t FROM now_sim) - interval '%s'`, s.clause(), s.after)).Scan(&c, &o)
+		if err != nil {
+			return -1, -1, fmt.Errorf("history wedges: %w", err)
+		}
+		n += c
+		if o > oldest {
+			oldest = o
+		}
+	}
+	return n, oldest, nil
+}
+
+// pairLine is the sim-pair row. A -1 is a query that failed, never a zero.
+func (p pairStats) pairLine() string {
+	return fmt.Sprintf("PAIR: dispatches %d · parks %d · wedges %d · hist-wedges %d (oldest %.1fm) · "+
+		"time-to-dispatch n=%d avg %.1fs p95 %.1fs · holds-at-rest %d · dig-lock-at-rest %d · storage %s",
+		p.dispatches, p.parks, p.wedges, p.histWedges, p.histOldestMin, p.ttdN, p.ttdAvgS, p.ttdP95S,
+		p.holdsAtRest, p.digLockAtRest, storageText(p.storage))
+}
+
+// groupFill is one lane group's storage: bins in its lanes' slots, and slots.
+type groupFill struct {
+	group         string
+	occupied, cap int
+}
+
+// storageFill sums the lane shapes (laneShapes: the one spelling of a lane
+// slot here) per lane group.
+func storageFill(shapes []laneShape) []groupFill {
+	var out []groupFill
+	for _, sh := range shapes {
+		if n := len(out); n > 0 && out[n-1].group == sh.group {
+			out[n-1].occupied += sh.occupied
+			out[n-1].cap += sh.depth
+			continue
+		}
+		out = append(out, groupFill{group: sh.group, occupied: sh.occupied, cap: sh.depth})
+	}
+	return out
+}
+
+// storageText renders the storage column: "SYN_COMP 26/37, SYN_MARKET 10/20".
+func storageText(fill []groupFill) string {
+	if len(fill) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(fill))
+	for _, f := range fill {
+		parts = append(parts, fmt.Sprintf("%s %d/%d", f.group, f.occupied, f.cap))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ── the measures ──────────────────────────────────────────────────────────────
@@ -724,6 +899,28 @@ var invariantChecks = []struct {
 	{"a negative total UOP across bins", checkNegativeTotalUOP},
 	{"a carrier type with no empty left to source", checkExhaustedCarrierPool},
 	{"two bins with overlapping residence at one node", checkBinResidenceOverlap},
+	{"an order waiting while it holds a hard claim", checkHoldsAtRest},
+}
+
+// checkHoldsAtRest reports every order that has not reached `dispatched` and
+// holds something hard (orders.HoldsAtRestSQL; compound legs excepted, and a dig
+// lock counted apart on the PAIR line). A hard claim is taken for the fleet call, so a waiting order that
+// holds one withholds it from every other order and counts at the dropoff gate
+// as if it were on its way.
+//
+// A sample can land inside one acquire, between the confirm and the fleet call,
+// while the split confirm stands. So one hit in one sample is not yet a wedge;
+// the same order in consecutive samples is, and the journal shows which.
+func checkHoldsAtRest(db *store.DB) []string {
+	held, err := orders.ListHoldsAtRest(db.DB)
+	if err != nil {
+		return []string{failedToRun("holds at rest", err)}
+	}
+	var out []string
+	for _, h := range held {
+		out = append(out, "HOLDS AT REST: "+h.Line())
+	}
+	return out
 }
 
 func checkInvariants(db *store.DB) []string {
@@ -766,7 +963,18 @@ func readLog(source string) *logStats {
 		body = string(b)
 	}
 	s := &logStats{source: source}
+	lifted, setDown, counted := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, line := range strings.Split(body, "\n") {
+		if m := liftRe.FindStringSubmatch(line); m != nil {
+			lifted[m[1]] = true
+		} else if m := setDownRe.FindStringSubmatch(line); m != nil {
+			setDown[m[1]] = true
+		} else if m := dissolveRe.FindStringSubmatch(line); m != nil {
+			if lifted[m[1]] && !setDown[m[1]] && !counted[m[1]] {
+				counted[m[1]] = true
+				s.midLiftDissolves++
+			}
+		}
 		switch {
 		case strings.Contains(line, "burial-shadow"):
 			// THESE LINES ARE A RUNNING TALLY, NOT AN EVENT — and counting them as
@@ -891,7 +1099,7 @@ func (r *report) report() {
 	fmt.Println("        lock-saturated group (§R.71 rider 2). It is a WATCHED measure, not a gate:")
 	fmt.Println("        no per-node dweller counting is built, by owner ruling.")
 
-	fmt.Printf("\n[8.4] DISSOLVES  %s\n", r.dissolves)
+	fmt.Printf("\n[8.4] DISSOLVES  %s  (with a leg mid-lift: %s)\n", r.dissolves, r.midLiftText())
 	fmt.Println("        NOTE: the catalog expected ~0 'with settle-then-plan'. That mechanism")
 	fmt.Println("        does not exist (see FINDINGS F-02) — the dissolve is the built answer,")
 	fmt.Println("        so this number is the RATE OF THE RACE, not a defect count.")
@@ -948,11 +1156,11 @@ func (r *report) summary() string {
 	}
 	return fmt.Sprintf(
 		"SOAK: orders %s done/%s fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · "+
-			"dwell %d avg %.0fs max %.0fs (%d open) · dissolves %s · hard-burials %s · violations %d · failed-to-run %d",
+			"dwell %d avg %.0fs max %.0fs (%d open) · dissolves %s (mid-lift %s) · hard-burials %s · holds-at-rest %d · violations %d · failed-to-run %d",
 		r.orders.completed, r.orders.failed, r.digs.parents, r.digs.maxLegs, reuse,
 		r.gated[true].avgCycleS, r.gated[false].avgCycleS,
 		r.dwell.n, r.dwell.avgS, r.dwell.maxS, r.dwell.open,
-		r.dissolves, hard, len(r.violations), len(r.failedToRun))
+		r.dissolves, r.midLiftText(), hard, r.pair.holdsAtRest, len(r.violations), len(r.failedToRun))
 }
 
 // exitCode is the process exit status for a full report. A soak whose
@@ -971,6 +1179,14 @@ func unrunTag(r *report, measure string) string {
 		return "  FAILED-TO-RUN"
 	}
 	return ""
+}
+
+// midLiftText is the mid-lift dissolve count, or n/a when no log was read.
+func (r *report) midLiftText() string {
+	if r.logCounts == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%d", r.logCounts.midLiftDissolves)
 }
 
 func tailNote(n int) string {
@@ -1585,6 +1801,9 @@ func checkUndeclaredWaits(db *store.DB) []string {
 }
 
 // checkStalledOrders reports orders that have not moved for their population's budget.
+// stalledPrefix starts every stall line; the PAIR line counts wedges by it.
+const stalledPrefix = "STALLED:"
+
 func checkStalledOrders(db *store.DB) []string {
 	var out []string
 
@@ -1652,7 +1871,7 @@ func checkStalledOrders(db *store.DB) []string {
 				rows.Close()
 				return append(out, failedToRun("stalled orders ("+s.label+")", err))
 			}
-			out = append(out, fmt.Sprintf("STALLED: order %d %s (%s) for %dm — cause: %s",
+			out = append(out, fmt.Sprintf(stalledPrefix+" order %d %s (%s) for %dm — cause: %s",
 				id, s.label, status, age/60, cause))
 		}
 		if err := rows.Err(); err != nil {

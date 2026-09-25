@@ -5,13 +5,11 @@ import "shingo/protocol"
 // Order-builder foundation: express the "simple" order families as plans —
 // resolvedStep lists over the closed pickup/dropoff/wait vocabulary — so that
 // dispatch control flow can branch on plan PROPERTIES rather than OrderType. Each
-// builder is a pure function of the already-resolved endpoints. In this step the
-// plans are EMITTED (on PlanningResult.Plan) but NOT consumed by dispatch and NOT
-// persisted: the plain path re-finds its source and builds the fleet request from
-// the order columns, so a simple plan has no reader yet. A differential test pins
-// each plan fleet-equivalent to the transport tail; persisting + consuming the
-// plan (one plan-shaped dispatch tail for simple and complex alike) is the
-// unified-create follow-up.
+// builder is a pure function of the already-resolved endpoints. dispatchToFleetCore
+// builds the plain path's fleet request from buildTransportPlan. Intake no longer
+// emits a copy of the plan (PlanningResult.Plan had no reader and was removed); a
+// differential test pins the transport plan fleet-equivalent to what the scanner
+// dispatches.
 
 // buildTransportPlan expresses a single-bin transport — retrieve, retrieve_empty,
 // or move (the store family was removed) — as the canonical two-step plan: pick

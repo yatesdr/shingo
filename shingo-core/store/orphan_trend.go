@@ -22,8 +22,9 @@ import (
 // comment warns the LIMIT would have hidden.
 //
 // So the trend gets an aggregate that is bounded by BUCKET COUNT and the lane
-// gets one bounded by STATION COUNT, and ListOrphanFindings keeps its job as
-// the full drill-down for anyone who wants every row.
+// gets one bounded by STATION COUNT. ListOrphanFindings is not served by any page
+// or API — only a test reads it — so there is no per-row drill-down today; this
+// note used to say there was.
 //
 // ── THE TREND IS KEYED ON created_at ─────────────────────────────────────────
 //

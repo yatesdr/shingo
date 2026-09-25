@@ -416,7 +416,9 @@ func (d *Dispatcher) queueOrderInternal(order *orders.Order, stationID, payloadC
 //     exactly this on the plain path (DispatchDirect) and the dig path, whose
 //     only caller is this function, never got it.
 func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) error {
-	if _, err := d.dispatchToFleetCore(order, sourceNode, destNode); err != nil {
+	// An empty hand: both callers dispatch an order whose bins are already held
+	// (a redirect, a compound leg), so only the occupancy and the status are taken.
+	if _, err := d.dispatchToFleetCore(order, sourceNode, destNode, Hand{}); err != nil {
 		return err
 	}
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode.Name)
@@ -567,7 +569,7 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 // destination at the one create site is what makes "every lane-bound order ships
 // unsealed" structurally true, instead of true-for-the-callers-we-remembered. Both
 // callers (Kafka/envelope and UI/scanner) inherit it.
-func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
+func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node, hand Hand) (string, error) {
 	payloadCode := d.payloadForDispatch(order)
 
 	// BUILD THE PLAN, THEN SPLICE IT. One rule for every order type: a plain
@@ -645,7 +647,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		return "", rErr
 	}
 	if gated {
-		return d.dispatchGated(order, target, spliced, d.loadSequenceForPayload(payloadCode))
+		return d.dispatchGated(order, target, spliced, d.loadSequenceForPayload(payloadCode), hand)
 	}
 
 	vendorOrderID := mintVendorOrderID(order.ID)
@@ -708,7 +710,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// release on every failure except a lost CAS. The pre-dispatch terminal
 	// re-read that used to sit here is absorbed by the CAS, which asks a strictly
 	// stronger question atomically.
-	if err := d.commitToFleet(order, req, "dispatcher", sourceNode, destNode); err != nil {
+	if err := d.commitToFleet(order, req, "dispatcher", hand, sourceNode, destNode); err != nil {
 		return "", err
 	}
 
@@ -836,7 +838,41 @@ func FleetRefusalCause(err error, destination string) (protocol.QueueCode, Queue
 //   - queued   — pre-dispatch holding state for a fully-resolved order.
 //
 // Returns the vendor order ID on success.
+//
+// DispatchDirect takes no hand beyond the occupancy and the status: it is for a
+// caller whose bins are already held. A caller that soft-held a bin and a slot
+// and wants them made hard with the dispatch uses DispatchHand.
 func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
+	return d.dispatchDirect(order, sourceNode, destNode, Hand{})
+}
+
+// DispatchHand dispatches a plain order that SOFT-holds binID (and, for a
+// storage dropoff, its destination slot): the slot, the bin, the lane mouths on
+// its path, the occupancy and the `dispatched` status are taken in one
+// transaction (acquireHand), and the fleet is asked after. It replaces the
+// ConfirmForDispatch-then-DispatchDirect pair, whose two confirms committed
+// separately and left a slot held when the bin's confirm failed.
+//
+// A *HandRefusal means nothing is held and the order is where it was (sourcing,
+// or queued): park it under the refusal's Code/Cause — it is a wait, not a fleet
+// refusal, and must not go through DemoteAfterFleetRefusal.
+func (d *Dispatcher) DispatchHand(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) (string, error) {
+	hand := Hand{Bins: []HandBin{{BinID: binID, RemainingUOP: order.RemainingUOP}}}
+	// Only a concrete storage dropoff is hard-claimed; a line or consume point
+	// has no slot reservation to confirm. Same test the split confirm used.
+	if destNode != nil && isStorageDropoff(d.db, order.DeliveryNode) {
+		hand.Slots = []HandSlot{{Node: destNode}}
+	}
+	holds, err := d.resolveOrderLaneHolds(sourceNode, destNode)
+	if err != nil {
+		return "", &HandRefusal{OrderID: order.ID, Leg: HandLegLane, Code: protocol.QueueWaitingForMaterial,
+			Cause: CauseLaneAcquireError, Err: err}
+	}
+	hand.Lanes = holds
+	return d.dispatchDirect(order, sourceNode, destNode, hand)
+}
+
+func (d *Dispatcher) dispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node, hand Hand) (string, error) {
 	// Bridge pending → queued before dispatching. The lifecycle's Dispatch
 	// method only accepts queued/sourcing as source states; direct-creation
 	// callers leave the order in pending. validTransitions allows
@@ -864,8 +900,16 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 	// responding — retrying"). Whether THIS caller can wait is the caller's to
 	// know: the scanner parks and retries, the bin-move door has a person waiting
 	// and fails the row itself. Returning the error is what lets them differ.
-	vendorOrderID, err := d.dispatchToFleetCore(order, sourceNode, destNode)
+	vendorOrderID, err := d.dispatchToFleetCore(order, sourceNode, destNode, hand)
 	if err != nil {
+		// A REFUSED HAND IS NOT A FLEET REFUSAL. It held nothing — the hand rolled
+		// back — and the order never left sourcing/queued, so there is no armor to
+		// take off and no `dispatched` to undo. It goes back to the caller to park.
+		// An ended order or a gone named bin (NotAWait) held nothing either; it
+		// goes back to the caller to stop or skip.
+		if _, refused := AsHandRefusal(err); refused || NotAWait(err) {
+			return "", err
+		}
 		// IT DOES UNDO ITS OWN MOVE, THOUGH. handoverToFleet's CAS claims the order
 		// by transitioning it to `dispatched` BEFORE the create, and documents that
 		// it leaves it there for "its caller to fail". This IS that caller, and not

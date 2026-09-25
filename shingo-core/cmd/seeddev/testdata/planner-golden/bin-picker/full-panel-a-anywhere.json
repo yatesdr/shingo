@@ -1,0 +1,12 @@
+{
+  "need": {
+    "payload": "PANEL-A",
+    "delivery": "ALN_001",
+    "intent": "full"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-PA-03",
+    "node": "SMN_003"
+  }
+}

@@ -67,12 +67,6 @@ type ReplenishResult struct {
 	// Want is how many carriers the loop needed, before any bounding. It is the
 	// sizing answer, not a plan.
 	Want int
-	// Outstanding is how many carriers this demand episode had already ordered
-	// and not yet had delivered (or cancelled) when the decision was made. It is
-	// subtracted from Want. Reported because "created nothing" and "created
-	// nothing because it already asked for four" are different runs, and only one
-	// of them is worth a second look.
-	Outstanding int
 	// Created is the orders actually made, one per window.
 	Created []*orders.Order
 	// HeldBy names each window that could not take a carrier, and why. A window
@@ -271,7 +265,6 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			req.LoaderID, req.PayloadCode, req.OriginID, err)
 		return res, nil
 	}
-	res.Outstanding = outstanding
 	if remaining := want - outstanding; remaining < want {
 		if remaining <= 0 {
 			res.Skipped = fmt.Sprintf("this demand already has %d carrier(s) outstanding for a need of %d; nothing more to order until they land or die",

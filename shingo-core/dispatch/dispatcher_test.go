@@ -1072,7 +1072,7 @@ func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 		testutil.MustNoErr(t, terr, "concurrent cancel")
 	})
 
-	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
+	_, err := d.dispatchToFleetCore(order, storageNode, lineNode, Hand{})
 	if err == nil {
 		t.Fatal("expected an error: the status write was refused after a robot was committed")
 	}
@@ -1132,7 +1132,7 @@ func TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder(t *testing.T) {
 	_, terr := db.TerminalizeOrder(order.ID, StatusCancelled, "operator cancel")
 	testutil.MustNoErr(t, terr, "cancel before dispatch")
 
-	_, err := d.dispatchToFleetCore(order, storageNode, lineNode)
+	_, err := d.dispatchToFleetCore(order, storageNode, lineNode, Hand{})
 	if err == nil {
 		t.Fatal("expected refusal: the order was terminal before the fleet call")
 	}

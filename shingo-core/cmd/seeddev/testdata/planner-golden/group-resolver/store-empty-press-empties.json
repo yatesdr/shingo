@@ -1,0 +1,10 @@
+{
+  "need": {
+    "group": "SYN_PRESS_EMPTIES",
+    "mode": "store",
+    "bin_type": "STANDARD"
+  },
+  "decision": {
+    "error": true
+  }
+}

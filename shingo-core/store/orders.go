@@ -658,6 +658,12 @@ func (db *DB) ClaimAppend(id int64, waitIndex int) (bool, error) {
 	return orders.ClaimAppend(db.DB, id, waitIndex)
 }
 
+// UpdateOrderStatusFromWithReasonTx is UpdateOrderStatusFromWithReason on the
+// caller's transaction (dispatch.acquireHand's status CAS).
+func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail string, reason HistoryReason) (bool, error) {
+	return orders.UpdateStatusFromWithReasonTx(tx, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
+}
+
 // UpdateOrderWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
 func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {

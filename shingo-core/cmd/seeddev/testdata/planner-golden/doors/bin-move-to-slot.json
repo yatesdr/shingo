@@ -1,0 +1,50 @@
+{
+  "need": {
+    "bin": "BIN-PA-01",
+    "dest": "SMN_007",
+    "door": "bin move"
+  },
+  "decision": {
+    "events": null,
+    "fleet": [
+      {
+        "external": "order 1 of this case",
+        "blocks": [
+          "Lane_02-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "move",
+        "status": "in_transit",
+        "payload": "PANEL-A",
+        "source": "SMN_001",
+        "delivery": "SMN_007",
+        "bin": "BIN-PA-01",
+        "steps": [
+          "wait Lane_02-WAIT",
+          "pickup SMN_001",
+          "wait Lane_02-WAIT",
+          "dropoff SMN_007"
+        ],
+        "hard_bins": [
+          "BIN-PA-01"
+        ],
+        "hard_slots": [
+          "SMN_007"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PA-01",
+          "mouth:confirmed:Lane_01",
+          "occupancy:confirmed:Lane_01",
+          "slot:confirmed:SMN_007"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": null
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "need": {
+    "current_uop": 0,
+    "door": "loader replenish",
+    "loader": "PLK_HOMES",
+    "member": "PLK_H1",
+    "payload": "SHIM",
+    "setup": "BIN-SHIM-01 taken off its home PLK_H1 to SLN_011",
+    "threshold": 2
+  },
+  "decision": {
+    "events": null,
+    "fleet": [
+      {
+        "external": "order 1 of this case",
+        "blocks": [
+          "Lane_02-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve_empty",
+        "status": "in_transit",
+        "payload": "SHIM",
+        "source": "UTN_001",
+        "delivery": "PLK_H1",
+        "bin": "BIN-MT-01",
+        "steps": [
+          "wait Lane_02-WAIT",
+          "pickup UTN_001 (empty)",
+          "dropoff PLK_H1"
+        ],
+        "hard_bins": [
+          "BIN-MT-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-MT-01",
+          "mouth:confirmed:Lane_11",
+          "occupancy:confirmed:Lane_11"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": [
+      "want 1"
+    ],
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill"
+    ]
+  }
+}

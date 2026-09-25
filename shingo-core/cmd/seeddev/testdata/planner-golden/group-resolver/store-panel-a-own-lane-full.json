@@ -1,0 +1,12 @@
+{
+  "need": {
+    "group": "SYN_MARKET",
+    "mode": "store",
+    "payload": "PANEL-A",
+    "bin_type": "STANDARD",
+    "setup": "Lane_03 and Lane_07 each hold a claimed slot"
+  },
+  "decision": {
+    "node": "SMN_008"
+  }
+}

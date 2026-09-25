@@ -70,7 +70,8 @@ func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid str
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
-	testutil.MustNoErr(t, d.ConfirmForDispatch(order, bin.ID, srcNode, lineNode), "confirm at dispatch")
+	// The hand's bin leg — a line destination has no slot to confirm.
+	testutil.MustNoErr(t, d.binManifest.ConfirmClaim(bin.ID, order.ID, nil), "confirm the bin")
 	orderRaw, err = db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	return order, bin.ID
@@ -151,11 +152,8 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 	going, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	orderRaw, err = db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
-	testutil.MustNoErr(t, going.ConfirmForDispatch(order, binID, srcNode, lineNode),
-		"re-confirm the kept paper")
-	orderRaw, err = db.GetOrder(order.ID)
-	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
-	vendorID, err := going.DispatchDirect(order, srcNode, lineNode)
+	// The kept paper re-confirms in the hand, with the dispatch.
+	vendorID, err := going.DispatchHand(order, binID, srcNode, lineNode)
 	testutil.MustNoErr(t, err, "re-dispatch after the blip")
 	if vendorID == "" {
 		t.Error("the re-dispatch produced no vendor order id")

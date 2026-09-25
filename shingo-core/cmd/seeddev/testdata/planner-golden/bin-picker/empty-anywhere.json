@@ -1,0 +1,12 @@
+{
+  "need": {
+    "payload": "PANEL-A",
+    "delivery": "PLN_001",
+    "intent": "empty"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-ACT-P1B",
+    "node": "PLN_002"
+  }
+}

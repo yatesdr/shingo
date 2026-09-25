@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_PRESS_EMPTIES",
+    "payload": "PANEL-A",
+    "delivery": "PLN_001",
+    "intent": "empty"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-PEB-01",
+    "node": "PEB_001"
+  }
+}

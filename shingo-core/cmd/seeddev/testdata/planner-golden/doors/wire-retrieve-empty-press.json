@@ -1,0 +1,50 @@
+{
+  "need": {
+    "delivery": "PLN_005",
+    "door": "edge wire intake",
+    "payload": "PANEL-A",
+    "source": "SYN_PRESS_EMPTIES",
+    "type": "retrieve_empty"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "dispatched",
+      "queued"
+    ],
+    "fleet": [
+      {
+        "external": "g-retrieve-empty",
+        "blocks": [
+          "PEB_001 JackLoad",
+          "PLN_005 JackUnload"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve_empty",
+        "status": "dispatched",
+        "payload": "PANEL-A",
+        "source": "PEB_001",
+        "delivery": "PLN_005",
+        "bin": "BIN-PEB-01",
+        "hard_bins": [
+          "BIN-PEB-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PEB-01"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill",
+      "order.update status=queued"
+    ]
+  }
+}

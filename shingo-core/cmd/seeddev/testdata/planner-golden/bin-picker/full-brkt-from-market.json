@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "BRKT",
+    "delivery": "ALN_004",
+    "intent": "full"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-BRKT-01",
+    "node": "SMN_010"
+  }
+}

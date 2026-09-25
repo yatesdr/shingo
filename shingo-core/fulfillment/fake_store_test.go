@@ -40,7 +40,6 @@ type fakeStore struct {
 	errCountBinsByNode error
 	errClaimBin        error
 	errReserveBin      error // soft-acquire (ReserveForDispatch) failure
-	errConfirmBin      error // confirm-at-dispatch (ConfirmClaim) failure
 
 	// getNodeByDotNameFn, when non-nil, replaces the default map lookup for
 	// GetNodeByDotName — lets a test make specific names resolve or fail.
@@ -54,7 +53,6 @@ type fakeStore struct {
 	// Recorded mutations — every test asserts on these.
 	claimedBins          [][2]int64 // (binID, orderID) — hard claims via ClaimForDispatch
 	reservedBins         [][2]int64 // (binID, orderID) — soft pending reservations (ReserveForDispatch)
-	confirmedBins        [][2]int64 // (binID, orderID) — confirm-at-dispatch (ConfirmClaim)
 	confirmedSlots       [][2]int64 // (nodeID, orderID) — confirm-at-dispatch slot claim (ConfirmSlotClaim)
 	releasedReservations []int64    // orderIDs whose soft bin reservation was released
 	clearedBinIDs        []int64    // orderIDs that FORGOT a stale held-bin pointer
@@ -185,19 +183,6 @@ func (f *fakeStore) ReserveForDispatch(binID, orderID int64) error {
 		return f.errReserveBin
 	}
 	f.reservedBins = append(f.reservedBins, [2]int64{binID, orderID})
-	return nil
-}
-
-// ConfirmClaim is the confirm-at-dispatch hard claim — flips the pending
-// reservation to confirmed and records the bin as hard-claimed. Called by the
-// scanner (and the direct/spot paths) immediately before the fleet dispatch.
-// Records to confirmedBins and honors errConfirmBin (inject to simulate a reaped
-// pending reservation / claim_failed).
-func (f *fakeStore) ConfirmClaim(binID, orderID int64, _ *int) error {
-	if f.errConfirmBin != nil {
-		return f.errConfirmBin
-	}
-	f.confirmedBins = append(f.confirmedBins, [2]int64{binID, orderID})
 	return nil
 }
 

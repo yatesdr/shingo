@@ -1,0 +1,35 @@
+{
+  "need": {
+    "delivery": "ALN_007",
+    "door": "edge wire intake",
+    "note": "the delivery node already holds a bin",
+    "payload": "STUD",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "queued"
+    ],
+    "fleet": null,
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve",
+        "status": "queued",
+        "payload": "STUD",
+        "source": "SYN_MARKET",
+        "delivery": "ALN_007",
+        "queue_code": "waiting_for_slot",
+        "queue_cause": "dropoff-occupied"
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.update status=queued",
+      "order.update status=queued"
+    ]
+  }
+}

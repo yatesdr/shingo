@@ -459,14 +459,23 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 	// clean up after it. bin_move.go asks the identical question at the identical
 	// point and queues (queueBinMoveForLane). Two spellings of one situation, and
 	// the terminal one was the door whose own doc claims it mirrors the other.
-	if admitted, cause, laneName, aerr := e.dispatcher.AcquireLanesForOrder(
+	if admitted, cause, laneName, aerr := e.dispatcher.AdmitLanesForOrder(
 		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil || !admitted {
 		return e.queueRecoveryForLane(order, destNode, cause, laneName, aerr)
 	}
-	if err := e.dispatcher.ConfirmForDispatch(order, binID, sourceNode, destNode); err != nil {
+	// THE HAND: slot, bin, lane mouths, occupancy and status in one transaction,
+	// then the fleet. A lane refusal inside it parks exactly as the admission
+	// refusal above does; a slot or bin refusal, an ended order or a gone named
+	// bin is the claim failure the old confirm returned. Either way the hand held
+	// nothing.
+	_, err := e.dispatcher.DispatchHand(order, binID, sourceNode, destNode)
+	if r, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
+		if refused && r.Leg == dispatch.HandLegLane && r.Cause != dispatch.CauseLaneAcquireError {
+			return e.queueRecoveryForLane(order, destNode, r.Cause, r.Lane, nil)
+		}
 		return fail("claim_failed", fmt.Sprintf("could not claim bin %d and slot %s: %v", binID, destNode.Name, err), err)
 	}
-	if _, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode); err != nil {
+	if err != nil {
 		// THIS ARM STAYS TERMINAL, and it is not the lane arm's twin. A fleet
 		// refusal is the sanctioned demand-by-hand exception: the person who
 		// pressed Recover is standing at the door awaiting the answer, and the

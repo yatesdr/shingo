@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "CLIP",
+    "delivery": "ALN_006",
+    "intent": "full"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-CLIP-01",
+    "node": "SMN_013"
+  }
+}

@@ -696,10 +696,6 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 // reconciles next tick — no bin is ever claimed without its reservation.
 func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, assigned []reservedPickup) error {
 	steps := plan.ResolvedSteps
-	processNode := order.ProcessNode
-	if processNode == "" {
-		processNode = order.SourceNode
-	}
 
 	// Confirm the reserved destination slots FIRST — before the bins. Each was
 	// reserved (pending) by reserveComplexSlots; ConfirmSlotClaim hard-claims it
@@ -796,6 +792,22 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 		// A complete reserve with zero needs is a malformed complex order (no true
 		// source pickup) — surface it rather than dispatch a bin-less order.
 		return &planningError{Code: codeNoBin, Detail: fmt.Sprintf("complex order %d has no source pickup", order.ID)}
+	}
+
+	return a.recordClaimedBins(order, steps, claimed)
+}
+
+// recordClaimedBins writes the order's plan of bins: the primary bin pointer
+// (the one at the order's process node, else the first) and, for a multi-pickup
+// parent, the per-bin order_bins rows with their destinations. Shared by the
+// pair's confirmComplexPlan and the solo order's hand, which writes it before
+// the hand confirms — it is the plan, not a hold. Its one error is
+// reservations.ErrOwnerEnded from the order_bins write: the order ended, and the
+// caller stops.
+func (a *Allocator) recordClaimedBins(order *orders.Order, steps []resolvedStep, claimed []claimedBin) error {
+	processNode := order.ProcessNode
+	if processNode == "" {
+		processNode = order.SourceNode
 	}
 
 	// order.BinID tracks the bin claimed at the process node, else the first —

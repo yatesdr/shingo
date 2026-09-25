@@ -17,8 +17,9 @@ import (
 //
 // ── WHY A TREND AND NOT A LEVEL ──────────────────────────────────────────────
 //
-// ListOrphanFindings already answers "how many orphans are there" and the plan
-// is explicit that the trend is the number that matters. A level on this bucket
+// A level ("how many orphans are there") is what store.ListOrphanFindings would
+// answer, and no page serves it; the plan is explicit that the trend is the
+// number that matters. A level on this bucket
 // is nearly uninformative: it is non-empty on any plant that has ever dropped a
 // notification, it never shrinks (findings are never deleted), and so it only
 // ever climbs. A monotonically rising number is not a signal.

@@ -59,9 +59,6 @@ func TestRule1_NoHardClaimWhileWaitingForSlot(t *testing.T) {
 	if len(f.claimedBins) != 0 {
 		t.Errorf("waiting on a slot must record NO hard bin claim: %v", f.claimedBins)
 	}
-	if len(f.confirmedBins) != 0 {
-		t.Errorf("waiting on a slot must NOT confirm the bin: %v", f.confirmedBins)
-	}
 	if len(dispatcher.confirmCalls) != 0 {
 		t.Errorf("confirm-at-dispatch must not run while waiting on a slot: %+v", dispatcher.confirmCalls)
 	}

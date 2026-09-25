@@ -1,0 +1,12 @@
+{
+  "need": {
+    "payload": "SHIM",
+    "delivery": "ALN_008",
+    "intent": "full"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-SHIM-01",
+    "node": "PLK_H1"
+  }
+}

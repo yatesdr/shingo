@@ -4,6 +4,7 @@ package messaging
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -48,7 +49,7 @@ func TestHandlePlantClaims_MirrorRebuildAfterWipe(t *testing.T) {
 	)
 
 	// Sanity: dirty index reflects both processes before the wipe.
-	idx, err := db.PlantClaimsDirtyIndex()
+	idx, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index before wipe: %v", err)
 	}
@@ -60,7 +61,10 @@ func TestHandlePlantClaims_MirrorRebuildAfterWipe(t *testing.T) {
 	if err := db.WipePlantClaims(); err != nil {
 		t.Fatalf("wipe: %v", err)
 	}
-	idx, _ = db.PlantClaimsDirtyIndex()
+	idx, err = plantClaimsDirtyIndex(db.DB)
+	if err != nil {
+		t.Fatalf("dirty index after wipe: %v", err)
+	}
 	if len(idx) != 0 {
 		t.Fatalf("dirty index after wipe = %v, want empty", idx)
 	}
@@ -78,7 +82,7 @@ func TestHandlePlantClaims_MirrorRebuildAfterWipe(t *testing.T) {
 		}),
 	)
 
-	idx, err = db.PlantClaimsDirtyIndex()
+	idx, err = plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index after rebuild: %v", err)
 	}
@@ -110,7 +114,7 @@ func TestHandlePlantClaims_PerProcessReplaceIsAuthoritative(t *testing.T) {
 		{name: "A", claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
 	}))
 
-	idx, err := db.PlantClaimsDirtyIndex()
+	idx, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index: %v", err)
 	}
@@ -138,7 +142,7 @@ func TestHandlePlantClaims_StaleSnapshotIgnored(t *testing.T) {
 		{name: "A", claims: []claimSpec{{node: "N1", payload: "OLD", allowed: []string{"OLD"}}}},
 	}))
 
-	idx, err := db.PlantClaimsDirtyIndex()
+	idx, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index: %v", err)
 	}
@@ -163,7 +167,7 @@ func TestHandlePlantClaims_EmptyProcessClearsMirror(t *testing.T) {
 	}))
 	svc.HandlePlantClaims(nil, plantClaimsReport("SNF2", 2, nil))
 
-	idx, err := db.PlantClaimsDirtyIndex()
+	idx, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index: %v", err)
 	}
@@ -221,7 +225,7 @@ func TestPlantClaimsMirror_MigrationIdempotent(t *testing.T) {
 		{name: "A", claims: []claimSpec{{node: "N1", payload: "BIN-A", allowed: []string{"BIN-A"}}}},
 	}))
 
-	idx, err := db.PlantClaimsDirtyIndex()
+	idx, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index after reseed: %v", err)
 	}
@@ -504,7 +508,7 @@ func TestHandlePlantClaims_AnOlderEdgeLandsBlankLegs(t *testing.T) {
 		t.Errorf("legs from an older Edge = %v, want four blanks", got)
 	}
 	// And the rest of the mirror is untouched by their absence.
-	idx, err := db.PlantClaimsDirtyIndex()
+	idx, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index: %v", err)
 	}
@@ -534,13 +538,13 @@ func TestHandlePlantClaims_LegsDoNotDirtyTheRecompute(t *testing.T) {
 	}
 
 	svc.HandlePlantClaims(nil, withLegs(1, "SMN_SYN_A"))
-	before, err := db.PlantClaimsDirtyIndex()
+	before, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index before: %v", err)
 	}
 
 	svc.HandlePlantClaims(nil, withLegs(2, "SMN_SYN_C"))
-	after, err := db.PlantClaimsDirtyIndex()
+	after, err := plantClaimsDirtyIndex(db.DB)
 	if err != nil {
 		t.Fatalf("dirty index after: %v", err)
 	}
@@ -553,4 +557,59 @@ func TestHandlePlantClaims_LegsDoNotDirtyTheRecompute(t *testing.T) {
 	if got := legsOf(t, db.DB, "SNF9", "A", "PLN_002")[0]; got != "SMN_SYN_C" {
 		t.Fatalf("inbound_source after the second report = %q, want SMN_SYN_C", got)
 	}
+}
+
+// plantClaimsDirtyIndex is payload_code → the (process, style) pairs whose
+// claims require it: a claim's primary payload plus every allowed payload. It
+// was plantclaims.DirtyIndex (removed), which no production code read — the sourceability
+// monitor keeps its own index — so the query lives here, with the only tests
+// that ask it, as their view of what the ingest wrote.
+func plantClaimsDirtyIndex(db *sql.DB) (map[string][]plantclaims.ProcessKey, error) {
+	rows, err := db.Query(
+		`SELECT process_id, style_id, payload_code, allowed_payload_codes
+		 FROM style_claims`)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims dirty index: query: %w", err)
+	}
+	defer rows.Close()
+
+	idx := make(map[string]map[plantclaims.ProcessKey]struct{})
+	add := func(payload, process, style string) {
+		if payload == "" {
+			return
+		}
+		set, ok := idx[payload]
+		if !ok {
+			set = make(map[plantclaims.ProcessKey]struct{})
+			idx[payload] = set
+		}
+		set[plantclaims.ProcessKey{ProcessID: process, StyleID: style}] = struct{}{}
+	}
+
+	for rows.Next() {
+		var process, style, payload, allowedJSON string
+		if err := rows.Scan(&process, &style, &payload, &allowedJSON); err != nil {
+			return nil, fmt.Errorf("plantclaims dirty index: scan: %w", err)
+		}
+		add(payload, process, style)
+		var allowed []string
+		if err := json.Unmarshal([]byte(allowedJSON), &allowed); err == nil {
+			for _, p := range allowed {
+				add(p, process, style)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("plantclaims dirty index: rows: %w", err)
+	}
+
+	out := make(map[string][]plantclaims.ProcessKey, len(idx))
+	for payload, set := range idx {
+		keys := make([]plantclaims.ProcessKey, 0, len(set))
+		for k := range set {
+			keys = append(keys, k)
+		}
+		out[payload] = keys
+	}
+	return out, nil
 }

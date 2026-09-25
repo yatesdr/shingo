@@ -664,7 +664,7 @@ func IsGateStaged(order *orders.Order) bool {
 // than propagated. Retrying an append that may have landed would risk duplicate
 // block ids (SEER's one contract on them is uniqueness), so the retry belongs in
 // the evaluator, which re-derives the segment from durable state.
-func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string) (string, error) {
+func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string, hand Hand) (string, error) {
 	vendorOrderID := mintVendorOrderID(order.ID)
 
 	stepsJSON, err := json.Marshal(plan)
@@ -737,7 +737,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	// the write see one set. The gate point contributes nothing: it is a property,
 	// never resolved against nodes, which is what still makes the gated lane's own
 	// row appendGateTail's to take.
-	if err := d.commitToFleet(order, req, "dispatcher", d.planNodes(preWait)...); err != nil {
+	if err := d.commitToFleet(order, req, "dispatcher", hand, d.planNodes(preWait)...); err != nil {
 		return "", err
 	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)

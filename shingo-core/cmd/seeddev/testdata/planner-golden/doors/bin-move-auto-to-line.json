@@ -1,0 +1,46 @@
+{
+  "need": {
+    "dest": "SLN_004",
+    "door": "bin move",
+    "selection": "auto",
+    "source": "SMN_016"
+  },
+  "decision": {
+    "events": null,
+    "fleet": [
+      {
+        "external": "order 1 of this case",
+        "blocks": [
+          "Lane_02-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "move",
+        "status": "in_transit",
+        "payload": "STUD",
+        "source": "SMN_016",
+        "delivery": "SLN_004",
+        "bin": "BIN-STUD-01",
+        "steps": [
+          "wait Lane_02-WAIT",
+          "pickup SMN_016",
+          "dropoff SLN_004"
+        ],
+        "hard_bins": [
+          "BIN-STUD-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-STUD-01",
+          "mouth:confirmed:Lane_06",
+          "occupancy:confirmed:Lane_06"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": null
+  }
+}

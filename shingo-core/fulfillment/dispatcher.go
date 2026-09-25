@@ -47,24 +47,15 @@ type Dispatcher interface {
 	// error ⇒ non-nil node.
 	ReserveStorageDropoff(order *orders.Order) dispatch.StorageDropoff
 
-	// ConfirmForDispatch is the Rule-1 confirm-at-dispatch step: hard-claim the
-	// destination slot (if a storage dropoff) AND the source bin, in one step,
-	// immediately before the fleet call. Called only after a soft-acquired bin and
-	// (where applicable) a soft-reserved slot. On failure the order parks in
-	// sourcing and retries. Owner-idempotent across legs.
-	ConfirmForDispatch(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) error
+	// DispatchHand takes the order's whole hand — the slot (if a storage
+	// dropoff), the soft-held bin, the lane mouths, the occupancy and the
+	// `dispatched` status — in one transaction, then asks the fleet. A
+	// *dispatch.HandRefusal means nothing is held: park under its cause.
+	DispatchHand(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) (string, error)
 
-	// AcquireLanesForOrder takes the order's lane mouth holds (P4) before dispatch,
-	// gated per lane group — a no-op when no mouth-enforced lane is on the order's
-	// path (byte-identical when the gate is off). admitted=false means the lane is
-	// contended: the scanner parks the order in sourcing under WAITING_FOR_SLOT with
-	// the returned cause and lane name, holding its soft reservations (Rule 1).
-	//
-	// Takes the ORDER, not its id: it delegates the physical questions to
-	// admission, whose decision turns on order identity (the dig exemption
-	// resolves through laneOwnerFor) rather than on an id it would otherwise
-	// have to re-read on the hottest path in the system.
-	AcquireLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) (admitted bool, cause dispatch.QueueCause, laneName string, err error)
+	// AdmitLanesForOrder is the lane admission verdict (P4) with no row written;
+	// the mouth rows are part of the hand (DispatchHand).
+	AdmitLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) (admitted bool, cause dispatch.QueueCause, laneName string, err error)
 
 	// ReleaseLanesForOrder drops all of an order's lane mouth holds.
 	ReleaseLanesForOrder(orderID int64) error
@@ -147,11 +138,8 @@ type Claimer interface {
 	// Returns reservations.ErrReservationConflict on a lost race (another order
 	// reserved the bin); the scanner parks the order in sourcing and retries.
 	ReserveForDispatch(binID, orderID int64) error
-	// ConfirmClaim commits an ALREADY-RESERVED bin to a hard claim and confirms its
-	// reservation (pending → confirmed) in one transaction. The dispatch-time half
-	// of Rule 1. A failure (pending reservation reaped, or bin claimed by another
-	// order) surfaces as claim_failed — the order keeps its soft hold and retries.
-	ConfirmClaim(binID, orderID int64, remainingUOP *int) error
+	// (The hard half — confirming the reservation into a claim — is not the
+	// scanner's any more: it is a leg of the order's hand, DispatchHand.)
 }
 
 // Compile-time checks that the concrete dispatch types satisfy the

@@ -671,11 +671,10 @@ func (s *CoreDataService) unlistedFor(stationID string, asked map[string]bool) [
 // compaction). Loaders/unloaders are already excluded by the publisher
 // (manual_swap claims never appear); nothing here filters by swap_mode.
 //
-// IT REBUILDS NO INDEX, which this comment used to claim it did. The dirty
-// index is DERIVED on demand — plantclaims.DirtyIndex queries style_claims
-// when the recompute asks — so replacing these rows is the whole of the
-// update, and there is no second structure that could fall out of step with
-// them.
+// IT REBUILDS NO INDEX. The sourceability monitor keeps its payload → style
+// index itself, rebuilt from these rows on its full recompute, so replacing the
+// rows is the whole of the update here. This note once named a dirty-index
+// reader in plantclaims; it had no production caller and was removed.
 //
 // ConfigGen is a stale-snapshot guard: if the mirror already holds a NEWER
 // config_gen for this process (an out-of-order older snapshot landing after a

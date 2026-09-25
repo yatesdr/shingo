@@ -131,13 +131,23 @@ import (
 // the corridor, so it passes nothing and takes nothing, and its row is taken by
 // the tail append that actually enters. Nodes outside a lane resolve to no lane
 // and cost one map lookup.
-func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string, entering ...*nodes.Node) error {
-	if err := d.TakeLaneOccupancy(order.ID, entering...); err != nil {
-		return err // nothing sent; the caller parks and the next tick retries
-	}
+//
+// ── THE HAND ───────────────────────────────────────────────────────────────
+//
+// The occupancy take is part of the order's hand now (hand.go): the slot, the
+// bins, the lane mouths, the occupancy and the `dispatched` status commit in one
+// transaction, and the fleet is asked only after. A caller with nothing else to
+// take passes an empty Hand, which is exactly the occupancy-then-claim this
+// function always did. "Take before the handover" holds by construction — the
+// take commits before the fleet call — and a refusal inside the hand leaves no
+// row to release, because it never committed. The seam assertion runs first: it
+// only reads, so a refusal there has nothing to undo.
+func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string, hand Hand, entering ...*nodes.Node) error {
 	if err := d.assertDeclaredEveryLaneItEnters(order.ID, req, entering); err != nil {
-		d.ReleaseLaneOccupancy(order.ID)
-		return err // nothing sent
+		return err // nothing taken, nothing sent
+	}
+	if err := d.acquireHand(order, hand, entering, actor, fmt.Sprintf("vendor order %s created", req.OrderID)); err != nil {
+		return err // nothing held, nothing sent; the caller parks a refusal and yields a lost CAS
 	}
 	if err := d.handoverToFleet(order, req, actor); err != nil {
 		if !IsConcurrentTransition(err) {
@@ -277,51 +287,14 @@ func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.Cr
 func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string) error {
 	vendorOrderID := req.OrderID
 
-	// 1. CLAIM. transition() compare-and-swaps on the status this caller loaded,
-	// so this is the atomic claim on the order — and it is now the FIRST
-	// irreversible-looking step rather than the second. A loser stops here having
-	// touched nothing outside the database.
-	// A FAILED CLAIM ABORTS, WHATEVER THE REASON. No fleet order is created for an
-	// order this function did not successfully claim.
-	//
-	// This is a REVERSAL of what an earlier version of this file did, and the
-	// reasoning matters because it is easy to get backwards. Under the OLD
-	// create-then-record ordering, a non-race transition failure arrived AFTER the
-	// robot was committed — proceeding was not a choice, it was the only remaining
-	// option, so the old code logged and carried on. Porting that tolerance into
-	// CAS-first looks like behaviour preservation and is actually the opposite: it
-	// would create a fleet job for an order whose claim did not land, which is the
-	// exact failure this reorder exists to prevent, arriving through another door.
-	//
-	// Two things can fail here besides a lost race, and neither justifies
-	// proceeding:
-	//
-	//   - IllegalTransition — the order's status does not lead to `dispatched`.
-	//     The caller is wrong about what it is holding.
-	//   - a database error — whether this order is claimed is UNKNOWN. Creating a
-	//     robot job on an unknown claim is the worst of the three outcomes.
-	//
-	// VERIFIED RATHER THAN ASSUMED. The tolerance was carried at first because
-	// mid-transit redirect appeared to depend on it — `in_transit → dispatched` is
-	// not a legal edge, so a redirect failed this call every time. That flow is now
-	// refused at the handler as a never-tested stub, and with it gone the whole
-	// shingo-core docker suite passes with this arm aborting. No caller depends on
-	// proceeding.
-	//
-	// Idempotent re-entry does not need it either, and is caught earlier and
-	// better: AdvanceCompoundOrder re-reads the child and refuses when
-	// VendorOrderID is already set, so a re-entrant leg never reaches this
-	// function.
-	if err := d.lifecycle.Dispatch(order, vendorOrderID, actor); err != nil {
-		if IsConcurrentTransition(err) {
-			log.Printf("dispatch: order %d moved under us before the fleet order was created — "+
-				"NOT dispatching (another caller owns it now): %v", order.ID, err)
-			return err
-		}
-		log.Printf("dispatch: order %d could not be claimed for dispatch: %v — NOT dispatching "+
-			"(nothing was sent to the fleet)", order.ID, err)
-		return err
-	}
+	// 1. CLAIM — done before this function is called. The status CAS is the
+	// hand's last leg (acquireHand), committed together with the slot, the bins,
+	// the lane mouths and the occupancy. Everything the old comment here said
+	// about it still holds, it just holds there: a lost CAS stops the caller
+	// having touched nothing outside the database, and a failed claim of any kind
+	// — a lost race, an illegal transition, a database error — aborts before the
+	// fleet is asked. No fleet order is created for an order whose hand did not
+	// commit.
 
 	// 2. COMMIT. The order is claimed; this is where a robot is actually spent.
 	if _, err := d.backend.CreateOrder(req); err != nil {

@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "BRKT",
+    "delivery": "ALN_004",
+    "intent": "full",
+    "setup": "BIN-BRKT-01 carries another order's pending reservation"
+  },
+  "decision": {
+    "outcome": "reshuffle",
+    "buried_lane": "Lane_04"
+  }
+}

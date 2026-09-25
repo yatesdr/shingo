@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -540,8 +541,10 @@ func TestReplenishLoader_DoesNotReAskForWhatThisDemandAlreadyOrdered(t *testing.
 	if len(second.Created) != 0 {
 		t.Fatalf("second call created %d carriers for a demand that already has one outstanding — this is the duplicate-order bug", len(second.Created))
 	}
-	if second.Outstanding != 1 {
-		t.Errorf("Outstanding = %d, want 1 — the run must report what it counted, or a quiet run is indistinguishable from a broken one", second.Outstanding)
+	// The run reports what it counted, in the sentence a person reads — a quiet
+	// run must be distinguishable from a broken one.
+	if !strings.Contains(second.Skipped, "already has 1 carrier(s) outstanding") {
+		t.Errorf("Skipped = %q, want it to name the 1 carrier already outstanding", second.Skipped)
 	}
 	if second.Skipped == "" && second.HeldBy[windows[0]] == "" {
 		t.Errorf("second call explained nothing: Skipped=%q HeldBy=%v", second.Skipped, second.HeldBy)
@@ -606,9 +609,6 @@ func TestReplenishLoader_UnattributedRequestIsNotBounded(t *testing.T) {
 	}
 	if len(first.Created) != 1 {
 		t.Fatalf("first call created %d, want 1", len(first.Created))
-	}
-	if first.Outstanding != 0 {
-		t.Errorf("Outstanding = %d for an unattributed request, want 0 — nothing was counted", first.Outstanding)
 	}
 
 	// The window it used is now occupied by an in-flight order of its own, so the

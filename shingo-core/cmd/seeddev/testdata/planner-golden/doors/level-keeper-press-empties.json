@@ -1,0 +1,104 @@
+{
+  "need": {
+    "door": "level keeper",
+    "group": "SYN_PRESS_EMPTIES",
+    "setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010, so STANDARD is 1 of 4 wanted"
+  },
+  "decision": {
+    "events": null,
+    "fleet": [
+      {
+        "external": "order 1 of this case",
+        "blocks": [
+          "PLN_001 JackLoad",
+          "PEB_001 JackUnload"
+        ]
+      },
+      {
+        "external": "order 2 of this case",
+        "blocks": [
+          "PLN_002 JackLoad",
+          "PEB_002 JackUnload"
+        ]
+      },
+      {
+        "external": "order 3 of this case",
+        "blocks": [
+          "ALN_002 JackLoad",
+          "PEB_003 JackUnload"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "retrieve_empty",
+        "status": "dispatched",
+        "source": "PLN_001",
+        "delivery": "PEB_001",
+        "bin": "BIN-ACT-P1F",
+        "hard_bins": [
+          "BIN-ACT-P1F"
+        ],
+        "hard_slots": [
+          "PEB_001"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-ACT-P1F",
+          "slot:confirmed:PEB_001"
+        ],
+        "to_fleet": true
+      },
+      {
+        "index": 2,
+        "type": "retrieve_empty",
+        "status": "dispatched",
+        "source": "PLN_002",
+        "delivery": "PEB_002",
+        "bin": "BIN-ACT-P1B",
+        "hard_bins": [
+          "BIN-ACT-P1B"
+        ],
+        "hard_slots": [
+          "PEB_002"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-ACT-P1B",
+          "slot:confirmed:PEB_002"
+        ],
+        "to_fleet": true
+      },
+      {
+        "index": 3,
+        "type": "retrieve_empty",
+        "status": "dispatched",
+        "source": "ALN_002",
+        "delivery": "PEB_003",
+        "bin": "BIN-ACT-W1",
+        "hard_bins": [
+          "BIN-ACT-W1"
+        ],
+        "hard_slots": [
+          "PEB_003"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-ACT-W1",
+          "slot:confirmed:PEB_003"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill",
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill",
+      "data.order.projected status=pending",
+      "order.ack",
+      "order.waybill"
+    ]
+  }
+}

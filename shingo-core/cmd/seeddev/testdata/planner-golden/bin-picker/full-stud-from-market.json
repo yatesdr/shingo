@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "STUD",
+    "delivery": "ALN_007",
+    "intent": "full"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-STUD-01",
+    "node": "SMN_016"
+  }
+}

@@ -41,7 +41,7 @@ type StyleRow struct {
 // The last four are the claim's LEGS — the nodes it draws from, ships to, and
 // is paired with. They are mirrored for the demand loop compiler, which needs
 // the edges between nodes and not just the nodes; the sourceability recompute
-// reads none of them (see DirtyIndex below, and store/sourceability). Blank
+// reads none of them (store/sourceability). Blank
 // means the Edge did not report a leg, which is the same value an Edge too old
 // to publish them leaves behind — and Core must read both as "unknown", never
 // as a node whose name is empty.
@@ -111,7 +111,7 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 
 	// swap_mode HAS NO CORE READER, AND THE WRITE STILL CANNOT STOP. No SELECT
 	// anywhere in shingo-core reads style_claims.swap_mode back — the mirror's own
-	// readers (DirtyIndex below, sourceability, lane_queries, bins, inventory)
+	// readers (sourceability, lane_queries, bins, inventory)
 	// all project other columns — so this is a write-only column.
 	//
 	// It cannot simply be dropped from the INSERT: the column is
@@ -192,63 +192,6 @@ func WipeAll(db *sql.DB) error {
 type ProcessKey struct {
 	ProcessID string
 	StyleID   string
-}
-
-// DirtyIndex is payload_code → the set of (process, style) pairs whose claims
-// require that payload. Built from style_claims: a claim contributes its
-// primary PayloadCode plus every code in AllowedPayloadCodes. The recompute
-// marks every entry under DirtyIndex[changedPayload] dirty.
-//
-// Returns a map keyed by payload; each value is a deduplicated []ProcessKey
-// (order is not stable — callers treat it as a set).
-func DirtyIndex(db *sql.DB) (map[string][]ProcessKey, error) {
-	rows, err := db.Query(
-		`SELECT process_id, style_id, payload_code, allowed_payload_codes
-		 FROM style_claims`)
-	if err != nil {
-		return nil, fmt.Errorf("plantclaims dirty index: query: %w", err)
-	}
-	defer rows.Close()
-
-	idx := make(map[string]map[ProcessKey]struct{})
-	add := func(payload, process, style string) {
-		if payload == "" {
-			return
-		}
-		set, ok := idx[payload]
-		if !ok {
-			set = make(map[ProcessKey]struct{})
-			idx[payload] = set
-		}
-		set[ProcessKey{process, style}] = struct{}{}
-	}
-
-	for rows.Next() {
-		var process, style, payload, allowedJSON string
-		if err := rows.Scan(&process, &style, &payload, &allowedJSON); err != nil {
-			return nil, fmt.Errorf("plantclaims dirty index: scan: %w", err)
-		}
-		add(payload, process, style)
-		var allowed []string
-		if err := json.Unmarshal([]byte(allowedJSON), &allowed); err == nil {
-			for _, p := range allowed {
-				add(p, process, style)
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("plantclaims dirty index: rows: %w", err)
-	}
-
-	out := make(map[string][]ProcessKey, len(idx))
-	for payload, set := range idx {
-		keys := make([]ProcessKey, 0, len(set))
-		for k := range set {
-			keys = append(keys, k)
-		}
-		out[payload] = keys
-	}
-	return out, nil
 }
 
 // ProcessNodeRef is one Core node a process's claims name.

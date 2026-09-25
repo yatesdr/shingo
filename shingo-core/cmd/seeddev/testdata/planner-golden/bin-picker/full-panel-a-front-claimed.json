@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "PANEL-A",
+    "delivery": "ALN_001",
+    "intent": "full",
+    "setup": "BIN-PA-01 (the lane front) is claimed by an order on its way"
+  },
+  "decision": {
+    "outcome": "reshuffle",
+    "buried_lane": "Lane_01"
+  }
+}

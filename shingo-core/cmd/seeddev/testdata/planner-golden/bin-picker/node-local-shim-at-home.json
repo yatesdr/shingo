@@ -1,0 +1,14 @@
+{
+  "need": {
+    "source": "PLK_H1",
+    "payload": "SHIM",
+    "delivery": "ALN_008",
+    "intent": "full",
+    "node_local": true
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-SHIM-01",
+    "node": "PLK_H1"
+  }
+}

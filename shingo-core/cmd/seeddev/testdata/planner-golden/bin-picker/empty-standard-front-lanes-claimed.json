@@ -1,0 +1,14 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "PANEL-A",
+    "delivery": "PLN_001",
+    "intent": "empty",
+    "setup": "the front empties of Lane_11 and Lane_12 are claimed"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-MT-07",
+    "node": "UTN_007"
+  }
+}

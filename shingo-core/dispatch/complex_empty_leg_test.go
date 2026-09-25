@@ -3,7 +3,6 @@
 package dispatch
 
 import (
-	"shingocore/domain"
 	"strings"
 	"testing"
 
@@ -65,7 +64,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		{Action: "pickup", Node: src.Name, Empty: true},
 		{Action: "dropoff", Node: lineNode.Name},
 	}
-	plan := BuildComplexPlan(steps, d.snapshotPickupBins(steps), bp.Code, order.ProcessNode, domain.BinTypeRule{})
+	plan := BuildComplexPlan(steps)
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
 		t.Fatalf("reserveComplexPlan: %v", rerr)

@@ -1,0 +1,300 @@
+{
+  "need": {
+    "perturbed": [
+      "BIN-PA-01 claimed by an order on its way",
+      "BIN-PB-01 pending-reserved by that order",
+      "BIN-CLIP-01 locked",
+      "BIN-STUD-01 staged",
+      "BIN-BRKT-03 in _TRANSIT"
+    ],
+    "predicate": "SQL and the Go twin, each against the bin's own payload and that payload's bin-type rule"
+  },
+  "decision": [
+    {
+      "bin": "BIN-ACT-P1B",
+      "node": "PLN_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ACT-P1F",
+      "node": "PLN_001",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ACT-P2A",
+      "node": "PLN_003",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ACT-P2B",
+      "node": "PLN_004",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ACT-W1",
+      "node": "ALN_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ACT-W1-PA",
+      "payload": "PANEL-A",
+      "node": "ALN_001",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ACT-W2",
+      "node": "ALN_005",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-ACT-W2-BR",
+      "payload": "BRKT",
+      "node": "ALN_004",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ACT-W2-PB",
+      "payload": "PANEL-B",
+      "node": "ALN_003",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ACT-W3-CL",
+      "payload": "CLIP",
+      "node": "ALN_006",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ACT-W4-ST",
+      "payload": "STUD",
+      "node": "ALN_007",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-ACT-W5-SH",
+      "payload": "SHIM",
+      "node": "ALN_008",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-BRKT-01",
+      "payload": "BRKT",
+      "node": "SMN_010",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-BRKT-02",
+      "payload": "BRKT",
+      "node": "SMN_011",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-BRKT-03",
+      "payload": "BRKT",
+      "node": "_TRANSIT",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-CLIP-01",
+      "payload": "CLIP",
+      "node": "SMN_013",
+      "sourceable_sql": false,
+      "go_unavailable_reason": "locked for active handling"
+    },
+    {
+      "bin": "BIN-CLIP-02",
+      "payload": "CLIP",
+      "node": "SMN_014",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-CLIP-03",
+      "payload": "CLIP",
+      "node": "SMN_015",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-MT-01",
+      "node": "UTN_001",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-02",
+      "node": "UTN_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-03",
+      "node": "UTN_003",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-04",
+      "node": "UTN_004",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-05",
+      "node": "UTN_005",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-06",
+      "node": "UTN_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-07",
+      "node": "UTN_007",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-08",
+      "node": "UTN_008",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-09",
+      "node": "UTN_009",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-10",
+      "node": "UTN_010",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-11",
+      "node": "UTN_011",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-12",
+      "node": "UTN_012",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-13",
+      "node": "UTN_013",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-14",
+      "node": "UTN_014",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-15",
+      "node": "UTN_015",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-16",
+      "node": "SMN_035",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-17",
+      "node": "SMN_036",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PA-01",
+      "payload": "PANEL-A",
+      "node": "SMN_001",
+      "sourceable_sql": false,
+      "go_unavailable_reason": "already claimed by order 1"
+    },
+    {
+      "bin": "BIN-PA-02",
+      "payload": "PANEL-A",
+      "node": "SMN_002",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PA-03",
+      "payload": "PANEL-A",
+      "node": "SMN_003",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PB-01",
+      "payload": "PANEL-B",
+      "node": "SMN_004",
+      "sourceable_sql": false,
+      "go_unavailable_reason": "pending reservation held"
+    },
+    {
+      "bin": "BIN-PB-02",
+      "payload": "PANEL-B",
+      "node": "SMN_005",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PB-03",
+      "payload": "PANEL-B",
+      "node": "SMN_006",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-PEB-01",
+      "node": "PEB_001",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-02",
+      "node": "PEB_002",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-03",
+      "node": "PEB_003",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-04",
+      "node": "PEB_004",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-05",
+      "node": "PEB_005",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-PEB-06",
+      "node": "PEB_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-SHIM-01",
+      "payload": "SHIM",
+      "node": "PLK_H1",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-SHIM-02",
+      "payload": "SHIM",
+      "node": "PLK_H2",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-STUD-01",
+      "payload": "STUD",
+      "node": "SMN_016",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-STUD-02",
+      "payload": "STUD",
+      "node": "SMN_017",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "BIN-STUD-03",
+      "payload": "STUD",
+      "node": "SMN_018",
+      "sourceable_sql": true
+    }
+  ]
+}

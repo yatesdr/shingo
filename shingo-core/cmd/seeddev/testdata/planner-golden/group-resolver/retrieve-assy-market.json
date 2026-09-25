@@ -1,0 +1,10 @@
+{
+  "need": {
+    "group": "SYN_MARKET",
+    "mode": "retrieve",
+    "payload": "ASSY"
+  },
+  "decision": {
+    "error": true
+  }
+}

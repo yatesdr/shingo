@@ -367,7 +367,10 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 	// create goes first, and a create that fails returns before the dropper is
 	// ever sent — a dropper is never committed on a lift that was not.
 	for _, p := range ready {
-		if err := d.dispatchComplexToFleet(p.order, p.steps); err != nil {
+		// An empty hand: a pair leg acquired its holds in its phases (the pair
+		// stays on the split until it becomes one hand, C2), so only the
+		// occupancy and the status are taken here.
+		if err := d.dispatchComplexToFleet(p.order, p.steps, Hand{}); err != nil {
 			// The fleet create's failure paths either terminal-fail this leg —
 			// and the death rule then resolves its partner (swap_peer.go) — or
 			// park it on a read that failed before the create, in which case it

@@ -1,0 +1,11 @@
+{
+  "need": {
+    "group": "SYN_CLEAR",
+    "mode": "store",
+    "payload": "PANEL-A",
+    "bin_type": "STANDARD"
+  },
+  "decision": {
+    "node": "CLR_002"
+  }
+}

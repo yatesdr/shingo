@@ -1,0 +1,13 @@
+{
+  "need": {
+    "source": "SYN_MARKET",
+    "payload": "PANEL-B",
+    "delivery": "PLN_003",
+    "intent": "empty"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-MT-13",
+    "node": "UTN_013"
+  }
+}

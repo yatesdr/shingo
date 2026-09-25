@@ -5,6 +5,7 @@ package store
 // change.
 
 import (
+	"database/sql"
 	"fmt"
 
 	"shingocore/store/nodes"
@@ -66,13 +67,30 @@ func (db *DB) ConfirmSlotClaimWithPartner(nodeID, orderID int64, takenFirst []in
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if err := nodes.ClaimSlotTx(tx, nodeID, orderID, takenFirst, partnerID, partnerTaken); err != nil {
-		return err
-	}
-	if err := reservations.ConfirmSlot(tx, orderID, nodeID); err != nil {
+	if err := ConfirmSlotClaimWithPartnerTx(tx, nodeID, orderID, takenFirst, partnerID, partnerTaken); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ConfirmSlotClaimTx is ConfirmSlotClaim on the caller's transaction: the slot's
+// hard claim and its reservation's confirm land with whatever else the caller
+// commits, or roll back with it. dispatch.acquireHand is the caller that needs it
+// — a hand confirms the slot, the bins, the lanes and the status in one
+// transaction, so a later leg's refusal takes the slot back too.
+func ConfirmSlotClaimTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64) error {
+	return ConfirmSlotClaimWithPartnerTx(tx, nodeID, orderID, takenFirst, 0, nil)
+}
+
+// ConfirmSlotClaimWithPartnerTx is ConfirmSlotClaimWithPartner on the caller's
+// transaction, for the same reason ConfirmSlotClaimTx exists: a hand that drops
+// on a slot its partner's lift vacates confirms that slot with the rest of the
+// hand.
+func ConfirmSlotClaimWithPartnerTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64, partnerID int64, partnerTaken []int64) error {
+	if err := nodes.ClaimSlotTx(tx, nodeID, orderID, takenFirst, partnerID, partnerTaken); err != nil {
+		return err
+	}
+	return reservations.ConfirmSlot(tx, orderID, nodeID)
 }
 
 // ReserveSlot places a pending slot reservation on nodeID for orderID — the slot
@@ -80,7 +98,7 @@ func (db *DB) ConfirmSlotClaimWithPartner(nodeID, orderID int64, takenFirst []in
 // reservations.ErrReservationConflict when another order already holds an active
 // slot reservation on the node (the reconcile treats it as a lost race / revert).
 func (db *DB) ReserveSlot(nodeID, orderID int64) error {
-	return reservations.AcquireSlot(db.DB, orderID, nodeID, "reserveComplexPlan")
+	return reservations.AcquireSlot(db.DB, orderID, nodeID, "reserveSlot")
 }
 
 // ReleaseSlotReservation drops a PENDING slot reservation the order no longer needs

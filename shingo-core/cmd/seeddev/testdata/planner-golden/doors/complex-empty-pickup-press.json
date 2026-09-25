@@ -1,0 +1,48 @@
+{
+  "need": {
+    "door": "complex intake",
+    "steps": "pickup SYN_PRESS_EMPTIES (empty) → dropoff PLN_005"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "dispatched",
+      "queued"
+    ],
+    "fleet": [
+      {
+        "external": "g-empty-leg",
+        "blocks": [
+          "PEB_001 JackLoad",
+          "PLN_005 JackUnload"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "complex",
+        "status": "dispatched",
+        "payload": "PANEL-A",
+        "source": "PEB_001",
+        "delivery": "PLN_005",
+        "bin": "BIN-PEB-01",
+        "steps": [
+          "pickup PEB_001 (empty)",
+          "dropoff PLN_005"
+        ],
+        "hard_bins": [
+          "BIN-PEB-01"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-PEB-01"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "order.ack"
+    ]
+  }
+}
