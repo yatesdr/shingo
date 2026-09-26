@@ -4,8 +4,11 @@ package messaging
 
 import (
 	"database/sql"
+	"fmt"
+	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -208,8 +211,7 @@ func TestPlantClaimsMirror_MigrationIdempotent(t *testing.T) {
 			t.Fatalf("drop %s: %v", table, err)
 		}
 	}
-	// Re-run the v49 DDL by calling the migration func's CREATE statements
-	// directly (the migration is idempotent — IF NOT EXISTS).
+	// Recreate them in their migrated shape, as a re-migrate would.
 	if err := reseedMirrorTables(db.DB); err != nil {
 		t.Fatalf("re-create mirror tables: %v", err)
 	}
@@ -293,50 +295,64 @@ func payloadTargets(idx map[string][]plantclaims.ProcessKey, payload string) []s
 	return out
 }
 
-// reseedMirrorTables re-runs the v49 CREATE TABLE statements. Mirrors the
-// migration's idempotent CREATE ... IF NOT EXISTS so the down/up test can
-// restore the tables without a full re-migrate.
+// snapshotPath is the committed pg_dump of the fully migrated schema,
+// relative to this package. internal/schemadump's TestSchemaSnapshotIsCurrent
+// keeps it equal to what the migrations produce.
+const snapshotPath = "../store/schema/schema.snapshot.sql"
+
+// reseedMirrorTables recreates the two mirror tables, with their constraints
+// and indexes, from the schema snapshot — the migrated shape, whatever
+// migrations have since added to it. Hand-written DDL here fell a column
+// behind once (v133's containment_destination), and ReplaceProcess's INSERT
+// then failed inside a transaction HandlePlantClaims only logs, which reads
+// as an empty mirror rather than a schema error.
 func reseedMirrorTables(db *sql.DB) error {
-	stmts := []string{
-		// Mirrors the migrated shape, v49 + v51 + v118. This helper hand-rolls
-		// the DDL to model a "tables dropped, recreated, feed replayed" cycle,
-		// so it has to track every migration that touches these tables —
-		// is_active came with v51 (the running style from the plant-claims
-		// feed), and the four leg columns with v118 (the arcs of the material
-		// loop, which the demand loop compiler reads).
-		`CREATE TABLE IF NOT EXISTS process_styles (
-			process_id   TEXT NOT NULL,
-			style_id     TEXT NOT NULL,
-			config_gen   BIGINT NOT NULL DEFAULT 0,
-			is_active    BOOLEAN NOT NULL DEFAULT FALSE,
-			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			PRIMARY KEY (process_id, style_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS style_claims (
-			process_id          TEXT NOT NULL,
-			style_id            TEXT NOT NULL,
-			core_node_name      TEXT NOT NULL,
-			role                TEXT NOT NULL,
-			swap_mode           TEXT NOT NULL,
-			payload_code        TEXT NOT NULL DEFAULT '',
-			allowed_payload_codes TEXT NOT NULL DEFAULT '[]',
-			uop_capacity        INTEGER NOT NULL DEFAULT 0,
-			reorder_point       INTEGER NOT NULL DEFAULT 0,
-			seq                 INTEGER NOT NULL DEFAULT 0,
-			inbound_source          TEXT NOT NULL DEFAULT '',
-			outbound_destination    TEXT NOT NULL DEFAULT '',
-			paired_core_node        TEXT NOT NULL DEFAULT '',
-			second_paired_core_node TEXT NOT NULL DEFAULT ''
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_style_claims_payload ON style_claims (payload_code)`,
-		`CREATE INDEX IF NOT EXISTS idx_style_claims_process_style ON style_claims (process_id, style_id)`,
+	stmts, err := snapshotStatementsFor("process_styles", "style_claims")
+	if err != nil {
+		return err
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
-			return err
+			return fmt.Errorf("%w\n%s", err, s)
 		}
 	}
 	return nil
+}
+
+// snapshotStatementsFor returns the snapshot's CREATE TABLE, ALTER TABLE ONLY
+// (constraints) and CREATE [UNIQUE] INDEX statements for the named tables, in
+// file order. pg_dump ends every statement with ";" at the end of a line, so
+// splitting there yields whole statements. A table with no CREATE TABLE in the
+// snapshot is an error, not an empty result.
+func snapshotStatementsFor(tables ...string) ([]string, error) {
+	b, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	created := map[string]bool{}
+	for _, chunk := range strings.Split(string(b), ";\n") {
+		stmt := strings.TrimSpace(chunk)
+		for _, t := range tables {
+			q := "public." + t
+			switch {
+			case strings.HasPrefix(stmt, "CREATE TABLE "+q+" ("):
+				created[t] = true
+			case strings.HasPrefix(stmt, "ALTER TABLE ONLY "+q+"\n"):
+			case (strings.HasPrefix(stmt, "CREATE INDEX ") || strings.HasPrefix(stmt, "CREATE UNIQUE INDEX ")) &&
+				strings.Contains(stmt, " ON "+q+" "):
+			default:
+				continue
+			}
+			out = append(out, stmt)
+		}
+	}
+	for _, t := range tables {
+		if !created[t] {
+			return nil, fmt.Errorf("%s: no CREATE TABLE public.%s", snapshotPath, t)
+		}
+	}
+	return out, nil
 }
 
 // TestHandlePlantClaims_MirrorsTheRunningStyle pins the running-style signal end
