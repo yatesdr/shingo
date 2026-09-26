@@ -521,137 +521,172 @@ func applyClaimOverrides(tx *sql.Tx, targetID int64, overrides []ClaimOverride) 
 	}
 
 	for _, ov := range overrides {
-		node := strings.TrimSpace(ov.Node)
-		if node == "" {
-			notes = append(notes, `an override row is missing its "node" match key — ignored`)
-			continue
+		rowNotes, err := applyOverrideFields(tx, targetID, rows, ov)
+		if err != nil {
+			return nil, err
 		}
-		row := rows[node]
-		if row == nil {
-			notes = append(notes, fmt.Sprintf("node %q: the source style has no such claim — override ignored", node))
-			continue
-		}
-
-		var sets []string
-		var args []any
-		add := func(col, val string) {
-			sets = append(sets, col+" = ?")
-			args = append(args, val)
-		}
-		if v := strings.TrimSpace(ov.PayloadCode); v != "" {
-			add("payload_code", v)
-			row.payload = v
-			// Keep the allowed list coherent with the payload: sourcing
-			// (walk.go) checks the requested payload against
-			// claim.AllowedPayloads(), so a payload outside the list makes
-			// the claim unsourceable — silently, exactly the failure shape
-			// this layer exists to avoid shipping.
-			if !slices.Contains(row.allowed, v) && !slices.Contains(row.allowed, "*") {
-				row.allowed = append(slices.Clone(row.allowed), v)
-				add("allowed_payload_codes", marshalAllowedPayloads(row.allowed))
-			}
-		}
-		if v := strings.TrimSpace(ov.InboundSource); v != "" {
-			add("inbound_source", v)
-			row.inboundSource = v
-		}
-		if v := strings.TrimSpace(ov.OutboundDestination); v != "" {
-			add("outbound_destination", v)
-			row.outboundDestination = v
-		}
-		if v := strings.TrimSpace(ov.InboundStaging); v != "" {
-			add("inbound_staging", v)
-			row.inboundStaging = v
-		}
-		if v := strings.TrimSpace(ov.OutboundStaging); v != "" {
-			add("outbound_staging", v)
-			row.outboundStaging = v
-		}
-		// Paired-position overrides on a press-index claim answer to the
-		// same validity rule the rename pass enforces: front, back and third
-		// must stay distinct. The offending field is withheld alone, noted,
-		// and everything else in the row still applies.
-		if v := strings.TrimSpace(ov.PairedCoreNode); v != "" {
-			if row.swapMode == protocol.SwapModeTwoRobotPressIndex && v == node {
-				notes = append(notes, fmt.Sprintf("node %q: paired_core_node override refused — it names the claim's own front position", node))
-			} else {
-				add("paired_core_node", v)
-				row.paired = v
-			}
-		}
-		if v := strings.TrimSpace(ov.SecondPairedCoreNode); v != "" {
-			if row.swapMode == protocol.SwapModeTwoRobotPressIndex && (v == node || v == row.paired) {
-				notes = append(notes, fmt.Sprintf("node %q: second_paired_core_node override refused — a press-index claim's positions must stay distinct", node))
-			} else {
-				add("second_paired_core_node", v)
-				row.second = v
-			}
-		}
-		// The role override answers to the SwapMode requirements, evaluated
-		// against the claim's post-override values — supplying the missing
-		// field beside the role change makes it legal. A claim that still
-		// fails keeps its copied role; the other fields apply regardless.
-		if s := strings.TrimSpace(ov.Role); s != "" {
-			want := protocol.ClaimRole(s)
-			if want != protocol.ClaimRoleProduce {
-				want = protocol.ClaimRoleConsume
-			}
-			if msg := claimSwapModeRequirement(row.swapMode, overrideApplied(*row, ov)); msg != "" {
-				notes = append(notes, fmt.Sprintf("node %q: role change withheld — %s", node, msg))
-			} else {
-				add("role", string(want))
-			}
-		}
-		if len(sets) > 0 {
-			args = append(args, targetID, node)
-			if _, err := tx.Exec(`UPDATE style_node_claims SET `+strings.Join(sets, ", ")+`
-				WHERE style_id = ? AND core_node_name = ?`, args...); err != nil {
-				return nil, fmt.Errorf("override node %q: %w", node, err)
-			}
-		}
+		notes = append(notes, rowNotes...)
 	}
 
 	// PASS 2 — renames, after the fields, because a rename changes the match
 	// key pass 1 keyed on.
 	for _, ov := range overrides {
-		oldName := strings.TrimSpace(ov.Node)
-		newName := strings.TrimSpace(ov.CoreNodeName)
-		if oldName == "" || newName == "" || newName == oldName {
-			continue
+		rowNotes, err := applyOverrideRename(tx, targetID, rows, ov)
+		if err != nil {
+			return nil, err
 		}
-		row := rows[oldName]
-		if row == nil {
-			continue // already noted in pass 1
+		notes = append(notes, rowNotes...)
+	}
+	return notes, nil
+}
+
+// applyOverrideFields is pass 1 for one override row: the field updates,
+// keyed on the claim's current (source) node name, with the paired-position
+// and role gates described on applyClaimOverrides. rows is updated in
+// memory as the values land. Returns the notes this row produced.
+func applyOverrideFields(tx *sql.Tx, targetID int64, rows map[string]*copiedClaim, ov ClaimOverride) ([]string, error) {
+	var notes []string
+	node := strings.TrimSpace(ov.Node)
+	if node == "" {
+		return []string{`an override row is missing its "node" match key — ignored`}, nil
+	}
+	row := rows[node]
+	if row == nil {
+		return []string{fmt.Sprintf("node %q: the source style has no such claim — override ignored", node)}, nil
+	}
+
+	var sets []string
+	var args []any
+	add := func(col, val string) {
+		sets = append(sets, col+" = ?")
+		args = append(args, val)
+	}
+	if v := strings.TrimSpace(ov.PayloadCode); v != "" {
+		add("payload_code", v)
+		row.payload = v
+		// Keep the allowed list coherent with the payload: sourcing
+		// (walk.go) checks the requested payload against
+		// claim.AllowedPayloads(), so a payload outside the list makes
+		// the claim unsourceable — silently, exactly the failure shape
+		// this layer exists to avoid shipping.
+		if !slices.Contains(row.allowed, v) && !slices.Contains(row.allowed, "*") {
+			row.allowed = append(slices.Clone(row.allowed), v)
+			add("allowed_payload_codes", marshalAllowedPayloads(row.allowed))
 		}
-		if clash := rows[newName]; clash != nil {
-			notes = append(notes, fmt.Sprintf("node %q: rename to %q refused — the copied set already has a claim on %q", oldName, newName, newName))
-			continue
+	}
+	if v := strings.TrimSpace(ov.InboundSource); v != "" {
+		add("inbound_source", v)
+		row.inboundSource = v
+	}
+	if v := strings.TrimSpace(ov.OutboundDestination); v != "" {
+		add("outbound_destination", v)
+		row.outboundDestination = v
+	}
+	if v := strings.TrimSpace(ov.InboundStaging); v != "" {
+		add("inbound_staging", v)
+		row.inboundStaging = v
+	}
+	if v := strings.TrimSpace(ov.OutboundStaging); v != "" {
+		add("outbound_staging", v)
+		row.outboundStaging = v
+	}
+	// Paired-position overrides on a press-index claim answer to the
+	// same validity rule the rename pass enforces: front, back and third
+	// must stay distinct. The offending field is withheld alone, noted,
+	// and everything else in the row still applies.
+	if v := strings.TrimSpace(ov.PairedCoreNode); v != "" {
+		if row.swapMode == protocol.SwapModeTwoRobotPressIndex && v == node {
+			notes = append(notes, fmt.Sprintf("node %q: paired_core_node override refused — it names the claim's own front position", node))
+		} else {
+			add("paired_core_node", v)
+			row.paired = v
 		}
-		if row.swapMode == protocol.SwapModeTwoRobotPressIndex && (newName == row.paired || (row.second != "" && newName == row.second)) {
-			notes = append(notes, fmt.Sprintf("node %q: rename to %q refused — a two_robot_press_index claim's positions must stay distinct", oldName, newName))
-			continue
+	}
+	if v := strings.TrimSpace(ov.SecondPairedCoreNode); v != "" {
+		if row.swapMode == protocol.SwapModeTwoRobotPressIndex && (v == node || v == row.paired) {
+			notes = append(notes, fmt.Sprintf("node %q: second_paired_core_node override refused — a press-index claim's positions must stay distinct", node))
+		} else {
+			add("second_paired_core_node", v)
+			row.second = v
 		}
-		if _, err := tx.Exec(`UPDATE style_node_claims SET core_node_name = ?
-			WHERE style_id = ? AND core_node_name = ?`, newName, targetID, oldName); err != nil {
-			return nil, fmt.Errorf("rename override %q: %w", oldName, err)
+	}
+	// The role override answers to the SwapMode requirements, evaluated
+	// against the claim's post-override values — supplying the missing
+	// field beside the role change makes it legal. A claim that still
+	// fails keeps its copied role; the other fields apply regardless.
+	if s := strings.TrimSpace(ov.Role); s != "" {
+		want := protocol.ClaimRole(s)
+		if want != protocol.ClaimRoleProduce {
+			want = protocol.ClaimRoleConsume
 		}
-		// Auto-fix the pairing partner: the operator renamed one side of an
-		// A/B pair, so references still pointing at the old name follow it.
-		// Rows affected are reported, because a cascade nobody can see is
-		// indistinguishable from a rename that never happened.
-		for _, col := range []string{"paired_core_node", "second_paired_core_node"} {
-			res, err := tx.Exec(`UPDATE style_node_claims SET `+col+` = ?
-				WHERE style_id = ? AND `+col+` = ?`, newName, targetID, oldName)
-			if err != nil {
-				return nil, fmt.Errorf("rename cascade %q: %w", oldName, err)
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				notes = append(notes, fmt.Sprintf("rename %q → %q: %d claim(s)' %s reference updated", oldName, newName, n, col))
-			}
+		if msg := claimSwapModeRequirement(row.swapMode, overrideApplied(*row, ov)); msg != "" {
+			notes = append(notes, fmt.Sprintf("node %q: role change withheld — %s", node, msg))
+		} else {
+			add("role", string(want))
 		}
-		delete(rows, oldName)
-		row.node = newName
-		rows[newName] = row
+	}
+	if len(sets) > 0 {
+		args = append(args, targetID, node)
+		if _, err := tx.Exec(`UPDATE style_node_claims SET `+strings.Join(sets, ", ")+`
+			WHERE style_id = ? AND core_node_name = ?`, args...); err != nil {
+			return nil, fmt.Errorf("override node %q: %w", node, err)
+		}
+	}
+	return notes, nil
+}
+
+// applyOverrideRename is pass 2 for one override row: the rename, its
+// refusals, and the partner repair when it lands. rows is re-keyed on the
+// new name. Returns the notes this row produced.
+func applyOverrideRename(tx *sql.Tx, targetID int64, rows map[string]*copiedClaim, ov ClaimOverride) ([]string, error) {
+	oldName := strings.TrimSpace(ov.Node)
+	newName := strings.TrimSpace(ov.CoreNodeName)
+	if oldName == "" || newName == "" || newName == oldName {
+		return nil, nil
+	}
+	row := rows[oldName]
+	if row == nil {
+		return nil, nil // already noted in pass 1
+	}
+	if clash := rows[newName]; clash != nil {
+		return []string{fmt.Sprintf("node %q: rename to %q refused — the copied set already has a claim on %q", oldName, newName, newName)}, nil
+	}
+	if row.swapMode == protocol.SwapModeTwoRobotPressIndex && (newName == row.paired || (row.second != "" && newName == row.second)) {
+		return []string{fmt.Sprintf("node %q: rename to %q refused — a two_robot_press_index claim's positions must stay distinct", oldName, newName)}, nil
+	}
+	if _, err := tx.Exec(`UPDATE style_node_claims SET core_node_name = ?
+		WHERE style_id = ? AND core_node_name = ?`, newName, targetID, oldName); err != nil {
+		return nil, fmt.Errorf("rename override %q: %w", oldName, err)
+	}
+	notes, err := renameClaimReferences(tx, targetID, oldName, newName)
+	if err != nil {
+		return nil, err
+	}
+	delete(rows, oldName)
+	row.node = newName
+	rows[newName] = row
+	return notes, nil
+}
+
+// renameClaimReferences is pass 2's partner repair for one landed rename:
+// every paired_core_node / second_paired_core_node in the target still
+// holding the old name is pointed at the new one, with a note per column
+// that moved any rows.
+func renameClaimReferences(tx *sql.Tx, targetID int64, oldName, newName string) ([]string, error) {
+	// Auto-fix the pairing partner: the operator renamed one side of an
+	// A/B pair, so references still pointing at the old name follow it.
+	// Rows affected are reported, because a cascade nobody can see is
+	// indistinguishable from a rename that never happened.
+	var notes []string
+	for _, col := range []string{"paired_core_node", "second_paired_core_node"} {
+		res, err := tx.Exec(`UPDATE style_node_claims SET `+col+` = ?
+			WHERE style_id = ? AND `+col+` = ?`, newName, targetID, oldName)
+		if err != nil {
+			return nil, fmt.Errorf("rename cascade %q: %w", oldName, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			notes = append(notes, fmt.Sprintf("rename %q → %q: %d claim(s)' %s reference updated", oldName, newName, n, col))
+		}
 	}
 	return notes, nil
 }

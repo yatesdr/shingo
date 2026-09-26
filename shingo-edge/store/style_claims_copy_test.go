@@ -274,3 +274,111 @@ func TestCopyStyleClaims_PressIndexDistinctnessAndRoleWithhold(t *testing.T) {
 		t.Errorf("N-RAW = %+v, want payload override P-RAW applied", raw)
 	}
 }
+
+// Pass 1's paired-position gate on a two_robot_press_index claim: front, back
+// and third must stay distinct, the offending field is withheld alone with a
+// note, and the gate reads the IN-MEMORY row, so a second_paired override is
+// checked against a paired override the same row just applied. The gate does
+// not apply outside press-index: a sequential claim takes the same values.
+func TestCopyStyleClaims_PairedOverrideDistinctness(t *testing.T) {
+	db := coverageDB(t)
+	processID, _, _, _ := seedProcessWithChildren(t, db, "CopyPairedGate")
+	src, err := processes.ListStylesByProcess(db.DB, processID)
+	testutil.MustNoErr(t, err, "list styles")
+	srcID := src[0].ID
+	tgtID, err := db.CreateStyle("PairedGateTarget", "", processID)
+	testutil.MustNoErr(t, err, "create target")
+	for _, c := range []struct{ node, paired string }{{"N-X", "N-P1"}, {"N-Y", "N-Q1"}, {"N-Z", "N-R1"}} {
+		_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+			StyleID: srcID, CoreNodeName: c.node, Role: protocol.ClaimRoleProduce,
+			SwapMode:       protocol.SwapModeTwoRobotPressIndex,
+			PairedCoreNode: c.paired, OutboundDestination: "LINE-OUT",
+		})
+		testutil.MustNoErr(t, err, "seed press-index claim "+c.node)
+	}
+	seedClaimRow(t, db, srcID, "N-SEQ", "consume", "PART-SEQ", 0)
+
+	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+		// Both positions refused: paired names the front itself, and second
+		// names the (unchanged) back. The sibling field still applies.
+		{Node: "N-X", PairedCoreNode: "N-X", SecondPairedCoreNode: "N-P1", InboundSource: "SRC-IN"},
+		// Distinct values apply.
+		{Node: "N-Y", PairedCoreNode: "N-Q2", SecondPairedCoreNode: "N-Q3"},
+		// Second collides with the paired value this same row just set.
+		{Node: "N-Z", PairedCoreNode: "N-R2", SecondPairedCoreNode: "N-R2"},
+		// Not press-index: no distinctness gate.
+		{Node: "N-SEQ", PairedCoreNode: "N-SEQ", SecondPairedCoreNode: "N-SEQ"},
+	})
+	testutil.MustNoErr(t, err, "copy with paired overrides")
+	joined := strings.Join(notes, " | ")
+	for _, want := range []string{
+		`node "N-X": paired_core_node override refused`,
+		`node "N-X": second_paired_core_node override refused`,
+		`node "N-Z": second_paired_core_node override refused`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("notes = %v, want %q", notes, want)
+		}
+	}
+	if len(notes) != 3 {
+		t.Errorf("notes = %v, want exactly the three refusals", notes)
+	}
+
+	x := claimByNode(t, db, tgtID, "N-X")
+	if x == nil || x.PairedCoreNode != "N-P1" || x.SecondPairedCoreNode != "" || x.InboundSource != "SRC-IN" {
+		t.Errorf("N-X = %+v, want paired N-P1, no second, inbound SRC-IN", x)
+	}
+	y := claimByNode(t, db, tgtID, "N-Y")
+	if y == nil || y.PairedCoreNode != "N-Q2" || y.SecondPairedCoreNode != "N-Q3" {
+		t.Errorf("N-Y = %+v, want paired N-Q2, second N-Q3", y)
+	}
+	z := claimByNode(t, db, tgtID, "N-Z")
+	if z == nil || z.PairedCoreNode != "N-R2" || z.SecondPairedCoreNode != "" {
+		t.Errorf("N-Z = %+v, want paired N-R2 applied and second withheld", z)
+	}
+	seq := claimByNode(t, db, tgtID, "N-SEQ")
+	if seq == nil || seq.PairedCoreNode != "N-SEQ" || seq.SecondPairedCoreNode != "N-SEQ" {
+		t.Errorf("N-SEQ = %+v, want both paired overrides applied (no gate outside press-index)", seq)
+	}
+}
+
+// Pass 1's allowed-list coherence on a payload override appends the new code
+// only when the list neither holds it already nor holds the "*" wildcard,
+// which already admits every payload.
+func TestCopyStyleClaims_PayloadOverrideAllowedList(t *testing.T) {
+	db := coverageDB(t)
+	processID, _, _, _ := seedProcessWithChildren(t, db, "CopyAllowedList")
+	src, err := processes.ListStylesByProcess(db.DB, processID)
+	testutil.MustNoErr(t, err, "list styles")
+	srcID := src[0].ID
+	tgtID, err := db.CreateStyle("AllowedListTarget", "", processID)
+	testutil.MustNoErr(t, err, "create target")
+	for _, c := range []struct {
+		node    string
+		allowed []string
+	}{{"N-WILD", []string{"*"}}, {"N-HAS", []string{"PART-A", "P-OVR"}}} {
+		_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+			StyleID: srcID, CoreNodeName: c.node, Role: protocol.ClaimRoleConsume,
+			SwapMode: protocol.SwapModeSequential, PayloadCode: "PART-A",
+			AllowedPayloadCodes: c.allowed,
+		})
+		testutil.MustNoErr(t, err, "seed claim "+c.node)
+	}
+
+	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+		{Node: "N-WILD", PayloadCode: "P-OVR"},
+		{Node: "N-HAS", PayloadCode: "P-OVR"},
+	})
+	testutil.MustNoErr(t, err, "copy with payload overrides")
+	if len(notes) != 0 {
+		t.Errorf("clean overrides produced notes: %v", notes)
+	}
+	wild := claimByNode(t, db, tgtID, "N-WILD")
+	if wild == nil || wild.PayloadCode != "P-OVR" || !slices.Equal(wild.AllowedPayloadCodes, []string{"*"}) {
+		t.Errorf("N-WILD = %+v, want payload P-OVR with the allowed list left at [*]", wild)
+	}
+	has := claimByNode(t, db, tgtID, "N-HAS")
+	if has == nil || has.PayloadCode != "P-OVR" || !slices.Equal(has.AllowedPayloadCodes, []string{"PART-A", "P-OVR"}) {
+		t.Errorf("N-HAS = %+v, want payload P-OVR with the allowed list unchanged", has)
+	}
+}
