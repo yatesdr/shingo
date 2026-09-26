@@ -9,6 +9,7 @@ import (
 	"shingocore/dispatch/binsource"
 	"shingocore/domain"
 	"shingocore/store/bins"
+	"shingocore/store/reservations"
 )
 
 // eligibility_golden_test.go — a photograph of every "may this bin be sourced?"
@@ -109,6 +110,12 @@ func (f eligFixture) bin(id int64) *bins.Bin {
 		HasPendingReservation: f.Reserved,
 		CreatedAt:             time.Unix(1_700_000_000, 0).UTC(),
 	}
+	if f.Reserved {
+		// A STRANGER's reservation: the predicates are asked by nobody in
+		// particular (reservations.Anyone), so any holder is somebody else.
+		holder := int64(strangerOrderID)
+		b.PendingReservedBy = &holder
+	}
 	if f.Claimed {
 		owner := int64(9999)
 		b.ClaimedBy = &owner
@@ -123,6 +130,16 @@ func (f eligFixture) bin(id int64) *bins.Bin {
 // cand mirrors dispatch.candFromBin, which is unexported in that package. The
 // mapping is field-for-field and carries no logic; if candFromBin changes shape,
 // this must follow or the row stops describing production.
+// strangerOrderID holds the reserved fixture's pending reservation.
+const strangerOrderID = 999
+
+func reservedByOf(b *bins.Bin) int64 {
+	if b.PendingReservedBy == nil {
+		return 0
+	}
+	return *b.PendingReservedBy
+}
+
 func (f eligFixture) cand(b *bins.Bin) binsource.Cand {
 	return binsource.Cand{
 		BinID:             b.ID,
@@ -133,6 +150,7 @@ func (f eligFixture) cand(b *bins.Bin) binsource.Cand {
 		CreatedAt:         b.CreatedAt,
 		Claimed:           b.ClaimedBy != nil,
 		Locked:            b.Locked,
+		ReservedBy:        reservedByOf(b),
 		ManifestConfirmed: b.ManifestConfirmed,
 		Status:            b.Status,
 	}
@@ -164,7 +182,7 @@ func TestGolden_Eligibility(t *testing.T) {
 		c := f.cand(b)
 
 		ngrp := ""
-		if !isBinAvailableForRetrieve(b, wantPayload) {
+		if !isBinAvailableForRetrieve(b, wantPayload, reservations.Anyone) {
 			ngrp = "rejected"
 		}
 

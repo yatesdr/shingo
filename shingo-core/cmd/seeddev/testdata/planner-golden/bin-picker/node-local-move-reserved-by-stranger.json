@@ -1,0 +1,15 @@
+{
+  "need": {
+    "source": "PLN_001",
+    "delivery": "SYN_MARKET",
+    "intent": "full",
+    "node_local": true,
+    "setup": "BIN-ACT-P1F carries another order's pending reservation",
+    "asker": "an order holding nothing"
+  },
+  "decision": {
+    "outcome": "wait",
+    "queue_code": "waiting_for_material",
+    "queue_cause": "finder-node-empty"
+  }
+}

@@ -55,6 +55,10 @@ type Want struct {
 	Payload  string
 	Intent   Intent
 	BinTypes domain.BinTypeRule
+	// Asker is the id of the order asking, 0 when nobody in particular is. A
+	// candidate carrying ITS pending reservation is still eligible; one carrying
+	// anybody else's is not (B1, Rule 4).
+	Asker int64
 }
 
 // Cand is one candidate bin, carrying exactly what the selector reads. Populated
@@ -71,6 +75,10 @@ type Cand struct {
 
 	Claimed bool // claimed_by IS NOT NULL → unavailable
 	Locked  bool
+	// ReservedBy is the order holding a pending reservation on the bin, 0 when
+	// none does. Another order's reservation makes the bin unavailable to this
+	// want; the asker's own does not.
+	ReservedBy int64
 	// Bare is bin_types.bare: a cart with no bin on it. Never a container to
 	// fill and never stock to drain, so it is rejected before any intent.
 	Bare              bool
@@ -118,6 +126,11 @@ func RejectReason(c Cand, w Want) string {
 		return "claimed"
 	case c.Locked:
 		return "locked"
+	case c.ReservedBy != 0 && (w.Asker == 0 || c.ReservedBy != w.Asker):
+		// OWNER-AWARE (B1, Rule 4): the pool used to be reservation-blind and
+		// handed out a bin another order had planned for; the reserve then
+		// conflicted and the cell waited beside a free one.
+		return "reserved"
 	case c.Bare:
 		// A bare cart has no payload, which Fill would read as a fungible
 		// empty. It never composed bins.EmptyCarrierWhere, so the rule is

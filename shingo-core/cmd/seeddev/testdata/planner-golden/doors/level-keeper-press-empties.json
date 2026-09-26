@@ -10,21 +10,21 @@
       {
         "external": "order 1 of this case",
         "blocks": [
-          "PLN_001 JackLoad",
+          "PLN_002 JackLoad",
           "PEB_001 JackUnload"
         ]
       },
       {
         "external": "order 2 of this case",
         "blocks": [
-          "PLN_002 JackLoad",
+          "PLN_006 JackLoad",
           "PEB_002 JackUnload"
         ]
       },
       {
         "external": "order 3 of this case",
         "blocks": [
-          "ALN_002 JackLoad",
+          "SLN_010 JackLoad",
           "PEB_003 JackUnload"
         ]
       }
@@ -34,17 +34,17 @@
         "index": 1,
         "type": "retrieve_empty",
         "status": "dispatched",
-        "source": "PLN_001",
+        "source": "PLN_002",
         "delivery": "PEB_001",
-        "bin": "BIN-ACT-P1F",
+        "bin": "BIN-ACT-P1B",
         "hard_bins": [
-          "BIN-ACT-P1F"
+          "BIN-ACT-P1B"
         ],
         "hard_slots": [
           "PEB_001"
         ],
         "reservations": [
-          "bin:confirmed:BIN-ACT-P1F",
+          "bin:confirmed:BIN-ACT-P1B",
           "slot:confirmed:PEB_001"
         ],
         "to_fleet": true
@@ -53,17 +53,17 @@
         "index": 2,
         "type": "retrieve_empty",
         "status": "dispatched",
-        "source": "PLN_002",
+        "source": "PLN_006",
         "delivery": "PEB_002",
-        "bin": "BIN-ACT-P1B",
+        "bin": "BIN-PEB-02",
         "hard_bins": [
-          "BIN-ACT-P1B"
+          "BIN-PEB-02"
         ],
         "hard_slots": [
           "PEB_002"
         ],
         "reservations": [
-          "bin:confirmed:BIN-ACT-P1B",
+          "bin:confirmed:BIN-PEB-02",
           "slot:confirmed:PEB_002"
         ],
         "to_fleet": true
@@ -72,17 +72,17 @@
         "index": 3,
         "type": "retrieve_empty",
         "status": "dispatched",
-        "source": "ALN_002",
+        "source": "SLN_010",
         "delivery": "PEB_003",
-        "bin": "BIN-ACT-W1",
+        "bin": "BIN-PEB-03",
         "hard_bins": [
-          "BIN-ACT-W1"
+          "BIN-PEB-03"
         ],
         "hard_slots": [
           "PEB_003"
         ],
         "reservations": [
-          "bin:confirmed:BIN-ACT-W1",
+          "bin:confirmed:BIN-PEB-03",
           "slot:confirmed:PEB_003"
         ],
         "to_fleet": true

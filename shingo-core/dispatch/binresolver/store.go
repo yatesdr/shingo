@@ -1,11 +1,10 @@
 package binresolver
 
 import (
-	"shingocore/store"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
-	"shingocore/store/reservations"
 )
 
 // Store is the narrow DB surface that the bin resolvers depend on.
@@ -33,7 +32,7 @@ type Store interface {
 	// an expose dig hides its own uncovered bin from its own parent. See
 	// store/reservations/dig_exclusion.go.
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
-	ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker) ([]*nodes.Node, error)
+	ListChildNodesUnlocked(parentID int64, asker domain.DigAsker) ([]*nodes.Node, error)
 	GetNode(id int64) (*nodes.Node, error)
 	GetNodeProperty(nodeID int64, key string) string
 
@@ -77,7 +76,7 @@ type Store interface {
 	// FindStoreSlotInLaneExcluding is the OWNER-AWARE form, and the group
 	// resolvers use it so a re-resolve can see the slot the asking order already
 	// holds. excludeOrderID 0 reproduces the blind form exactly (order ids are
-	// positive), which is why reservations.Anyone leaves every existing caller
+	// positive), which is why domain.Anyone leaves every existing caller
 	// byte-identical. See nodes.FindStoreSlotInLaneExcluding for why the blind
 	// form is unusable on a re-resolve: an order matches its own claim, its own
 	// reservation and its own delivery_node, so its slot is invisible to it and
@@ -109,7 +108,6 @@ type Store interface {
 	BinTypeBareOf(binTypeID int64) (*int64, error)
 }
 
-// Compile-time check that *store.DB satisfies Store. If the store package
-// drops or renames one of the methods above, this assertion catches it
-// before the build fails somewhere further downstream.
-var _ Store = (*store.DB)(nil)
+// The compile-time check that *store.DB satisfies Store lives in dispatch
+// (binresolver_aliases.go): this package is a planner part and must not import
+// shingocore/store, which is where *store.DB lives (planner-purity, B1).

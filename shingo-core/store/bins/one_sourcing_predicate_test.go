@@ -228,7 +228,7 @@ func moduleGoFiles(t *testing.T) []string {
 // with a part its carrier may not hold counts as stock and can never be
 // fetched, and that is the row the gap produced.
 var goPredicates = []struct{ file, fn, must string }{
-	{"../../dispatch/binresolver/helpers.go", "func BinUnavailableReason(", "binTypes.Permits"},
+	{"../../dispatch/binresolver/helpers.go", "func BinUnavailableReasonFor(", "binTypes.Permits"},
 	{"../../dispatch/binsource/source.go", "func RejectReason(", "binTypeReject"},
 }
 

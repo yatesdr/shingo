@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"shingocore/dispatch/plan"
 	"time"
 
 	"shingo/protocol"
@@ -44,7 +45,10 @@ type LifecycleService struct {
 	emitter     Emitter
 	resolver    NodeResolver
 	binManifest *service.BinManifestService
-	debug       func(string, ...any)
+	// pure is the Dispatcher's planner (dispatch/plan): the intake destination
+	// and its overflow are chosen there. Set by NewDispatcher.
+	pure  *plan.Planner
+	debug func(string, ...any)
 
 	// futility is the rate-per-tuple detector (futility.go). nil = disabled,
 	// which is the default until a plant turns it on in YAML; every method on
@@ -367,7 +371,7 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 	// than yesterday" rather than a placement that does not happen.
 	carrier := s.binTypeAtIntake(order)
 
-	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, carrier, digAskerFor(order), nil)
+	result, err := s.pure.StoreDestination(destNode, order.PayloadCode, carrier, digAskerFor(order))
 	if err != nil {
 		// A full group (ResolutionCapacity — "no available slot in node group
 		// X") must NOT fail the operator's action. Leave the synthetic
@@ -629,39 +633,10 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	return sourceNode, newDest, nil
 }
 
-// overflowReader is what OverflowGroupOf reads: the group's property and the
-// node it names.
-type overflowReader interface {
-	GetNodeProperty(nodeID int64, key string) string
-	GetNodeByDotName(name string) (*nodes.Node, error)
-}
-
-// OverflowGroupOf is a maintained group's configured overflow destination: the
-// node it names, or nil. With nil, why is "" when none is configured (a real
-// answer, not a missing one) and a sentence when one is configured and
-// unusable.
-//
-// THE LOOKUP HALF OF tryOverflow, and the only copy. The cancel-return policy
-// (engine/cancel_return.go) follows the same overflow for a bin it is returning
-// to a group at its level, and two lookups would be two answers the first time
-// either grows a rule.
-func OverflowGroupOf(db overflowReader, group *nodes.Node) (*nodes.Node, string) {
-	overflow := db.GetNodeProperty(group.ID, nodes.PropOverflowDestination)
-	if overflow == "" {
-		return nil, ""
-	}
-	dest, err := db.GetNodeByDotName(overflow)
-	if err != nil || dest == nil {
-		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", overflow, group.Name, err)
-	}
-	if dest.ID == group.ID {
-		// A group naming itself is the one-hop rule's degenerate case, and it is
-		// worth refusing explicitly: without this it would re-resolve the same
-		// full group and return the same capacity error, which reads as a
-		// mysterious no-op rather than a configuration mistake.
-		return nil, fmt.Sprintf("overflow of %s names itself", group.Name)
-	}
-	return dest, ""
+// OverflowGroupOf is plan.OverflowGroupOf, the one lookup of a group's overflow,
+// for the engine's cancel-return policy.
+func OverflowGroupOf(db plan.OverflowReader, group *nodes.Node) (*nodes.Node, string) {
+	return plan.OverflowGroupOf(db, group)
 }
 
 // tryOverflow resolves a maintained group's configured overflow destination.
@@ -687,23 +662,10 @@ func OverflowGroupOf(db overflowReader, group *nodes.Node) (*nodes.Node, string)
 // the overflow is a different group with its own algorithm, its own children,
 // and possibly its own level.
 func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node) (string, time.Time, bool) {
-	dest, why := OverflowGroupOf(s.db, group)
-	if dest == nil {
-		if why != "" {
-			s.dbg("intake: %s — parking instead", why)
-		}
+	stated := func() binresolver.BinTypeStatement { return s.binTypeAtIntake(order) }
+	node, ok := s.pure.OverflowDestination(group, order.PayloadCode, stated, digAskerFor(order))
+	if !ok {
 		return "", time.Time{}, false
 	}
-	overflow := dest.Name
-
-	// The overflow destination is the same placement one group over, so it gets
-	// the same carrier answer rather than a second, weaker one.
-	result, err := s.resolver.Resolve(dest, binresolver.ResolveModeStore, order.PayloadCode,
-		s.binTypeAtIntake(order), digAskerFor(order), nil)
-	if err != nil || result == nil || result.Node == nil {
-		s.dbg("intake: overflow %s of %s has no room either (%v) — parking",
-			overflow, group.Name, err)
-		return "", time.Time{}, false
-	}
-	return result.Node.Name, clock.Now().UTC(), true
+	return node, clock.Now().UTC(), true
 }

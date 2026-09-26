@@ -2,11 +2,11 @@ package binresolver
 
 import (
 	"fmt"
+	"shingocore/domain"
 
 	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/reservations"
 )
 
 // ResolveResult carries the resolved node and optionally a specific bin.
@@ -43,10 +43,10 @@ const (
 // and only to answer the dig-lock question about candidate lanes, but it sits
 // on the interface rather than on the group resolver because the caller with
 // the order in hand is out here — every production call site has one. Pass
-// reservations.Anyone where none exists.
+// domain.Anyone where none exists.
 type NodeResolver interface {
 	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, stated BinTypeStatement,
-		asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error)
+		asker domain.DigAsker, accept BinFilter) (*ResolveResult, error)
 }
 
 // BinFilter says which candidate bins the CALLER can actually use. nil accepts
@@ -114,7 +114,7 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 // Resolve selects the best physical child of a synthetic node for the given
 // direction of travel.
 func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, stated BinTypeStatement,
-	asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error) {
+	asker domain.DigAsker, accept BinFilter) (*ResolveResult, error) {
 	// A LANE NAMED AS A RETRIEVE SOURCE resolves inside that lane with the group
 	// scan's own ranking and buried check (GroupResolver.ResolveRetrieveInLane).
 	// Ahead of the child listing below, which that path does not need.
@@ -143,7 +143,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 
 	switch mode {
 	case ResolveModeRetrieve:
-		node, err := r.resolveRetrieve(children, payloadCode)
+		node, err := r.resolveRetrieve(children, payloadCode, asker)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +199,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 // Consequence worth stating: because this never runs, its ordering is not a live
 // FIFO defect. The one caller generalised past the NGRP gate so far (a LANE
 // source) answered the ranking question by taking the group scan's.
-func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
+func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string, asker domain.DigAsker) (*nodes.Node, error) {
 	for _, child := range children {
 		if !child.Enabled {
 			continue
@@ -210,7 +210,7 @@ func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode st
 			continue
 		}
 		for _, b := range bins {
-			if !isBinAvailableForRetrieve(b, payloadCode) {
+			if !isBinAvailableForRetrieve(b, payloadCode, asker) {
 				continue
 			}
 			return child, nil

@@ -92,7 +92,8 @@
       "bin": "BIN-BRKT-03",
       "payload": "BRKT",
       "node": "_TRANSIT",
-      "sourceable_sql": false
+      "sourceable_sql": false,
+      "go_unavailable_reason": "at synthetic node \"_TRANSIT\", not at a place"
     },
     {
       "bin": "BIN-CLIP-01",

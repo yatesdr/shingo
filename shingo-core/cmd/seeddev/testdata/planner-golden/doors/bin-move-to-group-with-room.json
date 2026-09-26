@@ -1,0 +1,28 @@
+{
+  "need": {
+    "bin": "BIN-ACT-P1F",
+    "dest": "SYN_MARKET",
+    "door": "bin move",
+    "note": "a group with no declared level: the destination is settled inside ReserveStorageDropoff"
+  },
+  "decision": {
+    "events": null,
+    "fleet": null,
+    "orders": [
+      {
+        "index": 1,
+        "type": "move",
+        "status": "failed",
+        "source": "PLN_001",
+        "delivery": "SMN_009",
+        "bin": "BIN-ACT-P1F"
+      }
+    ],
+    "refusals": [
+      "*engine.BinMoveError fault"
+    ],
+    "replies": [
+      "order.error error_code=fleet_failed"
+    ]
+  }
+}

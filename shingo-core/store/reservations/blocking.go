@@ -73,6 +73,18 @@ func ActiveStateSQL(qualifier string) string { return qualifier + activeStates }
 // positive form is what the projector column below needs.
 const BinSpokenForSQL = `EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.` + blockingState + `)`
 
+// BinSpokenForByOrderSQL is BinSpokenForSQL answered with WHO: the order holding
+// the bin's pending reservation, or NULL when nobody does. It is the same row set
+// as the EXISTS (same alias, same state predicate), so a non-NULL answer here and
+// a true answer there are one fact.
+//
+// It exists for the bin projection (bins.BinJoinQuery), whose one consumer asks
+// an OWNER-AWARE question the boolean cannot answer: may THIS order pick up the
+// bin? Its own reservation says yes, and a stranger's says no (B1, Rule 4). At
+// most one row can match: uq_reservations_bin_active admits one live
+// reservation per bin, and the ORDER BY only makes that explicit.
+const BinSpokenForByOrderSQL = `(SELECT r.order_id FROM reservations r WHERE r.bin_id = b.id AND r.` + blockingState + ` ORDER BY r.order_id LIMIT 1)`
+
 // HeldByOwnerSQL is the CLAIM SEATBELT's half: does THIS order hold a live
 // reservation on this resource, so that its hard claim is allowed to land?
 //

@@ -7,85 +7,34 @@ import (
 	"sort"
 
 	"shingo/protocol"
-	"shingocore/dispatch/binresolver"
-	"shingocore/store/nodes"
+	"shingocore/dispatch/plan"
 	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
 
-// vacated_slot.go — A DROP MAY LAND ON THE SLOT A COMMITTED LIFT VACATES.
+// vacated_slot.go — the dispatcher's half of the vacated-slot rule.
 //
-// ── WHAT WAS BROKEN ─────────────────────────────────────────────────────────
-//
-// A complex leg's drop was refused wherever the only thing between it and a free
-// slot was a lift already committed to happen first: its own earlier pickup, or
-// its partner's. SPR 2026-09-28, pairs 7060/7061 and 7062/7063: the supply was
-// widened FIFO onto a buffer partial, the return found its home holding a bin
-// nobody lifts and every buffer full, and the pair parked on loader-park-no-slot
-// every pass until an operator cancelled it. The buffer the supply was about to
-// empty was the answer, and nothing could say so.
-//
-// ── THE RULE ────────────────────────────────────────────────────────────────
-//
-// A drop at step i of leg L onto node N is clear when N's only bin is taken
-// before L gets there by
-//
-//	(a) L's own pickup at N strictly before step i (binsAtStep, carried logic
-//	    included), or
-//	(b) L's partner's pickup at N, when the partner ran EARLIER IN THIS PASS,
-//	    the pickup is committedAtDispatch, it lifts a bin the partner claimed
-//	    this pass, and L's drop is heldForRelease,
-//
-// and nothing else is in flight to N, by the asker's own in-flight predicate.
-// Never a lane slot: lane holds are per order, and two orders on one mouth is
-// the order 22/23 deadlock.
-//
-// CONSULTED ONLY WHERE TODAY'S ANSWER IS WAIT. Every asker keeps its answer
-// and asks this only in the branch that would have parked, so a free slot
-// always wins and every ordinary drop is byte-unchanged.
-//
-// MUTUAL GRANTS ARE IMPOSSIBLE BY CONSTRUCTION. Only the leg that runs second
-// in stage 1 is handed partner facts (dispatchPairInOnePass), so two legs can
-// never each be cleared by the other's lift.
-//
-// ── THE STAMP, AND WHY IT VALIDATES ITSELF ──────────────────────────────────
-//
-// A (b) grant is a promise about ORDER: the partner lifts before L drops. The
-// fleet does not keep it — release gates on L being staged, not on the partner
-// having lifted — so the release fence in HandleOrderRelease keeps it, and the
-// stamp is what tells the fence which drops need keeping. Only a drop the rule
-// admitted is stamped; nothing today's code already dispatches ever is.
-//
-// It names its node, and is honoured only while the step still drops there. Five
-// writers can re-point a drop, one of them at release; each clears the stamp as
-// housekeeping, but the self-check is the guarantee, because the next writer
-// someone adds can forget to.
+// THE RULE IS THE PLANNER'S (dispatch/plan/vacated.go): whether a drop that
+// would wait may land on the slot a committed lift empties first, read through
+// the slot book (plan.BinsAtStep) and decided once. This file keeps what is not
+// a decision: the pair's pass and the leg it hands the planner (pairPass), the
+// stage-1 order, the in-flight half each asker asks of its own predicate, the
+// stamp written onto the persisted plan, the INFO line the deploy check counts,
+// and the release fence (U5). The spellings below that name a planner function
+// are its callers' names for it, one line each.
 
-// vacateStamp records what the vacated-slot rule counted when it admitted a
-// drop. Partner is 0 for an own-lift (a) grant, which needs no release fence:
-// one robot lifts before it drops.
-type vacateStamp struct {
-	Node    string `json:"node"`
-	Bin     int64  `json:"bin"`
-	Partner int64  `json:"partner,omitempty"`
+// vacateStamp is the planner's grant record (plan.Vacate).
+type vacateStamp = plan.Vacate
+
+func stampHonoured(s resolvedStep) *vacateStamp { return plan.StampHonoured(s) }
+func partnerStamp(s resolvedStep) *vacateStamp  { return plan.PartnerStamp(s) }
+
+func committedAtDispatch(steps []resolvedStep, i int, isLaneNode func(string) bool) bool {
+	return plan.CommittedAtDispatch(steps, i, isLaneNode)
 }
-
-// stampHonoured returns the step's stamp when it still speaks for the node the
-// step drops at, else nil. Every reader goes through this.
-func stampHonoured(s resolvedStep) *vacateStamp {
-	if s.Action != protocol.ActionDropoff || s.Vacate == nil || s.Vacate.Node == "" || s.Vacate.Node != s.Node {
-		return nil
-	}
-	return s.Vacate
-}
-
-// partnerStamp is stampHonoured narrowed to a (b) grant — the only kind the
-// release fence and the slot claim's partner arm read.
-func partnerStamp(s resolvedStep) *vacateStamp {
-	if st := stampHonoured(s); st != nil && st.Partner != 0 {
-		return st
-	}
-	return nil
+func heldForRelease(steps []resolvedStep, i int) bool { return plan.HeldForRelease(steps, i) }
+func liftsBeforeFirstWait(steps []resolvedStep) bool  { return plan.LiftsBeforeFirstWait(steps) }
+func partnerLiftsResident(steps []resolvedStep, k int, node string) bool {
+	return plan.PartnerLiftsResident(steps, k, node)
 }
 
 // pairPass is what the leg that ran first in stage 1 hands the leg after it:
@@ -98,65 +47,17 @@ type pairPass struct {
 	claimed []reservedPickup
 }
 
-// ── THE TWO BOUNDARY PREDICATES ─────────────────────────────────────────────
-//
-// Deliberately not widen's predicate. Widen asks which pickups should see today's
-// pools; these ask what is physically committed.
-
-// committedAtDispatch reports whether the pickup at step i is sent to the fleet
-// by the dispatch itself: it sits in the splitAtWait prefix — before the plan's
-// first wait of ANY kind, which is what the create sends — and no step at or
-// before it touches a lane node, since the splice can put a gate wait in front
-// of a lane entry at fleet create and delay the lift behind it. isLaneNode nil
-// skips the lane test, for callers that only rank legs.
-func committedAtDispatch(steps []resolvedStep, i int, isLaneNode func(string) bool) bool {
-	if i < 0 || i >= len(steps) || steps[i].Action != protocol.ActionPickup || steps[i].Node == "" {
-		return false
+// leg is the pass's partner as the planner's need carries it (plan.Need.Pair).
+// nil for no partner.
+func (pc *pairPass) leg() *plan.PairLeg {
+	if pc == nil || pc.partner == nil {
+		return nil
 	}
-	pre, _ := splitAtWait(steps)
-	if i >= len(pre) {
-		return false
+	l := &plan.PairLeg{Partner: pc.partner.ID, Steps: pc.steps}
+	for _, cb := range pc.claimed {
+		l.Lifts = append(l.Lifts, plan.Lift{Bin: cb.binID, Node: cb.nodeName, Step: cb.stepIndex})
 	}
-	if isLaneNode == nil {
-		return true
-	}
-	for j := 0; j <= i; j++ {
-		if steps[j].Action != protocol.ActionWait && steps[j].Node != "" && isLaneNode(steps[j].Node) {
-			return false
-		}
-	}
-	return true
-}
-
-// heldForRelease reports whether the drop at step i waits for a station release:
-// a station-owned wait comes before it. A leg with none is never a (b) dropper,
-// because nothing then stands between its dispatch and its drop for the release
-// fence to hold. protocol.IsStationWaitKind still counts an untagged wait as the station's
-// during the drain window; when that arm goes, so does this answer for untagged
-// plans, and TestHeldForRelease_UntaggedWait pins it so the change is seen.
-func heldForRelease(steps []resolvedStep, i int) bool {
-	if i > len(steps) {
-		i = len(steps)
-	}
-	for j := 0; j < i; j++ {
-		if steps[j].Action == protocol.ActionWait && protocol.IsStationWaitKind(steps[j].WaitKind) {
-			return true
-		}
-	}
-	return false
-}
-
-// liftsBeforeFirstWait is the stage-1 ranking key: a leg with a pickup the
-// dispatch commits runs first, so the leg after it can be handed that fact. It
-// reads the persisted plan and asks no lane question — ranking a leg first grants
-// nothing, and the grant asks the full committedAtDispatch.
-func liftsBeforeFirstWait(steps []resolvedStep) bool {
-	for i := range steps {
-		if committedAtDispatch(steps, i, nil) {
-			return true
-		}
-	}
-	return false
+	return l
 }
 
 // stageOneOrder is the order the pair's legs acquire in: lifters first, ties in
@@ -173,149 +74,13 @@ func stageOneOrder(legs []*orders.Order) []*orders.Order {
 	return out
 }
 
-// ── THE RULE ────────────────────────────────────────────────────────────────
-
-// isLaneNode reports whether a node is a lane or a lane slot. Unreadable counts
-// as a lane: the answer only ever refuses a grant, and refusing is today's wait.
-func (d *Dispatcher) isLaneNode(name string) bool {
-	n, err := d.db.GetNodeByDotName(name)
-	if err != nil || n == nil {
-		return true
-	}
-	return d.nodeIsLaneOrLaneSlot(n)
-}
-
-func (d *Dispatcher) nodeIsLaneOrLaneSlot(n *nodes.Node) bool {
-	if n.NodeTypeCode == protocol.NodeClassLANE {
-		return true
-	}
-	if n.ParentID == nil {
-		return false
-	}
-	p, err := d.db.GetNode(*n.ParentID)
-	if err != nil || p == nil {
-		return true
-	}
-	return p.NodeTypeCode == protocol.NodeClassLANE
-}
-
-// vacatedFor is the rule's bin half: whether the drop at step i onto node is
-// cleared by a committed lift, and the stamp that says which. nil means today's
-// answer stands. The in-flight half is the caller's, through its own predicate.
-//
-// ONE BIN, TAKEN. The node must hold exactly one bin and that bin must be the
-// one the lift takes. Two bins, or a bin held by anyone else, is a node this
-// lift does not empty.
+// vacatedFor asks the planner the rule's bin half for this leg (plan.Planner.Vacated).
 func (d *Dispatcher) vacatedFor(order *orders.Order, steps []resolvedStep, i int, node string, pc *pairPass) *vacateStamp {
-	if order == nil || node == "" || i < 0 || i >= len(steps) || steps[i].Action != protocol.ActionDropoff {
+	if order == nil {
 		return nil
 	}
-	n, err := d.db.GetNodeByDotName(node)
-	if err != nil || n == nil || n.IsSynthetic || d.nodeIsLaneOrLaneSlot(n) {
-		return nil
-	}
-	remaining, taken, err := d.allocator.binsAtStep(order, steps, i, node)
-	if err != nil {
-		return nil
-	}
-	// (a) L's own earlier pickup takes the only bin.
-	if len(remaining) == 0 && len(taken) == 1 {
-		return &vacateStamp{Node: node, Bin: taken[0]}
-	}
-	if len(remaining) != 1 || len(taken) != 0 {
-		return nil
-	}
-	// (b) the partner's committed lift takes it.
-	if pc == nil || pc.partner == nil || !heldForRelease(steps, i) {
-		return nil
-	}
-	b := remaining[0]
-	if b.ClaimedBy == nil || *b.ClaimedBy != pc.partner.ID {
-		return nil
-	}
-	for _, cb := range pc.claimed {
-		if cb.binID != b.ID || cb.nodeName != node {
-			continue
-		}
-		if committedAtDispatch(pc.steps, cb.stepIndex, d.isLaneNode) && partnerLiftsResident(pc.steps, cb.stepIndex, node) {
-			return &vacateStamp{Node: node, Bin: b.ID, Partner: pc.partner.ID}
-		}
-	}
-	return nil
-}
-
-// partnerLiftsResident reports whether the partner's pickup at step k takes a bin
-// that was on node before the partner arrived, rather than re-collecting a
-// carrier the partner itself set down there earlier — binsAtStep's carried
-// logic, walked over the partner's plan. A re-collect vacates nothing.
-func partnerLiftsResident(steps []resolvedStep, k int, node string) bool {
-	if k < 0 || k >= len(steps) || steps[k].Node != node || steps[k].Action != protocol.ActionPickup {
-		return false
-	}
-	carried := 0
-	for j := 0; j < k; j++ {
-		if steps[j].Node != node {
-			continue
-		}
-		switch steps[j].Action {
-		case protocol.ActionDropoff:
-			carried++
-		case protocol.ActionPickup:
-			if carried > 0 {
-				carried--
-			}
-		}
-	}
-	return carried == 0
-}
-
-// vacatedGroupChild is the NGRP store arm: a drop into a group with no free
-// child, asked of the children a committed lift is emptying — this leg's own
-// earlier pickups (a) and the partner's claimed ones (b). The bin half is the
-// rule's; everything else about the slot is asked through the resolver's own
-// fences (binresolver.ResolveStoreVacated), including the in-flight count with
-// this order left out. First admitted child wins; "" and nil mean capacity
-// stands.
-func (d *Dispatcher) vacatedGroupChild(order *orders.Order, steps []resolvedStep, i int, group *nodes.Node,
-	orderPayload string, asker reservations.DigAsker, pc *pairPass) (string, *vacateStamp) {
-	var candidates []string
-	seen := map[string]bool{}
-	add := func(n string) {
-		if n != "" && !seen[n] {
-			seen[n] = true
-			candidates = append(candidates, n)
-		}
-	}
-	for j := 0; j < i; j++ {
-		if steps[j].Action == protocol.ActionPickup {
-			add(steps[j].Node)
-		}
-	}
-	if pc != nil {
-		for _, cb := range pc.claimed {
-			add(cb.nodeName)
-		}
-	}
-	gr := &binresolver.GroupResolver{DB: d.db, DebugLog: d.dbg}
-	for _, name := range candidates {
-		n, err := d.db.GetNodeByDotName(name)
-		if err != nil || n == nil || n.ParentID == nil || *n.ParentID != group.ID {
-			continue
-		}
-		st := d.vacatedFor(order, steps, i, name, pc)
-		if st == nil {
-			continue
-		}
-		carrier := binresolver.BinTypeFrom(d.binTypeBeforeStep(steps, i),
-			"complex step: no preceding pickup resolved to exactly one carrier")
-		payload := resolvedStepPayload(steps[i], orderPayload)
-		if _, err := gr.ResolveStoreVacated(group, n, []int64{st.Bin}, payload, carrier, asker); err != nil {
-			d.dbg("vacated: order %d step %d: %s refused by the group's fences: %v", order.ID, i, name, err)
-			continue
-		}
-		return name, st
-	}
-	return "", nil
+	return d.pure.Vacated(plan.Need{PayloadCode: order.PayloadCode, Asker: digAskerFor(order),
+		Order: order.ID, Pair: pc.leg()}, steps, i, node)
 }
 
 // noOtherInFlight is the in-flight half for the loader and destination-gate

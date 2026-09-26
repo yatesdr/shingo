@@ -8,7 +8,8 @@ import (
 	"shingocore/store/nodes"
 )
 
-// isBinAvailableForRetrieve checks if a bin can be claimed for retrieval.
+// isBinAvailableForRetrieve checks if a bin can be claimed for retrieval, by the
+// order asking.
 //
 // Locked is checked here rather than only downstream. Without it this predicate
 // selected bins the claim could never take: a LOCKED bin passed selection,
@@ -20,22 +21,27 @@ import (
 // bins with a pending reservation until the order terminalised. A locked bin
 // read as a material shortage.
 //
-// HasPendingReservation is deliberately NOT checked, and must not be added.
-// The field is OWNER-BLIND: it is true when ANY order holds a pending
-// reservation, including this order's own. BinUnavailableReason can consult it
-// safely because its caller (the reserve reconcile) loads its own holds first;
-// this path has no such step. Refusing here would therefore refuse an order the
-// bin IT ALREADY RESERVED whenever the resolver re-runs -- scanner replay or a
-// reconcile tick -- and the order could never source it. Another order's
-// reservation is already refused one layer down by uq_reservations_bin_active,
-// so nothing is lost by leaving it out.
+// A PENDING RESERVATION IS ASKED OWNER-AWARE (B1, Rule 4). This used to leave
+// reservations out entirely, and the reason given was half right. The owner-blind
+// HasPendingReservation would refuse the order the bin IT ALREADY RESERVED
+// whenever the resolver re-runs (scanner replay, a reconcile tick), so the order
+// could never source it: that half stands, and reservedByStranger lets the
+// holder through. The other half, that a stranger's reservation is refused one
+// layer down by uq_reservations_bin_active so nothing is lost, was wrong. The
+// choice was lost: the resolver handed back a bin somebody else had planned for,
+// the reserve then conflicted, and the order parked as though it had lost a race
+// when a free bin stood beside it. The holder rides the bin projection, so the
+// question costs no read.
 //
 // Status composes on the shared rule instead of restating it: sourceable, and
 // additionally not 'staged', because a retrieve from a group must not take a bin
 // an operator is working at. Equivalent to the previous `!= available` for every
 // declared status.
-func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
+func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string, asker domain.DigAsker) bool {
 	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed {
+		return false
+	}
+	if reservedByStranger(b, asker) {
 		return false
 	}
 	if !b.Status.Sourceable() || b.Status == domain.BinStatusStaged {
@@ -45,6 +51,17 @@ func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
 		return false
 	}
 	return true
+}
+
+// reservedByStranger reports whether a pending reservation on b belongs to an
+// order other than the asker. The asker's own reservation is not a reason to
+// refuse; domain.Anyone (order 0) holds none, so for it every pending
+// reservation is a stranger's, which is exactly the owner-blind answer.
+func reservedByStranger(b *bins.Bin, asker domain.DigAsker) bool {
+	if !b.HasPendingReservation {
+		return false
+	}
+	return b.PendingReservedBy == nil || *b.PendingReservedBy != asker.OrderID || asker.OrderID == 0
 }
 
 // IsAvailableAtConcreteNode checks if a bin can be claimed at a concrete
@@ -69,7 +86,16 @@ func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string, binTypes domain.
 	return BinUnavailableReason(b, payloadCode, binTypes) == ""
 }
 
-// BinUnavailableReason is the reason-returning sibling of IsAvailableAtConcreteNode.
+// BinUnavailableReason is BinUnavailableReasonFor asked by nobody in particular
+// (domain.Anyone): every pending reservation is a stranger's, which is the
+// owner-blind answer its callers without an asker have always had.
+func BinUnavailableReason(b *bins.Bin, payloadCode string, binTypes domain.BinTypeRule) string {
+	return BinUnavailableReasonFor(b, payloadCode, binTypes, domain.Anyone)
+}
+
+// BinUnavailableReasonFor is the PickableAt question (SYNTH F6): may the asker
+// pick up this bin, which stands at the node it named? It is the reason-returning
+// sibling of IsAvailableAtConcreteNode.
 // Returns "" when the bin is available; otherwise a short, log-friendly string
 // describing why the bin was rejected.
 //
@@ -88,13 +114,23 @@ func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string, binTypes domain.
 // (the claim guards locked=false, service/bin_manifest.go), so surfacing it here is
 // zero behaviour change — it just explains the skip instead of letting the claim
 // silently fail.
-func BinUnavailableReason(b *bins.Bin, payloadCode string, binTypes domain.BinTypeRule) string {
+//
+// WHERE IT DIVERGES FROM Sourceable (bins.BinSourceableSQL), BY DESIGN (owner,
+// 2026-09-26): a STAGED bin is pickable here and not sourceable there. Sourceable
+// asks whether the plant may take the bin for a demand ("staged keeps its
+// guards": no line stealing); this asks what stands at a node somebody named,
+// and a bin arriving at a line node is staged. Where they AGREE: a bin on a
+// synthetic node is refused by both (_TRANSIT is on a robot, not at a place),
+// and so is a stranger's pending reservation.
+func BinUnavailableReasonFor(b *bins.Bin, payloadCode string, binTypes domain.BinTypeRule, asker domain.DigAsker) string {
 	if b.ClaimedBy != nil {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
-	if b.HasPendingReservation {
-		// Owner-blind: HasPendingReservation is EXISTS(pending) on the bin, which
-		// includes THIS order's own hold, so don't claim "another order".
+	if b.AtSyntheticNode {
+		return fmt.Sprintf("at synthetic node %q, not at a place", b.NodeName)
+	}
+	if reservedByStranger(b, asker) {
+		// Another order's: the asker's own reservation never reaches here.
 		return "pending reservation held"
 	}
 	if b.Locked {

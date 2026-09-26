@@ -1,4 +1,4 @@
-package binresolver
+package dispatch
 
 import (
 	"database/sql"
@@ -9,6 +9,10 @@ import (
 )
 
 // LaneLock prevents concurrent reshuffle operations on the same lane.
+//
+// IT LIVES IN dispatch, NOT binresolver (B1): it writes dig rows, and binresolver
+// is a part of the pure planner, which holds nothing. The dig lane lock is
+// C2b's to move into the parent's hand.
 //
 // THE DURABLE ROW IS THE LOCK. There is no in-memory map: a lane is held iff a
 // dig mouth reservation row exists for it, and every question and every change

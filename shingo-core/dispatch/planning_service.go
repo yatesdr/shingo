@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"shingocore/dispatch/plan"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
@@ -148,7 +149,10 @@ type PlanningService struct {
 	resolver NodeResolver
 	finder   *SourceFinder
 	laneLock *LaneLock
-	debug    func(string, ...any)
+	// pure is the Dispatcher's planner (dispatch/plan): a move's group
+	// destination is chosen there. Set by NewDispatcher.
+	pure  *plan.Planner
+	debug func(string, ...any)
 
 	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan) error
 	// waitChanged tells a station its order's wait changed (WriteQueueDetail).
@@ -434,8 +438,8 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 		// NGRPs), so the concrete resolution must land on the order here. On a
 		// still-full group this is a TOCTOU race — re-queue and let the scanner retry.
 		if destNode.IsSynthetic && destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
-			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode,
-				binresolver.UnknownBinType("plan-move: order holds no bin and no hold"), digAskerFor(order), nil)
+			result, rErr := s.pure.StoreDestination(destNode, payloadCode,
+				binresolver.UnknownBinType("plan-move: order holds no bin and no hold"), digAskerFor(order))
 			if rErr != nil {
 				s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
 				// AND THE ROW SAYS WHY. This queued the order and wrote nothing, so a

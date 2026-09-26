@@ -180,18 +180,27 @@ func TestStageOneOrder_LifterFirst(t *testing.T) {
 
 // Each boundary predicate stays ONE named function, and the rule asks it by
 // name. A second spelling is how two askers come to disagree about one drop.
+// The rule is the planner's (plan/vacated.go); the dispatcher's spellings of
+// the predicates are its callers' names for the planner's, one line each.
 func TestVacatedSlotBoundaryPredicatesStayNamed(t *testing.T) {
 	t.Parallel()
-	src := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "vacated_slot.go"))
-	for _, sig := range []string{"func committedAtDispatch(", "func heldForRelease("} {
+	src := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "plan", "vacated.go"))
+	for _, sig := range []string{"func CommittedAtDispatch(", "func HeldForRelease("} {
 		if strings.Count(src, sig) != 1 {
-			t.Errorf("%s must be defined exactly once in vacated_slot.go", sig)
+			t.Errorf("%s must be defined exactly once in plan/vacated.go", sig)
 		}
 	}
-	rule := funcBody(t, src, "func (d *Dispatcher) vacatedFor(")
-	for _, call := range []string{"committedAtDispatch(", "heldForRelease("} {
+	rule := funcBody(t, src, "func (p *Planner) Vacated(")
+	for _, call := range []string{"CommittedAtDispatch(", "HeldForRelease("} {
 		if !strings.Contains(rule, call) {
-			t.Errorf("vacatedFor no longer asks %s — the rule has grown a second spelling of its boundary", call)
+			t.Errorf("Planner.Vacated no longer asks %s — the rule has grown a second spelling of its boundary", call)
+		}
+	}
+	disp := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "vacated_slot.go"))
+	for _, name := range []string{"committedAtDispatch", "heldForRelease"} {
+		body := funcBody(t, disp, "func "+name+"(")
+		if !strings.Contains(body, "plan."+strings.ToUpper(name[:1])+name[1:]+"(") {
+			t.Errorf("dispatch's %s is not the planner's — a second spelling of the boundary", name)
 		}
 	}
 }

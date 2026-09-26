@@ -473,7 +473,7 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND `+bins.BinCarriesSourceableStockSQL+`
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
-		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
+		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC, b.id ASC -- b.id breaks a load-time tie (B1)
 		LIMIT 1`, bins.BinJoinQuery, helpers.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {

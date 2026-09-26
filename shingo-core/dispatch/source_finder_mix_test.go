@@ -56,7 +56,7 @@ func TestMix_AsksForWhatTheLoaderIsShortOf(t *testing.T) {
 	db.addBin(&bins.Bin{ID: 2, BinTypeCode: "BIG", NodeID: &big2})
 
 	f := NewSourceFinder(db, nil, nil)
-	got := f.wantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"})
+	got := f.picker.WantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"})
 	if got != "SMALL" {
 		t.Errorf("wanted type = %q, want SMALL — the loader holds 2 of 3 BIG and 0 of 1 "+
 			"SMALL, so SMALL is the larger shortfall", got)
@@ -72,7 +72,7 @@ func TestMix_NeverAsksForSomethingTheWindowCannotHold(t *testing.T) {
 		map[int64][]string{10: {"SMALL"}})
 
 	f := NewSourceFinder(db, nil, nil)
-	got := f.wantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"})
+	got := f.picker.WantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"})
 	if got != "SMALL" {
 		t.Errorf("wanted type = %q, want SMALL — BIG is the bigger shortfall but this "+
 			"window does not fit one, and capability is not a preference", got)
@@ -85,7 +85,7 @@ func TestMix_UndeclaredLoaderTakesWhateverItFinds(t *testing.T) {
 	mixLoader(db, 1, map[int64]string{10: "W1"}, nil, nil)
 
 	f := NewSourceFinder(db, nil, nil)
-	if got := f.wantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"}); got != "" {
+	if got := f.picker.WantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"}); got != "" {
 		t.Errorf("wanted type = %q, want empty — a loader with no declared mix keeps "+
 			"taking whatever compatible carrier it finds, which is every loader today", got)
 	}
@@ -99,7 +99,7 @@ func TestMix_SatisfiedLoaderAsksForNothing(t *testing.T) {
 	db.addBin(&bins.Bin{ID: 1, BinTypeCode: "BIG", NodeID: &n})
 
 	f := NewSourceFinder(db, nil, nil)
-	if got := f.wantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"}); got != "" {
+	if got := f.picker.WantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "W1"}); got != "" {
 		t.Errorf("wanted type = %q, want empty — the mix is already satisfied, so there is "+
 			"no shortfall to name", got)
 	}
@@ -113,7 +113,7 @@ func TestMix_DoesNotApplyToFullRetrieves(t *testing.T) {
 	mixLoader(db, 1, map[int64]string{10: "W1"}, map[string]int{"BIG": 3}, nil)
 
 	f := NewSourceFinder(db, nil, nil)
-	if got := f.wantedBinType(SourceNeed{Intent: IntentFull, DeliveryNode: "W1"}); got != "" {
+	if got := f.picker.WantedBinType(SourceNeed{Intent: IntentFull, DeliveryNode: "W1"}); got != "" {
 		t.Errorf("wanted type = %q on a FULL retrieve, want empty", got)
 	}
 }
@@ -126,7 +126,7 @@ func TestMix_OrdinaryDestinationIsUnaffected(t *testing.T) {
 	db.addNode(&nodes.Node{ID: 20, Name: "ALN_003", Enabled: true})
 
 	f := NewSourceFinder(db, nil, nil)
-	if got := f.wantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "ALN_003"}); got != "" {
+	if got := f.picker.WantedBinType(SourceNeed{Intent: IntentEmpty, DeliveryNode: "ALN_003"}); got != "" {
 		t.Errorf("wanted type = %q at a non-loader destination, want empty", got)
 	}
 }

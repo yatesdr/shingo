@@ -157,7 +157,10 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		  -- Quality hold (v100): a bin carrying the operator's hold marker waits
 		  -- for its containment move and is NOT sourceable back into the flow.
 		  AND NOT COALESCE(b.quality_hold, false)
-		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
+		-- b.id breaks a load-time tie: the seeder and a burst of arrivals stamp
+		-- loaded_at to the same instant, and LIMIT 1 over a tie was whatever the
+		-- plan returned (B1, TestB1_FIFOTieBreaksByID).
+		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC, b.id ASC
 		LIMIT 1`, BinJoinQuery, BinSourceableSQL("$1")), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }

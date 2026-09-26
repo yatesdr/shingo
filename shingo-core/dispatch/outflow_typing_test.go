@@ -61,7 +61,7 @@ func TestOutflowTyping_OneEffectiveTypeIsTheWant(t *testing.T) {
 	db.addNode(pinNode(500, "OT-PRESS-POS"))
 	db.effectiveBinTypes[500] = []*bins.BinType{{ID: 1, Code: "OT-45x58"}}
 
-	got := NewSourceFinder(db, nil, nil).wantedBinType(SourceNeed{
+	got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
 		Intent: IntentEmpty, ProcessNode: "OT-PRESS-POS",
 	})
 	if got != "OT-45x58" {
@@ -100,7 +100,7 @@ func TestOutflowTyping_ZeroOrManyChangesNothing(t *testing.T) {
 			db.addNode(pinNode(510, "OT-POS"))
 			db.effectiveBinTypes[510] = tc.types
 
-			got := NewSourceFinder(db, nil, nil).wantedBinType(SourceNeed{
+			got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
 				Intent: IntentEmpty, ProcessNode: "OT-POS",
 			})
 			if got != "" {
@@ -120,7 +120,7 @@ func TestOutflowTyping_MaintainOriginStillWins(t *testing.T) {
 	db.effectiveBinTypes[520] = []*bins.BinType{{ID: 9, Code: "OT-POSITION-SAYS"}}
 	db.maintainedType["11111111-2222-3333-4444-555555555555"] = "OT-EPISODE-SAYS"
 
-	got := NewSourceFinder(db, nil, nil).wantedBinType(SourceNeed{
+	got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
 		Intent: IntentEmpty, ProcessNode: "OT-POS-2",
 		OriginID: "11111111-2222-3333-4444-555555555555",
 	})
@@ -136,7 +136,7 @@ func TestOutflowTyping_MaintainOriginStillWins(t *testing.T) {
 func TestOutflowTyping_NoDestinationIsNoOpinion(t *testing.T) {
 	t.Parallel()
 	db := newFakeFinderDB()
-	if got := NewSourceFinder(db, nil, nil).wantedBinType(SourceNeed{Intent: IntentEmpty}); got != "" {
+	if got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{Intent: IntentEmpty}); got != "" {
 		t.Errorf("wantedBinType = %q, want blank", got)
 	}
 }

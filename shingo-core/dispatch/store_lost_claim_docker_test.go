@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -65,7 +66,10 @@ func TestStore_ALostSlotGoesBackToItsGroup(t *testing.T) {
 
 	// The race: the resolver read slot 1 free, and the winner reserved it
 	// before this order's claim.
+	// The planner asks the resolver it was built with (B1), so the stale answer
+	// is given to a planner built over it, as the dispatcher builds its own.
 	d.resolver = &staleFirstAnswer{inner: d.resolver, first: s1}
+	d.pure = plan.NewPlanner(db, d.finder.picker, d.resolver, d.dbg)
 	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, winner.ID), "the winner reserves slot 1")
 	if got := d.ReserveStorageDropoff(o); !got.Refused() {
 		t.Fatalf("the claim on slot 1 was not lost: %+v", got)

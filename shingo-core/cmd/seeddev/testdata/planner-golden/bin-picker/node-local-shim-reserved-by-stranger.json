@@ -1,0 +1,16 @@
+{
+  "need": {
+    "source": "PLK_H1",
+    "payload": "SHIM",
+    "delivery": "ALN_008",
+    "intent": "full",
+    "node_local": true,
+    "setup": "BIN-SHIM-01 carries another order's pending reservation",
+    "asker": "an order holding nothing"
+  },
+  "decision": {
+    "outcome": "found",
+    "bin": "BIN-SHIM-02",
+    "node": "PLK_H2"
+  }
+}

@@ -46,6 +46,23 @@ func (db *DB) ListReservationsByOrder(orderID int64) ([]reservations.Reservation
 	return reservations.ListByOrder(db.DB, orderID)
 }
 
+// BinsReservedByOrder is the bins an order holds by reservation: the same read
+// as ListReservationsByOrder, narrowed to bin rows, for a reader that may not
+// name the reservations package (the planner's slot book, plan.BinsAtStep).
+func (db *DB) BinsReservedByOrder(orderID int64) ([]int64, error) {
+	rows, err := reservations.ListByOrder(db.DB, orderID)
+	if err != nil {
+		return nil, err
+	}
+	var out []int64
+	for _, r := range rows {
+		if r.Kind == reservations.KindBin {
+			out = append(out, r.BinID)
+		}
+	}
+	return out, nil
+}
+
 // ReleaseReservation deletes a single pending-only reservation for (orderID, binID)
 // — used by the reserve/reconcile to drop a stray hold that no longer matches a
 // need when no claim is involved. When the hold was confirmed (a claim exists),

@@ -34,9 +34,9 @@ type Bin = domain.Bin
 // BinJoinQuery (the const below) is the SELECT prefix used by every
 // bin-reading query, exported so cross-aggregate readers at the outer store/
 // level (which add their own WHERE clauses) can reuse it.
-// The last column (has_pending_reservation) is populated from the
-// reservations table so BinUnavailableReason can filter reserved bins
-// without a separate round-trip. ScanBin reads it into HasPendingReservation.
+// The pending_reserved_by column is populated from the reservations table so
+// the PickableAt question can filter reserved bins without a separate
+// round-trip. ScanBin reads it into PendingReservedBy and HasPendingReservation.
 // Pending-ONLY is sufficient: a confirmed reservation coincides with a hard
 // claimed_by (structural, since the one-tx claim+confirm moves them together),
 // which b.claimed_by already covers — so this projector never needs to see 'confirmed'.
@@ -85,13 +85,21 @@ func LabelsByPayloadCode(db *sql.DB, code string, limit int) ([]string, int, err
 
 // ── THE SEAM ──────────────────────────────────────────────────────────────────
 //
-// The column is reservations.BinSpokenForSQL, the same fragment every bin
-// finder composes — carried across a join boundary as a boolean because its
-// only consumer, binresolver.BinUnavailableReason, is a pure function over a
-// scanned row and cannot reach the table. So this projector and that function
-// are the two ends of ONE predicate, and the day BinSpokenForSQL's meaning
-// changes they both change with it without either being edited. That is the
-// whole reason the fragment is named.
+// The column is reservations.BinSpokenForByOrderSQL, BinSpokenForSQL answered
+// with the holder's order id: the same row set every bin finder composes,
+// carried across a join boundary because its consumers (the PickableAt question,
+// binresolver.BinUnavailableReasonFor, and the pickers that share it) are pure
+// functions over a scanned row and cannot reach the table. So this projector and
+// that function are the two ends of ONE predicate, and the day the blocking
+// state's meaning changes they both change with it without either being edited.
+// It carries the HOLDER rather than a boolean because the question is
+// owner-aware (B1): an order may pick up the bin it reserved itself, and never
+// one a stranger reserved. A scalar subquery in place of the EXISTS, on the same
+// row: +0 statements.
+//
+// node_synthetic is the bin's node's is_synthetic, off the join already here: a
+// bin on a synthetic node (_TRANSIT, a robot's deck) is not AT any place, and
+// PickableAt refuses it as the SQL's BinAtLiveNodeSQL does (B1).
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
@@ -100,8 +108,9 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	bt.required_robot_group, bt.bare, COALESCE(p.robot_group, ''),
 	COALESCE(p.near_empty_enabled, false), COALESCE(p.near_empty_robot_group, ''),
 	COALESCE(p.near_empty_threshold_pct, 0),
-	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation,
-	COALESCE(b.quality_hold, false) AS quality_hold
+	` + reservations.BinSpokenForByOrderSQL + ` AS pending_reserved_by,
+	COALESCE(b.quality_hold, false) AS quality_hold,
+	COALESCE(n.is_synthetic, false) AS node_synthetic
 	` + BinFromClause
 
 // BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
@@ -731,7 +740,7 @@ var AccessibleEmptyOrder = `
 // Exported for cross-aggregate readers at the outer store/ level.
 func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 	var b Bin
-	var nodeID, claimedBy sql.NullInt64
+	var nodeID, claimedBy, reservedBy sql.NullInt64
 	var manifest sql.NullString
 	err := row.Scan(&b.ID, &b.BinTypeID, &b.Label, &b.Description, &nodeID, &b.Status, &claimedBy,
 		&b.StagedAt, &b.StagedExpiresAt,
@@ -740,9 +749,13 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
 		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
-		&b.HasPendingReservation, &b.QualityHold)
+		&reservedBy, &b.QualityHold, &b.AtSyntheticNode)
 	if err != nil {
 		return nil, err
+	}
+	if reservedBy.Valid {
+		b.HasPendingReservation = true
+		b.PendingReservedBy = &reservedBy.Int64
 	}
 	if nodeID.Valid {
 		b.NodeID = &nodeID.Int64

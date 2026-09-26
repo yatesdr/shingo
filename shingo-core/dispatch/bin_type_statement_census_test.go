@@ -60,7 +60,7 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 			"the level IS a bin type; the one door that always named it, and the only caller that exercised the fence for years"},
 		{"engine/cancel_return.go", "storeInto", "known",
 			"the bin is on the deck and its own bin type is in hand; the store into the source's group is asked with it"},
-		{"dispatch/complex_steps.go", "resolveStepNode", "known",
+		{"dispatch/plan/complex_steps.go", "StepNode", "known",
 			"the paired pickup resolves to a slot holding exactly one carrier; unknown when it is not exactly one"},
 
 		// SETTLED — the site cannot say, but the order is persisted and holds a
@@ -74,8 +74,14 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 		{"dispatch/planning_service.go", "planMove", "settled",
 			"runs after CreateInboundOrder, so the order id is real"},
 
+		// PASS-THROUGH — the planner's one door to the store resolver (B1). It
+		// states nothing of its own: it forwards the statement its caller made,
+		// and every caller is named above with what that is.
+		{"dispatch/plan/destination.go", "StoreDestination", "known",
+			"forwards its caller's statement unchanged; the callers above say what each one knows"},
+
 		// NONE — places nothing.
-		{"dispatch/source_finder.go", "FindSourceForNeed", "none",
+		{"dispatch/plan/finder.go", "Pick", "none",
 			"a retrieve is looking FOR a carrier, not putting one down"},
 	}
 

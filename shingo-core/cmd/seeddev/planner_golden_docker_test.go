@@ -27,6 +27,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/plantclaims"
 	"shingocore/store/reservations"
 )
 
@@ -78,8 +79,16 @@ const goldenDir = "testdata/planner-golden"
 // goldenPlant is one case's world: the demo plant seeded into a fresh database,
 // and an engine whose background loops have been stopped.
 type goldenPlant struct {
-	t       *testing.T
-	db      *store.DB
+	t  *testing.T
+	db *store.DB
+	// cdb is the same database opened through store.OpenCounting: the engine,
+	// the picker and the resolver read through it, so every statement they
+	// issue is counted and the planner's can be judged (the zero-write test,
+	// planner_zero_write_docker_test.go). Fixtures and the record are written
+	// and read through db, and are not counted.
+	cdb     *store.DB
+	counter *store.QueryCounter
+	zw      *zeroWrite
 	eng     *engine.Engine
 	backend *testdb.MockTrackingBackend
 
@@ -91,11 +100,12 @@ type goldenPlant struct {
 
 func newGoldenPlant(t *testing.T) *goldenPlant {
 	t.Helper()
-	db := testdb.Open(t)
+	db, dbcfg := testdb.OpenWithConfig(t)
 	plant, err := plantspec.Load("../../../plants/demo.yaml")
 	testutil.MustNoErr(t, err, "load plants/demo.yaml")
 	testutil.MustNoErr(t, plant.Validate(), "validate plants/demo.yaml")
 	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the demo plant")
+	seedClaimsMirror(t, db, plant)
 
 	// ── FIFO AGE, MADE DETERMINISTIC ──────────────────────────────────────
 	//
@@ -109,8 +119,8 @@ func newGoldenPlant(t *testing.T) *goldenPlant {
 	// The fixture keeps the ages the seeder MEANT (BIN-PA-03 is an hour older
 	// than its lane on purpose, so FIFO digs for it) by rounding each bin's age
 	// to the minute relative to the newest, and breaks every remaining tie by
-	// seed order, one millisecond apart. The missing tie-break itself is a
-	// finding for the planner phase, not something this fixture decides.
+	// seed order, one millisecond apart. The finders' own tie-break (b.id,
+	// added in B1) agrees with that spacing, so neither decides for the other.
 	_, err = db.DB.Exec(`
 		WITH newest AS (SELECT MAX(loaded_at) AS t FROM bins)
 		UPDATE bins SET loaded_at = TIMESTAMPTZ '2026-01-01 12:00:00+00'
@@ -123,16 +133,70 @@ func newGoldenPlant(t *testing.T) *goldenPlant {
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "test-core"
 	cfg.Messaging.DispatchTopic = "shingo.dispatch"
-	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, Fleet: backend, LogFunc: func(string, ...any) {}})
+	cdb, counter, err := store.OpenCounting(dbcfg)
+	testutil.MustNoErr(t, err, "open the counting store")
+	t.Cleanup(func() { cdb.Close() })
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: cdb, Fleet: backend, LogFunc: func(string, ...any) {}})
 	eng.Start()
 	eng.Stop()
-	g := &goldenPlant{t: t, db: db, eng: eng, backend: backend}
+	g := &goldenPlant{t: t, db: db, cdb: cdb, counter: counter, eng: eng, backend: backend}
 	g.settle()
 	if n := g.count(`SELECT COUNT(*) FROM orders`); n != 0 {
 		t.Fatalf("fixture: %d order(s) exist after the engine was started and stopped — a background "+
 			"loop wrote before it was stopped, so the cases below would not be deterministic", n)
 	}
+	counter.Reset()
+	g.watchPlanner()
 	return g
+}
+
+// seedClaimsMirror fills Core's plant-claims mirror (style_claims) from the
+// spec's claims, through the store door the plant.claims handler writes with.
+//
+// A FIXTURE CORRECTION (B1). The golden first pinned a plant whose mirror was
+// empty, which no synced plant has: the Edge publishes its claims on connect.
+// The empties readers exclude a carrier standing on a claimed cell position
+// (bins.EmptyCarrierWhere's style_claims arm), so with the mirror empty the level
+// keeper took the carriers on the presses' own positions, a behaviour only a
+// wiped or late-joining Core shows. Process and style are keyed by their spec
+// names; the empties arm reads only core_node_name.
+func seedClaimsMirror(t *testing.T, db *store.DB, plant *plantspec.Plant) {
+	t.Helper()
+	processOf := map[string]string{}
+	for _, st := range plant.Styles {
+		processOf[st.Name] = st.Process
+	}
+	active := map[string]string{}
+	for _, pr := range plant.Processes {
+		active[pr.Name] = pr.ActiveStyle
+	}
+	styles := map[string][]plantclaims.StyleRow{}
+	claims := map[string][]plantclaims.ClaimRow{}
+	seen := map[string]bool{}
+	var order []string
+	for i, c := range plant.Claims {
+		proc := processOf[c.Style]
+		if proc == "" {
+			t.Fatalf("fixture: claim on %s names style %q, which no process owns", c.CoreNode, c.Style)
+		}
+		if !seen[proc] {
+			seen[proc] = true
+			order = append(order, proc)
+		}
+		if key := proc + "|" + c.Style; !seen[key] {
+			seen[key] = true
+			styles[proc] = append(styles[proc], plantclaims.StyleRow{ProcessID: proc, StyleID: c.Style, IsActive: active[proc] == c.Style})
+		}
+		claims[proc] = append(claims[proc], plantclaims.ClaimRow{
+			ProcessID: proc, StyleID: c.Style, CoreNodeName: c.CoreNode,
+			Role: protocol.ClaimRole(c.Role), SwapMode: protocol.SwapMode(c.SwapMode),
+			PayloadCode: c.Payload, UOPCapacity: int(c.UOPCapacity), ReorderPoint: int(c.ReorderPoint), Seq: i,
+			InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination, PairedCoreNode: c.PairedCoreNode,
+		})
+	}
+	for _, proc := range order {
+		testutil.MustNoErr(t, db.ReplacePlantClaims(proc, styles[proc], claims[proc], 0), "seed claims mirror for "+proc)
+	}
 }
 
 // settle drains the scan Start launched and waits for the order count to hold.
@@ -210,7 +274,7 @@ func (g *goldenPlant) labelOf(binID *int64) string {
 }
 
 func (g *goldenPlant) finder() *dispatch.SourceFinder {
-	return dispatch.NewSourceFinder(g.db, &dispatch.DefaultResolver{DB: g.db}, nil)
+	return dispatch.NewSourceFinder(g.cdb, &dispatch.DefaultResolver{DB: g.cdb}, nil)
 }
 
 // ── the recorded shapes ──────────────────────────────────────────────────────
@@ -494,6 +558,15 @@ func (g *goldenPlant) replies(since int) []string {
 		var typ string
 		var payload []byte
 		testutil.MustNoErr(g.t, rows.Scan(&typ, &payload), "scan outbox")
+		// NOT A DOOR'S REPLY. The sourceability monitor pushes a station's
+		// sourcing state on its own debounce when the bins it watches move, and
+		// the engine's Stop does not end that push. Whether one lands inside a
+		// case's window is timing, not a decision: seen once in five runs of the
+		// full golden, and it made the fifo-dig case flake. The doors record
+		// what they answered, so the push is left out.
+		if typ == "data."+protocol.SubjectSourcingState {
+			continue
+		}
 		var v any
 		_ = json.Unmarshal(payload, &v)
 		line := typ
@@ -569,6 +642,7 @@ func golden(t *testing.T, name string, need, decision any) {
 // resolver's four call sites directly.
 func TestPlannerGolden_BinPicker(t *testing.T) {
 	t.Parallel()
+	requirePlannerSeen(t)
 	type need struct {
 		Source   string `json:"source,omitempty"`
 		Payload  string `json:"payload,omitempty"`
@@ -576,11 +650,12 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 		Intent   string `json:"intent"`
 		Local    bool   `json:"node_local,omitempty"`
 		Setup    string `json:"setup,omitempty"`
+		Asker    string `json:"asker,omitempty"`
 	}
 	cases := []struct {
 		name  string
 		need  need
-		setup func(g *goldenPlant)
+		setup func(g *goldenPlant) reservations.DigAsker
 	}{
 		{name: "full-panel-a-from-market", need: need{Source: "SYN_MARKET", Payload: "PANEL-A", Delivery: "ALN_001", Intent: "full"}},
 		{name: "full-panel-b-from-market", need: need{Source: "SYN_MARKET", Payload: "PANEL-B", Delivery: "ALN_003", Intent: "full"}},
@@ -600,41 +675,93 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 			name: "full-panel-a-front-claimed",
 			need: need{Source: "SYN_MARKET", Payload: "PANEL-A", Delivery: "ALN_001", Intent: "full",
 				Setup: "BIN-PA-01 (the lane front) is claimed by an order on its way"},
-			setup: func(g *goldenPlant) { g.claimBin("BIN-PA-01", g.holder("golden-holder-1")) },
+			setup: func(g *goldenPlant) reservations.DigAsker {
+				g.claimBin("BIN-PA-01", g.holder("golden-holder-1"))
+				return reservations.Anyone
+			},
 		},
 		{
 			name: "full-panel-a-all-claimed",
 			need: need{Source: "SYN_MARKET", Payload: "PANEL-A", Delivery: "ALN_001", Intent: "full",
 				Setup: "every PANEL-A bin is claimed"},
-			setup: func(g *goldenPlant) {
+			setup: func(g *goldenPlant) reservations.DigAsker {
 				h := g.holder("golden-holder-1")
 				for _, l := range []string{"BIN-PA-01", "BIN-PA-02", "BIN-PA-03"} {
 					g.claimBin(l, h)
 				}
+				return reservations.Anyone
 			},
 		},
 		{
 			name: "full-clip-front-locked",
 			need: need{Source: "SYN_MARKET", Payload: "CLIP", Delivery: "ALN_006", Intent: "full",
 				Setup: "BIN-CLIP-01 (the lane front) is locked"},
-			setup: func(g *goldenPlant) { g.exec(`UPDATE bins SET locked = true WHERE label = 'BIN-CLIP-01'`) },
+			setup: func(g *goldenPlant) reservations.DigAsker {
+				g.exec(`UPDATE bins SET locked = true WHERE label = 'BIN-CLIP-01'`)
+				return reservations.Anyone
+			},
 		},
 		{
 			name: "full-brkt-front-pending-reserved",
 			need: need{Source: "SYN_MARKET", Payload: "BRKT", Delivery: "ALN_004", Intent: "full",
 				Setup: "BIN-BRKT-01 carries another order's pending reservation"},
-			setup: func(g *goldenPlant) {
+			setup: func(g *goldenPlant) reservations.DigAsker {
 				testdb.ReserveBin(g.t, g.db, g.holder("golden-holder-1").ID, g.bin("BIN-BRKT-01").ID)
+				return reservations.Anyone
 			},
 		},
 		{
 			name: "empty-standard-front-lanes-claimed",
 			need: need{Source: "SYN_MARKET", Payload: "PANEL-A", Delivery: "PLN_001", Intent: "empty",
 				Setup: "the front empties of Lane_11 and Lane_12 are claimed"},
-			setup: func(g *goldenPlant) {
+			setup: func(g *goldenPlant) reservations.DigAsker {
 				h := g.holder("golden-holder-1")
 				g.claimBin("BIN-MT-01", h)
 				g.claimBin("BIN-MT-04", h)
+				return reservations.Anyone
+			},
+		},
+		// ── OWNER-AWARE RESERVATIONS (B1, Rule 4) ─────────────────────────────
+		// A pending reservation is somebody's plan for a bin. The order holding it
+		// must be able to re-find it; any other order must not take it by
+		// accident. Two tiers, each asked both ways: the loader pool (tier 2) and a
+		// node-local move (tier 4).
+		{
+			name: "node-local-shim-reserved-by-stranger",
+			need: need{Source: "PLK_H1", Payload: "SHIM", Delivery: "ALN_008", Intent: "full", Local: true,
+				Setup: "BIN-SHIM-01 carries another order's pending reservation", Asker: "an order holding nothing"},
+			setup: func(g *goldenPlant) reservations.DigAsker {
+				testdb.ReserveBin(g.t, g.db, g.holder("golden-holder-1").ID, g.bin("BIN-SHIM-01").ID)
+				return reservations.Anyone
+			},
+		},
+		{
+			name: "node-local-shim-reserved-by-asker",
+			need: need{Source: "PLK_H1", Payload: "SHIM", Delivery: "ALN_008", Intent: "full", Local: true,
+				Setup: "BIN-SHIM-01 carries the asker's own pending reservation", Asker: "the reservation's holder"},
+			setup: func(g *goldenPlant) reservations.DigAsker {
+				h := g.holder("golden-holder-1")
+				testdb.ReserveBin(g.t, g.db, h.ID, g.bin("BIN-SHIM-01").ID)
+				return reservations.DigAsker{OrderID: h.ID, LaneOwner: h.ID}
+			},
+		},
+		{
+			name: "node-local-move-reserved-by-stranger",
+			need: need{Source: "PLN_001", Delivery: "SYN_MARKET", Intent: "full", Local: true,
+				Setup: "BIN-ACT-P1F carries another order's pending reservation", Asker: "an order holding nothing"},
+			setup: func(g *goldenPlant) reservations.DigAsker {
+				testdb.ReserveBin(g.t, g.db, g.holder("golden-holder-1").ID, g.bin("BIN-ACT-P1F").ID)
+				return reservations.Anyone
+			},
+		},
+		{
+			name: "node-local-move-reserved-by-asker",
+			need: need{Source: "PLN_001", Delivery: "SYN_MARKET", Intent: "full", Local: true,
+				Setup: "BIN-ACT-P1F carries the asker's own pending reservation", Asker: "the reservation's holder"},
+			setup: func(g *goldenPlant) reservations.DigAsker {
+				h := g.holder("golden-holder-1")
+				testdb.ReserveBin(g.t, g.db, h.ID, g.bin("BIN-ACT-P1F").ID)
+				return reservations.DigAsker{OrderID: h.ID, LaneOwner: h.ID}
 			},
 		},
 	}
@@ -643,8 +770,9 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			g := newGoldenPlant(t)
+			asker := reservations.Anyone
 			if c.setup != nil {
-				c.setup(g)
+				asker = c.setup(g)
 			}
 			intent := dispatch.IntentFull
 			if c.need.Intent == "empty" {
@@ -652,7 +780,7 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 			}
 			res := g.finder().FindSourceForNeed(dispatch.SourceNeed{
 				SourceNode: c.need.Source, PayloadCode: c.need.Payload, DeliveryNode: c.need.Delivery,
-				Intent: intent, NodeLocal: c.need.Local,
+				Intent: intent, NodeLocal: c.need.Local, Asker: asker,
 			})
 			golden(t, "bin-picker/"+c.name, c.need, g.sourceAnswer(res))
 		})
@@ -664,6 +792,7 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 // store into a synthetic group and the retrieve-mode chooser under the finder.
 func TestPlannerGolden_GroupResolver(t *testing.T) {
 	t.Parallel()
+	requirePlannerSeen(t)
 	type need struct {
 		Group   string `json:"group"`
 		Mode    string `json:"mode"`
@@ -717,8 +846,13 @@ func TestPlannerGolden_GroupResolver(t *testing.T) {
 				testutil.MustNoErr(t, err, "bin type "+c.need.BinType)
 				stated = binresolver.KnownBinType(bt.ID)
 			}
-			r := &binresolver.DefaultResolver{DB: g.db}
-			res, err := r.Resolve(g.node(c.need.Group), mode, c.need.Payload, stated, reservations.Anyone, nil)
+			r := &binresolver.DefaultResolver{DB: g.cdb}
+			group := g.node(c.need.Group)
+			var res *binresolver.ResolveResult
+			var err error
+			g.plannerCall("group-resolver", func() {
+				res, err = r.Resolve(group, mode, c.need.Payload, stated, reservations.Anyone, nil)
+			})
 			var a resolveAnswer
 			switch {
 			case err != nil:
@@ -747,6 +881,7 @@ func TestPlannerGolden_GroupResolver(t *testing.T) {
 // predicate is exercised on a real row.
 func TestPlannerGolden_Sourceable(t *testing.T) {
 	t.Parallel()
+	requirePlannerSeen(t)
 	g := newGoldenPlant(t)
 	h := g.holder("golden-holder-1")
 	g.claimBin("BIN-PA-01", h)
@@ -784,7 +919,7 @@ func TestPlannerGolden_Sourceable(t *testing.T) {
 		testutil.MustNoErr(t, err, "bin "+r.v.Bin)
 		rule, err := g.db.LoadBinTypeRule(r.v.Payload)
 		testutil.MustNoErr(t, err, "bin type rule "+r.v.Payload)
-		r.v.GoReason = binresolver.BinUnavailableReason(b, r.v.Payload, rule)
+		g.plannerCall("pickable-at", func() { r.v.GoReason = binresolver.BinUnavailableReason(b, r.v.Payload, rule) })
 		out = append(out, r.v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Bin < out[j].Bin })
@@ -805,6 +940,7 @@ func TestPlannerGolden_Sourceable(t *testing.T) {
 // holds, and what went to the fleet. One door per case, on its own plant.
 func TestPlannerGolden_Doors(t *testing.T) {
 	t.Parallel()
+	requirePlannerSeen(t)
 	env := testdb.Envelope()
 	wire := func(g *goldenPlant, req protocol.OrderRequest) {
 		g.watch()
@@ -921,6 +1057,33 @@ func TestPlannerGolden_Doors(t *testing.T) {
 					SourceNodeID: g.node("PLN_001").ID, DestNodeName: "SYN_PRESS_EMPTIES", StationID: "golden",
 				})
 				g.refused(err)
+				g.eng.RunFulfillmentScan()
+			},
+		},
+		{
+			name: "bin-move-to-group-with-room",
+			need: map[string]any{"door": "bin move", "bin": "BIN-ACT-P1F", "dest": "SYN_MARKET",
+				"note": "a group with no declared level: the destination is settled inside ReserveStorageDropoff"},
+			run: func(g *goldenPlant) {
+				_, err := g.eng.CreateBinMove(engine.BinMoveRequest{
+					Selection: engine.BinSelectionByLabel, BinLabel: "BIN-ACT-P1F",
+					SourceNodeID: g.node("PLN_001").ID, DestNodeName: "SYN_MARKET", StationID: "golden",
+				})
+				g.refused(err)
+				g.eng.RunFulfillmentScan()
+			},
+		},
+		{
+			name: "wire-move-queued-to-full-group",
+			need: map[string]any{"door": "edge wire intake", "type": "move", "source": "PLN_001", "delivery": "SYN_CLEAR",
+				"setup": "both SYN_CLEAR slots claimed by an order on its way; the move queues against the group, then CLR_002 is freed and the scanner runs"},
+			run: func(g *goldenPlant) {
+				h := g.holder("golden-holder-1")
+				testdb.ClaimSlotForTest(g.t, g.db, g.node("CLR_001").ID, h.ID)
+				testdb.ClaimSlotForTest(g.t, g.db, g.node("CLR_002").ID, h.ID)
+				wire(g, protocol.OrderRequest{OrderUUID: "g-move-full", OrderType: protocol.OrderTypeMove,
+					SourceNode: "PLN_001", DeliveryNode: "SYN_CLEAR", Quantity: 1})
+				g.exec(`UPDATE nodes SET claimed_by = NULL WHERE name = 'CLR_002'`)
 				g.eng.RunFulfillmentScan()
 			},
 		},

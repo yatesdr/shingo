@@ -3,11 +3,11 @@ package dispatch
 import (
 	"fmt"
 	"log"
+	"shingocore/dispatch/plan"
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
-	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/store"
@@ -15,185 +15,33 @@ import (
 	"shingocore/store/reservations"
 )
 
-// resolveComplexSteps validates and resolves all steps, returning concrete node names.
-//
-// Pure function — does NOT side-effect sendError on failure. Callers
-// decide how to surface the error (intake may queue on capacity
-// errors via classifyResolutionError; the scanner replay path
-// re-runs resolution per tick).
-//
-// Error shape: "step N: <reason>" — index info preserved so callers
-// don't need to re-format. The wrapped reason from resolveStepNode
-// preserves the original resolver substring so
-// classifyResolutionError's ResolutionCapacity branch can match.
+// resolveComplexSteps validates and resolves all steps, returning concrete node
+// names: the planner's leg shape for a complex order (plan.Planner.ComplexSteps).
 func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) ([]resolvedStep, error) {
-	var resolved []resolvedStep
-	// The carrier the most recently resolved pickup is holding, which is the one
-	// the next dropoff puts down. See the storeType comment in resolveStepNode
-	// for why the dropoff cannot work this out for itself at intake.
-	var carrier *int64
-	for i, step := range steps {
-		// MG3-4: where this leg's carrier is GOING, for the pickup that has not
-		// happened yet. See resolveStepNode.
-		nextDrop := nextDropoffNode(steps, i)
-		switch step.Action {
-		case protocol.ActionPickup, protocol.ActionDropoff:
-			// Blank dropoff = deferred destination (placeForDedicatedLoader resolves it
-			// after intake). Pass it through unchanged, same as reResolveComplexSteps.
-			if step.Action == protocol.ActionDropoff && step.Node == "" {
-				resolved = append(resolved, resolvedStep{Action: protocol.ActionDropoff, Empty: step.Empty,
-					PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
-				continue
-			}
-			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop, carrier)
-			if err != nil {
-				return nil, fmt.Errorf("step %d: %w", i, err)
-			}
-			if step.Action == protocol.ActionPickup {
-				carrier = binTypeAtNode(d.db, nodeName)
-			}
-			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty,
-				PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
-		case protocol.ActionWait:
-			// Wait may optionally include a node (drive-to-and-hold).
-			// If present, resolve it; otherwise it's a bare wait (split point only).
-			// THE AUTHOR'S KIND IS CARRIED, NOT RE-DERIVED. This is a
-			// translation from the wire type to Core's, not a new author: the
-			// station stamped who owns its wait when it built the plan, and
-			// dropping the stamp here would put the guessing back exactly where
-			// it was — the fence would see an unowned wait and read it as the
-			// station's by the drain-window default, which is right today by
-			// accident and wrong the moment that window closes.
-			if step.Node != "" {
-				// nil carrier: a wait puts nothing down, so there is nothing for the
-				// bin-type fence to narrow on.
-				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop, nil)
-				if err != nil {
-					return nil, fmt.Errorf("step %d: %w", i, err)
-				}
-				resolved = append(resolved, resolvedStep{
-					Action: protocol.ActionWait, Node: nodeName, Group: group, WaitKind: step.WaitKind,
-				})
-			} else {
-				resolved = append(resolved, resolvedStep{Action: protocol.ActionWait, WaitKind: step.WaitKind})
-			}
-		default:
-			return nil, fmt.Errorf("step %d: unknown step action: %s", i, step.Action)
-		}
-	}
-	return resolved, nil
+	return d.pure.ComplexSteps(steps, payloadCode, asker)
 }
 
-// reResolveComplexSteps walks an already-resolved step list and
-// re-resolves any step whose node still references a synthetic NGRP.
-// Used by DispatchPreparedComplex on the scanner replay path: when
-// intake queued an order because the NGRP was saturated, the original
-// NGRP names sit in stepsJSON until a later tick succeeds.
-//
-// Returns:
-//   - newSteps: resolution-applied step list (concrete child names
-//     where NGRP resolution succeeded).
-//   - changed: true if any step's Node value changed from the input.
-//     The dispatcher persists the new stepsJSON when changed=true so
-//     subsequent ticks don't redo the resolution work and so claim
-//     proceeds against the locked-in children.
-//   - err: the first resolution error encountered. Caller distinguishes
-//     capacity (queue, retry next tick), buried (replay reshuffle), and
-//     other errors (fail) via classifyResolutionError.
+// reResolveComplexSteps re-resolves the steps still naming a group
+// (plan.Planner.ReComplexSteps).
 func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string, asker reservations.DigAsker) (newSteps []resolvedStep, changed bool, err error) {
-	return d.reResolveSteps(nil, steps, payloadCode, asker, nil)
+	return d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: payloadCode, Asker: asker})
 }
 
 // reResolveComplexStepsFor is the dispatch pass's re-resolve: the same walk, with
 // the order in hand so a group drop that finds no free child can ask the
-// vacated-slot rule (vacatedGroupChild) before it reports capacity.
+// vacated-slot rule (plan.Planner.VacatedGroupChild) before it reports capacity.
+// The planner grants; the grant is logged here, where the order is.
 func (d *Dispatcher) reResolveComplexStepsFor(order *orders.Order, steps []resolvedStep, asker reservations.DigAsker,
 	pc *pairPass) (newSteps []resolvedStep, changed bool, err error) {
-	return d.reResolveSteps(order, steps, order.PayloadCode, asker, pc)
-}
-
-func (d *Dispatcher) reResolveSteps(order *orders.Order, steps []resolvedStep, payloadCode string, asker reservations.DigAsker,
-	pc *pairPass) (newSteps []resolvedStep, changed bool, err error) {
-	newSteps = make([]resolvedStep, 0, len(steps))
-	for i, step := range steps {
-		if step.Node == "" {
-			newSteps = append(newSteps, step)
-			continue
-		}
-		if step.WaitKind == WaitKindLane {
-			// A LANE WAIT IS EXEMPT, EXPLICITLY. Its node is an RDS map point,
-			// not a Core node — deliberately, so a point that never holds a bin
-			// stays out of the node graph (PropLaneGatePoint). So the lookup
-			// below cannot find it and it would ride the "node vanished —
-			// unrecoverable" arm: the right OUTCOME (passed through untouched)
-			// reached by a branch that means something else.
-			//
-			// That matters beyond tidiness. That arm is where a genuinely
-			// missing node lands, and a reader debugging one should not have to
-			// know that every gated plan takes it too. Naming the case also
-			// makes it fail loudly if a plant ever configures a gate point that
-			// HAPPENS to collide with a Core node name — without this, such a
-			// wait would be looked up, possibly found to be an NGRP, and
-			// re-resolved into a storage slot, silently re-aiming the gate.
-			newSteps = append(newSteps, step)
-			continue
-		}
-		node, lookupErr := d.db.GetNodeByDotName(step.Node)
-		if lookupErr != nil || node == nil {
-			// Node vanished from Core — unrecoverable. Fall through to
-			// the original step; the claim path will surface a usable
-			// error.
-			newSteps = append(newSteps, step)
-			continue
-		}
-		if !(node.IsSynthetic && node.NodeTypeCode == protocol.NodeClassNGRP) {
-			// Already a concrete node — no re-resolution needed.
-			newSteps = append(newSteps, step)
-			continue
-		}
-		// Step still references an NGRP; re-attempt resolution. Carry Empty so
-		// the produce empty-leg distinction survives replay re-resolution.
-		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty,
-			PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot}
-		// Same carrier question as intake, asked of the already-resolved list.
-		// The resolver would derive one from the asker here (this path has a real
-		// order), but a complex PARENT owns legs rather than cargo — its bin_id is
-		// NULL by design and its holds can name two carriers at once — so the
-		// paired pickup is the better answer and this prefers it.
-		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker, "",
-			d.binTypeBeforeStep(steps, i))
-		var vacate *vacateStamp
-		if resolveErr != nil {
-			// THE VACATED-SLOT RULE, WHERE THIS WOULD WAIT. A group drop with no
-			// free child may still land on the child a committed lift empties first.
-			// Only on capacity, and only on the dispatch pass (order in hand):
-			// intake is unchanged, since the pair is not formed there yet.
-			class, _ := classifyResolutionError(resolveErr)
-			if order == nil || step.Action != protocol.ActionDropoff || class != ResolutionCapacity {
-				return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
-			}
-			sofar := append(append([]resolvedStep(nil), newSteps...), steps[i:]...)
-			name, st := d.vacatedGroupChild(order, sofar, i, node, payloadCode, asker, pc)
-			if st == nil {
-				return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
-			}
-			newName, group, vacate = name, step.Node, st
+	newSteps, changed, err = d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: order.PayloadCode, Asker: asker,
+		Order: order.ID, Pair: pc.leg()})
+	if err != nil {
+		return newSteps, changed, err
+	}
+	for i := range newSteps {
+		if st := newSteps[i].Vacate; st != nil && (steps[i].Vacate == nil || *steps[i].Vacate != *st) {
 			logVacated(order, st, "group re-resolve")
 		}
-		if newName != step.Node {
-			changed = true
-		}
-		// The rebuild drops any stamp the step carried: it names a node this
-		// resolve may have moved off. A stamp only this resolve just granted rides.
-		// Who owns a wait survives the rebuild (WaitKind, WaitLane): only the node
-		// is re-resolved.
-		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group, Empty: step.Empty,
-			PayloadCode:   step.PayloadCode,
-			ExclusiveSlot: step.ExclusiveSlot,
-			WaitKind:      step.WaitKind,
-			WaitLane:      step.WaitLane,
-			Vacate:        vacate,
-			Anchor:        step.Anchor})
 	}
 	return newSteps, changed, nil
 }
@@ -213,218 +61,21 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 	return out
 }
 
-// resolveStepNode resolves a single step's node. If the node is a synthetic
-// group (NGRP), it is automatically resolved via the group resolver. If the
-// node is concrete, it is returned directly. If no node is provided, the
-// global fallback resolves via payload code.
-//
-// Every source-finding path in this function now routes through the shared
-// dispatch.SourceFinder (C(i)): the last inline copies of the plant-wide bin
-// finders are gone, and the forbidigo carve-out that marked them
-// (exclusions rule #7, complex_steps.go arm) is deleted with them. The
-// Reshuffle→blind-dispatch mappings below preserve pre-fold behaviour
-// byte-for-byte; surfacing the burial is a C(ii) decision.
-// stepPayload is the payload THIS step's bin selection resolves against.
-//
-// A leg may name its own, and exactly one kind does: the refill leg of a
-// changeover swap. That order carries the FROM-style payload because its
-// opening pickup has to find the bin physically on the line, while the carrier
-// it fetches has to suit the style arriving. Marking the leg Empty drops the
-// full-bin content match but not bin-type compatibility, which resolves against
-// whatever payload reaches PayloadBinTypeRuleArm — so before the step
-// could say, the press was handed a carrier of the type it was leaving
-// (sim 2026-08-24, N1-c).
-//
-// Everything else says nothing and gets the order's payload, which is what it
-// has always got.
+// stepPayload is the payload THIS step's bin selection resolves against
+// (plan.StepPayload).
 func stepPayload(step protocol.ComplexOrderStep, orderPayload string) string {
-	if step.PayloadCode != "" {
-		return step.PayloadCode
-	}
-	return orderPayload
+	return plan.StepPayload(step, orderPayload)
 }
 
-// resolvedStepPayload is stepPayload for the resolved form, and it sits here
-// rather than beside its caller so the two spellings of one rule cannot drift.
-// resolvedStep carries the payload through a replay precisely so the answer
-// survives; reading the order's payload instead is how a changeover leg ends up
-// sourcing the style being left.
+// resolvedStepPayload is stepPayload for the resolved form
+// (plan.ResolvedStepPayload).
 func resolvedStepPayload(step resolvedStep, orderPayload string) string {
-	if step.PayloadCode != "" {
-		return step.PayloadCode
-	}
-	return orderPayload
+	return plan.ResolvedStepPayload(step, orderPayload)
 }
 
-// binTypeBeforeStep names the carrier the nearest PICKUP ahead of index i is
-// holding — the one a dropoff at i is about to put down.
-//
-// Backwards from i rather than tracked in a variable, because this runs on the
-// REPLAY path, where only the steps still naming a group are re-resolved and the
-// walk therefore skips most of the list. A carried variable would be updated on
-// the iterations that happen to re-resolve and stale on the ones that do not.
-// The lists are a handful of steps long, so the scan costs nothing.
-func (d *Dispatcher) binTypeBeforeStep(steps []resolvedStep, i int) *int64 {
-	for j := i - 1; j >= 0; j-- {
-		if steps[j].Action != protocol.ActionPickup || steps[j].Node == "" {
-			continue
-		}
-		return binTypeAtNode(d.db, steps[j].Node)
-	}
-	return nil
-}
-
-// binTypeAtNode names the carrier standing at a just-resolved pickup slot,
-// so the dropoff that follows can be fenced by type at intake.
-//
-// EXACTLY ONE, OR NOTHING — the same rule typeFromDestinationPosition uses for
-// the same reason. A slot holding one carrier is a statement about what this leg
-// is about to carry. Zero means the pickup resolved against something this read
-// cannot see (a lane whose slot rows live a level down, a group child picked for
-// a bin not yet placed), and many means the answer is a guess. Both return nil,
-// which resolves the dropoff untyped exactly as it did before.
-//
-// BEST EFFORT THROUGHOUT. Every error path returns nil rather than failing the
-// intake: this is a narrowing, and a narrowing that cannot be computed must not
-// be able to refuse an order Edge just asked for.
-func binTypeAtNode(db *store.DB, nodeName string) *int64 {
-	if nodeName == "" {
-		return nil
-	}
-	node, err := db.GetNodeByDotName(nodeName)
-	if err != nil || node == nil {
-		return nil
-	}
-	binsAt, err := db.ListBinsByNode(node.ID)
-	if err != nil || len(binsAt) != 1 {
-		return nil
-	}
-	id := binsAt[0].BinTypeID
-	return &id
-}
-
-func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayload string,
-	asker reservations.DigAsker, nextDropoff string, carrierTypeID *int64) (string, string, error) {
-	payloadCode := stepPayload(step, orderPayload)
-	if step.Node != "" {
-		node, err := d.db.GetNodeByDotName(step.Node)
-		if err != nil {
-			return "", "", fmt.Errorf("node %q not found", step.Node)
-		}
-		// Auto-detect group nodes and resolve to a concrete slot.
-		if node.IsSynthetic && node.NodeTypeCode == protocol.NodeClassNGRP && d.resolver != nil {
-			// Empty pickup leg (produce node's "bring an empty to fill"):
-			// resolve to a slot holding an EMPTY compatible carrier, not a
-			// payload-matching full. Mirrors the source finder's group-scoped
-			// empty tier (planTransport, empty intent), which also bypasses the
-			// full-retrieve resolver for empties. (Pre-fix every complex pickup resolved as
-			// OrderTypeRetrieve — a full — which delivered a full to produce
-			// nodes; step.Empty now carries the distinction the old comment
-			// here said it would need.)
-			if step.Action == protocol.ActionPickup && step.Empty {
-				// Through the shared finder (tier 3 runs the same
-				// FindEmptyCompatibleBinInGroup this used to call inline, with
-				// excludeID=0 because the need carries no DeliveryNode).
-				res := d.finder.FindSourceForNeed(SourceNeed{
-					SourceNode:  step.Node,
-					PayloadCode: payloadCode,
-					ProcessNode: nextDropoff,
-					Intent:      IntentEmpty,
-					Asker:       asker,
-				})
-				switch res.Outcome {
-				case OutcomeFound:
-					return res.Node.Name, step.Node, nil
-				case OutcomeReshuffle:
-					// Pre-fold behaviour, preserved BYTE-FOR-BYTE for C(i): the
-					// inline call never checked slot accessibility, so a buried
-					// empty was dispatched at blind. The finder's tier-6 check
-					// now SEES the burial; acting on it (reshuffle instead of a
-					// robot fault at an unreachable slot) is a C(ii) decision,
-					// not a ratchet side effect.
-					return res.Buried.Slot.Name, step.Node, nil
-				default:
-					// Wait and Structural both collapse to the resolution error
-					// this caller has always returned. Known string delta, DB-
-					// error path only: the inline code distinguished a db error
-					// ("cannot resolve empty in group") from no-bin; the finder
-					// folds both into Wait.
-					return "", "", fmt.Errorf("no empty carrier in group %s", step.Node)
-				}
-			}
-			// Per STEP, not per order: one complex order's steps go both ways,
-			// which is why the resolver takes a direction rather than the
-			// order's type.
-			mode := binresolver.ResolveModeRetrieve
-			if step.Action == protocol.ActionDropoff {
-				mode = binresolver.ResolveModeStore
-			}
-			// THE CARRIER TYPE, FOR THE DROPOFF THAT HAS ONE. At intake the order
-			// row does not exist yet (complex_intake.go passes reservations.Anyone
-			// for exactly that reason), so the resolver's own derivation has no id
-			// to work from and the per-node Allowed Bin Types fence would be
-			// skipped — on a destination choice that is then LOCKED IN, because
-			// reResolveComplexSteps only re-resolves steps still naming a group.
-			//
-			// The pickup that precedes it is the answer: it resolves to a slot
-			// holding a specific carrier, and that carrier is the one this leg puts
-			// down. Nil on a retrieve, and nil when the pickup could not be pinned
-			// to exactly one bin, which resolves untyped as it always did.
-			storeCarrier := binresolver.NoBinType
-			if mode == binresolver.ResolveModeStore {
-				storeCarrier = binresolver.BinTypeFrom(carrierTypeID,
-					"complex step: no preceding pickup resolved to exactly one carrier")
-			}
-			result, err := d.resolver.Resolve(node, mode, payloadCode, storeCarrier, asker, nil)
-			if err != nil {
-				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
-			}
-			return result.Node.Name, step.Node, nil
-		}
-		return node.Name, "", nil
-	}
-	// Global fallback: when Edge sends no node, resolve the pickup SOURCE using
-	// the payload code (FindSourceBinFIFO / FindEmptyCompatibleBin). Blank
-	// dropoffs are deferred and short-circuited by the callers, so they never
-	// reach here — there is no dropoff fallback.
-	if payloadCode != "" {
-		switch step.Action {
-		case protocol.ActionPickup:
-			// Global fallback resolver: no order-level destination context here
-			// (we are picking the source), so no node to exclude. Pass 0.
-			// Empty leg sources an empty carrier (FindEmptyCompatibleBin),
-			// matching the NGRP empty branch above; otherwise a full (FIFO).
-			// Through the shared finder: a need with NO source node and
-			// NodeLocal=false skips tiers 1-4 and lands exactly on the tier-5
-			// plant-wide calls this used to make inline (preferZone "" and
-			// excludeID 0 because the need carries no DeliveryNode).
-			intent := IntentFull
-			if step.Empty {
-				intent = IntentEmpty
-			}
-			res := d.finder.FindSourceForNeed(SourceNeed{
-				PayloadCode: payloadCode,
-				Intent:      intent,
-				Asker:       asker,
-				ProcessNode: nextDropoff,
-			})
-			switch res.Outcome {
-			case OutcomeFound:
-				d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", res.Node.Name, res.Bin.ID)
-				return res.Node.Name, "", nil
-			case OutcomeReshuffle:
-				// Pre-fold blind dispatch preserved — see the NGRP branch above.
-				return res.Buried.Slot.Name, "", nil
-			default:
-				if step.Empty {
-					return "", "", fmt.Errorf("no empty carrier for payload %q", payloadCode)
-				}
-				return "", "", fmt.Errorf("no source bin for payload %q", payloadCode)
-			}
-		}
-	}
-	return "", "", fmt.Errorf("step requires either node or payload_code for resolution")
-}
+// binTypeAtNode names the carrier standing at a node, exactly one or nothing
+// (plan.BinTypeAtNode).
+func binTypeAtNode(db *store.DB, nodeName string) *int64 { return plan.BinTypeAtNode(db, nodeName) }
 
 // extractEndpoints returns the pickup (first actionable) and delivery (last
 // actionable) nodes. "Actionable" means pickup or dropoff — a wait is skipped.
@@ -475,17 +126,7 @@ func extractEndpoints(steps []resolvedStep) (pickup, delivery string) {
 // before the order is staged. A bare wait (no node) is a pure split marker and
 // is excluded from preWait (no block emitted).
 func splitAtWait(steps []resolvedStep) (preWait []resolvedStep, hasWait bool) {
-	for i, s := range steps {
-		if s.Action == protocol.ActionWait {
-			if s.Node != "" {
-				// Wait-with-node: include it (becomes a Wait block), split after.
-				return steps[:i+1], true
-			}
-			// Bare wait: split before (no block for this step).
-			return steps[:i], true
-		}
-	}
-	return steps, false
+	return plan.SplitAtWait(steps)
 }
 
 // splitSegment extracts the next segment of steps to release for a given
@@ -1013,39 +654,8 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 	return false, &SourceResult{Outcome: OutcomeReshuffle, Buried: buried}
 }
 
-// nextDropoffNode names where the carrier a leg is picking up is GOING — the
-// first dropoff at or after this step that names a node.
-//
-// ── MG3-4: OUTFLOW TYPING, AND WHY THE DESTINATION IS THE INPUT ─────────────
-//
-// A press empty pull has no payload to reason from: it is asking for an empty
-// carrier, and "empty" says nothing about which type. The only fact available at
-// selection time is the position it is going TO, and that position's effective
-// bin types say what fits there.
-//
-// This threads the destination in. The finder decides what to do with it —
-// exactly one effective type at the position means that is the want; zero or
-// many leaves today's behaviour untouched, because "this slot fits anything" and
-// "nobody has said" are both answered correctly by not narrowing.
-//
-// IT IS ALSO THE FENCE'S INPUT. A supported press reaches its own maintained
-// group through the supports list, keyed on this same node. Before MG3-4 a
-// complex leg carried no process identity at all, so every press-index swap was
-// an outsider at every group — including the one built to serve it.
-//
-// INERT ON EMPTY CONFIG, deliberately. A plant with no per-position bin types
-// and no maintained groups threads a node name that changes no decision. That is
-// why it lands regardless of what the census says about how many positions are
-// typed today: the wire has to exist before the config is worth populating.
-//
-// The FIRST dropoff at or after the step, not the last: a multi-leg plan drops
-// at several places, and the one that matters for a pickup is where that
-// carrier is set down next.
+// nextDropoffNode names where the carrier a leg is picking up is going next
+// (plan.NextDropoffNode).
 func nextDropoffNode(steps []protocol.ComplexOrderStep, from int) string {
-	for i := from; i < len(steps); i++ {
-		if steps[i].Action == protocol.ActionDropoff && steps[i].Node != "" {
-			return steps[i].Node
-		}
-	}
-	return ""
+	return plan.NextDropoffNode(steps, from)
 }

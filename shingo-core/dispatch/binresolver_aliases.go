@@ -1,9 +1,13 @@
 package dispatch
 
-import "shingocore/dispatch/binresolver"
+import (
+	"shingocore/dispatch/binresolver"
+	"shingocore/store"
+)
 
 // Stage 5 of the architecture refactor moved the bin-resolution code
-// (resolver.go, group_resolver.go, lane_lock.go, helpers.go) into the
+// (resolver.go, group_resolver.go, helpers.go; lane_lock.go too, until B1 moved
+// it back: it writes, and binresolver is now a planner part) into the
 // shingocore/dispatch/binresolver sub-package so the dispatch/ package
 // no longer owns both the lifecycle state machine *and* the slot-picking
 // algorithms.
@@ -17,7 +21,6 @@ type (
 	NodeResolver    = binresolver.NodeResolver
 	DefaultResolver = binresolver.DefaultResolver
 	GroupResolver   = binresolver.GroupResolver
-	LaneLock        = binresolver.LaneLock
 	StructuralError = binresolver.StructuralError
 	BuriedError     = binresolver.BuriedError
 )
@@ -26,9 +29,10 @@ type (
 // direct re-declare) so errors.Is still unwraps correctly.
 var ErrBuried = binresolver.ErrBuried
 
-// NewLaneLockWithDB constructs the *LaneLock. There is no memory-only variant:
-// the durable dig rows ARE the lock, so there is nothing for one to be.
-var NewLaneLockWithDB = binresolver.NewLaneLockWithDB
+// The compile-time check that *store.DB satisfies the resolvers' Store. It
+// lived in binresolver, which is now a planner part and must not import
+// shingocore/store (planner-purity, B1).
+var _ binresolver.Store = (*store.DB)(nil)
 
 // Retrieval and storage algorithm codes. Exported as untyped string
 // constants so they behave identically to the originals at call sites.
@@ -49,3 +53,7 @@ var IsAvailableAtConcreteNode = binresolver.IsAvailableAtConcreteNode
 // (already claimed by which order, status reject, payload mismatch). Used by
 // claim-loop logging so silent rejections become visible in production logs.
 var BinUnavailableReason = binresolver.BinUnavailableReason
+
+// BinUnavailableReasonFor mirrors binresolver.BinUnavailableReasonFor: the
+// PickableAt question asked by a particular order (owner-aware reservations).
+var BinUnavailableReasonFor = binresolver.BinUnavailableReasonFor

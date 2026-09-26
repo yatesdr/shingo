@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"shingocore/dispatch/plan"
 	"sync"
 
 	"shingo/protocol"
@@ -29,7 +30,11 @@ type Dispatcher struct {
 	allocator     *Allocator
 	// finder is the shared source-finding seam (see source_finder.go). Owned
 	// here so every sourcing consumer resolves through the SAME instance.
-	finder   *SourceFinder
+	finder *SourceFinder
+	// pure is the planner's destination and leg-shape parts (dispatch/plan),
+	// over the same reader and the same picker as finder: it reads and never
+	// holds or writes.
+	pure     *plan.Planner
 	DebugLog func(string, ...any)
 
 	// laneGates serializes lane-gate release passes per lane; gateAppendFails
@@ -101,7 +106,10 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	// seam exists so complex sourcing cannot drift from simple sourcing again;
 	// two finder instances would be two seams.
 	d.finder = NewSourceFinder(db, resolver, d.dbg)
+	d.pure = plan.NewPlanner(db, d.finder.picker, resolver, d.dbg)
+	d.lifecycle.pure = d.pure
 	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.CreateCompoundOrder, d.NotifyWaitChanged)
+	d.planner.pure = d.pure
 	d.allocator = newAllocator(db, binManifest, d.finder, d.dbg)
 	return d
 }

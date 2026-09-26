@@ -1,4 +1,4 @@
-package dispatch
+package plan
 
 import "shingocore/store/bins"
 
@@ -12,7 +12,7 @@ import "shingocore/store/bins"
 // full-vs-partial, not which type, and moving it would be a judgement rather than
 // a move.
 
-// wantedBinType decides WHICH carrier type an empty going to a loader window
+// WantedBinType decides WHICH carrier type an empty going to a loader window
 // should be, from the loader's declared carrier mix. Returns "" when the loader
 // has declared no mix — which is every loader today, and means "first come,
 // first served": take whatever compatible empty is available, exactly as before.
@@ -35,7 +35,7 @@ import "shingocore/store/bins"
 // not substitute another type — declaring a mix and then ignoring it when it is
 // inconvenient makes declaring it pointless. A loader that wants any-type
 // behaviour says so by declaring no mix.
-func (f *SourceFinder) wantedBinType(need SourceNeed) string {
+func (f *Finder) WantedBinType(need Need) string {
 	if need.Intent != IntentEmpty {
 		return ""
 	}
@@ -69,7 +69,7 @@ func (f *SourceFinder) wantedBinType(need SourceNeed) string {
 		if _, code, err := f.db.MaintainedEpisodeForOrigin(need.OriginID); err == nil && code != "" {
 			return code
 		} else if err != nil {
-			f.debug("wantedBinType: maintained episode for origin %s: %v", need.OriginID, err)
+			f.debug("WantedBinType: maintained episode for origin %s: %v", need.OriginID, err)
 		}
 	}
 
@@ -168,7 +168,7 @@ func (f *SourceFinder) wantedBinType(need SourceNeed) string {
 // group, which the next tick corrects, against parking every empty pull in the
 // plant on a database blip. The alternative — treat an unreadable episode as
 // "fence everything" — would turn one bad read into a plant-wide stall.
-func (f *SourceFinder) emptyFenceFor(need SourceNeed) bins.EmptyFence {
+func (f *Finder) emptyFenceFor(need Need) bins.EmptyFence {
 	fence := bins.EmptyFence{ProcessNode: need.ProcessNode}
 	if need.OriginID == "" {
 		return fence
@@ -210,7 +210,7 @@ func (f *SourceFinder) emptyFenceFor(need SourceNeed) bins.EmptyFence {
 // every call, which is what it got before MG3-4 existed. That is why the wire
 // lands regardless of how many positions are typed today: the config is not
 // worth populating until something reads it.
-func (f *SourceFinder) typeFromDestinationPosition(need SourceNeed) string {
+func (f *Finder) typeFromDestinationPosition(need Need) string {
 	if need.ProcessNode == "" {
 		return ""
 	}

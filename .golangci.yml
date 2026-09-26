@@ -266,6 +266,41 @@ linters:
             - pkg: "shingocore/dispatch"
               desc: "dispatch sub-packages must not import the parent back — the extraction direction is out of dispatch/, not into it"
 
+        # ── B1: the planner is pure ──────────────────────────────────────
+        #
+        # The planner and its parts choose; they never hold, write or move
+        # status (DESIGN-unification-v4 §2.4). The type does half of that: the
+        # only store type a part takes is a read-only interface. This rule does
+        # the other half, and it names PACKAGES because depguard cannot name a
+        # type:
+        #   - shingocore/store, the root, is where *store.DB lives. The
+        #     aggregates under it (bins, nodes, orders, loaders, payloads) are
+        #     row types and pure SQL fragments, and the allow entry keeps them
+        #     reachable. The longer allow prefix wins over the bare root, the same
+        #     mechanics dispatch-sub-pkg-isolation documents above.
+        #   - store/reservations holds the writers of every hold. It is longer
+        #     than the allow entry, so it wins. The asker a part carries lives in
+        #     shingocore/domain (domain.DigAsker) for exactly this reason.
+        #   - service is where the holds are taken.
+        # Test files build fixtures from anything and are out of scope, as they
+        # are for store-sub-pkg-isolation.
+        planner-purity:
+          list-mode: lax
+          files:
+            - "**/shingo-core/dispatch/plan/**"
+            - "**/shingo-core/dispatch/binresolver/**"
+            - "**/shingo-core/dispatch/binsource/**"
+            - "!**/*_test.go"
+          allow:
+            - "shingocore/store/"
+          deny:
+            - pkg: "shingocore/store"
+              desc: "a planner part reads through its read-only interface, never *store.DB (B1 planner-purity)"
+            - pkg: "shingocore/store/reservations"
+              desc: "a planner part holds nothing; the asker it carries is domain.DigAsker (B1 planner-purity)"
+            - pkg: "shingocore/service"
+              desc: "a planner part holds nothing; holds are acquiring's (B1 planner-purity)"
+
         # ── Phase 6.0c: store sub-package isolation ──────────────────────
         #
         # Each store sub-package owns one aggregate. Cross-aggregate
@@ -436,12 +471,13 @@ linters:
         text: "Function 'Validate' has too many statements"
         linters:
           - funlen
-      # FindSourceForNeed: permanent (owner decision D7)
+      # Pick, the tier cascade (FindSourceForNeed until B1 moved it, unchanged, into
+      # the planner): permanent (owner decision D7)
       # Owner decision D7: whether tier extraction reduces or CONCENTRATES the
       # fall-through risk is a study question, and no code moves before it
       # reports. Do not clear this entry by refactoring on your own judgement.
-      - path: "shingo-core/dispatch/source_finder\\.go"
-        text: "Function 'FindSourceForNeed' has too many statements"
+      - path: "shingo-core/dispatch/plan/finder\\.go"
+        text: "Function 'Pick' has too many statements"
         linters:
           - funlen
       # AdvanceCompoundOrder: permanent until the north-star unification (owner decision D6)
@@ -646,8 +682,9 @@ linters:
       #    complex_steps.go formerly held the last inline copy (resolveStepNode);
       #    C(i) folded it through the finder and DELETED its whole-file arm --
       #    verified by dry run: zero forbidigo findings on the file with the arm
-      #    removed. Only the message-scoped source_finder.go arm remains.
-      - path: "shingo-core/dispatch/source_finder\\.go"
+      #    removed. Only the message-scoped source_finder.go arm remains. B1 moved
+      #    the seam, unchanged, into the planner: dispatch/plan/finder.go.
+      - path: "shingo-core/dispatch/plan/finder\\.go"
         text: "bypass the shared source seam"
         linters:
           - forbidigo

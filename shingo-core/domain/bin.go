@@ -74,6 +74,15 @@ type Bin struct {
 	// with a hard claimed_by (structural, since the one-tx claim+confirm moves them
 	// together), which the separate claimed_by check already covers.
 	HasPendingReservation bool `json:"has_pending_reservation,omitempty"`
+	// PendingReservedBy is the order holding that pending reservation, nil when
+	// none does (at most one can: uq_reservations_bin_active). It is what makes
+	// the pick-up question owner-aware (B1, Rule 4): the holder may re-find its
+	// own bin, and nobody else may take it by accident. Not on the wire.
+	PendingReservedBy *int64 `json:"-"`
+	// AtSyntheticNode is the bin's node's is_synthetic, joined by BinJoinQuery: a
+	// bin on _TRANSIT or a robot's deck is not at any place anybody can pick it
+	// up from. Not on the wire.
+	AtSyntheticNode bool `json:"-"`
 	// QualityHold is the per-bin containment marker (v118): an operator's
 	// "Send to Quality Hold" set it, and the bin must not be SOURCED back into
 	// the ordinary flow while it waits for (or sits in) containment. The

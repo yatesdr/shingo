@@ -1,4 +1,4 @@
-package dispatch
+package plan
 
 import (
 	"shingocore/dispatch/binsource"
@@ -8,8 +8,16 @@ import (
 // loader_source.go — the store→binsource adapter. The ranker (binsource) is
 // store-free; candFromBin adapts a bins row to a binsource.Cand. The store-aware
 // pool gather that used to live here (sourceFromDedicatedLoader) moved onto
-// dispatch.SourceFinder (source_finder.go) so the dedicated-loader tier is
+// dispatch.Finder (source_finder.go) so the dedicated-loader tier is
 // reachable only through the one shared finder.
+
+// reservedBy is the pending reservation's holder, 0 when there is none.
+func reservedBy(b *bins.Bin) int64 {
+	if b.PendingReservedBy == nil {
+		return 0
+	}
+	return *b.PendingReservedBy
+}
 
 // candFromBin adapts one store bin to a binsource.Cand.
 //   - Payload "" marks an empty (the store normalizes a NULL/empty payload to "").
@@ -28,6 +36,7 @@ func candFromBin(b *bins.Bin) binsource.Cand {
 		CreatedAt:         b.CreatedAt,
 		Claimed:           b.ClaimedBy != nil,
 		Locked:            b.Locked,
+		ReservedBy:        reservedBy(b),
 		Bare:              b.BinTypeBare,
 		ManifestConfirmed: b.ManifestConfirmed,
 		Status:            b.Status,

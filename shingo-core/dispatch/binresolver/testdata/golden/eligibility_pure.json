@@ -120,9 +120,9 @@
   },
   {
     "fixture": "reserved_pending",
-    "loader_drain": "",
-    "loader_fill": "",
+    "loader_drain": "reserved",
+    "loader_fill": "reserved",
     "concrete_node": "pending reservation held",
-    "ngrp_resolver": ""
+    "ngrp_resolver": "rejected"
   }
 ]

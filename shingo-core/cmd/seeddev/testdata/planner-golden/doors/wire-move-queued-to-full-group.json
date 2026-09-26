@@ -1,0 +1,60 @@
+{
+  "need": {
+    "delivery": "SYN_CLEAR",
+    "door": "edge wire intake",
+    "setup": "both SYN_CLEAR slots claimed by an order on its way; the move queues against the group, then CLR_002 is freed and the scanner runs",
+    "source": "PLN_001",
+    "type": "move"
+  },
+  "decision": {
+    "events": [
+      "received",
+      "queued",
+      "dispatched"
+    ],
+    "fleet": [
+      {
+        "external": "g-move-full",
+        "blocks": [
+          "PLN_001 JackLoad",
+          "Lane_20-WAIT Wait"
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "index": 1,
+        "type": "move",
+        "status": "in_transit",
+        "source": "PLN_001",
+        "delivery": "CLR_002",
+        "bin": "BIN-ACT-P1F",
+        "steps": [
+          "pickup PLN_001",
+          "wait Lane_20-WAIT",
+          "dropoff CLR_002"
+        ],
+        "hard_bins": [
+          "BIN-ACT-P1F"
+        ],
+        "hard_slots": [
+          "CLR_002"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-ACT-P1F",
+          "occupancy:confirmed:Lane_20",
+          "slot:confirmed:CLR_002"
+        ],
+        "to_fleet": true
+      }
+    ],
+    "refusals": null,
+    "replies": [
+      "data.order.projected status=pending",
+      "order.update status=sourcing",
+      "order.update status=queued",
+      "order.ack",
+      "order.waybill"
+    ]
+  }
+}

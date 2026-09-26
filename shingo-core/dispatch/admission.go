@@ -146,7 +146,7 @@ import (
 //	              | is still taken where the     |
 //	              | group configures one.        |
 //	reachability  | finder Tier 6 (EMPTY intent  | ADMISSION asks it — window 2
-//	              | only, source_finder.go:730)  | (3326c1bb) gave the refusal a
+//	              | only, plan.Finder.Pick)      | (3326c1bb) gave the refusal a
 //	              | / NGRP resolver raising      | releaser first
 //	              | BuriedError                  | (digForBuriedHeldBin), then
 //	              | (group_resolver.go:241)      | skipsForEntry stopped skipping
@@ -410,7 +410,7 @@ type admissionSkips struct {
 // Answered for a FRESH-BIN order, two mechanisms, both real:
 //
 //   - EMPTY intent → the finder's post-find accessibility check,
-//     source_finder.go:730-763, which returns OutcomeReshuffle with a
+//     tier 6 of plan.Finder.Pick (dispatch/plan/finder.go), which returns OutcomeReshuffle with a
 //     BuriedError; the scanner turns that into PlanBuriedReshuffle
 //     (fulfillment/scanner.go:308,335). That is the named releaser — a dig gets
 //     planned, and the lane clears.
