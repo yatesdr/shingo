@@ -3,6 +3,38 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-09-25 — Lineside piles as levels, quality containment, and the two-stage unloader
+
+Piles now mirror to Core as levels, quality containment lands, a loader return with nowhere safe to go
+waits, and the two-stage unloader runs end to end with Core moving carts into stage 2. Deploy Core first,
+then the Edge (Core migrations 131–136, Edge `core_loaders.leaves_bare`; no Core rollback past v131).
+
+- A lineside pile is `(node, payload, state)`, mirrored to Core as levels (131–132)
+- The pile migration strands piles of parts the running style does not claim
+- The Edge stops the engine before its final count flush at shutdown
+- Quality containment: payload flag, bin hold marker, and a divert to the containment route (133–134)
+- Edge containment floor verbs, kiosk page, and composer toggle
+- Held bins are never sourced; a diverted bin is stamped held on arrival; held bins can be unheld
+- The Payloads page renders every payload again
+- Copy node claims between styles, with per-claim overrides
+- A loader return with no free home or buffer waits (`loader-park-no-slot`) instead of colliding
+- Buffer slots in a node group show their bin on the loader box
+- A two-stage unloader is one station: stage 1 names its stage 2 (135)
+- Bare is a property of the bin type: `bin_types.bare_of` names the carrier, `bare` is derived (136)
+- Stage 1's CLEAR stamps each cart's own marker; stage 2's Send on gives the cart its type back
+- A stage 1 with nowhere to send the cart refuses the CLEAR before clearing anything
+- Core pulls waiting carts into free stage-2 windows (`core-s2-`) and confirms each move on landing
+- A direct pair's stage-2 windows share a group Core makes, keeps in step, and renames with the pair
+- A marker fits wherever its carrier fits; mixes, maintained levels, tier 2 and tier 4 never take a bare cart
+- `bin_loaders.fed_directly` stores "fed directly from process" (136)
+- The operator board is one tap per stage (Full off, Send on) and never shows a marker code
+- The Edge tells the operator when a cleared carrier has nowhere to go
+- Stations are set up on the Nodes page: a three-question card, a box of slots, tap-to-assign, and Settings
+- "Fill one window at a time" replaces the layout dropdown; the bins-page bare checkbox is gone
+- The style guide gains placement boxes, choice buttons, and the cart and bare-marker glossary rows
+- www no longer imports store for containment or copy-claims rows
+- The plant-claims mirror test builds its tables from the schema snapshot
+
 ## 2026-09-24 — One count per carrier, a count feed that heals itself, and stranded bins told the truth
 
 Deploy Core first, then the Edge (migrations 126–130; an old Edge keeps working against the new Core).
