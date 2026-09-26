@@ -529,6 +529,16 @@ function configGapHtml(item) {
 
 // gridHtml renders every station, drawing a two-stage unloader as ONE station
 // with a Stage 1 and a Stage 2 column.
+// stationsHeadHtml is the Stations section heading, in the same shape as the
+// page's "Node groups" and "Ungrouped nodes" heads (nodes-supermarket.js
+// sectionHead). A two-stage pair is one station, so a stage 2 is not counted.
+function stationsHeadHtml(items) {
+  const n = items.filter(function (it) {
+    return !items.some(function (o) { return Number(o.loader.second_stage_loader_id) === Number(it.loader.id); });
+  }).length;
+  return h`<div class="section-head node-section-head"><h2>Stations <span class="node-section-count">${String(n)}</span></h2></div>`;
+}
+
 function gridHtml(items) {
   const byID = {};
   const secondStages = {};
@@ -1259,7 +1269,7 @@ function renderGrid() {
     area.insertBefore(bar, host.nextSibling);
   }
   host.innerHTML = loaderData.length
-    ? gridHtml(loaderData)
+    ? stationsHeadHtml(loaderData) + gridHtml(loaderData)
     : (isAuth ? h`<div class="loader-empty">No stations yet. Use <strong>+ Station</strong> to add one.</div>` : '');
   bar.innerHTML = assignBarHtml();
   bar.classList.toggle('is-hidden', !armed);

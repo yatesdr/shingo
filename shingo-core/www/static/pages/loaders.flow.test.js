@@ -717,6 +717,10 @@ console.log('config gap — the refusals the Edge makes that are not an empty sl
     const sprHtml = h.ctx.gridHtml([spr]);
     check('dedicated loader: no "Not running yet" header, and the slot reads "Stays on its own spots"',
         sprHtml.indexOf('Not running yet') < 0 && sprHtml.indexOf('Stays on its own spots') >= 0);
+    const head = h.ctx.stationsHeadHtml(pair().concat([spr]));
+    check('Stations heading: the page section shape, a pair counted once',
+        head.indexOf('class="section-head node-section-head"') >= 0 && />Stations <span class="node-section-count">2</.test(head),
+        head);
     const su = h.ctx.stationSlots({ loader: unloader({ layout: 'dedicated_positions', inbound_source: 'IN-G' }),
         homes: [{ position_node_id: 62 }], payloads: [] }, null);
     check('a dedicated UNLOADER still needs "Empties go to"', su[0].slots[2].required && su[0].slots[2].empty);
