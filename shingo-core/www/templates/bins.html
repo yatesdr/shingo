@@ -42,8 +42,7 @@
                 data-width="{{.WidthIn}}"
                 data-height="{{.HeightIn}}"
                 data-length="{{.LengthIn}}"
-                data-robot-group="{{.RequiredRobotGroup}}"
-                data-bare="{{.Bare}}">Edit</button>
+                data-robot-group="{{.RequiredRobotGroup}}">Edit</button>
               <form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
                 <input type="hidden" name="id" value="{{.ID}}">
                 <button type="submit" class="btn btn-danger btn-sm">Delete</button>
@@ -217,15 +216,6 @@
         <label>Empty carrier robots <span class="tooltip-trigger" title="Which robots may move this carrier when it is EMPTY. A loaded carrier always goes by its part's own robot group, set on the Payloads page. Any robot = no restriction, so the fleet manager may send a robot of any size.">?</span></label>
         <div class="tag-list" id="bt-create-robot-group" data-current=""></div>
       </div>
-      <div class="form-group">
-        <!-- Hidden companion first: an unticked box sends nothing, so the
-             server needs the field present to know the form asked. -->
-        <input type="hidden" name="bare" value="false">
-        <label class="form-check">
-          <input type="checkbox" name="bare" value="true">
-          Bare <span class="tooltip-trigger" title="Bare bin type: the label a two-stage unloader's first stage stamps on the carrier it leaves behind. A bare carrier is never handed out as an empty, cannot be in a payload's carrier rules, and is re-typed by PUSH AS at the second stage.">?</span>
-        </label>
-      </div>
       <button type="submit" class="btn btn-primary">Create</button>
       <button type="button" class="btn ml-05" data-action="closeBTCreateModal">Cancel</button>
     </form>
@@ -262,16 +252,6 @@
       <div class="form-group">
         <label>Empty carrier robots <span class="tooltip-trigger" title="Which robots may move this carrier when it is EMPTY. A loaded carrier always goes by its part's own robot group, set on the Payloads page. Any robot = no restriction, so the fleet manager may send a robot of any size.">?</span></label>
         <div class="tag-list" id="bt-edit-robot-group" data-current=""></div>
-      </div>
-      <div class="form-group">
-        <!-- Hidden companion first: an unticked box sends nothing, and this
-             door is a full-record write, so without it an unticked box and a
-             form that never asked would read the same. -->
-        <input type="hidden" name="bare" value="false">
-        <label class="form-check">
-          <input type="checkbox" name="bare" id="bt-edit-bare" value="true">
-          Bare <span class="tooltip-trigger" title="Bare bin type: the label a two-stage unloader's first stage stamps on the carrier it leaves behind. A bare carrier is never handed out as an empty, cannot be in a payload's carrier rules, and is re-typed by PUSH AS at the second stage.">?</span>
-        </label>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
       <button type="button" class="btn ml-05" data-action="closeBTEditModal">Cancel</button>

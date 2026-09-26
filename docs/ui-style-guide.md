@@ -377,6 +377,16 @@ accent, with a drift test holding each copy to the master in both directions;
 the copies are aliases now (`--os-sub-3: var(--sub-3)`), kept only because the
 locked swap-mode glyph file reads those names, and an alias cannot drift.
 
+### The loader-station outline
+
+`--loader-outline` (`#0a8f6a`, theme-invariant) is the teal a Core loader
+station is drawn in on the Nodes page: the box outline, each window tile's
+outline, and the 12-18% tints mixed from it. It was a literal repeated through
+Core's `style.css` until the station boxes were redrawn; it is an outline and a
+tint, never an ink, so it needs no dark override. An identity like a robot hue
+("this belongs to a station"), never a status. Ink on a fill of it is
+`--on-accent-solid`, the same white.
+
 ### Type scale
 
 Five named steps, defined in `tokens.css`, replace the ~12 ad-hoc `rem` sizes
@@ -1627,6 +1637,14 @@ Operator HMI buttons get `min-height: var(--os-touch-min)` via the
 `.modal--touch` scope (or equivalent). Don't introduce a parallel
 `.btn--touch` modifier; the scope handles it.
 
+### Labels
+
+A one-tap panel's action on the Operator HMI is a short verb phrase in
+sentence case: **Full off**, **Send on**. It names what happens to the thing in
+front of the operator, not the API verb behind it. CANCEL and the legacy picker
+labels stay upper case until the HMI migration changes them together; a panel
+half in one case and half in the other reads as two systems.
+
 ### What not to do
 
 - ❌ Hardcoded `padding: 12px 24px` for touch buttons — use the scope
@@ -1652,6 +1670,29 @@ and the input class:
 The `.form-input` class is **mandatory** on inputs, selects, and textareas.
 This is the Edge convention; Core inputs need the class added during
 migration.
+
+### Choice buttons
+
+A question with two or three answers, where the answer decides what else is
+asked, is a row of buttons rather than a `<select>`: every answer is visible,
+each can carry a one-line sub-label, and the tap target is the whole answer.
+
+```html
+<div class="form-group" role="group" aria-labelledby="q-role">
+  <div class="station-question" id="q-role">What does it do?</div>
+  <div class="station-choice-row">
+    <button type="button" class="station-choice" aria-pressed="false" data-action="pickStationRole:produce">Fills bins</button>
+    <button type="button" class="station-choice" aria-pressed="false" data-action="pickStationRole:consume">Empties bins</button>
+  </div>
+  <div class="form-error" data-error-for="q-role"></div>
+</div>
+```
+
+The pick lives in the form state, not in the button; `render(state)` sets
+`aria-pressed` and `.is-selected`. Nothing is pre-picked when the answer changes
+what the thing IS — a default there is a guess the person has to notice and
+undo. Worked example: the Nodes page's New station card
+(`shingo-core/www/static/pages/loaders.js`, `pickStationRole`).
 
 ### Form-state convention
 
@@ -1774,6 +1815,95 @@ The conventions above are the parts to copy when a new form needs
 this treatment. Two-field "save three values" modals don't need the
 full machinery — apply the convention when conditional visibility or
 multi-step validation enter the picture.
+
+## Placement boxes — the box is the form
+
+When most of what configures a thing is **which nodes and groups it uses**, draw
+it as a box on the page that holds the nodes, with one slot per place, instead of
+a modal of name inputs. A typed name accepts any string and says nothing about
+the node; the grid under the box already shows every node, and a slot can say
+what it still needs. The Nodes page's loader stations are the worked example
+(`shingo-core/www/static/pages/loaders.js`: `stationSlots`, `assignReason`,
+`settingsHtml`). The create card then asks only what the thing IS (see Choice
+buttons above) and hands off to the box.
+
+### Slots
+
+- One labelled row per place, **noun first, in plant words**, under eight words:
+  *Windows*, *Fulls come from*, *Empties go to*, *Carts wait at*. No "inbound",
+  "outbound", "layout" or "directive".
+- A required slot that is empty is **red and says what it needs**: *Needs a
+  place*, *Needs a window*, *Needs a part*, with one line of how (*tap, then tap
+  a group or node*). Red is border and `--danger` ink on `--surface`, not a pink
+  wash: the ink clears 4.5:1 on the surface and falls under it on any tint.
+- A value the system derives is **shown, not asked** — a read-only row, never an
+  input the save then overwrites.
+- The slots are data first. `stationSlots(item)` returns `{key, label, required,
+  empty}` per slot and the HTML is drawn from that, so what the box asks for is
+  unit-testable without a DOM.
+
+### The not-running status
+
+The box header counts the empty required slots: **Not running yet — N slots
+need a place** (singular for one), as a `.badge-warn`. When nothing is missing
+the header says nothing. It does not say "Running": the page knows the
+configuration is complete, not that the Edge accepted it or that robots are
+moving.
+
+### Armed slot and tap-to-assign
+
+Drag alone does not work on a long page on a touch screen. So:
+
+- **Tapping a slot arms it** (`.is-armed`, accent outline). One slot at a time;
+  tapping it again, **Done**, or **Esc** disarms.
+- While armed, a sticky bar over the grid says what is being set and holds a
+  **Find** box that filters tiles by name.
+- **Every tile shows whether it can go there, and why not, on the tile** — *in
+  AMR Supermarket*, *window of PRESS4-UNLOAD*, *has a bin on it*. On
+  the tile, not in a `title`: touch has no hover. A group on a window slot reads
+  *a group can’t be a window*, the same words a refused drop toasts. Tiles that can take it are
+  outlined (`.assign-lit`), the rest dimmed (`.assign-dim`), the current value
+  marked (`.assign-current`).
+- **Tapping a lit tile assigns it with the same API call a drop makes.** The
+  interception is a capture-phase click listener, so the tile's own action (open
+  the node) does not also fire.
+- One pure rule, `assignReason(slot, target, ctx) → {ok, current, note}`, decides
+  both what the grid dims and whether a drop is taken, so tap and drag cannot
+  disagree.
+- A slot that takes a set (windows) stays armed after an assignment; a slot that
+  takes one value disarms.
+
+### Drag sources
+
+Each drag source sets **only its own MIME type**, so a drop target that does not
+recognise it does nothing instead of misreading it:
+
+| Source | Type | Accepted by |
+|---|---|---|
+| Node tile | `text/plain` (node id) | windows, place slots, the grid and lanes (reparent) |
+| Station window tile | `application/x-loader-member` | its own box (reorder, re-kind) |
+| Group header | `application/x-node-group` (group name) | every place slot — *… come from*, *… go to*, *Carts wait at* — through the same assign call as a tap. Refused on a windows box with a toast, *a group can’t be a window*; ignored by the grid and lanes |
+
+Where a refusal needs a reason (a group on a windows box), the target still
+takes the `dragover` so the drop fires, and the drop says why. Where nothing
+useful can be said (a group over the grid), `dragover` returns without
+`preventDefault`, so the browser shows no drop cursor, and `drop` ignores the
+type as a second line.
+
+### Settings that save as ticked
+
+Everything with a sensible default sits behind **one Settings link** on the box
+and is drawn in place of the slots (**Close settings** returns). Each control
+commits on `change`, and the footer says so: *Changes save as you tick them.*
+
+- The update body is **the stored row with that one field changed**
+  (`settingUpdate(loader, field, value)`), because the update endpoint is a
+  full-row write: a body built from what the panel shows would flatten every
+  field it does not show.
+- Which rows appear is `formShape(state)`, the same function the create card
+  uses. A row that does not apply is absent.
+- A change that loses data (a layout switch that drops members) asks first with
+  `uiConfirm`; so does the destructive action at the foot (**Delete station**).
 
 ## Desktop composer patterns (U9)
 
@@ -2309,13 +2439,15 @@ This is the worst overloading in the codebase today — the word "Station" means
 | Term | Definition | Code reference |
 |---|---|---|
 | **Edge Cell** | One Edge installation — a physical production cell with its own Edge instance, controllers, HMIs, and Core sync. Identified by `StationID` in `Config.Messaging`. Core's `NodeType` code `EDGE` and `Order.StationID` refer to this concept. **The term "Edge Cell" is the proposed unified name** — code currently uses "Station" (Edge config), "edge-station" (Core docstrings), and `StationID` (both) | `shingo-edge/config/...` `StationID`; `shingo-core/domain/order.go:23` `StationID`; `shingo-core/domain/node_type.go:6` "EDGE (edge station)" |
+| **Loader station** | The Core Nodes page's word for a bin loader or unloader (one `bin_loaders` row; a two-stage unloader is one station made of two loaders). UI text says **station** only on that page's box and card (**+ Station**, **New station**, **Delete station**); code says loader. A third meaning of "station" — see the reconciliation table | `shingo-core/store/loaders` `Loader`; `shingo-core/www/static/pages/loaders.js` |
 | **Operator Station** | A specific HMI screen inside an Edge Cell. Configured to claim a subset of the cell's Process Nodes; renders an operator-facing UI for those nodes. Multiple Operator Stations exist per cell. **The term "Operator Station" wins** — code currently mixes this with "Station" (the domain type) and "Operator Screen" (the processes-tab UI label) | `shingo-edge/domain/station.go:8` `type Station struct`; API at `/api/operator-stations`; URL `/operator/station/{id}` |
 
 ### Carriers
 
 | Term | Definition | Code reference |
 |---|---|---|
-| **Bare bin type** | A bin type flagged `bare`: the label the first stage of a two-stage unloader (the half loader) stamps, on its blank CLEAR, on the carrier it leaves behind. It says "this carrier holds no container yet". A bare carrier is never handed out as an empty, a bare type can never be in a payload's carrier rules, and PUSH AS at the second stage overwrites it with a real type. Configured per unloader as its bare type ("Leaves carriers bare as"). UI: a **bare** badge on the bin types table | `shingo-core/domain/bin_type.go` `BinType.Bare`; `store/loaders` `Loader.BareBinTypeID`; `store/bins/bins.go` `EmptyCarrierWhere` |
+| **Bare bin type** | A bin type with `bare_of` set: the marker Core stamps on a CLEAR at a stage-1 window of a two-stage unloader. Derived from the cart's own type, one marker per cart type, created the first time that type comes through. It means "this cart holds no bin yet". A bare cart is never handed out as an empty, and a bare type is never in a payload's carrier rules or offered in any picker. At stage 2 the one-tap **Send on** posts a blank code and Core stamps the cart back to its `bare_of` type. No operator surface shows a marker code; the Edge carries only `leaves_bare`. UI: a **bare** badge on the bin types table, read-only | `shingo-core/domain/bin_type.go` `BinType.Bare`; `bin_types.bare_of`; `ensureBareMarker`; `store/bins/bins.go` `EmptyCarrierWhere` |
+| **Cart** | The operator-facing word for the carrier of a two-stage unloader. HMI copy on the two-stage panels says cart, and so do the Core station box slots about it (*Carts with an empty bin go to*, *Carts wait at*); code and other admin surfaces say carrier | `operator-render.js` `confirmFullOff`, `confirmSendOn`; `loaders.js` `stationSlots` |
 | **Bare position** | **Not the same thing.** An Edge word for a position with no carrier standing on it at all. Nothing to do with a bin type; do not shorten "bare bin type" to "bare" where the two could be confused | `shingo-edge/engine/consume_plan.go`, `operator_produce.go` |
 
 ### Orders
@@ -2346,6 +2478,7 @@ name and migrate. Listed in rough order of impact × ease.
 | Concept | Names today | Proposed unified name | Rename mechanics |
 |---|---|---|---|
 | **Edge installation / cell** | "Station" (Edge config UI, `StationID`), "edge-station" (Core docstrings), `EDGE` (Core NodeType code) | **"Edge Cell"** in UI labels and new docs. `StationID` field name stays in code (too disruptive to rename a serialized field across the protocol), but its meaning is "Edge Cell ID" | Update Edge config UI labels: "Station ID" → "Edge Cell ID". Update Core docstrings. Don't rename `StationID` in JSON/structs |
+| **Loader or unloader on Core's Nodes page** | "station" (the station box and card: **+ Station**, **New station**), "loader" (code, API, every other page) | Keep **station** on that page only; a plant person thinks "the press 6 unload station", and "loader" reads as the thing that fills. Qualify it (**loader station**) anywhere it could meet the two meanings above | Nothing to rename; don't spread "station" for a loader beyond the Nodes page |
 | **HMI screen inside a cell** | "Station" (domain type `shingo-edge/domain/station.go`), "OperatorStation" (API endpoint, JSON field), "Operator Screen" (processes-tab UI label) | **"Operator Station"** in code (matches existing API). In UI labels, **"Operator Station"** too — drop the "Operator Screen" label in `processes.html:46, 154` etc. | Rename UI strings only; data types and APIs already match. Single-PR Edge change |
 | **Order list page on Edge** | **Done.** URL `/orders`, page identifier `"orders"`, handler `handleOrders`. A 301 redirect from `/kanbans` preserves old bookmarks. HTMX targets use `/orders/partial`. | — (completed) | — |
 | **Admin-created one-off order** | Edge: "Manual Order" (types move/retrieve/store/complex). Core: still "Spot Order" (subtypes transport/staged/swap/send_to_location) — rename to "Manual Order" is outstanding. | **"Manual Order"** — clearer than "Spot," and Edge's term is the broader one. Core's `/orders` admin modal should be renamed to "Manual Order." Subtype vocabularies stay distinct because they represent genuinely different operations | Rename Core's `apiSpotOrderSubmit` to `apiManualOrderSubmit`. Rename `.spot-tabs` CSS to `.manual-order-tabs`. Update Core nav label "Spot Order" → "Manual Order" |

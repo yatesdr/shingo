@@ -114,6 +114,13 @@
    * wash rather than a recess. */
   --scrim: rgba(0, 0, 0, .5);
 
+  /* The outline of a Core loader station on the Nodes page, and of each window
+   * tile inside it. Theme-invariant: it is an outline and a 12-18% tint, never
+   * an ink, and it has read the same in both themes since the boxes were first
+   * drawn (it was a literal in Core's style.css until this token). An identity
+   * for "this belongs to a station", like a robot hue; never a status. */
+  --loader-outline: #0a8f6a;
+
   /* Semantic */
   --primary: var(--accent);
   --primary-hover: var(--accent-hover);

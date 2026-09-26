@@ -173,6 +173,16 @@ function initDragAndDrop() {
     container.addEventListener('drop', onDrop);
   });
 
+  // Group headers are a drag source of their own: a station's place slots
+  // ("Fulls come from", "Empties go to", ...) take a whole group. They carry
+  // ONLY application/x-node-group, never text/plain, so no drop target here
+  // can mistake one for a node to reparent — a group tile was skipped above
+  // for exactly that reason, since the reparent API refuses synthetic nodes.
+  document.querySelectorAll('.smkt-group > .smkt-header').forEach(function(hdr) {
+    hdr.setAttribute('draggable', 'true');
+    hdr.addEventListener('dragstart', onGroupDragStart);
+  });
+
   var dropArea = document.getElementById('nodes-drop-area');
   if (dropArea) {
     dropArea.addEventListener('dragover', onDragOverArea);
@@ -188,19 +198,35 @@ function onDragStart(e) {
   e.dataTransfer.setData('text/plain', this.dataset.id);
 }
 
+function onGroupDragStart(e) {
+  var group = this.closest('.smkt-group');
+  var nameEl = this.querySelector('.smkt-name');
+  if (!group || !nameEl) return;
+  e.dataTransfer.effectAllowed = 'link';
+  e.dataTransfer.setData('application/x-node-group', nameEl.textContent);
+}
+
+// isGroupDrag: a group header is being dragged. The grid and the lane slots
+// ignore it — a group is placed only by naming it on a station's box.
+function isGroupDrag(e) {
+  var types = (e.dataTransfer && e.dataTransfer.types) || [];
+  return Array.prototype.indexOf.call(types, 'application/x-node-group') >= 0;
+}
+
 function onDragEnd(e) {
   this.classList.remove('dragging');
   document.querySelectorAll('.drop-target').forEach(function(el) { el.classList.remove('drop-target'); });
 }
 
 function onDragOver(e) {
+  if (isGroupDrag(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
   this.classList.add('drop-target');
 }
 
 function onDragOverArea(e) {
-  if (e.target.closest('.smkt-lane-slots')) return;
+  if (e.target.closest('.smkt-lane-slots') || isGroupDrag(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
   document.getElementById('tile-grid').classList.add('drop-target');
@@ -214,6 +240,7 @@ function onDrop(e) {
   e.preventDefault();
   e.stopPropagation();
   this.classList.remove('drop-target');
+  if (isGroupDrag(e)) return;
   var nodeID = parseInt(e.dataTransfer.getData('text/plain'));
   if (!nodeID) return;
 
@@ -262,6 +289,7 @@ function onDropGrid(e) {
   e.preventDefault();
   document.getElementById('tile-grid').classList.remove('drop-target');
   this.classList.remove('drop-target');
+  if (isGroupDrag(e)) return;
   var nodeID = parseInt(e.dataTransfer.getData('text/plain'));
   if (!nodeID) return;
   reparentNode(nodeID, null, 0);
@@ -521,6 +549,7 @@ delegateActions(document.body, {
     onDragStart,
     onDrop,
     onDropGrid,
+    onGroupDragStart,
     openLaneModal,
     openNgrpModal,
     reorderLane,

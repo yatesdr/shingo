@@ -1,337 +1,343 @@
-import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '/static/app.js';
+import { apiGet, apiPost, delegateActions, h, toast, uiConfirm } from '/static/app.js';
 
-// Core-owned bin loaders, rendered as drag-and-drop containers on the Nodes grid
-// — the same mental model as node groups/lanes (nodes-supermarket.js). The modal
-// only CREATES a loader (name/role/layout/inbound/outbound); membership is edited
-// on the grid: drag a node tile into a dedicated loader to add a position, ⠿-drag
-// to reorder (persisted via sort_order), × to remove. shared_window loaders hold a
-// payload set instead of nodes (chips). Per-payload UoP thresholds + the lead-time
-// Calc live on the Inventory page; this surface is structure only.
+// Core-owned bin loaders ("stations"), drawn as boxes on the Nodes page.
 //
-// Coexistence with the supermarket drag code: a loader box's drop handler calls
-// stopPropagation so the drop never falls through to #nodes-drop-area's onDropGrid
-// (which would reparent/ungroup the node in topology). Member ⠿-grips set ONLY a
-// custom drag type (not text/plain), so if a member is dragged out onto the grid,
-// supermarket's onDropGrid reads an empty text/plain and no-ops instead of
-// reparenting. Membership is an overlay (bin_loader_homes), never a topology move,
-// so loader boxes render their own representational tiles and leave the canonical
-// grid tile in place.
+// THE BOX IS THE FORM. The create card asks three things — a name, what the
+// station does, and (for an unloader) whether the full bin comes off at one
+// station or two — and nothing else. Every place the station uses is then
+// filled in on its box: each slot is labelled in plant words, noun first
+// ("Windows", "Fulls come from", "Empties go to"), and a required slot that is
+// still empty is red and says what it needs. Everything that has a sensible
+// default sits behind one Settings link on the box and saves as it is ticked.
+//
+// Two ways to fill a slot, one API call each:
+//   - tap the slot to arm it, then tap a node (or a group header) on the grid.
+//     While a slot is armed the grid dims every tile that cannot go there and
+//     prints why on the tile; a Find box filters by name; Esc disarms.
+//   - drag a node tile (or a group header, `application/x-node-group`) onto
+//     the slot. Group drags are accepted only by the slots that name a place;
+//     a window is always one node.
+//
+// Coexistence with the supermarket drag code: every drop handler here calls
+// stopPropagation so the drop never falls through to #nodes-drop-area's
+// onDropGrid (which would reparent the node in topology). Member ⠿-grips and
+// group headers set ONLY custom drag types (not text/plain), so dragging one
+// onto the grid is a no-op there. Membership is an overlay
+// (bin_loader_homes), never a topology move, so boxes render their own tiles
+// and leave the canonical grid tile in place.
 
 let nodesByName = {};
 let nodesById = {};
-let childrenByParent = {}; // parent node id -> [child node ids], to list a group's slots
+let nodeInfo = {}; // node id -> {id, name, parentName, synthetic, typeCode}
 let payloadCodes = [];
-let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes}]
+let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types}]
 let draggingMemberNode = null;
+
+// View state for the boxes. None of it is configuration: it says which slot
+// is armed, which station has its settings open, and which pairs have the
+// "carts wait in a group" box ticked before a group has been named.
+let armed = null;        // {loaderID, slot} | null
+let settingsOpen = 0;    // loader id (stage 1 for a pair) whose settings show
+let waitOpen = {};       // stage-1 id -> true while the wait slot is being filled
+let findText = '';
 
 const pageData = document.getElementById('page-data');
 const isAuth = !!pageData && pageData.dataset.authenticated === 'true';
 
-/* ── The loader form ──────────────────────────────────────────────────────
-   Written to the form-state convention in docs/ui-style-guide.md: the state
-   lives in ONE object, what is on screen is DERIVED from that state, and the
-   rules are pure functions of it. What this replaced read values back off the
-   DOM in five places and set element.style.display from event handlers — the
-   two anti-patterns that section of the guide names by name.
-*/
-
 function val(id) { const e = document.getElementById(id); return e ? (e.value || '').trim() : ''; }
-function result(msg, isErr) {
-  const e = document.getElementById('loader-result');
-  if (!e) return;
-  e.textContent = msg || '';
-  e.style.color = isErr ? 'var(--danger)' : 'var(--success)';
-}
-
-// setVal skips a write that would not change anything. Re-rendering the form on
-// every change would otherwise reassign a text input's value while it is being
-// typed into, which moves the caret to the end.
 function setVal(id, v) {
+  // Skips a write that changes nothing, so a re-render never moves the caret
+  // of an input that is being typed into.
   const e = document.getElementById(id);
   if (e && e.value !== v) e.value = v;
 }
-function checked(id) { const e = document.getElementById(id); return !!(e && e.checked); }
-function setChecked(id, c) { const e = document.getElementById(id); if (e) e.checked = !!c; }
 function setText(id, t) { const e = document.getElementById(id); if (e) e.textContent = t; }
-function setDisabled(id, d) { const e = document.getElementById(id); if (e) e.disabled = d; }
-
 function setShown(id, show) {
   const e = document.getElementById(id);
   if (e && e.classList) e.classList.toggle('is-hidden', !show);
 }
-
-// KIND is what an operator actually picks, and it maps onto two stored fields.
-// The form used to ask for the layout AND a "one window at a time" checkbox, so
-// the three things a person thinks in terms of were spread across two controls,
-// one of which stated a restriction rather than a choice.
-function kindToLayout(kind) {
-  return kind === 'dedicated' ? 'dedicated_positions' : 'shared_window';
-}
-function kindFromLoader(l) {
-  if (l.layout === 'dedicated_positions') return 'dedicated';
-  return l.funnel_windows ? 'single_window' : 'multi_window';
+function setPressed(id, on) {
+  const e = document.getElementById(id);
+  if (!e) return;
+  if (e.classList) e.classList.toggle('is-selected', !!on);
+  if (e.setAttribute) e.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
 
-// formState is the loader currently in the modal. id 0 means "not saved yet".
+/* ── Form state ───────────────────────────────────────────────────────────
+   Written to the form-state convention in docs/ui-style-guide.md: the state
+   lives in ONE object, what is on screen is DERIVED from it by formShape, and
+   the rules are pure functions of it. The same state shape serves the create
+   card (id 0) and a saved station's Settings (id set), so formShape is the one
+   place that decides what shows on either.
+*/
+
 let formState = blankForm();
 
 function blankForm() {
   return {
     id: 0,
     name: '',
-    role: 'produce',       // produce | consume
-    kind: 'multi_window',  // multi_window | single_window | dedicated
-    changeoverLoadDirective: false,
-    acceptPartials: false,
-    autoPush: false,
-    bareBinTypeID: 0,
-    replenishment: 'operator',
-    fedByHand: false,
-    inbound: '',
-    outbound: '',
+    role: '',     // '' until picked | produce | consume
+    stages: '',   // '' until picked | single | two   (unloaders only)
   };
 }
 
-// readForm snapshots the controls into a state object. Nothing else reads the
-// DOM for a value.
+// STAGE_SUFFIX is how Core names the two loaders of a pair; the box shows the
+// station under its own name, without it.
+const STAGE_SUFFIX = [' · stage 1', ' · stage 2'];
+function baseName(name) {
+  const n = name || '';
+  for (let i = 0; i < STAGE_SUFFIX.length; i++) {
+    if (n.endsWith(STAGE_SUFFIX[i])) return n.slice(0, n.length - STAGE_SUFFIX[i].length);
+  }
+  return n;
+}
+
+// readForm snapshots the create card. Role and stages are button choices and
+// already live in state; the name is the one text input.
 function readForm() {
-  return {
-    id: Number(val('loader-edit-id') || 0),
-    name: val('loader-name'),
-    role: val('loader-role') || 'produce',
-    kind: val('loader-kind') || 'multi_window',
-    replenishment: val('loader-replenishment') || 'operator',
-    fedByHand: checked('loader-fed-by-hand'),
-    changeoverLoadDirective: checked('loader-changeover-directive'),
-    acceptPartials: checked('loader-accept-partials'),
-    autoPush: checked('loader-auto-push'),
-    bareBinTypeID: Number(val('loader-bare-type') || 0),
-    inbound: val('loader-inbound'),
-    outbound: val('loader-outbound'),
-  };
+  return Object.assign({}, formState, { name: val('loader-name') });
 }
 
-// normalizeForm folds in the choices that IMPLY another value, so the screen and
-// what gets saved cannot disagree. There is exactly one: ticking "fed by hand"
-// IS the operator saying there is no source, so the source is cleared and not
-// merely hidden. Every OTHER hidden field keeps its value — the save path writes
-// all of them, so a gate that blanked one would drop a plant's configuration on
-// the next save without saying so.
+// normalizeForm folds in the choices that IMPLY another value, so the screen
+// and what gets saved cannot disagree:
+//   - FED DIRECTLY means there is no source, so the source is cleared, not
+//     merely hidden.
+//   - Two stations is an unloader's answer; a loader clears nothing.
 function normalizeForm(state) {
   if (state.fedByHand) state.inbound = '';
+  if (state.role !== 'consume') state.stages = state.id ? 'single' : '';
   return state;
 }
 
-// formShape decides WHAT IS ON THE SCREEN, from state alone. Nothing that does
-// not apply to the chosen loader is rendered at all.
-//
-// It used to render everything and then grey out the parts that did not apply,
-// with a paragraph beside each explaining why it was greyed out. That is where
-// the form's nine blocks of prose came from: they were not documentation, they
-// were apologies for showing a control that could not be used. A field that is
-// absent needs no explanation.
-//
-// The rules, and each one removes a paragraph that used to be on screen:
-//
-//   - An UNLOADER has exactly one mode — it drains when the operator clears a
-//     window — so there is no supply question to ask.
-//   - FED BY HAND means no robot pulls anything, so there is no source to name.
-//   - The CARRIER MIX and the per-window capability are properties of a window
-//     SET; a dedicated loader is already one part per spot. Both are edited
-//     against a saved loader, so they wait for one.
+// formShape decides WHAT IS ON SCREEN, from state alone. A row that does not
+// apply is absent rather than disabled: an absent control needs no paragraph
+// explaining why it cannot be used.
 function formShape(state) {
-  const dedicated = state.kind === 'dedicated';
   const saved = state.id !== 0;
+  const unloader = state.role === 'consume';
+  const pair = state.stages === 'two';
+  const dedicated = !!state.dedicated;
   return {
-    supply: state.role !== 'consume',
-    inbound: !state.fedByHand,
-    // Outbound is asked of EVERY loader. It used to be hidden on a dedicated
-    // loader, on the reading that each spot is its own outbound — but a
-    // dedicated loader still has one place its filled carriers go, and hiding
-    // the field made "an inbound group and an outbound group" unenterable on
-    // exactly the layout that wants it.
-    outbound: true,
-    mix: !dedicated && saved,
-    windows: !dedicated && saved,
-    // Partials are a question about what an UNLOADER is fed, so only an
-    // unloader is asked. Edited against a saved loader, like the carrier mix:
-    // create does not carry it.
-    partials: state.role === 'consume' && saved,
-    // Re-pulling the next full is an UNLOADER's question too.
-    autoPush: state.role === 'consume' && saved,
-    // The bare type is what an UNLOADER's blank CLEAR stamps (the first stage
-    // of a two-stage unloader), so only an unloader is asked, and like the
-    // partials switch it is edited against a saved loader.
-    bare: state.role === 'consume' && saved,
+    // Create card. How the full bin comes off is asked only of an unloader,
+    // and only when it is created: a saved station is one or two stations.
+    stages: !saved && unloader,
+    // Settings rows. Partials and re-pulling the next full are questions about
+    // what an UNLOADER is fed; the service refuses both on a loader.
+    partials: saved && unloader,
+    autoPush: saved && unloader,
+    fedByHand: saved,
+    // An unloader drains when a window is cleared; only a loader has a supply
+    // mode to choose, and only a loader has a changeover card to commandeer.
+    supply: saved && !unloader,
+    changeover: saved && !unloader,
+    // A pair is two shared-window unloaders; there is no layout to pick.
+    dedicated: saved && !pair,
+    // Filling one window at a time is a budget shared across windows, so it
+    // means nothing where every position is its own one-bin slot.
+    funnel: saved && !dedicated,
+    // The carrier mix and the per-window capability are properties of a
+    // window SET; a dedicated station is already one part per spot.
+    mix: saved && !dedicated,
+    windows: saved && !dedicated,
+    remove: saved,
   };
 }
 
 // validateForm is a pure function of state — no DOM reads — so it can be
-// tested. The backend checks the same rules; this one is for immediate feedback.
+// tested. The backend checks the same rules; this one is for immediate
+// feedback, under the field it is about.
 function validateForm(state) {
   const errors = [];
   if (!state.name) errors.push({ field: 'loader-name', msg: 'Name is required' });
+  if (!state.role) errors.push({ field: 'loader-role', msg: 'Pick what it does' });
+  if (state.role === 'consume' && !state.stages) {
+    errors.push({ field: 'loader-stages', msg: 'Pick how the full bin comes off' });
+  }
   return { ok: errors.length === 0, errors };
 }
 
-// renderForm writes state back to the controls and applies the shape.
+const ERROR_SLOTS = {
+  'loader-name': 'loader-name-error',
+  'loader-role': 'loader-role-error',
+  'loader-stages': 'loader-stages-error',
+  'loader-form': 'loader-form-error',
+};
+
+function showErrors(errors) {
+  Object.keys(ERROR_SLOTS).forEach(function (f) { setText(ERROR_SLOTS[f], ''); });
+  const name = document.getElementById('loader-name');
+  if (name && name.classList) name.classList.remove('form-input--error');
+  (errors || []).forEach(function (er) {
+    setText(ERROR_SLOTS[er.field] || ERROR_SLOTS['loader-form'], er.msg);
+    if (er.field === 'loader-name' && name && name.classList) name.classList.add('form-input--error');
+  });
+}
+
 function renderForm(state) {
-  setVal('loader-edit-id', state.id ? String(state.id) : '');
   setVal('loader-name', state.name);
-  setVal('loader-role', state.role);
-  setVal('loader-kind', state.kind);
-  setChecked('loader-fed-by-hand', state.fedByHand);
-  setChecked('loader-changeover-directive', state.changeoverLoadDirective);
-  setChecked('loader-accept-partials', state.acceptPartials);
-  setChecked('loader-auto-push', state.autoPush);
-  renderBareTypeSelect(state.bareBinTypeID);
-  setVal('loader-inbound', state.inbound);
-  setVal('loader-outbound', state.outbound);
-  setReplenishmentOptions(state);
-
-  const shape = formShape(state);
-  setShown('loader-supply-row', shape.supply);
-  setShown('loader-inbound', shape.inbound);
-  setShown('loader-outbound', shape.outbound);
-  setShown('loader-mix-row', shape.mix);
-  setShown('loader-windows-row', shape.windows);
-  setShown('loader-partials-row', shape.partials);
-  setShown('loader-autopush-row', shape.autoPush);
-  setShown('loader-bare-row', shape.bare);
-  if (shape.mix) renderMixEditor(state.id);
-  if (shape.windows) renderWindowCapEditor(state.id);
+  setPressed('loader-role-produce', state.role === 'produce');
+  setPressed('loader-role-consume', state.role === 'consume');
+  setPressed('loader-stages-single', state.stages === 'single');
+  setPressed('loader-stages-two', state.stages === 'two');
+  setShown('loader-stages-row', formShape(state).stages);
 }
 
-// applyLoaderForm is the single path every control change takes: snapshot, fold
-// in the implied values, re-render the whole form. One path, so changing any
-// control re-decides the entire form rather than patching the part beside it.
-function applyLoaderForm() {
-  formState = normalizeForm(readForm());
+function pickStationRole(role) {
+  formState = normalizeForm(Object.assign(readForm(), { role: role }));
   renderForm(formState);
+  setText(ERROR_SLOTS['loader-role'], '');
 }
 
-// renderMixEditor draws the declared carrier mix: how many of each carrier type
-// this loader wants on hand. Empty is the normal state and means "take whatever
-// is available".
-function renderMixEditor(loaderID) {
-  const host = document.getElementById('loader-mix-editor');
-  if (!host) return;
-  const item = loaderItem(loaderID);
-  const mix = (item && item.quota) || [];
-  const declared = mix.map(function (q) { return q.bin_type_code; });
-  const rows = mix.map(function (q) {
-    return '<div class="loader-mix-line">'
-      + '<span class="loader-chip">' + escapeHtml(q.bin_type_code) + '</span>'
-      + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(q.want) + '"'
-      + ' aria-label="How many ' + escapeHtml(q.bin_type_code) + ' to keep on hand"'
-      + ' data-action-change="setLoaderQuota" data-bin-type="' + escapeHtml(q.bin_type_code) + '">'
-      + '<button class="btn btn-sm" title="Remove" data-action="removeLoaderQuota" data-bin-type="'
-      + escapeHtml(q.bin_type_code) + '">×</button>'
-      + '</div>';
-  }).join('');
-  // No bare types: a mix line of one could never be fetched, because no empty
-  // finder hands a bare carrier out.
-  const rest = binTypeOptions(declared, false);
-  const add = rest
-    ? '<div class="loader-mix-add">'
-      + '<select id="loader-mix-add-type" class="form-input" aria-label="Carrier type">' + rest + '</select>'
-      + '<input type="number" id="loader-mix-add-want" class="form-input loader-mix-want" min="1" value="1" aria-label="How many">'
-      + '<button class="btn btn-sm" data-action="addLoaderQuota">Add</button></div>'
-    : '';
-  host.innerHTML = rows + add;
+function pickStationStages(stages) {
+  formState = normalizeForm(Object.assign(readForm(), { stages: stages }));
+  renderForm(formState);
+  setText(ERROR_SLOTS['loader-stages'], '');
 }
 
-// renderWindowCapEditor draws one row per window: what that window can
-// physically take. It sits beside the carrier mix because the two answer
-// adjacent questions — the mix is what the LOADER wants on hand, the capability
-// is what each SLOT can hold — and an operator setting one usually means the
-// other.
-//
-// Rows come out in the arranged order, the same order that decides which window
-// fills first, so both readings of "the first window" agree on one screen.
-//
-// A window with nothing set takes anything, and that has to stay the meaning of
-// empty: every window at every plant is empty today, and the other reading would
-// have all of them suddenly accept nothing.
-function renderWindowCapEditor(loaderID) {
-  const host = document.getElementById('loader-windows-editor');
-  if (!host) return;
-  const item = loaderItem(loaderID);
-  const homes = ((item && item.homes) || []).slice().sort(function (a, b) {
-    return (a.sort_order || 0) - (b.sort_order || 0);
-  });
-  if (!homes.length) {
-    host.innerHTML = '<div class="loader-window-cap-empty">No windows yet — '
-      + 'drag node tiles into this loader on the grid.</div>';
-    return;
+// createRequest is the create card's wire shape — the one place a new station
+// becomes a request, so the three kinds cannot drift on what they send.
+// "Pull the next full automatically" defaults ON for a new unloader; every
+// other setting starts at the column default and lives in Settings.
+function createRequest(state) {
+  if (state.role === 'consume' && state.stages === 'two') {
+    return {
+      url: '/api/loader/create-two-stage',
+      body: { name: state.name, accept_partials: false, auto_push: true },
+    };
   }
-  const caps = (item && item.window_bin_types) || {};
-  host.innerHTML = homes.map(function (h) {
-    const nodeID = Number(h.position_node_id);
-    const name = nodesById[nodeID] || ('node ' + nodeID);
-    const set = caps[nodeID] || [];
-    const chips = set.map(function (code) {
-      return '<span class="loader-chip">' + escapeHtml(code)
-        + '<span class="loader-chip-x" title="Remove" data-action="removeWindowBinType"'
-        + ' data-node-id="' + nodeID + '" data-bin-type="' + escapeHtml(code) + '">×</span></span>';
-    }).join('');
-    // Bare types included: a window with a capability list must be able to
-    // take the carrier a first-stage unloader leaves bare.
-    const rest = binTypeOptions(set, true);
-    const add = rest
-      ? '<select class="form-input" data-action-change="addWindowBinType" data-node-id="' + nodeID + '"'
-        + ' aria-label="Add a carrier type ' + escapeHtml(name) + ' can take">'
-        + '<option value="">+ type</option>' + rest + '</select>'
-      : '';
-    return '<div class="loader-window-cap">'
-      + '<span class="loader-window-cap-name">' + escapeHtml(name) + '</span>'
-      + (chips || '<span class="loader-window-cap-any">takes anything</span>')
-      + add + '</div>';
-  }).join('');
+  const body = { name: state.name, role: state.role, layout: 'shared_window', replenishment: 'operator' };
+  if (state.role === 'consume') body.auto_push = true;
+  return { url: '/api/loader/create', body: body };
 }
 
-// binTypeCatalog is the carrier-type list, fetched once — the pickers need
-// codes to show and ids to save.
-let binTypeCatalog = [];
-
-function loadBinTypeCatalog() {
-  return apiGet('/api/bin-types').then(function (d) {
-    binTypeCatalog = (d && d.bin_types) || [];
-  }).catch(function () { binTypeCatalog = []; });
+function openLoaderModal() {
+  formState = blankForm();
+  renderForm(formState);
+  showErrors([]);
+  const m = document.getElementById('loader-modal');
+  if (m) m.classList.add('active');
+  const n = document.getElementById('loader-name');
+  if (n && n.focus) n.focus();
 }
 
-// binTypeOptions lists the carrier catalogue minus what is already set. An "add"
-// control should only offer what can actually be added; when that leaves nothing
-// the caller drops the control rather than showing an empty one. withBare says
-// whether bare types are offered at all.
-function binTypeOptions(exclude, withBare) {
-  const taken = {};
-  (exclude || []).forEach(function (c) { taken[c] = true; });
-  return binTypeCatalog.filter(function (t) { return !taken[t.code] && (withBare || !t.bare); })
-    .map(function (t) {
-      return '<option value="' + Number(t.id) + '">' + escapeHtml(t.code) + '</option>';
-    }).join('');
+// Closing discards the card (style guide: clear-on-close), whichever way it
+// was closed: ×, Cancel or Esc. The backdrop does not close it.
+function closeLoaderModal() {
+  const m = document.getElementById('loader-modal');
+  if (m) m.classList.remove('active');
+  formState = blankForm();
+  renderForm(formState);
+  showErrors([]);
 }
 
-// renderBareTypeSelect fills the unloader's bare-type select: none, or one of
-// the types flagged bare. A stored id the catalog does not list as bare (not
-// loaded yet, or un-flagged since) is kept as its own option so a save does not
-// silently drop it; the server then says why it refuses.
-function renderBareTypeSelect(selectedID) {
-  const e = document.getElementById('loader-bare-type');
-  if (!e) return;
-  const sel = Number(selectedID || 0);
-  const bare = binTypeCatalog.filter(function (t) { return t.bare; });
-  let opts = '<option value="">None — a clear stamps nothing</option>';
-  let listed = false;
-  bare.forEach(function (t) {
-    if (Number(t.id) === sel) listed = true;
-    opts += '<option value="' + Number(t.id) + '">' + escapeHtml(t.code) + '</option>';
-  });
-  if (sel && !listed) opts += '<option value="' + sel + '">bin type ' + sel + '</option>';
-  e.innerHTML = opts;
-  e.value = sel ? String(sel) : '';
+function modalOpen() {
+  const m = document.getElementById('loader-modal');
+  return !!(m && m.classList && m.classList.contains('active'));
 }
+
+async function submitLoader() {
+  const state = normalizeForm(readForm());
+  formState = state;
+  const v = validateForm(state);
+  showErrors(v.errors);
+  if (!v.ok) return;
+  const req = createRequest(state);
+  const btn = document.getElementById('loader-submit-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const d = await apiPost(req.url, req.body);
+    if (d && d.error) { showErrors([{ field: 'loader-form', msg: d.error }]); return; }
+    closeLoaderModal();
+    await refresh();
+    // The new box is the next thing to fill in: arm its windows so the next
+    // tap on the grid adds one.
+    if (d && d.id) armSlotFor(Number(d.id), 'windows');
+  } catch (e) {
+    showErrors([{ field: 'loader-form', msg: '' + e }]);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ── Saved station → state → update body ──────────────────────────────── */
+
+// fedDirectlyOf reads "fed directly from process" from its own field. A blank
+// source is not the answer: a new station has a blank source too, and that one
+// needs a place.
+function fedDirectlyOf(l) {
+  return !!l.fed_directly;
+}
+
+// formStateFromLoader is the one place a stored loader becomes state.
+function formStateFromLoader(l) {
+  return {
+    id: Number(l.id),
+    // The stored name, suffix and all: an update writes it back as it is.
+    name: l.name || '',
+    role: l.role || 'produce',
+    stages: l.second_stage_loader_id ? 'two' : 'single',
+    stage2ID: Number(l.second_stage_loader_id || 0),
+    dedicated: l.layout === 'dedicated_positions',
+    funnel: !!l.funnel_windows,
+    changeoverLoadDirective: !!l.changeover_load_directive,
+    acceptPartials: !!l.accept_partials,
+    autoPush: !!l.auto_push,
+    replenishment: l.replenishment || 'operator',
+    fedByHand: fedDirectlyOf(l),
+    inbound: l.inbound_source || '',
+    outbound: l.outbound_dest || '',
+  };
+}
+
+// loaderPayload is the update body of a state. /api/loader/update is a
+// full-row write, so every stored field is sent back — a field this screen
+// does not show is carried through unchanged rather than flattened.
+function loaderPayload(state) {
+  const unloader = state.role === 'consume';
+  return {
+    id: state.id,
+    name: state.name,
+    layout: state.dedicated ? 'dedicated_positions' : 'shared_window',
+    replenishment: state.replenishment,
+    funnel_windows: !!state.funnel,
+    changeover_load_directive: !!state.changeoverLoadDirective,
+    // Unloaders only; the server refuses true on a loader.
+    accept_partials: unloader && !!state.acceptPartials,
+    auto_push: unloader && !!state.autoPush,
+    fed_directly: !!state.fedByHand,
+    inbound_source: state.inbound,
+    outbound_dest: state.outbound,
+  };
+}
+
+// settingUpdate is one ticked Settings row as an update body: the stored row
+// with that one field changed.
+function settingUpdate(loader, field, value) {
+  const state = formStateFromLoader(loader);
+  state[field] = value;
+  return loaderPayload(normalizeForm(state));
+}
+
+// placeUpdate is one place slot filled (or cleared, with ''). Naming a source
+// is the answer to "fed directly?" as well, so it clears that.
+function placeUpdate(loader, slot, name) {
+  const state = formStateFromLoader(loader);
+  if (slot === 'inbound') { state.inbound = name; state.fedByHand = false; }
+  if (slot === 'outbound') state.outbound = name;
+  return loaderPayload(state);
+}
+
+// waitGroupUpdates names (or, with '', clears) the group a pair's carts wait
+// in: stage 2 pulls from it and stage 1 sends to it. STAGE 2 FIRST: stage 2
+// having a source is what puts the pair in pull mode, and in direct mode Core
+// derives stage 1's destination from stage 2's windows itself — so stage 1's
+// write only means what it says once stage 2's has landed.
+function waitGroupUpdates(stage1, stage2, group) {
+  return [placeUpdate(stage2, 'inbound', group), placeUpdate(stage1, 'outbound', group)];
+}
+
+/* ── The box: slots in plant words ────────────────────────────────────── */
 
 function loaderItem(loaderID) {
   const id = Number(loaderID || 0);
@@ -339,402 +345,123 @@ function loaderItem(loaderID) {
   return loaderData.find(function (x) { return Number(x.loader.id) === id; }) || null;
 }
 
-function quotaFor(el) {
-  return {
-    loaderID: formState.id,
-    code: el.getAttribute('data-bin-type') || '',
-  };
-}
-
-// addWindowBinType / removeWindowBinType edit ONE window's capability. The API
-// replaces the whole set, so both compute the new set from what is on screen and
-// send that.
-function windowCapSet(nodeID) {
-  const item = loaderItem(formState.id);
-  const caps = (item && item.window_bin_types) || {};
-  return (caps[Number(nodeID)] || []).slice();
-}
-
-function saveWindowCap(nodeID, codes) {
-  const ids = codes.map(binTypeIDForCode).filter(function (n) { return n > 0; });
-  return apiPost('/api/loader/set-window-bin-types', {
-    loader_id: formState.id, position_node_id: Number(nodeID), bin_type_ids: ids,
-  }).then(function (d) {
-    if (d && d.error) { result(d.error, true); return; }
-    return refresh().then(function () { renderWindowCapEditor(formState.id); });
-  }).catch(function (e) { result('' + e, true); });
-}
-
-function addWindowBinType(el) {
-  const nodeID = Number(el.getAttribute('data-node-id') || 0);
-  const binTypeID = Number(el.value || 0);
-  if (!formState.id || !nodeID || !binTypeID) return;
-  const t = binTypeCatalog.find(function (x) { return Number(x.id) === binTypeID; });
-  if (!t) return;
-  saveWindowCap(nodeID, windowCapSet(nodeID).concat([t.code]));
-}
-
-function removeWindowBinType(el) {
-  const nodeID = Number(el.getAttribute('data-node-id') || 0);
-  const code = el.getAttribute('data-bin-type') || '';
-  if (!formState.id || !nodeID || !code) return;
-  saveWindowCap(nodeID, windowCapSet(nodeID).filter(function (c) { return c !== code; }));
-}
-
-function binTypeIDForCode(code) {
-  const t = binTypeCatalog.find(function (x) { return x.code === code; });
-  return t ? Number(t.id) : 0;
-}
-
-function addLoaderQuota() {
-  const loaderID = formState.id;
-  const binTypeID = Number(val('loader-mix-add-type') || 0);
-  const want = Number(val('loader-mix-add-want') || 0);
-  if (!loaderID || !binTypeID || want < 1) return;
-  apiPost('/api/loader/set-quota', { loader_id: loaderID, bin_type_id: binTypeID, want: want })
-    .then(function (d) {
-      if (d && d.error) { result(d.error, true); return; }
-      refresh().then(function () { renderMixEditor(loaderID); });
-    }).catch(function (e) { result('' + e, true); });
-}
-
-function setLoaderQuota(el) {
-  const q = quotaFor(el);
-  const want = Number(el.value || 0);
-  const binTypeID = binTypeIDForCode(q.code);
-  if (!q.loaderID || !binTypeID || want < 0) return;
-  apiPost('/api/loader/set-quota', { loader_id: q.loaderID, bin_type_id: binTypeID, want: want })
-    .then(function (d) { if (d && d.error) result(d.error, true); else refresh(); })
-    .catch(function (e) { result('' + e, true); });
-}
-
-function removeLoaderQuota(el) {
-  const q = quotaFor(el);
-  const binTypeID = binTypeIDForCode(q.code);
-  if (!q.loaderID || !binTypeID) return;
-  apiPost('/api/loader/remove-quota', { loader_id: q.loaderID, bin_type_id: binTypeID })
-    .then(function (d) {
-      if (d && d.error) { result(d.error, true); return; }
-      refresh().then(function () { renderMixEditor(q.loaderID); });
-    }).catch(function (e) { result('' + e, true); });
-}
-
-// setReplenishmentOptions populates the replenishment <select> from state: a
-// produce loader picks operator-driven vs auto/UoP-threshold; a consume loader
-// (unloader) only drains. Writes loaders.Replenishment (operator | threshold).
-//
-// The consume list used to carry a disabled "Threshold (coming soon)" option.
-// That was the ONLY thing standing between the plant and a loader that neither
-// drains nor replenishes, and it was a greyed <option> in a browser — any direct
-// POST walked straight past it. The service refuses the combination now
-// (service.ErrConsumeThreshold, 400), so the option is gone rather than
-// decorative: an unloader has one mode, and the screen says so.
-function setReplenishmentOptions(state) {
-  const sel = document.getElementById('loader-replenishment');
-  if (!sel) return;
-  const role = state.role;
-  const want = state.replenishment || 'operator';
-  let opts, hint;
-  if (role === 'consume') {
-    opts = [['operator', 'Drain — window-queue empties out as bins fill']];
-    hint = 'An unloader drains: bins leave as they fill. It has no threshold mode.';
-  } else {
-    opts = [['operator', 'Operator-driven — operator stages from the board (no auto-fire)'],
-            ['threshold', 'Auto — UoP threshold (Core auto-fires an empty when UoP drops)']];
-    hint = 'Auto fires when lineside UoP drops below the per-payload threshold (set on the Inventory page); operator-driven never auto-fires.';
+// stationContext finds the station a loader belongs to: itself, or the pair
+// it is stage 1 or stage 2 of.
+function stationContext(loaderID) {
+  const item = loaderItem(loaderID);
+  if (!item) return null;
+  const l = item.loader;
+  if (l.second_stage_loader_id) {
+    return { s1: item, s2: loaderItem(l.second_stage_loader_id), stage: 1 };
   }
-  const valid = opts.some(function (o) { return o[0] === want; });
-  const chosen = valid ? want : 'operator';
-  sel.innerHTML = opts.map(function (o) {
-    return '<option value="' + o[0] + '"' + (o[0] === chosen ? ' selected' : '') + '>'
-      + escapeHtml(o[1]) + '</option>';
-  }).join('');
-  sel.value = chosen;
-  const h = document.getElementById('loader-replenishment-hint');
-  if (h) h.textContent = hint;
-}
-
-// replenishLabel is the short mode tag shown in a loader box header.
-function replenishLabel(l) {
-  if (l.replenishment === 'threshold') return l.role === 'consume' ? 'threshold' : 'auto-threshold';
-  return l.role === 'consume' ? 'drain' : 'operator-driven';
-}
-
-// formStateFromLoader is the one place a stored loader becomes form state.
-function formStateFromLoader(l) {
-  return {
-    id: Number(l.id),
-    name: l.name || '',
-    role: l.role || 'produce',
-    kind: kindFromLoader(l),
-    changeoverLoadDirective: !!l.changeover_load_directive,
-    acceptPartials: !!l.accept_partials,
-    autoPush: !!l.auto_push,
-    bareBinTypeID: Number(l.bare_bin_type_id || 0),
-    replenishment: l.replenishment || 'operator',
-    // No source IS the fed-by-hand choice; that is what the stored blank means.
-    fedByHand: !(l.inbound_source || ''),
-    inbound: l.inbound_source || '',
-    outbound: l.outbound_dest || '',
-  };
-}
-
-// showLoaderModal renders the given state and opens the modal. Create and edit
-// differ only in the state they hand it and in what stays locked.
-function showLoaderModal(state, title, submitLabel, lockRole) {
-  formState = state;
-  renderForm(formState);
-  setDisabled('loader-role', lockRole);
-  setDisabled('loader-kind', false);
-  setText('loader-modal-title', title);
-  setText('loader-submit-btn', submitLabel);
-  const m = document.getElementById('loader-modal');
-  if (m) m.classList.add('active');
-  result('');
-  fillDatalists();
-}
-
-function openLoaderModal() {
-  showLoaderModal(blankForm(), 'Create Loader', 'Create Loader', false);
-}
-
-// editLoader opens the modal pre-filled for an existing loader. Role is the
-// identity — what the loader IS — so it is locked; change it by delete and
-// recreate. Kind stays editable; submitLoader confirms and drops members first
-// if changing it would orphan them, because windows and dedicated spots cannot
-// carry across.
-function editLoader(lid) {
-  const item = loaderItem(lid);
-  if (!item) return;
-  showLoaderModal(formStateFromLoader(item.loader), 'Edit Loader', 'Save', true);
-}
-
-function closeLoaderModal() {
-  const m = document.getElementById('loader-modal');
-  if (m) m.classList.remove('active');
-}
-
-// A "clear the inbound source" button used to live here, unreferenced by any
-// markup — it was the one-tap way to say "fed directly, no robot pulls". The
-// "Fed by hand" checkbox is that choice now, stated as a choice and wired.
-
-// loaderPayload is the wire shape of a state — the one place state becomes a
-// request body, so create and edit cannot drift on what they send.
-function loaderPayload(state) {
-  return {
-    name: state.name,
-    layout: kindToLayout(state.kind),
-    replenishment: state.replenishment,
-    funnel_windows: state.kind === 'single_window',
-    // Commandeer this station's card during a changeover: instead of offering
-    // every payload it serves, the card names the carrier the incoming style
-    // needs. Set here because it describes the station, not a style.
-    changeover_load_directive: !!state.changeoverLoadDirective,
-    // Unloaders only. Sent false for a produce loader, which the server
-    // refuses to store as true: the rule it relaxes is a consume rule.
-    accept_partials: state.role === 'consume' && !!state.acceptPartials,
-    // Unloaders only. Sent false for a produce loader, which the server refuses
-    // to store as true: a produce loader pulls no fulls.
-    auto_push: state.role === 'consume' && !!state.autoPush,
-    // Unloaders only, 0 = none. A produce loader sends 0, which the server
-    // would otherwise refuse: only an unloader's clear stamps a type.
-    bare_bin_type_id: state.role === 'consume' ? Number(state.bareBinTypeID || 0) : 0,
-    inbound_source: state.inbound,
-    outbound_dest: state.outbound,
-  };
-}
-
-// submitLoader handles both create and edit — state.id decides which.
-async function submitLoader() {
-  const state = normalizeForm(readForm());
-  formState = state;
-  const v = validateForm(state);
-  if (!v.ok) { result(v.errors[0].msg, true); return; }
-  const body = loaderPayload(state);
-
-  if (state.id) {
-    const eitem = loaderItem(state.id);
-    const homes = eitem ? (eitem.homes || []) : [];
-    const pls = eitem ? (eitem.payloads || []) : [];
-    const doUpdate = function () {
-      result('Saving…');
-      apiPost('/api/loader/update', Object.assign({ id: state.id }, body)).then(function (d) {
-        if (d && d.error) { result(d.error, true); return; }
-        result('Saved', false);
-        refresh();
-        setTimeout(closeLoaderModal, 400);
-      }).catch(function (e) { result('' + e, true); });
-    };
-    // Changing layout on a loader that already has members would orphan them, so confirm
-    // and drop them first (the operator opted in).
-    if (eitem && body.layout !== eitem.loader.layout && (homes.length + pls.length) > 0) {
-      if (!await uiConfirm('Changing layout to "' + body.layout + '" will drop this loader’s ' + homes.length + ' node(s) and ' + pls.length + ' payload(s). Continue?')) {
-        formState = formStateFromLoader(eitem.loader);
-        renderForm(formState);
-        result('Cancelled — unchanged', false);
-        return;
-      }
-      result('Dropping members…');
-      Promise.all([].concat(
-        homes.map(function (h) { return apiPost('/api/loader/remove-home', { loader_id: state.id, position_node_id: h.position_node_id }); }),
-        pls.map(function (p) { return apiPost('/api/loader/remove-payload', { loader_id: state.id, payload_code: p.payload_code }); })
-      )).then(doUpdate).catch(function (e) { result('' + e, true); });
-      return;
-    }
-    doUpdate();
-    return;
-  }
-
-  result('Creating…');
-  // 1c: name the loader's outbound group INLINE — if the name isn't an existing
-  // node group, create it first, then the loader references it by name. So you set
-  // up the loader and its group in one flow instead of pre-making the group.
-  const newGroups = [body.outbound_dest].filter(function (n) { return n && !(n in nodesByName); });
-  Promise.all(newGroups.map(function (n) { return apiPost('/api/node-group/create', { name: n }); }))
-    .then(function () {
-      return apiPost('/api/loader/create', Object.assign({ role: state.role }, body));
-    })
-    .then(async function (d) {
-      if (d && d.error) { result(d.error, true); return; }
-      result('Created — drag node tiles into it on the grid', false);
-      // Stay on the loader that was just created, as an EDIT. The carrier mix and
-      // the per-window capability are edited against a saved loader, so before
-      // this the form cleared itself and those two sections stayed out of reach
-      // until the operator found the loader on the grid and clicked edit.
-      await refresh();
-      const created = loaderItem(d && d.id);
-      if (created) {
-        showLoaderModal(formStateFromLoader(created.loader), 'Edit Loader', 'Save', true);
-        result('Created — drag node tiles into it on the grid', false);
-      }
-    }).catch(function (e) { result('' + e, true); });
-}
-
-function fillDatalists() {
-  setDatalist('loader-nodes-dl', Object.keys(nodesByName).map(function (n) {
-    return '<option value="' + escapeHtml(n) + '">';
-  }).join(''));
-  setDatalist('loader-payloads-dl', payloadCodes.map(function (c) {
-    return '<option value="' + escapeHtml(c) + '">';
-  }).join(''));
-}
-function setDatalist(id, html) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
-
-/* ── Data load + grid render ──────────────────────────── */
-
-async function refresh() {
-  try {
-    const results = await Promise.all([apiGet('/api/nodes'), apiGet('/api/payloads'), apiGet('/api/loader/list')]);
-    const nd = results[0], pd = results[1], ld = results[2];
-    const nodes = (nd && (nd.nodes || nd.data || nd)) || [];
-    nodesByName = {}; nodesById = {}; childrenByParent = {};
-    (Array.isArray(nodes) ? nodes : []).forEach(function (n) {
-      const id = n.id != null ? n.id : n.ID, name = n.name != null ? n.name : n.Name;
-      const pid = n.parent_id != null ? n.parent_id : (n.ParentID != null ? n.ParentID : null);
-      if (name != null) { nodesByName[name] = id; nodesById[id] = name; }
-      if (pid != null) { (childrenByParent[pid] = childrenByParent[pid] || []).push(id); }
-    });
-    const ps = (pd && (pd.payloads || pd.data || pd)) || [];
-    payloadCodes = (Array.isArray(ps) ? ps : []).map(function (p) {
-      return p.code || p.Code || p.payload_code || p.PayloadCode || p;
-    }).filter(Boolean);
-    loaderData = (ld && ld.loaders) || [];
-  } catch (e) { /* keep last render */ }
-  fillDatalists();
-  renderGrid();
-}
-
-function renderGrid() {
-  const area = document.getElementById('nodes-drop-area');
-  if (!area) return; // page has no nodes
-  let host = document.getElementById('loader-boxes');
-  if (!host) {
-    host = document.createElement('div');
-    host.id = 'loader-boxes';
-    area.insertBefore(host, area.firstChild);
-  }
-  if (!loaderData.length) {
-    host.innerHTML = isAuth
-      ? '<div class="loader-empty">No loaders yet. Use <strong>Create Loader</strong>, then drag node tiles into the loader box to assign positions.</div>'
-      : '';
-    markLinkedTiles();
-    return;
-  }
-  host.innerHTML = loaderData.map(boxHtml).join('');
-  wireAll(host);
-  markLinkedTiles();
-}
-
-// markLinkedTiles mirrors each loader slot's CANONICAL grid tile state onto the slot,
-// for BOTH window/position slots (.loader-member) AND output group-zone slots
-// (.loader-group-slot), so a node shows the same live colour (loaded / empty / staged
-// / claimed …) everywhere it appears — group or loader. The grid (group) tile itself is
-// left untouched: a slot is differentiated by its teal outline, not by ringing the node.
-function markLinkedTiles() {
-  const STATE = ['tile-has-payload', 'tile-empty-bin', 'tile-staged', 'tile-maintenance', 'tile-claimed', 'tile-disabled', 'tile-synthetic'];
-  // Walk every rendered slot tile (both kinds carry .node-tile[data-id]) and copy the
-  // canonical tile's state classes onto the slot. The canonical tile is NOT always in
-  // #tile-grid: buildHierarchy moves a group's child tiles out of the grid into the
-  // group card, so a lookup scoped to #tile-grid found nothing for any grouped node and
-  // its slot rendered stateless. Springfield's buffer slots are all children of the
-  // AMR Supermarket group, so every buffer showed uncoloured while the ungrouped homes
-  // coloured. Exclude the slot kinds instead of scoping by container.
-  document.querySelectorAll('.loader-member[data-id], .loader-group-slot[data-id]').forEach(function (m) {
-    const id = m.dataset.id;
-    const grid = document.querySelector('.node-tile[data-id="' + id + '"]:not(.loader-member):not(.loader-group-slot)');
-    STATE.forEach(function (c) { m.classList.remove(c); });
-    if (grid) STATE.forEach(function (c) { if (grid.classList.contains(c)) m.classList.add(c); });
+  const first = loaderData.find(function (x) {
+    return Number(x.loader.second_stage_loader_id || 0) === Number(l.id);
   });
+  if (first) return { s1: first, s2: item, stage: 2 };
+  return { s1: item, s2: null, stage: 0 };
 }
 
-// groupSlots returns the LEAF descendant node ids of a node group (its slots), walking
-// NGRP -> LANE -> slot so both lane-nested seeded slots and nodes dropped directly into
-// the group show up. Empty group -> [].
-function groupSlots(groupName) {
-  const gid = nodesByName[groupName];
-  if (gid == null) return [];
-  const out = [];
-  (function walk(id) {
-    const kids = childrenByParent[id];
-    if (!kids || !kids.length) { if (id !== gid) out.push(id); return; }
-    kids.forEach(walk);
-  })(gid);
-  return out;
+function stationName(ctx) { return baseName(ctx.s1.loader.name) || '(unnamed)'; }
+
+function waiting(s1, s2) {
+  return !!((s2 && s2.loader.inbound_source) || waitOpen[s1.loader.id]);
 }
 
-// groupZoneHtml renders ONE associated node group (the output market) as a labelled
-// drop-zone inside the loader box: its current slots as draggable tiles (drag a tile OUT
-// to the grid to remove it from the group) and the zone itself a drop-target (drag a node
-// tile IN to add it). data-group carries the group name for the drop handler.
-function groupZoneHtml(label, groupName) {
-  const slots = groupSlots(groupName);
-  const tiles = slots.length
-    ? slots.map(function (id) {
-        return '<div class="node-tile loader-group-slot" data-id="' + id + '"' + (isAuth ? ' draggable="true"' : '') + '>'
-          + '<span class="tile-loc">' + escapeHtml(nodesById[id] || ('node#' + id)) + '</span></div>';
-      }).join('')
-    : '<span class="loader-members-empty">' + (isAuth ? 'drag node tiles in' : 'empty') + '</span>';
-  return '<div class="loader-box-group-zone" data-group="' + escapeHtml(groupName) + '">'
-    + '<div class="loader-group-zone-head"><span class="loader-box-group-label">' + label + '</span>'
-    + '<span class="loader-box-group-name">' + escapeHtml(groupName) + '</span></div>'
-    + '<div class="loader-group-zone-body">' + tiles + '</div></div>';
+function windowsSlot(item) {
+  return {
+    key: 'windows', label: 'Windows', loaderID: Number(item.loader.id),
+    required: true, empty: !(item.homes || []).length,
+    need: 'Needs a window', hint: 'tap, then tap a node',
+  };
 }
 
-// loaderGroupsHtml renders the loader's output market as a drag-in/out zone INSIDE
-// the teal box, placed after the positions + payload set + note.
-//
-// There used to be a second zone here, labelled "Buffer" and then "Staging", for a
-// group named on the loader row. It is gone: "Buffer" now means only one thing on
-// this screen — the kept-partial SLOTS one zone further up the same box — and where
-// a loader's empties come from is the inbound source, with no second answer.
-//
-// Shown for every layout. A dedicated loader's filled carriers go somewhere too;
-// the field used to be hidden on that layout and the zone with it.
-function loaderGroupsHtml(l) {
-  let html = '';
-  if (l.outbound_dest) html += groupZoneHtml('Output', l.outbound_dest);
-  return html;
+function placeSlot(item, key, label, value, required) {
+  return {
+    key: key, label: label, loaderID: Number(item.loader.id),
+    value: value || '', required: required, empty: !value,
+    need: 'Needs a place', hint: 'tap, then tap a group or node',
+  };
 }
+
+function partsSlot(item, label) {
+  const payloads = item.payloads || [];
+  return {
+    key: 'parts', label: label, loaderID: Number(item.loader.id),
+    required: true, empty: payloads.length === 0,
+    need: 'Needs a part', hint: '',
+  };
+}
+
+// stationSlots is the box as data: one group per stage (one group for a
+// single station), each a list of slots. Pure, so what the box asks for can
+// be tested without drawing it.
+function stationSlots(item, s2) {
+  const l = item.loader;
+  const unloader = l.role === 'consume';
+  const shared = l.layout !== 'dedicated_positions';
+  if (!s2) {
+    const fed = fedDirectlyOf(l);
+    const inbound = placeSlot(item, 'inbound', unloader ? 'Fulls come from' : 'Empties come from', l.inbound_source, !fed);
+    inbound.fed = fed && !l.inbound_source;
+    const slots = [
+      windowsSlot(item),
+      inbound,
+      placeSlot(item, 'outbound', unloader ? 'Empties go to' : 'Fulls go to', l.outbound_dest, true),
+    ];
+    if (shared) slots.push(partsSlot(item, unloader ? 'Parts it drains' : 'Parts it fills'));
+    return [{ stage: 0, item: item, slots: slots }];
+  }
+  const fed1 = fedDirectlyOf(l);
+  const in1 = placeSlot(item, 'inbound', 'Fulls come from', l.inbound_source, !fed1);
+  in1.fed = fed1 && !l.inbound_source;
+  const wait = waiting(item, s2);
+  const one = [windowsSlot(item), in1, partsSlot(item, 'Parts it drains')];
+  // Direct mode: Core names stage 1's destination from stage 2's windows. It
+  // is shown, not asked.
+  if (!wait) {
+    one.push({ key: 'onto', label: 'Carts go on to', readonly: true, value: l.outbound_dest || '',
+      loaderID: Number(l.id), required: false, empty: false });
+  }
+  const two = [
+    windowsSlot(s2),
+    placeSlot(s2, 'outbound', 'Carts with an empty bin go to', s2.loader.outbound_dest, true),
+    { key: 'waitCheck', checked: wait, loaderID: Number(l.id), required: false, empty: false },
+  ];
+  if (wait) {
+    const ws = placeSlot(s2, 'wait', 'Carts wait at', s2.loader.inbound_source, true);
+    two.push(ws);
+  }
+  return [{ stage: 1, item: item, slots: one }, { stage: 2, item: s2, slots: two }];
+}
+
+function countNeeds(groups) {
+  let n = 0;
+  groups.forEach(function (g) {
+    g.slots.forEach(function (s) { if (s.required && s.empty) n++; });
+  });
+  return n;
+}
+
+function statusText(n) {
+  if (!n) return '';
+  return 'Not running yet — ' + n + (n === 1 ? ' slot needs a place' : ' slots need a place');
+}
+
+function kindText(l, pair) {
+  if (l.role !== 'consume') return 'Fills bins';
+  return 'Empties bins · ' + (pair ? 'two stations' : 'one station');
+}
+
+const STAGE_TITLE = {
+  1: 'Stage 1 · takes the full bin off',
+  2: 'Stage 2 · puts an empty bin on',
+};
+
+// HTML is built with h`` (style guide, HTML construction): interpolations are
+// escaped, arrays are joined as they are. A nested h`` result that is not in an
+// array would be escaped again, so it goes through raw() — the helper's own
+// opt-out — and every function here returns markup already built that way.
+function raw(html) { return { __html: true, value: html || '' }; }
 
 // thresholdGapHtml surfaces payloads a THRESHOLD loader serves that carry no UOP
 // threshold — the ones nothing will ever order for.
@@ -752,214 +479,804 @@ function thresholdGapHtml(item) {
   const l = item.loader;
   if (l.replenishment !== 'threshold') return '';
   const missing = (item.payloads || []).filter(function (p) { return !(p.uop_threshold > 0); });
-  const homeMissing = (item.homes || []).filter(function (h) {
-    return h.payload_code && !(h.uop_threshold > 0);
+  const homeMissing = (item.homes || []).filter(function (hm) {
+    return hm.payload_code && !(hm.uop_threshold > 0);
   });
   const n = missing.length + homeMissing.length;
   if (n === 0) return '';
-  const total = (item.payloads || []).length + (item.homes || []).filter(function (h) { return h.payload_code; }).length;
+  const total = (item.payloads || []).length + (item.homes || []).filter(function (hm) { return hm.payload_code; }).length;
   // No threshold ANYWHERE is the louder case: nothing orders for this loader at
   // all, rather than for some of its parts.
   const none = n === total;
   const names = missing.map(function (p) { return p.payload_code; })
-    .concat(homeMissing.map(function (h) { return h.payload_code; }));
+    .concat(homeMissing.map(function (hm) { return hm.payload_code; }));
   const label = none
     ? 'no threshold set — nothing will order for this loader'
     : n + ' of ' + total + ' payloads need a threshold';
-  return '<a class="loader-threshold-gap' + (none ? ' loader-threshold-gap-none' : '') + '"'
-    + ' href="/inventory" title="' + escapeHtml(names.join(', ')) + ' — set a UoP threshold on the Inventory page">'
-    + escapeHtml(label) + '</a>';
+  return h`<a class="loader-threshold-gap${none ? ' loader-threshold-gap-none' : ''}" href="/inventory" title="${names.join(', ') + ' — set a UoP threshold on the Inventory page'}">${label}</a>`;
 }
 
-// configGapHtml surfaces a loader the EDGE WILL REFUSE — on the screen where it
-// was configured, which is the only screen that can say so.
+// configGapHtml surfaces the refusals the EDGE MAKES that are not an empty
+// slot — on the screen where the loader is configured, which is the only
+// screen that can say so.
 //
-// A loader is created bare and its members are dragged in afterwards. That is
-// deliberate and stays. What was missing is that NOTHING EVER RE-CHECKED that
-// the dragging happened. The Edge checks, in projectCoreLoader → the C0
-// constructors, and a loader that fails projection is SKIPPED — logged once and
-// left out of the snapshot entirely. Every lookup downstream then resolves nil:
-// no loader for the node, no synthesized claim, no operator board. Springfield
-// 2026-08-26 lost 70 minutes to a shared_window unloader that had its windows
-// but no payload. The box looked finished; the only witness was a journald line
-// on a Pi.
+// The Edge checks every loader in projectCoreLoader → the C0 constructors, and
+// a loader that fails is SKIPPED: logged once, left out of the snapshot, no
+// operator board. It cannot warn about a loader it has discarded, so this
+// screen is the only witness. Springfield 2026-08-26 lost 70 minutes to a
+// shared_window unloader with windows and no payload.
 //
-// THE EDGE CANNOT WARN ABOUT THIS. It discarded the loader, so it has nothing
-// left to warn about — the one process that detects the fault is the one that
-// then destroys the evidence. That is what makes this screen the only place the
-// state can surface, and also the right one: the invalid config is Core-owned.
+// The missing-member refusals (no windows, no positions, no payloads) are the
+// red slots on the box now, and the box header counts them. What is left here
+// is the malformed-member half, which has no slot to turn red.
 //
 // The conditions mirror shingo-edge/domain/loader.go NewSharedWindowLoader and
-// NewDedicatedPositionsLoader exactly. Keep them in step — a refusal added there
-// and not here goes straight back to being invisible.
-//
-// Unlike thresholdGapHtml this is NOT a link: the fix is on this screen (drag a
-// window in, tick a payload), so there is nowhere to send anyone.
+// NewDedicatedPositionsLoader. Keep them in step.
 function configGapHtml(item) {
   const l = item.loader;
   const homes = item.homes || [];
   const payloads = item.payloads || [];
   const missing = [];
-  if (l.layout === 'dedicated_positions') {
-    // A dedicated position with no payload yet is LEGAL — the constructor says
-    // so, and an unpinned home is inert rather than invalid. Only the count is
-    // a refusal.
-    if (homes.length === 0) missing.push('no positions');
-  } else {
-    if (homes.length === 0) missing.push('no windows');
-    if (payloads.length === 0) missing.push('no payloads');
-    if (payloads.some(function (p) { return !p.payload_code; })) missing.push('a blank payload');
+  if (l.layout !== 'dedicated_positions' && payloads.some(function (p) { return !p.payload_code; })) {
+    missing.push('a blank payload');
   }
-  if (homes.some(function (h) { return !h.position_node_id; })) missing.push('a position with no node');
+  if (homes.some(function (hm) { return !hm.position_node_id; })) missing.push('a position with no node');
   if (missing.length === 0) return '';
-  const fix = l.layout === 'dedicated_positions'
-    ? 'Drag node tiles into the box below to give it positions.'
-    : 'Drag node tiles in as windows, and set at least one payload.';
-  return '<span class="loader-config-gap" title="'
-    + escapeHtml('The Edge refuses a loader in this shape and renders no operator board for it. ' + fix)
-    + '">' + escapeHtml('incomplete — ' + missing.join(', ')) + '</span>';
+  return h`<span class="loader-config-gap" title="The Edge refuses a loader in this shape and renders no operator board for it.">${'incomplete — ' + missing.join(', ')}</span>`;
 }
 
-function boxHtml(item) {
+// gridHtml renders every station, drawing a two-stage unloader as ONE station
+// with a Stage 1 and a Stage 2 column.
+function gridHtml(items) {
+  const byID = {};
+  const secondStages = {};
+  items.forEach(function (it) {
+    byID[it.loader.id] = it;
+    if (it.loader.second_stage_loader_id) secondStages[it.loader.second_stage_loader_id] = true;
+  });
+  return items.map(function (it) {
+    if (secondStages[it.loader.id]) return '';
+    const s2 = it.loader.second_stage_loader_id ? (byID[it.loader.second_stage_loader_id] || null) : null;
+    return stationHtml(it, s2);
+  }).join('');
+}
+
+function stationHtml(item, s2) {
   const l = item.loader;
-  const dedicated = l.layout === 'dedicated_positions';
-  // Flow line. A dedicated loader's OUTBOUND is meaningless (its spots are its
-  // own outbound) but its INBOUND is load-bearing: it is where empties are
-  // retrieved from, and blank means the replenishment chain silently does
-  // nothing. Suppressing the whole line for dedicated hid exactly the value an
-  // engineer needs to see at a glance, so dedicated now renders
-  // `inbound → (spots)`. "(spots)" rather than a dash on the right, so the
-  // destination doesn't read as unset config; a dash on the LEFT is real and
-  // is meant to look wrong.
-  let meta = escapeHtml(l.role) + ' · ' + escapeHtml(l.layout) + ' · ' + escapeHtml(replenishLabel(l));
-  let flow;
-  if (dedicated && !l.outbound_dest) {
-    flow = (l.inbound_source || '—') + ' → (spots)';
-  } else {
-    flow = (l.inbound_source || '—') + ' → ' + (l.outbound_dest || '—');
-  }
-  meta += ' · ' + escapeHtml(flow);
-  // Member nodes are shown ONLY for dedicated-home loaders (each position is a
-  // meaningful payload-pinned slot). Shared-window loaders + unloaders are defined
-  // by the node GROUPS they pull from / feed — showing their individual windows is
-  // noise (and confusing to other team members), so they render group zones only.
-  const nodes = nodeMembersHtml(item, dedicated);
-  const payloadSet = dedicated ? '' : payloadChipsHtml(item);
-  const groupsHtml = loaderGroupsHtml(l);
-  const hint = isAuth
-    ? (dedicated
-      ? '<div class="loader-hint">Drag node tiles here · ⠿ reorder · × remove · pick a payload per spot (shows as a badge). UoP threshold lives on the Inventory page.</div>'
-      : '<div class="loader-hint">Shared-window loader — drag node tiles in above as its <strong>windows</strong> (where the operator loads); set its shared payloads below. The group zones are the source it pulls from and the supermarket it feeds.</div>')
-    : '';
-  return '<div class="loader-box" data-loader-id="' + l.id + '" data-layout="' + escapeHtml(l.layout) + '">'
-    + '<div class="loader-box-header">'
-    + '<span class="loader-box-name">' + escapeHtml(l.name || '(unnamed)') + '</span>'
-    + '<span class="loader-box-meta">' + meta + '</span>'
-    // configGap first: "the Edge will not load this at all" outranks "some of
-    // its payloads are ordered by nobody", and a loader that is skipped never
-    // reaches the threshold path to begin with.
-    + configGapHtml(item)
+  const pair = !!s2;
+  const groups = stationSlots(item, s2);
+  const status = statusText(countNeeds(groups));
+  const open = isAuth && Number(settingsOpen) === Number(l.id);
+  const head = h`<div class="loader-station-head">`
+    + h`<span class="loader-box-name">${baseName(l.name) || '(unnamed)'}</span>`
+    + h`<span class="loader-station-kind">${kindText(l, pair)}</span>`
+    + (status ? h`<span class="badge badge-warn loader-station-status">${status}</span>` : '')
+    + configGapHtml(item) + (s2 ? configGapHtml(s2) : '')
     + thresholdGapHtml(item)
-    + (isAuth ? '<button class="loader-box-edit" title="Edit loader">Edit</button>' : '')
-    + (isAuth ? '<button class="loader-box-del" title="Delete loader">Delete</button>' : '')
-    + '</div>'
-    + '<div class="loader-box-body">' + '<div class="loader-members' + (dedicated ? ' loader-members-zoned' : '') + '">' + nodes + '</div>' + payloadSet + hint + groupsHtml + '</div>'
-    + '</div>';
+    + (isAuth
+      ? h`<button type="button" class="loader-settings-link" data-action="toggleStationSettings" data-loader-id="${l.id}">${open ? 'Close settings' : 'Settings'}</button>`
+      : '')
+    + h`</div>`;
+  const body = open
+    ? settingsHtml(item, s2)
+    : h`<div class="loader-station-body${pair ? ' loader-pair-grid' : ''}">${groups.map(stageBoxHtml)}</div>`;
+  return h`<div class="loader-station${pair ? ' loader-pair' : ''}" data-loader-id="${l.id}">${raw(head)}${raw(body)}</div>`;
 }
 
-// nodeMembersHtml renders a loader's node members (bin_loader_homes). Shared_window
-// = a flat list of windows (name only). dedicated_positions = members split into two
-// zones by home_kind: HOME positions (payload pinned, or awaiting one) and BUFFER
-// slots (kept partials, no payload). The zone IS the discriminator now — dropping a
-// tile into Buffer marks it home_kind=buffer; an unpinned HOME stays a home (inert
-// until a payload is picked), no longer mis-filed as a buffer (the D4 fix).
-function nodeMembersHtml(item, dedicated) {
+function stageBoxHtml(group) {
+  const l = group.item.loader;
+  const title = group.stage ? h`<div class="loader-stage-title">${STAGE_TITLE[group.stage]}</div>` : '';
+  return h`<div class="loader-box" data-loader-id="${l.id}" data-layout="${l.layout}" data-stage="${group.stage}">${raw(title)}${group.slots.map(function (s) { return slotHtml(s, group); })}</div>`;
+}
+
+function isArmed(slot) {
+  return !!armed && Number(armed.loaderID) === Number(slot.loaderID) && armed.slot === slot.key;
+}
+
+function slotHtml(slot, group) {
+  if (slot.key === 'waitCheck') {
+    const id = 'loader-wait-' + slot.loaderID;
+    return h`<label class="form-check loader-wait-check" for="${id}"><input type="checkbox" id="${id}" data-action-change="toggleWaitGroup" data-loader-id="${slot.loaderID}"${raw(slot.checked ? ' checked' : '')}${raw(isAuth ? '' : ' disabled')}> Carts wait in a group between the stations</label>`;
+  }
+  const needed = slot.required && slot.empty;
+  const cls = 'loader-slot loader-slot-' + slot.key + (needed ? ' is-needed' : '') + (isArmed(slot) ? ' is-armed' : '');
+  const label = h`<div class="loader-slot-label">${slot.label}</div>`;
+  let body;
+  if (slot.key === 'windows') {
+    body = windowsBodyHtml(group.item, slot);
+  } else if (slot.key === 'parts') {
+    body = (needed ? h`<div class="loader-slot-need">${slot.need}</div>` : '') + payloadChipsHtml(group.item);
+  } else if (slot.readonly) {
+    body = h`<div class="loader-place is-readonly">${slot.value || '—'}${raw(placeKindHtml(slot.value))}</div>`;
+  } else {
+    return h`<div class="${cls} loader-slot-place" data-slot="${slot.key}" data-loader-id="${slot.loaderID}">${raw(label)}${raw(placeBodyHtml(slot))}</div>`;
+  }
+  return h`<div class="${cls}" data-slot="${slot.key}" data-loader-id="${slot.loaderID}">${raw(label)}${raw(body)}</div>`;
+}
+
+// placeKindHtml says what a named place IS: a group, or a name that no longer
+// resolves to any node (a destination is stored as a name, so a renamed or
+// deleted node leaves one behind).
+function placeKindHtml(name) {
+  if (!name) return '';
+  const id = nodesByName[name];
+  if (id == null) return Object.keys(nodesByName).length ? h` <span class="loader-place-kind is-warn">· not found</span>` : '';
+  const n = nodeInfo[id];
+  return n && n.synthetic ? h` <span class="loader-place-kind">· group</span>` : '';
+}
+
+function placeBodyHtml(slot) {
+  let inner;
+  if (!slot.empty) {
+    inner = h`<span class="loader-place-name">${slot.value}</span>${raw(placeKindHtml(slot.value))}`;
+  } else if (slot.fed) {
+    inner = h`<span class="loader-place-name">Fed directly from process</span>`;
+  } else {
+    inner = h`<span>${slot.need}</span>` + (isAuth ? h`<span class="loader-place-hint">${slot.hint}</span>` : '');
+  }
+  const state = slot.empty ? (slot.required ? ' is-needed' : ' is-quiet') : '';
+  if (!isAuth) return h`<div class="loader-place${state}">${raw(inner)}</div>`;
+  const shown = isArmed(slot) ? h`<span>Tap a group or node below</span>` : inner;
+  const clear = slot.empty ? ''
+    : h`<button type="button" class="loader-place-x" title="Remove" aria-label="${'Remove ' + slot.label}" data-action="clearSlot" data-loader-id="${slot.loaderID}" data-slot="${slot.key}">×</button>`;
+  return h`<div class="loader-place-row"><button type="button" class="loader-place${state}" data-action="armSlot" data-loader-id="${slot.loaderID}" data-slot="${slot.key}">${raw(shown)}</button>${raw(clear)}</div>`;
+}
+
+function windowsBodyHtml(item, slot) {
+  const dedicated = item.loader.layout === 'dedicated_positions';
+  const on = isArmed(slot);
+  const add = isAuth
+    ? h`<button type="button" class="loader-slot-add${on ? ' is-armed' : ''}" data-action="armSlot" data-loader-id="${slot.loaderID}" data-slot="windows">${on ? '+ add — tap a node below' : '+ add'}</button>`
+    : '';
+  const need = slot.empty ? h`<span class="loader-slot-need">${slot.need}</span>` : '';
+  return h`<div class="loader-members${dedicated ? ' loader-members-zoned' : ''}">${raw(nodeMembersHtml(item, dedicated, need + add))}</div>`;
+}
+
+// nodeMembersHtml renders a loader's node members (bin_loader_homes). Shared
+// window = a flat list of windows. dedicated_positions = members split into two
+// zones by home_kind: HOME positions (payload pinned, or awaiting one) and
+// BUFFER slots (kept partials, no payload). The zone IS the discriminator —
+// dropping a tile into Buffer marks it home_kind=buffer; an unpinned HOME stays
+// a home (inert until a payload is picked).
+function nodeMembersHtml(item, dedicated, tail) {
   const homes = item.homes || [];
   if (!dedicated) {
-    if (!homes.length) {
-      return '<span class="loader-members-empty">no windows yet — drag node tiles in</span>';
-    }
-    return homes.map(function (h) { return loaderMemberTile(h, false); }).join('');
+    return homes.map(function (hm) { return loaderMemberTile(hm, false); }).join('') + (tail || '');
   }
-  const isBuffer = function (h) { return (h.home_kind || 'home') === 'buffer'; };
-  const positions = homes.filter(function (h) { return !isBuffer(h); });
+  const isBuffer = function (hm) { return (hm.home_kind || 'home') === 'buffer'; };
+  const positions = homes.filter(function (hm) { return !isBuffer(hm); });
   const buffer = homes.filter(isBuffer);
-  const posTiles = positions.length
-    ? positions.map(function (h) { return loaderMemberTile(h, true); }).join('')
-    : '<span class="loader-members-empty">no positions yet — drag a tile in, pick a payload</span>';
   const bufTiles = buffer.length
-    ? buffer.map(function (h) { return loaderMemberTile(h, true); }).join('')
-    : '<span class="loader-members-empty">no buffer slots — drag a tile into this zone</span>';
-  return '<div class="loader-zone-label">Positions</div>'
-    + '<div class="loader-zone">' + posTiles + '</div>'
-    + '<div class="loader-zone-label">Buffer <span class="loader-zone-sub">kept partials · no payload</span></div>'
-    + '<div class="loader-zone loader-zone-buffer">' + bufTiles + '</div>';
+    ? buffer.map(function (hm) { return loaderMemberTile(hm, true); })
+    : raw(h`<span class="loader-members-empty">no buffer slots — drag a tile into this zone</span>`);
+  return h`<div class="loader-zone-label">Positions</div>`
+    + h`<div class="loader-zone">${positions.map(function (hm) { return loaderMemberTile(hm, true); })}${raw(tail)}</div>`
+    + h`<div class="loader-zone-label">Buffer <span class="loader-zone-sub">kept partials · no payload</span></div>`
+    + h`<div class="loader-zone loader-zone-buffer">${bufTiles}</div>`;
 }
 
 // loaderMemberTile draws one member slot — reused for windows, home positions and
 // buffer slots. A HOME shows its per-spot payload picker; a BUFFER shows a static
-// "buffer" badge (it pins no payload); a shared window shows name only. data-kind
-// carries home_kind so a drag can tell a within-zone reorder from a cross-zone
-// re-kind. The slot reuses the grid node tile (same block/size/state colour, copied
-// in markLinkedTiles) with the loader controls on top.
-function loaderMemberTile(h, dedicated) {
-  const nm = nodesById[h.position_node_id] || ('node#' + h.position_node_id);
-  const kind = (h.home_kind || 'home');
+// "buffer" badge; a shared window shows name only. data-kind carries home_kind so
+// a drag can tell a within-zone reorder from a cross-zone re-kind.
+function loaderMemberTile(home, dedicated) {
+  const nm = nodesById[home.position_node_id] || ('node#' + home.position_node_id);
+  const kind = (home.home_kind || 'home');
   let badge = '';
   if (dedicated) {
     if (kind === 'buffer') {
-      badge = '<span class="loader-pc-badge loader-buffer-badge" title="kept-partial buffer slot — pins no payload">buffer</span>';
-    } else {
-      badge = isAuth ? payloadSelect(h.payload_code)
-        : (h.payload_code ? '<span class="loader-pc-badge">' + escapeHtml(h.payload_code) + '</span>' : '');
+      badge = h`<span class="loader-pc-badge loader-buffer-badge" title="kept-partial buffer slot — pins no payload">buffer</span>`;
+    } else if (isAuth) {
+      badge = payloadSelect(home.payload_code);
+    } else if (home.payload_code) {
+      badge = h`<span class="loader-pc-badge">${home.payload_code}</span>`;
     }
   }
-  return '<div class="node-tile loader-member" data-id="' + h.position_node_id + '" data-kind="' + kind + '"' + (isAuth ? ' draggable="true"' : '') + '>'
-    + (isAuth ? '<span class="loader-grip" title="drag the tile to reorder / move">⠿</span>' : '')
-    + '<span class="tile-loc">' + escapeHtml(nm) + '</span>'
-    + badge
-    + (isAuth ? '<span class="loader-member-x" title="remove" draggable="false">×</span>' : '')
-    + '</div>';
+  const grip = isAuth ? h`<span class="loader-grip" title="drag the tile to reorder / move">⠿</span>` : '';
+  const x = isAuth ? h`<span class="loader-member-x" title="remove" draggable="false">×</span>` : '';
+  return h`<div class="node-tile loader-member" data-id="${home.position_node_id}" data-kind="${kind}"${raw(isAuth ? ' draggable="true"' : '')}>${raw(grip)}<span class="tile-loc">${nm}</span>${raw(badge)}${raw(x)}</div>`;
 }
 
-// payloadSelect is an inline per-position payload picker styled as a badge — it
-// reads as a teal badge once a payload is chosen (has-payload class).
 function payloadSelect(sel) {
-  let opts = '<option value="">+ payload</option>';
-  payloadCodes.forEach(function (c) {
-    opts += '<option value="' + escapeHtml(c) + '"' + (c === sel ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+  const opts = payloadCodes.map(function (c) {
+    return h`<option value="${c}"${raw(c === sel ? ' selected' : '')}>${c}</option>`;
   });
-  return '<select class="loader-pc-sel' + (sel ? ' has-payload' : '') + '" draggable="false">' + opts + '</select>';
+  return h`<select class="loader-pc-sel${sel ? ' has-payload' : ''}" draggable="false"><option value="">+ payload</option>${opts}</select>`;
 }
 
-// payloadChipsHtml renders a shared_window loader's allowed payload set. The current
-// set shows as chips; editing is a collapsible checklist of the whole catalog (checked =
-// in the set) — check/uncheck several at once instead of typing + add one at a time.
+// payloadChipsHtml renders a shared-window loader's part set as chips, with a
+// collapsible whole-catalog checklist to edit it. Ticking boxes only updates
+// local state — nothing round-trips until "Save parts" commits the diff.
 function payloadChipsHtml(item) {
   const set = new Set((item.payloads || []).map(function (p) { return p.payload_code; }));
-  const chips = Array.from(set).map(function (c) { return '<span class="loader-chip">' + escapeHtml(c) + '</span>'; }).join('');
-  if (!isAuth) {
-    return '<div class="loader-payload-set"><span class="loader-set-label">Allowed payloads:</span>' + chips + '</div>';
+  const chips = Array.from(set).map(function (c) { return h`<span class="loader-chip">${c}</span>`; });
+  if (!isAuth) return h`<div class="loader-payload-set">${chips}</div>`;
+  const boxes = payloadCodes.map(function (c) {
+    return h`<label class="loader-pc-item"><input type="checkbox" class="loader-pc-cb" data-pc="${c}"${raw(set.has(c) ? ' checked' : '')}>${c}</label>`;
+  });
+  return h`<div class="loader-payload-set" data-loader-id="${item.loader.id}">${chips}`
+    + h`<details class="loader-pc-checklist"><summary class="loader-pc-summary">+ part</summary>`
+    + h`<div class="loader-pc-list">${boxes}</div>`
+    + h`<div class="loader-pc-actions"><button type="button" class="loader-pc-save">Save parts</button><span class="loader-pc-status"></span></div>`
+    + h`</details></div>`;
+}
+
+/* ── Settings (behind the box's one link; saves as ticked) ────────────── */
+
+function settingCheck(loaderID, field, on, text) {
+  const id = 'loader-set-' + loaderID + '-' + field;
+  return h`<label class="form-check loader-setting" for="${id}"><input type="checkbox" id="${id}" data-action-change="saveStationSetting" data-loader-id="${loaderID}" data-field="${field}"${raw(on ? ' checked' : '')}> ${text}</label>`;
+}
+
+const SUPPLY_OPTIONS = [
+  ['operator', 'When the operator asks'],
+  ['threshold', 'Automatically when parts run low'],
+];
+
+function supplyHtml(state) {
+  const id = 'loader-set-' + state.id + '-replenishment';
+  const opts = SUPPLY_OPTIONS.map(function (o) {
+    return h`<option value="${o[0]}"${raw(o[0] === state.replenishment ? ' selected' : '')}>${o[1]}</option>`;
+  });
+  return h`<div class="form-group loader-setting"><label for="${id}">Order empties</label><select id="${id}" class="form-input" data-action-change="saveStationSetting" data-loader-id="${state.id}" data-field="replenishment">${opts}</select></div>`;
+}
+
+function settingsHtml(item, s2) {
+  const state = formStateFromLoader(item.loader);
+  const shape = formShape(state);
+  const lid = state.id;
+  const pair = !!s2;
+  let first = '';
+  if (shape.supply) first += supplyHtml(state);
+  if (shape.partials) first += settingCheck(lid, 'acceptPartials', state.acceptPartials, 'Accept partly used bins, not only full ones');
+  if (shape.autoPush) first += settingCheck(lid, 'autoPush', state.autoPush, 'Pull the next full automatically when a window frees');
+  if (shape.fedByHand) first += settingCheck(lid, 'fedByHand', state.fedByHand, 'Fed directly from process');
+  if (shape.changeover) first += settingCheck(lid, 'changeoverLoadDirective', state.changeoverLoadDirective, 'During a changeover, tell this station which carrier to load');
+  // "Cart" is the operator's word for a two-stage unloader's carrier (style
+  // guide glossary); every other station says carrier.
+  const noun = pair ? 'cart' : 'carrier';
+  let win = '';
+  if (shape.dedicated) win += settingCheck(lid, 'dedicated', state.dedicated, 'One spot per part (each window takes one part only)');
+  if (shape.funnel) win += settingCheck(lid, 'funnel', state.funnel, 'Fill one window at a time');
+  if (shape.mix) {
+    win += h`<div class="loader-setting loader-setting-block"><div class="loader-setting-label">Keep on hand <span class="loader-setting-aside">${'empty = any ' + noun}</span></div><div id="loader-mix-editor">${raw(mixEditorHtml(lid, noun))}</div></div>`;
   }
-  let html = '<div class="loader-payload-set" data-loader-id="' + item.loader.id + '"><span class="loader-set-label">Allowed payloads (' + set.size + '):</span> ' + chips;
-  // Collapsible whole-catalog checklist. Ticking boxes only updates local state — the
-  // panel stays OPEN and nothing round-trips until "Save payloads" commits the diff in
-  // one batch (set-payload for adds, remove-payload for removes, one refresh after).
-  html += '<details class="loader-pc-checklist" style="margin-top:4px">'
-    + '<summary style="cursor:pointer;color:var(--primary)">Select payloads ▾</summary>'
-    + '<div class="loader-pc-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;margin-top:4px;display:flex;flex-direction:column;gap:2px">';
-  html += payloadCodes.map(function (c) {
-    return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">'
-      + '<input type="checkbox" class="loader-pc-cb" data-pc="' + escapeHtml(c) + '"' + (set.has(c) ? ' checked' : '') + '>'
-      + escapeHtml(c) + '</label>';
+  if (shape.windows) {
+    const caps = windowCapHtml(item, pair ? 'Stage 1' : '') + (pair ? windowCapHtml(s2, 'Stage 2') : '');
+    win += h`<div class="loader-setting loader-setting-block"><div class="loader-setting-label">What each window can take <span class="loader-setting-aside">${'nothing set = any ' + noun}</span></div><div id="loader-windows-editor">${raw(caps)}</div></div>`;
+  }
+  const stageHead = pair ? h`<div class="loader-stage-title">Stage 1</div>` : '';
+  const winSection = win ? h`<div class="loader-settings-section"><div class="loader-stage-title">Windows</div>${raw(win)}</div>` : '';
+  const del = shape.remove
+    ? h`<button type="button" class="btn btn-sm btn-danger" data-action="deleteStation" data-loader-id="${lid}">Delete station</button>`
+    : '';
+  return h`<div class="loader-settings"><div class="loader-settings-section">${raw(stageHead)}${raw(first)}</div>${raw(winSection)}`
+    + h`<div class="loader-settings-foot">${raw(del)}<span class="loader-settings-note">Changes save as you tick them.</span></div></div>`;
+}
+
+// mixEditorHtml draws the declared carrier mix: how many of each carrier type
+// this station wants on hand. Empty is the normal state and means "take
+// whatever is available". No bare types: a mix line of one could never be
+// fetched, because no empty finder hands a bare carrier out.
+function mixEditorHtml(loaderID, noun) {
+  noun = noun || 'carrier';
+  const lid = Number(loaderID);
+  const item = loaderItem(loaderID);
+  const mix = (item && item.quota) || [];
+  const declared = mix.map(function (q) { return q.bin_type_code; });
+  const rows = mix.map(function (q) {
+    return h`<div class="loader-mix-line"><span class="loader-chip">${q.bin_type_code}</span>`
+      + h`<input type="number" class="form-input loader-mix-want" min="0" value="${Number(q.want)}" aria-label="${'How many ' + q.bin_type_code + ' to keep on hand'}" data-action-change="setLoaderQuota" data-loader-id="${lid}" data-bin-type="${q.bin_type_code}">`
+      + h`<button class="btn btn-sm" title="Remove" data-action="removeLoaderQuota" data-loader-id="${lid}" data-bin-type="${q.bin_type_code}">×</button></div>`;
   }).join('');
-  html += '</div>'
-    + '<div class="loader-pc-actions">'
-    + '<button type="button" class="loader-pc-save">Save payloads</button>'
-    + '<span class="loader-pc-status"></span>'
-    + '</div>'
-    + '</details></div>';
-  return html;
+  const rest = binTypeOptions(declared, false);
+  const add = rest
+    ? h`<div class="loader-mix-add"><select id="loader-mix-add-type" class="form-input" aria-label="${noun + ' type'}">${raw(rest)}</select>`
+      + h`<input type="number" id="loader-mix-add-want" class="form-input loader-mix-want" min="1" value="1" aria-label="How many">`
+      + h`<button class="btn btn-sm" data-action="addLoaderQuota" data-loader-id="${lid}">${'+ ' + noun + ' type'}</button></div>`
+    : '';
+  return rows + add;
+}
+
+// windowCapHtml draws one row per window: what that window can physically
+// take. Rows come out in the arranged order, the same order that decides which
+// window fills first. A window with nothing set takes anything, and that has
+// to stay the meaning of empty: every window at every plant is empty today.
+//
+// Never offers a bare type. A marker is admitted wherever its carrier is, so
+// naming the carrier is enough, and a bare type is not something a person
+// picks.
+function windowCapHtml(item, heading) {
+  if (!item) return '';
+  const loaderID = Number(item.loader.id);
+  const homes = (item.homes || []).slice().sort(function (a, b) {
+    return (a.sort_order || 0) - (b.sort_order || 0);
+  });
+  const head = heading ? h`<div class="loader-window-cap-head">${heading}</div>` : '';
+  if (!homes.length) return head + h`<div class="loader-window-cap-empty">No windows yet.</div>`;
+  const caps = item.window_bin_types || {};
+  return head + homes.map(function (hm) {
+    const nodeID = Number(hm.position_node_id);
+    const name = nodesById[nodeID] || ('node ' + nodeID);
+    const set = caps[nodeID] || [];
+    const chips = set.map(function (code) {
+      return h`<span class="loader-chip">${code}<span class="loader-chip-x" title="Remove" data-action="removeWindowBinType" data-loader-id="${loaderID}" data-node-id="${nodeID}" data-bin-type="${code}">×</span></span>`;
+    });
+    const rest = binTypeOptions(set, false);
+    const add = rest
+      ? h`<select class="form-input" data-action-change="addWindowBinType" data-loader-id="${loaderID}" data-node-id="${nodeID}" aria-label="${'Add a type ' + name + ' can take'}"><option value="">+ type</option>${raw(rest)}</select>`
+      : '';
+    const any = chips.length ? '' : h`<span class="loader-window-cap-any">takes anything</span>`;
+    return h`<div class="loader-window-cap"><span class="loader-window-cap-name">${name}</span>${chips}${raw(any)}${raw(add)}</div>`;
+  }).join('');
+}
+
+// binTypeCatalog is the carrier-type list, fetched once — the pickers need
+// codes to show and ids to save.
+let binTypeCatalog = [];
+
+function loadBinTypeCatalog() {
+  return apiGet('/api/bin-types').then(function (d) {
+    binTypeCatalog = (d && d.bin_types) || [];
+  }).catch(function () { binTypeCatalog = []; });
+}
+
+// binTypeOptions lists the carrier catalogue minus what is already set. An
+// "add" control should only offer what can actually be added; when that leaves
+// nothing the caller drops the control. withBare says whether bare types are
+// offered at all; no caller on this page passes true.
+function binTypeOptions(exclude, withBare) {
+  const taken = {};
+  (exclude || []).forEach(function (c) { taken[c] = true; });
+  return binTypeCatalog.filter(function (t) { return !taken[t.code] && (withBare || !t.bare); })
+    .map(function (t) {
+      return h`<option value="${Number(t.id)}">${t.code}</option>`;
+    }).join('');
+}
+
+function binTypeIDForCode(code) {
+  const t = binTypeCatalog.find(function (x) { return x.code === code; });
+  return t ? Number(t.id) : 0;
+}
+
+function elLoaderID(el) { return Number((el && el.getAttribute && el.getAttribute('data-loader-id')) || 0); }
+
+function windowCapSet(loaderID, nodeID) {
+  const item = loaderItem(loaderID);
+  const caps = (item && item.window_bin_types) || {};
+  return (caps[Number(nodeID)] || []).slice();
+}
+
+function saveWindowCap(loaderID, nodeID, codes) {
+  const ids = codes.map(binTypeIDForCode).filter(function (n) { return n > 0; });
+  return apiPost('/api/loader/set-window-bin-types', {
+    loader_id: loaderID, position_node_id: Number(nodeID), bin_type_ids: ids,
+  }).then(refresh).catch(function (e) { toast('' + e, 'error'); });
+}
+
+function addWindowBinType(el) {
+  const loaderID = elLoaderID(el);
+  const nodeID = Number(el.getAttribute('data-node-id') || 0);
+  const binTypeID = Number(el.value || 0);
+  if (!loaderID || !nodeID || !binTypeID) return;
+  const t = binTypeCatalog.find(function (x) { return Number(x.id) === binTypeID; });
+  if (!t) return;
+  saveWindowCap(loaderID, nodeID, windowCapSet(loaderID, nodeID).concat([t.code]));
+}
+
+function removeWindowBinType(el) {
+  const loaderID = elLoaderID(el);
+  const nodeID = Number(el.getAttribute('data-node-id') || 0);
+  const code = el.getAttribute('data-bin-type') || '';
+  if (!loaderID || !nodeID || !code) return;
+  saveWindowCap(loaderID, nodeID, windowCapSet(loaderID, nodeID).filter(function (c) { return c !== code; }));
+}
+
+function addLoaderQuota(el) {
+  const loaderID = elLoaderID(el);
+  const binTypeID = Number(val('loader-mix-add-type') || 0);
+  const want = Number(val('loader-mix-add-want') || 0);
+  if (!loaderID || !binTypeID || want < 1) return;
+  apiPost('/api/loader/set-quota', { loader_id: loaderID, bin_type_id: binTypeID, want: want })
+    .then(refresh).catch(function (e) { toast('' + e, 'error'); });
+}
+
+function setLoaderQuota(el) {
+  const loaderID = elLoaderID(el);
+  const want = Number(el.value || 0);
+  const binTypeID = binTypeIDForCode(el.getAttribute('data-bin-type') || '');
+  if (!loaderID || !binTypeID || want < 0) return;
+  apiPost('/api/loader/set-quota', { loader_id: loaderID, bin_type_id: binTypeID, want: want })
+    .then(refresh).catch(function (e) { toast('' + e, 'error'); });
+}
+
+function removeLoaderQuota(el) {
+  const loaderID = elLoaderID(el);
+  const binTypeID = binTypeIDForCode(el.getAttribute('data-bin-type') || '');
+  if (!loaderID || !binTypeID) return;
+  apiPost('/api/loader/remove-quota', { loader_id: loaderID, bin_type_id: binTypeID })
+    .then(refresh).catch(function (e) { toast('' + e, 'error'); });
+}
+
+function toggleStationSettings(el) {
+  const id = elLoaderID(el);
+  settingsOpen = Number(settingsOpen) === id ? 0 : id;
+  armed = null;
+  renderGrid();
+}
+
+// saveStationSetting saves ONE ticked row: the stored loader with that field
+// changed. Nothing else on the row moves, which is what keeps a setting this
+// screen does not show — or one the person did not touch — as it was.
+async function saveStationSetting(el) {
+  const lid = elLoaderID(el);
+  const field = el.getAttribute('data-field') || '';
+  const item = loaderItem(lid);
+  if (!item || !field) return;
+  const value = el.type === 'checkbox' ? !!el.checked : el.value;
+  const body = settingUpdate(item.loader, field, value);
+  // Changing the layout would orphan the members: windows and dedicated
+  // positions cannot carry across. Say so, and drop them first on a yes.
+  if (field === 'dedicated') {
+    const homes = item.homes || [];
+    const pls = item.payloads || [];
+    if (homes.length + pls.length > 0) {
+      if (!await uiConfirm('This drops the station’s ' + homes.length + ' window(s) and ' + pls.length + ' part(s). Continue?')) {
+        renderGrid();
+        return;
+      }
+      try {
+        await Promise.all([].concat(
+          homes.map(function (hm) { return apiPost('/api/loader/remove-home', { loader_id: lid, position_node_id: hm.position_node_id }); }),
+          pls.map(function (p) { return apiPost('/api/loader/remove-payload', { loader_id: lid, payload_code: p.payload_code }); })
+        ));
+      } catch (e) { toast('' + e, 'error'); return; }
+    }
+  }
+  try {
+    await apiPost('/api/loader/update', body);
+  } catch (e) {
+    toast('' + e, 'error');
+  }
+  await refresh();
+}
+
+async function deleteStation(el) {
+  const lid = elLoaderID(el);
+  const ctx = stationContext(lid);
+  if (!ctx) return;
+  const msg = 'Delete ' + stationName(ctx) + '?' + (ctx.s2 ? ' Both stages go with it.' : '');
+  if (!await uiConfirm(msg)) return;
+  try {
+    await apiPost('/api/loader/delete', { id: Number(ctx.s1.loader.id) });
+  } catch (e) { toast('' + e, 'error'); return; }
+  settingsOpen = 0;
+  armed = null;
+  await refresh();
+}
+
+/* ── Tap-to-assign ────────────────────────────────────────────────────── */
+
+// windowOwners maps each node that is some station's window to that station.
+function windowOwners() {
+  const out = {};
+  loaderData.forEach(function (it) {
+    const ctx = stationContext(it.loader.id);
+    const station = ctx ? stationName(ctx) : baseName(it.loader.name);
+    (it.homes || []).forEach(function (hm) {
+      out[Number(hm.position_node_id)] = { loaderID: Number(it.loader.id), station: station };
+    });
+  });
+  return out;
+}
+
+// armContext is what assignReason needs to know about the armed slot.
+function armContext(a) {
+  const ctx = stationContext(a.loaderID);
+  if (!ctx) return null;
+  const item = loaderItem(a.loaderID);
+  const l = item.loader;
+  let current = '';
+  if (a.slot === 'inbound' || a.slot === 'wait') current = l.inbound_source || '';
+  if (a.slot === 'outbound') current = l.outbound_dest || '';
+  return {
+    stage: ctx.stage,
+    station: stationName(ctx),
+    // Direct mode: stage 2's windows are grouped by Core, so a node already
+    // in another group cannot join them.
+    direct: ctx.stage === 2 && !(ctx.s2.loader.inbound_source || ''),
+    ownGroup: ctx.s1.loader.outbound_dest || '',
+    current: current,
+    owners: windowOwners(),
+  };
+}
+
+const GROUP_NOT_A_WINDOW = 'a group can’t be a window';
+
+// assignReason says whether the armed slot can take a target, and the few
+// words the tile shows either way. Pure: {ok, current?, note}.
+//
+// target: {id, name, group (a group header), synthetic, typeCode, parentName, hasBin}
+function assignReason(a, target, ctx) {
+  if (a.slot === 'windows') {
+    if (target.group || target.synthetic) return { ok: false, note: GROUP_NOT_A_WINDOW };
+    const owner = ctx.owners[Number(target.id)];
+    if (owner && owner.loaderID === Number(a.loaderID)) {
+      return { ok: false, current: true, note: ctx.stage ? 'already Stage ' + ctx.stage : 'already a window' };
+    }
+    if (owner) return { ok: false, note: 'window of ' + owner.station };
+    if (ctx.stage === 2 && ctx.direct && target.parentName && target.parentName !== ctx.ownGroup) {
+      return { ok: false, note: 'in ' + target.parentName };
+    }
+    if (ctx.stage === 2 && target.hasBin) return { ok: false, note: 'has a bin on it' };
+    return { ok: true, note: 'tap to add' };
+  }
+  if (target.typeCode === 'LANE') return { ok: false, note: 'a lane' };
+  if (!target.group) {
+    const owner = ctx.owners[Number(target.id)];
+    if (owner && owner.station === ctx.station) return { ok: false, note: 'window of ' + owner.station };
+  }
+  if (ctx.current && ctx.current === target.name) return { ok: false, current: true, note: 'already here' };
+  return { ok: true, note: 'tap to use' };
+}
+
+function armText(a) {
+  const ctx = stationContext(a.loaderID);
+  if (!ctx) return '';
+  if (a.slot === 'windows') {
+    const what = ctx.stage ? 'a Stage ' + ctx.stage + ' window' : 'a window';
+    return 'Adding ' + what + ' — tap a node. Greyed nodes can’t go here.';
+  }
+  const slot = [].concat.apply([], stationSlots(ctx.s1, ctx.s2).map(function (g) { return g.slots; }))
+    .find(function (s) { return s.key === a.slot && Number(s.loaderID) === Number(a.loaderID); });
+  return (slot ? slot.label : 'Place') + ' — tap a group or node. Greyed ones can’t go here.';
+}
+
+function assignBarHtml() {
+  if (!armed) return '';
+  return h`<div class="loader-assign-line"><span class="loader-assign-text">${armText(armed)}</span>`
+    + h`<label for="loader-assign-find" class="loader-assign-find-label">Find</label>`
+    + h`<input type="search" id="loader-assign-find" class="form-input" value="${findText}" data-action-input="filterAssign" autocomplete="off">`
+    + h`<button type="button" class="btn btn-sm" data-action="disarmSlot">Done</button></div>`
+    + h`<div class="loader-assign-hint">Dragging a tile onto a slot still works. Esc stops adding.</div>`;
+}
+
+function armSlotFor(loaderID, slot) {
+  armed = { loaderID: Number(loaderID), slot: slot };
+  settingsOpen = 0;
+  renderGrid();
+}
+
+function armSlot(el) {
+  const lid = elLoaderID(el);
+  const slot = el.getAttribute('data-slot') || '';
+  if (!lid || !slot) return;
+  if (armed && armed.loaderID === lid && armed.slot === slot) { disarmSlot(); return; }
+  armSlotFor(lid, slot);
+}
+
+function disarmSlot() {
+  if (!armed) return;
+  armed = null;
+  findText = '';
+  renderGrid();
+}
+
+function filterAssign(el) {
+  findText = (el.value || '').trim();
+  decorateGrid();
+}
+
+function tileTarget(tile) {
+  const id = Number(tile.dataset.id || 0);
+  const n = nodeInfo[id] || {};
+  return {
+    id: id,
+    name: n.name || tile.dataset.name || '',
+    synthetic: n.synthetic != null ? n.synthetic : tile.dataset.synthetic === 'true',
+    typeCode: n.typeCode || tile.dataset.typeCode || '',
+    parentName: n.parentName != null ? n.parentName : (tile.dataset.parentName || ''),
+    hasBin: tile.dataset.hasPayload === 'true' || tile.dataset.hasEmptyBin === 'true',
+  };
+}
+
+function groupTarget(groupEl) {
+  const id = Number(groupEl.dataset.smktId || 0);
+  const n = nodeInfo[id] || {};
+  const nameEl = groupEl.querySelector('.smkt-name');
+  return { id: id, name: n.name || (nameEl ? nameEl.textContent : ''), group: true, synthetic: true, typeCode: n.typeCode || 'NGRP' };
+}
+
+const ASSIGN_CLASSES = ['assign-lit', 'assign-dim', 'assign-current', 'assign-filtered'];
+
+function markTarget(el, r, name) {
+  ASSIGN_CLASSES.forEach(function (c) { el.classList.remove(c); });
+  const old = el.querySelector(':scope > .assign-note');
+  if (old) old.remove();
+  if (!r) return;
+  el.classList.add(r.ok ? 'assign-lit' : (r.current ? 'assign-current' : 'assign-dim'));
+  if (findText && name.toLowerCase().indexOf(findText.toLowerCase()) < 0) el.classList.add('assign-filtered');
+  const note = document.createElement('span');
+  note.className = 'assign-note';
+  note.textContent = r.note;
+  el.appendChild(note);
+}
+
+// decorateGrid dims or lights every canonical tile (and every group header)
+// for the armed slot, or clears the marks when nothing is armed.
+function decorateGrid() {
+  const area = document.getElementById('nodes-drop-area');
+  if (!area) return;
+  const ctx = armed ? armContext(armed) : null;
+  if (armed && !ctx) armed = null;
+  area.classList.toggle('assign-armed', !!armed);
+  document.querySelectorAll('#nodes-drop-area .node-tile:not(.loader-member)').forEach(function (tile) {
+    if (!armed) { markTarget(tile, null, ''); return; }
+    const t = tileTarget(tile);
+    markTarget(tile, assignReason(armed, t, ctx), t.name);
+  });
+  document.querySelectorAll('#nodes-drop-area .smkt-group').forEach(function (g) {
+    const hdr = g.querySelector('.smkt-header');
+    if (!hdr) return;
+    if (!armed) { markTarget(hdr, null, ''); return; }
+    const t = groupTarget(g);
+    markTarget(hdr, assignReason(armed, t, ctx), t.name);
+  });
+}
+
+// onArmedClick takes a tap on the grid while a slot is armed. Registered in
+// the capture phase so it runs before the tile's own open-the-node action and
+// the group header's collapse toggle, and stops both.
+function onArmedClick(e) {
+  if (!armed) return;
+  const t = e.target;
+  if (!t || !t.closest) return;
+  if (t.closest('#loader-boxes') || t.closest('#loader-assign-bar')) return;
+  const tile = t.closest('#nodes-drop-area .node-tile:not(.loader-member)');
+  const hdr = tile ? null : t.closest('#nodes-drop-area .smkt-header');
+  if (!tile && !hdr) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const el = tile || hdr;
+  if (!el.classList.contains('assign-lit')) return;
+  const target = tile ? tileTarget(tile) : groupTarget(hdr.closest('.smkt-group'));
+  assignToArmed(target);
+}
+
+function assignToArmed(target) {
+  const a = armed;
+  if (!a) return;
+  if (a.slot === 'windows') { appendWindow(a.loaderID, target.id); return; } // stays armed: windows come in sets
+  armed = null;
+  findText = '';
+  assignPlace(a.loaderID, a.slot, target.name);
+}
+
+// appendWindow adds a window at the end of the station's arranged order — the
+// same two calls a drop onto the box makes.
+function appendWindow(lid, nodeId) {
+  const item = loaderItem(lid);
+  const existing = ((item && item.homes) || []).slice()
+    .sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); })
+    .map(function (hm) { return Number(hm.position_node_id); })
+    .filter(function (id) { return id !== Number(nodeId); });
+  apiPost('/api/loader/set-home', {
+    loader_id: Number(lid), position_node_id: Number(nodeId), payload_code: '', home_kind: 'home', uop_threshold: 0,
+  }).then(function () {
+    return apiPost('/api/loader/reorder-homes', { loader_id: Number(lid), ordered_ids: existing.concat([Number(nodeId)]) });
+  }).then(refresh).catch(function (err) { toast('' + err, 'error'); refresh(); });
+}
+
+// assignPlace fills (or with '' clears) a place slot. The writes go one after
+// another, in the order given: the pair's wait group depends on it.
+async function assignPlace(lid, slot, name) {
+  const ctx = stationContext(lid);
+  const item = loaderItem(lid);
+  if (!ctx || !item) return;
+  const bodies = slot === 'wait'
+    ? waitGroupUpdates(ctx.s1.loader, ctx.s2.loader, name)
+    : [placeUpdate(item.loader, slot, name)];
+  try {
+    for (const b of bodies) await apiPost('/api/loader/update', b);
+  } catch (e) {
+    toast('' + e, 'error');
+  }
+  await refresh();
+}
+
+function clearSlot(el) {
+  const lid = elLoaderID(el);
+  const slot = el.getAttribute('data-slot') || '';
+  if (!lid || !slot) return;
+  if (armed && armed.loaderID === lid && armed.slot === slot) armed = null;
+  assignPlace(lid, slot, '');
+}
+
+// toggleWaitGroup is the pair's "carts wait in a group between the stations".
+// Ticking it only opens the Carts wait at slot (armed, so the next tap names
+// the group); nothing is saved until a group is named. Unticking a pair that
+// has a group puts it back in direct mode.
+function toggleWaitGroup(el) {
+  const s1id = elLoaderID(el);
+  const ctx = stationContext(s1id);
+  if (!ctx || !ctx.s2) return;
+  const s2id = Number(ctx.s2.loader.id);
+  if (el.checked) {
+    waitOpen[s1id] = true;
+    armSlotFor(s2id, 'wait');
+    return;
+  }
+  delete waitOpen[s1id];
+  if (armed && armed.loaderID === s2id && armed.slot === 'wait') armed = null;
+  if (ctx.s2.loader.inbound_source) { assignPlace(s2id, 'wait', ''); return; }
+  renderGrid();
+}
+
+/* ── Data load + grid render ──────────────────────────── */
+
+async function refresh() {
+  try {
+    const results = await Promise.all([apiGet('/api/nodes'), apiGet('/api/payloads'), apiGet('/api/loader/list')]);
+    const nd = results[0], pd = results[1], ld = results[2];
+    const nodes = (nd && (nd.nodes || nd.data || nd)) || [];
+    nodesByName = {}; nodesById = {}; nodeInfo = {};
+    (Array.isArray(nodes) ? nodes : []).forEach(function (n) {
+      const id = n.id != null ? n.id : n.ID, name = n.name != null ? n.name : n.Name;
+      if (name == null) return;
+      nodesByName[name] = id; nodesById[id] = name;
+      nodeInfo[id] = {
+        id: id, name: name, synthetic: !!n.is_synthetic,
+        typeCode: n.node_type_code || '', parentName: n.parent_name || '',
+      };
+    });
+    const ps = (pd && (pd.payloads || pd.data || pd)) || [];
+    payloadCodes = (Array.isArray(ps) ? ps : []).map(function (p) {
+      return p.code || p.Code || p.payload_code || p.PayloadCode || p;
+    }).filter(Boolean);
+    loaderData = (ld && ld.loaders) || [];
+  } catch (e) { /* keep last render */ }
+  if (armed && !loaderItem(armed.loaderID)) armed = null;
+  renderGrid();
+}
+
+function renderGrid() {
+  const area = document.getElementById('nodes-drop-area');
+  if (!area) return; // page has no nodes
+  let host = document.getElementById('loader-boxes');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'loader-boxes';
+    area.insertBefore(host, area.firstChild);
+  }
+  let bar = document.getElementById('loader-assign-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'loader-assign-bar';
+    area.insertBefore(bar, host.nextSibling);
+  }
+  host.innerHTML = loaderData.length
+    ? gridHtml(loaderData)
+    : (isAuth ? h`<div class="loader-empty">No stations yet. Use <strong>+ Station</strong> to add one.</div>` : '');
+  bar.innerHTML = assignBarHtml();
+  bar.classList.toggle('is-hidden', !armed);
+  wireAll(host);
+  markLinkedTiles();
+  decorateGrid();
+}
+
+// markLinkedTiles mirrors each window's CANONICAL grid tile state onto its
+// tile in the box, so a node shows the same live colour (loaded / empty /
+// staged / claimed …) everywhere it appears. The canonical tile is not always
+// in #tile-grid — buildHierarchy moves a group's children into the group card —
+// so the lookup excludes the box tiles instead of scoping by container.
+function markLinkedTiles() {
+  const STATE = ['tile-has-payload', 'tile-empty-bin', 'tile-staged', 'tile-maintenance', 'tile-claimed', 'tile-disabled', 'tile-synthetic'];
+  document.querySelectorAll('.loader-member[data-id]').forEach(function (m) {
+    const id = m.dataset.id;
+    const grid = document.querySelector('.node-tile[data-id="' + id + '"]:not(.loader-member)');
+    STATE.forEach(function (c) { m.classList.remove(c); });
+    if (grid) STATE.forEach(function (c) { if (grid.classList.contains(c)) m.classList.add(c); });
+  });
 }
 
 /* ── Wiring ───────────────────────────────────────────── */
@@ -970,19 +1287,11 @@ function wireAll(host) {
     box.addEventListener('dragover', onBoxDragOver);
     box.addEventListener('dragleave', onBoxDragLeave);
     box.addEventListener('drop', onBoxDrop);
-    // 1b: the associated group zone (output) is a drop-target — dropping a
-    // node tile there reparents it INTO that node group (topology move), distinct from
-    // dropping on the box body (a loader-position overlay). Its slot tiles drag OUT.
-    box.querySelectorAll('.loader-box-group-zone').forEach(function (g) {
-      g.addEventListener('dragover', onGroupDragOver);
-      g.addEventListener('dragleave', onGroupDragLeave);
-      g.addEventListener('drop', onGroupDrop);
+    box.querySelectorAll('.loader-slot-place').forEach(function (s) {
+      s.addEventListener('dragover', onPlaceDragOver);
+      s.addEventListener('dragleave', onPlaceDragLeave);
+      s.addEventListener('drop', onPlaceDrop);
     });
-    box.querySelectorAll('.loader-group-slot').forEach(function (s) {
-      s.addEventListener('dragstart', onGroupSlotDragStart);
-      s.addEventListener('dragend', function () { refresh(); });
-    });
-
     box.querySelectorAll('.loader-member').forEach(function (g) {
       g.addEventListener('dragstart', onMemberDragStart);
       g.addEventListener('dragend', onMemberDragEnd);
@@ -998,14 +1307,6 @@ function wireAll(host) {
         removeMember(lid, x.closest('.loader-member').dataset.id);
       });
     });
-    const del = box.querySelector('.loader-box-del');
-    if (del) del.addEventListener('click', function () { deleteLoader(lid); });
-    const edit = box.querySelector('.loader-box-edit');
-    if (edit) edit.addEventListener('click', function () { editLoader(lid); });
-
-    // Allowed-payload checklist: ticking a box only updates the live "unsaved" status
-    // (no API call, no re-render — the panel stays open). The Save button commits the
-    // diff in one batch. See savePayloads.
     const pcSave = box.querySelector('.loader-pc-save');
     if (pcSave) {
       const updateStatus = function () { refreshPayloadStatus(lid, box); };
@@ -1016,6 +1317,11 @@ function wireAll(host) {
       updateStatus();
     }
   });
+}
+
+function isGroupDrag(e) {
+  const types = (e.dataTransfer && e.dataTransfer.types) || [];
+  return Array.prototype.indexOf.call(types, 'application/x-node-group') >= 0;
 }
 
 function onMemberDragStart(e) {
@@ -1033,22 +1339,21 @@ function onMemberDragEnd(e) {
   draggingMemberNode = null;
 }
 
+// A window is one node. A group dragged onto a stage box is still let drop,
+// so the refusal can say why instead of the drop silently not happening.
 function onBoxDragOver(e) {
-  // Both layouts accept node drops (shared_window = windows, dedicated_positions
-  // = positions). preventDefault + stopPropagation so the drop never falls
-  // through to #nodes-drop-area's onDropGrid, which would reparent the node to
-  // the grid bottom (the "disappear" bug).
-  e.preventDefault();
   e.stopPropagation();
+  e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
   this.classList.add('loader-drop-target');
 }
-function onBoxDragLeave(e) { this.classList.remove('loader-drop-target'); }
+function onBoxDragLeave() { this.classList.remove('loader-drop-target'); }
 
 function onBoxDrop(e) {
   e.preventDefault();
   e.stopPropagation(); // keep the drop from reaching onDropGrid (topology reparent)
   this.classList.remove('loader-drop-target');
+  if (isGroupDrag(e)) { toast(GROUP_NOT_A_WINDOW, 'warning'); return; }
 
   const member = e.dataTransfer.getData('application/x-loader-member');
   const nodeId = parseInt(member || e.dataTransfer.getData('text/plain'), 10);
@@ -1099,41 +1404,41 @@ function onBoxDrop(e) {
   }).catch(function (err) { toast('' + err, 'error'); });
 }
 
-// 1b: group-chip drop-target handlers. stopPropagation keeps the drop from also
-// reaching the box (position assign) or the grid (#nodes-drop-area reparent-to-bottom).
-function onGroupDragOver(e) {
+function onPlaceDragOver(e) {
   e.preventDefault();
   e.stopPropagation();
-  e.dataTransfer.dropEffect = 'move';
-  this.classList.add('loader-group-drop-target');
+  e.dataTransfer.dropEffect = isGroupDrag(e) ? 'link' : 'move';
+  this.classList.add('loader-drop-target');
 }
-function onGroupDragLeave() { this.classList.remove('loader-group-drop-target'); }
-function onGroupDrop(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  this.classList.remove('loader-group-drop-target');
-  const member = e.dataTransfer.getData('application/x-loader-member');
-  const nodeId = parseInt(member || e.dataTransfer.getData('text/plain'), 10);
-  if (!nodeId) return;
-  const groupName = this.dataset.group;
-  const parentId = nodesByName[groupName];
-  if (parentId == null) { toast('node group ' + groupName + ' not found', 'error'); return; }
-  // Reparent the node INTO the group's NGRP — the group owns its slots (topology move,
-  // unlike the loader-home overlay). Guarded server-side: a 409 means orders reference
-  // the node's current group; surface it rather than force.
-  apiPost('/api/node-group/reparent-node', { node_id: nodeId, parent_id: parentId, force: false })
-    .then(function (d) { if (d && d.error) { toast(d.error, 'error'); return; } refresh(); })
-    .catch(function (err) { toast('' + err, 'error'); });
-}
+function onPlaceDragLeave() { this.classList.remove('loader-drop-target'); }
 
-// onGroupSlotDragStart: dragging a slot tile OUT — set text/plain so the grid's onDropGrid
-// reparents it back out of the group (or another zone's onGroupDrop re-homes it); the
-// dragend handler refreshes so the box reflects the move. stopPropagation keeps the box's
-// member-drag from also firing.
-function onGroupSlotDragStart(e) {
+// onPlaceDrop names a place by drag: a group header or a node tile. The same
+// rule the grid shows when the slot is armed decides whether it can go here.
+function onPlaceDrop(e) {
+  e.preventDefault();
   e.stopPropagation();
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', e.currentTarget.dataset.id || '');
+  this.classList.remove('loader-drop-target');
+  if (e.dataTransfer.getData('application/x-loader-member')) return;
+  const lid = parseInt(this.dataset.loaderId, 10);
+  const slot = this.dataset.slot;
+  const groupName = e.dataTransfer.getData('application/x-node-group');
+  let target;
+  if (groupName) {
+    const gid = nodesByName[groupName];
+    target = { id: gid, name: groupName, group: true, synthetic: true, typeCode: (nodeInfo[gid] || {}).typeCode || 'NGRP' };
+  } else {
+    const nodeId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (!nodeId || !nodesById[nodeId]) return;
+    const n = nodeInfo[nodeId] || {};
+    target = { id: nodeId, name: nodesById[nodeId], synthetic: !!n.synthetic, typeCode: n.typeCode || '', parentName: n.parentName || '' };
+  }
+  const a = { loaderID: lid, slot: slot };
+  const ctx = armContext(a);
+  if (!ctx) return;
+  const r = assignReason(a, target, ctx);
+  if (!r.ok) { if (!r.current) toast(target.name + ': ' + r.note, 'warning'); return; }
+  if (armed && armed.loaderID === lid && armed.slot === slot) { armed = null; findText = ''; }
+  assignPlace(lid, slot, target.name);
 }
 
 /* ── Mutations ────────────────────────────────────────── */
@@ -1149,11 +1454,9 @@ function setMemberPayload(lid, nodeId, pc) {
 function removeMember(lid, nodeId) {
   apiPost('/api/loader/remove-home', { loader_id: Number(lid), position_node_id: Number(nodeId) }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
 }
-function deleteLoader(lid) {
-  apiPost('/api/loader/delete', { id: Number(lid) }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
-}
-// loaderPayloadDiff returns {checked, toAdd, toRemove} for a loader's checklist:
-// the currently-ticked boxes vs the loader's saved payload set.
+
+// loaderPayloadDiff returns {checked, toAdd, toRemove} for a box's part
+// checklist: the ticked boxes vs the loader's saved set.
 function loaderPayloadDiff(lid, box) {
   const item = loaderData.find(function (it) { return String(it.loader.id) === String(lid); });
   const current = new Set(((item && item.payloads) || []).map(function (p) { return p.payload_code; }));
@@ -1165,8 +1468,6 @@ function loaderPayloadDiff(lid, box) {
   return { checked: checked, toAdd: toAdd, toRemove: toRemove };
 }
 
-// refreshPayloadStatus updates the checklist's live "unsaved" line + Save button state
-// as boxes are ticked, without touching the server.
 function refreshPayloadStatus(lid, box) {
   const btn = box.querySelector('.loader-pc-save');
   const status = box.querySelector('.loader-pc-status');
@@ -1177,37 +1478,30 @@ function refreshPayloadStatus(lid, box) {
   btn.classList.toggle('is-dirty', dirty);
   if (status) {
     status.textContent = dirty
-      ? '● ' + d.checked.length + ' selected · +' + d.toAdd.length + ' / −' + d.toRemove.length + ' unsaved'
+      ? d.checked.length + ' selected · +' + d.toAdd.length + ' / −' + d.toRemove.length + ' unsaved'
       : d.checked.length + ' selected · saved';
   }
 }
 
-// savePayloads commits the checklist in ONE batch: it diffs the ticked boxes against
-// the loader's saved set and fires the set-payload (adds) / remove-payload (removes)
-// calls together, then refreshes once — so the panel stays open while you tick boxes
-// instead of collapsing + round-tripping per click.
 function savePayloads(lid, box, btn) {
   const d = loaderPayloadDiff(lid, box);
-  if (!d.toAdd.length && !d.toRemove.length) { toast('No payload changes to save', 'warning'); return; }
+  if (!d.toAdd.length && !d.toRemove.length) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const ops = d.toAdd.map(function (pc) {
     return apiPost('/api/loader/set-payload', { loader_id: Number(lid), payload_code: pc, uop_threshold: 0 });
   }).concat(d.toRemove.map(function (pc) {
     return apiPost('/api/loader/remove-payload', { loader_id: Number(lid), payload_code: pc });
   }));
-  Promise.all(ops).then(function () {
-    toast('Saved ' + (d.toAdd.length + d.toRemove.length) + ' payload change(s)', 'success');
-    refresh();
-  }).catch(function (err) {
+  Promise.all(ops).then(refresh).catch(function (err) {
     toast('' + err, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Save payloads'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Save parts'; }
   });
 }
 
 function findHome(lid, nodeId) {
   const item = loaderData.find(function (it) { return String(it.loader.id) === String(lid); });
   if (!item) return null;
-  return (item.homes || []).find(function (h) { return String(h.position_node_id) === String(nodeId); }) || null;
+  return (item.homes || []).find(function (hm) { return String(hm.position_node_id) === String(nodeId); }) || null;
 }
 function findHomeAnyLoader(nodeId) {
   for (const it of loaderData) {
@@ -1219,23 +1513,32 @@ function findHomeAnyLoader(nodeId) {
 
 /* ── Init ─────────────────────────────────────────────── */
 
-delegateActions(document.body, { openLoaderModal, closeLoaderModal, submitLoader,
-  addLoaderQuota, removeLoaderQuota, removeWindowBinType });
+delegateActions(document.body, {
+  openLoaderModal, closeLoaderModal, submitLoader, pickStationRole, pickStationStages,
+  armSlot, disarmSlot, clearSlot, toggleStationSettings, deleteStation,
+  addLoaderQuota, removeLoaderQuota, removeWindowBinType,
+});
 
-// The two controls that commit on CHANGE rather than on click: the carrier-mix
-// count and the per-window "+ type" picker. setLoaderQuota was registered as a
-// click action, which on a number input fires only when the input itself is
-// clicked — typing a count and tabbing away saved nothing.
-delegateActions(document.body, { setLoaderQuota, addWindowBinType }, { event: 'change' });
+// The controls that commit on CHANGE rather than on click: every Settings
+// row, the wait-group checkbox, the carrier-mix count and the per-window
+// "+ type" picker.
+delegateActions(document.body, { saveStationSetting, toggleWaitGroup, setLoaderQuota, addWindowBinType }, { event: 'change' });
+delegateActions(document.body, { filterAssign }, { event: 'input' });
 
-// Continuous edge auto-scroll while a node tile is dragged. Native HTML5 drag
-// suppresses the mouse WHEEL entirely (no wheel events fire during a drag), so
-// the only way to scroll mid-drag is to push the cursor toward the top/bottom
-// edge. A 16ms timer (started on dragstart, stopped on dragend/drop) scrolls the
-// window smoothly while the cursor sits in the edge band — speed scales with how
-// deep into the band it is — which works even when the cursor is held still
-// (per-dragover nudges fire too sparsely to scroll). Window is the scroller (no
-// inner overflow container on this page), so window.scrollBy is correct.
+document.addEventListener('click', onArmedClick, true);
+
+// Esc closes the create card when it is open, and otherwise stops adding.
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  if (modalOpen()) { closeLoaderModal(); return; }
+  if (armed) disarmSlot();
+});
+
+// Continuous edge auto-scroll while a tile is dragged. Native HTML5 drag
+// suppresses the mouse WHEEL entirely, so the only way to scroll mid-drag is to
+// push the cursor toward the top/bottom edge. A 16ms timer (started on
+// dragstart, stopped on dragend/drop) scrolls the window while the cursor sits
+// in the edge band — speed scales with how deep into the band it is.
 let _dragY = null;
 let _dragScrollTimer = null;
 function startDragScroll() {
@@ -1253,17 +1556,13 @@ function stopDragScroll() {
 }
 
 // Run on/after DOMContentLoaded so the supermarket's buildHierarchy (registered
-// earlier) has finished placing tiles before markLinkedTiles rings them. A
-// deferred module executes at readyState 'interactive', so the listener still
-// fires; 'complete' covers a late/dynamic load.
+// earlier) has finished placing tiles before markLinkedTiles and decorateGrid
+// read them. A deferred module executes at readyState 'interactive', so the
+// listener still fires; 'complete' covers a late/dynamic load.
 function init() {
   loadBinTypeCatalog();
-  // One handler: every control that changes WHAT APPLIES re-decides what is on
-  // screen. Kind, role and fed-by-hand each remove or restore whole questions.
-  ['loader-kind', 'loader-role', 'loader-fed-by-hand'].forEach(function (id) {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('change', applyLoaderForm);
-  });
+  const name = document.getElementById('loader-name');
+  if (name) name.addEventListener('keydown', function (e) { if (e.key === 'Enter') submitLoader(); });
   document.addEventListener('dragstart', startDragScroll);
   document.addEventListener('dragover', function (e) { _dragY = e.clientY; });
   document.addEventListener('dragend', stopDragScroll);

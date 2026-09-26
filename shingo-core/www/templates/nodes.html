@@ -5,7 +5,7 @@
     {{if .Authenticated}}
     <div class="flex gap-1">
       <button class="btn btn-primary" data-action="openNgrpModal">Add Node Group</button>
-      <button class="btn btn-primary" data-action="openLoaderModal">Create Loader</button>
+      <button class="btn btn-primary" data-action="openLoaderModal">+ Station</button>
       <button type="button" class="btn" data-action="syncFromFleet">Sync from Fleet</button>
       <details class="dev-menu disclosure-bare">
         <summary class="btn" title="Developer / test-data tools">Dev tools <svg class="icon icon-16" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
@@ -367,110 +367,51 @@
   </div>
 </div>
 
-<!-- Create / Manage Loader Modal (loader refactor: Core-owned bin_loaders) -->
-<div id="loader-modal" class="modal-overlay" data-backdrop-close>
-  <div class="modal" style="max-width:600px">
+<!-- New station card. Three questions and nothing else: every place the
+     station uses is set on its box on the page, and everything with a default
+     is behind the box's Settings link. No data-backdrop-close: a stray click
+     must not throw away what was typed. × , Cancel and Esc close it. -->
+<div id="loader-modal" class="modal-overlay">
+  <div class="modal" role="dialog" aria-labelledby="loader-modal-title">
     <div class="modal-header flex flex-between">
-      <h2 id="loader-modal-title">Create Loader</h2>
-      <button class="modal-close" data-action="closeLoaderModal">&times;</button>
+      <h2 id="loader-modal-title">New station</h2>
+      <button type="button" class="modal-close" aria-label="Close" data-action="closeLoaderModal">&times;</button>
     </div>
-    <div class="loader-form">
-      <input type="hidden" id="loader-edit-id">
-
+    <div class="modal-body">
       <div class="form-group">
         <label for="loader-name">Name</label>
-        <input type="text" id="loader-name" class="form-input" placeholder="e.g. COMP-LOADER">
+        <input type="text" id="loader-name" class="form-input" autocomplete="off" placeholder="e.g. PRESS6-UNLOAD">
+        <div class="form-error" id="loader-name-error" data-error-for="loader-name"></div>
       </div>
 
-      <div class="form-group">
-        <label for="loader-role">What is it?</label>
-        <div class="loader-form-pair">
-          <select id="loader-role" class="form-input">
-            <option value="produce">Loader — feeds a line (empties in, fulls out)</option>
-            <option value="consume">Unloader — drains (fulls in, empties out)</option>
-          </select>
-          <select id="loader-kind" class="form-input" aria-label="Loader style">
-            <option value="multi_window">Multi window — one carrier per window</option>
-            <option value="single_window">Single window — one carrier at a time</option>
-            <option value="dedicated">Dedicated homes — a spot per part</option>
-          </select>
+      <div class="form-group" role="group" aria-labelledby="loader-role-label">
+        <div class="station-question" id="loader-role-label">What does it do?</div>
+        <div class="station-choice-row">
+          <button type="button" class="station-choice" id="loader-role-produce" aria-pressed="false" data-action="pickStationRole:produce">Fills bins</button>
+          <button type="button" class="station-choice" id="loader-role-consume" aria-pressed="false" data-action="pickStationRole:consume">Empties bins</button>
         </div>
+        <div class="form-error" id="loader-role-error" data-error-for="loader-role"></div>
       </div>
 
-      <div class="form-group" id="loader-supply-row">
-        <label for="loader-replenishment">How is it supplied?</label>
-        <select id="loader-replenishment" class="form-input"></select>
-        <div id="loader-replenishment-hint" class="form-hint"></div>
-      </div>
-
-      <div class="form-group">
-        <label for="loader-inbound">Where carriers come from and go</label>
-        <div class="loader-form-pair">
-          <input type="text" id="loader-inbound" class="form-input" list="loader-nodes-dl" placeholder="Pull carriers from…">
-          <input type="text" id="loader-outbound" class="form-input" list="loader-nodes-dl" placeholder="Send carriers to…" aria-label="Send carriers to">
+      <div class="form-group is-hidden" id="loader-stages-row" role="group" aria-labelledby="loader-stages-label">
+        <div class="station-question" id="loader-stages-label">How does the full bin come off?</div>
+        <div class="station-choice-col">
+          <button type="button" class="station-choice station-choice-tall" id="loader-stages-single" aria-pressed="false" data-action="pickStationStages:single">
+            <span class="station-choice-title">One station</span>
+            <span class="station-choice-sub">The operator removes the bin and adds a bin.</span>
+          </button>
+          <button type="button" class="station-choice station-choice-tall" id="loader-stages-two" aria-pressed="false" data-action="pickStationStages:two">
+            <span class="station-choice-title">Two stations</span>
+            <span class="station-choice-sub">The first takes the full bin off the cart. The second puts an empty bin on.</span>
+          </button>
         </div>
-        <label class="form-check" for="loader-fed-by-hand">
-          <input type="checkbox" id="loader-fed-by-hand">
-          Fed by hand — a person or press loads it, no robot pulls
-        </label>
-        <label class="form-check" for="loader-changeover-directive">
-          <input type="checkbox" id="loader-changeover-directive">
-          During a changeover, tell this station what to load — the card names the
-          carrier the incoming style needs instead of offering the whole board
-        </label>
+        <div class="form-error" id="loader-stages-error" data-error-for="loader-stages"></div>
       </div>
-
-      <div class="form-group" id="loader-partials-row">
-        <label class="form-check" for="loader-accept-partials">
-          <input type="checkbox" id="loader-accept-partials">
-          Accept partial carriers — this unloader may be sent a partly used carrier,
-          not only full ones
-        </label>
-      </div>
-
-      <div class="form-group" id="loader-autopush-row">
-        <label class="form-check" for="loader-auto-push">
-          <input type="checkbox" id="loader-auto-push">
-          Re-pull the next full when a window frees — after a clear, a push-empty, or this
-          unloader's own empty-out landing
-        </label>
-      </div>
-
-      <div class="form-group" id="loader-bare-row">
-        <label for="loader-bare-type">Leaves carriers bare as</label>
-        <select id="loader-bare-type" class="form-input"></select>
-        <div class="form-hint">The first stage of a two-stage unloader: a clear here stamps this bare
-          bin type on the carrier it leaves, so nothing takes it as an empty until the second stage
-          pushes it out as a real type. Only bin types flagged bare are listed.</div>
-      </div>
-
-      <div class="form-group" id="loader-mix-row">
-        <!-- CARRIER MIX here, MAINTAINED LEVEL in the group section above. Two
-             mechanisms, two names, deliberately: this one is a loader's own
-             quota across its windows, that one is a level Core holds in a group.
-             Sharing a word would make them one thing in an operator's head. -->
-        <label>Carrier mix <span class="form-label-aside">(optional)</span></label>
-        <div id="loader-mix-editor"></div>
-        <div class="form-hint">How many of each carrier type this loader wants on hand. Leave it
-          empty to take whatever carrier is available. Declare a mix and it is honoured — a window
-          waits rather than taking the wrong type.</div>
-      </div>
-
-      <div class="form-group" id="loader-windows-row">
-        <label>What each window can take <span class="form-label-aside">(optional)</span></label>
-        <div id="loader-windows-editor"></div>
-        <div class="form-hint">A window with nothing set takes any carrier. Set types on a window that physically only fits some.</div>
-      </div>
-
-      <datalist id="loader-nodes-dl"></datalist>
-      <datalist id="loader-payloads-dl"></datalist>
-      <div class="flex-end gap-1 mt-1">
-        <button id="loader-submit-btn" class="btn btn-primary" data-action="submitLoader">Create Loader</button>
-      </div>
-      <span id="loader-result" class="text-sm"></span>
+      <div class="form-error" id="loader-form-error" data-error-for="loader-form"></div>
     </div>
-    <div class="form-hint mt-2">
-      Drag node tiles onto the box to add windows or spots · <strong>⠿</strong> reorder (this decides which window fills first) · <strong>×</strong> remove.
+    <div class="modal-footer">
+      <button type="button" class="btn" data-action="closeLoaderModal">Cancel</button>
+      <button type="button" id="loader-submit-btn" class="btn btn-primary" data-action="submitLoader">Create</button>
     </div>
   </div>
 </div>

@@ -1292,34 +1292,58 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   margin-bottom: 0.35rem;
 }
 
-/* ── Core-owned loader boxes (Nodes-grid overlay) ───── */
+/* ── Stations: Core-owned loader boxes on the Nodes page ─────────────────
+   The box is the form. Each slot is a labelled row; a required slot that is
+   still empty turns red and says what it needs; the header counts them.
+   The station outline is --loader-outline (shared/tokens.css). */
 #loader-boxes { margin-bottom: 0.5rem; }
 .loader-empty {
-  border: 1.5px dashed #0a8f6a;
+  border: 1.5px dashed var(--loader-outline);
   border-radius: 8px;
   padding: 0.5rem 0.75rem;
   margin-bottom: 0.75rem;
   font-size: 0.8rem;
   color: var(--text-muted);
 }
-.loader-box {
-  border: 2px solid #0a8f6a;
+.loader-station {
+  border: 2px solid var(--loader-outline);
   border-radius: 8px;
   margin-bottom: 1rem;
-  overflow: hidden;
   background: var(--bg);
+  padding: 0.6rem 0.75rem 0.75rem;
 }
-.loader-box-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  background: color-mix(in srgb, #0a8f6a 10%, var(--bg));
-  border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
+.loader-station-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;
+  margin-bottom: 0.6rem; font-size: 0.85rem;
 }
-.loader-box-name { font-weight: 700; color: #0a8f6a; }
-.loader-box-meta { color: var(--text-muted); font-size: 0.78rem; }
+.loader-box-name { font-weight: 700; color: var(--loader-outline); font-size: 1rem; }
+.loader-station-kind {
+  font-size: 0.72rem; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.55rem;
+}
+.loader-station-head > .loader-station-status { margin-left: auto; }
+.loader-settings-link {
+  background: none; border: 0; cursor: pointer; color: var(--primary);
+  font: inherit; font-size: 0.85rem; padding: 0.35rem 0.25rem; min-height: 32px;
+  margin-left: auto;
+}
+.loader-station-status ~ .loader-settings-link { margin-left: 0.25rem; }
+.loader-station-body.loader-pair-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.75rem;
+}
+/* A stage (or a single station's one column): its slots stacked. */
+.loader-box {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.7rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+  background: var(--surface);
+}
+.loader-box.loader-drop-target { outline: 2px dashed var(--loader-outline); outline-offset: 2px; }
+.loader-stage-title {
+  font-size: 0.72rem; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
 /* A threshold loader with payloads nobody set a threshold for. Amber for a
    partial gap (the loader works, those parts are ordered by nobody), red when
    NOTHING is set (nothing orders for the loader at all). It is a link because
@@ -1340,9 +1364,8 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   color: var(--danger-text, #b3453f);
   background: var(--danger-bg, rgba(179, 69, 63, 0.12));
 }
-/* A loader the Edge refuses outright — missing windows, positions or payloads.
-   Always red, never a link: unlike the threshold gap the fix is on THIS screen,
-   and there is no partial version of "not loaded at all". */
+/* A loader the Edge refuses for a malformed member. Always red, never a link:
+   the fix is on this screen. */
 .loader-config-gap {
   font-size: 0.72rem;
   padding: 0.1rem 0.45rem;
@@ -1353,42 +1376,47 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   white-space: nowrap;
   cursor: help;
 }
-.loader-box-edit, .loader-box-del {
-  font-size: 0.72rem;
-  padding: 0.15rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
-  cursor: pointer;
-  color: var(--text-muted);
+
+/* Slots. */
+.loader-slot { display: flex; flex-direction: column; gap: 0.3rem; border-radius: 6px; }
+.loader-slot-label { font-size: 0.85rem; }
+.loader-slot.is-armed > .loader-slot-label { color: var(--primary); font-weight: 600; }
+.loader-slot-need { font-size: 0.8rem; color: var(--danger); }
+.loader-slot-add {
+  font: inherit; font-size: 0.8rem; color: var(--text-muted); background: transparent;
+  border: 1px dashed var(--border); border-radius: 6px; padding: 0.35rem 0.7rem;
+  cursor: pointer; min-height: 34px;
 }
-.loader-box-edit { margin-left: auto; }
-.loader-box-del { margin-left: 0.35rem; }
-.loader-box-edit:hover { color: #0a8f6a; border-color: #0a8f6a; }
-.loader-box-del:hover { color: var(--danger); border-color: var(--danger); }
-.loader-box.loader-drop-reject { outline: 2px dashed var(--text-muted); outline-offset: 2px; opacity: 0.9; }
-.loader-box-body { padding: 0.5rem 0.75rem; }
-/* The loader's associated node groups (output supermarket + buffer) rendered INSIDE the
-   teal box as drop-zones: drag a node tile into a zone to add it to that group, drag a
-   slot tile out to remove it. Dashed teal = droppable. */
-.loader-box-group-zone {
-  margin-top: 0.5rem;
-  border: 1px dashed #0a8f6a; border-radius: 6px;
-  padding: 0.35rem 0.5rem;
-  background: color-mix(in srgb, #0a8f6a 6%, var(--bg));
+.loader-slot-add.is-armed { color: var(--on-accent-solid); background: var(--accent-solid); border: 1px solid var(--accent-solid); }
+.loader-place-row { display: flex; align-items: stretch; gap: 0.35rem; }
+.loader-place {
+  flex: 1 1 auto; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+  text-align: left; font: inherit; font-size: 0.85rem; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.45rem 0.7rem; min-height: 38px;
 }
-.loader-group-zone-head { display: flex; align-items: baseline; gap: 0.4rem; margin-bottom: 0.3rem; }
-.loader-box-group-label {
-  font-weight: 600; color: #0a8f6a;
-  text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.03em;
+button.loader-place { cursor: pointer; }
+/* Red by border and ink, not by a tint: --danger text clears 4.5:1 on
+   --surface and drops under it on any pink wash. */
+.loader-place.is-needed {
+  color: var(--danger);
+  border-color: var(--danger);
+  box-shadow: inset 3px 0 0 var(--danger);
 }
-.loader-box-group-name { color: var(--text); font-family: var(--mono, monospace); font-size: 0.78rem; }
-.loader-group-zone-body { display: flex; flex-wrap: wrap; gap: 0.4rem; min-height: 34px; align-items: center; }
-.loader-box-group-zone.loader-group-drop-target { border-style: solid; background: color-mix(in srgb, #0a8f6a 18%, var(--bg)); }
-/* A group-zone slot is the same node tile as a loader window (same size + mirrored
-   state colour); a DASHED teal outline (vs the window's solid) is the only marker that
-   tells "group member" apart from "loader window". */
-.loader-group-slot { outline: 2px dashed #0a8f6a; outline-offset: -2px; }
+.loader-place.is-quiet { color: var(--text-muted); }
+.loader-place.is-readonly { color: var(--text-muted); }
+.loader-slot.is-armed .loader-place { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: -1px; }
+.loader-place-hint { font-size: 0.75rem; color: var(--text-muted); }
+.loader-place-kind { color: var(--text-muted); font-size: 0.78rem; }
+.loader-place-kind.is-warn { color: var(--warning); }
+.loader-place-x {
+  flex: none; width: 38px; font-size: 1rem; line-height: 1; cursor: pointer;
+  color: var(--text-muted); background: transparent; border: 1px solid var(--border); border-radius: 6px;
+}
+.loader-place-x:hover { color: var(--danger); border-color: var(--danger); }
+.loader-slot-place.loader-drop-target .loader-place { outline: 2px dashed var(--loader-outline); outline-offset: 1px; }
+.loader-wait-check { font-size: 0.85rem; min-height: 32px; }
+
 .loader-members {
   display: flex;
   flex-wrap: wrap;
@@ -1398,8 +1426,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   border-radius: 4px;
   transition: background 0.15s;
 }
-.loader-box.loader-drop-target { outline: 2px dashed #0a8f6a; outline-offset: 2px; }
-.loader-box.loader-drop-target .loader-members { background: color-mix(in srgb, #0a8f6a 12%, var(--bg)); }
+.loader-box.loader-drop-target .loader-members { background: color-mix(in srgb, var(--loader-outline) 12%, var(--bg)); }
 /* Dedicated loaders stack two zones (Positions + Buffer) instead of one flat row.
    The members container becomes a column; each zone is its own wrapped tile row. */
 .loader-members-zoned { flex-direction: column; align-items: stretch; }
@@ -1417,32 +1444,25 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   background: color-mix(in srgb, var(--text-muted) 8%, var(--bg));
   border: 1px dashed color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
-/* The buffer badge reads as muted (a slot that pins no payload) vs the teal payload
-   badge a home position carries. */
 .loader-buffer-badge {
   background: color-mix(in srgb, var(--text-muted) 18%, var(--bg));
   color: var(--text-muted);
   border: 1px dashed color-mix(in srgb, var(--text-muted) 40%, transparent);
   font-style: italic;
 }
-/* A loader slot IS a node tile: it inherits .node-tile (same size, padding, and live
-   state colour — the .tile-* classes mirrored on by markLinkedTiles), so a node looks
-   identical whether it sits in a node group or a loader. It adds ONLY a teal outline to
-   mark it as a loader slot, and a column layout so the optional per-position payload
-   picker stacks under the name. outline (not a thicker border) + outline-offset keep the
-   box exactly the grid-tile size; the ⠿ grip and × ride as absolute corner overlays. */
+/* A window IS a node tile: it inherits .node-tile (same size, padding, and live
+   state colour — the .tile-* classes mirrored on by markLinkedTiles), so a node
+   looks identical in a group or a station. It adds ONLY a teal outline, and a
+   column layout so the per-position payload picker stacks under the name. */
 .loader-member {
   flex-direction: column;
   gap: 2px;
-  outline: 2px solid #0a8f6a;
+  outline: 2px solid var(--loader-outline);
   outline-offset: -2px;
 }
 .loader-member.dragging { opacity: 0.35; }
 .loader-grip { position: absolute; top: 2px; left: 4px; font-size: 0.62rem; opacity: 0.55; cursor: grab; user-select: none; }
 .loader-grip:active { cursor: grabbing; }
-.loader-member-name { font-weight: 700; }
-/* Per-position payload picker, styled as a badge. Muted "+ payload" prompt until
-   a code is chosen, then a solid teal badge (has-payload). */
 .loader-pc-sel {
   font-size: 0.64rem;
   padding: 0.05rem 0.25rem;
@@ -1454,30 +1474,34 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   cursor: pointer;
 }
 .loader-pc-sel.has-payload {
-  border: 1px solid #0a8f6a;
-  background: color-mix(in srgb, #0a8f6a 18%, var(--bg));
+  border: 1px solid var(--loader-outline);
+  background: color-mix(in srgb, var(--loader-outline) 18%, var(--bg));
   color: var(--text);
   font-weight: 700;
 }
 .loader-pc-badge {
   font-size: 0.68rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 10px;
-  background: color-mix(in srgb, #0a8f6a 18%, var(--bg)); border: 1px solid #0a8f6a; color: var(--text);
+  background: color-mix(in srgb, var(--loader-outline) 18%, var(--bg)); border: 1px solid var(--loader-outline); color: var(--text);
 }
 .loader-member-x { position: absolute; top: 0; right: 4px; cursor: pointer; color: var(--text-muted); font-weight: 700; font-size: 0.95rem; line-height: 1; }
 .loader-member-x:hover { color: var(--danger); }
-.loader-members-empty, .loader-anchor { font-size: 0.75rem; color: var(--text-muted); }
-/* shared_window allowed-payload set (chips), beneath the window nodes. */
-.loader-payload-set { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.5rem; padding-top: 0.4rem; border-top: 1px dashed var(--border); }
-.loader-set-label { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); }
-/* Allowed-payload checklist batch-save controls (the panel stays open; Save commits
-   all ticked changes at once). */
+.loader-members-empty { font-size: 0.75rem; color: var(--text-muted); }
+/* The part set (chips) and its batch-save checklist. */
+.loader-payload-set { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.loader-pc-checklist { flex-basis: 100%; }
+.loader-pc-summary { cursor: pointer; color: var(--primary); font-size: 0.8rem; }
+.loader-pc-list {
+  max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px; margin-top: 4px; display: flex; flex-direction: column; gap: 2px;
+}
+.loader-pc-item { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem; }
 .loader-pc-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.45rem; }
 .loader-pc-save {
   font-size: 0.78rem; padding: 0.2rem 0.6rem; border-radius: 4px; cursor: pointer;
-  border: 1px solid #0a8f6a; background: color-mix(in srgb, #0a8f6a 12%, var(--bg)); color: var(--text);
+  border: 1px solid var(--loader-outline); background: color-mix(in srgb, var(--loader-outline) 12%, var(--bg)); color: var(--text);
 }
 .loader-pc-save:disabled { opacity: 0.5; cursor: default; }
-.loader-pc-save.is-dirty { background: #0a8f6a; color: #fff; font-weight: 600; }
+.loader-pc-save.is-dirty { background: var(--loader-outline); color: var(--on-accent-solid); font-weight: 600; }
 .loader-pc-status { font-size: 0.75rem; color: var(--text-muted); }
 .loader-chip {
   display: inline-flex;
@@ -1491,28 +1515,29 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .loader-chip-x { cursor: pointer; color: var(--text-muted); font-weight: 700; }
 .loader-chip-x:hover { color: var(--danger); }
-.loader-chip-add input { width: 100px; font-size: 0.72rem; }
-.loader-hint { margin-top: 0.4rem; font-size: 0.7rem; color: var(--text-muted); opacity: 0.85; }
 
-/* ── The loader modal's form ─────────────────────────────────────────────
-   The form renders only the fields that apply to the chosen loader style, so
-   what is left has to hold its shape as sections come and go. Two things do
-   that: the accent rule down the left edge (which used to be an inline style
-   on a .form-group doing double duty as a container), and .loader-form-pair
-   for the two places that ask for two related values side by side. */
-.loader-form { border-left: 3px solid var(--accent); padding-left: 0.65rem; }
-.loader-form-pair { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.loader-form-pair > * { flex: 1 1 12rem; }
+/* Settings, drawn in place of the slots behind the box's one link. */
+.loader-settings { display: flex; flex-direction: column; gap: 0.9rem; }
+.loader-settings-section { display: flex; flex-direction: column; gap: 0.15rem; }
+.loader-setting { min-height: 40px; font-size: 0.9rem; }
+.loader-setting-block { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.3rem 0; }
+.loader-setting-label { font-size: 0.9rem; }
+.loader-setting-aside { font-size: 0.78rem; color: var(--text-muted); margin-left: 0.4rem; }
+.loader-settings-foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+  padding-top: 0.6rem; border-top: 1px solid var(--border);
+}
+.loader-settings-note { font-size: 0.8rem; color: var(--text-muted); }
 
-/* The carrier mix: how many of each carrier type this loader wants on hand. */
+/* The carrier mix: how many of each cart type this station wants on hand. */
 .loader-mix-line { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.3rem; }
 .loader-mix-line .loader-mix-want { width: 4.5rem; flex: none; }
-.loader-mix-add { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
+.loader-mix-add { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.3rem; }
 .loader-mix-add select { flex: 1 1 8rem; }
 
-/* Per-window capability: what one window can physically take. One row per
-   window, in the operator's arranged order — the same order that decides
-   which window fills first, so the two readings agree on this screen. */
+/* Per-window capability: what one window can physically take, one row per
+   window in the arranged order. */
+.loader-window-cap-head { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin-top: 0.3rem; }
 .loader-window-cap { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
 .loader-window-cap-name {
   font-family: var(--mono, monospace); font-size: 0.75rem; font-weight: 700;
@@ -1521,9 +1546,55 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .loader-window-cap-any { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
 .loader-window-cap select { flex: none; width: auto; font-size: 0.72rem; padding: 0.1rem 0.3rem; }
 .loader-window-cap-empty { font-size: 0.8rem; color: var(--text-muted); }
-/* A grid tile that's also a dedicated loader position — ringed teal to link the
-   two representations (the node stays on the grid; the box holds a member chip). */
-.node-tile.loader-linked { outline: 2px solid #0a8f6a; outline-offset: 1px; }
+
+/* Tap-to-assign: the bar over the grid while a slot is armed, and the marks
+   on each tile. A dimmed tile says why on the tile itself. */
+#loader-assign-bar {
+  position: sticky; top: 0; z-index: var(--z-sticky);
+  background: var(--bg); padding: 0.5rem 0; margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.loader-assign-line { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; }
+.loader-assign-text { font-size: 0.9rem; color: var(--primary); flex: 1 1 18rem; }
+.loader-assign-find-label { font-size: 0.8rem; color: var(--text-muted); }
+#loader-assign-find { width: 14rem; min-height: 34px; }
+.loader-assign-hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.25rem; }
+#nodes-drop-area.assign-armed .node-tile.assign-lit,
+#nodes-drop-area.assign-armed .smkt-header.assign-lit { outline: 2px solid var(--primary); outline-offset: -2px; cursor: pointer; }
+#nodes-drop-area.assign-armed .node-tile.assign-dim,
+#nodes-drop-area.assign-armed .smkt-header.assign-dim { opacity: 0.35; cursor: not-allowed; }
+#nodes-drop-area.assign-armed .node-tile.assign-current { outline: 2px solid var(--primary); background: color-mix(in srgb, var(--primary) 18%, var(--surface)); }
+#nodes-drop-area.assign-armed .node-tile.assign-filtered,
+#nodes-drop-area.assign-armed .smkt-header.assign-filtered { display: none; }
+#nodes-drop-area.assign-armed .assign-note { display: block; font-size: 0.66rem; color: var(--text-muted); line-height: 1.2; }
+#nodes-drop-area.assign-armed .assign-lit > .assign-note { color: var(--primary); }
+#nodes-drop-area:not(.assign-armed) .assign-note { display: none; }
+.smkt-group > .smkt-header[draggable="true"] { cursor: grab; }
+
+/* The new-station card: modal-body / modal-footer and .form-error slots, per
+   the style guide's Modals and Forms sections. */
+.modal .modal-footer {
+  display: flex; justify-content: flex-end; gap: 0.5rem;
+  margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border);
+}
+.modal .form-error { color: var(--danger); font-size: 0.8rem; margin-top: 0.25rem; }
+.modal .form-error:empty { display: none; }
+.station-question { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.4rem; }
+.station-choice-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+.station-choice-col { display: flex; flex-direction: column; gap: 0.6rem; }
+.station-choice {
+  min-height: 56px; font: inherit; font-size: 1rem; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+}
+.station-choice.is-selected {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--primary) 22%, var(--bg)); border-color: var(--primary);
+}
+.station-choice-tall {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem;
+  text-align: left; padding: 0.75rem 1rem;
+}
+.station-choice-sub { font-size: 0.82rem; color: var(--text-muted); font-weight: 400; }
 
 /* ── AMR Task Board — DELETED, the whole section ─────────────────────────
    Entered as a bare-class collision and came out as dead code.

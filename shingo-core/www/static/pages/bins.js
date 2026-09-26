@@ -821,7 +821,6 @@ function openEditBTModal(btn) {
   document.getElementById('bt-edit-h').value = d.height && d.height !== '0' ? d.height : '';
   document.getElementById('bt-edit-l').value = d.length && d.length !== '0' ? d.length : '';
   renderRobotGroupChoices(document.getElementById('bt-edit-robot-group'), d.robotGroup || '');
-  document.getElementById('bt-edit-bare').checked = d.bare === 'true';
   showModal('bt-edit-modal');
 }
 function closeBTEditModal() { hideModal('bt-edit-modal'); }
