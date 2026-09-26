@@ -1,12 +1,10 @@
 package www
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
 	"shingocore/domain"
-	"shingocore/service"
 )
 
 func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +39,6 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		// configurable while RDS is down, and the datalist on the form is the
 		// typo guard. Same treatment payloads.robot_group already gets.
 		RequiredRobotGroup: r.FormValue("required_robot_group"),
-		Bare:               formBare(r, false),
 	}
 
 	if err := h.engine.BinService().CreateBinType(bt); err != nil {
@@ -83,32 +80,13 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		bt.LengthIn = l
 	}
 	bt.RequiredRobotGroup = r.FormValue("required_robot_group")
-	bt.Bare = formBare(r, bt.Bare)
 
 	if err := svc.UpdateBinType(bt); err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, service.ErrBareTypeInPayloadRule) || errors.Is(err, service.ErrBareTypeInUse) {
-			status = http.StatusBadRequest
-		}
-		http.Error(w, err.Error(), status)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	http.Redirect(w, r, "/bins", http.StatusSeeOther)
-}
-
-// formBare reads the bare checkbox, which the form sends with a hidden
-// companion: `bare=false` first, then `bare=true` when the box is ticked. The
-// last value wins. A POST that carries no bare field at all keeps cur, because
-// this door is a full-record write and an absent checkbox would otherwise read
-// as an un-flag (TestPinBinTypeUpdate_AFieldTheFormOmitsIsOverwritten is that
-// hazard on another field).
-func formBare(r *http.Request, cur bool) bool {
-	vals := r.Form["bare"]
-	if len(vals) == 0 {
-		return cur
-	}
-	return vals[len(vals)-1] == "true"
 }
 
 func (h *Handlers) handleBinTypeDelete(w http.ResponseWriter, r *http.Request) {

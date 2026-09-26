@@ -43,6 +43,8 @@ type fakeStore struct {
 	// tell", which is the untyped resolve every test predating the derivation got.
 	orderBinTypes   map[int64]int64
 	orderBinTypeErr error // injected read failure; the derivation must not refuse on it
+	// bareOf maps a bare marker to its carrier; absent = a real type.
+	bareOf map[int64]int64
 
 	// Lane query fixtures.
 	//
@@ -242,6 +244,13 @@ func (f *fakeStore) LaneAcceptsInbound(laneID int64) (bool, error) {
 		return v, nil
 	}
 	return true, nil // default: empty lane is compatible
+}
+
+func (f *fakeStore) BinTypeBareOf(binTypeID int64) (*int64, error) {
+	if id, ok := f.bareOf[binTypeID]; ok {
+		return &id, nil
+	}
+	return nil, nil
 }
 
 // BinTypeForOrder defaults to "could not tell", which is what an order with

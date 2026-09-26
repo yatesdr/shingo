@@ -33,6 +33,8 @@ type fakeCapacityDB struct {
 	effBinTypes    map[int64][]*bins.BinType
 	effBinTypesErr error
 	orderBinTypes  map[int64]int64
+	// bareOf maps a bare marker to its carrier; absent = a real type.
+	bareOf map[int64]int64
 }
 
 func (f *fakeCapacityDB) GetNodeByDotName(string) (*nodes.Node, error) {
@@ -365,6 +367,13 @@ func (f *fakeCapacityDB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, er
 		return nil, f.effBinTypesErr
 	}
 	return f.effBinTypes[nodeID], nil
+}
+
+func (f *fakeCapacityDB) BinTypeBareOf(binTypeID int64) (*int64, error) {
+	if id, ok := f.bareOf[binTypeID]; ok {
+		return &id, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeCapacityDB) BinTypeForOrder(orderID int64) (*int64, error) {

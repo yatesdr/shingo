@@ -520,8 +520,8 @@ func findLoaderInfo(t *testing.T, db *store.DB, id int64) protocol.LoaderInfo {
 }
 
 // TestPinBuildLoaderInfos_AZeroPayloadUnloader pins the stage-2 shape on the
-// wire: a consume shared-window loader with a window, no payloads and no bare
-// type projects its window, no payloads, and a blank BareBinTypeCode (omitted
+// wire: a consume shared-window loader with a window, no payloads and no
+// second stage projects its window, no payloads, and LeavesBare false (omitted
 // on the wire).
 func TestPinBuildLoaderInfos_AZeroPayloadUnloader(t *testing.T) {
 	t.Parallel()
@@ -557,55 +557,45 @@ func TestPinBuildLoaderInfos_AZeroPayloadUnloader(t *testing.T) {
 	if len(li.Payloads) != 0 {
 		t.Errorf("payloads = %+v, want none", li.Payloads)
 	}
-	if li.BareBinTypeCode != "" {
-		t.Errorf("BareBinTypeCode = %q, want blank for a loader with no bare type", li.BareBinTypeCode)
+	if li.LeavesBare {
+		t.Error("LeavesBare = true, want false for a loader that names no second stage")
 	}
 }
 
-// TestBuildLoaderInfos_CarriesTheBareType: an unloader's bare type reaches the
-// wire as its code, resolved in the loader row; cleared, it is blank again.
-func TestBuildLoaderInfos_CarriesTheBareType(t *testing.T) {
+// TestBuildLoaderInfos_StageOneLeavesBare: a stage 1 — the loader naming a
+// second stage — tells the Edge its CLEAR leaves the cart bare; the stage 2 it
+// names does not. No marker code travels: Core derives each cart's marker at
+// the CLEAR.
+func TestBuildLoaderInfos_StageOneLeavesBare(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-
-	var bareID int64
-	if err := db.DB.QueryRow(
-		`INSERT INTO bin_types (code, bare) VALUES ('HL-HALF', true) RETURNING id`,
-	).Scan(&bareID); err != nil {
-		t.Fatalf("seed bare type: %v", err)
-	}
-	id, err := db.CreateLoader(loaders.Loader{
-		Name: "HL-S1", Role: loaders.RoleConsume,
+	two, err := db.CreateLoader(loaders.Loader{
+		Name: "HL-S2", Role: loaders.RoleConsume,
 		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
 	})
 	if err != nil {
-		t.Fatalf("CreateLoader: %v", err)
+		t.Fatalf("CreateLoader stage 2: %v", err)
 	}
-	l, err := db.GetLoader(id)
-	if err != nil || l == nil {
-		t.Fatalf("GetLoader: %v", err)
+	one, err := db.CreateLoader(loaders.Loader{
+		Name: "HL-S1", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator,
+		SecondStageLoaderID: &two,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader stage 1: %v", err)
 	}
-	l.BareBinTypeID = &bareID
-	if err := db.UpdateLoader(*l); err != nil {
-		t.Fatalf("UpdateLoader: %v", err)
+	if !findLoaderInfo(t, db, one).LeavesBare {
+		t.Error("stage 1 LeavesBare = false, want true")
 	}
-	if got := findLoaderInfo(t, db, id).BareBinTypeCode; got != "HL-HALF" {
-		t.Errorf("BareBinTypeCode = %q, want HL-HALF", got)
-	}
-
-	l.BareBinTypeID = nil
-	if err := db.UpdateLoader(*l); err != nil {
-		t.Fatalf("UpdateLoader clear: %v", err)
-	}
-	if got := findLoaderInfo(t, db, id).BareBinTypeCode; got != "" {
-		t.Errorf("BareBinTypeCode = %q after clearing, want blank", got)
+	if findLoaderInfo(t, db, two).LeavesBare {
+		t.Error("stage 2 LeavesBare = true, want false")
 	}
 }
 
 // TestPinLoaderInfo_WireKeys pins the JSON key set Core sends for an unloader
 // with every optional field at its zero value and no members: every omitempty
 // field (the flow endpoints, funnel_windows, changeover_load_directive,
-// bare_bin_type_code, auto_push, positions, payloads, quota) is absent, so a
+// leaves_bare, auto_push, positions, payloads, quota) is absent, so a
 // Core that adds one ships the same bytes for every loader that does not set it.
 func TestPinLoaderInfo_WireKeys(t *testing.T) {
 	t.Parallel()

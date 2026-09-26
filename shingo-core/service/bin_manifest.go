@@ -201,12 +201,25 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 // empty state. Callers that don't set dunnage (UOP-applier auto-clear,
 // admin clear) pass nil.
 func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64, by protocol.Declarer) (int64, error) {
+	return s.ClearForReuseResolved(binID, func(*sql.Tx) (*int64, error) { return binTypeID, nil }, by)
+}
+
+// ClearForReuseResolved is ClearForReuse with the type to stamp decided INSIDE
+// the clear's transaction, by resolve, against the bin as it stands at that
+// moment. The two-stage stamp needs it: the marker a stage-1 CLEAR stamps is
+// derived from the cart's current type and may be created by the same
+// transaction (bins.ResolveBareStampTx).
+func (s *BinManifestService) ClearForReuseResolved(binID int64, resolve func(*sql.Tx) (*int64, error), by protocol.Declarer) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
+	binTypeID, err := resolve(tx)
+	if err != nil {
+		return 0, err
+	}
 	epoch, err := s.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse", by)
 	if err != nil {
 		return 0, err

@@ -172,6 +172,12 @@ import (
 // demand_origins.used_edge_reports. Neither is inert to an older binary: brief
 // v7 rules out a rollback to the previous build.
 //
+// v136 ADDS bin_types.bare_of (a bare marker names its carrier), re-derives
+// bin_types.bare as GENERATED from it, backfills `<code>-BARE` markers, and
+// DROPS bin_loaders.bare_bin_type_id. Not inert to an older binary, which
+// writes bin_types.bare and reads the dropped column; rollback needs the
+// schema put back by hand (see v136BareOf).
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -183,8 +189,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 132 {
-		t.Errorf("head migration = %d, want 132", got)
+	if got := store.LatestMigrationVersion(); got != 136 {
+		t.Errorf("head migration = %d, want 136", got)
 	}
 }
 

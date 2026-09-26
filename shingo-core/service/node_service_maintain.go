@@ -134,6 +134,14 @@ func (s *NodeService) SetMaintainLevel(groupNodeID, binTypeID int64, want int) (
 	if err != nil {
 		return MaintainedGroupCheck{}, fmt.Errorf("read carrier type %d: %w", binTypeID, err)
 	}
+	// A level is N EMPTIES kept on hand, and a bare cart is nobody's empty
+	// (bins.EmptyCarrierWhere): the keeper would chase a level it can never
+	// count.
+	if bt.Bare {
+		return MaintainedGroupCheck{
+			Refusals: []string{fmt.Sprintf("%s is a bare cart type: a group keeps empties, and no finder hands out a bare cart", bt.Code)},
+		}, nil
+	}
 	post, err := s.GetMaintainedGroup(groupNodeID)
 	if err != nil {
 		return MaintainedGroupCheck{}, err

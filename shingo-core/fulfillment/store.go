@@ -55,6 +55,7 @@ type Store interface {
 	// child free that the resolver will refuse for declaring another carrier type.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
 	BinTypeForOrder(orderID int64) (*int64, error)
+	BinTypeBareOf(binTypeID int64) (*int64, error)
 
 	// Bin reads (CapacityDB).
 	CountBinsByNode(nodeID int64) (int, error)

@@ -47,10 +47,6 @@ type Plant struct {
 	CellConfigs        []CellConfig      `yaml:"cell_configs"`
 	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
 	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
-	// BareBinTypes lists the bin types flagged bare (→ bin_types.bare): the label
-	// a two-stage unloader's first stage stamps on the carrier it leaves. Each
-	// must be in bin_types and no payload may name one as its bin_type.
-	BareBinTypes []string `yaml:"bare_bin_types,omitempty"`
 	// LoaderSettings holds the per-loader switches a claim cannot express, keyed
 	// by loader name: the anchor node a claim names, or a window_of / home_of
 	// label. Absent = the column defaults, which is every loader today.
@@ -238,9 +234,6 @@ type LoaderSettings struct {
 	// when a window frees. Distinct from a claim's auto_push, which seeds only
 	// the Edge's stored claim and never reaches the Core loader.
 	AutoPush bool `yaml:"auto_push,omitempty"`
-	// BareBinType → bin_loaders.bare_bin_type_id, by code: the bare type this
-	// unloader's blank CLEAR stamps. Must be listed in bare_bin_types.
-	BareBinType string `yaml:"bare_bin_type,omitempty"`
 }
 
 // Bin is an initial bin placement. Empty Payload = an empty bin.

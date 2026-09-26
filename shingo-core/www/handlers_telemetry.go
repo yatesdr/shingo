@@ -421,6 +421,21 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 // atomically with the manifest clear (dunnage floating — operator declared
 // which dunnage type they just loaded). Unknown or node-disallowed codes
 // return 400. Absent → bin_type_id is unchanged (existing behaviour).
+//
+// TWO CARTS IGNORE THE CODE, and are stamped inside the clear's transaction
+// instead (bins.ResolveBareStampTx):
+//   - at a window of a stage 1 (a loader naming a second stage) the cart takes
+//     its own type's bare marker. A stage 1 never re-types a cart to a real
+//     type, and several cart types run through one stage 1 with nothing
+//     configured. A stage 1 with nowhere to send the cart is refused with 409
+//     BEFORE the clear: after it, the Edge's empty-out has no destination and a
+//     bare cart would sit on the window.
+//   - a bare cart anywhere else (stage 2's SEND ON) takes its carrier back. An
+//     older Edge still posts PUSH AS <type> here; the cart gets its own type
+//     regardless, because a bare cart is a known cart.
+//
+// cleared_bin_type_code in the answer is the cart's type as an operator knows
+// it — the carrier, never a marker.
 func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeName    string `json:"node_name"`
@@ -469,10 +484,15 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stamp, ok := h.binClearStamp(w, node.ID, req.NodeName, bin.BinTypeBare)
+	if !ok {
+		return
+	}
+
 	// Resolve optional dunnage re-type. Existence check keeps the blast radius
 	// of a mis-pick to "starves out, repair via re-type" (R3 severity).
 	var binTypeID *int64
-	if req.BinTypeCode != "" {
+	if req.BinTypeCode != "" && stamp == domain.StampNone {
 		bt, err := h.engine.BinService().GetBinTypeByCode(req.BinTypeCode)
 		if err != nil {
 			h.jsonError(w, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode), http.StatusBadRequest)
@@ -493,10 +513,16 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	// cannot be written the clear is refused with them, and the unloader presses
 	// the button again; the alternative is a clear that destroys the count with
 	// nothing recording that material left.
-	newEpoch, err := h.orchestration.ClearForReuseAndBookDeparture(bin.ID, node.ID, binTypeID)
+	newEpoch, err := h.orchestration.ClearForReuseStampAndBookDeparture(bin.ID, node.ID, binTypeID, stamp)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Read after the commit: the stamp is decided inside the transaction. A
+	// failed read costs the board its line, never the clear.
+	clearedType, err := h.engine.BinService().RealTypeCode(bin.ID)
+	if err != nil {
+		log.Printf("telemetry: bin-clear bin=%d: read its cart type: %v", bin.ID, err)
 	}
 	log.Printf("telemetry: bin-clear bin=%d at node=%s bin_type=%s epoch=%d", bin.ID, req.NodeName, req.BinTypeCode, newEpoch)
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
@@ -512,7 +538,32 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		"bin_label":            bin.Label,
 		"delta_epoch":          newEpoch,
 		"cleared_payload_code": bin.PayloadCode,
+		// The cart's type as an operator knows it — the carrier, never a
+		// marker — for the board's CLEAR line.
+		"cleared_bin_type_code": clearedType,
 	})
+}
+
+// binClearStamp decides the two-stage stamp for a clear at nodeID, before
+// anything is written: a stage-1 window stamps the cart's marker (and refuses
+// with 409 when the stage 1 has nowhere to send the cart); a bare cart
+// elsewhere gets its carrier back; anything else stamps what it was told. ok
+// false means the answer has been written.
+func (h *Handlers) binClearStamp(w http.ResponseWriter, nodeID int64, nodeName string, bare bool) (domain.BareStamp, bool) {
+	stageOne, sendsTo, err := h.engine.LoaderService().StageOneAt(nodeID)
+	switch {
+	case err != nil:
+		h.jsonError(w, fmt.Sprintf("read the loader at %s: %v", nodeName, err), http.StatusInternalServerError)
+		return domain.StampNone, false
+	case stageOne && sendsTo == "":
+		h.jsonError(w, fmt.Sprintf("this station has nowhere to send the cart: set where %s's carts go before clearing", nodeName), http.StatusConflict)
+		return domain.StampNone, false
+	case stageOne:
+		return domain.StampMarker, true
+	case bare:
+		return domain.StampCarrier, true
+	}
+	return domain.StampNone, true
 }
 
 // ── E-Maint Robot Telemetry ──────────────────────────────────

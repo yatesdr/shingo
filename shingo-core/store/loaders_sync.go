@@ -60,10 +60,11 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			FunnelWindows: l.FunnelWindows,
 
 			ChangeoverLoadDirective: l.ChangeoverLoadDirective,
-			// Resolved in the ListLoaders row above; blank for every loader
-			// without one, and omitted on the wire.
-			BareBinTypeCode: l.BareBinTypeCode,
-			AutoPush:        l.AutoPush,
+			// A stage 1 is the loader that names a second stage. Its CLEAR
+			// leaves the cart bare, and Core derives the marker from the cart's
+			// own type, so the Edge needs the fact and never the code.
+			LeavesBare: l.SecondStageLoaderID != nil,
+			AutoPush:   l.AutoPush,
 		}
 
 		// A home's kind is fully determined by the parent loader's layout: a

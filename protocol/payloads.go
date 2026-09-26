@@ -915,13 +915,13 @@ type LoaderInfo struct {
 	// value — which is also what a Core predating this field sends — means the
 	// ordinary board, which is what every loader does today.
 	ChangeoverLoadDirective bool `json:"changeover_load_directive,omitempty"`
-	// BareBinTypeCode names the bin type a blank CLEAR at this unloader stamps
-	// on the carrier it leaves behind: the stage-1 half of a two-stage
-	// unloader. The type is flagged bare on Core, so no empty finder hands the
-	// carrier out until PUSH AS re-stamps it. Empty — also what a Core
-	// predating this field sends — means a blank CLEAR stamps nothing, which
-	// is what every unloader does today.
-	BareBinTypeCode string `json:"bare_bin_type_code,omitempty"`
+	// LeavesBare marks the stage-1 half of a two-stage unloader: its CLEAR
+	// leaves the cart with no bin on it, and Core stamps the cart's own bare
+	// marker, derived from the cart's type. The Edge posts a blank code there
+	// and shows a one-tap panel with no type on it — the marker is Core's
+	// bookkeeping and never reaches an operator. False — also what a Core
+	// predating this field sends — is an ordinary unloader.
+	LeavesBare bool `json:"leaves_bare,omitempty"`
 	// AutoPush re-pulls this unloader's next full when a CLEAR, a PUSH EMPTY or
 	// its own empty-out landing frees a window. It lives on the loader because
 	// the stored claim that used to carry it is retired and SynthClaim never set

@@ -503,6 +503,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/nodegroup/add-lane", h.apiAddLane)
 				r.Post("/nodegroup/reorder-lane", h.apiReorderLaneSlots)
 				r.Post("/loader/create", h.apiCreateLoader)
+				r.Post("/loader/create-two-stage", h.apiCreateTwoStageLoader)
 				r.Post("/loader/update", h.apiUpdateLoader)
 				r.Post("/loader/set-payload", h.apiSetLoaderPayload)
 				r.Post("/loader/set-home", h.apiSetLoaderHome)

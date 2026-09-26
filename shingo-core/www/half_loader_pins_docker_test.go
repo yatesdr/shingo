@@ -54,10 +54,15 @@ func mintBinType(t *testing.T, db *store.DB, code string) *bins.BinType {
 	return bt
 }
 
+// mintBareType mints a carrier named code and returns its bare marker: bare is
+// derived from bin_types.bare_of and cannot be set by hand.
 func mintBareType(t *testing.T, db *store.DB, code string) *bins.BinType {
 	t.Helper()
-	bt := &bins.BinType{Code: code, Description: "half-loader pin", Bare: true}
-	testutil.MustNoErr(t, db.CreateBinType(bt), "create bare bin type "+code)
+	carrier := mintBinType(t, db, code)
+	id, err := db.EnsureBareMarker(carrier.ID)
+	testutil.MustNoErr(t, err, "derive the marker of "+code)
+	bt, err := db.GetBinType(id)
+	testutil.MustNoErr(t, err, "read the marker of "+code)
 	return bt
 }
 
@@ -110,17 +115,19 @@ func TestPinBinClear_DeclaredTypeOnAFullBinAtAConsumeLoaderWindow_StampsIt(t *te
 // TestPinBinClear_ReClearOfAnEmptyCarrier_RestampsItsType is PUSH AS's Core
 // half: a carrier already empty, standing at an unloader window, cleared with a
 // declared type. It is re-stamped and its epoch moves on, exactly as a clear of
-// a full carrier; nothing about the carrier's CURRENT type is consulted.
+// a full carrier. The carrier's current type is an ordinary one: a BARE cart
+// ignores the declared type and gets its own carrier back
+// (TestBinClear_BareCartIgnoresAnExplicitCode).
 func TestPinBinClear_ReClearOfAnEmptyCarrier_RestampsItsType(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	win := halfLoaderWindow(t, db, sd, "HLPIN-S2-W1")
-	stage1 := mintBareType(t, db, "HLPIN-S2-FROM")
+	stage1 := mintBinType(t, db, "HLPIN-S2-FROM")
 	realType := mintBinType(t, db, "HLPIN-S2-REAL")
 	bin := testdb.CreateBinAtNode(t, db, "", win.ID, "BIN-HLPIN-S2")
 	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1 WHERE id=$2`, stage1.ID, bin.ID)
-	testutil.MustNoErr(t, err, "retype to stage-1 carrier")
+	testutil.MustNoErr(t, err, "retype to the from carrier")
 	before, err := db.GetBin(bin.ID)
 	testutil.MustNoErr(t, err, "get bin before")
 
@@ -142,7 +149,7 @@ func TestPinBinClear_ReClearOfAnEmptyCarrier_RestampsItsType(t *testing.T) {
 		t.Errorf("epoch before %d after %d resp %d, want the clear to bump it and report it",
 			before.DeltaEpoch, after.DeltaEpoch, resp.DeltaEpoch)
 	}
-	// Re-stamped, it is an ordinary carrier again: the row loses `bare`.
+	// Re-stamped to a real type, the row carries no `bare`.
 	if row := nodeBinsRow(t, h, win.Name); row["bare"] != nil {
 		t.Errorf("node-bins row = %v, want no bare key once PUSH AS re-stamped a real type", row)
 	}

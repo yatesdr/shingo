@@ -873,15 +873,19 @@ func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID *int64) bool {
 			"— a list that could not be read is not an empty list", nodeID, err, *binTypeID)
 		return false
 	}
-	if len(bts) == 0 {
-		return true // nothing declared = no restriction
+	if bins.TypeAdmits(bts, *binTypeID, nil) {
+		return true // nothing declared, or declared by name
 	}
-	for _, bt := range bts {
-		if bt.ID == *binTypeID {
-			return true
-		}
+	// A BARE MARKER FITS WHERE ITS CARRIER FITS — the same cart with no bin on
+	// it. The gate asks the same thing (dispatch.binTypeAllowedAt), so a group
+	// the gate admits a bare cart to is one this places it in. A failed read
+	// refuses, for the reason above.
+	bareOf, err := r.DB.BinTypeBareOf(*binTypeID)
+	if err != nil {
+		log.Printf("store slot: bin type %d carrier unreadable (%v); refusing it at node %d", *binTypeID, err, nodeID)
+		return false
 	}
-	return false
+	return bareOf != nil && bins.TypeAdmits(bts, *binTypeID, bareOf)
 }
 
 // payloadAllowedAt reports whether a store of payloadCode may land at a child

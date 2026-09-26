@@ -99,8 +99,9 @@ CREATE TABLE public.bin_loaders (
     archived_at timestamp with time zone,
     funnel_windows boolean DEFAULT false NOT NULL,
     accept_partials boolean DEFAULT false NOT NULL,
-    bare_bin_type_id bigint,
     auto_push boolean DEFAULT false NOT NULL,
+    second_stage_loader_id bigint,
+    fed_directly boolean DEFAULT false NOT NULL,
     CONSTRAINT bin_loaders_layout_check CHECK ((layout = ANY (ARRAY['shared_window'::text, 'dedicated_positions'::text]))),
     CONSTRAINT bin_loaders_replenishment_check CHECK ((replenishment = ANY (ARRAY['operator'::text, 'threshold'::text]))),
     CONSTRAINT bin_loaders_role_check CHECK ((role = ANY (ARRAY['produce'::text, 'consume'::text])))
@@ -125,7 +126,9 @@ CREATE TABLE public.bin_types (
     required_robot_group text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    bare boolean DEFAULT false NOT NULL
+    bare_of bigint,
+    bare boolean GENERATED ALWAYS AS ((bare_of IS NOT NULL)) STORED NOT NULL,
+    CONSTRAINT bin_types_bare_of_not_self CHECK ((bare_of <> id))
 );
 
 CREATE SEQUENCE public.bin_types_id_seq
@@ -235,17 +238,6 @@ CREATE TABLE public.bins (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     anomaly_note text DEFAULT ''::text NOT NULL,
     undeclared_carrier_at timestamp with time zone
-);
-
-CREATE TABLE public.payload_containment (
-    payload_code text NOT NULL,
-    active boolean DEFAULT false NOT NULL,
-    reason text DEFAULT ''::text NOT NULL,
-    activated_by text DEFAULT ''::text NOT NULL,
-    activated_at timestamp with time zone,
-    deactivated_by text DEFAULT ''::text NOT NULL,
-    deactivated_at timestamp with time zone,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE SEQUENCE public.bins_id_seq
@@ -905,6 +897,17 @@ CREATE TABLE public.payload_bin_types (
     bin_type_id bigint NOT NULL
 );
 
+CREATE TABLE public.payload_containment (
+    payload_code text NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    activated_by text DEFAULT ''::text NOT NULL,
+    activated_at timestamp with time zone,
+    deactivated_by text DEFAULT ''::text NOT NULL,
+    deactivated_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.payload_manifest (
     id bigint NOT NULL,
     payload_id bigint NOT NULL,
@@ -1300,7 +1303,6 @@ CREATE TABLE public.style_claims (
     role text NOT NULL,
     swap_mode text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
-    containment_destination text DEFAULT ''::text NOT NULL,
     allowed_payload_codes text DEFAULT '[]'::text NOT NULL,
     uop_capacity integer DEFAULT 0 NOT NULL,
     reorder_point integer DEFAULT 0 NOT NULL,
@@ -1308,7 +1310,8 @@ CREATE TABLE public.style_claims (
     inbound_source text DEFAULT ''::text NOT NULL,
     outbound_destination text DEFAULT ''::text NOT NULL,
     paired_core_node text DEFAULT ''::text NOT NULL,
-    second_paired_core_node text DEFAULT ''::text NOT NULL
+    second_paired_core_node text DEFAULT ''::text NOT NULL,
+    containment_destination text DEFAULT ''::text NOT NULL
 );
 
 CREATE TABLE public.supply_refusals (
@@ -1496,6 +1499,9 @@ ALTER TABLE ONLY public.bin_loaders
     ADD CONSTRAINT bin_loaders_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.bin_types
+    ADD CONSTRAINT bin_types_bare_of_key UNIQUE (bare_of);
+
+ALTER TABLE ONLY public.bin_types
     ADD CONSTRAINT bin_types_code_key UNIQUE (code);
 
 ALTER TABLE ONLY public.bin_types
@@ -1641,6 +1647,9 @@ ALTER TABLE ONLY public.parts
 
 ALTER TABLE ONLY public.payload_bin_types
     ADD CONSTRAINT payload_bin_types_pkey PRIMARY KEY (payload_id, bin_type_id);
+
+ALTER TABLE ONLY public.payload_containment
+    ADD CONSTRAINT payload_containment_pkey PRIMARY KEY (payload_code);
 
 ALTER TABLE ONLY public.payload_manifest
     ADD CONSTRAINT payload_manifest_pkey PRIMARY KEY (id);
@@ -1905,7 +1914,10 @@ ALTER TABLE ONLY public.bin_loader_quotas
     ADD CONSTRAINT bin_loader_quotas_loader_id_fkey FOREIGN KEY (loader_id) REFERENCES public.bin_loaders(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.bin_loaders
-    ADD CONSTRAINT bin_loaders_bare_bin_type_id_fkey FOREIGN KEY (bare_bin_type_id) REFERENCES public.bin_types(id);
+    ADD CONSTRAINT bin_loaders_second_stage_loader_id_fkey FOREIGN KEY (second_stage_loader_id) REFERENCES public.bin_loaders(id);
+
+ALTER TABLE ONLY public.bin_types
+    ADD CONSTRAINT bin_types_bare_of_fkey FOREIGN KEY (bare_of) REFERENCES public.bin_types(id);
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id);

@@ -296,6 +296,9 @@ func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) 
 	return f.effBinTypes[nodeID], nil
 }
 
+// BinTypeBareOf: every type is a real one here.
+func (f *fakeStore) BinTypeBareOf(int64) (*int64, error) { return nil, nil }
+
 func (f *fakeStore) BinTypeForOrder(orderID int64) (*int64, error) {
 	if id, ok := f.orderBinTypes[orderID]; ok {
 		return &id, nil

@@ -143,12 +143,15 @@ type Engine struct {
 	notifier         *notify.Notifier
 	stopChan         chan struct{}
 	stopOnce         sync.Once
-	sceneSyncing     atomic.Bool
-	fleetConnected   atomic.Bool
-	msgConnected     atomic.Bool
-	dbConnected      atomic.Bool
-	robotsMu         sync.RWMutex
-	robotsCache      map[string]fleet.RobotStatus
+	// stage2 serializes the two-stage pull per pair and tracks its trigger
+	// goroutines (stage2_pull.go).
+	stage2         stage2Puller
+	sceneSyncing   atomic.Bool
+	fleetConnected atomic.Bool
+	msgConnected   atomic.Bool
+	dbConnected    atomic.Bool
+	robotsMu       sync.RWMutex
+	robotsCache    map[string]fleet.RobotStatus
 
 	// preDisconnectAvailability captures per-robot Available state at the
 	// moment a fleet disconnect is detected. autoResumeAfterFleetReconnect

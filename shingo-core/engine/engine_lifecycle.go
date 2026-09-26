@@ -122,6 +122,11 @@ func (e *Engine) Start() {
 			"assigned, so their config accepts nothing: %s", len(names), strings.Join(names, ", "))
 	}
 
+	// Two-stage unloaders in pull mode: a cart that reached a wait group while
+	// Core was down, or a window freed then, is pulled now rather than on the
+	// next event (stage2_pull.go).
+	e.sweepStage2Pulls()
+
 	// Scan for any orders queued before restart
 	go e.fulfillment.RunOnce()
 
@@ -352,6 +357,7 @@ WHERE o.status IN ('in_transit', 'staged')
 
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stopChan) })
+	e.stage2.stop()
 	if e.fulfillment != nil {
 		e.fulfillment.Stop()
 	}

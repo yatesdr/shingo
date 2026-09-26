@@ -821,4 +821,15 @@ func (e *Engine) wireEventHandlers() {
 	// bin-transit handler on a pickup. Registering it last is the cheapest way
 	// to be after all of them; see wiring_lane_gate.go.
 	e.wireLaneGateHandlers()
+
+	// ── Two-stage pull ──────────────────────────────────────────────────
+	// After the completion handler above has applied the arrival, so a pull
+	// reads the cart where it landed. Both handlers only read and spawn; the
+	// pull itself runs on stage2_pull.go's tracked goroutine.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
+		e.onStage2WindowLeft(evt.Payload.FromNodeID)
+	}, EventBinEnteredTransit)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		e.onStage2OrderCompleted(evt.Payload)
+	}, EventOrderCompleted)
 }

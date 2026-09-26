@@ -69,8 +69,11 @@ type Cand struct {
 	LoadedAt  *time.Time // nil for an empty; FIFO key is COALESCE(LoadedAt, CreatedAt)
 	CreatedAt time.Time
 
-	Claimed           bool // claimed_by IS NOT NULL → unavailable
-	Locked            bool
+	Claimed bool // claimed_by IS NOT NULL → unavailable
+	Locked  bool
+	// Bare is bin_types.bare: a cart with no bin on it. Never a container to
+	// fill and never stock to drain, so it is rejected before any intent.
+	Bare              bool
 	ManifestConfirmed bool             // required only for a FULL source (see eligible)
 	Status            domain.BinStatus // rejected set is statusUsable
 }
@@ -115,6 +118,11 @@ func RejectReason(c Cand, w Want) string {
 		return "claimed"
 	case c.Locked:
 		return "locked"
+	case c.Bare:
+		// A bare cart has no payload, which Fill would read as a fungible
+		// empty. It never composed bins.EmptyCarrierWhere, so the rule is
+		// spelled here (TestDedicatedPool_NeverDrawsABareCart).
+		return "bare"
 	case c.Status.BlocksPickup():
 		return "status:" + string(c.Status)
 	}

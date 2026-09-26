@@ -11,10 +11,11 @@ import (
 	"shingocore/service"
 )
 
-// seed_bare_docker_test.go — the fixture keys the half-loader sim needs:
-// bare_bin_types (→ bin_types.bare) and loader_settings (→ a loader's
-// accept_partials and bare_bin_type_id), seeded through the admin doors' own
-// refusals so a fixture cannot set up a state the running plant would refuse.
+// seed_bare_docker_test.go — the fixture key the half-loader sim needs:
+// loader_settings (→ a loader's accept_partials and auto_push), seeded through
+// the admin doors' own refusals so a fixture cannot set up a state the running
+// plant would refuse. A bare marker is not a fixture key: it derives from each
+// cart's own type at a stage-1 CLEAR.
 
 func loadSeedFixture(t *testing.T) *plantspec.Plant {
 	t.Helper()
@@ -25,14 +26,12 @@ func loadSeedFixture(t *testing.T) *plantspec.Plant {
 	return plant
 }
 
-func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
+func TestSeedCore_LoaderSettings(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	plant := loadSeedFixture(t)
-	plant.BinTypes = append(plant.BinTypes, "HALF-CART")
-	plant.BareBinTypes = []string{"HALF-CART"}
 	plant.LoaderSettings = map[string]plantspec.LoaderSettings{
-		"FGN_001": {AcceptPartials: true, BareBinType: "HALF-CART", AutoPush: true},
+		"FGN_001": {AcceptPartials: true, AutoPush: true},
 	}
 	if err := plant.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -41,10 +40,6 @@ func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
 		t.Fatalf("seedCore: %v", err)
 	}
 
-	bt, err := db.GetBinTypeByCode("HALF-CART")
-	if err != nil || !bt.Bare {
-		t.Fatalf("HALF-CART = %+v, %v; want a bare type", bt, err)
-	}
 	std, err := db.GetBinTypeByCode("STANDARD")
 	if err != nil || std.Bare {
 		t.Fatalf("STANDARD = %+v, %v; want not bare", std, err)
@@ -53,8 +48,8 @@ func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
 	if err != nil || l == nil {
 		t.Fatalf("FGN_001 loader: %v", err)
 	}
-	if !l.AcceptPartials || l.BareBinTypeID == nil || *l.BareBinTypeID != bt.ID || l.BareBinTypeCode != "HALF-CART" {
-		t.Errorf("FGN_001 = accept %v bare %v/%q, want true and HALF-CART", l.AcceptPartials, l.BareBinTypeID, l.BareBinTypeCode)
+	if !l.AcceptPartials {
+		t.Errorf("FGN_001 accept_partials = false, want the loader_settings value")
 	}
 	if !l.AutoPush {
 		t.Error("FGN_001 auto_push = false, want the loader_settings value")
@@ -65,9 +60,9 @@ func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
 	}
 	// FGN_002's CLAIM says auto_push: true; only loader_settings reaches the
 	// Core loader (TestPinSeedCore_ClaimAutoPushDoesNotReachTheCoreLoader).
-	if other.AcceptPartials || other.BareBinTypeID != nil || other.AutoPush {
-		t.Errorf("FGN_002 has no settings but got accept %v bare %v auto_push %v",
-			other.AcceptPartials, other.BareBinTypeID, other.AutoPush)
+	if other.AcceptPartials || other.AutoPush {
+		t.Errorf("FGN_002 has no settings but got accept %v auto_push %v",
+			other.AcceptPartials, other.AutoPush)
 	}
 	// Idempotent re-seed.
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
@@ -75,18 +70,15 @@ func TestSeedCore_BareTypeAndLoaderSettings(t *testing.T) {
 	}
 }
 
-// TestSeedCore_RefusesAnIllegalBareFixture: each refusal the admin doors make
-// is made at seed time too.
-func TestSeedCore_RefusesAnIllegalBareFixture(t *testing.T) {
+// TestSeedCore_RefusesAnIllegalLoaderSettingsFixture: each refusal the admin
+// doors make is made at seed time too.
+func TestSeedCore_RefusesAnIllegalLoaderSettingsFixture(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name    string
 		edit    func(p *plantspec.Plant)
 		wantErr error // checked with errors.Is when the refusal is the service's
 	}{
-		{"a bare bin type on a produce loader", func(p *plantspec.Plant) {
-			p.LoaderSettings = map[string]plantspec.LoaderSettings{"PLK_X1": {BareBinType: "HALF-CART"}}
-		}, service.ErrBareTypeProduce},
 		{"accept_partials on a produce loader", func(p *plantspec.Plant) {
 			p.LoaderSettings = map[string]plantspec.LoaderSettings{"PLK_X1": {AcceptPartials: true}}
 		}, service.ErrAcceptPartialsProduce},
@@ -102,8 +94,6 @@ func TestSeedCore_RefusesAnIllegalBareFixture(t *testing.T) {
 			t.Parallel()
 			db := testdb.Open(t)
 			plant := loadSeedFixture(t)
-			plant.BinTypes = append(plant.BinTypes, "HALF-CART")
-			plant.BareBinTypes = []string{"HALF-CART"}
 			tc.edit(plant)
 			err := seedCore(db, plant, map[string]int64{})
 			if err == nil {
@@ -113,23 +103,5 @@ func TestSeedCore_RefusesAnIllegalBareFixture(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-// TestPlantSpec_RefusesABareTypeAsAPayloadCarrier: validation catches the
-// payload-rule case before any write; the seeder asks the service's check
-// again at the write.
-func TestPlantSpec_RefusesABareTypeAsAPayloadCarrier(t *testing.T) {
-	t.Parallel()
-	plant := loadSeedFixture(t)
-	plant.BareBinTypes = []string{plant.Payloads[0].BinType}
-	if err := plant.Validate(); err == nil {
-		t.Fatal("Validate accepted a payload whose bin_type is bare")
-	}
-
-	db := testdb.Open(t)
-	err := seedCore(db, plant, map[string]int64{})
-	if !errors.Is(err, service.ErrBareTypeInPayloadRule) {
-		t.Fatalf("seedCore err = %v, want ErrBareTypeInPayloadRule", err)
 	}
 }

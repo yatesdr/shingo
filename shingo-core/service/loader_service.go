@@ -63,16 +63,6 @@ var ErrAcceptPartialsProduce = errors.New("only an unloader can accept partial c
 // it would be stored, shown, and do nothing.
 var ErrAutoPushProduce = errors.New("only an unloader can re-pull its next full: a produce loader pulls no fulls")
 
-// ErrBareTypeProduce refuses a bare type on a produce loader. The bare type is
-// what an unloader's blank CLEAR stamps on the carrier it leaves behind; a
-// produce loader has no such CLEAR, so it would be stored, shown, and do nothing.
-var ErrBareTypeProduce = errors.New("only an unloader can leave carriers bare: a produce loader has no clear that would stamp the type")
-
-// ErrBareTypeNotBare refuses a loader's bare type that is not flagged bare. The
-// stamped carrier would then be an ordinary empty the plant-wide finders hand
-// out, which is the stealing the flag exists to prevent.
-var ErrBareTypeNotBare = errors.New("an unloader's bare type must be a bin type flagged bare: otherwise the carrier it leaves is handed out as an ordinary empty")
-
 // LoaderService wraps the bin_loaders store CRUD with the demand re-derive.
 type LoaderService struct {
 	db       *store.DB
@@ -123,6 +113,35 @@ func (s *LoaderService) WindowBinTypes(loaderID int64) (map[int64][]string, erro
 // other questions appear, so a create that dropped it contradicted the screen
 // that sent it.
 func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource string, funnelWindows bool) (int64, error) {
+	return s.CreateLoader(LoaderCreate{
+		Name: name, Role: role, Layout: layout, Replenishment: replenishment,
+		OutboundDest: outboundDest, InboundSource: inboundSource, FunnelWindows: funnelWindows,
+	})
+}
+
+// LoaderCreate is CreateLoader's argument: everything a loader can be set up
+// with, so the form asks each question once, at create, instead of creating
+// the loader and then editing it to reach the rest.
+type LoaderCreate struct {
+	Name                    string
+	Role                    string
+	Layout                  string
+	Replenishment           string
+	OutboundDest            string
+	InboundSource           string
+	FunnelWindows           bool
+	ChangeoverLoadDirective bool
+	AcceptPartials          bool
+	AutoPush                bool
+	// FedDirectly: fed straight from a process, not from an inbound source.
+	// When set, InboundSource is stored blank whatever was sent.
+	FedDirectly bool
+}
+
+// CreateLoader is Create with the settings Update takes, refused on the same
+// terms.
+func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
+	layout, replenishment := in.Layout, in.Replenishment
 	if layout == "" {
 		layout = loaders.LayoutSharedWindow
 	}
@@ -130,23 +149,34 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 		// Role-aware default: a produce loader is threshold-driven (UOP kanban
 		// autoreorder); a consume loader (unloader) is always operator (the
 		// window-queue drain — no consume threshold mode today).
-		if role == loaders.RoleConsume {
+		if in.Role == loaders.RoleConsume {
 			replenishment = loaders.ReplenishmentOperator
 		} else {
 			replenishment = loaders.ReplenishmentThreshold
 		}
 	}
-	if err := checkReplenishment(role, replenishment); err != nil {
+	if err := checkReplenishment(in.Role, replenishment); err != nil {
 		return 0, err
 	}
-	if err := s.checkInboundSource(inboundSource); err != nil {
+	if in.AcceptPartials && in.Role != loaders.RoleConsume {
+		return 0, ErrAcceptPartialsProduce
+	}
+	if in.AutoPush && in.Role != loaders.RoleConsume {
+		return 0, ErrAutoPushProduce
+	}
+	inbound := in.InboundSource
+	if in.FedDirectly {
+		inbound = ""
+	}
+	if err := s.checkInboundSource(inbound); err != nil {
 		return 0, err
 	}
 	id, err := s.db.CreateLoader(loaders.Loader{
-		Name: name, Role: role, Layout: layout,
-		Replenishment: replenishment, OutboundDest: outboundDest,
-		InboundSource: inboundSource,
-		FunnelWindows: funnelWindows,
+		Name: in.Name, Role: in.Role, Layout: layout,
+		Replenishment: replenishment, OutboundDest: in.OutboundDest,
+		InboundSource: inbound, FunnelWindows: in.FunnelWindows,
+		ChangeoverLoadDirective: in.ChangeoverLoadDirective,
+		AcceptPartials:          in.AcceptPartials, AutoPush: in.AutoPush, FedDirectly: in.FedDirectly,
 	})
 	if err != nil {
 		return 0, err
@@ -185,9 +215,9 @@ type LoaderUpdate struct {
 	// AutoPush: an unloader re-pulls its next full when a window frees. Consume
 	// only; set on a saved loader, like AcceptPartials.
 	AutoPush bool
-	// BareBinTypeID: the bare type this unloader's blank CLEAR stamps. 0 is
-	// none. Consume only, and the type must be flagged bare.
-	BareBinTypeID int64
+	// FedDirectly: fed straight from a process. When set, InboundSource is
+	// stored blank whatever was sent.
+	FedDirectly bool
 }
 
 func (s *LoaderService) Update(in LoaderUpdate) error {
@@ -211,14 +241,17 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	if err := checkReplenishment(cur.Role, replenishment); err != nil {
 		return err
 	}
-	cur.Name = name
 	cur.Layout = layout
 	cur.Replenishment = replenishment
 	cur.OutboundDest = outboundDest
+	if in.FedDirectly {
+		inboundSource = ""
+	}
 	if err := s.checkInboundSource(inboundSource); err != nil {
 		return err
 	}
 	cur.InboundSource = inboundSource
+	cur.FedDirectly = in.FedDirectly
 	cur.FunnelWindows = funnelWindows
 	cur.ChangeoverLoadDirective = in.ChangeoverLoadDirective
 	if in.AcceptPartials && cur.Role != loaders.RoleConsume {
@@ -229,44 +262,51 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 		return ErrAutoPushProduce
 	}
 	cur.AutoPush = in.AutoPush
-	bare, err := CheckLoaderBareType(s.db, cur.Role, in.BareBinTypeID)
+	// A direct pair's group is named after stage 1, and syncPair finds it by
+	// that name. Find it under the OLD name before the rename lands and carry it
+	// over, or the sync would make a second, empty group and refuse, because the
+	// windows still stand in the first (TestPairRename_KeepsItsGroup).
+	carried, err := s.pairGroupBeforeRename(id, name)
 	if err != nil {
 		return err
 	}
-	cur.BareBinTypeID = bare
+	cur.Name = name
 	if err := s.db.UpdateLoader(*cur); err != nil {
+		return err
+	}
+	if carried != nil {
+		carried.Name = pairGroupName(cur)
+		if err := s.db.UpdateNode(carried); err != nil {
+			return fmt.Errorf("rename the group %s made for %s: %w", carried.Name, cur.Name, err)
+		}
+	}
+	// Half of a pair: stage 1's destination is derived from stage 2 (a stage-1
+	// OutboundDest sent here is replaced), and a stage 2's inbound source is
+	// what switches the pair between pull and direct.
+	if err := s.syncPairOf(id); err != nil {
 		return err
 	}
 	s.rederive()
 	return nil
 }
 
-// CheckLoaderBareType resolves a loader's bare type: nil for none, else the id
-// once the role is consume and the type is flagged bare. One bin-type read, and
-// only when a type is named. Exported so every writer of
-// bin_loaders.bare_bin_type_id asks the same question — Update above and
-// cmd/seeddev's fixture load.
-func CheckLoaderBareType(db *store.DB, role string, id int64) (*int64, error) {
-	if id == 0 {
-		return nil, nil
-	}
-	if role != loaders.RoleConsume {
-		return nil, ErrBareTypeProduce
-	}
-	bt, err := db.GetBinType(id)
-	if err != nil {
-		return nil, fmt.Errorf("bare bin type %d: %w", id, err)
-	}
-	if !bt.Bare {
-		return nil, ErrBareTypeNotBare
-	}
-	return &id, nil
-}
-
 // Delete archives a loader (a soft delete: its homes and payloads stay, and
 // ListLoaders stops returning it) and re-derives.
 func (s *LoaderService) Delete(id int64) error {
-	if err := s.db.DeleteLoader(id); err != nil {
+	// A two-stage unloader is one unloader to the plant, so deleting either
+	// stage deletes the pair: a stage 2 left behind would sit on the page as an
+	// unloader nothing feeds, and a stage 1 left behind would send carts to
+	// nothing.
+	one, two, err := s.pairOf(id)
+	if err != nil {
+		return err
+	}
+	if one != nil {
+		err = s.deletePair(one, two)
+	} else {
+		err = s.db.DeleteLoader(id)
+	}
+	if err != nil {
 		return err
 	}
 	s.rederive()
@@ -293,6 +333,13 @@ func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThresh
 // never-2N still bounds how many carriers exist, and this only decides which
 // type is fetched next inside that bound.
 func (s *LoaderService) SetQuota(loaderID, binTypeID int64, want int) error {
+	bt, err := s.db.GetBinType(binTypeID)
+	if err != nil {
+		return fmt.Errorf("carrier type %d: %w", binTypeID, err)
+	}
+	if bt.Bare {
+		return fmt.Errorf("%w (%s)", ErrQuotaBare, bt.Code)
+	}
 	if err := s.db.UpsertLoaderQuota(loaders.Quota{
 		LoaderID: loaderID, BinTypeID: binTypeID, Want: want,
 	}); err != nil {
@@ -356,6 +403,9 @@ func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, hom
 	if node.IsSynthetic {
 		return fmt.Errorf("loader window must be a physical slot, not a %s container (%s)", node.NodeTypeCode, node.Name)
 	}
+	if err := s.checkStage2Window(loaderID, node); err != nil {
+		return err
+	}
 	existing, err := s.db.ListLoaderHomes(loaderID)
 	if err != nil {
 		return err
@@ -366,14 +416,32 @@ func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, hom
 	}); err != nil {
 		return err
 	}
+	if err := s.syncPairOf(loaderID); err != nil {
+		return fmt.Errorf("stage-2 window %s: %w", node.Name, err)
+	}
 	s.rederive()
 	return nil
 }
 
-// RemoveHome clears a dedicated position from a loader.
+// RemoveHome clears a dedicated position from a loader. A stage-2 window of a
+// direct pair also leaves the group Core made for the pair.
 func (s *LoaderService) RemoveHome(loaderID, positionNodeID int64) error {
 	if err := s.db.RemoveLoaderHome(loaderID, positionNodeID); err != nil {
 		return err
+	}
+	if one, two, err := s.pairOf(loaderID); err != nil {
+		return err
+	} else if one != nil && two.ID == loaderID {
+		if g := s.pairGroup(one, two); g != nil {
+			if n, err := s.db.GetNode(positionNodeID); err == nil && n.ParentID != nil && *n.ParentID == g.ID {
+				if err := s.db.ReparentNode(positionNodeID, nil, 0); err != nil {
+					return fmt.Errorf("take %s out of %s: %w", n.Name, g.Name, err)
+				}
+			}
+		}
+		if err := s.syncPair(one, two); err != nil {
+			return err
+		}
 	}
 	s.rederive()
 	return nil

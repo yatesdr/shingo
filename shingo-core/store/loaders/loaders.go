@@ -121,17 +121,21 @@ type Loader struct {
 	// is every Core-owned unloader's behaviour until a plant turns it on.
 	AutoPush bool `json:"auto_push"`
 
-	// BareBinTypeID is the bin type a blank CLEAR at this UNLOADER stamps on
-	// the carrier it leaves behind: the stage-1 half of a two-stage unloader.
-	// The type must be flagged bare, so no empty finder hands the carrier out
-	// until PUSH AS at stage 2 re-stamps it. NULL — the column default and every
-	// unloader until one is configured — stamps nothing. Consume only; the
-	// service refuses it on a produce loader and refuses a type that is not bare.
-	BareBinTypeID *int64 `json:"bare_bin_type_id"`
-	// BareBinTypeCode is that type's code, "" when none: what LoaderInfo
-	// carries to the Edge. Read-only, resolved inside the loader row's own read
-	// (loaderCols), so projecting it costs no query per loader.
-	BareBinTypeCode string `json:"bare_bin_type_code,omitempty"`
+	// FedDirectly says this loader is fed straight from a process — a press or
+	// a forklift — rather than pulling from an inbound source. When it is set
+	// InboundSource is stored blank, which is what every reader (the Edge
+	// included, on LoaderInfo) already keys on; the column is the loader
+	// saying so on purpose, so a blank source is a choice and not a slot
+	// nobody filled. FALSE for a new loader; v136 backfilled every existing row
+	// as inbound_source = '', so no loader's pulling changed.
+	FedDirectly bool `json:"fed_directly"`
+
+	// SecondStageLoaderID links the stage-1 half of a two-stage unloader to its
+	// stage 2, so the two are set up, shown and edited as one unloader. Set on the
+	// stage-1 row only; NULL on every other loader. Each stage still runs as its
+	// own loader; the Edge learns only that a stage 1 leaves its carts bare
+	// (LoaderInfo.LeavesBare), and Core's CLEAR stamps each cart's own marker.
+	SecondStageLoaderID *int64 `json:"second_stage_loader_id"`
 }
 
 // Home is one dedicated position: exactly one payload. The global
@@ -176,26 +180,23 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-// loaderCols is every loader read's column list. The bare type's code is a
-// scalar subquery on the bin_types primary key, so each reader gets it in the
-// same row; with bare_bin_type_id NULL it matches nothing.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id, auto_push,
-	COALESCE((SELECT bt.code FROM bin_types bt WHERE bt.id = bin_loaders.bare_bin_type_id), '')`
+// loaderCols is every loader read's column list.
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly`
 
 type scanner interface{ Scan(...any) error }
 
 func scanLoader(s scanner) (Loader, error) {
 	var l Loader
 	var archivedAt sql.NullTime
-	var bareID sql.NullInt64
+	var secondStageID sql.NullInt64
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
-		&l.ChangeoverLoadDirective, &l.AcceptPartials, &bareID, &l.AutoPush, &l.BareBinTypeCode)
+		&l.ChangeoverLoadDirective, &l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
-	if bareID.Valid {
-		l.BareBinTypeID = &bareID.Int64
+	if secondStageID.Valid {
+		l.SecondStageLoaderID = &secondStageID.Int64
 	}
 	return l, err
 }
@@ -207,15 +208,27 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
-			funnel_windows, changeover_load_directive, accept_partials, bare_bin_type_id, auto_push)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID), l.AutoPush,
+			funnel_windows, changeover_load_directive, accept_partials, auto_push,
+			second_stage_loader_id, fed_directly)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, inboundUnlessFedDirectly(l), l.FunnelWindows,
+		l.ChangeoverLoadDirective, l.AcceptPartials, l.AutoPush,
+		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
 	}
 	return id, nil
+}
+
+// inboundUnlessFedDirectly is the inbound source a write stores: blank for a
+// loader fed directly, whatever the caller left in the field, so the two can
+// never disagree on disk.
+func inboundUnlessFedDirectly(l Loader) string {
+	if l.FedDirectly {
+		return ""
+	}
+	return l.InboundSource
 }
 
 // GetLoader returns the loader by id, or (nil, nil) if absent.
@@ -273,11 +286,12 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
-			changeover_load_directive=$7, accept_partials=$8, bare_bin_type_id=$9, auto_push=$10,
-			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$11`,
-		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
-		l.ChangeoverLoadDirective, l.AcceptPartials, helpers.NullableInt64(l.BareBinTypeID), l.AutoPush, l.ID)
+			changeover_load_directive=$7, accept_partials=$8, auto_push=$9,
+			second_stage_loader_id=$10, fed_directly=$11, config_gen=config_gen+1, updated_at=NOW()
+		WHERE id=$12`,
+		l.Name, l.Layout, l.Replenishment, l.OutboundDest, inboundUnlessFedDirectly(l), l.FunnelWindows,
+		l.ChangeoverLoadDirective, l.AcceptPartials, l.AutoPush,
+		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

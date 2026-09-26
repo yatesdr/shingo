@@ -15,10 +15,14 @@ import (
 // single-carrier loader has one bin type, so any empty is interchangeable;
 // carrier-type matching for multi-carrier loaders is a known follow-up (the
 // same limitation the edge RequestEmptyBin path already TODOs).
+//
+// A BARE CART IS NOT AN EMPTY, though it has no payload: it has no bin on it to
+// fill. This filter never composed bins.EmptyCarrierWhere, so it needs the rule
+// spelled here (TestTier4_NeverOffersABareCart).
 func emptyBinsOnly(candidates []*binsstore.Bin) []*binsstore.Bin {
 	out := make([]*binsstore.Bin, 0, len(candidates))
 	for _, b := range candidates {
-		if b.PayloadCode == "" {
+		if b.PayloadCode == "" && !b.BinTypeBare {
 			out = append(out, b)
 		}
 	}

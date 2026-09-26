@@ -28,6 +28,7 @@ func candFromBin(b *bins.Bin) binsource.Cand {
 		CreatedAt:         b.CreatedAt,
 		Claimed:           b.ClaimedBy != nil,
 		Locked:            b.Locked,
+		Bare:              b.BinTypeBare,
 		ManifestConfirmed: b.ManifestConfirmed,
 		Status:            b.Status,
 	}

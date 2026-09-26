@@ -416,13 +416,22 @@ func NotFencedArm() string {
 //
 // ── A BARE CARRIER IS NOBODY'S EMPTY ──────────────────────────────────────
 //
-// A bare bin type is the label the first stage of a two-stage unloader stamps
-// on the carrier it leaves behind: the carrier holds no container yet, so no
-// empty request may be given it, wherever it stands — including on the way from
-// stage 1 to stage 2, when it is on neither loader's position. It leaves the
-// bare type only when PUSH AS at stage 2 re-stamps it; the stage-1 U2 and the
-// stage-2 U2 are moves naming the node, which list the node directly and never
-// read this predicate (TestEmptyScan_NeverOffersABareCarrier).
+// A bare bin type is the marker the first stage of a two-stage unloader stamps
+// on the cart it leaves behind (bin_types.bare_of names the cart's real type):
+// the cart holds no container, so no empty finder composing this predicate
+// hands it out — on a plain node, a group slot or a window alike, including on
+// the way from stage 1 to stage 2 (TestEmptyScan_NeverOffersABareCarrier). It
+// leaves the marker when stage 2's SEND ON stamps its carrier back. Every move
+// that carries a bare cart names it — the stage-1 U2, Core's core-s2- pull
+// (engine/stage2_pull.go), the stage-2 U2 — so none of them reads this
+// predicate.
+//
+// Two Go-side pickers never composed it and carry the rule themselves: the
+// complex allocator's emptyBinsOnly (TestTier4_NeverOffersABareCart) and the
+// dedicated-loader pool's binsource.RejectReason
+// (TestDedicatedPool_NeverDrawsABareCart). Those three pins are the whole of
+// the claim; a new empty reader that neither composes this nor carries the rule
+// is not covered by it.
 //
 // COST: a filter on the bin_types row the join already reads; no new join.
 //

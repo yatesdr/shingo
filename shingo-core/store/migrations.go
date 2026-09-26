@@ -4274,9 +4274,10 @@ func migrationList() []migration {
 
 		{124, "bin_types.bare + bin_loaders.bare_bin_type_id — a carrier type that holds no container, and the unloader that leaves its carriers as it",
 			v124BareBinType,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "bin_types", "bare") && schema.ColumnExists(q, "bin_loaders", "bare_bin_type_id")
-			}},
+			// bin_types.bare only: v136 drops bin_loaders.bare_bin_type_id, and a
+			// verify that still asked for it would fail on every boot after v136
+			// and re-run this body, which re-adds the dropped column.
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_types", "bare") }},
 
 		{125, "bin_loaders.auto_push — an unloader re-pulls its next full when a window frees, set on the loader Core owns instead of the retired stored claim",
 			v125LoaderAutoPush,
@@ -4350,6 +4351,14 @@ func migrationList() []migration {
 				return schema.TableExists(q, "payload_containment") &&
 					schema.ColumnExists(q, "bins", "quality_hold")
 			}},
+
+		{135, "bin_loaders.second_stage_loader_id — a two-stage unloader's stage 1 names its stage 2, so the pair is set up and edited as one",
+			v135SecondStageLoader,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "second_stage_loader_id") }},
+
+		{136, "bin_types.bare_of — a bare marker names its carrier and bin_types.bare is derived from it; bin_loaders.bare_bin_type_id dropped; bin_loaders.fed_directly",
+			v136BareOf,
+			verifyV136BareOf},
 	}
 }
 
@@ -4931,6 +4940,107 @@ func v127LinesideReportCarrier(tx *sql.Tx) error {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("v127 lineside report carrier: %w", err)
 		}
+	}
+	return nil
+}
+
+// v136BareOf makes bare a property of the bin type instead of a loader setting.
+//
+// bin_types.bare_of points a bare marker at its carrier: the marker is the same
+// physical cart with no bin on it. UNIQUE, so a carrier has one marker, and the
+// FK is NO ACTION like every other bin_types reference. bin_types.bare becomes
+// GENERATED ALWAYS AS (bare_of IS NOT NULL) STORED, so every reader of bt.bare
+// is unchanged and a bare type can no longer be made by hand — the only writer
+// is bins.EnsureBareMarkerTx, called by the stage-1 CLEAR the first time a cart
+// type comes through.
+//
+// THE BACKFILL is today's naming: a bare `<code>-BARE` row whose `<code>` is a
+// real type. A bare row that matches no carrier has nothing to point at and
+// stops being bare; the report names the pre-deploy query that finds one.
+//
+// bin_loaders.bare_bin_type_id is DROPPED: the marker derives from each cart's
+// own type at CLEAR, so several cart types run through one unloader with
+// nothing configured.
+//
+// Postgres cannot turn a plain column into a generated one, so bare is dropped
+// and re-added; nothing indexes or views it. Every step is guarded, so the
+// self-heal re-run is a no-op on a converged schema.
+//
+// bin_loaders.fed_directly (owner ruling 2026-09-25, same migration): the
+// loader says it is fed straight from a process rather than leaving its inbound
+// source blank by omission. BACKFILLED true where inbound_source is blank — exactly the rows
+// that pull nothing today — so no loader's pulling changes; a new loader
+// defaults to false. The backfill runs only when this adds the column, so a
+// self-heal re-run never overwrites a value a person set since.
+//
+// ROLLBACK is the previous binary plus DROP COLUMN bare_of and fed_directly,
+// re-adding bare as a plain column set from the markers, and re-adding
+// bare_bin_type_id (NULL).
+func v136BareOf(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_types ADD COLUMN IF NOT EXISTS bare_of BIGINT NULL UNIQUE REFERENCES bin_types(id)`); err != nil {
+		return fmt.Errorf("v136 bin_types.bare_of: %w", err)
+	}
+	if _, err := tx.Exec(`DO $$ BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bin_types_bare_of_not_self') THEN
+			ALTER TABLE bin_types ADD CONSTRAINT bin_types_bare_of_not_self CHECK (bare_of <> id);
+		END IF;
+	END $$`); err != nil {
+		return fmt.Errorf("v136 bin_types.bare_of self check: %w", err)
+	}
+	var generated string
+	if err := tx.QueryRow(`SELECT COALESCE((SELECT is_generated FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'bin_types' AND column_name = 'bare'), '')`).Scan(&generated); err != nil {
+		return fmt.Errorf("v136 read bin_types.bare: %w", err)
+	}
+	if generated != "ALWAYS" {
+		for _, stmt := range []string{
+			`UPDATE bin_types m SET bare_of = c.id FROM bin_types c
+			  WHERE m.bare AND m.bare_of IS NULL AND NOT c.bare AND m.code = c.code || '-BARE'`,
+			`ALTER TABLE bin_types DROP COLUMN IF EXISTS bare`,
+			`ALTER TABLE bin_types ADD COLUMN bare BOOLEAN NOT NULL GENERATED ALWAYS AS (bare_of IS NOT NULL) STORED`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("v136 bin_types.bare derived: %w", err)
+			}
+		}
+	}
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders DROP COLUMN IF EXISTS bare_bin_type_id`); err != nil {
+		return fmt.Errorf("v136 drop bin_loaders.bare_bin_type_id: %w", err)
+	}
+	if !schema.ColumnExists(tx, "bin_loaders", "fed_directly") {
+		for _, stmt := range []string{
+			`ALTER TABLE bin_loaders ADD COLUMN fed_directly BOOLEAN NOT NULL DEFAULT false`,
+			`UPDATE bin_loaders SET fed_directly = (inbound_source = '')`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("v136 bin_loaders.fed_directly: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// verifyV136BareOf checks all four facts: bare_of present, bare generated, the
+// loader's bare column gone, and fed_directly present.
+func verifyV136BareOf(q schema.Querier) bool {
+	if !schema.ColumnExists(q, "bin_types", "bare_of") || !schema.ColumnAbsent(q, "bin_loaders", "bare_bin_type_id") ||
+		!schema.ColumnExists(q, "bin_loaders", "fed_directly") {
+		return false
+	}
+	var generated string
+	if err := q.QueryRow(`SELECT COALESCE((SELECT is_generated FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'bin_types' AND column_name = 'bare'), '')`).Scan(&generated); err != nil {
+		return false
+	}
+	return generated == "ALWAYS"
+}
+
+// v135SecondStageLoader links a two-stage unloader's halves. Nullable and set on
+// the stage-1 row only, so every existing loader reads as single-stage.
+func v135SecondStageLoader(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS second_stage_loader_id BIGINT NULL REFERENCES bin_loaders(id)`); err != nil {
+		return fmt.Errorf("v135 bin_loaders.second_stage_loader_id: %w", err)
 	}
 	return nil
 }

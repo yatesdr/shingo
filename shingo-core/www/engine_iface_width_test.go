@@ -122,10 +122,12 @@ func TestServiceAccessWidth(t *testing.T) {
 // healthy and idle, which is the exact failure the health endpoint exists to
 // make impossible.
 //
-// ClearForReuseAndBookDeparture is here for the other reason a verb belongs on
-// the wide surface: it spans two aggregates in one transaction — the bin's
-// manifest and the CMS ledger rows whose quantities the clear destroys. Reached
-// through BinManifest() it could only be one or the other.
+// ClearForReuseStampAndBookDeparture is here for the other reason a verb
+// belongs on the wide surface: it spans two aggregates in one transaction — the
+// bin's manifest and the CMS ledger rows whose quantities the clear destroys.
+// Reached through BinManifest() it could only be one or the other. (Renamed
+// from ClearForReuseAndBookDeparture when it took the two-stage stamp; the
+// width is unchanged.)
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -138,7 +140,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CMSTransactionService",
 		"CalculatorService",
 		"CarrierBindings",
-		"ClearForReuseAndBookDeparture",
+		"ClearForReuseStampAndBookDeparture",
 		"ConfigPath",
 		"CreateBinMove",
 		"DashboardService",

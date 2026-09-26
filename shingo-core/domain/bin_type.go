@@ -33,12 +33,33 @@ type BinType struct {
 	// direction: a carrier misconfigured to a lighter group would then take a
 	// full heavy load. See dispatch/robot_group.go.
 	RequiredRobotGroup string `json:"required_robot_group"`
-	// Bare flags a carrier type that holds no container: the label a stage-1
-	// unloader's CLEAR stamps on the carrier it leaves behind (the half
-	// loader). A bare carrier is never handed out as an empty
-	// (bins.EmptyCarrierWhere), a bare type is never in a payload rule, and
-	// PUSH AS at stage 2 overwrites it with a real type.
-	Bare      bool      `json:"bare"`
+	// Bare flags a carrier type that holds no container: the marker a stage-1
+	// unloader's CLEAR stamps on the cart it leaves behind. Read-only — the
+	// column is GENERATED from BareOf, so a bare type cannot be made by hand. A
+	// bare cart is never handed out as an empty (bins.EmptyCarrierWhere), a
+	// bare type is never in a payload rule, and stage 2's blank CLEAR (SEND ON)
+	// stamps BareOf back.
+	Bare bool `json:"bare"`
+	// BareOf is the carrier a bare marker stands for: the same physical cart
+	// with no bin on it. nil on every real type. Written only by
+	// bins.EnsureBareMarkerTx; a marker is admitted wherever its carrier is.
+	BareOf    *int64    `json:"bare_of,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// BareStamp is what a CLEAR does to a cart's type in a two-stage unloader,
+// decided by the caller from where the cart stands and resolved by the store
+// inside the clear's transaction (bins.ResolveBareStampTx).
+type BareStamp int
+
+const (
+	// StampNone: the clear writes the explicit type it was given, or none.
+	StampNone BareStamp = iota
+	// StampMarker: a stage-1 CLEAR — the cart takes its own type's bare marker,
+	// created the first time that type comes through.
+	StampMarker
+	// StampCarrier: SEND ON — a bare cart takes its carrier back. A cart that is
+	// no longer bare keeps its type.
+	StampCarrier
+)

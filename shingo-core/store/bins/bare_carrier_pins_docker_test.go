@@ -43,9 +43,11 @@ func bareCarrierFixture(t *testing.T, db *store.DB) bareFixture {
 	bank, bank2 := mk("HLPIN-BANK-1", nil), mk("HLPIN-BANK-2", nil)
 	slot := mk("HLPIN-GRP-SLOT-1", &grpID)
 
+	// bare is generated from bare_of (v136): the marker names its carrier.
 	var bareID int64
 	testutil.MustNoErr(t, sdb.QueryRow(
-		`INSERT INTO bin_types (code, description, bare) VALUES ('HLPIN-BARE', 'half-loader stage-1 carrier', true) RETURNING id`,
+		`WITH c AS (INSERT INTO bin_types (code, description) VALUES ('HLPIN', 'half-loader cart') RETURNING id)
+		 INSERT INTO bin_types (code, description, bare_of) SELECT 'HLPIN-BARE', 'half-loader stage-1 carrier', id FROM c RETURNING id`,
 	).Scan(&bareID), "bin type")
 	ofType := func(b *bins.Bin) *bins.Bin {
 		_, err := sdb.Exec(`UPDATE bins SET bin_type_id=$1 WHERE id=$2`, bareID, b.ID)

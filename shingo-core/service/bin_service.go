@@ -713,44 +713,17 @@ func (s *BinService) GetBinType(id int64) (*bins.BinType, error) {
 	return s.db.GetBinType(id)
 }
 
-// ErrBareTypeInPayloadRule refuses a bare type in a payload rule, from either
-// side: listing a bare type in a rule, or flagging bare a type a rule lists. A
-// bare type holds no container, so a part cannot be declared to travel in it,
-// and the rule catalog is also what the Edge's PUSH AS picker offers — a bare
-// type there would let stage 2 "correct" a carrier back to bare.
+// ErrBareTypeInPayloadRule refuses a bare marker in a payload rule. A marker
+// holds no container, so a part cannot be declared to travel in it, and the
+// rule catalog is also what the Edge's PUSH AS picker offers — a marker there
+// would let stage 2 "correct" a cart back to bare.
 var ErrBareTypeInPayloadRule = errors.New("a bare bin type cannot be in a payload's carrier rules: it holds no container, so no part travels in it")
-
-// ErrBareTypeInUse refuses un-flagging a type a live unloader names as its bare
-// type. The edit would leave a loader whose bare type is not bare, which the
-// loader save refuses (ErrBareTypeNotBare); change the loader first.
-var ErrBareTypeInUse = errors.New("this bin type is an unloader's bare type: clear it on the unloader before un-flagging it")
 
 // UpdateBinType persists changes to a bin type row. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
-// (PR 3a.2).
-//
-// The bare flag is checked against both things that depend on it, one indexed
-// EXISTS read on this admin save: a type in a payload rule may not become bare
-// (ErrBareTypeInPayloadRule), and a live unloader's bare type may not stop
-// being bare (ErrBareTypeInUse).
+// (PR 3a.2). Bare is not writable here: it is derived from bare_of, which only
+// the stage-1 CLEAR writes (bins.EnsureBareMarkerTx).
 func (s *BinService) UpdateBinType(bt *bins.BinType) error {
-	if bt.Bare {
-		in, err := s.db.BinTypeInPayloadRule(bt.ID)
-		if err != nil {
-			return err
-		}
-		if in {
-			return ErrBareTypeInPayloadRule
-		}
-	} else {
-		in, err := s.db.BinTypeIsLiveLoadersBare(bt.ID)
-		if err != nil {
-			return err
-		}
-		if in {
-			return ErrBareTypeInUse
-		}
-	}
 	return s.db.UpdateBinType(bt)
 }
 
@@ -766,6 +739,12 @@ func (s *BinService) DeleteBinType(id int64) error {
 // (PR 3a.2).
 func (s *BinService) ListBinTypes() ([]*bins.BinType, error) {
 	return s.db.ListBinTypes()
+}
+
+// RealTypeCode is the bin's cart type as an operator knows it — the carrier
+// when the bin is bare. A marker code never reaches a screen.
+func (s *BinService) RealTypeCode(binID int64) (string, error) {
+	return s.db.BinRealTypeCode(binID)
 }
 
 // GetBinTypeByCode fetches a bin type by its unique code.

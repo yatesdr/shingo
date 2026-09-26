@@ -53,7 +53,12 @@ func TestExhaustedCarrierPool_ABareTypeIsNotAPool(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	typeCode, nodeID := poolFixture(t, db, "BARE")
-	if _, err := db.Exec(`UPDATE bin_types SET bare = true WHERE code = $1`, typeCode); err != nil {
+	// bare is derived from bare_of: point the type at a carrier to make it a
+	// marker, as a stage-1 CLEAR's EnsureBareMarkerTx would.
+	if _, err := db.Exec(`INSERT INTO bin_types (code) VALUES ($1 || '-CARRIER')`, typeCode); err != nil {
+		t.Fatalf("carrier: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE bin_types SET bare_of = (SELECT id FROM bin_types WHERE code = $1 || '-CARRIER') WHERE code = $1`, typeCode); err != nil {
 		t.Fatalf("flag bare: %v", err)
 	}
 	for i := 1; i <= 2; i++ {

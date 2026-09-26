@@ -96,6 +96,9 @@ type CapacityDB interface {
 	// differently about what is arriving.
 	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
 	BinTypeForOrder(orderID int64) (*int64, error)
+	// BinTypeBareOf names the carrier a bare marker stands for, so a slot
+	// fenced to the carrier admits the bare cart too (bins.TypeAdmits).
+	BinTypeBareOf(binTypeID int64) (*int64, error)
 }
 
 // CapacityBlock is the structured result of a blocked dropoff-capacity check —
@@ -400,15 +403,17 @@ func binTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	if len(bts) == 0 {
+	if bins.TypeAdmits(bts, *binTypeID, nil) {
 		return true, nil
 	}
-	for _, bt := range bts {
-		if bt.ID == *binTypeID {
-			return true, nil
-		}
+	// A BARE MARKER FITS WHERE ITS CARRIER FITS: it is the same cart with no
+	// bin on it. Read only after the direct match failed, so an unfenced or
+	// directly admitted type costs nothing extra.
+	bareOf, err := db.BinTypeBareOf(*binTypeID)
+	if err != nil {
+		return false, err
 	}
-	return false, nil
+	return bareOf != nil && bins.TypeAdmits(bts, *binTypeID, bareOf), nil
 }
 
 // ngrpAtDeclaredLevel is the gate's copy of the level question, and it is a copy

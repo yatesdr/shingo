@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 
 	"shingocore/material"
 	"shingocore/store/audit"
+	"shingocore/store/bins"
 	"shingocore/store/cms"
 )
 
@@ -118,6 +120,21 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 // reaches for to REPAIR a wrong record, and booking a repair as an inventory
 // movement writes fiction into a ledger. It stays silent, deliberately.
 func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *int64) (int64, error) {
+	return e.ClearForReuseStampAndBookDeparture(binID, nodeID, binTypeID, bins.StampNone)
+}
+
+// ClearForReuseStampAndBookDeparture is ClearForReuseAndBookDeparture with the
+// two-stage stamp: under StampMarker or StampCarrier the type written is
+// resolved inside the clear's own transaction (bins.ResolveBareStampTx) and
+// binTypeID is ignored; under StampNone it is the explicit binTypeID, exactly
+// as before.
+func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp bins.BareStamp) (int64, error) {
+	resolve := func(tx *sql.Tx) (*int64, error) {
+		if stamp == bins.StampNone {
+			return binTypeID, nil
+		}
+		return bins.ResolveBareStampTx(tx, binID, stamp)
+	}
 	txns := e.buildClearDeparture(binID, nodeID)
 	if len(txns) == 0 {
 		// THREE DIFFERENT REASONS ARRIVE HERE and all three mean the same thing
@@ -126,7 +143,7 @@ func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *i
 		// untagged clear is invisible to CMS and that is correct); the bin is
 		// drained or bare; or the build FAILED, which buildClearDeparture has
 		// already counted and named.
-		return e.binManifest.ClearForReuse(binID, binTypeID, protocol.DeclaredByLifecycle)
+		return e.binManifest.ClearForReuseResolved(binID, resolve, protocol.DeclaredByLifecycle)
 	}
 
 	tx, err := e.db.Begin()
@@ -138,7 +155,11 @@ func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *i
 		return 0, fmt.Errorf("book cms departure of bin %d: %w — the clear is REFUSED with it, "+
 			"because clearing the bin destroys the counts these rows carry", binID, err)
 	}
-	epoch, err := e.binManifest.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse,
+	stamped, err := resolve(tx)
+	if err != nil {
+		return 0, err
+	}
+	epoch, err := e.binManifest.ClearForReuseTx(tx, binID, stamped, audit.OpClearForReuse,
 		"engine/cms_transactions.go:ClearForReuseAndBookDeparture", protocol.DeclaredByLifecycle)
 	if err != nil {
 		return 0, err

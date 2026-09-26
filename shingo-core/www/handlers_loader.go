@@ -13,8 +13,8 @@ import (
 // server broke", which is the opposite of what the rejection is for.
 func loaderWriteStatus(err error) int {
 	if errors.Is(err, service.ErrConsumeThreshold) || errors.Is(err, service.ErrAcceptPartialsProduce) ||
-		errors.Is(err, service.ErrAutoPushProduce) ||
-		errors.Is(err, service.ErrBareTypeProduce) || errors.Is(err, service.ErrBareTypeNotBare) {
+		errors.Is(err, service.ErrAutoPushProduce) || errors.Is(err, service.ErrWindowInAnotherGroup) ||
+		errors.Is(err, service.ErrQuotaBare) || errors.Is(err, service.ErrInboundSourceUnresolved) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
@@ -42,6 +42,14 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		// created spread. Absent still means spread, which is what every loader
 		// at every plant is today and what an older client sends.
 		FunnelWindows bool `json:"funnel_windows"`
+		// The settings the edit form has always had, asked at create too, so a
+		// loader is set up in one pass. Absent reads as false, as on update.
+		ChangeoverLoadDirective bool `json:"changeover_load_directive"`
+		AcceptPartials          bool `json:"accept_partials"`
+		AutoPush                bool `json:"auto_push"`
+		// FedDirectly: fed straight from a process; the inbound source is
+		// stored blank. Absent reads as false.
+		FedDirectly bool `json:"fed_directly"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -50,13 +58,45 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "name and role are required", http.StatusBadRequest)
 		return
 	}
-	id, err := h.engine.LoaderService().Create(req.Name, req.Role, req.Layout,
-		req.Replenishment, req.OutboundDest, req.InboundSource, req.FunnelWindows)
+	id, err := h.engine.LoaderService().CreateLoader(service.LoaderCreate{
+		Name: req.Name, Role: req.Role, Layout: req.Layout, Replenishment: req.Replenishment,
+		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource, FunnelWindows: req.FunnelWindows,
+		ChangeoverLoadDirective: req.ChangeoverLoadDirective,
+		AcceptPartials:          req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly,
+	})
 	if err != nil {
 		h.jsonError(w, "create loader: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
 	h.jsonOK(w, map[string]any{"id": id, "name": req.Name})
+}
+
+// apiCreateTwoStageLoader creates a two-stage unloader: both stages and the
+// link that makes them one unloader. Nothing about placement — the windows,
+// where fulls come from and where carts wait are set on the box afterwards
+// through the loader update and add-home endpoints, and where stage 1 sends a
+// cart is derived from stage 2 (service/loader_two_stage.go).
+func (h *Handlers) apiCreateTwoStageLoader(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name           string `json:"name"`
+		AcceptPartials bool   `json:"accept_partials"`
+		AutoPush       bool   `json:"auto_push"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.Name == "" {
+		h.jsonError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	s1, s2, err := h.engine.LoaderService().CreateTwoStage(service.TwoStageCreate{
+		Name: req.Name, AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush,
+	})
+	if err != nil {
+		h.jsonError(w, "create two-stage unloader: "+err.Error(), loaderWriteStatus(err))
+		return
+	}
+	h.jsonOK(w, map[string]any{"id": s1, "stage2_id": s2, "name": req.Name})
 }
 
 // apiUpdateLoader edits a loader's mutable fields (name + flow endpoints). role + core_node are the identity and are not editable here.
@@ -79,9 +119,9 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// AutoPush: an unloader re-pulls its next full when a window frees.
 		// Absent reads as false, which is today's behaviour.
 		AutoPush bool `json:"auto_push"`
-		// BareBinTypeID: the bare type an unloader's blank CLEAR stamps. Absent
-		// or 0 reads as none, which stamps nothing.
-		BareBinTypeID int64 `json:"bare_bin_type_id"`
+		// FedDirectly: fed straight from a process; the inbound source is
+		// stored blank. Absent reads as false.
+		FedDirectly bool `json:"fed_directly"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -94,7 +134,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		ID: req.ID, Name: req.Name, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
 		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
-		AcceptPartials: req.AcceptPartials, BareBinTypeID: req.BareBinTypeID, AutoPush: req.AutoPush,
+		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return
@@ -157,7 +197,7 @@ func (h *Handlers) apiSetLoaderQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.LoaderService().SetQuota(req.LoaderID, req.BinTypeID, req.Want); err != nil {
-		h.jsonError(w, "set quota: "+err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, "set quota: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
 	h.jsonSuccess(w)
@@ -225,7 +265,7 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.LoaderService().SetHome(req.LoaderID, req.PositionNodeID, req.PayloadCode, req.HomeKind, req.UOPThreshold); err != nil {
-		h.jsonError(w, "set home: "+err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, "set home: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
 	h.jsonSuccess(w)

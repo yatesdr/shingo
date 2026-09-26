@@ -93,6 +93,10 @@ type Store interface {
 	// dig asker already carries. nil means "could not tell", which narrows
 	// nothing.
 	BinTypeForOrder(orderID int64) (*int64, error)
+
+	// BinTypeBareOf names the carrier a bare marker stands for: a marker is
+	// admitted wherever its carrier is (bins.TypeAdmits). nil for a real type.
+	BinTypeBareOf(binTypeID int64) (*int64, error)
 }
 
 // Compile-time check that *store.DB satisfies Store. If the store package

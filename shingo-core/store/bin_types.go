@@ -16,11 +16,22 @@ func (db *DB) ListBinTypes() ([]*bins.BinType, error) { return bins.ListTypes(db
 // BareBinTypeCodes returns the codes, among ids, of the types flagged bare.
 func (db *DB) BareBinTypeCodes(ids []int64) ([]string, error) { return bins.BareTypeCodes(db.DB, ids) }
 
-// BinTypeInPayloadRule reports whether any payload rule lists the type.
-func (db *DB) BinTypeInPayloadRule(id int64) (bool, error) { return bins.TypeInPayloadRule(db.DB, id) }
-
-// BinTypeIsLiveLoadersBare reports whether a live loader names the type as its
-// bare type.
-func (db *DB) BinTypeIsLiveLoadersBare(id int64) (bool, error) {
-	return bins.TypeIsLiveLoadersBare(db.DB, id)
+// EnsureBareMarker returns a cart type's bare marker, creating it the first
+// time (bins.EnsureBareMarkerTx).
+func (db *DB) EnsureBareMarker(typeID int64) (int64, error) {
+	return bins.EnsureBareMarker(db.DB, typeID)
 }
+
+// BinTypeBareOf returns the carrier a bare marker stands for, nil for a real
+// type. The dispatch fences read it (bins.TypeAdmits).
+func (db *DB) BinTypeBareOf(typeID int64) (*int64, error) { return bins.TypeBareOf(db.DB, typeID) }
+
+// ListBareCartsInGroup returns the bare carts a stage-2 pull may move out of a
+// wait group, oldest first (bins.ListBareInGroup).
+func (db *DB) ListBareCartsInGroup(groupNodeID int64) ([]*bins.Bin, error) {
+	return bins.ListBareInGroup(db.DB, groupNodeID)
+}
+
+// BinRealTypeCode is the bin's cart type as an operator knows it: the carrier
+// when the bin is bare (bins.RealTypeCode).
+func (db *DB) BinRealTypeCode(binID int64) (string, error) { return bins.RealTypeCode(db.DB, binID) }

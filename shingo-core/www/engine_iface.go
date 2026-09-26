@@ -171,7 +171,10 @@ type EngineOrchestration interface {
 	// The UI's admin clear is NOT this. It goes to the service and stays silent,
 	// because an operator repairing a wrong record is not material leaving a
 	// storeroom.
-	ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *int64) (int64, error)
+	//
+	// stamp is the two-stage cart stamp (domain.BareStamp), resolved inside the
+	// same transaction; StampNone writes binTypeID as given.
+	ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp domain.BareStamp) (int64, error)
 
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)
