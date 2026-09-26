@@ -64,6 +64,11 @@ const (
 // the ticker remains the backstop, and a row missed here simply waits for it
 // as it does today.
 //
+// Core's three transactional announces (the epoch bump, the count, the epoch
+// repair) ring this way, at their INSERT, before their commit, and stay so
+// (orc, 2026-09-26): the settle and the ticker are the guarantee, and the
+// measured cost is nil (uop_adjustment p95 71 ms on the rig).
+//
 // Variable rather than const so tests can compress it and exercise many wake
 // cycles without the wall-clock cost, mirroring www's sseKeepaliveInterval.
 var wakeSettle = 50 * time.Millisecond

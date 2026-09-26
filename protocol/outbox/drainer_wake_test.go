@@ -2,6 +2,7 @@ package outbox
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -282,5 +283,51 @@ func TestDrainer_PurgeUsesSeparateRetentions(t *testing.T) {
 		t.Errorf("dead letters (%v) are kept no longer than delivered rows (%v) — "+
 			"the whole point is that the destroyed message outlives the receipt",
 			gotDead, gotDelivered)
+	}
+}
+
+// overlapStore records the most drain passes ever in flight at once.
+type overlapStore struct {
+	*mockStore
+	inflight, peak atomic.Int32
+}
+
+func (s *overlapStore) ListPendingOutbox(limit int) ([]Message, error) {
+	n := s.inflight.Add(1)
+	defer s.inflight.Add(-1)
+	for {
+		p := s.peak.Load()
+		if n <= p || s.peak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	time.Sleep(2 * time.Millisecond) // a pass long enough for the other arm to fire inside it
+	return s.mockStore.ListPendingOutbox(limit)
+}
+
+// TestDrainer_WakeNeverOverlapsATickerDrain pins that the two arms take turns.
+// Both run on the one loop goroutine, so a wake arriving mid-tick waits for the
+// tick's pass and a tick arriving mid-wake waits for the wake's. Two passes at
+// once would both read the same pending rows and publish each one twice.
+func TestDrainer_WakeNeverOverlapsATickerDrain(t *testing.T) {
+	compressWakeSettle(t, 0)
+
+	store := &overlapStore{mockStore: &mockStore{}}
+	pub := &mockPublisher{connected: true}
+
+	d := NewDrainer(store, pub, "orders", time.Millisecond, 50)
+	d.Start()
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		d.Notify()
+		time.Sleep(200 * time.Microsecond)
+	}
+	d.Stop()
+
+	if got := store.calls(); got < 10 {
+		t.Fatalf("only %d drains in 150ms, want >=10 — the pin needs both arms firing", got)
+	}
+	if p := store.peak.Load(); p != 1 {
+		t.Fatalf("%d drain passes ran at once, want 1: a wake and a tick overlapped", p)
 	}
 }
