@@ -164,10 +164,20 @@ func NewRunningClock(speed float64) *SimClock {
 // 2x SHAPE: same order lifetime, same queue depth, backlog flat.
 //
 // The cap is the fastest speed actually observed to work, not the fastest that
-// might. 6x through 9x are untested and therefore not permitted: an honest 5x
-// beats a lying 10x. See docs/dev-env/sim.md for the ceiling and the
-// binding leg; what raising it would cost is a designed change, not a knob.
-const DefaultSimMaxSpeed = 5.0
+// might. See docs/dev-env/sim.md for the ceiling.
+//
+// ── 10, MEASURED AS A PAIR (2026-09-26) ──────────────────────────────────
+//
+// The table above is 09-06's. On 2026-09-26 the rig ran lane-stress-packed three
+// times over the same ~99 sim-minutes: 5x for 20 wall-minutes twice (A, C) and
+// 10x for 10 (B). Read through the demand pairing, 10x sits inside the 5x-vs-5x
+// spread: A-B diverges at no node where A-C and C-B each diverge at one; median
+// time-to-dispatch delta +0.4 s (A-C 0.0, C-B +0.4); throughput 412 orders at 10x
+// against 402 and 364 at 5x; stuck 0, holds-at-rest 0. The waits did not grow
+// with speed (they are robot travel, in sim time); only the sub-second pipeline
+// did, about 0.3 to 0.7 sim-s. 09-06's 10x collapse is not reproduced by the
+// tree as it stands. Above 10x is untested and therefore not permitted.
+const DefaultSimMaxSpeed = 10.0
 
 // SimMode is which kind of clock BuildSimClock constructed, returned so the caller
 // can log a binary-appropriate banner without re-deriving (and re-risking) the

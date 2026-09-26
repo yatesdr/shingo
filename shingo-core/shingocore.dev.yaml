@@ -138,13 +138,25 @@ sim:
   # interval) and shortening it divides a real broker's recovery window by the
   # same factor. Splitting the two is the change that raises the ceiling.
   #
+  # ── 10x, MEASURED AS A PAIR (2026-09-26), AND THE PARAGRAPH ABOVE IS STALE ──
+  #
+  # Three runs on lane-stress-packed over the same ~99 sim-minutes: 5x twice and
+  # 10x once, read through the demand pairing. 10x sits inside the 5x-vs-5x
+  # spread (see clock.DefaultSimMaxSpeed for the numbers), so the rig runs at 10x
+  # and a run's wall minutes halve for the same sim span.
+  #
+  # The outbox is not the binding leg today: the drainer has rung on every
+  # enqueue since 2e4b416f (2026-08-21), and on the rig a message leaves in about
+  # 60-70 ms on both sides (Core p95 under 0.13 s). What 09-06 measured with a
+  # 500 ms interval is not reproduced by the tree as it stands.
+  #
   # SEPARATELY, AND IT LIMITS EVERY SPEED: a staged bin with no reservation wedges
   # a robot permanently through the position gate, and the count only ratchets up.
   # It is a single_robot swap self-deadlocking against the sim's position gate,
   # it costs two robots in the first three minutes of every run, and it is
   # sim-only. Write-up: ISSUE-sim-position-hold-deadlock-2026-09-06.md at the
   # GitHub root. A long run degrades for that reason, not this one.
-  speed: 5.0
+  speed: 10.0
   # SYNCED RUNNING (zero core↔edge drift, and the multiplier is real). In
   # running-clock mode (no epoch) each binary stamps its own boot-now as the clock
   # epoch, so core+edge drift by boot-skew × speed and cross-process coordination

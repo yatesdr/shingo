@@ -171,17 +171,20 @@ free robot and the driver tracks utilization. It is off by default, so the demo
 runs as the legacy infinite fleet (one robot per active order). A live dev-mode
 top-strip is on the roadmap.
 
-### The speed ceiling is 5×
+### The speed ceiling is 10×
 
-`clock.DefaultSimMaxSpeed` (`protocol/clock/sim_clock.go:170`) refuses more, and
+`clock.DefaultSimMaxSpeed` (`protocol/clock/sim_clock.go`) refuses more, and
 Core and Edge cap at the same const so their fast-forward clocks cannot drift.
-The binding constraint is not CPU — it is the Edge outbox drain, a **wall**-time
-backstop (`protocol/outbox/drainer.go:170`, `outbox_drain_interval: 5s`), so at
-N× it costs `5N` *simulated* seconds per Edge→Core hop. It is not simply lowered
-because that interval is three policies at once — drain cadence, wake-settle
-coalescing, and (as `MaxRetries × interval`) the dead-letter budget a real broker
-gets to come back. Above 5× the simulated world outruns the choreography and
-sim-time release/abandon timeouts misfire.
+It was 5× from 2026-09-06; on 2026-09-26 a pair on `lane-stress-packed` (5× twice,
+10× once, the same ~99 sim-minutes, read through the demand pairing) put 10×
+inside the 5×-vs-5× spread, so the rig runs at 10× and a run's wall minutes
+halve for the same sim span. Above 10× is untested.
+
+The Edge outbox drain was named as the binding leg in 2026-09 and is not one
+today: the drainer rings on every enqueue, and on the rig a message leaves in
+about 60–70 ms on both sides. At 10× the waits (robot travel) do not grow with
+speed; the sub-second pipeline does (about 0.3 to 0.7 sim-s), and no wait reaches
+the scanner's 60 s floor (600 sim-s at 10×) more often than at 5×.
 
 To measure a speed change, take rates per **wall** minute after three minutes of
 settle — per *sim* minute flatters a starving rig, reporting less work as if it
@@ -246,7 +249,7 @@ realistic, sustained, metric-rich plant.
 
 **`sim.speed` is live**, not pending — `SimConfig.Speed` at
 `shingo-core/config/config.go:262`, set to `5.0` in both dev configs
-(`shingocore.dev.yaml:166`, `shingoedge.dev.yaml:73`), with the 5× ceiling
+(`shingocore.dev.yaml:166`, `shingoedge.dev.yaml:73`), with the 10× ceiling
 described under *The speed ceiling* above. **Downtime is live too** —
 `SimDowntimeConfig` at `shingo-edge/config/config.go:271`, configured at
 `shingoedge.dev.yaml:202`.

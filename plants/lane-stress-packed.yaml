@@ -369,6 +369,11 @@ bins:
   - {name: BIN-PB-04, slot: LSD_024, payload: PANEL-B, uop: 30}
   - {name: BIN-PB-05, slot: LSD_025, payload: PANEL-B, uop: 30}
   - {name: BIN-PB-06, slot: LSD_026, payload: PANEL-B, uop: 30}
+  # --- SYN_STAMP: +2 PANEL-B stock at the back of a 5-deep lane, mouth free (2026-09-26).
+  # simcalc: PRESS-2 5/min against WELD-2 6/min drained the 205-uop buffer in 3.4 sim-h,
+  # about 41 wall-minutes at 5x, no margin for the downtime model; 265 uop is 4.4 sim-h.
+  - {name: BIN-PB-07, slot: LSD_010, payload: PANEL-B, uop: 30}
+  - {name: BIN-PB-08, slot: LSD_009, payload: PANEL-B, uop: 30}
   # --- SYN_STAMP: empty carriers, all six in the two depth-3 pool lanes ---
   - {name: BIN-MT-S1, slot: LSD_027}
   - {name: BIN-MT-S2, slot: LSD_028}
@@ -629,6 +634,14 @@ claims:
     inbound_source: SYN_COMP
     outbound_destination: SYN_COMP
     auto_push: true
+
+# Core's loader switches (plantspec LoaderSettings). A claim's `auto_push` seeds only
+# the Edge's stored claim; the unloader's re-pull when its window frees reads Core's
+# bin_loaders.auto_push, which only this section sets. Without it FGN_001 re-pulled only on
+# a weld's capture release, and sat idle with its window free (Stage A soak, 2026-09-26:
+# 22 pulls in 90 minutes, gaps up to 9.5 wall-minutes, 23 full ASSY waiting).
+loader_settings:
+  FGN_001: {auto_push: true}
 
 demands:
   # Loader demands key on the loader identity (synthetic PLK_LOADER, or the single-window

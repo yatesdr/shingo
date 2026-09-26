@@ -126,6 +126,10 @@ func TestLedger_BooksAndClasses(t *testing.T) {
 		t.Errorf("dig parent: committed %+v at-rest %v/%v; want one dig lock, dig-lock-at-rest only",
 			o.Committed, o.HoldsAtRest, o.DigLockAtRest)
 	}
+	if !reflect.DeepEqual(o.DigLockTags, []string{orders.DigLockTags[0]}) {
+		t.Errorf("dig parent: dig-lock tags %v, want [%s] — a hit must say which kind of lock it is",
+			o.DigLockTags, orders.DigLockTags[0])
+	}
 
 	back := ledgerSlotByName(t, l, "LDG_S3")
 	if !back.SpokenFor || !reflect.DeepEqual(back.ResPending, []int64{soft.ID}) || back.Entombing {

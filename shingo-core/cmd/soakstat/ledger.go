@@ -41,6 +41,10 @@ package main
 //                      not read the fleet id, so neither does this)
 //   dig_lock_at_rest   the orders.DigLocksAtRestSQL predicate: pre-dispatch,
 //                      top-level, dig_lock > 0
+//   dig_lock_tags      the reserved_by tag of each confirmed dig-lock mouth row
+//                      (lanelock: the dig holds its lane; dighandoff: a closed
+//                      dig handed its lane to the parent), so a dig-lock hit
+//                      says which it is
 //   no_shuffle_slot    queue_cause is dispatch.CauseNoShuffleSlot
 //
 // rec "slot": one per storage slot: a node whose parent is a LANE-type node that
@@ -74,6 +78,7 @@ package main
 // It reads only, through the same OpenWithoutMigrate handle as the report.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -141,6 +146,7 @@ type ledgerOrder struct {
 	Claimed       *ledgerHard `json:"claimed"`
 	HoldsAtRest   bool        `json:"holds_at_rest"`
 	DigLockAtRest bool        `json:"dig_lock_at_rest"`
+	DigLockTags   []string    `json:"dig_lock_tags,omitempty"`
 	NoShuffleSlot bool        `json:"no_shuffle_slot"`
 	hard          ledgerHard
 }
@@ -177,8 +183,8 @@ type ledgerRows struct {
 // every statement so the sample record's count is the count of what ran, and
 // the rows each table read leaves for the readings after it.
 type ledgerReader struct {
-	db   *sql.DB
-	n    int // statements sent
+	tx   *sql.Tx // the sample's one snapshot; see takeLedgerSample
+	n    int     // statements sent, BEGIN and COMMIT included
 	out  *ledgerRows
 	byID map[int64]*ledgerOrder
 
@@ -210,16 +216,30 @@ type ledgerRes struct {
 
 func (r *ledgerReader) query(q string, args ...any) (*sql.Rows, error) {
 	r.n++
-	return r.db.Query(q, args...)
+	return r.tx.Query(q, args...)
 }
 
 var movedNode = regexp.MustCompile(`node=(\d+)`)
 
 // takeLedgerSample reads one sample. It returns an error rather than a partial
 // sample: a ledger row that silently lost a table is worse than a missing one.
+//
+// ONE SNAPSHOT. The six reads run in one read-only REPEATABLE READ transaction,
+// so a sample cannot straddle another transaction's commit. Read as separate
+// statements, a sample could see an order still `sourcing` (the orders read)
+// and the holds its hand committed a moment later (the reservations read), and
+// the classifier then filed a coordinated pair inside its dispatch as
+// holds-at-rest (Stage A certification, 2026-09-26: four hits, all of that
+// shape). Cost: BEGIN and COMMIT, counted in the sample's statements.
 func takeLedgerSample(db *sql.DB, n int, wall time.Time, simS *float64) (*ledgerRows, error) {
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("ledger snapshot: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
 	r := &ledgerReader{
-		db:       db,
+		tx:       tx,
+		n:        1, // BEGIN
 		out:      &ledgerRows{sample: ledgerSample{Rec: "sample", N: n, Wall: wall.UTC().Format("2006-01-02T15:04:05.000Z"), SimS: simS}},
 		byID:     map[int64]*ledgerOrder{},
 		nodes:    map[int64]*ledgerNode{},
@@ -232,6 +252,10 @@ func takeLedgerSample(db *sql.DB, n int, wall time.Time, simS *float64) (*ledger
 			return nil, err
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("ledger snapshot: commit: %w", err)
+	}
+	r.n++ // COMMIT
 	r.out.sample.Statements = r.n
 	r.orderBooks()
 	r.slotRows()
@@ -376,6 +400,7 @@ func bookReservation(o *ledgerOrder, x ledgerRes) {
 			o.Reserved.Mouth++
 		case digLockTag[x.reservedBy]:
 			o.hard.DigLock++
+			o.DigLockTags = append(o.DigLockTags, x.reservedBy)
 		default:
 			o.hard.Mouth++
 		}
