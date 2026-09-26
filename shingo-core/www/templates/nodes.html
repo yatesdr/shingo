@@ -24,22 +24,22 @@
       <option value="">All Zones</option>
       {{range .Zones}}<option value="{{.}}">{{.}}</option>{{end}}
     </select>
-    <span class="text-muted" style="font-size:0.8rem" id="node-count">{{len .Nodes}} nodes</span>
+    <span class="text-muted-sm" id="node-count">{{len .Nodes}} nodes</span>
   </div>
 
-  <div class="node-legend" style="display:flex;gap:1rem;align-items:center;font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem;flex-wrap:wrap;">
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch" style="width:12px;height:12px;border-radius:2px;background:var(--bg-dark);border:1px solid var(--border);display:inline-block;"></span> Empty</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-has-payload" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Has Payload</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-empty-bin" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Empty Bin</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-staged" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Staged</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-maintenance" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Maintenance</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid var(--warning);display:inline-block;"></span> Claimed</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid var(--danger);display:inline-block;"></span> Disabled</span>
+  <div class="node-legend">
+    <span class="node-legend-item"><span class="legend-swatch legend-swatch-empty"></span>Empty</span>
+    <span class="node-legend-item"><span class="legend-swatch tile-has-payload"></span>Has payload</span>
+    <span class="node-legend-item"><span class="legend-swatch tile-empty-bin"></span>Empty bin</span>
+    <span class="node-legend-item"><span class="legend-swatch tile-staged"></span>Staged</span>
+    <span class="node-legend-item"><span class="legend-swatch tile-maintenance"></span>Maintenance</span>
+    <span class="node-legend-item"><span class="legend-swatch legend-swatch-claimed"></span>Claimed</span>
+    <span class="node-legend-item"><span class="legend-swatch legend-swatch-disabled"></span>Disabled</span>
   </div>
 
   {{if .Nodes}}
   <div id="nodes-drop-area">
-  <div class="tile-grid" id="tile-grid">
+  <div class="tile-grid node-panel" id="tile-grid">
     {{range .Nodes}}
     {{$count := index $.Counts .ID}}
     {{$childCount := index $.ChildCounts .ID}}
@@ -64,7 +64,7 @@
          {{with index $.NodeInfo .Name}}data-point-name="{{.PointName}}" data-node-tasks="{{.Tasks}}" data-bound-map="{{.BoundMap}}"{{end}}
          data-action="openNodeModal"
          title="{{.Name}}{{if $count}} ({{$count}} items){{end}}{{if .IsSynthetic}} [synthetic, {{$childCount}} children]{{end}}">
-      <div>
+      <div class="tile-text">
         <span class="tile-loc">{{.Name}}</span>
         {{with index $.NodeLabels .Name}}
         <span class="tile-label">{{.}}</span>
@@ -83,8 +83,8 @@
   {{end}}
 
   {{if .MapGroups}}
-  <div class="mt-2 mb-1">
-    <h3 class="section-subhead">Map Infrastructure</h3>
+  <div class="section-head node-section-head">
+    <h2>Map infrastructure</h2>
   </div>
   {{range .MapClassOrder}}
     {{$points := index $.MapGroups .}}
@@ -94,7 +94,7 @@
         {{.}} <span class="text-muted">({{len $points}})</span>
       </button>
       <div class="accordion-body">
-        <table style="font-size:0.8rem">
+        <table class="table-compact">
           <thead><tr><th>Name</th><th>Area</th><th>Label</th><th>Position</th></tr></thead>
           <tbody>
           {{range $points}}

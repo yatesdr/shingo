@@ -678,7 +678,7 @@ function loaderMemberTile(home, dedicated) {
   }
   const grip = isAuth ? h`<span class="loader-grip" title="drag the tile to reorder / move">⠿</span>` : '';
   const x = isAuth ? h`<span class="loader-member-x" title="remove" draggable="false">×</span>` : '';
-  return h`<div class="node-tile loader-member" data-id="${home.position_node_id}" data-kind="${kind}"${raw(isAuth ? ' draggable="true"' : '')}>${raw(grip)}<span class="tile-loc">${nm}</span>${raw(badge)}${raw(x)}</div>`;
+  return h`<div class="node-tile loader-member" data-id="${home.position_node_id}" data-kind="${kind}"${raw(isAuth ? ' draggable="true"' : '')}>${raw(grip)}<span class="tile-loc" title="${nm}">${nm}</span>${raw(badge)}${raw(x)}</div>`;
 }
 
 function payloadSelect(sel) {

@@ -351,13 +351,34 @@ function updateGroupSummary(group) {
   });
   var directSection = group.querySelector('.ngrp-direct');
   var directCount = directSection ? directSection.querySelectorAll('.smkt-lane-slots .node-tile').length : 0;
-  var summary = lanes.length + ' lane' + (lanes.length !== 1 ? 's' : '')
-    + ', ' + totalSlots + ' slot' + (totalSlots !== 1 ? 's' : '');
-  if (directCount > 0) {
-    summary += ', ' + directCount + ' direct';
-  }
   var el = group.querySelector('.smkt-summary');
-  if (el) el.textContent = summary;
+  if (el) el.textContent = groupSummary(lanes.length, totalSlots, directCount);
+}
+
+// groupSummary is the count on a group's header, in plant words, naming only
+// what the group has: "11 nodes", "4 lanes · 12 slots", never "0 lanes, 0
+// slots". An empty group returns '' and its body says so instead.
+function groupSummary(laneCount, slotCount, nodeCount) {
+  function n(count, word) { return count + ' ' + word + (count === 1 ? '' : 's'); }
+  var parts = [];
+  if (laneCount > 0) parts.push(n(laneCount, 'lane'), n(slotCount, 'slot'));
+  if (nodeCount > 0) parts.push(n(nodeCount, 'node'));
+  return parts.join(' · ');
+}
+
+// sectionHead draws the page's one section title (the shared .section-head
+// h2) with its count beside it, for the sections this module builds.
+function sectionHead(title, count) {
+  var head = document.createElement('div');
+  head.className = 'section-head node-section-head';
+  var h2 = document.createElement('h2');
+  h2.textContent = title + ' ';
+  var c = document.createElement('span');
+  c.className = 'node-section-count';
+  c.textContent = String(count);
+  h2.appendChild(c);
+  head.appendChild(h2);
+  return head;
 }
 
 /* --- Build supermarket hierarchy from flat tiles --- */
@@ -379,6 +400,9 @@ function buildHierarchy() {
     }
   });
   if (grpTiles.length === 0) return;
+
+  var dropArea = document.getElementById('nodes-drop-area');
+  dropArea.insertBefore(sectionHead('Node groups', grpTiles.length), grid);
 
   grpTiles.forEach(function(grpTile) {
     var grpId = grpTile.dataset.id;
@@ -420,17 +444,14 @@ function buildHierarchy() {
     group.className = 'smkt-group';
     group.dataset.smktId = grpId;
 
-    var summary = lanes.length + ' lane' + (lanes.length !== 1 ? 's' : '')
-      + ', ' + totalSlots + ' slot' + (totalSlots !== 1 ? 's' : '');
-    if (directChildren.length > 0) {
-      summary += ', ' + directChildren.length + ' direct';
-    }
+    var summary = groupSummary(lanes.length, totalSlots, directChildren.length);
+    var isEmpty = lanes.length === 0 && directChildren.length === 0;
 
     var header = document.createElement('div');
     header.className = 'smkt-header';
     header.innerHTML = '<span class="smkt-arrow">&#9660;</span>'
       + '<span class="smkt-name">' + escapeHtml(grpName) + '</span>'
-      + '<span class="smkt-summary">' + summary + '</span>';
+      + '<span class="smkt-summary">' + escapeHtml(summary) + '</span>';
 
     header.addEventListener('click', function(e) {
       if (e.target.classList.contains('smkt-name')) return;
@@ -450,11 +471,16 @@ function buildHierarchy() {
       directSection.className = 'smkt-lane ngrp-direct';
       directSection.dataset.laneId = grpId;
 
-      var directHeader = document.createElement('div');
-      directHeader.className = 'smkt-lane-header';
-      directHeader.dataset.laneName = 'Direct Nodes';
-      directHeader.textContent = 'Direct Nodes (' + directChildren.length + ')';
-      directSection.appendChild(directHeader);
+      // The caption only earns its place beside lanes: in a group with no
+      // lanes every node is "not in a lane", and the header already counts
+      // them.
+      if (lanes.length > 0) {
+        var directHeader = document.createElement('div');
+        directHeader.className = 'smkt-lane-header';
+        directHeader.dataset.laneName = 'Not in a lane';
+        directHeader.textContent = 'Not in a lane (' + directChildren.length + ')';
+        directSection.appendChild(directHeader);
+      }
 
       var directContainer = document.createElement('div');
       directContainer.className = 'smkt-lane-slots';
@@ -462,8 +488,19 @@ function buildHierarchy() {
       directChildren.forEach(function(child) {
         directContainer.appendChild(child);
       });
+      if (isEmpty) {
+        var hint = document.createElement('span');
+        hint.className = 'node-group-empty';
+        hint.textContent = 'No nodes yet. Drag a node here, or add a lane.';
+        directContainer.appendChild(hint);
+      }
       directSection.appendChild(directContainer);
       body.appendChild(directSection);
+    } else if (isEmpty) {
+      var empty = document.createElement('p');
+      empty.className = 'node-group-empty';
+      empty.textContent = 'No nodes in this group yet.';
+      body.appendChild(empty);
     }
 
     allLaneSlots.forEach(function(item) {
@@ -497,7 +534,7 @@ function buildHierarchy() {
     if (isAuth) {
       var addLaneBtn = document.createElement('div');
       addLaneBtn.className = 'smkt-add-lane';
-      addLaneBtn.textContent = '+ Add Lane';
+      addLaneBtn.textContent = '+ Add lane';
       addLaneBtn.addEventListener('click', function() {
         openLaneModal(grpId);
       });
@@ -505,7 +542,6 @@ function buildHierarchy() {
     }
 
     group.appendChild(body);
-    var dropArea = document.getElementById('nodes-drop-area');
     dropArea.insertBefore(group, grid);
 
     grpTile.classList.add('smkt-absorbed');
@@ -513,16 +549,14 @@ function buildHierarchy() {
     otherChildren.forEach(function(c) { c.classList.add('smkt-absorbed'); });
   });
 
+  // The grid stays in place (it is the drop target that takes a node out of
+  // its group); with nothing left in it, it drops its card so an empty panel
+  // does not sit at the foot of the page.
   var remaining = grid.querySelectorAll('.node-tile:not(.smkt-absorbed)');
   if (remaining.length > 0) {
-    var wrapper = document.createElement('div');
-    wrapper.className = 'ungrouped-wrapper';
-    var label = document.createElement('div');
-    label.className = 'ungrouped-label';
-    label.textContent = 'Ungrouped Nodes (' + remaining.length + ')';
-    grid.parentNode.insertBefore(wrapper, grid);
-    wrapper.appendChild(label);
-    wrapper.appendChild(grid);
+    dropArea.insertBefore(sectionHead('Ungrouped nodes', remaining.length), grid);
+  } else {
+    grid.classList.remove('node-panel');
   }
 }
 

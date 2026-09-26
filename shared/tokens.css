@@ -105,6 +105,14 @@
    * --accent-solid background is this token. */
   --on-accent-solid: #ffffff;
 
+  /* The ink on a node tile's solid state fill (Core's Nodes page). Measured,
+   * not white by habit: white on --status-staged-dot is 2.5:1 in both themes
+   * (the teal is theme-invariant, so its ink is too), and white on --success
+   * clears 4.5:1 only in light (4.53:1) — dark --success is brighter and
+   * takes a near-black ink (7.4:1). node_tile_contrast_test.go pins both. */
+  --on-success-fill: #ffffff;
+  --on-staged-fill: #0d1117;
+
   /* The modal backdrop. One scrim for every surface: admin's .modal-overlay,
    * the desktop composer's sheet, and anything else that darkens the page
    * behind a dialog. The light value is .modal-overlay's own rgba(0,0,0,.5),
@@ -471,6 +479,7 @@
   --primary-hover: var(--accent-hover);
   --primary-dark: var(--accent-hover);
   --success: #3fb950;
+  --on-success-fill: #0d1117;   /* see the light block */
   --danger: #f85149;
   --warning: #d29922;
   --info: #39d2f5;

@@ -144,43 +144,67 @@ textarea { resize: vertical; min-height: 60px; }
 .timeline-item::before { content: ''; position: absolute; left: -1.15rem; top: 0.4rem; width: 10px; height: 10px; border-radius: 50%; background: var(--primary); border: 2px solid var(--surface); }
 .timeline-item .time { font-size: 0.8rem; color: var(--text-muted); }
 
-/* Node tile grid */
+/* Node tiles — the style guide's "Node tile" section.
+ *
+ * ONE SIZE EVERYWHERE. A tile is the same box in a group, a lane, the
+ * ungrouped grid, a station box and the synthetic _TRANSIT tile, so the width
+ * and height live here and nowhere else: every container is a wrapping row of
+ * fixed tiles, never a grid that stretches them or a flex row that shrinks
+ * them to their text. A long name truncates with an ellipsis (the full name is
+ * the tile's title); it never resizes the tile. The one exception is tap-to-
+ * assign, where a tile grows downward to carry its reason on the tile (see the
+ * assign-armed rule further down). */
 .tile-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
 }
 .node-tile {
   position: relative;
-  border-radius: 6px;
-  padding: 0.25rem 0.4rem;
+  box-sizing: border-box;
+  width: 6.5rem;
+  height: 2.75rem;
+  flex: none;
+  border-radius: var(--radius);
+  padding: var(--sp-1) var(--sp-2);
   text-align: center;
   cursor: pointer;
   border: 1px solid var(--border);
-  transition: transform 0.1s, box-shadow 0.1s;
-  min-height: 36px;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   background: var(--bg-dark);
-  color: var(--text-muted);
+  color: var(--chip-ink-muted);
 }
 /* Node tile content states — re-derived from the shared palette so they read the
- * same as the badges/map (has-payload = success green, staged = staged teal —
- * NOT the old cyan that collided with in-transit, maintenance = warning amber,
- * disabled = danger, claimed = warning border). The hatch stripes stay as a
- * texture channel. Tokens are theme-aware, so no dark-mode overrides are needed. */
-.tile-has-payload { background: var(--success); color: #fff; }
+ * same as the badges/map (has-payload = success green, staged = staged teal,
+ * maintenance = warning amber, disabled = danger, claimed = warning border).
+ *
+ * THE INK IS MEASURED, not white by habit: white on --status-staged-dot is
+ * 2.5:1 in both themes and white on dark --success is 2.5:1, so each solid
+ * fill names its own ink token. The hatch stripes stay as a texture channel,
+ * but no single ink clears 4.5:1 on both stripes, so on a hatched tile the name
+ * sits on an opaque --elev-surface plate. node_tile_contrast_test.go pins all
+ * of it. */
+.tile-has-payload { background: var(--success); color: var(--on-success-fill); }
 .tile-empty-bin {
   background: repeating-linear-gradient(45deg, var(--success) 0 4px, color-mix(in srgb, var(--success) 30%, var(--surface)) 4px 8px);
-  color: #fff;
 }
-.tile-staged { background: var(--status-staged-dot); color: #fff; }
+.tile-staged { background: var(--status-staged-dot); color: var(--on-staged-fill); }
 
 /* Node tile maintenance state */
 .tile-maintenance {
   background: repeating-linear-gradient(45deg, var(--warning) 0 4px, color-mix(in srgb, var(--warning) 35%, var(--surface)) 4px 8px);
-  color: var(--text-strong);
+}
+.tile-empty-bin > .tile-text, .tile-maintenance > .tile-text,
+.tile-empty-bin > .tile-loc, .tile-maintenance > .tile-loc {
+  background: var(--elev-surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 0 var(--sp-1);
 }
 
 /* Node tile claim/lock borders */
@@ -209,27 +233,37 @@ textarea { resize: vertical; min-height: 60px; }
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
 }
+/* Hover lifts the edge, not the size: a tile that scales on hover is the
+   decorative wobble "Motion means motion" forbids, and it overlapped its
+   neighbours in a tight row. */
 .node-tile:hover {
-  transform: scale(1.08);
-  box-shadow: 0 3px 12px rgba(0,0,0,0.18);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
   z-index: var(--z-raised);
 }
+.tile-text { display: block; max-width: 100%; min-width: 0; }
 .tile-loc {
+  display: block;
+  max-width: 100%;
   font-weight: 700;
-  font-size: 0.7rem;
+  font-size: var(--font-xs);
   letter-spacing: 0.02em;
-  line-height: 1.2;
-  word-break: break-word;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tile-disabled {
   opacity: 0.4;
 }
 .tile-label {
   display: block;
-  font-size: 0.6rem;
-  opacity: 0.7;
-  margin-top: 1px;
-  line-height: 1;
+  max-width: 100%;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tile-off {
   position: absolute;
@@ -347,17 +381,6 @@ textarea { resize: vertical; min-height: 60px; }
 }
 .modal-close:hover {
   color: var(--text);
-}
-
-/* Section subheading */
-.section-subhead {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.35rem;
 }
 
 /* Accordion */
@@ -1171,98 +1194,109 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .tile-synthetic { border: 2px dashed var(--primary) !important; }
 .tile-badge { position:absolute; top:2px; right:4px; font-size:0.65rem; font-weight:700; color:var(--primary); }
-.node-tile { position: relative; }
+/* ── Nodes page sections — the style guide's "Nodes page" section ─────────
+   Every block on the page (a node group, the ungrouped grid, a map
+   accordion) is the same card: --surface, a 1px --border edge, 0.5rem radius,
+   one --sp-2 gap under it. Sections are titled with the shared .section-head
+   h2; inside a card, a sub-section (a lane, "Not in a lane") is the
+   uppercase caption the station boxes already use for their stages. */
+.node-section-head { margin-top: var(--sp-5); margin-bottom: var(--sp-2); }
+.node-section-head h2 { font-size: var(--font-lg); }
+.node-section-count { font-size: var(--font-sm); font-weight: var(--fw-normal); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.node-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
 .smkt-group {
-  border: 2px solid var(--primary);
-  border-radius: 8px;
-  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  margin-bottom: var(--sp-2);
   overflow: hidden;
-  background: var(--bg);
+  background: var(--surface);
 }
 .smkt-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  background: color-mix(in srgb, var(--primary) 8%, var(--bg));
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
   user-select: none;
-  font-size: 0.85rem;
+  font-size: var(--font-sm);
   border-bottom: 1px solid var(--border);
 }
-.smkt-header:hover { background: color-mix(in srgb, var(--primary) 14%, var(--bg)); }
+.smkt-header:hover { background: var(--bg); }
+.smkt-collapsed .smkt-header { border-bottom-color: transparent; }
 .smkt-arrow {
   display: inline-block;
-  transition: transform 0.2s;
+  transition: transform var(--dur-fast) var(--ease);
   font-size: 0.7rem;
   color: var(--text-muted);
 }
 .smkt-collapsed .smkt-arrow { transform: rotate(-90deg); }
 .smkt-collapsed .smkt-body { display: none; }
-.smkt-name { font-weight: 600; color: var(--primary); cursor: pointer; }
+.smkt-name { font-size: var(--font-base); font-weight: var(--fw-bold); color: var(--primary); cursor: pointer; }
 .smkt-name:hover { text-decoration: underline; }
-.smkt-summary { color: var(--text-muted); font-size: 0.8rem; margin-left: auto; }
-.smkt-body { padding: 0.5rem 0.75rem; }
-.smkt-lane { margin-bottom: 0.5rem; }
+.smkt-summary { color: var(--text-muted); font-size: var(--font-sm); margin-left: auto; font-variant-numeric: tabular-nums; }
+.smkt-body { padding: var(--sp-3); }
+.smkt-lane { margin-bottom: var(--sp-3); }
 .smkt-lane:last-child { margin-bottom: 0; }
 .smkt-lane-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-  color: var(--text);
+  gap: var(--sp-2);
+  font-size: var(--font-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--sp-1);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .smkt-lane-header:hover { color: var(--primary); }
+/* A lane is drawn as a rail open at its mouth (the left edge): structure you
+   read along, so --sub-3, never a colour. */
 .smkt-lane-slots {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  min-height: 36px;
-  padding: 0.2rem 0.4rem;
-  border-top: 1.5px solid #d4a574;
-  border-right: 1.5px solid #d4a574;
-  border-bottom: 1.5px solid #d4a574;
+  gap: var(--sp-2);
+  min-height: calc(2.75rem + 2 * var(--sp-1));
+  padding: var(--sp-1);
+  border: 1px solid var(--sub-3);
   border-left: none;
-  border-radius: 0 4px 4px 0;
-  transition: background 0.15s, outline-color 0.15s;
-}
-.smkt-lane-slots .node-tile {
-  min-width: 70px;
-  max-width: 100px;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.4rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  transition: background var(--dur-fast) var(--ease);
 }
 .smkt-absorbed { display: none !important; }
 .smkt-add-lane {
-  margin-top: 0.5rem;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.8rem;
+  margin-top: var(--sp-3);
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--font-sm);
   color: var(--text-muted);
   cursor: pointer;
   border: 1px dashed var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   text-align: center;
-  opacity: 0.6;
 }
-.smkt-add-lane:hover { opacity: 1; color: var(--primary); border-color: var(--primary); }
-.ngrp-direct {
-  margin-bottom: 0.5rem;
-}
+.smkt-add-lane:hover { color: var(--primary); border-color: var(--primary); }
 .ngrp-direct .smkt-lane-slots {
-  border: 1px dashed color-mix(in srgb, var(--primary) 30%, var(--border));
-  background: color-mix(in srgb, var(--primary) 4%, transparent);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  align-items: center;
 }
+/* An empty group says so in its body rather than drawing a header over
+   nothing. Inside the drop zone it sits beside where a dropped tile lands. */
+.node-group-empty { padding: var(--sp-2); font-size: var(--font-sm); color: var(--text-muted); }
+.ngrp-direct .smkt-lane-slots > .node-group-empty { padding: 0 var(--sp-2); }
 .slot-depth {
   position: absolute;
   bottom: 1px;
   right: 3px;
-  font-size: 0.55rem;
+  font-size: 0.6rem;
   font-weight: 700;
   color: inherit;
-  opacity: 0.6;
   line-height: 1;
   pointer-events: none;
 }
@@ -1279,18 +1313,21 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   min-height: 60px;
 }
 #nodes-drop-area { min-height: 60px; }
-.ungrouped-wrapper {
-  border: 1.5px dashed var(--border);
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem 0.75rem;
-  margin-top: 0.5rem;
+
+/* The legend reads at body-adjacent size: it is the key to every colour on
+   the page, and at 0.75rem with 12px swatches it was the smallest text on it. */
+.node-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4);
+  font-size: var(--font-sm); color: var(--text); margin-bottom: var(--sp-3);
 }
-.ungrouped-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 0.35rem;
-}
+.node-legend-item { display: inline-flex; align-items: center; gap: var(--sp-2); }
+/* The fill comes from the tile-state class the swatch also carries, so the
+   key cannot drift from the tiles; only the empty and outline swatches are
+   drawn here. */
+.legend-swatch { width: 1rem; height: 1rem; flex: none; border-radius: 3px; }
+.legend-swatch-empty { background: var(--bg-dark); border: 1px solid var(--border); }
+.legend-swatch-claimed { background: transparent; border: 2px solid var(--warning); }
+.legend-swatch-disabled { background: transparent; border: 2px solid var(--danger); }
 
 /* ── Stations: Core-owned loader boxes on the Nodes page ─────────────────
    The box is the form. Each slot is a labelled row; a required slot that is
@@ -1452,11 +1489,11 @@ button.loader-place { cursor: pointer; }
 }
 /* A window IS a node tile: it inherits .node-tile (same size, padding, and live
    state colour — the .tile-* classes mirrored on by markLinkedTiles), so a node
-   looks identical in a group or a station. It adds ONLY a teal outline, and a
-   column layout so the per-position payload picker stacks under the name. */
+   looks identical in a group or a station. It adds ONLY a teal outline and the
+   side padding that keeps the name clear of its corner controls; the column
+   layout that stacks the payload picker under the name is every tile's. */
 .loader-member {
-  flex-direction: column;
-  gap: 2px;
+  padding-inline: 0.9rem;   /* clear of the grip and the x in the corners */
   outline: 2px solid var(--loader-outline);
   outline-offset: -2px;
 }
@@ -1567,6 +1604,9 @@ button.loader-place { cursor: pointer; }
 #nodes-drop-area.assign-armed .node-tile.assign-filtered,
 #nodes-drop-area.assign-armed .smkt-header.assign-filtered { display: none; }
 #nodes-drop-area.assign-armed .assign-note { display: block; font-size: 0.66rem; color: var(--text-muted); line-height: 1.2; }
+/* The one place a tile's height gives: while a slot is armed each tile carries
+   its reason on the tile, and a clipped reason is no reason. Width holds. */
+#nodes-drop-area.assign-armed .node-tile { height: auto; min-height: 2.75rem; }
 #nodes-drop-area.assign-armed .assign-lit > .assign-note { color: var(--primary); }
 #nodes-drop-area:not(.assign-armed) .assign-note { display: none; }
 .smkt-group > .smkt-header[draggable="true"] { cursor: grab; }
