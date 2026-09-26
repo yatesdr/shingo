@@ -282,6 +282,11 @@ body {
 .os-co-picker-btn:active { opacity: 0.8; }
 .os-co-picker-btn.cancel { background: #3a3f4e; color: #ccc; }
 .os-co-picker-btn.danger { background: #6b1f1f; color: #fff; }
+/* The two-stage unloader's one-tap panels (Full off, Send on): the one button
+   is the whole interaction, so it and CANCEL sit at the HMI touch floor
+   (ui-style-guide, Buttons > Touch sizing) by scope, not a parallel button
+   class. Scoped to these panels only; the older pickers are not in this change. */
+.os-co-picker--one-tap .os-co-picker-btn { min-height: var(--os-touch-min, 56px); }
 
 /* Sourceability on the changeover picker. GREEN = Core can source every payload the
    style needs; RED = it cannot. Red stays fully enabled — the operator may change over

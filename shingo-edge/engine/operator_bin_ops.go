@@ -499,9 +499,18 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // for this node's own unloader to the reservation seam — a no-inbound drain is gated
 // there too, so it's a no-op.
 // ClearBin clears the bin at the consume-unloader window. binTypeCode is the
-// dunnage type the operator selected at the confirm tap; empty string means no
-// change to the carrier's bin_type_id — except at an unloader with a bare type,
-// where a blank code stamps that type (see the substitution before the clear).
+// dunnage type the operator selected at the confirm tap, sent as given; empty
+// string sends none. The Edge never fills it in. At a two-stage unloader Core
+// stamps the cart itself from the cart's own type — the stage-1 marker on a
+// Full off, the carrier back on a stage-2 Send on — so the board posts a blank
+// code there and the Edge passes it through
+// (TestClearBin_BinTypeCodeAtACoreOwnedUnloader).
+//
+// When the clear commits but the unloader has nowhere to send the carrier
+// (createUnloaderEmptyOut finds no outbound), the bookkeeping below still runs
+// and ClearBin returns an error that says the bin WAS cleared: the operator has
+// to learn the carrier is staying, and a retry is not the fix
+// (TestClearBin_NoOutboundTellsTheOperator).
 func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -518,17 +527,6 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
 	}
-	// A blank code at an unloader Core configured with a bare type (the stage-1
-	// half of a two-stage unloader) stamps that type through the same
-	// bin_type_code parameter; an explicit code still wins. The lookup is the
-	// loader store's in-memory snapshot — no SQL, no Core round trip
-	// (TestClearBin_BinTypeCodeAtACoreOwnedUnloader). Consume only: the bare
-	// type is an unloader's.
-	if binTypeCode == "" && claim.Role == protocol.ClaimRoleConsume {
-		if l, lerr := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
-			binTypeCode = l.BareBinTypeCode()
-		}
-	}
 	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode)
 	if err != nil {
 		return fmt.Errorf("clear bin: %w", err)
@@ -542,6 +540,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	// ones an AMR fed — but only after the clear has COMMITTED on Core, so the
 	// carrier the U2 names is empty on Core's side too and not merely about to be.
 	// The clear succeeding is what says a carrier was there (see the doc above).
+	var notSent error
 	if claim.Role == protocol.ClaimRoleConsume {
 		// Double-tap guard, the same one PushEmptyOut carries: the order layer has
 		// no dedup for move orders, so a second CLEAR tap on the same window would
@@ -564,8 +563,8 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		} else if inFlight {
 			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
 				node.Name, existingID)
-		} else {
-			e.createUnloaderEmptyOut(node, claim)
+		} else if nerr := e.createUnloaderEmptyOut(node, claim); nerr != nil {
+			notSent = nerr
 		}
 	}
 	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
@@ -622,6 +621,9 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if claim.Role == protocol.ClaimRoleProduce {
 		e.rePushOwnLoader(node)
 	}
+	if notSent != nil {
+		return fmt.Errorf("bin cleared, but %w", notSent)
+	}
 	return nil
 }
 
@@ -674,8 +676,11 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	}
 	// Same empty-out as ClearBin's door, and it names no part either: the U2 is a
 	// removal of whatever carrier stands on the window, never a fetch for a part.
-	// See createUnloaderEmptyOut.
-	e.createUnloaderEmptyOut(node, claim)
+	// See createUnloaderEmptyOut. Nowhere to send it is a refusal here: the
+	// push is the whole operation and nothing has been committed.
+	if err := e.createUnloaderEmptyOut(node, claim); err != nil {
+		return err
+	}
 	// Re-arm the delivery seam — mirrors ClearBin's gate at its tail, with the
 	// tapped window counted held for the same reason.
 	if claim.AutoPush {
@@ -739,10 +744,18 @@ func (e *Engine) emptyOutInFlight(nodeID int64) (existingID int64, inFlight bool
 // in operator-window-state.js, and the modal's demand queue). Pinned by
 // TestEmptyOut_EnvelopeNamesNoPart and, Core side,
 // TestPayloadlessEmptyOut_SourcesAResidentThePartCouldNotCarry.
-func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim) {
+//
+// NO OUTBOUND IS AN ERROR, not a quiet return. It used to return nothing, so a
+// CLEAR at an unloader with no outbound (or one pointing at itself) told the
+// operator it worked while the carrier stayed in the window with no move owed.
+// outboundFor logs the reason; the error is what reaches the operator, through
+// ClearBin (which has already cleared, and says so) and PushEmptyOut (where the
+// move is the whole operation, so it is a refusal). A failure to CREATE the move
+// is still only logged.
+func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.NodeClaim) error {
 	outbound, ok := e.outboundFor(node, claim, domain.RoleConsume)
 	if !ok {
-		return
+		return fmt.Errorf("%s has nowhere to send the empty carrier: it stays in the window until it is moved by hand", node.Name)
 	}
 	nodeID := node.ID
 	// NoDemand: the side-cycle's empty-out is the system's own consequence of a
@@ -751,7 +764,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 		ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", node.Name, err)
-		return
+		return nil
 	}
 	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s (names no part)", order.ID, node.Name, outbound)
 	// Point the runtime active order at U2 so the unloader UI shows the empty-out next.
@@ -759,6 +772,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(node.ID, &order.ID); err != nil {
 		log.Printf("side-cycle: update runtime orders for unloader %d: %v", node.ID, err)
 	}
+	return nil
 }
 
 // RequestEmptyBin delivers an empty bin to a produce node. Manual_swap and

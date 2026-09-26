@@ -106,17 +106,34 @@ p = open(function () { ctx.confirmUnloadSwap(14, ['PART-C'], 7); });
 eq(p.texts.indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true,
     'clear: the discard count is stated');
 
-// ── stage 1: the CLEAR at an unloader with a bare type ──
+// ── stage 1: the CLEAR at a window of an unloader that leaves the cart bare ──
 // One tap, no picker even when the node's payloads map to several types, and
-// a blank code: the Edge (ClearBin) fills the loader's bare type.
-p = open(function () { ctx.confirmUnloadSwap(15, ['PART-A', 'PART-B'], 0, 'HALF-TOTE'); });
-eq(p.texts[0], 'Full pulled — carrier leaves bare', 'stage 1: title');
-eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'stage 1: one button, no picker');
-eq(p.click('CONFIRM SWAP'), [{ url: '/api/process-nodes/15/clear-bin', body: undefined }],
-    'stage 1: blank code (no body) — the Edge fills the bare type');
-p = open(function () { ctx.confirmUnloadSwap(16, ['PART-C'], 5, 'HALF-TOTE'); });
-eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'stage 1: a single-type node does not auto-fill its type either');
-eq(p.click('CONFIRM SWAP'), [{ url: '/api/process-nodes/16/clear-bin', body: undefined }],
+// a blank code: Core stamps the cart's own marker from the cart's type. The
+// panel names no type at all — the marker is Core's bookkeeping.
+//
+// noTypeOnPanel is the pin the brief names: no "-BARE" text, and none of the
+// catalog's bin-type codes, anywhere on the panel.
+function noTypeOnPanel(p, label) {
+    const codes = catalog.map(function (e) { return e.bin_type_code; });
+    p.texts.concat(p.buttons).forEach(function (t) {
+        eq(/-BARE/i.test(t), false, label + ': no -BARE text (' + t + ')');
+        codes.forEach(function (c) {
+            eq(t.indexOf(c) >= 0, false, label + ': no bin-type code ' + c + ' (' + t + ')');
+        });
+    });
+}
+p = open(function () { ctx.confirmUnloadSwap(15, ['PART-A', 'PART-B'], 0, true); });
+eq(p.texts[0], 'Full bin on the cart', 'stage 1: title');
+eq(p.buttons, ['Full off', 'CANCEL'], 'stage 1: one button, no picker');
+eq(p.texts.indexOf('The cart goes on to Stage 2. The next full is on its way.') >= 0, true,
+    'stage 1: says where the cart goes');
+noTypeOnPanel(p, 'stage 1');
+eq(p.click('Full off'), [{ url: '/api/process-nodes/15/clear-bin', body: undefined }],
+    'stage 1: blank code (no body) — Core stamps the cart');
+p = open(function () { ctx.confirmUnloadSwap(16, ['PART-C'], 5, true); });
+eq(p.buttons, ['Full off', 'CANCEL'], 'stage 1: a single-type node does not auto-fill its type either');
+noTypeOnPanel(p, 'stage 1 single-type');
+eq(p.click('Full off'), [{ url: '/api/process-nodes/16/clear-bin', body: undefined }],
     'stage 1: still a blank code');
 eq(p.texts.indexOf('This slot still counts 5. Confirming writes it to zero.') >= 0, true,
     'stage 1: the discard count is still stated');
@@ -141,17 +158,21 @@ p = open(function () { ctx.confirmPushEmpty(23, ['PART-UNMAPPED']); });
 eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-L', 'PUSH AS RACK-C', 'CANCEL'],
     'empty: payloads that match nothing -> the full catalog');
 
-// ── stage 2: a bare carrier in the window ──
-// PUSH EMPTY is hidden, so PUSH AS <type> is the only way out. A zero-payload
-// stage-2 loader offers the whole catalog, which never holds a bare type
-// (Core refuses one in payload_bin_types).
-p = open(function () { ctx.confirmPushEmpty(25, [], true); });
-eq(p.buttons, ['PUSH AS TOTE-S', 'PUSH AS TOTE-L', 'PUSH AS RACK-C', 'CANCEL'],
-    'stage 2: bare -> no PUSH EMPTY, PUSH AS for the full catalog');
-eq(p.texts.indexOf('This carrier is bare. Push it out as its real type:') >= 0, true,
-    'stage 2: says the carrier is bare');
-eq(p.click('PUSH AS TOTE-L'), [{ url: '/api/process-nodes/25/clear-bin', body: { bin_type_code: 'TOTE-L' } }],
-    'stage 2: PUSH AS re-stamps the carrier through clear-bin');
+// ── stage 2: a bare cart in the window ──
+// One tap, Send on, with a blank code: Core stamps the cart back to the type
+// it is the marker of. No PUSH EMPTY (it would send the cart on still bare) and
+// no PUSH AS picker — there is no type to pick, and none is shown.
+p = open(function () { ctx.confirmPushEmpty(25, ['PART-A', 'PART-B'], true); });
+eq(p.texts[0], 'Cart, no bin', 'stage 2: title');
+eq(p.buttons, ['Send on', 'CANCEL'], 'stage 2: bare -> one tap, no PUSH EMPTY, no PUSH AS');
+eq(p.texts.indexOf('Put an empty bin on it, then send it on.') >= 0, true,
+    'stage 2: says what to do');
+noTypeOnPanel(p, 'stage 2');
+eq(p.click('Send on'), [{ url: '/api/process-nodes/25/clear-bin', body: undefined }],
+    'stage 2: Send on posts clear-bin with a blank code');
+p = open(function () { ctx.confirmPushEmpty(27, [], true); });
+eq(p.buttons, ['Send on', 'CANCEL'], 'stage 2: a zero-payload loader offers no catalog either');
+noTypeOnPanel(p, 'stage 2 zero-payload');
 p = open(function () { ctx.confirmPushEmpty(26, [], false); });
 eq(p.buttons[0], 'PUSH EMPTY', 'stage 2: a carrier that is not bare keeps PUSH EMPTY');
 

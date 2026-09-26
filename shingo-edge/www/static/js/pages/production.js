@@ -51,7 +51,7 @@ function viewBinContents() {
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem">';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Payload</div><strong>' + escapeHtml(binState.payload_code || 'empty') + '</strong></div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">UoP Remaining</div><strong>' + (binState.uop_remaining || 0) + '</strong></div>';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + escapeHtml(binState.bin_type_code || '-') + '</div>';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + escapeHtml(binState.bare ? 'Cart, no bin' : (binState.bin_type_code || '-')) + '</div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Confirmed</div>' + (binState.manifest_confirmed ? 'Yes' : 'No') + '</div>';
     html += '</div>';
     if (binState.manifest) {

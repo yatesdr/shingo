@@ -382,10 +382,11 @@ export function renderGrid() {
 // what they were discarding at the moment they discarded it. Pass 0 or null
 // when there is nothing to say and the line is omitted.
 //
-// bareBinTypeCode is the tile's bare_bin_type_code: set only at the stage-1
-// window of a two-stage unloader. There the carrier leaves bare as that type,
-// so there is nothing to pick — the CLEAR is one tap and posts a blank code,
-// and the Edge (ClearBin) stamps the loader's bare type.
+// leavesBare is the tile's leaves_bare: true only at a window of the stage-1
+// half of a two-stage unloader. There the cart goes on to stage 2 with no bin
+// on it, so there is nothing to pick — the CLEAR is one tap, Full off, and
+// posts a blank code; Core stamps the cart from its own type. The panel names
+// no type: the marker Core stamps is bookkeeping, never an operator's word.
 // dunnageTypesFor derives the distinct carrier types a node may declare, from
 // the view-level payload_bin_types catalog narrowed to the node's payloads.
 //
@@ -422,20 +423,18 @@ function dunnageTypesFor(allowedPayloadCodes) {
     return binTypeCodes;
 }
 
-function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding, bareBinTypeCode) {
-    var binTypeCodes = bareBinTypeCode ? [] : dunnageTypesFor(allowedPayloadCodes);
+function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding, leavesBare) {
+    if (leavesBare) {
+        confirmFullOff(nodeID, discarding);
+        return;
+    }
+    var binTypeCodes = dunnageTypesFor(allowedPayloadCodes);
 
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
-    if (bareBinTypeCode) {
-        panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full pulled — carrier leaves bare' }));
-        panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
-            textContent: 'Confirms the bin is unloaded. The carrier moves on as ' + bareBinTypeCode + ' and the next full is requested.' }));
-    } else {
-        panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full pulled, empty filled?' }));
-        panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
-            textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
-    }
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full pulled, empty filled?' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
     if (discarding > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
             textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
@@ -460,8 +459,7 @@ function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding, bareBinTypeC
             panel.appendChild(btn);
         });
     } else {
-        // No catalog / exactly one type (auto-fill) / a bare stage-1 window
-        // (blank code, the Edge fills it): one button.
+        // No catalog / exactly one type (auto-fill): one button.
         const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM SWAP' });
         confirm.addEventListener('click', function() {
             overlay.remove();
@@ -480,29 +478,75 @@ function confirmUnloadSwap(nodeID, allowedPayloadCodes, discarding, bareBinTypeC
     document.body.appendChild(overlay);
 }
 
+// oneTapPanel is the two-stage unloader's panel: a title, what to do, one
+// button that posts clear-bin with a blank code, the line saying what happens
+// next, and CANCEL. No type appears on it anywhere — Core stamps the cart from
+// its own type, so there is nothing for the operator to pick or read.
+function oneTapPanel(nodeID, title, subtitles, label, after) {
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: title }));
+    subtitles.forEach(function(s) { panel.appendChild(s); });
+    const go = el('button', { className: 'os-co-picker-btn', textContent: label });
+    go.addEventListener('click', function() {
+        overlay.remove();
+        postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
+    });
+    panel.appendChild(go);
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle', textContent: after }));
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+// confirmFullOff is stage 1 of a two-stage unloader: the full comes off the
+// cart and the cart goes on to stage 2 bare. The discard count is still stated.
+function confirmFullOff(nodeID, discarding) {
+    const subs = [];
+    if (discarding > 0) {
+        subs.push(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
+            textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
+    }
+    oneTapPanel(nodeID, 'Full bin on the cart', subs, 'Full off',
+        'The cart goes on to Stage 2. The next full is on its way.');
+}
+
+// confirmSendOn is stage 2 with a bare cart in the window (bin_state.bare):
+// the operator puts an empty bin on it and sends it on. Plain PUSH EMPTY would
+// send the cart on still bare, and a PUSH AS picker asks a question the cart
+// already answers, so it is one tap.
+function confirmSendOn(nodeID) {
+    oneTapPanel(nodeID, 'Cart, no bin',
+        [el('div', { className: 'os-co-picker-subtitle', textContent: 'Put an empty bin on it, then send it on.' })],
+        'Send on', 'Goes to the empties supermarket. No type to pick — it\'s the cart it came in as.');
+}
+
 // confirmPushEmpty shows a confirmation panel for an empty carrier sitting in a
 // drain slot. Tapping PUSH EMPTY fires the push-empty endpoint so the carrier is
 // sent to the supermarket and the node can request a fresh full bin.
 //
-// bare is the carrier's bin_state.bare. A bare carrier holds no container and
-// is never handed out as an empty, so plain PUSH EMPTY would send it to the
-// empties market still bare; the panel offers only PUSH AS <type>, which
-// re-stamps it on the way out.
+// bare is the carrier's bin_state.bare: a stage-2 cart with no bin on it gets
+// the one-tap Send on panel instead (confirmSendOn).
 function confirmPushEmpty(nodeID, allowedPayloadCodes, bare) {
+    if (bare) {
+        confirmSendOn(nodeID);
+        return;
+    }
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Empty bin in slot' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: 'Send the empty carrier to the supermarket so a full bin can be requested.' }));
 
-    if (!bare) {
-        const push = el('button', { className: 'os-co-picker-btn', textContent: 'PUSH EMPTY' });
-        push.addEventListener('click', function() {
-            overlay.remove();
-            postAction('/api/process-nodes/' + nodeID + '/push-empty', undefined, loadViewRef);
-        });
-        panel.appendChild(push);
-    }
+    const push = el('button', { className: 'os-co-picker-btn', textContent: 'PUSH EMPTY' });
+    push.addEventListener('click', function() {
+        overlay.remove();
+        postAction('/api/process-nodes/' + nodeID + '/push-empty', undefined, loadViewRef);
+    });
+    panel.appendChild(push);
 
     // ── RE-CLEAR: SAY WHAT THIS CARRIER IS, ON THE WAY OUT ──────────────────
     //
@@ -528,8 +572,7 @@ function confirmPushEmpty(nodeID, allowedPayloadCodes, bare) {
     const dunnage = dunnageTypesFor(allowedPayloadCodes);
     if (dunnage.length > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
-            textContent: bare ? 'This carrier is bare. Push it out as its real type:'
-                : 'Or push it out and correct the carrier type:' }));
+            textContent: 'Or push it out and correct the carrier type:' }));
         dunnage.forEach(function(code) {
             const btn = el('button', { className: 'os-co-picker-btn', textContent: 'PUSH AS ' + code });
             btn.addEventListener('click', function() {
@@ -896,7 +939,7 @@ function buildLoaderCard(entry, code, counters, opts) {
         card.style.cursor = 'pointer';
         card.addEventListener('click', function() {
             confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
-                entry.runtime && entry.runtime.remaining_uop_cached, entry.bare_bin_type_code);
+                entry.runtime && entry.runtime.remaining_uop_cached, !!entry.leaves_bare);
         });
     } else {
         card.style.cursor = 'pointer';
@@ -1405,7 +1448,7 @@ function createNodeButton(entry) {
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
             if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
-                entry.runtime && entry.runtime.remaining_uop_cached, entry.bare_bin_type_code);
+                entry.runtime && entry.runtime.remaining_uop_cached, !!entry.leaves_bare);
             else if (emptyPresent) confirmPushEmpty(entry.node.id,
                 entry.active_claim && entry.active_claim.allowed_payload_codes, !!bs.bare);
         });

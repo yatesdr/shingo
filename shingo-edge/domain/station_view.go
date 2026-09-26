@@ -130,11 +130,11 @@ type StationNodeView struct {
 	// from the Edge-only home_location_loaders table — that copy was orphaned by
 	// the loader move to Core and has no reader.
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
-	// BareBinTypeCode is the bin type a blank CLEAR at this unloader stamps on
-	// the carrier it leaves (Loader.BareBinTypeCode, Core-owned). When set the
-	// board's CLEAR is one tap with no dunnage picker, and the engine fills the
-	// code (ClearBin). Empty for every other node.
-	BareBinTypeCode string `json:"bare_bin_type_code,omitempty"`
+	// LeavesBare marks a window of the stage-1 half of a two-stage unloader
+	// (Loader.LeavesBare, Core-owned). The board's CLEAR there is one tap,
+	// "Full off", with no dunnage picker and no type on it: it posts a blank
+	// code and Core stamps the cart's own marker. False for every other node.
+	LeavesBare bool `json:"leaves_bare,omitempty"`
 	// HasBufferPartial is true when this is a dedicated home position with a
 	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with
 	// the same payload. When set, the HMI shows the "Clear Bin" button so the

@@ -41,10 +41,18 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 		for j := range views[i].Nodes {
 			name := views[i].Nodes[j].Node.CoreNodeName
 			if info, ok := binMap[name]; ok {
+				// A bare cart's type is the marker Core stamps between the
+				// stages of a two-stage unloader: bookkeeping, never an
+				// operator's word. Only the bare flag travels to the pages
+				// (TestEnrichViewBinState_BareCartCarriesNoMarkerCode).
+				binTypeCode := info.BinTypeCode
+				if info.Bare {
+					binTypeCode = ""
+				}
 				views[i].Nodes[j].BinState = &domain.NodeBinState{
 					BinID:             info.BinID,
 					BinLabel:          info.BinLabel,
-					BinTypeCode:       info.BinTypeCode,
+					BinTypeCode:       binTypeCode,
 					Bare:              info.Bare,
 					PayloadCode:       info.PayloadCode,
 					UOPRemaining:      info.UOPRemaining,

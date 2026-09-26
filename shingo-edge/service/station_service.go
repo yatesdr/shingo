@@ -1425,7 +1425,7 @@ func (s *StationService) applyManualSwapLoaderFields(
 			if loader, err := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); err == nil && loader != nil {
 				nodeView.OperatorDriven = loader.IsOperatorDriven()
 				nodeView.HomeLocationLoader = loader.IsDedicated()
-				nodeView.BareBinTypeCode = loader.BareBinTypeCode()
+				nodeView.LeavesBare = loader.LeavesBare()
 				// Core owns the loader's payload set — the board shows it (the edge claim
 				// is just the node now). Overrides the claim-derived set above; falls back
 				// to it only when the loader carries no Core payloads (legacy / not migrated).

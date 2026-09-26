@@ -691,7 +691,8 @@ func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 }
 
 // TestPinOutbound_BlankFilesNothing_AtAllThreeSites: no outbound anywhere means
-// no move from any creator.
+// no move from any creator. PUSH EMPTY, whose whole operation is the move, is
+// refused rather than reported done.
 func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 	t.Parallel()
 
@@ -713,7 +714,11 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = NewCoreClient(c.srv.URL)
-		testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
+		// PUSH EMPTY with nowhere to push is refused, not reported done: the
+		// empty-out IS the operation, and nothing was committed.
+		if err := eng.PushEmptyOut(nodeID); err == nil {
+			t.Error("PushEmptyOut with no outbound returned nil, want a refusal")
+		}
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
 			t.Errorf("U2 destinations = %v, want none", got)
 		}
@@ -748,7 +753,9 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = NewCoreClient(c.srv.URL)
-		testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
+		if err := eng.PushEmptyOut(nodeID); err == nil {
+			t.Error("PushEmptyOut with a same-node outbound returned nil, want a refusal")
+		}
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
 			t.Errorf("U2 destinations = %v, want none (same-node)", got)
 		}

@@ -22,8 +22,8 @@ func projectedByKey(t *testing.T, eng *Engine, key string, role domain.LoaderRol
 }
 
 // TestProjectCoreLoader_OptionsByBranch: the shared_window branch carries
-// inbound, outbound, funnel_windows, changeover_load_directive, the bare bin
-// type and auto_push; the dedicated_positions branch carries all of those
+// inbound, outbound, funnel_windows, changeover_load_directive, leaves_bare
+// and auto_push; the dedicated_positions branch carries all of those
 // except funnel_windows.
 func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	t.Parallel()
@@ -33,7 +33,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Name: "OPT-SW", LoaderKey: "loader:OPT-SW", Role: "consume", Layout: "shared_window",
 			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
-			FunnelWindows: true, ChangeoverLoadDirective: true, BareBinTypeCode: "HALF-SW", AutoPush: true,
+			FunnelWindows: true, ChangeoverLoadDirective: true, LeavesBare: true, AutoPush: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-SW-W1", Kind: "window"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		},
@@ -41,7 +41,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Name: "OPT-DP", LoaderKey: "loader:OPT-DP", Role: "consume", Layout: "dedicated_positions",
 			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
-			FunnelWindows: true, ChangeoverLoadDirective: true, BareBinTypeCode: "HALF-DP", AutoPush: true,
+			FunnelWindows: true, ChangeoverLoadDirective: true, LeavesBare: true, AutoPush: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-DP-P1", PayloadCode: "PART-A", Kind: "position"}},
 		},
 	)
@@ -53,8 +53,8 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	if !sw.FunnelWindows() || !sw.ChangeoverLoadDirective() {
 		t.Errorf("shared funnel/directive = %v/%v, want true/true", sw.FunnelWindows(), sw.ChangeoverLoadDirective())
 	}
-	if got := sw.BareBinTypeCode(); got != "HALF-SW" {
-		t.Errorf("shared bare bin type = %q, want HALF-SW", got)
+	if !sw.LeavesBare() {
+		t.Error("shared LeavesBare = false, want true")
 	}
 	if !sw.AutoPush() {
 		t.Error("shared AutoPush = false, want true")
@@ -64,8 +64,8 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	if dp.InboundSource() != "FG-SUPER" || dp.OutboundDest() != "EMPTY-TOTES" {
 		t.Errorf("dedicated inbound/outbound = %q/%q, want FG-SUPER/EMPTY-TOTES", dp.InboundSource(), dp.OutboundDest())
 	}
-	if got := dp.BareBinTypeCode(); got != "HALF-DP" {
-		t.Errorf("dedicated bare bin type = %q, want HALF-DP", got)
+	if !dp.LeavesBare() {
+		t.Error("dedicated LeavesBare = false, want true")
 	}
 	if !dp.AutoPush() {
 		t.Error("dedicated AutoPush = false, want true")

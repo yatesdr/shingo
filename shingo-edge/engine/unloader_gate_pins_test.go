@@ -152,7 +152,7 @@ func TestPinUnloaderGate_U2Landed(t *testing.T) {
 	testutil.MustNoErr(t, err, "read N")
 	_, _, claim, err := f.eng.loadActiveNode(f.n)
 	testutil.MustNoErr(t, err, "load N")
-	f.eng.createUnloaderEmptyOut(nNode, claim) // the U2, without the tap's own gate
+	testutil.MustNoErr(t, f.eng.createUnloaderEmptyOut(nNode, claim), "the U2, without the tap's own gate")
 	moves := scMovesFrom(t, f.db, f.nCore)
 	if len(moves) != 1 {
 		t.Fatalf("fixture: U2s leaving %s = %d, want 1", f.nCore, len(moves))

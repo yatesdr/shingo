@@ -36,11 +36,11 @@ type CoreLoader struct {
 	// naming the carrier the incoming style needs rather than offering the
 	// whole board. Core owns it; this is the mirror.
 	ChangeoverLoadDirective bool
-	// BareBinTypeCode: the bin type a blank CLEAR at this unloader stamps on
-	// the carrier it leaves (the stage-1 half of a two-stage unloader). Core
-	// owns it (bin_loaders.bare_bin_type_id); "" means a blank CLEAR stamps
-	// nothing, which is also what a row from a Core predating the field reads as.
-	BareBinTypeCode string
+	// LeavesBare: this unloader is the stage-1 half of a two-stage unloader;
+	// its CLEAR leaves the cart with no bin on it and Core stamps the cart's
+	// own bare marker. Core owns it (a loader with second_stage_loader_id);
+	// false is also what a row from a Core predating the field reads as.
+	LeavesBare bool
 	// AutoPush: a CLEAR, a PUSH EMPTY or this unloader's own empty-out landing
 	// re-pulls its next full. Core owns it (bin_loaders.auto_push); false is
 	// also what a row from a Core predating the field reads as.
@@ -107,10 +107,10 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, bare_bin_type_code, auto_push, synced_at)
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push, synced_at)
 			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
 			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.ConfigGen, l.FunnelWindows, l.ChangeoverLoadDirective,
-			l.BareBinTypeCode, l.AutoPush,
+			l.LeavesBare, l.AutoPush,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
@@ -153,7 +153,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, bare_bin_type_code, auto_push FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -171,7 +171,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, bare_bin_type_code, auto_push FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, leaves_bare, auto_push FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -195,7 +195,7 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 		var l CoreLoader
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
 			&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &l.FunnelWindows,
-			&l.ChangeoverLoadDirective, &l.BareBinTypeCode, &l.AutoPush); err != nil {
+			&l.ChangeoverLoadDirective, &l.LeavesBare, &l.AutoPush); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
 		}
 		out = append(out, l)

@@ -91,7 +91,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			domain.WithUOPThreshold(uopThreshold),
 			domain.WithFunnelWindows(l.FunnelWindows),
 			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
-			domain.WithBareBinType(l.BareBinTypeCode),
+			domain.WithLeavesBare(l.LeavesBare),
 			domain.WithAutoPush(l.AutoPush),
 			domain.WithOutboundDest(l.OutboundDest))
 
@@ -111,7 +111,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		return domain.NewDedicatedPositionsLoader(id, l.Name, role, repl, positions,
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
-			domain.WithBareBinType(l.BareBinTypeCode),
+			domain.WithLeavesBare(l.LeavesBare),
 			domain.WithAutoPush(l.AutoPush),
 			domain.WithOutboundDest(l.OutboundDest))
 

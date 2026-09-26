@@ -200,7 +200,7 @@ type Loader struct {
 	uopThreshold            map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
 	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
-	bareBinTypeCode         string              // the type a blank CLEAR at this unloader stamps (see BareBinTypeCode)
+	leavesBare              bool                // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
 	autoPush                bool                // a freed window re-pulls this unloader's next full (see AutoPush)
 }
 
@@ -475,18 +475,19 @@ func WithChangeoverLoadDirective(on bool) LoaderOption {
 // each style's claim, where it used to be duplicated per style.
 func (l *Loader) ChangeoverLoadDirective() bool { return l.changeoverLoadDirective }
 
-// WithBareBinType sets the bin type a blank CLEAR at this unloader stamps on
-// the carrier it leaves behind (CoreLoader.BareBinTypeCode, owned by Core's
-// bin_loaders.bare_bin_type_id). "" — not passing the option — stamps nothing,
-// which is what every unloader does.
-func WithBareBinType(code string) LoaderOption {
-	return func(l *Loader) { l.bareBinTypeCode = code }
+// WithLeavesBare marks this unloader as the stage-1 half of a two-stage
+// unloader (CoreLoader.LeavesBare; Core owns it — a loader with a second
+// stage). Not passing the option is an ordinary unloader.
+func WithLeavesBare(on bool) LoaderOption {
+	return func(l *Loader) { l.leavesBare = on }
 }
 
-// BareBinTypeCode is the stage-1 half of a two-stage unloader: the bin type
-// Core flags bare, so no empty finder hands the carrier out until PUSH AS
-// re-stamps it at stage 2. "" for every other loader.
-func (l *Loader) BareBinTypeCode() string { return l.bareBinTypeCode }
+// LeavesBare reports whether this unloader's CLEAR leaves the cart with no bin
+// on it (stage 1 of a two-stage unloader). The Edge does nothing with the cart's
+// type there: it posts a blank code and Core stamps the cart's own bare marker,
+// derived from the cart's type, so several cart types can run through one
+// stage 1. The board reads it to show the one-tap "Full off" panel.
+func (l *Loader) LeavesBare() bool { return l.leavesBare }
 
 // WithAutoPush sets whether a CLEAR, a PUSH EMPTY or this unloader's own
 // empty-out landing re-pulls its next full (CoreLoader.AutoPush, owned by

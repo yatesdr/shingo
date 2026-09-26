@@ -74,25 +74,29 @@ func coreUnloaderWindow(t *testing.T, eng *Engine, window string, info protocol.
 }
 
 // TestClearBin_BinTypeCodeAtACoreOwnedUnloader: a blank code reaches Core as
-// no bin_type_code at all, and an explicit code is sent as given. At an
-// unloader with a bare type, a blank code sends the bare type and an explicit
-// code still wins. A produce loader never substitutes. Every case costs one
-// bin-clear POST and no node-bins read: the bare type comes from the loader
-// snapshot, and whether a carrier was there comes from the clear's own answer.
+// no bin_type_code at all, and an explicit code is sent as given — at an
+// ordinary unloader and at a stage-1 (leaves_bare) window alike. The Edge
+// never fills a code in: Core stamps a two-stage cart from the cart's own type
+// (the stage-1 marker, or the carrier back at a stage-2 Send on), so there is
+// no marker code on the Edge to send. Every case costs one bin-clear POST and
+// no node-bins read: whether a carrier was there comes from the clear's own
+// answer.
 func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, window, role, bare, code string
-		want                           string
-		wantKey                        bool
-		wantReads                      int
+		name, window, role, code string
+		leavesBare               bool
+		want                     string
+		wantKey                  bool
+		wantReads                int
 	}{
 		{name: "blank code", window: "HLC-B", role: "consume", code: "", want: "", wantKey: false, wantReads: 0},
 		{name: "explicit code", window: "HLC-X", role: "consume", code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 0},
-		{name: "blank code at a bare unloader", window: "HLC-BB", role: "consume", bare: "HALF-TOTE", code: "", want: "HALF-TOTE", wantKey: true, wantReads: 0},
-		{name: "explicit code at a bare unloader wins", window: "HLC-BX", role: "consume", bare: "HALF-TOTE", code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 0},
-		// A produce loader's CLEAR never substitutes.
-		{name: "blank code at a produce loader with a bare type", window: "HLC-PB", role: "produce", bare: "HALF-TOTE", code: "", want: "", wantKey: false, wantReads: 0},
+		// Stage 1: a blank Full off posts no code at all. Red at the tree,
+		// where a blank code here sent the loader's configured bare type.
+		{name: "blank code at a leaves_bare window", window: "HLC-BB", role: "consume", leavesBare: true, code: "", want: "", wantKey: false, wantReads: 0},
+		// Not gated on the Edge either: Core ignores it at a stage-1 window.
+		{name: "explicit code at a leaves_bare window is sent as given", window: "HLC-BX", role: "consume", leavesBare: true, code: "TOTE-S", want: "TOTE-S", wantKey: true, wantReads: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -102,7 +106,7 @@ func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 			info := sharedLoaderInfo(tc.window, tc.role, "operator", "PART-HL", 0, 0)
 			info.InboundSource = ""
 			info.OutboundDest = "EMPTY-TOTES"
-			info.BareBinTypeCode = tc.bare
+			info.LeavesBare = tc.leavesBare
 			nodeID := coreUnloaderWindow(t, eng, tc.window, info)
 
 			testutil.MustNoErr(t, eng.ClearBin(nodeID, tc.code), "ClearBin")

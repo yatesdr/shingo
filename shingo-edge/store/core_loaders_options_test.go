@@ -20,7 +20,7 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 	testutil.MustNoErr(t, db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
 		LoaderKey: "loader:OPT", Role: "consume", Name: "OPT", Layout: "shared_window",
 		Replenishment: "operator", FunnelWindows: true, ChangeoverLoadDirective: true,
-		BareBinTypeCode: "HALF-TOTE", AutoPush: true,
+		LeavesBare: true, AutoPush: true,
 		Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-W1", Kind: "window"}},
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	}}), "write the cache")
@@ -36,28 +36,33 @@ func TestCoreLoadersCache_OptionsSurviveReopen(t *testing.T) {
 	if !l.FunnelWindows || !l.ChangeoverLoadDirective {
 		t.Errorf("after re-open funnel/directive = %v/%v, want true/true", l.FunnelWindows, l.ChangeoverLoadDirective)
 	}
-	if l.BareBinTypeCode != "HALF-TOTE" {
-		t.Errorf("after re-open bare bin type = %q, want HALF-TOTE", l.BareBinTypeCode)
+	if !l.LeavesBare {
+		t.Error("after re-open leaves_bare = false, want true")
 	}
 	if !l.AutoPush {
 		t.Error("after re-open auto_push = false, want true")
 	}
 }
 
-// TestCoreLoadersCache_BareColumnReachesAnOlderCache: a core_loaders table that
-// predates bare_bin_type_code and auto_push gains both on the next open (the
-// idempotent ALTERs), and they read as ""/false until the next sync writes them.
-func TestCoreLoadersCache_BareColumnReachesAnOlderCache(t *testing.T) {
+// TestCoreLoadersCache_LeavesBareReplacesTheBareCodeColumn: a core_loaders
+// table from before leaves_bare — it still carries bare_bin_type_code, with a
+// marker code in it, and predates auto_push — gains leaves_bare and auto_push
+// and loses bare_bin_type_code on the next open. The new columns read false
+// until the next sync writes them; the cache is regenerated on every sync, so
+// the dropped code is not carried anywhere.
+func TestCoreLoadersCache_LeavesBareReplacesTheBareCodeColumn(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "older.db")
 	db, err := Open(dbPath)
 	testutil.MustNoErr(t, err, "open")
-	_, err = db.Exec(`ALTER TABLE core_loaders DROP COLUMN bare_bin_type_code`)
-	testutil.MustNoErr(t, err, "drop the column to model an older cache")
+	_, err = db.Exec(`ALTER TABLE core_loaders DROP COLUMN leaves_bare`)
+	testutil.MustNoErr(t, err, "drop leaves_bare to model an older cache")
 	_, err = db.Exec(`ALTER TABLE core_loaders DROP COLUMN auto_push`)
 	testutil.MustNoErr(t, err, "drop auto_push to model an older cache")
-	_, err = db.Exec(`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment)
-		VALUES ('loader:OLD', 'consume', 'OLD', 'shared_window', 'operator')`)
+	_, err = db.Exec(`ALTER TABLE core_loaders ADD COLUMN bare_bin_type_code TEXT NOT NULL DEFAULT ''`)
+	testutil.MustNoErr(t, err, "add bare_bin_type_code to model an older cache")
+	_, err = db.Exec(`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, bare_bin_type_code)
+		VALUES ('loader:OLD', 'consume', 'OLD', 'shared_window', 'operator', 'HALF-TOTE')`)
 	testutil.MustNoErr(t, err, "seed an older row")
 	testutil.MustNoErr(t, db.Close(), "close")
 
@@ -68,10 +73,17 @@ func TestCoreLoadersCache_BareColumnReachesAnOlderCache(t *testing.T) {
 	if err != nil || l == nil {
 		t.Fatalf("read the older row: loader=%v err=%v", l, err)
 	}
-	if l.BareBinTypeCode != "" {
-		t.Errorf("older row bare bin type = %q, want \"\"", l.BareBinTypeCode)
+	if l.LeavesBare {
+		t.Error("older row leaves_bare = true, want false")
 	}
 	if l.AutoPush {
 		t.Error("older row auto_push = true, want false")
+	}
+	var n int
+	testutil.MustNoErr(t, db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name='bare_bin_type_code'`).Scan(&n),
+		"probe the old column")
+	if n != 0 {
+		t.Error("bare_bin_type_code survived the migration, want it dropped")
 	}
 }

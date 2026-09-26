@@ -390,11 +390,20 @@ func (db *DB) migrate() error {
 	// Core owns it (bin_loaders); this is the mirror. Default 0 = the ordinary
 	// board, which is what every station does until one is opted in.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
-	// The bin type a blank CLEAR at this unloader stamps (bin_loaders.bare_bin_type_id,
-	// carried as its code). Idempotent — duplicate ADD COLUMN fails silently.
-	// Default '' = a blank CLEAR stamps nothing, which is every unloader until
-	// Core configures one.
-	db.Exec("ALTER TABLE core_loaders ADD COLUMN bare_bin_type_code TEXT NOT NULL DEFAULT ''")
+	// Whether this unloader is the stage-1 half of a two-stage unloader
+	// (LoaderInfo.LeavesBare): its CLEAR leaves the cart bare and Core stamps
+	// the cart's own marker. It replaces bare_bin_type_code, the one marker
+	// code a loader used to carry — the marker now derives from each cart's
+	// type on Core, so the Edge only needs to know the station leaves carts
+	// bare. Idempotent ADD COLUMN; default 0 = an ordinary unloader.
+	//
+	// The old column is dropped, not left dormant. core_loaders is a CACHE
+	// (ReplaceCoreLoaders deletes every row and re-inserts on each node-list
+	// sync), so there is nothing to carry across and no rebuild: the bundled
+	// modernc SQLite has DROP COLUMN (3.35+), same as buffer_dest above. No-op
+	// on a fresh DB and on one this already ran on.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN leaves_bare INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE core_loaders DROP COLUMN bare_bin_type_code")
 	// Whether a CLEAR / PUSH EMPTY / empty-out landing re-pulls this unloader's
 	// next full (bin_loaders.auto_push). Idempotent — duplicate ADD COLUMN fails
 	// silently. Default 0 = no re-pull, which is every Core-owned unloader until
