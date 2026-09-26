@@ -3,6 +3,7 @@ package www
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -67,8 +68,10 @@ func TestEnrichViewContainmentTargets(t *testing.T) {
 	// BIN'S PAYLOAD disambiguates whose outbound the tile shows (the release
 	// verb resolves the same way). An ASSY bin on the tile shows ULN-1; a
 	// PART-B bin shows ULN-2; an unknown payload shows nothing.
-	otherProc, _ := testDB.CreateProcess("StampProcB", "", "active_production", "", "", false)
-	otherStyle, _ := testDB.CreateStyle("STAMP-STYLE-B", "", otherProc)
+	otherProc, err := testDB.CreateProcess("StampProcB", "", "active_production", "", "", false)
+	testutil.MustNoErr(t, err, "create second process")
+	otherStyle, err := testDB.CreateStyle("STAMP-STYLE-B", "", otherProc)
+	testutil.MustNoErr(t, err, "create second style")
 	if _, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: otherStyle, CoreNodeName: "PLN-STAMP-B2", Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-B", UOPCapacity: 5,

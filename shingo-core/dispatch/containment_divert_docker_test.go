@@ -153,7 +153,9 @@ func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 	if got.DeliveryNode != hold.Name {
 		t.Fatalf("DeliveryNode = %q, want %q", got.DeliveryNode, hold.Name)
 	}
-	if rows, _ := db.ListOrderBins(o.ID); len(rows) != 0 {
+	rows, err := db.ListOrderBins(o.ID)
+	testutil.MustNoErr(t, err, "list order bins")
+	if len(rows) != 0 {
 		t.Fatalf("single-bin order grew %d junction rows", len(rows))
 	}
 }

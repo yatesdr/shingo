@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 )
 
@@ -160,14 +161,16 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	}
 
 	// A bin, but the claim has no containment route (reseed without one).
-	processID, _ := eng.db.CreateProcess("HOLD-PROC-NOROUTE", "", "active_production", "", "", false)
+	processID, err := eng.db.CreateProcess("HOLD-PROC-NOROUTE", "", "active_production", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
 	node2, err := eng.db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "PLN-NOROUTE", Code: "HN2", Name: "No Route", Sequence: 1, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	styleID, _ := eng.db.CreateStyle("HOLD-STYLE-NOROUTE", "", processID)
+	styleID, err := eng.db.CreateStyle("HOLD-STYLE-NOROUTE", "", processID)
+	testutil.MustNoErr(t, err, "create style")
 	var active = styleID
 	_ = eng.db.SetActiveStyle(processID, &active)
 	_, err = eng.db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -178,7 +181,8 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert claim: %v", err)
 	}
-	_, _ = eng.db.EnsureProcessNodeRuntime(node2)
+	_, err = eng.db.EnsureProcessNodeRuntime(node2)
+	testutil.MustNoErr(t, err, "ensure runtime")
 	stub.setBin(NodeBinInfo{NodeName: "PLN-NOROUTE", BinID: 7, PayloadCode: "PART-X", Occupied: true})
 	_, err = eng.SendBinToQualityHold(node2, "s")
 	if err == nil || !strings.Contains(err.Error(), "no containment destination") {
@@ -207,7 +211,8 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create containment node: %v", err)
 	}
-	_, _ = eng.db.EnsureProcessNodeRuntime(contID)
+	_, err = eng.db.EnsureProcessNodeRuntime(contID)
+	testutil.MustNoErr(t, err, "ensure runtime")
 
 	// Happy path: the bin is standing at the containment node.
 	stub.setBin(NodeBinInfo{NodeName: "CONT-1", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
@@ -235,8 +240,10 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	// BIN'S PAYLOAD disambiguates the release. The PART-HOLD bin still
 	// releases to FG-1 (its own producer's outbound) despite the second
 	// claim covering the same node.
-	otherProc, _ := eng.db.CreateProcess("HOLD-PROC-B", "", "active_production", "", "", false)
-	otherStyle, _ := eng.db.CreateStyle("HOLD-STYLE-B", "", otherProc)
+	otherProc, err := eng.db.CreateProcess("HOLD-PROC-B", "", "active_production", "", "", false)
+	testutil.MustNoErr(t, err, "create second process")
+	otherStyle, err := eng.db.CreateStyle("HOLD-STYLE-B", "", otherProc)
+	testutil.MustNoErr(t, err, "create second style")
 	_, err = eng.db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: otherStyle, CoreNodeName: "PLN-OTHER", Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-OTHER", UOPCapacity: 5,

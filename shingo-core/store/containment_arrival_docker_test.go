@@ -112,7 +112,9 @@ func TestStampContainmentArrival(t *testing.T) {
 	if stamped {
 		t.Fatal("an unrelated node stamped as a containment arrival")
 	}
-	if hold, _, _ := db.BinQualityHold(binOther.ID); hold {
+	hold, _, err = db.BinQualityHold(binOther.ID)
+	testutil.MustNoErr(t, err, "read hold on unrelated landing")
+	if hold {
 		t.Fatal("unrelated landing left a hold marker")
 	}
 
@@ -124,7 +126,9 @@ func TestStampContainmentArrival(t *testing.T) {
 	if stamped {
 		t.Fatal("the mechanism's stamp overwrote an operator hold")
 	}
-	if _, by, _ := db.BinQualityHold(binOp.ID); by != "op-1" {
+	_, by, err = db.BinQualityHold(binOp.ID)
+	testutil.MustNoErr(t, err, "read operator hold")
+	if by != "op-1" {
 		t.Fatalf("hold_by = %q, want the operator's op-1", by)
 	}
 
