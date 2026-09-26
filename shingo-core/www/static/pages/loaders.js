@@ -403,11 +403,13 @@ function stationSlots(item, s2) {
     const fed = fedDirectlyOf(l);
     const inbound = placeSlot(item, 'inbound', unloader ? 'Fulls come from' : 'Empties come from', l.inbound_source, !fed);
     inbound.fed = fed && !l.inbound_source;
-    const slots = [
-      windowsSlot(item),
-      inbound,
-      placeSlot(item, 'outbound', unloader ? 'Empties go to' : 'Fulls go to', l.outbound_dest, true),
-    ];
+    // A loader with a spot per part fills each bin where it stands: its fulls
+    // stay on its own spots, so a blank "Fulls go to" is a running station, not
+    // a missing place.
+    const staysOnSpots = !unloader && !shared;
+    const outbound = placeSlot(item, 'outbound', unloader ? 'Empties go to' : 'Fulls go to', l.outbound_dest, !staysOnSpots);
+    outbound.stays = staysOnSpots && !l.outbound_dest;
+    const slots = [windowsSlot(item), inbound, outbound];
     if (shared) slots.push(partsSlot(item, unloader ? 'Parts it drains' : 'Parts it fills'));
     return [{ stage: 0, item: item, slots: slots }];
   }
@@ -611,6 +613,8 @@ function placeBodyHtml(slot) {
     inner = h`<span class="loader-place-name">${slot.value}</span>${raw(placeKindHtml(slot.value))}`;
   } else if (slot.fed) {
     inner = h`<span class="loader-place-name">Fed directly from process</span>`;
+  } else if (slot.stays) {
+    inner = h`<span class="loader-place-name">Stays on its own spots</span>`;
   } else {
     inner = h`<span>${slot.need}</span>` + (isAuth ? h`<span class="loader-place-hint">${slot.hint}</span>` : '');
   }

@@ -703,6 +703,23 @@ console.log('config gap — the refusals the Edge makes that are not an empty sl
     const d = h.ctx.stationSlots({ loader: loader({ layout: 'dedicated_positions', outbound_dest: 'OUT-G' }),
         homes: [{ position_node_id: 62 }], payloads: [] }, null);
     check('dedicated, blank source: "Empties come from" is red', d[0].slots[1].required && d[0].slots[1].empty);
+    // THE SPRINGFIELD DEDICATED LOADER: a spot per part, fed from the
+    // supermarket, no "Fulls go to" — its fulls stay on its own spots, and it
+    // runs. The box must not call it "Not running yet".
+    const spr = { loader: loader({ layout: 'dedicated_positions', replenishment: 'threshold',
+        inbound_source: 'AMR Supermarket', outbound_dest: '' }),
+        homes: [{ position_node_id: 62 }], payloads: [{ payload_code: 'X', uop_threshold: 1 }] };
+    const sd = h.ctx.stationSlots(spr, null);
+    check('dedicated loader, blank "Fulls go to": needs nothing', h.ctx.countNeeds(sd) === 0,
+        'needs=' + h.ctx.countNeeds(sd));
+    check('dedicated loader, blank "Fulls go to": says its fulls stay on its spots',
+        sd[0].slots[2].stays === true && !sd[0].slots[2].required);
+    const sprHtml = h.ctx.gridHtml([spr]);
+    check('dedicated loader: no "Not running yet" header, and the slot reads "Stays on its own spots"',
+        sprHtml.indexOf('Not running yet') < 0 && sprHtml.indexOf('Stays on its own spots') >= 0);
+    const su = h.ctx.stationSlots({ loader: unloader({ layout: 'dedicated_positions', inbound_source: 'IN-G' }),
+        homes: [{ position_node_id: 62 }], payloads: [] }, null);
+    check('a dedicated UNLOADER still needs "Empties go to"', su[0].slots[2].required && su[0].slots[2].empty);
     const both = h.ctx.gridHtml([{ loader: loader({ replenishment: 'threshold' }), homes: [{ position_node_id: 0 }],
         payloads: [{ payload_code: 'X', uop_threshold: 0 }] }]);
     const g = both.indexOf('loader-config-gap'), t = both.indexOf('loader-threshold-gap');
