@@ -355,7 +355,7 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	// re-derive staging, so a bin staged at a lineside node would stay staged
 	// after relocating to storage. Mirror the arrival behavior: clear staging
 	// in the same tx when a staged bin lands on a storage slot.
-	clearStaging := b.Status == domain.BinStatusStaged && s.destIsStorageSlot(destNode)
+	clearStaging := b.Status == domain.BinStatusStaged && IsStorageSlot(s.db, destNode)
 	// A BIN COMING OFF _TRANSIT OR A DECK IS NO LONGER LOST, so the anomaly
 	// goes with it. `anomaly_at` and `anomaly_note` say "nobody knows where
 	// this bin is", and the note names a robot's coordinates; both are false
@@ -384,18 +384,30 @@ func wasUnlocated(nodeName string) bool {
 	return nodeName == domain.TransitNodeName || strings.HasPrefix(nodeName, bins.CarrierNodePrefix)
 }
 
-// destIsStorageSlot reports whether a node is a storage slot — a LANE/NGRP
-// itself or a direct child of one. Mirrors the engine-private
-// engine.isStorageSlot; the staging-clear on Move needs the same
-// classification at the service layer. Keep the two definitions in sync.
-func (s *BinService) destIsStorageSlot(node *nodes.Node) bool {
+// IsStorageSlot reports whether a bin set down at node lands available
+// (storage) rather than staged (lineside). It is THE rule: a robot arrival
+// (engine resolveNodeStaging), a recovery reapply and a hand Move all ask it,
+// so a bin ends up in the same state however it got there.
+//
+// Storage is a LANE or NGRP itself, a direct child of one, or a dedicated
+// loader home or buffer position (bin_loader_homes). Loader positions are
+// parentless, like a lineside cell, so the loader-home check must come before
+// the parentless answer. Everything else stages on arrival: a lineside cell,
+// and any node Core cannot positively place in storage.
+//
+// ONE FUNCTION, NOT TWO. Move used to carry its own copy that never learned the
+// loader-home clause (added to the engine's copy 2026-06-23), and Springfield
+// 2026-09-25 had two full bins hand-moved onto loader homes left staged and
+// never sourced (TestMove_StagedBinOntoDedicatedLoaderHomeArrivesAvailable).
+func IsStorageSlot(db *store.DB, node *nodes.Node) bool {
 	if node.NodeTypeCode == protocol.NodeClassLANE || node.NodeTypeCode == protocol.NodeClassNGRP {
 		return true
 	}
 	if node.ParentID == nil {
-		return false
+		home, err := db.GetLoaderHomeByPositionNode(node.ID)
+		return err == nil && home != nil
 	}
-	parent, err := s.db.GetNode(*node.ParentID)
+	parent, err := db.GetNode(*node.ParentID)
 	if err != nil {
 		return false
 	}
