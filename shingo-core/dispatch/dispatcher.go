@@ -39,6 +39,18 @@ type Dispatcher struct {
 	gateFailMu      sync.Mutex
 	gateAppendFails map[int64]int
 
+	// dissolving names the compound parents a dissolve pass is deciding right now,
+	// so a second pass on the same parent returns instead of deciding again.
+	// In-process and crash-volatile, like laneGates — see dissolveCompound.
+	dissolveMu sync.Mutex
+	dissolving map[int64]bool
+
+	// summoning names the gate-staged orders whose own dig a lane-gate pass has
+	// decided and not yet written. In-process and crash-volatile, like dissolving
+	// — see summonOwnDigs.
+	summonMu  sync.Mutex
+	summoning map[int64]bool
+
 	// postFindHook is a test-only seam fired by the fulfillment scanner between
 	// Find and Claim (the single claim point after the claim-move to the scanner).
 	// Nil in production; set via SetPostFindHook for deterministic concurrency tests.
@@ -53,6 +65,11 @@ type Dispatcher struct {
 	// chooser can take the slot in. Nil in production; set directly by tests in
 	// this package.
 	dwellChoiceHook func(legID int64, dest *nodes.Node)
+
+	// preHandHook is a test-only seam fired just before a hand is acquired
+	// (commitToFleet → acquireHand), with the order's id. Nil in production; set
+	// via SetPreHandHook to put a second dispatcher inside the window deterministically.
+	preHandHook func(orderID int64)
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
@@ -1285,6 +1302,13 @@ func (d *Dispatcher) PostFindHook() {
 	if d.postFindHook != nil {
 		d.postFindHook()
 	}
+}
+
+// SetPreHandHook installs a test-only hook fired just before a hand is acquired,
+// the last point at which a second dispatcher can take the same order and make
+// this one lose the status CAS. Nil in production.
+func (d *Dispatcher) SetPreHandHook(fn func(orderID int64)) {
+	d.preHandHook = fn
 }
 
 // LaneLock returns the dispatcher's lane lock for external use.

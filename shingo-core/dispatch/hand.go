@@ -40,13 +40,15 @@ import (
 // advisory lock is transaction-scoped, so it is held until the hand commits:
 // the lane is decided together with everything else.
 //
-// THE OWNER'S ROW IS THE FIRST ROW LOCK. Every statement in the hand that takes
-// a row lock carries reservations.OwnerLiveSQL (the slot claim, the bin claim,
-// the mouth and occupancy writers), so whichever of them runs first takes the
-// share lock on this order's row before any other row: the lock-order rule in
-// OwnerLiveSQL's comment, with this hand as one more transaction in its list.
-// The status CAS at the end takes the same row for update, which a share lock
-// this transaction holds does not block.
+// THE OWNER'S ROW IS THE FIRST ROW LOCK. The status CAS is the hand's first
+// statement (acquireHand), and it takes this order's row for update, refusing an
+// order that has ended (ConcurrentTransition: the caller yields). A terminalize
+// running at the same moment waits for the hand, or the hand for it: the
+// lock-order rule in reservations.OwnerLiveSQL's comment, with the hand as one
+// more transaction in its list. The owner tests the later statements carry (the
+// slot and bin claims, the mouth and occupancy writers) read a row this
+// transaction already holds. One departure from that list's rule, recorded
+// there: a hand with lanes takes their advisory locks after the order row.
 //
 // AN ENDED ORDER OR A GONE NAMED BIN IS NOT A WAIT. A leg refused with
 // reservations.ErrOwnerEnded or ErrNotTheNamedBin comes back as that error, not
@@ -154,6 +156,23 @@ func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.
 	}
 	defer tx.Rollback() // no-op once committed
 
+	// THE STATUS CAS GOES FIRST, so it is the detector (SYNTH §2.4). Two
+	// dispatchers can reach one order: a hand door queues it, and a scanner pass
+	// takes it through the held-bin arm before the door's own hand. When the CAS
+	// came last, the loser was stopped earlier, at the bin leg, because the
+	// winner already held the bin, and a bin refusal reads as "wait for
+	// material": the door released the winner's reservation and the scanner
+	// parked a dispatched order. First, the loser gets ConcurrentTransition and
+	// yields. Same statements, same transaction; only the order moved.
+	finish, err := d.lifecycle.transitionTx(tx, order, StatusDispatched, Event{Actor: actor, Reason: reason})
+	if err != nil {
+		if IsConcurrentTransition(err) {
+			log.Printf("dispatch: order %d moved under us before the fleet order was created — "+
+				"NOT dispatching (another caller owns it now): %v", order.ID, err)
+		}
+		return err
+	}
+
 	for _, s := range h.Slots {
 		if err := store.ConfirmSlotClaimWithPartnerTx(tx, s.Node.ID, order.ID, s.TakenFirst, s.Partner, s.PartnerTaken); err != nil {
 			if NotAWait(err) {
@@ -194,14 +213,6 @@ func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.
 		if _, err := reservations.AcquireOccupancy(tx, order.ID, laneID); err != nil {
 			return fmt.Errorf("take occupancy for order %d on lane %d: %w", order.ID, laneID, err)
 		}
-	}
-	finish, err := d.lifecycle.transitionTx(tx, order, StatusDispatched, Event{Actor: actor, Reason: reason})
-	if err != nil {
-		if IsConcurrentTransition(err) {
-			log.Printf("dispatch: order %d moved under us before the fleet order was created — "+
-				"NOT dispatching (another caller owns it now): %v", order.ID, err)
-		}
-		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("hand: commit for order %d: %w", order.ID, err)

@@ -81,8 +81,8 @@ headroom:
 #    difference between them is the gated-vs-ungated number, measured rather than argued.
 #
 # 4. SHUFFLE HEADROOM IS SIZED, NOT HOPED FOR. A four-blocker dig needs four places to put
-#    blockers, and shuffle slots come from the group. SYN_STAMP: 35 slots, 22 bins seeded,
-#    13 free. SYN_COMP: 33 slots, 19 bins, 14 free. Lanes D2/D4/S1-S3 and C4/C6/C7 start
+#    blockers, and shuffle slots come from the group. SYN_STAMP: 38 slots, 25 bins seeded,
+#    13 free. SYN_COMP: 37 slots, 29 bins, 8 free. Lanes D2/D4/S1-S3 and C4/C11 start
 #    EMPTY and are expected to stay mostly empty under LKND (which packs deepest-first, so
 #    mouths empty last and whole lanes stay available). If a soak run reports
 #    no-shuffle-slot waits as anything other than rare, that is a finding about sizing, not
@@ -126,7 +126,7 @@ payloads:
 
 zones:
   # ══ SYN_STAMP — the dig theatre. PANEL-A, PANEL-B, and their empties. ══════════════
-  # 11 lanes / 35 slots. Marks on D1, D2, M1.
+  # 12 lanes / 38 slots. Marks on D1, D2, M1.
   - name: SYN_STAMP
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -223,7 +223,7 @@ zones:
         slots: [{name: LSD_032, depth: 1}]
 
   # ══ SYN_COMP — components, finished goods, and their empties. ═════════════════════
-  # 11 lanes / 33 slots. Marks on C1, C5, C8 — one at each of three depths, so the gate
+  # 12 lanes / 37 slots. Marks on C1, C5, C8 — one at each of three depths, so the gate
   # is exercised against shallow lanes as well as deep ones.
   - name: SYN_COMP
     retrieve_algorithm: FIFO

@@ -319,6 +319,9 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// ended order or a gone named bin (dispatch.NotAWait) is the fault the old
 	// confirm returned. Either way the hand held nothing.
 	vendorOrderID, err := e.dispatcher.DispatchHand(order, bin.ID, sourceNode, destNode)
+	if dispatch.IsConcurrentTransition(err) {
+		return e.binMoveTakenByScanner(order, sourceNode, destNode, bin)
+	}
 	if r, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
 		if refused && r.Leg == dispatch.HandLegLane && r.Cause != dispatch.CauseLaneAcquireError {
 			return e.queueBinMoveForLane(order, bin, sourceNode, destNode, r.Cause, r.Lane, nil)
@@ -357,6 +360,28 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		ToNode:        destNode.Name,
 		BinLabel:      bin.Label,
 	}, nil
+}
+
+// binMoveTakenByScanner is the bin move's answer when its hand lost the status
+// CAS: a scanner pass took the order after this door queued it and dispatched it
+// first. The CAS is the detector and the loser yields (SYNTH §2.4). The hand
+// held nothing and created no vendor order, so there is nothing to undo, and
+// failing the order or releasing its claim would undo the WINNER's dispatch.
+// The move is reported as the order now stands.
+func (e *Engine) binMoveTakenByScanner(order *orders.Order, sourceNode, destNode *nodes.Node, bin *bins.Bin) (*BinMoveResult, error) {
+	e.logFn("engine: bin move order %d was dispatched by the scanner before its own hand — yielding", order.ID)
+	res := &BinMoveResult{
+		OrderID:  order.ID,
+		FromNode: sourceNode.Name,
+		ToNode:   destNode.Name,
+		BinLabel: bin.Label,
+	}
+	if fresh, err := e.db.GetOrder(order.ID); err == nil {
+		res.VendorOrderID = fresh.VendorOrderID
+	} else {
+		e.logFn("engine: re-read bin move order %d after yielding: %v", order.ID, err)
+	}
+	return res, nil
 }
 
 // queueBinMoveForLane parks a bin move whose lane would not take it, and is the

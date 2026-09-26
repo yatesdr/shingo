@@ -189,11 +189,11 @@ func (d *Dispatcher) recordStandoff(cycle []int64, lanes map[int64]string) {
 		"Every one of these waits is individually lawful and none of them can clear: each dig is "+
 		"holding the lane the next one needs for parking, and each is waiting for a slot only "+
 		"another member of the cycle can release. It will not self-clear. "+
-		"THIS SHOULD BE UNREACHABLE: there is no dig admission ledger counting a group's usable "+
-		"room (§R.79 deleted it) — capacity refusal happens at plan time instead, as transient "+
-		"congestion (ErrNoShuffleSlot). A firing here means the plan-time room estimate was wrong "+
-		"or the room was eaten by a writer no estimate sees. A human rules the incident; nothing "+
-		"automatic runs.",
+		"There is no dig admission ledger counting a group's usable room (§R.79 deleted it): the "+
+		"plan-time count asks only whether the dig's own blockers have somewhere to go now, it "+
+		"reads the shuffle pool, and the pool does not read the slot reservation book the claim "+
+		"refuses on — so several digs can each be satisfied by the same slot, and a plan's room "+
+		"can be eaten by a writer no count sees. A human rules the incident; nothing automatic runs.",
 		len(cycle), loop, cycle[0])
 
 	if err := d.db.RecordRecoveryAction(standoffAction, "order", cycle[0], detail, "system"); err != nil {

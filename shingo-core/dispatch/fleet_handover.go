@@ -146,6 +146,9 @@ func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderReq
 	if err := d.assertDeclaredEveryLaneItEnters(order.ID, req, entering); err != nil {
 		return err // nothing taken, nothing sent
 	}
+	if d.preHandHook != nil {
+		d.preHandHook(order.ID)
+	}
 	if err := d.acquireHand(order, hand, entering, actor, fmt.Sprintf("vendor order %s created", req.OrderID)); err != nil {
 		return err // nothing held, nothing sent; the caller parks a refusal and yields a lost CAS
 	}

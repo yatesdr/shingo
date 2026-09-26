@@ -469,6 +469,16 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 	// bin is the claim failure the old confirm returned. Either way the hand held
 	// nothing.
 	_, err := e.dispatcher.DispatchHand(order, binID, sourceNode, destNode)
+	if dispatch.IsConcurrentTransition(err) {
+		// Another dispatcher took the order first and holds it; the hand held
+		// nothing, so there is nothing to fail or undo (SYNTH §2.4: the loser
+		// yields). The order is returned as it now stands.
+		e.logFn("engine: recovery order %d was dispatched by another caller first — yielding", order.ID)
+		if fresh, rerr := e.db.GetOrder(order.ID); rerr == nil {
+			*order = *fresh
+		}
+		return nil
+	}
 	if r, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
 		if refused && r.Leg == dispatch.HandLegLane && r.Cause != dispatch.CauseLaneAcquireError {
 			return e.queueRecoveryForLane(order, destNode, r.Cause, r.Lane, nil)

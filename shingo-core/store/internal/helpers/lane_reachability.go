@@ -132,11 +132,17 @@ func BuriedSQL(target string) string {
 //
 // ── THE BUBBLE, AND WHY THE EXISTING GUARDS CANNOT SEE IT ─────────────────
 //
-// Every selector already refuses to PICK a slot somebody else holds — by slot
-// claim, by slot reservation, or by another order's delivery_node. All three
-// remove the deeper slot from the candidate pool and say nothing about the
-// shallower ones. So the selector, offered a lane whose deep slot is spoken for,
-// happily fills a shallow one, and the deep slot is now behind a bin.
+// The selectors refuse to PICK a slot somebody else holds, each by its own
+// reads. The store-slot finder (nodes.findStoreSlot) reads all three: the slot
+// claim, a stranger's slot reservation, and another live order's
+// delivery_node. The dig's shuffle pool (dispatch shuffleSlotFree) reads only
+// the slot claim and the dropoff gate — bins at the node, and orders holding a
+// claimed bin bound for it — so a waiting order's pending reservation or bare
+// delivery_node does not remove a slot from that pool; the claim at the moment
+// of choice is what refuses it (dig-starvation SYNTH S16). Whatever a selector
+// reads removes the deeper slot from its own pool and says nothing about the
+// shallower ones. So the selector, offered a lane whose deep slot is spoken
+// for, happily fills a shallow one, and the deep slot is now behind a bin.
 //
 // WHETHER THE HOLE IS PERMANENT DEPENDS ON WHAT SEALS IT, and the difference
 // decides whether anything ever recovers. If the sealing bin is one NOBODY WILL

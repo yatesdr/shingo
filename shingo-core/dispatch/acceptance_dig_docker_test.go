@@ -125,6 +125,50 @@ func TestAcceptance_ADiggingDwellerProposesNoSecondDig(t *testing.T) {
 	}
 }
 
+// TestAcceptance_TwoPassesInTheSummonWindowRaiseOneDig is the interleaving the
+// test above cannot reach. A pass decides a summon under the lane's gate lock and
+// summons after releasing it, so a second pass on the same lane can decide the
+// same summon before the first has written a child: the open-chapter skip finds
+// nothing yet. before-edge2 2026-09-24: order 95 summoned its own dig twice in one
+// second, and the two legs (111, 112) both carried BIN-PA-03, one to SMN_014 and
+// one to SMN_019; the later landing left SMN_019 recorded empty with a bin on it.
+//
+// The pin is on the decision, because that is where the fixture can stop time.
+// Run one after the other here, the second summon is refused downstream, but only
+// incidentally: the first chapter's leg is already dispatched and the lane reads
+// occupied. In the plant the two proposals overlapped and neither saw the other.
+//
+// MUTATION: drop the in-flight summon claim in evaluateLaneReleasesPass. The
+// second pass decides the same summon.
+func TestAcceptance_TwoPassesInTheSummonWindowRaiseOneDig(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, dweller, _ := stageDwellerBehindAWall(t, db, d, "ACC-WINDOW")
+
+	accA, wantA, _, _ := d.evaluateLaneReleasesPass(wall)
+	accB, wantB, _, _ := d.evaluateLaneReleasesPass(wall) // inside A's window
+	if !wantA {
+		t.Fatal("fixture: the first pass did not want a dig")
+	}
+	d.summonOwnDigs(wall, accA)
+	if wantB {
+		d.summonOwnDigs(wall, accB)
+	}
+	one := childCount(t, db, dweller.ID)
+
+	// And the claim is given back: a later pass is governed by the open chapter.
+	d.EvaluateLaneReleases(wall.ID)
+	if after := childCount(t, db, dweller.ID); after != one {
+		t.Errorf("a later pass grew the chapter from %d to %d legs", one, after)
+	}
+	if wantB {
+		t.Fatalf("a second pass decided the dweller's summon while the first was still between "+
+			"deciding and writing it: %d legs for one wall", one)
+	}
+}
+
 func childCount(t *testing.T, db *store.DB, parentID int64) int {
 	t.Helper()
 	kids, err := db.ListChildOrders(parentID)

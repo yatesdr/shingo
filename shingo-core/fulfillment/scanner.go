@@ -131,6 +131,15 @@ func (s *Scanner) Stop() {
 	close(s.stopChan)
 }
 
+// yieldLostHand is the scanner's answer when its hand lost the status CAS: another
+// dispatcher (a hand door) took the order first and holds it. The CAS is the
+// detector and the loser yields (SYNTH §2.4). The hand held nothing, and the
+// fleet-refusal demote would clear every claim under the order's id, which are
+// the winner's.
+func (s *Scanner) yieldLostHand(order *orders.Order, err error) {
+	s.logFn("fulfillment: order %d was dispatched by another caller first — yielding: %v", order.ID, err)
+}
+
 func (s *Scanner) scan() int {
 	orders, err := s.db.ListAcquiringOrders()
 	if err != nil {
@@ -520,6 +529,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// holds, and re-enters via the held-bin arm next tick.
 	vendorOrderID, err := s.dispatcher.DispatchHand(order, bin.ID, sourceNode, destNode)
 	if err != nil {
+		if dispatch.IsConcurrentTransition(err) {
+			s.yieldLostHand(order, err)
+			return false
+		}
 		if s.endedOrSkipped(order, err, bin.ID, sourceNode.Name) {
 			return false
 		}
@@ -676,6 +689,10 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// reservation from the prior tick); the slot, the bin, the lane mouths, the
 	// occupancy and the status are taken in one transaction, or none of them is.
 	vendorOrderID, err := s.dispatcher.DispatchHand(order, *order.BinID, sourceNode, destNode)
+	if dispatch.IsConcurrentTransition(err) {
+		s.yieldLostHand(order, err)
+		return false
+	}
 	if s.endedOrSkipped(order, err, *order.BinID, sourceNode.Name) {
 		return false
 	}

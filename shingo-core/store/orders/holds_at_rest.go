@@ -61,8 +61,9 @@ func (h HoldAtRest) Line() string {
 // list, so a status joining that family joins this check with it.
 //
 // One spelling for its readers: soakstat's invariant, the engine
-// characterisation, the verify-red pins, and the sim rig's probe (which renders
-// a copy — keep them in step).
+// characterisation and the verify-red pins. soakstat's books-over-time ledger
+// derives the same flag from its own sample, and TestLedger_ReadingsEqualTheSQL
+// holds the two equal (the sim rig's old psql probe is gone).
 func HoldsAtRestSQL() string {
 	return fmt.Sprintf(`
 		SELECT o.id, o.status,

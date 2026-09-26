@@ -1874,6 +1874,56 @@ func (d *Dispatcher) claimantStopped(claimantID int64) (bool, time.Duration, err
 	return still >= claimantStallWindow, still, nil
 }
 
+// beginDissolve claims the right to decide parentID's dissolve, or reports that
+// another pass holds it. endDissolve gives it back. See dissolveCompound.
+func (d *Dispatcher) beginDissolve(parentID int64) bool {
+	d.dissolveMu.Lock()
+	defer d.dissolveMu.Unlock()
+	if d.dissolving[parentID] {
+		return false
+	}
+	if d.dissolving == nil {
+		d.dissolving = map[int64]bool{}
+	}
+	d.dissolving[parentID] = true
+	return true
+}
+
+func (d *Dispatcher) endDissolve(parentID int64) {
+	d.dissolveMu.Lock()
+	defer d.dissolveMu.Unlock()
+	delete(d.dissolving, parentID)
+}
+
+// splitLiftedLegs sorts a chapter's live legs into the ones a door may cancel and
+// the ones carrying their claimed bin at _TRANSIT, which no door cancels: a robot
+// is holding that bin, and cancelling the only order that owns it leaves the bin
+// on the robot with nowhere to go (lane-stress 2026-09-25, leg 212 and bin 59).
+// Dispatched is never preempted (v4 §2.6); the kept leg sets its bin down and its
+// chapter closes when it lands.
+//
+// Every door that closes a chapter by cancelling its legs asks here (the
+// dissolve, a leg failing, and the chapter-end arm), so the rule is spelled once.
+// One SELECT, and none when no leg is live. An error means the answer is
+// unknown, and each caller cancels nothing on it.
+func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) (cancel, kept []*orders.Order, err error) {
+	if len(live) == 0 {
+		return nil, nil, nil
+	}
+	lifted, err := d.db.ListChildrenCarryingALiftedBin(parentOrderID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, leg := range live {
+		if lifted[leg.ID] {
+			kept = append(kept, leg)
+		} else {
+			cancel = append(cancel, leg)
+		}
+	}
+	return cancel, kept, nil
+}
+
 // dissolveCompound abandons a dig without terminating the demand behind it.
 //
 // THIS IS THE EXIT THE COMPOUND LIFECYCLE DID NOT HAVE. A compound could finish
@@ -1908,10 +1958,35 @@ func (d *Dispatcher) claimantStopped(claimantID int64) (bool, time.Duration, err
 // park the re-plan on lane_locked with nothing left alive to release it — the
 // wedge this whole disposition exists to remove, rebuilt one layer up.
 //
+// EXCEPT WHILE A LEG IS CARRYING ITS BIN. A leg whose claimed bin is at _TRANSIT
+// has a robot holding that bin, and cancelling the leg leaves the bin on the robot
+// with no order behind it (lane-stress 2026-09-25: leg 212 and bin 59, declined by
+// the stranded sweep for its whole two-hour window). Dispatched is never
+// preempted (v4 §2.6), so the dissolve keeps that leg: it stays a set-down leg,
+// the dwell places it, the chapter stays open until it lands, and the lane stays
+// held because the robot is still in it. When it lands the chapter-end arm
+// (advanceCompoundChapterEnd → chapterStoppedShort) returns the parent and
+// releases the lane, as it does for any chapter that stopped short.
+//
+// ONE DISSOLVE IS ONE DECISION. The first cancel's event starts
+// `go AdvanceCompoundOrder(parent)` in the engine, which can reach this function
+// again while the first pass is still between its cancels. The second pass then
+// read the same pending legs and decided the same dissolve (dig 211, twice in one
+// second), stopped only by each child's CAS. A per-parent in-process guard makes
+// the second pass return without deciding. It is a try, not a lock: a synchronous
+// path back in from a cancel must not wait on itself. A pass that finds nothing
+// left to cancel has been beaten to it and decides nothing either.
+//
 // Blockers already moved STAY WHERE THEY LANDED. There is no restore; deepest-
 // first parking keeps the lane packed without one, and the re-plan simply sees
 // fewer blockers than the first plan did.
 func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
+	if !d.beginDissolve(parentOrderID) {
+		d.dbg("dispatch: dig %d is already being dissolved by another pass — not deciding it twice", parentOrderID)
+		return nil
+	}
+	defer d.endDissolve(parentOrderID)
+
 	heldLanes := d.digLanesHeld(parentOrderID)
 	children, err := d.db.ListChildOrders(parentOrderID)
 	if err != nil {
@@ -1955,13 +2030,30 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 		return nil
 	}
 
+	// WHICH LEGS ARE CARRYING THEIR BIN (splitLiftedLegs). Unreadable is not
+	// "none", so the dig stays held and the next redrive asks again, as it does
+	// when the child list cannot be read.
+	var live []*orders.Order
+	for _, child := range children {
+		if !protocol.IsTerminal(child.Status) {
+			live = append(live, child)
+		}
+	}
+	cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
+	if err != nil {
+		log.Printf("dispatch: dissolve compound %d: %v (leaving the dig held)", parentOrderID, err)
+		return err
+	}
+	if len(cancel) == 0 {
+		d.dbg("dispatch: not dissolving compound %d — no leg is left to cancel (%d carrying a bin), "+
+			"so another pass already has", parentOrderID, len(kept))
+		return nil
+	}
+
 	log.Printf("dispatch: DISSOLVING dig %d — %s. Cancelling its remaining legs and re-planning against "+
 		"the lane as it now stands; the demand survives.", parentOrderID, why)
 
-	for _, child := range children {
-		if protocol.IsTerminal(child.Status) {
-			continue
-		}
+	for _, child := range cancel {
 		// UNCODED DELIBERATELY. The honest code for a dissolve is
 		// TermReshuffleError, which ClassifyTermCode buckets as FAILED — and
 		// these rows read as cancelled today, because the demand survives and
@@ -1969,6 +2061,16 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 		// of an attribution change. That is its own decision, with its own
 		// before/after count. Same at every teardown below.
 		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleDissolveDetail, CancelCause{})
+	}
+
+	// A KEPT LEG KEEPS THE LANE: its robot is still in it. The chapter-end arm
+	// releases it when the leg lands (see the header).
+	if len(kept) > 0 {
+		for _, leg := range kept {
+			log.Printf("dispatch: dissolve of dig %d keeps leg %d — it is carrying its bin, so it sets "+
+				"it down first; the lane is released when it lands", parentOrderID, leg.ID)
+		}
+		return nil
 	}
 
 	// Before the parent can re-plan, and unconditionally: see above. The parent
@@ -2050,14 +2152,29 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 		return
 	}
 
-	cancelled := 0
+	// A SIBLING CARRYING ITS BIN IS NOT CANCELLED (splitLiftedLegs): it sets the
+	// bin down and the chapter closes when it lands. The failed leg itself is not
+	// among these even when it was the carrier: it is already terminal, and a
+	// robot that faulted mid-carry cannot set anything down, so its bin takes the
+	// stranded-transit path it always has. Unreadable cancels nothing, like the
+	// reads above; the reconciliation sweep re-drives the chapter.
+	var live []*orders.Order
 	for _, child := range children {
-		if child.ID == childOrderID {
-			continue
+		if child.ID != childOrderID && !protocol.IsTerminal(child.Status) {
+			live = append(live, child)
 		}
-		if protocol.IsTerminal(child.Status) {
-			continue
-		}
+	}
+	cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
+	if err != nil {
+		log.Printf("dispatch: failed compound %d: %v (cancelling no leg)", parentOrderID, err)
+		return
+	}
+	for _, leg := range kept {
+		log.Printf("dispatch: compound %d keeps leg %d after leg %d failed — it is carrying its bin, "+
+			"so it sets it down first; the chapter closes when it lands", parentOrderID, leg.ID, childOrderID)
+	}
+	cancelled := 0
+	for _, child := range cancel {
 		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleLegFailedDetail, CancelCause{})
 		cancelled++
 	}
@@ -2326,9 +2443,18 @@ func (d *Dispatcher) chapterStoppedShort(
 	}
 
 	// CLOSE THE REST OF THE CHAPTER. A dissolve has already cancelled its
-	// legs and this loop finds nothing; a leg that died mid-chapter leaves
-	// siblings still moving, and they are what this cancels. The marker is
-	// what re-drives us when they land (IsChapterEndCancel).
+	// legs and this loop finds nothing. A FAILED leg does not reach it either:
+	// endsItsChapter makes it a chapter boundary, so it is not in openChildren,
+	// hasFailedOrCancelled stays false, and its siblings were
+	// HandleChildOrderFailure's to close. What reaches it is a leg cancelled
+	// WITHOUT the chapter-end marker (an operator or the fleet ending one leg),
+	// and its live siblings are what this cancels. The marker is what re-drives
+	// us when they land (IsChapterEndCancel).
+	//
+	// EXCEPT A LEG CARRYING ITS BIN (splitLiftedLegs): it sets the bin down, and
+	// the !allTerminal wait below holds the chapter open until it lands.
+	// Unreadable cancels nothing; the same wait returns, and the next terminal
+	// event asks again.
 	//
 	// THE PARTNER IS NOT TOUCHED, and that is a consequence rather than a
 	// clause. A two-robot swap leg unwinds its sibling when it goes
@@ -2338,10 +2464,21 @@ func (d *Dispatcher) chapterStoppedShort(
 	if parent != nil && hasFailedOrCancelled {
 		log.Printf("dispatch: compound order %d lost a leg — closing the rest of the chapter; "+
 			"the demand re-plans (gate 1: a dig failure is congestion)", parentOrderID)
+		var live []*orders.Order
 		for _, c := range openChildren {
-			if protocol.IsTerminal(c.Status) {
-				continue
+			if !protocol.IsTerminal(c.Status) {
+				live = append(live, c)
 			}
+		}
+		cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
+		if err != nil {
+			log.Printf("dispatch: compound order %d: %v (cancelling no leg)", parentOrderID, err)
+		}
+		for _, leg := range kept {
+			log.Printf("dispatch: compound order %d keeps leg %d — it is carrying its bin, so it sets "+
+				"it down first; the chapter closes when it lands", parentOrderID, leg.ID)
+		}
+		for _, c := range cancel {
 			d.lifecycle.CancelOrder(c, parent.StationID, reshuffleLegFailedDetail, CancelCause{})
 		}
 	}

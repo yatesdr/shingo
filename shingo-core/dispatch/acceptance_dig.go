@@ -179,6 +179,7 @@ func (d *Dispatcher) acceptanceDigNeeded(lane *nodes.Node, c gateCandidate) (acc
 // Summon-before-lock is outlawed by name: it would leave the corridor open to
 // ordinary traffic for the length of an excavation.
 func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
+	defer d.endSummon(req.order.ID) // taken by the pass that decided this summon
 	res := d.proposeLaneClearDig(lane, req.entry, req.order)
 	switch res.outcome {
 	case laneClearStarted:
@@ -399,4 +400,33 @@ func (d *Dispatcher) blockerIsWalledByThisDig(lane *nodes.Node, claimantID int64
 	// its parent's dig is not walled by it, and reporting a deadlock there would
 	// hide a real stall inside a compound.
 	return excavator != claimantID && excavator != owner
+}
+
+// beginSummon claims the right to summon orderID's own dig, or reports that a
+// pass has already decided one that is not yet written. endSummon gives it back.
+// The claim spans the gap between deciding under the lane's gate lock and
+// writing the chapter outside it; after that, hasOpenDigChapter answers.
+func (d *Dispatcher) beginSummon(orderID int64) bool {
+	d.summonMu.Lock()
+	defer d.summonMu.Unlock()
+	if d.summoning[orderID] {
+		return false
+	}
+	if d.summoning == nil {
+		d.summoning = map[int64]bool{}
+	}
+	d.summoning[orderID] = true
+	return true
+}
+
+func (d *Dispatcher) summonInFlight(orderID int64) bool {
+	d.summonMu.Lock()
+	defer d.summonMu.Unlock()
+	return d.summoning[orderID]
+}
+
+func (d *Dispatcher) endSummon(orderID int64) {
+	d.summonMu.Lock()
+	defer d.summonMu.Unlock()
+	delete(d.summoning, orderID)
 }

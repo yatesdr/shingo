@@ -564,6 +564,30 @@ func (db *DB) ListChildOrders(parentOrderID int64) ([]*orders.Order, error) {
 	return orders.ListChildren(db.DB, parentOrderID)
 }
 
+// ListChildrenCarryingALiftedBin returns the ids of a parent's children that hold
+// a claimed bin at _TRANSIT: a robot has lifted it and not yet set it down. The
+// lift itself is not audited, so the bin's position is the fact. One statement.
+func (db *DB) ListChildrenCarryingALiftedBin(parentOrderID int64) (map[int64]bool, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT b.claimed_by FROM bins b
+		JOIN orders o ON o.id = b.claimed_by
+		WHERE o.parent_order_id = $1
+		  AND b.node_id IN (SELECT id FROM nodes WHERE name = '_TRANSIT')`, parentOrderID)
+	if err != nil {
+		return nil, fmt.Errorf("children of %d carrying a lifted bin: %w", parentOrderID, err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("children of %d carrying a lifted bin: scan: %w", parentOrderID, err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // RetireReshuffleRestoreOrders cancels any non-terminal reshuffle_restore
 // housekeeping orders (and their non-terminal children) left over from the
 // retired restore-blockers subsystem. One-shot and idempotent: a clean DB — or a

@@ -231,14 +231,16 @@ var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, o
 //	CreateCompoundChildren     *SELECT the parent FOR UPDATE; child rows; claims;
 //	                           the child's ledger INSERT tests the child, a row
 //	                           this transaction created and no other can lock.
-//	dispatch.acquireHand       the slot claims (*UPDATE nodes), the bin claims
-//	                           (*UPDATE bins), the mouth writers, AcquireOccupancy,
-//	                           in that order, each with the test, so the first of
-//	                           them present takes it; a hand of lanes alone takes
-//	                           the advisory lock first, as AcquireLanesFor does.
-//	                           Last, the status CAS UPDATEs the same order row,
-//	                           which this transaction's own share lock does not
-//	                           block.
+//	dispatch.acquireHand       *UPDATE orders (the status CAS, first); then the
+//	                           slot claims, the bin claims, the mouth writers and
+//	                           AcquireOccupancy, whose tests read the row the CAS
+//	                           holds. Its lanes' advisory locks come after the
+//	                           order row: HandOffLaneToPicker for the same order
+//	                           at the same moment (lane lock, then the picker's
+//	                           row) can meet it. Postgres ends one of the two
+//	                           with a deadlock error: a failed handoff leaves its
+//	                           dig row to the compound's teardown, and a failed
+//	                           hand holds nothing and is asked again next pass.
 //
 // No transaction holds an order row for update while taking this share lock on
 // a different, existing order's row: CreateCompoundChildren's second order is

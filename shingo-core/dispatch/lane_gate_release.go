@@ -383,7 +383,18 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 		if cause == "" {
 			return
 		}
-		if req, ok := d.acceptanceDigNeeded(lane, c); ok {
+		// ONE SUMMON AT A TIME PER DWELLER. The summon runs after this pass
+		// releases the lane's gate lock, so until it has written its chapter the
+		// open-chapter skip above finds nothing, and a second pass decided the
+		// same summon (order 95, before-edge2 2026-09-24: two legs for one wall).
+		// The claim is taken here, under the lock, and summonOwnDigs gives it
+		// back once the chapter is written or refused. In-process, no statement.
+		if d.summonInFlight(c.order.ID) {
+			d.dbg("lane gate: order %d already has a dig being summoned for it — not deciding it twice",
+				c.order.ID)
+			return
+		}
+		if req, ok := d.acceptanceDigNeeded(lane, c); ok && d.beginSummon(req.order.ID) {
 			acceptance, digWanted = req, true
 		}
 	}
