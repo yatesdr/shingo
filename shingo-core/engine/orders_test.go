@@ -3,17 +3,15 @@
 package engine
 
 import (
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
-	"shingocore/internal/testdb"
 	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
 
 // orders_test.go — coverage for orders.go.
@@ -150,11 +148,11 @@ func TestCreateBinMove_MissingDestNode(t *testing.T) {
 	}
 }
 
-// TestCreateBinMove_FleetDispatchFails covers the fleet-error
-// branch and (transitively) failOrderAndEmit — the simulator's
-// WithCreateFailure makes DispatchDirect call FailOrderAtomic and emit
-// EventOrderFailed before returning the wrapped error.
-func TestCreateBinMove_FleetDispatchFails(t *testing.T) {
+// TestCreateBinMove_FleetRefusalQueues: a bin move the fleet refuses waits
+// under fleet_unavailable like every other order, instead of failing (the orc's
+// Q2 ruling, v4 §2.1). The door no longer dispatches; acquiring does, and its
+// fleet-refusal disposition is the demotion to queued with the paper kept.
+func TestCreateBinMove_FleetRefusalQueues(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
@@ -171,48 +169,28 @@ func TestCreateBinMove_FleetDispatchFails(t *testing.T) {
 		SourceNodeID: storageNode.ID,
 		DestNodeID:   lineNode.ID,
 		StationID:    "test",
-		Desc:         "should fail",
+		Desc:         "the fleet refuses this",
 	})
-	if err == nil {
-		t.Fatal("expected dispatch failure")
+	if err != nil {
+		t.Fatalf("a fleet refusal came back as a refusal (%v): it is congestion, and the move waits", err)
 	}
-	if res != nil {
-		t.Errorf("expected nil result, got %+v", res)
+	if !res.Queued || res.QueueReason == "" {
+		t.Fatalf("result %+v, want Queued with the sentence saying what it waits for", res)
 	}
-	// The message used to be "fleet dispatch failed: ..." and is now a sentence
-	// a person reads, so this asserts the classification rather than a word:
-	// the fleet refusing an order is nobody's input being wrong.
-	var bmErr *BinMoveError
-	if !errors.As(err, &bmErr) {
-		t.Fatalf("err = %v (%T), want a *BinMoveError so the caller can pick a status", err, err)
+	o, err := db.GetOrder(res.OrderID)
+	if err != nil {
+		t.Fatalf("reload the move: %v", err)
 	}
-	if bmErr.Kind != BinMoveFault {
-		t.Errorf("kind = %v, want BinMoveFault: the request was fine and the fleet refused it", bmErr.Kind)
+	if !protocol.IsAcquiring(o.Status) || o.QueueCode != string(protocol.QueueFleetUnavailable) {
+		t.Errorf("move is %s under %q, want waiting (queued or sourcing) under %q", o.Status, o.QueueCode, protocol.QueueFleetUnavailable)
 	}
-	if !strings.Contains(err.Error(), "fleet") {
-		t.Errorf("err = %v, want it to say the fleet refused", err)
+	if o.BinID == nil || *o.BinID != bin.ID {
+		t.Errorf("the waiting move lost its bin (bin_id %v): it keeps its paper and retries", o.BinID)
 	}
-
-	// Dispatcher emits EventOrderFailed on its FailOrderAtomic path —
-	// dispatcher.DispatchDirect calls emitter.EmitOrderFailed directly.
 	select {
 	case ev := <-failed:
-		if ev.OrderID == 0 {
-			t.Errorf("failed event missing OrderID: %+v", ev)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("EventOrderFailed not fired after fleet failure")
-	}
-
-	// Rollback must release the RESERVATION too, not just claimed_by — else the
-	// confirmed row bricks the bin. Assert re-acquirability (the assertion a
-	// claimed_by-only rollback would silently pass).
-	if got, _ := db.GetBin(bin.ID); got.ClaimedBy != nil {
-		t.Errorf("bin claimed_by = %v after dispatch-failure rollback, want nil", got.ClaimedBy)
-	}
-	probe := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, probe.ID, probe.ID, bin.ID, "test"); err != nil {
-		t.Errorf("bin not re-acquirable after dispatch-failure rollback: %v (reservation leaked?)", err)
+		t.Errorf("EventOrderFailed fired for order %d: a fleet refusal is not a failure", ev.OrderID)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

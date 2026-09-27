@@ -310,7 +310,7 @@ SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node, o.status
        (SELECT MAX(created_at) FROM order_history
             WHERE order_id = o.id AND status = 'in_transit') AS last_in_transit_at
 FROM orders o
-WHERE o.status IN ('in_transit', 'staged')
+WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 `
 	rows, err := e.db.Query(q)
 	if err != nil {

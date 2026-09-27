@@ -1,0 +1,64 @@
+{
+  "need": {
+    "delivery": "SLN_002",
+    "door": "edge wire intake",
+    "note": "the oldest PANEL-A is the deepest in Lane_01, so strict FIFO plans a dig",
+    "payload": "PANEL-A",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "retrieve",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "PANEL-A",
+      "source": "SYN_MARKET",
+      "delivery": "SLN_002",
+      "origin_class": "orphan",
+      "projected": "pending"
+    },
+    {
+      "index": 2,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "PANEL-A",
+      "source": "SMN_001",
+      "bin": "BIN-PA-01",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    },
+    {
+      "index": 3,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "PANEL-A",
+      "source": "SMN_002",
+      "bin": "BIN-PA-02",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    },
+    {
+      "index": 4,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "PANEL-A",
+      "source": "SMN_003",
+      "delivery": "SLN_002",
+      "bin": "BIN-PA-03",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    }
+  ]
+}

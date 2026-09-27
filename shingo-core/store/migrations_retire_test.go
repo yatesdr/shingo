@@ -186,6 +186,18 @@ import (
 // existing row means "every station", today's behaviour. Inert to a pre-v144
 // binary; rollback is DROP COLUMN.
 //
+// v145 ADDS orders.station_unaware — a Core-born order its station has no row
+// for, which is sent nothing about it. false on every existing row, today's
+// behaviour. Inert to a pre-v145 binary; rollback is DROP COLUMN.
+//
+// v146 ADDS orders.projects_to — the station a station-unaware order's
+// delivered and picked_up notices go to. Blank on every existing row. Inert to
+// a pre-v146 binary; rollback is DROP COLUMN.
+//
+// v147 ADDS orders.plan — the planner's pick at birth, which acquiring reads
+// instead of picking again. Blank on every existing row, which acquiring reads
+// as "pick". Inert to a pre-v147 binary; rollback is DROP COLUMN.
+//
 // The hard-coded head number that used to close this test is gone (orc ruling,
 // 2026-09-28): it conflicted with every stream that adds a migration. What it
 // guarded, a migration added below the head, is now TestMigrationList_Shape's

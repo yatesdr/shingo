@@ -1,0 +1,53 @@
+{
+  "need": {
+    "door": "complex intake",
+    "steps": "pickup SYN_MARKET [PANEL-A] → dropoff ALN_002; pickup ALN_001 → dropoff SYN_MARKET"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "complex",
+      "status": "sourcing",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "PANEL-A",
+      "source": "SYN_MARKET",
+      "delivery": "SYN_MARKET",
+      "process_node": "ALN_001",
+      "steps": [
+        "pickup SYN_MARKET",
+        "dropoff ALN_002",
+        "pickup ALN_001",
+        "dropoff SYN_MARKET"
+      ],
+      "coordinated": true,
+      "origin_class": "orphan"
+    },
+    {
+      "index": 2,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "PANEL-A",
+      "source": "SMN_001",
+      "bin": "BIN-PA-01",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    },
+    {
+      "index": 3,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "PANEL-A",
+      "source": "SMN_002",
+      "bin": "BIN-PA-02",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    }
+  ]
+}

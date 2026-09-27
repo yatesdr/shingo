@@ -992,7 +992,7 @@ func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID *int64) bool {
 		return true // nothing declared, or declared by name
 	}
 	// A BARE MARKER FITS WHERE ITS CARRIER FITS — the same cart with no bin on
-	// it. The gate asks the same thing (dispatch.binTypeAllowedAt), so a group
+	// it. The gate asks the same thing (plan.BinTypeAllowedAt), so a group
 	// the gate admits a bare cart to is one this places it in. A failed read
 	// refuses, for the reason above.
 	bareOf, err := r.DB.BinTypeBareOf(*binTypeID)

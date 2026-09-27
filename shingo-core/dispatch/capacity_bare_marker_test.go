@@ -3,6 +3,7 @@ package dispatch
 import (
 	"testing"
 
+	"shingocore/dispatch/plan"
 	"shingocore/store/bins"
 )
 
@@ -29,7 +30,7 @@ func TestCapacity_MarkerFitsWhereCarrierFits(t *testing.T) {
 		{"another carrier's marker", 80, false},
 		{"an unrelated type", 9, false},
 	} {
-		got, err := binTypeAllowedAt(db, 42, id(tc.bt))
+		got, err := plan.BinTypeAllowedAt(db, 42, id(tc.bt))
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}

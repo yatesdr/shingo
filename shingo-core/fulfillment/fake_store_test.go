@@ -6,6 +6,7 @@ import (
 	"shingocore/store/reservations"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -109,6 +110,12 @@ func (f *fakeStore) ListAcquiringOrders() ([]*orders.Order, error) {
 // ordinary one. False is the honest answer for this fixture and it is also the
 // value that preserves every existing guard's behaviour.
 func (f *fakeStore) OrderOwnsNoCargo(int64) (bool, error) { return false, nil }
+
+// PlannedPickStands: the fake keeps no bins, so no birth pick stands and every
+// order picks, which is what every order did before orders.plan.
+func (f *fakeStore) PlannedPickStands(*domain.PlannedPick, domain.DigAsker) (*nodes.Node, error) {
+	return nil, nil
+}
 
 func (f *fakeStore) GetOrder(id int64) (*orders.Order, error) {
 	if f.errGetOrder != nil {

@@ -28,6 +28,12 @@ func (db *DB) ProcessStations() (map[string]string, error) {
 	return plantclaims.ProcessStations(db.DB)
 }
 
+// StationsClaimingNode lists the stations whose processes claim a node. See
+// plantclaims.StationsClaimingNode.
+func (db *DB) StationsClaimingNode(nodeName string) ([]string, error) {
+	return plantclaims.StationsClaimingNode(db.DB, nodeName)
+}
+
 // WipePlantClaims drops every plant-claims mirror row. See plantclaims.WipeAll.
 func (db *DB) WipePlantClaims() error {
 	return plantclaims.WipeAll(db.DB)

@@ -180,6 +180,18 @@ CREATE TABLE IF NOT EXISTS orders (
     -- AdvanceStuckReshuffleParents). Under the fold that state is the normal
     -- one BETWEEN moves.
     open_for_children BOOLEAN NOT NULL DEFAULT false,
+    -- The station named on the order has no row for it: it did not send the
+    -- order and the order does not project there. Its station is sent nothing
+    -- about it. Named for the exception; false is every order but a Core-born
+    -- one that does not project (v145).
+    station_unaware BOOLEAN NOT NULL DEFAULT false,
+    -- The station a station-unaware order's delivered and picked_up notices go
+    -- to; blank is nobody. Unread for a station-known order (v146).
+    projects_to TEXT NOT NULL DEFAULT '',
+    -- The planner's pick at birth, as JSON: the bin, its node and the bin row as
+    -- the pick saw it. Acquiring reads it instead of picking again, and picks
+    -- only when it no longer stands. Blank is no pick (v147).
+    plan TEXT NOT NULL DEFAULT '',
     -- When an order was judged an orphan. A timestamp rather than a fourth
     -- origin_class, so aging records WHEN a judgement was made without
     -- overwriting WHAT the judgement was. Added by migration 61 and present at
@@ -188,7 +200,7 @@ CREATE TABLE IF NOT EXISTS orders (
     orphan_aged_at  TIMESTAMPTZ,
     -- WHEN THE STORE-SLOT SELECTOR CHOSE THIS ORDER'S DESTINATION, at intake.
     --
-    -- Written only by admitOrder, only when resolveSyntheticDestination actually
+    -- Written only by admission (admit), only when resolveSyntheticDestination actually
     -- rewrote a group into a concrete slot. NULL means the destination was not
     -- chosen at intake -- either it was named concretely by the sender, or the
     -- group was full and planMove resolves it at dispatch instead.

@@ -1,0 +1,25 @@
+{
+  "need": {
+    "delivery": "PLN_005",
+    "door": "edge wire intake",
+    "payload": "PANEL-A",
+    "source": "SYN_PRESS_EMPTIES",
+    "type": "retrieve_empty"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "retrieve_empty",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "PANEL-A",
+      "source": "SYN_PRESS_EMPTIES",
+      "delivery": "PLN_005",
+      "source_intent": "empty",
+      "origin_class": "orphan",
+      "projected": "pending",
+      "plan": "BIN-PEB-01 at PEB_001"
+    }
+  ]
+}

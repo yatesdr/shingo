@@ -1,0 +1,11 @@
+{
+  "need": {
+    "delivery": "SYN_MARKET",
+    "door": "edge wire intake",
+    "note": "store is not a wire order type; the Edge sends a move",
+    "payload": "BRKT",
+    "source": "ALN_004",
+    "type": "store"
+  },
+  "decision": null
+}

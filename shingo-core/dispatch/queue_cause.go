@@ -220,6 +220,12 @@ const (
 	// The wait is shorter than it looks: a promise on a bin is a plan to remove
 	// it, so the dig's lane is cleared by the holder's own drive.
 	CauseDigBlockerPromised QueueCause = "dig-blocker-promised"
+	// CauseBinTaken — a person's move took the bin this order had only promised
+	// itself (Q1, owner 2026-09-26: the person is authoritative over soft holds).
+	// The take un-points the order, so it re-finds rather than waiting on a bin
+	// that is leaving; the sentence names the taking order (TakenByOrderID) and
+	// the order's history keeps the take after the cause is overwritten.
+	CauseBinTaken QueueCause = "bin-taken"
 	// CauseDigBlockerWaitsOnThisDig — the bin the dig must move is held by an
 	// order THIS DIG IS ITSELF REFUSING. A circular wait, not a stalled holder.
 	//

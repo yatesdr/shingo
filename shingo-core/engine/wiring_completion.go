@@ -145,9 +145,13 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		}
 	}
 
+	// A Core-born order that projects to nobody is heard by no station.
+	stationID, ok := materialStation(order)
+	if !ok {
+		return
+	}
 	// Core-admin (manual move) orders have no station; broadcast to all edges so
 	// each can attempt the bin binding via DeliveryNode fallback.
-	stationID := order.StationID
 	if stationID == "" {
 		stationID = protocol.StationBroadcast
 	}
@@ -165,6 +169,18 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}
+}
+
+// materialStation is the station an order's material notices (order.delivered,
+// bin_picked_up) go to, and false when they go to nobody. A station-known order
+// sends to its own station, as it always did; a station-unaware one sends to the
+// station it projects to, if any (the orc's ruling on Stop 1's delivery line).
+// The order is already read, so this adds no statement.
+func materialStation(order *orders.Order) (string, bool) {
+	if !order.StationUnaware {
+		return order.StationID, true
+	}
+	return order.ProjectsTo, order.ProjectsTo != ""
 }
 
 // selectConsumingBinForNode returns the order_bin destined for the consuming
@@ -577,6 +593,13 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		e.logFn("engine: get order %d for completion: %v", ev.OrderID, err)
 		return
 	}
+	e.handleOrderCompletedFor(ev, order)
+}
+
+// handleOrderCompletedFor is handleOrderCompleted with the order already read,
+// which is how the completion event's handler calls it (one read for its
+// notice gate and for this).
+func (e *Engine) handleOrderCompletedFor(ev OrderCompletedEvent, order *orders.Order) {
 
 	// If this is a child of a compound order, advance the parent
 	if order.ParentOrderID != nil && e.dispatcher != nil {

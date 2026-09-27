@@ -181,8 +181,13 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 	// bin's delta accumulator and advance the active claim. We publish
 	// for every pickup (not just partial-back) — the Edge handler
 	// no-ops gracefully when the order doesn't match a tracked bin.
-	if order, err := e.db.GetOrder(ev.OrderID); err == nil && order != nil && order.StationID != "" {
-		if err := e.SendDataToEdge(protocol.SubjectBinPickedUp, order.StationID, &protocol.BinPickedUp{
+	order, err := e.db.GetOrder(ev.OrderID)
+	var station string
+	if err == nil && order != nil {
+		station, _ = materialStation(order)
+	}
+	if station != "" {
+		if err := e.SendDataToEdge(protocol.SubjectBinPickedUp, station, &protocol.BinPickedUp{
 			OrderUUID:  order.EdgeUUID,
 			BinID:      binID,
 			Location:   ev.Location,

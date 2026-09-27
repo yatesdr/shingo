@@ -11,7 +11,9 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/dispatch"
+	"shingocore/domain"
 	"shingocore/service"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -166,6 +168,34 @@ func (s *Scanner) scan() int {
 	return fulfilled
 }
 
+// AcquireOne tries one order once, as a door births it, without walking the
+// waiting set (the orc's Stop 2 ruling, 2026-09-26: acquiring is one act, v4
+// §2.6, and a demand's arrival is a scheduling event, Rule 2). The periodic
+// pass stays the re-asker for whatever this parks.
+//
+// It takes the scan lock, so it never runs beside a pass. A `pending` order it
+// cannot dispatch is moved to `queued` with the cause the park wrote (pending ->
+// queued has no action, so nothing re-enters the scanner under the lock), which
+// puts it in the set the periodic pass asks again. Reports whether the order
+// was dispatched.
+func (s *Scanner) AcquireOne(orderID int64) bool {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	order, err := s.db.GetOrder(orderID)
+	if err != nil || (order.Status != protocol.StatusPending && !protocol.IsAcquiring(order.Status)) {
+		return false
+	}
+	if s.fulfill(order) {
+		return true
+	}
+	if order.Status == protocol.StatusPending {
+		if err := s.lifecycle.Queue(order, "fulfillment", order.QueueReason); err != nil {
+			s.logTransition(order.ID, "pending → queued after its first acquire", err)
+		}
+	}
+	return false
+}
+
 func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Re-check status. The scan set is {queued, sourcing} (the acquiring set),
 	// so re-verify the order is still acquiring (not cancelled/failed/dispatched
@@ -174,9 +204,13 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if err != nil || !protocol.IsAcquiring(current.Status) {
 		return false
 	}
-
 	// Use the fresh copy for all subsequent operations.
-	order = current
+	return s.fulfill(current)
+}
+
+// fulfill is one acquire attempt on an order already read fresh: a pass's
+// acquiring order, or AcquireOne's just-born one.
+func (s *Scanner) fulfill(order *orders.Order) bool {
 
 	// Stage-3 tripwire: a simple-family order must never be classified coordinated,
 	// or the IsCoordinated discriminator below inverts (a plain order routed to the
@@ -312,7 +346,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if order.SourceIntent == dispatch.SourceIntentEmpty {
 		intent = dispatch.IntentEmpty
 	}
-	res := s.finder.FindSource(order, intent)
+	res, planned := s.plannedSource(order)
+	if !planned {
+		res = s.finder.FindSource(order, intent)
+	}
 	// mapFinderOutcome is the shared admission point: it fails loudly on an
 	// unknown outcome instead of letting a default arm mis-file it.
 	switch dispatch.MapFinderOutcome(res) {
@@ -596,6 +633,32 @@ func (s *Scanner) skipForNamedBin(order *orders.Order, found int64, source strin
 	s.dispatcher.SkipOrder(order, string(protocol.TermNotNeeded), detail)
 }
 
+// plannedSource reads the order's birth pick (orders.plan, v147) in place of a
+// pick: the planned bin and its node while the pick stands, one read where a
+// pick is tens (SYNTH F4). No plan, a stale one or an unreadable answer and the
+// caller picks, as every order did before the plan existed.
+//
+// The asker is the order itself: a plain order in this arm has no compound
+// parent (those are skipped above), so it owns its own lanes.
+func (s *Scanner) plannedSource(order *orders.Order) (dispatch.SourceResult, bool) {
+	if order.Plan == nil {
+		return dispatch.SourceResult{}, false
+	}
+	node, err := s.db.PlannedPickStands(order.Plan, domain.AskerFor(order.ID, order.ID))
+	if err != nil {
+		s.logFn("fulfillment: order %d: read its planned bin %d: %v — picking instead", order.ID, order.Plan.BinID, err)
+		return dispatch.SourceResult{}, false
+	}
+	if node == nil {
+		if s.debugLog != nil {
+			s.debugLog("fulfillment: order %d: planned bin %d at %s no longer stands — picking again",
+				order.ID, order.Plan.BinID, order.Plan.Node)
+		}
+		return dispatch.SourceResult{}, false
+	}
+	return dispatch.SourceResult{Outcome: dispatch.OutcomeFound, Bin: &bins.Bin{ID: order.Plan.BinID}, Node: node}, true
+}
+
 // dispatchHeldBin dispatches a plain order that already holds its source bin —
 // a retrieve/move that soft-acquired its bin on a prior tick and parked in
 // `sourcing`. It never re-finds or re-acquires (re-finding would shop a second
@@ -665,14 +728,21 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		return false
 	}
 	destNode := dest.Node
-	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
-		// Same yield as the fresh-bin path: ConfirmForDispatch and
-		// DispatchDirect follow, and DispatchDirect commits a robot.
-		if dispatch.IsConcurrentTransition(err) {
-			s.logTransition(order.ID, "dispatching held bin", err)
-			return false
+	// PENDING -> DISPATCHED (SYNTH F8; the orc's Stop 2 ruling, 2026-09-26) for
+	// an order no station knows: it goes straight from its birth to the hand,
+	// so its history never says it waited when it did not. Every other order
+	// keeps its sourcing step until C1 flips them with the Edge shipped first; a
+	// projected or station-sent order's mirror has not learned the new edge.
+	if !(order.Status == protocol.StatusPending && order.StationUnaware) {
+		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
+			// Same yield as the fresh-bin path: ConfirmForDispatch and
+			// DispatchDirect follow, and DispatchDirect commits a robot.
+			if dispatch.IsConcurrentTransition(err) {
+				s.logTransition(order.ID, "dispatching held bin", err)
+				return false
+			}
+			s.logTransition(order.ID, "held-bin → sourcing", err)
 		}
-		s.logTransition(order.ID, "held-bin → sourcing", err)
 	}
 	// Lane admission (P4): same as the fresh path — the physical question with no
 	// row written; the mouth rows are taken in the hand. EntryHeldBin: this caller
@@ -974,7 +1044,9 @@ func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, c
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful
 // dispatch. Shared by the retrieve/move path and the store path.
 func (s *Scanner) notifyEdgeDispatched(order *orders.Order, sourceNode *nodes.Node, vendorOrderID string) {
-	if order.StationID == "" {
+	// Only a station that sent the order or that it projects to is told (v4
+	// §2.5; the orc's Stop 1 ruling): an unaware station has no row to ack.
+	if order.StationID == "" || order.StationUnaware {
 		return
 	}
 	if err := s.sendToEdge(protocol.TypeOrderAck, order.StationID, &protocol.OrderAck{

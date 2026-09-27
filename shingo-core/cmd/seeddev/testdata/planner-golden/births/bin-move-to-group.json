@@ -1,0 +1,8 @@
+{
+  "need": {
+    "bin": "BIN-ACT-P1F",
+    "dest": "SYN_PRESS_EMPTIES",
+    "door": "bin move"
+  },
+  "decision": null
+}

@@ -86,6 +86,9 @@ type QueueParams struct {
 	// the wait is on another order's turn rather than on any machine, so the
 	// operator can look up who it is waiting behind.
 	HolderOrderID int64
+	// TakenByOrderID names the person's move that took this order's promised bin
+	// (CauseBinTaken). Zero on every other wait.
+	TakenByOrderID int64
 	// Sibling is the partner order's edge UUID in a coordinated pair.
 	Sibling string
 	// SiblingStatus is the partner's status when Core has its row, and empty when
@@ -225,6 +228,11 @@ func materialSentence(p QueueParams) string {
 		} else {
 			s = "The source this order names no longer exists — waiting for its configuration to be fixed"
 		}
+	}
+	// TAKEN REPLACES IT TOO: the order is not short of anything, somebody moved
+	// the bin it had picked, and it is finding another.
+	if p.TakenByOrderID != 0 {
+		s = fmt.Sprintf("Its bin was taken by order #%d (a person's move) — finding another", p.TakenByOrderID)
 	}
 	if p.Partial {
 		s += " — partial set already held"

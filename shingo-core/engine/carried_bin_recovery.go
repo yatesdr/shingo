@@ -25,6 +25,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/dispatch/plan"
 	"shingocore/fleet"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -235,21 +236,26 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		return nil, "", fmt.Errorf("carrier node %s does not exist", bin.NodeName)
 	}
 
-	order := &orders.Order{
-		// STATION-LESS on purpose. No Edge asked for this order and no Edge
-		// should be shown it as one of its own; it is Core reconciling its own
-		// bookkeeping with the floor.
-		OrderType: dispatch.OrderTypeMove,
-		Status:    protocol.StatusPending,
-		Quantity:  1,
-		BinID:     &bin.ID,
-		// SourceNode is the carrier node — the bookkeeping row the bin sits on.
-		// It is recorded because it is true and because the lane and slot
-		// machinery below take a source node, NOT because a robot goes there:
-		// the on-deck plan has no pickup step at all (buildUnloadOnlyPlan).
-		SourceNode:   carrierNode.Name,
-		PayloadCode:  bin.PayloadCode,
-		DeliveryNode: dest.Name,
+	// STATION-LESS on purpose. No Edge asked for this order and no Edge should
+	// be shown it as one of its own; it is Core reconciling its own bookkeeping
+	// with the floor. So no station has a row for it, and Build writes it
+	// station-unaware: it goes pending -> dispatched (B3, under the orc's B2
+	// Stop 1 and 2 rulings).
+	//
+	// BUT A BIN LANDING AT A LINE IS THAT LINE'S TO BIND, so the order projects
+	// its material notices (order.delivered) to the station whose position it
+	// lands on, and to nobody else: recoveryStation. A recovery to storage
+	// projects nowhere (B3 close-out, stop 5).
+	need := dispatch.Need{
+		Type:     dispatch.OrderTypeMove,
+		Quantity: 1,
+		// The bin is the order's from birth: the need holds it, and the row's
+		// source is the carrier node the bin sits on. That node is recorded
+		// because it is true and because the lane and slot machinery below take a
+		// source node, NOT because a robot goes there: the on-deck plan has no
+		// pickup step at all (plan.UnloadOnlyLegs).
+		HoldsBin:    true,
+		PayloadCode: bin.PayloadCode,
 		// The pin. See dispatch.pinnedVehicleFor for why the intent and not
 		// robot_id alone is what makes this a pin.
 		SourceIntent: dispatch.SourceIntentOnDeck,
@@ -260,17 +266,17 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		// '' vacuum, which is worse than either honest answer: the no_demand
 		// bucket does not count it and the orphan surface does not show it.
 		OriginClass: protocol.OriginClassNoDemand,
-		RobotID:     robotID,
 		// ONE UUID FOR BOTH DOORS, per (bin, robot). It is what refuses the
 		// second of two concurrent creates (the watch's two hosts, or the
 		// watch and a press) at the unique index, and what makes the button's
 		// "already in flight" true of an automatic return too.
-		EdgeUUID:        recoveryEdgeUUID(binID, robotID),
-		RecoversOrderID: req.recovers,
+		Ref:      recoveryEdgeUUID(binID, robotID),
+		Projects: e.recoveryStation(dest),
+		Recovers: req.recovers,
 	}
-	if order.RecoversOrderID == nil && req.recoversTerminalCarrier &&
+	if need.Recovers == nil && req.recoversTerminalCarrier &&
 		carrier != nil && protocol.IsTerminal(carrier.Status) {
-		order.RecoversOrderID = &carrier.ID
+		need.Recovers = &carrier.ID
 	}
 	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
 	//
@@ -287,20 +293,22 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 	// clearing it would be minting a second order for a bin somebody is already
 	// moving. The dead row itself is kept — status, error_detail and history are
 	// the record of the failed attempt — and only its index entry is released.
-	if freed, cerr := e.db.ReleaseTerminalEdgeUUID(order.EdgeUUID); cerr != nil {
+	if freed, cerr := e.db.ReleaseTerminalEdgeUUID(need.Ref); cerr != nil {
 		// Not fatal on its own: the create below either succeeds (nothing was
 		// holding the uuid) or fails with the constraint error, which is the
 		// same outcome as before and still names the problem.
 		e.dbg("engine: carried bin recovery: release terminal uuid %q for bin %d: %v",
-			order.EdgeUUID, binID, cerr)
+			need.Ref, binID, cerr)
 	} else if freed > 0 {
 		e.logFn("engine: carried bin recovery: bin %d — freed %d terminal order(s) holding %q "+
 			"so this attempt can be created; the earlier attempt(s) failed and their rows are kept",
-			binID, freed, order.EdgeUUID)
+			binID, freed, need.Ref)
 	}
-	if err := e.db.CreateOrder(order); err != nil {
+	order, err := e.dispatcher.Birth(need, plan.Plan{Outcome: plan.OutcomeFound, Bin: bin, Node: carrierNode, Dest: dest})
+	if err != nil {
 		return nil, "", fmt.Errorf("create recovery order for bin %d: %w", binID, err)
 	}
+	order.RobotID = robotID
 	// ── PERSIST THE PIN, BECAUSE THE INSERT DOES NOT ──────────────────────
 	//
 	// orders.Create's column list has no robot_id (store/orders/orders.go): the
@@ -657,6 +665,56 @@ func onDeckSplit(ords []*orders.Order) (live, carrier *orders.Order) {
 // good error message.
 func recoveryEdgeUUID(binID int64, robotID string) string {
 	return fmt.Sprintf("recovery-bin-%d-%s", binID, robotID)
+}
+
+// recoveryStation is the station a recovery's material notices go to: the one
+// whose position the bin lands on, or "" when it lands in storage or on a node
+// Core cannot tie to one Edge.
+//
+// The chooser (chooseDeclared) puts the bin where a claim declares the line's
+// bins come from or its empties go: a storage group's slot, which tells nobody,
+// or a loader's position, which asks stationClaiming.
+//
+// Before B3 the recovery broadcast order.delivered to station "" and every Edge
+// tried to bind by delivery node; the one modelling the node did. This is that
+// Edge, named: one message instead of one per Edge.
+func (e *Engine) recoveryStation(dest *nodes.Node) string {
+	if dest == nil || dest.NodeTypeCode == protocol.NodeClassSTOR {
+		return ""
+	}
+	return e.stationClaiming(dest)
+}
+
+// stationClaiming is the Edge that models a node no order named: the plant's
+// only Edge, or, when there are several, the one station whose processes claim
+// the node in the keeper's mirror (one read). Several stations, or none, and
+// nobody is told: a notice to the wrong Edge binds a bin it does not hold.
+//
+// node_stations is not asked. It is an admin allow-list, empty on a plant that
+// never set it, and says which stations may order from a node, not which one
+// models it.
+func (e *Engine) stationClaiming(n *nodes.Node) string {
+	edges, err := e.db.ListEdges()
+	if err != nil {
+		e.logFn("engine: recovery to %s: list edges: %v — no station told", n.Name, err)
+		return ""
+	}
+	switch len(edges) {
+	case 0:
+		return ""
+	case 1:
+		return edges[0].StationID
+	}
+	sts, err := e.db.StationsClaimingNode(n.Name)
+	if err != nil {
+		e.logFn("engine: recovery to %s: read the claims mirror: %v — no station told", n.Name, err)
+		return ""
+	}
+	if len(sts) != 1 {
+		e.logFn("engine: recovery to %s: %d stations claim it (%v) — no station told", n.Name, len(sts), sts)
+		return ""
+	}
+	return sts[0]
 }
 
 // recoveryDropoffRefusal turns a ReserveStorageDropoff cause into the code and

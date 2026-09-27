@@ -25,7 +25,7 @@ import (
 // and pins the answer each gives, because the difference is the whole point:
 //
 //   - THE PUSH, dispatch/lifecycle_service.go. Its scope is a function —
-//     admitOrder — and compound children do not route through it. No child is
+//     admission — and compound children do not route through it. No child is
 //     ever pushed.
 //
 //   - THE RECONCILE, messaging/core_data_service.go. Its scope is a QUERY:
@@ -58,7 +58,7 @@ var projectionDoors = []projectionDoor{
 		site:         "dispatch/lifecycle_service.go",
 		name:         "the push — an order Core just admitted, projected to the station that owns it",
 		carriesChild: false,
-		whyThatAnswer: "its scope is admitOrder, and CreateCompoundChildren does not route through admitOrder; " +
+		whyThatAnswer: "its scope is admission, and CreateCompoundChildren does not route through admission; " +
 			"see projectOrder's doc comment, which ties the scope to the function on purpose",
 	},
 	{
@@ -171,8 +171,8 @@ afterwards — the wire type carries no parent marker.`, unnamed)
 func TestCompoundChildren_AreNeverPushed(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"dispatch/lifecycle_service.go:173", // the Edge wire intake's own echo
-		"dispatch/loader_replenish.go:471",  // AdmitCoreAsk: both Core timer doors
+		"dispatch/lifecycle_service.go:200", // the Edge wire intake's own echo
+		"dispatch/loader_replenish.go:447",  // AdmitCoreAsk: both Core timer doors
 	}
 	got := projectOrderSites(scanCoreSources(t))
 	if !slices.Equal(got, want) {

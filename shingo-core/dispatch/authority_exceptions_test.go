@@ -144,17 +144,25 @@ func TestManualRobotMove_RefusesLaneDestinations(t *testing.T) {
 func TestBinMoveDoor_AsksAdmission(t *testing.T) {
 	t.Parallel()
 
-	body := readRepoFile(t, filepath.Join("shingo-core", "engine", "bin_move.go"))
-	fn := funcBody(t, body, "func (e *Engine) CreateBinMove(")
-
-	askAt := strings.Index(fn, "AdmitLanesForOrder(")
+	// SINCE B2 THE DOOR DOES NOT DISPATCH (ruling F2): it births the move and
+	// hands it to acquiring (Scanner.AcquireOne), whose held-bin arm asks
+	// admission before the hand. So the question is asked of that arm, and the
+	// door is held to handing over rather than dispatching itself.
+	door := funcBody(t, readRepoFile(t, filepath.Join("shingo-core", "engine", "bin_move.go")),
+		"func (e *Engine) CreateBinMove(")
+	if !strings.Contains(door, "acquireOne(") || strings.Contains(door, "DispatchHand(") {
+		t.Fatal("CreateBinMove must hand the move to acquiring (acquireOne) and must not dispatch it itself")
+	}
+	fn := funcBody(t, readRepoFile(t, filepath.Join("shingo-core", "fulfillment", "scanner.go")),
+		"func (s *Scanner) dispatchHeldBin(")
+	askAt := strings.Index(fn, "admitLanes(")
 	if askAt < 0 {
-		t.Fatal("CreateBinMove does not ask admission. A core operator's bin move is a robot in a lane " +
+		t.Fatal("the held-bin arm does not ask admission. A core operator's bin move is a robot in a lane " +
 			"exactly as much as a compound leg is")
 	}
 	handAt := strings.Index(fn, "DispatchHand(")
 	if handAt < 0 {
-		t.Fatal("CreateBinMove no longer dispatches through the hand; re-derive the ordering rule below")
+		t.Fatal("the held-bin arm no longer dispatches through the hand; re-derive the ordering rule below")
 	}
 	if askAt > handAt {
 		t.Error("admission is asked AFTER the hand, so a refusal would come after the bin was hard-claimed " +

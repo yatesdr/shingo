@@ -301,3 +301,27 @@ func ProcessStations(db *sql.DB) (map[string]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// StationsClaimingNode lists the stations whose processes claim a node, from
+// the mirror: a style_claims row naming the node, its process's publishing
+// station (process_styles.station_id). One statement. A node no process claims,
+// or one claimed only by processes with no recorded station, lists none.
+func StationsClaimingNode(db *sql.DB, nodeName string) ([]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT ps.station_id FROM style_claims sc
+		JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		WHERE sc.core_node_name = $1 AND ps.station_id IS NOT NULL
+		ORDER BY ps.station_id`, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims stations claiming %s: %w", nodeName, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var station string
+		if err := rows.Scan(&station); err != nil {
+			return nil, fmt.Errorf("plantclaims stations claiming %s: scan: %w", nodeName, err)
+		}
+		out = append(out, station)
+	}
+	return out, rows.Err()
+}

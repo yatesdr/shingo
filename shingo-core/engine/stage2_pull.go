@@ -138,9 +138,12 @@ func (e *Engine) PullStage2(stage1ID int64) (int, error) {
 				continue
 			}
 			taken[c.ID] = true
+			// The window's Edge binds the cart when it lands, so the move
+			// projects its delivery there.
+			station := e.stage2Station(w)
 			if _, err := e.CreateBinMove(BinMoveRequest{
 				Selection: BinSelectionByLabel, BinLabel: c.Label, DestNodeID: w.ID,
-				StationID: e.stage2Station(w), EdgeUUID: Stage2EdgeUUIDPrefix + uuid.New().String(),
+				StationID: station, Projects: station, EdgeUUID: Stage2EdgeUUIDPrefix + uuid.New().String(),
 				Desc: "stage 2 pull for " + strings.TrimSuffix(one.Name, " · stage 1"),
 			}); err != nil {
 				// This cart could not go (lost to another mover, a lane that

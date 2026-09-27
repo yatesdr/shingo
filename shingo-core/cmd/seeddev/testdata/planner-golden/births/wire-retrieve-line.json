@@ -1,0 +1,24 @@
+{
+  "need": {
+    "delivery": "SLN_001",
+    "door": "edge wire intake",
+    "payload": "STUD",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "retrieve",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "STUD",
+      "source": "SYN_MARKET",
+      "delivery": "SLN_001",
+      "origin_class": "orphan",
+      "projected": "pending",
+      "plan": "BIN-STUD-01 at SMN_016"
+    }
+  ]
+}

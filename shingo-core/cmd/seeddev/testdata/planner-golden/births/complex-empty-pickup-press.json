@@ -1,0 +1,25 @@
+{
+  "need": {
+    "door": "complex intake",
+    "steps": "pickup SYN_PRESS_EMPTIES (empty) → dropoff PLN_005"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "complex",
+      "status": "sourcing",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "PANEL-A",
+      "source": "PEB_001",
+      "delivery": "PLN_005",
+      "process_node": "PLN_005",
+      "steps": [
+        "pickup PEB_001 (empty)",
+        "dropoff PLN_005"
+      ],
+      "coordinated": true,
+      "origin_class": "orphan"
+    }
+  ]
+}

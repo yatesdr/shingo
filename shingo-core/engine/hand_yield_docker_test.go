@@ -4,6 +4,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -50,13 +51,17 @@ func assertDispatchedWithItsClaim(t *testing.T, db *store.DB, sim *simulator.Sim
 	return got
 }
 
-// TestHandDispatch_LosingTheCASToTheScannerYields: an operator's bin move whose
-// order the scanner takes inside the window reports the move dispatched.
+// TestBinMove_APassCannotRunInsideTheDoorsAcquire: the race the door used to
+// lose is closed by construction. Since B2 the door does not dispatch; it hands
+// the move to Scanner.AcquireOne, which holds the scan lock, so a pass started
+// while the door's hand is in flight waits until the door's acquire is done and
+// then finds the move already dispatched. (The door's own yield,
+// binMoveTakenByScanner, went with the inline hand. The mirror below, a hand
+// inside the scanner's window, still exercises the scanner's yield.)
 //
-// MUTATION: drop the yield in CreateBinMove. The lost CAS takes the fleet-failure
-// arm: failOrderAndEmit fails the scanner's dispatched order, ReleaseClaimForBin
-// drops its claim, and the operator is told the fleet did not accept it.
-func TestHandDispatch_LosingTheCASToTheScannerYields(t *testing.T) {
+// It used to call RunOnce from inside the hand; that now deadlocks on the scan
+// lock, which is the fact this pins.
+func TestBinMove_APassCannotRunInsideTheDoorsAcquire(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
@@ -64,13 +69,23 @@ func TestHandDispatch_LosingTheCASToTheScannerYields(t *testing.T) {
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
 
-	scannerTook := false
+	passDone := make(chan struct{})
+	ranInside := false
+	started := false
 	eng.Dispatcher().SetPreHandHook(func(int64) {
-		if scannerTook {
+		if started {
 			return
 		}
-		scannerTook = true
-		eng.fulfillment.RunOnce() // the scanner takes the queued order here
+		started = true
+		go func() {
+			eng.fulfillment.RunOnce()
+			close(passDone)
+		}()
+		select {
+		case <-passDone:
+			ranInside = true
+		case <-time.After(200 * time.Millisecond):
+		}
 	})
 
 	res, err := eng.CreateBinMove(BinMoveRequest{
@@ -78,15 +93,16 @@ func TestHandDispatch_LosingTheCASToTheScannerYields(t *testing.T) {
 		SourceNodeID: storageNode.ID,
 		DestNodeID:   lineNode.ID,
 		StationID:    "test-station",
-		Desc:         "the scanner gets there first",
+		Desc:         "a pass tries to get there first",
 	})
-	if !scannerTook {
+	if !started {
 		t.Fatal("fixture: the pre-hand hook never fired")
 	}
-	if err != nil {
-		t.Fatalf("CreateBinMove: %v — the move was dispatched, by the scanner; losing the CAS to it is "+
-			"not a failure of the move", err)
+	if ranInside {
+		t.Fatal("a scanner pass ran inside the door's acquire: the scan lock is not held across it")
 	}
+	testutil.MustNoErr(t, err, "CreateBinMove")
+	<-passDone
 	got := assertDispatchedWithItsClaim(t, db, sim, res.OrderID, bin.ID)
 	if res.VendorOrderID != got.VendorOrderID {
 		t.Errorf("CreateBinMove reported vendor order %q, want the one the order carries (%q)",

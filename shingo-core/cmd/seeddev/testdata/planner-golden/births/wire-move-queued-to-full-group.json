@@ -1,0 +1,24 @@
+{
+  "need": {
+    "delivery": "SYN_CLEAR",
+    "door": "edge wire intake",
+    "setup": "both SYN_CLEAR slots claimed by an order on its way; the move queues against the group, then CLR_002 is freed and the scanner runs",
+    "source": "PLN_001",
+    "type": "move"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "source": "PLN_001",
+      "delivery": "SYN_CLEAR",
+      "source_intent": "local",
+      "origin_class": "orphan",
+      "projected": "pending",
+      "plan": "BIN-ACT-P1F at PLN_001"
+    }
+  ]
+}

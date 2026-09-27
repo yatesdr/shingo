@@ -259,6 +259,11 @@ func (c *countingFinderDB) GetLoaderHomeByPositionNode(id int64) (*loaders.Home,
 	return c.fakeFinderDB.GetLoaderHomeByPositionNode(id)
 }
 
+func (c *countingFinderDB) GetLoaderHomeAndLayout(id int64) (*loaders.Home, string, error) {
+	c.reads++
+	return c.fakeFinderDB.GetLoaderHomeAndLayout(id)
+}
+
 func (c *countingFinderDB) GetLoader(id int64) (*loaders.Loader, error) {
 	c.reads++
 	return c.fakeFinderDB.GetLoader(id)

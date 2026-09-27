@@ -36,11 +36,11 @@ var deliberatelyNotWritten = map[string]string{
 	"orphan_aged_at":  "stamped by the orphan sweep long after creation; an order is never born aged",
 	// NOT BINDABLE HERE, and the reason is an ordering rather than a preference.
 	// The moment it records happens BEFORE this INSERT runs -- intake's selector
-	// rewrites a destination on a struct that has no id yet -- so admitOrder
+	// rewrites a destination on a struct that has no id yet -- so admission
 	// carries the instant forward and stamps it immediately after Create returns.
 	// Binding it would mean threading a diagnostic column through Order,
 	// SelectCols and ScanOrders for one reader that consults it once per burial.
-	"destination_resolved_at": "stamped by dispatch.admitOrder right after Create, from the resolve that " +
+	"destination_resolved_at": "stamped by dispatch admission (LifecycleService.admit) right after Create, from the resolve that " +
 		"preceded it; NULL for every order whose destination was not chosen at intake",
 	// Deliberately NOT bound, and the omission is the mechanism rather than an
 	// oversight. Every order is born sealed -- the column's DEFAULT false says

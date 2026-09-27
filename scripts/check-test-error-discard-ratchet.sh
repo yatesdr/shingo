@@ -104,7 +104,7 @@ cd "$(dirname "$0")/.."
 # 1416 → 1415: the store wrapper db.PlantClaimsDirtyIndex went as dead output,
 # and the messaging test that discarded its error now checks it through the
 # test's own helper.
-FROZEN=1415
+FROZEN=1414
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

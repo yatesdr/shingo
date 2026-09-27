@@ -1,0 +1,23 @@
+{
+  "need": {
+    "delivery": "SYN_PRESS_EMPTIES",
+    "door": "edge wire intake",
+    "source": "PLN_001",
+    "type": "move"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "source": "PLN_001",
+      "delivery": "SMN_009",
+      "source_intent": "local",
+      "origin_class": "orphan",
+      "projected": "pending",
+      "plan": "BIN-ACT-P1F at PLN_001"
+    }
+  ]
+}

@@ -154,6 +154,45 @@ type Order struct {
 	// stands on the source node (reservations.NamedBinSQL); once it has left,
 	// the move is skipped. nil on every other order. Written once at creation.
 	NamedBinID *int64 `json:"named_bin_id,omitempty"`
+
+	// StationUnaware is true when the station named on the order has no row for
+	// it: the station did not send it and it does not project there (v4 §2.5; the
+	// orc's Stop 1 ruling, 2026-09-26). Acquiring and every order-channel sender
+	// read it and send such an order's station nothing about it, and it is the
+	// only kind of order that takes pending -> dispatched before C1.
+	//
+	// NAMED FOR THE EXCEPTION, like OpenForChildren: the zero value and the
+	// column's default are false, which is every order before B2 and every door
+	// that does not write it. dispatch.Build writes it true: every door on it
+	// is Core-born.
+	StationUnaware bool `json:"station_unaware,omitempty"`
+
+	// ProjectsTo is the station a station-unaware order projects to, and what it
+	// projects there is its material notices alone: order.delivered and
+	// data.transit.bin_picked_up, which bind the bin at a node that station's
+	// Edge models (a stage-2 pull's window). Blank projects to nobody, and such
+	// an order sends no station anything (the orc's ruling on Stop 1, v4 §2.5).
+	// Unread for a station-known order, which sends to StationID as it always
+	// did. Written by dispatch.Build from its need's Projects.
+	ProjectsTo string `json:"projects_to,omitempty"`
+
+	// Plan is the planner's pick, written at birth by a door that picks before
+	// its INSERT and does not hold the bin (the wire door, v147). Acquiring reads
+	// it in place of a second pick and re-finds only when the plan no longer
+	// stands (SYNTH F4). nil when no bin was found at birth, and for a door that
+	// holds its bin from birth (BinID).
+	Plan *PlannedPick `json:"plan,omitempty"`
+}
+
+// PlannedPick is a bin the planner chose and the bin row as it saw it. The row
+// fields are the plan's premises: acquiring takes the planned bin only while
+// the bin still stands at Node with this payload, status and manifest flag.
+type PlannedPick struct {
+	BinID     int64  `json:"bin_id"`
+	Node      string `json:"node"`
+	Payload   string `json:"payload"`
+	Status    string `json:"status"`
+	Confirmed bool   `json:"manifest_confirmed"`
 }
 
 // OrderFilter is the query for a filtered, paged order list. It lives in

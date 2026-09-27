@@ -519,10 +519,12 @@ linters:
         text: "Function 'handleVendorStatusChange' has too many statements"
         linters:
           - funlen
-      # tryFulfill: pinnable
+      # fulfill: pinnable. The body that was tryFulfill's until B2 split the
+      # status re-check off it (tryFulfill for a pass, AcquireOne for a door);
+      # the same statements, renamed, not a new exemption.
       # Exit condition: TestScanner_TryFulfill_* in fulfillment/.
       - path: "shingo-core/fulfillment/scanner\\.go"
-        text: "Function 'tryFulfill' has too many statements"
+        text: "Function 'fulfill' has too many statements"
         linters:
           - funlen
       # syncOrClearForReleased: pinnable
@@ -721,6 +723,8 @@ linters:
       #        emitter.go           — EmitOrderReceived(protocol.OrderType) type param
       #        order_provenance.go  — SourceIntentForType label→data conversion +
       #                               the AssertSimpleHasNoSteps tripwire switch
+      #        builder.go           — dispatch.Need.Type, written verbatim into
+      #                               the row by Build (B2); never branched on
       #        planning_service.go  — the intake handler map key
       #                               s.handlers[order.OrderType] (data-driven
       #                               dispatch, the pattern we WANT) + its
@@ -730,7 +734,7 @@ linters:
       - linters:
           - forbidigo
         text: "OrderType is data, not a control-flow key"
-        path: "shingo-core/dispatch/(dispatcher|emitter|order_provenance|planning_service)\\.go"
+        path: "shingo-core/dispatch/(builder|dispatcher|emitter|order_provenance|planning_service)\\.go"
 
       # ---- Raw bin-move carveouts (forbidigo) -------------------------------
       # The sanctioned store-level delegates that service.BinService.Move

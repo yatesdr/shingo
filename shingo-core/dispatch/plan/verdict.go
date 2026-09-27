@@ -41,12 +41,23 @@ const (
 	CauseFinderNoEmptyOfType           Cause = "finder-no-empty-of-type"
 )
 
+// The dropoff-capacity gate's causes (capacity.go), under the same rule: each is
+// the value of the dispatch QueueCause of the same name.
+const (
+	CauseDropoffOccupied     Cause = "dropoff-occupied"
+	CauseDropoffInflight     Cause = "dropoff-inflight"
+	CauseNGRPFull            Cause = "ngrp-full"
+	CauseNGRPAtLevel         Cause = "ngrp-at-level"
+	CauseCapacityCheckFailed Cause = "capacity-check-failed"
+)
+
 // Causes enumerates every Cause the planner can return, for the drift test.
 var Causes = []Cause{
 	CauseReadFailed, CauseLoaderSourceUnreadable,
 	CauseFinderNodeEmpty, CauseFinderGroupEmpty, CauseFinderPoolEmpty, CauseFinderPlantEmpty,
 	CauseFinderNoFullCarrier, CauseFinderAccessibilityUnreadable, CauseFinderGroupFenced,
 	CauseFinderSourceUnreadable, CauseFinderSourceMissing, CauseFinderNoEmptyOfType,
+	CauseDropoffOccupied, CauseDropoffInflight, CauseNGRPFull, CauseNGRPAtLevel, CauseCapacityCheckFailed,
 }
 
 // Params are the facts a waiting verdict's operator sentence is built from: the
@@ -57,6 +68,13 @@ type Params struct {
 	Group         string
 	Reserved      bool
 	SourceMissing bool
+
+	// The capacity gate's: the destination it gated, the bins standing there,
+	// the orders already inbound, and whether a maintained group is at its level.
+	Destination   string
+	BlockingBins  int
+	InboundOrders int
+	AtLevel       bool
 }
 
 // The terminal codes a structural verdict carries. The same values as the

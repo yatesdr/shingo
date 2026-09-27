@@ -36,8 +36,11 @@ func episodeCodes(t *testing.T, db *sql.DB, orderID int64) [][2]string {
 // time series is the instrument the starvation work measures by, and it was
 // being written against the wrong wait in both directions.
 //
-// So: two waits, two episodes, two causes. Each lands on its own row, and the
-// row that belongs to the first wait is not rewritten by the second.
+// So: two waits, two causes. Each lands on a row of its own, at the status the
+// order was resting in, and the first wait's row is not rewritten by the second.
+// Since the orc's Stop 3 ruling (2026-09-26) a park INSERTS its row rather than
+// stamping the row the transition wrote, so the transition rows stay blank and
+// each cause is its own dated row.
 func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
@@ -64,11 +67,13 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 
 	got := episodeCodes(t, db, o.ID)
 	want := [][2]string{
+		{string(protocol.StatusQueued), ""},
 		{string(protocol.StatusQueued), string(protocol.QueueStorageRearranging)},
+		{string(protocol.StatusSourcing), ""},
 		{string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial)},
 	}
 	if len(got) != len(want) {
-		t.Fatalf("history = %v, want one row per episode %v", got, want)
+		t.Fatalf("history = %v, want each status row and each cause's own row %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -79,11 +84,13 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 	}
 }
 
-// TestSetQueueDetail_ARepeatedStampStaysOnOneEpisode pins the half of the old
-// behaviour that was right and must survive the re-aim: successive writes within
-// ONE wait overwrite that wait's row rather than appending. The last known
-// reason is why the order was still waiting.
-func TestSetQueueDetail_ARepeatedStampStaysOnOneEpisode(t *testing.T) {
+// TestSetQueueDetail_EachCauseChangeIsItsOwnRow: two causes within one wait are
+// two rows (the orc's Stop 3 ruling, 2026-09-26). This used to overwrite the
+// wait's one row, so the first cause left no record; now each is dated where it
+// was written. The same cause written again writes nothing: dispatch's
+// WriteQueueDetail returns before the store call when nothing changed, so a park
+// re-asserted every pass does not append.
+func TestSetQueueDetail_EachCauseChangeIsItsOwnRow(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
@@ -98,9 +105,18 @@ func TestSetQueueDetail_ARepeatedStampStaysOnOneEpisode(t *testing.T) {
 		"Waiting for material: PART-A", string(protocol.QueueWaitingForMaterial), "reserve-holding"), "second")
 
 	got := episodeCodes(t, db, o.ID)
-	want := [][2]string{{string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial)}}
-	if len(got) != 1 || got[0] != want[0] {
-		t.Errorf("history = %v, want %v — one wait is one row, carrying the last reason it was still waiting for", got, want)
+	want := [][2]string{
+		{string(protocol.StatusSourcing), ""},
+		{string(protocol.StatusSourcing), string(protocol.QueueStorageRearranging)},
+		{string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial)},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("history = %v, want %v — each cause change is its own row", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("history[%d] = %v, want %v (full %v)", i, got[i], want[i], got)
+		}
 	}
 }
 

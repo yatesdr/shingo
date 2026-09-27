@@ -34,7 +34,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	}
 
 	// First robot assignment: send waybill only (no DB write here - Option C)
-	if ev.RobotID != "" && order.RobotID == "" {
+	if ev.RobotID != "" && order.RobotID == "" && !order.StationUnaware {
 		if err := e.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
 			OrderUUID: order.EdgeUUID,
 			WaybillID: order.VendorOrderID,
@@ -235,8 +235,12 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			update.ETA = etaStr
 		}
 	}
-	if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, update); err != nil {
-		e.logFn("engine: status update: %v", err)
+	// An order its station has no row for is not reported to it (the orc's
+	// Stop 1 ruling); nor are its waybill and staged notices.
+	if !order.StationUnaware {
+		if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, update); err != nil {
+			e.logFn("engine: status update: %v", err)
+		}
 	}
 
 	// Send dedicated staged notification when robot is dwelling
@@ -262,13 +266,15 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// exactly this moment on purpose — it is what keeps the destination
 		// uncommitted while the robot works the other lane.
 		e.dispatcher.EvaluateWaitLaneForStagedOrder(order.ID)
-		if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
-			OrderUUID:   order.EdgeUUID,
-			Detail:      "robot dwelling at staging node",
-			StationWait: stationWait,
-			WaitKind:    waitKind,
-		}); err != nil {
-			e.logFn("engine: staged notification: %v", err)
+		if !order.StationUnaware {
+			if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
+				OrderUUID:   order.EdgeUUID,
+				Detail:      "robot dwelling at staging node",
+				StationWait: stationWait,
+				WaitKind:    waitKind,
+			}); err != nil {
+				e.logFn("engine: staged notification: %v", err)
+			}
 		}
 	}
 

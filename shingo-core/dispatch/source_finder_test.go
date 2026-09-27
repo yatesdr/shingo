@@ -353,6 +353,17 @@ func (f *fakeFinderDB) GetLoaderHomeByPositionNode(posID int64) (*loaders.Home, 
 	return f.homeByPos[posID], nil
 }
 
+func (f *fakeFinderDB) GetLoaderHomeAndLayout(posID int64) (*loaders.Home, string, error) {
+	h := f.homeByPos[posID]
+	if h == nil {
+		return nil, "", nil
+	}
+	if l := f.loaders[h.LoaderID]; l != nil {
+		return h, l.Layout, nil
+	}
+	return h, "", nil
+}
+
 func (f *fakeFinderDB) GetLoader(id int64) (*loaders.Loader, error) {
 	return f.loaders[id], nil
 }

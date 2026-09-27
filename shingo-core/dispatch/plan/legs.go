@@ -127,3 +127,23 @@ func TransportLegs(sourceNode, deliveryNode string, emptyPickup bool) []Step {
 		{Action: protocol.ActionDropoff, Node: deliveryNode},
 	}
 }
+
+// UnloadOnlyLegs is the carried-bin recovery plan: put down what you are
+// already carrying, here.
+//
+// NO PICKUP, and that is not an optimisation. The bin is on the robot's deck;
+// its source node is the synthetic carrier node, which is a bookkeeping row and
+// not a map point. A pickup step would send the robot to a place that does not
+// exist, and a pickup at the DESTINATION would tell it to lift the bin it is
+// about to set down.
+//
+// One block out of this, a JackUnload at deliveryNode, and the order completes
+// the moment the deck reports empty there — which is also how Core learns where
+// the bin ended up, through the ordinary arrival path rather than an inference.
+//
+// Moved from dispatch/plan_simple.go unchanged (B3, buildUnloadOnlyPlan).
+func UnloadOnlyLegs(deliveryNode string) []Step {
+	return []Step{
+		{Action: protocol.ActionDropoff, Node: deliveryNode},
+	}
+}

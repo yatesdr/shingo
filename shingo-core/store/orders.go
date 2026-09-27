@@ -504,6 +504,103 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	return displaced, stolen, nil
 }
 
+// HolderNote is what a taken holder's row says afterwards: the queue detail
+// (formatted by the caller, which owns the sentence vocabulary) and the actor the
+// history row records.
+type HolderNote struct {
+	Reason string
+	Code   protocol.QueueCode
+	Cause  string
+	Actor  string
+}
+
+// TakeSoftHolds is a person's explicit take of a bin other orders have only
+// PROMISED themselves (Q1, owner 2026-09-26; v4 §2.7 Rule 4, "taking a held
+// resource is an explicit act, never an accident"). It runs in the caller's
+// transaction, the one that births the person's move, so the take and the
+// taker's own hold land together or not at all.
+//
+// ONLY PENDING ROWS. A confirmed row is a robot's; nobody takes it, and the
+// planner refuses a claimed bin before this is reached. No rank is asked: the
+// person is authoritative over soft holds (the 08-28 ruling). The dig's ranked
+// steal (stealSoftHolds) is the other taker, and C2b folds it onto this.
+//
+// EACH HOLDER'S ROW IS DELETED, and a holder still pointing at the bin is
+// un-pointed and told why: its queue detail names the taker, and an
+// order_history row at its current status (code bin-taken, ref taken_by) keeps
+// the take after the queue columns are overwritten by its next wait. Un-pointed,
+// it re-finds through the finder on the next pass instead of confirming a bin
+// that is leaving (the pointer wedge stealSoftHolds documents).
+//
+// A HOLDER THAT IS ITSELF A PERSON'S MOVE is not un-pointed: re-finding a move at
+// its node would carry whatever bin stands there now, not the one somebody
+// named. Its row is still deleted (the taker's own reservation needs the bin's
+// one active row), and it is returned for the caller to end by name after the
+// commit, as the dig's steal does with DisplacedByHand.
+func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (handPlaced []int64, err error) {
+	type holder struct {
+		orderID    int64
+		status     string
+		handPlaced bool
+		pointsHere bool
+	}
+	rows, err := tx.Query(`SELECT r.order_id, o.status, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
+		FROM reservations r
+		JOIN orders o ON o.id = r.order_id
+		WHERE r.bin_id=$1 AND r.resource_kind='bin' AND r.state=$2 AND r.order_id <> $3
+		ORDER BY r.order_id`, binID, string(reservations.StatePending), takerID)
+	if err != nil {
+		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+	}
+	var holders []holder
+	for rows.Next() {
+		var h holder
+		var originClass string
+		var pointsAt int64
+		if err := rows.Scan(&h.orderID, &h.status, &originClass, &pointsAt); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
+		}
+		h.handPlaced = originClass == protocol.OriginClassNoDemand
+		h.pointsHere = pointsAt == binID
+		holders = append(holders, h)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+	}
+	rows.Close()
+
+	now := clock.Now().UTC()
+	ref, _ := json.Marshal(map[string]int64{"taken_by": takerID})
+	for _, h := range holders {
+		if _, err := tx.Exec(`DELETE FROM reservations
+			WHERE order_id=$1 AND bin_id=$2 AND resource_kind='bin' AND state=$3`,
+			h.orderID, binID, string(reservations.StatePending)); err != nil {
+			return nil, fmt.Errorf("release order %d's hold on bin %d: %w", h.orderID, binID, err)
+		}
+		if !h.pointsHere {
+			continue
+		}
+		if h.handPlaced {
+			handPlaced = append(handPlaced, h.orderID)
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE orders SET bin_id=NULL, queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
+			WHERE id=$1 AND bin_id=$2`,
+			h.orderID, binID, note.Reason, string(note.Code), note.Cause, now); err != nil {
+			return nil, fmt.Errorf("un-point order %d from bin %d: %w", h.orderID, binID, err)
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
+			 VALUES ($1, $2, $3, 'bin-taken', NULLIF($4,''), $5, $6)`,
+			h.orderID, h.status, note.Reason, note.Actor, ref, now); err != nil {
+			return nil, fmt.Errorf("record the take on order %d: %w", h.orderID, err)
+		}
+	}
+	return handPlaced, nil
+}
+
 // stolenBin is one steal, held back for the log that runs AFTER the commit.
 //
 // The log lines used to fire inside the transaction, at the moment of the write,
@@ -742,6 +839,15 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 
 func (db *DB) CompleteOrder(id int64) error             { return orders.Complete(db.DB, id) }
 func (db *DB) GetOrder(id int64) (*orders.Order, error) { return orders.Get(db.DB, id) }
+
+// OrderStationUnaware reports orders.station_unaware for one order: whether its
+// station has no row for it, so a notice about it goes nowhere. One read, for
+// the notice paths that do not already hold the order.
+func (db *DB) OrderStationUnaware(id int64) (bool, error) {
+	var unaware bool
+	err := db.QueryRow(`SELECT station_unaware FROM orders WHERE id=$1`, id).Scan(&unaware)
+	return unaware, err
+}
 func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return orders.GetByUUID(db.DB, uuid)
 }

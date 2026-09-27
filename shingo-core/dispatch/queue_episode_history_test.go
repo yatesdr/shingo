@@ -123,18 +123,59 @@ func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 	testutil.MustNoErr(t, db.SetOrderQueueDetail(o.ID,
 		"Waiting for material: PART-A", protocol.QueueWaitingForMaterial, string(CauseReserveHolding)), "second wait")
 
+	// Since the orc's Stop 3 ruling (2026-09-26) each park is a row of its own
+	// beside the status row, dated when its cause was written.
 	want := [][2]string{
+		{string(StatusQueued), ""},
 		{string(StatusQueued), string(protocol.QueueStorageRearranging)},
+		{string(StatusSourcing), ""},
 		{string(StatusSourcing), string(protocol.QueueWaitingForMaterial)},
 	}
 	got := historyPairs(t, db, o.ID)
 	if len(got) != len(want) {
-		t.Fatalf("history = %v, want one row per wait %v", got, want)
+		t.Fatalf("history = %v, want each status row and each cause's own row %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("history[%d] = %v, want %v — each wait keeps its own reason at its own moment. Full history: %v",
 				i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestPark_ASameCauseWrittenAgainAddsNoRow is Stop 3's other half (the orc's
+// ruling, 2026-09-26): a park writes a history row on a CHANGE of cause, never
+// once per scanner pass. WriteQueueDetail, the one door every park goes
+// through, returns before the store when the order already carries the cause.
+// Two passes under the same cause, then a changed cause: two park rows.
+func TestPark_ASameCauseWrittenAgainAddsNoRow(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	setupTestData(t, db)
+
+	o := &orders.Order{
+		EdgeUUID: "park-no-chatter", StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+		Status: StatusQueued, Quantity: 1, DeliveryNode: "LINE1-IN",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	logf := func(string, ...any) {}
+	params := QueueParams{Payload: "PART-A"}
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params, nil)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params, nil)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueStorageRearranging, CauseLaneHeldTraffic, QueueParams{Lane: "L1"}, nil)
+
+	want := [][2]string{
+		{string(StatusQueued), ""},
+		{string(StatusQueued), string(protocol.QueueWaitingForMaterial)},
+		{string(StatusQueued), string(protocol.QueueStorageRearranging)},
+	}
+	got := historyPairs(t, db, o.ID)
+	if len(got) != len(want) {
+		t.Fatalf("history = %v, want %v: one row per cause change, none per repeat", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("history[%d] = %v, want %v (full %v)", i, got[i], want[i], got)
 		}
 	}
 }

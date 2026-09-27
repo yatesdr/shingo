@@ -4368,6 +4368,24 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "process_styles", "station_id")
 			}},
+
+		{145, "orders.station_unaware — a Core-born order its station has no row for, so its station is sent nothing about it",
+			v145StationUnaware,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "station_unaware")
+			}},
+
+		{146, "orders.projects_to — the station a Core-born order's delivered and picked_up notices go to, or nobody",
+			v146ProjectsTo,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "projects_to")
+			}},
+
+		{147, "orders.plan — the planner's pick at birth, which acquiring reads instead of picking again",
+			v147Plan,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "plan")
+			}},
 	}
 }
 
@@ -4484,6 +4502,40 @@ func v131LinesideBucketLevel(tx *sql.Tx) error {
 func v132DropUsedEdgeReports(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE demand_origins DROP COLUMN IF EXISTS used_edge_reports`); err != nil {
 		return fmt.Errorf("v132 drop demand_origins.used_edge_reports: %w", err)
+	}
+	return nil
+}
+
+// v147Plan adds orders.plan (B3's first item, SYNTH F4): the pick a door made
+// before its INSERT, as JSON, which acquiring reads in place of a second pick.
+// Every existing row is blank, which acquiring reads as "pick", what every
+// order before it did.
+func v147Plan(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v147 orders.plan: %w", err)
+	}
+	return nil
+}
+
+// v146ProjectsTo adds orders.projects_to (the orc's ruling on Stop 1's
+// delivery line, 2026-09-26): the station a station-unaware order's material
+// notices (order.delivered, bin_picked_up) go to, blank for nobody. Every
+// existing row is blank: a station-known row never reads it, and the only
+// station-unaware rows are v145 bin moves, which no plant has run.
+func v146ProjectsTo(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS projects_to TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v146 orders.projects_to: %w", err)
+	}
+	return nil
+}
+
+// v145StationUnaware adds orders.station_unaware (the orc's Stop 1 ruling,
+// 2026-09-26): true for a Core-born order whose station has no row for it,
+// which acquiring and the order-channel senders read to send that station
+// nothing. Every existing row is false, which is what every order was.
+func v145StationUnaware(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS station_unaware BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("v145 orders.station_unaware: %w", err)
 	}
 	return nil
 }

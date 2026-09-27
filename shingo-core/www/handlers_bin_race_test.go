@@ -22,7 +22,7 @@ func raceTheBin(t *testing.T, db interface {
 	t.Helper()
 	holder := &orders.Order{
 		EdgeUUID: "race-holder", StationID: "test", OrderType: "move",
-		Status: "queued", Quantity: 1,
+		Status: "in_transit", Quantity: 1,
 	}
 	if err := db.CreateOrder(holder); err != nil {
 		t.Fatalf("seed the competing order: %v", err)
@@ -57,11 +57,11 @@ func TestBinMove_LosingTheBinIsNotAServerError(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RACE-OP")
 
-	// The operator door checks availability up front, so the only way to reach
-	// the reservation failure is to lose the bin after that check. Seed the
-	// competing hold directly.
+	// Seed the competing hold directly. A HARD claim: since the orc's Q1 ruling
+	// (2026-09-26) a person's move takes a bin another order has only reserved,
+	// so the conflict this pins is the one a person may not take, a robot's.
 	raceTheBin(t, db, bin.ID, func(binID, orderID int64) error {
-		testdb.ReserveBin(t, db, orderID, binID)
+		claimForRobot(t, db, orderID, binID)
 		return nil
 	})
 

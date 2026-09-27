@@ -384,7 +384,7 @@ func TestBurialShadow_ApprovedThenInvalidatedIsNotABypass(t *testing.T) {
 }
 
 // resolveDestinationAt records when intake's store-slot selector chose this
-// order's destination — the moment admitOrder stamps for real.
+// order's destination — the moment admission stamps for real.
 func resolveDestinationAt(t *testing.T, db *store.DB, orderID int64, at time.Time) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE orders SET destination_resolved_at=$2 WHERE id=$1`, orderID, at.UTC())

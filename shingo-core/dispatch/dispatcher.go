@@ -130,7 +130,19 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	d.dbg("order request: station=%s uuid=%s type=%s payload=%s delivery=%s source=%s",
 		stationID, p.OrderUUID, p.OrderType, p.PayloadCode, p.DeliveryNode, p.SourceNode)
 
-	order, payloadCode, lifecycleErr := d.lifecycle.CreateInboundOrder(stationID, p)
+	// The planner decides before the row is born, so the pick rides the INSERT
+	// (orders.plan) and the scanner does not pick again (B3's first item). The
+	// decision is applied to the born row below, as planTransport applied it.
+	var decided *transportDecision
+	order, payloadCode, lifecycleErr := d.lifecycle.CreateInboundOrder(stationID, p,
+		func(o *orders.Order, payloadCode string) plan.Plan {
+			if !d.planner.decidesAhead(o.OrderType) {
+				return plan.Plan{}
+			}
+			dec := d.planner.decideTransport(o, payloadCode)
+			decided = &dec
+			return dec.Plan()
+		})
 	if lifecycleErr != nil {
 		if lifecycleErr.Err != nil {
 			d.dbg("create inbound order %s: %v", p.OrderUUID, lifecycleErr.Err)
@@ -139,7 +151,13 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	result, planErr := d.planner.Plan(order, env, payloadCode)
+	var result *PlanningResult
+	var planErr *planningError
+	if decided != nil {
+		result, planErr = d.planner.applyTransport(order, env, *decided)
+	} else {
+		result, planErr = d.planner.Plan(order, env, payloadCode)
+	}
 	if planErr != nil {
 		if planErr.Err != nil {
 			d.dbg("plan order %s (%s): %v", p.OrderUUID, p.OrderType, planErr.Err)
@@ -903,7 +921,11 @@ func (d *Dispatcher) dispatchDirect(order *orders.Order, sourceNode, destNode *n
 	// callers leave the order in pending. validTransitions allows
 	// pending → queued explicitly as the fast-path edge for callers that
 	// already know the destination.
-	if order.Status == protocol.StatusPending {
+	//
+	// An order no station knows goes pending → dispatched instead (SYNTH F8; the
+	// orc's Stop 2 ruling, 2026-09-26): a queued row would say it waited when it
+	// did not, and no Edge mirror reads its statuses.
+	if order.Status == protocol.StatusPending && !order.StationUnaware {
 		if err := d.lifecycle.Queue(order, "dispatcher", "direct dispatch"); err != nil {
 			d.dbg("order %d → queued: %v", order.ID, err)
 		}

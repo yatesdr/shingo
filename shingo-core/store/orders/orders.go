@@ -42,7 +42,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -65,6 +65,8 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var originID sql.NullString
 	// key_route is a JSON array in one TEXT column; '' is the ordinary state.
 	var keyRouteJSON string
+	// plan is the birth pick as JSON in one TEXT column (v147); '' is none.
+	var planJSON string
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
@@ -72,9 +74,18 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON)
 	if err != nil {
 		return nil, err
+	}
+	if planJSON != "" {
+		// Unreadable reads as no plan: acquiring then picks, as it did before v147.
+		var p domain.PlannedPick
+		if err := json.Unmarshal([]byte(planJSON), &p); err != nil {
+			log.Printf("orders: order %d has unparseable plan %q: %v — acquiring will pick", o.ID, planJSON, err)
+		} else {
+			o.Plan = &p
+		}
 	}
 	if keyRouteJSON != "" {
 		// A malformed route reads as none. It cannot be repaired here and a
@@ -177,7 +188,7 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // the two inserts are separate autocommits and the invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $27, $28, $29, $26, $26) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
@@ -187,7 +198,7 @@ func Create(db helpers.QueryRower, o *Order) error {
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
 		helpers.NullableInt64(o.NamedBinID),
-		now)
+		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan))
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -202,6 +213,19 @@ func Create(db helpers.QueryRower, o *Order) error {
 		return fmt.Errorf("create order %d birth history: %w", id, err)
 	}
 	return nil
+}
+
+// marshalPlan stores the birth pick. None stays blank rather than 'null', as
+// key_route does.
+func marshalPlan(p *domain.PlannedPick) string {
+	if p == nil {
+		return ""
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // marshalKeyRoute stores the ordered via-point list. Empty stays ” rather
@@ -309,6 +333,29 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// annotateEpisodeRow writes a cause onto the row that opened the order's current
+// passage through `status` (the latest row in it), for a status that is not a
+// park: the cause annotates that passage rather than opening one. An order with
+// no such row (written before birth rows existed) gets one, dated now.
+func annotateEpisodeRow(tx *sql.Tx, id int64, status, reason, code string) error {
+	res, err := tx.Exec(
+		`UPDATE order_history SET code = $2
+		 WHERE id = (SELECT id FROM order_history
+		             WHERE order_id = $1 AND status = $3
+		             ORDER BY id DESC LIMIT 1)`, id, code, status)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	_, err = tx.Exec(
+		`INSERT INTO order_history (order_id, status, detail, code, created_at)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		id, status, reason, code, clock.Now().UTC())
+	return err
 }
 
 // waitEndsSQL is the SET fragment that clears an order's wait when it moves to
@@ -436,6 +483,38 @@ func ClaimAppend(db *sql.DB, id int64, waitIndex int) (bool, error) {
 	return n == 1, err
 }
 
+// Wait is what an order is waiting on, as its row carries it: the code and the
+// sentence the station reads, and the cause, which stays in Core.
+type Wait struct {
+	Code, Cause, Reason string
+}
+
+// WaitTold reports whether a station that holds prev is told next. It is told a
+// new code, or a new cause that reads as a new sentence. The wire carries the
+// status, the sentence and the code, never the cause, so a cause alone is not
+// news; and a sentence whose code and cause are unchanged (a count in it moved)
+// is not a new wait. The first wait (prev has no code) is never told here: it
+// reaches the station with the order's announcement, the queued event's push.
+// Clearing (next has no code) is not a wait.
+//
+// THE ONE PREDICATE FOR A CHANGE OF WAIT. dispatch.WriteQueueDetail asks it of
+// each write before telling the station, the push after a queued announcement
+// asks it of the wait the order was announced with, and SetQueueDetail asks it
+// (through WaitOpens) before opening a history row.
+func WaitTold(prev, next Wait) bool {
+	return prev.Code != "" && next.Code != "" &&
+		(prev.Code != next.Code || (prev.Cause != next.Cause && prev.Reason != next.Reason))
+}
+
+// WaitOpens reports whether next opens a row of its own on the order's history:
+// the first wait (prev has no code), or a change WaitTold tells. A change it
+// does not tell (a count in the sentence, a cause under the same sentence)
+// rewrites the live columns and opens no row; the row it would have opened
+// carries the same code and sentence as the one before it.
+func WaitOpens(prev, next Wait) bool {
+	return next.Code != "" && (prev.Code == "" || WaitTold(prev, next))
+}
+
 // SetQueueDetail stores the blocking reason on a queued order — the generated
 // sentence (queue_reason), its structured category (queue_code), and the
 // engineer-only call-site tag (queue_cause) — together, in one write. Pass all
@@ -459,6 +538,21 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	// "waiting for material" on every board that reads the row. The two halves of
 	// one write now answer the same question. Clearing is caught by the same
 	// clause and is a no-op there, which is what it was already worth.
+	//
+	// THE ROW AS IT WAS, read first and locked, when this write is a wait: its
+	// status and parent say where a history row may land, and its wait is the
+	// prev WaitOpens compares (below). A clear reads nothing.
+	var status string
+	var parentOrderID sql.NullInt64
+	var prev Wait
+	if code != "" {
+		if err := tx.QueryRow(`SELECT status, parent_order_id, COALESCE(queue_code, ''),
+			COALESCE(queue_cause, ''), COALESCE(queue_reason, '')
+			FROM orders WHERE id=$1 FOR UPDATE`, id).
+			Scan(&status, &parentOrderID, &prev.Code, &prev.Cause, &prev.Reason); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(fmt.Sprintf(
 		`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3
 		 WHERE id=$2 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
@@ -475,19 +569,17 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	// code a time series, and this is the write that puts it there.
 	//
 	// The code is not known at the moment of the transition (the scanner
-	// discovers the reason on a later pass), so this UPDATES the row that opened
-	// the current episode rather than inserting a new one. Each episode keeps its
-	// own reason; successive updates within one episode overwrite that episode's
-	// row, which is correct — the last known reason is why it was still waiting.
+	// discovers the reason on a later pass), so each park writes a row of its
+	// own, dated when the cause was written (see the default arm below).
 	//
 	// IT USED TO NAME 'queued', which missed in both directions: a complex order
 	// born `queued` matched no row at all, and a `sourcing` park landed its cause
 	// on an earlier queued episode. Fixed by "a wait's cause lands on that
 	// wait's own history row".
 	//
-	// The order's own status is the discriminator, read inside this transaction —
-	// which the UPDATE above has already locked the row for, so a concurrent
-	// transition cannot move the target out from under the stamp.
+	// The order's own status is the discriminator, read inside this transaction
+	// FOR UPDATE ahead of the column write, so a concurrent transition cannot
+	// move the target out from under the stamp.
 	//
 	// TWO GUARDS ON WHERE IT MAY LAND:
 	//
@@ -518,39 +610,21 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	//   overwritten in place, so a leg that parked three times left a record of
 	//   one and a wedged leg left no dated record at all.
 	//
-	//   AND IT IS AN INSERT, NOT THE UPDATE THE OTHER STATUSES GET. Updating "the
-	//   row that opened the current episode" is right where an episode is a
-	//   passage — each visit gets its own row, and re-asserting within one visit
-	//   overwrites it, which is how the buried path NARROWS a cause without
-	//   splitting one wait in two. A leg has no such passage: there is exactly ONE
-	//   `pending` row for its entire existence, so updating it would collapse
-	//   every wait the leg ever has onto a single record — the same disease at a
-	//   different address. Each distinct wait is its own episode here, and gets
-	//   its own dated row.
+	//   Each distinct wait of a leg is its own dated row, as every order's is
+	//   since the Stop 3 ruling (the default arm below).
 	//
 	//   IT CANNOT CHATTER. Every one of the six park sites goes through
 	//   dispatch.WriteQueueDetail, whose short-circuit returns before the store
 	//   call when the sentence, code and cause all match what the row already
 	//   carries — so a leg re-parked under the SAME cause every scanner tick
-	//   writes nothing at all, and only a genuine change of cause opens a row.
-	//
-	// NO ROW FOR THE CURRENT EPISODE means an order created before the birth row
-	// existed — a plant upgrades with live orders on the board. Rather than drop
-	// the cause the way the old stamp dropped every complex order's, the row is
-	// INSERTED. Its created_at is when the cause was written rather than when the
-	// episode began, so a duration measured from it under-reads for exactly that
-	// population, which empties itself within one order lifetime.
+	//   writes nothing at all. A write that changes only what the station is not
+	//   told (WaitOpens) rewrites the columns and opens no row.
 	//
 	// Clearing (empty code, on successful dispatch) deliberately does NOT wipe
 	// the history row: the order waited for that reason, and it having stopped
 	// waiting does not unmake the fact.
 	if code != "" {
-		var status string
-		var parentOrderID sql.NullInt64
-		if err := tx.QueryRow(`SELECT status, parent_order_id FROM orders WHERE id=$1`, id).
-			Scan(&status, &parentOrderID); err != nil {
-			return err
-		}
+		opens := WaitOpens(prev, Wait{Code: code, Cause: cause, Reason: reason})
 		s := protocol.Status(status)
 		switch {
 		case protocol.IsTerminal(s):
@@ -558,6 +632,9 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 		case s == protocol.StatusPending && parentOrderID.Valid:
 			// A resting leg's wait, written as its own episode. See the PENDING
 			// clause above for why this one population is an INSERT.
+			if !opens {
+				break
+			}
 			if _, err := tx.Exec(
 				`INSERT INTO order_history (order_id, status, detail, code, created_at)
 				 VALUES ($1, $2, $3, $4, $5)`,
@@ -568,21 +645,35 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 			// Nothing. The door that wrote this is about to move the order, and
 			// its code rides the transition onto the new row.
 		default:
-			res, err := tx.Exec(
-				`UPDATE order_history SET code = $2
-				 WHERE id = (SELECT id FROM order_history
-				             WHERE order_id = $1 AND status = $3
-				             ORDER BY id DESC LIMIT 1)`, id, code, status)
-			if err != nil {
-				return err
-			}
-			if n, _ := res.RowsAffected(); n == 0 {
-				if _, err := tx.Exec(
-					`INSERT INTO order_history (order_id, status, detail, code, created_at)
-					 VALUES ($1, $2, $3, $4, $5)`,
-					id, status, reason, code, clock.Now().UTC()); err != nil {
+			// EACH CAUSE CHANGE IS ITS OWN ROW (the orc's Stop 3 ruling, 2026-09-26;
+			// a flat bug, all orders). This UPDATED the row that opened the current
+			// episode, so a later park overwrote an earlier one's code and an order
+			// that waited on a lane, then on a slot, kept one of the two. The wire
+			// doors lost the record the same way the bin move did. It cannot
+			// chatter: a row opens only on a change of wait (WaitOpens, the
+			// predicate the station is told by), so one park is one row, never one
+			// per pass.
+			//
+			// A PARK, NOT A LABEL. The ruling is about the waits shingo holds an
+			// order in (the acquiring statuses). A status the fleet reported — a
+			// `staged` order labelled with its station wait the moment it lands
+			// (MarkStationWaitIfOwned) — is not a park: its cause annotates the row
+			// that opened it, as every cause did before the ruling, so one staging
+			// is one `staged` row.
+			if !protocol.IsAcquiring(s) {
+				if err := annotateEpisodeRow(tx, id, status, reason, code); err != nil {
 					return err
 				}
+				break
+			}
+			if !opens {
+				break
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO order_history (order_id, status, detail, code, created_at)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				id, status, reason, code, clock.Now().UTC()); err != nil {
+				return err
 			}
 		}
 	}

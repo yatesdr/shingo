@@ -1,0 +1,51 @@
+{
+  "need": {
+    "delivery": "SLN_003",
+    "door": "edge wire intake",
+    "payload": "PANEL-A",
+    "setup": "BIN-PA-01 and BIN-PA-02 claimed; BIN-PA-03 moved to the back of Lane_03 with BIN-CLIP-03 in front of it",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "retrieve",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "PANEL-A",
+      "source": "SYN_MARKET",
+      "delivery": "SLN_003",
+      "origin_class": "orphan",
+      "projected": "pending"
+    },
+    {
+      "index": 2,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "CLIP",
+      "source": "SMN_007",
+      "bin": "BIN-CLIP-03",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    },
+    {
+      "index": 3,
+      "parent": 1,
+      "type": "move",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 0,
+      "payload": "PANEL-A",
+      "source": "SMN_009",
+      "delivery": "SLN_003",
+      "bin": "BIN-PA-03",
+      "source_intent": "local",
+      "origin_class": "orphan"
+    }
+  ]
+}

@@ -117,7 +117,7 @@ func TestCensus_OrdersTableInsertStatements(t *testing.T) {
 //
 // AdmitCoreAsk belongs on this list even though it is not the store call. From a
 // caller's side it IS creation: it builds the order, admits it through the same
-// admitOrder body the wire path uses, and hands back the created row. The two
+// admission body the wire path uses, and hands back the created row. The two
 // Core timer doors reach the table only through it and carry no store symbol of
 // their own — which is exactly how both of them stood uncounted while both
 // census tests passed green.
@@ -126,6 +126,19 @@ var writerSymbols = []string{
 	"orders.Create(",
 	"CreateCompoundChildren(",
 	"AdmitCoreAsk(",
+	// B2: the builder, and the one door that reaches it so far. From the door's
+	// side BirthMove IS creation (the row, the take and the hold, one
+	// transaction), as AdmitCoreAsk is for the timer doors.
+	"BirthMove(",
+	// B3: the builder called in a door's own transaction — the shape both
+	// BirthMove and admission's birth take. Spelled with its first argument so
+	// an unrelated Build (cms/wire) is not read as a writer.
+	"Build(tx, ",
+	// B3: the builder in a transaction of its own, which admission's birth and
+	// Dispatcher.Birth share.
+	"birthOwnTx(",
+	// And its face for a door outside dispatch (carried-bin recovery).
+	"dispatcher.Birth(",
 }
 
 // writesOrders reports whether a source file brings orders into existence.
@@ -182,13 +195,13 @@ type door struct {
 // The Core-native loader design was written on the premise that
 // CreateInboundOrder is "the admission path", with a Core originator added
 // beside it as the second entry point. That premise does not survive a census:
-// most of the doors below never go near it. Extracting a shared admitOrder body
+// most of the doors below never go near it. Extracting a shared admission body
 // is still right for the wire path and the new originator — but it is one door
-// among several, not THE one, and anything hung off admitOrder covers only what
+// among several, not THE one, and anything hung off admission covers only what
 // routes through it.
 //
 // The immediate consequence is the Edge order projection: orders from the other
-// doors do not pass through admitOrder, so a projection emitted there will not
+// doors do not pass through admission, so a projection emitted there will not
 // carry them and the Edge board stays blind to them, exactly as it is today.
 // That may be the right first scope. It has to be a decision rather than an
 // oversight, which is what this test exists to force.
@@ -209,7 +222,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//
 		// The three questions this list exists to ask, answered:
 		//  1. Projects to the Edge? No. It writes the row itself rather than
-		//     routing through admitOrder, so it is outside the projection scope
+		//     routing through admission, so it is outside the projection scope
 		//     — the same answer both doors gave separately.
 		//  2. Needs the dropoff-capacity gate? Yes, and it consults it, before
 		//     the row and before any claim so a refusal leaves the bin alone.
@@ -242,7 +255,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		{"carried-bin recovery", "engine/carried_bin_recovery.go", "an operator pressing Recover on the bins page — Core then asks the robot holding the stranded bin to put it down"},
 		// THE TWO CORE TIMER DOORS. Both mint retrieve_empty orders nobody on the
 		// Edge requested, both reach the orders table through AdmitCoreAsk and
-		// admitOrder rather than writing a row, and both stood on no list at all
+		// admission rather than writing a row, and both stood on no list at all
 		// until the completeness arm was widened to see them. The two doors that
 		// fire with nobody watching were the two nothing counted.
 		//
@@ -254,7 +267,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//
 		// The three questions, loader replenish:
 		//  1. Projects to the Edge? YES, and this is THE case the projection
-		//     exists for. It routes through admitOrder, so it is inside the
+		//     exists for. It routes through admission, so it is inside the
 		//     scope; and no Edge station asked for the order, so without the
 		//     projection an operator watches a robot arrive at a window with
 		//     nothing on the board to say why.
@@ -317,11 +330,42 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		}
 	}
 
+	// THE DOORS ON THE BUILDER (B2, B3): each reaches the single INSERT through
+	// dispatch.Build, by the call named here, and the file that defines that
+	// call hands Build its own transaction. A door joins this list in the commit
+	// that moves it; the rest still write through orders.Create as they did.
+	// Each entry is the door's call, the file defining it, and what that file
+	// calls next on the way to Build.
+	onBuild := map[string]struct{ call, definedIn, next string }{
+		"bin move":                      {"BirthMove(", "dispatch/builder.go", "Build(tx, need, p)"},
+		"Edge wire intake":              {"s.birth(", "dispatch/lifecycle_service.go", "birthOwnTx("},
+		"loader replenish":              {"AdmitCoreAsk(", "dispatch/loader_replenish.go", "d.lifecycle.birth("},
+		"maintained-group level keeper": {"AdmitCoreAsk(", "dispatch/loader_replenish.go", "d.lifecycle.birth("},
+		"carried-bin recovery":          {"e.dispatcher.Birth(", "dispatch/builder.go", "birthOwnTx("},
+	}
+	for _, d := range doors {
+		b, ok := onBuild[d.name]
+		if !ok {
+			continue
+		}
+		if !strings.Contains(sources[d.site], b.call) {
+			t.Errorf("door %q (%s) no longer reaches the builder through %s", d.name, d.site, b.call)
+		}
+		if !strings.Contains(sources[b.definedIn], b.next) {
+			t.Errorf("door %q: %s defines %s but no longer calls %s on the way to Build", d.name, b.definedIn, b.call, b.next)
+		}
+	}
+	if !strings.Contains(sources["dispatch/builder.go"], "func birthOwnTx(") ||
+		strings.Count(sources["dispatch/builder.go"], "Build(tx, need, p)") < 2 {
+		t.Error("dispatch/builder.go: birthOwnTx and BirthMove no longer both call Build in their transaction")
+	}
+
 	// Plumbing a door reaches THROUGH, named so that "not a door" is a stated
 	// judgement rather than an omission. This is the distinction the old
 	// file-counting version could not make, and the reason it counted eight.
 	delegates := map[string]string{
-		"store/orders.go": "the writer itself; every door reaches the orders table through this file, which is why there is one INSERT and not several",
+		"store/orders.go":     "the writer itself; every door reaches the orders table through this file, which is why there is one INSERT and not several",
+		"dispatch/builder.go": "the one builder (B2): Build over the single INSERT, and BirthMove's transaction; the bin move, the wire door and the two Core asks reach it now, and B3 moves the other doors to it",
 	}
 
 	// And no site may start writing orders without being named as a door. This
@@ -337,7 +381,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	if len(unnamed) > 0 {
 		t.Errorf("these create orders and are not named as a door: %s\n"+
 			"Add one, in the words someone would use out loud, and answer three questions in the same commit:\n"+
-			"  1. Does it project to the Edge? (only what routes through admitOrder does)\n"+
+			"  1. Does it project to the Edge? (only what routes through admission does)\n"+
 			"  2. Does it need the dropoff-capacity gate?\n"+
 			"  3. What origin_class do its rows carry? A blank is a row nothing can explain later.",
 			strings.Join(unnamed, ", "))

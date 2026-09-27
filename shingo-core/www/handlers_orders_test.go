@@ -19,7 +19,6 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
 
 // Characterization tests for handlers_orders.go — pinned before the Stage 1
@@ -298,14 +297,12 @@ func TestSubmitSpotRetrieveSpecific_HappyPath(t *testing.T) {
 	testdb.RequireBinClaimedBy(t, db, bin.ID, got.ID)
 }
 
-// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim is the core
-// rollback contract: CreateOrder succeeds, ClaimBin succeeds, DispatchDirect
-// fails (fleet create injected), and then (a) the order MUST end up "failed"
-// (via dispatcher's FailOrderAtomic) and (b) the bin MUST be unclaimed
-// (belt-and-suspenders: dispatcher clears claims for the order in
-// FailOrderAtomic, handler then calls UnclaimBin for the specific bin). A
-// refactor that drops either half would leak a dangling claim.
-func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) {
+// TestSubmitSpotRetrieveSpecific_FleetRefusalWaits: the operator's move the
+// fleet refuses is a real order that waits under fleet_unavailable and keeps
+// its bin, answered 200 with status queued and the sentence (the orc's Q2
+// ruling, v4 §2.1). It used to be failed and its claim rolled back; the door no
+// longer dispatches, and acquiring's disposition for a fleet refusal is to wait.
+func TestSubmitSpotRetrieveSpecific_FleetRefusalWaits(t *testing.T) {
 	t.Parallel()
 	sim := simulator.New(simulator.WithCreateFailure())
 	h, db := testHandlersWithSim(t, sim)
@@ -313,47 +310,21 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-FAIL")
 
 	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
-	// A dispatch failure is a failure. This used to answer 200 with
-	// {status:"failed"} and an order id, on the reasoning that the body
-	// reflected the outcome — but a 2xx now means an order exists and is on
-	// its way, and after this rollback nothing is.
-	if status != http.StatusInternalServerError {
-		t.Fatalf("status: got %d, want %d — the bin is not moving, so this is not a success; err=%q",
-			status, http.StatusInternalServerError, resp.Error)
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 — the move is real and waits; err=%q", status, resp.Error)
 	}
-	if resp.Error == "" {
-		t.Error("rejection carried no message")
+	if resp.Status != string(protocol.StatusQueued) || resp.OrderID == 0 {
+		t.Fatalf("response %+v, want status queued with the order id", resp)
 	}
-	if resp.OrderID != 0 {
-		t.Errorf("order_id = %d in a rejection body; a refused submission has no order to point at", resp.OrderID)
-	}
-
-	// The row still has to be found, and no longer through the response — the
-	// rollback assertions below are the actual subject of this test.
-	rows, err := db.ListOrdersByStation("core-operator", 50)
-	if err != nil {
-		t.Fatalf("list spot orders: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("got %d spot order rows, want 1", len(rows))
-	}
-	got, err := db.GetOrder(rows[0].ID)
+	got, err := db.GetOrder(resp.OrderID)
 	if err != nil {
 		t.Fatalf("reload order: %v", err)
 	}
-	if got.Status != "failed" {
-		t.Errorf("order status after dispatch failure: got %q, want %q", got.Status, "failed")
+	if !protocol.IsAcquiring(got.Status) || got.QueueCode != string(protocol.QueueFleetUnavailable) {
+		t.Errorf("order is %s under %q, want waiting (queued or sourcing) under %q", got.Status, got.QueueCode, protocol.QueueFleetUnavailable)
 	}
-	if got.VendorOrderID != "" {
-		t.Errorf("vendor_order_id should be empty after failed dispatch, got %q", got.VendorOrderID)
-	}
-
-	// The critical rollback: bin claim released AND re-acquirable (the reservation
-	// released too, not just claimed_by — else the confirmed row bricks the bin).
-	testdb.RequireBinUnclaimed(t, db, bin.ID)
-	probe := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, probe.ID, probe.ID, bin.ID, "test"); err != nil {
-		t.Errorf("bin not re-acquirable after spot-submit rollback: %v (reservation leaked?)", err)
+	if got.BinID == nil || *got.BinID != bin.ID {
+		t.Errorf("the waiting move lost its bin (bin_id %v)", got.BinID)
 	}
 }
 

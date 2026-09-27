@@ -1100,6 +1100,21 @@ func TestPlannerGolden_Doors(t *testing.T) {
 			},
 		},
 		{
+			name: "bin-move-to-dead-node",
+			need: map[string]any{"door": "bin move", "bin": "BIN-PA-01", "dest": "SMN_007",
+				"setup": "SMN_007 disabled (a dead node)",
+				"note":  "B2's one predicted behaviour change (v4 §2.5): this refuses at intake once the builder checks the destination"},
+			run: func(g *goldenPlant) {
+				g.exec(`UPDATE nodes SET enabled = false WHERE name = 'SMN_007'`)
+				_, err := g.eng.CreateBinMove(engine.BinMoveRequest{
+					Selection: engine.BinSelectionByLabel, BinLabel: "BIN-PA-01",
+					SourceNodeID: g.node("SMN_001").ID, DestNodeName: "SMN_007", StationID: "golden",
+				})
+				g.refused(err)
+				g.eng.RunFulfillmentScan()
+			},
+		},
+		{
 			name: "bin-move-auto-to-line",
 			need: map[string]any{"door": "bin move", "selection": "auto", "source": "SMN_016", "dest": "SLN_004"},
 			run: func(g *goldenPlant) {
@@ -1164,12 +1179,16 @@ func TestPlannerGolden_Doors(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			g := newGoldenPlant(t)
+			g.recordBirths()
 			since := g.count(`SELECT COALESCE(MAX(id), 0) FROM outbox`)
 			c.run(g)
 			golden(t, "doors/"+c.name, c.need, map[string]any{
 				"refusals": g.refusals, "events": g.events, "replies": g.replies(since),
 				"orders": g.orders(), "fleet": g.fleet(),
 			})
+			// What the door wrote at birth, beside what it decided
+			// (planner_births_docker_test.go): B2's differential.
+			golden(t, "births/"+c.name, c.need, g.births(since))
 		})
 	}
 }
@@ -1183,5 +1202,6 @@ var _ = strings.Join([]string{
 	"bin move: bin-move-*",
 	"level keeper: level-keeper-press-empties",
 	"loader replenish: loader-replenish-* (single-window, multi-window, dedicated positions)",
-	"carried-bin recovery: carried-bin-recovery-no-robot (the refusal only; see the case)",
+	"carried-bin recovery: carried-bin-recovery-no-robot (the refusal only; see the case); its success case is " +
+		"engine's TestB2Pin_RecoveryBirth, since this plant's robot cache is stopped",
 }, "\n")

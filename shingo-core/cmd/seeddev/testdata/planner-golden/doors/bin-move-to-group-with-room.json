@@ -7,22 +7,43 @@
   },
   "decision": {
     "events": null,
-    "fleet": null,
+    "fleet": [
+      {
+        "external": "order 1 of this case",
+        "blocks": [
+          "PLN_001 JackLoad",
+          "Lane_02-WAIT Wait"
+        ]
+      }
+    ],
     "orders": [
       {
         "index": 1,
         "type": "move",
-        "status": "failed",
+        "status": "in_transit",
         "source": "PLN_001",
         "delivery": "SMN_009",
-        "bin": "BIN-ACT-P1F"
+        "bin": "BIN-ACT-P1F",
+        "steps": [
+          "pickup PLN_001",
+          "wait Lane_02-WAIT",
+          "dropoff SMN_009"
+        ],
+        "hard_bins": [
+          "BIN-ACT-P1F"
+        ],
+        "hard_slots": [
+          "SMN_009"
+        ],
+        "reservations": [
+          "bin:confirmed:BIN-ACT-P1F",
+          "occupancy:confirmed:Lane_03",
+          "slot:confirmed:SMN_009"
+        ],
+        "to_fleet": true
       }
     ],
-    "refusals": [
-      "*engine.BinMoveError fault"
-    ],
-    "replies": [
-      "order.error error_code=fleet_failed"
-    ]
+    "refusals": null,
+    "replies": null
   }
 }

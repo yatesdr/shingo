@@ -1,13 +1,12 @@
 package dispatch
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store/loaders"
 	"shingocore/store/orders"
 )
@@ -284,7 +283,12 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			req.LoaderID, req.PayloadCode, req.CurrentUOP)
 	}
 
-	targets, budget := loaders.DeliveryTargets(loaders.DeliveryTargetsInput{
+	// The window choice is the planner's (plan.LoaderWindows): the delivery
+	// targets, each gated at decision time by the capacity verdict and by
+	// whether a carrier is already asked for there, up to the ask. See it for
+	// why the target list is the bound and why the open ask is counted from any
+	// origin.
+	w := d.pure.LoaderWindows(loaders.DeliveryTargetsInput{
 		Layout:        cfg.Layout,
 		FunnelWindows: cfg.FunnelWindows,
 		Homes:         cfg.Homes,
@@ -292,62 +296,18 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		Payloads:      cfg.Payloads,
 		Member:        req.MemberNode,
 		PayloadCode:   req.PayloadCode,
-	})
-	if len(targets) == 0 || budget <= 0 {
+	}, want)
+	if w.Targets == 0 || w.Budget <= 0 {
 		res.Skipped = fmt.Sprintf("loader %d has no delivery target for payload %q", req.LoaderID, req.PayloadCode)
 		d.dbg("loader_replenish loader=%d payload=%s: no target", req.LoaderID, req.PayloadCode)
 		return res, nil
 	}
-
-	// THE LOOP IS THE BOUND, and it is worth saying so because a separate
-	// min(want, budget) clamp reads like the safety here and is not: it cannot
-	// fire. DeliveryTargets returns a budget equal to its target count in every
-	// shape that exists — spread gives every window and the window count, funnel
-	// and dedicated each give one node and 1 — so iterating targets already caps
-	// creation at the budget. A clamp above this loop would be unreachable code
-	// dressed as a guard, which is worse than no guard, because the next reader
-	// trusts it.
-	//
-	// What actually bounds the ask, in order: the target list caps it at the
-	// number of places a carrier can go, `want` stops early when the loop needs
-	// fewer than that, and the per-window check below removes the ones that
-	// cannot take one right now.
-	for _, t := range targets {
-		if len(res.Created) >= want {
-			break
-		}
-		if held := d.windowHeldBy(req, t.NodeName); held != "" {
-			res.HeldBy[t.NodeName] = held
-			continue
-		}
-		// A carrier has already been ASKED FOR here and the ask has not been given
-		// up. The check above cannot see it while it sits `queued` — that
-		// blindness is exactly what produced the duplicates — and it is asked from
-		// ANY origin on purpose: two payloads at one shared-window loader are two
-		// separate episodes that cannot see each other, so an episode-scoped
-		// question here would let both put a carrier on the same window. "One
-		// order per window" has to mean one order, not one per asker.
-		//
-		// ASKS, not arrivals. A swap's evac leg names this home as its delivery
-		// node but never asked for a carrier — it is a return trip. Counting it as
-		// an outstanding ask is what deadlocked SMN_030 for 8h57m on 2026-08-05:
-		// the evac held the window, so the carrier its own supply sibling was
-		// waiting for could not be ordered. Returns are covered by
-		// CheckDropoffCapacity's in-flight arm above, which is the physical
-		// question; this is the logical one. See
-		// orders.CountLiveCarrierRequestsByDeliveryNode.
-		live, lerr := d.db.CountLiveCarrierRequestsByDeliveryNode(t.NodeName)
-		if lerr != nil {
-			// Fail closed, same as every other unreadable occupancy question.
-			res.HeldBy[t.NodeName] = "window-check-failed"
-			d.dbg("loader_replenish loader=%d payload=%s window=%s: count live carrier requests: %v",
-				req.LoaderID, req.PayloadCode, t.NodeName, lerr)
-			continue
-		}
-		if live > 0 {
-			res.HeldBy[t.NodeName] = "window-order-open"
-			continue
-		}
+	res.HeldBy = w.HeldBy
+	for node, err := range w.ReadErrs {
+		d.dbg("loader_replenish loader=%d payload=%s window=%s: count live carrier requests: %v",
+			req.LoaderID, req.PayloadCode, node, err)
+	}
+	for _, t := range w.Chosen {
 		order, err := d.admitReplenishOrder(req, cfg, t)
 		if err != nil {
 			// Stop rather than press on. A failure here is a write failure or a
@@ -366,17 +326,17 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	// being correctly refused, and it should be visible as such rather than
 	// looking like a loader that under-delivered.
 	d.dbg("loader_replenish loader=%d payload=%s want=%d budget=%d targets=%d created=%d held=%d",
-		req.LoaderID, req.PayloadCode, res.Want, budget, len(targets), len(res.Created), len(res.HeldBy))
+		req.LoaderID, req.PayloadCode, res.Want, w.Budget, w.Targets, len(res.Created), len(res.HeldBy))
 	return res, nil
 }
 
 // admitReplenishOrder builds and admits one carrier pull.
 //
-// It goes through admitOrder, the same body wire-originated orders go through,
-// rather than writing a row itself — so a Core-originated order gets the same
-// reference checks, the same synthetic-destination resolution, and the same
-// insert. A second writer here is exactly the drift the order-writer
-// consolidation removed one layer down.
+// It goes through AdmitCoreAsk — admission, the same body wire-originated
+// orders go through, and the one builder — rather than writing a row itself, so
+// a Core-originated order gets the same reference checks, the same
+// synthetic-destination resolution, and the same insert. A second writer here is
+// exactly the drift the order-writer consolidation removed one layer down.
 func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderReplenishConfig, t loaders.Target) (*orders.Order, error) {
 	order, err := d.AdmitCoreAsk(CoreAskSpec{
 		UUIDPrefix:   "core-l1-",
@@ -418,8 +378,8 @@ type CoreAskSpec struct {
 
 // AdmitCoreAsk builds and admits one Core-authored carrier pull.
 //
-// It goes through admitOrder, the same body wire-originated orders go through,
-// rather than writing a row itself — so a Core-originated order gets the same
+// It goes through admission, the same body wire-originated orders go through,
+// and births through the one builder — so a Core-originated order gets the same
 // reference checks, the same synthetic-destination resolution, and the same
 // insert.
 func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
@@ -458,7 +418,23 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 			order.OriginClass = protocol.OriginClassOrphan
 		}
 	}
-	if lerr := d.lifecycle.admitOrder(order); lerr != nil {
+	// Born through the builder, after admission's checks. No pick rides the
+	// birth: the scanner picks the carrier, as it always has for a Core ask. The
+	// station is projected the order below, so it has a row for it.
+	if lerr := d.lifecycle.admit(order, func() error {
+		return d.lifecycle.birth(order, Need{
+			Type:         OrderTypeRetrieveEmpty,
+			Station:      order.StationID,
+			Ref:          order.EdgeUUID,
+			Quantity:     order.Quantity,
+			Desc:         order.PayloadDesc,
+			OriginID:     order.OriginID,
+			OriginClass:  order.OriginClass,
+			StationKnows: true,
+			Source:       order.SourceNode,
+			Delivery:     order.DeliveryNode,
+		}, plan.Plan{})
+	}); lerr != nil {
 		if lerr.Err != nil {
 			return nil, lerr.Err
 		}
@@ -478,38 +454,4 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 // distinguishable.
 func (d *Dispatcher) QueueCoreAsk(order *orders.Order, stationID string) {
 	d.queueOrderInternal(order, stationID, "")
-}
-
-// windowHeldBy is the decision-time check on one window: why a carrier may not
-// be ordered to it now, or "" when it may.
-//
-// Capacity first. Pass 0 for the exclude-order id: there is no order of ours yet
-// to exclude, which is the whole difference between deciding and retrying.
-//
-// Then ANOTHER ORDER'S SLOT RESERVATION, which the capacity check does not read:
-// the pull's claim on a storage-classed window would be refused for as long as
-// the holder holds it. No pull exists yet, so nobody is exempt. A name that
-// resolves to no node passes, the same answer CheckDropoffCapacity gives it, so
-// the dispatch produces the real error.
-func (d *Dispatcher) windowHeldBy(req ReplenishRequest, name string) string {
-	if blocked, block := CheckDropoffCapacity(d.db, name, 0); blocked {
-		return string(block.Cause)
-	}
-	node, err := d.db.GetNodeByDotName(name)
-	switch {
-	case errors.Is(err, sql.ErrNoRows), err == nil && node == nil:
-		return ""
-	case err != nil:
-		return "window-check-failed"
-	}
-	spoken, err := d.db.SlotSpokenForByStranger(node.ID, 0)
-	if err != nil {
-		d.dbg("loader_replenish loader=%d payload=%s window=%s: read slot reservations: %v",
-			req.LoaderID, req.PayloadCode, name, err)
-		return "window-check-failed"
-	}
-	if spoken {
-		return "window-reserved"
-	}
-	return ""
 }

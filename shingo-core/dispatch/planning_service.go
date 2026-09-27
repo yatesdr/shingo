@@ -159,6 +159,10 @@ type PlanningService struct {
 	waitChanged func(*orders.Order)
 
 	handlers map[protocol.OrderType]PlanningHandler
+	// ahead: the types whose handler is planTransport, whose questions a door
+	// can ask before the row exists (decideTransport). Registering another
+	// handler for a type takes it out.
+	ahead map[protocol.OrderType]bool
 }
 
 func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, waitChanged func(*orders.Order)) *PlanningService {
@@ -179,6 +183,7 @@ func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinde
 	s.Register(OrderTypeRetrieve, s.planTransport)
 	s.Register(OrderTypeRetrieveEmpty, s.planTransport)
 	s.Register(OrderTypeMove, s.planTransport)
+	s.ahead = map[protocol.OrderType]bool{OrderTypeRetrieve: true, OrderTypeRetrieveEmpty: true, OrderTypeMove: true}
 	return s
 }
 
@@ -210,6 +215,13 @@ func (s *PlanningService) dbg(format string, args ...any) {
 
 func (s *PlanningService) Register(orderType protocol.OrderType, handler PlanningHandler) {
 	s.handlers[orderType] = handler
+	delete(s.ahead, orderType)
+}
+
+// decidesAhead reports whether an order of this type is planned by
+// planTransport, so its decision can be taken before its row is born.
+func (s *PlanningService) decidesAhead(t protocol.OrderType) bool {
+	return s.ahead[t]
 }
 
 // Handles reports whether a planner is registered for an order type — that is,
@@ -236,12 +248,12 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 	return handler(order, env, payloadCode)
 }
 
-// resolveSource runs the shared SourceFinder for one intent and maps its
-// non-Found outcomes to caller return values. On OutcomeFound it returns the bin
-// + its node with proceed=true; on every other outcome it returns the
-// queue/reshuffle/terminal result with proceed=false, so the caller can:
+// disposeSource maps the shared SourceFinder's answer for one intent to caller
+// return values. On OutcomeFound it returns the bin + its node with
+// proceed=true; on every other outcome it returns the queue/reshuffle/terminal
+// result with proceed=false, so the caller can:
 //
-//	source, sourceNode, pr, pe, ok := s.resolveSource(order, intent)
+//	source, sourceNode, pr, pe, ok := s.disposeSource(order, res)
 //	if !ok { return pr, pe }
 //
 // The disposition (queue vs reshuffle vs terminal) lives in the finder, so
@@ -249,8 +261,10 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 // queue_reason (intake used to queue silently on no-source); OutcomeStructural
 // re-raises the finder's TermCode verbatim (the codeStructural / codeNode
 // strings are the persisted contract intake already used).
-func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bins.Bin, *nodes.Node, *PlanningResult, *planningError, bool) {
-	res := s.finder.FindSource(order, intent)
+//
+// The answer is taken before the row exists (decideTransport) and disposed of
+// on the born row, which is why the pick and the disposition are two calls.
+func (s *PlanningService) disposeSource(order *orders.Order, res SourceResult) (*bins.Bin, *nodes.Node, *PlanningResult, *planningError, bool) {
 	// mapFinderOutcome is the shared admission point (see finder_outcome.go):
 	// unknown outcomes fail loudly there, so every arm here is explicit and
 	// the old behavior-bearing default (anything-unknown parked as Wait,
@@ -319,34 +333,61 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 // scanner is the SINGLE claim point (the model complex has run since birth:
 // status-first queued → scanner claims at dispatch). planTransport validates,
 // resolves the source, gates capacity, resolves a move's concrete dest, then
-// QUEUES; the scanner re-finds + claims + reserves + dispatches. Source resolution
-// stays at intake so a WAIT/STRUCTURAL outcome sets the queue reason / terminal
-// error at submit time, and a BURIED source queues under a cause naming the lane
-// — the scanner plans its dig (parkBuried). On Found the resolved sourceNode is
-// ADVISORY; the scanner's re-find is authoritative. The one datum the scanner cannot recompute —
-// the operator's declared release-correction count (RemainingUOP, carried only by a
+// QUEUES; the scanner claims + reserves + dispatches. Source resolution stays at
+// intake so a WAIT/STRUCTURAL outcome sets the queue reason / terminal error at
+// submit time, and a BURIED source queues under a cause naming the lane — the
+// scanner plans its dig (parkBuried). On Found the wire door writes the pick
+// onto the row at birth (orders.plan, v147), and the scanner takes it instead of
+// picking again while it still stands (SYNTH F4). The one datum the scanner
+// cannot recompute — the operator's declared release-correction count
+// (RemainingUOP, carried only by a
 // move) — is persisted onto the order so the scanner's claim seeds the same
 // manifest sync.
+//
+// It is decideTransport (reads) then applyTransport (writes). The wire door
+// calls the two apart, deciding before its INSERT (B3); a caller holding a born
+// row calls this.
 func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+	return s.applyTransport(order, env, s.decideTransport(order, payloadCode))
+}
+
+// transportDecision is what planTransport reads, taken in the order it asks and
+// stopping where it stops: each field is set only when every question before it
+// let the order through.
+type transportDecision struct {
+	// refused: a move's named source is missing or unknown, or it is the
+	// destination.
+	refused *planningError
+	// blocked: the destination has no room; capacity says why.
+	blocked  bool
+	capacity CapacityBlock
+	// pick: the finder's answer, asked once the gate is clear.
+	picked bool
+	pick   SourceResult
+	// destNode: the destination row, read once the pick found a bin.
+	destNode *nodes.Node
+	destErr  error
+	// group: a group destination's chosen child, or why none (groupErr).
+	group    *nodes.Node
+	groupErr error
+}
+
+// Plan is the pick as the builder writes it (orders.plan): a bin when the
+// finder found one with the destination clear, else nothing.
+func (d transportDecision) Plan() plan.Plan {
+	if d.refused != nil || d.blocked || !d.picked || d.pick.Outcome != OutcomeFound {
+		return plan.Plan{}
+	}
+	return plan.Plan{Outcome: plan.OutcomeFound, Bin: d.pick.Bin, Node: d.pick.Node}
+}
+
+// decideTransport asks planTransport's questions and writes nothing, so a door
+// can ask them before its row exists. An order with no id yet asks as nobody's
+// dig, which is what a fresh id is too: no dig names it.
+func (s *PlanningService) decideTransport(order *orders.Order, payloadCode string) transportDecision {
+	var d transportDecision
 	isEmpty := order.SourceIntent == SourceIntentEmpty
 	isMove := order.SourceIntent == SourceIntentLocal
-
-	// Persist the operator's declared release-correction count onto the order so the
-	// scanner — the single claim point, which has no envelope — seeds the same
-	// atomic claim+manifest-sync (bin_manifest.ClaimForDispatch: nil=plain claim,
-	// >0 syncs, <=0 clears). In practice only a move carries it
-	// (CreateMoveOrderWithUOP → OrderRequest.RemainingUOP); retrieve carries none,
-	// and an empty carrier forces nil (the bin is already empty). Bridge column:
-	// the unified-create follow-up carries the count in the persisted plan and this
-	// write retires.
-	var remainingUOP *int
-	if !isEmpty {
-		remainingUOP = extractRemainingUOP(env)
-	}
-	order.RemainingUOP = remainingUOP
-	if err := s.db.UpdateOrderRemainingUOP(order.ID, remainingUOP); err != nil {
-		log.Printf("dispatch: persist remaining_uop for order %d: %v", order.ID, err)
-	}
 
 	// move's named-source validations are load-bearing and MUST run BEFORE the
 	// shared capacity gate: a missing/same-node move is invalid regardless of
@@ -355,14 +396,17 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// the order sit queued forever on a reason that would never clear.
 	if isMove {
 		if order.SourceNode == "" {
-			return nil, &planningError{Code: codeMissingSource, Detail: "move order requires source_node"}
+			d.refused = &planningError{Code: codeMissingSource, Detail: "move order requires source_node"}
+			return d
 		}
 		moveSrc, err := s.db.GetNodeByDotName(order.SourceNode)
 		if err != nil {
-			return nil, &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
+			d.refused = &planningError{Code: codeInvalidNode, Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
+			return d
 		}
 		if destPreCheck, dErr := s.db.GetNodeByDotName(order.DeliveryNode); dErr == nil && destPreCheck != nil && moveSrc.ID == destPreCheck.ID {
-			return nil, &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", moveSrc.Name)}
+			d.refused = &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", moveSrc.Name)}
+			return d
 		}
 	}
 
@@ -379,30 +423,21 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// first lets a buried retrieve plan a compound that drives a bin into an
 	// occupied line, laundering the deadlock_gate_test invariant through the
 	// compound machinery. Gate first, then resolve.
-	if blocked, cap := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		s.dbg("transport: order %d queued — %s", order.ID, cap.Cause)
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
-		return &PlanningResult{Queued: true}, nil
+	if d.blocked, d.capacity = CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); d.blocked {
+		return d
 	}
 
-	// Resolve the source through the shared SourceFinder. The dispositions live in
-	// resolveSource so intake and scanner-replay cannot drift on them. A buried
-	// source comes back Queued like any wait: the scanner is the one reshuffle
-	// planner, behind its own copy of this gate and under scanMu (parkBuried,
-	// Scanner.tryFulfill's OutcomeReshuffle arm).
 	intent := IntentFull
 	if isEmpty {
 		intent = IntentEmpty
 	}
-	_, sourceNode, pr, pe, ok := s.resolveSource(order, intent)
-	if !ok {
-		return pr, pe
+	d.picked, d.pick = true, s.finder.FindSource(order, intent)
+	if d.pick.Outcome != OutcomeFound {
+		return d
 	}
-	s.dbg("transport: order %d source resolvable at node=%s (intent=%q) — queuing for scanner claim", order.ID, sourceNode.Name, order.SourceIntent)
 
-	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil {
-		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
+	if d.destNode, d.destErr = s.db.GetNodeByDotName(order.DeliveryNode); d.destErr != nil {
+		return d
 	}
 
 	// ── The synthetic-destination re-resolution ──────────────────────────────
@@ -431,29 +466,88 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// ask to a concrete position before admitting it, so this branch is a no-op
 	// for them by construction — which is the point of pre-resolving. This fixes
 	// the OTHER empties: the ones that arrive from a station naming a group.
+	//
+	// If the destination is still a synthetic NGRP, resolve a concrete child slot
+	// now. Intake (CreateInboundOrder) deferred it because the group was full;
+	// the scanner dispatches to order.DeliveryNode verbatim (it does not resolve
+	// NGRPs), so the concrete resolution must land on the order (applyTransport).
+	// On a still-full group this is a TOCTOU race — re-queue and let the scanner
+	// retry.
+	if (isMove || isEmpty) && d.destNode.IsSynthetic && d.destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
+		result, rErr := s.pure.StoreDestination(d.destNode, payloadCode,
+			binresolver.UnknownBinType("plan-move: order holds no bin and no hold"), digAskerFor(order))
+		if rErr != nil {
+			d.groupErr = rErr
+		} else {
+			d.group = result.Node
+		}
+	}
+	return d
+}
+
+// applyTransport disposes of a decision on the born row: every write
+// planTransport makes, in the order it made them.
+func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Envelope, d transportDecision) (*PlanningResult, *planningError) {
+	isEmpty := order.SourceIntent == SourceIntentEmpty
+	isMove := order.SourceIntent == SourceIntentLocal
+
+	// Persist the operator's declared release-correction count onto the order so the
+	// scanner — the single claim point, which has no envelope — seeds the same
+	// atomic claim+manifest-sync (bin_manifest.ClaimForDispatch: nil=plain claim,
+	// >0 syncs, <=0 clears). In practice only a move carries it
+	// (CreateMoveOrderWithUOP → OrderRequest.RemainingUOP); retrieve carries none,
+	// and an empty carrier forces nil (the bin is already empty). Bridge column:
+	// the unified-create follow-up carries the count in the persisted plan and this
+	// write retires.
+	var remainingUOP *int
+	if !isEmpty {
+		remainingUOP = extractRemainingUOP(env)
+	}
+	order.RemainingUOP = remainingUOP
+	if err := s.db.UpdateOrderRemainingUOP(order.ID, remainingUOP); err != nil {
+		log.Printf("dispatch: persist remaining_uop for order %d: %v", order.ID, err)
+	}
+
+	if d.refused != nil {
+		return nil, d.refused
+	}
+	if d.blocked {
+		s.dbg("transport: order %d queued — %s", order.ID, d.capacity.Cause)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, d.capacity.Cause, d.capacity.Params)
+		return &PlanningResult{Queued: true}, nil
+	}
+
+	// The source's dispositions live in disposeSource so intake and scanner-replay
+	// cannot drift on them. A buried source comes back Queued like any wait: the
+	// scanner is the one reshuffle planner, behind its own copy of this gate and
+	// under scanMu (parkBuried, Scanner.tryFulfill's OutcomeReshuffle arm).
+	_, sourceNode, pr, pe, ok := s.disposeSource(order, d.pick)
+	if !ok {
+		return pr, pe
+	}
+	s.dbg("transport: order %d source resolvable at node=%s (intent=%q) — queuing for scanner claim", order.ID, sourceNode.Name, order.SourceIntent)
+
+	if d.destErr != nil {
+		return nil, &planningError{Code: codeNode, Detail: d.destErr.Error(), Err: d.destErr}
+	}
+	destNode := d.destNode
+
 	if isMove || isEmpty {
-		// If the destination is still a synthetic NGRP, resolve a concrete child slot
-		// now. Intake (CreateInboundOrder) deferred it because the group was full;
-		// the scanner dispatches to order.DeliveryNode verbatim (it does not resolve
-		// NGRPs), so the concrete resolution must land on the order here. On a
-		// still-full group this is a TOCTOU race — re-queue and let the scanner retry.
-		if destNode.IsSynthetic && destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
-			result, rErr := s.pure.StoreDestination(destNode, payloadCode,
-				binresolver.UnknownBinType("plan-move: order holds no bin and no hold"), digAskerFor(order))
-			if rErr != nil {
-				s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
-				// AND THE ROW SAYS WHY. This queued the order and wrote nothing, so a
-				// move parked on a full destination group was indistinguishable on the
-				// row from one nobody had planned yet — and blank is the one wait state
-				// no operator and no query can explain. Same cause the complex path uses
-				// for the same fact (a step still names a group with no free child), so
-				// the two cannot drift.
-				s.setQueueReason(order, protocol.QueueWaitingForSlot, CauseNGRPResolve,
-					QueueParams{Destination: order.DeliveryNode})
-				return &PlanningResult{Queued: true}, nil
-			}
-			s.dbg("move: dest NGRP %s resolved -> %s for order %d", order.DeliveryNode, result.Node.Name, order.ID)
-			destNode = result.Node
+		if d.groupErr != nil {
+			s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, d.groupErr, order.ID)
+			// AND THE ROW SAYS WHY. This queued the order and wrote nothing, so a
+			// move parked on a full destination group was indistinguishable on the
+			// row from one nobody had planned yet — and blank is the one wait state
+			// no operator and no query can explain. Same cause the complex path uses
+			// for the same fact (a step still names a group with no free child), so
+			// the two cannot drift.
+			s.setQueueReason(order, protocol.QueueWaitingForSlot, CauseNGRPResolve,
+				QueueParams{Destination: order.DeliveryNode})
+			return &PlanningResult{Queued: true}, nil
+		}
+		if d.group != nil {
+			s.dbg("move: dest NGRP %s resolved -> %s for order %d", order.DeliveryNode, d.group.Name, order.ID)
+			destNode = d.group
 			order.DeliveryNode = destNode.Name
 			if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
 				log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)

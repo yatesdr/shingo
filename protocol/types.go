@@ -495,7 +495,12 @@ const Version = 1
 var validTransitions = map[Status][]Status{
 	// Pending → Queued is a fast-path used by fulfillment/scanner.go when
 	// the bin is already known and resolution can be skipped.
-	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
+	//
+	// Pending → Dispatched is SYNTH F8's edge (orc, 2026-09-26): an order goes
+	// from its birth to the hand without a history row saying it waited. Only a
+	// Core-born order no station knows takes it before C1 (fulfillment
+	// dispatchHeldBin); an Edge mirror never sees such an order.
+	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
 	// Sourcing → Dispatched is the order's hand committing (dispatch.acquireHand):
 	// the status is written with the slot, bin and lane claims in one transaction,

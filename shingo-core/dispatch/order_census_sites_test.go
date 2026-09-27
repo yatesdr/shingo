@@ -171,30 +171,34 @@ func TestCensus_PersonDoors(t *testing.T) {
 // — which is exactly what the one-step acquire does. The list is the blast
 // radius of that ruling, written down before it lands.
 //
-// The typed door (CheckDropoffCapacityForType) is the gate's body; its one caller
-// outside capacity.go is the cancel-return's loader chooser, which knows the
-// carried bin's type.
+// The typed door (CheckDropoffCapacityForType) is the gate's body, in
+// dispatch/plan since B2 (plan.DropoffCapacityForType); its one caller outside
+// the gate is the cancel-return's loader chooser, which knows the carried bin's
+// type.
 func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 	t.Parallel()
-	got := callSites(t, scanCoreSources(t), "CheckDropoffCapacity", "CheckDropoffCapacityForType",
+	got := callSites(t, scanCoreSources(t), "CheckDropoffCapacity", "DropoffCapacity", "DropoffCapacityForType", "CheckDropoffCapacityForType",
 		"CountInFlightOrdersByDeliveryNodeExcluding", "CountInFlightByDeliveryNode",
 		"CountInFlightByDeliveryNodeExcluding", "InFlightForDropoffSQL")
 	sameSites(t, "the dropoff-capacity gate's callers", got, map[string]string{
-		"dispatch/capacity.go:CheckDropoffCapacity":                   "the gate itself, through its typed form",
-		"dispatch/capacity.go:CheckDropoffCapacityForType":            "the gate's in-flight arm (the cleanup phase folds the wrapper away)",
-		"dispatch/capacity.go:checkNGRPCapacity":                      "the NGRP arm: in-flight per child",
+		"dispatch/plan/capacity.go:DropoffCapacity":                   "the gate itself, through its typed form (the planner's since B2; dispatch's CheckDropoffCapacity is its face)",
+		"dispatch/capacity.go:CheckDropoffCapacityForType":            "the typed door's face, for the cancel-return chooser",
+		"dispatch/plan/capacity.go:DropoffCapacityForType":            "the gate's in-flight arm (the cleanup phase folds the wrapper away)",
+		"dispatch/plan/capacity.go:checkNGRPCapacity":                 "the NGRP arm: in-flight per child",
+		"dispatch/plan/loader_window_choice.go:LoaderWindows":         "loader replenish: per window at decision time (the planner's since B3)",
+		"dispatch/plan/move.go:moveDestination":                       "the bin move's destination verdict (B2), named when the census learned the planner's own name for the gate (B3)",
+		"dispatch/capacity.go:CheckDropoffCapacity":                   "dispatch's face on the planner's gate",
 		"dispatch/complex_dispatch.go:reserveComplexDestination":      "complex: the final dropoff and each intermediate one",
 		"dispatch/loader_place.go:placeForContainment":                "quality containment: whether the containment node has room",
 		"dispatch/loader_place.go:placeForDedicatedLoader":            "dedicated loader: the home it would place at",
 		"dispatch/loader_place.go:tryPlaceFromHomeSource":             "dedicated loader: a home-sourced placement",
 		"dispatch/loader_place.go:homeForPayload":                     "dedicated loader: choosing a home for a payload",
 		"dispatch/loader_place.go:placeForLoader":                     "loader: choosing a buffer",
-		"dispatch/loader_replenish.go:windowHeldBy":                   "loader replenish: per window at decision time",
-		"dispatch/planning_service.go:planTransport":                  "wire intake: the plain path's gate",
+		"dispatch/planning_service.go:decideTransport":                "wire intake: the plain path's gate, asked before the row is born (B3)",
 		"dispatch/preview.go:PreviewDropoffCapacity":                  "the read-only preview the UI shows",
 		"dispatch/vacated_slot.go:noOtherInFlight":                    "the vacated-slot rule's in-flight half: another order delivering to the node, the asker excluded",
 		"engine/cancel_return.go:storeIntoLoader":                     "cancel-return: whether a loader home has room for the carried bin's type",
-		"fulfillment/scanner.go:tryFulfill":                           "the scanner's re-run before every dispatch",
+		"fulfillment/scanner.go:fulfill":                              "the scanner's re-run before every dispatch (a pass's order, or AcquireOne's)",
 		"store/orders.go:CountInFlightOrdersByDeliveryNodeExcluding":  "the store wrapper",
 		"store/orders/orders.go:CountInFlightByDeliveryNode":          "the count",
 		"store/orders/orders.go:CountInFlightByDeliveryNodeExcluding": "the count, excluding the asker",

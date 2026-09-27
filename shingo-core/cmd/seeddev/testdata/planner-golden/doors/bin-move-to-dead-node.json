@@ -1,0 +1,18 @@
+{
+  "need": {
+    "bin": "BIN-PA-01",
+    "dest": "SMN_007",
+    "door": "bin move",
+    "note": "B2's one predicted behaviour change (v4 §2.5): this refuses at intake once the builder checks the destination",
+    "setup": "SMN_007 disabled (a dead node)"
+  },
+  "decision": {
+    "events": null,
+    "fleet": null,
+    "orders": null,
+    "refusals": [
+      "*engine.BinMoveError bad-request"
+    ],
+    "replies": null
+  }
+}

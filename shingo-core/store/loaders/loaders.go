@@ -437,6 +437,28 @@ func GetHomeByPositionNode(db *sql.DB, positionNodeID int64) (*Home, error) {
 	return &h, nil
 }
 
+// GetHomeAndLayoutByPositionNode is GetHomeByPositionNode with its loader's
+// layout, in one statement: the source finder's loader tier decides from the
+// layout whether to rank a pool (dedicated) or fall through (a shared window),
+// and a part named at a window paid a second read for that answer. A home whose
+// loader row is gone reads layout "", which the tier does not rank.
+func GetHomeAndLayoutByPositionNode(db *sql.DB, positionNodeID int64) (*Home, string, error) {
+	var h Home
+	var layout string
+	err := db.QueryRow(`SELECT h.loader_id, h.position_node_id, h.payload_code, h.home_kind,
+			h.uop_threshold, h.sort_order, COALESCE(l.layout, '')
+		FROM bin_loader_homes h LEFT JOIN bin_loaders l ON l.id = h.loader_id
+		WHERE h.position_node_id=$1`, positionNodeID).
+		Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.Kind, &h.UOPThreshold, &h.SortOrder, &layout)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("get home and layout by position node %d: %w", positionNodeID, err)
+	}
+	return &h, layout, nil
+}
+
 // UpsertPayload adds or updates an allowed payload on a shared_window loader.
 // Bumps config_gen.
 func UpsertPayload(db *sql.DB, p Payload) error {

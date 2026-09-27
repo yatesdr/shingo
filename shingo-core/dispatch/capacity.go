@@ -1,105 +1,16 @@
-// capacity.go — shared dropoff-capacity gate for the queue-on-capacity
-// work (Phase 4 of bin-transit-state).
+// capacity.go — dispatch's face on the dropoff-capacity gate.
 //
-// Pre-Phase-4 the only dropoff-capacity gate in the codebase lived
-// inside fulfillment.Scanner.tryFulfill — i.e., it gated REPLAY of
-// already-queued orders, not initial dispatch. Simple retrieves to a
-// full destination dispatched and raced the scanner; complex orders
-// failed at planning rather than queueing. Both behaviors are bugs we
-// haven't seen in production at scale because:
-//
-//   - Production swap orders (the only ones with realistic capacity
-//     pressure) were complex orders that failed rather than queued.
-//   - Simple retrieves go to/from loader/unloader nodes where
-//     destination-full is operator-paced or NGRP-resolved (many
-//     slots).
-//
-// But edge cases exist (loader rapid cycles, NGRP saturation, manual
-// moves, auto-return, side-cycle L2/U2). Phase 4 adds this shared gate
-// at every planning-time dispatch path so they all queue cleanly
-// instead of racing.
-//
-// THE PARAGRAPH ABOVE IS HISTORY, AND IT USED TO BE WRITTEN AS "today".
-// It said complex orders "fail-rather-than-queue today" — describing the
-// pre-Phase-4 world in the present tense, in the file that implements
-// Phase 4. Complex orders queue now; that is what this gate does. Past
-// tense, so the reason survives without the claim. (Corrected
-// 2026-09-10; nothing about the behaviour changed.)
-//
-// ── NGRP DROPOFFS **ARE** GATED HERE, and this header said the opposite ──
-//
-// It read: "NGRP dropoffs are intentionally not gated by this helper
-// today — the binresolver picks a free child at dispatch time and returns
-// an error if all are full. For the Phase 4 work we leave that path
-// as-is." That is FALSE, and the same file says so twice:
-// CheckDropoffCapacityForType routes a synthetic NGRP node straight to
-// checkNGRPCapacity, and that function's own doc describes the walk —
-// "treat as blocked iff EVERY child is occupied or has an in-flight order
-// inbound... this gate is what makes 'all children full' produce a queue
-// rather than a fail."
-//
-// So the exemption was removed at some point and the header was not. A
-// reader trusting it would look for the NGRP queue behaviour somewhere
-// else, or add it a second time; two design rounds read past it.
-// Concrete-node dropoffs are gated here AND so are NGRP parents, by
-// walking their children. LANE and _TRANSIT still pass through to
-// whoever resolves them at dispatch time.
+// The gate, its history and its account of every arm live with the planner
+// since B2 (dispatch/plan/capacity.go, plan.DropoffCapacity). This file says
+// the planner's verdict in dispatch's queue vocabulary, so the gate's eleven
+// callers ask it exactly as they did.
 
 package dispatch
 
-import (
-	"database/sql"
-	"errors"
+import "shingocore/dispatch/plan"
 
-	"shingo/protocol"
-	"shingocore/store/bins"
-	"shingocore/store/nodes"
-)
-
-// CapacityDB is the read interface used by the capacity gate. Kept
-// narrow so the gate can be exercised against a fake store in tests
-// without spinning up the full dispatcher harness. The concrete *store.DB
-// satisfies it.
-type CapacityDB interface {
-	GetNodeByDotName(name string) (*nodes.Node, error)
-	CountBinsByNode(nodeID int64) (int, error)
-	CountInFlightOrdersByDeliveryNodeExcluding(name string, excludeID int64) (int, error)
-	// ListChildNodes returns the children of an NGRP for saturation
-	// checking — when every child is full, the NGRP destination as a
-	// whole is "blocked" and the order should queue rather than fail at
-	// dispatch.
-	ListChildNodes(parentID int64) ([]*nodes.Node, error)
-
-	// ── The maintained-group level (MG4-3) ──────────────────────────────────
-	//
-	// The gate and the resolver must not disagree about whether a group can take
-	// a carrier, so the gate reads the level through the SAME two calls the
-	// resolver does. Without this, a group at its declared level looks free here
-	// — it has empty positions, they are just spoken for — and the order is
-	// admitted, resolved, refused, and parked one layer deeper with a cause that
-	// says nothing about the level.
-	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
-	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
-
-	// ── The per-node Allowed Bin Types fence ────────────────────────────────
-	//
-	// Same reason as the level above, one question over: the gate counted a
-	// child FREE that the resolver then refuses for declaring a different
-	// carrier type. That divergence was invisible while the resolver's own
-	// bin-type check was inert, and goes live with it — a group whose only free
-	// positions are fenced against the arriving carrier reports room here, and
-	// the order is admitted, resolved, refused, and parked a layer deeper under
-	// a cause that says nothing about the fence.
-	//
-	// BinTypeForOrder is read through the SAME store method the resolver
-	// derives from, keyed on the asking order, so the two cannot answer
-	// differently about what is arriving.
-	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
-	BinTypeForOrder(orderID int64) (*int64, error)
-	// BinTypeBareOf names the carrier a bare marker stands for, so a slot
-	// fenced to the carrier admits the bare cart too (bins.TypeAdmits).
-	BinTypeBareOf(binTypeID int64) (*int64, error)
-}
+// CapacityDB is the gate's read interface; see plan.CapacityDB.
+type CapacityDB = plan.CapacityDB
 
 // CapacityBlock is the structured result of a blocked dropoff-capacity check —
 // the queue code (always QueueWaitingForSlot when blocked), the engineer-only
@@ -112,348 +23,31 @@ type CapacityBlock struct {
 }
 
 // CheckDropoffCapacity returns (false, zero) when the named delivery node can
-// accept a bin right now, and (true, block) when it cannot — where block names
-// WHICH shape of refusal it was (block.Cause) and carries the values the
-// operator sentence is generated from (block.Params).
-//
-// IT RETURNS NO SENTENCE, and this comment used to say it did: "(true, reason)
-// … the reason string is suitable for storing on orders.queue_reason and
-// rendering to operators". That stopped being true when the pre-formatted string
-// became a CapacityBlock so callers would park through the shared formatter door
-// — which the CapacityBlock doc twelve lines above already says. Two comments in
-// one file, disagreeing about this function's own return type.
+// accept a bin right now, and (true, block) when it cannot: plan.DropoffCapacity's
+// verdict, with its cause under dispatch's name (the same string,
+// TestPlanCausesAreDeclaredQueueCauses) and its params copied field for field.
 //
 // CALLERS MUST WRITE block.Cause THROUGH, not a coarse tag of their own. The
-// four causes below have four different releasers, and the two complex arms
-// substituted CauseDropoffCapacity for all of them until 2026-08-30 — passing
-// block.Params so the SENTENCE was right while the column an engineer groups by
-// was wrong. See CauseDropoffCapacity's own note.
+// five causes have different releasers; see plan.DropoffCapacity.
 //
 // excludeOrderID is the caller's own order, excluded from the count so a gate
-// checking from inside the order's own dispatch/retry path cannot see itself.
-// Callers dispatching an order pass its order.ID. Callers with no order of their
-// own to exclude pass 0: preview paths. (The dig's shuffle walk used to ask it
-// with 0; it now asks nodes.SlotTakeableSQL, which also reads slot
-// reservations.)
-//
-// "Capacity" is two physical facts and no status: zero bins at the node, AND no
-// other order delivering there that holds a claimed bin — the one that is
-// bringing a bin (orders.InFlightForDropoffSQL). Either makes the slot unsafe for
-// a fresh dispatch. An order that has only planned holds nothing and blocks
-// nobody, so two orders shopping for one slot do not wait on each other: the
-// first to claim goes, and the second waits its turn here.
-//
-// Empty deliveryNode → not blocked (the order has no concrete dropoff
-// to gate on; auto-confirm or fleet-resolved destination orders fall
-// into this bucket).
-//
-// Synthetic-node deliveryNode:
-//   - NGRP: walk children, treat as blocked iff EVERY child is
-//     occupied or has an in-flight order inbound. The resolver picks
-//     a free child at dispatch time when one exists; this gate is what
-//     makes "all children full" produce a queue rather than a fail.
-//   - LANE / _TRANSIT / other synthetic types: pass through. LANE
-//     gating is handled inside the lane-aware planners (depth/buried
-//     reshuffle); _TRANSIT is never a real dropoff.
-//
-// Node not found → not blocked, on purpose. A typoed node name should fail at
-// the actual dispatch with a clearer error than "waiting for a slot at a place
-// that does not exist", which would queue forever on a reason that can never
-// clear.
-//
-// Node lookup ERRORED → blocked, capacity-check-failed. That is a different
-// fact and it used to be folded in with the one above, so a database blip on
-// this read passed the gate while the identical blip on either of the two reads
-// below fails it closed. The three reads now agree: if occupancy cannot be read,
-// do not risk the drop.
+// checking from inside the order's own dispatch/retry path cannot see itself;
+// 0 when the caller has no order of its own (previews).
 func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
-	return CheckDropoffCapacityForType(db, deliveryNode, excludeOrderID, nil)
+	blocked, v := plan.DropoffCapacity(db, deliveryNode, excludeOrderID)
+	if !blocked {
+		return false, CapacityBlock{}
+	}
+	return true, CapacityBlock{Cause: queueCauseOf(v.Cause), Params: queueParamsOf(v.Params)}
 }
 
-// CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that knows
-// which carrier type is arriving: the cancel-return's chooser (engine), which
-// asks with the carried bin's type. Every other caller goes through
-// CheckDropoffCapacity with nil, and the NGRP arm derives the type from the
-// asking order it excludes (checkNGRPCapacity → BinTypeForOrder), the same way
-// the resolver derives it.
-//
-// The type only changes the LEVEL question — physical occupancy is physical
-// whatever is arriving.
+// CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that knows the
+// arriving carrier's type: plan.DropoffCapacityForType, said the same way.
 func CheckDropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID int64,
 	binTypeID *int64) (blocked bool, block CapacityBlock) {
-	if deliveryNode == "" {
+	blocked, v := plan.DropoffCapacityForType(db, deliveryNode, excludeOrderID, binTypeID)
+	if !blocked {
 		return false, CapacityBlock{}
 	}
-	params := QueueParams{Destination: deliveryNode}
-	node, err := db.GetNodeByDotName(deliveryNode)
-	switch {
-	case errors.Is(err, sql.ErrNoRows), err == nil && node == nil:
-		// No such node — let dispatch produce the real error.
-		return false, CapacityBlock{}
-	case err != nil:
-		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
-	}
-	if node.IsSynthetic {
-		if node.NodeTypeCode == protocol.NodeClassNGRP {
-			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID, binTypeID)
-		}
-		// LANE / _TRANSIT / future synthetic types — defer to whoever
-		// resolves them at dispatch time. _TRANSIT is never a legit
-		// dropoff; LANE depth/buried handling lives inside the
-		// lane-aware planners.
-		return false, CapacityBlock{}
-	}
-	count, err := db.CountBinsByNode(node.ID)
-	if err != nil {
-		// Fail closed: if occupancy can't be read, don't risk dropping onto a
-		// possibly-full node — gate the order so it queues until the check works.
-		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
-	}
-	if count > 0 {
-		// Carry the count into the sentence. "A bin is sitting there" and "an
-		// order is already on its way" are different operator situations —
-		// go clear it, versus wait — and both used to render as the bare
-		// "Waiting for a slot at X". The discriminator existed only in
-		// queue_cause, which no surface renders and which never leaves Core.
-		p := params
-		p.BlockingBins = count
-		return true, CapacityBlock{Cause: CauseDropoffOccupied, Params: p}
-	}
-	inFlight, err := db.CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode, excludeOrderID)
-	if err != nil {
-		// Fail closed on the in-flight read as well.
-		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
-	}
-	if inFlight > 0 {
-		p := params
-		p.InboundOrders = inFlight
-		return true, CapacityBlock{Cause: CauseDropoffInflight, Params: p}
-	}
-	return false, CapacityBlock{}
-}
-
-// checkNGRPCapacity walks the children of an NGRP destination and
-// returns blocked=true only when every enabled, non-synthetic child
-// is either occupied by a bin or has an in-flight order inbound. At
-// least one free child means the resolver will be able to pick a
-// concrete dropoff at dispatch time.
-//
-// Concurrency: there's a TOCTOU window between this check and the
-// resolver's child pick at dispatch time — a different order could
-// claim the free child between the two. The existing claim_failed →
-// queueOrder path handles that race (the loser of the claim race
-// re-queues), so this gate doesn't need to be perfectly atomic; it
-// just needs to handle the steady-state "everything full" case.
-//
-// excludeOrderID propagates to the per-child in-flight count so an
-// order checking its own NGRP destination doesn't self-collide.
-//
-// A CHILD THAT CANNOT BE READ IS NOT A FREE CHILD. All three reads in here used
-// to fail open, and the two per-child ones failed open in the worst direction:
-// `err == nil && count > 0` means a read error skips the `continue`, and the
-// child falls through to be counted FREE — the answer that says "there is room",
-// on no evidence. The outer gate's two reads have failed closed since they were
-// written; these are the same reads one level down.
-//
-// "Cannot see" and "full" are kept apart. A group whose children could not be
-// read reports capacity-check-failed, not ngrp-full: both queue the order, but
-// only one of them sends an operator to go clear a group that may be empty.
-func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64,
-	binTypeID *int64) (blocked bool, block CapacityBlock) {
-
-	params := QueueParams{Destination: ngrpName}
-
-	// ── THE LEVEL, BEFORE THE PHYSICS ───────────────────────────────────────
-	//
-	// A maintained group at its declared level is FULL in the sense that matters,
-	// and it does not look full physically: it has empty positions, and they are
-	// spoken for by a number somebody configured. Asking here means the order
-	// parks with a cause that says so, instead of being admitted, resolved,
-	// refused by MG4-1, and parked a layer deeper under a generic capacity
-	// reason.
-	//
-	// SAME PREDICATE AS THE RESOLVER, read through the same two calls. Two
-	// answers to "is this group full" is exactly the drift that puts an order in
-	// a loop between a gate that admits it and a resolver that refuses it.
-	if atLevel, err := ngrpAtDeclaredLevel(db, ngrp, binTypeID); err != nil {
-		// Unknown is not permission, and it is not a claim of fullness either —
-		// it is the check failing, which has its own cause.
-		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
-	} else if atLevel {
-		// AtLevel, so the sentence says the group is holding what it was told to
-		// hold rather than "waiting for a slot" — there are free positions, and
-		// an operator sent to look for room finds room and no explanation.
-		atLevelParams := params
-		atLevelParams.AtLevel = true
-		return true, CapacityBlock{Cause: CauseNGRPAtLevel, Params: atLevelParams}
-	}
-	children, err := db.ListChildNodes(ngrp.ID)
-	if err != nil {
-		// The child list itself is unreadable, so nothing below can be judged.
-		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
-	}
-	if len(children) == 0 {
-		// A genuinely empty group — pass through so the resolver's own failure
-		// surfaces rather than being masked as a queue. Unchanged.
-		return false, CapacityBlock{}
-	}
-	// Derived here exactly as the resolver derives it, and only when the caller
-	// did not already know. excludeOrderID is the asking order — the same id the
-	// resolver sees in its dig asker — so the two reach the same answer or both
-	// reach "could not tell".
-	if binTypeID == nil && excludeOrderID != 0 {
-		if id, err := db.BinTypeForOrder(excludeOrderID); err == nil {
-			binTypeID = id
-		}
-	}
-	// ENABLED AND ADMISSIBLE ARE COUNTED SEPARATELY, and the difference decides
-	// between two dispositions that look alike and are not:
-	//
-	//   enabledCount == 0  — the group has no usable positions AT ALL. Structural,
-	//                        and it passes through so the resolver's own failure
-	//                        surfaces instead of being masked as a queue. This is
-	//                        the pre-existing rule and it must not absorb the case
-	//                        below, or a fenced group would be ADMITTED and then
-	//                        parked a layer deeper — the exact loop this gate
-	//                        exists to prevent.
-	//   admissible == 0    — positions exist and every one of them refuses THIS
-	//                        carrier. That is a capacity fact about this order, so
-	//                        it blocks as ngrp-full and the order queues here.
-	enabledCount := 0
-	admissible := 0
-	freeCount := 0
-	unreadable := 0
-	for _, child := range children {
-		if !child.Enabled || child.IsSynthetic {
-			continue
-		}
-		enabledCount++
-		// A READ FAILURE COUNTS THE CHILD AS UNREADABLE rather than free or
-		// fenced — the same disposition the two occupancy reads below take, and
-		// the reason the group reports capacity-check-failed instead of claiming
-		// fullness it did not establish.
-		allowed, aErr := binTypeAllowedAt(db, child.ID, binTypeID)
-		if aErr != nil {
-			admissible++
-			unreadable++
-			continue
-		}
-		if !allowed {
-			continue
-		}
-		admissible++
-		c, cErr := db.CountBinsByNode(child.ID)
-		if cErr != nil {
-			unreadable++
-			continue // not counted free: we did not learn that it is
-		}
-		if c > 0 {
-			continue
-		}
-		inflight, iErr := db.CountInFlightOrdersByDeliveryNodeExcluding(child.Name, excludeOrderID)
-		if iErr != nil {
-			unreadable++
-			continue
-		}
-		if inflight > 0 {
-			continue
-		}
-		freeCount++
-	}
-	if enabledCount == 0 {
-		// No usable children at all — the resolver will fail; pass
-		// through so the failure surfaces with the resolver's reason
-		// rather than masking it as a queue.
-		return false, CapacityBlock{}
-	}
-	if freeCount > 0 {
-		return false, CapacityBlock{}
-	}
-	if admissible == 0 {
-		// Positions exist and all of them are fenced against this carrier. Said as
-		// fullness because that is what it is from this order's side — the group
-		// has nowhere for it — and blocking here is what keeps it from being
-		// admitted onto a destination the resolver is going to refuse.
-		return true, CapacityBlock{Cause: CauseNGRPFull, Params: params}
-	}
-	if unreadable > 0 {
-		// No free child was FOUND, but at least one could not be looked at, so
-		// "full" is not something this run is entitled to say.
-		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
-	}
-	return true, CapacityBlock{Cause: CauseNGRPFull, Params: params}
-}
-
-// binTypeAllowedAt is the gate's copy of binresolver.binTypeAllowed, and — like
-// ngrpAtDeclaredLevel below — it is a copy of the CALL and not of the LOGIC:
-// both read GetEffectiveBinTypes, and both take an empty result as "nothing
-// declared, so nothing refused".
-//
-// THE ERROR IS RETURNED HERE RATHER THAN SWALLOWED INTO A REFUSAL. The resolver
-// refuses on an unreadable list because its next move is to try another
-// candidate slot, which costs nothing. This gate's next move is to decide
-// whether the whole group is full, and a read fault must surface as
-// capacity-check-failed rather than as a child quietly counted out — otherwise a
-// database blip reads as "the supermarket is full" and sends somebody looking.
-func binTypeAllowedAt(db CapacityDB, nodeID int64, binTypeID *int64) (bool, error) {
-	if binTypeID == nil {
-		return true, nil
-	}
-	bts, err := db.GetEffectiveBinTypes(nodeID)
-	if err != nil {
-		return false, err
-	}
-	if bins.TypeAdmits(bts, *binTypeID, nil) {
-		return true, nil
-	}
-	// A BARE MARKER FITS WHERE ITS CARRIER FITS: it is the same cart with no
-	// bin on it. Read only after the direct match failed, so an unfenced or
-	// directly admitted type costs nothing extra.
-	bareOf, err := db.BinTypeBareOf(*binTypeID)
-	if err != nil {
-		return false, err
-	}
-	return bareOf != nil && bins.TypeAdmits(bts, *binTypeID, bareOf), nil
-}
-
-// ngrpAtDeclaredLevel is the gate's copy of the level question, and it is a copy
-// of the CALL and not of the LOGIC: both this and the resolver's atDeclaredLevel
-// read ListMaintainLevels and CountEmptyBinsOfTypeInGroup, which is where the
-// one definition of "how full is this group" lives.
-//
-// The two cannot be one function without the resolver importing dispatch or
-// dispatch reaching into binresolver's unexported half. They can and do share
-// the reads, the per-type / group-total asymmetry, and the reason for it — see
-// binresolver.atDeclaredLevel, which carries the full account.
-func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, binTypeID *int64) (bool, error) {
-	levels, err := db.ListMaintainLevels(ngrp.ID)
-	if err != nil {
-		return false, err
-	}
-	if len(levels) == 0 {
-		return false, nil
-	}
-	if binTypeID != nil {
-		for _, l := range levels {
-			if l.BinTypeID != *binTypeID {
-				continue
-			}
-			held, cerr := db.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, ngrp.ID)
-			if cerr != nil {
-				return false, cerr
-			}
-			return held >= l.Want, nil
-		}
-		return false, nil
-	}
-	want, held := 0, 0
-	for _, l := range levels {
-		want += l.Want
-		n, cerr := db.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, ngrp.ID)
-		if cerr != nil {
-			return false, cerr
-		}
-		held += n
-	}
-	return held >= want, nil
+	return true, CapacityBlock{Cause: queueCauseOf(v.Cause), Params: queueParamsOf(v.Params)}
 }

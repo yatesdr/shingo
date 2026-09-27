@@ -166,5 +166,9 @@ func queueParamsOf(p plan.Params) QueueParams {
 		Group:         p.Group,
 		Reserved:      p.Reserved,
 		SourceMissing: p.SourceMissing,
+		Destination:   p.Destination,
+		BlockingBins:  p.BlockingBins,
+		InboundOrders: p.InboundOrders,
+		AtLevel:       p.AtLevel,
 	}
 }

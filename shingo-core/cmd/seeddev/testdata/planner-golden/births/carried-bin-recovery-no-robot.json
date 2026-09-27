@@ -1,0 +1,9 @@
+{
+  "need": {
+    "bin": "BIN-STUD-03",
+    "coverage": "the refusal only: resolveCarriedBinDestination needs a live robot and is pinned by engine's recovery tests, not here",
+    "door": "carried-bin recovery",
+    "setup": "the bin is on a robot's deck; the robot cache is empty because the engine's refresh loop is stopped"
+  },
+  "decision": null
+}

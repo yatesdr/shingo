@@ -110,10 +110,6 @@ type Need struct {
 	// process (SYNTH round 2 §2).
 	ProcessNode string
 
-	// Given is set when the need is a fully specified manual move (v4 §2.5).
-	// Declared for B2; nil for every need in B1.
-	Given *Given
-
 	// Order is the order this need is planned FOR, when there is one and the
 	// plan's own earlier steps count: the vacated-slot rule's case (a) asks what
 	// THIS order's earlier pickups take (BinsAtStep). 0 at intake, where no row
@@ -168,22 +164,31 @@ type Plan struct {
 	// structural outcome to its "structural" fail path.
 	TermCode string
 	Err      error
+
+	// THE GATHERED PLAN (B2). A move's plan (move.go) carries its destination
+	// and whether it takes a soft hold, and the builder reads both (dispatch.Build
+	// writes Dest as the row's delivery node; the bin-move door takes the hold in
+	// the birth's transaction). The picker leaves them zero.
+	//
+	// Dest is the node the carrier is put down on: the named node, or the child
+	// the planner chose when the named node is a group.
+	Dest *nodes.Node
+	// Take is Q1's explicit take: the bin carries another order's PENDING
+	// reservation, and a person's move takes it (v4 §2.7, Rule 4).
+	Take bool
+	// Refused is the move's "not satisfiable": which rule said no, for a door
+	// with a person waiting. nil when the plan can be carried out.
+	Refused *Refusal
 }
 
-// Given is a fully specified manual move (v4 §2.5): the bin, where it stands and
-// where it goes are all named, and the planner VALIDATES that plan instead of
-// choosing one: the bin is where it is said to be, the destination takes this
-// carrier, the carrier's rule allows it.
-//
-// DECLARED, NOT FILLED (owner, 2026-09-26, Q3). B2 fills it with the bin-move
-// door, its first user; until then no need carries one and nothing reads it. The
-// bin move's own pickers (engine/bin_move.go resolveMoveSource, pickFreeBinAt)
-// are B2's to retire into PickableAt (binresolver.BinUnavailableReasonFor), so no
-// further spelling of eligibility appears.
+// Given is a fully specified manual move (v4 §2.5): the bin, where it stands
+// and where it goes are all named, and the planner VALIDATES that plan instead of
+// choosing one (Planner.ValidateMove). It carries the rows the door read for what
+// the person named, so validating costs no second read of them.
 type Given struct {
-	BinID      int64
-	SourceNode string
-	DestNode   string
+	Bin    *bins.Bin
+	Source *nodes.Node
+	Dest   *nodes.Node
 }
 
 // FinderDB is the narrow store surface the finder needs. *store.DB satisfies it
@@ -224,6 +229,9 @@ type FinderDB interface {
 
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)
+	// GetLoaderHomeAndLayout is the home with its loader's layout, one read: the
+	// loader tier's gate.
+	GetLoaderHomeAndLayout(positionNodeID int64) (*loaders.Home, string, error)
 	GetLoader(id int64) (*loaders.Loader, error)
 	ListLoaderHomes(loaderID int64) ([]loaders.Home, error)
 	ListLoaderQuotas(loaderID int64) ([]loaders.Quota, error)

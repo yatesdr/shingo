@@ -34,7 +34,9 @@ func AssertNoHoldsAtRest(t testing.TB, db *store.DB, when string) {
 // VerifyRed is the committed form of a red pin. The caller computes the
 // invariant's violations; while the bug stands they are PREDICTED, so the test
 // passes and logs them. The moment they are gone the test fails, telling whoever
-// fixed it to replace the call with AssertNoHoldsAtRest.
+// fixed it to replace the call with the invariant's own assertion (for held
+// claims, AssertNoHoldsAtRest). It knows nothing of the invariant, so its
+// message names none.
 //
 // This keeps the gate green while the red stays checked on every run: a
 // predicted red that quietly went green would otherwise be invisible until
@@ -43,9 +45,9 @@ func AssertNoHoldsAtRest(t testing.TB, db *store.DB, when string) {
 func VerifyRed(t *testing.T, name string, violations []string) {
 	t.Helper()
 	if len(violations) == 0 {
-		t.Fatalf("VERIFY-RED %s is GREEN: no order waits holding a hard claim. If the one-step "+
-			"acquire landed, replace VerifyRed with AssertNoHoldsAtRest; if not, the fixture no "+
-			"longer reaches the bug and has to be rebuilt.", name)
+		t.Fatalf("VERIFY-RED %s is GREEN: the predicted violation is gone. If the fix landed, "+
+			"replace VerifyRed with the invariant's assertion; if not, the fixture no longer "+
+			"reaches the bug and has to be rebuilt.", name)
 	}
 	for _, v := range violations {
 		t.Logf("VERIFY-RED %s, as predicted: %s", name, v)

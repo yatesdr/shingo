@@ -476,6 +476,15 @@ var causeReleasers = []causeReleaser{
 			"because a holder abandoning a promise emits nothing anyone listens for",
 	},
 	{
+		cause:       CauseBinTaken,
+		populations: []WaitPopulation{PopAcquiring},
+		// The take is the releaser's own trigger: the person's move is queued with
+		// EmitOrderQueued in the same request, and that runs the scanner, which
+		// re-finds the un-pointed holder on the same pass.
+		what: "the scanner pass the taking move's own queue event runs, on which the un-pointed " +
+			"holder re-finds through the finder; the periodic floor if that pass is missed",
+	},
+	{
 		cause: CauseDigBlockerStopped,
 		// PopGateStaged only, and by construction rather than by policy: the
 		// acceptance arm is the one caller that asks the liveness question before

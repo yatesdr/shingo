@@ -733,7 +733,7 @@ func (db *DB) OrderCommittedToFleetAt(orderID int64) (time.Time, bool, error) {
 // StampDestinationResolved records the instant the store-slot selector chose
 // `orderID`'s destination at intake.
 //
-// WRITTEN ONCE, BY ONE CALLER (dispatch.admitOrder), and only when
+// WRITTEN ONCE, BY ONE CALLER (dispatch LifecycleService.admit), and only when
 // resolveSyntheticDestination actually rewrote a group into a concrete slot. The
 // value is the selector's OWN clock reading, taken at the resolve and carried
 // forward — not a second reading taken here, which would fold the CreateOrder
@@ -742,7 +742,7 @@ func (db *DB) OrderCommittedToFleetAt(orderID int64) (time.Time, bool, error) {
 // COALESCE, NOT A BARE SET. A re-admitted order keeps its FIRST stamp: the
 // question this answers is "when did a selector last look and approve", and on
 // the intake path there is exactly one such moment per order. An overwrite could
-// only come from a retry re-running admitOrder, which would move the timestamp
+// only come from a retry re-running admission, which would move the timestamp
 // forward past claims the original resolve genuinely did see — turning a real
 // bypass quiet. Keeping the earliest keeps the loud direction.
 func (db *DB) StampDestinationResolved(orderID int64, at time.Time) error {

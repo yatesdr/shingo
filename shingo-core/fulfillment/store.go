@@ -2,6 +2,7 @@ package fulfillment
 
 import (
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -34,6 +35,10 @@ type Store interface {
 	// {queued, sourcing} (the acquiring set, widened from queued-only).
 	ListAcquiringOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
+	// PlannedPickStands is how acquiring reads a birth pick (orders.plan): the
+	// planned bin's node while the pick stands for this asker, nil when it is
+	// stale and the scanner picks again (SYNTH F4).
+	PlannedPickStands(p *domain.PlannedPick, asker domain.DigAsker) (*nodes.Node, error)
 	// OwnsNoCargo distinguishes a COORDINATOR (owns legs, NULL bin_id
 	// permanently and correctly) from a defective single-bin order. Shadowed
 	// at dispatchHeldBin for one window before the spelling is cut over.

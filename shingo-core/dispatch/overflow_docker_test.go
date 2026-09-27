@@ -62,7 +62,7 @@ func pushInto(t *testing.T, d *Dispatcher, db *store.DB, uuid, group string) str
 		Status: StatusPending, Quantity: 1, DeliveryNode: group,
 		SourceNode: "OVF-SRC",
 	}
-	if lerr := d.lifecycle.admitOrder(o); lerr != nil {
+	if lerr := d.lifecycle.admit(o, func() error { return d.db.CreateOrder(o) }); lerr != nil {
 		t.Fatalf("admit %s: %s", uuid, lerr.Detail)
 	}
 	got, err := db.GetOrderByUUID(uuid)

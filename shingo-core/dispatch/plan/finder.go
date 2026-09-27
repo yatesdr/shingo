@@ -908,23 +908,21 @@ func (f *Finder) sourceFromDedicatedLoader(srcNode *nodes.Node, payloadCode stri
 	// read failure (TestMissingSourcePin_*); both answers are now given once, at
 	// the top of the cascade, and a missing source never reaches this tier.
 	sourceNodeName := srcNode.Name
-	home, err := f.db.GetLoaderHomeByPositionNode(srcNode.ID)
+	// Layout gate (D5 / M3): Source ranks dedicated_positions loaders only. A
+	// shared_window loader ALSO stores its windows in bin_loader_homes, so
+	// without this a window node name would be ranked as a flat pool, bypassing
+	// the supermarket/seam semantics that govern a market loader. A non-dedicated
+	// (or vanished) loader → treat as "not a loader source" and fall through. The
+	// layout comes with the home, in one read: a part named at a shared window
+	// used to pay a second read here only to learn it falls through.
+	home, layout, err := f.db.GetLoaderHomeAndLayout(srcNode.ID)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("resolve loader for node %s: %w", sourceNodeName, err)
 	}
 	if home == nil {
 		return nil, nil, false, nil // not a loader position at all
 	}
-	// Layout gate (D5 / M3): Source ranks dedicated_positions loaders only. A
-	// shared_window loader ALSO stores its windows in bin_loader_homes, so
-	// without this a window node name would be ranked as a flat pool, bypassing
-	// the supermarket/seam semantics that govern a market loader. A non-dedicated
-	// (or vanished/archived) loader → treat as "not a loader source" and fall through.
-	loader, err := f.db.GetLoader(home.LoaderID)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("resolve loader %d for node %s: %w", home.LoaderID, sourceNodeName, err)
-	}
-	if loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
+	if layout != loaders.LayoutDedicatedPositions {
 		return nil, nil, false, nil
 	}
 

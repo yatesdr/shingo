@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
@@ -104,6 +105,15 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"RecoversOrderID": &recovered.ID,
 		// A birth fact: a move names the bin it is for when it is created.
 		"NamedBinID": &namedBin,
+		// true is the non-default: every door but dispatch.Build leaves it false
+		// (v145).
+		"StationUnaware": true,
+		// Blank is the default and projects to nobody; a named station is what
+		// a stage-2 pull writes (v146).
+		"ProjectsTo": "roundtrip-projected-station",
+		// The birth pick the wire door writes and acquiring reads (v147).
+		"Plan": &domain.PlannedPick{BinID: 424242, Node: "ROUNDTRIP-PLAN-NODE", Payload: "RT-PAYLOAD",
+			Status: "available", Confirmed: true},
 		// A birth fact, so unlike OpenForChildren it round-trips through Create.
 		// That is the property worth pinning: if this ever stops surviving the
 		// INSERT, a service dig's lane releases on the last blocker and the bin

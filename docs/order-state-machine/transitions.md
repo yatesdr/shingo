@@ -47,7 +47,7 @@ and `AllStatuses()`.
 
 | from | to |
 |---|---|
-| `pending` | `sourcing`, `submitted`, `queued`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `pending` | `sourcing`, `submitted`, `dispatched`, `queued`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `sourcing` | `queued`, `submitted`, `dispatched`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `queued` | `acknowledged`, `dispatched`, `in_transit`, `sourcing`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `submitted` | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |

@@ -1,0 +1,25 @@
+{
+  "need": {
+    "current_uop": 0,
+    "door": "loader replenish",
+    "loader": "PLK_HOMES",
+    "member": "PLK_H1",
+    "payload": "SHIM",
+    "setup": "BIN-SHIM-01 taken off its home PLK_H1 to SLN_011",
+    "threshold": 2
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "retrieve_empty",
+      "status": "pending",
+      "station": "edge1.line1",
+      "quantity": 1,
+      "source": "SYN_MARKET",
+      "delivery": "PLK_H1",
+      "source_intent": "empty",
+      "origin_class": "orphan",
+      "projected": "pending"
+    }
+  ]
+}

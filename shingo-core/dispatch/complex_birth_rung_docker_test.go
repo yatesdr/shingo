@@ -147,18 +147,21 @@ func TestComplexIntake_TheBirthRowIsTheEpisodeTheCauseLandsOn(t *testing.T) {
 		"Waiting for material: "+bp.Code, protocol.QueueWaitingForMaterial, string(CauseReserveHolding)),
 		"stamp a wait")
 
+	// Since the orc's Stop 3 ruling (2026-09-26) the park is a row of its own,
+	// at the status the order rests in: after the `sourcing` birth row.
 	history, err := db.ListOrderHistory(order.ID)
 	testutil.MustNoErr(t, err, "list history")
-	if len(history) != 1 {
-		t.Fatalf("history has %d rows, want 1 (the birth row) — the stamp must land ON the birth "+
-			"episode, not append beside it", len(history))
+	if len(history) != 2 {
+		t.Fatalf("history has %d rows, want 2 (the birth row, then the park's own row)", len(history))
 	}
-	if history[0].Status != protocol.StatusSourcing {
-		t.Errorf("the birth history row says %q, want %q", history[0].Status, protocol.StatusSourcing)
+	for i, h := range history {
+		if h.Status != protocol.StatusSourcing {
+			t.Errorf("history[%d] says %q, want %q: the order rests in its birth rung", i, h.Status, protocol.StatusSourcing)
+		}
 	}
-	if history[0].Code != string(protocol.QueueWaitingForMaterial) {
-		t.Errorf("the birth row carries code %q, want %q — orders.queue_code is overwritten in "+
+	if history[1].Code != string(protocol.QueueWaitingForMaterial) {
+		t.Errorf("the park's row carries code %q, want %q — orders.queue_code is overwritten in "+
 			"place, so this row is the only durable record of what the order waited for",
-			history[0].Code, protocol.QueueWaitingForMaterial)
+			history[1].Code, protocol.QueueWaitingForMaterial)
 	}
 }

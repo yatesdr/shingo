@@ -72,31 +72,20 @@ type QueueDetailStore interface {
 }
 
 // QueueWait is what an order is waiting on, as its row carries it: the code
-// and the sentence the station reads, and the cause, which stays in Core.
-type QueueWait struct {
-	Code, Cause, Reason string
-}
+// and the sentence the station reads, and the cause, which stays in Core
+// (orders.Wait).
+type QueueWait = orders.Wait
 
 // WaitOf reads the wait an order struct carries.
 func WaitOf(o *orders.Order) QueueWait {
 	return QueueWait{Code: o.QueueCode, Cause: o.QueueCause, Reason: o.QueueReason}
 }
 
-// WaitTold reports whether a station that holds prev is told next. It is told a
-// new code, or a new cause that reads as a new sentence. The wire carries the
-// status, the sentence and the code, never the cause, so a cause alone is not
-// news; and a sentence whose code and cause are unchanged (a count in it moved)
-// is not a new wait. The first wait (prev has no code) is never told here: it
-// reaches the station with the order's announcement, the queued event's push.
-// Clearing (next has no code) is not a wait.
-//
-// One predicate for both doors that tell a station: WriteQueueDetail asks it of
-// each write, and the push after a queued announcement asks it of the wait the
-// order was announced with, to skip a change the write already told.
-func WaitTold(prev, next QueueWait) bool {
-	return prev.Code != "" && next.Code != "" &&
-		(prev.Code != next.Code || (prev.Cause != next.Cause && prev.Reason != next.Reason))
-}
+// WaitTold reports whether a station that holds prev is told next:
+// orders.WaitTold, the one predicate for a change of wait. The store asks the
+// same predicate before it opens a history row (orders.WaitOpens), so what the
+// station is told and what the history records change together.
+func WaitTold(prev, next QueueWait) bool { return orders.WaitTold(prev, next) }
 
 // WriteQueueDetail formats the operator sentence from code+params and writes
 // sentence+code+cause together, returning whether it wrote a NEW wait.

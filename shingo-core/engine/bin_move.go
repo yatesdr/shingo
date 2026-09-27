@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/dispatch/plan"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -50,6 +51,11 @@ type BinMoveRequest struct {
 	DestNodeName string
 
 	StationID string
+	// Projects is the station whose Edge models the destination and binds the
+	// bin when it arrives, so it is sent the move's order.delivered and
+	// bin_picked_up and nothing else (dispatch.Need.Projects). The stage-2 pull
+	// names its window's Edge; a person's move leaves it blank.
+	Projects string
 	// EdgeUUID is the order's reference number. Blank mints one.
 	EdgeUUID string
 	Priority int
@@ -65,10 +71,11 @@ type BinMoveResult struct {
 	ToNode        string
 	BinLabel      string
 
-	// Queued is true when the lane refused the move at dispatch. The order is
-	// real, holds its bin, and the fulfillment scanner drives it in as soon as
-	// the lane clears — so this is not a refusal and must not be answered as
-	// one. QueueReason is the operator sentence saying what it is waiting for.
+	// Queued is true when acquiring could not dispatch the move now (a lane, a
+	// slot, the fleet). The order is real, holds its bin, and the fulfillment
+	// scanner drives it in as soon as the wait clears — so this is not a refusal
+	// and must not be answered as one. QueueReason is the operator sentence
+	// saying what it is waiting for.
 	//
 	// The pick is never blocked at the UI; the queue message carries the wait.
 	// The alternative — refusing at the door — would make an operator guess when
@@ -130,6 +137,14 @@ func refuse(kind BinMoveErrKind, cause error, format string, a ...any) *BinMoveE
 // a lost race as a server fault, one never wrote the order's creation history.
 // Each was fixed on its own door as it was found, which is exactly the work
 // that having two of these makes necessary forever.
+//
+// ONE PIPELINE SINCE B2 (v4 §2.1, §2.5). The door resolves what the person
+// named, the planner validates or chooses the plan, the builder writes it
+// `pending` with the take and the move's own soft hold in one transaction, and
+// acquiring tries that one order once: dispatchHeldBin dispatches it straight
+// from `pending` (no station knows it, so it takes SYNTH F8's edge), or parks
+// it `queued` with its cause. The door no longer dispatches (ruling F2), so what
+// it answers is the row as acquiring left it.
 func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// Destination first, then source, then a bin — and the order is not
 	// arbitrary. A request that names a node which does not exist, or names the
@@ -148,22 +163,17 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 
 	// Asking to move a bin to where it already is.
 	//
-	// The specific answer has to win over the generic one: the occupancy gate
-	// below catches most of these incidentally — the bin is at the destination,
-	// so the destination reads as occupied — and then tells the operator to go
-	// clear a node whose only occupant is the bin they are moving. It also does
-	// not catch all of them, because it defers on lane nodes, so a bin sitting
-	// in a lane used to reach the fleet with nothing stopping it.
+	// The specific answer has to win over the generic one: the capacity verdict
+	// catches most of these incidentally — the bin is at the destination, so the
+	// destination reads as occupied — and then tells the operator to go clear a
+	// node whose only occupant is the bin they are moving. It also does not catch
+	// all of them, because it defers on lane nodes.
 	//
 	// Scoped to this door. It must never move into the shared writer or the
 	// dispatch tail: a complex order's first and last step are legitimately the
 	// same node — a robot lifts a bin off a position, takes it away and brings a
 	// different one back — so a check placed there would break changeovers.
 	if sourceNode.ID == destNode.ID {
-		// Named the bin, so name it back: "already at" is the sentence that
-		// tells an operator nothing needs doing. With no bin named yet there is
-		// nothing to point at, and the request itself is the thing that is
-		// wrong.
 		if bin != nil {
 			return nil, refuse(BinMoveBadRequest, nil,
 				"bin %s is already at %s", bin.Label, destNode.Name)
@@ -172,20 +182,12 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 			"source and destination must be different (both are %s)", destNode.Name)
 	}
 
-	// Before the order row and before any claim, so a refusal leaves the source
-	// bin exactly as it was. Rejecting later would strand a pending order and
-	// leave a reservation the next move would be told to wait behind.
-	if preview := e.dispatcher.PreviewDropoffCapacity(destNode.Name); preview.Blocked {
-		return nil, refuse(BinMoveConflict, ErrDestinationOccupied, "%s", preview.Reason)
-	}
-
-	// The request is sound; now ask the plant. An auto request has named a node
-	// rather than a bin, so this is where one gets chosen.
-	if bin == nil {
-		var rerr error
-		if bin, rerr = e.pickFreeBinAt(sourceNode); rerr != nil {
-			return nil, rerr
-		}
+	// THE PLAN. A named bin is validated (the person is authoritative over soft
+	// holds, never over a robot); a named node has its bin chosen. Everything the
+	// planner refuses, it refuses before any row exists.
+	p := e.dispatcher.PlanMove(plan.Given{Bin: bin, Source: sourceNode, Dest: destNode})
+	if p.Refused != nil {
+		return nil, moveRefusal(p.Refused, bin, sourceNode, destNode)
 	}
 
 	edgeUUID := req.EdgeUUID
@@ -196,276 +198,145 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		// collision.
 		edgeUUID = uuid.New().String()
 	}
-
-	order := &orders.Order{
-		EdgeUUID:  edgeUUID,
-		StationID: req.StationID,
-		OrderType: protocol.OrderTypeMove,
-		Status:    protocol.StatusPending,
+	need := dispatch.Need{
+		Type:    protocol.OrderTypeMove,
+		Station: req.StationID,
+		Ref:     edgeUUID,
 		// One robot, one bin.
-		Quantity:     1,
-		SourceNode:   sourceNode.Name,
-		DeliveryNode: destNode.Name,
-		Priority:     req.Priority,
-		PayloadDesc:  req.Desc,
-		BinID:        &bin.ID,
+		Quantity: 1,
+		Priority: req.Priority,
+		Desc:     req.Desc,
 		// NO_DEMAND, stamped where it is known. Somebody moving a bin from A to
 		// B is not a place asking for material, so there is no episode and its
 		// absence is not a finding. Left blank it would land orphan and put a
 		// deliberate human action in the one bucket that is supposed to mean
-		// "we lost a demand link".
+		// "we lost a demand link". Build stamps SourceIntent LOCAL from the type,
+		// through the same map as every other door.
 		OriginClass: protocol.OriginClassNoDemand,
-		// LOCAL, for the same reason and through the same map as every other
-		// door (lifecycle intake, compound children, loader replenish). A move
-		// relocates the physical bin AT its source node, so it carries no
-		// payload key — and the scanner's empty-payload guard exempts exactly
-		// that case by reading THIS FIELD.
-		//
-		// It was missing here, and the gap was invisible while the order kept
-		// its bin_id: a held bin routes straight to dispatch and never reaches
-		// the guard. The day a dig took the bin and cleared the pointer, the
-		// order fell through to a guard that could not recognise the class it
-		// was built to protect, and a person's move died as "order has empty
-		// payload_code" — a construction-bug sentence for an order nobody
-		// constructed wrongly.
-		SourceIntent: dispatch.SourceIntentForType(protocol.OrderTypeMove),
-	}
-	if err := e.db.CreateOrder(order); err != nil {
-		return nil, refuse(BinMoveFault, err, "could not create the order: %v", err)
+		// A bin move is Core-born, so its station has no row for it and is sent
+		// no ack, waybill or status (v4 §2.5). It projects its delivery to the
+		// Edge the door names, or to nobody.
+		Projects: req.Projects,
+		// The birth takes the bin (BirthMove's soft hold), so the row is born
+		// holding it.
+		HoldsBin: true,
 	}
 
-	// THE CREATION ENTRY IS THE INSERT'S NOW, and it still lands before the
-	// reservation — which was the deliberate half of this merge.
-	//
-	// The two doors stamped at opposite points and neither said why. The status
-	// column already says pending — the INSERT set it — so what the stamp was
-	// really for is the HISTORY row, which transitions write and inserts did not.
-	// Without it an order created directly at pending has no entry saying it
-	// ever started, and its timeline begins at whatever happened next.
-	//
-	// Which makes the order matter. Reserve-then-stamp loses the creation entry
-	// for exactly the orders that fail at the reservation — the ones that lost a
-	// race with another person, whose history would then read as a failure with
-	// no beginning. Those are the ones somebody is most likely to go and read.
-	//
-	// orders.Create writes the birth row inside the INSERT's own transaction, so
-	// that ordering is now structural rather than a call site anyone can move:
-	// the row exists before this function can reach the acquire below.
-
-	// Soft-acquire the bin now, hard-claim it at dispatch. Another order can
-	// take it in the gap between the check above and this call — that is a race
-	// with a person, not a fault.
-	if err := e.binManifest.ReserveForDispatch(bin.ID, order.ID); err != nil {
-		// The order row exists by now, so a failure here has to fail it too or
-		// it sits pending forever with nothing to dispatch, fail or clean it up.
-		//
-		// Through the lifecycle rather than a bare FailOrderAtomic: the direct
-		// call transitions the row and stops there, leaving an order that failed
-		// with no audit line and no notification, which is the state the
-		// state-machine guard exists to prevent. failOrderAndEmit routes through
-		// Lifecycle().Fail and fires EventOrderFailed, so this lands in the audit
-		// trail and reaches the station like every other failure.
-		e.failOrderAndEmit(order.ID, "bin_taken", "bin taken by another order before reservation")
+	// THE BIRTH: the row, the take and the move's own soft hold, in one
+	// transaction. orders.Create writes the creation history row inside it, so
+	// every move's timeline begins, including the ones that go on to wait.
+	order, handedBack, err := e.dispatcher.BirthMove(need, p, moveActor(req))
+	if err != nil {
+		// Another order reserved the bin between the plan and the transaction: a
+		// race with a person, not a fault. Nothing was written.
 		if errors.Is(err, reservations.ErrReservationConflict) {
 			return nil, refuse(BinMoveConflict, ErrBinTaken,
-				"bin %s was taken a moment ago — try again", bin.Label)
+				"bin %s was taken a moment ago — try again", p.Bin.Label)
 		}
-		return nil, refuse(BinMoveFault, err, "could not reserve bin %s: %v", bin.Label, err)
+		return nil, refuse(BinMoveFault, err, "could not create the order: %v", err)
+	}
+	// A person's move that had promised itself this bin is ended by name, never
+	// re-aimed at whatever else stands at its node (store.TakeSoftHolds).
+	for _, id := range handedBack {
+		e.failOrderAndEmit(id, "bin_taken", fmt.Sprintf(
+			"bin %s was taken by order #%d (a person's move)", p.Bin.Label, order.ID))
 	}
 
-	// MAY THIS MOVE HAPPEN NOW — the same question every other lane entry asks,
-	// asked here for the first time.
-	//
-	// This door went from the capacity preview straight to the fleet. Capacity is
-	// "is there room at the destination"; it is not "is another robot inside that
-	// corridor", "is someone digging this lane", or "is the bin behind another
-	// bin". A core operator's bin move is a robot in a lane exactly as much as a
-	// compound leg is, and it was the one lane entry with nothing between it and
-	// the fleet. An engineer clearing a slot could send a robot into a lane a dig
-	// owned.
-	//
-	// EntryHeldBin, because that is what this is: the bin is named, the finder was
-	// never called, so nothing has answered the reachability question and this
-	// caller must ask it.
-	//
-	// BEFORE the hand, deliberately, and with no row written: the admission
-	// verdict only. A refusal here leaves the bin SOFT — reserved, not
-	// hard-claimed — which is exactly the state the scanner's held-bin path
-	// expects to pick the order up in, so the retry is the ordinary machinery
-	// rather than a second implementation of it.
-	if admitted, cause, laneName, aerr := e.dispatcher.AdmitLanesForOrder(
-		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil || !admitted {
-		return e.queueBinMoveForLane(order, bin, sourceNode, destNode, cause, laneName, aerr)
-	}
-
-	// THE DESTINATION SLOT, SOFT. This door never reserved it, so a move to a
-	// concrete storage slot could never dispatch: the hard claim is only allowed
-	// where the order already holds a pending slot reservation, and there was
-	// none — the confirm refused "no pending reservation" every time, on an empty
-	// slot in an empty lane as much as anywhere. Every other plain door reserves
-	// the slot first; this one does now. A no-op for a line or consume point.
-	if dest := e.dispatcher.ReserveStorageDropoff(order); dest.Refused() {
-		// The same disposition as the claim refusal below: release the bin's soft
-		// hold and answer the person with a refusal.
-		if rerr := e.db.ReleaseReservation(order.ID, bin.ID); rerr != nil {
-			e.logFn("engine: release reservation for bin %d after slot refusal: %v", bin.ID, rerr)
-		}
-		return nil, refuse(BinMoveConflict, dest.Err, "%s cannot take the bin right now (%s)", destNode.Name, dest.Cause)
-	}
-
-	// THE HAND: the slot, the bin, the lane mouths, the occupancy and the status
-	// in one transaction, then the fleet call. A lane refusal inside the hand is
-	// the same wait as the admission refusal above; a slot or bin refusal, an
-	// ended order or a gone named bin (dispatch.NotAWait) is the fault the old
-	// confirm returned. Either way the hand held nothing.
-	vendorOrderID, err := e.dispatcher.DispatchHand(order, bin.ID, sourceNode, destNode)
-	if dispatch.IsConcurrentTransition(err) {
-		return e.binMoveTakenByScanner(order, sourceNode, destNode, bin)
-	}
-	if r, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
-		if refused && r.Leg == dispatch.HandLegLane && r.Cause != dispatch.CauseLaneAcquireError {
-			return e.queueBinMoveForLane(order, bin, sourceNode, destNode, r.Cause, r.Lane, nil)
-		}
-		if rerr := e.db.ReleaseReservation(order.ID, bin.ID); rerr != nil {
-			e.logFn("engine: release reservation for bin %d after confirm failure: %v", bin.ID, rerr)
-		}
-		return nil, refuse(BinMoveFault, err, "could not claim bin %s at dispatch: %v", bin.Label, err)
-	}
-	if err != nil {
-		// THIS DOOR FAILS THE ROW, because this door has a person waiting on it.
-		// DispatchDirect no longer terminalizes — a fleet refusal is congestion and
-		// the scanner waits it out — but there is nobody here to wait for: the
-		// request answers now, and a row left queued with nothing driving it is an
-		// orphan the operator would see on the board and not understand. So the
-		// disposition that used to be DispatchDirect's is made explicitly here,
-		// where the reason for it holds.
-		//
-		// Through failOrderAndEmit rather than a bare FailOrderAtomic, for the same
-		// reason the reservation arm above uses it: the audit line and the station
-		// notification are part of failing an order.
-		e.failOrderAndEmit(order.ID, "fleet_failed", err.Error())
-		// Coupled rollback: clear the hard claim AND release the reservation, so
-		// a failed dispatch cannot orphan a confirmed one. (The terminalize above
-		// released them — this is the idempotent belt.)
-		if uerr := e.db.ReleaseClaimForBin(bin.ID, order.ID); uerr != nil {
-			e.logFn("engine: release claim for bin %d after dispatch failure: %v", bin.ID, uerr)
-		}
-		return nil, refuse(BinMoveFault, err, "the fleet did not accept the order: %v", err)
-	}
-
-	return &BinMoveResult{
-		OrderID:       order.ID,
-		VendorOrderID: vendorOrderID,
-		FromNode:      sourceNode.Name,
-		ToNode:        destNode.Name,
-		BinLabel:      bin.Label,
-	}, nil
+	// ACQUIRING, this one order, once (the orc's Stop 2 ruling): when this
+	// returns the move is dispatched, or queued with its cause on the row for
+	// the periodic pass to ask again.
+	e.acquireOne(order)
+	return e.binMoveAsItStands(order, p)
 }
 
-// binMoveTakenByScanner is the bin move's answer when its hand lost the status
-// CAS: a scanner pass took the order after this door queued it and dispatched it
-// first. The CAS is the detector and the loser yields (SYNTH §2.4). The hand
-// held nothing and created no vendor order, so there is nothing to undo, and
-// failing the order or releasing its claim would undo the WINNER's dispatch.
-// The move is reported as the order now stands.
-func (e *Engine) binMoveTakenByScanner(order *orders.Order, sourceNode, destNode *nodes.Node, bin *bins.Bin) (*BinMoveResult, error) {
-	e.logFn("engine: bin move order %d was dispatched by the scanner before its own hand — yielding", order.ID)
+// acquireOne hands a just-born order to acquiring. An engine built without a
+// scanner (some tests) queues it for whoever scans.
+func (e *Engine) acquireOne(order *orders.Order) {
+	if e.fulfillment != nil {
+		e.fulfillment.AcquireOne(order.ID)
+		return
+	}
+	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", "awaiting acquire"); err != nil {
+		e.logFn("engine: queue bin move %d with no scanner: %v", order.ID, err)
+	}
+}
+
+// binMoveAsItStands answers the person with the order as acquiring left it.
+//
+// A move that waits is real and is not refused: it holds its bin, and the
+// scanner drives it in when its wait clears. The sentence on the row says what
+// it waits for. Only a move acquiring ended (a structural fault) is refused.
+func (e *Engine) binMoveAsItStands(order *orders.Order, p plan.Plan) (*BinMoveResult, error) {
 	res := &BinMoveResult{
 		OrderID:  order.ID,
-		FromNode: sourceNode.Name,
-		ToNode:   destNode.Name,
-		BinLabel: bin.Label,
+		FromNode: p.Node.Name,
+		ToNode:   p.Dest.Name,
+		BinLabel: p.Bin.Label,
 	}
-	if fresh, err := e.db.GetOrder(order.ID); err == nil {
+	fresh, err := e.db.GetOrder(order.ID)
+	if err != nil {
+		e.logFn("engine: re-read bin move order %d: %v", order.ID, err)
+		return res, nil
+	}
+	switch {
+	case protocol.IsTerminal(fresh.Status):
+		return nil, refuse(BinMoveFault, nil, "the move could not be carried out: %s", fresh.ErrorDetail)
+	case fresh.VendorOrderID != "":
 		res.VendorOrderID = fresh.VendorOrderID
-	} else {
-		e.logFn("engine: re-read bin move order %d after yielding: %v", order.ID, err)
+	default:
+		res.Queued = true
+		res.QueueReason = fresh.QueueReason
 	}
 	return res, nil
 }
 
-// queueBinMoveForLane parks a bin move whose lane would not take it, and is the
-// #7 ruling in code: the UI never blocks the pick, the queue message carries the
-// wait.
-//
-// The order is REAL and it is not refused. It keeps its soft reservation on the
-// bin, moves to `queued`, and the emit runs the fulfillment scanner — whose
-// held-bin path re-asks this same question on every lane-clearing event and
-// dispatches the moment the answer changes. So the releaser is the one every
-// other lane wait rides, and nothing new is subscribed for it.
-//
-// An admission ERROR parks too, under its own cause. A lane Core could not read
-// is not a lane Core may send a robot into, and "undetermined" has to stay
-// distinguishable from "busy" on the row — the two are investigated differently.
-func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceNode, destNode *nodes.Node,
-	cause dispatch.QueueCause, laneName string, aerr error,
-) (*BinMoveResult, error) {
-	code := protocol.QueueWaitingForSlot
-	params := dispatch.QueueParams{Destination: laneName}
-	if aerr != nil {
-		e.logFn("engine: bin move %d — lane admission could not be read: %v (holding)", order.ID, aerr)
-		cause = dispatch.CauseLaneAcquireError
-		params.Destination = destNode.Name
+// moveRefusal says a planner refusal in the door's vocabulary: the kind a caller
+// answers with, and the sentence a person reads.
+func moveRefusal(r *plan.Refusal, bin *bins.Bin, source, dest *nodes.Node) *BinMoveError {
+	label := ""
+	if bin != nil {
+		label = bin.Label
 	}
-	// Drop any mouth hold the acquire took before it refused, so a parked move
-	// does not sit on a lane it is not using.
-	if lerr := e.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
-		e.logFn("engine: release lanes for parked bin move %d: %v", order.ID, lerr)
+	switch r.Rule {
+	case plan.RefusedClaimed:
+		return refuse(BinMoveConflict, nil, "bin %s is already claimed by order #%d", label, r.Holder)
+	case plan.RefusedLocked:
+		return refuse(BinMoveConflict, nil, "bin %s is locked for handling — try again once it is released", label)
+	case plan.RefusedNotAtSource:
+		return refuse(BinMoveBadRequest, nil, "bin %s is not at %s", label, source.Name)
+	case plan.RefusedDestDisabled:
+		return refuse(BinMoveBadRequest, nil, "%s is disabled, so nothing can be moved there", dest.Name)
+	case plan.RefusedCarrier:
+		if r.Err != nil {
+			return refuse(BinMoveConflict, r.Err, "%s cannot take the bin right now (%v)", dest.Name, r.Err)
+		}
+		return refuse(BinMoveBadRequest, nil, "%s does not take bin %s's carrier", dest.Name, label)
+	case plan.RefusedDestFull:
+		return refuse(BinMoveConflict, ErrDestinationOccupied, "%s", dispatch.CapacitySentence(r.Capacity))
+	case plan.RefusedNoFreeBin:
+		// A conflict with what the plant is doing, not a fault: every bin on that
+		// node is spoken for.
+		return refuse(BinMoveConflict, nil,
+			"no free bin at %s — every bin there is claimed or spoken for", source.Name)
+	default:
+		return refuse(BinMoveFault, r.Err, "could not plan the move: %v", r.Err)
 	}
+}
 
-	// THROUGH THE DISPATCHER'S HELPER, NOT STRAIGHT TO THE STORE, and that is the
-	// whole of this line's history. The store write left order.QueueCode empty on
-	// the struct in hand; Queue()'s history row reads its code off that struct
-	// (dispatch/lifecycle.go historyReason), so the fresh `queued` row was born
-	// blank — and orders.queue_code is overwritten in place, so that row was the
-	// only durable record there was ever going to be of what this person's move
-	// waited for. The helper writes both halves, which is why no park site that
-	// goes through dispatch.WriteQueueDetail has ever had this problem.
-	//
-	// ONE COMPUTATION OF THE SENTENCE, not two. SetQueueReason formats it from
-	// code+params and mirrors it back onto the order, so the FormatQueueSentence
-	// call that used to stand here built the identical string a second time from
-	// the identical inputs — and would have gone on agreeing with the stored one
-	// only for as long as nobody changed the formatter's inputs at one of the two
-	// sites. Reading it back off the order makes the sentence in the history row
-	// the sentence on the row BY CONSTRUCTION.
-	//
-	// If the column write failed, the mirror did not happen and this passes the
-	// blank the row actually carries. That is the honest pairing: the durable
-	// record and the live column say the same thing, and the write failure is
-	// already logged one layer down.
-	e.dispatcher.SetQueueReason(order, code, cause, params)
-	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", order.QueueReason); err != nil {
-		// The order is stuck at `pending`, which no scanner pass selects. Say so
-		// loudly and fail it rather than hand back a row nothing will ever drive.
-		e.logFn("engine: parked bin move %d could not be queued: %v", order.ID, err)
-		e.failOrderAndEmit(order.ID, "lane_park_failed", "lane refused the move and the order could not be queued")
-		return nil, refuse(BinMoveFault, err, "the lane refused the move and it could not be queued: %v", err)
+// moveActor is who the history records as taking a promised bin: the station
+// that asked, or the door when none did.
+func moveActor(req BinMoveRequest) string {
+	if req.StationID != "" {
+		return req.StationID
 	}
-	// The scanner trigger. Synchronous on this goroutine (wiring.go), so a lane
-	// that is already free dispatches before this call returns and the operator's
-	// "queued" is a fraction of a second old at worst.
-	e.Events.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{
-		OrderID:     order.ID,
-		EdgeUUID:    order.EdgeUUID,
-		StationID:   order.StationID,
-		PayloadCode: order.PayloadCode,
-	}})
-
-	return &BinMoveResult{
-		OrderID:     order.ID,
-		FromNode:    sourceNode.Name,
-		ToNode:      destNode.Name,
-		BinLabel:    bin.Label,
-		Queued:      true,
-		QueueReason: order.QueueReason,
-	}, nil
+	return "bin-move"
 }
 
 // resolveMoveSource answers which bin is moving and where it is starting from.
 //
 // This is the whole of the difference between the two surfaces, which is why it
-// is the only part of the move that branches.
+// is the only part of the move that branches. It reads what the person named;
+// whether the plant lets it move is the planner's (ValidateMove, ChooseMove).
 func (e *Engine) resolveMoveSource(req BinMoveRequest) (*bins.Bin, *nodes.Node, error) {
 	switch req.Selection {
 	case BinSelectionByLabel:
@@ -475,19 +346,6 @@ func (e *Engine) resolveMoveSource(req BinMoveRequest) (*bins.Bin, *nodes.Node, 
 		bin, err := e.db.GetBinByLabel(req.BinLabel)
 		if err != nil {
 			return nil, nil, refuse(BinMoveBadRequest, err, "bin not found: %s", req.BinLabel)
-		}
-		// Two questions, because a bin is held in two stages: a soft
-		// reservation taken at planning, then a hard claim taken immediately
-		// before dispatch. For the whole window between them an in-flight
-		// order's bin still has claimed_by NULL, so reading only the claim
-		// showed a bin somebody already has as free.
-		if bin.ClaimedBy != nil {
-			return nil, nil, refuse(BinMoveConflict, nil,
-				"bin %s is already claimed by order #%d", bin.Label, *bin.ClaimedBy)
-		}
-		if bin.HasPendingReservation {
-			return nil, nil, refuse(BinMoveConflict, nil,
-				"bin %s is already spoken for by another order — pick another bin or wait for that one to finish", bin.Label)
 		}
 		if bin.NodeID == nil {
 			return nil, nil, refuse(BinMoveBadRequest, nil,
@@ -505,8 +363,7 @@ func (e *Engine) resolveMoveSource(req BinMoveRequest) (*bins.Bin, *nodes.Node, 
 
 	case BinSelectionAuto:
 		// No bin yet, deliberately: which bin is a question about the plant,
-		// and it is asked after the request itself has been found sound. See
-		// pickFreeBinAt, called once the gates have passed.
+		// and the planner asks it once the request itself has been found sound.
 		sourceNode, err := e.db.GetNode(req.SourceNodeID)
 		if err != nil {
 			return nil, nil, refuse(BinMoveBadRequest, ErrNodeNotFound,
@@ -517,32 +374,6 @@ func (e *Engine) resolveMoveSource(req BinMoveRequest) (*bins.Bin, *nodes.Node, 
 	default:
 		return nil, nil, refuse(BinMoveFault, nil, "unknown bin selection %q", req.Selection)
 	}
-}
-
-// pickFreeBinAt chooses a bin to move off a node when the caller named the node
-// rather than a bin.
-//
-// The order carries a concrete bin id either way. Without one the arrival
-// handler silently skips on completion and the bin's node never reflects the
-// move, which is the stuck-at-source bug.
-func (e *Engine) pickFreeBinAt(sourceNode *nodes.Node) (*bins.Bin, error) {
-	srcBins, err := e.db.ListBinsByNode(sourceNode.ID)
-	if err != nil {
-		return nil, refuse(BinMoveFault, err, "could not list bins at %s: %v", sourceNode.Name, err)
-	}
-	for _, b := range srcBins {
-		// The same two questions the by-label path asks, asked while scanning:
-		// skip a bin another order has reserved but not yet claimed, so the
-		// soft-acquire later does not lose the race.
-		if b.ClaimedBy == nil && !b.HasPendingReservation {
-			return b, nil
-		}
-	}
-	// A conflict with what the plant is doing, not a fault. This was a server
-	// error, which told an engineer the system was broken when the answer was
-	// that every bin on that node is already spoken for.
-	return nil, refuse(BinMoveConflict, nil,
-		"no free bin at %s — every bin there is claimed or spoken for", sourceNode.Name)
 }
 
 // resolveMoveDest answers where the bin is going, by whichever name the caller

@@ -8,10 +8,13 @@ import "shingocore/dispatch/binresolver"
 // (.golangci.yml) stops the package importing one by another road.
 //
 // It is the union of the parts' own read surfaces, each declared where it is
-// used: the picker's (FinderDB), the group resolver's (binresolver.Store) and
-// the slot book's (SlotBookDB).
+// used: the picker's (FinderDB), the group resolver's (binresolver.Store), the
+// capacity gate's (CapacityDB), the loader window choice's (LoaderWindowsDB)
+// and the slot book's (SlotBookDB).
 type Reader interface {
 	FinderDB
 	binresolver.Store
+	CapacityDB
+	LoaderWindowsDB
 	SlotBookDB
 }

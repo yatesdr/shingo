@@ -52,6 +52,19 @@ func lookupRobotID(e *Engine, orderID int64) string {
 
 // ── Outbound messaging ──────────────────────────────────────────────
 
+// stationUnaware reports whether an order's station has no row for it (the
+// orc's Stop 1 ruling), for the notice paths that do not hold the order: one
+// read, asked only when a notice is about to go to a named station. A read
+// failure answers false, which sends the notice as before.
+func (e *Engine) stationUnaware(orderID int64) bool {
+	unaware, err := e.db.OrderStationUnaware(orderID)
+	if err != nil {
+		e.logFn("engine: read station_unaware for order %d: %v (sending the notice)", orderID, err)
+		return false
+	}
+	return unaware
+}
+
 // sendToEdge builds a protocol envelope and enqueues it for dispatch to an edge station.
 func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error {
 	coreAddr := protocol.Address{Role: protocol.RoleCore, Station: e.cfg.Messaging.StationID}
@@ -116,8 +129,11 @@ func (e *Engine) wireEventHandlers() {
 		// failure notifications for an already-failed order are harmless.
 		// Core-minted orders with no Edge behind them — the on-deck recovery
 		// and cancel-return orders — carry an EdgeUUID but no StationID, and
-		// the gate skips them on the station.
-		if ev.StationID != "" && ev.EdgeUUID != "" {
+		// the gate skips them on the station. An order its station has no row
+		// for is skipped too (the orc's Stop 1 ruling), off the read below,
+		// moved up so it is one read for both.
+		order, orderErr := e.db.GetOrder(ev.OrderID)
+		if ev.StationID != "" && ev.EdgeUUID != "" && !(orderErr == nil && order.StationUnaware) {
 			if err := e.sendToEdge(protocol.TypeOrderError, ev.StationID,
 				&protocol.OrderError{
 					OrderUUID: ev.EdgeUUID,
@@ -130,7 +146,7 @@ func (e *Engine) wireEventHandlers() {
 			}
 		}
 
-		if order, err := e.db.GetOrder(ev.OrderID); err == nil {
+		if orderErr == nil {
 			// If child of a compound order, handle parent failure. Otherwise a
 			// top-level order failing may be a two-robot swap leg — unwind its
 			// sibling so a half-swap can't strand/collide the line (ALN_003
@@ -159,7 +175,7 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: order %d skipped: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
 		e.db.AppendAudit("order", ev.OrderID, "skipped", "", ev.Detail, "system")
 
-		if ev.StationID != "" && ev.EdgeUUID != "" {
+		if ev.StationID != "" && ev.EdgeUUID != "" && !e.stationUnaware(ev.OrderID) {
 			if err := e.sendToEdge(protocol.TypeOrderSkipped, ev.StationID,
 				&protocol.OrderSkipped{
 					OrderUUID: ev.EdgeUUID,
@@ -223,7 +239,11 @@ func (e *Engine) wireEventHandlers() {
 		// Core, Core completes and tells Edge it confirmed — costs one message
 		// and no writes: that arm returns early when the Edge row is already
 		// terminal, which after an Edge-side confirm it always is.
-		if ev.StationID != "" && ev.EdgeUUID != "" {
+		//
+		// The order is read once here, for this gate and for the completion
+		// handler below (an order its station has no row for: the Stop 1 ruling).
+		order, orderErr := e.db.GetOrder(ev.OrderID)
+		if ev.StationID != "" && ev.EdgeUUID != "" && !(orderErr == nil && order.StationUnaware) {
 			if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID,
 				&protocol.OrderUpdate{
 					OrderUUID: ev.EdgeUUID,
@@ -236,7 +256,11 @@ func (e *Engine) wireEventHandlers() {
 			}
 		}
 
-		e.handleOrderCompleted(ev)
+		if orderErr != nil {
+			e.logFn("engine: get order %d for completion: %v", ev.OrderID, orderErr)
+			return
+		}
+		e.handleOrderCompletedFor(ev, order)
 	}, EventOrderCompleted)
 
 	// ── Order cancellation ─────────────────────────────────────────
@@ -251,7 +275,7 @@ func (e *Engine) wireEventHandlers() {
 		// terminate, fleet status change, recovery) go through this event handler.
 		// The edge handler (HandleOrderCancelled) is idempotent — a duplicate
 		// cancellation for an already-cancelled order is harmless.
-		if ev.StationID != "" && ev.EdgeUUID != "" {
+		if ev.StationID != "" && ev.EdgeUUID != "" && !e.stationUnaware(ev.OrderID) {
 			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
 				&protocol.OrderCancelled{
 					OrderUUID: ev.EdgeUUID,
@@ -578,7 +602,7 @@ func (e *Engine) wireEventHandlers() {
 	// live path, so it is the one the mirror has to be walked through.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderResumedEvent]) {
 		ev := evt.Payload
-		if ev.EdgeUUID == "" || ev.StationID == "" {
+		if ev.EdgeUUID == "" || ev.StationID == "" || e.stationUnaware(ev.OrderID) {
 			return
 		}
 		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
@@ -842,7 +866,9 @@ func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string, anno
 		e.logFn("engine: queue_reason push: load order %d: %v", orderID, err)
 		return
 	}
-	if !protocol.IsAcquiring(order.Status) || order.QueueReason == "" {
+	// An order its station has no row for is sent nothing (the orc's Stop 1
+	// ruling).
+	if order.StationUnaware || !protocol.IsAcquiring(order.Status) || order.QueueReason == "" {
 		return
 	}
 	if announced != nil && dispatch.WaitTold(*announced, dispatch.WaitOf(order)) {

@@ -1,0 +1,24 @@
+{
+  "need": {
+    "delivery": "ALN_007",
+    "door": "edge wire intake",
+    "note": "the delivery node already holds a bin",
+    "payload": "STUD",
+    "source": "SYN_MARKET",
+    "type": "retrieve"
+  },
+  "decision": [
+    {
+      "index": 1,
+      "type": "retrieve",
+      "status": "pending",
+      "station": "line-1",
+      "quantity": 1,
+      "payload": "STUD",
+      "source": "SYN_MARKET",
+      "delivery": "ALN_007",
+      "origin_class": "orphan",
+      "projected": "pending"
+    }
+  ]
+}

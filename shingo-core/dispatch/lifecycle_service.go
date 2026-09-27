@@ -73,7 +73,10 @@ func (s *LifecycleService) dbg(format string, args ...any) {
 	}
 }
 
-func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest) (*orders.Order, string, *lifecycleError) {
+// CreateInboundOrder births the order a station sent. decide is the planner's
+// question for this order, asked after the ref-checks and before the INSERT so
+// the pick rides the birth (orders.plan; B3's first item); nil asks nothing.
+func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest, decide func(order *orders.Order, payloadCode string) plan.Plan) (*orders.Order, string, *lifecycleError) {
 	payloadCode := p.PayloadCode
 	// Wire-protocol normalization: edge may send OrderTypeRetrieve + RetrieveEmpty=true.
 	// Promote that pair to the canonical OrderTypeRetrieveEmpty so downstream code
@@ -149,10 +152,34 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		binID := p.BinID
 		order.NamedBinID = &binID
 	}
-	if lerr := s.admitOrder(order); lerr != nil {
+	// Born through the builder. The need is what the station stated, with the
+	// delivery as admission resolved it; the plan is the pick, when the decision
+	// found one.
+	if lerr := s.admit(order, func() error {
+		var pl plan.Plan
+		if decide != nil {
+			pl = decide(order, payloadCode)
+		}
+		return s.birth(order, Need{
+			Type:            orderType,
+			Station:         order.StationID,
+			Ref:             order.EdgeUUID,
+			Quantity:        order.Quantity,
+			Priority:        order.Priority,
+			Desc:            order.PayloadDesc,
+			PayloadCode:     order.PayloadCode,
+			OriginID:        order.OriginID,
+			OriginClass:     order.OriginClass,
+			StationKnows:    true,
+			Source:          order.SourceNode,
+			Delivery:        order.DeliveryNode,
+			SkipAutoConfirm: order.SkipAutoConfirm,
+			NamedBin:        order.NamedBinID,
+		}, pl)
+	}); lerr != nil {
 		return nil, "", lerr
 	}
-	// Emitted by the CALLER, not by admitOrder, and deliberately with the RAW
+	// Emitted by the CALLER, not by admit, and deliberately with the RAW
 	// wire values: p.OrderType rather than the promoted orderType, and
 	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
 	// are what the sender said, and this event reports receipt of a request. A
@@ -176,7 +203,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 
 // projectOrder pushes an order's row down to the station that owns it.
 //
-// SCOPE IS DEFINED BY admitOrder, on purpose. Every order admitted through that
+// SCOPE IS DEFINED BY admission (admit), on purpose. Every order admitted through that
 // body projects, and nothing else does — compound children and complex orders
 // stay out, because a child is a step of a parent the Edge already knows about
 // and complex orders were excluded by name. Tying the scope to a function rather
@@ -189,12 +216,11 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 	s.emitter.ProjectOrder(order.StationID, ProjectionFor(order))
 }
 
-// admitOrder is the wire-free middle of order intake: validate the payload,
-// resolve a synthetic delivery node, insert the row, and mark it pending. It
-// takes a fully-built *orders.Order because that is already the shape every
-// caller has — a parallel spec struct would be a second field list to keep in
-// step with the first, which is the failure mode TestCensus_OrdersTableInsertStatements
-// exists to prevent one layer down.
+// admit is the wire-free middle of order intake: validate the payload, resolve a
+// synthetic delivery node, birth the row, and stamp the destination's
+// resolution. The birth is the door's own (every door on admission births
+// through Build, by LifecycleService.birth); admit runs it between the checks
+// and the stamp.
 //
 // It is extracted so a Core-originated order can be admitted through exactly the
 // same body as a wire-originated one, without synthesizing a fake OrderRequest.
@@ -204,11 +230,11 @@ func (s *LifecycleService) projectOrder(order *orders.Order) {
 //
 // This is NOT the only way an order comes into existence in Core — see
 // TestCensus_OrderCreationDoors for the whole list. Of the seven doors there,
-// THREE route through this body (the Edge wire intake above, and the two Core
+// THREE route through admission (the Edge wire intake above, and the two Core
 // timer doors by way of AdmitCoreAsk); the other four write their row another
-// way. So anything hung off this function covers three doors in seven, which is
-// the number to hold in mind before saying "every order gets this".
-func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
+// way. So anything hung off admission covers three doors in seven, which is the
+// number to hold in mind before saying "every order gets this".
+func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifecycleError {
 	destNode, lerr := s.checkOrderRefs(order)
 	if lerr != nil {
 		return lerr
@@ -217,7 +243,7 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 	if lerr != nil {
 		return lerr
 	}
-	if err := s.db.CreateOrder(order); err != nil {
+	if err := birth(); err != nil {
 		return lifecycleErr("internal_error", err.Error(), err)
 	}
 	// THE SELECTOR'S OWN CLOCK READING, WRITTEN AFTER THE ROW EXISTS. There is no
@@ -240,6 +266,17 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 	// the history row saying the order began, which orders.Create now writes in
 	// the INSERT's own transaction for every door. Keeping it would have put a
 	// second `pending` row on every wire-intake order.
+	return nil
+}
+
+// birth writes the order through the builder in its own transaction
+// (birthOwnTx) and leaves order as written.
+func (s *LifecycleService) birth(order *orders.Order, need Need, p plan.Plan) error {
+	built, err := birthOwnTx(s.db, need, p)
+	if err != nil {
+		return err
+	}
+	*order = *built
 	return nil
 }
 
@@ -289,7 +326,7 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 // A zero time means no choice was made here — not synthetic, no resolver, or a
 // full group left to queue. A non-zero time is the instant the store-slot
 // selector approved this destination, and it is the only moment in the system at
-// which that guard was consulted for this order. admitOrder writes it down
+// which that guard was consulted for this order. admit writes it down
 // because the burial tripwire has to be able to ask "could the selector have
 // seen this claim", and until this column existed it was reduced to comparing
 // against the fleet-commit — an event that can trail the choice by minutes.
@@ -298,7 +335,7 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 //
 // ── WHY INTAKE IS THE BLIND SPOT ────────────────────────────────────────────
 //
-// admitOrder resolves the destination BEFORE the INSERT — its own comment says
+// admit resolves the destination BEFORE the INSERT — its own comment says
 // so: "resolution rewrites a field on a struct that has no id yet". So the order
 // has no id, no bin row and no reservation, and GroupResolver.settleBinType's
 // order-id lookup can find nothing. It reported "I do not know", the fence read
