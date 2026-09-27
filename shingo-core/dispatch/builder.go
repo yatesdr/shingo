@@ -6,9 +6,11 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
 	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -166,6 +168,18 @@ func birthOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, error) {
 		return nil, err
 	}
 	return o, nil
+}
+
+// PlanMaintainedSlot asks the planner for the slot one keeper ask fills
+// (plan.MaintainedSlot).
+func (d *Dispatcher) PlanMaintainedSlot(group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
+	return d.pure.MaintainedSlot(group, binTypeID)
+}
+
+// PlanGroupStoreSlot asks the planner for the slot a carrier is stored in when it
+// goes into a group (plan.GroupStoreSlot).
+func (d *Dispatcher) PlanGroupStoreSlot(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
+	return d.pure.GroupStoreSlot(group, payloadCode, stated)
 }
 
 // PlanMove asks the planner for a bin move: it validates a named bin (Given),

@@ -11,11 +11,9 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/dispatch"
-	"shingocore/dispatch/binresolver"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
 
 // maintainer.go — the maintained-group level keeper.
@@ -53,6 +51,22 @@ import (
 // There is no shadow flag. A group is maintained when its own maintain_enabled
 // property says so, which no production group has set until an owner sets it.
 // The per-tick subtraction line is the floor diagnostic, not a mode.
+//
+// ── THE KNOWN EXPOSURE: A WIPED CORE, FOR AT MOST ONE HEARTBEAT ────────────
+//
+// The keeper's empties come from the shared empty finders, whose cell arm keeps
+// a carrier on any of a claim's positions (core, paired, second paired) out of
+// the pool. The only Core record that ties a cell position to its Edge is the
+// claims mirror the Edges publish; node_stations is an admin allow-list, empty
+// on every rig plant, and a node carries no kind. A Core restart that keeps its
+// database keeps the mirror and is not exposed. A WIPED Core has no mirror until
+// each Edge re-registers and republishes its claims, which it does on every
+// registration (shingo-edge/cmd/shingoedge/main.go): at most one heartbeat,
+// about 60 s. Inside that window a cell's carrier reads as a free empty, and the
+// consequence is one recoverable move. Accepted, with no guard (the orc's
+// ruling on the B3 close-out, stop 6): a wiped Core is an incident, not an
+// operating mode, and keying the arm on node_stations would guard nothing on the
+// rig and the wrong nodes at a plant.
 
 // maintainerTickInterval is the cadence. Slow on purpose: this is a level
 // keeper, not a reflex. A carrier takes minutes to arrive, the subtraction
@@ -339,15 +353,13 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 func (m *Maintainer) createAsks(g *nodes.Node, lv store.MaintainLevel, station string,
 	episode store.DemandOrigin, gap int) (created int, heldBy string) {
 
-	resolver := m.eng.maintainerResolver()
-	if resolver == nil {
-		return 0, "no resolver"
-	}
-	binTypeID := lv.BinTypeID
 	for i := 0; i < gap; i++ {
-		// The one door that has always named its carrier: the level IS a carrier
-		// type, so this asks for a free slot OF that type rather than any free slot.
-		res, err := resolver.ResolveStore(g, "", binresolver.KnownBinType(binTypeID), reservations.Anyone)
+		// The slot is the planner's (plan.MaintainedSlot). The one door that has
+		// always named its carrier: the level IS a carrier type, so this asks for a
+		// free slot OF that type rather than any free slot. Each ask is born before
+		// the next is chosen: the resolver's count of what is inbound is what
+		// moves the next choice on.
+		res, err := m.eng.dispatcher.PlanMaintainedSlot(g, lv.BinTypeID)
 		if err != nil || res == nil || res.Node == nil {
 			// QUEUE-ON-FULL IS A NORMAL OUTCOME, NEVER AN ERROR. The group has no
 			// free typed slot this tick; the level stays short, the episode stays
@@ -455,19 +467,6 @@ func (m *Maintainer) oldestAsk(originID string) (*orders.Order, bool) {
 		}
 	}
 	return oldest, oldest != nil
-}
-
-// maintainerResolver builds the slot chooser.
-//
-// THE SAME RESOLVER INTAKE USES, deliberately — a slot the keeper picks is one
-// the ordinary path would have picked, and the per-child count+inflight>=1 check
-// that bounds the pre-resolve loop is that resolver's own, not a second opinion
-// written here.
-func (e *Engine) maintainerResolver() *binresolver.GroupResolver {
-	if e.db == nil {
-		return nil
-	}
-	return &binresolver.GroupResolver{DB: e.db, DebugLog: e.dbg}
 }
 
 // MaintainedGroupStates is the accessor the www layer reads. It exists so www

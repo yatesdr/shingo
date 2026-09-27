@@ -47,7 +47,6 @@ import (
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
 
 const (
@@ -406,8 +405,10 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 	default:
 		return nil, "it is a single position, not a store group or a loader position"
 	}
-	gr, stated := e.maintainerResolver(), binresolver.KnownBinType(bin.BinTypeID)
-	res, err := gr.ResolveStore(group, bin.PayloadCode, stated, reservations.Anyone)
+	// The slot is the planner's (plan.GroupStoreSlot), the group resolver the
+	// level keeper and intake ask.
+	stated := binresolver.KnownBinType(bin.BinTypeID)
+	res, err := e.dispatcher.PlanGroupStoreSlot(group, bin.PayloadCode, stated)
 	if err == nil && res != nil && res.Node != nil {
 		return res.Node, ""
 	}
@@ -434,7 +435,7 @@ func (e *Engine) storeInto(src *nodes.Node, bin *bins.Bin) (*nodes.Node, string)
 		}
 		return nil, group.Name + " is at its declared level and " + why
 	}
-	res, err = gr.ResolveStore(over, bin.PayloadCode, stated, reservations.Anyone)
+	res, err = e.dispatcher.PlanGroupStoreSlot(over, bin.PayloadCode, stated)
 	if err != nil || res == nil || res.Node == nil {
 		return nil, fmt.Sprintf("%s is at its declared level; its overflow %s refused too: %s",
 			group.Name, over.Name, refusalText(err, "no slot"))

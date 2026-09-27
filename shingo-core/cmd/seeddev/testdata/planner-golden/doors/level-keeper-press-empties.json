@@ -10,22 +10,20 @@
       {
         "external": "order 1 of this case",
         "blocks": [
-          "PLN_002 JackLoad",
+          "SLN_010 JackLoad",
           "PEB_001 JackUnload"
         ]
       },
       {
         "external": "order 2 of this case",
         "blocks": [
-          "PLN_006 JackLoad",
-          "PEB_002 JackUnload"
+          "Lane_03-WAIT Wait"
         ]
       },
       {
         "external": "order 3 of this case",
         "blocks": [
-          "SLN_010 JackLoad",
-          "PEB_003 JackUnload"
+          "Lane_04-WAIT Wait"
         ]
       }
     ],
@@ -34,17 +32,17 @@
         "index": 1,
         "type": "retrieve_empty",
         "status": "dispatched",
-        "source": "PLN_002",
+        "source": "SLN_010",
         "delivery": "PEB_001",
-        "bin": "BIN-ACT-P1B",
+        "bin": "BIN-PEB-03",
         "hard_bins": [
-          "BIN-ACT-P1B"
+          "BIN-PEB-03"
         ],
         "hard_slots": [
           "PEB_001"
         ],
         "reservations": [
-          "bin:confirmed:BIN-ACT-P1B",
+          "bin:confirmed:BIN-PEB-03",
           "slot:confirmed:PEB_001"
         ],
         "to_fleet": true
@@ -53,17 +51,23 @@
         "index": 2,
         "type": "retrieve_empty",
         "status": "dispatched",
-        "source": "PLN_006",
+        "source": "UTN_001",
         "delivery": "PEB_002",
-        "bin": "BIN-PEB-02",
+        "bin": "BIN-MT-01",
+        "steps": [
+          "wait Lane_03-WAIT",
+          "pickup UTN_001 (empty)",
+          "dropoff PEB_002"
+        ],
         "hard_bins": [
-          "BIN-PEB-02"
+          "BIN-MT-01"
         ],
         "hard_slots": [
           "PEB_002"
         ],
         "reservations": [
-          "bin:confirmed:BIN-PEB-02",
+          "bin:confirmed:BIN-MT-01",
+          "mouth:confirmed:Lane_11",
           "slot:confirmed:PEB_002"
         ],
         "to_fleet": true
@@ -72,17 +76,23 @@
         "index": 3,
         "type": "retrieve_empty",
         "status": "dispatched",
-        "source": "SLN_010",
+        "source": "UTN_004",
         "delivery": "PEB_003",
-        "bin": "BIN-PEB-03",
+        "bin": "BIN-MT-04",
+        "steps": [
+          "wait Lane_04-WAIT",
+          "pickup UTN_004 (empty)",
+          "dropoff PEB_003"
+        ],
         "hard_bins": [
-          "BIN-PEB-03"
+          "BIN-MT-04"
         ],
         "hard_slots": [
           "PEB_003"
         ],
         "reservations": [
-          "bin:confirmed:BIN-PEB-03",
+          "bin:confirmed:BIN-MT-04",
+          "mouth:confirmed:Lane_12",
           "slot:confirmed:PEB_003"
         ],
         "to_fleet": true

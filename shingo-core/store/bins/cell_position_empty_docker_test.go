@@ -120,7 +120,9 @@ func TestEmptyScan_SkipsACellsOwnPosition(t *testing.T) {
 // keep-staged spare, the empties group's level keeper topped up its pool with
 // that carrier ("order 23 fulfilled — bin 17 (PLN_002 -> PEB_001)"). The index
 // leg could then never reserve, nothing re-plans a parked pair, and the press
-// held until a changeover cancelled the swap.
+// held until a changeover cancelled the swap. The demo plant's specimen is
+// BIN-ACT-P1B on PLN_002, PRESS-1's paired index position, which the level
+// keeper's first ask took (planner golden, level-keeper-press-empties).
 func TestEmptyScan_SkipsAPressCellsPairedPositions(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

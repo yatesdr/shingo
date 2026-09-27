@@ -105,3 +105,37 @@ func OverflowGroupOf(db OverflowReader, group *nodes.Node) (*nodes.Node, string)
 	}
 	return dest, ""
 }
+
+// MaintainedSlot chooses the free slot of a maintained group that one keeper
+// ask fills: the group resolver's store mode, asked with the level's carrier
+// type (the one door that has always named its carrier) and as nobody's dig.
+//
+// The group resolver directly, not StoreDestination: a maintained group is an
+// NGRP (its config save refuses anything else), so the child listing the
+// general resolver makes before delegating would be a read the keeper never
+// made. The resolver's per-child count + inflight >= 1 check is what bounds the
+// keeper's loop, which is why the keeper births each ask before asking again.
+//
+// Moved from engine (Maintainer.createAsks' ResolveStore) unchanged (B3).
+func (p *Planner) MaintainedSlot(group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
+	defer observe(p.db, "maintained-slot")()
+	return p.groupStore(group, "", binresolver.KnownBinType(binTypeID))
+}
+
+// GroupStoreSlot chooses the free child of a node group a carrier is stored in:
+// the group resolver's store mode, asked with the carrier the caller states and
+// as nobody's dig. The cancel-return's store into a claim's declared source
+// asks it (engine storeInto), and reads its refusal: a maintained group at its
+// level answers binresolver.ErrAtDeclaredLevel, which is what sends the bin
+// one hop to the group's overflow.
+func (p *Planner) GroupStoreSlot(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
+	defer observe(p.db, "group-store-slot")()
+	return p.groupStore(group, payloadCode, stated)
+}
+
+// groupStore is the group resolver's store mode, the one slot chooser
+// MaintainedSlot and GroupStoreSlot share.
+func (p *Planner) groupStore(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
+	gr := &binresolver.GroupResolver{DB: p.db, DebugLog: p.dbg}
+	return gr.ResolveStore(group, payloadCode, stated, domain.Anyone)
+}
