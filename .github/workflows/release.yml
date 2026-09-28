@@ -16,9 +16,29 @@ jobs:
     uses: ./.github/workflows/core.yml
   test-edge:
     uses: ./.github/workflows/edge.yml
+  test-shared:
+    # Was absent: a release shipped without shared's tests having run on the
+    # tag. protocol/core/edge all build against shared via go.work, so a
+    # broken shared passed their builds while its own seven test files ran
+    # nowhere in the release chain.
+    uses: ./.github/workflows/shared.yml
+  test-integration:
+    # Was absent for the same reason — the scenario suite is the only place
+    # the five modules are exercised together before a release.
+    uses: ./.github/workflows/integration.yml
+  lint:
+    # Was absent: the lint gate (depguard + forbidido + the docker-tag
+    # compile) ran on pushes but never gated a release.
+    uses: ./.github/workflows/lint.yml
+  guards:
+    # Was absent: the scripts/check-*.sh guard set never gated a release.
+    uses: ./.github/workflows/guards.yml
 
   release:
-    needs: [test, test-core, test-edge]
+    # Every gate that runs on a push now also gates the tag: lint, shared,
+    # integration, guards join protocol/core/edge. Nothing ships that did
+    # not pass the same checks a branch had to.
+    needs: [test, test-core, test-edge, test-shared, test-integration, lint, guards]
     runs-on: ubuntu-latest
     permissions:
       contents: write

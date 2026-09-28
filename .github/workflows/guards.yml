@@ -1,0 +1,58 @@
+name: Guards
+
+# The script guards (scripts/check-*.sh) as their own CI workflow.
+#
+# WHY A SEPARATE WORKFLOW: the guards are repo-wide text/consistency checks
+# over scripts, docs and workflow files — exactly the files lint.yml's
+# '**.go' path filter excludes. Folding them into lint.yml would either fire
+# the five-module golangci matrix on a docs change (the thing lint.yml's
+# filter exists to prevent) or inherit the filter and never run on the files
+# the guards police. No path filter here, deliberately: a guard that skips
+# the files it guards is not a guard. js.yml was deleted rather than merged
+# because its one job is also a scripts/check-*.sh invocation, now covered
+# here on every push and PR.
+#
+# gate.sh's scripts step globs the same set locally, so a guard runs in
+# exactly one place remotely and one place locally — never a job here per
+# guard, which is the pairing that let the first guards go missing (see
+# gate.sh's step_scripts note).
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# See core.yml — coalesce burst pushes; only the latest commit matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.0'
+          # check-dead-identifiers runs a Go tool over the repo; every other
+          # guard is grep/awk. go.sum-keyed cache as in core.yml.
+          cache-dependency-path: "**/go.sum"
+
+      # check-test-error-discard-ratchet.sh runs golangci-lint and FAILS when
+      # it is not on PATH, so the guards need the linter installed — at the
+      # same pin as lint.yml and the .golangci.yml header (bump them together).
+      # install-only: the ratchet runs it; the action must not.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+          install-only: true
+
+      # Same call the local gate makes (gate.sh step_scripts), so CI and the
+      # pre-push gate cannot disagree about which guards ran.
+      - name: script guards
+        run: bash scripts/gate.sh scripts

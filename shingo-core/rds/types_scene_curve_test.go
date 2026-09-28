@@ -10,7 +10,7 @@ import (
 )
 
 // The fixtures below are VERBATIM advanced curves from Springfield's live
-// scene (GET http://10.222.10.76:8088/scene, 2026-07-26), with only `property`
+// scene (GET /scene on the plant RDS host, 2026-07-26), with only `property`
 // and `devices` emptied — property carries one key, bindRobotMap, listing
 // twelve robot/map bindings and no geometry at all.
 //

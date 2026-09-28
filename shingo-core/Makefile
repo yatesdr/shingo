@@ -58,12 +58,21 @@ clean-testcontainers:
 	@ids=$$(docker ps -aq --filter label=org.testcontainers=true 2>/dev/null) ; \
 	  [ -z "$$ids" ] || docker rm -fv $$ids >/dev/null 2>&1 || true
 
-# Run the full suite, including the //go:build docker-tagged tests
-# that require a live Postgres via testdb / testcontainers. Use this
-# locally before pushing, and in CI where Docker Desktop is available.
-# Always reaps its testcontainers afterward, then preserves the test exit code.
+# The full suite: the //go:build docker-tagged tests behind one gate call.
+#
+# gate.sh docker, not a bare `go test -tags=docker ./...`: the gate starts
+# ONE shared Postgres for every package (a bare run boots one per package —
+# measured 61% of the suite's wall time — and thrashes the box at default
+# parallelism; see scripts/gate.sh's docker_p note), runs the skip-together
+# sentinel, and prints the failure excerpt. Same modules, same tests, honest
+# harness. The reap stays as the belt to the gate's braces (ledger item I7's
+# pairing), and the exit code is the test run's own.
+#
+# If the shared server cannot start, gate.sh says so and falls back to one
+# container per package, and prints the cost as its arithmetic
+# (N docker-tagged packages x ~5s = total).
 test-all:
-	go test -v -tags=docker ./... ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
+	bash ../scripts/gate.sh docker ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
 
 # Regenerate the committed schema snapshot: boot an empty Postgres, run the
 # FULL migrate path, pg_dump --schema-only, write store/schema/schema.snapshot.sql.

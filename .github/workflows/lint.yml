@@ -37,24 +37,48 @@ jobs:
       # both passes). shared was missing for the same reason and worse:
       # it was in no workflow at all, so its seven test files ran
       # nowhere in CI. It lints clean today.
+      #
+      # cache_key replaces the old repo-wide "**/go.sum" glob, which gave
+      # every matrix job an IDENTICAL cache key: the first module to finish
+      # saved, the rest skipped with "already exists", and the stored build
+      # cache belonged to whichever module won the race — measured in
+      # core.yml as a 42s→36s "warm" restore that then recompiled
+      # everything. See core.yml's full note for the mechanism.
+      #
+      # Each module keys on its own go.sum plus protocol/go.sum (go.work
+      # builds every module against protocol, so its deps are part of what
+      # got compiled) — except shared, which has no go.sum of its own, and
+      # hashing a file that does not exist resolves nothing and throws the
+      # way the unset default did. protocol appears twice in its own key;
+      # the duplicate hash input is harmless and keeps the list uniform.
       matrix:
-        module: [protocol, shared, shingo-core, shingo-edge, integration]
+        include:
+          - module: protocol
+            cache_key: |
+              protocol/go.sum
+          - module: shared
+            cache_key: |
+              protocol/go.sum
+          - module: shingo-core
+            cache_key: |
+              shingo-core/go.sum
+              protocol/go.sum
+          - module: shingo-edge
+            cache_key: |
+              shingo-edge/go.sum
+              protocol/go.sum
+          - module: integration
+            cache_key: |
+              integration/go.sum
+              protocol/go.sum
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.0'
-          # Without this, the cache is silently OFF. setup-go defaults
-          # cache:true, and with no cache-dependency-path it requires `go.mod`
-          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
-          # repo: the root has go.work and the go.mod files sit one level down,
-          # so the lookup throws "Dependencies file is not found ... Supported
-          # file pattern: go.mod" — and main.ts catches it into a warning, so
-          # the job stays green having restored nothing. It caches both
-          # GOMODCACHE and GOCACHE, so every job was re-downloading every
-          # module and recompiling from scratch. See core.yml for the full note.
-          cache-dependency-path: "**/go.sum"
+          # Per-module key — see the matrix comment above for why the old
+          # "**/go.sum" glob was every job sharing one cache entry.
+          cache-dependency-path: ${{ matrix.cache_key }}
 
       # THE MODULE MUST BUILD WITHOUT go.work. Runs before the linter because
       # it is the cheaper check and it fails on a strictly more basic problem:
@@ -127,28 +151,9 @@ jobs:
           # invocation, before anything reaches CI.
           verify: false
 
-  swap-mode-literals:
-    # Guards against raw swap-mode strings outside protocol/swap_mode.go
-    # and tests. forbidigo can only match identifier expressions, so
-    # this grep-based check enforces "use the typed constants" instead.
-    # See scripts/check-swap-mode-literals.sh.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: check
-        run: bash scripts/check-swap-mode-literals.sh
-
-  dead-identifiers:
-    # An identifier a Go comment cites (`Foo(`, `x.Foo`, backticked, or a
-    # retired name) must be declared somewhere in the repo. A stdlib-only Go
-    # tool, about 3 s. See scripts/check-dead-identifiers.sh.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.25.0'
-          # Without it the go.work layout silently disables the cache; see core.yml.
-          cache-dependency-path: "**/go.sum"
-      - name: check
-        run: bash scripts/check-dead-identifiers.sh
+  # swap-mode-literals and dead-identifiers jobs were deleted 2026-09-27:
+  # both are scripts/check-*.sh invocations, discovered-and-run by gate.sh's
+  # step_scripts glob and now by guards.yml on every push and PR. Carrying
+  # them as hand-listed jobs here was the pairing that let the first guard
+  # go missing from CI — a new check-*.sh had to be remembered in this file
+  # by whoever wrote it (see gate.sh's step_scripts note).

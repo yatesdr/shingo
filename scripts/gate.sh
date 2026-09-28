@@ -48,6 +48,14 @@
 #   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
 #   bash scripts/gate.sh modbuild         GOWORK=off go build, per module
 #   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race|sim  one step
+#   bash scripts/gate.sh lint|test [MODULE...]
+#                                         lint or unit-test only the named modules
+#                                         (protocol shared shingo-core shingo-edge
+#                                         integration); an unknown name is a usage
+#                                         error, and the gate sentence names the
+#                                         scope so a scoped pass cannot be pasted
+#                                         as a whole-repo one
+#
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -79,7 +87,33 @@ if [ -n "${WSL_DISTRO_NAME:-}" ] && case "$ROOT" in /mnt/*) true ;; *) false ;; 
   echo >&2
 fi
 
-MODULES="protocol shared shingo-core shingo-edge integration"
+ALL_MODULES="protocol shared shingo-core shingo-edge integration"
+usage() {
+  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full] [BASE]" >&2
+  echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
+  exit 2
+}
+
+# SCOPED RUNS. `gate.sh lint|test shingo-core shared` is the interface;
+# GATE_MODULES is how it is carried to the steps (and still honoured when set
+# directly). Either way every name is checked against ALL_MODULES — a typo
+# that silently scoped the run to nothing would print "ok" over no modules.
+if [ $# -gt 1 ]; then
+  case "$1" in
+    lint|test) GATE_MODULES="${*:2}" ;;
+  esac
+fi
+MODULES="${GATE_MODULES:-$ALL_MODULES}"
+for _m in $MODULES; do
+  case " $ALL_MODULES " in
+    *" $_m "*) ;;
+    *) echo "gate.sh: unknown module '$_m'" >&2; usage ;;
+  esac
+done
+[ -n "${MODULES// /}" ] || { echo "gate.sh: empty module list" >&2; usage; }
+# The scope the sentence names: empty when every module ran.
+gate_scope=""
+[ "$(echo $MODULES)" = "$ALL_MODULES" ] || gate_scope="$(echo $MODULES)"
 rc=0
 
 # Which modules actually carry docker-tagged tests. COMPUTED, not listed,
@@ -292,6 +326,103 @@ step_scripts() {
   return $failed
 }
 
+
+# excerpt_failures <log> — THE failure excerpt, for every step that runs tests:
+# unit (step_test), docker, race and sim all print through this one function,
+# so a red step reads the same whichever of them went red. In order:
+#
+#   1. each LEAF `--- FAIL:` (a failing test with no failing subtest under it;
+#      a parent's block is only its children's headers) with its indented
+#      block. Inside the block the `*_test.go:N:` assertion lines are kept and
+#      the engine's t.Log chatter around them is dropped; a block with no
+#      assertion line (a race report, a helper without t.Helper) is kept
+#      whole. Capped per test and in the number of tests.
+#   2. the package-level lines: `FAIL <pkg>`, `panic:`, `DATA RACE`, and the
+#      compiler's `# pkg` / `file.go:L:C:` lines when a package did not build.
+#   3. the log path, always.
+#
+# No `ok` lines and no unindented app logging: the 30-line `grep -Ev` excerpts
+# this replaced interleaved both and buried the index of what broke.
+# Pinned against the preserved docker fixture (evidence-lead/a3-proof.sh).
+excerpt_failures() {
+  # Caps: at most 30 leaf tests, 8 block lines each. Inside the function so it
+  # can be lifted out alone (evidence-lead/a3-proof.sh sources just this).
+  local log="$1" maxt=30 maxl=8
+  awk -v maxt="$maxt" -v maxl="$maxl" '
+    function indent(s) { match(s, /^ */); return RLENGTH }
+    { line[NR] = $0 }
+    END {
+      shown = 0; extra = 0
+      for (i = 1; i <= NR; i++) {
+        if (line[i] !~ /^ *--- FAIL: /) continue
+        ind = indent(line[i])
+        leaf = 1
+        for (j = i + 1; j <= NR && line[j] != "" && indent(line[j]) > ind; j++)
+          if (line[j] ~ /^ *--- FAIL: /) leaf = 0
+        if (!leaf) continue
+        if (shown >= maxt) { extra++; continue }
+        shown++
+        # Keep the assertion lines (and their deeper continuation lines).
+        n = 0; keep = 0; any = 0
+        for (k = i + 1; k < j; k++) if (line[k] ~ /_test\.go:[0-9]+:/) any = 1
+        for (k = i + 1; k < j; k++) {
+          if (!any) { sel[++n] = line[k]; continue }
+          if (indent(line[k]) == ind + 4) keep = (line[k] ~ /_test\.go:[0-9]+:/)
+          if (keep) sel[++n] = line[k]
+        }
+        hdr = line[i]; sub(/^ +/, "", hdr)
+        print "  " hdr
+        for (k = 1; k <= n && k <= maxl; k++) {
+          s = sel[k]; sub(/^ +/, "", s)
+          print "      " substr(s, 1, 400)
+        }
+        if (n > maxl) print "      ... (" n - maxl " more lines in the log)"
+      }
+      if (extra > 0) print "  ... and " extra " more failing tests (see the log)"
+    }' "$log"
+  grep -E '^FAIL[[:space:]]+[^[:space:]]|^panic: |DATA RACE|^# |^[^ ]+\.go:[0-9]+:[0-9]+: ' "$log" \
+    | awk '!seen[$0]++' | head -20 | sed 's/^/  /'
+  echo "  (full log: $log)"
+}
+
+# harness_verdict <log> — connect-shaped failure classifier for docker logs.
+# A docker run that fails because the shared Postgres was unavailable shows
+# every failing test with a connect/auth error; those are re-runs, not bugs.
+# An "other" failure that fails again alone is real. The verdict names the
+# split so the reader re-runs before debugging.
+# A3's pin: A3-block-classification.txt — 36 of 37 CONNECT, 1 OTHER.
+harness_verdict() {
+  local log="$1" name total=0 other=0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    total=$((total + 1))
+    if ! awk -v t="$name" '
+      index($0, "--- FAIL: " t) { infail=1; next }
+      /^--- FAIL: / { infail=0 }
+      infail && /failed to connect|failed SASL auth|connection refused|dial tcp/ { found=1; exit }
+      END { exit !found }
+    ' "$log"; then
+      other=$((other + 1))
+      echo "  other failures (not connect-shaped):"
+      echo "    $name"
+      # The message is the test's own t.Error/t.Fatal output: the block's
+      # `_test.go:NN:` lines (up to 3). Engine and store log lines in the same
+      # block come first and say nothing about the failure; only when the
+      # block has no _test.go line does its first line stand in.
+      awk -v t="$name" '
+        index($0, "--- FAIL: " t) { infail=1; next }
+        /^--- FAIL: / { infail=0 }
+        infail && first == "" { first = $0 }
+        infail && /_test\.go:[0-9]+:/ { print "      " $0; n++; if (n >= 3) exit }
+        END { if (n == 0 && first != "") print "      " first }
+      ' "$log"
+    fi
+  done < <(grep -E '^--- FAIL:' "$log" | sed 's/^--- FAIL: //; s/ (.*//' | sort -u)
+  if [ "$total" -gt 0 ]; then
+    echo "HARNESS: $((total - other)) of $total failing tests are connect failures to the shared Postgres — re-run before debugging; an \"other\" test that fails again alone is real."
+  fi
+}
+
 step_test() {
   local m failed=0 logdir mods
   mods="${1:-$MODULES}"
@@ -320,18 +451,18 @@ step_test() {
   # One background job per module; collect failures when the last lands. The
   # log stays per-module ($logdir/test-$m.log) so the excerpt printed on a
   # failure is that module's own, not another's interleaving.
+  # Each job records its own exit code: the verdict is go test's, not a guess
+  # read back out of the log text.
   for m in $mods; do
-    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1 ) &
+    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1
+      echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
   for m in $mods; do
-    if ! grep -q '^ok' "$logdir/test-$m.log" 2>/dev/null; then
-      echo "  $m:"
-      grep -Ev '^ok |no test files' "$logdir/test-$m.log" | head -30
-      failed=1
-    elif grep -qE '^(FAIL|--- FAIL)' "$logdir/test-$m.log" 2>/dev/null; then
-      echo "  $m:"
-      grep -E '^(FAIL|--- FAIL)' "$logdir/test-$m.log" | head -30
+    if [ "$(cat "$logdir/test-$m.rc" 2>/dev/null)" != 0 ] \
+        || grep -qE '^(FAIL|--- FAIL)' "$logdir/test-$m.log" 2>/dev/null; then
+      echo "  --- $m ---"
+      excerpt_failures "$logdir/test-$m.log"
       failed=1
     fi
   done
@@ -388,7 +519,7 @@ step_sim() {
     # Windows: borrow WSL's cgo, exactly as step_race does, and translate the
     # path rather than assuming /mnt/c — a worktree is not always under it.
     local wslroot
-    wslroot="$(wsl.exe -d Ubuntu -- wslpath -a "$(pwd -W 2>/dev/null || pwd)" 2>/dev/null | tr -d ' ')"
+    wslroot="$(wsl.exe -d Ubuntu -- wslpath -a "$(pwd -W 2>/dev/null || pwd)" 2>/dev/null | tr -d '\r\0')"
     if [ -z "$wslroot" ]; then
       echo "FAIL sim — could not translate $ROOT into a WSL path"
       return 1
@@ -409,9 +540,8 @@ step_sim() {
     echo "ok   sim ($how)"
     return 0
   fi
-  echo "FAIL sim ($logdir/sim.log)"
-  grep -A 24 'WARNING: DATA RACE' "$logdir/sim.log" | head -40
-  grep -E '^(FAIL|--- FAIL)' "$logdir/sim.log" | head -20
+  echo "FAIL sim"
+  excerpt_failures "$logdir/sim.log"
   return 1
 }
 
@@ -658,6 +788,16 @@ stop_shared_pg() {
 # So: the gate is the runner to trust. A hand-run of one package is fine and
 # fast — it is `./...` at default parallelism that manufactures failures. If
 # you want the whole suite by hand, pass the same -p this computes.
+# docker_packages <module...> — how many packages carry a go:build docker
+# test, i.e. how many would each start their own container without the shared
+# server. Counted from the tree, for the fallback warning's arithmetic.
+docker_packages() {
+  local m
+  for m in "$@"; do
+    grep -rl 'go:build docker' --include='*_test.go' "$ROOT/$m" 2>/dev/null
+  done | sed 's#/[^/]*$##' | sort -u | wc -l | tr -d ' '
+}
+
 docker_p() {
   local cores
   cores="$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
@@ -689,8 +829,13 @@ step_docker() {
   else
     stop_shared_pg
     unset SHINGO_TEST_PG SHINGO_TEST_PG_TEMPLATE
+    # The cost is PRINTED AS ITS ARITHMETIC, not asserted as a fixed phrase:
+    # how many packages will each start a container is a count of this tree,
+    # and a reader deciding whether to wait or fix docker needs the total.
+    local npk per=5
+    npk="$(docker_packages $mods)"
     echo "  docker: WARNING — could not start a shared postgres;" >&2
-    echo "          each package will start its own (adds roughly 5s per package)." >&2
+    echo "          each package will start its own: $npk packages x ~${per}s = ~$((npk * per))s added." >&2
   fi
 
   # ── THE SKIP-TOGETHER TRAP (fix-batch 2a) ─────────────────────────────
@@ -711,7 +856,9 @@ step_docker() {
   for m in $mods; do
     echo "  docker: $m"
     ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1 ) \
-      || { failed=1; echo "  --- $m ($logdir/docker-$m.log) ---"; grep -Ev '^ok |no test files' "$logdir/docker-$m.log" | head -30; }
+      || { failed=1
+           echo "  --- $m ---"
+           excerpt_failures "$logdir/docker-$m.log"; }
     # The per-package ok-count the Sunday smoke asserts on. `ok  pkg  1.2s`
     # only prints when that package's binary ran and passed; a package whose
     # tests all skipped still prints ok, so the smoke's assertion is on the
@@ -728,6 +875,16 @@ step_docker() {
   # this covers the normal one, and it takes the server down before the verdict
   # is printed rather than after the script has already returned.
   stop_shared_pg
+  if [ "$failed" -ne 0 ]; then
+    # A3: classify the failures before the verdict — a connect-shaped wall is
+    # a wedged Postgres, not a broken diff. See harness_verdict above.
+    for m in $mods; do
+      if grep -qE '^(FAIL|--- FAIL)' "$logdir/docker-$m.log" 2>/dev/null; then
+        echo "  $m:"
+        harness_verdict "$logdir/docker-$m.log"
+      fi
+    done
+  fi
   [ "$failed" -eq 0 ] && echo "ok   docker" || echo "FAIL docker"
   return $failed
 }
@@ -793,11 +950,11 @@ step_race() {
     echo "ok   race ($RACE_PKGS)"
     return 0
   fi
-  echo "FAIL race ($ROOT/.gate/race.log)"
-  # WARNING: DATA RACE is the line that matters and it is not near the end, so
-  # grep for it rather than tailing.
-  grep -A 24 'WARNING: DATA RACE' "$ROOT/.gate/race.log" | head -60
-  grep -Ev '^ok |no test files' "$ROOT/.gate/race.log" | head -20
+  echo "FAIL race"
+  # A race fails its test with "race detected during execution of test", so
+  # the leaf block names the test and the DATA RACE line says why; the stacks
+  # are in the log the excerpt ends by naming.
+  excerpt_failures "$ROOT/.gate/race.log"
   return 1
 }
 
@@ -834,6 +991,9 @@ gate_sentence() {
     skipped) : ;;
   esac
   [ -n "$s" ] || { echo "Gate sentence: (nothing ran)"; return; }
+  # A scoped run says so in the sentence itself, so "Gate: lint." can only
+  # ever mean all five modules.
+  [ -n "$gate_scope" ] && s="$s (scoped to: $gate_scope)"
   # Capitalised the way it lands in a commit message, ready to paste.
   local out="Gate: $s."
   [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope (nothing in this diff can reach one)."
@@ -893,7 +1053,7 @@ case "${1:-all}" in
     if step_scripts; then note_step scripts; else rc=1; fi
     if step_test; then note_step unit; else rc=1; fi
     ;;
-  *) echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full] [BASE]" >&2; exit 2 ;;
+  *) usage ;;
 esac
 
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi

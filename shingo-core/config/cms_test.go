@@ -225,7 +225,7 @@ func TestCMSConfig_Validate_AcceptsAUsableBaseURL(t *testing.T) {
 	t.Parallel()
 	for _, u := range []string{
 		"https://middleware.example.com/api/inventory_transactions",
-		"http://10.0.0.5:8080/inventory",
+		"http://192.0.2.5:8080/inventory",
 		"https://middleware.example.com/api?tenant=acme",
 	} {
 		c := CMSDefaults()

@@ -237,7 +237,7 @@ func TestMapRobotStatus_AllFields(t *testing.T) {
 		IsError:          true,
 		NetworkDelay:     42,
 		BasicInfo: rds.RobotBasicInfo{
-			IP:          "10.0.0.5",
+			IP:          "192.0.2.5",
 			Model:       "JS-200",
 			Version:     "v3.1.0",
 			CurrentMap:  "warehouse_A",
@@ -287,7 +287,7 @@ func TestMapRobotStatus_AllFields(t *testing.T) {
 		{"Charging", got.Charging, true},
 		{"CurrentMap", got.CurrentMap, "warehouse_A"},
 		{"Model", got.Model, "JS-200"},
-		{"IP", got.IP, "10.0.0.5"},
+		{"IP", got.IP, "192.0.2.5"},
 		{"X", got.X, 1.1},
 		{"Y", got.Y, 2.2},
 		{"Angle", got.Angle, 0.75},

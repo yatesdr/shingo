@@ -311,12 +311,16 @@ linters:
         linters:
           - funlen
 
-      # ---- funlen baseline (2026-08-19) ------------------------------------
+      # ---- funlen baseline (2026-08-19; recounted 2026-09-26) --------------
       #
-      # 39 production functions exceeded 60 statements on the day funlen was
-      # enabled (40 entries: the D6 cut split one of them in two). They are listed rather than the threshold being raised to
-      # clear them, because a threshold set above the worst offender guards
-      # nothing: the point of the ceiling is that the NEXT one fails CI.
+      # 21 entries below. 39 production functions exceeded 60 statements on the
+      # day funlen was enabled (40 entries: the D6 cut split one in two);
+      # refactors since have retired the other 19. They are listed rather than
+      # the threshold being raised to clear them, because a threshold set above
+      # the worst offender guards nothing: the point of the ceiling is that the
+      # NEXT one fails CI. Maintenance: `grep -c 'Function.*has too many
+      # statements' .golangci.yml` must equal the count this header names — fix
+      # the header whenever an entry is added or removed.
       #
       # Each entry is pinned to a function NAME as well as a path, so a second
       # oversized function appearing in an excluded file is still caught.
