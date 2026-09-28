@@ -122,10 +122,9 @@ func (e *Engine) Start() {
 			"assigned, so their config accepts nothing: %s", len(names), strings.Join(names, ", "))
 	}
 
-	// Two-stage unloaders in pull mode: a cart that reached a wait group while
-	// Core was down, or a window freed then, is pulled now rather than on the
-	// next event (stage2_pull.go).
-	e.sweepStage2Pulls()
+	// Two-stage unloaders: pairs re-derived, and pull-mode carts moved on, now
+	// rather than at the next edit or event (startTwoStage).
+	e.startTwoStage()
 
 	// Scan for any orders queued before restart
 	go e.fulfillment.RunOnce()

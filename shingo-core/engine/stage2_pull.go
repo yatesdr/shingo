@@ -299,6 +299,16 @@ func (e *Engine) pullModePairs() (map[int64]int64, error) {
 	return out, nil
 }
 
+// startTwoStage is the two-stage unloaders' startup. Every pair is re-derived
+// first, so one set up before stage 1 had a group of its windows gets one now
+// rather than at its next edit (LoaderService.SyncPairs). Then a cart that
+// reached a wait group while Core was down, or a window freed then, is pulled
+// now rather than on the next event.
+func (e *Engine) startTwoStage() {
+	e.loaderService.SyncPairs()
+	e.sweepStage2Pulls()
+}
+
 // sweepStage2Pulls is the startup trigger: every pull-mode pair, once.
 func (e *Engine) sweepStage2Pulls() {
 	pairs, err := e.pullModePairs()

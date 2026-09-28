@@ -262,11 +262,12 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 		return ErrAutoPushProduce
 	}
 	cur.AutoPush = in.AutoPush
-	// A direct pair's group is named after stage 1, and syncPair finds it by
-	// that name. Find it under the OLD name before the rename lands and carry it
-	// over, or the sync would make a second, empty group and refuse, because the
-	// windows still stand in the first (TestPairRename_KeepsItsGroup).
-	carried, err := s.pairGroupBeforeRename(id, name)
+	// The groups Core made for a pair are named after stage 1, and syncPair
+	// finds them by that name. Find them under the OLD name before the rename
+	// lands and carry them over, or the sync would make second, empty groups and
+	// refuse, because the windows still stand in the first
+	// (TestPairRename_KeepsItsGroup).
+	carried, err := s.pairGroupsBeforeRename(id, name)
 	if err != nil {
 		return err
 	}
@@ -274,10 +275,10 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err
 	}
-	if carried != nil {
-		carried.Name = pairGroupName(cur)
-		if err := s.db.UpdateNode(carried); err != nil {
-			return fmt.Errorf("rename the group %s made for %s: %w", carried.Name, cur.Name, err)
+	for _, c := range carried {
+		c.node.Name = stageGroupName(cur, c.suffix)
+		if err := s.db.UpdateNode(c.node); err != nil {
+			return fmt.Errorf("rename the group %s made for %s: %w", c.node.Name, cur.Name, err)
 		}
 	}
 	// Half of a pair: stage 1's destination is derived from stage 2 (a stage-1
@@ -403,7 +404,7 @@ func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, hom
 	if node.IsSynthetic {
 		return fmt.Errorf("loader window must be a physical slot, not a %s container (%s)", node.NodeTypeCode, node.Name)
 	}
-	if err := s.checkStage2Window(loaderID, node); err != nil {
+	if err := s.checkPairWindow(loaderID, node); err != nil {
 		return err
 	}
 	existing, err := s.db.ListLoaderHomes(loaderID)
@@ -417,22 +418,26 @@ func (s *LoaderService) SetHome(loaderID, positionNodeID int64, payloadCode, hom
 		return err
 	}
 	if err := s.syncPairOf(loaderID); err != nil {
-		return fmt.Errorf("stage-2 window %s: %w", node.Name, err)
+		return fmt.Errorf("two-stage window %s: %w", node.Name, err)
 	}
 	s.rederive()
 	return nil
 }
 
-// RemoveHome clears a dedicated position from a loader. A stage-2 window of a
-// direct pair also leaves the group Core made for the pair.
+// RemoveHome clears a dedicated position from a loader. A window of a pair also
+// leaves the group Core made for its stage.
 func (s *LoaderService) RemoveHome(loaderID, positionNodeID int64) error {
 	if err := s.db.RemoveLoaderHome(loaderID, positionNodeID); err != nil {
 		return err
 	}
 	if one, two, err := s.pairOf(loaderID); err != nil {
 		return err
-	} else if one != nil && two.ID == loaderID {
-		if g := s.pairGroup(one, two); g != nil {
+	} else if one != nil {
+		g := s.pairGroup(one, two)
+		if one.ID == loaderID {
+			g = s.stage1Group(one)
+		}
+		if g != nil {
 			if n, err := s.db.GetNode(positionNodeID); err == nil && n.ParentID != nil && *n.ParentID == g.ID {
 				if err := s.db.ReparentNode(positionNodeID, nil, 0); err != nil {
 					return fmt.Errorf("take %s out of %s: %w", n.Name, g.Name, err)

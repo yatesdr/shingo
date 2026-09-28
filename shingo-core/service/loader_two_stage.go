@@ -15,6 +15,9 @@
 //     engine/stage2_pull.go moves each cart on into a free stage-2 window.
 //     Direct mode: stage 2 has none, and stage 1 sends to stage 2's one window,
 //     or to a plain group Core makes for several and keeps in step.
+//   - stage 1's windows stand in a group Core makes too, so a press or cell
+//     feeding stage 1 has one name to pick as its outbound destination. It is
+//     the same problem as stage 2's group in the other direction.
 
 package service
 
@@ -36,10 +39,10 @@ const BareMarkerSuffix = bins.BareMarkerSuffix
 // that is not bare, which would make stage 1 stamp an ordinary empty.
 var ErrBareMarkerTaken = bins.ErrBareMarkerTaken
 
-// ErrWindowInAnotherGroup refuses a stage-2 window of a direct pair that already
-// stands in a group. Core parents a direct pair's windows into the group stage
-// 1 sends to, and a node has one parent: taking it would silently pull it out of
-// the group it is in.
+// ErrWindowInAnotherGroup refuses a window Core would have to take out of the
+// group it already stands in: a stage-1 window, or a stage-2 window of a direct
+// pair. Core parents those into a group of its own, and a node has one parent:
+// taking it would silently pull it out of the group it is in.
 var ErrWindowInAnotherGroup = errors.New("this node is already in another group: take it out of that group first")
 
 // ErrQuotaBare refuses a bare marker in a loader's carrier mix: the mix says
@@ -123,18 +126,23 @@ func (s *LoaderService) pairOf(loaderID int64) (*loaders.Loader, *loaders.Loader
 	return one, two, nil
 }
 
-// pairGroupName is the name of the group Core makes for a direct pair with
-// several stage-2 windows: the pair's stage-2 name, so it reads as what it is on
-// the nodes page.
-func pairGroupName(one *loaders.Loader) string {
-	return strings.TrimSuffix(one.Name, stage1Suffix) + stage2Suffix
+// stageGroupName is the name of the group Core makes for one stage's windows:
+// the pair's name and the stage, so it reads as what it is on the nodes page.
+func stageGroupName(one *loaders.Loader, suffix string) string {
+	return strings.TrimSuffix(one.Name, stage1Suffix) + suffix
 }
 
-// pairGroup returns the group Core made for the pair, or nil. It is never the
-// plant's own wait group, even if somebody named one the same.
-func (s *LoaderService) pairGroup(one, two *loaders.Loader) *nodes.Node {
-	name := pairGroupName(one)
-	if name == two.InboundSource {
+// pairGroupName names the group Core makes for a direct pair's stage-2 windows.
+func pairGroupName(one *loaders.Loader) string { return stageGroupName(one, stage2Suffix) }
+
+// stage1GroupName names the group Core makes for stage 1's windows.
+func stage1GroupName(one *loaders.Loader) string { return stageGroupName(one, stage1Suffix) }
+
+// madeGroup returns the group Core made under name, or nil. It is never the
+// stage's inbound source, a group the plant made, even if somebody named one
+// the same.
+func (s *LoaderService) madeGroup(name, inboundSource string) *nodes.Node {
+	if name == inboundSource {
 		return nil
 	}
 	g, err := s.db.GetNodeByDotName(name)
@@ -144,22 +152,46 @@ func (s *LoaderService) pairGroup(one, two *loaders.Loader) *nodes.Node {
 	return g
 }
 
-// pairGroupBeforeRename returns the group Core made for the pair whose stage 1
+// pairGroup returns the group Core made for a direct pair's stage-2 windows, or
+// nil. It is never the plant's own wait group.
+func (s *LoaderService) pairGroup(one, two *loaders.Loader) *nodes.Node {
+	return s.madeGroup(pairGroupName(one), two.InboundSource)
+}
+
+// stage1Group returns the group Core made for stage 1's windows, or nil.
+func (s *LoaderService) stage1Group(one *loaders.Loader) *nodes.Node {
+	return s.madeGroup(stage1GroupName(one), one.InboundSource)
+}
+
+// carriedGroup is a group Core made for the pair, and which stage it is for,
+// read before a rename so the rename can carry it.
+type carriedGroup struct {
+	node   *nodes.Node
+	suffix string
+}
+
+// pairGroupsBeforeRename returns the groups Core made for the pair whose stage 1
 // is loaderID, when newName renames that stage 1 — read under the current name,
-// before the rename is written. nil when loaderID is not a stage 1, the name is
-// unchanged, or the pair has no such group.
-func (s *LoaderService) pairGroupBeforeRename(loaderID int64, newName string) (*nodes.Node, error) {
+// before the rename is written. Empty when loaderID is not a stage 1, the name
+// is unchanged, or the pair has no such group.
+func (s *LoaderService) pairGroupsBeforeRename(loaderID int64, newName string) ([]carriedGroup, error) {
 	one, two, err := s.pairOf(loaderID)
 	if err != nil || one == nil || one.ID != loaderID || one.Name == newName {
 		return nil, err
 	}
-	return s.pairGroup(one, two), nil
+	var out []carriedGroup
+	if g := s.stage1Group(one); g != nil {
+		out = append(out, carriedGroup{g, stage1Suffix})
+	}
+	if g := s.pairGroup(one, two); g != nil {
+		out = append(out, carriedGroup{g, stage2Suffix})
+	}
+	return out, nil
 }
 
-// dropPairGroup deletes the pair's group, which reparents its windows back to
-// the grid (nodes.DeleteGroup).
-func (s *LoaderService) dropPairGroup(one, two *loaders.Loader) error {
-	g := s.pairGroup(one, two)
+// dropGroup deletes a group Core made for the pair, which reparents its windows
+// back to the grid (nodes.DeleteGroup). nil is nothing to drop.
+func (s *LoaderService) dropGroup(g *nodes.Node, one *loaders.Loader) error {
 	if g == nil {
 		return nil
 	}
@@ -169,25 +201,41 @@ func (s *LoaderService) dropPairGroup(one, two *loaders.Loader) error {
 	return nil
 }
 
-// checkStage2Window refuses a window a direct pair would have to take out of
-// another group. Pull mode never parents a window, so it has nothing to refuse.
-func (s *LoaderService) checkStage2Window(loaderID int64, node *nodes.Node) error {
+// dropPairGroup deletes the group Core made for a direct pair's stage-2 windows.
+func (s *LoaderService) dropPairGroup(one, two *loaders.Loader) error {
+	return s.dropGroup(s.pairGroup(one, two), one)
+}
+
+// checkPairWindow refuses a window Core would have to take out of another
+// group: any stage-1 window, and a stage-2 window of a direct pair. Stage 2 in
+// pull mode never parents a window, so it has nothing to refuse.
+func (s *LoaderService) checkPairWindow(loaderID int64, node *nodes.Node) error {
 	one, two, err := s.pairOf(loaderID)
-	if err != nil || one == nil || two.ID != loaderID || two.InboundSource != "" || node.ParentID == nil {
+	if err != nil || one == nil || node.ParentID == nil {
 		return err
+	}
+	var own string
+	switch {
+	case one.ID == loaderID:
+		own = stage1GroupName(one)
+	case two.InboundSource == "":
+		own = pairGroupName(one)
+	default:
+		return nil
 	}
 	parent, err := s.db.GetNode(*node.ParentID)
 	if err != nil {
 		return fmt.Errorf("read the group %s stands in: %w", node.Name, err)
 	}
-	if parent.Name == pairGroupName(one) {
+	if parent.Name == own {
 		return nil
 	}
 	return fmt.Errorf("%w (%s is in %s)", ErrWindowInAnotherGroup, node.Name, parent.Name)
 }
 
-// syncPair derives where stage 1 sends a cart, and keeps a direct pair's group
-// in step with stage 2's windows:
+// syncPair derives where stage 1 sends a cart, keeps a direct pair's group in
+// step with stage 2's windows, and keeps stage 1's group in step with its own
+// (syncStage1Group):
 //
 //   - pull mode (stage 2 has an inbound source): stage 1 sends to that group,
 //     and a group Core made for direct mode is dropped.
@@ -223,19 +271,53 @@ func (s *LoaderService) syncPair(one, two *loaders.Loader) error {
 			}
 		}
 	}
-	if one.OutboundDest == dest {
-		return nil
+	// Stage 1's destination is written before its own group is synced, so a
+	// stage-1 window standing in another group refuses the grouping without
+	// holding the cart's destination hostage.
+	if one.OutboundDest != dest {
+		one.OutboundDest = dest
+		if err := s.db.UpdateLoader(*one); err != nil {
+			return err
+		}
 	}
-	one.OutboundDest = dest
-	return s.db.UpdateLoader(*one)
+	return s.syncStage1Group(one)
+}
+
+// syncStage1Group keeps the group Core makes for stage 1's windows in step with
+// them. A press or cell feeding stage 1 names where its fulls go as ONE outbound
+// destination, so stage 1's windows need a group to be named by, exactly as
+// stage 2's windows need one for stage 1 to send its carts to.
+//
+// MADE AT THE FIRST WINDOW, NOT THE SECOND, which is where it differs from stage
+// 2's. Core writes stage 1's destination itself, so stage 2's can switch between
+// a node and a group as windows come and go. Stage 1's name is typed into a
+// claim by hand, and adding a window must not change it under that claim.
+//
+// KEPT WHETHER STAGE 1 IS FED DIRECTLY OR PULLS: Core's own pulls into stage 1
+// name the window, never the group, so the group changes nothing for them.
+func (s *LoaderService) syncStage1Group(one *loaders.Loader) error {
+	homes, err := s.db.ListLoaderHomes(one.ID)
+	if err != nil {
+		return err
+	}
+	if len(homes) == 0 {
+		return s.dropGroup(s.stage1Group(one), one)
+	}
+	_, err = s.groupWindows(stage1GroupName(one), s.stage1Group(one), one, homes)
+	return err
 }
 
 // groupStage2Windows parents every stage-2 window into the pair's group,
 // creating it the first time, and returns its name.
 func (s *LoaderService) groupStage2Windows(one, two *loaders.Loader, homes []loaders.Home) (string, error) {
-	g := s.pairGroup(one, two)
+	return s.groupWindows(pairGroupName(one), s.pairGroup(one, two), one, homes)
+}
+
+// groupWindows parents every window in homes into g, creating it under name the
+// first time, and returns its name.
+func (s *LoaderService) groupWindows(name string, g *nodes.Node, one *loaders.Loader, homes []loaders.Home) (string, error) {
 	if g == nil {
-		id, err := s.db.CreateNodeGroup(pairGroupName(one))
+		id, err := s.db.CreateNodeGroup(name)
 		if err != nil {
 			return "", fmt.Errorf("create the group for %s: %w", one.Name, err)
 		}
@@ -246,7 +328,7 @@ func (s *LoaderService) groupStage2Windows(one, two *loaders.Loader, homes []loa
 	for _, h := range homes {
 		n, err := s.db.GetNode(h.PositionNodeID)
 		if err != nil {
-			return "", fmt.Errorf("stage-2 window %d: %w", h.PositionNodeID, err)
+			return "", fmt.Errorf("window %d: %w", h.PositionNodeID, err)
 		}
 		if n.ParentID != nil && *n.ParentID == g.ID {
 			continue
@@ -265,6 +347,25 @@ func (s *LoaderService) groupStage2Windows(one, two *loaders.Loader, homes []loa
 	return g.Name, nil
 }
 
+// SyncPairs re-derives every pair, so a pair set up before stage 1 had a group
+// gets one at startup instead of at its next edit. A pair that cannot be synced
+// is logged and left as it was; the rest still sync.
+func (s *LoaderService) SyncPairs() {
+	all, err := s.db.ListLoaders()
+	if err != nil {
+		log.Printf("loader_service: sync two-stage pairs: %v", err)
+		return
+	}
+	for _, l := range all {
+		if l.SecondStageLoaderID == nil || l.ArchivedAt != nil {
+			continue
+		}
+		if err := s.syncPairOf(l.ID); err != nil {
+			log.Printf("loader_service: sync two-stage %s: %v", l.Name, err)
+		}
+	}
+}
+
 // syncPairOf re-derives the pair loaderID belongs to, if any.
 func (s *LoaderService) syncPairOf(loaderID int64) error {
 	one, two, err := s.pairOf(loaderID)
@@ -274,10 +375,13 @@ func (s *LoaderService) syncPairOf(loaderID int64) error {
 	return s.syncPair(one, two)
 }
 
-// deletePair archives both stages and drops the group Core made for a direct
-// pair, which gives its windows back to the grid.
+// deletePair archives both stages and drops the groups Core made for the pair,
+// which gives their windows back to the grid.
 func (s *LoaderService) deletePair(one, two *loaders.Loader) error {
 	if err := s.dropPairGroup(one, two); err != nil {
+		return err
+	}
+	if err := s.dropGroup(s.stage1Group(one), one); err != nil {
 		return err
 	}
 	if err := s.db.DeleteLoader(one.ID); err != nil {
