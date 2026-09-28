@@ -135,7 +135,8 @@ type StationNodeView struct {
 	// Loader.IsDedicated() → service/station_service.go, the SAME resolver the
 	// runtime uses, so the board and the engine cannot disagree. It does NOT come
 	// from the Edge-only home_location_loaders table — that copy was orphaned by
-	// the loader move to Core and has no reader.
+	// the loader move to Core, had no reader, and was dropped by Edge v2
+	// (2026-09-27).
 	HomeLocationLoader bool `json:"home_location_loader,omitempty"`
 	// LeavesBare marks a window of the stage-1 half of a two-stage unloader
 	// (Loader.LeavesBare, Core-owned). The board's CLEAR there is one tap,

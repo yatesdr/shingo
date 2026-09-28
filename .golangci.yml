@@ -594,11 +594,13 @@ linters:
         text: "bypass the state machine"
         linters:
           - forbidigo
-      # 4. Passthrough wrappers around db.UpdateOrderStatus and
-      #    FailOrderAtomic. Slated for removal — callers should go
-      #    direct to lifecycle. Carveout removable when the file is
-      #    deleted.
+      # 4. OrderService.FailAtomic, the handler-layer passthrough to
+      #    db.FailOrderAtomic. Scoped to that guard's message: the
+      #    UpdateStatus and ClaimBin passthroughs are gone, so a new
+      #    db.UpdateOrderStatus or db.ClaimBin call in this file is caught.
+      #    Removable when FailAtomic goes.
       - path: "shingo-core/service/order_service\\.go"
+        text: "Direct FailOrderAtomic calls bypass the state machine"
         linters:
           - forbidigo
       # 5. Store-level implementations themselves.

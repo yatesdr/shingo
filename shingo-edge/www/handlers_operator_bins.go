@@ -153,6 +153,11 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 // correction; the local cache is written from Core's reply so the two sides
 // hold the same number. A refusal from Core surfaces here rather than being
 // swallowed — an operator who corrected a count has to know it landed.
+//
+// PARKED, NOT DEAD. This is the operator line-count door, and no UI calls it
+// yet by design. It is pinned by TestApiBinCount_* (Core), TestLineCount_* and
+// TestFence_*; the wiring spec is "Operator line count" in
+// PARKED-shingo-features.md. Do not remove it as a dead route.
 func (h *Handlers) apiRecordCount(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

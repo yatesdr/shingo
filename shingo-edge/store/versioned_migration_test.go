@@ -26,21 +26,28 @@ func TestOpenSeedsSchemaMigrationsBaseline_Fresh(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Exactly the baseline row: the version table exists, holds one row, and
-	// it is v1. A v2+ row would mean the runner applied something the
-	// baseline already covers; zero rows would mean it never seeded.
+	// Exactly the baseline row plus one row per listed migration: the
+	// version table exists, v1 is seeded, and every edgeMigrations() entry
+	// applied once. Zero rows would mean it never seeded; an extra row would
+	// mean something applied that is not in the list.
+	ms := edgeMigrations()
+	wantRows, wantMax := 1+len(ms), edgeBaselineVersion
+	if len(ms) > 0 {
+		wantMax = migrate.LatestVersion(ms)
+	}
 	var rows, maxV int
 	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&rows, &maxV); err != nil {
 		t.Fatalf("schema_migrations not present after Open: %v", err)
 	}
-	if rows != 1 || maxV != 1 {
-		t.Fatalf("fresh Open seeded %d rows (max v%d), want exactly 1 row at baseline v1", rows, maxV)
+	if rows != wantRows || maxV != wantMax {
+		t.Fatalf("fresh Open recorded %d rows (max v%d), want %d rows (baseline v1 + the list) at v%d",
+			rows, maxV, wantRows, wantMax)
 	}
 
-	// Latest agrees — the wire's schema version for a fresh edge is the
-	// baseline, read back through the same accessor the heartbeat uses.
-	if v, err := migrate.Latest(db.DB, migrate.SQLite); err != nil || v != 1 {
-		t.Fatalf("migrate.Latest = (%d, %v), want (1, nil)", v, err)
+	// Latest agrees — the wire's schema version for a fresh edge, read back
+	// through the same accessor the heartbeat uses.
+	if v, err := migrate.Latest(db.DB, migrate.SQLite); err != nil || v != wantMax {
+		t.Fatalf("migrate.Latest = (%d, %v), want (%d, nil)", v, err, wantMax)
 	}
 }
 
@@ -72,8 +79,11 @@ func TestOpenSeedsSchemaMigrationsBaseline_Aged(t *testing.T) {
 	if err := again.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&rows); err != nil {
 		t.Fatalf("aged DB got no schema_migrations: %v", err)
 	}
-	if rows != 1 {
-		t.Fatalf("aged DB seeded %d rows, want 1 (baseline only, chain not re-run)", rows)
+	// Baseline seeded once, then every listed migration applied once. Each
+	// is written to be safe on a DB where the work is already done, which is
+	// exactly this DB's shape.
+	if want := 1 + len(edgeMigrations()); rows != want {
+		t.Fatalf("aged DB recorded %d rows, want %d (baseline + the list, chain not re-run)", rows, want)
 	}
 	var n int
 	if err := again.QueryRow(`SELECT COUNT(*) FROM styles WHERE name='proof-style'`).Scan(&n); err != nil || n != 1 {
@@ -93,9 +103,15 @@ func TestRunVersionedAppliesExactlyOnce(t *testing.T) {
 	}
 	defer db.Close()
 
+	// The synthetic migration takes the next free version, so it is new to
+	// this DB whatever the real list holds.
 	calls := 0
+	next := migrate.LatestVersion(edgeMigrations()) + 1
+	if next <= edgeBaselineVersion {
+		next = edgeBaselineVersion + 1
+	}
 	list := []migrate.Migration{{
-		Version: 2,
+		Version: next,
 		Name:    "test_marker",
 		Fn: func(tx *sql.Tx) error {
 			calls++
@@ -120,9 +136,45 @@ func TestRunVersionedAppliesExactlyOnce(t *testing.T) {
 		t.Fatalf("body ran %d times across two calls, want 1 — the runner's exists-check is the gate", calls)
 	}
 
-	// Baseline intact: v2 applied without disturbing v1.
+	// Earlier rows intact: the synthetic version applied without disturbing
+	// the baseline or the real list.
+	want := 1 + len(edgeMigrations()) + 1
 	var rows int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&rows); err != nil || rows != 2 {
-		t.Fatalf("schema_migrations rows = (%d, %v), want 2 (baseline v1 + v2)", rows, err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&rows); err != nil || rows != want {
+		t.Fatalf("schema_migrations rows = (%d, %v), want %d (baseline + the list + the synthetic one)", rows, err, want)
+	}
+}
+
+// edgeMigrationVersion returns the version edgeMigrations() gives the named
+// migration. Tests find a migration's row by its name, never by a literal
+// version, so renumbering on a rebase touches the list and nothing else.
+func edgeMigrationVersion(t *testing.T, name string) int {
+	t.Helper()
+	for _, m := range edgeMigrations() {
+		if m.Name == name {
+			return m.Version
+		}
+	}
+	t.Fatalf("no Edge migration named %q", name)
+	return 0
+}
+
+// TestEdgeMigrations_Shape pins the list by structure, not by numbers:
+// versions strictly increasing, the first above the adopted baseline (the
+// baseline row stands for the whole frozen chain), and LatestVersion is the
+// last entry.
+func TestEdgeMigrations_Shape(t *testing.T) {
+	ms := edgeMigrations()
+	if err := migrate.CheckOrder(ms); err != nil {
+		t.Error(err)
+	}
+	if len(ms) == 0 {
+		return
+	}
+	if ms[0].Version <= edgeBaselineVersion {
+		t.Errorf("first Edge migration is v%d, want above the baseline v%d", ms[0].Version, edgeBaselineVersion)
+	}
+	if got, last := migrate.LatestVersion(ms), ms[len(ms)-1].Version; got != last {
+		t.Errorf("LatestVersion = %d, want the last entry's %d", got, last)
 	}
 }

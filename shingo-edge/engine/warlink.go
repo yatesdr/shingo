@@ -84,14 +84,6 @@ func (e *Engine) enableAndMarkManaged(rpID int64, plcName, tagName string) {
 	}
 }
 
-// CleanupReportingPointTag disables WarLink publishing for a deleted reporting
-// point if it was warlink-managed.
-func (e *Engine) CleanupReportingPointTag(rpID int64, plcName, tagName string, managed bool) {
-	if managed {
-		e.EnsureTagUnpublished(rpID, plcName, tagName)
-	}
-}
-
 func (e *Engine) SyncProcessCounter(processID int64) error {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {

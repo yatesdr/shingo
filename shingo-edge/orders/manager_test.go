@@ -126,24 +126,6 @@ func TestRollbackReleaseRejection_TerminalIgnored(t *testing.T) {
 	}
 }
 
-func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge.station")
-
-	orderID, err := db.CreateOrder("uuid-redirect", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "", "", "")
-	if err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusSubmitted)), "set submitted status")
-
-	testutil.MustNoErr(t, db.Close(), "close db")
-
-	if _, err := mgr.RedirectOrder(orderID, "LINE-2"); err == nil {
-		t.Fatalf("expected redirect to fail when redirect enqueue fails")
-	}
-}
-
 // --- Regression: Bug 5+6 — Terminal→terminal transition returns nil, not error ---
 // When an order is already in a terminal state (confirmed, cancelled, failed)
 // and a duplicate transition to the same or another terminal state arrives,

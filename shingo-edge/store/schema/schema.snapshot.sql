@@ -384,13 +384,8 @@ CREATE TABLE payload_catalog (
     code          TEXT NOT NULL DEFAULT '',
     description   TEXT NOT NULL DEFAULT '',
     uop_capacity  INTEGER NOT NULL DEFAULT 0,
-    -- Edge-local per-part cycle time (seconds per UOP at the consuming
-    -- cell). NOT synced from Core — different installations may run the
-    -- same part at different rates, and the calculator on this Edge is
-    -- the only consumer. Engineer-edited via the replenishment page;
-    -- preserved across catalog syncs (UpsertCatalog excludes this column
-    -- from its ON CONFLICT update list).
-    cycle_seconds REAL NOT NULL DEFAULT 0,
+    -- (cycle_seconds, an Edge-local cycle time with no reader, was dropped by
+    -- Edge v3, 2026-09-28.)
     catid         TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );

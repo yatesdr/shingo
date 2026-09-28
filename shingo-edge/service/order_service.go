@@ -65,13 +65,6 @@ func (s *OrderService) ListAllByProcess(processID int64) ([]orders.Order, error)
 	return s.db.ListOrdersByProcess(processID)
 }
 
-// UpdateFinalCount writes the final_count + count_confirmed fields
-// on an order. Used at operator final-count confirmation time after
-// material delivery.
-func (s *OrderService) UpdateFinalCount(id int64, finalCount int64, confirmed bool) error {
-	return s.db.UpdateOrderFinalCount(id, finalCount, confirmed)
-}
-
 // WaitSince answers "how long has this order been waiting" for every order in
 // the list that is still ACQUIRING its material, as the RFC3339 instant its
 // current wait began. Keyed by order id; absent means no clock, which is the

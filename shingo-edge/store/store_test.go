@@ -485,7 +485,7 @@ func TestPayloadCatalog_GetMissingReturnsError(t *testing.T) {
 // reporting_points.go
 // ============================================================================
 
-func TestReportingPoints_CRUD(t *testing.T) {
+func TestReportingPoints_CreateReadUpdate(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S1")
@@ -520,11 +520,6 @@ func TestReportingPoints_CRUD(t *testing.T) {
 		t.Errorf("after update: %+v", got2)
 	}
 
-	testutil.MustNoErr(t, db.DeleteReportingPoint(id), "delete")
-	after, _ := db.ListReportingPoints()
-	if len(after) != 0 {
-		t.Errorf("after delete: %d", len(after))
-	}
 }
 
 func TestReportingPoints_UpdateCounter(t *testing.T) {

@@ -34,19 +34,6 @@ func (db *DB) GetPayloadCatalogByCode(code string) (*catalog.CatalogEntry, error
 	return catalog.GetCatalogByCode(db.DB, code)
 }
 
-// SetPayloadCatalogCycleSeconds writes the engineer-edited per-part
-// cycle time onto an existing payload_catalog row.
-//
-// NO CURRENT CALLER as of 2026-07-21. Its only writer was the Edge threshold
-// calculator's Apply path, deleted with the rest of the dead Edge threshold
-// surface. The cycle_seconds COLUMN is deliberately retained (Core's
-// calculator takes the value per-request from its own modal, so nothing is
-// stranded), and this stays as the column's accessor rather than leaving it
-// unwritable. Delete both together if the column is ever dropped.
-func (db *DB) SetPayloadCatalogCycleSeconds(code string, seconds float64) error {
-	return catalog.SetCycleSeconds(db.DB, code, seconds)
-}
-
 // DeleteStalePayloadCatalogEntries removes local catalog entries whose
 // IDs are not in activeIDs. If activeIDs is empty, no entries are
 // removed.

@@ -219,35 +219,6 @@ func (m *Manager) AbortOrderWithReason(orderID int64, reason string) error {
 	return nil
 }
 
-// RedirectOrder changes the delivery node of a non-terminal order and enqueues a redirect message.
-// The envelope is built and enqueued before updating the local DB so that
-// Core receives the redirect. If enqueue fails, the error is returned.
-func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*orders.Order, error) {
-	m.DebugLog.Log("redirect: id=%d new_delivery=%s", orderID, newDeliveryNode)
-	order, err := m.db.GetOrder(orderID)
-	if err != nil {
-		return nil, fmt.Errorf("get order: %w", err)
-	}
-	if IsTerminal(order.Status) {
-		return nil, fmt.Errorf("order is already in terminal state: %s", order.Status)
-	}
-
-	// Build and enqueue redirect message first. If this fails, don't
-	// update local state — the operator can retry.
-	if err := m.sender.Queue(protocol.TypeOrderRedirect, &protocol.OrderRedirect{
-		OrderUUID:       order.UUID,
-		NewDeliveryNode: newDeliveryNode,
-	}); err != nil {
-		return nil, fmt.Errorf("enqueue redirect: %w", err)
-	}
-
-	if err := m.db.UpdateOrderDeliveryNode(orderID, newDeliveryNode); err != nil {
-		return nil, fmt.Errorf("update delivery node: %w", err)
-	}
-
-	return m.db.GetOrder(orderID)
-}
-
 // SubmitOrder transitions a pending order to submitted and enqueues it.
 func (m *Manager) SubmitOrder(orderID int64) error {
 	order, err := m.db.GetOrder(orderID)

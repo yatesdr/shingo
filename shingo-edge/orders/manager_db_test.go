@@ -34,7 +34,7 @@ import (
 // PR 3.3 — lifecycle helpers: ApplyCoreStatusSnapshot across all forced-
 //   transition branches, lookupPayloadMeta via CreateMoveOrder (nil node,
 //   active-style-only, target-style overrides active during changeover),
-//   ReleaseOrder, AbortOrder and RedirectOrder happy paths plus their
+//   ReleaseOrder and AbortOrder happy paths plus their
 //   terminal-rejection guards, TransitionOrder delegation, and
 //   HandleDeliveredWithExpiry persisting the expiry timestamp.
 // ═══════════════════════════════════════════════════════════════════════
@@ -1349,51 +1349,6 @@ func TestAbortOrder_MissingOrder(t *testing.T) {
 
 	err := mgr.AbortOrder(99999)
 	if err == nil {
-		t.Fatal("expected error for missing order")
-	}
-}
-
-func TestRedirectOrder_HappyPath_UpdatesDeliveryAndQueues(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	oid, _ := db.CreateOrder("uuid-rd", TypeRetrieve, nil, false, 1, "OLD-LINE", "", "", "", false, "", "", "")
-	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-
-	o, err := mgr.RedirectOrder(oid, "NEW-LINE")
-	if err != nil {
-		t.Fatalf("RedirectOrder: %v", err)
-	}
-	if o.DeliveryNode != "NEW-LINE" {
-		t.Errorf("DeliveryNode: got %q, want NEW-LINE", o.DeliveryNode)
-	}
-	var rd protocol.OrderRedirect
-	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRedirect, &rd)
-	if rd.NewDeliveryNode != "NEW-LINE" || rd.OrderUUID != "uuid-rd" {
-		t.Errorf("OrderRedirect: %+v", rd)
-	}
-}
-
-func TestRedirectOrder_RejectsTerminal(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	oid, _ := db.CreateOrder("uuid-rdt", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
-	_ = db.UpdateOrderStatus(oid, string(StatusConfirmed))
-
-	if _, err := mgr.RedirectOrder(oid, "Y"); err == nil {
-		t.Fatal("expected error redirecting terminal order")
-	}
-}
-
-func TestRedirectOrder_MissingOrder(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	if _, err := mgr.RedirectOrder(99999, "X"); err == nil {
 		t.Fatal("expected error for missing order")
 	}
 }

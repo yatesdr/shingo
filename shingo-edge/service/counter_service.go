@@ -42,33 +42,10 @@ func NewCounterService(db *store.DB, loc *time.Location) *CounterService {
 	return &CounterService{db: db, loc: loc}
 }
 
-// ── Reporting points ─────────────────────────────────────────────
-
-// ListReportingPoints returns all reporting_points ordered by id.
-func (s *CounterService) ListReportingPoints() ([]counters.ReportingPoint, error) {
-	return s.db.ListReportingPoints()
-}
-
-// GetReportingPoint returns one reporting_point by id.
-func (s *CounterService) GetReportingPoint(id int64) (*counters.ReportingPoint, error) {
-	return s.db.GetReportingPoint(id)
-}
-
-// CreateReportingPoint inserts a new reporting_point and returns its
-// row id.
-func (s *CounterService) CreateReportingPoint(plcName, tagName string, styleID int64) (int64, error) {
-	return s.db.CreateReportingPoint(plcName, tagName, styleID)
-}
-
-// UpdateReportingPoint modifies an existing reporting_point.
-func (s *CounterService) UpdateReportingPoint(id int64, plcName, tagName string, styleID int64, enabled bool) error {
-	return s.db.UpdateReportingPoint(id, plcName, tagName, styleID, enabled)
-}
-
-// DeleteReportingPoint removes a reporting_point row by id.
-func (s *CounterService) DeleteReportingPoint(id int64) error {
-	return s.db.DeleteReportingPoint(id)
-}
+// No reporting-point CRUD here: reporting points are written by the counter
+// sync (engine/warlink.go) and read by PLC polling (cmd/shingoedge/main.go),
+// both straight off *store.DB. The CRUD wrappers served only the
+// /api/reporting-points routes, dropped 2026-09-27.
 
 // ── Hourly counts ────────────────────────────────────────────────
 

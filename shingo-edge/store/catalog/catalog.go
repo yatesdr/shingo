@@ -22,17 +22,12 @@ import (
 )
 
 // CatalogEntry is one payload_catalog row.
-//
-// CycleSeconds is Edge-local: not synced from Core, engineer-edited via
-// the replenishment page, preserved across UpsertCatalog calls so the
-// catalog sync (which only refreshes the synced columns) doesn't wipe it.
 type CatalogEntry struct {
-	ID           int64   `json:"id"`
-	Name         string  `json:"name"`
-	Code         string  `json:"code"`
-	Description  string  `json:"description"`
-	UOPCapacity  int     `json:"uop_capacity"`
-	CycleSeconds float64 `json:"cycle_seconds"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Code        string `json:"code"`
+	Description string `json:"description"`
+	UOPCapacity int    `json:"uop_capacity"`
 	// CATID is the payload's part identity, synced from Core: the DISTINCT
 	// manifest part numbers comma-joined (a single value for a one-part
 	// payload, the full list for a multi-part kit), empty when the manifest
@@ -43,12 +38,12 @@ type CatalogEntry struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-const catalogSelectCols = `id, name, code, description, uop_capacity, cycle_seconds, COALESCE(catid, '') as catid, updated_at`
+const catalogSelectCols = `id, name, code, description, uop_capacity, COALESCE(catid, '') as catid, updated_at`
 
 func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, error) {
 	e := &CatalogEntry{}
 	var updatedAt string
-	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CycleSeconds, &e.CATID, &updatedAt); err != nil {
+	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CATID, &updatedAt); err != nil {
 		return nil, err
 	}
 	e.UpdatedAt = helpers.ScanTime(updatedAt)
@@ -56,10 +51,7 @@ func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, e
 }
 
 // UpsertCatalog inserts or updates a payload_catalog row from a Core
-// sync payload. cycle_seconds is deliberately excluded from the
-// ON CONFLICT update list so the engineer-edited Edge-local value is
-// preserved across syncs. On INSERT the column takes its DEFAULT 0;
-// SetCycleSeconds is the engineer-edit path.
+// sync payload.
 //
 // The upsert is CONDITIONAL: an unchanged row is not written (and its
 // updated_at is not stamped). updated_at means "last changed", not "last
@@ -118,15 +110,6 @@ func SyncCatalog(db *sql.DB, entries []*CatalogEntry) error {
 		return err
 	}
 	return tx.Commit()
-}
-
-// SetCycleSeconds writes the engineer-edited per-part cycle time. No-op
-// (no error) if no row matches the code; the replenishment UI never
-// surfaces parts the catalog doesn't already know about, so a missing
-// row at this point is a sync race the caller can ignore.
-func SetCycleSeconds(db *sql.DB, code string, seconds float64) error {
-	_, err := db.Exec(`UPDATE payload_catalog SET cycle_seconds=?, updated_at=datetime('now') WHERE code=?`, seconds, code)
-	return err
 }
 
 // ListCatalog returns every payload_catalog row sorted by name.

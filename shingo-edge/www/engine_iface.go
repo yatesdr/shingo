@@ -217,8 +217,6 @@ type EngineOrchestration interface {
 
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)
-	ManageReportingPointTag(rpID int64, oldPLC, oldTag string, oldManaged bool, newPLC, newTag string)
-	CleanupReportingPointTag(rpID int64, plcName, tagName string, managed bool)
 }
 
 // Compile-time assertions: *engine.Engine must satisfy both interfaces.

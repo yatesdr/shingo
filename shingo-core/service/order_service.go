@@ -38,10 +38,9 @@ func NewOrderService(db *store.DB, f fleet.Backend) *OrderService {
 
 // --- Status & vendor transitions -----------------------------------------
 
-// UpdateStatus changes the order's status field and detail string.
-func (s *OrderService) UpdateStatus(orderID int64, status, detail string) error {
-	return s.db.UpdateOrderStatus(orderID, status, detail)
-}
+// NO UpdateStatus HERE either: a status write goes through the lifecycle's
+// typed transitions, and the passthrough that sat here had no caller but its
+// own tests (dropped 2026-09-27).
 
 // UpdateVendor records vendor-side identifiers on the order (vendor
 // order id, current vendor state, and the assigned robot id).
@@ -76,13 +75,9 @@ func (s *OrderService) SetPriority(orderID int64, priority int) (*orders.Order, 
 
 // --- Bin claims -----------------------------------------------------------
 
-// ClaimBin reserves a bin for an order. Thin delegate centralized here
-// so the manual-order submission flow does not have to reach into a
-// separate bin accessor purely to attach a bin to the order it just
-// created.
-func (s *OrderService) ClaimBin(binID, orderID int64) error {
-	return s.db.ClaimBin(binID, orderID)
-}
+// No ClaimBin delegate: a claim goes through ClaimForDispatch (reserve ->
+// claim -> confirm); the bare passthrough here had no caller but its own
+// tests (dropped 2026-09-27).
 
 // ReleaseClaimForBin is the coupled rollback (clears claimed_by AND releases the
 // reservation). The manual-order rollback uses it instead of a bare claimed_by

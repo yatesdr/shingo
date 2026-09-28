@@ -362,9 +362,11 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
 
-	// Edge-local per-part cycle time used by the threshold calculator.
-	// Not synced from Core (see catalog.UpsertCatalog comment).
-	db.Exec("ALTER TABLE payload_catalog ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0")
+	// REMOVED 2026-09-28: the ALTER that added payload_catalog.cycle_seconds.
+	// Edge v3 drops that column, and this unguarded step re-ran on every boot,
+	// so it would have put the column straight back. A step that re-creates
+	// what a versioned migration drops is removed with the drop (see
+	// frozen_chain_pin_test.go).
 
 	// Multi-window C0: explicit position kind on the cached loader aggregate
 	// ('window' | 'dedicated'), synced from Core's LoaderPosition.Kind, so the
@@ -1087,10 +1089,80 @@ const edgeBaselineVersion = 1
 
 // edgeMigrations lists Edge's versioned migrations, ascending. Append-only;
 // a new migration's Version must be prev+1 (see protocol/migrate/README.md).
-// Empty today — the frozen chain carries the schema — and this is the ONLY
-// place a future Edge schema change goes.
+// This is the ONLY place an Edge schema change goes — the frozen chain above
+// is never edited or appended to.
+//
+// Every entry must be safe on a database where the frozen chain (or a
+// hand-run fix) already did the work, and must not be undone by the frozen
+// chain on the next boot: the chain re-runs on every startup, so dropping
+// something one of its steps creates means removing that step in the same
+// change (v3 and the cycle_seconds ALTER; see frozen_chain_pin_test.go).
 func edgeMigrations() []migrate.Migration {
-	return nil
+	return []migrate.Migration{
+		{
+			// Two tables with no reader or writer in any module, left on plant
+			// disks when their Go surface went: loader_payload_thresholds (the
+			// Edge threshold surface, deleted 2026-07-21) and
+			// home_location_loaders (deleted 2026-09-10). A fresh install has
+			// not created either since; only upgraded Edges carry them. Dead
+			// tables get dropped rather than left on plant disks, which also
+			// retires both schemadump known-divergences.
+			//
+			// Nothing brings them back: neither schema.Apply nor the frozen
+			// chain CREATEs them. The chain's `ALTER TABLE
+			// loader_payload_thresholds ADD COLUMN overridden_inputs` fails
+			// with "no such table" once the table is gone and its error is
+			// ignored, and its v5->v6 step is a guarded DROP IF EXISTS.
+			Version: 2,
+			Name:    "drop_orphan_loader_tables",
+			Fn: func(tx *sql.Tx) error {
+				for _, stmt := range []string{
+					`DROP TABLE IF EXISTS home_location_loaders`,
+					`DROP TABLE IF EXISTS loader_payload_thresholds`,
+				} {
+					if _, err := tx.Exec(stmt); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'
+					AND name IN ('home_location_loaders', 'loader_payload_thresholds')`).Scan(&n)
+				return err == nil && n == 0
+			},
+		},
+		{
+			// payload_catalog.cycle_seconds: an Edge-local per-part cycle time
+			// whose only writer and reader went with the Edge threshold
+			// calculator. Nothing reads it; the values it holds are dropped
+			// with it. The frozen-chain ALTER that added it on every boot was
+			// removed in the same change, so nothing re-adds it.
+			//
+			// Column-check guarded: a fresh DB never has the column (the DDL
+			// no longer creates it), so the DROP runs only where it exists.
+			//
+			// NO Verify, deliberately. A "column absent" Verify would quietly
+			// re-drop the column on every boot if anything ever re-added it,
+			// hiding exactly the regression the double-boot schema-dump proof
+			// exists to catch. Without one, a re-added column stays visible.
+			Version: 3,
+			Name:    "drop_payload_catalog_cycle_seconds",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('payload_catalog')
+					WHERE name = 'cycle_seconds'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE payload_catalog DROP COLUMN cycle_seconds`)
+				return err
+			},
+		},
+	}
 }
 
 // runVersioned is the seam versioned_migration_test.go drives directly; the

@@ -61,7 +61,7 @@ Without a filter (`--log-debug`), all subsystems are logged.
 `--log-debug` controls the optional **file** (`shingo-debug.log`) only. What
 reaches **stderr**, and so journald under systemd, is `logging.stderr_subsystems`
 in the YAML, with Core's semantics: absent is the default list (every subsystem
-except `outbox`, `inventory_delta`, `kafka` and `reporter`), `[all]` mirrors
+except `outbox`, `inventory_delta` and `kafka`), `[all]` mirrors
 everything, `[]` mirrors nothing. The browser log UI shows every subsystem
 either way.
 
@@ -75,7 +75,6 @@ either way.
 | `edge_handler` | Inbound dispatch message handling |
 | `heartbeat` | Registration and heartbeat messaging |
 | `outbox` | Outbox drain cycles |
-| `reporter` | Production reporting |
 | `protocol` | Wire protocol encode and decode |
 
 ## Command-Line Flags
@@ -105,10 +104,9 @@ Shingo Edge provides a browser-based interface for production line operators and
 
 | Page | Route | Description |
 |------|-------|-------------|
-| Processes | `/processes` | Production lines |
+| Processes | `/processes` | Production lines, including each line's PLC counter tag (its reporting point) |
 | Styles | `/styles` | Job styles and their node claims |
 | Payload catalog | `/payload-catalog` | Payload templates for this station |
-| Reporting points | `/reporting-points` | PLC counter tags bound to job styles |
 | PLCs | `/plcs` | Discovered PLCs, WarLink connection, tag reads |
 | Shifts | `/shifts` | Shift windows for production bucketing |
 | Operator stations | `/operator-stations` | Station definitions and node assignment |

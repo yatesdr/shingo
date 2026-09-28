@@ -42,60 +42,6 @@ func makeOrder(t *testing.T, db *store.DB, nodeName string) *orders.Order {
 	return o
 }
 
-func TestOrderService_UpdateStatus_TransitionAndHistory(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc, _ := newOrderSvc(db, false)
-
-	o := makeOrder(t, db, sd.LineNode.Name)
-
-	testutil.MustNoErr(t, svc.UpdateStatus(o.ID, "queued", "ready"), "UpdateStatus")
-	got, _ := db.GetOrder(o.ID)
-	if got.Status != "queued" {
-		t.Errorf("Status = %q, want queued", got.Status)
-	}
-	// Non-terminal statuses clear error_detail per UpdateStatus semantics.
-	if got.ErrorDetail != "" {
-		t.Errorf("ErrorDetail = %q, want empty for non-terminal status", got.ErrorDetail)
-	}
-
-	history, err := db.ListOrderHistory(o.ID)
-	if err != nil {
-		t.Fatalf("ListOrderHistory: %v", err)
-	}
-	foundQueued := false
-	for _, h := range history {
-		if h.Status == "queued" {
-			foundQueued = true
-		}
-	}
-	if !foundQueued {
-		t.Errorf("order history missing 'queued' entry: %+v", history)
-	}
-}
-
-// TestOrderService_UpdateStatus_RefusesTerminal pins the guard through the
-// OrderService: a terminal UpdateStatus is refused — terminals must go through
-// the lifecycle's TerminalizeOrder, which ALSO releases claims + reservations.
-// (Was ..._TerminalFailedPersistsDetail, which pinned the leak-enabling
-// behavior; terminal error_detail is now owned by TerminalizeOrder.)
-func TestOrderService_UpdateStatus_RefusesTerminal(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc, _ := newOrderSvc(db, false)
-
-	o := makeOrder(t, db, sd.LineNode.Name)
-	if err := svc.UpdateStatus(o.ID, "failed", "resolver had no matching bin"); err == nil {
-		t.Error("OrderService.UpdateStatus(failed): want error (terminals must go through the lifecycle), got nil")
-	}
-	got, _ := db.GetOrder(o.ID)
-	if got.Status == "failed" {
-		t.Errorf("status = %q — a refused terminal write must not apply", got.Status)
-	}
-}
-
 func TestOrderService_UpdateVendor(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -205,56 +151,6 @@ func TestOrderService_SetPriority_OrderNotFound(t *testing.T) {
 	}
 	if resolved != nil {
 		t.Errorf("resolved = %+v, want nil on lookup failure", resolved)
-	}
-}
-
-func TestOrderService_ClaimBin(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc, _ := newOrderSvc(db, false)
-
-	bin := createTestBin(t, db, sd.StorageNode.ID, "OS-CLAIM-1", "", 0)
-	o := makeOrder(t, db, sd.LineNode.Name)
-
-	testdb.ReserveBin(t, db, o.ID, bin.ID)
-	testutil.MustNoErr(t, svc.ClaimBin(bin.ID, o.ID), "ClaimBin")
-	got, _ := db.GetBin(bin.ID)
-	if got.ClaimedBy == nil || *got.ClaimedBy != o.ID {
-		t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, o.ID)
-	}
-
-	// The bare UnclaimBin inverse was removed (it orphaned the coupled
-	// reservation and bricked the bin). Release now goes through the coupled
-	// ReleaseClaimForBin, which is covered by the claim_release / delivery tests.
-}
-
-func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc, _ := newOrderSvc(db, false)
-
-	bin := createTestBin(t, db, sd.StorageNode.ID, "OS-CLAIM-2", "", 0)
-	o1 := makeOrder(t, db, sd.LineNode.Name)
-
-	testdb.ReserveBin(t, db, o1.ID, bin.ID)
-	testutil.MustNoErr(t, svc.ClaimBin(bin.ID, o1.ID), "first ClaimBin")
-
-	// Second order tries to claim the same bin — must fail.
-	o2 := &orders.Order{
-		EdgeUUID: "second-claim", StationID: "s", OrderType: "move", Status: "pending",
-		Quantity: 1, DeliveryNode: sd.LineNode.Name,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(o2), "create o2")
-
-	if err := svc.ClaimBin(bin.ID, o2.ID); err == nil {
-		t.Fatal("expected second ClaimBin to fail on already-claimed bin")
-	}
-
-	got, _ := db.GetBin(bin.ID)
-	if got.ClaimedBy == nil || *got.ClaimedBy != o1.ID {
-		t.Errorf("ClaimedBy = %v, want original claim %d", got.ClaimedBy, o1.ID)
 	}
 }
 

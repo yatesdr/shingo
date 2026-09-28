@@ -39,11 +39,6 @@ func (db *DB) UpdateReportingPointCounter(id int64, count int64) error {
 	return counters.UpdateReportingPointCounter(db.DB, id, count)
 }
 
-// DeleteReportingPoint removes a reporting_point row.
-func (db *DB) DeleteReportingPoint(id int64) error {
-	return counters.DeleteReportingPoint(db.DB, id)
-}
-
 // SetReportingPointManaged toggles the warlink_managed flag.
 func (db *DB) SetReportingPointManaged(id int64, managed bool) error {
 	return counters.SetReportingPointManaged(db.DB, id, managed)

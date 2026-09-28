@@ -363,13 +363,8 @@ CREATE TABLE IF NOT EXISTS payload_catalog (
     code          TEXT NOT NULL DEFAULT '',
     description   TEXT NOT NULL DEFAULT '',
     uop_capacity  INTEGER NOT NULL DEFAULT 0,
-    -- Edge-local per-part cycle time (seconds per UOP at the consuming
-    -- cell). NOT synced from Core — different installations may run the
-    -- same part at different rates, and the calculator on this Edge is
-    -- the only consumer. Engineer-edited via the replenishment page;
-    -- preserved across catalog syncs (UpsertCatalog excludes this column
-    -- from its ON CONFLICT update list).
-    cycle_seconds REAL NOT NULL DEFAULT 0,
+    -- (cycle_seconds, an Edge-local cycle time with no reader, was dropped by
+    -- Edge v3, 2026-09-28.)
     catid         TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -745,6 +740,16 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
 
 -- REMOVED 2026-07-21 — loader_payload_thresholds.
 --
+-- DROPPED PHYSICALLY 2026-09-27 by Edge versioned migration v2
+-- (drop_orphan_loader_tables, store/migrations.go). The two reasons below for
+-- keeping it were re-checked first and neither held any more:
+--   1. A pre-sweep binary's migrate() runs schema.Apply, whose DDL still had
+--      this CREATE, BEFORE verifySchema, so a rolled-back binary recreates the
+--      table empty and boots.
+--   2. The remediation input: the Hopkinsville copy held no rows, and
+--      Springfield's were the ones already verified on Core.
+-- The history below is kept as the record of why it waited.
+--
 -- The Edge-owned per-(loader, payload) UOP threshold table. Core owns that
 -- value now (bin_loader_homes.uop_threshold -> BuildDemandRegistryFromAggregate
 -- -> demand_registry -> the threshold monitor); the Edge write path terminated
@@ -842,6 +847,12 @@ CREATE TABLE IF NOT EXISTS core_loader_payloads (
 
 
 -- REMOVED 2026-09-10 — home_location_loaders.
+--
+-- DROPPED PHYSICALLY 2026-09-27 by Edge versioned migration v2
+-- (drop_orphan_loader_tables, store/migrations.go), together with
+-- loader_payload_thresholds above. The rollback reason below does not hold: a
+-- pre-sweep binary's schema.Apply recreates the table empty before
+-- verifySchema runs. Its schemadump known-divergence is retired with it.
 --
 -- Membership set marking a bin loader's layout as "home location" (each payload
 -- its own dedicated node) vs the default single window. The layout fact is

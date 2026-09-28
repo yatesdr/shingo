@@ -1033,8 +1033,8 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 // ║  It never checks the robot reaches the new destination and never inspects ║
 // ║  the re-issued blocks. A green suite says nothing about this working.     ║
 // ║                                                                           ║
-// ║  Reachable, so it is not dead code: Edge's apiRedirectOrder →             ║
-// ║  Manager.RedirectOrder queues the message, and Edge no-ops the reply.     ║
+// ║  Reachable only from the Edge manual-message page (diagnostics); the      ║
+// ║  operator redirect route and Manager.RedirectOrder were deleted as dead.  ║
 // ║                                                                           ║
 // ║  BEFORE RELYING ON THIS: decide whether redirect is pre-dispatch only     ║
 // ║  (coherent — nothing picked up yet, terminate+recreate is honest), and if ║

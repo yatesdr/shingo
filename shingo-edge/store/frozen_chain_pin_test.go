@@ -34,6 +34,15 @@ import (
 // the edit this test exists to stop. Revert it, ship the change as a
 // versioned migration with Version > edgeBaselineVersion instead.
 //
+// ONE KIND OF FROZEN-STEP EDIT IS SANCTIONED: a step that re-creates what a
+// versioned migration drops is removed WITH the drop, in the same change.
+// Otherwise the chain, which re-runs on every boot, undoes the migration on
+// the next start. First use: 2026-09-28, the payload_catalog.cycle_seconds
+// ALTER removed with Edge v3 (wantTotal 165 -> 164). Removal only: a
+// re-creating step is never rewritten in place, and nothing else qualifies.
+// The chain's retirement condition is unchanged: every deployed Edge
+// reports schema version >= 1.
+//
 // The runtime half of the pin — that a fresh Open seeds exactly the
 // baseline row and an aged database is adopted, not re-run — is
 // versioned_migration_test.go's job.
@@ -56,7 +65,7 @@ func TestFrozenChainIsPinned(t *testing.T) {
 		t.Fatalf("no migrate() FuncDecl found in migrations.go")
 	}
 
-	const wantTotal = 165 // statements in migrate(): frozen chain + the runVersioned tail
+	const wantTotal = 164 // statements in migrate(): frozen chain + the runVersioned tail
 	if got := len(mig.Body.List); got != wantTotal {
 		t.Errorf("migrate() has %d statements, want %d — the frozen chain's shape changed. "+
 			"New schema changes go in edgeMigrations(), not here; frozen steps are never edited. "+

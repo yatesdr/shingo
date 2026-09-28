@@ -47,10 +47,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		// Order lifecycle
 		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
-		r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
-		r.Post("/orders/{orderID}/abort", h.apiCancelOrder) // alias
-		r.Post("/orders/{orderID}/redirect", h.apiRedirectOrder)
-		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
+		r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 	})
 
 	return h, r
@@ -65,7 +62,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // rather than a reason to wait.
 //
 // The other half matters just as much: the operator station is a shop-floor
-// monitor with no login, so gating release/submit/cancel would take the floor's
+// monitor with no login, so gating release/submit/abort would take the floor's
 // own buttons away. Minting new work and acting on work that already exists are
 // different authorities. Both directions are asserted so a later "tidy the
 // routes" pass cannot move one without noticing the other.
@@ -74,8 +71,7 @@ func TestApiOrders_CreationRequiresAuth_LifecycleDoesNot(t *testing.T) {
 	r.Route("/api", func(r chi.Router) {
 		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
-		r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
-		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
+		r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 		r.Group(func(r chi.Router) {
 			r.Use(h.adminMiddleware)
 			r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
@@ -108,8 +104,7 @@ func TestApiOrders_CreationRequiresAuth_LifecycleDoesNot(t *testing.T) {
 	for _, path := range []string{
 		"/api/orders/1/release",
 		"/api/orders/1/submit",
-		"/api/orders/1/cancel",
-		"/api/orders/1/count",
+		"/api/orders/1/abort",
 	} {
 		resp := doRequest(t, r, "POST", path, map[string]any{}, nil)
 		if resp.StatusCode == http.StatusSeeOther {
@@ -658,33 +653,17 @@ func TestApiOrders_SubmitOrder_MissingOrder(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Cancel / Abort — apiCancelOrder (same handler, two route aliases)
+// Abort — apiCancelOrder (the /cancel alias was dropped 2026-09-27; the
+// orders page posts /abort)
 // DB call sites: DB.GetOrder, DB.EnqueueOutbox (sender.Queue),
 // DB.UpdateOrderStatus + DB.InsertOrderHistory (TransitionOrder to cancelled).
 // ═══════════════════════════════════════════════════════════════════════
 
-func TestApiOrders_CancelOrder_Success(t *testing.T) {
+func TestApiOrders_AbortOrder_Success(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/cancel", nil, nil)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-
-	stored, _ := testDB.GetOrder(orderID)
-	if stored.Status != orders.StatusCancelled {
-		t.Errorf("status after cancel: got %q, want %q",
-			stored.Status, orders.StatusCancelled)
-	}
-}
-
-func TestApiOrders_AbortOrder_Alias(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
-
-	// /abort is an alias for /cancel — same handler, same behaviour.
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 
@@ -695,133 +674,21 @@ func TestApiOrders_AbortOrder_Alias(t *testing.T) {
 	}
 }
 
-func TestApiOrders_CancelOrder_InvalidID(t *testing.T) {
+func TestApiOrders_AbortOrder_InvalidID(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	resp := doRequest(t, router, "POST", "/api/orders/bad/cancel", nil, nil)
+	resp := doRequest(t, router, "POST", "/api/orders/bad/abort", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid order ID")
 }
 
-func TestApiOrders_CancelOrder_AlreadyTerminal(t *testing.T) {
+func TestApiOrders_AbortOrder_AlreadyTerminal(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	// Cancelled (terminal) orders cannot be cancelled again.
+	// Cancelled (terminal) orders cannot be aborted again.
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusCancelled)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/cancel", nil, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Set final count — apiSetOrderCount
-// DB call site: DB.UpdateOrderFinalCount (direct, bypasses manager).
-// ═══════════════════════════════════════════════════════════════════════
-
-func TestApiOrders_SetOrderCount_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, protocol.OrderType("store"), orders.StatusPending)
-
-	body := map[string]int64{"final_count": 99}
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/count", body, nil)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-
-	stored, _ := testDB.GetOrder(orderID)
-	if stored.FinalCount == nil || *stored.FinalCount != 99 {
-		t.Errorf("final_count: got %v, want 99", stored.FinalCount)
-	}
-	if !stored.CountConfirmed {
-		t.Error("expected count_confirmed=true after set-count")
-	}
-}
-
-func TestApiOrders_SetOrderCount_InvalidID(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	body := map[string]int64{"final_count": 1}
-	resp := doRequest(t, router, "POST", "/api/orders/bad/count", body, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "invalid order ID")
-}
-
-func TestApiOrders_SetOrderCount_InvalidJSON(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, protocol.OrderType("store"), orders.StatusPending)
-
-	body := map[string]any{"final_count": "not-a-number"}
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/count", body, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Redirect — apiRedirectOrder
-// DB call sites: DB.GetOrder, DB.EnqueueOutbox (sender.Queue),
-// DB.UpdateOrderDeliveryNode.
-// ═══════════════════════════════════════════════════════════════════════
-
-func TestApiOrders_RedirectOrder_Success(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
-
-	body := map[string]string{"delivery_node": "NEW-DEST"}
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/redirect", body, nil)
-	assertStatus(t, resp, http.StatusOK)
-
-	var order storeorders.Order
-	decodeJSON(t, resp, &order)
-	if order.DeliveryNode != "NEW-DEST" {
-		t.Errorf("delivery_node in response: got %q, want NEW-DEST", order.DeliveryNode)
-	}
-
-	// Verify DB state.
-	stored, _ := testDB.GetOrder(orderID)
-	if stored.DeliveryNode != "NEW-DEST" {
-		t.Errorf("delivery_node in DB: got %q, want NEW-DEST", stored.DeliveryNode)
-	}
-}
-
-func TestApiOrders_RedirectOrder_InvalidID(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	body := map[string]string{"delivery_node": "X"}
-	resp := doRequest(t, router, "POST", "/api/orders/bad/redirect", body, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "invalid order ID")
-}
-
-func TestApiOrders_RedirectOrder_MissingDeliveryNode(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
-
-	body := map[string]string{"delivery_node": ""}
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/redirect", body, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "delivery_node is required")
-}
-
-func TestApiOrders_RedirectOrder_InvalidJSON(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusSubmitted)
-
-	// delivery_node must be a string; sending an int triggers a decode error.
-	body := map[string]any{"delivery_node": 42}
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/redirect", body, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-}
-
-func TestApiOrders_RedirectOrder_AlreadyTerminal(t *testing.T) {
-	_, router := newApiOrdersRouter(t)
-
-	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusConfirmed)
-
-	body := map[string]string{"delivery_node": "ANYWHERE"}
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/redirect", body, nil)
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 

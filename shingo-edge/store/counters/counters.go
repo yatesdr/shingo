@@ -264,12 +264,6 @@ func UpdateReportingPointCounter(db *sql.DB, id int64, count int64) error {
 	return err
 }
 
-// DeleteReportingPoint removes a reporting_point row.
-func DeleteReportingPoint(db *sql.DB, id int64) error {
-	_, err := db.Exec(`DELETE FROM reporting_points WHERE id=?`, id)
-	return err
-}
-
 // SetReportingPointManaged toggles the warlink_managed flag.
 func SetReportingPointManaged(db *sql.DB, id int64, managed bool) error {
 	_, err := db.Exec(`UPDATE reporting_points SET warlink_managed=? WHERE id=?`, managed, id)

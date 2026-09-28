@@ -2,14 +2,12 @@
 //
 // resolveNodeStaging decides whether a destination node receives bins
 // as "staged" (lineside) or "available" (storage under a LANE).
-// resolveStagingExpiry computes the expiry time for staged bins using
-// per-node `staging_ttl` property with parent fallback and a global
-// config default.
+// resolveStagingExpiry computes the expiry time for staged bins from the
+// global config default (staging.ttl).
 
 package engine
 
 import (
-	"strings"
 	"time"
 
 	"shingo/protocol/clock"
@@ -38,42 +36,19 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 	return service.IsStorageSlot(e.db, node)
 }
 
-// resolveStagingExpiry computes the staging expiry time for a node.
-// Returns nil if staging is permanent (ttl=0 or ttl=none).
-func (e *Engine) resolveStagingExpiry(node *nodes.Node) *time.Time {
-	ttlStr := ""
-
-	// Check node's own property first
-	ttlStr = e.db.GetNodeProperty(node.ID, "staging_ttl")
-
-	// If not set, check parent (via effective properties)
-	if ttlStr == "" && node.ParentID != nil {
-		ttlStr = e.db.GetNodeProperty(*node.ParentID, "staging_ttl")
-	}
-
-	// Parse the TTL value
-	if ttlStr == "0" || strings.EqualFold(ttlStr, "none") {
-		return nil // permanent staging
-	}
-
-	var ttl time.Duration
-	if ttlStr != "" {
-		parsed, err := time.ParseDuration(ttlStr)
-		if err != nil {
-			e.logFn("engine: staging ttl parse error for node %d: %q: %v", node.ID, ttlStr, err)
-		} else {
-			ttl = parsed
-		}
-	}
-
-	// Fall back to global config default
-	if ttl == 0 {
-		ttl = e.cfg.Staging.TTL
-	}
+// resolveStagingExpiry computes the staging expiry time for a node from the
+// global staging.ttl. Returns nil if staging is permanent (ttl <= 0).
+//
+// There was a per-node `staging_ttl` property, with a parent fallback, that
+// could override the default. No node at either plant ever carried it, so
+// both reads always came back empty and fell through to the default; the
+// reads were dropped 2026-09-27. The node argument stays because callers
+// pass the destination; the expiry no longer depends on it.
+func (e *Engine) resolveStagingExpiry(_ *nodes.Node) *time.Time {
+	ttl := e.cfg.Staging.TTL
 	if ttl <= 0 {
 		return nil
 	}
-
 	t := clock.Now().Add(ttl)
 	return &t
 }

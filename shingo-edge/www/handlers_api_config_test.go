@@ -9,7 +9,6 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/catalog"
-	"shingoedge/store/counters"
 	"shingoedge/store/processes"
 )
 
@@ -339,84 +338,6 @@ func TestApiConfig_UpdateStyle_MissingProcessID(t *testing.T) {
 	resp := doRequest(t, router, "PUT", "/api/styles/"+itoa(sid), body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "process_id is required")
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Reporting Points — List, Create, Update, Delete
-// DB call sites: ListReportingPoints, CreateReportingPoint,
-//                GetReportingPoint, UpdateReportingPoint, DeleteReportingPoint
-// ═══════════════════════════════════════════════════════════════════════
-
-func TestApiConfig_ReportingPointsCRUD(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-	pid := seedProcess(t, "RPLine")
-	sid := seedStyle(t, "RPStyle", pid)
-
-	// --- Create ---
-	body := map[string]any{
-		"plc_name": "plc-rp",
-		"tag_name": "tag-rp",
-		"style_id": sid,
-	}
-	resp := doRequest(t, router, "POST", "/api/reporting-points", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var createResult map[string]int64
-	decodeJSON(t, resp, &createResult)
-	rpID := createResult["id"]
-	if rpID == 0 {
-		t.Fatal("expected non-zero reporting point id")
-	}
-
-	// Verify DB
-	rp, err := testDB.GetReportingPoint(rpID)
-	if err != nil {
-		t.Fatalf("GetReportingPoint: %v", err)
-	}
-	if rp.PLCName != "plc-rp" || rp.TagName != "tag-rp" {
-		t.Errorf("reporting point: plc=%q tag=%q, want plc=plc-rp tag=tag-rp", rp.PLCName, rp.TagName)
-	}
-
-	// --- List ---
-	resp = doRequest(t, router, "GET", "/api/reporting-points", nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var rps []counters.ReportingPoint
-	decodeJSON(t, resp, &rps)
-	found := false
-	for _, r := range rps {
-		if r.ID == rpID {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("created reporting point not found in list")
-	}
-
-	// --- Update ---
-	updateBody := map[string]any{
-		"plc_name": "plc-updated",
-		"tag_name": "tag-updated",
-		"style_id": sid,
-		"enabled":  true,
-	}
-	resp = doRequest(t, router, "PUT", "/api/reporting-points/"+itoa(rpID), updateBody, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-
-	rp, _ = testDB.GetReportingPoint(rpID)
-	if rp.PLCName != "plc-updated" {
-		t.Errorf("updated plc_name: got %q, want %q", rp.PLCName, "plc-updated")
-	}
-
-	// --- Delete ---
-	resp = doRequest(t, router, "DELETE", "/api/reporting-points/"+itoa(rpID), nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-
-	_, err = testDB.GetReportingPoint(rpID)
-	if err == nil {
-		t.Error("expected error getting deleted reporting point")
-	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -841,7 +762,6 @@ func TestApiConfig_AdminAuth_RequiresLogin(t *testing.T) {
 	}{
 		{"GET", "/api/processes"},
 		{"GET", "/api/styles"},
-		{"GET", "/api/reporting-points"},
 		{"GET", "/api/warlink/status"},
 		{"PUT", "/api/config/core-api"},
 	}
@@ -877,8 +797,6 @@ func TestApiConfig_BadPathParams(t *testing.T) {
 		{"update_style_bad_id", "PUT", "/api/styles/abc"},
 		{"delete_style_bad_id", "DELETE", "/api/styles/abc"},
 		{"list_claims_bad_id", "GET", "/api/styles/abc/node-claims"},
-		{"update_rp_bad_id", "PUT", "/api/reporting-points/abc"},
-		{"delete_rp_bad_id", "DELETE", "/api/reporting-points/abc"},
 		{"delete_claim_bad_id", "DELETE", "/api/style-node-claims/abc"},
 	}
 

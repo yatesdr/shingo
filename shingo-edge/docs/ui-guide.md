@@ -115,7 +115,6 @@ pages, each with its own route (`shingo-edge/www/router.go`):
 | Process nodes | `/process-nodes` |
 | Process groups | `/process-groups` |
 | Payload catalog | `/payload-catalog` |
-| Reporting points | `/reporting-points` |
 | WarLink / PLCs | `/plcs` |
 | Shifts | `/shifts` |
 | Operator stations | `/operator-stations` |
@@ -138,10 +137,7 @@ What each covers:
 
 The payload catalog is synced automatically from Shingo Core. Local configuration adds station-specific settings such as reorder thresholds.
 
-**Reporting Points** (`/reporting-points`) — Bind PLC counter tags to job styles for automated production counting. Each reporting point specifies:
-- PLC name (discovered from WarLink)
-- Tag name (counter tag on the PLC)
-- Associated job style
+**Reporting points** have no page of their own. A line's production counter is set on the line itself (`/processes`): its PLC (discovered from WarLink) and its counter tag. The Edge keeps the reporting point that binds that tag to the line's active style in step whenever the line is saved or changes over, and PLC polling reads it from there.
 
 **WarLink / PLC** (`/plcs`) — View discovered PLCs and connection status. Test individual tag reads. Configure the WarLink connection address.
 

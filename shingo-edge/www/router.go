@@ -300,6 +300,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/finalize", h.apiRequestProduceSwap)
 			r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
 			r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
+			// PARKED, not dead: the operator line-count door. No UI calls it
+			// yet by design; see apiRecordCount and PARKED-shingo-features.md.
 			r.Post("/process-nodes/{id}/record-count", h.apiRecordCount)
 			r.Post("/process-nodes/{id}/clear-loader-home", h.apiClearLoaderHome)
 			r.Get("/process-nodes/{id}/market-bins", h.apiGetMarketBins)
@@ -364,10 +366,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// behind admin auth (see the admin group below).
 			r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 			r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
-			r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
 			r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
-			r.Post("/orders/{orderID}/redirect", h.apiRedirectOrder)
-			r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
 			r.Get("/orders/active", h.apiGetActiveOrders)
 
 			// Lookups
@@ -402,8 +401,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// operator apart from a script.
 				//
 				// The per-order lifecycle routes stay public, deliberately —
-				// release / submit / cancel / count are the operator
-				// station's, and that is a shop-floor monitor with no login.
+				// release / submit / abort are the orders page's and the
+				// operator station's, and that is a shop-floor monitor with no login.
 				// Acting on an order that already exists is a different
 				// authority from minting one.
 				r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
@@ -423,12 +422,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// here were deleted with the dead Edge threshold surface —
 				// Core owns that value (engine/replenishment_admin.go).
 				r.Put("/replenishment/cell-reorder", h.apiUpdateCellReorder)
-
-				// Reporting points
-				r.Get("/reporting-points", h.apiListReportingPoints)
-				r.Post("/reporting-points", h.apiCreateReportingPoint)
-				r.Put("/reporting-points/{id}", h.apiUpdateReportingPoint)
-				r.Delete("/reporting-points/{id}", h.apiDeleteReportingPoint)
 
 				// Processes
 				r.Get("/processes", h.apiListProcesses)

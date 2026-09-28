@@ -428,11 +428,6 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Get("/warlink/status", h.apiWarLinkStatus)
 			r.Put("/config/warlink", h.apiUpdateWarLink)
 
-			r.Get("/reporting-points", h.apiListReportingPoints)
-			r.Post("/reporting-points", h.apiCreateReportingPoint)
-			r.Put("/reporting-points/{id}", h.apiUpdateReportingPoint)
-			r.Delete("/reporting-points/{id}", h.apiDeleteReportingPoint)
-
 			r.Get("/processes", h.apiListProcesses)
 			r.Post("/processes", h.apiCreateProcess)
 			r.Put("/processes/{id}", h.apiUpdateProcess)
