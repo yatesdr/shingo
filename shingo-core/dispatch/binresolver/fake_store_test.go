@@ -26,6 +26,12 @@ type fakeStore struct {
 	maintainLevelsErr error
 	emptyCounts       map[groupKey]int
 	emptyCountErr     error
+	// emptiesAt: counted empties standing on one node (keyed {nodeID, code}),
+	// which the excluding count subtracts.
+	emptiesAt map[groupKey]int
+	// activeByOrder: the order an activeByDelivery entry belongs to, so the
+	// excluding count can leave the asker out.
+	activeByOrder map[string]int64
 
 	// Basic lookup tables.
 	nodes            map[int64]*nodes.Node
@@ -171,6 +177,17 @@ func (f *fakeStore) CountActiveOrdersByDeliveryNode(nodeName string) (int, error
 	return f.activeByDelivery[nodeName], nil
 }
 
+// CountActiveOrdersByDeliveryNodeExcluding reads activeByDelivery less any entry
+// activeByOrder attributes to the excluded order — how the vacated-slot tests
+// say "this traffic is the asker's own".
+func (f *fakeStore) CountActiveOrdersByDeliveryNodeExcluding(nodeName string, excludeID int64) (int, error) {
+	n := f.activeByDelivery[nodeName]
+	if f.activeByOrder[nodeName] == excludeID && excludeID != 0 && n > 0 {
+		n--
+	}
+	return n, nil
+}
+
 func (f *fakeStore) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 	return f.laneSlots[laneID], nil
 }
@@ -287,6 +304,15 @@ func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID 
 		return 0, f.emptyCountErr
 	}
 	return f.emptyCounts[groupKey{groupNodeID, binTypeCode}], nil
+}
+
+// CountEmptyBinsOfTypeInGroupExcludingNode is the group count less the empties
+// emptiesAt says stand on the excluded node.
+func (f *fakeStore) CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64) (int, error) {
+	if f.emptyCountErr != nil {
+		return 0, f.emptyCountErr
+	}
+	return f.emptyCounts[groupKey{groupNodeID, binTypeCode}] - f.emptiesAt[groupKey{excludeNodeID, binTypeCode}], nil
 }
 
 type groupKey struct {

@@ -55,9 +55,13 @@ type Store interface {
 	// that is the whole feature quietly not working.
 	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
 	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+	// The same count with one node's carriers left out — the level after a
+	// committed lift empties that node (ResolveStoreVacated).
+	CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64) (int, error)
 
 	// In-flight orders (used for storage candidate screening).
 	CountActiveOrdersByDeliveryNode(nodeName string) (int, error)
+	CountActiveOrdersByDeliveryNodeExcluding(nodeName string, excludeID int64) (int, error)
 
 	// Lane-aware queries.
 	ListLaneSlots(laneID int64) ([]*nodes.Node, error)

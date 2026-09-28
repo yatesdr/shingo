@@ -127,7 +127,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return d.dispatchPairInOnePass(order, legs)
 	}
 
-	resolvedSteps, st := d.acquireComplexPhases(order)
+	resolvedSteps, _, st := d.acquireComplexPhases(order, nil)
 	if st.done {
 		return st.err
 	}
@@ -153,29 +153,35 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 //
 // done=true means the order was parked or terminalized inside a phase and the
 // caller returns st.err verbatim; the returned slice is meaningless then.
-func (d *Dispatcher) acquireComplexPhases(order *orders.Order) ([]resolvedStep, dispatchStep) {
-	resolvedSteps, st := d.prepareComplexSteps(order)
+//
+// pc is the pair partner that acquired earlier in this pass, or nil — a solo
+// order, the first leg of a pair, or a one-leg slice. Only the vacated-slot
+// rule reads it. claimed is what this order's sources confirmed, for the leg
+// after it.
+func (d *Dispatcher) acquireComplexPhases(order *orders.Order, pc *pairPass) ([]resolvedStep, []reservedPickup, dispatchStep) {
+	resolvedSteps, st := d.prepareComplexSteps(order, pc)
 	if st.done {
-		return nil, st
+		return nil, nil, st
 	}
 
 	if st := d.applySwapGates(order, resolvedSteps); st.done {
-		return nil, st
+		return nil, nil, st
 	}
 
-	if st := d.reserveComplexDestination(order, resolvedSteps); st.done {
-		return nil, st
+	if st := d.reserveComplexDestination(order, resolvedSteps, pc); st.done {
+		return nil, nil, st
 	}
 
-	if st := d.acquireComplexSources(order, resolvedSteps); st.done {
-		return nil, st
+	claimed, st := d.acquireComplexSources(order, resolvedSteps)
+	if st.done {
+		return nil, nil, st
 	}
 
 	if st := d.admitComplexLanes(order, resolvedSteps); st.done {
-		return nil, st
+		return nil, nil, st
 	}
 
-	return resolvedSteps, dispatchStep{}
+	return resolvedSteps, claimed, dispatchStep{}
 }
 
 // admitComplexLanes is the physical question, asked for a coordinated order for
@@ -324,7 +330,7 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 // dedicated-loader placement. done=true means the order was parked or terminalized
 // here and the orchestrator returns st.err verbatim; on done=false the returned
 // slice is the single source of truth the read-only phases B–E consume.
-func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, dispatchStep) {
+func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]resolvedStep, dispatchStep) {
 	var resolvedSteps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &resolvedSteps); err != nil {
 		d.failOrderInternal(order, "invalid_steps", fmt.Sprintf("parse stored steps: %v", err))
@@ -343,7 +349,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	// the lane lock is held BY THIS ORDER to protect the bin it uncovered; an
 	// owner-blind re-resolve drops that lane and sends the parent back to a
 	// buried bin it will dig for again. See store/reservations/dig_exclusion.go.
-	newSteps, changed, rerr := d.reResolveComplexSteps(resolvedSteps, order.PayloadCode, digAskerFor(order))
+	newSteps, changed, rerr := d.reResolveComplexStepsFor(order, resolvedSteps, digAskerFor(order), pc)
 	if rerr != nil {
 		class, payload := classifyResolutionError(rerr)
 		switch class {
@@ -430,7 +436,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	// found unavailable, the order WAITS here rather than being dispatched onto it.
 	// Only a leg whose drop is a loader home can reach that answer, so a supply leg
 	// bound for the line is never held by it.
-	if waitHome := d.placeForDedicatedLoader(order, resolvedSteps); waitHome != "" {
+	if waitHome := d.placeForDedicatedLoader(order, resolvedSteps, pc); waitHome != "" {
 		if d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLoaderParkNoSlot,
 			QueueParams{Destination: waitHome}) {
 			log.Printf("dispatch: complex order %d waits — loader home %s cannot take its bin and no buffer is free",
@@ -459,7 +465,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 // MoveToSourcing status side effect is intentional and stays first, inside this
 // phase. plan and assigned are locals — nothing downstream needs them. Reads the
 // resolved steps read-only.
-func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []resolvedStep) ([]reservedPickup, dispatchStep) {
 	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
 	// order stays `sourcing` while it holds partials and the scanner retries it
 	// (the acquiring-set widening, complex scope). Idempotent — a retried order
@@ -482,7 +488,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		// is no longer ours.
 		if IsConcurrentTransition(err) {
 			log.Printf("dispatch: complex order %d moved under us — another actor owns it now: %v", order.ID, err)
-			return dispatchStep{done: true, err: fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)}
+			return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)}
 		}
 		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
@@ -502,7 +508,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	binTypes, err := d.db.LoadBinTypeRule(order.PayloadCode)
 	if err != nil {
 		log.Printf("dispatch: complex order %d — carrier rule for %q unreadable: %v", order.ID, order.PayloadCode, err)
-		return dispatchStep{done: true, err: fmt.Errorf("complex order %d: load bin-type rule: %w", order.ID, err)}
+		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d: load bin-type rule: %w", order.ID, err)}
 	}
 	plan := BuildComplexPlan(resolvedSteps, d.snapshotPickupBins(resolvedSteps), order.PayloadCode, processNode, binTypes)
 
@@ -527,7 +533,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReadFailed,
 			QueueParams{Payload: order.PayloadCode})
-		return dispatchStep{done: true, err: rerr}
+		return nil, dispatchStep{done: true, err: rerr}
 	}
 	switch outcome {
 	case reserveMoot:
@@ -537,7 +543,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		// than hold forever: a moot evac is not demand (operator-driven hold-and-retry
 		// does not apply).
 		d.skipOrderInternal(order, codeNoSourceBin, fmt.Sprintf("complex order %d: no bin at any source node", order.ID))
-		return dispatchStep{done: true, err: fmt.Errorf("complex order %d moot — skipped", order.ID)}
+		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moot — skipped", order.ID)}
 	case reserveHolding:
 		// Only claim "partial set already held" when the order actually holds part
 		// of its set. Holding NOTHING (zero reserved, blocked on every need) is a
@@ -548,7 +554,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReserveHolding,
 			QueueParams{Payload: order.PayloadCode, Partial: holdingPartials})
 		d.dbg("complex: order %d incomplete reserve — holding %d partial(s), retrying next tick", order.ID, len(assigned))
-		return dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
+		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
 	}
 
 	// Confirm = commit the complete reserved set to hard claims (apply-as-confirm, no
@@ -561,13 +567,13 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 			d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseClaimFailed,
 				QueueParams{Payload: order.PayloadCode})
 			d.dbg("complex: order %d held on claim_failed: %s", order.ID, pe.Detail)
-			return dispatchStep{done: true, err: cerr}
+			return nil, dispatchStep{done: true, err: cerr}
 		}
 		d.failOrderInternal(order, codeNoBin, cerr.Error())
-		return dispatchStep{done: true, err: cerr}
+		return nil, dispatchStep{done: true, err: cerr}
 	}
 
-	return dispatchStep{}
+	return assigned, dispatchStep{}
 }
 
 // dispatchComplexToFleet performs the guardless happy-path tail of complex
@@ -818,7 +824,7 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 // (capacity-blocked or incomplete reserve) or hit a reserve error; the
 // orchestrator returns st.err verbatim. Runs before the bin reserve
 // (slots-before-bins). Reads the resolved steps read-only.
-func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedSteps []resolvedStep, pc *pairPass) dispatchStep {
 	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
 	// orders, but ONLY for concrete STORAGE dropoffs. The scanner dropped the
 	// gate for every complex order to unstick two-robot SUPPLY legs — which
@@ -871,7 +877,37 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// it was.
 	finalChecked := isConcreteStorageDropoff(d.db, order.DeliveryNode)
 	if finalChecked {
-		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
+		blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID)
+		// ── THE VACATED-SLOT RULE, IN TODAY'S WAIT BRANCH ONLY ────────────────
+		//
+		// Three cases, in this order, when the final drop is blocked:
+		//
+		//   1. A drop already stamped by the arm that chose it (the NGRP or loader
+		//      vacated arm, or this arm on an earlier pass) is re-asked, and passes
+		//      while the rule still holds. Without this the revert below would send
+		//      it back to its group every pass and the market case would loop.
+		//   2. An UNSTAMPED FUNGIBLE drop reverts to its group exactly as before,
+		//      and the rule is not asked, so a free child still wins.
+		//   3. An UNSTAMPED NON-FUNGIBLE drop asks the rule where it would have
+		//      waited, and is stamped if admitted — the NGRP-child home case.
+		//
+		// Only an occupied node is the rule's question. A node an order is already
+		// inbound to has nothing on it to vacate.
+		if blocked && cap.Cause == CauseDropoffOccupied {
+			if f := lastDropIndex(resolvedSteps); f >= 0 && resolvedSteps[f].Node == order.DeliveryNode {
+				fungible := resolvedSteps[f].Group != "" && resolvedSteps[f].Group != resolvedSteps[f].Node
+				if stampHonoured(resolvedSteps[f]) != nil || !fungible {
+					if st := d.vacatedFor(order, resolvedSteps, f, order.DeliveryNode, pc); st != nil &&
+						d.noOtherInFlight(order.DeliveryNode, order) {
+						if prev := resolvedSteps[f].Vacate; prev == nil || *prev != *st {
+							d.admitVacated(order, resolvedSteps, f, st, "final-drop gate")
+						}
+						blocked = false
+					}
+				}
+			}
+		}
+		if blocked {
 			// ── A FUNGIBLE DROPOFF RE-ASKS RATHER THAN WAITING ON ONE SLOT ────
 			//
 			// The step remembers the group it was resolved from, and resolvedStep.Group
@@ -964,6 +1000,16 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 			continue
 		}
 		if blocked, cap := CheckDropoffCapacity(d.db, s.Node, order.ID); blocked {
+			// (a) was asked above. In the branch that would wait, ask (b): the
+			// partner that acquired earlier in this pass may be the lift that empties
+			// this node before the release lets this leg drop.
+			if cap.Cause == CauseDropoffOccupied {
+				if st := d.vacatedFor(order, resolvedSteps, i, s.Node, pc); st != nil && st.Partner != 0 &&
+					d.noOtherInFlight(s.Node, order) {
+					d.admitVacated(order, resolvedSteps, i, st, "exclusive-dropoff gate")
+					continue
+				}
+			}
 			// cap.Cause, not the coarse tag — see CauseDropoffCapacity's own note.
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			d.dbg("complex: order %d queued — declared-exclusive dropoff %s blocked: %s", order.ID, s.Node, cap.Cause)
@@ -1194,6 +1240,7 @@ func (d *Dispatcher) revertFungibleDropoffToGroup(order *orders.Order, steps []r
 	log.Printf("dispatch: complex order %d dropoff %s is occupied — reverting to group %s so the next "+
 		"tick picks a slot that can take it", order.ID, steps[idx].Node, group)
 	steps[idx].Node = group
+	steps[idx].Vacate = nil // housekeeping; stampHonoured would ignore it anyway
 	d.persistWidenedPlan(order, steps)
 	return true
 }

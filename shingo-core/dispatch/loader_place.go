@@ -27,6 +27,13 @@ import (
 // the occupied home, which delivered two carriers onto occupied homes at SMN_016
 // and SMN_035 on 2026-08-26 and faulted AMR-10 at SMN_034 on 2026-09-25.
 //
+// BEFORE THE WAIT, THE VACATED SLOT. A member — home or buffer — whose only bin
+// the partner's committed lift takes first is a destination too
+// (placeVacated, vacated_slot.go). SPR 2026-09-28, pairs 7060/7061 and 7062/7063:
+// the supply was widened onto a buffer partial, every buffer was full, and the
+// return parked every pass beside the buffer being emptied. Order: free buffer,
+// drain, vacated, wait. The release fence holds the drop until the lift is real.
+//
 // LOCUS — Core is the single authority. The Edge ships the evac order with
 // DeliveryNode="" and holds no authoritative bin-landing record; Core resolves the
 // dropoff here and the existing release-time redirect overlay (patchRedirectSegments)
@@ -35,11 +42,15 @@ import (
 // NEVER-2N — the park's placement MUST consult the Core in-flight authority (the
 // SAME order-truth restock gates on, the in-flight delivery-node counts /
 // planning_service.go's CheckDropoffCapacity) — NEVER a bespoke count. Committing
-// DeliveryNode=home makes this order in-flight to the home, so a later restock's
-// own gate sees it and yields; and if a restock got there first, this read sees it
-// and yields to buffer. A lost race requeues (scanner replay), the same contract
-// every dropoff has. Do NOT route through the Edge withLoaderBudget seam (wrong
-// store, re-introduces divergence) and do NOT add ClaimSlot here.
+// DeliveryNode=home does NOT by itself make this order in-flight: in-flight means
+// holding a claimed bin (orders.InFlightForDropoffSQL), and placement runs before
+// the sources are claimed. The order becomes in-flight to the home when its claim
+// lands later in the same pass, so a later restock's own gate sees it and yields —
+// and a pair that parks after placing gives the claim back and is not in-flight
+// again until it next claims. If a restock got there first, this read sees it and
+// yields to buffer. A lost race requeues (scanner replay), the same contract every
+// dropoff has. Do NOT route through the Edge withLoaderBudget seam (wrong store,
+// re-introduces divergence) and do NOT add ClaimSlot here.
 //
 // The home occupancy check is split by LEG ROLE, read from the leg's own steps
 // (legReturnsToHome). It used to be split on "does the plan contain a wait step",
@@ -76,7 +87,7 @@ import (
 // the home nor any buffer can take the bin and the only destination left is the
 // home just found occupied; the caller queues the order rather than dispatching
 // it there (see placeForLoader).
-func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep) (waitHome string) {
+func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep, pc *pairPass) (waitHome string) {
 	// Pattern A: SourceNode is a home position (produce-side return).
 	// Pattern B: DeliveryNode is a home position (consume-side removal leg).
 	// Both route to the same home/buffer/drain logic; the only structural
@@ -93,12 +104,33 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// DeliveryNode WAS a home. tryPlaceFromHomeSource reports whether it took
 	// ownership; "false" means "not mine", never "done".
 	if order.SourceNode != "" && !hasWaitStep(steps) {
-		if owned, wait := d.tryPlaceFromHomeSource(order, steps); owned {
+		if owned, wait := d.tryPlaceFromHomeSource(order, steps, pc); owned {
 			return wait
 		}
 	}
 
-	if order.DeliveryNode != "" {
+	// A RETURN THE VACATED ARM ONCE RE-POINTED RE-DERIVES FROM ITS HOME. The
+	// vacated slot it was sent to last pass was a fact about that pass's partner;
+	// read as "the home" it would pin the leg to wherever FIFO sent the supply
+	// then. Only the vacated arm writes an anchor, so every other placement —
+	// including today's stickiness on a buffer — reads DeliveryNode as before.
+	target := order.DeliveryNode
+	anchored := false
+	if f := lastDropIndex(steps); f >= 0 && steps[f].Anchor != "" {
+		target, anchored = steps[f].Anchor, true
+		// The in-memory plan still names last pass's vacated slot. Whatever this
+		// pass decides, the gates and the slot claim after this read the plan, so
+		// it follows the destination — and a stamp for a slot it left stops
+		// counting. Never-vacated orders are not touched, and keep today's plan.
+		defer func() {
+			if steps[f].Node != order.DeliveryNode {
+				steps[f].Node = order.DeliveryNode
+				steps[f].Vacate = nil
+			}
+		}()
+	}
+
+	if target != "" {
 		// Pattern B: explicit DeliveryNode is a home position. Two shapes land here:
 		//   - Return leg: the robot bringing the line's spent bin back to the home.
 		//     In-flight check only, but ONLY once homeClearForReturn has established
@@ -106,7 +138,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		//   - Supply leg: a fresh bin sourced from a staging/supermarket node
 		//     delivering to the home. Full capacity gate, so a physically-occupied
 		//     home routes to buffer instead of faulting on arrival.
-		destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
+		destNode, err := d.db.GetNodeByDotName(target)
 		if err != nil || destNode == nil {
 			return ""
 		}
@@ -139,8 +171,9 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// terms. This is the backstop: it is the only place that holds both facts
 		// — what the carrier is, and what the home is for — so it is the only
 		// place that can answer the question at all.
+		pl := placement{steps: steps, pc: pc, anchored: anchored}
 		if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
-			return d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
+			return d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier, pl)
 		}
 		// A RETURN leg landing on a home whose only occupant this swap is
 		// already lifting takes the in-flight check alone: the bin standing
@@ -163,13 +196,13 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 				d.setParkDestination(order, homeName, "home")
 				return ""
 			}
-			return d.placeForLoader(order, home.LoaderID, homeName)
+			return d.placeForLoader(order, home.LoaderID, homeName, pl)
 		}
 		blocked, block := CheckDropoffCapacity(d.db, homeName, order.ID)
 		d.dbg("place: order %d takes the physical gate on home %s (return=%v, clear=%v) — blocked=%v cause=%s",
 			order.ID, homeName, isReturn, clear, blocked, block.Cause)
 		if blocked {
-			return d.placeForLoader(order, home.LoaderID, homeName)
+			return d.placeForLoader(order, home.LoaderID, homeName, pl)
 		}
 		d.setParkDestination(order, homeName, "home")
 	}
@@ -190,7 +223,8 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 // `owned` covers the drain and the wait outcomes too — if placeForLoader finds
 // no free buffer, Pattern A still owned and answered the question; waitHome
 // carries placeForLoader's answer through.
-func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolvedStep) (owned bool, waitHome string) {
+func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolvedStep, pc *pairPass) (owned bool, waitHome string) {
+	pl := placement{steps: steps, pc: pc}
 	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
 	if err != nil || srcNode == nil {
 		return false, ""
@@ -210,7 +244,7 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 	// already holding a carrier that does not belong to it. Putting that one back
 	// where it was found is not a repair, and this is the only pass that notices.
 	if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
-		return true, d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
+		return true, d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier, pl)
 	}
 	if !orderDeliversTo(steps, homeName) {
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
@@ -219,7 +253,7 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 			return true, ""
 		}
 	}
-	return true, d.placeForLoader(order, home.LoaderID, homeName)
+	return true, d.placeForLoader(order, home.LoaderID, homeName, pl)
 }
 
 // carrierPayloadFor reports the payload of the carrier THIS LEG IS MOVING, and
@@ -230,8 +264,8 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 //
 // TWO SOURCES, IN THIS ORDER, AND THE SECOND IS THE ONE THAT MATTERS.
 // order.BinID is the direct answer but it is usually nil here:
-// prepareComplexSteps (complex_dispatch.go:133) runs BEFORE
-// acquireComplexSources (:146), so at placement time the bin is resolved but
+// prepareComplexSteps runs BEFORE acquireComplexSources in
+// acquireComplexPhases (complex_dispatch.go), so at placement time the bin is resolved but
 // not yet claimed. That is not a defect to route around — placement is a
 // resolution-time read on purpose, so the swap supply leg is never gated — it
 // just means the bin pointer cannot be the only source.
@@ -348,7 +382,7 @@ func (d *Dispatcher) homeForPayload(loaderID int64, payload string, orderID int6
 // what is on a cell, and that is worth a line whether or not the recovery was
 // clean — the recovery hides the disagreement, which is how this one survived a
 // full shift.
-func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64, homeName, carrierPayload string) (waitHome string) {
+func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64, homeName, carrierPayload string, pl placement) (waitHome string) {
 	if own := d.homeForPayload(loaderID, carrierPayload, order.ID); own != "" {
 		log.Printf("WARN: order %d carries %s, which does not belong on home %s — routing to %s, "+
 			"the carrier's own home. Something upstream picked this destination from the style being "+
@@ -360,7 +394,7 @@ func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64,
 	log.Printf("WARN: order %d carries %s, which does not belong on home %s, and its own home is "+
 		"occupied or unconfigured — falling back to a buffer.",
 		order.ID, carrierPayload, homeName)
-	return d.placeForLoader(order, loaderID, homeName)
+	return d.placeForLoader(order, loaderID, homeName, pl)
 }
 
 // placeForLoader routes to a free buffer slot for the given loader. Shared by
@@ -370,7 +404,7 @@ func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64,
 // destination left is the home the caller just found unable to take the bin.
 // Returns "" when the order has somewhere to go — a buffer, or a drain to a
 // different node it was already pointed at.
-func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string) (waitHome string) {
+func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string, pl placement) (waitHome string) {
 	members, merr := d.db.ListLoaderHomes(loaderID)
 	if merr != nil {
 		log.Printf("dispatch: place loader %d members: %v — order %d waits", loaderID, merr, order.ID)
@@ -395,7 +429,9 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	// DRAIN: it points somewhere other than this home (an outbound the Edge named).
 	// That node is not the one just found unable to take the bin, so the order
 	// keeps it. Recorded, because a drain is still the pool running out of room.
-	if order.DeliveryNode != "" && order.DeliveryNode != homeName {
+	// An ANCHORED order points at the slot the vacated arm chose last pass, which
+	// is not an outbound anybody named: it re-asks below instead of draining.
+	if order.DeliveryNode != "" && order.DeliveryNode != homeName && !pl.anchored {
 		log.Printf("WARN: loader %d home %s cannot take order %d and no buffer is free — it drains to %s",
 			loaderID, homeName, order.ID, order.DeliveryNode)
 		if err := d.db.RecordRecoveryAction("loader_park_no_slot", "order", order.ID,
@@ -422,10 +458,59 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	// as well as the home, and a return whose home is free (or held only by this
 	// swap's own supply carrier) never reaches this branch at all.
 	//
-	// A two-robot swap is safe to hold on its evac leg: the Edge offers RELEASE
-	// only once the evac is staged (store.ComputeSwapReady), so the supply waits at
-	// its staging node rather than racing a fresh bin onto an occupied line.
+	// VACATED, BEFORE THE WAIT: a member of this loader — home or buffer — whose
+	// only bin the partner's committed lift takes first (vacated_slot.go). SPR
+	// 2026-09-28, pairs 7060/7061 and 7062/7063: the supply was widened onto a
+	// buffer partial, every buffer was full, and the return parked on its home
+	// every pass while the buffer it needed was the one being emptied.
+	if d.placeVacated(order, homeName, members, pl) {
+		return ""
+	}
 	return homeName
+}
+
+// placement is what the loader park carries down to its WAIT arm for the
+// vacated-slot rule: the plan, the partner that acquired earlier in this pass,
+// and whether the order's destination was re-derived from its anchor.
+type placement struct {
+	steps    []resolvedStep
+	pc       *pairPass
+	anchored bool
+}
+
+// placeVacated is the loader's vacated arm. It tries each member the rule clears
+// — the pinned-payload question asked first, exactly as for the home — and
+// commits the first: DeliveryNode, the stamp the release fence reads, and the
+// anchor the next pass re-derives from. The in-memory plan follows too, so the
+// destination gate and the slot claim later in this pass read the slot that was
+// chosen. Reports whether it placed.
+func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, members []loaders.Home, pl placement) bool {
+	f := lastDropIndex(pl.steps)
+	if f < 0 {
+		return false
+	}
+	carrier, known := d.carrierPayloadFor(order, pl.steps)
+	for _, m := range members {
+		if m.Kind != loaders.HomeKindBuffer && !homeAcceptsCarrier(m.PayloadCode, carrier, known) {
+			continue
+		}
+		n, err := d.db.GetNode(m.PositionNodeID)
+		if err != nil || n == nil {
+			continue
+		}
+		st := d.vacatedFor(order, pl.steps, f, n.Name, pl.pc)
+		if st == nil || !d.noOtherInFlight(n.Name, order) {
+			continue
+		}
+		d.setParkDestination(order, n.Name, "vacated")
+		pl.steps[f].Node = n.Name
+		pl.steps[f].Vacate = st
+		pl.steps[f].Anchor = homeName
+		d.persistStepStamp(order, f, st, homeName)
+		logVacated(order, st, "loader park")
+		return true
+	}
+	return false
 }
 
 // placeForContainment is quality containment's divert (v100): when a payload's
@@ -741,6 +826,7 @@ func applyPlanNode(db *store.DB, order *orders.Order, node string, stepIndex int
 		return
 	}
 	steps[stepIndex].Node = node
+	steps[stepIndex].Vacate = nil // a re-pointed drop is not the drop the stamp was granted for
 	patched, err := json.Marshal(steps)
 	if err != nil {
 		log.Printf("dispatch: applyPlanNode order %d → %s: re-marshal: %v", order.ID, node, err)
@@ -827,8 +913,9 @@ func applySourceNodeAtStep(db *store.DB, order *orders.Order, node string, stepI
 
 // setParkDestination commits the chosen dropoff for a dedicated-loader
 // return leg. Delegates to applyDeliveryNode to keep delivery_node and
-// steps_json in sync; also makes the order in-flight to the chosen node
-// so concurrent restock gates observe it (the never-2N handshake).
+// steps_json in sync. It does not make the order in-flight on its own: the
+// never-2N handshake completes when the order claims its bin later in the pass
+// (see the NEVER-2N note in the header).
 func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) {
 	if order.DeliveryNode == node {
 		return // already there — idempotent across scanner replays

@@ -53,12 +53,20 @@ func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 // binsAtStep). nil for a dropoff with no pickup before it at the same node, which
 // is every caller but the complex allocator.
 func (db *DB) ConfirmSlotClaim(nodeID, orderID int64, takenFirst []int64) error {
+	return db.ConfirmSlotClaimWithPartner(nodeID, orderID, takenFirst, 0, nil)
+}
+
+// ConfirmSlotClaimWithPartner is ConfirmSlotClaim for a drop the vacated-slot
+// rule admitted on the partner's lift: partnerTaken are the bins on the node the
+// partner takes first, credited only while the partner still holds them and is
+// this order's live sibling (see ClaimSlotTx). partnerID 0 is ConfirmSlotClaim.
+func (db *DB) ConfirmSlotClaimWithPartner(nodeID, orderID int64, takenFirst []int64, partnerID int64, partnerTaken []int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if err := nodes.ClaimSlotTx(tx, nodeID, orderID, takenFirst); err != nil {
+	if err := nodes.ClaimSlotTx(tx, nodeID, orderID, takenFirst, partnerID, partnerTaken); err != nil {
 		return err
 	}
 	if err := reservations.ConfirmSlot(tx, orderID, nodeID); err != nil {

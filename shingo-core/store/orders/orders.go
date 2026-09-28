@@ -1232,6 +1232,16 @@ func CountActiveByDeliveryNode(db *sql.DB, nodeName string) (int, error) {
 	return count, err
 }
 
+// CountActiveByDeliveryNodeExcluding is CountActiveByDeliveryNode with the
+// asking order left out, so an order resolving its own drop does not count
+// itself as traffic to the node it is choosing.
+func CountActiveByDeliveryNodeExcluding(db *sql.DB, nodeName string, excludeID int64) (int, error) {
+	var count int
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND id != $2 AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList()), nodeName, excludeID).Scan(&count)
+	return count, err
+}
+
 // ListStalledChapters returns compound parents in `reshuffling` that still have a
 // non-terminal child and whose whole family has gone quiet — nothing in the
 // parent or any of its children written since `since`.

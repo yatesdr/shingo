@@ -48,6 +48,23 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// ── THE VACATED-SLOT FENCE (vacated_slot.go) ──────────────────────────
+	//
+	// A drop the vacated-slot rule admitted is sound only once its partner has
+	// lifted the bin standing there, and the release is the moment that promise
+	// is kept or broken. Refused while it cannot be kept, and the partner with
+	// it. Only a stamped drop, or the partner of a staged stamped one, is ever
+	// refused here; every other release reads one sibling row at most and goes.
+	//
+	// AHEAD OF THE MANIFEST SYNC, unlike the gate fence below: a refused release
+	// must change nothing, and the sync writes the operator's count. invalid_state
+	// is the code Edge rolls back to staged non-terminally (edge_handler.go).
+	if refusal := d.vacateReleaseRefusal(order); refusal != "" {
+		log.Printf("dispatch: release refused (vacated slot): %s", refusal)
+		d.sendError(env, p.OrderUUID, "invalid_state", refusal)
+		return
+	}
+
 	if err := d.syncManifestForRelease(env, order, p); err != nil {
 		return
 	}
@@ -290,6 +307,13 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 		physical = "REFUSED BY: " + v
 	} else if v == "" {
 		physical = "clear"
+	}
+
+	// The vacated-slot fence is bypassed here the same way the gate fence is, on
+	// purpose — this is the hatch — and said out loud when it would have refused.
+	if refusal := d.vacateReleaseRefusal(order); refusal != "" {
+		physical += "; VACATED-SLOT FENCE BYPASSED: " + refusal
+		log.Printf("HARD RELEASE: order %d bypasses the vacated-slot fence: %s", orderID, refusal)
 	}
 
 	d.db.AppendAudit("order", orderID, "hard_release", "",

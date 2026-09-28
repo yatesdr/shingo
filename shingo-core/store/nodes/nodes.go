@@ -89,10 +89,23 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 // and the reservation confirm commit atomically. Owner-idempotent (claimed_by=$1),
 // so a claimed-but-pending slot heals on retry instead of wedging.
 //
-// The legacy ClaimSlot above (the still-live hard-claim loop path) deliberately
-// does NOT carry the reservation clause — the loop never reserves — and is retired
-// WITH that loop, at which point this is the only slot-claim path. Seatbelts only
-// ever gain clauses; ClaimSlot is not weakened.
+// This is the only slot-claim path: the un-reserved ClaimSlot and the hard-claim
+// loop that called it are gone (see the note above).
+//
+// ── THE PARTNER ARM ──────────────────────────────────────────────────────────
+//
+// A drop the vacated-slot rule admitted on the PARTNER's lift finds the
+// partner's bin on the node, and the occupancy clause above would refuse it.
+// partnerTaken credits those bins — and only while, inside this statement:
+//
+//   - the bin is held by partnerID the way a confirmed claim leaves it
+//     (claimed_by = partner AND a confirmed reservation by the partner);
+//   - the partner is not terminal; and
+//   - the partner is this order's linked sibling.
+//
+// So a partner that gave its bin back, went terminal leaving a claim behind, or
+// is not this order's partner at all credits nothing, and the claim is refused.
+// partnerID 0 with no bins leaves the arm vacuous: the plain claim, unchanged.
 //
 // ── NOTHING ON THE NODE, AS THE CLAIMING PLAN WILL FIND IT ───────────────────
 //
@@ -107,17 +120,27 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 // IS NOT DISTINCT FROM, not =: an unclaimed bin's claimed_by is NULL, and a NULL
 // inside the NOT would drop the bin from the subquery and wave the claim through
 // on exactly the bin it must refuse.
-func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64) error {
+func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64, partnerID int64, partnerTaken []int64) error {
 	if takenFirst == nil {
 		takenFirst = []int64{} // an array, never NULL: NULL would make the clause vacuous
+	}
+	if partnerTaken == nil || partnerID == 0 {
+		partnerTaken = []int64{}
 	}
 	res, err := tx.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2
-		      AND NOT (b.id = ANY($3::bigint[])
+		      AND NOT ((b.id = ANY($3::bigint[])
 		               AND (b.claimed_by IS NOT DISTINCT FROM $1 OR EXISTS (SELECT 1 FROM reservations r
-		                    WHERE r.bin_id = b.id AND r.order_id = $1 AND `+reservations.ActiveStateSQL("r.")+`))))
-		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2), orderID, nodeID, takenFirst)
+		                    WHERE r.bin_id = b.id AND r.order_id = $1 AND `+reservations.ActiveStateSQL("r.")+`)))
+		            OR (b.id = ANY($5::bigint[])
+		               AND b.claimed_by IS NOT DISTINCT FROM $4::bigint
+		               AND EXISTS (SELECT 1 FROM reservations pr
+		                    WHERE pr.bin_id = b.id AND pr.order_id = $4::bigint AND pr.state = '`+string(reservations.StateConfirmed)+`')
+		               AND EXISTS (SELECT 1 FROM orders p JOIN orders l ON l.id = $1
+		                    WHERE p.id = $4::bigint AND l.sibling_order_uuid = p.edge_uuid
+		                      AND p.status NOT IN (`+protocol.TerminalStatusSQLList()+`)))))
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2), orderID, nodeID, takenFirst, partnerID, partnerTaken)
 	if err != nil {
 		return err
 	}

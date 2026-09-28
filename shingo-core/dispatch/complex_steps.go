@@ -101,6 +101,19 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 //     capacity (queue, retry next tick), buried (replay reshuffle), and
 //     other errors (fail) via classifyResolutionError.
 func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string, asker reservations.DigAsker) (newSteps []resolvedStep, changed bool, err error) {
+	return d.reResolveSteps(nil, steps, payloadCode, asker, nil)
+}
+
+// reResolveComplexStepsFor is the dispatch pass's re-resolve: the same walk, with
+// the order in hand so a group drop that finds no free child can ask the
+// vacated-slot rule (vacatedGroupChild) before it reports capacity.
+func (d *Dispatcher) reResolveComplexStepsFor(order *orders.Order, steps []resolvedStep, asker reservations.DigAsker,
+	pc *pairPass) (newSteps []resolvedStep, changed bool, err error) {
+	return d.reResolveSteps(order, steps, order.PayloadCode, asker, pc)
+}
+
+func (d *Dispatcher) reResolveSteps(order *orders.Order, steps []resolvedStep, payloadCode string, asker reservations.DigAsker,
+	pc *pairPass) (newSteps []resolvedStep, changed bool, err error) {
 	newSteps = make([]resolvedStep, 0, len(steps))
 	for i, step := range steps {
 		if step.Node == "" {
@@ -149,15 +162,34 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		// paired pickup is the better answer and this prefers it.
 		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker, "",
 			d.binTypeBeforeStep(steps, i))
+		var vacate *vacateStamp
 		if resolveErr != nil {
-			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
+			// THE VACATED-SLOT RULE, WHERE THIS WOULD WAIT. A group drop with no
+			// free child may still land on the child a committed lift empties first.
+			// Only on capacity, and only on the dispatch pass (order in hand):
+			// intake is unchanged, since the pair is not formed there yet.
+			class, _ := classifyResolutionError(resolveErr)
+			if order == nil || step.Action != protocol.ActionDropoff || class != ResolutionCapacity {
+				return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
+			}
+			sofar := append(append([]resolvedStep(nil), newSteps...), steps[i:]...)
+			name, st := d.vacatedGroupChild(order, sofar, i, node, payloadCode, asker, pc)
+			if st == nil {
+				return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
+			}
+			newName, group, vacate = name, step.Node, st
+			logVacated(order, st, "group re-resolve")
 		}
 		if newName != step.Node {
 			changed = true
 		}
+		// The rebuild drops any stamp the step carried: it names a node this
+		// resolve may have moved off. A stamp only this resolve just granted rides.
 		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group, Empty: step.Empty,
 			PayloadCode:   step.PayloadCode,
-			ExclusiveSlot: step.ExclusiveSlot})
+			ExclusiveSlot: step.ExclusiveSlot,
+			Vacate:        vacate,
+			Anchor:        step.Anchor})
 	}
 	return newSteps, changed, nil
 }

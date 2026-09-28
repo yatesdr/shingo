@@ -12,9 +12,9 @@ import (
 // binsAtStep is what this plan finds on a node when it reaches step `at`: the
 // bins on the node now, less the ones this plan's earlier pickups there take.
 //
-// ── ONE QUESTION, THREE ASKERS ────────────────────────────────────────────────
+// ── ONE QUESTION, FOUR ASKERS ─────────────────────────────────────────────────
 //
-// Three checks ask whether a node is clear, and each used to ask it of the world
+// Four checks ask whether a node is clear, and each used to ask it of the world
 // NOW — the wrong moment for every step after the plan's first. A choreography
 // can place onto a node that holds a bin right now because its own earlier step
 // carries that bin away, and it can re-collect at a node that holds a bin right
@@ -26,7 +26,12 @@ import (
 //     exclusive dropoff, before anything is reserved;
 //   - the relay rule (reserveComplexPlan) asks it of a re-collect;
 //   - the slot claim (confirmComplexPlan) asks it of the staging slot it is about
-//     to take, and ConfirmSlotClaim re-checks the answer inside the claim.
+//     to take, and ConfirmSlotClaim re-checks the answer inside the claim;
+//   - the vacated-slot rule (vacatedFor) asks it of a drop that would otherwise
+//     wait, as case (a), and its askers are the loader park's wait arm, the NGRP
+//     re-resolve, and the destination gate's final-drop and exclusive arms. Its
+//     case (b) — the PARTNER's lift — is not this function's: this counts one
+//     plan's own steps, and the partner's bin is credited separately.
 //
 // Asked a different way by any one of them, the same plan is clear to one check
 // and blocked at the next — which is how the keep-staged combined supply got past

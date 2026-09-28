@@ -755,6 +755,10 @@ func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {
 	return orders.CountActiveByDeliveryNode(db.DB, nodeName)
 }
 
+func (db *DB) CountActiveOrdersByDeliveryNodeExcluding(nodeName string, excludeID int64) (int, error) {
+	return orders.CountActiveByDeliveryNodeExcluding(db.DB, nodeName, excludeID)
+}
+
 // ActiveLaneStores returns non-terminal orders whose delivery_node is one of the
 // given slot names — the active stores targeting a lane (tiered-entry gate input).
 func (db *DB) ActiveLaneStores(slotNames []string) ([]*orders.Order, error) {

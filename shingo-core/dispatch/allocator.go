@@ -464,6 +464,7 @@ func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []res
 				// re-picks a free slot next tick (the escape valve). A fixed-concrete
 				// dropoff (group=="") just holds and retries.
 				resolvedSteps[sn.stepIndex].Node = sn.group
+				resolvedSteps[sn.stepIndex].Vacate = nil // the stamp named the slot just given up
 				reverted = true
 			}
 			continue
@@ -728,7 +729,17 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 		if oerr != nil {
 			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("read slot %s for order %d: %v", sn.nodeName, order.ID, oerr)}
 		}
-		if err := a.db.ConfirmSlotClaim(node.ID, order.ID, takenFirst); err != nil {
+		// A drop the vacated-slot rule admitted on the partner's lift credits that
+		// one bin to the partner, and the claim re-checks inside its own statement
+		// that the partner still holds it, is live, and is this order's sibling.
+		// Every other slot claims exactly as before.
+		var claimErr error
+		if st := partnerStamp(steps[sn.stepIndex]); st != nil {
+			claimErr = a.db.ConfirmSlotClaimWithPartner(node.ID, order.ID, takenFirst, st.Partner, []int64{st.Bin})
+		} else {
+			claimErr = a.db.ConfirmSlotClaim(node.ID, order.ID, takenFirst)
+		}
+		if err := claimErr; err != nil {
 			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("confirm slot claim %s for order %d: %v", sn.nodeName, order.ID, err)}
 		}
 		a.db.AppendAudit("node", node.ID, "slot_claimed", "",

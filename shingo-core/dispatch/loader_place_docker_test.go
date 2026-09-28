@@ -89,7 +89,7 @@ func TestPlaceForDedicatedLoader_HomeFree_ReturnsHome(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	evac := makeEvacOrder(t, db, "park-home-1", home.Name, outbound.Name)
-	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name), nil)
 
 	if evac.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q (home is free)", evac.DeliveryNode, home.Name)
@@ -106,7 +106,7 @@ func TestPlaceForDedicatedLoader_RestockInFlight_ParksBuffer(t *testing.T) {
 
 	makeInFlightTo(t, db, "restock-1", home.Name) // a fresh bin committed to the home
 	evac := makeEvacOrder(t, db, "park-buf-1", home.Name, outbound.Name)
-	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name), nil)
 
 	if evac.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q (restock in-flight to home)", evac.DeliveryNode, buffer.Name)
@@ -130,7 +130,7 @@ func TestPlaceForDedicatedLoader_SelfDeliversHome_ParksBuffer(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: home.Name}, // new style delivered to home (same order)
 		{Action: protocol.ActionDropoff, Node: outbound.Name},
 	}
-	d.placeForDedicatedLoader(evac, steps)
+	d.placeForDedicatedLoader(evac, steps, nil)
 
 	if evac.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q (same order delivers new bin to home)", evac.DeliveryNode, buffer.Name)
@@ -148,7 +148,7 @@ func TestPlaceForDedicatedLoader_BufferFull_Drains(t *testing.T) {
 	makeInFlightTo(t, db, "restock-2", home.Name)                                  // home not free
 	makeLoaderBin(t, db, "PART-X", buffer.ID, "buf-occupied", 4, time.Now().UTC()) // buffer occupied
 	evac := makeEvacOrder(t, db, "park-drain-1", home.Name, outbound.Name)
-	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name), nil)
 
 	if evac.DeliveryNode != outbound.Name {
 		t.Fatalf("DeliveryNode = %q, want DRAIN/outbound %q (home not free, buffer full)", evac.DeliveryNode, outbound.Name)
@@ -181,7 +181,7 @@ func TestPlaceForDedicatedLoader_SupplyLeg_Untouched(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: staging.Name},
 		{Action: protocol.ActionDropoff, Node: home.Name},
 	}
-	d.placeForDedicatedLoader(supply, steps)
+	d.placeForDedicatedLoader(supply, steps, nil)
 
 	if supply.DeliveryNode != home.Name {
 		t.Fatalf("supply leg DeliveryNode = %q, want UNCHANGED %q (park must not touch a supply leg)", supply.DeliveryNode, home.Name)
@@ -220,7 +220,7 @@ func TestPlaceForDedicatedLoader_SupplyFromHome_Untouched(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: outbound.Name},
 		{Action: protocol.ActionDropoff, Node: line.Name},
 	}
-	d.placeForDedicatedLoader(supply, steps)
+	d.placeForDedicatedLoader(supply, steps, nil)
 
 	if supply.DeliveryNode != line.Name {
 		t.Fatalf("supply-from-home leg DeliveryNode = %q, want UNCHANGED line %q (Pattern A must not touch supply legs)", supply.DeliveryNode, line.Name)
@@ -256,7 +256,7 @@ func TestPlaceForDedicatedLoader_SupplyWithWait_HomeOccupied_RoutesBuffer(t *tes
 		{Action: protocol.ActionPickup, Node: staging.Name},
 		{Action: protocol.ActionDropoff, Node: home.Name},
 	}
-	d.placeForDedicatedLoader(supply, steps)
+	d.placeForDedicatedLoader(supply, steps, nil)
 
 	if supply.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q (home physically occupied, supply+wait must not deliver there)",
@@ -289,7 +289,7 @@ func TestPlaceForDedicatedLoader_SupplyWithWait_HomeFree_RoutesHome(t *testing.T
 		{Action: protocol.ActionPickup, Node: staging.Name},
 		{Action: protocol.ActionDropoff, Node: home.Name},
 	}
-	d.placeForDedicatedLoader(supply, steps)
+	d.placeForDedicatedLoader(supply, steps, nil)
 
 	if supply.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q (home free, supply+wait should route home)",
@@ -310,7 +310,7 @@ func TestPlaceForDedicatedLoader_RedirectCarriesParkToFinalDropoff(t *testing.T)
 
 	makeInFlightTo(t, db, "restock-redir", home.Name) // forces buffer
 	evac := makeEvacOrder(t, db, "park-redir-1", home.Name, outbound.Name)
-	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name), nil)
 	if evac.DeliveryNode != buffer.Name {
 		t.Fatalf("precondition: DeliveryNode = %q, want buffer %q", evac.DeliveryNode, buffer.Name)
 	}
@@ -345,7 +345,7 @@ func TestPlaceForDedicatedLoader_Race_RestockInFlight_AllYieldBuffer(t *testing.
 		wg.Add(1)
 		go func(o *orders.Order) {
 			defer wg.Done()
-			d.placeForDedicatedLoader(o, simpleEvacSteps(home.Name, outbound.Name))
+			d.placeForDedicatedLoader(o, simpleEvacSteps(home.Name, outbound.Name), nil)
 		}(evacs[i])
 	}
 	wg.Wait()
@@ -404,7 +404,7 @@ func TestPlaceForDedicatedLoader_NonHomeSource_FallsThroughToPatternB(t *testing
 		{Action: protocol.ActionPickup, Node: line.Name},
 		{Action: protocol.ActionDropoff, Node: home.Name},
 	}
-	d.placeForDedicatedLoader(o, steps)
+	d.placeForDedicatedLoader(o, steps, nil)
 
 	if o.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q — Pattern A declined (source is not a home) "+
@@ -423,7 +423,7 @@ func TestPlaceForDedicatedLoader_HomeSource_PatternAStillShortCircuits(t *testin
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	evac := makeEvacOrder(t, db, "park-shortcircuit-1", home.Name, outbound.Name)
-	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name), nil)
 
 	if evac.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q — Pattern A owned this and the home is free",
@@ -497,7 +497,7 @@ func TestPlaceForDedicatedLoader_ReturnWithWait_SiblingLifting_HoldsHome(t *test
 	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
 
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	if ret.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q — the bin on the home is the one the sibling lifts, "+
@@ -523,7 +523,7 @@ func TestPlaceForDedicatedLoader_ReturnWithWait_ForeignCarrier_RoutesBuffer(t *t
 
 	// No sibling link: nothing vouches for the carrier standing on the home.
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, false)
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	if ret.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q — no sibling lifts the carrier on the home, "+
@@ -550,7 +550,7 @@ func TestPlaceForDedicatedLoader_ReturnWithWait_UnknownRole_KeepsProxyBehaviour(
 
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
 	ret.ProcessNode = "" // role unreadable — falls back to the wait-step proxy
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	if ret.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q — with no ProcessNode the leg must move exactly as "+
@@ -572,7 +572,7 @@ func TestPlaceForDedicatedLoader_BufferFull_RecordsNoSlotAction(t *testing.T) {
 	makeInFlightTo(t, db, "restock-noslot", home.Name)
 	makeLoaderBin(t, db, "PART-X", buffer.ID, "buf-occupied-noslot", 4, time.Now().UTC())
 	evac := makeEvacOrder(t, db, "park-noslot-1", home.Name, outbound.Name)
-	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name), nil)
 
 	actions, err := db.ListRecoveryActions(50)
 	if err != nil {
@@ -708,7 +708,7 @@ func TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields(t *testing.T) {
 	makeLoaderBin(t, db, "PART-X", home.ID, "spr-on-home", 100, time.Now().UTC())
 
 	ret, retSteps := stageSwapAtHome(t, db, home.Name, line.Name)
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	// Link 2, corrected: the occupant is this swap's own, so the home is held.
 	if ret.DeliveryNode != home.Name {
@@ -801,7 +801,7 @@ func TestPlaceForDedicatedLoader_WrongPayloadCarrier_RoutesToOwnHome(t *testing.
 	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
 
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	if ret.DeliveryNode == home.Name {
 		t.Fatalf("DeliveryNode = %q — a PART-Y carrier parked on PART-X's pinned home. The home read "+
@@ -832,7 +832,7 @@ func TestPlaceForDedicatedLoader_WrongPayloadCarrier_OwnHomeOccupied_RoutesBuffe
 	makeLoaderBin(t, db, "PART-Y", ownHome.ID, "own-home-occupied", 500, time.Now().UTC())
 
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	if ret.DeliveryNode != buffer.Name {
 		t.Fatalf("DeliveryNode = %q, want BUFFER %q — the carrier does not belong on %q and its own "+
@@ -866,7 +866,7 @@ func TestPlaceForDedicatedLoader_SpentCarrier_BlankPayload_HoldsHome(t *testing.
 	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
 
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
-	d.placeForDedicatedLoader(ret, retSteps)
+	d.placeForDedicatedLoader(ret, retSteps, nil)
 
 	if ret.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q — a spent carrier has a cleared payload and belongs "+
@@ -897,7 +897,7 @@ func TestPlaceForDedicatedLoader_ForeignCarrier_BufferFull_Waits(t *testing.T) {
 
 	// No sibling link: nothing in this swap lifts the carrier on the home.
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, false)
-	if got := d.placeForDedicatedLoader(ret, retSteps); got != home.Name {
+	if got := d.placeForDedicatedLoader(ret, retSteps, nil); got != home.Name {
 		t.Fatalf("waitHome = %q, want %q — the home holds a carrier nobody is lifting and the only "+
 			"buffer is full, so the leg must wait rather than be dispatched onto the home", got, home.Name)
 	}
@@ -906,7 +906,7 @@ func TestPlaceForDedicatedLoader_ForeignCarrier_BufferFull_Waits(t *testing.T) {
 	if err := db.DeleteBin(parked.ID); err != nil {
 		t.Fatalf("free the buffer: %v", err)
 	}
-	if got := d.placeForDedicatedLoader(ret, retSteps); got != "" {
+	if got := d.placeForDedicatedLoader(ret, retSteps, nil); got != "" {
 		t.Fatalf("waitHome = %q after the buffer freed, want \"\" (placed)", got)
 	}
 	if ret.DeliveryNode != buffer.Name {
@@ -931,7 +931,7 @@ func TestPlaceForDedicatedLoader_SiblingLifting_BufferFull_HoldsHomeWithoutWaiti
 	makeLoaderBin(t, db, "PART-X", buffer.ID, "swap-buffer-full", 40, time.Now().UTC())
 
 	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
-	if got := d.placeForDedicatedLoader(ret, retSteps); got != "" {
+	if got := d.placeForDedicatedLoader(ret, retSteps, nil); got != "" {
 		t.Fatalf("waitHome = %q, want \"\" — the sibling lifts the carrier on the home, so a full "+
 			"buffer is irrelevant and a plain swap must never queue", got)
 	}

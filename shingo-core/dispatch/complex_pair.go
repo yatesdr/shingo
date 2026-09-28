@@ -64,15 +64,26 @@ import (
 // ── WHAT IT COSTS, SO NOBODY REDISCOVERS IT AS A BUG ──────────────────────
 //
 // In a cell whose inbound source and outbound destination are the same market,
-// the supply's own pickup is what frees the slot the evac needs. Under the old
-// asymmetry the supply went first and unblocked its partner. Under this rule
-// neither goes, so at 100% outbound capacity such a pair waits for something
-// else to free a slot. That is the accepted cost: a queued
-// pair is a wait, and wait-not-fail is the house law. The named upgrade path is
-// a reservation model in which the evac's slot IS the one the supply vacates.
-// Do not re-introduce a same-resource exemption to paper over it — that
-// exemption is Face 3, and it emptied itself into a no-op precisely because
-// every claim it could see was same-resource.
+// the supply's own pickup is what frees the slot the evac needs. Under this rule
+// neither leg goes alone, so at 100% capacity such a pair used to wait for
+// something else to free a slot.
+//
+// THE UPGRADE PATH HAS LANDED: the evac's slot may now BE the one the supply
+// vacates (vacated_slot.go). The supply acquires first in stage 1, and the evac
+// is handed its lift. The evac's drop lands on the slot that lift empties, and
+// the release fence holds the evac until the lift has actually happened. SPR
+// 2026-09-28, pairs 7060/7061 and 7062/7063, is the case that made it
+// necessary.
+//
+// IT IS NOT FACE 3. Face 3 let one leg go while its partner was blocked; here
+// both legs still commit in one pass or neither does, and nothing is exempted.
+//
+// What still queues at 100%: a drop into a LANE slot (lane holds are per order,
+// and two orders on one mouth is the order 22/23 deadlock); a lift that comes
+// after the drop (an unflipped press-index R1 drops before it fetches); a
+// partner lift behind the partner's own wait (both press-index legs move on the
+// same release); and a partner that is not in this pass — a one-leg slice,
+// sequential's B, a relay.
 
 // coordinatedPairLegs returns the acquiring legs of order's coordinated pair, in
 // ascending order-id order — or, when the pair cannot be evaluated this pass,
@@ -273,9 +284,24 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 		return fmt.Errorf("complex order %d: pair led by order %d this pass", self.ID, legs[0].ID)
 	}
 
+	// ── STAGE 1 RUNS THE LIFTER FIRST ─────────────────────────────────────
+	//
+	// A leg whose plan lifts before its first wait acquires first, ties in id
+	// order, and ONLY the leg after it is handed what it resolved and claimed
+	// (pairPass). That is how the vacated-slot rule (vacated_slot.go) learns a
+	// partner's lift without re-reading it, and why a mutual grant cannot exist:
+	// the first leg is never handed anything. The leader is still the lowest
+	// acquiring id; this orders the work the leader does, not who does it.
+	//
+	// Every Edge door that can form such a pair creates the lifter first, so this
+	// changes nothing for them. It matters when the outbox inverts a pair — the
+	// drain carries on past a failed publish, so the partner can reach Core
+	// first — where the returning leg used to read its supply's plan from before
+	// this pass's widen and could be sent at a home nobody was emptying.
 	ready := make([]preparedLeg, 0, len(legs))
-	for _, leg := range legs {
-		steps, st := d.acquireComplexPhases(leg)
+	var pc *pairPass
+	for _, leg := range stageOneOrder(legs) {
+		steps, claimed, st := d.acquireComplexPhases(leg, pc)
 		if st.done {
 			// ── A PHASE CAN END A LEG, AND THAT IS A DEATH, NOT A PARK ────
 			//
@@ -326,27 +352,20 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 			return st.err
 		}
 		ready = append(ready, preparedLeg{order: leg, steps: steps})
+		if pc == nil {
+			pc = &pairPass{partner: leg, steps: steps, claimed: claimed}
+		}
 	}
 
-	// ── NO ORDERING BETWEEN THE LEGS, ON PURPOSE ──────────────────────────
+	// ── THE FLEET CREATES FOLLOW STAGE 1's ORDER, AND NOW THAT IS LOAD-BEARING ─
 	//
-	// A clearer-before-filler sort stood here. It was the ordering half of the
-	// index anti-collision arm — commit the leg that empties the shared position
-	// before the leg that fills it, so a robot could not be sent to place onto
-	// something nothing had cleared.
-	//
-	// IT WAS GUARDING A PARKING LOT. Both press-index legs open with a WAIT, so
-	// what dispatch sends each robot is "drive to your node and hold". Neither
-	// touches a carrier until the operator releases the choreography, and which
-	// robot parks first is not a fact about anything: the bins move at RELEASE,
-	// in the order the release path chooses. Sequencing the fleet creates was
-	// buying an ordering nobody consumes.
-	//
-	// Same finding as Face 1, and the third time this batch has found it — a
-	// dispatch-layer gate written as though dispatch moved material. The
-	// collision hazard is real and it lives at release, where
-	// refusePlacingLegWhileSiblingPending already orders the legs. That guard
-	// needs no help from here.
+	// This used to say the order bought nothing anyone consumes. For a press-index
+	// pair that is still true — both legs open with a wait, and the bins move at
+	// release, where refusePlacingLegWhileSiblingPending orders them. It stopped
+	// being true for a pair the vacated-slot rule cleared: the second leg's drop
+	// is sound only because the first leg's lift is committed. So the lifter's
+	// create goes first, and a create that fails returns before the dropper is
+	// ever sent — a dropper is never committed on a lift that was not.
 	for _, p := range ready {
 		if err := d.dispatchComplexToFleet(p.order, p.steps); err != nil {
 			// The fleet create's failure paths either terminal-fail this leg —

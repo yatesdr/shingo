@@ -172,10 +172,13 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 // CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that knows
 // which carrier type is arriving.
 //
-// A SECOND ENTRY POINT RATHER THAN A WIDER SIGNATURE, because the type is known
-// at exactly one of the eight call sites. Threading a nil through the other
-// seven would be seven edits that each say "I do not know", and the reader of
-// any one of them would have to go and check that nil means what they hope.
+// A SECOND ENTRY POINT RATHER THAN A WIDER SIGNATURE, because the callers of
+// CheckDropoffCapacity do not know the arriving type; threading a nil through
+// each would be an edit per site that says "I do not know". (This used to say
+// the type was known at "one of the eight call sites". There are more than
+// eight, and at this writing no production caller passes a type here — the
+// only caller is CheckDropoffCapacity, with nil. The entry point stays for the
+// caller that will.)
 //
 // The type only changes the LEVEL question — physical occupancy is physical
 // whatever is arriving.

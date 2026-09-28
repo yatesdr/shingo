@@ -63,6 +63,10 @@ func (db *DB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64)
 	return bins.CountEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID)
 }
 
+func (db *DB) CountEmptyBinsOfTypeInGroupExcludingNode(binTypeCode string, groupNodeID, excludeNodeID int64) (int, error) {
+	return bins.CountEmptyOfTypeInGroupExcludingNode(db.DB, binTypeCode, groupNodeID, excludeNodeID)
+}
+
 func (db *DB) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error) {
 	return bins.FindSourceFIFO(db.DB, payloadCode, excludeNodeID)
 }

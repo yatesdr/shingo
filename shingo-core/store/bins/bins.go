@@ -455,9 +455,15 @@ var EmptyCarrierWhere = emptyCarrierWhere("NULL")
 // ── A HOME DRAWS FROM ITS OWN LOADER'S BUFFERS ────────────────────────────────
 //
 // A dedicated loader's buffer slots hold the empties its homes are refilled
-// from, and its inbound source is usually the very group those slots stand in.
+// from, and its inbound source is usually a group whose SUBTREE holds those
+// slots: the empty search below walks descendants, not direct children.
 // Springfield's "Supermarket Dedicated Locations" is exactly that: every SMN
-// slot is one of its homes or buffers and it sources from AMR Supermarket. The
+// slot is one of its homes or buffers and it sources from AMR Supermarket.
+// (This used to say the group the slots "stand in", which reads as parentage.
+// It is not the same fact: whether a slot's IMMEDIATE parent is an NGRP or LANE
+// decides whether a drop there is a storage slot (isConcreteStorageDropoff),
+// and loader 7's are not — on 2026-09-28 a return dispatched onto SMN_023 while
+// a bin stood there, which the final-drop gate refuses for a storage slot.) The
 // refill is a retrieve_empty whose SOURCE is the group and whose DELIVERY is the
 // home, so it never reaches the loader-pool tier (keyed on the source node) and
 // lands here. When the loader arm excluded every loader position, the group had
@@ -1224,6 +1230,26 @@ func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64) 
 		binTypeCode, groupNodeID, 0).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count empty %s in group %d: %w", binTypeCode, groupNodeID, err)
+	}
+	return n, nil
+}
+
+// CountEmptyOfTypeInGroupExcludingNode is CountEmptyOfTypeInGroup with one
+// node's carriers left out: the level a maintained group will hold once the
+// carrier a committed lift takes off that node has gone (the vacated-slot store,
+// binresolver.ResolveStoreVacated). Same predicate, same destination (none), one
+// more arm — ExcludeNodeArm, which the finder already composes.
+func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64) (int, error) {
+	if binTypeCode == "" {
+		return 0, nil
+	}
+	var n int
+	err := db.QueryRow(
+		nodetree.DescendantsOf(2)+" SELECT COUNT(*) "+BinFromClause+
+			EmptyCarrierWhereFor(4)+OfTypeArm(1)+InGroupArm()+ExcludeNodeArm(3),
+		binTypeCode, groupNodeID, excludeNodeID, 0).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count empty %s in group %d excluding node %d: %w", binTypeCode, groupNodeID, excludeNodeID, err)
 	}
 	return n, nil
 }

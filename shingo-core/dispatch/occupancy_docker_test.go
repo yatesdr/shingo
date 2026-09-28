@@ -67,7 +67,7 @@ func TestStepOccupancy_GateAndSlotClaimAgree(t *testing.T) {
 				testdb.CreateBinAtNode(t, db, sd.Payload.Code, stage.ID, tc.prefix+"-FOREIGN")
 			}
 
-			st := d.reserveComplexDestination(order, steps)
+			st := d.reserveComplexDestination(order, steps, nil)
 			gateClear := !(st.done && st.err != nil && strings.Contains(st.err.Error(), "dropoff capacity"))
 
 			// The claim needs its slot reservation; the gate takes it when it lets the

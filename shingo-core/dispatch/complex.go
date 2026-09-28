@@ -69,6 +69,20 @@ type resolvedStep struct {
 	// per candidate on the release path and would not survive a lane rename —
 	// and unlike Node, nothing downstream re-derives it from the plant.
 	WaitLane int64 `json:"wait_lane,omitempty"`
+
+	// Vacate is set on a DROPOFF the vacated-slot rule admitted: a drop that
+	// would otherwise have waited, onto a node whose only bin a committed lift
+	// takes first (vacated_slot.go). It names the node it was granted for, and
+	// every reader honours it only while the step still drops there
+	// (stampHonoured), so a stamp left behind by a writer that re-pointed the
+	// step stops counting on its own. Only Core reads Core's steps_json.
+	Vacate *vacateStamp `json:"vacate,omitempty"`
+	// Anchor is the Edge-authored home a dedicated-loader return was pointed at
+	// before the vacated arm re-pointed it (placeForLoader). Placement
+	// re-derives from it on a later pass, so a parked pair does not re-anchor on
+	// the slot its partner happened to vacate last time. Written only by the
+	// vacated arm; every other placement leaves it empty and behaves as before.
+	Anchor string `json:"anchor,omitempty"`
 }
 
 // WaitKindLane marks a wait ONLY the lane evaluator may advance: its

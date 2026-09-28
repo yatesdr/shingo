@@ -539,6 +539,91 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 	}
 }
 
+// ResolveStoreVacated asks whether one flat child of a group may take a store
+// once the bins a committed lift takes off it have gone — the vacated-slot
+// rule's NGRP arm (dispatch/vacated_slot.go), asked only after ResolveStore has
+// answered "no available slot".
+//
+// THE RESOLVER'S OWN FENCES, NOT A COPY OF THEM. Enabled, dig-free, unclaimed by
+// anyone else, payloadAllowedAt, binTypeAllowed, the empties-only refusal and the
+// maintained level are all asked here, the same way ResolveStore asks them, so
+// the vacated arm cannot admit a store the ordinary one would refuse for any
+// reason other than the bin standing there.
+//
+// THE VACATING BINS ARE ABSENT, AND ONLY THEY ARE. Every bin on the child must be
+// in vacating, or the child is not free after the lift either. The level counts
+// the group without this child's carriers: an empty of the declared type lifted
+// off it lowers the count by one (level-neutral against the carrier the store
+// puts down), and a full lifted off it lowers nothing.
+//
+// THE ASKER'S OWN TRAFFIC IS NOT TRAFFIC. The in-flight count excludes it,
+// which the ordinary scan's CountActiveOrdersByDeliveryNode does not.
+func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating []int64, payloadCode string,
+	stated BinTypeStatement, asker reservations.DigAsker) (*ResolveResult, error) {
+	stated = r.settleBinType(stated, asker, group)
+	binTypeID := stated.TypeID()
+	levels, err := r.DB.ListMaintainLevels(group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("read declared level for %s: %w", group.Name, err)
+	}
+	if payloadCode != "" && len(levels) > 0 {
+		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
+	}
+	full, err := r.atDeclaredLevelCounting(group, binTypeID, levels, func(code string) (int, error) {
+		return r.DB.CountEmptyBinsOfTypeInGroupExcludingNode(code, group.ID, child.ID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if full {
+		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+	}
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
+	if err != nil {
+		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
+	}
+	var c *nodes.Node
+	for _, n := range children {
+		if n.ID == child.ID {
+			c = n
+			break
+		}
+	}
+	switch {
+	case c == nil:
+		return nil, fmt.Errorf("%s is not an available child of %s", child.Name, group.Name)
+	case !c.Enabled || c.IsSynthetic || c.NodeTypeCode == protocol.NodeClassLANE:
+		return nil, fmt.Errorf("%s is not a flat enabled slot of %s", c.Name, group.Name)
+	case c.ClaimedBy != nil && *c.ClaimedBy != asker.OrderID:
+		return nil, fmt.Errorf("%s is claimed by order %d", c.Name, *c.ClaimedBy)
+	case !r.payloadAllowedAt(c.ID, payloadCode):
+		return nil, fmt.Errorf("%s does not accept payload %s", c.Name, payloadCode)
+	case !r.binTypeAllowed(c.ID, binTypeID):
+		return nil, fmt.Errorf("%s does not accept the arriving carrier type", c.Name)
+	}
+	onNode, err := r.DB.ListBinsByNode(c.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list bins at %s: %w", c.Name, err)
+	}
+	gone := make(map[int64]bool, len(vacating))
+	for _, id := range vacating {
+		gone[id] = true
+	}
+	for _, b := range onNode {
+		if !gone[b.ID] {
+			return nil, fmt.Errorf("%s holds bin %d, which no committed lift takes", c.Name, b.ID)
+		}
+	}
+	inflight, err := r.DB.CountActiveOrdersByDeliveryNodeExcluding(c.Name, asker.OrderID)
+	if err != nil {
+		return nil, fmt.Errorf("count orders inbound to %s: %w", c.Name, err)
+	}
+	if inflight > 0 {
+		return nil, fmt.Errorf("%s has %d other order(s) inbound", c.Name, inflight)
+	}
+	return &ResolveResult{Node: c}, nil
+}
+
 // ── THE STORE RESOLVERS ARE OWNER-AWARE, AND THE OWNER WAS ALREADY IN HAND ──
 //
 // Both arms below ask the slot selector through FindStoreSlotInLaneExcluding
@@ -959,6 +1044,16 @@ func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool 
 // the same list one line earlier to decide whether the group is an empties bank
 // at all. One read, two questions.
 func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel) (bool, error) {
+	return r.atDeclaredLevelCounting(group, binTypeID, levels, func(code string) (int, error) {
+		return r.DB.CountEmptyBinsOfTypeInGroup(code, group.ID)
+	})
+}
+
+// atDeclaredLevelCounting is atDeclaredLevel with the count supplied, so the
+// vacated-slot store can ask the same question of the group as it will stand
+// once a committed lift has emptied one child.
+func (r *GroupResolver) atDeclaredLevelCounting(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel,
+	count func(binTypeCode string) (int, error)) (bool, error) {
 	if len(levels) == 0 {
 		return false, nil
 	}
@@ -968,7 +1063,7 @@ func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, lev
 			if l.BinTypeID != *binTypeID {
 				continue
 			}
-			held, cerr := r.DB.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, group.ID)
+			held, cerr := count(l.BinTypeCode)
 			if cerr != nil {
 				return false, fmt.Errorf("count %s in %s: %w", l.BinTypeCode, group.Name, cerr)
 			}
@@ -984,7 +1079,7 @@ func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, lev
 	want, held := 0, 0
 	for _, l := range levels {
 		want += l.Want
-		n, cerr := r.DB.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, group.ID)
+		n, cerr := count(l.BinTypeCode)
 		if cerr != nil {
 			return false, fmt.Errorf("count %s in %s: %w", l.BinTypeCode, group.Name, cerr)
 		}
