@@ -455,6 +455,19 @@ func ReleaseByBin(db Execer, binID int64) error {
 	return nil
 }
 
+// ReleaseByBinForOrder deletes orderID's reservation on binID, and no other
+// order's. The scoped twin of ReleaseByBin, for a caller that is releasing ONE
+// ORDER's hold rather than recording a delivery: the bin may have been released
+// already and reserved by somebody else since, and a bin-keyed delete would take
+// that reservation too.
+func ReleaseByBinForOrder(db Execer, binID, orderID int64) error {
+	_, err := db.Exec(`DELETE FROM reservations WHERE bin_id=$1 AND order_id=$2`, binID, orderID)
+	if err != nil {
+		return fmt.Errorf("reservations release-by-bin-for-order: %w", err)
+	}
+	return nil
+}
+
 // ReleaseByNode deletes any reservation on nodeID — the slot dual of ReleaseByBin.
 // Called at the delivered moment in the same tx that clears the slot's
 // nodes.claimed_by, so a slot's reservation lives exactly as long as its hard

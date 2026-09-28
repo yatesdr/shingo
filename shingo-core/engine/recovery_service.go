@@ -148,15 +148,17 @@ func (s *RecoveryService) ReleaseTerminalBinClaim(binID int64, actor string) err
 }
 
 func (s *RecoveryService) ReleaseStagedBin(binID int64, actor string) error {
-	bin, err := s.db.GetBin(binID)
-	if err != nil {
+	if _, err := s.db.GetBin(binID); err != nil {
 		return fmt.Errorf("bin not found")
 	}
-	if bin.Status != domain.BinStatusStaged {
-		return fmt.Errorf("bin %d is not staged", binID)
-	}
-	if err := s.db.ReleaseStagedBin(binID); err != nil {
+	// The release's own guard is the pre-check: it writes only a staged bin
+	// and says whether it did, so there is no read-then-write window.
+	released, err := s.db.ReleaseStagedBin(binID)
+	if err != nil {
 		return err
+	}
+	if !released {
+		return fmt.Errorf("bin %d is not staged", binID)
 	}
 	s.db.AppendAudit("bin", binID, "recovery.release_staged", string(domain.BinStatusStaged), string(domain.BinStatusAvailable), actor)
 	s.db.RecordRecoveryAction("release_staged_bin", "bin", binID, "released staged bin back to available", actor)

@@ -30,7 +30,7 @@ func TestBinUnavailableReason_BadStatus(t *testing.T) {
 	t.Parallel()
 	for _, status := range []domain.BinStatus{
 		domain.BinStatusMaintenance, domain.BinStatusFlagged,
-		domain.BinStatusRetired, domain.BinStatusQualityHold,
+		domain.BinStatusRetired,
 	} {
 		b := &bins.Bin{Status: status}
 		got := BinUnavailableReason(b, "", domain.BinTypeRule{})

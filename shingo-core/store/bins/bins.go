@@ -749,11 +749,23 @@ func Create(db *sql.DB, b *Bin) error {
 	return nil
 }
 
-// Update writes the mutable columns on a bin (bin_type_id, label, description,
-// node_id, status).
-func Update(db *sql.DB, b *Bin) error {
-	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1, label=$2, description=$3, node_id=$4, status=$5, updated_at=$7 WHERE id=$6`,
-		b.BinTypeID, b.Label, b.Description, helpers.NullableInt64(b.NodeID), b.Status, b.ID, clock.Now().UTC())
+// Update is the bin edit: it writes the fields the edit names and nothing else.
+// A nil pointer leaves its column alone.
+//
+// NOT node_id AND NOT status. This wrote both from a *Bin the caller had read at
+// some earlier moment, so a door-write that landed between that read and this
+// save — an arrival moving the bin, a flag, a release — was overwritten with the
+// stale values. Where a bin is has one writer (PlaceBinTx and the move doors);
+// its status has its doors (UpdateStatus, Stage, ReleaseStaged, Retire). An
+// edit of a label is not one of them.
+func Update(db *sql.DB, binID int64, label, description *string, binTypeID *int64) error {
+	_, err := db.Exec(`UPDATE bins SET
+		label=COALESCE($2, label),
+		description=COALESCE($3, description),
+		bin_type_id=COALESCE($4, bin_type_id),
+		updated_at=$5
+		WHERE id=$1`,
+		binID, label, description, binTypeID, clock.Now().UTC())
 	return err
 }
 
@@ -980,7 +992,7 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 		MAX(CASE WHEN b.manifest IS NULL OR b.manifest_confirmed = false THEN 1 ELSE 0 END),
 		MAX(CASE WHEN b.claimed_by IS NOT NULL THEN 1 ELSE 0 END),
 		MAX(CASE WHEN b.status = 'staged' THEN 1 ELSE 0 END),
-		MAX(CASE WHEN b.status IN ('maintenance', 'flagged', 'quality_hold') THEN 1 ELSE 0 END)
+		MAX(CASE WHEN b.status IN ('maintenance', 'flagged') THEN 1 ELSE 0 END)
 		FROM bins b
 		WHERE b.node_id IS NOT NULL AND b.status != 'retired'
 		GROUP BY b.node_id`)
@@ -1007,9 +1019,9 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 }
 
 // MoveAndClearStaging relocates a bin and, when clearStaging is set, drops a
-// stale staged status — both in one transaction. The staging clear is
-// guarded (WHERE status='staged'), so it is a no-op on a non-staged bin and
-// never flips an unrelated status, unlike the unguarded ReleaseStaged.
+// stale staged status — both in one transaction. The staging clear composes
+// the same guard as arrival (helpers.StagingOwnsStatusSQL), so it never flips
+// a status the staging machine does not own.
 //
 // A manual Move bypasses the arrival paths (ApplyArrival / recovery) that
 // re-derive staging, so a bin staged at a lineside node would otherwise stay
@@ -1050,7 +1062,7 @@ func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool) er
 	}
 
 	if clearStaging {
-		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2 WHERE id=$1 AND status='staged'`, binID, clock.Now().UTC()); err != nil {
+		if _, err := tx.Exec(`UPDATE bins SET `+helpers.AvailableSetSQL+` WHERE id=$2 AND `+helpers.StagingOwnsStatusSQL, clock.Now().UTC(), binID); err != nil {
 			return err
 		}
 	}
@@ -1395,21 +1407,33 @@ func UpdateStatus(db *sql.DB, binID int64, status domain.BinStatus) error {
 // Stage marks a bin as staged with expiry tracking.
 // If expiresAt is nil, the bin is staged permanently (no auto-release).
 func Stage(db *sql.DB, binID int64, expiresAt *time.Time) error {
-	_, err := db.Exec(`UPDATE bins SET status='staged', staged_at=$3, staged_expires_at=$1, updated_at=$3 WHERE id=$2`,
-		helpers.NullableTime(expiresAt), binID, clock.Now().UTC())
+	_, err := db.Exec(`UPDATE bins SET `+helpers.StagedSetSQL+` WHERE id=$3`,
+		clock.Now().UTC(), helpers.NullableTime(expiresAt), binID)
 	return err
 }
 
-// ReleaseStaged clears the staged status on a single bin, setting it back to available.
-func ReleaseStaged(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC())
-	return err
+// ReleaseStaged turns a STAGED bin back to available, and reports whether it
+// did. A bin in any other status is left exactly as it is and released=false.
+//
+// The guard is in the statement, not in a caller's earlier read. This was
+// `WHERE id=$1` and nothing else, so a release aimed at a flagged or
+// maintenance bin wrote available over it and reported success; the recovery
+// door guarded in Go with a read first, which a concurrent write could still
+// slip between. The returned bool is the one answer to "was it staged".
+func ReleaseStaged(db *sql.DB, binID int64) (released bool, err error) {
+	res, err := db.Exec(`UPDATE bins SET `+helpers.AvailableSetSQL+` WHERE id=$2 AND `+helpers.StagedOnlySQL,
+		clock.Now().UTC(), binID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // ReleaseExpiredStaged releases staged bins whose expiry has passed.
 // Returns the number of bins released.
 func ReleaseExpiredStaged(db *sql.DB) (int, error) {
-	result, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$1 WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < $1`, clock.Now().UTC())
+	result, err := db.Exec(`UPDATE bins SET `+helpers.AvailableSetSQL+` WHERE `+helpers.StagedOnlySQL+` AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < $1`, clock.Now().UTC())
 	if err != nil {
 		return 0, err
 	}

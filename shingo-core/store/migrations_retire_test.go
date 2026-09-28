@@ -7,7 +7,6 @@ import (
 
 	"shingo/protocol"
 	"shingocore/internal/testdb"
-	"shingocore/store"
 	"shingocore/store/orders"
 	"shingocore/store/schema"
 )
@@ -178,19 +177,19 @@ import (
 // writes bin_types.bare and reads the dropped column; rollback needs the
 // schema put back by hand (see v136BareOf).
 //
-// THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
-// not a value to sync -- it is the second person confirming the head moved on
-// purpose, which is the only thing that distinguishes "a migration was added"
-// from "a migration was added below the head and the head silently did not
-// move".
+// v137 ADDS edge_registry.schema_version (nullable, inert to an older
+// binary). v138 is DATA ONLY: bins in the retired quality_hold status become
+// flagged (zero rows at both plants); an older binary reads flagged fine.
+//
+// The hard-coded head number that used to close this test is gone (orc ruling,
+// 2026-09-28): it conflicted with every stream that adds a migration. What it
+// guarded, a migration added below the head, is now TestMigrationList_Shape's
+// structural check.
 func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
-	}
-	if got := store.LatestMigrationVersion(); got != 136 {
-		t.Errorf("head migration = %d, want 136", got)
 	}
 }
 

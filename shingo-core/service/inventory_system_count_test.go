@@ -40,7 +40,7 @@ func TestSystemBinCount_IncludesStaged(t *testing.T) {
 }
 
 // TestSystemBinCount_ExcludesOutOfLoop: flagged, maintenance,
-// quality_hold, and retired bins are out of the kanban loop and must
+// and retired bins are out of the kanban loop and must
 // not count. Each status verified individually.
 func TestSystemBinCount_ExcludesOutOfLoop(t *testing.T) {
 	t.Parallel()
@@ -50,7 +50,6 @@ func TestSystemBinCount_ExcludesOutOfLoop(t *testing.T) {
 	}{
 		{"flagged", domain.BinStatusFlagged},
 		{"maintenance", domain.BinStatusMaintenance},
-		{"quality_hold", domain.BinStatusQualityHold},
 		{"retired", domain.BinStatusRetired},
 	}
 	for _, c := range cases {

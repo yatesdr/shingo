@@ -1093,21 +1093,31 @@ func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
 // bin's claim AND releases its reservation in one transaction. Dispatch-failure
 // rollbacks route through this instead of a bare UnclaimBin, which would clear
 // claimed_by only and orphan the CONFIRMED reservation ClaimForDispatch leaves
-// on success — bricking the bin via uq_reservations_bin_active. Owner-scoped
-// (only clears claimed_by held by orderID) and bin-keyed on the reservation (the
-// unique index guarantees at most one active row per bin, and this order owns
-// it). Idempotent: a not-claimed / not-reserved bin is a harmless no-op.
+// on success — bricking the bin via uq_reservations_bin_active. Idempotent: a
+// not-claimed / not-reserved bin is a harmless no-op.
+//
+// SCOPED TO THIS ORDER, BOTH HALVES. The claim clear is owner-scoped
+// (claimed_by=orderID), and the reservation goes only when that clear actually
+// matched, and only this order's row. Two of the three callers run AFTER
+// failOrderAndEmit, whose terminalize already released this order's holds; by
+// then the bin may be reserved by another order, and the old bin-keyed delete
+// removed that order's reservation. Same shape as PlaceBinTx's handoff: the
+// reservation lives exactly as long as the claim, released only when the claim
+// ended HERE.
 func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1 AND claimed_by=$2`, binID, orderID); err != nil {
+	res, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1 AND claimed_by=$2`, binID, orderID)
+	if err != nil {
 		return err
 	}
-	if err := reservations.ReleaseByBin(tx, binID); err != nil {
-		return err
+	if n, _ := res.RowsAffected(); n > 0 {
+		if err := reservations.ReleaseByBinForOrder(tx, binID, orderID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

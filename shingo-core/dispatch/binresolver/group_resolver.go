@@ -42,6 +42,14 @@ func (e *BuriedError) Error() string {
 
 func (e *BuriedError) Unwrap() error { return ErrBuried }
 
+// Node-property keys an NGRP's algorithm is stored under (with
+// PropResolveAround in helpers.go). The nodes page writes these exact keys;
+// www's node_algorithm_vocabulary_drift_test pins the page to these constants.
+const (
+	PropRetrieveAlgorithm = "retrieve_algorithm"
+	PropStoreAlgorithm    = "store_algorithm"
+)
+
 // Retrieval algorithm codes.
 const (
 	RetrieveFIFO = "FIFO" // strict FIFO: globally oldest bin, proactive reshuffle when buried is older
@@ -96,7 +104,7 @@ func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string)
 // owner-blind behaviour this parameter was added to end.
 func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string, asker reservations.DigAsker,
 	accept BinFilter) (*ResolveResult, error) {
-	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
+	algo := r.getGroupAlgorithm(group.ID, PropRetrieveAlgorithm, RetrieveFIFO)
 	strategy := retrieveStrategies[algo]
 	return r.scanForBestBin(group, payloadCode, strategy, asker, accept)
 }
@@ -357,7 +365,7 @@ func (r *GroupResolver) ResolveRetrieveInLane(lane *nodes.Node, payloadCode stri
 			return nil, fmt.Errorf("no bin of requested payload in lane %s: the lane is held by a dig", lane.Name)
 		}
 	}
-	strategy := retrieveStrategies[r.getGroupAlgorithm(algoAt, "retrieve_algorithm", RetrieveFIFO)]
+	strategy := retrieveStrategies[r.getGroupAlgorithm(algoAt, PropRetrieveAlgorithm, RetrieveFIFO)]
 	res, err := r.scanChildren([]*nodes.Node{lane}, payloadCode, strategy, accept)
 	if err != nil || res != nil {
 		return res, err
@@ -530,7 +538,7 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
 	}
 
-	algo := r.getGroupAlgorithm(group.ID, "store_algorithm", StoreLKND)
+	algo := r.getGroupAlgorithm(group.ID, PropStoreAlgorithm, StoreLKND)
 	switch algo {
 	case StoreDPTH:
 		return r.resolveStoreDPTH(group, payloadCode, binTypeID, asker)

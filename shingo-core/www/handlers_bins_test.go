@@ -202,63 +202,6 @@ func TestExecuteBinAction_Retire(t *testing.T) {
 
 // --- Complex actions ---
 
-func TestExecuteBinAction_QualityHold(t *testing.T) {
-	t.Parallel()
-	h, db, _, bin := setupBinForAction(t)
-
-	params := mustJSON(t, map[string]string{
-		"reason": "Surface defect on lid",
-		"actor":  "inspector-1",
-	})
-	testutil.MustNoErr(t, h.executeBinAction(bin, "quality_hold", params), "quality_hold")
-
-	got, _ := db.GetBin(bin.ID)
-	if got.Status != "quality_hold" {
-		t.Errorf("status: got %q, want %q", got.Status, "quality_hold")
-	}
-
-	// Three audit entries: handler "status", "note:hold", engine "status_changed".
-	entries, _ := db.ListEntityAudit("bin", bin.ID)
-	if len(entries) < 3 {
-		t.Fatalf("expected at least 3 audit entries, got %d", len(entries))
-	}
-	// Find the note entry.
-	noteEntry := findAuditByAction(entries, "note:hold")
-	if noteEntry == nil {
-		t.Fatal("expected note:hold audit entry")
-	}
-	if noteEntry.NewValue != "Surface defect on lid" {
-		t.Errorf("note new_value: got %q, want reason text", noteEntry.NewValue)
-	}
-	if noteEntry.Actor != "inspector-1" {
-		t.Errorf("note actor: got %q, want %q", noteEntry.Actor, "inspector-1")
-	}
-	requireAudit(t, db, bin.ID, "status", "available", "quality_hold", "inspector-1")
-}
-
-func TestExecuteBinAction_QualityHold_NoReason(t *testing.T) {
-	t.Parallel()
-	h, db, _, bin := setupBinForAction(t)
-
-	// No reason — should still change status but skip the note. Two audit
-	// entries: handler "status" + engine "status_changed".
-	params := mustJSON(t, map[string]string{"actor": "inspector-2"})
-	testutil.MustNoErr(t, h.executeBinAction(bin, "quality_hold", params), "quality_hold no reason")
-
-	got, _ := db.GetBin(bin.ID)
-	if got.Status != "quality_hold" {
-		t.Errorf("status: got %q, want %q", got.Status, "quality_hold")
-	}
-
-	entries, _ := db.ListEntityAudit("bin", bin.ID)
-	// No note:hold entry — just handler "status" and engine "status_changed".
-	noteEntry := findAuditByAction(entries, "note:hold")
-	if noteEntry != nil {
-		t.Error("expected no note:hold audit entry when reason is empty")
-	}
-	requireAudit(t, db, bin.ID, "status", "available", "quality_hold", "inspector-2")
-}
-
 func TestExecuteBinAction_Lock(t *testing.T) {
 	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
@@ -328,6 +271,33 @@ func TestExecuteBinAction_Release(t *testing.T) {
 		t.Error("staged_at should be nil after release")
 	}
 	requireAudit(t, db, bin.ID, "status", "staged", "available", "ui")
+}
+
+// TestExecuteBinAction_Release_RefusesNonStaged: release is for a STAGED bin.
+// A release aimed at a bin in any other status is refused, leaves the status
+// exactly as it was, and writes no status audit line. Before, it wrote
+// available over the bin and audited "staged -> available" whatever the bin
+// really was.
+func TestExecuteBinAction_Release_RefusesNonStaged(t *testing.T) {
+	t.Parallel()
+	h, db, _, bin := setupBinForAction(t)
+
+	testutil.MustNoErr(t, db.UpdateBinStatus(bin.ID, "flagged"), "flag the bin")
+	bin.Status = "flagged"
+
+	if err := h.executeBinAction(bin, "release", nil); err == nil {
+		t.Error("release of a flagged bin returned nil, want a not-staged error")
+	}
+	got, _ := db.GetBin(bin.ID)
+	if got.Status != "flagged" {
+		t.Errorf("status after a refused release = %q, want %q — a release must not flatten a status it does not own", got.Status, "flagged")
+	}
+	entries, _ := db.ListEntityAudit("bin", bin.ID)
+	for _, e := range entries {
+		if e.Action == "status" && e.NewValue == "available" {
+			t.Errorf("audit recorded a release (%q -> %q) that did not happen", e.OldValue, e.NewValue)
+		}
+	}
 }
 
 // --- Payload actions ---

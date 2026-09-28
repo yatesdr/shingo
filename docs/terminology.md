@@ -31,7 +31,7 @@ A physical container that holds materials and is tracked as it moves between nod
 | Locus Robotics | Tote / Cart |
 | VDA 5050 | Load |
 
-Bin statuses: `available`, `staged`, `flagged`, `maintenance`, `quality_hold`, `retired`.
+Bin statuses: `available`, `staged`, `flagged`, `maintenance`, `retired`.
 
 ### Payload
 

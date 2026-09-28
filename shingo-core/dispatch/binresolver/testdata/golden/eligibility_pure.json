@@ -91,13 +91,6 @@
     "ngrp_resolver": "rejected"
   },
   {
-    "fixture": "status_quality_hold",
-    "loader_drain": "status:quality_hold",
-    "loader_fill": "status:quality_hold",
-    "concrete_node": "status=\"quality_hold\" rejects pickup",
-    "ngrp_resolver": "rejected"
-  },
-  {
     "fixture": "status_retired",
     "loader_drain": "status:retired",
     "loader_fill": "status:retired",

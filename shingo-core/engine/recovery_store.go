@@ -33,7 +33,7 @@ type RecoveryStore interface {
 	// Recovery-specific mutations.
 	RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time) error
 	ReleaseTerminalBinClaim(binID int64) (int64, error)
-	ReleaseStagedBin(binID int64) error
+	ReleaseStagedBin(binID int64) (released bool, err error)
 
 	// Audit + recovery action log writes.
 	AppendAudit(entityType string, entityID int64, action, oldValue, newValue, actor string) error

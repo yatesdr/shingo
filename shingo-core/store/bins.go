@@ -17,7 +17,6 @@ import (
 )
 
 func (db *DB) CreateBin(b *bins.Bin) error                   { return bins.Create(db.DB, b) }
-func (db *DB) UpdateBin(b *bins.Bin) error                   { return bins.Update(db.DB, b) }
 func (db *DB) DeleteBin(id int64) error                      { return bins.Delete(db.DB, id) }
 func (db *DB) RetireBin(id int64) error                      { return bins.Retire(db.DB, id) }
 func (db *DB) GetBin(id int64) (*bins.Bin, error)            { return bins.Get(db.DB, id) }
@@ -95,8 +94,17 @@ func (db *DB) StageBin(binID int64, expiresAt *time.Time) error {
 	return bins.Stage(db.DB, binID, expiresAt)
 }
 
-// ReleaseStagedBin clears the staged status on a single bin.
-func (db *DB) ReleaseStagedBin(binID int64) error { return bins.ReleaseStaged(db.DB, binID) }
+// ReleaseStagedBin turns a staged bin back to available; released=false means
+// the bin was not staged and nothing was written.
+func (db *DB) ReleaseStagedBin(binID int64) (released bool, err error) {
+	return bins.ReleaseStaged(db.DB, binID)
+}
+
+// UpdateBin is the bin edit: label, description and bin type, each only when
+// non-nil. It never writes node_id or status (see bins.Update).
+func (db *DB) UpdateBin(binID int64, label, description *string, binTypeID *int64) error {
+	return bins.Update(db.DB, binID, label, description, binTypeID)
+}
 
 // ReleaseExpiredStagedBins releases staged bins whose expiry has passed.
 func (db *DB) ReleaseExpiredStagedBins() (int, error) { return bins.ReleaseExpiredStaged(db.DB) }
@@ -133,12 +141,6 @@ func (db *DB) ClearBinAnomaly(binID int64) error { return bins.ClearAnomaly(db.D
 // RecoverBinToNode moves a bin to toNodeID and clears anomaly_at atomically.
 func (db *DB) RecoverBinToNode(binID, toNodeID int64) error {
 	return bins.RecoverToNode(db.DB, binID, toNodeID)
-}
-
-// RecordBinCount updates UOP and records the count timestamp.
-func (db *DB) RecordBinCount(binID int64, actualUOP int, actor string) error {
-	_, _, err := bins.RecordCount(db.DB, binID, actualUOP, actor)
-	return err
 }
 
 // UnconfirmBinManifest resets the manifest confirmation flag.

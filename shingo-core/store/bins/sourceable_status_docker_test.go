@@ -24,7 +24,7 @@ import (
 // validation is deferred, so an off-spec value is representable — and the two
 // implementations must agree about it, not merely about the happy set.
 //
-// Adding a seventh status fails this test until it is classified on BOTH sides.
+// Adding a sixth status fails this test until it is classified on BOTH sides.
 // That failure is the point: it is cheaper than discovering months later that one
 // reader admits a status another refuses.
 //
@@ -46,7 +46,6 @@ func TestSourceableStatus_GoSQLAgree(t *testing.T) {
 		domain.BinStatusStaged,
 		domain.BinStatusFlagged,
 		domain.BinStatusMaintenance,
-		domain.BinStatusQualityHold,
 		domain.BinStatusRetired,
 		offSpecStatus,
 	}

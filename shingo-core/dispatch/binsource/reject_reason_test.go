@@ -16,7 +16,7 @@ import (
 func TestRejectReasonCannotDriftFromEligible(t *testing.T) {
 	statuses := []domain.BinStatus{
 		domain.BinStatusAvailable, domain.BinStatusStaged, domain.BinStatusFlagged,
-		domain.BinStatusMaintenance, domain.BinStatusQualityHold, domain.BinStatusRetired,
+		domain.BinStatusMaintenance, domain.BinStatusRetired,
 	}
 	payloads := []string{"", X, Y}
 	uops := []int{-1, 0, 1, cap10 - 1, cap10, cap10 + 1}
@@ -73,7 +73,7 @@ func TestRejectReasonNamesTheFirstFailure(t *testing.T) {
 		{"eligible full of X", full(nil), ""},
 		{"claimed beats everything", full(func(c *Cand) { c.Claimed = true; c.Payload = Y }), "claimed"},
 		{"locked", full(func(c *Cand) { c.Locked = true }), "locked"},
-		{"blocking status", full(func(c *Cand) { c.Status = domain.BinStatusQualityHold }), "status:quality_hold"},
+		{"blocking status", full(func(c *Cand) { c.Status = domain.BinStatusMaintenance }), "status:maintenance"},
 		{"empty bin cannot be drained", full(func(c *Cand) { c.Payload = ""; c.UOP = 0 }), "empty-bin"},
 		{"near-miss payload is named", full(func(c *Cand) { c.Payload = Y }), "payload:" + Y},
 		{"drained to zero", full(func(c *Cand) { c.UOP = 0 }), "uop<=0"},

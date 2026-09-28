@@ -11,8 +11,9 @@ import (
 // strings and other enum-shaped string types (order Status, etc.).
 //
 // Mirrors the protocol.Status pattern (shingo/protocol/status.go) — same
-// Scanner/Valuer shape, same advisory CanTransitionTo / IsTerminal helpers
-// derived from a single transition table.
+// Scanner/Valuer shape. There is no transition table: bin status changes go
+// through their doors (UpdateStatus, Stage, ReleaseStaged, Retire), and the
+// advisory table that used to sit here had no caller.
 type BinStatus string
 
 // Canonical bin status constants. These are the only values the domain
@@ -24,63 +25,8 @@ const (
 	BinStatusStaged      BinStatus = "staged"
 	BinStatusFlagged     BinStatus = "flagged"
 	BinStatusMaintenance BinStatus = "maintenance"
-	BinStatusQualityHold BinStatus = "quality_hold"
 	BinStatusRetired     BinStatus = "retired"
 )
-
-// validBinTransitions defines the canonical bin state machine. Advisory
-// today — ChangeStatus does not enforce this. The table exists so callers
-// that want a guard (e.g. UI confirming a destructive transition, future
-// recovery flows) have a single source of truth instead of re-deriving it.
-//
-// IsTerminal is derived from this table: a status is terminal iff it has
-// no key in the map.
-var validBinTransitions = map[BinStatus][]BinStatus{
-	BinStatusAvailable: {
-		BinStatusStaged,
-		BinStatusFlagged,
-		BinStatusMaintenance,
-		BinStatusQualityHold,
-		BinStatusRetired,
-	},
-	BinStatusStaged: {
-		BinStatusAvailable,
-	},
-	BinStatusFlagged: {
-		BinStatusAvailable,
-		BinStatusRetired,
-	},
-	BinStatusMaintenance: {
-		BinStatusAvailable,
-		BinStatusRetired,
-	},
-	BinStatusQualityHold: {
-		BinStatusAvailable,
-		BinStatusRetired,
-	},
-	// BinStatusRetired is terminal — no key in the map.
-}
-
-// IsTerminal reports whether the bin status has no outgoing transitions.
-func (s BinStatus) IsTerminal() bool {
-	_, hasOutgoing := validBinTransitions[s]
-	return !hasOutgoing
-}
-
-// CanTransitionTo reports whether (s, to) is allowed by the canonical bin
-// state machine. Advisory only — the service layer does not enforce this.
-func (s BinStatus) CanTransitionTo(to BinStatus) bool {
-	allowed, ok := validBinTransitions[s]
-	if !ok {
-		return false
-	}
-	for _, t := range allowed {
-		if t == to {
-			return true
-		}
-	}
-	return false
-}
 
 // Sourceable reports whether a bin in this status MAY be taken for a
 // pickup/retrieve. 'available' and 'staged' are pickable — loader and lineside
@@ -126,15 +72,13 @@ func (s BinStatus) Value() (driver.Value, error) {
 }
 
 // AllBinStatuses returns every canonical bin status defined in this
-// module, used by table-driven tests that exhaustively cover the
-// (from, to) matrix.
+// module, used by table-driven tests that cover the enum exhaustively.
 func AllBinStatuses() []BinStatus {
 	return []BinStatus{
 		BinStatusAvailable,
 		BinStatusStaged,
 		BinStatusFlagged,
 		BinStatusMaintenance,
-		BinStatusQualityHold,
 		BinStatusRetired,
 	}
 }

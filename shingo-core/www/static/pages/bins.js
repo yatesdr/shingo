@@ -243,7 +243,6 @@ async function renderActions(data) {
   html += '<div class="action-group"><h4>Status</h4>';
   if (b.status !== 'available') html += '<button class="btn btn-sm" data-action="doBinAction:activate" >Activate</button> ';
   if (b.status !== 'flagged') html += '<button class="btn btn-sm" data-action="doBinAction:flag" >Flag</button> ';
-  if (b.status !== 'quality_hold') html += '<button class="btn btn-sm" data-action="doQualityHold">Quality Hold</button> ';
   if (b.status !== 'maintenance') html += '<button class="btn btn-sm" data-action="doBinAction:maintenance" >Maintenance</button> ';
   // Staged toggle: blue when active, default otherwise. Available ↔ staged only.
   if (b.status === 'available' || b.status === 'staged') {
@@ -461,12 +460,6 @@ function updateBinProps() {
   doBinAction('update', params);
 }
 
-async function doQualityHold() {
-  var reason = await uiPrompt('Reason for quality hold:');
-  if (reason === null) return;
-  doBinAction('quality_hold', { reason: reason, actor: 'ui' });
-}
-
 function addNote() {
   var noteType = document.getElementById('bd-note-type').value;
   var msg = document.getElementById('bd-note-msg').value.trim();
@@ -515,11 +508,6 @@ async function bulkAction(action) {
     var actor = await uiPrompt('Lock by (name):');
     if (!actor) return;
     params = { actor: actor };
-  }
-  if (action === 'quality_hold') {
-    var reason = await uiPrompt('Reason for quality hold:');
-    if (reason === null) return;
-    params = { reason: reason, actor: 'ui' };
   }
   if (!await uiConfirm(action + ' ' + ids.length + ' bin(s)?')) return;
   apiPost('/api/bins/bulk-action', { ids: ids, action: action, params: params })
@@ -960,7 +948,6 @@ delegateActions(document.body, {
     closeCreateBinModal,
     closeCycleCount,
     doBinAction,
-    doQualityHold,
     esc,
     filterBins,
     getSelectedIds,

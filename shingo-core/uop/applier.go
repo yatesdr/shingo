@@ -461,9 +461,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	if d.Reason == protocol.ReasonProduceTick && d.PayloadCode != "" &&
 		havePayloadCode != d.PayloadCode {
 		if valueBefore == 0 {
-			if _, err := tx.Exec(`UPDATE bins b SET payload_code=$1,
-				undeclared_carrier_at = `+undeclaredCarrierStampSQL+`
-				WHERE b.id=$2`, d.PayloadCode, d.BinID); err != nil {
+			if err := bindProducedPayloadTx(tx, d.BinID, d.PayloadCode, false); err != nil {
 				return fmt.Errorf("bind payload on first delta bin=%d: %w", d.BinID, err)
 			}
 			metadata, merr := json.Marshal(struct {
@@ -481,11 +479,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		} else {
 			// Anomaly write rides the rebind UPDATE — same tx, same row; a
 			// separate s.db write here would block on this tx's own row lock.
-			if _, err := tx.Exec(`UPDATE bins b SET payload_code=$1,
-				anomaly_at=COALESCE(b.anomaly_at, NOW()),
-				undeclared_carrier_at = `+undeclaredCarrierStampSQL+`
-				WHERE b.id=$2`,
-				d.PayloadCode, d.BinID); err != nil {
+			if err := bindProducedPayloadTx(tx, d.BinID, d.PayloadCode, true); err != nil {
 				return fmt.Errorf("rebind payload with inventory bin=%d: %w", d.BinID, err)
 			}
 			metadata, merr := json.Marshal(struct {
@@ -731,6 +725,38 @@ func (s *InventoryDeltaService) DroppedDeltaCounts() (staleEpoch, payloadMismatc
 var undeclaredCarrierStampSQL = `CASE WHEN ` +
 	bins.UndeclaredCarrierRuleSQL("$1", "b.bin_type_id") +
 	` THEN COALESCE(b.undeclared_carrier_at, NOW()) ELSE NULL END`
+
+// templateManifestSQL is the manifest the payload named by $1 gives a bin: its
+// template lines' part numbers in template order, `{"items":[]}` when it has
+// none. It is the shape BinManifestService.resolveTemplateManifest marshals for
+// every load and produce write, built in-statement so the bind below stays one
+// UPDATE. The COALESCE matters: jsonb_agg over zero rows is NULL, and an empty
+// template must still write an empty list rather than keep the old label's
+// parts under the new code.
+const templateManifestSQL = `jsonb_build_object('items', COALESCE((
+		SELECT jsonb_agg(jsonb_build_object('part_number', pm.part_number) ORDER BY pm.id)
+		  FROM payload_manifest pm
+		  JOIN payloads p ON p.id = pm.payload_id
+		 WHERE p.code = $1), '[]'::jsonb))`
+
+// bindProducedPayloadTx is the produce-tick bind: the one statement that moves
+// a bin onto the payload a produce tick is filling it with. payload_code and
+// the manifest are written TOGETHER, as every other payload_code writer on bins
+// writes them — before this verb both arms wrote the code alone, leaving a
+// blank carrier's manifest NULL and a relabelled one listing the old payload's
+// parts. flagAnomaly is the rebind-with-inventory arm's cycle-count marker.
+//
+// Deliberately untouched: uop_remaining (the count path below owns it),
+// delta_epoch (see the caller: nothing starts a new life here) and
+// manifest_confirmed (the rebind gates nothing; un-confirming would).
+func bindProducedPayloadTx(tx *sql.Tx, binID int64, payloadCode string, flagAnomaly bool) error {
+	_, err := tx.Exec(`UPDATE bins b SET payload_code=$1,
+		manifest=`+templateManifestSQL+`,
+		anomaly_at=CASE WHEN $3 THEN COALESCE(b.anomaly_at, NOW()) ELSE b.anomaly_at END,
+		undeclared_carrier_at = `+undeclaredCarrierStampSQL+`
+		WHERE b.id=$2`, payloadCode, binID, flagAnomaly)
+	return err
+}
 
 // AnomalyDeltaSummary is the read-only rollup behind the inventory page's
 // "N rejected deltas · N stale staged bins" banner line (P2-C6). Every field is

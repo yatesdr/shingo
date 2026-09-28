@@ -368,7 +368,11 @@ func TestBinService_Release_ClearsStaging(t *testing.T) {
 		t.Fatal("expected staged_at to be set after StageBin")
 	}
 
-	testutil.MustNoErr(t, svc.Release(bin.ID), "Release")
+	released, err := svc.Release(bin.ID)
+	testutil.MustNoErr(t, err, "Release")
+	if !released {
+		t.Error("Release of a staged bin reported released=false")
+	}
 	got, _ := db.GetBin(bin.ID)
 	if got.StagedAt != nil {
 		t.Errorf("StagedAt = %v, want nil after Release", got.StagedAt)
@@ -923,6 +927,39 @@ func TestBinService_Update_AppliesPartialChanges(t *testing.T) {
 	}
 	if got.BinTypeID != bt2.ID {
 		t.Errorf("BinTypeID = %d, want %d", got.BinTypeID, bt2.ID)
+	}
+}
+
+// TestBinService_Update_WritesOnlyWhatItEdits: the edit door writes label,
+// description and bin type, and never node_id or status. The *Bin the caller
+// passes was read earlier; a door-write between that read and the save (a flag,
+// a move) must survive the edit. Before, the save wrote the stale node_id and
+// status straight back over it.
+func TestBinService_Update_WritesOnlyWhatItEdits(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-UPD-STALE", "", 0)
+	stale, _ := db.GetBin(bin.ID) // the caller's read
+
+	// Door-writes after the read: the bin is flagged and moved.
+	testutil.MustNoErr(t, db.UpdateBinStatus(bin.ID, "flagged"), "flag")
+	testutil.MustNoErr(t, db.MoveBinClearingStaging(bin.ID, sd.LineNode.ID, false), "move")
+
+	newLabel := "BS-UPD-STALE-2"
+	testutil.MustNoErr(t, svc.Update(stale, &newLabel, nil, nil), "Update")
+
+	got, _ := db.GetBin(bin.ID)
+	if got.Label != newLabel {
+		t.Errorf("Label = %q, want %q", got.Label, newLabel)
+	}
+	if got.Status != "flagged" {
+		t.Errorf("Status = %q, want %q — the edit wrote back the status from a stale read", got.Status, "flagged")
+	}
+	if got.NodeID == nil || *got.NodeID != sd.LineNode.ID {
+		t.Errorf("NodeID = %v, want %d — the edit wrote back the node from a stale read", got.NodeID, sd.LineNode.ID)
 	}
 }
 

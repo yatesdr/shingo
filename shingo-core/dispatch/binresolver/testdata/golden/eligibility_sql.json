@@ -130,16 +130,6 @@
     "empty_carrier": "rejected"
   },
   {
-    "fixture": "status_quality_hold",
-    "find_source_fifo": "rejected",
-    "lane_accessible": "rejected",
-    "sourceability_pool": "rejected",
-    "pool_breakdown_free": "rejected",
-    "inventory_preflight": "rejected",
-    "inventory_preflight_present": "rejected",
-    "empty_carrier": "rejected"
-  },
-  {
     "fixture": "status_retired",
     "find_source_fifo": "rejected",
     "lane_accessible": "rejected",

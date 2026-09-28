@@ -94,7 +94,7 @@ func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
 
 func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
 	t.Parallel()
-	for _, status := range []domain.BinStatus{domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired, domain.BinStatusQualityHold} {
+	for _, status := range []domain.BinStatus{domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired} {
 		bin := &bins.Bin{
 			ID:                5,
 			Status:            status,

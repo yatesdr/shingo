@@ -85,7 +85,6 @@ var eligFixtures = []eligFixture{
 	{Name: "status_staged", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusStaged, Confirmed: true},
 	{Name: "status_flagged", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusFlagged, Confirmed: true},
 	{Name: "status_maintenance", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusMaintenance, Confirmed: true},
-	{Name: "status_quality_hold", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusQualityHold, Confirmed: true},
 	{Name: "status_retired", Payload: wantPayload, UOP: 400, Cap: 1000, Status: domain.BinStatusRetired, Confirmed: true},
 	// Off-spec: the column carries no CHECK constraint. A reject-list predicate
 	// admits this; an allow-list rejects it.

@@ -185,7 +185,7 @@ func availablePoolByPayload(db *sql.DB) (pool, undeclared map[string]int, err er
 // COUNT(DISTINCT b.id) because a node appears once per (style, claim) there and
 // the join would otherwise multiply one bin by its claim count.
 //
-// ONLY 'staged' gets the exemption. maintenance, flagged, quality_hold and
+// ONLY 'staged' gets the exemption. maintenance, flagged and
 // retired are not usable parts no matter where they sit, so they stay excluded.
 // claimed / locked / reserved stay excluded too: a bin already spoken for is on
 // its way out, not stock in place. manifest_confirmed stays required — an

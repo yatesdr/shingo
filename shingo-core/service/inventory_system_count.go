@@ -2,7 +2,7 @@
 //
 // This is intentionally separate from PreflightAvailability (which has
 // "available for sourcing right now" semantics and excludes staged,
-// flagged, maintenance, quality_hold, retired bins as well as bins at
+// flagged, maintenance, retired bins as well as bins at
 // non-storage nodes). The kanban demand math has a different question:
 // "how many bins of this payload are physically in the loop right now,
 // regardless of whether they're parked at storage, en route, or staged
@@ -16,38 +16,47 @@
 //
 //   - Include  : available, staged — bins still in productive
 //                circulation
-//   - Exclude  : flagged, maintenance, quality_hold, retired — bins
+//   - Exclude  : flagged, maintenance, retired — bins
 //                that production can't rely on
 //
 // Flagged means the operator marked it for investigation; not assumed
-// to return. Maintenance and quality_hold are off the line and shouldn't
+// to return. Maintenance is off the line and shouldn't
 // be counted as available capacity — production has to plan around them.
 // Retired is terminal.
 //
 // No node filter — bins anywhere count, including the loader itself
 // (an empty carrier sitting at the loader still represents capacity).
+//
+// A REJECT-LIST, DELIBERATELY, and spelled once (outOfLoopFilterSQL below,
+// composed by both totals). A sourcing reader fails closed on an
+// unrecognised status; a physical-inventory total fails open, because
+// under-reporting stock that is really there is the wrong error for a count.
+// store/bins/one_sourcing_predicate_test.go carries this file as its one
+// frozen exception.
 
 package service
 
 import (
 	"context"
 	"fmt"
+
+	"shingo/protocol"
 )
+
+// outOfLoopFilterSQL is the lifecycle filter both system totals compose: the
+// statuses production cannot rely on, so their bins are not loop inventory.
+const outOfLoopFilterSQL = `status NOT IN ('flagged', 'maintenance', 'retired')`
 
 // PayloadSystemCount is the per-payload count returned by SystemBinCount.
 // Distinct from PayloadAvailability (preflight) so callers can't confuse
-// the two semantics at the type level.
-type PayloadSystemCount struct {
-	PayloadCode string `json:"payload_code"`
-	BinCount    int    `json:"bin_count"`
-}
+// the two semantics at the type level. The wire shape lives in
+// shingo/protocol (http_contract.go); the alias keeps the service name.
+type PayloadSystemCount = protocol.PayloadSystemCount
 
 // SystemBinCountResult carries per-payload counts. Payloads with zero
 // bins are present in the result with BinCount=0 — callers should not
 // assume absence means zero.
-type SystemBinCountResult struct {
-	Counts []PayloadSystemCount `json:"counts"`
-}
+type SystemBinCountResult = protocol.SystemBinCountResult
 
 // SystemBinCount counts bins per payload across the whole plant,
 // excluding states that aren't part of the kanban loop. See file
@@ -86,7 +95,7 @@ func (s *InventoryService) SystemBinCount(ctx context.Context, payloads []string
 	query := `SELECT payload_code, COUNT(*) AS n
 		FROM bins
 		WHERE payload_code IN (` + string(placeholders) + `)
-		  AND status NOT IN ('flagged', 'maintenance', 'quality_hold', 'retired')
+		  AND ` + outOfLoopFilterSQL + `
 		GROUP BY payload_code`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -140,8 +149,8 @@ type SystemUOPForPayloadResult struct {
 // retrieve orders (the wire signal it used to fire,
 // LoopBelowThresholdSignal, is gone — Core owns the whole decision).
 //
-// Lifecycle filter on bins mirrors SystemBinCount — bins in flagged,
-// maintenance, quality_hold, or retired status are excluded
+// Lifecycle filter on bins is SystemBinCount's (outOfLoopFilterSQL) — bins in
+// flagged, maintenance, or retired status are excluded
 // (preserves the 2026-05-11 SNF2 fix semantics: production can't rely
 // on those bins so they don't count as loop inventory).
 //
@@ -182,7 +191,7 @@ func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []s
 	binQuery := `SELECT payload_code, COALESCE(SUM(uop_remaining), 0) AS total
 		FROM bins
 		WHERE payload_code IN (` + in + `)
-		  AND status NOT IN ('flagged', 'maintenance', 'quality_hold', 'retired')
+		  AND ` + outOfLoopFilterSQL + `
 		GROUP BY payload_code`
 	binRows, err := s.db.QueryContext(ctx, binQuery, args...)
 	if err != nil {

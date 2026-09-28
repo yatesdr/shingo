@@ -209,15 +209,14 @@ func (s *BinService) ensurePhysicalNodeEmpty(nodeID int64, addCount int) error {
 // ChangeStatus updates a bin's status without additional validation.
 //
 // Validation is intentionally omitted: operators occasionally need to set
-// off-spec states during incident recovery. domain.BinStatus.CanTransitionTo
-// is available for callers (UI, future recovery flows) that want to gate
-// transitions before invoking this.
+// off-spec states during incident recovery.
 func (s *BinService) ChangeStatus(binID int64, status domain.BinStatus) error {
 	return s.db.UpdateBinStatus(binID, status)
 }
 
-// Release moves a staged bin back to the available state.
-func (s *BinService) Release(binID int64) error {
+// Release moves a staged bin back to the available state. released=false means
+// the bin was not staged, and it was left exactly as it was.
+func (s *BinService) Release(binID int64) (released bool, err error) {
 	return s.db.ReleaseStagedBin(binID)
 }
 
@@ -607,10 +606,14 @@ func (s *BinService) AddNote(binID int64, noteType, message, actor string) error
 // --- Update ---------------------------------------------------------------
 
 // Update applies partial field updates to a bin. Nil pointers mean "leave
-// this field alone". Fields supported today: Label, Description, BinTypeID.
-// This helper exists so handlers don't have to mutate the caller-owned
-// *bins.Bin in place before calling UpdateBin.
+// this field alone". Fields supported: Label, Description, BinTypeID — and only
+// those reach the database; node_id and status are never written from b, which
+// the caller read at some earlier moment (see bins.Update). b is updated in
+// place to match what was written.
 func (s *BinService) Update(b *bins.Bin, label, description *string, binTypeID *int64) error {
+	if err := s.db.UpdateBin(b.ID, label, description, binTypeID); err != nil {
+		return err
+	}
 	if label != nil {
 		b.Label = *label
 	}
@@ -620,7 +623,7 @@ func (s *BinService) Update(b *bins.Bin, label, description *string, binTypeID *
 	if binTypeID != nil {
 		b.BinTypeID = *binTypeID
 	}
-	return s.db.UpdateBin(b)
+	return nil
 }
 
 // --- Queries --------------------------------------------------------------

@@ -64,10 +64,8 @@ func TestCreateBin_CRUD(t *testing.T) {
 	})
 
 	t.Run("Update_persists_changes", func(t *testing.T) {
-		bin.Label = "BIN-CRUD-1B"
-		bin.Description = "renamed"
-		bin.Status = "maintenance"
-		testutil.MustNoErr(t, bins.Update(db.DB, bin), "bins.Update")
+		label, desc := "BIN-CRUD-1B", "renamed"
+		testutil.MustNoErr(t, bins.Update(db.DB, bin.ID, &label, &desc, nil), "bins.Update")
 		got, err := bins.Get(db.DB, bin.ID)
 		if err != nil {
 			t.Fatalf("bins.Get after update: %v", err)
@@ -78,8 +76,12 @@ func TestCreateBin_CRUD(t *testing.T) {
 		if got.Description != "renamed" {
 			t.Errorf("post-update Description = %q, want %q", got.Description, "renamed")
 		}
-		if got.Status != "maintenance" {
-			t.Errorf("post-update Status = %q, want %q", got.Status, "maintenance")
+		// The edit never writes status or node_id (see bins.Update).
+		if got.Status != "available" {
+			t.Errorf("post-update Status = %q, want %q (untouched)", got.Status, "available")
+		}
+		if got.NodeID == nil || *got.NodeID != std.StorageNode.ID {
+			t.Errorf("post-update NodeID = %v, want %d (untouched)", got.NodeID, std.StorageNode.ID)
 		}
 	})
 
@@ -303,7 +305,11 @@ func TestStage_Release_And_ReleaseExpired(t *testing.T) {
 	})
 
 	t.Run("ReleaseStaged_clears", func(t *testing.T) {
-		testutil.MustNoErr(t, bins.ReleaseStaged(db.DB, bin.ID), "bins.ReleaseStaged")
+		released, err := bins.ReleaseStaged(db.DB, bin.ID)
+		testutil.MustNoErr(t, err, "bins.ReleaseStaged")
+		if !released {
+			t.Error("bins.ReleaseStaged of a staged bin reported released=false")
+		}
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.Status != "available" {
 			t.Errorf("Status after bins.ReleaseStaged = %q, want %q", got.Status, "available")

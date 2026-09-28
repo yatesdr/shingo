@@ -65,11 +65,6 @@
     "lane_buried_oldest": "rejected"
   },
   {
-    "fixture": "status_quality_hold",
-    "lane_buried": "rejected",
-    "lane_buried_oldest": "rejected"
-  },
-  {
     "fixture": "status_retired",
     "lane_buried": "rejected",
     "lane_buried_oldest": "rejected"

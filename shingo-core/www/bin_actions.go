@@ -19,7 +19,6 @@ func (h *Handlers) executeBinAction(b *domain.Bin, action string, params json.Ra
 	actions := map[string]binActionFunc{
 		"activate":           h.binActivate,
 		"flag":               h.binFlag,
-		"quality_hold":       h.binQualityHold,
 		"maintenance":        h.binMaintenance,
 		"retire":             h.binRetire,
 		"release":            h.binRelease,
@@ -62,27 +61,6 @@ func (h *Handlers) binFlag(b *domain.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binQualityHold(b *domain.Bin, params json.RawMessage) error {
-	var p struct {
-		Reason string `json:"reason"`
-		Actor  string `json:"actor"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-		return fmt.Errorf("invalid params: %w", err)
-	}
-	svc := h.engine.BinService()
-	if err := svc.ChangeStatus(b.ID, domain.BinStatusQualityHold); err != nil {
-		return err
-	}
-	actor := h.resolveActor(p.Actor)
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusQualityHold), actor)
-	if p.Reason != "" {
-		svc.AddNote(b.ID, "hold", p.Reason, actor)
-	}
-	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
-	return nil
-}
-
 func (h *Handlers) binMaintenance(b *domain.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().ChangeStatus(b.ID, domain.BinStatusMaintenance); err != nil {
 		return err
@@ -107,11 +85,18 @@ func (h *Handlers) binRetire(b *domain.Bin, _ json.RawMessage) error {
 	return nil
 }
 
+// binRelease releases a STAGED bin. A bin in any other status is refused with
+// an error and left as it is — the release's own guard decides, not the status
+// this handler read — and the audit records the status the bin really had.
 func (h *Handlers) binRelease(b *domain.Bin, _ json.RawMessage) error {
-	if err := h.engine.BinService().Release(b.ID); err != nil {
+	released, err := h.engine.BinService().Release(b.ID)
+	if err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", string(domain.BinStatusStaged), string(domain.BinStatusAvailable), protocol.AuditActorUI)
+	if !released {
+		return fmt.Errorf("bin %d is not staged", b.ID)
+	}
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusAvailable), protocol.AuditActorUI)
 	h.emitBinUpdate(b, engine.BinActionStatusChanged, "")
 	return nil
 }

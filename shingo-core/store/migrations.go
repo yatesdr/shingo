@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"shingo/protocol/migrate"
 	"shingocore/store/schema"
 )
 
@@ -59,7 +60,28 @@ func (db *DB) migrate() error {
 	if err := schema.Apply(db.DB); err != nil {
 		return err
 	}
-	return db.runVersionedMigrations()
+	// Versioned migrations run through the shared runner (protocol/migrate).
+	// migrationList's entries have Verify taking schema.Querier; migrate.Querier
+	// has the identical method set, so the wrap below is a closure, not a
+	// rewrite — all 136 verify predicates move unchanged. Baseline 0: Core has
+	// owned schema_migrations since v1, so there is nothing to seed.
+	wrapped := make([]migrate.Migration, 0, len(migrationList()))
+	for _, m := range migrationList() {
+		m := m
+		verify := m.verify
+		wrapped = append(wrapped, migrate.Migration{
+			Version: m.version,
+			Name:    m.name,
+			Fn:      m.fn,
+			Verify: func(q migrate.Querier) bool {
+				if verify == nil {
+					return true
+				}
+				return verify(q)
+			},
+		})
+	}
+	return migrate.Run(db.DB, migrate.Postgres, 0, wrapped)
 }
 
 // migrateAddBaselineColumns idempotently adds columns the baseline DDL
@@ -140,7 +162,7 @@ func (db *DB) migrateAddBaselineColumns() error {
 // migration is one numbered, tracked schema change.
 //
 // fn is the apply function — runs inside a per-version transaction
-// alongside the schema_migrations row insert (see runOneMigration).
+// alongside the schema_migrations row insert (see protocol/migrate's Run).
 //
 // verify is the post-condition check — given a Querier, returns true
 // iff the schema state the migration is supposed to produce is
@@ -170,16 +192,15 @@ type migration struct {
 	verify  func(q schema.Querier) bool
 }
 
-// runVersionedMigrations runs numbered migrations that are tracked in a
-// schema_migrations table.
+// The versioned migrations themselves run through the shared runner in
+// shingo/protocol/migrate (see migrate()'s tail), which carries the two
+// correctness layers this file used to own:
 //
-// Two correctness layers:
-//
-//  1. **Transactional invariant** (runOneMigration): each migration's
-//     DDL/DML AND the schema_migrations row insert run inside the same
-//     transaction. Either both commit or neither does. Closes the
-//     "DDL committed but version row missing" and "version row
-//     committed but DDL silently no-op'd" failure modes.
+//  1. **Transactional invariant**: each migration's DDL/DML AND its
+//     schema_migrations row insert commit in the same transaction. Either
+//     both land or neither does. Closes the "DDL committed but version row
+//     missing" and "version row committed but DDL silently no-op'd"
+//     failure modes.
 //
 //  2. **Self-heal-on-startup**: for migrations with a non-nil verify,
 //     check the post-condition before trusting the schema_migrations
@@ -212,41 +233,6 @@ func init() {
 // constant), so it can never drift from the migrations themselves.
 func LatestMigrationVersion() int { return latestMigrationVersion }
 
-func (db *DB) runVersionedMigrations() error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INTEGER PRIMARY KEY,
-		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	)`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-
-	migrations := migrationList()
-
-	for _, m := range migrations {
-		var applied bool
-		db.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, m.version).Scan(&applied)
-
-		// Self-heal check: if recorded as applied but the post-
-		// condition is missing, treat as not-applied so the
-		// transactional re-run below restores it.
-		if applied && m.verify != nil && !m.verify(db.DB) {
-			log.Printf("migrations: v%d (%s) recorded as applied but post-condition fails — re-running",
-				m.version, m.name)
-			if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = $1`, m.version); err != nil {
-				return fmt.Errorf("clear stale schema_migrations row v%d: %w", m.version, err)
-			}
-			applied = false
-		}
-		if applied {
-			continue
-		}
-		if err := db.runOneMigration(m.version, m.name, m.fn); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // verifyV15BinTransitState checks that BOTH the synthetic _TRANSIT
 // node row AND the bins.anomaly_at column are present. v15 is the only
 // migration that touches more than one piece of schema, so the verify
@@ -258,30 +244,6 @@ func verifyV15BinTransitState(q schema.Querier) bool {
 	var exists bool
 	q.QueryRow(`SELECT EXISTS (SELECT 1 FROM nodes WHERE name='_TRANSIT' AND is_synthetic=true)`).Scan(&exists)
 	return exists
-}
-
-// runOneMigration wraps a single migration's DDL/DML and its
-// schema_migrations row insert in one transaction. On any error, the
-// transaction rolls back and the migration is re-attempted on the next
-// startup. Migrations are written to be idempotent so re-runs are
-// always safe.
-func (db *DB) runOneMigration(version int, name string, fn func(tx *sql.Tx) error) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("migration v%d (%s): begin tx: %w", version, name, err)
-	}
-	defer tx.Rollback() // no-op after Commit
-
-	if err := fn(tx); err != nil {
-		return fmt.Errorf("migration v%d (%s): %w", version, name, err)
-	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
-		return fmt.Errorf("migration v%d (%s): record version: %w", version, name, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migration v%d (%s): commit: %w", version, name, err)
-	}
-	return nil
 }
 
 // v1BooleanColumns converts INTEGER boolean columns to native BOOLEAN.
@@ -1647,7 +1609,12 @@ func v69ReservationsMouthMode(tx *sql.Tx) error {
 // the 2026-09-23 seat-count ruling is a checksum: Core compares each report
 // against its replica on ingest (v127 adds the carrier columns) and decides
 // nothing from it. Its OWN table — NOT bins — and nothing here writes
-// bins.uop_remaining; the delta path stays that column's only writer.
+// bins.uop_remaining. (An earlier version of this comment added "the delta
+// path stays that column's only writer" — that was never true: the delta
+// apply at uop/applier.go is one writer among several; manifest writes
+// (service/bin_manifest.go), counts (store/bins.RecordCount) and the
+// release-claim sync all write the column too. The claim this paragraph
+// actually needs is the narrow one: this MIGRATION writes no bin rows.)
 func v52EdgeLinesideReports(tx *sql.Tx) error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS edge_lineside_reports (
 		station         TEXT NOT NULL,
@@ -3145,11 +3112,12 @@ func v82DestinationResolvedAt(tx *sql.Tx) error {
 
 // migrationList is the numbered migration chain, as DATA.
 //
-// EXTRACTED SO IT HAS A SECOND READER. It lived inside
-// runVersionedMigrations, so the only thing that could see it was the loop
-// that ran it — and a property OF the list (no two entries with contradictory
-// post-conditions) had nowhere to be asserted from. v24 and v85 spent an
-// unknown number of boots re-running each other because of that.
+// EXTRACTED SO IT HAS A SECOND READER. It once lived inside the private
+// versioned runner (now protocol/migrate), where the only thing that could
+// see it was the loop that ran it — and a property OF the list (no two
+// entries with contradictory post-conditions) had nowhere to be asserted
+// from. v24 and v85 spent an unknown number of boots re-running each other
+// because of that.
 func migrationList() []migration {
 	return []migration{
 		// v1–v7: legacy migrations. verify=nil — these are old, the
@@ -3648,10 +3616,10 @@ func migrationList() []migration {
 		// orders gains the link back to the demand it served.
 		//
 		// The verify checks the LAST thing this migration creates, not the
-		// first. Everything here runs in one transaction (runOneMigration), so
-		// a partial apply is not reachable — but a post-condition that passes
-		// while the tail is missing would be a self-heal that never heals, and
-		// which end it checks costs nothing to get right.
+		// first. Everything here runs in one transaction (protocol/migrate's
+		// runOne), so a partial apply is not reachable — but a post-condition
+		// that passes while the tail is missing would be a self-heal that
+		// never heals, and which end it checks costs nothing to get right.
 		{59, "demand_origins + orders.origin_id/origin_class (the demand grain)",
 			v59DemandOrigins,
 			func(q schema.Querier) bool {
@@ -4359,6 +4327,16 @@ func migrationList() []migration {
 		{136, "bin_types.bare_of — a bare marker names its carrier and bin_types.bare is derived from it; bin_loaders.bare_bin_type_id dropped; bin_loaders.fed_directly",
 			v136BareOf,
 			verifyV136BareOf},
+
+		{137, "edge_registry.schema_version — the applied schema_migrations version an edge reports on register, so /edges shows each station's migration state beside Core's own",
+			v137EdgeSchemaVersion,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "edge_registry", "schema_version") }},
+
+		// Data only; nil verify — the post-condition is "no row in a status", a
+		// table scan, not a cheap schema probe.
+		{138, "retire the quality_hold bin STATUS value — any such bin becomes flagged (the bins.quality_hold containment marker is untouched)",
+			v138RetireQualityHoldStatus,
+			nil},
 	}
 }
 
@@ -5033,6 +5011,38 @@ func verifyV136BareOf(q schema.Querier) bool {
 		return false
 	}
 	return generated == "ALWAYS"
+}
+
+// v137EdgeSchemaVersion adds edge_registry.schema_version: the applied
+// schema_migrations version an edge's register payload reports (see
+// protocol.EdgeRegister.SchemaVersion). One home — the registry row, beside
+// `version`, where every /edges surface already reads. NULL is the honest
+// pre-v137 state (no migration has ever reported it), written only from the
+// wire, never by a human; the register statement's unconditional SET makes a
+// later register from an older edge overwrite it back to NULL, which is
+// correct: the newest fact wins, whatever it is.
+func v137EdgeSchemaVersion(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS schema_version INTEGER NULL`); err != nil {
+		return fmt.Errorf("v137 edge_registry.schema_version: %w", err)
+	}
+	return nil
+}
+
+// v138RetireQualityHoldStatus retires the old quality_hold bin STATUS value.
+// Holds are the containment marker now (the bins.quality_hold boolean, v118),
+// which never touched bins.status; the status value had no door left that set
+// it except the bins-page button removed with this migration. A bin still in it
+// becomes flagged: out of flow, visible, and releasable by an operator — the
+// same three properties the old status had.
+//
+// Zero rows at both plants when this was written; it exists for dev and sim
+// databases. DATA ONLY — no column, no constraint, and the boolean marker is
+// not read or written.
+func v138RetireQualityHoldStatus(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE bins SET status='flagged', updated_at=NOW() WHERE status='quality_hold'`); err != nil {
+		return fmt.Errorf("v138 retire quality_hold status: %w", err)
+	}
+	return nil
 }
 
 // v135SecondStageLoader links a two-stage unloader's halves. Nullable and set on

@@ -199,23 +199,32 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 	// config flag from live, and it was introduced by THIS campaign's own
 	// placement primitive, into a column it did not audit for a clock.
 	//
-	// The shape now matches bins.Stage/ReleaseStaged exactly: two writers of one
+	// The triple is spelled once, in staging.go, and bins.Stage, ReleaseStaged
+	// and ReleaseExpiredStaged compose the same fragments: several writers of one
 	// fact, one spelling.
 	//
 	// The `updated_at=NOW()` on the statements above is left alone deliberately —
 	// bins.updated_at genuinely carries both domains across the tree, which is a
 	// column-wide finding and not this statement's contradiction to fix.
+	//
+	// ── ONLY FROM available OR staged ─────────────────────────────────────
+	//
+	// Both arms are guarded by StagingOwnsStatusSQL. This wrote its status
+	// unconditionally, so a flagged, maintenance or retired bin a robot put down
+	// came back available — an operator's classification erased by a delivery.
+	// A bin in a status the staging machine does not own keeps it, and keeps its
+	// staging columns: the whole statement is a no-op for it. The node_id write
+	// above is NOT conditional — where the bin is, is the fact this primitive
+	// owns; its status belongs to the doors that set it.
 	now := clock.Now().UTC()
 	if p.Staged {
-		if _, err := tx.Exec(`UPDATE bins
-			SET status='staged', staged_at=$3, staged_expires_at=$1, updated_at=$3
-			WHERE id=$2`, NullableTime(p.ExpiresAt), p.BinID, now); err != nil {
+		if _, err := tx.Exec(`UPDATE bins SET `+StagedSetSQL+`
+			WHERE id=$3 AND `+StagingOwnsStatusSQL, now, NullableTime(p.ExpiresAt), p.BinID); err != nil {
 			return nil, fmt.Errorf("stage bin %d: %w", p.BinID, err)
 		}
 	} else {
-		if _, err := tx.Exec(`UPDATE bins
-			SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2
-			WHERE id=$1`, p.BinID, now); err != nil {
+		if _, err := tx.Exec(`UPDATE bins SET `+AvailableSetSQL+`
+			WHERE id=$2 AND `+StagingOwnsStatusSQL, now, p.BinID); err != nil {
 			return nil, fmt.Errorf("set available bin %d: %w", p.BinID, err)
 		}
 	}
