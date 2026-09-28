@@ -17,6 +17,7 @@ import (
 	"shingo/protocol"
 
 	"shingocore/domain"
+	"shingocore/service"
 )
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
@@ -46,36 +47,14 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 	}
 	names := strings.Split(nodesParam, ",")
 
-	type nodeBinInfo struct {
-		NodeName    string `json:"node_name"`
-		BinID       int64  `json:"bin_id,omitempty"`
-		BinLabel    string `json:"bin_label,omitempty"`
-		BinTypeCode string `json:"bin_type_code,omitempty"`
-		// Bare reports the bin type's bare flag: a carrier that holds no
-		// container and is never handed out as an empty.
-		Bare         bool   `json:"bare,omitempty"`
-		PayloadCode  string `json:"payload_code,omitempty"`
-		UOPRemaining int    `json:"uop_remaining"`
-		// DeltaEpoch is the bin's current load-lifecycle epoch.
-		// Edge's startup reconciliation reads it here to repopulate
-		// the bin-state cache after a restart that lost the in-memory
-		// epoch tracking — without this field, Edge would emit its
-		// first post-restart BinUOPDelta with epoch=0 and Core's
-		// stale-epoch guard would log + drop the delta.
-		DeltaEpoch        int64   `json:"delta_epoch"`
-		Manifest          *string `json:"manifest,omitempty"`
-		ManifestConfirmed bool    `json:"manifest_confirmed"`
-		Occupied          bool    `json:"occupied"`
-	}
-
 	nodes := h.engine.NodeService()
-	result := make([]nodeBinInfo, 0, len(names))
+	result := make([]protocol.NodeBinInfo, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
-		entry := nodeBinInfo{NodeName: name}
+		entry := protocol.NodeBinInfo{NodeName: name}
 		node, err := nodes.GetByDotName(name)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -118,13 +97,13 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
 	if code == "" {
-		h.jsonOK(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
+		h.jsonOK(w, protocol.PayloadManifestResponse{Items: []protocol.ManifestItem{}})
 		return
 	}
 	payloads := h.engine.PayloadService()
 	payload, err := payloads.GetByCode(code)
 	if err != nil {
-		h.jsonOK(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
+		h.jsonOK(w, protocol.PayloadManifestResponse{Items: []protocol.ManifestItem{}})
 		return
 	}
 	// parts_per_cycle, not a count. Edge multiplies by the bin's UoP to get
@@ -132,11 +111,6 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 	// `quantity` key — what was wrong was reading a ratio as a count, which
 	// the old name invited and Edge's load screen did. Core and Edge change
 	// this key in the same release; there is no both-keys transition.
-	type manifestItem struct {
-		PartNumber    string `json:"part_number"`
-		PartsPerCycle int64  `json:"parts_per_cycle"`
-		Description   string `json:"description"`
-	}
 	// Include the canonical bin type code so press-index changeover on
 	// Edge can detect from→to bin type changes without a dedicated
 	// lookup endpoint. Empty when no payload_bin_types rule exists for
@@ -154,31 +128,31 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 	items, err := payloads.ListManifest(payload.ID)
 	if err != nil || len(items) == 0 {
 		// No manifest template — return a single entry with the payload code as part number
-		h.jsonOK(w, map[string]any{
-			"uop_capacity":  payload.UOPCapacity,
-			"bin_type_code": binTypeCode,
+		h.jsonOK(w, protocol.PayloadManifestResponse{
+			BinTypeCode: binTypeCode,
 			// One part per cycle: with no template to say otherwise, a bin of
 			// this payload holds uop_remaining of the part. The old shape said
 			// Quantity: UOPCapacity, which is the same claim written as a
 			// full-bin count.
-			"items": []manifestItem{
+			Items: []protocol.ManifestItem{
 				{PartNumber: code, PartsPerCycle: 1, Description: payload.Description},
 			},
+			UOPCapacity: payload.UOPCapacity,
 		})
 		return
 	}
-	result := make([]manifestItem, len(items))
+	result := make([]protocol.ManifestItem, len(items))
 	for i, item := range items {
-		result[i] = manifestItem{
+		result[i] = protocol.ManifestItem{
 			PartNumber:    item.PartNumber,
 			PartsPerCycle: item.PartsPerCycle,
 			Description:   item.Description,
 		}
 	}
-	h.jsonOK(w, map[string]any{
-		"uop_capacity":  payload.UOPCapacity,
-		"bin_type_code": binTypeCode,
-		"items":         result,
+	h.jsonOK(w, protocol.PayloadManifestResponse{
+		BinTypeCode: binTypeCode,
+		Items:       result,
+		UOPCapacity: payload.UOPCapacity,
 	})
 }
 
@@ -204,21 +178,17 @@ func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Reque
 		h.jsonOK(w, []struct{}{})
 		return
 	}
-	type childInfo struct {
-		Name     string `json:"name"`
-		NodeType string `json:"node_type"`
-	}
-	var result []childInfo
+	var result []protocol.NodeChildInfo
 	for _, c := range children {
 		if includeSynthetic || !c.IsSynthetic {
-			result = append(result, childInfo{
+			result = append(result, protocol.NodeChildInfo{
 				Name:     node.Name + "." + c.Name,
 				NodeType: c.NodeTypeCode,
 			})
 		}
 	}
 	if result == nil {
-		result = []childInfo{}
+		result = []protocol.NodeChildInfo{}
 	}
 	h.jsonOK(w, result)
 }
@@ -227,16 +197,7 @@ func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Reque
 // for bin loading — synchronous, returns updated bin state.
 // POST /api/telemetry/bin-load
 func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NodeName    string `json:"node_name"`
-		PayloadCode string `json:"payload_code"`
-		UOPCount    *int64 `json:"uop_count"`
-		Manifest    []struct {
-			PartNumber  string `json:"part_number"`
-			Quantity    int64  `json:"quantity"`
-			Description string `json:"description,omitempty"`
-		} `json:"manifest"`
-	}
+	var req protocol.BinLoadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -257,7 +218,27 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
 		return
 	}
+	// Same resolution rule as bin-count and bin-clear: one carrier is
+	// unambiguous, more than one and the caller has to name which. This took
+	// binList[0] — whichever carrier the query happened to return first.
 	bin := binList[0]
+	switch {
+	case req.BinID != 0:
+		bin = nil
+		for _, b := range binList {
+			if b.ID == req.BinID {
+				bin = b
+				break
+			}
+		}
+		if bin == nil {
+			h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+			return
+		}
+	case len(binList) > 1:
+		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)), http.StatusConflict)
+		return
+	}
 
 	// The manifest stores WHICH parts. The per-line counts Edge sends are not
 	// stored: a stored count goes stale as the bin is drawn down and nothing
@@ -268,45 +249,33 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	manifestJSON, _ := json.Marshal(manifest)
 
-	// ABSENCE IS THE QUESTION, NOT ZERO. A missing uop_count means nobody
-	// declared one, and the standard pack answers it: a full bin is
-	// uop_capacity CYCLES. (It used to sum the manifest's part counts, which
-	// is a different unit — right only while every payload is one part per
-	// cycle, and wrong by parts_per_cycle for any that is not.) A payload with
-	// no template row gives 0 rather than a guess: an undeclared count on an
-	// unknown payload is not a full bin, it is an unanswered question, and 0
-	// makes the operator answer it.
-	//
-	// A DECLARED COUNT IS HONOURED AS GIVEN, including zero. This arm keyed on
-	// `uop <= 0`, which spent a declared "the bin is empty" on the standard
-	// pack and handed the line a full carrier nobody had filled.
-	var uop int64
-	if req.UOPCount != nil {
-		uop = *req.UOPCount
-	} else if p, err := h.engine.PayloadService().GetByCode(req.PayloadCode); err == nil && p != nil {
-		uop = int64(p.UOPCapacity)
-	}
-
-	newEpoch, err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop), protocol.DeclaredByLifecycle)
+	// ABSENCE IS THE QUESTION, NOT ZERO: a missing uop_count is the standard
+	// pack, a declared one (zero included) is written as given. An unknown
+	// payload is refused rather than loaded at 0 — a 0 there is a ledger entry
+	// that reads as a measured empty bin. Both rules, and the one transaction
+	// the set and the confirm now share, are BinManifestService.LoadAtLine's.
+	newEpoch, written, err := h.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
 	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrUnknownPayload) {
+			status = http.StatusBadRequest
+		}
+		h.jsonError(w, err.Error(), status)
 		return
 	}
-	if err := h.engine.BinManifest().Confirm(bin.ID, ""); err != nil {
-		log.Printf("telemetry: bin-load confirm manifest on bin %d: %v", bin.ID, err)
-	}
+	uop := int64(written)
 
 	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d epoch=%d", bin.ID, req.NodeName, req.PayloadCode, uop, newEpoch)
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "loaded", "bin_id": bin.ID,
 	}))
-	h.jsonOK(w, map[string]any{
-		"status":        "ok",
-		"bin_id":        bin.ID,
-		"bin_label":     bin.Label,
-		"payload_code":  req.PayloadCode,
-		"uop_remaining": uop,
-		"delta_epoch":   newEpoch,
+	h.jsonOK(w, protocol.BinLoadResponse{
+		Status:       "ok",
+		BinID:        bin.ID,
+		BinLabel:     bin.Label,
+		PayloadCode:  req.PayloadCode,
+		UOPRemaining: int(uop),
+		DeltaEpoch:   newEpoch,
 	})
 }
 
@@ -337,12 +306,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 //
 // Not an epoch bump; see store/bins.RecordCount for why.
 func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NodeName  string `json:"node_name"`
-		BinID     int64  `json:"bin_id,omitempty"`
-		ActualUOP int    `json:"actual_uop"`
-		Actor     string `json:"actor,omitempty"`
-	}
+	var req protocol.BinCountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -399,18 +363,18 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "counted", "bin_id": bin.ID,
 	}))
-	h.jsonOK(w, map[string]any{
-		"status":        "ok",
-		"bin_id":        bin.ID,
-		"bin_label":     bin.Label,
-		"expected":      res.Expected,
-		"uop_remaining": res.Actual,
-		"discrepancy":   res.Discrepancy,
-		"warning":       res.Warning,
-		"delta_epoch":   res.Epoch,
-		"as_of_net":     res.AsOfNet,
-		"as_of_seq":     res.AsOfSeq,
-		"as_of_station": res.AsOfStation,
+	h.jsonOK(w, protocol.BinCountResponse{
+		Status:       "ok",
+		BinID:        bin.ID,
+		BinLabel:     bin.Label,
+		Expected:     res.Expected,
+		UOPRemaining: res.Actual,
+		Discrepancy:  res.Discrepancy,
+		Warning:      res.Warning,
+		DeltaEpoch:   res.Epoch,
+		AsOfNet:      res.AsOfNet,
+		AsOfSeq:      res.AsOfSeq,
+		AsOfStation:  res.AsOfStation,
 	})
 }
 
@@ -437,11 +401,7 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 // cleared_bin_type_code in the answer is the cart's type as an operator knows
 // it — the carrier, never a marker.
 func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NodeName    string `json:"node_name"`
-		BinID       int64  `json:"bin_id,omitempty"`
-		BinTypeCode string `json:"bin_type_code,omitempty"`
-	}
+	var req protocol.BinClearRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -532,15 +492,15 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	// read above, before ClearForReuseAndBookDeparture. The Edge logs it with the
 	// CLEAR; it no longer reads node-bins first to learn it, and a successful
 	// answer here is what tells it a carrier was there (the no-bin refusal above).
-	h.jsonOK(w, map[string]any{
-		"status":               "ok",
-		"bin_id":               bin.ID,
-		"bin_label":            bin.Label,
-		"delta_epoch":          newEpoch,
-		"cleared_payload_code": bin.PayloadCode,
+	h.jsonOK(w, protocol.BinClearResponse{
+		Status:             "ok",
+		BinID:              bin.ID,
+		BinLabel:           bin.Label,
+		DeltaEpoch:         newEpoch,
+		ClearedPayloadCode: bin.PayloadCode,
 		// The cart's type as an operator knows it — the carrier, never a
 		// marker — for the board's CLEAR line.
-		"cleared_bin_type_code": clearedType,
+		ClearedBinTypeCode: clearedType,
 	})
 }
 

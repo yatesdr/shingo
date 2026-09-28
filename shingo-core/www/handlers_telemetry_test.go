@@ -361,10 +361,14 @@ func TestApiBinLoad_UOPFallsBackToCapacity(t *testing.T) {
 	}
 }
 
-// TestApiBinLoad_UOPFallbackWithNoTemplateIsZero: an undeclared count on a
-// payload Core has no template for is an unanswered question, not a full bin.
-// Zero makes the operator answer it; a guess would look like a measurement.
-func TestApiBinLoad_UOPFallbackWithNoTemplateIsZero(t *testing.T) {
+// TestApiBinLoad_UOPFallbackWithNoTemplateIsRefused: an undeclared count on a
+// payload Core has no template for is an unanswered question, not a full bin —
+// and not an empty one either. This used to answer 200 and write uop 0, which
+// is a ledger entry indistinguishable from "somebody counted none": the guess
+// that looks like a measurement. Refusing is what actually makes the operator
+// answer it, and it is how BinService.LoadPayload has always treated an
+// unknown code. The bin is left as it was.
+func TestApiBinLoad_UOPFallbackWithNoTemplateIsRefused(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -376,13 +380,15 @@ func TestApiBinLoad_UOPFallbackWithNoTemplateIsZero(t *testing.T) {
 			"payload_code": "PAYLOAD-CORE-HAS-NEVER-SEEN",
 			"manifest":     []map[string]any{{"part_number": "P1", "quantity": 100}},
 		})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
+	assertJSONError(t, rec.Body.Bytes(), "not found")
 
 	got, _ := db.GetBin(bin.ID)
-	if got.UOPRemaining != 0 {
-		t.Errorf("uop_remaining = %d, want 0 — no template means no capacity to assume", got.UOPRemaining)
+	if got.PayloadCode != bin.PayloadCode || got.UOPRemaining != bin.UOPRemaining {
+		t.Errorf("refused load wrote the bin: payload %q uop %d, was %q uop %d",
+			got.PayloadCode, got.UOPRemaining, bin.PayloadCode, bin.UOPRemaining)
 	}
 }
 

@@ -31,6 +31,11 @@ const (
 	// change — it records the lifecycle event, not a UOP write).
 	OpManifestConfirmed = "manifest_confirmed"
 
+	// OpManifestUnconfirmed tags Unconfirm, confirm's inverse: the bin leaves
+	// the confirmed (drain-eligible) population. Same shape as
+	// OpManifestConfirmed — after_uop is the bin's unchanged count.
+	OpManifestUnconfirmed = "manifest_unconfirmed"
+
 	// OpReleasedCaptureEmpty tags the manifest-clear that fires
 	// inside ApplyBinUOPDelta when a capture_reduction delta drives
 	// uop_remaining to zero — the PULL PARTS LINESIDE path. Distinct

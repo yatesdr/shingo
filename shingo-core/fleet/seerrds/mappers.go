@@ -9,25 +9,16 @@ import (
 	"shingocore/rds"
 )
 
-// MapState translates an RDS order state to a ShinGo dispatch status.
+// MapState translates an RDS order state to a ShinGo dispatch status, through
+// the one map (rds.OrderState.CoreStatus). An unrecognised state logs and reads
+// as dispatched: a real fleet can grow a state, and treating it as still in
+// the fleet's hands is the answer that strands nothing.
 func MapState(vendorState string) string {
-	switch rds.OrderState(vendorState) {
-	case rds.StateCreated, rds.StateToBeDispatched:
-		return string(protocol.StatusDispatched)
-	case rds.StateRunning:
-		return string(protocol.StatusInTransit)
-	case rds.StateWaiting:
-		return string(protocol.StatusStaged)
-	case rds.StateFinished:
-		return string(protocol.StatusDelivered)
-	case rds.StateFailed:
-		return string(protocol.StatusFaulted)
-	case rds.StateStopped:
-		return string(protocol.StatusCancelled)
-	default:
-		log.Printf("mapstate: unrecognized RDS state %q, defaulting to dispatched", vendorState)
-		return string(protocol.StatusDispatched)
+	if st, ok := rds.OrderState(vendorState).CoreStatus(); ok {
+		return string(st)
 	}
+	log.Printf("mapstate: unrecognized RDS state %q, defaulting to dispatched", vendorState)
+	return string(protocol.StatusDispatched)
 }
 
 // IsTerminalState returns true if the RDS state is a terminal state.

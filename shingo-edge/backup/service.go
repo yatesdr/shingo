@@ -263,7 +263,7 @@ func (s *Service) shouldRunScheduled() bool {
 		return false
 	}
 	if interval <= 0 {
-		interval = time.Hour
+		interval = config.DefaultBackupScheduleInterval
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -382,7 +382,7 @@ func (s *Service) refreshStaticStatus() {
 	interval := s.cfg.Backup.ScheduleInterval
 	s.cfg.RUnlock()
 	if interval <= 0 {
-		interval = time.Hour
+		interval = config.DefaultBackupScheduleInterval
 	}
 	next := time.Now().UTC().Add(interval)
 	s.mu.Lock()

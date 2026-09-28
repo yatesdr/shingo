@@ -215,6 +215,12 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// prescribes a corrective action that the request path then refuses too
 	// (claimOccupancy assumes occupied on the same failure). Refusing is right;
 	// saying why is the part that was missing.
+	//
+	// THE BIN IT CHECKED IS THE BIN IT LOADS: its id rides the load request, so
+	// Core writes the carrier this check found empty rather than whichever one
+	// its own query returns first. Without a check (Core not configured) no id
+	// is sent, and a node holding several carriers answers 409.
+	var checkedBinID int64
 	if e.coreClient.Available() {
 		bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
 		if !reachable {
@@ -228,6 +234,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		if bins[0].PayloadCode != "" {
 			return fmt.Errorf("bin at node %s already loaded with %s — wait for outbound move", node.Name, bins[0].PayloadCode)
 		}
+		checkedBinID = bins[0].BinID
 	}
 
 	// Validate payload code against the loader-wide loadable set (see
@@ -259,6 +266,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	}
 	loadResp, err := e.coreClient.LoadBin(&BinLoadRequest{
 		NodeName:    node.CoreNodeName,
+		BinID:       checkedBinID,
 		PayloadCode: payloadCode,
 		UOPCount:    uopCount,
 		Manifest:    items,

@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/rds"
 	"shingocore/store/orders"
 )
 
@@ -188,12 +189,11 @@ func classifyStalledChapter(legs []*orders.Order) (chapterVerdict, *orders.Order
 // SEER spelling rather than a mapped status: MapState turns FAILED into `faulted`,
 // which is a Core status with a grace period and its own meaning, and the question
 // here is only whether the fleet still has work outstanding on this mission.
+//
+// So it is rds's terminal set plus FAILED, spelled with rds's constants.
 func isTerminalVendorState(vendorState string) bool {
-	switch vendorState {
-	case "FINISHED", "STOPPED", "FAILED":
-		return true
-	}
-	return false
+	st := rds.OrderState(vendorState)
+	return st.IsTerminal() || st == rds.StateFailed
 }
 
 // replanStalledChapter is the resolve arm: the plan is stale and nothing is

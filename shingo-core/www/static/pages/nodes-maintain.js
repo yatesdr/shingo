@@ -154,13 +154,12 @@ function fillOverflow(current) {
   var sel = document.getElementById('nf-maintain-overflow');
   if (!sel) return;
   var html = '<option value="">— none —</option>';
-  // Groups come off the tiles already on the page. NGRP is the current code;
-  // SMKT and SUP are legacy codes still on un-migrated databases and are matched
-  // the same way everywhere else in this modal.
+  // Groups come off the tiles already on the page. NGRP is the only group
+  // code: Core's v6 migration renamed the legacy SMKT / SUP codes to it.
   var seen = {};
   document.querySelectorAll('.node-tile').forEach(function (t) {
     var code = t.dataset.typeCode;
-    if (['NGRP', 'SMKT', 'SUP'].indexOf(code) < 0) return;
+    if (code !== 'NGRP') return;
     var name = t.dataset.name;
     if (!name || seen[name]) return;
     if (_mg && String(t.dataset.id) === String(_mg.nodeID)) return; // never itself

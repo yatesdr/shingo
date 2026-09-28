@@ -44,6 +44,21 @@ var vocabularyNames = map[string]bool{
 	"HomeKindBuffer":           true,
 	"invDeltaScopeBin":         true,
 	"invDeltaScopeBucket":      true,
+	// The station wait kind ("station" is an ordinary word, so it is guarded by
+	// name, not value). It has no protocol constant yet; see
+	// pendingPromotionHomes.
+	"WaitKindStation": true,
+	"waitKindStation": true,
+}
+
+// pendingPromotionHomes are the definition sites of vocabulary that has not
+// moved into protocol/ yet: one per module, each pinned by a literal test. They
+// are the named exception, so any OTHER literal binding of the same name still
+// fails. Promoting the value to protocol/ (and deriving these from it) is how
+// an entry leaves this list.
+var pendingPromotionHomes = map[string]bool{
+	"shingo-core/dispatch/complex.go WaitKindStation": true,
+	"shingo-edge/orders/types.go WaitKindStation":     true,
 }
 
 // distinctiveValues are vocabulary strings specific enough that a constant
@@ -86,6 +101,9 @@ func TestWireVocabularyHasOneDefinitionSite(t *testing.T) {
 				}
 				at := rel + ":" + strconv.Itoa(fset.Position(spec.Pos()).Line) + " " + name.Name
 				if vocabularyNames[name.Name] {
+					if pendingPromotionHomes[rel+" "+name.Name] {
+						continue
+					}
 					byName = append(byName, at+" = "+lit.Value)
 				} else if distinctiveValues[val] {
 					byValue = append(byValue, at+" = "+lit.Value)

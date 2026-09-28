@@ -44,9 +44,36 @@ func (s *PayloadService) GetByCode(code string) (*payloads.Payload, error) {
 	return s.db.GetPayloadByCode(code)
 }
 
-// Update persists field changes on a payload template, refusing a CODE change
-// while bins still carry the old one. Every other field is freely editable.
+// ErrPayloadCapacity marks a payload write refused for a UoP capacity below 1,
+// so a handler can answer 400 rather than 500 without matching on text.
+var ErrPayloadCapacity = errors.New("payload capacity")
+
+// ValidatePayloadCapacity refuses a UoP capacity below 1.
+//
+// uop_capacity is the standard pack — how many production cycles a full bin of
+// this payload holds — and 0 is not "unknown": the standard-pack fallback
+// hands the line a carrier with nothing in it, and the near-empty and
+// over-capacity arithmetic divide by it. Rows already stored at 0 are left
+// alone until somebody edits them, as parts_per_cycle was.
+//
+// Create does NOT call this: the bulk importer creates through Create and
+// still admits 0 with a warning. The handler doors that create a payload call
+// it before Create instead.
+func ValidatePayloadCapacity(p *payloads.Payload) error {
+	if p.UOPCapacity < 1 {
+		return fmt.Errorf("%w: payload %q needs a UoP capacity of 1 or more — how many production "+
+			"cycles a full bin of it holds (got %d)", ErrPayloadCapacity, p.Code, p.UOPCapacity)
+	}
+	return nil
+}
+
+// Update persists field changes on a payload template, refusing a capacity
+// below 1 (ValidatePayloadCapacity) and a CODE change while bins still carry
+// the old one. Every other field is freely editable.
 func (s *PayloadService) Update(p *payloads.Payload) error {
+	if err := ValidatePayloadCapacity(p); err != nil {
+		return err
+	}
 	if before, err := s.db.GetPayload(p.ID); err == nil && before != nil && before.Code != p.Code {
 		if err := s.refuseIfBinsCarry(before.Code, "change the code for"); err != nil {
 			return err

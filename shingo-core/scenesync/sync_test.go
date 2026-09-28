@@ -3,6 +3,7 @@ package scenesync
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -801,4 +802,26 @@ type laneDiffCall struct {
 	Areas           []string
 	Lanes           []sceneversion.Lane
 	EdgesAtCallTime int
+}
+
+// TestSyncFleetNodes_FailedDeleteIsNotCounted pins the count-on-error fix: a
+// node the store refused to delete is neither counted as deleted nor announced
+// as one.
+func TestSyncFleetNodes_FailedDeleteIsNotCounted(t *testing.T) {
+	t.Parallel()
+	db := newFakeStore()
+	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
+	_ = db.CreateNode(&nodes.Node{Name: "bin-ghost", Enabled: true})
+	db.errDeleteNode = errors.New("still referenced")
+
+	rc := &recordingChange{}
+	_, deleted := SyncFleetNodes(db, noopLog, rc.on, map[string]string{})
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 — the delete failed", deleted)
+	}
+	for _, e := range rc.events {
+		if strings.HasPrefix(e, "deleted:") {
+			t.Errorf("a failed delete was announced: %v", rc.events)
+		}
+	}
 }

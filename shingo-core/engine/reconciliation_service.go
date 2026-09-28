@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/service"
 	"shingocore/store/messaging"
@@ -93,7 +94,8 @@ func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*messaging.Ou
 
 func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfirmTimeout, abandonTimeout, abandonOperatorGatedTimeout time.Duration) {
 	if interval <= 0 {
-		interval = 5 * time.Minute
+		// Its one caller passes cfg.Staging.SweepInterval (engine_lifecycle.go).
+		interval = config.DefaultStagingSweepInterval
 	}
 	// clock.Default(), not time.NewTicker. The cutoff comparison below already
 	// moved to clock.Now() and its comment explains why; the loop that drives
@@ -423,7 +425,7 @@ func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders c
 			WHERE c.parent_order_id = p.id
-			  AND c.status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped')
+			  AND c.status NOT IN (` + protocol.TerminalStatusSQLList() + `)
 		  )
 		ORDER BY p.id
 		LIMIT 100`)

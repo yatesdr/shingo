@@ -573,7 +573,7 @@ func (m *Manager) pollLoop() {
 	defer m.wg.Done()
 	pollRate := m.cfg.PollRate
 	if pollRate <= 0 {
-		pollRate = time.Second
+		pollRate = config.DefaultPollRate
 	}
 	ticker := clock.Default().NewTicker(pollRate)
 	defer ticker.Stop()

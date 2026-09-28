@@ -91,7 +91,28 @@ type Config struct {
 	UOPAccumulatingCTAAfter time.Duration `yaml:"uop_accumulating_cta_after"`
 
 	Demand DemandConfig `yaml:"demand"`
+
+	PlantClaims PlantClaimsConfig `yaml:"plant_claims"`
 }
+
+// PlantClaimsConfig tunes the plant-claims publisher (messaging/
+// plant_claims_publisher.go).
+type PlantClaimsConfig struct {
+	// SnapshotInterval is the safety snapshot's period: the full claims set is
+	// republished this often even when no edit triggered a publish, so a Core
+	// that missed one converges. <= 0 uses DefaultPlantClaimsSnapshotInterval.
+	SnapshotInterval time.Duration `yaml:"snapshot_interval"`
+}
+
+// Shipped defaults that a consumer outside this package also falls back to
+// when its configured value is <= 0. Exported, and read by both Defaults() and
+// those fallbacks, so the two cannot disagree.
+const (
+	DefaultPollRate                    = time.Second
+	DefaultOutboxDrainInterval         = 5 * time.Second
+	DefaultBackupScheduleInterval      = time.Hour
+	DefaultPlantClaimsSnapshotInterval = 60 * time.Minute
+)
 
 // DefaultUOPAccumulatingCTAAfter is the fallback for
 // Config.UOPAccumulatingCTAAfter — see that field for why it is configurable.
@@ -391,6 +412,8 @@ type SimOperatorsConfig struct {
 // 13,092 journal lines an hour, 82% of them from outbox, inventory_delta,
 // kafka and reporter, which log per tick and per flush. journald was the
 // Pi's largest SD writer (55 KB/s) and rsyslog stored every line again.
+// (The reporter subsystem has since been deleted with production.report;
+// the other three remain.)
 //
 // The ring buffer, the browser log UI and the --log-debug file are NOT gated
 // by this. A muted subsystem is still fully readable in the UI and the file;
@@ -412,9 +435,10 @@ type LoggingConfig struct {
 }
 
 // DefaultStderrSubsystems is the allow-list applied when logging config is
-// absent: every Edge subsystem except the four that log per tick and per
-// flush (outbox, inventory_delta, kafka, reporter). Ruled by the orc on
-// 2026-09-24; those four stay in the ring buffer, the UI and the debug file.
+// absent: every Edge subsystem except the three that log per tick and per
+// flush (outbox, inventory_delta, kafka). Ruled by the orc on 2026-09-24;
+// those stay in the ring buffer, the UI and the debug file. (A fourth,
+// reporter, was muted by the same ruling and deleted with production.report.)
 func DefaultStderrSubsystems() []string {
 	return []string{"edge_handler", "engine", "heartbeat", "orders", "plant_claims",
 		"plc", "production_ticks", "protocol", "release"}
@@ -445,7 +469,7 @@ func Defaults() *Config {
 		// mistake; it was the system having a default answer to a question
 		// that has no default.
 		DatabasePath: "shingoedge.db",
-		PollRate:     time.Second,
+		PollRate:     DefaultPollRate,
 		WarLink: WarLinkConfig{
 			Host:     "localhost",
 			Port:     8080,
@@ -461,7 +485,7 @@ func Defaults() *Config {
 		Messaging: MessagingConfig{
 			DispatchTopic:       "shingo.dispatch",
 			OrdersTopic:         "shingo.orders",
-			OutboxDrainInterval: 5 * time.Second,
+			OutboxDrainInterval: DefaultOutboxDrainInterval,
 			Kafka: KafkaConfig{
 				Brokers: []string{},
 			},
@@ -471,7 +495,7 @@ func Defaults() *Config {
 		},
 		Backup: BackupConfig{
 			Enabled:          false,
-			ScheduleInterval: time.Hour,
+			ScheduleInterval: DefaultBackupScheduleInterval,
 			KeepHourly:       48,
 			KeepDaily:        14,
 			KeepWeekly:       8,
@@ -491,7 +515,8 @@ func Defaults() *Config {
 				SwapRelease:       3 * time.Second,
 			},
 		},
-		Logging: LoggingConfig{StderrSubsystems: DefaultStderrSubsystems()},
+		Logging:     LoggingConfig{StderrSubsystems: DefaultStderrSubsystems()},
+		PlantClaims: PlantClaimsConfig{SnapshotInterval: DefaultPlantClaimsSnapshotInterval},
 	}
 }
 

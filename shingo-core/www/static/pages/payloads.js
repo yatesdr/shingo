@@ -385,7 +385,7 @@ function surfaceSaveWarnings(data) {
 
 function openCreatePayloadModal() {
   document.getElementById('plc-code').value = '';
-  document.getElementById('plc-uop').value = '0';
+  document.getElementById('plc-uop').value = '';
   document.getElementById('plc-notes').value = '';
   document.getElementById('plc-robot-group').value = '';
   document.getElementById('plc-manifest-rows').innerHTML = '';

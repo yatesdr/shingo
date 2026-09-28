@@ -91,7 +91,7 @@ func decodeReport(t *testing.T, payload []byte) protocol.PlantClaimsReport {
 func TestPlantClaimsPublisher_BuildProcessQueryCountIsConstant(t *testing.T) {
 	t.Parallel()
 	db, counter := countingPublisherDB(t)
-	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pid, _ := seedClaimsProcess(t, db, "SMALL", 2, 2)
 	proc, err := processes.Get(db.DB, pid)
@@ -145,7 +145,7 @@ func TestPlantClaimsPublisher_BuildProcessQueryCountIsConstant(t *testing.T) {
 func TestPlantClaimsPublisher_BuildProcessReportShape(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
-	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pid, ids := seedClaimsProcess(t, db, "SHAPE", 3, 2)
 	// A loader claim on style 0 — must be excluded from the wire.
@@ -270,7 +270,7 @@ func claimNodes(claims []protocol.PlantClaim) []string {
 func TestPlantClaimsPublisher_SnapshotIntervalIsTheSafetyNet(t *testing.T) {
 	t.Parallel()
 
-	p := NewPlantClaimsPublisher(nil, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(nil, "plant-a.line-1", 0)
 
 	if p.snapshotInterval != 60*time.Minute {
 		t.Errorf("snapshotInterval = %v, want 60m — this is the LAST-RESORT catch "+
@@ -313,7 +313,7 @@ func unsentClaimsPayloads(t *testing.T, db *store.DB) (ids []int64, payloads [][
 func TestPlantClaimsPublisher_ChangedPublishesOnlyThatProcess(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
-	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pidA, idsA := seedClaimsProcess(t, db, "PRESS-4", 3, 2)
 	_, _ = seedClaimsProcess(t, db, "PRESS-6", 2, 2)
@@ -392,7 +392,7 @@ func TestPlantClaimsPublisher_ChangedPublishesOnlyThatProcess(t *testing.T) {
 func TestPlantClaimsPublisher_ChangedMatchesAllForThatProcess(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
-	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pidA, idsA := seedClaimsProcess(t, db, "PRESS-4", 3, 2)
 	if err := db.SetActiveStyle(pidA, &idsA[1]); err != nil {
@@ -446,7 +446,7 @@ func TestPlantClaimsPublisher_ChangedMatchesAllForThatProcess(t *testing.T) {
 func TestPlantClaimsPublisher_ClaimLegsOnTheWire(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
-	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pid, ids := seedClaimsProcess(t, db, "LEGS", 1, 0)
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -527,7 +527,7 @@ func assertPublishedLegs(t *testing.T, claim protocol.PlantClaim, src processes.
 func TestPlantClaimsPublisher_ClaimWithNoLegsPublishesNoLegKeys(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
-	p := NewPlantClaimsPublisher(db, "plant-a.line-1")
+	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pid, _ := seedClaimsProcess(t, db, "NOLEGS", 1, 1)
 	proc, err := processes.Get(db.DB, pid)

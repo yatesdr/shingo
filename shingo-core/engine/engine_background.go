@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"shingocore/config"
 	"shingocore/fleet"
 
 	"shingo/protocol/clock"
@@ -172,7 +173,7 @@ func (e *Engine) laneLivenessFloorLoop() {
 func (e *Engine) stagedBinSweepLoop() {
 	interval := e.cfg.Staging.SweepInterval
 	if interval <= 0 {
-		interval = 5 * time.Minute
+		interval = config.DefaultStagingSweepInterval
 	}
 	// clock.Default(), not time.NewTicker: THIS IS THE SHARPEST CASE OF THE
 	// MISMATCH. store/bins releases a staged bin when staged_expires_at <

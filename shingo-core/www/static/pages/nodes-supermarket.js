@@ -395,7 +395,7 @@ function buildHierarchy() {
   Object.keys(tilesByID).forEach(function(id) {
     var tile = tilesByID[id];
     var tc = tile.dataset.typeCode;
-    if (tile.dataset.synthetic === 'true' && (tc === 'NGRP' || tc === 'SMKT' || tc === 'SUP')) {
+    if (tile.dataset.synthetic === 'true' && tc === 'NGRP') {
       grpTiles.push(tile);
     }
   });

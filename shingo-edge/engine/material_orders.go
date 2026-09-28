@@ -2,6 +2,7 @@ package engine
 
 import (
 	"shingo/protocol"
+	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
@@ -44,11 +45,11 @@ func stationWait(node string) protocol.ComplexOrderStep {
 	}
 }
 
-// waitKindStation mirrors dispatch.WaitKindStation. Edge cannot import Core, so
-// the value is duplicated and pinned by TestWaitKindStation_MatchesCore, which
-// fails if the two ever drift — the same shape as every other cross-module
-// constant in this repo.
-const waitKindStation = "station"
+// waitKindStation is the Edge's one definition, orders.WaitKindStation (which
+// mirrors Core's dispatch.WaitKindStation). Pinned here as well by
+// TestWaitKindStation_MatchesCore, so a rename at the source fails in both
+// packages.
+const waitKindStation = orders.WaitKindStation
 
 // stagingDropoff builds a dropoff at a STAGING node — one that holds a single
 // bin and must be reserved before a robot is sent to it.

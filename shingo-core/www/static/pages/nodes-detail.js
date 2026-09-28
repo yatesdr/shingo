@@ -52,11 +52,10 @@ export function openNodeModal(el) {
   // the UI-consistency refactor, but the inline style.display toggle
   // here wasn't updated, so .hide kept the wrapper invisible for every
   // node type.
-  // Group type codes: NGRP is current; SMKT / SUP are legacy codes still on
-  // un-migrated DBs (matched the same way in nodes-supermarket.js). The
-  // algorithm / ASRS controls apply to any of them — keying only on the exact
-  // 'NGRP' string left the whole section hidden on legacy-coded groups.
-  var isGroupType = d.typeCode === 'NGRP' || d.typeCode === 'SMKT' || d.typeCode === 'SUP';
+  // NGRP is the only group type code. The legacy SMKT / SUP codes are renamed
+  // to NGRP by Core's v6 migration (migrateNodeTypes), which every database
+  // has run, so there is no legacy-coded group left to match.
+  var isGroupType = d.typeCode === 'NGRP';
   var algoDiv = document.getElementById('ngrp-algorithms');
   if (algoDiv) {
     algoDiv.classList.toggle('hide', !isGroupType);
@@ -140,7 +139,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
 
       // The waiting-points section is built from the group's LANE children.
       renderLaneGate(
-        data.node && ['NGRP', 'SMKT', 'SUP'].indexOf(data.node.node_type_code) >= 0,
+        data.node && data.node.node_type_code === 'NGRP',
         data.node ? data.node.id : 0);
 
       var props = data.properties || [];

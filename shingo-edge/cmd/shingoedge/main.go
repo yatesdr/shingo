@@ -961,10 +961,10 @@ func main() {
 	// ── Plant-claims publisher (sourceability feed, Edge → Core) ───────
 	// Publishes the plant-spec claim set so Core can mirror what every
 	// process can source. Start publishes one full snapshot immediately
-	// (boot), then periodic snapshots every few minutes (late-joiner
-	// rebuild). The spec-change hook re-publishes on every style/claim
+	// (boot), then a periodic snapshot every plant_claims.snapshot_interval
+	// (default 60m; late-joiner rebuild). The spec-change hook re-publishes on every style/claim
 	// edit via the coalesced spec-change signal.
-	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID)
+	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID, cfg.PlantClaims.SnapshotInterval)
 	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
 	// Publish it for the SubjectEdgeRegistered handler registered far above,
 	// which cannot capture a variable that does not exist yet.

@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -325,6 +326,25 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// THE SAME DOOR AS apiDeleteNodeGroup. Only an NGRP name can be an order's
+	// source_node, so only an NGRP needs the check — and deleting one here used
+	// to strand every order still sourcing from it, where the group door
+	// refuses. There is no force option on this form, so the group door's
+	// fail-the-orders cascade is not mirrored: that is its explicit choice.
+	isGroup := node.NodeTypeCode == protocol.NodeClassNGRP
+	if isGroup {
+		blocked, bErr := h.engine.OrderService().ListActiveBySourceRef([]string{node.Name})
+		if bErr != nil {
+			http.Error(w, "failed to check active orders: "+bErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(blocked) > 0 {
+			http.Error(w, fmt.Sprintf("cannot delete group: %d active order(s) reference %q as source",
+				len(blocked), node.Name), http.StatusConflict)
+			return
+		}
+	}
+
 	if err := h.engine.NodeService().DeleteNode(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -333,6 +353,19 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: id, NodeName: node.Name, Action: "deleted",
 	}})
+
+	// And the same notice: the Edge caches the group's structure.
+	if isGroup {
+		h.orchestration.SendDataToEdge(
+			protocol.SubjectNodeStructureChanged,
+			protocol.StationBroadcast,
+			&protocol.NodeStructureChanged{
+				NodeID:   node.ID,
+				NodeName: node.Name,
+				Action:   "group_deleted",
+			},
+		)
+	}
 
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 }

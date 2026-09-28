@@ -9,7 +9,9 @@
 // against the struct will ever catch the next one.
 //
 // These tests are written against the WIRE instead. The fixtures are real
-// captures, one per plant, taken 2026-08-06 and kept verbatim.
+// captures, one per plant, taken 2026-08-06, with their key structure kept
+// verbatim and every value anonymised (scripts/anonymise-robotsstatus-fixture.py):
+// the tests read which keys the vendor sends, never a plant's own values.
 //
 // Two rules, both learned the expensive way:
 //
@@ -43,7 +45,7 @@ import (
 	"shingocore/rds"
 )
 
-// fixtures are verbatim /robotsStatus captures. Both plants, because a
+// fixtures are anonymised /robotsStatus captures, keys verbatim. Both plants, because a
 // single plant's payload cannot tell a vendor-wide field apart from a
 // site-configured one.
 var fixtures = map[string]string{
@@ -460,9 +462,9 @@ func TestSceneState_NeverPolledIsNotNothingDisabled(t *testing.T) {
 // The envelope's disabled lanes are unwrapped from the vendor's object form,
 // and blanks are dropped rather than becoming empty ids.
 //
-// Four lanes are disabled at Springfield as of 2026-08-06 and none at
-// Hopkinsville, so this is read straight off the captured fixtures: the
-// numbers are the plant's, not a hand-built literal.
+// Four lanes were disabled at Springfield in the 2026-08-06 capture and none at
+// Hopkinsville, so this is read straight off the fixtures: the counts are the
+// capture's (the anonymiser keeps array lengths), not a hand-built literal.
 func TestSceneState_DisabledPathsComeOffTheWire(t *testing.T) {
 	want := map[string]int{"springfield": 4, "hopkinsville": 0}
 	for plant, path := range fixtures {

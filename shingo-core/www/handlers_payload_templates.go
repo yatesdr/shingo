@@ -2,8 +2,10 @@ package www
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"shingocore/domain"
 	"shingocore/service"
@@ -28,13 +30,37 @@ func (h *Handlers) manifestWriteError(w http.ResponseWriter, err error) {
 	}
 }
 
+// payloadWriteStatus answers a refused capacity as the caller's error and
+// anything else as the server's.
+func payloadWriteStatus(err error) int {
+	if errors.Is(err, service.ErrPayloadCapacity) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
+// formUOPCapacity reads the form's UoP capacity. A blank or unparseable box is
+// refused rather than read as 0: 0 is a real value (a bin that holds nothing),
+// and the Atoi error this used to discard is how a typo became one.
+func formUOPCapacity(r *http.Request) (int, error) {
+	v, err := strconv.Atoi(strings.TrimSpace(r.FormValue("uop_capacity")))
+	if err != nil {
+		return 0, fmt.Errorf("uop_capacity %q is not a whole number", r.FormValue("uop_capacity"))
+	}
+	return v, nil
+}
+
 func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	uop, _ := strconv.Atoi(r.FormValue("uop_capacity"))
+	uop, err := formUOPCapacity(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	p := &domain.Payload{
 		Code:                 r.FormValue("code"),
@@ -48,6 +74,10 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	nePct, _ := strconv.Atoi(r.FormValue("near_empty_threshold_pct"))
 	p.NearEmptyThresholdPct = clampPct(nePct)
 
+	if err := service.ValidatePayloadCapacity(p); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if _, err := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -81,7 +111,10 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 
 	p.Code = r.FormValue("code")
 	p.Description = r.FormValue("description")
-	p.UOPCapacity, _ = strconv.Atoi(r.FormValue("uop_capacity"))
+	if p.UOPCapacity, err = formUOPCapacity(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	p.RobotGroup = r.FormValue("robot_group")
 	p.NearEmptyEnabled = r.FormValue("near_empty_enabled") != ""
 	p.NearEmptyRobotGroup = r.FormValue("near_empty_robot_group")
@@ -95,7 +128,7 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.engine.PayloadService().Update(p); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), payloadWriteStatus(err))
 		return
 	}
 
@@ -184,6 +217,10 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	// Config-time validation (fail loud on a real missing key, warn-and-save when
 	// unverifiable). A new payload has no assigned nodes yet, so this rejects only
 	// an unknown sequence name; a real key check happens on later edits / Check.
+	if err := service.ValidatePayloadCapacity(p); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	check, verr := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence)
 	if verr != nil {
 		h.jsonError(w, verr.Error(), http.StatusBadRequest)
@@ -270,7 +307,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.engine.PayloadService().Update(p); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		h.jsonError(w, err.Error(), payloadWriteStatus(err))
 		return
 	}
 

@@ -3,12 +3,14 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 
 	"shingocore/domain"
 	"shingocore/store/audit"
@@ -413,14 +415,10 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	if err != nil {
 		return "", 0, fmt.Errorf("marshal manifest: %w", err)
 	}
-	uop := p.UOPCapacity
-	if uopOverride != nil {
-		if *uopOverride < 0 {
-			return "", 0, fmt.Errorf("uop override %d is negative", *uopOverride)
-		}
-		uop = *uopOverride
+	if uopOverride != nil && *uopOverride < 0 {
+		return "", 0, fmt.Errorf("uop override %d is negative", *uopOverride)
 	}
-	return string(manifestJSON), uop, nil
+	return string(manifestJSON), standardPackUOP(p.UOPCapacity, uopOverride), nil
 }
 
 // SetForProduction sets a bin's manifest and UOP from a payload template,
@@ -703,21 +701,83 @@ func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt strin
 // the same DeclaredByLifecycle that keeps the announcement from inviting a
 // bind, reused: see judgeBinTypeCarriesPayload.
 func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) error {
+	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt)
+	return err
+}
+
+// recordProduced is RecordProducedBin's one transaction, returning the new
+// delta_epoch for the caller that has to hand it back to the Edge.
+func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	// A press finishing a carrier. This announcement is the one that routinely
 	// lands after a robot has already lifted what it names, so it must never
 	// invite a bind.
-	if _, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle); err != nil {
-		return err
+	epoch, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle)
+	if err != nil {
+		return 0, err
 	}
 	if err := s.confirmTx(tx, binID, producedAt); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return epoch, nil
+}
+
+// ErrUnknownPayload marks a load refused because Core has no template for the
+// payload code, so a handler can answer the caller's error rather than 500.
+var ErrUnknownPayload = errors.New("unknown payload")
+
+// LoadAtLine is the bin-load telemetry door's write: the Edge reporting what a
+// cell physically put in a carrier, with the parts it named (manifestJSON) and
+// the count it declared, if any.
+//
+// It is RecordProducedBin with the two questions the door used to answer for
+// itself answered here instead:
+//
+//   - AN UNKNOWN PAYLOAD IS REFUSED, like BinService.LoadPayload refuses it. It
+//     used to load at uop 0, which is not "unknown": it is a ledger entry that
+//     reads as a measured empty bin.
+//   - AN UNDECLARED COUNT IS THE STANDARD PACK (standardPackUOP), the same rule
+//     SetFromTemplate applies to a nil override. A declared count, zero
+//     included, is written as given.
+//
+// The set and the confirm commit together (recordProduced). They were two
+// transactions with the confirm's failure logged and dropped, which left a
+// set-but-unconfirmed bin — invisible to kanban — reported to the Edge as ok.
+// Returns the new epoch and the count written.
+func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode string, declared *int64) (int64, int, error) {
+	p, err := s.db.GetPayloadByCode(payloadCode)
+	if err != nil || p == nil {
+		return 0, 0, fmt.Errorf("%w: payload template %q not found", ErrUnknownPayload, payloadCode)
+	}
+	var d *int
+	if declared != nil {
+		v := int(*declared)
+		d = &v
+	}
+	uop := standardPackUOP(p.UOPCapacity, d)
+	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "")
+	if err != nil {
+		return 0, 0, err
+	}
+	return epoch, uop, nil
+}
+
+// standardPackUOP is the one statement of the standard-pack rule: absence of a
+// declared count means a full bin, and a full bin is the payload's
+// uop_capacity CYCLES. A declared count is honoured as given, including zero —
+// "I counted none" is an answer, not a missing one.
+func standardPackUOP(capacity int, declared *int) int {
+	if declared != nil {
+		return *declared
+	}
+	return capacity
 }
 
 // RecordProducedBinFromTemplate is RecordProducedBin for the no-manifest ingest
@@ -731,14 +791,43 @@ func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadC
 	return s.RecordProducedBin(binID, manifestJSON, payloadCode, uop, producedAt)
 }
 
-// Unconfirm clears a bin's manifest confirmation flag. Absorbed from
-// engine_db_methods.go as part of the www-handler service migration
-// (PR 3a.2).
+// Unconfirm clears a bin's manifest confirmation flag, and writes its
+// manifest_unconfirmed ledger row in the same transaction — Confirm's mirror.
+//
+// It was a silent mutation: Confirm leaves an OpManifestConfirmed row and
+// Unconfirm left nothing, so a bin's ledger could say "confirmed" as its last
+// word about a bin that had since been taken back out of the drain population.
+// after_uop is the unchanged uop_remaining; like confirm, this records a
+// lifecycle event, not a count change.
 func (s *BinManifestService) Unconfirm(binID int64) error {
-	if err := s.db.UnconfirmBinManifest(binID); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
 		return fmt.Errorf("unconfirm manifest bin %d: %w", binID, err)
 	}
-	return nil
+	var uop int
+	var payloadCode string
+	// updated_at from clock.Now(), as the store writer this replaces stamped it
+	// (the rest of this file uses the database's NOW()).
+	if err := tx.QueryRow(`UPDATE bins SET manifest_confirmed=false, updated_at=$2
+		WHERE id=$1 RETURNING uop_remaining, COALESCE(payload_code, '')`, binID, clock.Now().UTC()).Scan(&uop, &payloadCode); err != nil {
+		return fmt.Errorf("unconfirm manifest bin %d: %w", binID, err)
+	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, nil)
+	if err != nil {
+		return err
+	}
+	if err := audit.AppendBinUOP(tx, binID, before, uop,
+		audit.OpManifestUnconfirmed, "service/bin_manifest.go:Unconfirm",
+		nil, payloadCode, "", uopCtx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ClearAndClaim atomically clears manifest and claims the bin for an order.

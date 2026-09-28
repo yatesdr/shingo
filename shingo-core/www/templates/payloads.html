@@ -171,7 +171,7 @@
         </div>
         <div class="form-group">
           <label>UoP Capacity <span class="tooltip-trigger" title="Units of Production per fully loaded cart">?</span></label>
-          <input type="number" name="uop_capacity" id="plc-uop" value="0" min="0" data-action-input="refreshFullBinCells:plc-manifest-rows">
+          <input type="number" name="uop_capacity" id="plc-uop" min="1" required data-action-input="refreshFullBinCells:plc-manifest-rows">
         </div>
       </div>
       <div class="form-group mb-1">
@@ -259,7 +259,7 @@
         </div>
         <div class="form-group">
           <label>UoP Capacity</label>
-          <input type="number" name="uop_capacity" id="pl-edit-uop" min="0" data-action-input="refreshFullBinCells:ple-manifest-rows">
+          <input type="number" name="uop_capacity" id="pl-edit-uop" min="1" required data-action-input="refreshFullBinCells:ple-manifest-rows">
         </div>
       </div>
       <div class="form-group mb-1">

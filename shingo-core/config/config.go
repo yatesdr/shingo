@@ -26,6 +26,16 @@ const defaultFaultNoticeAfter = 60 * time.Second
 // RDSConfig.StrandedSweepWindow for why the sweep declines older bins.
 const defaultStrandedSweepWindow = 2 * time.Hour
 
+// DefaultDemandOrphanGrace and DefaultStagingSweepInterval are shipped
+// defaults that a consumer outside this package also falls back to when the
+// configured value is <= 0. Exported, and read by both Defaults() and those
+// fallbacks, so the two cannot disagree — the same reason as the constants
+// above, across a package boundary.
+const (
+	DefaultDemandOrphanGrace    = 24 * time.Hour
+	DefaultStagingSweepInterval = 5 * time.Minute
+)
+
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
 
@@ -283,8 +293,8 @@ type SourceabilityConfig struct {
 type StagingConfig struct {
 	// TTL is the global default staging expiry. 0 (the default) means permanent:
 	// staged bins never auto-unstage — they're released only by the next claim
-	// or by operator action. Override per-node via the `staging_ttl` property
-	// (admin UI) on a specific node or its parent.
+	// or by operator action. It applies to every staged node; there is no
+	// per-node override.
 	TTL                  time.Duration `yaml:"ttl"`                    // default 0 (permanent)
 	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
@@ -581,8 +591,8 @@ func Defaults() *Config {
 			SessionSecret: "change-me-in-production",
 		},
 		Staging: StagingConfig{
-			TTL:                  0, // 0 = never auto-unstage; override per node group via staging_ttl property
-			SweepInterval:        5 * time.Minute,
+			TTL:                  0, // 0 = never auto-unstage
+			SweepInterval:        DefaultStagingSweepInterval,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
 			AbandonStuck:         time.Hour,       // cancel orders stuck queued/staged for 1h (ties up robots, clutters the board)
 			// Operator-gated staging gets 4h, not 1h: the wait is a human
@@ -612,7 +622,7 @@ func Defaults() *Config {
 			// edited a YAML.
 			ReconcileInterval: 60 * time.Second,
 			ChildlessGrace:    15 * time.Minute,
-			OrphanGrace:       24 * time.Hour,
+			OrphanGrace:       DefaultDemandOrphanGrace,
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

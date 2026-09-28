@@ -44,7 +44,6 @@ type BinManifestStore interface {
 
 	// Bin manifest mutations.
 	ConfirmBinManifest(binID int64, producedAt string) error
-	UnconfirmBinManifest(binID int64) error
 	ClaimBin(binID, orderID int64) error
 
 	// High-level audit-row append (legacy audit table, not bin_uop_ledger

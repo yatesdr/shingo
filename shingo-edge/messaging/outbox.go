@@ -63,7 +63,7 @@ func NewOutboxDrainer(db *store.DB, client *Client, cfg *config.MessagingConfig)
 	store := &edgeOutboxStore{db: db}
 	interval := cfg.OutboxDrainInterval
 	if interval <= 0 {
-		interval = 5 * time.Second
+		interval = config.DefaultOutboxDrainInterval
 	}
 	drainer := outbox.NewDrainer(store, client, cfg.OrdersTopic, interval, DrainBatchSize)
 	return drainer

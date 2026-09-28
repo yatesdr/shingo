@@ -25,6 +25,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/fleet"
+	"shingocore/rds"
 )
 
 // simulatedOrder is the in-memory representation of a fleet order.
@@ -103,11 +104,8 @@ func New(opts ...Option) *SimulatorBackend {
 // IsTerminalState (which the dispatch state machine keys on and which omits
 // FAILED) — a failed sim order is just as dead and should be reaped.
 func isEvictableTerminal(vendorState string) bool {
-	switch vendorState {
-	case "FINISHED", "STOPPED", "FAILED":
-		return true
-	}
-	return false
+	st := rds.OrderState(vendorState)
+	return st.IsTerminal() || st == rds.StateFailed
 }
 
 // stampTerminalLocked records when an order first becomes terminal. Caller must
@@ -295,15 +293,17 @@ func (s *SimulatorBackend) RobotGroupFor(vendorOrderID string) (string, bool) {
 	return o.robotGroup, true
 }
 
-// MapState translates vendor states to dispatch status strings.
-// This replicates the same mapping as the SEER RDS adapter's MapState.
+// MapState translates vendor states to dispatch status strings through the
+// same map the SEER RDS adapter reads (rds.OrderState.CoreStatus).
 func (s *SimulatorBackend) MapState(vendorState string) string {
 	return mapStateInternal(vendorState)
 }
 
-// IsTerminalState returns true for FINISHED, FAILED, STOPPED.
+// IsTerminalState is rds.OrderState.IsTerminal: FINISHED and STOPPED. Not
+// FAILED — that maps to faulted, which Core treats as a non-terminal grace
+// state. (This comment used to list FAILED; the code never did.)
 func (s *SimulatorBackend) IsTerminalState(vendorState string) bool {
-	return vendorState == "FINISHED" || vendorState == "STOPPED"
+	return rds.OrderState(vendorState).IsTerminal()
 }
 
 // Reconfigure is a no-op for the simulator.
@@ -313,22 +313,12 @@ func (s *SimulatorBackend) Reconfigure(_ fleet.ReconfigureParams) {}
 // status strings. Extracted from MapState so that DriveState can call it while
 // holding the write lock without risk of lock reentrancy.
 func mapStateInternal(vendorState string) string {
-	switch vendorState {
-	case "CREATED", "TOBEDISPATCHED":
-		return "dispatched"
-	case "RUNNING":
-		return "in_transit"
-	case "WAITING":
-		return "staged"
-	case "FINISHED":
-		return "delivered"
-	case "FAILED":
-		return "faulted"
-	case "STOPPED":
-		return "cancelled"
-	default:
-		return "unknown"
+	if st, ok := rds.OrderState(vendorState).CoreStatus(); ok {
+		return string(st)
 	}
+	// The simulator only emits states it defines, so anything else is a sim
+	// bug worth seeing rather than a vendor state worth tolerating.
+	return "unknown"
 }
 
 // Compile-time interface check: SimulatorBackend must satisfy fleet.TrackingBackend.

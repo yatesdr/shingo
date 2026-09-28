@@ -29,6 +29,7 @@ messaging.outbox_drain_interval = 5s
 messaging.signing_key = <unset>
 messaging.station_id = 
 namespace = 
+plant_claims.snapshot_interval = 1h0m0s
 poll_rate = 1s
 sim.anchor_wall = 0001-01-01 00:00:00 +0000 UTC
 sim.calendar.enabled = false

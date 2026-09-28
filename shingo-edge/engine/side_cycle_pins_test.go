@@ -46,6 +46,8 @@ type scCore struct {
 	windows  map[string]*scWindow
 	srv      *httptest.Server
 	binReads int
+	// loadBinIDs is the bin_id of every bin-load request, in order.
+	loadBinIDs []int64
 }
 
 // nodeBinReads is how many node-bins requests Core has served so far.
@@ -88,6 +90,7 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 	case "/api/telemetry/bin-load":
 		var req BinLoadRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		c.loadBinIDs = append(c.loadBinIDs, req.BinID)
 		if win := c.windows[req.NodeName]; win != nil {
 			win.payload = req.PayloadCode
 		}

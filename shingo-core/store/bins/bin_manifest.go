@@ -123,8 +123,8 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 // ── THE OFF-SPEC STATUS WARNING NOW APPLIES PLANT-WIDE ────────────────────
 //
 // This query once carried a REJECT-LIST — `status NOT IN ('staged',
-// 'maintenance','flagged','retired','quality_hold')` — which answers TRUE for
-// any value it does not name. The status column carries no CHECK constraint
+// 'maintenance','flagged','retired', ...)`, plus a status value since retired
+// (v138) — which answers TRUE for any value it does not name. The status column carries no CHECK constraint
 // (domain.BinStatus says so, and write-time validation is deferred on purpose
 // so operators can set off-spec states during incident recovery), so a
 // hand-corrected row, or a seventh status added to the enum and not to the

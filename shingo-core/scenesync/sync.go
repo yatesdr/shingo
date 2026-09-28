@@ -261,7 +261,10 @@ func SyncFleetNodes(db Store, log LogFn, onChange NodeChangeFn, locationSet map[
 		}
 		if _, inScene := locationSet[n.Name]; !inScene {
 			if err := db.DeleteNode(n.ID); err != nil {
+				// Not deleted, so neither counted nor announced: a failed delete
+				// used to report itself as a success to both.
 				log("scenesync: delete node %s: %v", n.Name, err)
+				continue
 			}
 			if onChange != nil {
 				onChange(n.ID, n.Name, "deleted")

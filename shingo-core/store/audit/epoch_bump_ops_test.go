@@ -143,7 +143,7 @@ func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 	// binding in the Springfield dump (bin 27, 22.99 days, recounted in the
 	// middle) into two shorter ones and hide it from the candidate list entirely.
 	for _, op := range []string{
-		OpCycleCount, OpManifestConfirmed, OpStaleEpochDropped, OpPayloadMismatchDropped,
+		OpCycleCount, OpManifestConfirmed, OpManifestUnconfirmed, OpStaleEpochDropped, OpPayloadMismatchDropped,
 		OpPayloadBoundFirstDelta, OpPayloadReboundWithInventory,
 		OpOperatorOverrideReleasePartial, OpOperatorOverridePullParts,
 	} {

@@ -32,7 +32,7 @@ func TestStderrSubsystems_AbsentUsesDefaults(t *testing.T) {
 	if !reflect.DeepEqual(got, DefaultStderrSubsystems()) {
 		t.Fatalf("absent key should fall back to defaults, got %v", got)
 	}
-	for _, s := range []string{"outbox", "inventory_delta", "kafka", "reporter"} {
+	for _, s := range []string{"outbox", "inventory_delta", "kafka"} {
 		if slices.Contains(got, s) {
 			t.Errorf("%q must be off the default allow-list, got %v", s, got)
 		}

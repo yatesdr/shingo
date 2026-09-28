@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/config"
 	"shingocore/messaging"
 	"shingocore/store"
 )
@@ -359,7 +360,7 @@ func describeEdgeSilence(s *store.OpenEpisodeState, c edgeContact, horizon time.
 func (e *Engine) reconcileOrphanOrders() int {
 	grace := e.cfg.Demand.OrphanGrace
 	if grace <= 0 {
-		grace = 24 * time.Hour
+		grace = config.DefaultDemandOrphanGrace
 	}
 	now := time.Now().UTC()
 	n, err := e.db.AgeOutOrphanOrders(now.Add(-grace), now)

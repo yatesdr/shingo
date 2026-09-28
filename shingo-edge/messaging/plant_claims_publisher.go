@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/config"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -55,12 +56,16 @@ type PlantClaimsPublisher struct {
 
 // NewPlantClaimsPublisher creates a publisher for the given edge identity.
 // Start begins the periodic snapshot loop and publishes one full snapshot
-// immediately.
-func NewPlantClaimsPublisher(db *store.DB, stationID string) *PlantClaimsPublisher {
+// immediately. snapshotInterval is the config's PlantClaims.SnapshotInterval;
+// <= 0 uses config.DefaultPlantClaimsSnapshotInterval.
+func NewPlantClaimsPublisher(db *store.DB, stationID string, snapshotInterval time.Duration) *PlantClaimsPublisher {
+	if snapshotInterval <= 0 {
+		snapshotInterval = config.DefaultPlantClaimsSnapshotInterval
+	}
 	return &PlantClaimsPublisher{
 		db:               db,
 		stationID:        stationID,
-		snapshotInterval: 60 * time.Minute,
+		snapshotInterval: snapshotInterval,
 		stopCh:           make(chan struct{}),
 	}
 }
