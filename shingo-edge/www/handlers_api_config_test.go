@@ -672,6 +672,39 @@ func TestApiConfig_GetCoreNodes(t *testing.T) {
 	}
 }
 
+// A group carries its members, so the positions picker can take a group as its
+// nodes when it is picked; a plain node carries none.
+func TestApiConfig_GetCoreNodes_GroupCarriesMembers(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+
+	stub := h.engine.(*stubEngine)
+	stub.core = map[string]protocol.NodeInfo{
+		"UL · stage 1": {Name: "UL · stage 1", NodeType: "NGRP"},
+		"FGN_001":      {Name: "FGN_001", NodeType: "storage"},
+	}
+	stub.groups = map[string][]string{"UL · stage 1": {"FGN_001", "FGN_002"}}
+
+	resp := doRequest(t, router, "GET", "/api/core-nodes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+
+	var rows []struct {
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+	}
+	decodeJSON(t, resp, &rows)
+	got := map[string][]string{}
+	for _, r := range rows {
+		got[r.Name] = r.Members
+	}
+	if m := got["UL · stage 1"]; len(m) != 2 || m[0] != "FGN_001" || m[1] != "FGN_002" {
+		t.Errorf("group members = %v, want [FGN_001 FGN_002]", m)
+	}
+	if m, ok := got["FGN_001"]; !ok || len(m) != 0 {
+		t.Errorf("plain node: present %v members %v, want present with none", ok, m)
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Config endpoints — UpdateCoreAPI, UpdateMessaging, UpdateStationID,
 // UpdateAutoConfirm, UpdateWarLink

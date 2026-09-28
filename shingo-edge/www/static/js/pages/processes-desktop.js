@@ -3101,6 +3101,10 @@ function coreNodeList() {
 //   source    'core' (default) or 'payloads' — which universe the option list
 //             is drawn from. A part is not a place, and the part set's picker
 //             offers the payload catalog rather than Core's node list
+//   expandGroups  a group picked is its nodes (groupMembers). For the positions
+//             pickers only: a group has no slot, so as a position it renders
+//             nothing, while in a routing list a group is a real source or
+//             destination and must stay itself
 function pickerInit(key, opts) {
     const o = opts || {};
     S.pickers[key] = {
@@ -3113,7 +3117,17 @@ function pickerInit(key, opts) {
         onPick: o.onPick || null,
         onDrop: o.onDrop || null,
         onChange: o.onChange || null,
+        expandGroups: !!o.expandGroups,
     };
+}
+
+// groupMembers is the plain nodes standing in a group, from Core's node list,
+// or [] for anything that is not a group with members. The server applies the
+// same rule at save (StationService.expandGroups), so a list that reaches it
+// with a group in it still lands as the group's nodes.
+function groupMembers(name) {
+    const n = (S.coreNodes || []).find(c => c.name === name);
+    return (n && Array.isArray(n.members)) ? n.members : [];
 }
 
 function pickerValue(key) {
@@ -3188,8 +3202,13 @@ function pickerOptions(key) {
             out += '<button class="off" disabled>' + esc(n.name) + '<small>' + esc(why) + '</small></button>';
             continue;
         }
-        const on = p.sel.indexOf(n.name) >= 0;
-        const note = p.annotate(n.name);
+        const members = p.expandGroups ? groupMembers(n.name) : [];
+        const on = members.length
+            ? members.every(m => p.sel.indexOf(m) >= 0)
+            : p.sel.indexOf(n.name) >= 0;
+        const note = members.length
+            ? 'adds its ' + members.length + ' node' + (members.length === 1 ? '' : 's') + ': ' + members.join(', ')
+            : p.annotate(n.name);
         out += '<button class="' + (on ? 'on' : '') + '" data-npk="add" data-npkkey="' + key +
             '" data-npkname="' + esc(n.name) + '">' + esc(n.name) +
             (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
@@ -3314,6 +3333,16 @@ function onPickerClick(el) {
         if (p.onDrop && p.sel.indexOf(name) >= 0) { p.onDrop(name); return; }
         p.onPick(name);
         return;
+    } else if (p.expandGroups && groupMembers(name).length) {
+        // A group is its nodes: picking it adds the ones not yet picked, and
+        // picking it with all of them in unpicks them all, which is what the
+        // `on` class drawn on its row says.
+        const members = groupMembers(name);
+        if (members.every(m => p.sel.indexOf(m) >= 0)) {
+            p.sel = p.sel.filter(m => members.indexOf(m) < 0);
+        } else {
+            for (const m of members) if (p.sel.indexOf(m) < 0) p.sel.push(m);
+        }
     } else {
         // A name already picked is unpicked, which is what clicking a chosen
         // row of a multi-select means everywhere else.
@@ -3773,6 +3802,7 @@ function openAddProcess() {
     S.add = { groupID: 0 };
     const positions = () => pickerValue('positions');
     pickerInit('positions', {
+        expandGroups: true,
         onChange: () => {
             // A name that has just become a position cannot also be a routing
             // row: process_routing_nodes refuses one (ErrRoutingNodeIsPosition)
@@ -3883,6 +3913,7 @@ async function openEditProcessFor(p) {
 
     pickerInit('positions', {
         selected: positions,
+        expandGroups: true,
         onChange: () => {
             for (const g of ROUTING_GROUPS) {
                 const key = routingPickerKey(g[0]);
@@ -4185,6 +4216,7 @@ async function openScreenSheet(stationID) {
     }
     pickerInit('positions', {
         selected: baseline,
+        expandGroups: true,
         // A position claimed by a sibling screen is NOT hidden and not refused:
         // SetNodes moves it, deliberately, because one Core node has exactly one
         // process_node row per process. The engineer is told whose it is before

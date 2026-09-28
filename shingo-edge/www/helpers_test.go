@@ -83,6 +83,7 @@ type stubEngine struct {
 	cfg      *config.Config
 	cfgPath  string
 	core     map[string]protocol.NodeInfo
+	groups   map[string][]string // group membership the stub's StationService is wired with
 	orderMgr *orders.Manager
 
 	// Spy fields — populated by stub methods so handler tests can assert on
@@ -332,7 +333,12 @@ func (s *stubEngine) UpdateCellReorder(engine.CellReorderInput) error { return n
 // *store.DB shim methods) but the call shape now matches production.
 
 func (s *stubEngine) StationService() *service.StationService {
-	return service.NewStationService(s.db)
+	svc := service.NewStationService(s.db)
+	if s.groups != nil {
+		groups := s.groups
+		svc.SetCoreNodeGroupResolver(func() map[string][]string { return groups })
+	}
+	return svc
 }
 func (s *stubEngine) ChangeoverService() *service.ChangeoverService {
 	return service.NewChangeoverService(s.db)

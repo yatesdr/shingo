@@ -11,11 +11,21 @@ import (
 
 // --- Core Nodes ---
 
+// coreNodeRow is one row of the node list the pickers draw from. Members is set
+// on a group: the plain nodes standing in it, so a picker of positions can take
+// a group as its nodes the moment it is picked (StationService.expandGroups is
+// the same rule at save).
+type coreNodeRow struct {
+	protocol.NodeInfo
+	Members []string `json:"members,omitempty"`
+}
+
 func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.CoreNodes()
-	infos := make([]protocol.NodeInfo, 0, len(nodes))
+	groups := h.engine.StationService().GroupMembers()
+	infos := make([]coreNodeRow, 0, len(nodes))
 	for _, n := range nodes {
-		infos = append(infos, n)
+		infos = append(infos, coreNodeRow{NodeInfo: n, Members: groups[n.Name]})
 	}
 	writeJSON(w, infos)
 }

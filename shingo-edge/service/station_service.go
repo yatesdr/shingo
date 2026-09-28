@@ -251,6 +251,44 @@ func (s *StationService) plantGen() uint64 {
 	return s.plantGeneration()
 }
 
+// expandGroups replaces each node group in names with the nodes standing in it,
+// in the group's order, and passes every other name through.
+//
+// A group is never a position: it has no slot, so a group on a station renders
+// nothing (unknownCoreNodes names the Springfield rows that did). Picking one
+// means its nodes, which is the Core-made group of a loader's windows put on a
+// screen in one pick. Membership is Core's, from the last node list: the plain
+// nodes directly in the group, never a lane or its slots, since Core does not
+// send those as members. A group with no members, or no resolver wired, passes
+// through unchanged.
+//
+// ONCE, AT SAVE. The screen holds the nodes, not the group, so a node added to
+// the group later reaches the screen when the group is picked again.
+func (s *StationService) expandGroups(names []string) []string {
+	if s.coreNodeGroups == nil {
+		return names
+	}
+	groups := s.coreNodeGroups()
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if members := groups[strings.TrimSpace(name)]; len(members) > 0 {
+			out = append(out, members...)
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// GroupMembers is the group membership expandGroups applies: NGRP name to the
+// plain nodes directly in it. Empty with no resolver wired.
+func (s *StationService) GroupMembers() map[string][]string {
+	if s.coreNodeGroups == nil {
+		return map[string][]string{}
+	}
+	return s.coreNodeGroups()
+}
+
 // ErrUnknownCoreNodes rejects a station node list naming something that is not a
 // Core node.
 var ErrUnknownCoreNodes = errors.New("not a Core node")
@@ -377,10 +415,10 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 		byCoreName[n.CoreNodeName] = n
 	}
 
-	// Normalize input: trim and deduplicate, preserving order.
+	// Normalize input: trim, expand groups, and deduplicate, preserving order.
 	clean := make([]string, 0, len(nodeNames))
 	desired := map[string]bool{}
-	for _, name := range nodeNames {
+	for _, name := range s.expandGroups(nodeNames) {
 		name = strings.TrimSpace(name)
 		if name != "" && !desired[name] {
 			desired[name] = true

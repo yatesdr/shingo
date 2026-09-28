@@ -128,3 +128,24 @@ func TestSetNodes_CanRemoveAnAlreadyStoredBadName(t *testing.T) {
 		t.Errorf("bad name not cleared: %v", got)
 	}
 }
+
+// A group picked as a position lands as its nodes: a group has no slot, so on a
+// station it would render nothing. This is how the Core-made group of a
+// loader's windows puts all of them on a screen in one pick. A name that is
+// not a group with members passes through.
+func TestSetNodes_ExpandsAGroupToItsNodes(t *testing.T) {
+	t.Parallel()
+	svc, id := newStationFixture(t)
+	svc.SetCoreNodeResolver(func() map[string]bool {
+		return map[string]bool{"UL · stage 1": true, "FGN_001": true, "FGN_002": true, "ULN_009": true}
+	})
+	svc.SetCoreNodeGroupResolver(func() map[string][]string {
+		return map[string][]string{"UL · stage 1": {"FGN_001", "FGN_002"}}
+	})
+
+	testutil.MustNoErr(t, svc.SetNodes(id, []string{"FGN_002", "UL · stage 1", "ULN_009"}), "set")
+	got := strings.Join(nodeNames(t, svc, id), ",")
+	if got != "FGN_002,FGN_001,ULN_009" {
+		t.Errorf("station nodes = %s, want the group's nodes in its place, deduplicated: FGN_002,FGN_001,ULN_009", got)
+	}
+}
