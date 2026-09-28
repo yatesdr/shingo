@@ -8,7 +8,7 @@ import (
 
 // ── THE SHADOW WINDOW FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ────────
 //
-// Seven sites ask that question by testing `order.BinID == nil`. That predicate
+// Six sites ask that question by testing `order.BinID == nil`. That predicate
 // is TRUE OF A COORDINATOR AND TRUE OF A DEFECT, and cannot tell them apart:
 //
 //   - a compound PARENT is a folder. It owns legs, never touches a bin, and its
@@ -25,10 +25,10 @@ import (
 //
 // ── WHY A WINDOW AND NOT A CUTOVER ────────────────────────────────────────
 //
-// Three of the seven have UNVERIFIED REACHABILITY for a coordinator —
+// Two of the six have UNVERIFIED REACHABILITY for a coordinator —
 // fulfillment/scanner.go's held-bin dispatch (guarded upstream by the scanner's
-// own coordinator skip and by reshuffling ∉ IsAcquiring),
-// service/tag_verify_service.go, and engine/recovery_service.go. Reading alone
+// own coordinator skip and by reshuffling ∉ IsAcquiring) and
+// engine/recovery_service.go. Reading alone
 // could not establish that a coordinator never arrives at them, and cutting a
 // predicate over on the strength of "I could not find a path" is how a guard
 // silently changes population.
@@ -141,13 +141,12 @@ func ResetFolderShadow() {
 	folderShadowTally.seen = map[string]int{}
 }
 
-// FolderShadowSites are the seven, named once so the emitter, the tally and any
+// FolderShadowSites are the six, named once so the emitter, the tally and any
 // reader share one list.
 const (
 	FolderSiteDeliverySettle   = "wiring_completion delivery settle"
 	FolderSiteCompletionNet    = "wiring_completion completion safety net"
 	FolderSiteHeldBinDispatch  = "fulfillment held-bin dispatch"
-	FolderSiteTagVerify        = "tag verify"
 	FolderSiteRecoveryReapply  = "recovery reapply-completion"
 	FolderSiteBuriedForHeldBin = "lane gate buried-for-held-bin"
 	FolderSiteBlockCompleted   = "block-completed single-bin fallback"

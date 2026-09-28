@@ -15,11 +15,10 @@ package store
 // fix came to be, so doing it wrong here would rebuild the defect while fixing
 // it.
 //
-// There is no version marker to consult. `grep -rn schema_migrations
-// shingo-edge/` returns nothing — the Edge migration runner is unversioned and
-// every step must decide for itself whether it has already run. Each function
-// below probes the stored schema text and returns early when the shape is
-// already current.
+// These are FROZEN-CHAIN steps: they ran before the versioned-migration
+// runner existed and are adopted at the baseline version automatically
+// (edgeBaselineVersion in migrations.go; pinned by TestFrozenChainIsPinned).
+// New schema changes go in edgeMigrations() instead - never here.
 
 import (
 	"database/sql"

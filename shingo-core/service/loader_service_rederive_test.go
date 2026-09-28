@@ -4,6 +4,7 @@ package service
 
 import (
 	"bytes"
+	"database/sql"
 	"io"
 	"log"
 	"strings"
@@ -38,7 +39,7 @@ func enrollRegisteredEdge(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
 	_, err := db.EnrollEdge(stationID, "", stationID)
 	testutil.MustNoErr(t, err, "enroll edge")
-	_, err = db.RegisterEdge(stationID, "test-host", "test-inst", "test", "")
+	_, err = db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{})
 	testutil.MustNoErr(t, err, "register edge")
 }
 

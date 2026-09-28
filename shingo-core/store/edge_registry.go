@@ -5,6 +5,7 @@ package store
 // don't need to change.
 
 import (
+	"database/sql"
 	"time"
 
 	"shingocore/store/registry"
@@ -24,8 +25,8 @@ func (db *DB) EnrollEdge(uid, displayName, stationID string) (*registry.Edge, er
 // The conflict is returned rather than swallowed so the caller can put it
 // somewhere the operator will see; it is already logged by registry.Register,
 // so a caller that has nothing better to do with it may ignore it.
-func (db *DB) RegisterEdge(uid, hostname, instance, version, timezone string) (*registry.Conflict, error) {
-	return registry.Register(db.DB, uid, hostname, instance, version, timezone)
+func (db *DB) RegisterEdge(uid, hostname, instance, version, timezone string, schemaVersion sql.NullInt64) (*registry.Conflict, error) {
+	return registry.Register(db.DB, uid, hostname, instance, version, timezone, schemaVersion)
 }
 
 // RebindEdgeHostname moves a station's binding to a new machine and clears its

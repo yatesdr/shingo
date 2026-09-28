@@ -65,9 +65,9 @@ func TestPurgeKeepsAnUndeliveredCountRow(t *testing.T) {
 func TestPurgeOld_OtherRowsKeepTheirRetention(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	deadOrder := agedOutboxRow(t, db, protocol.SubjectProductionReport, true, false)
+	deadOrder := agedOutboxRow(t, db, protocol.SubjectEdgeHeartbeat, true, false)
 	sentCount := agedOutboxRow(t, db, protocol.SubjectBinUOPDelta, false, true)
-	young, err := db.EnqueueOutbox([]byte(`{"n":1}`), protocol.SubjectProductionReport)
+	young, err := db.EnqueueOutbox([]byte(`{"n":1}`), protocol.SubjectEdgeHeartbeat)
 	testutil.MustNoErr(t, err, "enqueue young row")
 	testutil.MustNoErr(t, db.MarkOutboxExhausted(young, "test"), "exhaust young row")
 

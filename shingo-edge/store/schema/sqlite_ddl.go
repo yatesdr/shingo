@@ -1228,4 +1228,15 @@ CREATE TABLE IF NOT EXISTS scene_geometry_meta (
     revision  TEXT NOT NULL DEFAULT '',
     synced_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Versioned-migration bookkeeping (protocol/migrate). The runner creates
+-- this same table at the tail of migrate(); declaring it here too means a
+-- FRESH database and an AGED one converge on the identical shape, which is
+-- what the schemadump convergence gate diffs. Columns must stay
+-- column-for-column identical to the runner's createTableSQL[SQLite]
+-- constant — pinned from both sides (TestDialectSQLMatchesTheExtraction in
+-- protocol/migrate, TestSchemaSnapshotIsCurrent here).
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `

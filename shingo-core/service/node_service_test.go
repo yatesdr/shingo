@@ -3,6 +3,7 @@
 package service
 
 import (
+	"database/sql"
 	"sort"
 	"testing"
 
@@ -972,7 +973,7 @@ func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
 
 	_, enrErr := db.EnrollEdge("edge-svc-1", "", "edge-svc-1")
 	testutil.MustNoErr(t, enrErr, "EnrollEdge")
-	_, regErr := db.RegisterEdge("edge-svc-1", "host-svc", "inst-svc", "v1", "")
+	_, regErr := db.RegisterEdge("edge-svc-1", "host-svc", "inst-svc", "v1", "", sql.NullInt64{})
 	testutil.MustNoErr(t, regErr, "RegisterEdge")
 
 	edges, err := svc.ListEdges()

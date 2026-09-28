@@ -25,6 +25,7 @@ import (
 	"log"
 	"strings"
 
+	"shingo/protocol/migrate"
 	"shingoedge/store/schema"
 )
 
@@ -1069,7 +1070,47 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// ── versioned migrations (protocol/migrate) ─────────────────────────
+	// Everything above this marker is the FROZEN chain — self-probing steps
+	// with no version marker, adopted at baseline 1 and never to be edited
+	// or appended to. The chain's shape (statement order and count up to
+	// this marker) is pinned by frozen_chain_pin_test.go; the runner's
+	// Edge-side behaviour is pinned by versioned_migration_test.go. New
+	// migrations go in edgeMigrations() with version > edgeBaselineVersion.
+	return db.runVersioned(edgeMigrations())
+}
+
+// edgeBaselineVersion is the frozen chain adopted mid-life: every database
+// this build opens that has no schema_migrations rows is declared to be at
+// v1, whatever its physical age. Versioned migrations start at v2.
+const edgeBaselineVersion = 1
+
+// edgeMigrations lists Edge's versioned migrations, ascending. Append-only;
+// a new migration's Version must be prev+1 (see protocol/migrate/README.md).
+// Empty today — the frozen chain carries the schema — and this is the ONLY
+// place a future Edge schema change goes.
+func edgeMigrations() []migrate.Migration {
 	return nil
+}
+
+// runVersioned is the seam versioned_migration_test.go drives directly; the
+// production call is the tail of migrate(), above.
+func (db *DB) runVersioned(ms []migrate.Migration) error {
+	return migrate.Run(db.DB, migrate.SQLite, edgeBaselineVersion, ms)
+}
+
+// AppliedSchemaVersion is the version the boot migration left this database
+// at — what the register payload reports to Core's /edges page. The one
+// reader is the heartbeater's SchemaVersionFn (wired in main.go); it exists
+// as a DB method so the accessor travels with the runner it reads for.
+// -1 on a read failure, which the wire carries as "knows but cannot read"
+// rather than as the pre-runner 0.
+func (db *DB) AppliedSchemaVersion() int {
+	v, err := migrate.Latest(db.DB, migrate.SQLite)
+	if err != nil {
+		return -1
+	}
+	return v
 }
 
 // ── Table rebuild helpers (rename-rebuild pattern) ───────────────────

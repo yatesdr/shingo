@@ -178,51 +178,6 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 	}
 }
 
-// TestWiring_CounterDelta_EmitsProducedReport verifies that a produce-node
-// counter tick emits EventProducedReport keyed by the node's payload code
-// (the cat_id Core matches demands on) — explicitly NOT the style name. This
-// is the signal the production reporter consumes; keying by payload_code is
-// what lands produced counts on the right demand row even when the style is
-// named differently from the part.
-func TestWiring_CounterDelta_EmitsProducedReport(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	processID, nodeID, styleID, claimID := seedProduceNode(t, db, "")
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	// Bin physically present so the produce tick is applied (mirrors the
-	// IncrementsUOP test above).
-	bin := int64(7)
-	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 10)
-
-	var got []ProducedReportEvent
-	eng.Events.SubscribeTypes(func(evt Event) {
-		if pr, ok := evt.Payload.(ProducedReportEvent); ok {
-			got = append(got, pr)
-		}
-	}, EventProducedReport)
-
-	eng.handleCounterDelta(CounterDeltaEvent{
-		ProcessID: processID,
-		StyleID:   styleID,
-		Delta:     5,
-	})
-
-	if len(got) != 1 {
-		t.Fatalf("EventProducedReport count = %d, want 1", len(got))
-	}
-	// seedProduceNode sets PayloadCode "WIDGET-A" and style name "PROD-STYLE".
-	if got[0].PayloadCode != "WIDGET-A" {
-		t.Errorf("PayloadCode = %q, want %q (the claim payload, not the style name PROD-STYLE)",
-			got[0].PayloadCode, "WIDGET-A")
-	}
-	if got[0].Delta != 5 {
-		t.Errorf("Delta = %d, want 5", got[0].Delta)
-	}
-}
-
 // TestWiring_CounterDelta_ConsumeDecrementsUOP verifies that counter delta
 // events decrement UOP for consume nodes (counting DOWN from capacity).
 func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {

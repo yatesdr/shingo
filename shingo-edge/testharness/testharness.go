@@ -36,8 +36,7 @@ func OpenDB(t *testing.T) *store.DB {
 // Edge bundles a running Edge engine with the message-handler and
 // ingestor layers wired the same way cmd/shingoedge/main.go wires them
 // in production — minus Kafka, the outbox drainer, the heartbeater,
-// the production reporter, and other subsystems integration scenarios
-// don't exercise.
+// and other subsystems integration scenarios don't exercise.
 //
 // Use the Ingestor as harness.EdgeSide.EdgeIngestor when constructing a
 // bus. Call methods on Engine directly to drive the scenario
@@ -68,8 +67,7 @@ type Edge struct {
 //   - InventoryDeltaReporter: HandleBinPickedUp's flush call already
 //     guards on nil. Set explicitly via SetInventoryDeltaSink if a
 //     scenario needs delta accumulation tested.
-//   - Production reporter, backup service: not touched by
-//     release-path code.
+//   - Backup service: not touched by release-path code.
 //
 // AppConfig is minimal: namespace + line_id are used for station ID
 // derivation and log strings. WarLink stays disabled (default zero-

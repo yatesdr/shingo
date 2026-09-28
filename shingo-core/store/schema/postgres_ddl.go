@@ -475,7 +475,14 @@ CREATE TABLE IF NOT EXISTS edge_registry (
     claimed_at        TIMESTAMPTZ,
     conflict_hostname TEXT NOT NULL DEFAULT '',
     conflict_count    BIGINT NOT NULL DEFAULT 0,
-    conflict_at       TIMESTAMPTZ
+    conflict_at       TIMESTAMPTZ,
+    -- schema_version is the applied schema_migrations version the edge's
+    -- register payload last reported (protocol.EdgeRegister.SchemaVersion),
+    -- written only from the wire, never by a human. NULL means no register
+    -- has carried one. The historical record of how an existing plant
+    -- acquired this column is migration v137; this line is today's shape
+    -- for fresh databases — both live, one truth each.
+    schema_version    INTEGER
 );
 
 -- PARTIAL, because the identity migration deliberately leaves a window in

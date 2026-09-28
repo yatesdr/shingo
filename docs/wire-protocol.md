@@ -191,6 +191,7 @@ Type strings use dotted notation: `{category}.{action}`. Two categories exist fo
 | `order.delivered` | `shingo.dispatch` | Core -> Edge | [OrderDelivered](#orderdelivered) | Fleet reports delivery complete |
 | `order.error` | `shingo.dispatch` | Core -> Edge | [OrderError](#ordererror) | Order processing failed |
 | `order.cancelled` | `shingo.dispatch` | Core -> Edge | [OrderCancelled](#ordercancelled) | Order cancellation confirmed |
+| `order.skipped` | `shingo.dispatch` | Core -> Edge | `OrderSkipped` | Core declined to act on an order, with an error code (wire shape mirrors OrderError; see order-lifecycle.md) |
 
 ---
 
@@ -244,12 +245,8 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `edge.heartbeat_ack` | Core -> Edge | [EdgeHeartbeatAck](#edgeheartbeatack) | Core acknowledges heartbeat |
 | `edge.stale` | Core -> Edge | [EdgeStale](#edgestale) | Core notifies edge it has been marked stale |
 | `edge.register_request` | Core -> Edge | [EdgeRegisterRequest](#edgeregisterrequest) | Core asks edge to re-register |
-| `production.report` | Edge -> Core | [ProductionReport](#productionreport) | Edge sends production counts |
-| `production.report_ack` | Core -> Edge | [ProductionReportAck](#productionreportack) | Core acknowledges production report |
 | `node.list_request` | Edge -> Core | [NodeListRequest](#nodelistrequest) | Edge requests core's node list |
 | `node.list_response` | Core -> Edge | [NodeListResponse](#nodelistresponse) | Core returns authoritative node list |
-| `tag.verify_request` | Edge -> Core | [TagVerifyRequest](#tagverifyrequest) | **No sender exists** — Core routes and answers it, nothing emits it. See material-flow.md |
-| `tag.verify_response` | Core -> Edge | [TagVerifyResponse](#tagverifyresponse) | Core's answer; the Edge handler only writes a log line. Never blocks an order |
 | `catalog.payloads_request` | Edge -> Core | [CatalogPayloadsRequest](#catalogpayloadsrequest) | Edge requests payload catalog |
 | `catalog.payloads_response` | Core -> Edge | [CatalogPayloadsResponse](#catalogpayloadsresponse) | Core returns payload catalog |
 | `plant.claims` | Edge -> Core | [PlantClaimsReport](#plantclaimsreport) | Edge publishes its plant-spec claim set so Core can mirror what every process can source |
@@ -262,21 +259,28 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `inventory.bin_epoch_refresh` | Core -> Edge | `BinEpochRefresh` | Re-anchor a bin's counting epoch without a full resync |
 | `order.status_request` | Edge -> Core | `OrderStatusRequest` | Startup reconciliation — Edge names the orders it wants authoritative status for |
 | `order.status_response` | Core -> Edge | `OrderStatusResponse` | The answer, plus `Unlisted`: orders for that station the Edge did **not** name |
-| `order.skipped` | Core -> Edge | `OrderSkipped` | Core declined to act on an order, with an error code |
 | `order.projected` | Core -> Edge | `OrderProjected` | A projected order, ahead of it being real |
 | `demand.origin` | Edge -> Core | `DemandOrigin` | The demand episodes the Edge owns |
 | `inventory.bin_uop_delta` | Edge -> Core | `BinUOPDelta` | A bin's UoP moved |
 | `inventory.lineside_bucket_level` | Edge -> Core | `LinesideBucketLevel` | A lineside pile row's level after a change (the Edge is its only writer; Core mirrors it) |
+| `production.tick` | Edge -> Core | `CounterSnapshot` | One PLC counter tick per envelope, from Edges before the counter_snapshots shipper; newer Edges send `production.ticks` |
+| `production.ticks` | Edge -> Core | `ProductionTicks` | Batched per-station tick feed from the counter_snapshots shipper — the successor to `production.tick` |
+| `inventory.lineside_level_report` | Edge -> Core | `LinesideLevelReport` | The Edge's own view of its lineside levels, for Core's divergence comparison |
 | `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
 
-The sixteen rows with linked schemas carry full field tables below. The fourteen
-added after them do not — the Go structs in `protocol/payloads.go` are the reference
-for their fields.
+The sixteen rows with linked schemas carry full field tables below. The sixteen
+added after them do not — the Go structs in `protocol/payloads.go` and
+`protocol/lineside_level_report.go` are the reference
+for their fields. The table's membership is pinned against
+`protocol.AllSubjects()` by `protocol/docs_drift_test.go`, so a subject added
+to the code without a row here fails the protocol suite.
 
-All of them were absent from this document until 2026-08-17, having accumulated
-across the supply-refusal, demand-origin and inventory work.
-`supply.refusal` / `supply.refusal_state` are the whole supply-refusal channel
-that shipped 2026-07-30.
+All of the unlinked rows were absent from this document until 2026-08-17, having accumulated
+across the supply-refusal, demand-origin and inventory work — except the three
+added 2026-09-26 (`production.tick`, `production.ticks`,
+`inventory.lineside_level_report`), which had existed as constants for weeks
+with no row. `supply.refusal` / `supply.refusal_state` are the whole
+supply-refusal channel that shipped 2026-07-30.
 
 **Note the name.** The downtime subject is `production.downtime`. An earlier
 version of this document called it `downtime.event` in prose, which matches no
@@ -295,23 +299,30 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
 | `edge.register` | 5 minutes | Should complete quickly after connect |
 | `edge.registered` | 5 minutes | Should complete quickly after connect |
-| `production.report` | 5 minutes | Should be processed promptly |
-| `production.report_ack` | 5 minutes | Should be processed promptly |
 | `edge.stale` | 5 minutes | Notification, not time-critical |
 | `edge.register_request` | 5 minutes | Should trigger re-register promptly |
 | `node.list_request` | 5 minutes | Sync request |
 | `node.list_response` | 5 minutes | Sync response |
 | `inventory.bin_uop_delta` | **none** | Sequenced increment — see below |
 | `inventory.lineside_bucket_level` | **none** | Sequenced level of one row — see below |
+| `production.ticks` | **none** | Batched increments keyed (cell, snapshot id, recorded_at) at Core — see below |
+| `inventory.uop_adjustment` | **none** | Count announcement a dropped copy strands under a dead generation — see below |
+| `inventory.bin_epoch_refresh` | **none** | Epoch re-anchor a dropped copy strands under a dead generation — see below |
 | Unknown subjects | 5 minutes | Safe general default |
 
-**Two subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22). Every other data
+**Five subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
+pinned against `protocol/expiry.go` by `protocol/docs_drift_test.go`). Every other data
 subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
 copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
 that never self-corrects. The lineside bucket level is a snapshot of one pile row, but its
 successor comes only when that pile next changes (for a stranded row, never), so a dropped one
 leaves Core's mirror wrong until then. Core applies a level only above the row's high-water
-`SequenceID`, so a late copy is a no-op.
+`SequenceID`, so a late copy is a no-op. The production tick feed is sequenced like the bin
+delta — Core keys each tick on (cell, snapshot id, recorded_at), so a late copy is a no-op and
+a dropped one is a fake stop in MTBF and Lost. The two Core→Edge announcements (UoP adjustment,
+bin epoch refresh) are counts a station still holds after an outage longer than TypeData's
+5-minute TTL — dropped, every count that station reports under the superseded generation is
+discarded at Core until the next announcement.
 
 They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
 dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
@@ -491,47 +502,6 @@ Sent by core to request that an edge re-register (e.g., after core restart or ed
 | Station ID | `station_id` | string | Yes | The edge station that should re-register. |
 | Reason | `reason` | string | No | Why re-registration is needed. |
 
-#### ProductionReport
-
-Sent by edge to report production counts from PLC reporting points.
-
-```json
-{
-  "station_id": "plant-a.line-1",
-  "reports": [
-    {"cat_id": "BRK-ROTOR-KIT", "count": 12}
-  ]
-}
-```
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Station ID | `station_id` | string | Yes | Reporting edge station. |
-| Reports | `reports` | ProductionReportEntry[] | Yes | Array of production counts per payload catalog ID. |
-
-**ProductionReportEntry:**
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Cat ID | `cat_id` | string | Yes | Payload catalog identifier. |
-| Count | `count` | integer | Yes | Production count for this entry. |
-
-#### ProductionReportAck
-
-Acknowledges processing of a production report.
-
-```json
-{
-  "station_id": "plant-a.line-1",
-  "accepted":   1
-}
-```
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Station ID | `station_id` | string | Yes | The reporting edge station (echo back). |
-| Accepted | `accepted` | integer | Yes | Number of report entries accepted. |
-
 #### NodeListRequest
 
 Sent by edge to request the core's authoritative node list. Empty body.
@@ -595,44 +565,6 @@ slice, consumed by the Edge cache (`core_loaders`) — the loader resolvers' rea
 | UOP Threshold | `uop_threshold` | int | Per-position UOP-threshold replenishment trigger (0 = off). |
 
 **LoaderPayloadInfo:** `payload_code` (string), `min_stock` (int), `uop_threshold` (int) — one entry per payload in a shared_window loader's allowed set.
-
-#### TagVerifyRequest
-
-Sent by edge to verify a scanned QR tag against the expected bin for an order.
-
-```json
-{
-  "order_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "tag_id":     "SHG:0042",
-  "location":   "LINE1-IN"
-}
-```
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Order UUID | `order_uuid` | string | Yes | The order being verified. |
-| Tag ID | `tag_id` | string | Yes | Scanned QR tag value. |
-| Location | `location` | string | No | Where the scan occurred. |
-
-#### TagVerifyResponse
-
-Core's response to a tag verification request.
-
-```json
-{
-  "order_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "match":      true,
-  "expected":   "SHG:0042",
-  "detail":     "Tag matches claimed bin"
-}
-```
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Order UUID | `order_uuid` | string | Yes | The order that was verified. |
-| Match | `match` | boolean | Yes | Whether the scanned tag matches the expected bin. |
-| Expected | `expected` | string | No | The expected tag value (for mismatch diagnostics). |
-| Detail | `detail` | string | No | Human-readable result detail. |
 
 #### CatalogPayloadsRequest
 

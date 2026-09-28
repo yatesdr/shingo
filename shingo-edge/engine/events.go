@@ -46,13 +46,6 @@ const (
 	// side-effects (state machine, side-cycle dispatch).
 	EventOrderDelivered
 
-	// EventProducedReport fires once per produce-node tick, carrying the
-	// node's resolved payload code. The production reporter subscribes to
-	// this (rather than the raw EventCounterDelta) so it keys finished-good
-	// counts by the catalog part code (cat_id) Core matches demands on,
-	// instead of the style name. See ProducedReportEvent.
-	EventProducedReport
-
 	// EventUOPAdjusted fires when an admin-originated UOP adjustment
 	// arrives from Core. Handled by the SSE broadcaster as a
 	// counter-update event so the operator screen refreshes its view.
@@ -156,18 +149,6 @@ type CounterDeltaEvent struct {
 	// threshold, "reset" backward (Delta is then the new count). A record
 	// only; every consumer counts the delta whatever it says.
 	Anomaly string `json:"anomaly"`
-}
-
-// ProducedReportEvent is emitted once per produce-node tick. PayloadCode is
-// the produce node's active-claim payload — the catalog part code (cat_id) —
-// resolved at the tick site where the node, and therefore the part, is
-// unambiguous even for multi-part styles. The production reporter keys
-// counts by this instead of the style name so they match demands.cat_id on
-// Core. Mirrors the per-produce-node inventory delta emitted alongside it.
-type ProducedReportEvent struct {
-	eventbus.PayloadBase
-	PayloadCode string `json:"payload_code"`
-	Delta       int64  `json:"delta"`
 }
 
 // OrderCreatedEvent is emitted when a new order is placed.

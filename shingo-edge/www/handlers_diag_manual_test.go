@@ -93,15 +93,6 @@ func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 }
 
-func TestApiSendManualMessage_ProductionReport_Success(t *testing.T) {
-	_, router := newDiagnosticsManualRouter(t)
-
-	resp := sendManualPayload(t, router, "production.report", map[string]any{
-		"entries": []protocol.ProductionReportEntry{},
-	})
-	assertStatus(t, resp, http.StatusOK)
-}
-
 func TestApiSendManualMessage_NodeListRequest_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
@@ -172,11 +163,11 @@ func TestApiSendManualMessage_InvalidOuterJSON(t *testing.T) {
 func TestApiSendManualMessage_InvalidInnerPayload(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
-	// production.report requires entries to unmarshal as []ProductionReportEntry.
+	// edge.heartbeat requires uptime to unmarshal as an integer.
 	// Sending a string should trigger the inner "invalid payload" branch.
 	body := map[string]any{
-		"type":    "production.report",
-		"payload": json.RawMessage([]byte(`{"entries":"not-an-array"}`)),
+		"type":    "edge.heartbeat",
+		"payload": json.RawMessage([]byte(`{"uptime":"not-a-number"}`)),
 	}
 	resp := doRequest(t, router, "POST", "/api/manual-message", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)

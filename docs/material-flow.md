@@ -27,7 +27,7 @@ Fields:
 - **Label**: unique identifier (e.g., `SHG:0042`)
 - **Bin Type**: physical container class (determines size and compatibility)
 - **Node**: current floor location
-- **Status**: `available`, `staged`, `flagged`, `maintenance`, `quality_hold`, `retired`
+- **Status**: `available`, `staged`, `flagged`, `maintenance`, `retired`
 - **Payload Code**: assigned payload template (empty if unloaded)
 - **Manifest**: JSON parts list (actual contents)
 - **Manifest Confirmed**: whether the operator has verified contents
@@ -159,7 +159,7 @@ to the dig, and it clears on the same rule as any other dig.
 
 Flagged bins occupy slots and block like any other bin, and stores can occur in
 front of them. They are excluded from sourcing and from inventory counts by
-status (`status NOT IN ('flagged','maintenance','quality_hold','retired')`).
+status (`status NOT IN ('flagged','maintenance','retired')`).
 
 A dig that has to move one parks it like any other blocker. There is no special
 depth-1 placement for maintenance access — that behaviour belonged to the restock
@@ -255,27 +255,7 @@ The editor shows the same rule inline: "1-Robot requires both inbound and outbou
 Labels follow the format `SHG:NNNN` (e.g., `SHG:0042`). The `SHG:` prefix distinguishes a Shingo label from other identifiers a plant may already put on a container. The number is unique across all bins regardless of type.
 
 The label is an **identifier**, not a verification gate. Nothing in the running
-system reads it off the physical bin — see below.
-
-### Tag verification is not wired end to end
-
-A tag-verification exchange exists in the protocol (`tag.verify_request` /
-`tag.verify_response`), and Core implements its half: the subject is routed to
-`HandleTagVerifyRequest` and answered by `service.TagVerifyService`, which looks
-up the order, compares the bin's label, and writes an audit entry.
-
-**Nothing sends the request.** The Edge registers a handler for the *response*
-that writes a log line, and no code path anywhere emits a `tag.verify_request`.
-There is no scanner integration. This is the same shape `ClaimSync` had before it
-was deleted — a live handler with no caller.
-
-Even if a sender existed, verification would not gate anything. `TagVerifyService`
-is explicitly best-effort: it returns `match=true` on every couldn't-determine
-branch and mismatches never block an order, so dispatch keeps running while
-operators reconcile out of band.
-
-Treat any plan that depends on scan-at-pickup as unbuilt work, not as a feature to
-re-enable.
+system reads it off the physical bin.
 
 ### Physical Labels
 

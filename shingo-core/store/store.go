@@ -92,8 +92,8 @@ type DB struct {
 // that used to commit stops committing.
 //
 // IT APPLIES TO EVERY SESSION, not only the migration ones, deliberately. The
-// DDL runs on pool connections (schema.Apply takes *sql.DB, runOneMigration
-// takes any connection db.Begin hands it), so a per-session SET would have to
+// DDL runs on pool connections (schema.Apply takes *sql.DB; the runner in
+// protocol/migrate takes any connection db.Begin hands it), so a per-session SET would have to
 // bound a connection nobody chooses. A session default in the startup packet
 // covers every statement wherever it runs, which is the property being bought.
 const (

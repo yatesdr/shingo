@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -57,7 +58,6 @@ type ThresholdMonitor interface {
 
 type CoreDataService struct {
 	db             *store.DB
-	tagVerify      *service.TagVerifyService
 	inventoryDelta *service.InventoryDeltaService
 	// linesideDivergence compares each lineside report against Core's replica
 	// (the report is a checksum and triggers no evaluation).
@@ -118,18 +118,16 @@ func (s *CoreDataService) SetCellTickEmitter(fn func(station string, processID, 
 	s.cellTickEmitter = fn
 }
 
-// NewCoreDataService constructs a CoreDataService. The TagVerifyService is
-// built internally from the same *store.DB so the constructor signature
-// stays minimal. Subject-router registration is the composition root's
-// responsibility — it calls RegisterSubject against this service's
-// HandleX methods explicitly, matching the EdgeHandler wiring pattern
-// (cmd/shingoedge/main.go). Keeping the dispatch table at the
-// composition root rather than buried in this constructor means a
-// reader can see every Subject Core handles by grepping cmd/shingocore.
+// NewCoreDataService constructs a CoreDataService. Subject-router
+// registration is the composition root's responsibility — it calls
+// RegisterSubject against this service's HandleX methods explicitly, matching
+// the EdgeHandler wiring pattern (cmd/shingoedge/main.go). Keeping the
+// dispatch table at the composition root rather than buried in this
+// constructor means a reader can see every Subject Core handles by grepping
+// cmd/shingocore.
 func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.EpochAnnounce) *CoreDataService {
 	return &CoreDataService{
 		db:                 db,
-		tagVerify:          service.NewTagVerifyService(db),
 		inventoryDelta:     service.NewInventoryDeltaService(db, service.NewBinManifestService(db, announce), announce),
 		linesideDivergence: service.NewLinesideDivergenceService(db),
 		resp:               resp,
@@ -393,10 +391,26 @@ func (s *CoreDataService) HandleLinesideBucketLevel(env *protocol.Envelope, l *p
 
 func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
 	uid := p.StationID
-	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s)",
-		uid, p.Hostname, p.Instance, p.Version)
+	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s, schema_version=%d)",
+		uid, p.Hostname, p.Instance, p.Version, p.SchemaVersion)
 
-	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version, p.Timezone)
+	// Three answers arrive on a field that is a plain int with omitempty:
+	//   - n >= 1: a new edge's applied version. Stored as vN.
+	//   - absent: an edge older than the field (or a new one at v0, which
+	//     omitempty makes byte-identical). It decodes to 0 and is stored as v0,
+	//     NOT NULL: absence cannot be told from 0 on this wire, and both mean
+	//     the pre-runner schema, which is the truthful value for an old edge.
+	//   - -1: the edge could not read its own version at boot. Stored as NULL,
+	//     which /edges shows as "unknown".
+	// Every register overwrites the column, including an older edge's v0 over
+	// a newer version: the column records what IS, not what was. NULL on a row
+	// otherwise means no register since v137 added the column.
+	var schemaVersion sql.NullInt64
+	if p.SchemaVersion >= 0 {
+		schemaVersion = sql.NullInt64{Int64: int64(p.SchemaVersion), Valid: true}
+	}
+
+	conflict, err := s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version, p.Timezone, schemaVersion)
 	if errors.Is(err, registry.ErrUnknownStation) {
 		// AN EDGE MAY INTRODUCE ITSELF. IT MAY NOT SAY WHICH STATION IT IS.
 		//
@@ -427,7 +441,7 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 		}
 		// Re-register so the binding lease, instance and conflict detection all
 		// run against the row exactly as they would for any other station.
-		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version, p.Timezone)
+		conflict, err = s.db.RegisterEdge(uid, p.Hostname, p.Instance, p.Version, p.Timezone, schemaVersion)
 	}
 	if err != nil {
 		log.Printf("core_handler: register edge %s: %v", uid, err)
@@ -630,47 +644,6 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *pro
 	})
 	log.Printf("core_handler: sent node list (%d nodes, %d loaders, %d scene points, %d scene edges, geometry=%v) to %s",
 		len(infos), len(loaderInfos), len(scenePoints), len(sceneEdges), sceneRevision != "" && edgeRevision != sceneRevision, env.Src.Station)
-}
-
-func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
-	log.Printf("core_handler: production report from %s: %d entries (PARALLEL-RUN: writes disabled; new path is HandleBinUOPDelta, §14)", rpt.StationID, len(rpt.Reports))
-	accepted := 0
-	for _, entry := range rpt.Reports {
-		if entry.CatID == "" || entry.Count <= 0 {
-			continue
-		}
-		// §14 parallel-run (risk #3): the new bin_uop_delta path is now the
-		// SOLE writer of produced_qty. IncrementProduced is
-		// NOT idempotent, so we must NOT also write here — double-writing would
-		// silently double the counter and the parity check would pass on both
-		// being wrong. Keep the handler + ack live and LOG what this path WOULD
-		// have written so Stephen can compare LOGS (not counter values) for a
-		// week before the production_reporter deletion lands (Q-024-FOLLOWUP).
-		// (The production_log half of the old claim was a duplicate ledger,
-		// dropped at v92 — this path's counter claim is the surviving half.)
-		log.Printf("core_handler: [production.report parallel-run] would write cat_id=%s station=%s count=%d",
-			entry.CatID, rpt.StationID, entry.Count)
-		accepted++
-	}
-
-	s.resp.replyData(env, protocol.SubjectProductionReportAck,
-		&protocol.ProductionReportAck{StationID: rpt.StationID, Accepted: accepted})
-}
-
-func (s *CoreDataService) HandleTagVerifyRequest(env *protocol.Envelope, req *protocol.TagVerifyRequest) {
-	log.Printf("core_handler: tag verify from %s: uuid=%s tag=%s", env.Src.Station, req.OrderUUID, req.TagID)
-
-	result := s.tagVerify.VerifyTag(req.OrderUUID, req.TagID, req.Location)
-	if !result.Match {
-		log.Printf("core_handler: tag mismatch for order %s: expected=%s (proceeding best-effort)", req.OrderUUID, result.Expected)
-	}
-
-	s.resp.replyData(env, protocol.SubjectTagVerifyResponse, &protocol.TagVerifyResponse{
-		OrderUUID: req.OrderUUID,
-		Match:     result.Match,
-		Expected:  result.Expected,
-		Detail:    result.Detail,
-	})
 }
 
 func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {

@@ -11,40 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/service"
 )
 
-// NodeBinInfo describes the bin state at a single core node.
-//
-// BinID carries Core's bins.id so callers can thread the authoritative
-// id into BinUOPDelta scopes — needed when the Edge order's BinID is
-// nil at release time (REP / complex orders whose OrderDelivered didn't
-// carry binID) and capture_reduction would otherwise be silently
-// dropped at the BinID==0 gate.
-type NodeBinInfo struct {
-	NodeName    string `json:"node_name"`
-	BinID       int64  `json:"bin_id,omitempty"`
-	BinLabel    string `json:"bin_label,omitempty"`
-	BinTypeCode string `json:"bin_type_code,omitempty"`
-	// Bare is Core's bin_types.bare for the carrier: it holds no container,
-	// so the only way out of the window is PUSH AS a real type.
-	Bare         bool   `json:"bare,omitempty"`
-	PayloadCode  string `json:"payload_code,omitempty"`
-	UOPRemaining int    `json:"uop_remaining"`
-	// DeltaEpoch is Core's bins.delta_epoch — bumps on every load-
-	// lifecycle boundary (SetForProduction, ClearForReuseTx). Edge
-	// stores it alongside the bin and stamps every outgoing
-	// BinUOPDelta with the value cached here. On startup / cache miss
-	// the field deserializes to 0, which Core treats as the bootstrap
-	// sentinel and always applies. This used to say "the next bin-state
-	// refresh from Core repopulates it" — there was no such refresh, and
-	// what actually repopulates it is Core's reply to the first discarded
-	// count (protocol.BinEpochRefresh).
-	DeltaEpoch        int64   `json:"delta_epoch"`
-	Manifest          *string `json:"manifest,omitempty"`
-	ManifestConfirmed bool    `json:"manifest_confirmed"`
-	Occupied          bool    `json:"occupied"`
-}
+// NodeBinInfo and the other Edge↔Core HTTP contract types are defined in
+// shingo/protocol (http_contract.go) and aliased here so existing call sites
+// compile unchanged.
+type NodeBinInfo = protocol.NodeBinInfo
 
 // CoreClient makes lightweight HTTP requests to Core's telemetry API.
 type CoreClient struct {
@@ -74,44 +48,14 @@ func (c *CoreClient) Available() bool {
 	return c != nil && c.baseURL != ""
 }
 
-// ManifestItem describes a single line in a payload manifest TEMPLATE.
-//
-// PartsPerCycle is a ratio — how many of the part one production cycle
-// consumes, usually 1. The number physically in a bin is that times the bin's
-// UoP count. The JSON key was `quantity` until Core's rename — same value, a
-// name that says what it is. Core and Edge ship that rename together, so there
-// is no version in which one key is read and the other written.
-//
-// This is NOT the shape a bin-load request carries — see BinLoadItem. The two
-// were one struct, which is how a template ratio and a physical count came to
-// share a field name.
-type ManifestItem struct {
-	PartNumber    string `json:"part_number"`
-	PartsPerCycle int64  `json:"parts_per_cycle"`
-	Description   string `json:"description"`
-}
+// ManifestItem is the payload-template manifest line of the manifest endpoint.
+type ManifestItem = protocol.ManifestItem
 
-// BinLoadItem is a single line of a bin-load request: a part number and how
-// many of it are actually in the carrier right now. A COUNT, not a ratio.
-type BinLoadItem struct {
-	PartNumber  string `json:"part_number"`
-	Quantity    int64  `json:"quantity"`
-	Description string `json:"description"`
-}
+// BinLoadItem is one line of a bin-load request: part number + physical count.
+type BinLoadItem = protocol.BinLoadItem
 
-// PayloadManifestResponse is the full response from Core's manifest endpoint.
-//
-// BinTypeCode lets press-index changeover detect "from bin type → to
-// bin type" changes without a separate Core endpoint. Empty when Core
-// has no payload_bin_types rule for this payload (the existing
-// advisory pattern: no rules = any compatible bin). Empty value is
-// treated by the planner as "unknown bin type" — the comparator falls
-// back to "same" so the existing same-bin-type choreography ships.
-type PayloadManifestResponse struct {
-	UOPCapacity int            `json:"uop_capacity"`
-	Items       []ManifestItem `json:"items"`
-	BinTypeCode string         `json:"bin_type_code,omitempty"`
-}
+// PayloadManifestResponse is the full response from the manifest endpoint.
+type PayloadManifestResponse = protocol.PayloadManifestResponse
 
 // FetchPayloadManifest returns the default manifest template and UOP capacity for a payload code.
 // Returns nil if Core is unavailable or the payload doesn't exist.
@@ -135,11 +79,8 @@ func (c *CoreClient) FetchPayloadManifest(payloadCode string) (*PayloadManifestR
 	return &result, nil
 }
 
-// NodeChildInfo describes a physical child node of an NGRP.
-type NodeChildInfo struct {
-	Name     string `json:"name"`
-	NodeType string `json:"node_type"`
-}
+// NodeChildInfo is one physical child of an NGRP in the children endpoint.
+type NodeChildInfo = protocol.NodeChildInfo
 
 // FetchNodeChildren returns the direct children of an NGRP node.
 // When includeSynthetic is true, synthetic children (e.g. LANE nodes) are included;
@@ -313,18 +254,7 @@ func OccupancyOutcome(reachable bool, err error) string {
 }
 
 // BinLoadRequest is the request body for loading a bin via HTTP.
-type BinLoadRequest struct {
-	NodeName    string `json:"node_name"`
-	PayloadCode string `json:"payload_code"`
-	// UOPCount is absent-or-value: a count is a count, absence is the
-	// question. nil means nobody declared one and Core answers from the
-	// payload's standard pack; a value is the count somebody counted, and 0
-	// is a bin with nothing in it. It was a plain int64 where 0 carried both
-	// meanings, so "I did not measure" and "I measured none" were the same
-	// bytes on the wire and the receiver had to guess.
-	UOPCount *int64        `json:"uop_count,omitempty"`
-	Manifest []BinLoadItem `json:"manifest"`
-}
+type BinLoadRequest = protocol.BinLoadRequest
 
 // coreErrorText picks the readable half of a failed Core reply.
 //
@@ -357,22 +287,8 @@ func coreErrorText(detail, errText string, statusCode int) string {
 	return fmt.Sprintf("core returned %d", statusCode)
 }
 
-// BinLoadResponse is Core's response after loading a bin.
-type BinLoadResponse struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-	// Error is the OTHER shape Core answers a failure in, and not having it
-	// here cost 115 unattributable log lines in one sim run. See coreErrorText.
-	Error        string `json:"error,omitempty"`
-	BinID        int64  `json:"bin_id,omitempty"`
-	BinLabel     string `json:"bin_label,omitempty"`
-	PayloadCode  string `json:"payload_code,omitempty"`
-	UOPRemaining int    `json:"uop_remaining,omitempty"`
-	// DeltaEpoch is the new bins.delta_epoch SetForProduction returned.
-	// Edge caches it and stamps subsequent BinUOPDeltas against this
-	// bin with the value, so Core's epoch-aware dedup accepts them.
-	DeltaEpoch int64 `json:"delta_epoch,omitempty"`
-}
+// BinLoadResponse is the response after loading a bin via HTTP.
+type BinLoadResponse = protocol.BinLoadResponse
 
 // LoadBin sets the manifest on the bin at a node via Core's HTTP API.
 // Unlike telemetry reads, this returns errors on failure since it is a write operation.
@@ -415,10 +331,7 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	reqBody := struct {
-		Station  string   `json:"station"`
-		Payloads []string `json:"payloads"`
-	}{Station: station, Payloads: payloads}
+	reqBody := protocol.PreflightRequest{Station: station, Payloads: payloads}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshal preflight request: %w", err)
@@ -476,9 +389,7 @@ func (c *CoreClient) SystemBinCount(payloads []string) ([]PayloadSystemCount, bo
 	if c.baseURL == "" || len(payloads) == 0 {
 		return nil, false
 	}
-	reqBody := struct {
-		Payloads []string `json:"payloads"`
-	}{Payloads: payloads}
+	reqBody := protocol.SystemCountRequest{Payloads: payloads}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, false
@@ -491,74 +402,21 @@ func (c *CoreClient) SystemBinCount(payloads []string) ([]PayloadSystemCount, bo
 	if resp.StatusCode != http.StatusOK {
 		return nil, false
 	}
-	var wire struct {
-		Counts []struct {
-			PayloadCode string `json:"payload_code"`
-			BinCount    int    `json:"bin_count"`
-		} `json:"counts"`
-	}
+	var wire protocol.SystemBinCountResult
 	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
 		return nil, false
 	}
-	out := make([]PayloadSystemCount, len(wire.Counts))
-	for i, c := range wire.Counts {
-		out[i] = PayloadSystemCount{PayloadCode: c.PayloadCode, BinCount: c.BinCount}
-	}
-	return out, true
+	return wire.Counts, true
 }
 
-// PayloadSystemCount is the Edge-side mirror of Core's
-// PayloadSystemCount — total bins of one payload in the kanban loop.
-type PayloadSystemCount struct {
-	PayloadCode string
-	BinCount    int
-}
+// PayloadSystemCount is the per-payload count of the system-count endpoint.
+type PayloadSystemCount = protocol.PayloadSystemCount
 
-// BinClearResponse is Core's reply to a bin clear.
-//
-// DeltaEpoch is the carrier's new generation stamp. Clearing a carrier for
-// reuse ends its old life and starts a new one, and Core has always sent the
-// new stamp straight back in this reply — the Edge decoded the status and
-// threw the rest away, so it kept reporting counts under the stamp of a life
-// that had ended and Core discarded every one of them.
-//
-// BinID names which carrier Core actually cleared. Core resolves that from
-// its own view of the node, so it is not automatically the carrier the Edge
-// believes is there; the stamp is only adopted when the two agree.
-type BinClearResponse struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-	// Error is the OTHER shape Core answers a failure in, and not having it
-	// here cost 115 unattributable log lines in one sim run. See coreErrorText.
-	Error      string `json:"error,omitempty"`
-	BinID      int64  `json:"bin_id,omitempty"`
-	BinLabel   string `json:"bin_label,omitempty"`
-	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
-	// ClearedPayloadCode is what the carrier held before the clear. ClearBin
-	// logs it; nothing decides on it. Blank from a Core that predates the field.
-	ClearedPayloadCode string `json:"cleared_payload_code,omitempty"`
-}
+// BinClearResponse is the response after clearing a bin via HTTP.
+type BinClearResponse = protocol.BinClearResponse
 
-// BinCountResponse is Core's reply to a count declared from the line.
-type BinCountResponse struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-	// Error is the OTHER shape Core answers a failure in, and not having it
-	// here cost 115 unattributable log lines in one sim run. See coreErrorText.
-	Error        string `json:"error,omitempty"`
-	BinID        int64  `json:"bin_id,omitempty"`
-	BinLabel     string `json:"bin_label,omitempty"`
-	Expected     int    `json:"expected"`
-	UOPRemaining int    `json:"uop_remaining"`
-	Discrepancy  bool   `json:"discrepancy"`
-	Warning      string `json:"warning,omitempty"`
-	DeltaEpoch   int64  `json:"delta_epoch,omitempty"`
-	// The record-count fence, the same as on the UOPAdjustment Core enqueues
-	// for this count; nil/"" from a Core that predates it or could not fence.
-	AsOfNet     *int64 `json:"as_of_net,omitempty"`
-	AsOfSeq     *int64 `json:"as_of_seq,omitempty"`
-	AsOfStation string `json:"as_of_station,omitempty"`
-}
+// BinCountResponse is the response to a count declared from the line.
+type BinCountResponse = protocol.BinCountResponse
 
 // RecordBinCount declares a count an operator made at the line to Core.
 //
@@ -576,10 +434,10 @@ func (c *CoreClient) RecordBinCount(nodeName string, actualUOP int, actor string
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	body, err := json.Marshal(map[string]any{
-		"node_name":  nodeName,
-		"actual_uop": actualUOP,
-		"actor":      actor,
+	body, err := json.Marshal(protocol.BinCountRequest{
+		NodeName:  nodeName,
+		ActualUOP: actualUOP,
+		Actor:     actor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal bin-count request: %w", err)
@@ -673,10 +531,7 @@ func (c *CoreClient) ClearBin(nodeName, binTypeCode string) (*BinClearResponse, 
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	reqBody := map[string]string{"node_name": nodeName}
-	if binTypeCode != "" {
-		reqBody["bin_type_code"] = binTypeCode
-	}
+	reqBody := protocol.BinClearRequest{NodeName: nodeName, BinTypeCode: binTypeCode}
 	body, _ := json.Marshal(reqBody)
 	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
 	if err != nil {

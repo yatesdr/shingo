@@ -7,7 +7,7 @@
 // Startup sequence (main):
 //   flags → restore check → debug log → config → DB → engine →
 //   backup service → messaging → data sender → outbox drainer →
-//   production reporter → Kafka subscribers → HTTP server → shutdown
+//   Kafka subscribers → HTTP server → shutdown
 //
 // Kafka wiring lives in setupKafkaSubscribers() because it requires
 // a live connection. If Connect fails, the outbox drainer still runs
@@ -85,7 +85,7 @@ func parseFlags() edgeFlags {
 		fmt.Fprintf(flag.CommandLine.Output(), "  --log-debug[=FILTER]\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "        Enable debug log file. FILTER is optional comma-separated subsystems:\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "        engine, plc, orders, changeover, kafka, edge_handler,\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "        heartbeat, outbox, reporter, protocol\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "        heartbeat, outbox, protocol\n")
 	}
 	flag.Parse()
 
@@ -314,6 +314,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		}
 		return ""
 	}
+	// Applied schema version on every register, so Core's /edges page can
+	// show each station's migration state beside Core's own. Read at send
+	// time, though it cannot change while the process lives — same shape as
+	// the other Fns. A failed read reports -1, which renders as "unread",
+	// not as pre-runner.
+	hb.SchemaVersionFn = db.AppliedSchemaVersion
 
 	// The production tick shipper's lag on every heartbeat, so Core's Inventory
 	// page can flag a station whose tick feed has stalled — no message of its
@@ -382,9 +388,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// response carries the whole scene with its revision.
 		eng.SetSceneGeometry(resp.SceneRevision, resp.ScenePoints, resp.SceneEdges)
 	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
-		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
-	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectCatalogPayloadsResponse, func(_ *protocol.Envelope, resp *protocol.CatalogPayloadsResponse) {
 		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
 		eng.HandlePayloadCatalog(resp.Payloads)
@@ -395,13 +398,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// ask about, because we have no row for them. A dropped projection is
 		// repaired here and nowhere else.
 		eng.HandleUnlistedOrders(resp.Unlisted)
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectTagVerifyResponse, func(_ *protocol.Envelope, resp *protocol.TagVerifyResponse) {
-		if resp.Match {
-			log.Printf("edge_handler: tag verify: uuid=%s match=true detail=%s", resp.OrderUUID, resp.Detail)
-		} else {
-			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
-		}
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegisterRequest, func(_ *protocol.Envelope, req *protocol.EdgeRegisterRequest) {
 		log.Printf("edge_handler: core requested re-registration: %s", req.Reason)
@@ -777,21 +773,10 @@ func main() {
 		eng.SetProductionTickLagFunc(tickShipper.Lag)
 	}
 
-	// ── Production reporter ────────────────────────────────────────────
-	reporter := messaging.NewProductionReporter(db, stationID)
-	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		if pr, ok := evt.Payload.(engine.ProducedReportEvent); ok {
-			reporter.RecordDelta(pr.PayloadCode, pr.Delta)
-		}
-	}, engine.EventProducedReport)
-	reporter.Start()
-	defer reporter.Stop()
-
 	// ── UOP mutator ────────────────────────────────────────────────────
 	// Accumulates per-bin UOP deltas and dirty lineside pile levels from
 	// the PLC tick path, the operator release path and the pile writes;
-	// flushes through the same outbox as the production reporter on a 5s
+	// flushes through the same outbox on a 5s
 	// cadence plus the release-click / loader-confirm / A/B-flip flush
 	// triggers. Core applies bin deltas to bins.uop_remaining and sets its
 	// lineside_buckets mirror to each pile level.
@@ -1006,11 +991,11 @@ func main() {
 
 	// Stop the engine before the deferred stops run. Defers run last in,
 	// first out, so the deferred eng.Stop above would run after
-	// uopMutator.Stop and reporter.Stop: their final flush would happen
+	// uopMutator.Stop: its final flush would happen
 	// while the PLC poll was still recording ticks, and a tick recorded
 	// after it never reached Core. Stop joins the poll goroutine, and a tick
 	// is handled synchronously inside the poll pass, so once it returns the
-	// accumulators are quiet and their final flush carries every tick. The
+	// accumulators are quiet and its final flush carries every tick. The
 	// deferred call is then a no-op.
 	eng.Stop()
 }

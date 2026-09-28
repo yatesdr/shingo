@@ -255,7 +255,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// Load bin via direct HTTP to Core — synchronous, immediate feedback
 	items := make([]BinLoadItem, len(manifest))
 	for i, m := range manifest {
-		items[i] = BinLoadItem{PartNumber: m.PartNumber, Quantity: m.Quantity, Description: m.Description}
+		items[i] = BinLoadItem(m)
 	}
 	loadResp, err := e.coreClient.LoadBin(&BinLoadRequest{
 		NodeName:    node.CoreNodeName,
@@ -602,9 +602,9 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	if runtime != nil {
 		discarded = runtime.RemainingUOPCached
 	}
-	log.Printf("bin_ops: CLEAR at node %s discarded %d parts on bin %d (payload=%q, new epoch=%d) — "+
+	log.Printf("bin_ops: CLEAR at node %s discarded %d parts on bin %d (payload=%q, type=%q, new epoch=%d) — "+
 		"Core holds the ledger row (clear_for_reuse)",
-		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.DeltaEpoch)
+		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.ClearedBinTypeCode, cleared.DeltaEpoch)
 	// Push-driven unloader: offer the next pull at the unloader this window
 	// belongs to. The AutoPush gate is this condition. The carrier is still on the
 	// window (it leaves at the U2's pickup), so it is counted held and the offer

@@ -61,8 +61,16 @@ type RegistryEdge struct {
 	// name), reported on register and heartbeat. Empty means unconfigured —
 	// the /edges table shows the blank rather than guessing, because a
 	// guessed zone is exactly the wrongness this column exists to surface.
-	// Written only from the wire, never by a human.
 	Timezone string `json:"timezone"`
+
+	// SchemaVersion is the applied schema_migrations version the edge's
+	// register reported (see protocol.EdgeRegister.SchemaVersion). Nil means
+	// no register has carried one — a pre-v137 Core or an edge predating the
+	// wire field; the /edges table renders the blank as "unknown" rather
+	// than 0, because 0 is a real answer (a database that predates the
+	// versioned runner) and nil is the absence of the question. Written only
+	// from the wire, never by a human.
+	SchemaVersion *int `json:"schema_version"`
 
 	// TickPending / TickOldestUnsentAgeMS are the production tick shipper's lag
 	// as the edge last reported it on a heartbeat: shippable counter_snapshots

@@ -12,14 +12,14 @@ import (
 //
 // ── THE DEFECT THIS EXISTS TO STOP COMING BACK ────────────────────────────
 //
-// The window's job is to measure how often the seven `BinID == nil` sites fire
+// The window's job is to measure how often the six `BinID == nil` sites fire
 // on a COORDINATOR, whose NULL bin_id is permanent and correct. Twelve of those
 // read "Core degraded" for a whole rig run against zero real defects, and the
 // count is what the stage-1 cutover is meant to quote.
 //
 // It counted the opposite. NoteFolderShadow took a binIDIsNil parameter and
 // tested `binIDIsNil != ownsNoCargo` (both since removed), which reads like a
-// symmetric comparison of two answers — but all seven callers are inside their
+// symmetric comparison of two answers — but all six callers are inside their
 // own nil branch and passed the constant `true`, so it reduced to
 // `!ownsNoCargo` (since removed), and OrderOwnsNoCargo returns TRUE for a coordinator. So
 // it tallied and shouted about the firings that were RIGHT and stayed silent on
@@ -60,16 +60,16 @@ func TestFolderShadow_AnUnreadableRowIsNotAnAnswer(t *testing.T) {
 	ResetFolderShadow()
 	t.Cleanup(ResetFolderShadow)
 
-	NoteFolderShadow(FolderSiteTagVerify, 7, false, errors.New("db down"))
+	NoteFolderShadow(FolderSiteRecoveryReapply, 7, false, errors.New("db down"))
 
-	if got := FolderShadowTally()[FolderSiteTagVerify]; got != 0 {
+	if got := FolderShadowTally()[FolderSiteRecoveryReapply]; got != 0 {
 		t.Errorf("coordinator count = %d, want 0 on a read failure", got)
 	}
-	if got := FolderShadowOrdinary()[FolderSiteTagVerify]; got != 0 {
+	if got := FolderShadowOrdinary()[FolderSiteRecoveryReapply]; got != 0 {
 		t.Errorf("ordinary count = %d, want 0 on a read failure — the isCoordinator argument is "+
 			"undefined when the read failed and must not be believed", got)
 	}
-	if got := FolderShadowSampled()[FolderSiteTagVerify]; got != 1 {
+	if got := FolderShadowSampled()[FolderSiteRecoveryReapply]; got != 1 {
 		t.Errorf("sampled = %d, want 1 — the attempt happened and the window is one short here", got)
 	}
 }

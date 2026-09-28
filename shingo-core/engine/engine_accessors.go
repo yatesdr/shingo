@@ -73,7 +73,6 @@ func (e *Engine) CMSFeedHealth() (*service.FeedHealth, error) {
 func (e *Engine) InventoryService() *service.InventoryService { return e.inventoryService }
 func (e *Engine) AdminService() *service.AdminService         { return e.adminService }
 func (e *Engine) HealthService() *service.HealthService       { return e.healthService }
-func (e *Engine) TagVerifyService() *service.TagVerifyService { return e.tagVerifyService }
 func (e *Engine) InventoryDeltaService() *service.InventoryDeltaService {
 	return e.inventoryDeltaService
 }

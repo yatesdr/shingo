@@ -23,7 +23,7 @@ import (
 //   - 60 payloads
 //   - 720 bins spread across those payloads and 12 nodes, with a realistic
 //     status mix (available / staged plus a slice of the excluded
-//     flagged/maintenance/quality_hold/retired states so the lifecycle filter
+//     flagged/maintenance/retired states so the lifecycle filter
 //     is exercised, not short-circuited)
 //   - active lineside piles on ~half the payloads at consuming nodes (the
 //     bucket arm is SUM(qty) over state='active'; it read the plant-claims
@@ -112,7 +112,7 @@ func seedPlantScale(b *testing.B, db *store.DB) []string {
 	// filter and the staged-counts-in-full path both see real rows. Direct
 	// inserts — SystemUOPForPayload reads only (payload_code, status,
 	// uop_remaining), so the manifest-confirm flow is unnecessary here.
-	statuses := []string{"available", "available", "available", "staged", "flagged", "maintenance", "quality_hold", "retired"}
+	statuses := []string{"available", "available", "available", "staged", "flagged", "maintenance", "retired"}
 	for i := 0; i < numBins; i++ {
 		payload := payloads[i%numPayloads]
 		nodeID := nodeIDs[i%numNodes]

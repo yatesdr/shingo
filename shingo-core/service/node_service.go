@@ -162,6 +162,12 @@ func (s *NodeService) ListScenePoints() ([]*scene.Point, error) {
 	return s.db.ListScenePoints()
 }
 
+// CoreSchemaVersion is Core's own applied schema version, the head of this
+// binary's migration list. A running Core has applied every version through it:
+// store.Open refuses to start on a failed migration. /edges shows it beside
+// each station's reported version.
+func (s *NodeService) CoreSchemaVersion() int { return store.LatestMigrationVersion() }
+
 // ListEdges returns the registered edges (adjacency records) between
 // nodes. Absorbed from engine_db_methods.go as part of the
 // nodesPageDataStore dissolution (PR 3a.5.1).

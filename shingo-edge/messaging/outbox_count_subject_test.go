@@ -111,7 +111,7 @@ func TestCountRowRetriesPastTheBudget(t *testing.T) {
 // row the broker refuses 10 times is dead-lettered as it always was.
 func TestOrdinarySubjectStillDeadLetters(t *testing.T) {
 	t.Parallel()
-	_, attempts, failureStatements := failedCountPublishes(t, protocol.SubjectProductionReport, 15)
+	_, attempts, failureStatements := failedCountPublishes(t, protocol.SubjectEdgeHeartbeat, 15)
 	if attempts != 10 {
 		t.Errorf("%d publish attempts, want exactly 10 (outbox.MaxRetries)", attempts)
 	}

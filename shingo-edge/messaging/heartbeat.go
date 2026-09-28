@@ -44,6 +44,13 @@ type Heartbeater struct {
 	// TimezoneFn, when set, supplies the plant display zone stamped onto
 	// every register and heartbeat (see TimezoneFunc). Set post-construction.
 	TimezoneFn TimezoneFunc
+	// SchemaVersionFn, when set, supplies the database's applied
+	// schema_migrations version stamped onto every register (startup +
+	// reconnect), so Core's /edges page can show each station's migration
+	// state. Read at send time like the other Fns. -1 means "read failed";
+	// the register still goes out with that value, which is the honest
+	// answer, not a blank that reads as pre-runner.
+	SchemaVersionFn func() int
 	// SceneRevisionFn, when set, supplies the revision of the scene geometry
 	// the Edge already holds, quoted on every node-list request so Core can
 	// leave the geometry off when nothing changed. Read at send time, not
@@ -112,17 +119,22 @@ func (h *Heartbeater) sendRegister() {
 	if h.TimezoneFn != nil {
 		tz = h.TimezoneFn()
 	}
+	var schemaVersion int
+	if h.SchemaVersionFn != nil {
+		schemaVersion = h.SchemaVersionFn()
+	}
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeRegister,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.EdgeRegister{
-			StationID: h.stationID,
-			Hostname:  hostname,
-			Instance:  h.instance,
-			Version:   h.version,
-			Timezone:  tz,
-			Catalog:   catalog,
+			StationID:     h.stationID,
+			Hostname:      hostname,
+			Instance:      h.instance,
+			Version:       h.version,
+			Timezone:      tz,
+			SchemaVersion: schemaVersion,
+			Catalog:       catalog,
 		},
 	)
 	if err != nil {

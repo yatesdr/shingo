@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="flex flex-between mb-2">
   <h1>Stations</h1>
+  <span class="muted" title="The schema_migrations version this Core has applied. Each station's Schema column is its own SQLite version, read against this.">Core schema v{{.CoreSchemaVersion}}</span>
 </div>
 
 <p class="muted mb-2">
@@ -35,6 +36,7 @@
       <th>Name</th>
       <th>Station uid</th>
       <th>Host</th>
+      <th title="The applied edge schema version this station last reported on register — its SQLite migration state, shown beside Core's own. A station behind on a migration is a station whose dispatch surface may not match what Core sends.">Schema</th>
       <th>Status</th>
       <th title="The plant display zone this edge reports being on. Blank means its shingoedge.yaml has no timezone: set one (Edge → System Config → Plant Timezone) and restart it.">Zone</th>
       <th title="Registers that arrived from a machine other than the one this station is bound to. A climbing count means two machines are alive on one identity.">Conflicts</th>
@@ -59,6 +61,7 @@
       </td>
       <td><code>{{.StationUID}}</code></td>
       <td>{{if .Hostname}}{{.Hostname}}{{else}}-{{end}}</td>
+      <td title="The applied edge schema version this station last reported on register — its SQLite migration state, shown beside Core's own. A station behind on a migration is a station whose dispatch surface may not match what Core sends.">{{if .SchemaVersion}}v{{.SchemaVersion}}{{else}}<span class="badge badge-warn" title="No register has carried a schema version: an edge older than the wire field, or a Core row predating v137.">unknown</span>{{end}}</td>
       <td>{{.Status}}</td>
       <td>
         {{/* Wire-reported, never hand-set. Blank = the edge is unconfigured —

@@ -88,7 +88,7 @@ func TestCountSubjectFailedPublishKeepsItsBudget(t *testing.T) {
 
 	// Control: an ordinary subject keeps its budget.
 	store := &mockStore{pending: []Message{
-		{ID: 2, Payload: []byte("report"), MsgType: protocol.SubjectProductionReport},
+		{ID: 2, Payload: []byte("report"), MsgType: protocol.SubjectEdgeHeartbeat},
 	}}
 	pub := &mockPublisher{connected: true, publishErr: errors.New("broker unreachable")}
 	NewDrainer(store, pub, "orders", time.Hour, 50).drain()

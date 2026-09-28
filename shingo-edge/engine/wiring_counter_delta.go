@@ -356,11 +356,10 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// Hold-and-replay, mirror of consume. Increment the bin physically at
 	// the slot; when none is bound (finalize→new-empty gap) hold the
 	// produced parts in pending and replay onto the next empty bin when it
-	// binds. The finished-good production tally (EventProducedReport below)
-	// is bin-independent and fires every tick regardless.
+	// binds.
 	//
 	// The count write and the record are one change to the seat; the lineside
-	// report must see both or neither (countMu). The event below is outside it.
+	// report must see both or neither (countMu).
 	e.countMu.Lock()
 	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, delta, +1)
 
@@ -375,18 +374,6 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		})
 	}
 	e.countMu.Unlock()
-
-	// Report finished-good production to Core keyed by this produce node's
-	// payload (the catalog part code demands match on), resolved per node so
-	// multi-part styles attribute to the right part. Independent of the
-	// inventory delta above — the production reporter subscribes to
-	// EventProducedReport. Empty payload = misconfigured node; skip.
-	if delta > 0 && claim.PayloadCode != "" {
-		e.Events.Emit(Event{Type: EventProducedReport, Payload: ProducedReportEvent{
-			PayloadCode: claim.PayloadCode,
-			Delta:       int64(delta),
-		}})
-	}
 }
 
 // handleABFallthrough is the safety-net path when no active-pull consume node

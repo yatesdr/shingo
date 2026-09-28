@@ -317,7 +317,7 @@ func Claim(db *sql.DB, uid, displayName string) (bool, error) {
 // hostname must read as "cannot judge" in BOTH directions: it must not raise a
 // false alarm against the bound host, and it must not become the binding,
 // which would then make the real hostname look like the intruder.
-func Register(db *sql.DB, uid, hostname, instance, version, timezone string) (*Conflict, error) {
+func Register(db *sql.DB, uid, hostname, instance, version, timezone string, schemaVersion sql.NullInt64) (*Conflict, error) {
 	var boundHost string
 	var count int64
 	var at sql.NullTime
@@ -331,6 +331,7 @@ func Register(db *sql.DB, uid, hostname, instance, version, timezone string) (*C
 			hostname = $2,
 			version = $4,
 			timezone = $5,
+			schema_version = $6,
 			registered_at = NOW(),
 			status = 'active',
 			bound_hostname = CASE
@@ -356,7 +357,7 @@ func Register(db *sql.DB, uid, hostname, instance, version, timezone string) (*C
 		RETURNING prev.bound_hostname, e.conflict_count, e.conflict_at,
 		          (prev.bound_hostname NOT IN ('', $2) AND $2 <> ''),
 		          ($3 <> '' AND prev.prev_instance = $3)
-	`, uid, hostname, instance, version, timezone).Scan(
+	`, uid, hostname, instance, version, timezone, schemaVersion).Scan(
 		&boundHost, &count, &at, &hostConflict, &instConflict)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUnknownStation
@@ -494,7 +495,8 @@ const edgeColumns = `id, station_uid, display_name, station_id, hostname, versio
 	       bound_hostname, bound_instance, prev_instance, bound_at, claimed_at,
 	       conflict_hostname, conflict_count, conflict_at,
 	       timezone,
-	       tick_pending, tick_oldest_unsent_age_ms, tick_reported_at, tick_rejected`
+	       tick_pending, tick_oldest_unsent_age_ms, tick_reported_at, tick_rejected,
+	       schema_version`
 
 func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 	var e Edge
@@ -503,7 +505,8 @@ func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 		&e.BoundHostname, &e.BoundInstance, &e.PrevInstance, &e.BoundAt, &e.ClaimedAt,
 		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt,
 		&e.Timezone,
-		&e.TickPending, &e.TickOldestUnsentAgeMS, &e.TickReportedAt, &e.TickRejected)
+		&e.TickPending, &e.TickOldestUnsentAgeMS, &e.TickReportedAt, &e.TickRejected,
+		&e.SchemaVersion)
 	return e, err
 }
 

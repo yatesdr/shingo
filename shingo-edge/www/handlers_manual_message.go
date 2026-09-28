@@ -112,19 +112,6 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 			Uptime:    p.Uptime,
 		})
 
-	case "production.report":
-		var p struct {
-			Entries []protocol.ProductionReportEntry `json:"entries"`
-		}
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
-		env, err = protocol.NewDataEnvelope(protocol.SubjectProductionReport, src, dst, &protocol.ProductionReport{
-			StationID: stationID,
-			Reports:   p.Entries,
-		})
-
 	case "node.list_request":
 		env, err = protocol.NewDataEnvelope(protocol.SubjectNodeListRequest, src, dst, &protocol.NodeListRequest{})
 

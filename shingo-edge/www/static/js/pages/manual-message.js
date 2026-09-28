@@ -17,10 +17,6 @@ var _fieldDefs = {
     'edge.heartbeat': [
         { id: 'uptime', label: 'Uptime (seconds)', type: 'number', value: '0' }
     ],
-    'production.report': [
-        { id: 'cat_id', label: 'Cat ID', type: 'text', value: '' },
-        { id: 'count', label: 'Count', type: 'number', value: '1' }
-    ],
     'node.list_request': [],
     'order.request': [
         { id: 'order_uuid', label: 'Order UUID', type: 'text', value: function(){ return crypto.randomUUID(); } },
@@ -96,8 +92,6 @@ function buildPayload() {
             return { version: getFieldValue('version') };
         case 'edge.heartbeat':
             return { uptime: getFieldValue('uptime') };
-        case 'production.report':
-            return { entries: [{ cat_id: getFieldValue('cat_id'), count: getFieldValue('count') }] };
         case 'node.list_request':
             return {};
         case 'order.request':

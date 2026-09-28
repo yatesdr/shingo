@@ -38,17 +38,11 @@ const (
 	SubjectEdgeHeartbeat    = "edge.heartbeat"
 	SubjectEdgeHeartbeatAck = "edge.heartbeat_ack"
 
-	SubjectProductionReport    = "production.report"
-	SubjectProductionReportAck = "production.report_ack"
-
 	SubjectEdgeStale           = "edge.stale"
 	SubjectEdgeRegisterRequest = "edge.register_request"
 
 	SubjectNodeListRequest  = "node.list_request"
 	SubjectNodeListResponse = "node.list_response"
-
-	SubjectTagVerifyRequest  = "tag.verify_request"
-	SubjectTagVerifyResponse = "tag.verify_response"
 
 	SubjectCatalogPayloadsRequest  = "catalog.payloads_request"
 	SubjectCatalogPayloadsResponse = "catalog.payloads_response"
@@ -329,8 +323,6 @@ func CoreInboundSubjects() []string {
 		SubjectEdgeRegister,
 		SubjectEdgeHeartbeat,
 		SubjectNodeListRequest,
-		SubjectProductionReport,
-		SubjectTagVerifyRequest,
 		SubjectCatalogPayloadsRequest,
 		SubjectOrderStatusRequest,
 		SubjectBinUOPDelta,
@@ -361,10 +353,8 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeRegistered,
 		SubjectEdgeHeartbeatAck,
 		SubjectNodeListResponse,
-		SubjectProductionReportAck,
 		SubjectCatalogPayloadsResponse,
 		SubjectOrderStatusResponse,
-		SubjectTagVerifyResponse,
 		SubjectEdgeRegisterRequest,
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,

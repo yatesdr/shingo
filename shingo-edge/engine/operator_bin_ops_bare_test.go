@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -129,5 +132,39 @@ func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 				t.Errorf("node-bins reads = %d, want %d (paths %v)", reads, tc.wantReads, paths)
 			}
 		})
+	}
+}
+
+// TestClearBin_LogsClearedBinTypeCode: Core's clear answer names the cart's
+// type as an operator knows it (cleared_bin_type_code — the carrier, never a
+// marker), and the board's CLEAR log line is where it is read. Pin: the line
+// carries type="<code>". Blank from a Core that predates the field is fine;
+// a present code that is thrown away is what this test catches.
+func TestClearBin_LogsClearedBinTypeCode(t *testing.T) {
+	// No t.Parallel — stdlib log.SetOutput is global.
+	eng := testEngine(t, testEngineDB(t))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "bin_id": 91, "delta_epoch": 2,
+			"cleared_payload_code": "PART-HL", "cleared_bin_type_code": "TOTE-XL",
+		})
+	}))
+	var buf bytes.Buffer
+	prevW, prevFlags := log.Writer(), log.Flags()
+	t.Cleanup(srv.Close)
+	eng.coreClient = NewCoreClient(srv.URL)
+	info := sharedLoaderInfo("HLC-T", "consume", "operator", "PART-HL", 0, 0)
+	info.InboundSource = ""
+	info.OutboundDest = "EMPTY-TOTES"
+	nodeID := coreUnloaderWindow(t, eng, "HLC-T", info)
+
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevW); log.SetFlags(prevFlags) })
+
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin")
+
+	if !strings.Contains(buf.String(), `type="TOTE-XL"`) {
+		t.Errorf("CLEAR log line does not carry the cart type Core sent — want %q in:\n%s", `type="TOTE-XL"`, buf.String())
 	}
 }

@@ -1,7 +1,9 @@
 # Order state machine — bypasses and the lint guard
 
-**This document does not contain the state machine.** It used to, and that is why
-it was wrong.
+**The code is the state machine; this document is not.** It used to carry
+hand-copied tables, and that is why it was wrong. It carries one again — the
+transition table below — only because a test now fails when it disagrees with
+the code.
 
 Where the machine actually lives:
 
@@ -10,7 +12,7 @@ Where the machine actually lives:
 | the statuses | `protocol/status.go` — the const block, and `AllStatuses()` |
 | the transitions | `protocol/types.go` — `validTransitions` |
 | terminality | derived: a status is terminal iff it has no outgoing edges |
-| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsPreDispatch`, `IsStuckSweepCandidate`, `IsRuntimeStuckCandidate`, `IsOperatorVisible`, `BlocksChangeoverStart` |
+| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsPreDispatch`, `IsStuckSweepCandidate`, `IsRuntimeStuckCandidate`, `IsFailureTerminal`, `BlocksChangeoverStart` |
 | the side effects per edge | `shingo-core/dispatch/lifecycle.go` — `actionMap` |
 | the typed writer methods | `shingo-core/dispatch/lifecycle.go` |
 | a readable diagram | [`docs/order-lifecycle.md`](../order-lifecycle.md) |
@@ -29,8 +31,39 @@ message points developers here (`.golangci.yml`). Someone arriving to add a
 carveout was reading a machine two feature-cycles behind the one they were
 editing.
 
-A table copied out of code has a half-life. The fix is not to re-copy it — it is
-to stop. What remains below is the part that is only here.
+A table copied out of code has a half-life. The fix was to stop copying — and,
+for the one table a reader arriving from a lint failure most needs, to copy it
+under a pin. The transition table below is checked against `validTransitions`
+by `protocol/transitions_doc_drift_test.go`
+(`TestTransitionsDocTableMatchesTheCode`): an edge or a status added or removed
+on either side fails the protocol module's tests. The action map and the method list stay
+unrendered; read them in `lifecycle.go`.
+
+## The transition table
+
+One row per status. `from` may move to each status in its row; a terminal
+status has no outgoing edge. Pinned to `protocol/types.go` `validTransitions`
+and `AllStatuses()`.
+
+| from | to |
+|---|---|
+| `pending` | `sourcing`, `submitted`, `queued`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `sourcing` | `queued`, `submitted`, `dispatched`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `queued` | `acknowledged`, `dispatched`, `in_transit`, `sourcing`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `submitted` | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |
+| `dispatched` | `in_transit`, `delivered`, `sourcing`, `cancelled`, `faulted`, `failed` |
+| `acknowledged` | `dispatched`, `in_transit`, `sourcing`, `cancelled`, `faulted`, `failed` |
+| `in_transit` | `delivered`, `staged`, `cancelled`, `faulted`, `failed` |
+| `staged` | `in_transit`, `delivered`, `cancelled`, `faulted`, `failed` |
+| `delivered` | `confirmed`, `cancelled`, `failed` |
+| `faulted` | `in_transit`, `delivered`, `failed`, `cancelled` |
+| `reshuffling` | `confirmed`, `queued`, `cancelled`, `failed` |
+| `confirmed` | *(terminal)* |
+| `failed` | *(terminal)* |
+| `cancelled` | *(terminal)* |
+| `skipped` | *(terminal)* |
+
+What remains below the table is the part that is only here.
 
 ## Reservations run alongside, not inside
 

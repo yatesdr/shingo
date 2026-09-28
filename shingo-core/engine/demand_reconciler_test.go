@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 	if _, err := db.EnrollEdge(stationID, "", stationID); err != nil {
 		t.Fatalf("enroll edge: %v", err)
 	}
-	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", ""); err != nil {
+	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{}); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
 	if _, err := db.UpdateHeartbeat(stationID, "", store.TickLag{}); err != nil {
@@ -59,7 +60,7 @@ func registerEdgeWithoutHeartbeat(t *testing.T, db *store.DB, stationID string) 
 	if _, err := db.EnrollEdge(stationID, "", stationID); err != nil {
 		t.Fatalf("enroll edge: %v", err)
 	}
-	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", ""); err != nil {
+	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{}); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
 }

@@ -4,8 +4,8 @@
 // Phase 6.0a of the architecture refactor cut this seam out of
 // store/schema_postgres.go (DDL constant) and store/migrations.go
 // (per-DB introspection methods on *store.DB). The DDL is applied
-// once via Apply() before the versioned migration loop in
-// store.runVersionedMigrations() runs; introspection helpers are
+// once via Apply() before the versioned migration loop (protocol/migrate's
+// Run, called from store.migrate) runs; introspection helpers are
 // used by per-version migration funcs to make schema changes
 // idempotent across DBs of any age.
 //
@@ -15,7 +15,7 @@
 // the migration's DDL and the schema_migrations row insert commit
 // or roll back together — without that, an ALTER TABLE that fails
 // midway can still leave behind a version row that fools the runner
-// into thinking the migration succeeded. (See store.runVersionedMigrations.)
+// into thinking the migration succeeded. (See protocol/migrate's Run.)
 package schema
 
 import (

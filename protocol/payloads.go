@@ -67,8 +67,21 @@ type EdgeRegister struct {
 	// emptiness, which is the "go set it" signal. Additive: an old Core
 	// drops the unknown field (no DisallowUnknownFields anywhere); an old
 	// edge sends nothing and a new Core reads absence as "unknown".
-	Timezone string             `json:"timezone,omitempty"`
-	Catalog  []CellCatalogEntry `json:"catalog,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
+	// SchemaVersion is the Edge's applied schema_migrations version at
+	// process start — the version its boot migration left the database at
+	// (0 for an edge that predates the versioned runner). Sent on register,
+	// never the heartbeat: the version cannot change while the process
+	// lives, so repeating it every 60s would be noise. Core's /edges page
+	// shows it beside Core's own, so an edge left behind on a migration is
+	// visible without an SSH round trip to the box.
+	//
+	// -1 means "the edge knows but could not read it" (a failed Latest at
+	// boot); 0 with a blank is the honest pre-runner answer, not a fault.
+	// Additive, like Timezone: an old Core drops the unknown field and an
+	// old edge sends nothing, which a new Core reads as pre-runner.
+	SchemaVersion int                `json:"schema_version,omitempty"`
+	Catalog       []CellCatalogEntry `json:"catalog,omitempty"`
 }
 
 // EdgeHeartbeat is sent periodically by an edge.
@@ -1060,24 +1073,6 @@ type LoaderPayloadInfo struct {
 
 // --- Production data schemas ---
 
-// ProductionReportEntry is a single cat_id production count.
-type ProductionReportEntry struct {
-	CatID string `json:"cat_id"`
-	Count int64  `json:"count"`
-}
-
-// ProductionReport carries production counts from an edge station.
-type ProductionReport struct {
-	StationID string                  `json:"station_id"`
-	Reports   []ProductionReportEntry `json:"reports"`
-}
-
-// ProductionReportAck acknowledges processing of a production report.
-type ProductionReportAck struct {
-	StationID string `json:"station_id"`
-	Accepted  int    `json:"accepted"`
-}
-
 // EdgeStale is sent by core to notify an edge that it has been marked stale.
 type EdgeStale struct {
 	StationID string `json:"station_id"`
@@ -1088,23 +1083,6 @@ type EdgeStale struct {
 type EdgeRegisterRequest struct {
 	StationID string `json:"station_id"`
 	Reason    string `json:"reason"`
-}
-
-// --- QR Tag Verification ---
-
-// TagVerifyRequest is sent by edge to verify a scanned QR tag against an order's payload bin.
-type TagVerifyRequest struct {
-	OrderUUID string `json:"order_uuid"`
-	TagID     string `json:"tag_id"`
-	Location  string `json:"location,omitempty"`
-}
-
-// TagVerifyResponse is the core's response to a tag verification request.
-type TagVerifyResponse struct {
-	OrderUUID string `json:"order_uuid"`
-	Match     bool   `json:"match"`
-	Expected  string `json:"expected,omitempty"`
-	Detail    string `json:"detail,omitempty"`
 }
 
 // --- Payload Catalog ---

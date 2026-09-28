@@ -106,7 +106,6 @@ type Engine struct {
 	inventoryService      *service.InventoryService
 	adminService          *service.AdminService
 	healthService         *service.HealthService
-	tagVerifyService      *service.TagVerifyService
 	inventoryDeltaService *service.InventoryDeltaService
 	dashboardService      *service.DashboardService
 	footprintService      *service.FootprintService
@@ -305,7 +304,6 @@ func New(c Config) *Engine {
 	e.inventoryService = service.NewInventoryService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.healthService = service.NewHealthService(e.db)
-	e.tagVerifyService = service.NewTagVerifyService(e.db)
 	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest, epochAnnounce)
 	e.dashboardService = service.NewDashboardService(e.db)
 	e.footprintService = service.NewFootprintService(e.db)

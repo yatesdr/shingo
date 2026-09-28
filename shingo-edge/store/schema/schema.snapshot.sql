@@ -648,6 +648,11 @@ CREATE TABLE scene_geometry_points (
     PRIMARY KEY (instance_name)
 );
 
+CREATE TABLE schema_migrations (
+    version    INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE shifts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL DEFAULT '',

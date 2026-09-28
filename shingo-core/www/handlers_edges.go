@@ -42,7 +42,7 @@ import (
 // legitimate state (nothing enrolled yet) and it is indistinguishable from a
 // failed read unless the failure says so.
 func (h *Handlers) handleEdgesAdmin(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{"Page": "edges"}
+	data := map[string]any{"Page": "edges", "CoreSchemaVersion": h.engine.NodeService().CoreSchemaVersion()}
 	edges, err := h.engine.NodeService().ListEdges()
 	if err != nil {
 		data["RegistryError"] = err.Error()
