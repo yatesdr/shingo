@@ -272,9 +272,13 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
 	}
 
-	// Futility accounting. Placed here because transition() is the one
-	// chokepoint every status write goes through, so the detector cannot be
-	// bypassed by a new call site the way a per-caller hook could.
+	// Futility accounting. Placed here so every write that goes through
+	// transition() feeds the detector without a per-caller hook. It is NOT
+	// every status write, and never was: dispatch/compound.go fails orders with
+	// a direct db.FailOrderAtomic, OrderService.FailAtomic does the same, the
+	// orders.Create INSERT births a status outright, and the .golangci.yml
+	// exclusions.rules carveouts name the rest (see transitions.md, "What
+	// bypasses transition()"). Writes on those paths are invisible here.
 	s.noteFutility(ord, from, to, ev)
 
 	for _, action := range actionMap[transitionKey{from, to}] {

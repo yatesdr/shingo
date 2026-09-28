@@ -76,8 +76,10 @@ func (e *Engine) reconcileLoaderClaims(loaders []protocol.LoaderInfo) {
 	// because nothing after it writes a manual_swap row (UpsertClaim refuses one).
 	// Before it the population is NOT zero: rows survive from Edge boot to the
 	// first non-empty loader set — unbounded while Core is unreachable or sends
-	// an empty one — and cloneStyleTx copies them verbatim into any style cloned
-	// in that window. This loop is what empties them.
+	// an empty one. A style cloned in that window does NOT inherit them:
+	// cloneStyleTx's SELECT excludes manual_swap rows (styles.go:282, pinned by
+	// TestCloneStyle_LeavesWithheldConfigurationBehind). This loop is what
+	// empties the rows that remain in the source style.
 	for _, m := range moved {
 		e.logFn("core_loaders: quarantined style_node_claims id=%d node=%s style=%d payload=%q — %s. "+
 			"The row is in %s; restore it with INSERT ... SELECT if this was wrong.",

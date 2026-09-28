@@ -68,16 +68,23 @@ func ListByProcess(db *sql.DB, processID int64) ([]Order, error) {
 	return scanOrders(rows)
 }
 
-// ListActive returns orders visible on the edge HMI orders history screen.
+// operatorWindowSQL is the orders-history visibility rule, shared by
+// ListActive and ListActiveByProcess.
 //
-// Always shown: non-terminal active statuses (queued, in_transit, staged, …).
-// Shown for 7 days: confirmed, failed, faulted — recent history without
-// accumulating months of noise.
+// Always shown: non-terminal statuses (queued, in_transit, staged, …), and
+// faulted with them: it is a grace state the operator still has to act on, so
+// it never ages out.
+// Shown for 7 days: confirmed, failed — recent history without accumulating
+// months of noise.
 // Never shown: cancelled, skipped — operator has nothing to do with these.
+const operatorWindowSQL = `o.status NOT IN ('cancelled','skipped')
+		AND (o.status NOT IN ('confirmed','failed') OR o.created_at > datetime('now', '-7 days'))`
+
+// ListActive returns orders visible on the edge HMI orders history screen
+// (operatorWindowSQL).
 func ListActive(db *sql.DB) ([]Order, error) {
 	rows, err := db.Query(`SELECT ` + selectCols + ` ` + joinClause + `
-		WHERE o.status NOT IN ('cancelled','skipped')
-		AND (o.status NOT IN ('confirmed','failed','faulted') OR o.created_at > datetime('now', '-7 days'))
+		WHERE ` + operatorWindowSQL + `
 		ORDER BY o.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -128,12 +135,12 @@ func CountActive(db *sql.DB) int {
 	return count
 }
 
-// ListActiveByProcess returns orders for one process. Mirrors ListActive's predicate.
+// ListActiveByProcess returns orders for one process, under ListActive's
+// window (operatorWindowSQL).
 func ListActiveByProcess(db *sql.DB, processID int64) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.status NOT IN ('cancelled','skipped')
+		WHERE `+operatorWindowSQL+`
 		AND pl.id = ?
-		AND (o.status NOT IN ('confirmed','failed','faulted') OR o.created_at > datetime('now', '-7 days'))
 		ORDER BY o.created_at DESC`, processID)
 	if err != nil {
 		return nil, err

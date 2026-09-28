@@ -169,7 +169,6 @@ var predicateProjectorPairs = []struct {
 	{"CanHoldWait", CanHoldWait, CanHoldWaitStatusSQLList},
 	{"IsRuntimeStuckCandidate", IsRuntimeStuckCandidate, RuntimeStuckCandidateStatusSQLList},
 	{"IsStuckSweepCandidate", IsStuckSweepCandidate, StuckSweepStatusSQLList},
-	{"IsOperatorVisible", IsOperatorVisible, OperatorVisibleStatusSQLList},
 }
 
 // TestBlockingStatusesAreTracked is the invariant that was missing, and its

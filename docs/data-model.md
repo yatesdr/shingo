@@ -50,7 +50,7 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 | `bin_type_id` | Physical container class |
 | `node_id` | Current floor location (nullable — bin may be in transit) |
 | `status` | Lifecycle state (see [Bin Statuses](#bin-statuses)) |
-| `claimed_by` | Order ID that has claimed this bin for transport (nullable). Set atomically with a `confirmed` **reservation** (see [Reservations](#reservations)) — the two never drift apart. |
+| `claimed_by` | Order ID that has claimed this bin for transport (nullable). Set with a `confirmed` **reservation** (see [Reservations](#reservations)). They can drift briefly: `ReleaseOrphanedClaims` clears the claim and leaves the reservation row for `ReapOrphanedReservations`. |
 | `payload_code` | Assigned payload template code (empty if unloaded) |
 | `manifest` | JSON list of parts and quantities (actual contents) |
 | `uop_remaining` | Production cycles of material left |
@@ -128,7 +128,6 @@ Classification for nodes. Controls dispatch behavior.
 |------|------|-----------|---------|
 | `NGRP` | Node Group | Yes | Groups lanes and/or direct children for dispatch resolution |
 | `LANE` | Lane | Yes | Linear sequence of slots in a supermarket |
-| `SHF` | Shuffle Row | Yes | Temporary holding for reshuffle operations |
 
 Physical nodes (storage slots, line-side locations, staging areas) typically have no node type.
 
@@ -296,13 +295,17 @@ When multiple bins match a retrieve request, the system picks the one with the o
 
 ### Dispatch Eligibility
 
-A bin is eligible for retrieval only when all three conditions are met:
+The rule has one definition, `BinSourceableSQL` in
+`shingo-core/store/internal/helpers/bin_sourceable.go`, and every sourcing reader
+composes it. A bin is eligible for retrieval when:
 1. `manifest_confirmed = true` — contents have been verified
-2. `status = 'available'` — bin is in normal operating state
-3. No active **reservation** held by another order — the bin is not already
-   reserved or claimed. Reservations (`resource_kind = 'bin'`) are the primary
-   hold; `claimed_by` is the confirmed-claim mirror, set atomically with the
-   `confirmed` reservation. See [reservations.md](reservations.md).
+2. `status = 'available'` — `staged` passes the status allow-list but is excluded
+   as stock, because an operator is working at it
+3. it stands at an enabled, non-synthetic node (not a robot deck or `_TRANSIT`)
+4. nobody holds it: no `claimed_by`, not `locked`, and no pending **reservation**
+   (see [reservations.md](reservations.md))
+5. where `payload_bin_types` declares carriers for the payload, the bin's type is
+   one of them
 
 ### Node Hierarchy
 
@@ -368,7 +371,6 @@ orders --< order_history
   |---> bins
   +--< reservations (resource_kind bin→bins / slot→nodes)
 
-corrections ---> nodes, bins        (historical only — nothing writes it)
 cms_transactions ---> nodes, bins, orders
 
 outbox                  (message queue)
@@ -376,6 +378,5 @@ audit_log               (system-wide audit)
 admin_users             (authentication)
 edge_registry           (connected edge stations)
 scene_points            (fleet map cache)
-demands                 (demand planning)
 test_commands           (fleet testing)
 ```

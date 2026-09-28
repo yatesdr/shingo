@@ -15,14 +15,11 @@
 
 export const TERMINAL_STATUSES = ['cancelled', 'confirmed', 'failed', 'skipped'];
 
-// Operator-visible statuses on edge HMI surfaces. Failed stays visible
-// so the operator can retry/acknowledge; confirmed/cancelled/skipped
-// are "done from the operator's POV" and disappear.
-export const OPERATOR_VISIBLE_STATUSES = [
-    'acknowledged', 'delivered', 'dispatched', 'failed', 'faulted',
-    'in_transit', 'pending', 'queued', 'reshuffling', 'sourcing',
-    'staged', 'submitted',
-];
+// (OPERATOR_VISIBLE_STATUSES was deleted 2026-09-26: no importer - the
+// operator station asks isActive/isPreDispatch, and the Edge order-history
+// window is spelled server-side in shingo-edge/store/orders/orders.go
+// ListActive. Its Go twin IsOperatorVisible went with it; see the deletion
+// note in protocol/status.go.)
 
 // PRE-DISPATCH: born, waiting, and no robot committed yet. Mirrors
 // protocol.IsPreDispatch / PreDispatchStatusSQLList, and the Go drift test pins
@@ -49,8 +46,4 @@ export function isActive(status) {
 // isPreDispatch is "waiting, nothing is moving yet" — the demand-card question.
 export function isPreDispatch(status) {
     return PRE_DISPATCH_STATUSES.includes(status);
-}
-
-export function isOperatorVisible(status) {
-    return OPERATOR_VISIBLE_STATUSES.includes(status);
 }

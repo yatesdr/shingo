@@ -66,8 +66,8 @@ func main() {
 	r.report()
 	fmt.Println()
 	fmt.Println(r.summary())
-	if len(r.violations) > 0 {
-		os.Exit(1)
+	if code := r.exitCode(); code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -78,16 +78,107 @@ type report struct {
 	digs       digStats
 	lanes      []laneShape
 	gated      map[bool]flowStats // true = the lane carries a mark
-	dissolves  int
+	dissolves  reading
 	depthCost  []depthBucket
 	logCounts  *logStats // nil when -log was not given
 	violations []string
 	robotReuse reuseStats
 	waitCauses []causeCount
 	dwell      dwellStats
+
+	// failedToRun is every measure and check whose query errored, one
+	// failedToRunPrefix line each. It is reported apart from the violations
+	// and it fails the run the same way (see main): an instrument that did not
+	// run has measured nothing, and reading its silence as "clean" is the lie
+	// this tool's header warns about.
+	failedToRun []string
+	// unrunMeasures marks the measure sections whose query failed, so the
+	// report prints FAILED-TO-RUN in place of their (empty) numbers.
+	unrunMeasures map[string]bool
 }
 
-type counts struct{ total, completed, failed, cancelled, inFlight, queued int }
+// ── failed-to-run ─────────────────────────────────────────────────────────────
+//
+// A QUERY ERROR IS NOT A READING. scalar() used to return 0 on error, and every
+// other query site here returned an empty result — "no rows", which every check
+// reads as "nothing wrong". checkNegativeTotalUOP asked for a column that does
+// not exist (`uop_count`) for its whole life and reported clean on every run.
+// So every query site now reports its failure as a FAILED TO RUN line, and the
+// run exits non-zero on it.
+
+// failedToRunPrefix starts every failed-to-run line; collect() uses it to split
+// a check's output into violations and instruments that never ran.
+const failedToRunPrefix = "FAILED TO RUN: "
+
+// failedToRun renders one failed-to-run line.
+func failedToRun(what string, err error) string {
+	return fmt.Sprintf("%s%s: %v", failedToRunPrefix, what, err)
+}
+
+// splitFailedToRun separates a check's output into real findings and
+// failed-to-run lines.
+func splitFailedToRun(lines []string) (findings, unrun []string) {
+	for _, l := range lines {
+		if strings.HasPrefix(l, failedToRunPrefix) {
+			unrun = append(unrun, l)
+		} else {
+			findings = append(findings, l)
+		}
+	}
+	return findings, unrun
+}
+
+// unrun collects the measures whose query failed.
+type unrun struct {
+	lines    []string
+	measures map[string]bool
+}
+
+func (u *unrun) fail(measure string, err error) {
+	if u.measures == nil {
+		u.measures = map[string]bool{}
+	}
+	u.measures[measure] = true
+	u.lines = append(u.lines, failedToRun(measure, err))
+}
+
+// read runs a scalar measure, recording a failure against `measure`.
+func (u *unrun) read(db *store.DB, measure, q string, args ...any) reading {
+	n, err := scalar(db, q, args...)
+	if err != nil {
+		u.fail(measure, err)
+		return reading{failed: true}
+	}
+	return reading{n: n}
+}
+
+// reading is one scalar measure: a value, or the fact that it could not be read.
+type reading struct {
+	n      int
+	failed bool
+}
+
+func (r reading) String() string {
+	if r.failed {
+		return "FAILED-TO-RUN"
+	}
+	return strconv.Itoa(r.n)
+}
+
+// The measure sections, as the report names them.
+const (
+	measureOrders    = "ORDERS"
+	measureDigs      = "[3.8] ROBOTS PER DIG"
+	measureReuse     = "[8.8] ROBOT REUSE ACROSS LEGS"
+	measureLanes     = "[8.1] LANE SHAPE"
+	measureGated     = "[8.2] GATED vs UNGATED"
+	measureDwell     = "[R.71] OUTBOUND DWELL"
+	measureDepth     = "[8.6] TIME TO COMPLETE BY SOURCE DEPTH"
+	measureDissolves = "[8.4] DISSOLVES"
+	measureCauses    = "WAIT CAUSES SEEN"
+)
+
+type counts struct{ total, completed, failed, cancelled, inFlight, queued reading }
 
 type digStats struct {
 	parents      int
@@ -158,24 +249,28 @@ type logStats struct {
 
 func collect(db *store.DB, logSource string) *report {
 	r := &report{gated: map[bool]flowStats{}}
-	r.orders = orderCounts(db)
-	r.digs = digDistribution(db)
-	r.robotReuse = robotReuse(db)
-	r.lanes = laneShapes(db)
-	r.gated = gatedVsUngated(db)
+	u := &unrun{}
+	r.orders = orderCounts(db, u)
+	r.digs = digDistribution(db, u)
+	r.robotReuse = robotReuse(db, u)
+	r.lanes = laneShapes(db, u)
+	r.gated = gatedVsUngated(db, u)
 	// EVERY way a chapter ends, not just the one. This counted
 	// ReshuffleDissolveDetail alone and so under-reported a chapter that ended by
 	// a leg failing — which is the other half of the same measure, and the number
 	// a soak reads to decide whether the dissolve arm is firing at all
 	// (§R.98 stage D).
-	r.dissolves = scalar(db, chapterEndCancelCountQuery(), chapterEndCancelArgs()...)
-	r.depthCost = depthCost(db)
-	r.waitCauses = waitCauses(db)
-	r.dwell = dwellDuration(db)
+	r.dissolves = u.read(db, measureDissolves, chapterEndCancelCountQuery(), chapterEndCancelArgs()...)
+	r.depthCost = depthCost(db, u)
+	r.waitCauses = waitCauses(db, u)
+	r.dwell = dwellDuration(db, u)
 	if logSource != "" {
 		r.logCounts = readLog(logSource)
 	}
-	r.violations = checkInvariants(db)
+	var checksUnrun []string
+	r.violations, checksUnrun = splitFailedToRun(checkInvariants(db))
+	r.failedToRun = append(u.lines, checksUnrun...)
+	r.unrunMeasures = u.measures
 	return r
 }
 
@@ -187,18 +282,18 @@ func collect(db *store.DB, logSource string) *report {
 // this file's header calls the most dangerous number in a soak report. The
 // status vocabulary is protocol/status.go and the SQL forms are generated from
 // the enum there, so they are used rather than retyped.
-func orderCounts(db *store.DB) counts {
+func orderCounts(db *store.DB, u *unrun) counts {
 	var c counts
-	c.total = scalar(db, `SELECT COUNT(*) FROM orders`)
-	c.completed = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusConfirmed))
-	c.failed = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusFailed))
-	c.cancelled = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusCancelled))
+	c.total = u.read(db, measureOrders+" total", `SELECT COUNT(*) FROM orders`)
+	c.completed = u.read(db, measureOrders+" completed", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusConfirmed))
+	c.failed = u.read(db, measureOrders+" failed", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusFailed))
+	c.cancelled = u.read(db, measureOrders+" cancelled", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusCancelled))
 	// Pre-dispatch, from the predicate rather than typed out: {pending, queued,
 	// sourcing} is IsPreDispatch, and a status joining that family must join this
 	// count with it.
-	c.queued = scalar(db, fmt.Sprintf(
+	c.queued = u.read(db, measureOrders+" queued", fmt.Sprintf(
 		`SELECT COUNT(*) FROM orders WHERE status IN (%s)`, protocol.PreDispatchStatusSQLList()))
-	c.inFlight = scalar(db, fmt.Sprintf(
+	c.inFlight = u.read(db, measureOrders+" in-flight", fmt.Sprintf(
 		`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND status NOT IN (%s)`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList()))
 	return c
@@ -269,7 +364,7 @@ var stallPopulations = []stallPopulation{
 // digDistribution answers catalog 3.8: how many robots a dig actually costs.
 // Keyed on the PARENT, counting distinct non-empty robot ids across its legs —
 // a leg that never reached the fleet has no robot and must not count as one.
-func digDistribution(db *store.DB) digStats {
+func digDistribution(db *store.DB, u *unrun) digStats {
 	d := digStats{byRobotCount: map[int]int{}}
 	rows, err := db.DB.Query(`
 		SELECT parent_order_id,
@@ -279,6 +374,7 @@ func digDistribution(db *store.DB) digStats {
 		WHERE parent_order_id IS NOT NULL
 		GROUP BY parent_order_id`)
 	if err != nil {
+		u.fail(measureDigs, err)
 		return d
 	}
 	defer rows.Close()
@@ -286,7 +382,8 @@ func digDistribution(db *store.DB) digStats {
 		var parent int64
 		var legs, robots int
 		if err := rows.Scan(&parent, &legs, &robots); err != nil {
-			continue
+			u.fail(measureDigs, err)
+			return d
 		}
 		d.parents++
 		d.legs += legs
@@ -294,6 +391,10 @@ func digDistribution(db *store.DB) digStats {
 		if legs > d.maxLegs {
 			d.maxLegs = legs
 		}
+	}
+	if err := rows.Err(); err != nil {
+		u.fail(measureDigs, err)
+		return d
 	}
 	return d
 }
@@ -306,7 +407,7 @@ func digDistribution(db *store.DB) digStats {
 // SIM ASSIGNMENT IS NOT RDS ASSIGNMENT. This does not measure whether the vendor
 // prefers the nearby robot. It measures whether OUR timing leaves that robot free
 // and nearest at the moment the next create fires — the half Core controls.
-func robotReuse(db *store.DB) reuseStats {
+func robotReuse(db *store.DB, u *unrun) reuseStats {
 	var s reuseStats
 	rows, err := db.DB.Query(`
 		SELECT parent_order_id, robot_id
@@ -314,6 +415,7 @@ func robotReuse(db *store.DB) reuseStats {
 		WHERE parent_order_id IS NOT NULL AND robot_id <> ''
 		ORDER BY parent_order_id, sequence`)
 	if err != nil {
+		u.fail(measureReuse, err)
 		return s
 	}
 	defer rows.Close()
@@ -323,7 +425,8 @@ func robotReuse(db *store.DB) reuseStats {
 		var parent int64
 		var robot string
 		if err := rows.Scan(&parent, &robot); err != nil {
-			continue
+			u.fail(measureReuse, err)
+			return s
 		}
 		if lastParent.Valid && lastParent.Int64 == parent {
 			s.consecutivePairs++
@@ -333,6 +436,10 @@ func robotReuse(db *store.DB) reuseStats {
 		}
 		lastParent = sql.NullInt64{Int64: parent, Valid: true}
 		lastRobot = robot
+	}
+	if err := rows.Err(); err != nil {
+		u.fail(measureReuse, err)
+		return s
 	}
 	// The resume leg: the parent's own robot against its LAST child's robot.
 	rows2, err := db.DB.Query(`
@@ -345,18 +452,24 @@ func robotReuse(db *store.DB) reuseStats {
 		) c ON TRUE
 		WHERE p.robot_id <> ''`)
 	if err != nil {
+		u.fail(measureReuse, err)
 		return s
 	}
 	defer rows2.Close()
 	for rows2.Next() {
 		var parentRobot, lastChild string
 		if err := rows2.Scan(&parentRobot, &lastChild); err != nil {
-			continue
+			u.fail(measureReuse, err)
+			return s
 		}
 		s.resumes++
 		if parentRobot == lastChild {
 			s.resumeSameRobot++
 		}
+	}
+	if err := rows2.Err(); err != nil {
+		u.fail(measureReuse, err)
+		return s
 	}
 	return s
 }
@@ -365,7 +478,7 @@ func robotReuse(db *store.DB) reuseStats {
 // deepestFull is the drift signal — if lanes are being emptied mouth-first and
 // refilled deepest-first as designed, occupancy should stay contiguous from the
 // back; a lane holding one bin at depth 2 with depth 1 empty is an air bubble.
-func laneShapes(db *store.DB) []laneShape {
+func laneShapes(db *store.DB, u *unrun) []laneShape {
 	rows, err := db.DB.Query(`
 		SELECT g.name                                            AS grp,
 		       l.name                                            AS lane,
@@ -388,6 +501,7 @@ func laneShapes(db *store.DB) []laneShape {
 		GROUP BY g.name, l.name, marked
 		ORDER BY g.name, l.name`, dispatch.PropLaneGatePoint, dispatch.PropGroupWaitPoints)
 	if err != nil {
+		u.fail(measureLanes, err)
 		return nil
 	}
 	defer rows.Close()
@@ -395,9 +509,14 @@ func laneShapes(db *store.DB) []laneShape {
 	for rows.Next() {
 		var s laneShape
 		if err := rows.Scan(&s.group, &s.lane, &s.marked, &s.depth, &s.occupied, &s.deepestFull); err != nil {
-			continue
+			u.fail(measureLanes, err)
+			return nil
 		}
 		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		u.fail(measureLanes, err)
+		return nil
 	}
 	return out
 }
@@ -408,7 +527,7 @@ func laneShapes(db *store.DB) []laneShape {
 // SOURCE node for a retrieve; either way the lane it contended for is the one
 // whose slot it named. Orders touching no lane are excluded rather than counted
 // as ungated, because they never asked the question.
-func gatedVsUngated(db *store.DB) map[bool]flowStats {
+func gatedVsUngated(db *store.DB, u *unrun) map[bool]flowStats {
 	out := map[bool]flowStats{}
 	rows, err := db.DB.Query(`
 		WITH touched AS (
@@ -433,6 +552,7 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 		FROM touched GROUP BY marked`, dispatch.PropLaneGatePoint, string(protocol.StatusConfirmed),
 		dispatch.PropGroupWaitPoints)
 	if err != nil {
+		u.fail(measureGated, err)
 		return out
 	}
 	defer rows.Close()
@@ -440,9 +560,14 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 		var marked bool
 		var f flowStats
 		if err := rows.Scan(&marked, &f.completed, &f.waits, &f.avgCycleS); err != nil {
-			continue
+			u.fail(measureGated, err)
+			return out
 		}
 		out[marked] = f
+	}
+	if err := rows.Err(); err != nil {
+		u.fail(measureGated, err)
+		return out
 	}
 	return out
 }
@@ -470,7 +595,7 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 // the sample is taken is exactly the population a ballooning trend is made of,
 // and excluding it would make the average look best at the worst moment — the
 // same premature-read error §R.12 cost this stream once already.
-func dwellDuration(db *store.DB) dwellStats {
+func dwellDuration(db *store.DB, u *unrun) dwellStats {
 	var s dwellStats
 	// The terminal set is RENDERED from the transition table rather than passed as
 	// an array parameter: that is how every other status predicate in this tree is
@@ -503,6 +628,7 @@ func dwellDuration(db *store.DB) dwellStats {
 		string(protocol.StatusStaged)).
 		Scan(&s.n, &s.open, &s.avgS, &s.maxS)
 	if err != nil {
+		u.fail(measureDwell, err)
 		return dwellStats{}
 	}
 	return s
@@ -511,7 +637,7 @@ func dwellDuration(db *store.DB) dwellStats {
 // depthCost answers catalog 8.6: what depth costs, in seconds, before and after
 // marks. Bucketed by the SOURCE slot's depth, so a retrieve out of slot 5 lands
 // in bucket 5 whether or not it needed a dig.
-func depthCost(db *store.DB) []depthBucket {
+func depthCost(db *store.DB, u *unrun) []depthBucket {
 	rows, err := db.DB.Query(`
 		SELECT s.depth,
 		       COUNT(*),
@@ -521,6 +647,7 @@ func depthCost(db *store.DB) []depthBucket {
 		WHERE o.status = $1 AND o.completed_at IS NOT NULL AND s.depth IS NOT NULL
 		GROUP BY s.depth ORDER BY s.depth`, string(protocol.StatusConfirmed))
 	if err != nil {
+		u.fail(measureDepth, err)
 		return nil
 	}
 	defer rows.Close()
@@ -528,19 +655,25 @@ func depthCost(db *store.DB) []depthBucket {
 	for rows.Next() {
 		var b depthBucket
 		if err := rows.Scan(&b.depth, &b.n, &b.avgCycleS); err != nil {
-			continue
+			u.fail(measureDepth, err)
+			return nil
 		}
 		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		u.fail(measureDepth, err)
+		return nil
 	}
 	return out
 }
 
-func waitCauses(db *store.DB) []causeCount {
+func waitCauses(db *store.DB, u *unrun) []causeCount {
 	rows, err := db.DB.Query(`
 		SELECT queue_cause, COUNT(*) FROM orders
 		WHERE queue_cause IS NOT NULL AND queue_cause <> ''
 		GROUP BY queue_cause ORDER BY 2 DESC`)
 	if err != nil {
+		u.fail(measureCauses, err)
 		return nil
 	}
 	defer rows.Close()
@@ -548,9 +681,14 @@ func waitCauses(db *store.DB) []causeCount {
 	for rows.Next() {
 		var c causeCount
 		if err := rows.Scan(&c.cause, &c.n); err != nil {
-			continue
+			u.fail(measureCauses, err)
+			return nil
 		}
 		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		u.fail(measureCauses, err)
+		return nil
 	}
 	return out
 }
@@ -680,11 +818,23 @@ func (r *report) report() {
 	fmt.Println("SOAK MEASURES")
 	fmt.Println(strings.Repeat("=", 78))
 
+	if len(r.failedToRun) > 0 {
+		fmt.Printf("\nFAILED TO RUN — %d instrument(s) did not measure; their sections read FAILED-TO-RUN, not zero\n", len(r.failedToRun))
+		for _, l := range r.failedToRun {
+			fmt.Printf("        %s\n", l)
+		}
+	}
+
 	c := r.orders
-	fmt.Printf("\nORDERS  total %d · completed %d · failed %d · cancelled %d · in-flight %d · queued %d\n",
+	fmt.Printf("\nORDERS  total %s · completed %s · failed %s · cancelled %s · in-flight %s · queued %s\n",
 		c.total, c.completed, c.failed, c.cancelled, c.inFlight, c.queued)
 
-	fmt.Printf("\n[3.8] ROBOTS PER DIG  %d digs, %d legs, deepest %d legs\n", r.digs.parents, r.digs.legs, r.digs.maxLegs)
+	fmt.Printf("\n[3.8] ROBOTS PER DIG  ")
+	if r.unrunMeasures[measureDigs] {
+		fmt.Println("FAILED-TO-RUN")
+	} else {
+		fmt.Printf("%d digs, %d legs, deepest %d legs\n", r.digs.parents, r.digs.legs, r.digs.maxLegs)
+	}
 	for n := 0; n <= 6; n++ {
 		if k, ok := r.digs.byRobotCount[n]; ok {
 			fmt.Printf("        %d robot(s): %d dig(s)%s\n", n, k, tailNote(n))
@@ -692,7 +842,9 @@ func (r *report) report() {
 	}
 
 	fmt.Printf("\n[8.8] ROBOT REUSE ACROSS LEGS  ")
-	if r.robotReuse.consecutivePairs == 0 {
+	if r.unrunMeasures[measureReuse] {
+		fmt.Println("FAILED-TO-RUN")
+	} else if r.robotReuse.consecutivePairs == 0 {
 		fmt.Println("no consecutive leg pairs yet")
 	} else {
 		fmt.Printf("%d/%d leg handoffs kept the same robot (%.0f%%)\n",
@@ -706,27 +858,31 @@ func (r *report) report() {
 	fmt.Println("        caveat: sim assignment is not RDS assignment — this measures whether")
 	fmt.Println("        our timing INVITES chaining, not whether the vendor prefers it.")
 
-	fmt.Printf("\n[8.2] GATED vs UNGATED\n")
+	fmt.Printf("\n[8.2] GATED vs UNGATED%s\n", unrunTag(r, measureGated))
 	fmt.Printf("        %-9s %9s %9s %12s\n", "lane", "completed", "waits", "avg cycle s")
 	for _, marked := range []bool{true, false} {
 		f := r.gated[marked]
 		fmt.Printf("        %-9s %9d %9d %12.1f\n", markedLabel(marked), f.completed, f.waits, f.avgCycleS)
 	}
 
-	fmt.Printf("\n[8.6] TIME TO COMPLETE BY SOURCE DEPTH\n")
+	fmt.Printf("\n[8.6] TIME TO COMPLETE BY SOURCE DEPTH%s\n", unrunTag(r, measureDepth))
 	for _, b := range r.depthCost {
 		fmt.Printf("        depth %d: n=%-5d avg %.1fs\n", b.depth, b.n, b.avgCycleS)
 	}
 
-	fmt.Printf("\n[8.1] LANE SHAPE  (air bubble = occupied>0 with the mouth empty)\n")
+	fmt.Printf("\n[8.1] LANE SHAPE  (air bubble = occupied>0 with the mouth empty)%s\n", unrunTag(r, measureLanes))
 	fmt.Printf("        %-10s %-8s %-7s %6s %9s %10s\n", "group", "lane", "marked", "depth", "occupied", "deepest")
 	for _, l := range r.lanes {
 		fmt.Printf("        %-10s %-8s %-7s %6d %9d %10d\n",
 			l.group, l.lane, yesNo(l.marked), l.depth, l.occupied, l.deepestFull)
 	}
 
-	fmt.Printf("\n[R.71] OUTBOUND DWELL  %d leg(s) dwelled · avg %.1fs · max %.1fs · %d still standing\n",
-		r.dwell.n, r.dwell.avgS, r.dwell.maxS, r.dwell.open)
+	if r.unrunMeasures[measureDwell] {
+		fmt.Printf("\n[R.71] OUTBOUND DWELL  FAILED-TO-RUN\n")
+	} else {
+		fmt.Printf("\n[R.71] OUTBOUND DWELL  %d leg(s) dwelled · avg %.1fs · max %.1fs · %d still standing\n",
+			r.dwell.n, r.dwell.avgS, r.dwell.maxS, r.dwell.open)
+	}
 	fmt.Println("        A dwell is a dig leg standing in the lane it is digging, holding a blocker,")
 	fmt.Println("        while Core chooses where it goes. EXPECTED FLAT and short: the ordinary case")
 	fmt.Println("        is an open destination and a robot that barely pauses. A rising average or a")
@@ -735,7 +891,7 @@ func (r *report) report() {
 	fmt.Println("        lock-saturated group (§R.71 rider 2). It is a WATCHED measure, not a gate:")
 	fmt.Println("        no per-node dweller counting is built, by owner ruling.")
 
-	fmt.Printf("\n[8.4] DISSOLVES  %d\n", r.dissolves)
+	fmt.Printf("\n[8.4] DISSOLVES  %s\n", r.dissolves)
 	fmt.Println("        NOTE: the catalog expected ~0 'with settle-then-plan'. That mechanism")
 	fmt.Println("        does not exist (see FINDINGS F-02) — the dissolve is the built answer,")
 	fmt.Println("        so this number is the RATE OF THE RACE, not a defect count.")
@@ -757,7 +913,9 @@ func (r *report) report() {
 		fmt.Printf("        dig steals:              %d\n", r.logCounts.stealN)
 	}
 
-	if len(r.waitCauses) > 0 {
+	if r.unrunMeasures[measureCauses] {
+		fmt.Printf("\nWAIT CAUSES SEEN  FAILED-TO-RUN\n")
+	} else if len(r.waitCauses) > 0 {
 		fmt.Printf("\nWAIT CAUSES SEEN\n")
 		for _, c := range r.waitCauses {
 			fmt.Printf("        %-28s %d\n", c.cause, c.n)
@@ -765,8 +923,11 @@ func (r *report) report() {
 	}
 
 	fmt.Printf("\nINVARIANTS\n")
-	if len(r.violations) == 0 {
+	switch {
+	case len(r.violations) == 0 && len(r.failedToRun) == 0:
 		fmt.Println("        all clear")
+	case len(r.violations) == 0:
+		fmt.Printf("        NOT clear: no violation found, but %d instrument(s) failed to run (above)\n", len(r.failedToRun))
 	}
 	for _, v := range r.violations {
 		fmt.Printf("        VIOLATION: %s\n", v)
@@ -786,12 +947,30 @@ func (r *report) summary() string {
 		reuse = fmt.Sprintf("%.0f%%", 100*float64(r.robotReuse.sameRobot)/float64(r.robotReuse.consecutivePairs))
 	}
 	return fmt.Sprintf(
-		"SOAK: orders %d done/%d fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · "+
-			"dwell %d avg %.0fs max %.0fs (%d open) · dissolves %d · hard-burials %s · violations %d",
+		"SOAK: orders %s done/%s fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · "+
+			"dwell %d avg %.0fs max %.0fs (%d open) · dissolves %s · hard-burials %s · violations %d · failed-to-run %d",
 		r.orders.completed, r.orders.failed, r.digs.parents, r.digs.maxLegs, reuse,
 		r.gated[true].avgCycleS, r.gated[false].avgCycleS,
 		r.dwell.n, r.dwell.avgS, r.dwell.maxS, r.dwell.open,
-		r.dissolves, hard, len(r.violations))
+		r.dissolves, hard, len(r.violations), len(r.failedToRun))
+}
+
+// exitCode is the process exit status for a full report. A soak whose
+// instruments did not run is not a clean soak: failed-to-run exits non-zero
+// exactly as a violation does.
+func (r *report) exitCode() int {
+	if len(r.violations) > 0 || len(r.failedToRun) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// unrunTag is the heading suffix for a measure section whose query failed.
+func unrunTag(r *report, measure string) string {
+	if r.unrunMeasures[measure] {
+		return "  FAILED-TO-RUN"
+	}
+	return ""
 }
 
 func tailNote(n int) string {
@@ -836,12 +1015,21 @@ func chapterEndCancelArgs() []any {
 	return args
 }
 
-func scalar(db *store.DB, q string, args ...any) int {
+// scalar runs a one-number query and returns its error. A failed query is not
+// a reading of any value: every caller reports its check or measure as FAILED
+// TO RUN. This function used to return 0 on error, silently (0 is the value
+// this tool's own header calls the most dangerous number in a soak report),
+// and then -1 — which every `n > 0` check still read as clean.
+// checkNegativeTotalUOP's `SUM(uop_count)` (a column that does not exist —
+// the schema's is uop_remaining) rode that swallow for its whole life: the
+// check read "0 < 0 = false" on every run and never once executed. Pinned by
+// scalar_test.go and every_query_runs_docker_test.go.
+func scalar(db *store.DB, q string, args ...any) (int, error) {
 	var n int
 	if err := db.DB.QueryRow(q, args...).Scan(&n); err != nil {
-		return 0
+		return 0, err
 	}
-	return n
+	return n, nil
 }
 
 // tallyValue pulls the integer immediately following `prefix` out of a running
@@ -876,12 +1064,16 @@ func checkTerminalWithCongestionCause(db *store.DB) []string {
 	var out []string
 	// "Terminating demand is a no-no", executable. A congestion-shaped cause on
 	// a terminal order means something waited and then died anyway.
-	if n := scalar(db, `
+	n, err := scalar(db, `
 		SELECT COUNT(*) FROM orders
 		WHERE status = $1
 		  AND queue_cause IS NOT NULL AND queue_cause <> ''
 		  AND queue_cause NOT IN ('config-failure', 'fleet-error')`,
-		string(protocol.StatusFailed)); n > 0 {
+		string(protocol.StatusFailed))
+	if err != nil {
+		return append(out, failedToRun("terminal order with a congestion-shaped cause", err))
+	}
+	if n > 0 {
 		out = append(out, fmt.Sprintf("%d order(s) FAILED carrying a congestion-shaped queue cause", n))
 	}
 	return out
@@ -901,12 +1093,16 @@ func checkDoubleOccupancy(db *store.DB) []string {
 	// them, and this count stays at zero through exactly the scenario the release
 	// was warned about. The traversal-window check below is the other half; read
 	// them together or neither means what it says.
-	if n := scalar(db, `
+	n, err := scalar(db, `
 		SELECT COUNT(*) FROM (
 			SELECT node_id FROM reservations
 			WHERE resource_kind = 'occupancy' AND state <> 'released'
 			GROUP BY node_id HAVING COUNT(DISTINCT order_id) > 1
-		) x`); n > 0 {
+		) x`)
+	if err != nil {
+		return append(out, failedToRun("double occupancy", err))
+	}
+	if n > 0 {
 		out = append(out, fmt.Sprintf("%d lane(s) with TWO occupancy owners", n))
 	}
 	return out
@@ -984,20 +1180,26 @@ func checkPhantomEntrants(db *store.DB) []string {
 		ORDER BY o.id LIMIT 12`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
 		protocol.StatusStaged)
-	if rows, err := db.DB.Query(phantomQ); err == nil {
-		for rows.Next() {
-			var id int
-			var status, lane string
-			if err := rows.Scan(&id, &status, &lane); err != nil {
-				continue
-			}
-			out = append(out, fmt.Sprintf(
-				"PHANTOM ENTRANT: order %d (%s) was sent to pick in lane %s, its bin is still in "+
-					"that lane so it has not lifted, and it holds no occupancy row — it is invisible "+
-					"to everyone else's admission", id, status, lane))
-		}
-		rows.Close()
+	rows, err := db.DB.Query(phantomQ)
+	if err != nil {
+		return append(out, failedToRun("phantom entrants", err))
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		var status, lane string
+		if err := rows.Scan(&id, &status, &lane); err != nil {
+			return append(out, failedToRun("phantom entrants", err))
+		}
+		out = append(out, fmt.Sprintf(
+			"PHANTOM ENTRANT: order %d (%s) was sent to pick in lane %s, its bin is still in "+
+				"that lane so it has not lifted, and it holds no occupancy row — it is invisible "+
+				"to everyone else's admission", id, status, lane))
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("phantom entrants", err))
+	}
+	rows.Close()
 	return out
 }
 
@@ -1012,7 +1214,7 @@ func checkNotJudgedAtDestEnd(db *store.DB) []string {
 	// tool cannot tell without parsing the plan), and executing orders carrying no
 	// bin_id at all, which have no bin to locate. The second is its own finding —
 	// it is the nil-BinID family the round left open.
-	if n := scalar(db, fmt.Sprintf(`
+	n, err := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(DISTINCT o.id)
 		FROM orders o
 		JOIN nodes s ON s.name = o.delivery_node
@@ -1027,7 +1229,11 @@ func checkNotJudgedAtDestEnd(db *store.DB) []string {
 		  AND o.status <> '%s'
 		  AND r.id IS NULL`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)); n > 0 {
+		protocol.StatusStaged))
+	if err != nil {
+		return append(out, failedToRun("not judged (dest end)", err))
+	}
+	if n > 0 {
 		out = append(out, fmt.Sprintf(
 			"NOT JUDGED (dest end): %d executing order(s) name a delivery node in a lane and hold no "+
 				"occupancy row. Expected whenever that dropoff is in a post-wait segment the robot "+
@@ -1040,7 +1246,7 @@ func checkNotJudgedAtDestEnd(db *store.DB) []string {
 // checkNotJudgedNoBin reports a leg judged with no bin to judge.
 func checkNotJudgedNoBin(db *store.DB) []string {
 	var out []string
-	if n := scalar(db, fmt.Sprintf(`
+	n, err := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(DISTINCT o.id)
 		FROM orders o
 		JOIN nodes s ON s.name IN (o.source_node, o.delivery_node)
@@ -1056,7 +1262,11 @@ func checkNotJudgedNoBin(db *store.DB) []string {
 		  AND r.id IS NULL
 		  AND o.bin_id IS NULL`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)); n > 0 {
+		protocol.StatusStaged))
+	if err != nil {
+		return append(out, failedToRun("not judged (no bin)", err))
+	}
+	if n > 0 {
 		out = append(out, fmt.Sprintf(
 			"NOT JUDGED (no bin): %d executing order(s) in a lane hold no occupancy row AND carry no "+
 				"bin_id, so there is no bin to locate against the mouth. An executing order with no "+
@@ -1085,7 +1295,7 @@ func checkTraversalOverlap(db *store.DB) []string {
 	// It is a WATCH, not a violation: the window is an owner ruling taken
 	// deliberately, and a non-zero count here is the evidence that it bites, not
 	// proof that something is broken. Named so the reader can tell those apart.
-	if rows, err := db.DB.Query(fmt.Sprintf(`
+	rows, err := db.DB.Query(fmt.Sprintf(`
 		SELECT l.name, COUNT(DISTINCT o.id)
 		FROM orders o
 		JOIN nodes s  ON s.name = o.source_node
@@ -1109,21 +1319,27 @@ func checkTraversalOverlap(db *store.DB) []string {
 		  )
 		GROUP BY l.name ORDER BY l.name LIMIT 12`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)); err == nil {
-		for rows.Next() {
-			var lane string
-			var n int
-			if err := rows.Scan(&lane, &n); err != nil {
-				continue
-			}
-			out = append(out, fmt.Sprintf(
-				"TRAVERSAL OVERLAP (watch, not a violation): lane %s has an occupancy holder AND %d "+
-					"order(s) still driving out of it having already released. This is the window the "+
-					"exit release opened by owner ruling — it is what the EXIT MARKER decision waits "+
-					"on, and the phantom count is not", lane, n))
-		}
-		rows.Close()
+		protocol.StatusStaged))
+	if err != nil {
+		return append(out, failedToRun("traversal overlap", err))
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var lane string
+		var n int
+		if err := rows.Scan(&lane, &n); err != nil {
+			return append(out, failedToRun("traversal overlap", err))
+		}
+		out = append(out, fmt.Sprintf(
+			"TRAVERSAL OVERLAP (watch, not a violation): lane %s has an occupancy holder AND %d "+
+				"order(s) still driving out of it having already released. This is the window the "+
+				"exit release opened by owner ruling — it is what the EXIT MARKER decision waits "+
+				"on, and the phantom count is not", lane, n))
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("traversal overlap", err))
+	}
+	rows.Close()
 	return out
 }
 
@@ -1141,26 +1357,32 @@ func checkTerminalOrderReservations(db *store.DB) []string {
 	// plant. A leaked `slot` or `mouth` row is narrower. A bare total cannot tell
 	// them apart, and "N reservations leaked" is not an answer to "did complex
 	// occupancy release on every path".
-	if rows, err := db.DB.Query(fmt.Sprintf(`
+	rows, err := db.DB.Query(fmt.Sprintf(`
 		SELECT r.resource_kind, COUNT(*) FROM reservations r
 		JOIN orders o ON o.id = r.order_id
 		WHERE r.state <> 'released'
 		  AND o.status IN (%s)
-		GROUP BY 1 ORDER BY 1`, protocol.TerminalStatusSQLList())); err == nil {
-		for rows.Next() {
-			var kind string
-			var n int
-			if err := rows.Scan(&kind, &n); err != nil {
-				continue
-			}
-			detail := ""
-			if kind == "occupancy" {
-				detail = " — that lane reads OCCUPIED to every future entrant, permanently"
-			}
-			out = append(out, fmt.Sprintf("%d %s reservation(s) held by a TERMINAL order%s", n, kind, detail))
-		}
-		rows.Close()
+		GROUP BY 1 ORDER BY 1`, protocol.TerminalStatusSQLList()))
+	if err != nil {
+		return append(out, failedToRun("reservations held by terminal orders", err))
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			return append(out, failedToRun("reservations held by terminal orders", err))
+		}
+		detail := ""
+		if kind == "occupancy" {
+			detail = " — that lane reads OCCUPIED to every future entrant, permanently"
+		}
+		out = append(out, fmt.Sprintf("%d %s reservation(s) held by a TERMINAL order%s", n, kind, detail))
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("reservations held by terminal orders", err))
+	}
+	rows.Close()
 	return out
 }
 
@@ -1179,12 +1401,16 @@ func checkQueuedWithoutCause(db *store.DB) []string {
 	// A wait with no cause on the row. The operator sentence is the whole point
 	// of parking rather than failing; a parked order nobody can explain is the
 	// shape this stream exists to refuse.
-	if n := scalar(db, fmt.Sprintf(`
+	n, err := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(*) FROM orders
 		WHERE status IN (%s)
 		  AND (queue_cause IS NULL OR queue_cause = '')
 		  AND created_at < now() - interval '5 minutes'`,
-		protocol.AcquiringStatusSQLList())); n > 0 {
+		protocol.AcquiringStatusSQLList()))
+	if err != nil {
+		return append(out, failedToRun("waiting with no cause", err))
+	}
+	if n > 0 {
 		out = append(out, fmt.Sprintf("%d order(s) waiting 5min+ with NO cause on the row", n))
 	}
 	return out
@@ -1228,20 +1454,23 @@ func checkArmoredWithNoVendorOrder(db *store.DB) []string {
 		  AND updated_at < now() - interval '5 minutes'
 		ORDER BY id LIMIT 12`, protocol.VendorActiveStatusSQLList()))
 	if err != nil {
-		return out
+		return append(out, failedToRun("armored with no fleet order", err))
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id, ageSec int64
 		var status string
 		if err := rows.Scan(&id, &status, &ageSec); err != nil {
-			continue
+			return append(out, failedToRun("armored with no fleet order", err))
 		}
 		out = append(out, fmt.Sprintf(
 			"ARMORED, NO FLEET ORDER: order %d has been %s for %s with an empty vendor_order_id — "+
 				"Core wrote the status and the create never landed, so it holds its claims and its "+
 				"lane while nothing polls it (the poller's re-registration selects non-empty ids only)",
 			id, status, protocol.FormatDuration(time.Duration(ageSec)*time.Second)))
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("armored with no fleet order", err))
 	}
 	return out
 }
@@ -1264,44 +1493,50 @@ func checkFloorReleaseHistogram(db *store.DB) []string {
 	// signal rather than a missing subscription. It is separated here rather
 	// than suppressed, for the same reason the burial shadow counts its known
 	// gap apart instead of hiding it.
-	if rows, err := db.DB.Query(`
+	rows, err := db.DB.Query(`
 		SELECT COALESCE(NULLIF(split_part(split_part(detail, 'cause "', 2), '"', 1), ''), '(none)'),
 		       COUNT(*)
 		FROM recovery_actions
 		WHERE action = $1
-		GROUP BY 1 ORDER BY 2 DESC`, dispatch.FloorReleaseAction); err == nil {
-		for rows.Next() {
-			var cause string
-			var n int
-			if err := rows.Scan(&cause, &n); err != nil {
-				continue
-			}
-			switch cause {
-			case string(dispatch.CauseFleetRefusedCreate):
-				out = append(out, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
-					"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
-			case "(none)", "(no cause on the row)":
-				// A BLANK IS NOT A MISSING EMITTER — causeReleasers is not the file to
-				// open — and it is not ONE defect either. It is two, and they want
-				// opposite investigations: an arm that refused without recording, or
-				// nothing having evaluated the order at all. §12.49 traced a specimen
-				// of the second kind (order 56: freed 17s after staging, with zero
-				// refusals logged against it while the same line fired 77 times for
-				// others), and the old wording sent the reader hunting an arm that did
-				// not exist. Same split the floor's own record now makes.
-				out = append(out, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
-					"floor with NO cause on the row. TWO possible defects: an arm refused them "+
-					"without calling setQueueReason, OR nothing ever evaluated them and the missing "+
-					"EVENT is the defect. Check the log for a refusal naming the order — no refusal "+
-					"means the second. Not an inventory gap either way", n))
-			default:
-				out = append(out, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
-					"under cause %s — an event should have done this; see causeReleasers for which",
-					n, cause))
-			}
-		}
-		rows.Close()
+		GROUP BY 1 ORDER BY 2 DESC`, dispatch.FloorReleaseAction)
+	if err != nil {
+		return append(out, failedToRun("floor-release histogram", err))
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var cause string
+		var n int
+		if err := rows.Scan(&cause, &n); err != nil {
+			return append(out, failedToRun("floor-release histogram", err))
+		}
+		switch cause {
+		case string(dispatch.CauseFleetRefusedCreate):
+			out = append(out, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
+				"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
+		case "(none)", "(no cause on the row)":
+			// A BLANK IS NOT A MISSING EMITTER — causeReleasers is not the file to
+			// open — and it is not ONE defect either. It is two, and they want
+			// opposite investigations: an arm that refused without recording, or
+			// nothing having evaluated the order at all. §12.49 traced a specimen
+			// of the second kind (order 56: freed 17s after staging, with zero
+			// refusals logged against it while the same line fired 77 times for
+			// others), and the old wording sent the reader hunting an arm that did
+			// not exist. Same split the floor's own record now makes.
+			out = append(out, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
+				"floor with NO cause on the row. TWO possible defects: an arm refused them "+
+				"without calling setQueueReason, OR nothing ever evaluated them and the missing "+
+				"EVENT is the defect. Check the log for a refusal naming the order — no refusal "+
+				"means the second. Not an inventory gap either way", n))
+		default:
+			out = append(out, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
+				"under cause %s — an event should have done this; see causeReleasers for which",
+				n, cause))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("floor-release histogram", err))
+	}
+	rows.Close()
 	return out
 }
 
@@ -1323,23 +1558,29 @@ func checkUndeclaredWaits(db *store.DB) []string {
 	for _, c := range dispatch.DeclaredQueueCauses() {
 		declared[c] = true
 	}
-	if rows, err := db.DB.Query(`
+	rows, err := db.DB.Query(`
 		SELECT DISTINCT status, COALESCE(queue_cause, '')
 		FROM orders
-		WHERE COALESCE(queue_cause, '') <> ''`); err == nil {
-		for rows.Next() {
-			var status, cause string
-			if err := rows.Scan(&status, &cause); err != nil {
-				continue
-			}
-			if !declared[cause] {
-				out = append(out, fmt.Sprintf("UNDECLARED WAIT: orders sit at status=%s under cause %q, "+
-					"which has no causeReleasers row — nothing on record says what ends it, and no "+
-					"floor claims it", status, cause))
-			}
-		}
-		rows.Close()
+		WHERE COALESCE(queue_cause, '') <> ''`)
+	if err != nil {
+		return append(out, failedToRun("undeclared waits", err))
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var status, cause string
+		if err := rows.Scan(&status, &cause); err != nil {
+			return append(out, failedToRun("undeclared waits", err))
+		}
+		if !declared[cause] {
+			out = append(out, fmt.Sprintf("UNDECLARED WAIT: orders sit at status=%s under cause %q, "+
+				"which has no causeReleasers row — nothing on record says what ends it, and no "+
+				"floor claims it", status, cause))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("undeclared waits", err))
+	}
+	rows.Close()
 	return out
 }
 
@@ -1401,16 +1642,22 @@ func checkStalledOrders(db *store.DB) []string {
 			WHERE %s AND updated_at < now() - interval '%s'
 			ORDER BY updated_at LIMIT 12`, s.clause(), s.after))
 		if err != nil {
+			out = append(out, failedToRun("stalled orders ("+s.label+")", err))
 			continue
 		}
 		for rows.Next() {
 			var id, age int
 			var status, cause string
 			if err := rows.Scan(&id, &status, &cause, &age); err != nil {
-				continue
+				rows.Close()
+				return append(out, failedToRun("stalled orders ("+s.label+")", err))
 			}
 			out = append(out, fmt.Sprintf("STALLED: order %d %s (%s) for %dm — cause: %s",
 				id, s.label, status, age/60, cause))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return append(out, failedToRun("stalled orders ("+s.label+")", err))
 		}
 		rows.Close()
 	}
@@ -1421,10 +1668,24 @@ func checkStalledOrders(db *store.DB) []string {
 func checkNegativeTotalUOP(db *store.DB) []string {
 	var out []string
 
-	// The inventory invariant, the same one /api/inventory/invariant serves.
-	total := scalar(db, `SELECT COALESCE(SUM(uop_count), 0) FROM bins`)
+	// The inventory invariant, the same one /api/inventory/invariant serves
+	// (store/inventory.go:36 spells the same sum on the real column).
+	//
+	// THE COLUMN IS uop_remaining, and it always was: this query asked for
+	// `uop_count` — a column that does not exist on bins — from the day it was
+	// written, and scalar's error swallow turned the failure into 0, so the
+	// check read "0 < 0" and never once fired. Fixed with the column, not by
+	// deleting the check: the invariant is real and /api/inventory/invariant
+	// serves the same one, so the soak losing its copy would be a silent
+	// coverage drop.
+	total, err := scalar(db, `SELECT COALESCE(SUM(uop_remaining), 0) FROM bins`)
+	if err != nil {
+		// UNREADABLE is a finding in itself — a zero here would read as
+		// "inventory healthy" on a probe that never ran.
+		return append(out, failedToRun("negative total UOP", err))
+	}
 	if total < 0 {
-		out = append(out, "negative total UOP across bins")
+		out = append(out, fmt.Sprintf("negative total UOP across bins: %d", total))
 	}
 	return out
 }
@@ -1479,7 +1740,7 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 		GROUP BY bt.code
 		ORDER BY bt.code`)
 	if err != nil {
-		return nil
+		return append(out, failedToRun("carrier pools", err))
 	}
 	defer rows.Close()
 
@@ -1489,9 +1750,12 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 		var code string
 		var total, full int
 		if err := rows.Scan(&code, &total, &full); err != nil {
-			return out
+			return append(out, failedToRun("carrier pools", err))
 		}
 		pools[code] = pool{total, full}
+	}
+	if err := rows.Err(); err != nil {
+		return append(out, failedToRun("carrier pools", err))
 	}
 	rows.Close()
 
@@ -1500,8 +1764,12 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 			continue
 		}
 		// The SOURCEABLE count, over the population the finders read.
-		sourceable := scalar(db, `SELECT COUNT(*) `+
+		sourceable, err := scalar(db, `SELECT COUNT(*) `+
 			bins.BinFromClause+bins.EmptyCarrierWhere+bins.OfTypeArm(1), code)
+		if err != nil {
+			out = append(out, failedToRun("carrier pool "+code+" sourceable count", err))
+			continue
+		}
 		if sourceable > 0 {
 			continue
 		}
@@ -1600,13 +1868,11 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 // placement.
 //
 // `_TRANSIT` is excluded (many bins legitimately in flight).
+//
+// (The final-delivery read lives in addFinalDeliveries so this function stays
+// under funlen once every row read reports its failure.)
 func checkBinResidenceOverlap(db *store.DB) []string {
-	type ev struct {
-		at      time.Time
-		arrival bool
-		orderID int64
-		binID   int64
-	}
+	type ev = residenceEvent
 	events := map[string][]ev{} // node → events
 
 	// ── EXECUTED BLOCKS ────────────────────────────────────────────────────
@@ -1616,22 +1882,20 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 		JOIN orders o ON o.id = me.order_id
 		WHERE me.new_state = $1`, engine.BlockLegState)
 	if err != nil {
-		return []string{"bin residence overlap: unreadable block ledger: " + err.Error()}
+		return []string{failedToRun("bin residence overlap (block ledger)", err)}
 	}
 	// Which (order, node) pairs already have a dropoff on the ledger, so the
 	// final-delivery arm below does not add a second arrival for the same
 	// placement.
-	type orderNode struct {
-		orderID int64
-		node    string
-	}
+	type orderNode = residenceKey
 	ledgerDropoff := map[orderNode]bool{}
+	defer rows.Close()
 	for rows.Next() {
 		var orderID, binID int64
 		var at time.Time
 		var blocksJSON string
 		if err := rows.Scan(&orderID, &at, &blocksJSON, &binID); err != nil {
-			continue
+			return []string{failedToRun("bin residence overlap (block ledger)", err)}
 		}
 		var legs []struct {
 			Location string `json:"location"`
@@ -1655,31 +1919,15 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return []string{failedToRun("bin residence overlap (block ledger)", err)}
+	}
 	rows.Close()
 
 	// ── FINAL DELIVERIES THE LEDGER DOES NOT CARRY ─────────────────────────
-	dels, err := db.DB.Query(`
-		SELECT o.id, o.delivery_node, COALESCE(o.bin_id, 0),
-		       (SELECT MIN(h.created_at) FROM order_history h
-		         WHERE h.order_id = o.id AND h.status = 'delivered')
-		FROM orders o
-		WHERE o.delivery_node <> '' AND o.delivery_node <> '_TRANSIT'`)
-	if err != nil {
-		return []string{"bin residence overlap: unreadable deliveries: " + err.Error()}
+	if err := addFinalDeliveries(db, events, ledgerDropoff); err != nil {
+		return []string{failedToRun("bin residence overlap (deliveries)", err)}
 	}
-	for dels.Next() {
-		var orderID, binID int64
-		var node string
-		var at sql.NullTime
-		if err := dels.Scan(&orderID, &node, &binID, &at); err != nil {
-			continue
-		}
-		if !at.Valid || ledgerDropoff[orderNode{orderID, node}] {
-			continue
-		}
-		events[node] = append(events[node], ev{at: at.Time, arrival: true, orderID: orderID, binID: binID})
-	}
-	dels.Close()
 
 	var out []string
 	for node, evs := range events {
@@ -1717,4 +1965,48 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 		out = out[:8]
 	}
 	return out
+}
+
+// residenceEvent is one arrival or lift at a node, for checkBinResidenceOverlap.
+type residenceEvent struct {
+	at      time.Time
+	arrival bool
+	orderID int64
+	binID   int64
+}
+
+// residenceKey is an (order, node) pair with a dropoff already on the ledger.
+type residenceKey struct {
+	orderID int64
+	node    string
+}
+
+// addFinalDeliveries adds each order's final delivery as an arrival at its
+// delivery node, unless the block ledger already carries that dropoff. Any
+// query, row or iteration error is returned: the caller reports the check as
+// failed-to-run rather than judging a partial event list.
+func addFinalDeliveries(db *store.DB, events map[string][]residenceEvent, ledgerDropoff map[residenceKey]bool) error {
+	dels, err := db.DB.Query(`
+		SELECT o.id, o.delivery_node, COALESCE(o.bin_id, 0),
+		       (SELECT MIN(h.created_at) FROM order_history h
+		         WHERE h.order_id = o.id AND h.status = 'delivered')
+		FROM orders o
+		WHERE o.delivery_node <> '' AND o.delivery_node <> '_TRANSIT'`)
+	if err != nil {
+		return err
+	}
+	defer dels.Close()
+	for dels.Next() {
+		var orderID, binID int64
+		var node string
+		var at sql.NullTime
+		if err := dels.Scan(&orderID, &node, &binID, &at); err != nil {
+			return err
+		}
+		if !at.Valid || ledgerDropoff[residenceKey{orderID, node}] {
+			continue
+		}
+		events[node] = append(events[node], residenceEvent{at: at.Time, arrival: true, orderID: orderID, binID: binID})
+	}
+	return dels.Err()
 }

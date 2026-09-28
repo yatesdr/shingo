@@ -666,18 +666,15 @@ func IsStuckSweepCandidate(s Status) bool {
 // IsStuckSweepCandidate is the method form.
 func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
 
-// IsOperatorVisible reports whether the status should still appear on
-// operator-facing HMI surfaces (edge ListActive, kanban demand pages,
-// manual-message picker). Distinct from !IsTerminal: Failed orders stay
-// operator-visible so the operator can retry or acknowledge them, even
-// though they're terminal. Skipped/Confirmed/Cancelled are "done from
-// the operator's POV" and disappear from the surface.
-func IsOperatorVisible(s Status) bool {
-	return s != StatusConfirmed && s != StatusCancelled && s != StatusSkipped
-}
-
-// IsOperatorVisible is the method form.
-func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
+// (IsOperatorVisible was deleted 2026-09-26: zero production callers. It
+// claimed to drive "edge ListActive, kanban demand pages, manual-message
+// picker", but every one of those surfaces hand-spells its own visibility
+// window — Edge ListActive pins its 7-day faulted/confirmed window at
+// shingo-edge/store/orders/orders.go:77 (list_active_window_test.go), and no
+// kanban or manual-message code referenced this predicate either. The JS twin
+// OPERATOR_VISIBLE_STATUSES in order-status.js had no importers and went with
+// it. Intent, should a surface ever want one shared answer: non-terminal
+// statuses plus failed, minus confirmed/cancelled/skipped.)
 
 // ─── Changeover-start classification ─────────────────────────────────────
 //
@@ -860,10 +857,8 @@ var (
 	canHoldWaitStatusSQLList           = buildStatusSQLList(CanHoldWait)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
 	stuckSweepStatusSQLList            = buildStatusSQLList(IsStuckSweepCandidate)
-	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
 )
 
-// StatusSQLList is buildStatusSQLList for callers OUTSIDE this package that
 // need a population the named projectors above do not already spell.
 //
 // The named projectors stay the way to ask for a predicate this package owns —
@@ -943,8 +938,3 @@ func RuntimeStuckCandidateStatusSQLList() string { return runtimeStuckCandidateS
 // destructive AbandonStuckOrders sweep may auto-cancel. Excludes in_transit and all
 // pre-dispatch waiting (demand is operator-driven). Use in `status IN (StuckSweepStatusSQLList())`.
 func StuckSweepStatusSQLList() string { return stuckSweepStatusSQLList }
-
-// OperatorVisibleStatusSQLList returns the statuses that should still
-// appear on Edge HMI surfaces. Skipped/Confirmed/Cancelled are excluded;
-// Failed is intentionally included so the operator can retry.
-func OperatorVisibleStatusSQLList() string { return operatorVisibleStatusSQLList }

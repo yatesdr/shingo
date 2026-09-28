@@ -101,8 +101,6 @@ linters:
           msg: "Direct UpdateOrderStatus calls bypass the state machine. Use dispatch.LifecycleService typed methods (CancelOrder, ConfirmReceipt, Release, MarkInTransit, MarkStaged, MarkDelivered, Queue, MoveToSourcing, Dispatch, Fail, Acknowledge, BeginReshuffle, CompleteCompound, ResumeCompound, FailWithRef). See docs/order-state-machine/transitions.md."
         - pattern: 'db\.FailOrderAtomic'
           msg: "Direct FailOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.Fail."
-        - pattern: 'db\.CancelOrderAtomic'
-          msg: "Direct CancelOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.CancelOrder."
         # Reservation-sourcing bypass guard. Bin claims must go through the
         # reserve→claim→confirm sequence (BinManifestService.ClaimForDispatch),
         # which holds a revocable reservation across the decide→do gap; a bare
@@ -151,28 +149,19 @@ linters:
         # helpers exist to prevent. The db.UnclaimBin / db.UnclaimOrderBins / service
         # wrappers were deleted; these guard the SURVIVING store-level primitives so
         # a new caller is steered to the coupled inverse instead of re-opening the
-        # brick. `bins\.Unclaim` prefix-matches `bins.UnclaimByOrder`; the binsstore
-        # alias (used in dispatch) gets its own entry. This is the release-direction
-        # twin of the db.ClaimBin claim-direction guard above. Sanctioned callers:
-        # the definition file (declarations don't match a `pkg.Fn` selector) and
-        # tests (the blanket _test.go carveout under exclusions.rules).
+        # brick. NOTE (2026-09-26): the bare bins.Unclaim primitive was deleted;
+        # this pattern now guards against its REINTRODUCTION — any new
+        # `bins.Unclaim...` selector should trip it. db.UnclaimSlot /
+        # db.UnclaimOrderSlots (nodes) are the surviving slot-side primitives and
+        # do NOT match this pattern. This is the release-direction twin of the
+        # db.ClaimBin claim-direction guard above. Sanctioned callers: the
+        # definition folder (store/bins + store/nodes; declarations don't match a
+        # `pkg.Fn` selector) and tests (the blanket _test.go carveout under
+        # exclusions.rules).
         - pattern: 'bins\.Unclaim'
-          msg: "Direct bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin (store/orders.go); for the whole of an order's holds, db.TerminalizeOrder."
-        - pattern: 'binsstore\.Unclaim'
-          msg: "Direct binsstore.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation. Use db.ReleaseClaimForBin (store/orders.go); for the whole of an order's holds, db.TerminalizeOrder."
-        # Slot-claim seatbelt guard. nodes.ClaimSlot / db.ClaimSlot — the
-        # un-seatbelted slot CAS — were deleted (the hard slot loop, their only
-        # production caller, was removed). The live slot claim is the
-        # reservation-guarded ClaimSlotTx via db.ConfirmSlotClaim (reserve → guarded
-        # claim → confirm, one tx). These patterns stop a raw slot claim from being
-        # reintroduced — the slot twin of the db.ClaimBin guard above. The `\b` keeps
-        # `nodes.ClaimSlot` from prefix-matching `nodes.ClaimSlotTx` (the sanctioned
-        # path). Fixture setup uses testdb.ClaimSlotForTest (a raw claim, in testdb —
-        # covered by the blanket _test.go carveout under exclusions.rules).
-        - pattern: 'nodes\.ClaimSlot\b'
-          msg: "Direct nodes.ClaimSlot is the un-seatbelted slot CAS (deleted). Claim a slot through db.ConfirmSlotClaim (reserve→guarded claim→confirm); in tests use testdb.ClaimSlotForTest."
-        - pattern: 'db\.ClaimSlot\b'
-          msg: "Direct db.ClaimSlot bypasses the slot reservation seatbelt (deleted). Use db.ConfirmSlotClaim; in tests use testdb.ClaimSlotForTest."
+          msg: "TOMBSTONE: forbids re-adding a deleted function (bins.Unclaim / bins.UnclaimByOrder, deleted 2026-09-26). A bare bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin (store/orders.go); for the whole of an order's holds, db.TerminalizeOrder."
+        # (The slot-claim patterns nodes.ClaimSlot / db.ClaimSlot went in the
+        # 2026-09-26 dead-pattern sweep with the primitives they guarded.)
         # Order-builder Stage 5: OrderType is DATA, not a control-flow key.
         # dispatch + fulfillment must not branch on an order's .OrderType —
         # route on plan provenance (IsCoordinated), SourceIntent, or the
@@ -198,15 +187,31 @@ linters:
         # route bin moves through service.BinService.Move. Sanctioned store-level
         # delegates that BinService.Move composes are carved out in
         # exclusions.rules below (keyed on the "occupancy fail-close" message so
-        # only THIS guard is relaxed there). The un-reconciled db.MoveBin twin was
-        # deleted outright (zero production callers). The `\b` keeps bins.Move
-        # from prefix-matching bins.MoveAndClearStaging (its own entry).
-        - pattern: 'bins\.Move\b'
-          msg: "Direct bins.Move bypasses the service-layer occupancy fail-close (BinService.Move) and the arrival ghost-reconciliation. Route bin moves through service.BinService.Move."
+        # only THIS guard is relaxed there). The un-reconciled db.MoveBin and
+        # bins.Move twins were deleted outright (zero production callers); their
+        # forbidigo patterns went with them in the 2026-09-26 dead-pattern sweep.
         - pattern: 'db\.MoveBinClearingStaging'
           msg: "Direct db.MoveBinClearingStaging bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
         - pattern: 'bins\.MoveAndClearStaging'
           msg: "Direct bins.MoveAndClearStaging bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
+        # Raw bin-writer guard (2026-09-26). The four writers below mutate bin
+        # location/lifecycle directly; callers must route through the BinService
+        # wrappers, which hold the occupancy fail-close and ghost-reconciliation.
+        # The `\b` on db.UpdateBin keeps it from matching db.UpdateBinStatus.
+        # Sanctioned callers: service/bin_service.go :623 (updateBin),
+        # :917 (moveToTransit), :1040 (recoverToNode), :674 (retire) — covered by
+        # the message-scoped exclusion in exclusions.rules. Declarations in
+        # store/bins.go don't match a `db.` selector; testdb + _test.go carveouts
+        # already exist. tag_verify_service.go:69 (the fifth db.UpdateBin caller)
+        # died with the tag-verify service deletion, same date.
+        - pattern: 'db\.UpdateBin\b'
+          msg: "Raw bin writer: db.UpdateBin bypasses BinService validation. Route through service.BinService (Update/MergeUpdate path)."
+        - pattern: 'db\.MoveBinToTransit\b'
+          msg: "Raw bin writer: db.MoveBinToTransit bypasses the occupancy fail-close. Route through service.BinService.Move."
+        - pattern: 'db\.RecoverBinToNode\b'
+          msg: "Raw bin writer: db.RecoverBinToNode bypasses BinService recovery checks. Route through service.BinService.Recover."
+        - pattern: 'db\.RetireBin\b'
+          msg: "Raw bin writer: db.RetireBin bypasses BinService retire checks. Route through service.BinService.Retire."
 
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
@@ -696,6 +701,14 @@ linters:
           - forbidigo
       - path: "shingo-core/service/bin_service\\.go"
         text: "occupancy fail-close"
+        linters:
+          - forbidigo
+      # BinService IS the seatbelt for the raw bin-writer guard; its own four
+      # calls (updateBin :623, moveToTransit :917, recoverToNode :1040, retire
+      # :674) are the sanctioned ones. Scoped to the "Raw bin writer" message so
+      # every other guard stays live on the rest of the file.
+      - path: "shingo-core/service/bin_service\\.go"
+        text: "Raw bin writer"
         linters:
           - forbidigo
 

@@ -35,7 +35,6 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 		goProjector func() string
 	}{
 		{"TERMINAL_STATUSES", protocol.TerminalStatusSQLList},
-		{"OPERATOR_VISIBLE_STATUSES", protocol.OperatorVisibleStatusSQLList},
 		// PRE_DISPATCH_STATUSES is the demand-card question — "waiting, nothing is
 		// moving yet". It is pinned here because the operator station used to ask it
 		// with literals (`'queued' || 'pending'`) and so left `sourcing` out: a
