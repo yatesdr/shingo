@@ -66,7 +66,6 @@ type simOperator struct {
 	mu         sync.Mutex
 	pending    map[int64]bool // nodes with a LOAD/CLEAR scheduled/in-flight (idempotence)
 	releasing  map[int64]bool // orders with a swap-ready release scheduled/in-flight
-	flipping   map[int64]bool // A/B active nodes with a cutover scheduled/in-flight
 	confirming map[int64]bool // delivered swap legs with a confirm scheduled/in-flight
 	// releaseTries counts consecutive Release pushes per order that did not stick.
 	// See maxReleaseTries: the Edge cannot see a Core-owned lane wait, so the only
@@ -94,7 +93,6 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 		ctx:          ctx,
 		pending:      make(map[int64]bool),
 		releasing:    make(map[int64]bool),
-		flipping:     make(map[int64]bool),
 		confirming:   make(map[int64]bool),
 		releaseTries: make(map[int64]int),
 		cappedAt:     make(map[int64]time.Time),
@@ -102,11 +100,11 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 	op.classify = op.classifyFromClaim
 	// The bus is synchronous (D4): handlers must not block — they dedupe and
 	// spawn a delayed worker, then return. onDelivered drives the post-delivery
-	// LOAD/CLEAR; onStatusChanged drives the swap-ready release; onOrderCreated
-	// drives the A/B cutover (the PLC-bit stand-in).
+	// LOAD/CLEAR; onStatusChanged drives the swap-ready release. There is no
+	// cutover handler: the sim has no PLC bit to stand in for, because the
+	// release trunk flips the pair itself (2026-09-27, fact-owners Lane G).
 	e.Events.SubscribeTypes(op.onDelivered, EventOrderDelivered)
 	e.Events.SubscribeTypes(op.onStatusChanged, EventOrderStatusChanged)
-	e.Events.SubscribeTypes(op.onOrderCreated, EventOrderCreated)
 	e.logFn("[sim] sim operator started (loader_auto_load=%s unloader_auto_clear=%s swap_release=%s)",
 		op.loaderDelay(), op.unloaderDelay(), op.swapReleaseDelay())
 
@@ -624,34 +622,16 @@ func (op *simOperator) reconcile() {
 		o := active[i]
 		switch o.Status {
 		case protocol.StatusStaged:
+			// ── NO CUTOVER ARM, AND ITS ABSENCE IS THE CHANGE ─────────────
+			//
+			// This arm used to call scheduleFlip. It existed because the
+			// cutover was a separate operator action the sim had to take before
+			// a release could succeed — the 2026-08-30 deadlock this loop was
+			// written to close ("444 refusals, five robots pinned, four
+			// sim-hours"). Since 2026-09-27 (fact-owners Lane G) the release
+			// trunk flips the pair itself when the partner can feed the line,
+			// so scheduleRelease is the whole action: nothing left to re-derive.
 			op.scheduleRelease(o.ID)
-			// ── AND THE A/B CUTOVER, WHICH THIS LOOP DID NOT DRIVE ────────
-			//
-			// scheduleFlip had exactly ONE caller — onOrderCreated — so the
-			// cutover was LIVE-EVENT-ONLY. That is a hole shaped precisely like
-			// a deadlock, and the fixture found it:
-			//
-			//	[sim] operator auto-release order 164 rejected: the line is
-			//	      pulling from PLN_003; flip to PLN_004 first
-			//
-			// The evac at a sequential press cannot release until the line
-			// flips to the paired side. Nothing flips unless an order is
-			// CREATED against that node. No order can be created for a cell
-			// whose swap is stuck. Measured 2026-08-30: 444 refusals of that one
-			// message, 500 release-cap announcements, five robots pinned, and
-			// PANEL-B production stopped for four sim-hours — with the operator
-			// retrying an action that could not succeed until it took a
-			// different one first.
-			//
-			// This loop exists to "re-derive pending operator actions from
-			// current state" so a live-only trigger cannot strand the plant. It
-			// re-derived three of the four. runFlip is already idempotent and
-			// already short-circuits on !ActivePull and on a non-sequential
-			// claim, so asking it once per staged order per sweep costs a read
-			// and answers nothing new when there is nothing to flip.
-			if o.ProcessNodeID != nil {
-				op.scheduleFlip(*o.ProcessNodeID)
-			}
 			pending++
 		case protocol.StatusDelivered:
 			// The test onDelivered makes: a leg whose bin LEFT this node (a U2
@@ -1112,88 +1092,6 @@ func (op *simOperator) releaseAsPair(orderID int64) {
 		return
 	}
 	op.e.logFn("[sim] operator pair-release node %d (order %d was swap-ready)", nodeID, orderID)
-}
-
-// onOrderCreated is the A/B cutover trigger — the headless stand-in for the PLC
-// bit. A real plant's PLC flips active_pull to the partner bin when the active
-// bin's swap fires; the sim has no PLC, so when an A/B (sequential) node
-// dispatches its swap order, flip active_pull to its paired partner so the line
-// keeps running on the partner while this bin swaps out. Either role — a produce
-// press fills the partner's empty, a consume cell feeds off the partner's
-// material, and the flip is the same move. Must not block
-// (synchronous bus): dedupe and spawn, then return.
-func (op *simOperator) onOrderCreated(ev Event) {
-	d, ok := ev.Payload.(OrderCreatedEvent)
-	if !ok || d.ProcessNodeID == nil {
-		return
-	}
-	op.scheduleFlip(*d.ProcessNodeID)
-}
-
-// scheduleFlip dedupes by the active node and spawns the cutover worker.
-func (op *simOperator) scheduleFlip(nodeID int64) {
-	op.mu.Lock()
-	if op.flipping[nodeID] {
-		op.mu.Unlock()
-		return
-	}
-	op.flipping[nodeID] = true
-	op.mu.Unlock()
-	go op.runFlip(nodeID)
-}
-
-func (op *simOperator) runFlip(nodeID int64) {
-	defer func() {
-		op.mu.Lock()
-		delete(op.flipping, nodeID)
-		op.mu.Unlock()
-	}()
-
-	node, runtime, claim, err := loadActiveNode(op.e.db, nodeID)
-	if err != nil || node == nil || claim == nil || runtime == nil {
-		return
-	}
-	// Any A/B (sequential + paired) node that is CURRENTLY the active-pull side.
-	// After we flip it inactive, the backfill order's EventOrderCreated re-enters
-	// here and short-circuits on !ActivePull.
-	//
-	// NOT PRODUCE-ONLY, and the restriction that used to be here was the sim's
-	// and not the product's. Swap modes are agnostic to role — FlipABNode and
-	// flipTargetReady handle a consume A/B pair explicitly, with an extra
-	// conjunct consume needs (the position must hold MATERIAL, and the incoming
-	// style's). This function stands in for the PLC that would flip a real one,
-	// and it only ever learned the produce case because that is the only case
-	// the fixtures had. A consume A/B pair configured here simply never cycled:
-	// its drained carrier could not rotate out, and the cell starved with no
-	// error anywhere.
-	if claim.SwapMode != protocol.SwapModeSequential || claim.PairedCoreNode == "" ||
-		!runtime.ActivePull {
-		return
-	}
-	paired := op.pairedNode(node.ProcessID, claim.PairedCoreNode)
-	if paired == nil {
-		return
-	}
-	// FlipABNode(x) makes x active and its partner (this node) inactive.
-	if err := op.e.FlipABNode(paired.ID, OperatorFlip("sim-operator")); err != nil {
-		op.e.debugFn("[sim] A/B cutover %s→%s rejected: %v", node.CoreNodeName, claim.PairedCoreNode, err)
-		return
-	}
-	op.e.logFn("[sim] A/B cutover: %s → %s (active bin swapping out)", node.CoreNodeName, claim.PairedCoreNode)
-}
-
-// pairedNode resolves the process node with the given core-node name in a process.
-func (op *simOperator) pairedNode(processID int64, coreName string) *processes.Node {
-	nodes, err := op.e.db.ListProcessNodesByProcess(processID)
-	if err != nil {
-		return nil
-	}
-	for i := range nodes {
-		if nodes[i].CoreNodeName == coreName {
-			return &nodes[i]
-		}
-	}
-	return nil
 }
 
 // classifyFromClaim inspects the node's active claim and returns the

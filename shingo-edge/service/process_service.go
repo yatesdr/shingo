@@ -17,9 +17,9 @@ import (
 // three tables together describe the production line's structure (a
 // process has many nodes; each node has runtime state).
 //
-// Style transitions (SetActiveStyle) live on this service because
-// they're a process-level concern — a process *runs* a style, and
-// flipping the active style is a process operation.
+// Style transitions are the engine's flip verb (SetProcessActiveStyle on
+// Engine — lineside_strand.go): a flip strands the piles and publishes
+// plant.claims, so it was never really a bare CRUD concern.
 //
 // Phase 6.2′ extracted this from named methods on *engine.Engine.
 type ProcessService struct {
@@ -153,12 +153,6 @@ var ErrDuplicateGroupName = process_groups.ErrDuplicateGroupName
 // the other way round.
 func (s *ProcessService) Delete(id int64) error {
 	return s.db.DeleteProcess(id)
-}
-
-// SetActiveStyle flips the active_style_id for a process. Pass nil to
-// clear the active style.
-func (s *ProcessService) SetActiveStyle(processID int64, styleID *int64) error {
-	return s.db.SetActiveStyle(processID, styleID)
 }
 
 // SetChangeoverAutoArm writes the per-process CATID auto-arm mode

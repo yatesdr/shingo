@@ -296,10 +296,8 @@ func (s *stubEngine) EvacuateNode(int64, int64, int64) (*storeorders.Order, erro
 func (s *stubEngine) DeliverNewMaterialForChangeover(int64, int64) (*storeorders.Order, error) {
 	return nil, nil
 }
-func (s *stubEngine) SwitchNodeToTarget(int64, int64) error             { return nil }
-func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error  { return nil }
-func (s *stubEngine) FlipABNode(int64, engine.FlipRequest) error        { return nil }
-func (s *stubEngine) SetActivePullSide(int64, engine.FlipRequest) error { return nil }
+func (s *stubEngine) SwitchNodeToTarget(int64, int64) error            { return nil }
+func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error { return nil }
 
 func (s *stubEngine) AdminClearLinesideBucket(int64) error { return nil }
 

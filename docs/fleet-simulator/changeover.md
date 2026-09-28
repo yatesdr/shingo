@@ -9,7 +9,7 @@ Edge tests use SQLite in a temp directory — no Docker required.
 ## Test files
 
 - `engine/changeover_test.go` — full changeover lifecycle, auto-staging, error/retry, cancel, keep-staged (TC-74, 76, 61, 73)
-- `engine/wiring_test.go` — A/B cycling and FlipABNode (TC-72)
+- `engine/wiring_test.go` — A/B cycling (TC-72); the release flip is `engine/sequential_release_flip_test.go`
 - `engine/operator_stations_test.go` — order acceptance guards (TC-61)
 - `engine/changeover_diff_test.go` — DiffStyleClaims pure function unit tests (TC-86 through TC-89)
 - `engine/step_builders_test.go` — Build*Steps pure function unit tests (TC-90)
@@ -18,7 +18,7 @@ Run this domain's tests:
 
 ```bash
 cd shingo-edge
-go test -v -run "TestChangeover|TestWiring_ABCycling|TestWiring_FlipABNode|TestCanAcceptOrders|TestDiffStyleClaims|TestBuildSwapChangeover|TestBuildEvacuateChangeover|TestBuildKeepStaged|TestBuildStage|TestBuildRelease|TestBuildRestore" ./engine/ -timeout 60s
+go test -v -run "TestChangeover|TestWiring_ABCycling|TestSequential|TestCanAcceptOrders|TestDiffStyleClaims|TestBuildSwapChangeover|TestBuildEvacuateChangeover|TestBuildKeepStaged|TestBuildStage|TestBuildRelease|TestBuildRestore" ./engine/ -timeout 60s
 ```
 
 The TC-61…TC-108 case ledger that used to sit below this line was a test report —

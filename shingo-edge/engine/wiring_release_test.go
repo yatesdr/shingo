@@ -257,54 +257,18 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 }
 
 // TestRegression_ABInactivePairFlush pins the A/B-flip flush trigger:
-// FlipABNode triggers a reporter flush before swapping active-pull,
-// so any deltas the inactive accumulator collected ship before the
-// new bin starts driving counts. Without this trigger the inactive
-// node's residual deltas would either get lost (on Edge restart) or
-// attribute to the wrong active-bin context.
+// the release trunk's flip (releaseFlipPartner) triggers a reporter flush
+// before swapping active-pull, so any deltas the inactive accumulator
+// collected ship before the new bin starts driving counts. Without this
+// trigger the inactive node's residual deltas would either get lost (on
+// Edge restart) or attribute to the wrong active-bin context. It drove
+// Engine.FlipABNode until that door was deleted; the flush is now the
+// release's, on the partner going live, before the pull bits move.
 func TestRegression_ABInactivePairFlush(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeAID, styleID, claimAID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix:      "AB-FLIP-A",
-		PayloadCode: "PART-AB",
-		UOPCapacity: 100,
-		InitialUOP:  100,
-	})
-	// Pair claim A → B.
-	claimA, _ := db.GetStyleNodeClaimByNode(styleID, "AB-FLIP-A-NODE")
-	nodeBID, err := db.CreateProcessNode(processes.NodeInput{
-		ProcessID:    claimA.StyleID, // any process; same one
-		CoreNodeName: "AB-FLIP-B-NODE",
-		Code:         "ABB",
-		Name:         "AB Flip B",
-		Sequence:     2,
-		Enabled:      true,
-	})
-	if err != nil {
-		// The signature is best-effort — if it errs (style/process
-		// mismatch), the test setup is fine without a real paired
-		// node row; the FlipABNode call only checks PairedCoreNode
-		// on the claim, not that the paired node exists for the
-		// flush-trigger assertion. Skip to the assertion.
-		t.Logf("paired node create err (non-fatal for flush trigger test): %v", err)
-		nodeBID = 0
-	}
-
-	// Pair on the claim itself — that's what FlipABNode checks.
-	if _, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID:        claimA.StyleID,
-		CoreNodeName:   claimA.CoreNodeName,
-		Role:           claimA.Role,
-		SwapMode:       claimA.SwapMode,
-		PayloadCode:    claimA.PayloadCode,
-		UOPCapacity:    claimA.UOPCapacity,
-		PairedCoreNode: "AB-FLIP-B-NODE",
-	}); err != nil {
-		t.Fatalf("pair claim A: %v", err)
-	}
-
-	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeAID, &claimAID, 100), "seed runtime A")
+	_, nodeAID, nodeBID, _, claimAID, claimBID := seedABPair(t, db)
+	makePairSequential(t, db, claimAID, claimBID)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -316,13 +280,19 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 		t.Fatalf("pre-flip flushes = %d, want 0", sink.flushes)
 	}
 
-	testutil.MustNoErr(t, eng.FlipABNode(nodeAID, OperatorFlip("test")), "FlipABNode")
+	nodeA, err := db.GetProcessNode(nodeAID)
+	testutil.MustNoErr(t, err, "get node A")
+	testutil.MustNoErr(t, eng.releaseFlipPartner(nodeA), "releaseFlipPartner")
 
 	if sink.flushes == 0 {
-		t.Errorf("Flush() not called during FlipABNode — A/B active-pull state flip is a flush trigger")
+		t.Errorf("Flush() not called during the release flip — the A/B active-pull state flip is a flush trigger")
 	}
-	_ = nodeBID
-	_ = orders.TypeRetrieve // anchor import
+	if len(sink.boundaryCalls) != 1 || sink.boundaryCalls[0] != nodeBID {
+		t.Errorf("boundary calls = %v, want one on the partner going live (%d)", sink.boundaryCalls, nodeBID)
+	}
+	if activePullOf(t, db, nodeAID) || !activePullOf(t, db, nodeBID) {
+		t.Error("the release flip did not move the pull from A to B")
+	}
 }
 
 // flushTrackingSink extends fakeDeltaSink with a Flush counter so

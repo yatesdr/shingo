@@ -1,4 +1,4 @@
-import { esc, postAction } from './operator-util.js';
+import { esc, postAction, showExitToast } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
 import { openKeypad } from './operator-keypad.js';
 
@@ -125,6 +125,20 @@ function linesideSoftThresholdForEntry(entry) {
     return isNaN(v) || v < 0 ? 0 : v;
 }
 
+// The release guard's second click. The engine refused with "…confirm to
+// release anyway" (the partner of a sequential pair cannot feed the line
+// yet); the operator's answer is the same POST plus confirm_active_pull:
+// true. The release itself then flips the pull side to the partner — there
+// is no separate flip action any more.
+function offerReleaseAnyway(url, body) {
+    return function onRefusal(msg) {
+        showExitToast(msg, 'RELEASE ANYWAY', async () => {
+            const ok = await postAction(url, Object.assign({}, body, { confirm_active_pull: true }), loadViewRef);
+            if (ok && closeModalRef) closeModalRef();
+        });
+    };
+}
+
 export async function openReleasePrompt(url, entry) {
     const payloads = allowedPayloadsForEntry(entry);
 
@@ -134,7 +148,7 @@ export async function openReleasePrompt(url, entry) {
     // opens and isReleasePromptOpen() stays false for the SSE re-render guard.
     const direct = singleOutcomeReleaseBody(entry, payloads);
     if (direct) {
-        const ok = await postAction(url, direct, loadViewRef);
+        const ok = await postAction(url, direct, loadViewRef, { onRefusal: offerReleaseAnyway(url, direct) });
         if (ok && closeModalRef) closeModalRef();
         return;
     }
@@ -491,7 +505,7 @@ async function handleReleasePromptAction(evt) {
         const body = releasedFullBody(calledByFromView());
         closeReleasePrompt();
         evt.currentTarget.disabled = true;
-        const ok = await postAction(state.url, body, loadViewRef);
+        const ok = await postAction(state.url, body, loadViewRef, { onRefusal: offerReleaseAnyway(state.url, body) });
         if (ok && closeModalRef) closeModalRef();
         return;
     }
@@ -551,7 +565,7 @@ async function handleReleasePromptAction(evt) {
         }
         closeReleasePrompt();
         evt.currentTarget.disabled = true;
-        const ok = await postAction(url, body, loadViewRef);
+        const ok = await postAction(url, body, loadViewRef, { onRefusal: offerReleaseAnyway(url, body) });
         if (ok && closeModalRef) closeModalRef();
         return;
     }

@@ -133,12 +133,17 @@ func (e *Engine) reconcileActiveBinAfterCancel(processNodeID int64, activeClaimI
 	}
 	if bin != nil {
 		binID := bin.BinID
-		if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(processNodeID, activeClaimID, &binID, bin.DeltaEpoch, bin.UOPRemaining); err != nil {
-			log.Printf("changeover cancel: rebind active bin %d for node %s: %v", bin.BinID, node.Name, err)
+		// Rebind through the verb: count + stamp from Core's physical view.
+		if e.inventoryDelta != nil {
+			if err := e.inventoryDelta.BindFromCore(processNodeID, activeClaimID, &binID, bin.DeltaEpoch, bin.UOPRemaining); err != nil {
+				log.Printf("changeover cancel: rebind active bin %d for node %s: %v", bin.BinID, node.Name, err)
+			}
 		}
 		return
 	}
-	if err := e.db.SetProcessNodeRuntimeWithBin(processNodeID, activeClaimID, nil, 0); err != nil {
+	// Confirmed empty: the carrier left. Pointer, count and identity go
+	// through the one verb (carrier_left.go); no sink, no write.
+	if err := e.carrierLeft(processNodeID, node.CoreNodeName); err != nil {
 		log.Printf("changeover cancel: clear active bin for node %s: %v", node.Name, err)
 	}
 }

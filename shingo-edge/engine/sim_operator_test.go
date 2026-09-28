@@ -148,21 +148,24 @@ func TestSimOperator_OutboundDeliveryDoesNotScheduleAClear(t *testing.T) {
 //
 // reconcile's whole job is stated in its doc: "re-derive pending operator
 // actions from current state … so any order already mid-choreography when this
-// operator starts is not invisible to the live-only handlers". It drove three of
-// the four schedulers. scheduleFlip — the A/B cutover — had exactly ONE caller,
-// onOrderCreated, so the cutover was live-event-only.
+// operator starts is not invisible to the live-only handlers". At the time this
+// test was written it drove three of four schedulers: scheduleFlip — the A/B
+// cutover — had exactly ONE caller, onOrderCreated, so the cutover was
+// live-event-only.
 //
 // MEASURED 2026-08-30, and it is not a corner case. A sequential press's evac
-// cannot release until the line flips to the paired side:
+// could not release until the line flipped to the paired side, nothing flipped
+// unless an order was CREATED against that node, and no order could be created
+// for a cell whose swap was stuck: 444 refusals, 500 release-cap
+// announcements, five robots pinned, PANEL-B dark for four sim-hours.
 //
-//	[sim] operator auto-release order 164 rejected: the line is pulling from
-//	      PLN_003; flip to PLN_004 first, or confirm to release anyway
+// ── THE CUTOVER ARM IS GONE, AND THAT IS THE FIX ITSELF ───────────────────
 //
-// Nothing flips unless an order is CREATED against that node, and no order can
-// be created for a cell whose swap is stuck. 444 refusals of that one message,
-// 500 release-cap announcements, five robots pinned, and PANEL-B production
-// stopped for four sim-hours — the operator retrying an action that could not
-// succeed until it took a different one first.
+// Since 2026-09-27 (fact-owners Lane G) there is no cutover action to miss:
+// the release trunk flips the pair itself (releaseFlipPartner), so the flip
+// cannot be live-only — it rides every release, and reconcile's scheduleRelease
+// covers it. The count dropped from four schedulers to three for that reason;
+// the totality property the scan checks is unchanged and still general.
 //
 // ── WHY A SOURCE SCAN AND NOT A BEHAVIOUR TEST ────────────────────────────
 //
@@ -170,11 +173,11 @@ func TestSimOperator_OutboundDeliveryDoesNotScheduleAClear(t *testing.T) {
 // paired node and a live claim — a fixture that would pin THIS deadlock and
 // nothing about the next one. The property that actually failed is narrower and
 // general: the restart-safety net must cover EVERY action the live handlers
-// drive. A fifth scheduler added tomorrow with a live-only trigger is the same
+// drive. A scheduler added tomorrow with a live-only trigger is the same
 // bug again, and this fires for it too.
 //
-// MUTATION (verified): remove the scheduleFlip call from reconcile. This names
-// it and says what a live-only trigger costs.
+// MUTATION (verified): remove a schedule* call from reconcile. This names it
+// and says what a live-only trigger costs.
 func TestSimOperator_ReconcileDrivesEveryScheduler(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile(filepath.Clean("sim_operator.go"))
@@ -189,7 +192,7 @@ func TestSimOperator_ReconcileDrivesEveryScheduler(t *testing.T) {
 	for _, m := range decl.FindAllStringSubmatch(body, -1) {
 		schedulers = append(schedulers, m[1])
 	}
-	if len(schedulers) < 4 {
+	if len(schedulers) < 3 {
 		t.Fatalf("found %d schedule* helpers (%v) — the scan has drifted from the file and this test "+
 			"is checking nothing", len(schedulers), schedulers)
 	}

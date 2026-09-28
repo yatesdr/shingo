@@ -41,11 +41,8 @@ func (db *DB) SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activ
 }
 
 // SetProcessNodeRuntimeWithBin updates active_claim_id, active_bin_id,
-// and remaining_uop_cached atomically. Used by the CLEAR-shaped writes —
-// ClearActiveAndReset and the changeover-cancel reconcile — where the slot ends
-// up empty and no epoch is in hand. Deliveries use
-// SetProcessNodeRuntimeForDeliveredBin; the completion-handler callers this
-// once named were removed with the old delivery handler.
+// and remaining_uop_cached atomically. No production caller (see
+// processes.SetRuntimeWithBin); test fixtures seed runtime rows with it.
 func (db *DB) SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error {
 	return processes.SetRuntimeWithBin(db.DB, processNodeID, activeClaimID, activeBinID, remainingUOP)
 }
@@ -58,8 +55,8 @@ func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64)
 }
 
 // ClearProcessNodeActiveBinAndCount clears the bin pointer and zeroes the
-// cached count atomically — the pickup-departure write. See
-// processes.ClearActiveBinAndCount.
+// cached count atomically — the pointer/count half of the carrier-left verb.
+// See processes.ClearActiveBinAndCount.
 func (db *DB) ClearProcessNodeActiveBinAndCount(processNodeID int64) error {
 	return processes.ClearActiveBinAndCount(db.DB, processNodeID)
 }
@@ -73,8 +70,8 @@ func (db *DB) SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID
 
 // SetProcessNodeRuntimeWithBinAndEpoch updates active_claim_id,
 // active_bin_id, active_bin_epoch, and remaining_uop_cached atomically.
-// Used by ManualLoad (operator imprint) where Core's LoadBin response
-// provides the epoch.
+// Used by ManualLoad (operator imprint, epoch from Core's LoadBin response)
+// and BindFromCore (Core's announcement of the carrier at the slot).
 func (db *DB) SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error {
 	return processes.SetRuntimeWithBinAndEpoch(db.DB, processNodeID, activeClaimID, activeBinID, deltaEpoch, remainingUOP)
 }

@@ -1,23 +1,5 @@
 package engine
 
-// engine_coverage_test.go — coverage tests for the thin accessor/adapter/
-// service layer of the Engine. These exercise the files that had zero
-// coverage before PR 3.3:
-//
-//   engine.go              — accessors + Core node sync + func-injection
-//                            + HandlePayloadCatalog + SendEnvelope +
-//                            ReconnectKafka
-//   adapters.go            — plcEmitter + orderEmitter branches
-//   core_client.go         — CoreClient against httptest.NewServer
-//   core_sync_service.go   — CoreSyncService StartupReconcile +
-//                            RequestOrderStatusSync + HandleOrderStatusSnapshots
-//   reconciliation.go      — thin Engine delegates
-//   reconciliation_service.go — ReconciliationService delegates
-//
-// The tests construct Engine and subsystem structs directly (injecting
-// fields) rather than calling Start(); Start() wires PLC polling and
-// WarLink and isn't safe to invoke from a unit test.
-
 import (
 	"encoding/json"
 	"errors"
@@ -38,6 +20,7 @@ import (
 	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
+	"shingoedge/uop"
 )
 
 // ── Shared fixtures ─────────────────────────────────────────────────
@@ -68,6 +51,7 @@ func newCoverageEngine(t *testing.T) *Engine {
 		Events:   NewEventBus(),
 		stopChan: make(chan struct{}),
 		logFn:    func(string, ...any) {},
+		debugFn:  func(string, ...any) {},
 	}
 	eng.coreClient = NewCoreClient("")
 	eng.reconciliation = newReconciliationService(eng.db)
@@ -75,6 +59,9 @@ func newCoverageEngine(t *testing.T) *Engine {
 	eng.orderMgr = orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, cfg.StationID())
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
+	// Production wires the UOP mutator as the inventory sink (main.go);
+	// Released adjustments and the other slot verbs route through it.
+	eng.SetInventoryDeltaSink(uop.New(db, "stn-test", db, db))
 	return eng
 }
 

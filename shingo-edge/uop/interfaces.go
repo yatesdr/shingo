@@ -25,10 +25,11 @@ type Ticker interface {
 // intent is visible at the call site.
 type SlotWriter interface {
 	BindActiveBin(nodeID, binID int64, deltaEpoch int64) error
+	BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
+	BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error)
 	ClearActiveBin(nodeID int64) error
 	SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error
 	SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error
-	ClearActiveAndReset(nodeID int64, activeClaimID *int64) error
 	OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error
 	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 }
@@ -57,7 +58,8 @@ type Pickup interface {
 }
 
 // Boundary — non-UOP orchestration boundary that needs a flush before
-// attribution context changes. Today's caller: A/B active-pull flip.
+// attribution context changes. Today's caller: the release trunk's A/B
+// active-pull flip (releaseFlipPartner).
 type Boundary interface {
 	MarkAttributionBoundary(nodeID int64) error
 }

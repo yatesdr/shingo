@@ -387,3 +387,39 @@ func TestListLinesideLevels_OneStatementForEverySeat(t *testing.T) {
 		t.Errorf("ListLinesideLevels issued %d statements for 3 seats, want 1", got)
 	}
 }
+
+// A RETIRED NODE'S PILES GO WITH IT, AND NOTHING READS THEM AFTER. The retire
+// deletes the bucket rows (DeleteNode), so a level Core still mirrors for the
+// retired cell's core name has no place to land — ListKeys does not name the
+// tombstoned node's rows, and Level does not sum them. This is the parity the
+// process delete already has; the node retire gains it here.
+func TestRetireNode_TakesThePilesWithIt(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, _, nodeID, _ := linesideFixture(t, db, "ALN_RETIRE")
+	if _, err := db.CaptureLinesideBucket(nodeID, "REAL-PART", 70); err != nil {
+		t.Fatalf("capture bucket: %v", err)
+	}
+
+	if err := db.DeleteProcessNode(nodeID); err != nil {
+		t.Fatalf("retire node: %v", err)
+	}
+
+	keys, err := db.ListLinesidePileKeys()
+	if err != nil {
+		t.Fatalf("list pile keys: %v", err)
+	}
+	for _, k := range keys {
+		if k.NodeID == nodeID {
+			t.Errorf("key %+v still names the retired node — the boot resend would ask Core to "+
+				"mirror a level for a cell that no longer exists", k)
+		}
+	}
+	level, err := db.LinesidePileLevel("ALN_RETIRE", "REAL-PART", "active")
+	if err != nil {
+		t.Fatalf("read level: %v", err)
+	}
+	if level != 0 {
+		t.Errorf("level = %d, want 0 — the retired node's stock is not stock at the core name", level)
+	}
+}

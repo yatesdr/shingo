@@ -146,6 +146,11 @@ type Engine struct {
 	catalogSyncFn   func()
 	sendFn          func(*protocol.Envelope) error
 	kafkaReconnFn   func() error
+	// plantClaimsFn publishes one process's plant.claims report so Core's
+	// mirror follows an active-style flip within one message instead of
+	// waiting for the snapshot. Wired at the composition root; nil in
+	// tests that don't assert the publish (call sites nil-guard).
+	plantClaimsFn func(processID int64)
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
@@ -213,18 +218,9 @@ type Engine struct {
 	// /status. Injected for the same reason.
 	productionTickLagFn func() (pending, oldestAgeMS int64, err error)
 
-	// homeConsolidations tracks pending two-order consolidation sequences
-	// initiated by ClearLoaderHome. Key = Order A's UUID. When Order A's robot
-	// picks up the empty carrier (home is now clear), HandleBinPickedUp fires
-	// Order B (buffer partial → home). Protected by homeConsolidationsMu.
-	homeConsolidations   map[string]homeConsolidation
-	homeConsolidationsMu sync.Mutex
-
-	// marketPullbacks tracks pull-from-market orders so the delivery handler
-	// can auto-clear the bin when it arrives at the loader window.
-	// Key = order UUID, value = Edge process node ID of the loader window.
-	marketPullbacks   map[string]int64
-	marketPullbacksMu sync.Mutex
+	// The pending home-consolidation and market-pullback intents are NOT here:
+	// they live on the order row (orders.pending_intent, order_intent.go) so an
+	// Edge restart between arming and firing does not lose them.
 
 	// pendingSiblingRelease records a two-robot swap leg whose consolidated
 	// RELEASE was deferred by ReleaseStagedOrders because Core would have
@@ -351,6 +347,7 @@ func New(c Config) *Engine {
 	e.stationService.SetSceneGeometryResolver(e.SceneGeometry)
 	e.stationService.SetCoreNodeGroupResolver(e.CoreNodeGroups)
 	e.stationService.SetPlantGenerationResolver(e.PlantGeneration)
+	e.stationService.SetNodeRetirer(e.RetireNode)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
@@ -361,8 +358,6 @@ func New(c Config) *Engine {
 	e.orderService = service.NewOrderService(e.db)
 	e.preflightChecker = service.NewPreflightChecker(e.db, e.coreClient, e.cfg.StationID())
 	e.loaderStore = newLoaderStore(e)
-	e.homeConsolidations = make(map[string]homeConsolidation)
-	e.marketPullbacks = make(map[string]int64)
 	return e
 }
 
@@ -746,6 +741,14 @@ func (e *Engine) RequestNodeSync() {
 // SetCatalogSyncFunc sets the function to call when a payload catalog sync is requested.
 func (e *Engine) SetCatalogSyncFunc(fn func()) {
 	e.catalogSyncFn = fn
+}
+
+// SetPlantClaimsFunc injects the plant-claims publisher's changed-process
+// publish, so a flip verb (lineside_strand.go) can tell Core about the new
+// running style without the engine taking a dependency on the messaging
+// package — the same indirection as SetSendFunc above.
+func (e *Engine) SetPlantClaimsFunc(fn func(processID int64)) {
+	e.plantClaimsFn = fn
 }
 
 // RequestCatalogSync triggers a payload catalog request to core.

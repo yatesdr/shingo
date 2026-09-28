@@ -10,60 +10,6 @@ import (
 	"shingoedge/domain"
 )
 
-// TestArch_ResidentPayloadHasOneDoorway pins the chokepoint. The resident
-// identity is written from exactly one place, so "who last said what this
-// carrier is" always has an answer.
-//
-// The field it replaces, active_claim_id, is written by eighteen paths, most of
-// them stamping the requested style, with nothing recording which spoke last.
-// That is how an ordinary recovery action came to re-aim a cell's idea of what
-// was standing on it.
-//
-// Same shape as uop/archtest_test.go: os.WalkDir plus a substring check, no
-// framework. Test files are exempt — a test may seed the column directly.
-func TestArch_ResidentPayloadHasOneDoorway(t *testing.T) {
-	t.Parallel()
-	root := edgeRoot(t)
-	const setter = "SetProcessNodeRuntimeLinesidePayload"
-	allowed := map[string]bool{
-		// The doorway itself.
-		filepath.Join("engine", "lineside_carrier_doorway.go"): true,
-		// The store wrapper it calls through.
-		filepath.Join("store", "process_node_runtime.go"): true,
-	}
-
-	var bad []string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		data, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return rerr
-		}
-		if !strings.Contains(string(data), setter) {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		if !allowed[rel] {
-			bad = append(bad, rel)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk: %v", err)
-	}
-	if len(bad) > 0 {
-		t.Errorf("the lineside identity is written outside its doorway:\n  %s\n\n"+
-			"Route it through Engine.recordLinesideCarrier and name the source. A field several "+
-			"paths write without saying which spoke last is the defect this replaced, not a "+
-			"shape to reintroduce.", strings.Join(bad, "\n  "))
-	}
-}
-
 func edgeRoot(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()

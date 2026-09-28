@@ -7,10 +7,11 @@
 // SequentialChangeoverCutover USED TO LIVE HERE and is gone (owner ruling
 // 2026-08-28). It bundled "flip the pull, then release the wait" into one
 // changeover-only button, and then needed a precondition of its own to stop
-// itself cutting over onto an unstocked position. Both halves already exist as
-// ordinary, mode-agnostic operator controls — FlipABNode and the per-node
-// release — so the cutover is those two clicks, each carrying its own physical
-// guard. A changeover needs no ceremony the steady state does not.
+// itself cutting over onto an unstocked position. The flip is now the release
+// itself (owner ruling 2026-09-27: releasing a sequential position moves the
+// line to its partner, guarded by the partner's readiness), so the cutover is
+// the per-node release, carrying its own physical guard. A changeover needs no
+// ceremony the steady state does not.
 
 package engine
 
@@ -284,14 +285,12 @@ func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 		return fmt.Errorf("cannot cutover: %s", strings.Join(domain.BlockersToReasons(blockers), "; "))
 	}
 	toStyleID := changeover.ToStyleID
-	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
+	// The flip goes through the shared verb (lineside_strand.go) so it
+	// strands the piles AND publishes plant.claims — Core's is_active
+	// follows within one message. Verb errors are returned: a failed write
+	// must not finalize the changeover row.
+	if err := e.flipActiveStyle(processID, &toStyleID); err != nil {
 		return err
-	}
-	// The cutover strands every lineside pile at the process's nodes
-	// (lineside_strand.go). Logged, not returned: the flip has happened, and
-	// failing here would leave the changeover row open on the to-style.
-	if err := e.strandLinesidePiles(processID); err != nil {
-		log.Printf("changeover: cutover on process %d: %v", processID, err)
 	}
 	return e.finalizeChangeoverRow(processID, changeover.ID, triggeredBy)
 }

@@ -79,10 +79,15 @@ func TestRegression_MultiBinAtPairedNodes_TicksAttributeCorrectly(t *testing.T) 
 // arriving between Flush and the active-pull writes should still find
 // the correct active side. We exercise the boundary by firing ticks
 // before, during (interleaved by re-issue), and after the flip.
+//
+// The flip is the release trunk's (releaseFlipPartner, on a sequential
+// pair): releasing A moves the line to B. It used to drive Engine.FlipABNode until
+// that door was deleted.
 func TestRegression_TickDuringABFlip(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
+	processID, nodeAID, nodeBID, styleID, claimAID, claimBID := seedABPair(t, db)
+	makePairSequential(t, db, claimAID, claimBID)
 
 	const binA, binB int64 = 2001, 2002
 	orderA := stageABOrder(t, db, nodeAID, "uuid-abflip-A", "PART-AB", binA)
@@ -103,10 +108,12 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 		ProcessID: processID, StyleID: styleID, Delta: 3,
 	}})
 
-	// Flip A → B. FlipABNode flushes before swapping active-pull; the
-	// flush ensures any pre-flip deltas are sealed against the old
-	// active context.
-	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode")
+	// Release A → the line moves to B. releaseFlipPartner flushes before
+	// swapping active-pull; the flush ensures any pre-flip deltas are
+	// sealed against the old active context.
+	nodeA, err := db.GetProcessNode(nodeAID)
+	testutil.MustNoErr(t, err, "get node A")
+	testutil.MustNoErr(t, eng.releaseFlipPartner(nodeA), "releaseFlipPartner")
 
 	// Post-flip tick → B's bin.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
@@ -126,7 +133,7 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 			sink.binCalls[1], binB)
 	}
 	if sink.flushes == 0 {
-		t.Errorf("Flush() not called during FlipABNode (B5 flush trigger)")
+		t.Errorf("Flush() not called during the release flip (B5 flush trigger)")
 	}
 }
 

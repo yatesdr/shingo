@@ -638,14 +638,8 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 	// request. Log-only on failure: the manifest already shipped, and the
 	// stale count would only re-stamp on a retry (Core's SetForProduction
 	// is idempotent).
-	if e.inventoryDelta != nil {
-		var claimID *int64
-		if runtime.ActiveClaimID != nil {
-			claimID = runtime.ActiveClaimID
-		}
-		if err := e.inventoryDelta.ClearActiveAndReset(node.ID, claimID); err != nil {
-			log.Printf("produce release: clear active bin for node %d: %v", node.ID, err)
-		}
+	if err := e.carrierLeft(node.ID, node.CoreNodeName); err != nil {
+		log.Printf("produce release: clear active bin for node %d: %v", node.ID, err)
 	}
 	return nil
 }
@@ -698,15 +692,12 @@ func (e *Engine) dispatchPairedLeg(nodeID int64, quantity int64, steps []protoco
 // Errors are logged only — the order(s) already shipped, so failing
 // here would leave the caller with no actionable recovery.
 func (e *Engine) resetProduceRuntime(nodeID int64, runtime *processes.RuntimeState, activeID, stagedID *int64, clearCounts bool) {
-	if clearCounts && e.inventoryDelta != nil {
+	if clearCounts {
 		// Clear the active bin (slot is empty after finalize → ticks hold)
-		// and zero the count (the next empty bin starts at 0). Preserves
-		// the claim so the next delivery binds against it.
-		var claimID *int64
-		if runtime != nil {
-			claimID = runtime.ActiveClaimID
-		}
-		if err := e.inventoryDelta.ClearActiveAndReset(nodeID, claimID); err != nil {
+		// and zero the count (the next empty bin starts at 0); the carrier's
+		// identity leaves with it. The claim is untouched, so the next
+		// delivery binds against it.
+		if err := e.carrierLeft(nodeID, ""); err != nil {
 			log.Printf("produce: clear active bin for node %d: %v", nodeID, err)
 		}
 	}

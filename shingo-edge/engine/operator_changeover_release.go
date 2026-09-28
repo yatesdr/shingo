@@ -177,18 +177,29 @@ func (e *Engine) releaseSingleLegChangeoverNode(nodeID int64, disp ReleaseDispos
 	return true, nil
 }
 
-// linePullsFrom reports whether a node is one half of an A/B pair that the line
-// is CURRENTLY DRAWING FROM, and names its partner.
+// linePullsFrom reports whether a node is one half of a SEQUENTIAL pair the
+// line is CURRENTLY DRAWING FROM, and if so why the partner cannot take over
+// yet.
 //
 // That is the physical reason a robot must not strip a position, and it is the
 // whole of it — no changeover vocabulary, no situation, no mode. It is equally
 // true in steady state: sending a robot to lift the bin the line is pulling
 // from stops production whether or not a changeover is running.
 //
+// The QUESTION the guard asks changed on 2026-09-27 (owner ruling, fact-owners
+// Lane G): it was "does the stored bit say pulling", it is now "can the partner
+// feed the line" — flipTargetReady on the partner. The stored bit still decides
+// WHETHER this side is the one being drawn from (the parked side of a pair
+// must release; a bit-less trigger would decline both halves), but the bit no
+// longer ANSWERS the release: the partner's readiness does. pulling is
+// therefore "own bit true AND the partner is not ready"; why is that reason,
+// empty only when the partner IS ready.
+//
 // Reads nothing it does not need: the node's active claim for the A/B geometry
 // (PairedCoreNode, the same predicate wiring.go uses for "is this the parked
-// side"), and the runtime row for the bit.
-func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string, err error) {
+// side"), the runtime row for the bit, and — only when the bit is set — the
+// partner node and its flipTargetReady answer.
+func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, why string, err error) {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil || node == nil {
 		return false, "", "", fmt.Errorf("read process node %d: %w", nodeID, err)
@@ -212,14 +223,35 @@ func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string,
 	// is what makes this side safe to clear. The scope is not a carve-out for a
 	// mode; it is the rule being stated about the choreography it describes.
 	if claim.SwapMode != protocol.SwapModeSequential {
-		return false, node.CoreNodeName, claim.PairedCoreNode, nil
+		return false, node.CoreNodeName, "", nil
 	}
 	rt, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
-		return false, node.CoreNodeName, claim.PairedCoreNode,
+		return false, node.CoreNodeName, "",
 			fmt.Errorf("read runtime for node %d: %w", nodeID, err)
 	}
-	return rt.ActivePull, node.CoreNodeName, claim.PairedCoreNode, nil
+	if !rt.ActivePull {
+		return false, node.CoreNodeName, "", nil // the line pulls from the partner — this side is clear
+	}
+	// The line draws from THIS side. Ask the new question: can the partner
+	// feed the line? flipTargetReady names the partner and the reason in one
+	// string, so the refusal says what to go fix ("SEQ-B's new bin has not
+	// been delivered yet") instead of naming a button that no longer exists.
+	//
+	// A partner that cannot be RESOLVED is a reason, not a read failure of
+	// this side's own state: the operator can look at the aisle and confirm,
+	// whereas an unread own runtime (above) is err because a confirm cannot
+	// answer a question that was never asked.
+	partner, pErr := e.pairedNodeOf(node)
+	if pErr != nil || partner == nil {
+		return true, node.CoreNodeName,
+			fmt.Sprintf("its paired node %s could not be resolved", claim.PairedCoreNode), nil
+	}
+	why = e.flipTargetReady(partner)
+	if why == "" {
+		return false, node.CoreNodeName, "", nil // partner ready: release and flip, nothing to ask
+	}
+	return true, node.CoreNodeName, why, nil
 }
 
 // activePullGuard decides what a release click may do at one task's node.
@@ -240,7 +272,7 @@ func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string,
 //
 // An unreadable role declines the same way for the same reason.
 func (e *Engine) activePullGuard(task processes.NodeTask, onlyNodeID int64, disp ReleaseDisposition) (skip bool, err error) {
-	pulling, own, partner, pErr := e.linePullsFrom(task.ProcessNodeID)
+	pulling, own, why, pErr := e.linePullsFrom(task.ProcessNodeID)
 	if pErr != nil {
 		log.Printf("release changeover wait node %s: %v — declining rather than releasing on an "+
 			"unread pull state", task.NodeName, pErr)
@@ -271,8 +303,7 @@ func (e *Engine) activePullGuard(task processes.NodeTask, onlyNodeID int64, disp
 			own, task.NextMaterialOrderID, disp.CalledBy)
 		return false, nil
 	}
-	return true, fmt.Errorf("the line is pulling from %s; flip to %s first, or confirm to release anyway",
-		own, partner)
+	return true, fmt.Errorf("cannot release %s yet: %s; confirm to release anyway", own, why)
 }
 
 // coreNameOf is the node's CORE name — what the flip button and the board key

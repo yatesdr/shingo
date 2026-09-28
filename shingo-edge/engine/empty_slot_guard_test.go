@@ -10,6 +10,7 @@ import (
 	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/service"
 	"shingoedge/store"
+	"shingoedge/uop"
 )
 
 // empty_slot_guard_test.go — what the empty-slot guard costs. The slot
@@ -33,6 +34,7 @@ func newCountingCoverageEngine(t *testing.T) (*Engine, *store.QueryCounter) {
 		Events:   NewEventBus(),
 		stopChan: make(chan struct{}),
 		logFn:    func(string, ...any) {},
+		debugFn:  func(string, ...any) {},
 	}
 	eng.coreClient = NewCoreClient("")
 	eng.reconciliation = newReconciliationService(eng.db)
@@ -40,6 +42,9 @@ func newCountingCoverageEngine(t *testing.T) (*Engine, *store.QueryCounter) {
 	eng.orderMgr = orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, cfg.StationID())
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
+	// Production wires the UOP mutator as the inventory sink (main.go);
+	// the Released clear routes through it.
+	eng.SetInventoryDeltaSink(uop.New(db, "stn-test", db, db))
 	return eng, counter
 }
 
@@ -47,10 +52,15 @@ func newCountingCoverageEngine(t *testing.T) (*Engine, *store.QueryCounter) {
 // the guard at their base counts: emptying a slot through a Released
 // adjustment, and a correction arriving at the emptied slot.
 //
-// Base: Released = 4 statements (node lookup, runtime read, clear the bin
-// pointer, blank the count); late correction = 3 (node lookup, runtime read,
-// the bind write). The guard adds a column write to the clearing statement and
-// a predicate to the bind statement, and neither count moves.
+// Released = 4 statements, the base count: node lookup, runtime read, and
+// the carrier-left verb's two writes — pointer + count in one statement
+// (uop.ClearActiveBin, which also remembers the departed bin), then the
+// identity through the lineside doorway (Engine.carrierLeft). Base spent the
+// same four on pointer and count as two writes and never cleared the
+// identity; the identity rode the pointer statement for a while (3) as a raw
+// store literal that bypassed the doorway, and moved back through it (FixH).
+// Late correction = 3 (node lookup, runtime read, the bind write). The
+// guard's refusal predicate rides the bind statement, not a read before it.
 func TestEmptySlotGuard_CostsNoStatement(t *testing.T) {
 	t.Parallel()
 	eng, counter := newCountingCoverageEngine(t)
@@ -64,7 +74,7 @@ func TestEmptySlotGuard_CostsNoStatement(t *testing.T) {
 	})
 	if got := counter.Count(); got != 4 {
 		t.Errorf("Released adjustment issued %d statements, want 4 — remembering the departed "+
-			"bin must ride the statement that clears the pointer", got)
+			"bin must ride the statement that clears the pointer, and the identity is one doorway write", got)
 	}
 
 	counter.Reset()

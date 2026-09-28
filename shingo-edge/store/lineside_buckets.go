@@ -51,10 +51,11 @@ func (db *DB) ListLinesidePileKeys() ([]lineside.Key, error) {
 	return lineside.ListKeys(db.DB)
 }
 
-// ListLinesidePileKeysForProcess returns the Key of every pile row at the
-// process's nodes.
-func (db *DB) ListLinesidePileKeysForProcess(processID int64) ([]lineside.Key, error) {
-	return lineside.ListKeysForProcess(db.DB, processID)
+// ListLinesidePileKeysForNode returns the Key of every pile row at the node:
+// what a node retire takes with it, read before the delete so each level can
+// be sent as 0 after it.
+func (db *DB) ListLinesidePileKeysForNode(nodeID int64) ([]lineside.Key, error) {
+	return lineside.ListKeysForNode(db.DB, nodeID)
 }
 
 // LinesidePileLevel returns the summed qty Core mirrors for one

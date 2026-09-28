@@ -4,6 +4,8 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 // HandleUOPAdjustment processes a count Core has set for a carrier: a count
@@ -47,38 +49,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	}
 
 	if adj.Bound {
-		// Bind the destination's runtime to the moved bin. EnsureProcessNodeRuntime
-		// because a never-active destination may have no runtime row yet.
-		// rt.ActiveClaimID is preserved — the move changes which bin sits at the
-		// slot, not what the node produces/consumes.
-		rt, err := e.db.EnsureProcessNodeRuntime(node.ID)
-		if err != nil || rt == nil {
-			log.Printf("uop_adjustment: bind bin %d — ensure runtime for node %s: %v", adj.BinID, adj.CoreNodeName, err)
-			return
-		}
-		if rt.ActiveBinID != nil && *rt.ActiveBinID != adj.BinID {
-			log.Printf("uop_adjustment: bind bin %d onto node %s overwrote stale active_bin_id=%d (Core moved destination to empty)",
-				adj.BinID, adj.CoreNodeName, *rt.ActiveBinID)
-		}
-		if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(node.ID, rt.ActiveClaimID, &adj.BinID, adj.Epoch, adj.NewRemaining); err != nil {
-			log.Printf("uop_adjustment: bind active bin %d to node %s: %v", adj.BinID, adj.CoreNodeName, err)
-			return
-		}
-		log.Printf("uop_adjustment: bound bin %d to node %s (remaining=%d epoch=%d, moved in Core)",
-			adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
-		// THE SECOND HALF OF A DEPARTURE. This bind is the record that a bin is
-		// on the cell, and it is the fact a leg that has already left the cell's
-		// nodes was waiting on. Firing it here rather than only at the pickup is
-		// what makes arrival order irrelevant: whichever of the two facts lands
-		// second completes the departure. See leg_departure.go.
-		e.settleCellPlacement(node.ID)
-		e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
-			ProcessNodeID: node.ID,
-			CoreNodeName:  adj.CoreNodeName,
-			BinID:         adj.BinID,
-			NewRemaining:  adj.NewRemaining,
-			Actor:         adj.Actor,
-		}})
+		e.bindAdjustmentFromCore(node, adj)
 		return
 	}
 
@@ -167,7 +138,10 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// and the bind is refused in its own WHERE clause when this is that
 		// bin at an older stamp. A different bin, or the same one at an equal
 		// or newer stamp, binds as before.
-		bound, err := e.db.BindEmptySlotUnlessDeparted(node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
+		if e.inventoryDelta == nil {
+			return
+		}
+		bound, err := e.inventoryDelta.BindStagedUnlessDeparted(node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
 		if err != nil {
 			log.Printf("uop_adjustment: bind staged bin %d to node %s via count correction: %v", adj.BinID, adj.CoreNodeName, err)
 			return
@@ -179,6 +153,10 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		}
 		log.Printf("uop_adjustment: bound staged bin %d to node %s via count correction (remaining=%d epoch=%d)",
 			adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
+		// Same identity hand-off as the Bound arm: the correction binds a
+		// carrier whose payload the envelope does not carry, so UNKNOWN clears
+		// whatever the slot said before — through the doorway.
+		e.recordLinesideCarrier(node.ID, node.CoreNodeName, domain.UnknownCarrier(), domain.CarrierFromDelivery)
 		e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 			ProcessNodeID: node.ID,
 			CoreNodeName:  adj.CoreNodeName,
@@ -206,12 +184,12 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// number for an empty slot (a stale count on an unbound slot is the
 		// "which one is right" confusion the SNF3 write-up called out). The guard
 		// above already confirmed this node still points at the bin.
-		if err := e.db.SetProcessNodeActiveBinID(node.ID, nil); err != nil {
+		//
+		// The carrier left: the one verb clears the pointer, zeroes the count
+		// (the blanked tile) and records the departure through the lineside
+		// doorway, so its identity leaves with it (carrier_left.go).
+		if err := e.carrierLeft(node.ID, adj.CoreNodeName); err != nil {
 			log.Printf("uop_adjustment: release active bin %d from node %s: %v", adj.BinID, adj.CoreNodeName, err)
-			return
-		}
-		if err := e.db.UpdateProcessNodeUOP(node.ID, 0); err != nil {
-			log.Printf("uop_adjustment: blank tile count for node %s on release of bin %d: %v", adj.CoreNodeName, adj.BinID, err)
 			return
 		}
 		log.Printf("uop_adjustment: released bin %d from node %s (moved in Core), tile blanked", adj.BinID, adj.CoreNodeName)
@@ -267,11 +245,60 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	// (see epochAssign in store/processes). Zero is simply not greater. The count
 	// lands either way — it is written unconditionally, the guard is on the epoch
 	// column alone.
-	if err := e.db.SetProcessNodeRuntimeWithBinAndEpoch(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
+	if e.inventoryDelta == nil {
+		return
+	}
+	if err := e.inventoryDelta.BindFromCore(node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining); err != nil {
 		log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
 		return
 	}
 
+	e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
+		ProcessNodeID: node.ID,
+		CoreNodeName:  adj.CoreNodeName,
+		BinID:         adj.BinID,
+		NewRemaining:  adj.NewRemaining,
+		Actor:         adj.Actor,
+	}})
+}
+
+// bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: Core moved a bin
+// onto this node, so the node's runtime binds it. Split out to keep the handler
+// under the funlen ceiling; the arm is unchanged.
+func (e *Engine) bindAdjustmentFromCore(node *processes.Node, adj protocol.UOPAdjustment) {
+	// Bind the destination's runtime to the moved bin. EnsureProcessNodeRuntime
+	// because a never-active destination may have no runtime row yet.
+	// rt.ActiveClaimID is preserved — the move changes which bin sits at the
+	// slot, not what the node produces/consumes.
+	rt, err := e.db.EnsureProcessNodeRuntime(node.ID)
+	if err != nil || rt == nil {
+		log.Printf("uop_adjustment: bind bin %d — ensure runtime for node %s: %v", adj.BinID, adj.CoreNodeName, err)
+		return
+	}
+	if rt.ActiveBinID != nil && *rt.ActiveBinID != adj.BinID {
+		log.Printf("uop_adjustment: bind bin %d onto node %s overwrote stale active_bin_id=%d (Core moved destination to empty)",
+			adj.BinID, adj.CoreNodeName, *rt.ActiveBinID)
+	}
+	if e.inventoryDelta == nil {
+		return
+	}
+	if err := e.inventoryDelta.BindFromCore(node.ID, rt.ActiveClaimID, &adj.BinID, adj.Epoch, adj.NewRemaining); err != nil {
+		log.Printf("uop_adjustment: bind active bin %d to node %s: %v", adj.BinID, adj.CoreNodeName, err)
+		return
+	}
+	// The bind is a carrier arriving: whatever identity the slot carried for
+	// the previous occupant is now a confident wrong answer about this one.
+	// The adjustment envelope carries no payload field, so the honest write
+	// is UNKNOWN — through the doorway, so the pin holds.
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName, domain.UnknownCarrier(), domain.CarrierFromDelivery)
+	log.Printf("uop_adjustment: bound bin %d to node %s (remaining=%d epoch=%d, moved in Core)",
+		adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
+	// THE SECOND HALF OF A DEPARTURE. This bind is the record that a bin is
+	// on the cell, and it is the fact a leg that has already left the cell's
+	// nodes was waiting on. Firing it here rather than only at the pickup is
+	// what makes arrival order irrelevant: whichever of the two facts lands
+	// second completes the departure. See leg_departure.go.
+	e.settleCellPlacement(node.ID)
 	e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 		ProcessNodeID: node.ID,
 		CoreNodeName:  adj.CoreNodeName,

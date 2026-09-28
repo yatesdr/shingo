@@ -21,8 +21,9 @@ import (
 // pile.
 //
 // "Cutover" is every active-style flip on the process: the changeover's
-// (completeCutover) and the admin's (SetProcessActiveStyle). Both share
-// processes.SetActiveStyle, and both call strandLinesidePiles right after it.
+// (completeCutover) and the admin's (SetProcessActiveStyle). Both route
+// through the one flip verb below (flipActiveStyle), which writes the style,
+// strands the piles, and publishes plant.claims.
 // A node the changeover does not touch is stranded too.
 
 // strandLinesidePiles folds every active pile at the process's nodes into its
@@ -52,15 +53,27 @@ func (e *Engine) strandLinesidePiles(processID int64) error {
 	return nil
 }
 
-// SetProcessActiveStyle is the admin style flip: it sets the process's active
-// style and, when the style actually changed, strands the process's piles the
-// way a changeover's cutover does. Re-setting the style a process already
-// runs is not a flip and strands nothing.
-//
-// A strand failure is logged, not returned: the style is already set, and the
-// flip is what the admin asked for. The piles stay active, which is today's
-// behaviour, and the next flip strands them.
+// SetProcessActiveStyle is the admin style flip. It delegates to
+// flipActiveStyle — the one flip verb — so an admin flip strands the piles
+// and reaches Core exactly like a changeover's cutover does.
 func (e *Engine) SetProcessActiveStyle(processID int64, styleID *int64) error {
+	return e.flipActiveStyle(processID, styleID)
+}
+
+// flipActiveStyle is THE active-style flip: db.SetActiveStyle plus, when the
+// style actually changed, the two side effects every flip owes — strand the
+// process's lineside piles (below) and publish the process's plant.claims
+// report so Core's mirror marks the new running style within one message
+// instead of up to the next snapshot. Re-setting the style a process already
+// runs is not a flip: no strand, no publish.
+//
+// Both doors route here — the admin verb above and the changeover's
+// completeCutover — so a flip cannot reach the DB without its consequences.
+//
+// The strand and the publish failures are logged, not returned: the style is
+// already set, and the flip is what the caller asked for. The piles stay
+// active until the next flip; the snapshot is the publish's safety net.
+func (e *Engine) flipActiveStyle(processID int64, styleID *int64) error {
 	proc, err := e.db.GetProcess(processID)
 	if err != nil {
 		return fmt.Errorf("get process %d: %w", processID, err)
@@ -72,9 +85,19 @@ func (e *Engine) SetProcessActiveStyle(processID int64, styleID *int64) error {
 		return nil
 	}
 	if err := e.strandLinesidePiles(processID); err != nil {
-		log.Printf("lineside: admin style flip on process %d: %v", processID, err)
+		log.Printf("lineside: style flip on process %d: %v", processID, err)
 	}
+	e.publishPlantClaims(processID)
 	return nil
+}
+
+// publishPlantClaims rings the injected plant-claims publish (engine.go,
+// wired at the composition root). The notifier's own errors are logged
+// inside the closure — a failed publish must not surface as a flip failure.
+func (e *Engine) publishPlantClaims(processID int64) {
+	if e.plantClaimsFn != nil {
+		e.plantClaimsFn(processID)
+	}
 }
 
 func sameStyle(a, b *int64) bool {

@@ -1834,27 +1834,53 @@ func activePullOf(t *testing.T, db *store.DB, nodeID int64) bool {
 	return rt.ActivePull
 }
 
-// ── THE FLIP GUARD: DO NOT PUT THE LINE ONTO A POSITION THAT CANNOT FEED IT ──
+// ── THE READINESS GUARD: DO NOT PUT THE LINE ONTO A POSITION THAT CANNOT FEED IT ──
 //
-// The flip is what makes the other side releasable, so it is where "has the
-// operator got a bin of the new product" belongs. Every arm is answered from
-// state this Edge already owns — it holds no bin table, and needs none, because
-// the same steady-state invariant the reuse-skip leans on carries the knowledge:
-// a produce press's parked side holds an empty of the running style's carrier.
+// The release of a sequential position is what moves the line onto its
+// partner (owner ruling 2026-09-27, fact-owners Lane G), so the release trunk
+// asks flipTargetReady of the PARTNER before it lets the click through. Every
+// arm is answered from state this Edge already owns — it holds no bin table,
+// and needs none, because the same steady-state invariant the reuse-skip leans
+// on carries the knowledge: a produce press's parked side holds an empty of
+// the running style's carrier.
 //
 //	SKIPPED       the reuse shortcut turned this side Unchanged, which happens
 //	              only when the catalog says both styles ride the same carrier.
 //	DELIVERED     this side's own changeover order is terminal — the Edge watched
 //	              its robot deliver.
 //	STEADY STATE  no changeover; a bin is present.
+//
+// These drove Engine.FlipABNode until it was deleted (no production caller
+// after Lane G). They now ask flipTargetReady directly for each arm's answer,
+// and drive the release trunk where the test is about the line moving.
+
+// readinessOf is flipTargetReady for one node id.
+func readinessOf(t *testing.T, eng *Engine, db *store.DB, nodeID int64) string {
+	t.Helper()
+	node, err := db.GetProcessNode(nodeID)
+	if err != nil || node == nil {
+		t.Fatalf("get process node %d: %v", nodeID, err)
+	}
+	return eng.flipTargetReady(node)
+}
+
+// releaseActiveSide stages and releases the ACTIVE side's changeover order
+// through the trunk — the click that moves the line onto the parked side.
+func releaseActiveSide(t *testing.T, eng *Engine, db *store.DB, activeOrder int64, confirm bool) error {
+	t.Helper()
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage the active side")
+	return eng.ReleaseOrderWithLineside(activeOrder, ReleaseDisposition{CalledBy: "op", ConfirmActivePull: confirm})
+}
 
 // TestFlipGuard_SkippedSideIsReadyImmediately — arm (a). The reuse shortcut
 // already decided the resident empty is the right carrier, so there is no order
-// to wait for and the flip must not invent one.
+// to wait for and the release must not invent one: the active side releases
+// unconfirmed and the line moves onto the skipped side.
 func TestFlipGuard_SkippedSideIsReadyImmediately(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	eng, _, _, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
 
 	// Stand in for the shortcut having fired on this side.
 	task, err := db.GetChangeoverNodeTaskByNode(co.ID, parkedNodeID)
@@ -1863,13 +1889,16 @@ func TestFlipGuard_SkippedSideIsReadyImmediately(t *testing.T) {
 		string(SituationUnchanged), task.ID)
 	testutil.MustNoErr(t, uErr, "mark the parked side skipped")
 
-	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
-		t.Fatalf("flip onto the skipped side was refused: %v. The catalog said both styles ride the "+
+	if why := readinessOf(t, eng, db, parkedNodeID); why != "" {
+		t.Fatalf("the skipped side is not ready: %s. The catalog said both styles ride the "+
 			"same carrier, so the empty already standing there IS the one the new style wants — "+
-			"there is nothing to deliver and nothing to wait for.", err)
+			"there is nothing to deliver and nothing to wait for.", why)
 	}
-	if !activePullOf(t, db, parkedNodeID) {
-		t.Error("the flip reported success but did not move the pull")
+	if err := releaseActiveSide(t, eng, db, activeOrder, false); err != nil {
+		t.Fatalf("release of the active side was refused with a ready partner: %v", err)
+	}
+	if !activePullOf(t, db, parkedNodeID) || activePullOf(t, db, activeNodeID) {
+		t.Error("the release went through but did not move the line onto the skipped side")
 	}
 }
 
@@ -1880,30 +1909,35 @@ func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-	_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	activeOrder, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
 
-	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
-	if err == nil {
-		t.Fatal("the flip went through while the parked side's changeover order was still running. " +
+	why := readinessOf(t, eng, db, parkedNodeID)
+	if why == "" {
+		t.Fatal("the parked side reads ready while its changeover order is still running. " +
 			"The line would be switched onto a position whose new carrier has not arrived.")
 	}
 	for _, want := range []string{"SEQ-B", fmt.Sprint(parkedOrder)} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("warning = %q, want it to name %q — the operator needs the position and the "+
-				"order that fixes it", err.Error(), want)
+		if !strings.Contains(why, want) {
+			t.Errorf("reason = %q, want it to name %q — the operator needs the position and the "+
+				"order that fixes it", why, want)
 		}
 	}
+	// The trunk carries that reason on its refusal and moves nothing.
+	err := releaseActiveSide(t, eng, db, activeOrder, false)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprint(parkedOrder)) {
+		t.Fatalf("release with an unready partner = %v, want the refusal carrying the partner's reason", err)
+	}
 	if activePullOf(t, db, parkedNodeID) {
-		t.Error("a refused flip moved the pull anyway")
+		t.Error("a refused release moved the pull anyway")
 	}
 
 	// CONFIRM OVERRIDES. The bit is the system's belief; the operator can see
 	// the aisle and may know better.
-	if err := eng.FlipABNode(parkedNodeID, FlipRequest{Confirm: true, CalledBy: "op"}); err != nil {
-		t.Fatalf("the confirmed flip was refused: %v — the guard is a speed bump, not a wall", err)
+	if err := releaseActiveSide(t, eng, db, activeOrder, true); err != nil {
+		t.Fatalf("the confirmed release was refused: %v — the guard is a speed bump, not a wall", err)
 	}
 	if !activePullOf(t, db, parkedNodeID) {
-		t.Error("the confirmed flip did not move the pull")
+		t.Error("the confirmed release did not move the pull")
 	}
 
 	// AND ONCE IT DELIVERS, no warning at all.
@@ -1911,8 +1945,8 @@ func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
 	eng2, _, activeB, parkedB, co2 := seedSequentialScenario(t, db2, false)
 	_, parkedOrder2 := seqTaskOrders(t, db2, co2.ID, activeB, parkedB)
 	markOrderTerminal(db2, parkedOrder2)
-	if err := eng2.FlipABNode(parkedB, OperatorFlip("op")); err != nil {
-		t.Fatalf("flip refused after the parked side's order delivered: %v", err)
+	if why := readinessOf(t, eng2, db2, parkedB); why != "" {
+		t.Fatalf("the parked side is not ready after its order delivered: %s", why)
 	}
 }
 
@@ -1923,7 +1957,7 @@ func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
 // wait". Terminal is not delivered: `failed`, `cancelled` and `skipped` are
 // terminal too, and each of them means the OPPOSITE of what the guard concluded.
 // The changeover order for this side ended without a carrier arriving, and the
-// flip was permitted onto a position still holding the old one — the exact
+// line was permitted onto a position still holding the old one — the exact
 // failure the guard exists to prevent, with the warning switched off.
 //
 // Consume's extra conjuncts (material present, and of the incoming style) catch
@@ -1948,23 +1982,19 @@ func TestFlipGuard_AFailedOrCancelledOrderIsNotADelivery(t *testing.T) {
 			_, uErr := db.Exec("UPDATE orders SET status=? WHERE id=?", string(status), parkedOrder)
 			testutil.MustNoErr(t, uErr, "end the parked side's order without a delivery")
 
-			err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
-			if err == nil {
-				t.Fatalf("the flip onto SEQ-B was allowed with its changeover order %s. The order is "+
+			why := readinessOf(t, eng, db, parkedNodeID)
+			if why == "" {
+				t.Fatalf("SEQ-B reads ready with its changeover order %s. The order is "+
 					"terminal, but nothing was delivered — the position is still holding the OLD "+
-					"style's carrier, and the line has just been switched onto it. `terminal` is not "+
-					"`delivered`; the honest predicate is delivered-or-confirmed.", status)
+					"style's carrier. `terminal` is not `delivered`; the honest predicate is "+
+					"delivered-or-confirmed.", status)
 			}
-			if activePullOf(t, db, parkedNodeID) {
-				t.Error("a refused flip moved the pull anyway")
+			if !strings.Contains(why, "SEQ-B") {
+				t.Errorf("reason = %q, want it to name the position", why)
 			}
-			if !strings.Contains(err.Error(), "SEQ-B") {
-				t.Errorf("warning = %q, want it to name the position", err.Error())
-			}
-			if strings.Contains(err.Error(), "has not delivered") {
-				t.Errorf("warning = %q — that sentence tells the operator to wait, and there is nothing "+
-					"to wait for: the order is over. It has to say the delivery is not coming.",
-					err.Error())
+			if strings.Contains(why, "has not delivered") {
+				t.Errorf("reason = %q — that sentence tells the operator to wait, and there is nothing "+
+					"to wait for: the order is over. It has to say the delivery is not coming.", why)
 			}
 		})
 	}
@@ -1985,13 +2015,13 @@ func TestFlipGuard_ConsumeAlsoWantsMaterial(t *testing.T) {
 	testutil.MustNoErr(t, rErr, "make SEQ-B consume")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, nil, 0), "no material")
 
-	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
-	if err == nil {
-		t.Fatal("the flip went through onto a consume position holding no material. Its order " +
-			"finished, but an empty carrier at a consume position feeds the line nothing.")
+	why := readinessOf(t, eng, db, parkedNodeID)
+	if why == "" {
+		t.Fatal("a consume position holding no material reads ready. Its order finished, but " +
+			"an empty carrier at a consume position feeds the line nothing.")
 	}
-	if !strings.Contains(err.Error(), "material") {
-		t.Errorf("warning = %q, want it to say what is missing", err.Error())
+	if !strings.Contains(why, "material") {
+		t.Errorf("reason = %q, want it to say what is missing", why)
 	}
 }
 
@@ -2006,32 +2036,13 @@ func TestFlipGuard_SteadyStateWantsABinPresent(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(co.ID, domain.ChangeoverCompleted),
 		"close changeover")
 
-	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err == nil {
-		t.Fatal("steady-state flip onto a position with no bin was allowed; the line would starve")
+	if why := readinessOf(t, eng, db, parkedNodeID); why == "" {
+		t.Fatal("a steady-state position with no bin reads ready; the line would starve")
 	}
 	bin := int64(4242)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(parkedNodeID, nil, &bin, 40), "put a bin on it")
-	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
-		t.Fatalf("steady-state flip onto a position holding a bin was refused: %v", err)
-	}
-}
-
-// TestFlipGuard_PLCCannotConfirm — a PLC bit cannot look at the aisle, so it
-// cannot override. Refused loudly (changeover-53 precedent), never silently.
-func TestFlipGuard_PLCCannotConfirm(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, _, _, parkedNodeID, _ := seedSequentialScenario(t, db, false)
-
-	// Even carrying a confirm, a PLC request must be refused: the field is an
-	// operator's statement that he looked, and a PLC has no eyes.
-	err := eng.FlipABNode(parkedNodeID, FlipRequest{ByPLC: true, Confirm: true, CalledBy: "plc"})
-	if err == nil {
-		t.Fatal("a PLC flip onto an unready position was allowed. A PLC cannot see whether the new " +
-			"carrier arrived; only a person can, and this must land in front of one.")
-	}
-	if activePullOf(t, db, parkedNodeID) {
-		t.Error("the refused PLC flip moved the pull anyway")
+	if why := readinessOf(t, eng, db, parkedNodeID); why != "" {
+		t.Fatalf("a steady-state position holding a bin is not ready: %s", why)
 	}
 }
 
@@ -2170,21 +2181,21 @@ func TestFlipGuard_ConsumeWantsTheIncomingStylesMaterial(t *testing.T) {
 	fromClaimID := claimIDFor(t, db, *co.FromStyleID, "SEQ-B")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, &fromClaimID, 40), "outgoing material")
 
-	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
-	if err == nil {
-		t.Fatal("the flip went through onto a consume position holding the OUTGOING style's " +
-			"material. Its order finished and there is material on it, and neither fact makes it " +
-			"able to feed a press that is about to run the new part.")
+	why := readinessOf(t, eng, db, parkedNodeID)
+	if why == "" {
+		t.Fatal("a consume position holding the OUTGOING style's material reads ready. Its " +
+			"order finished and there is material on it, and neither fact makes it able to feed " +
+			"a press that is about to run the new part.")
 	}
-	if !strings.Contains(err.Error(), "outgoing") {
-		t.Errorf("warning = %q, want it to say the material is the wrong style", err.Error())
+	if !strings.Contains(why, "outgoing") {
+		t.Errorf("reason = %q, want it to say the material is the wrong style", why)
 	}
 
-	// Re-stock it for the INCOMING style and the same click goes through.
+	// Re-stock it for the INCOMING style and it is ready.
 	toClaimID := claimIDFor(t, db, co.ToStyleID, "SEQ-B")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, &toClaimID, 40), "incoming material")
-	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
-		t.Fatalf("flip refused with the incoming style's material on the position: %v", err)
+	if why := readinessOf(t, eng, db, parkedNodeID); why != "" {
+		t.Fatalf("not ready with the incoming style's material on the position: %s", why)
 	}
 }
 

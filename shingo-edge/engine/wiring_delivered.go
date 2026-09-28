@@ -238,21 +238,19 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 
 	// Auto-clear: if this was a pull-from-market delivery, zero the bin UOP
 	// immediately so the operator doesn't need to hit a separate Clear Bin button.
-	e.marketPullbacksMu.Lock()
-	_, isPullback := e.marketPullbacks[order.UUID]
-	if isPullback {
-		delete(e.marketPullbacks, order.UUID)
-	}
-	e.marketPullbacksMu.Unlock()
-	if isPullback {
+	// The intent is read off the order row, so it fires after an Edge restart
+	// too; the take is exactly-once, so a replayed delivery does not clear twice.
+	if _, isPullback := e.takeOrderIntent(order.ID, intentPullback); isPullback {
 		cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "")
 		if err != nil {
 			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, err)
 		} else {
 			log.Printf("market_pullback: auto-cleared bin at %s on delivery", node.CoreNodeName)
-			if e.inventoryDelta != nil {
-				// The stamp too: the auto-clear started this carrier's next life.
-				_ = e.inventoryDelta.SetClaimCountAndEpoch(node.ID, claimID, 0, cleared.BinID, cleared.DeltaEpoch)
+			// The stamp and the identity: the auto-clear started this carrier's
+			// next life, and it is known-empty now — the clear is the
+			// operator-visible event the Clear button's shape records.
+			if err := e.carrierClearedInPlace(node.ID, node.CoreNodeName, claimID, cleared.BinID, cleared.DeltaEpoch); err != nil {
+				log.Printf("market_pullback: record the clear at %s: %v", node.CoreNodeName, err)
 			}
 		}
 	}

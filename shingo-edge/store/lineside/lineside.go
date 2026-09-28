@@ -308,35 +308,42 @@ func StrandProcess(db *sql.DB, processID int64) ([]Stranded, error) {
 	return out, nil
 }
 
-// ListKeys returns the Key of every pile row: the boot resend of every level.
+// ListKeys returns the Key of every pile row at nodes still alive: the boot
+// resend of every level. A retired node's piles are gone (the retire deletes
+// the rows), so a left-joined tombstone core name would only ever read as a
+// level Core no longer has a place for.
 func ListKeys(db *sql.DB) ([]Key, error) {
 	return scanKeys(db.Query(`SELECT b.node_id, COALESCE(pn.core_node_name, ''), b.payload_code, b.state
 		FROM node_lineside_bucket b
 		LEFT JOIN process_nodes pn ON pn.id = b.node_id
+		WHERE pn.deleted_at IS NULL
 		ORDER BY b.id`))
 }
 
-// ListKeysForProcess returns the Key of every pile row at the process's nodes:
-// what a process delete takes with it, read before the delete so each level
-// can be sent as 0 after it.
-func ListKeysForProcess(db *sql.DB, processID int64) ([]Key, error) {
+// ListKeysForNode returns the Key of every pile row at the node: what a node
+// retire takes with it, read before the delete so each level can be sent as 0
+// after it. A process delete retires each of its nodes through the same verb,
+// so this is the only per-scope pile list.
+func ListKeysForNode(db *sql.DB, nodeID int64) ([]Key, error) {
 	return scanKeys(db.Query(`SELECT b.node_id, pn.core_node_name, b.payload_code, b.state
 		FROM node_lineside_bucket b
 		JOIN process_nodes pn ON pn.id = b.node_id
-		WHERE pn.process_id = ?
-		ORDER BY b.id`, processID))
+		WHERE b.node_id = ?
+		ORDER BY b.id`, nodeID))
 }
 
 // Level is the qty Core mirrors for (coreNodeName, payloadCode, state): the sum
 // over every process node carrying that core name, since two local nodes with
 // one core name are one place at Core. 0 when there is no row. One statement;
-// the accumulator reads it once per dirty key per flush.
+// the accumulator reads it once per dirty key per flush. A retired node's
+// piles no longer exist, so its core name cannot qualify.
 func Level(db *sql.DB, coreNodeName, payloadCode, state string) (int, error) {
 	var qty int
 	if err := db.QueryRow(`SELECT COALESCE(SUM(b.qty), 0)
 		FROM node_lineside_bucket b
 		JOIN process_nodes pn ON pn.id = b.node_id
-		WHERE pn.core_node_name = ? AND b.payload_code = ? AND b.state = ?`,
+		WHERE pn.core_node_name = ? AND b.payload_code = ? AND b.state = ?
+			AND pn.deleted_at IS NULL`,
 		coreNodeName, payloadCode, state).Scan(&qty); err != nil {
 		return 0, fmt.Errorf("lineside: level %s/%s/%s: %w", coreNodeName, payloadCode, state, err)
 	}

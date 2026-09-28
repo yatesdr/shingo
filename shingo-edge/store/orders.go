@@ -236,3 +236,22 @@ func (db *DB) ListActiveOrdersByProcessNodeOrSource(processNodeID int64, sourceN
 func (db *DB) ListOrderHistory(orderID int64) ([]orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }
+
+// SetOrderPendingIntent arms (or, with "", disarms) the order's future action.
+// See orders.SetPendingIntent.
+func (db *DB) SetOrderPendingIntent(id int64, intent string) error {
+	return orders.SetPendingIntent(db.DB, id, intent)
+}
+
+// GetOrderPendingIntent reads the order's armed intent ("" = none). See
+// orders.GetPendingIntent.
+func (db *DB) GetOrderPendingIntent(id int64) (string, error) {
+	return orders.GetPendingIntent(db.DB, id)
+}
+
+// TakeOrderPendingIntent clears the intent iff it still equals expected and
+// reports whether this call took it — the exactly-once gate. See
+// orders.TakePendingIntent.
+func (db *DB) TakeOrderPendingIntent(id int64, expected string) (bool, error) {
+	return orders.TakePendingIntent(db.DB, id, expected)
+}

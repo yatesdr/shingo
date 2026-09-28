@@ -189,7 +189,18 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// confirm answers "the bit says pulling and I have looked", which is not an
 	// answer to "nothing could be read". The readable refusal below is unchanged
 	// and still confirms through.
-	pulling, own, partner, pErr := e.linePullsFrom(node.ID)
+	//
+	// ── THE QUESTION CHANGED (owner ruling 2026-09-27, fact-owners Lane G) ──
+	//
+	// It was "does the stored bit say pulling"; it is now "can the partner feed
+	// the line". linePullsFrom answers it: pulling means "own bit true AND the
+	// partner is not ready", why carries flipTargetReady(partner)'s reason. A
+	// READY partner (why == "") is not pulling at all — the release proceeds and
+	// flips the line to the partner below, which is the point: releasing a
+	// sequential position IS the operator saying the line has moved. The flip
+	// arm lives after the guard, not inside linePullsFrom, so the parked side
+	// (own bit false) never rewrites the pair.
+	pulling, own, why, pErr := e.linePullsFrom(node.ID)
 	if own == "" {
 		own = node.CoreNodeName // linePullsFrom could not even name it
 	}
@@ -199,11 +210,22 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 			"unread pull state", orderID, own, pErr)
 		return fmt.Errorf("node %s: could not read whether the line is pulling from it (%w)", own, pErr)
 	case pulling && !disp.ConfirmActivePull:
-		return fmt.Errorf("the line is pulling from %s; flip to %s first, or confirm to release anyway",
-			own, partner)
+		return fmt.Errorf("cannot release %s yet: %s; confirm to release anyway", own, why)
 	case pulling:
 		log.Printf("AUDIT release-override: node=%s order=%d called_by=%q — the line was recorded as "+
 			"pulling from this position and the operator released it anyway", own, orderID, disp.CalledBy)
+	}
+	// The release is decided (refused above, or confirmed through). The
+	// release itself is the flip: the line has moved to the partner. The
+	// helper re-derives everything — sequential, paired, own bit true — so
+	// it runs on EVERY release that gets this far: a ready partner (why ==
+	// "", pulling false) proceeds and flips, a confirm proceeds and flips
+	// (the confirm answered the partner's readiness, not the line's move),
+	// and a parked side (own bit false) makes the helper a no-op. It runs
+	// BEFORE the rest of the release (boundary, writePullSide, sweep), so
+	// the pair is consistent before any order state moves.
+	if err := e.releaseFlipPartner(node); err != nil {
+		return err
 	}
 
 	runtime, err := e.db.EnsureProcessNodeRuntime(node.ID)
@@ -321,6 +343,74 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	}
 
 	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply)
+}
+
+// releaseFlipPartner performs the sequential flip that a release IS. The
+// trunk guard above has decided the release may proceed (partner ready, or
+// the operator confirmed through the refusal); when the released side's own
+// active_pull bit was true, the operator's click is the statement "the line
+// has moved to the partner" — so the release itself puts the pull side on the
+// partner and takes it off the released position (writePullSide). There is no
+// separate flip button: the release is the flip. (The old operator flip
+// door, Engine.FlipABNode, was deleted with its last caller.)
+//
+// It re-derives sequential + paired + own-bit-true rather than trusting the
+// caller's context, for the same reason writePullSide is the only writer of
+// the pair: a parked-side release (own bit false) must never rewrite the
+// pair, and neither must a non-sequential or unpaired position that happened
+// to share the trunk.
+//
+// The order of operations: attribution boundary on the partner (flush the
+// outgoing side's residual deltas before the new active side starts
+// ticking), then the atomic pull-side write, then an immediate level sweep of
+// the position that just went dark.
+//
+// THE DEPLETED SIDE IS THE LEVEL SWEEP'S DECISION, TAKEN EARLY HERE. A tail
+// at the old flip used to fire its own auto-reorder, and it answered to
+// nothing: no reorder_point > 0 opt-out, no check for a bin already inbound,
+// no hysteresis, and no evaluateCellLevel. Calling the sweep's own per-node
+// decision instead applies all four. It is here only for immediacy — the
+// flip is the one moment a side becomes interesting, and waiting a period to
+// notice is a real regression on the operator-visible path. Drop the line
+// and the periodic sweep still covers the cell on its next pass.
+func (e *Engine) releaseFlipPartner(node *processes.Node) error {
+	claim := e.claimAtNode(node)
+	if claim == nil || claim.PairedCoreNode == "" {
+		return nil // not a paired position — nothing to flip
+	}
+	if claim.SwapMode != protocol.SwapModeSequential {
+		return nil
+	}
+	rt, err := e.db.GetProcessNodeRuntime(node.ID)
+	if err != nil || rt == nil {
+		return fmt.Errorf("read runtime for node %d: %w", node.ID, err)
+	}
+	if !rt.ActivePull {
+		return nil // the line already pulls from the partner — nothing to write
+	}
+	partner, err := e.pairedNodeOf(node)
+	if err != nil {
+		return err
+	}
+	// Attribution boundary on the node GOING LIVE: the flip is the
+	// inactive→active transition with no operator action of its own on that
+	// side, so residual deltas must flush before the new active side starts
+	// attributing ticks. MarkAttributionBoundary is synchronous — an error
+	// means the flush failed, and the pull must not move.
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.MarkAttributionBoundary(partner.ID); err != nil {
+			return fmt.Errorf("attribution boundary flush failed: %w", err)
+		}
+	}
+	if err := e.writePullSide(partner.ID, node.ID); err != nil {
+		return err
+	}
+	log.Printf("release flip: node %s released — pull side now on partner %s",
+		node.CoreNodeName, partner.CoreNodeName)
+	// The released position just went dark; the level sweep decides its
+	// reorder now rather than on its next pass (see above).
+	e.sweepNodeLevelNow(node.ID)
+	return nil
 }
 
 // queueReasonSuffix renders Core's mirrored blocking reason for an operator-

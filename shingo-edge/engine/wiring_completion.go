@@ -350,10 +350,8 @@ func matchOrderBSimple(ctx *orderCompletionCtx) bool {
 // during planning — skip the redundant state write to avoid churning
 // updated_at).
 func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ClearActiveAndReset(ctx.node.ID, ctx.runtime.ActiveClaimID); err != nil {
-			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
-		}
+	if err := e.carrierLeft(ctx.node.ID, ctx.node.CoreNodeName); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	if domain.IsNodeTaskStateTerminal(ctx.nodeTask.State, ctx.nodeTask.Situation) {
 		return true

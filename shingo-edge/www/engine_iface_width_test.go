@@ -84,15 +84,23 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 77 methods -
-// ServiceAccess's 20 embedded, plus 57 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 73 methods -
+// ServiceAccess's 20 embedded, plus 53 orchestration verbs of its own.
 //
-// The 51st is SetActivePullSide, added 2026-08-28 under the owner ruling that
-// the operator gets an explicit set/change control for which side of an A/B pair
-// the line is pulling from (the flip stays its canonical writer). The header's
-// own rule applied: the want-list edit follows the conversation, not the other
-// way round. The stated numbers were also two out before this — the list was 70,
-// not 72 — so they are counted rather than carried forward.
+// 2026-09-27 (fact-owners Lane G): FlipABNode and SetActivePullSide were
+// REMOVED — two entries, the count 77 → 75. The release trunk flips the
+// pair itself (releasing a sequential position is the operator saying the
+// line has moved), so the two www doors onto the pair (POST
+// /process-nodes/{id}/flip-ab and /set-active-pull) closed with their
+// handlers; neither ever had an originator in the UI. The header's own rule
+// applies in reverse: the want-list edit follows the conversation. The
+// SetActivePullSide entry was itself added 2026-08-28 under the earlier
+// owner ruling; both removals are counted rather than carried forward.
+//
+// 2026-09-28 (fact-owners Lane D): CleanupReportingPointTag went with the
+// /reporting-points CRUD routes, its only caller, and ManageReportingPointTag
+// left the interface with them: its one live caller is the engine's own
+// counter sync (warlink.go), not www. The count 75 -> 73.
 //
 // 52-54 are PreviewFlow, SaveFlow and FlowFingerprint, added 2026-09-03 for
 // the HMI flow composer (design ruling SYNTH-round2 R-S3, brief U7): the two
@@ -149,7 +157,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"EnsureTagPublished",
 		"EvacuateNode",
 		"FetchMarketBins",
-		"FlipABNode",
 		"FlowFingerprint",
 		"LoadBin",
 		"OrderManager",
@@ -187,7 +194,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ScenePointNames",
 		"SendBinToQualityHold",
 		"SendEnvelope",
-		"SetActivePullSide",
 		"SetProcessActiveStyle",
 		"ShiftService",
 		"SourcingStateForProcess",

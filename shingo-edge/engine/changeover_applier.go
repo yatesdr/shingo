@@ -41,7 +41,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	//
 	// An evacuate strips every position and the press goes down for the tool
 	// change. `active_pull` nevertheless kept asserting that the line was still
-	// drawing from one of them, because only FlipABNode ever cleared it — and
+	// drawing from one of them, because only a flip ever cleared it — and
 	// that bit is now load-bearing: the release guard refuses to let a robot
 	// strip a position the line is pulling from, which would have made the
 	// tooling-done click unable to release the very legs it exists for.
@@ -336,11 +336,11 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 	//
 	// That is correct while the press is down — the line really is pulling from
 	// nothing — and it is deliberate that nothing here schedules the bit's return.
-	// The A/B flip is the canonical writer of active_pull and lights it as part of
-	// moving the line; the operator can also state it outright when the press comes
-	// back up on the side it was already on (SetActivePullSide). Owner ruling
-	// 2026-08-28. Until one of those two clicks lands, the release guard has
-	// nothing to protect here, which is the honest reading of a stopped press.
+	// The release trunk is the canonical writer of active_pull and lights the
+	// partner side as part of releasing the finished side (owner ruling
+	// 2026-09-27: the flip happens on release; the explicit flip/set-active-pull
+	// doors are gone). Until a release lands, the guard has nothing to protect
+	// here, which is the honest reading of a stopped press.
 	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); the "+
 		"press is down, so the line is pulling from nothing. It stays dark until the flip or an "+
 		"operator says otherwise", node.CoreNodeName, len(ids))

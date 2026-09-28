@@ -981,6 +981,16 @@ func main() {
 			}
 		},
 	)
+
+	// Style flips publish the changed process's plant.claims so Core's
+	// is_active follows within one message instead of up to the next
+	// snapshot. The engine verb (lineside_strand.go flipActiveStyle) rings
+	// this on every real flip, through both doors (admin + cutover).
+	eng.SetPlantClaimsFunc(func(processID int64) {
+		if err := plantClaims.PublishChanged(processID); err != nil {
+			log.Printf("plant_claims: style-flip publish: %v", err)
+		}
+	})
 	plantClaims.Start()
 	defer plantClaims.Stop()
 

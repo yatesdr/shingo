@@ -1162,6 +1162,38 @@ func edgeMigrations() []migrate.Migration {
 				return err
 			},
 		},
+		{
+			// orders.pending_intent: the future action an order arms when it is
+			// dispatched — a pull-from-market's auto-clear on delivery, a
+			// clear-loader-home's Order B on pickup (engine/order_intent.go).
+			// These lived only in two maps on the Engine, so an Edge restart
+			// between arming and firing lost them. '' = nothing armed.
+			//
+			// Column-check guarded: a fresh DB already has the column from
+			// schema.Apply's CREATE, and a hand-run fix may have added it, so
+			// the ALTER runs only where it is missing. The frozen chain has no
+			// statement touching this column, so nothing undoes it.
+			Version: 4,
+			Name:    "orders_pending_intent",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'pending_intent'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN pending_intent TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'pending_intent'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

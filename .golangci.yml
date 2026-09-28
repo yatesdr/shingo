@@ -212,6 +212,14 @@ linters:
           msg: "Raw bin writer: db.RecoverBinToNode bypasses BinService recovery checks. Route through service.BinService.Recover."
         - pattern: 'db\.RetireBin\b'
           msg: "Raw bin writer: db.RetireBin bypasses BinService retire checks. Route through service.BinService.Retire."
+        # Style-flip bypass guard (2026-09-27). The edge engine's flipActiveStyle
+        # is the one active-style writer: it strands the old style's piles and
+        # publishes plant.claims so Core's is_active follows within one message.
+        # A direct write skips both. Sanctioned: the verb itself
+        # (engine/lineside_strand.go) and the plant seeder (a bootstrap, not a
+        # flip), both in exclusions.rules under the "style-flip verb" message.
+        - pattern: 'db\.SetActiveStyle'
+          msg: "Direct db.SetActiveStyle bypasses the style-flip verb. Route through Engine.SetProcessActiveStyle (strands piles, publishes plant.claims)."
 
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
@@ -711,6 +719,17 @@ linters:
       # every other guard stays live on the rest of the file.
       - path: "shingo-core/service/bin_service\\.go"
         text: "Raw bin writer"
+        linters:
+          - forbidigo
+      # The style-flip verb is the sanctioned db.SetActiveStyle caller; the
+      # plant seeder sets a fresh process's style before anything runs (no
+      # piles to strand, no mirror to update). Scoped to the guard's message.
+      - path: "shingo-edge/engine/lineside_strand\\.go"
+        text: "style-flip verb"
+        linters:
+          - forbidigo
+      - path: "shingo-edge/internal/testdb/plantseed\\.go"
+        text: "style-flip verb"
         linters:
           - forbidigo
 

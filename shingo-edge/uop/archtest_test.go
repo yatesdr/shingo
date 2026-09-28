@@ -8,6 +8,7 @@
 package uop
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +132,202 @@ func TestArch_PileWritersAreKnown(t *testing.T) {
 	if len(bad) > 0 {
 		t.Errorf("node_lineside_bucket written outside the known writer set:\n  %s\n\n"+
 			"A pile write must mark its level dirty (uop.Mutator.PilesChanged or a capture/tick verb).",
+			strings.Join(bad, "\n  "))
+	}
+}
+
+// TestArch_ActiveBinPointerWritersAreKnown pins the set of production files
+// that write the process_node_runtime_states slot-lifecycle columns (the
+// active-bin pointer, the cached count, the stamp) through the raw store
+// setters. Engine code must go through the uop verbs instead — the verb name
+// is the plant event at the call site. The one engine file still allowed is a
+// documented exception: handler_bin_epoch_refresh.go is a stamp-only refresh
+// (the bin stays; no identity or count changes hands). handler_uop_adjustment.go
+// used to be allowed for its bind arms; they go through BindFromCore and
+// BindStagedUnlessDeparted now, and the file left the list.
+func TestArch_ActiveBinPointerWritersAreKnown(t *testing.T) {
+	t.Parallel()
+	root := edgeRepoRoot(t)
+	allowed := map[string]bool{
+		filepath.Join("uop", "mutator.go"):                      true, // the verbs
+		filepath.Join("uop", "store_iface.go"):                  true, // the surface they write through
+		filepath.Join("store", "process_node_runtime.go"):       true, // the delegates
+		filepath.Join("engine", "handler_bin_epoch_refresh.go"): true, // stamp-only refresh, documented
+	}
+	patterns := []string{
+		".BindEmptySlotUnlessDeparted(",
+		"SetProcessNodeActiveBinID(",
+		"SetProcessNodeActiveBinIDAndEpoch(",
+		"ClearProcessNodeActiveBinAndCount(",
+		"SetProcessNodeRuntime(",
+		"SetProcessNodeRuntimeWithBin(",
+		"SetProcessNodeRuntimeWithBinAndEpoch(",
+		"SetProcessNodeRuntimeClaimCountAndEpoch(",
+		"SetProcessNodeRuntimeForDeliveredBin(",
+	}
+
+	var bad []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		if allowed[rel] {
+			return nil
+		}
+		text := string(data)
+		for _, pat := range patterns {
+			if strings.Contains(text, pat) {
+				bad = append(bad, rel+" calls "+pat+"...) directly")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(bad) > 0 {
+		t.Errorf("runtime slot columns written outside the known writer set:\n  %s\n\n"+
+			"Route the write through a uop verb (mutator.go) so the plant event is named at "+
+			"the call site and the lineside identity moves with the carrier.",
+			strings.Join(bad, "\n  "))
+	}
+}
+
+// TestArch_ResidentPayloadHasOneDoorway pins the chokepoint. The resident
+// identity is written from exactly one place, so "who last said what this
+// carrier is" always has an answer.
+//
+// The field it replaces, active_claim_id, is written by eighteen paths, most
+// of them stamping the requested style, with nothing recording which spoke
+// last. That is how an ordinary recovery action came to re-aim a cell's idea
+// of what was standing on it.
+//
+// Two patterns: the store method the doorway calls, and the SQL column
+// itself. The column is assigned in exactly ONE statement, the doorway's own
+// (processes.SetRuntimeLinesidePayload). Departures and clears used to write
+// it as literals inside the pointer statements, which bypassed the doorway
+// and its "who said so"; those literals are gone and the count below keeps
+// them from coming back.
+func TestArch_ResidentPayloadHasOneDoorway(t *testing.T) {
+	t.Parallel()
+	root := edgeRepoRoot(t)
+	patterns := map[string]map[string]bool{
+		"SetProcessNodeRuntimeLinesidePayload": {
+			filepath.Join("engine", "lineside_carrier_doorway.go"): true,
+			filepath.Join("store", "process_node_runtime.go"):      true,
+		},
+		"lineside_payload_code=": {
+			filepath.Join("store", "processes", "processes.go"): true,
+		},
+	}
+
+	var bad []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		rel, _ := filepath.Rel(root, path)
+		if rel == filepath.Join("store", "processes", "processes.go") {
+			if n := strings.Count(string(data), "lineside_payload_code="); n != 1 {
+				bad = append(bad, fmt.Sprintf("%s assigns lineside_payload_code= in %d statements, want 1 "+
+					"(the doorway's SetRuntimeLinesidePayload)", rel, n))
+			}
+		}
+		for pat, patAllowed := range patterns {
+			if !strings.Contains(string(data), pat) {
+				continue
+			}
+			if !patAllowed[rel] {
+				bad = append(bad, rel+" writes "+pat)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(bad) > 0 {
+		t.Errorf("the lineside identity is written outside its doorway:\n  %s\n\n"+
+			"Route it through Engine.recordLinesideCarrier and name the source — a departure "+
+			"goes through Engine.carrierLeft, which calls it. A field several paths write "+
+			"without saying which spoke last is the defect this replaced, not a shape to "+
+			"reintroduce.",
+			strings.Join(bad, "\n  "))
+	}
+}
+
+// TestArch_CarrierLeavesThroughOneVerb pins "the carrier left" to one verb.
+// Engine.carrierLeft (engine/carrier_left.go) clears the pointer and the count
+// through uop.ClearActiveBin and records the departure through the lineside
+// doorway; no other production file may call ClearActiveBin on the sink, or
+// record a departure on its own. A second caller is a door that nulls
+// active_bin_id and can forget the identity — the defect the verb exists to
+// end. (Tests are exempt: they drive the Mutator directly.)
+func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
+	t.Parallel()
+	root := edgeRepoRoot(t)
+	verb := filepath.Join("engine", "carrier_left.go")
+	patterns := []string{
+		".ClearActiveBin(",
+		"domain.CarrierDeparted",
+	}
+	var bad []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if filepath.Base(path) == "uop" {
+				return filepath.SkipDir // the verb's pointer/count half lives here
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		if rel == verb {
+			return nil
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		for _, pat := range patterns {
+			if strings.Contains(string(data), pat) {
+				bad = append(bad, rel+" uses "+pat)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(bad) > 0 {
+		t.Errorf("a carrier departure outside the one verb:\n  %s\n\n"+
+			"Call Engine.carrierLeft — it clears the pointer and the count and records the "+
+			"departure through the lineside doorway, so the identity cannot be left behind.",
 			strings.Join(bad, "\n  "))
 	}
 }

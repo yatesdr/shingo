@@ -168,6 +168,11 @@ type StationService struct {
 	// coreNodeGroups hands the view the NGRP membership for the dock strip.
 	// Optional: nil lists no members under a group.
 	coreNodeGroups func() map[string][]string
+	// nodeRetirer retires a process_node through the engine, so a station's
+	// node-list sync closes the node's demand episodes and takes its lineside
+	// piles with it rather than only tombstoning the row. Optional: nil keeps
+	// the plain store retire, for the lighter test constructors.
+	nodeRetirer func(int64) error
 	// plantGeneration is the engine's counter for the two caches a node-list
 	// response replaces — the scene geometry and the NGRP membership — and is
 	// how a station poll can say "the plant moved" WITHOUT calling either
@@ -213,6 +218,12 @@ func NewStationService(db *store.DB) *StationService {
 // multi-window view fields (WindowGroupAnchor / WindowNodes). The engine calls
 // this once at startup with its flag-selected LoaderStore.
 func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
+
+// SetNodeRetirer injects the engine's node retire, so a station sync that
+// drops a node runs the full retire (episode closes, pile removal, pile
+// zero-sends) instead of the bare store delete. The engine calls this once at
+// startup.
+func (s *StationService) SetNodeRetirer(r func(int64) error) { s.nodeRetirer = r }
 
 // SetBinTypeResolver injects the payload -> dunnage lookup the changeover load
 // directive needs. Optional; unset leaves every directive nil.
@@ -486,7 +497,11 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 			}
 			continue
 		}
-		if err := s.db.DeleteProcessNode(n.ID); err != nil {
+		if s.nodeRetirer != nil {
+			if err := s.nodeRetirer(n.ID); err != nil {
+				return err
+			}
+		} else if err := s.db.DeleteProcessNode(n.ID); err != nil {
 			return err
 		}
 	}

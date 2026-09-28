@@ -195,9 +195,10 @@ func Delete(db *sql.DB, id int64) error {
 		{`UPDATE styles SET deleted_at = datetime('now') WHERE process_id=? AND` + liveStyles, id},
 		{`UPDATE reporting_points SET enabled = 0 WHERE style_id IN (SELECT id FROM styles WHERE process_id=?)`, id},
 		{`DELETE FROM process_node_runtime_states WHERE process_node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
-		// The process's lineside piles go with it, active and stranded. The
-		// caller sends each one's level as 0 afterwards (Engine.DeleteProcess),
-		// so Core's mirror loses them too.
+		// The process's lineside piles go with it, active and stranded. A
+		// BACKSTOP: Engine.DeleteProcess retires every node first (RetireNode
+		// deletes each node's piles and sends their levels as 0), so this
+		// should find nothing; a pile it does find is deleted unannounced.
 		{`DELETE FROM node_lineside_bucket WHERE node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
 		// operator_station_id is cleared because the station row itself goes in
 		// the next statement: a retired node pointing at a deleted station is a
@@ -529,6 +530,12 @@ func UpdateNode(db *sql.DB, id int64, in NodeInput) error {
 // It also cascades into process_node_runtime_states, which is genuinely
 // ephemeral, so that row IS deleted here — carrying stale runtime state for a
 // node nobody can address is how a phantom badge appears.
+//
+// The node's lineside pile rows are deleted too: the pile is the node's
+// stock, and stock at a retired cell is a number Core still mirrors without a
+// place to put it. The bucket table has no FK to process_nodes (its node_id
+// is bare), so no cascade reaches them — the delete is explicit here, inside
+// the retire's transaction.
 func DeleteNode(db *sql.DB, id int64) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -540,6 +547,9 @@ func DeleteNode(db *sql.DB, id int64) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM process_node_runtime_states WHERE process_node_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM node_lineside_bucket WHERE node_id = ?`, id); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -713,17 +723,17 @@ func SetRuntimeClaimCountAndEpoch(db *sql.DB, processNodeID int64, activeClaimID
 // SetRuntimeWithBin updates active_claim_id, active_bin_id, and
 // remaining_uop_cached in one atomic write.
 //
-// USED BY THE CLEAR-SHAPED WRITES, not by deliveries. This said "every
-// delivery-completion handler", and the four completion-time call sites it
-// named were removed with the old delivery handler; deliveries go through
-// SetRuntimeForDeliveredBin, which also carries the epoch. What is left are the
-// two writes that end with the slot empty and no epoch in hand:
-// uop.ClearActiveAndReset and the changeover-cancel reconcile. activeBinID is the bin physically
-// arriving at the slot, or nil for removal-shaped completions where
-// the slot ends up empty.
+// NO PRODUCTION CALLER. The departure it served (uop.ClearActiveAndReset, deleted)
+// collapsed into the one carrier-left verb, which writes through
+// ClearActiveBinAndCount; test fixtures seed runtime rows with it.
+//
+// Pointer and count only. The lineside identity is not this statement's to
+// write: it goes through the engine's doorway (recordLinesideCarrier), which
+// names who said it.
 func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, remaining_uop_cached=?, updated_at=datetime('now')
+		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, remaining_uop_cached=?,
+		updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeClaimID, activeBinID, remainingUOPCached, processNodeID)
 	return err
@@ -923,15 +933,21 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 
 // ClearActiveBinAndCount clears active_bin_id and zeroes
 // remaining_uop_cached in ONE statement, leaving the claim and both order
-// pointers alone. Used by ClearActiveBin (bin-pickup departure): the count on
-// the row is the departed bin's, and a count surviving the bin it describes is
+// pointers alone. The pointer/count half of the carrier-left verb
+// (uop.ClearActiveBin, called only from Engine.carrierLeft): the count on the
+// row is the departed bin's, and a count surviving the bin it describes is
 // read by the pickup→delivery window's readers as material that is no longer
-// there. Atomic for the same reason SetRuntimeWithBin is — a tick landing
-// between two separate writes could see an empty slot still carrying its old
-// count, which is exactly the state the pickup exists to end.
+// there. Atomic because a tick landing between two separate writes could see
+// an empty slot still carrying its old count, which is exactly the state the
+// departure exists to end.
+//
+// The identity half is NOT here: the verb records the departure through the
+// engine's lineside doorway right after this statement, so the one place
+// that writes the identity also names who cleared it.
 func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0, updated_at=datetime('now')
+		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0,
+		updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		processNodeID)
 	return err

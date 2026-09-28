@@ -200,8 +200,6 @@ type EngineOrchestration interface {
 	// against a process that no longer exists. Same reason SyncProcessCounter
 	// above is an orchestration verb rather than a service call.
 	DeleteProcess(processID int64) error
-	FlipABNode(nodeID int64, req engine.FlipRequest) error
-	SetActivePullSide(nodeID int64, req engine.FlipRequest) error
 
 	// ── Lineside admin (team leader / engineer override) ───────────
 	// Backs the Clear button on the Production page's lineside table:

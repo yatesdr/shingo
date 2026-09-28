@@ -234,14 +234,11 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		return
 	}
 	if runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID {
-		if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
+		// The carrier left: pointer, count and identity go together
+		// (carrier_left.go).
+		if err := e.carrierLeft(*order.ProcessNodeID, location); err != nil {
 			e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
 		}
-		// The carrier's identity leaves with the carrier. Held over, it would
-		// be inherited by whatever lands next and read as a fact about it —
-		// which is the failure this field exists to end, reintroduced from the
-		// other direction.
-		e.recordLinesideCarrier(*order.ProcessNodeID, "", domain.UnknownCarrier(), domain.CarrierDeparted)
 	}
 
 	e.logFn("bin_picked_up: flushed deltas + cleared active bin for order=%s bin=%d (status=%s)",
@@ -249,12 +246,9 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 
 	// Home consolidation: if this was Order A of a ClearLoaderHome sequence,
 	// the robot just cleared the home position. Fire Order B (buffer partial → home).
-	e.homeConsolidationsMu.Lock()
-	if c, ok := e.homeConsolidations[orderUUID]; ok {
-		delete(e.homeConsolidations, orderUUID)
-		e.homeConsolidationsMu.Unlock()
-		e.dispatchBufferConsolidation(c)
-		return
+	// The intent is on Order A's row, so it fires after an Edge restart too; the
+	// take is exactly-once, so a replayed pickup does not fire a second Order B.
+	if it, ok := e.takeOrderIntent(order.ID, intentConsolidation); ok {
+		e.dispatchBufferConsolidation(it.consolidation())
 	}
-	e.homeConsolidationsMu.Unlock()
 }

@@ -7,6 +7,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
+	"shingoedge/uop"
 )
 
 // THE CLASS FIX, END TO END.
@@ -251,5 +252,59 @@ func TestBinAtNode_FallsBackToTheClaimWhenNothingIsRecorded(t *testing.T) {
 
 	if _, gotPayload, _ := eng.binAtNode(rt, claim); gotPayload != "PART-CLAIMED" {
 		t.Errorf("payload = %q, want the claim's PART-CLAIMED as the fallback", gotPayload)
+	}
+}
+
+// THE IDENTITY LEAVES WITH THE CARRIER. The one carrier-left verb
+// (Engine.carrierLeft) clears the pointer and the count through the real
+// Mutator, then records the departure through the lineside doorway —
+// an empty lineside_payload_code, known=0, source 'departed' — so whatever lands
+// next cannot inherit the departed carrier's payload. The readers of this
+// field fail open on an empty value, so a held-over identity (the pre-fix
+// behaviour this test used to document) was a confident wrong answer about
+// the next occupant. (This drove two uop verbs, ClearActiveBin and
+// ClearActiveAndReset, whose store statements carried the identity as
+// literals; the verbs collapsed into the one engine verb, which routes the
+// identity through the doorway. Same observable result.)
+func TestDepartureVerbs_ClearTheLinesideIdentity(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "DEPART",
+		PayloadCode: "PART-X",
+		UOPCapacity: 100,
+		InitialUOP:  100,
+	})
+	bin := int64(9101)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 100), "bind the carrier")
+	// Seat a resident identity, as Core's delivery envelope does.
+	if err := db.SetProcessNodeRuntimeLinesidePayload(nodeID, "PART-X", true, "delivery"); err != nil {
+		t.Fatalf("record resident payload: %v", err)
+	}
+	// Route the departure through the real Mutator, as production does.
+	mut := uop.New(db, "stn-test", db, db)
+	eng := testEngine(t, db)
+	eng.SetInventoryDeltaSink(mut)
+
+	if err := eng.carrierLeft(nodeID, "DEPART-NODE"); err != nil {
+		t.Fatalf("carrierLeft: %v", err)
+	}
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		t.Fatalf("read runtime after carrierLeft: %v", err)
+	}
+	if rt.LinesidePayloadCode != "" || rt.LinesideSource != string(domain.CarrierDeparted) || rt.LinesidePayloadKnown {
+		t.Fatalf("identity survived the departure: code=%q source=%q known=%v — the carrier's "+
+			"identity must leave with the carrier",
+			rt.LinesidePayloadCode, rt.LinesideSource, rt.LinesidePayloadKnown)
+	}
+	if rt.ActiveBinID != nil {
+		t.Fatalf("carrierLeft left active_bin_id=%v, want nil", *rt.ActiveBinID)
+	}
+	if rt.RemainingUOPCached != 0 {
+		t.Fatalf("carrierLeft left remaining_uop=%d, want 0", rt.RemainingUOPCached)
+	}
+	if rt.ActiveClaimID == nil || *rt.ActiveClaimID != claimID {
+		t.Fatalf("carrierLeft moved the claim to %v, want %d untouched", rt.ActiveClaimID, claimID)
 	}
 }

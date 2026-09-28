@@ -7,7 +7,8 @@
 // and Shingo dispatches a single move order: market slot → loader window.
 //
 // After the robot delivers the bin to the window Edge auto-clears the UOP
-// (via the marketPullbacks delivery hook in wiring_delivered.go) so the
+// (via the pullback intent on the order row, taken by the delivery hook in
+// wiring_delivered.go — see order_intent.go) so the
 // operator can immediately resume the standard empty-request / load-full cycle.
 
 package engine
@@ -148,9 +149,9 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	}
 	log.Printf("market_pullback: order %d: %s → %s payload=%q (auto-clear on delivery)", order.ID, sourceCoreName, node.CoreNodeName, payload)
 
-	e.marketPullbacksMu.Lock()
-	e.marketPullbacks[order.UUID] = nodeID
-	e.marketPullbacksMu.Unlock()
+	// Arm the auto-clear on the order row, not in memory, so it survives an
+	// Edge restart before the delivery (order_intent.go).
+	e.armOrderIntent(order.ID, orderIntent{Kind: intentPullback, NodeID: nodeID})
 
 	return nil
 }

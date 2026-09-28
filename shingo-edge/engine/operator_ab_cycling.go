@@ -10,94 +10,6 @@ import (
 	"shingoedge/store/processes"
 )
 
-// FlipABNode switches the active pull point to the specified node and deactivates
-// its paired partner. Used for A/B cycling — operator (or PLC bit) decides when
-// to start pulling from the other side.
-// FlipRequest says who is asking to flip and whether they have looked.
-//
-// A PLC bit cannot look at the aisle, so it can never carry Confirm — a flip it
-// asks for onto an unready position is refused loudly rather than overridden
-// (the changeover-53 precedent). An operator can, because he can.
-type FlipRequest struct {
-	Confirm  bool
-	CalledBy string
-	ByPLC    bool
-}
-
-// OperatorFlip is the ordinary unconfirmed operator request, and the zero value
-// most callers want.
-func OperatorFlip(calledBy string) FlipRequest { return FlipRequest{CalledBy: calledBy} }
-
-func (e *Engine) FlipABNode(nodeID int64, req FlipRequest) error {
-	node, err := e.db.GetProcessNode(nodeID)
-	if err != nil {
-		return fmt.Errorf("node not found: %w", err)
-	}
-	// ── DO NOT PUT THE LINE ONTO A POSITION THAT CANNOT FEED IT ───────────
-	//
-	// The flip is what makes the OTHER side releasable, so it is where the
-	// "has the operator got a bin of the new product" question belongs. Every
-	// arm below is answered from state this Edge already owns — no Core call,
-	// no per-node inventory read. See flipTargetReady.
-	if why := e.flipTargetReady(node); why != "" {
-		if req.ByPLC {
-			log.Printf("A/B flip REFUSED (PLC) node=%s: %s — a PLC bit cannot see the aisle, so it "+
-				"cannot override this; a person must look and flip from the board", node.CoreNodeName, why)
-			return fmt.Errorf("flip to %s refused: %s", node.CoreNodeName, why)
-		}
-		if !req.Confirm {
-			return fmt.Errorf("%s; confirm to flip anyway", why)
-		}
-		log.Printf("AUDIT flip-override: node=%s called_by=%q — %s; the operator flipped anyway",
-			node.CoreNodeName, req.CalledBy, why)
-	}
-
-	pairedNode, err := e.pairedNodeOf(node)
-	if err != nil {
-		return err
-	}
-	// Attribution boundary: A/B cycling has no operator action at the
-	// inactive→active transition — the active-pull state flip IS the
-	// boundary. Without flushing here the inactive node's accumulator
-	// would carry residual deltas past the flip and they'd ship under
-	// the wrong active-bin attribution. Fires before the SetActivePull
-	// writes so the outgoing-bin's deltas land before the new bin
-	// starts driving ticks against the now-active node.
-	//
-	// MarkAttributionBoundary is synchronous — a returned error means
-	// the flush failed and we must NOT proceed with the SetActivePull
-	// swap (pending deltas would land under the wrong attribution).
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.MarkAttributionBoundary(nodeID); err != nil {
-			return fmt.Errorf("attribution boundary flush failed: %w", err)
-		}
-	}
-
-	if err := e.writePullSide(nodeID, pairedNode.ID); err != nil {
-		return err
-	}
-
-	log.Printf("A/B flip: node %s now active, node %s inactive", node.Name, pairedNode.Name)
-
-	// THE DEPLETED PARTNER IS THE LEVEL SWEEP'S DECISION, TAKEN EARLY HERE.
-	//
-	// A tail used to sit at this line firing its own auto-reorder, and it was
-	// the one order-firing site that answered to nothing: no reorder_point > 0
-	// opt-out, so a claim set to the documented opt-out fired from here anyway;
-	// no check for a bin already inbound; no hysteresis; and it never called
-	// evaluateCellLevel, so it ordered without recording that the cell had gone
-	// below its level. All four now apply, because this is the same decision
-	// the periodic sweep takes and not a second implementation of it.
-	//
-	// It is here at all only for immediacy. A flip is the one moment a parked
-	// side becomes interesting, and waiting a period to notice is a real
-	// regression on the operator-visible path. Drop this line and the sweep
-	// still covers the cell on its next pass — it does not skip parked sides.
-	e.sweepNodeLevelNow(pairedNode.ID)
-
-	return nil
-}
-
 // flipTargetReady returns "" when the line may safely be put onto this position,
 // or an operator-readable reason why not.
 //
@@ -221,8 +133,9 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 
 // pairedNodeOf resolves the other half of an A/B pair from a node's active claim.
 //
-// Both writers of active_pull go through it, so neither can end up writing one
-// bit while disagreeing about which row the partner is.
+// The release trunk's guard (linePullsFrom) and its flip (releaseFlipPartner)
+// both go through it, so the question and the write cannot disagree about
+// which row the partner is.
 func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
 	claim := e.claimAtNode(node)
 	if claim == nil {
@@ -244,7 +157,12 @@ func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
 }
 
 // writePullSide puts the pull bit on one side of a pair and takes it off the
-// other, in one transaction. THE ONLY PLACE EITHER WRITER TOUCHES active_pull.
+// other, in one transaction. The canonical writer of active_pull. The one
+// other writer is tooling evacuate's clear (changeover_applier.go), which
+// sets both sides dark deliberately. writePullSide's one production caller is
+// the release trunk's releaseFlipPartner — releasing a sequential position is
+// the statement that the line has moved, taken as one atomic fact. (The
+// operator flip door, Engine.FlipABNode, was deleted with its last caller.)
 //
 // Item 5 atomic wrap: a tick firing between the two writes — with both sides
 // momentarily reading inactive, or both active — attributes to the wrong bucket.
@@ -264,73 +182,5 @@ func (e *Engine) writePullSide(activeID, partnerID int64) error {
 		log.Printf("ab_cycling: atomic pull write node=%d paired=%d: %v", activeID, partnerID, err)
 		return err
 	}
-	return nil
-}
-
-// SetActivePullSide records which side of an A/B pair the line is DRAWING FROM,
-// without moving anything.
-//
-// ── THE FLIP STAYS CANONICAL; THIS IS THE OTHER QUESTION ──────────────────
-//
-// FlipABNode remains the writer of active_pull in ordinary operation, and that
-// is the point of it: it moves the line and writes the bit in the same click, so
-// the two cannot disagree. The gap it does not cover is the state a tooling
-// evacuate leaves — clearActivePullForEvacuate darkens BOTH sides, which is
-// correct while the press is down, and nothing re-asserts the bit when it comes
-// back up. Both sides then read 0, the release guard is silent on a running
-// press, and the only existing click that lights the bit is a flip: a
-// choreography step the operator may not want, because he may already be on the
-// side he means to run.
-//
-// So this is the declaration, and it is deliberately NOT a flip:
-//
-//	NO READINESS GUARD. flipTargetReady asks "may the line be MOVED onto this
-//	position". Nothing is being moved. The operator is telling the system what
-//	is already true on the floor, and it is his eyes against a bit that is
-//	currently blank.
-//
-//	NO AUTO-REORDER. Nothing was depleted; no side just came off the line.
-//
-//	THE ATTRIBUTION BOUNDARY STILL FIRES, for the same reason the flip fires it:
-//	the bit decides which position a UOP tick lands against, so residual deltas
-//	in the incoming side's accumulator must be flushed BEFORE it starts driving
-//	ticks under a new attribution. A declaration that changed the answer without
-//	flushing would ship the old bin's counts against the new one.
-//
-// AUDITED, AND CLOSED TO THE PLC. The whole content of this call is "a person
-// looked at the aisle and this is what is true" — the same statement
-// ConfirmActivePull and FlipRequest.Confirm carry, and it is logged the same
-// way. A PLC bit cannot look, so it can never make it (the changeover-53
-// precedent, and FlipABNode's own ByPLC arm).
-func (e *Engine) SetActivePullSide(nodeID int64, req FlipRequest) error {
-	node, err := e.db.GetProcessNode(nodeID)
-	if err != nil || node == nil {
-		return fmt.Errorf("node not found: %w", err)
-	}
-	if req.ByPLC {
-		log.Printf("active-pull declaration REFUSED (PLC) node=%s: a PLC bit cannot see which side the "+
-			"line is drawing from; a person must look and set it from the board", node.CoreNodeName)
-		return fmt.Errorf("setting the active pull side on %s is an operator action: a PLC cannot see "+
-			"the aisle", node.CoreNodeName)
-	}
-	pairedNode, err := e.pairedNodeOf(node)
-	if err != nil {
-		return err
-	}
-
-	// Same flush, same ordering, same refusal as the flip — see writePullSide's
-	// caller above and MarkAttributionBoundary's own doc.
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.MarkAttributionBoundary(nodeID); err != nil {
-			return fmt.Errorf("attribution boundary flush failed: %w", err)
-		}
-	}
-	if err := e.writePullSide(nodeID, pairedNode.ID); err != nil {
-		return err
-	}
-	log.Printf("AUDIT active-pull set: node=%s partner=%s called_by=%q — the operator declared that the "+
-		"line is drawing from %s; the release guard now protects it and %s is releasable",
-		node.CoreNodeName, pairedNode.CoreNodeName, req.CalledBy,
-		node.CoreNodeName, pairedNode.CoreNodeName)
 	return nil
 }

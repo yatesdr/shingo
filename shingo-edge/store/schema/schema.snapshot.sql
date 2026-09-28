@@ -364,6 +364,11 @@ CREATE TABLE orders (
     -- completes the departure when the placement lands second. NULL means the
     -- leg has not left the cell's nodes.
     cell_left_at    TEXT,
+    -- pending_intent (Edge v4): the future action this order armed when it was
+    -- dispatched, as a JSON envelope (engine/order_intent.go) — a
+    -- pull-from-market's auto-clear on delivery, or a clear-loader-home's Order B
+    -- on pickup. '' = nothing armed. Taken exactly once by the firing site.
+    pending_intent  TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 , payload_desc TEXT NOT NULL DEFAULT '', origin_id TEXT NOT NULL DEFAULT '', origin_class TEXT NOT NULL DEFAULT '');

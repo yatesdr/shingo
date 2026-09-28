@@ -313,8 +313,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/supply-refusal/ack", h.apiAckSupplyRefusal)
 			r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
 			r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
-			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
-			r.Post("/process-nodes/{id}/set-active-pull", h.apiSetActivePullSide)
 
 			// Quality containment (v100): the containment screen lives at the
 			// ROOT (/containment, public kiosk); the state read + verbs ride
@@ -514,7 +512,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
 				r.Post("/process-nodes", h.apiCreateProcessNode)
 				r.Put("/process-nodes/{id}", h.apiUpdateProcessNode)
-				r.Delete("/process-nodes/{id}", h.apiDeleteProcessNode)
 
 				// Sync (core nodes, payload catalog)
 				r.Post("/core-nodes/sync", h.apiSyncCoreNodes)

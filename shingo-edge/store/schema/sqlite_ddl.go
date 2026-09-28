@@ -234,6 +234,11 @@ CREATE TABLE IF NOT EXISTS orders (
     -- completes the departure when the placement lands second. NULL means the
     -- leg has not left the cell's nodes.
     cell_left_at    TEXT,
+    -- pending_intent (Edge v4): the future action this order armed when it was
+    -- dispatched, as a JSON envelope (engine/order_intent.go) — a
+    -- pull-from-market's auto-clear on delivery, or a clear-loader-home's Order B
+    -- on pickup. '' = nothing armed. Taken exactly once by the firing site.
+    pending_intent  TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -955,8 +960,8 @@ CREATE TABLE IF NOT EXISTS process_changeovers (
 -- WHY A TABLE AND NOT A COLUMN ON style_node_claims (O8, resolved 2026-07-25).
 -- The episode is per PROCESS; claims are per node. A/B sequential puts TWO
 -- same-payload claims in one process — plants/demo.yaml PRESS-2, PLN_003 and
--- PLN_004, both auto_reorder — and FlipABNode fires RequestNodeMaterial on the
--- paired node. A current_origin_id column on the claim would hold the open
+-- PLN_004, both auto_reorder — and releasing one side flips the pair and
+-- reorders the side that went dark. A current_origin_id column on the claim would hold the open
 -- episode on claim A where claim B cannot see it, so B's fire would mint a
 -- second episode for a place that already has one. The design's own grain rule
 -- says the process needs the payload and which position is pulling is not a

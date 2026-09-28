@@ -18,10 +18,20 @@ import (
 // once they switch to uop.
 type DebugLogFunc = types.DebugLogFunc
 
-// Mutator is the engine's chokepoint for UOP state mutations. Wraps a
-// private accumulator (bin deltas and pile levels) plus narrow store
-// interfaces (runtimeWriter for runtime-row writes, bucketStore for the
-// lineside pile writes and reads its verbs make).
+// Mutator is the verb surface for the slot-lifecycle writes — the
+// active-bin pointer, the cached count and the stamp — and for the delta
+// accumulator (bin deltas and pile levels). It wraps that private
+// accumulator plus narrow store interfaces (runtimeWriter for runtime-row
+// writes, bucketStore for the lineside pile writes and reads its verbs make).
+//
+// IT IS NOT THE ONLY WRITER OF THE RUNTIME ROW, and this used to call itself
+// the engine's chokepoint for UOP state. The engine still writes directly: the
+// order pointers, active_pull, the lineside identity (through its own doorway,
+// recordLinesideCarrier), the per-tick count (UpdateProcessNodeUOP and the
+// clear-pending write in wiring_counter_delta.go), the manifest count at
+// release, the record-count fence, and the stamp-only epoch refresh. What IS
+// pinned is the pointer/count/stamp setters: TestArch_ActiveBinPointerWritersAreKnown
+// names every file allowed to call them raw.
 type Mutator struct {
 	acc     *accumulator
 	rw      runtimeWriter
@@ -86,9 +96,11 @@ func (m *Mutator) OnBinPickedUp(nodeID *int64) error {
 }
 
 // MarkAttributionBoundary flushes pending deltas before a non-UOP
-// orchestration step changes attribution context. Today's caller is
-// FlipABNode, which calls this before SetActivePull swaps which side
-// is active-pull. Engine owns the orchestration; UOP owns the flush.
+// orchestration step changes attribution context. Today's caller is the
+// release trunk's releaseFlipPartner (fact-owners Lane G; the operator flip
+// door FlipABNode was deleted with its last caller), which calls this
+// before writePullSide swaps which side is active-pull. Engine owns the
+// orchestration; UOP owns the flush.
 //
 // MUST flush synchronously. The error signature is the forward-shape
 // for when the accumulator flush gains error propagation; the current
@@ -118,42 +130,59 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 	return m.rw.SetProcessNodeActiveBinIDAndEpoch(nodeID, &binID, deltaEpoch)
 }
 
+// BindFromCore writes claim + active_bin_id + epoch + count as Core states
+// them: Core's word on which carrier is at the slot, its count and its
+// generation. Callers:
+//
+//   - handler_uop_adjustment.go Bound arm (admin Move put this carrier here);
+//   - handler_uop_adjustment.go count arm (a count for the carrier already
+//     bound here — binID is the bound one, the count and stamp are Core's;
+//     the stamp only moves forward, see the store's epochAssignOnBind);
+//   - operator_changeover_cancel.go reconcile (Core's physical view after a
+//     cancelled changeover rebinds the slot).
+//
+// Same statement as ManualLoad; a different plant event, so a different name
+// at the call site. The identity is not written here: a Core announcement
+// carries no payload, and the callers record UNKNOWN through the doorway
+// where a new carrier arrived.
+func (m *Mutator) BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+	return m.rw.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
+}
+
+// BindStagedUnlessDeparted binds a staged carrier into a slot read as empty,
+// from a person's count correction (handler_uop_adjustment.go), unless it is
+// the carrier that last left this slot arriving at an older stamp — a late
+// correction for a carrier that has moved on. Reports whether it bound. See
+// processes.BindEmptySlotUnlessDeparted for the WHERE-clause guard.
+func (m *Mutator) BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error) {
+	return m.rw.BindEmptySlotUnlessDeparted(nodeID, activeClaimID, binID, deltaEpoch, uop)
+}
+
 // ClearActiveBin clears the active bin pointer AND zeroes the cached count on
-// a process node's runtime row, in one statement. Today's caller is
-// handler_bin_picked_up.go (Core BinPickedUp arrival — the bin has physically
-// left the slot, so any subsequent ticks attribute to nothing rather than to
-// the now-gone bin).
+// a process node's runtime row, in one statement: the pointer/count half of
+// "the carrier left". Its one production caller is Engine.carrierLeft
+// (engine/carrier_left.go), which records the identity half through the
+// lineside doorway right after — the doorway is an engine method, and uop
+// cannot call back into the engine (engine imports uop), so the verb that
+// composes both halves lives there. Every door that nulls active_bin_id goes
+// through that verb (TestArch_CarrierLeavesThroughOneVerb).
 //
 // THE COUNT GOES WITH THE BIN. The count on the row is the departed carrier's;
 // held over, every reader in the pickup→delivery window sees material that is
 // no longer there — flipTargetReady's changeover arm reads it as "holds no
 // material to feed the line" only by the accident of the value's sign, and the
-// demand reconciler reads it as stock. Zeroing at the pickup is the same
-// atomic semantics as ClearActiveAndReset (both land the slot in "empty and
-// knows it"), differing only in leaving the claim and order pointers for the
-// callers that own them.
+// demand reconciler reads it as stock.
+//
+// THE CLAIM IS LEFT ALONE. A sibling verb (ClearActiveAndReset) used to write
+// active_claim_id in the same statement; every caller passed the value it had
+// just read from the same row, so it was a no-op write, and the two verbs
+// collapsed into this one.
 //
 // ActiveOrderID IS DELIBERATELY LEFT ALONE — it is the cell-busy pointer the
 // admission guards read, released by orderWorksTheCell on terminal/departure,
 // not by the pickup.
 func (m *Mutator) ClearActiveBin(nodeID int64) error {
 	return m.rw.ClearProcessNodeActiveBinAndCount(nodeID)
-}
-
-// ClearActiveAndReset atomically clears active_bin_id and zeros the
-// count while preserving the claim. Today's caller is
-// wiring_completion.go:181 (Order B completion at supermarket — the
-// evac bin has been delivered to the supermarket, the slot it left
-// from has no bin until the next supply arrives, but the claim
-// continues for the next bin).
-//
-// activeClaimID is passed by the caller (a pointer so the existing
-// runtime.ActiveClaimID can be threaded through unchanged). Atomic
-// because a tick firing between two separate writes (clear active +
-// set count) could attribute to a stale active_bin_id with the new
-// count, or vice versa.
-func (m *Mutator) ClearActiveAndReset(nodeID int64, activeClaimID *int64) error {
-	return m.rw.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, nil, 0)
 }
 
 // SetClaimAndCount writes claim + count without touching either bin
@@ -186,7 +215,9 @@ func (m *Mutator) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) 
 // operator_bin_ops.go (the operator's CLEAR on a manual-swap window),
 // operator_home_consolidation.go (zeroing a loader home before the
 // consolidation move), and wiring_delivered.go (the market-pullback
-// auto-clear on delivery).
+// auto-clear on delivery). Each then records the carrier as known-empty,
+// said by the operator, through the engine's lineside doorway — the carrier
+// stays, so this is not a departure.
 func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error {
 	return m.rw.SetProcessNodeRuntimeClaimCountAndEpoch(nodeID, activeClaimID, uop, binID, deltaEpoch)
 }

@@ -989,3 +989,40 @@ func ListHistory(db *sql.DB, orderID int64) ([]History, error) {
 	}
 	return out, rows.Err()
 }
+
+// SetPendingIntent writes the order's armed future action (pending_intent, an
+// opaque string the engine encodes; "" disarms). It does NOT bump updated_at:
+// the intent is bookkeeping for a later event, not a change to the order, and
+// updated_at is read by staleness sweeps (see SetFaultClock).
+func SetPendingIntent(db *sql.DB, id int64, intent string) error {
+	_, err := db.Exec(`UPDATE orders SET pending_intent=? WHERE id=?`, intent, id)
+	return err
+}
+
+// GetPendingIntent returns the order's armed intent, "" when none is armed.
+// sql.ErrNoRows when the order does not exist.
+func GetPendingIntent(db *sql.DB, id int64) (string, error) {
+	var s string
+	err := db.QueryRow(`SELECT pending_intent FROM orders WHERE id=?`, id).Scan(&s)
+	return s, err
+}
+
+// TakePendingIntent clears the order's intent iff it still equals expected,
+// and reports whether THIS call cleared it. The conditional UPDATE is the
+// exactly-once decision: of any number of takers racing one intent (a replayed
+// Core event, two handlers), one sees RowsAffected == 1 and fires; the rest see
+// 0 and do nothing. No updated_at bump, as SetPendingIntent.
+func TakePendingIntent(db *sql.DB, id int64, expected string) (bool, error) {
+	if expected == "" {
+		return false, nil
+	}
+	res, err := db.Exec(`UPDATE orders SET pending_intent='' WHERE id=? AND pending_intent=?`, id, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}

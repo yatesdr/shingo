@@ -6,6 +6,7 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,10 +137,25 @@ func (h *Handlers) apiStyleDeleteImpact(w http.ResponseWriter, r *http.Request) 
 
 // apiDeleteStyle RETIRES a style. The row survives, so changeover history keeps
 // resolving its name and nothing that points at it is left dangling.
+//
+// It refuses (409) a style a process is RUNNING, or one an open changeover is
+// taking a process TO. Retiring drops the style's claims from Core's demand
+// registry, so the first ended every demand of a live cell with nothing on the
+// floor saying why, and the second left a changeover heading for a style with
+// no claims. Episodes need no closing here: they key on node, payload, process
+// or changeover (protocol/episode_key.go), never on a style, and a style that
+// is neither running nor a target is driving none.
 func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	if reason, err := h.styleInUse(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if reason != "" {
+		writeError(w, http.StatusConflict, reason)
 		return
 	}
 	if err := h.engine.StyleService().Delete(id); err != nil {
@@ -153,6 +169,32 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 	// still names its process.
 	h.publishSpecChangeForStyle(id)
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// styleInUse names why a style cannot be retired, or "" when it can. A read
+// that fails is an error, never an allow: the refusal exists because the
+// unguarded path is silent.
+func (h *Handlers) styleInUse(styleID int64) (string, error) {
+	procs, err := h.engine.ProcessService().List()
+	if err != nil {
+		return "", fmt.Errorf("check style in use: list processes: %w", err)
+	}
+	for _, p := range procs {
+		if p.ActiveStyleID != nil && *p.ActiveStyleID == styleID {
+			return fmt.Sprintf("style is the active style of process %q — change the process to another style first", p.Name), nil
+		}
+		co, err := h.engine.ChangeoverService().GetActive(p.ID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			return "", fmt.Errorf("check style in use: changeover of process %q: %w", p.Name, err)
+		}
+		if co != nil && co.ToStyleID == styleID {
+			return fmt.Sprintf("style is the target of process %q's open changeover — finish or cancel it first", p.Name), nil
+		}
+	}
+	return "", nil
 }
 
 // apiRestoreStyle un-retires a style. Soft delete without an undo is just a

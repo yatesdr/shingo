@@ -81,15 +81,15 @@ Core fetches an empty carrier (not a full bin).
 
 **`sequential`** (A/B) — the **two-bins-at-the-line, rotate** pattern (`BuildSequential{Removal,Backfill}Steps`):
 - Two positions (A, B) share one process+style; `paired_core_node` points each at the other;
-  `active_pull` marks the bin the line is currently filling. When it fills, the **PLC**
-  cuts over — `Engine.FlipABNode` (exposed as `POST /process-nodes/{id}/flip-ab`) flips
-  `active_pull` to the other bin and fires auto-reorder on the now-full one, which swaps it out:
+  `active_pull` marks the bin the line is currently filling. When it fills, the operator
+  releases it, and the release flips `active_pull` to the other bin (the release trunk,
+  `releaseFlipPartner`); the level sweep then reorders the side that went dark, which swaps
+  it out:
 - Order A (removal): wait(node)→pickup(node)→dropoff(OutboundDestination)
 - Order B (backfill, auto-created when A goes in_transit): pickup(InboundSource)→dropoff(node)
 - This is the realistic press/line model — a press is never a single bin filling alone; it's
-  A/B (or the in-line `two_robot_press_index`). The cutover is **automated by a PLC bit**, not
-  a manual operator action. **Catch (see §4): the sim's PLC stand-in doesn't yet fire that
-  flip**, so an A/B cell won't rotate headlessly until the sim simulates the bit.
+  A/B (or the in-line `two_robot_press_index`). The cutover is the operator's release of the
+  finished side (see §4), and the sim operator releases, so an A/B cell rotates headlessly.
 
 ---
 
@@ -106,12 +106,9 @@ Core fetches an empty carrier (not a full bin).
 order), so two-robot choreographies drive. Binding of a delivered bin to a node is
 automatic on delivery.
 
-**Not auto-driven (today):** the **A/B cutover**. In production this is automated — a PLC
-bit calls `Engine.FlipABNode` (the `/flip-ab` endpoint) when the active bin fills, flipping
-`active_pull` and swapping out the full bin. It is **not** a manual operator action. The
-sim's PLC stand-in (`plc/simwarlink`) only generates counter ticks; it doesn't yet fire the
-flip, so an A/B cell won't rotate headlessly until the sim simulates that PLC bit (auto-flip
-on active-bin-full). Also not auto-driven: changeover style cutover, partial/empty-release
+**The A/B cutover is the release.** Since 2026-09-27 releasing the finished side is what
+flips the pair (there is no flip button or `/flip-ab` endpoint any more), and the sim
+operator releases like any operator, so an A/B cell rotates headlessly. Not auto-driven: changeover style cutover, partial/empty-release
 accounting.
 
 ---

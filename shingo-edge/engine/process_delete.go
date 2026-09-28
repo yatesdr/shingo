@@ -57,14 +57,25 @@ import (
 //     CANNOT HAPPEN. The delete is reached only from below, after every close
 //     has returned, and a close that failed to enqueue refuses the delete
 //     outright. There is no path that removes the process first.
-//   - after the process row is deleted, before the pile levels are enqueued.
-//     The piles are gone on the Edge and Core's mirror keeps them: the boot
-//     resend sends only rows that exist. The window is the in-memory mark and
-//     one flush after the commit; nothing on the Edge closes it afterwards.
+//   - after a node is retired, before its pile levels are enqueued. The piles
+//     are gone on the Edge and Core's mirror keeps them: the boot resend sends
+//     only rows that exist. The window is the in-memory mark and one flush
+//     after the node's commit; nothing on the Edge closes it afterwards.
+//   - part-way through the nodes. Some are retired (their episodes closed,
+//     their piles gone and zeroed), the rest and the process are still there.
+//     The operator's retry finishes: RetireNode is idempotent, and the process
+//     lists only live nodes.
 //
-// The process's lineside piles go with it (processes.Delete deletes them in its
-// transaction). Their keys are read first, and each level is sent as 0 after
-// the delete, so Core's mirror loses them too.
+// ── ONE PATH FOR A NODE GOING AWAY ────────────────────────────────────────
+//
+// Each of the process's nodes is retired through Engine.RetireNode — the same
+// verb the station editor uses — so a node's episodes close, its piles are
+// deleted and their levels sent as 0, and its runtime row goes, the same way
+// whichever door removed it. What is left for this verb is the process's own:
+// the episodes whose origin names no live node, and the process row.
+// processes.Delete still deletes piles and runtime rows for the process's
+// nodes in its transaction; after the retires that is a backstop that should
+// find nothing.
 //
 // ── THE SINGLE CONNECTION ─────────────────────────────────────────────────
 //
@@ -98,6 +109,19 @@ func (e *Engine) DeleteProcess(id int64) error {
 		return fmt.Errorf("delete process %d: read name: %w", id, err)
 	}
 
+	// Every node goes through the node retire: its episodes, its piles and
+	// their levels, its runtime row. Stops at the first failure — the process
+	// stays and the retry finishes the job.
+	nodes, err := e.db.ListProcessNodesByProcess(id)
+	if err != nil {
+		return fmt.Errorf("delete process %d: list nodes: %w", id, err)
+	}
+	for i := range nodes {
+		if err := e.RetireNode(nodes[i].ID); err != nil {
+			return fmt.Errorf("delete process %d: %w", id, err)
+		}
+	}
+
 	if proc.Name == "" {
 		// An episode key built on an empty process names no place, and a list
 		// keyed on "" would match every other episode whose process could not be
@@ -111,24 +135,14 @@ func (e *Engine) DeleteProcess(id int64) error {
 		return err
 	}
 
-	// The piles the delete takes, read while they still exist.
-	piles, err := e.db.ListLinesidePileKeysForProcess(id)
-	if err != nil {
-		return fmt.Errorf("delete process %d: list lineside piles: %w", id, err)
-	}
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
-	if err := e.processService.Delete(id); err != nil {
-		return err
-	}
-	if len(piles) > 0 && e.inventoryDelta != nil {
-		e.inventoryDelta.PilesChanged(piles...)
-	}
-	return nil
+	return e.processService.Delete(id)
 }
 
-// closeProcessEpisodes closes every episode open for a process name, through the
-// ordinary close writer.
+// closeProcessEpisodes closes every episode still open for a process name,
+// through the ordinary close writer. After the node retires these are the
+// process's own: episodes whose origin names no live node of it.
 //
 // ONE LIST, ONE CLOSE PER OPEN EPISODE, AT DELETE ONLY. No tick, no sweep, no
 // periodic work: a process is deleted by hand, perhaps twice a year, and this

@@ -98,19 +98,6 @@ func (h *Handlers) apiUpdateProcessNode(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiDeleteProcessNode(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-	if err := h.engine.ProcessService().DeleteNode(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
 // ── A MINTED core_node_name IS A CLAIM ABOUT CORE'S PLANT ─────────────────
 //
 // process_nodes.core_node_name is Edge's pointer at a node Core owns. Nothing

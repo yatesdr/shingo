@@ -19,9 +19,9 @@ import "shingoedge/store/lineside"
 // dependency through at construction so uop/ never imports the store.
 type runtimeWriter interface {
 	// ClearProcessNodeActiveBinAndCount clears the bin pointer and zeroes
-	// the cached count in one statement. Used by ClearActiveBin when the
-	// bin physically departs the slot (the count on the row is the
-	// departed bin's).
+	// the cached count in one statement. Used by ClearActiveBin, the
+	// pointer/count half of the carrier-left verb (the count on the row is
+	// the departed bin's).
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
 
 	// SetProcessNodeActiveBinIDAndEpoch writes active_bin_id and
@@ -29,16 +29,11 @@ type runtimeWriter interface {
 	// is known (loader L1 confirm with Core's LoadBin response).
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 
-	// SetProcessNodeRuntimeWithBin writes active_claim_id, active_bin_id,
-	// and remaining_uop_cached atomically. Used by ClearActiveAndReset
-	// (Order B completion at supermarket — claim preserved, active_bin
-	// nulled, count zeroed).
-	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
-
 	// SetProcessNodeRuntimeWithBinAndEpoch writes active_claim_id,
 	// active_bin_id, active_bin_epoch, and remaining_uop_cached
-	// atomically. Used by ManualLoad when the epoch is known (operator
-	// imprint via Core's LoadBin response).
+	// atomically. Used by ManualLoad (operator imprint via Core's LoadBin
+	// response) and BindFromCore (Core's announcement of the carrier at
+	// the slot).
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 
 	// SetProcessNodeRuntime writes active_claim_id + remaining_uop_cached
@@ -54,6 +49,11 @@ type runtimeWriter interface {
 	// routes, where Core starts the carrier's next life and hands back
 	// the new stamp, but the carrier itself has not moved.
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
+
+	// BindEmptySlotUnlessDeparted binds a carrier into a slot read as
+	// empty, refusing in its own WHERE clause when it is the carrier that
+	// last left the slot at an older stamp. Used by BindStagedUnlessDeparted.
+	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 
 	// SetProcessNodeRuntimeForDeliveredBin atomically writes
 	// active_claim_id, active_bin_id, active_bin_epoch, and

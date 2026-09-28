@@ -34,7 +34,8 @@ CREATE TABLE process_nodes (
     process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
     core_node_name TEXT NOT NULL,
     code TEXT NOT NULL,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    deleted_at TEXT
 );
 CREATE TABLE node_lineside_bucket (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -332,8 +333,8 @@ func TestLevel_SumsNodesSharingACoreName(t *testing.T) {
 	}
 }
 
-// ListKeys names every row once, with its core name; ListKeysForProcess only
-// the process's.
+// ListKeys names every row once, with its core name; ListKeysForNode only
+// the node's.
 func TestListKeys_NamesEveryRow(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
@@ -358,9 +359,9 @@ func TestListKeys_NamesEveryRow(t *testing.T) {
 			t.Errorf("ListKeys[%d] = %+v, want %+v", i, all[i], want[i])
 		}
 	}
-	proc, err := ListKeysForProcess(db, 1)
-	testutil.MustNoErr(t, err, "ListKeysForProcess")
-	if len(proc) != 2 {
-		t.Errorf("ListKeysForProcess(1) = %+v, want the two process-1 rows", proc)
+	node, err := ListKeysForNode(db, 101)
+	testutil.MustNoErr(t, err, "ListKeysForNode")
+	if len(node) != 1 || node[0] != want[1] {
+		t.Errorf("ListKeysForNode(101) = %+v, want only %+v", node, want[1])
 	}
 }

@@ -174,21 +174,25 @@ func TestPinClaimReader_CanAcceptOrders_TrueAtACoreOwnedWindow(t *testing.T) {
 }
 
 // operator_ab_cycling.go flipTargetReady and pairedNodeOf — SAME DECISION, one
-// message. A flip at a loader window is refused either way: flipTargetReady
-// answers first (no bin, no changeover — its consume arm is reached only through
-// a changeover task, which a loader window has none of), and pairedNodeOf
-// refuses the confirmed flip. Through the synthesized claim it says "is not part
-// of an A/B pair"; before (1bb689bc) it said "has no active claim".
+// message. A loader window is never a position the line can be moved onto:
+// flipTargetReady answers first (no bin, no changeover — its consume arm is
+// reached only through a changeover task, which a loader window has none of),
+// and pairedNodeOf refuses it as a pair. Through the synthesized claim it says
+// "is not part of an A/B pair"; before (1bb689bc) it said "has no active claim".
+// (These two were reached through Engine.FlipABNode until it was deleted; the
+// release trunk asks both of them now.)
 func TestPinClaimReader_FlipAtACoreOwnedWindow_IsRefused(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRB")
-	err := f.eng.FlipABNode(f.w, FlipRequest{CalledBy: "test"})
-	if err == nil || !strings.Contains(err.Error(), "has no bin on it") {
-		t.Errorf("unconfirmed flip at W = %v, want the no-bin refusal", err)
+	node, err := f.db.GetProcessNode(f.w)
+	if err != nil || node == nil {
+		t.Fatalf("get window node: %v", err)
 	}
-	err = f.eng.FlipABNode(f.w, FlipRequest{CalledBy: "test", Confirm: true})
-	if err == nil || !strings.Contains(err.Error(), "is not part of an A/B pair") {
-		t.Errorf("confirmed flip at W = %v, want pairedNodeOf's refusal", err)
+	if why := f.eng.flipTargetReady(node); !strings.Contains(why, "has no bin on it") {
+		t.Errorf("flipTargetReady(W) = %q, want the no-bin reason", why)
+	}
+	if _, err := f.eng.pairedNodeOf(node); err == nil || !strings.Contains(err.Error(), "is not part of an A/B pair") {
+		t.Errorf("pairedNodeOf(W) = %v, want the not-a-pair refusal", err)
 	}
 }
 

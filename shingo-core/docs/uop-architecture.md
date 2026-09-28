@@ -50,7 +50,7 @@ The Edge-side mutator. Holds:
 - `Mutator` — the public type carrying the intent verbs, grouped by concern into the interfaces in `interfaces.go` (Ticker, SlotWriter, Capturer, Piles, Pickup, Boundary). Read `interfaces.go` for the roster rather than a count here; a number in prose is the first thing to rot, and this line has already carried a wrong one.
 - `accumulator` (unexported) — per-bin signed-delta accumulation, and per-pile dirty marks: each flush sends one level per changed pile row, read from the table at flush. Periodic flush to the outbox; an entry is cleared only after its enqueue succeeds.
 - Narrow store interfaces (`runtimeWriter`, `bucketStore`) so the package never imports engine. `*store.DB` satisfies both at the composition root.
-- The files are `mutator.go` (most verbs — `BindActiveBin`, `ClearActiveBin`, `ClearActiveAndReset`, `SetClaimAndCount`, `SetClaimCountAndEpoch`, `OnDelivered`, `ManualLoad`, `OnBinPickedUp`, `MarkAttributionBoundary` and the lifecycle methods), `tick.go` (`Consumed` / `Produced` / `Fallthrough`), `capture.go` (`CaptureToLineside`), `piles.go` (`PilesChanged` / `ResendLevels`), `release.go` (`ReleaseDisposition` + pure functions), and `accumulator.go`. There is no `slot.go`, `pickup.go`, `boundary.go` or `admin.go` — that split was proposed and never made.
+- The files are `mutator.go` (most verbs — `BindActiveBin`, `BindFromCore`, `BindStagedUnlessDeparted`, `ClearActiveBin`, `SetClaimAndCount`, `SetClaimCountAndEpoch`, `OnDelivered`, `ManualLoad`, `OnBinPickedUp`, `MarkAttributionBoundary` and the lifecycle methods), `tick.go` (`Consumed` / `Produced` / `Fallthrough`), `capture.go` (`CaptureToLineside`), `piles.go` (`PilesChanged` / `ResendLevels`), `release.go` (`ReleaseDisposition` + pure functions), and `accumulator.go`. There is no `slot.go`, `pickup.go`, `boundary.go` or `admin.go` — that split was proposed and never made.
 - `archtest_test.go` — CI tests: no production file outside `uop/` records a delta directly (every emission routes through a named verb), and only the known files write `node_lineside_bucket` (the pile store, process delete and the migrations), so every pile write marks its level.
 
 ### `shingo-core/uop/`
@@ -81,7 +81,6 @@ Engine and other callers route every UOP state mutation through a named verb on 
 | `BindActiveBin` | `active_bin_id := bin` (L1 retrieve confirm) |
 | `ClearActiveBin` | `active_bin_id := nil` (pickup clear) |
 | `SetClaimAndCount` | `active_claim_id := claim`, `remaining_uop_cached := uop` (no pointer changes) |
-| `ClearActiveAndReset` | `active_claim_id := claim`, `active_bin_id := nil`, `remaining_uop_cached := 0` (atomic Order B completion at supermarket) |
 | `OnDelivered` | `active_claim_id` + `active_bin_id` + `active_bin_epoch` + `remaining_uop_cached` atomic (delivery binds the arrived bin from its OrderDelivered envelope) |
 | `ManualLoad` | claim + active_bin + count atomic (operator imprint via loader fallback) |
 
@@ -130,7 +129,7 @@ type BinUOPDelta struct {
 }
 ```
 
-Subject: `inventory.bin_uop_delta`. Edge emits one envelope per accumulated delta window (default 5s, configurable via `uop.delta_flush_interval`). The accumulator at `shingo-edge/uop/accumulator.go` mirrors the existing `production_reporter.go` pattern: per-bin accumulation under a mutex, periodic flush via the outbox, restore on enqueue failure.
+Subject: `inventory.bin_uop_delta`. Edge emits one envelope per accumulated delta window (default 5s, configurable via `uop.delta_flush_interval`). The accumulator at `shingo-edge/uop/accumulator.go`: per-bin accumulation under a mutex, periodic flush via the outbox, restore on enqueue failure.
 
 `PayloadCode` carries the bin's actual current payload at the moment of delta emission, not the target style's template payload. Core's `ApplyBinUOPDelta` validates this against the bin row and rejects mismatches.
 

@@ -65,12 +65,31 @@ async function releaseOrder(orderID) {
         ? { disposition: 'send_partial_back', partial_count: partial, called_by: 'admin-ui' }
         : { disposition: 'capture_lineside', qty_by_part: {}, called_by: 'admin-ui' };
     try {
-        await api.post('/api/orders/' + orderID + '/release', body);
+        await postRelease(body);
         toast(partial > 0
             ? 'Order released — partial (' + partial + ' parts preserved)'
             : 'Order released — empty (manifest cleared)', 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e, 'error'); }
+
+    // postRelease: the sequential release guard can refuse with a reason
+    // ("cannot release SEQ-A yet: …; confirm to release anyway"). This is
+    // the admin view, so the second click is the browser's own confirm() —
+    // and the answered POST carries confirm_active_pull: true, which the
+    // engine audits and then flips the pull side as part of the release.
+    async function postRelease(b) {
+        try {
+            await api.post('/api/orders/' + orderID + '/release', b);
+        } catch (e) {
+            if (String(e).indexOf('confirm to release anyway') !== -1 &&
+                await confirm(String(e) + '\n\nRelease anyway?')) {
+                await api.post('/api/orders/' + orderID + '/release',
+                    Object.assign({}, b, { confirm_active_pull: true }));
+                return;
+            }
+            throw e;
+        }
+    }
 }
 
 async function abortOrder(orderID) {

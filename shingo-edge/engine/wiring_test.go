@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -534,9 +535,23 @@ func TestWiring_ABCycling_FallthroughBothInactive(t *testing.T) {
 	}
 }
 
-// TestWiring_FlipABNode_SwitchesActivePull verifies that FlipABNode correctly
-// sets active_pull=true on the target and active_pull=false on the partner.
-func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
+// makePairSequential re-marks both claims of seedABPair's pair as sequential,
+// the one mode whose release moves the line (releaseFlipPartner).
+func makePairSequential(t *testing.T, db *store.DB, claimIDs ...int64) {
+	t.Helper()
+	for _, id := range claimIDs {
+		if _, err := db.Exec(`UPDATE style_node_claims SET swap_mode=? WHERE id=?`,
+			string(protocol.SwapModeSequential), id); err != nil {
+			t.Fatalf("make claim %d sequential: %v", id, err)
+		}
+	}
+}
+
+// TestWiring_WritePullSide_SwitchesActivePull verifies that writePullSide (the
+// canonical active_pull writer, shared by the release trunk) sets
+// active_pull=true on the target and active_pull=false on the partner. It
+// drove Engine.FlipABNode until that door was deleted.
+func TestWiring_WritePullSide_SwitchesActivePull(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeAID, nodeBID, _, _, _ := seedABPair(t, db)
@@ -544,7 +559,7 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Initially A=active, B=inactive. Flip to B.
-	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode to B")
+	testutil.MustNoErr(t, eng.writePullSide(nodeBID, nodeAID), "pull side to B")
 
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
@@ -557,7 +572,7 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 	}
 
 	// Flip back to A
-	testutil.MustNoErr(t, eng.FlipABNode(nodeAID, OperatorFlip("test")), "FlipABNode to A")
+	testutil.MustNoErr(t, eng.writePullSide(nodeAID, nodeBID), "pull side to A")
 
 	rtA, _ = db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ = db.GetProcessNodeRuntime(nodeBID)
@@ -570,9 +585,10 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 	}
 }
 
-// TestWiring_FlipABNode_RejectsUnpairedNode verifies that FlipABNode returns
-// an error when called on a node without PairedCoreNode.
-func TestWiring_FlipABNode_RejectsUnpairedNode(t *testing.T) {
+// TestWiring_PairedNodeOf_RejectsUnpairedNode verifies that pairedNodeOf (the
+// partner resolution the release trunk's flip uses) returns an error for a
+// node without PairedCoreNode.
+func TestWiring_PairedNodeOf_RejectsUnpairedNode(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
@@ -581,9 +597,10 @@ func TestWiring_FlipABNode_RejectsUnpairedNode(t *testing.T) {
 
 	eng := testEngine(t, db)
 
-	err := eng.FlipABNode(nodeID, OperatorFlip("test"))
-	if err == nil {
-		t.Fatal("FlipABNode should reject a node without PairedCoreNode")
+	node, nErr := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, nErr, "get node")
+	if _, err := eng.pairedNodeOf(node); err == nil {
+		t.Fatal("pairedNodeOf should reject a node without PairedCoreNode")
 	}
 }
 
@@ -737,7 +754,10 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 				"stock AB-NODE-B with the incoming style's material")
 		}
 	}
-	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode during changeover")
+	if why := readinessOf(t, eng, db, nodeBID); why != "" {
+		t.Fatalf("AB-NODE-B not ready after its own order delivered with the incoming material: %s", why)
+	}
+	testutil.MustNoErr(t, eng.writePullSide(nodeBID, nodeAID), "move the pull to B during changeover")
 
 	// Verify flip happened
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
@@ -802,7 +822,7 @@ func TestWiring_ABFlip_ImmediateDelta(t *testing.T) {
 	eng.wireEventHandlers()
 
 	// Flip then immediately send delta — Node B should get the decrement
-	eng.FlipABNode(nodeBID, OperatorFlip("test"))
+	testutil.MustNoErr(t, eng.writePullSide(nodeBID, nodeAID), "pull side to B")
 
 	eng.handleCounterDelta(CounterDeltaEvent{
 		ProcessID: processID,

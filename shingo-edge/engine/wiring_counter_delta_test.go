@@ -23,20 +23,20 @@ type fakeDeltaSink struct {
 
 	// flushCount counts Flush + MarkAttributionBoundary invocations.
 	// boundaryCalls records the nodeIDs MarkAttributionBoundary was
-	// called with so tests can assert FlipABNode flushed before
-	// SetActivePull.
+	// called with so tests can assert the release flip flushed before
+	// the pull bits moved.
 	flushCount    int
 	boundaryCalls []int64
 
 	// bindCalls / clearActiveCalls record BindActiveBin and
 	// ClearActiveBin invocations for tests that assert on slot-pointer
 	// lifecycle.
-	bindCalls                []fakeBindCall
-	clearActiveCalls         []int64
-	clearActiveAndResetCalls []fakeClearActiveAndResetCall
-	setClaimAndCountCalls    []fakeSetClaimAndCountCall
+	bindCalls             []fakeBindCall
+	clearActiveCalls      []int64
+	setClaimAndCountCalls []fakeSetClaimAndCountCall
 	//nolint:unused // asserted by the clear-route epoch tests
 	setClaimCountAndEpochCalls []fakeSetClaimCountAndEpochCall
+	bindFromCoreCalls          []fakeManualLoadCall
 	onDeliveredCalls           []fakeOnDeliveredCall
 	manualLoadCalls            []fakeManualLoadCall
 	onBinPickedUpCalls         []*int64
@@ -59,10 +59,10 @@ type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
-	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
+	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
 	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
 }
@@ -97,8 +97,8 @@ func (s *fakeDeltaSink) Flush() {
 }
 
 // MarkAttributionBoundary records the boundary-flush call. Tests that
-// want to assert FlipABNode flushed before SetActivePull can read
-// boundaryCalls.
+// want to assert the release flip flushed before the pull bits moved can
+// read boundaryCalls.
 func (s *fakeDeltaSink) MarkAttributionBoundary(nodeID int64) error {
 	s.mu.Lock()
 	s.boundaryCalls = append(s.boundaryCalls, nodeID)
@@ -134,22 +134,6 @@ func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) error {
 	s.mu.Unlock()
 	if db != nil {
 		return db.ClearProcessNodeActiveBinAndCount(nodeID)
-	}
-	return nil
-}
-
-type fakeClearActiveAndResetCall struct {
-	NodeID  int64
-	ClaimID *int64
-}
-
-func (s *fakeDeltaSink) ClearActiveAndReset(nodeID int64, activeClaimID *int64) error {
-	s.mu.Lock()
-	s.clearActiveAndResetCalls = append(s.clearActiveAndResetCalls, fakeClearActiveAndResetCall{nodeID, activeClaimID})
-	db := s.db
-	s.mu.Unlock()
-	if db != nil {
-		return db.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, nil, 0)
 	}
 	return nil
 }
@@ -227,6 +211,30 @@ func (s *fakeDeltaSink) ManualLoad(nodeID int64, activeClaimID *int64, binID *in
 		return db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return nil
+}
+
+// BindFromCore records and delegates like ManualLoad (the same statement).
+func (s *fakeDeltaSink) BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
+	s.mu.Lock()
+	s.bindFromCoreCalls = append(s.bindFromCoreCalls, fakeManualLoadCall{nodeID, activeClaimID, binID, deltaEpoch, uop})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
+	}
+	return nil
+}
+
+// BindStagedUnlessDeparted delegates to the store's guarded bind; with no db
+// it reports a bind, as the recorded-calls-only tests expect a clean path.
+func (s *fakeDeltaSink) BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error) {
+	s.mu.Lock()
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.BindEmptySlotUnlessDeparted(nodeID, activeClaimID, binID, deltaEpoch, uop)
+	}
+	return true, nil
 }
 
 func (s *fakeDeltaSink) OnBinPickedUp(nodeID *int64) error {

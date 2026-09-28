@@ -47,7 +47,6 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Post("/process-nodes/{id}/request-empty", h.apiRequestEmptyBin)
 		r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
-		r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 
 		r.Get("/processes/{id}/changeover/gate-status", h.apiChangeoverGateStatus)
 		r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
@@ -80,7 +79,6 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
 			r.Post("/process-nodes", h.apiCreateProcessNode)
 			r.Put("/process-nodes/{id}", h.apiUpdateProcessNode)
-			r.Delete("/process-nodes/{id}", h.apiDeleteProcessNode)
 		})
 	})
 
@@ -593,39 +591,6 @@ func TestOperatorStations_UpdateProcessNode_InvalidID(t *testing.T) {
 	assertJSONPath(t, resp, "error", "invalid id")
 }
 
-func TestOperatorStations_DeleteProcessNode_Success(t *testing.T) {
-	h, router := newOperatorStationsRouter(t)
-	cookie := authCookie(t, h)
-
-	pid := seedProcess(t, "DeletePNLine")
-	sid := seedOperatorStation(t, pid, "OS-DPN-1", "DeletePNStation")
-	nodeID := seedProcessNode(t, pid, sid, "pn-delete-me")
-
-	resp := doRequest(t, router, "DELETE", "/api/process-nodes/"+itoa(nodeID), nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-
-	// Retired, not removed: changeover_node_tasks.process_node_id is NOT NULL
-	// with ON DELETE CASCADE, so a hard delete destroys per-node changeover
-	// detail outright. The row survives and resolves by id; it leaves the list.
-	n, err := testDB.GetProcessNode(nodeID)
-	if err != nil {
-		t.Fatalf("retired node must still resolve by id: %v", err)
-	}
-	if n.DeletedAt == nil {
-		t.Error("retired process_node has no deleted_at")
-	}
-	nodes, err := testDB.ListProcessNodesByProcess(pid)
-	if err != nil {
-		t.Fatalf("ListProcessNodesByProcess: %v", err)
-	}
-	for _, ln := range nodes {
-		if ln.ID == nodeID {
-			t.Errorf("retired node %d is still listed for its process", nodeID)
-		}
-	}
-}
-
 func TestOperatorStations_ClearNodeOrders_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
@@ -853,22 +818,6 @@ func TestOperatorStations_ClearBin_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 }
 
-func TestOperatorStations_FlipABNode_Success(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
-
-	resp := doRequest(t, router, "POST", "/api/process-nodes/1/flip-ab", nil, nil)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-}
-
-func TestOperatorStations_FlipABNode_InvalidID(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
-
-	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/flip-ab", nil, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "invalid node id")
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // Engine passthrough — changeover lifecycle
 // ═══════════════════════════════════════════════════════════════════════
@@ -1011,7 +960,6 @@ func TestOperatorStations_AdminAuth_RequiresLogin(t *testing.T) {
 		{"GET", "/api/process-nodes/station/1"},
 		{"POST", "/api/process-nodes"},
 		{"PUT", "/api/process-nodes/1"},
-		{"DELETE", "/api/process-nodes/1"},
 	}
 
 	for _, ep := range endpoints {

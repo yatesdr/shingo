@@ -12,7 +12,7 @@
 // which Core resolves via its queuing — it holds Order A's delivery until Order B
 // frees the slot.
 //
-// See homeConsolidations on Engine for the pending-state storage.
+// The pending state is an intent on Order A's row (order_intent.go).
 
 package engine
 
@@ -26,8 +26,8 @@ import (
 )
 
 // homeConsolidation is the pending-state record for an in-flight consolidation
-// sequence. Stored under Order A's UUID; consumed by HandleBinPickedUp when
-// Order A's robot physically leaves the home position.
+// sequence. Persisted on Order A's row as an orderIntent; taken by
+// HandleBinPickedUp when Order A's robot physically leaves the home position.
 type homeConsolidation struct {
 	bufferCoreName    string // Core node name of the buffer slot
 	homeCoreName      string // Core node name of the dedicated home position
@@ -129,15 +129,14 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	// Mirror the zero into the Edge delta accumulator so the station view reflects
 	// the cleared count immediately (same as Engine.ClearBin for produce nodes),
 	// and take the new generation stamp with it — the clear started the carrier's
-	// next life on Core.
-	if e.inventoryDelta != nil {
-		var claimIDPtr *int64
-		if claim.ID != 0 {
-			claimIDPtr = &claim.ID
-		}
-		if err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
-			log.Printf("home_consolidation: set delta for node %d: %v", nodeID, err)
-		}
+	// next life on Core. The carrier stays until Order A lifts it, known-empty:
+	// the operator's clear says so, through the lineside doorway.
+	var claimIDPtr *int64
+	if claim.ID != 0 {
+		claimIDPtr = &claim.ID
+	}
+	if err := e.carrierClearedInPlace(nodeID, node.CoreNodeName, claimIDPtr, cleared.BinID, cleared.DeltaEpoch); err != nil {
+		log.Printf("home_consolidation: set delta for node %d: %v", nodeID, err)
 	}
 
 	// Order A: move the now-empty carrier from home → buffer.
@@ -153,17 +152,17 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	}
 	log.Printf("home_consolidation: Order A (empty-out) %d: %s → %s", orderA.ID, node.CoreNodeName, bufferCoreName)
 
-	// Register the pending consolidation. HandleBinPickedUp fires Order B when
-	// Order A's robot physically picks up the empty (home is now clear to receive
-	// the partial).
-	e.homeConsolidationsMu.Lock()
-	e.homeConsolidations[orderA.UUID] = homeConsolidation{
-		bufferCoreName:    bufferCoreName,
-		homeCoreName:      node.CoreNodeName,
-		homeProcessNodeID: nodeID,
-		payload:           homePayload,
-	}
-	e.homeConsolidationsMu.Unlock()
+	// Register the pending consolidation on Order A's row. HandleBinPickedUp
+	// fires Order B when Order A's robot physically picks up the empty (home is
+	// now clear to receive the partial). On the row, not in memory, so it
+	// survives an Edge restart before the pickup (order_intent.go).
+	e.armOrderIntent(orderA.ID, orderIntent{
+		Kind:              intentConsolidation,
+		BufferCoreName:    bufferCoreName,
+		HomeCoreName:      node.CoreNodeName,
+		HomeProcessNodeID: nodeID,
+		Payload:           homePayload,
+	})
 
 	return nil
 }
