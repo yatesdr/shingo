@@ -179,7 +179,7 @@
         <input type="text" name="robot_group" id="plc-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
       </div>
       <div class="form-group mb-1">
-        <label>Near-Empty Robot Group <span class="tooltip-trigger" title="When the bin is empty or at/below the threshold, dispatch it to this group instead (e.g. let the 600kg robots answer a drained heavy bin). The box below is the switch: unticked keeps every move on the Robot Group above. A BLANK group here is meaningful - it means the vendor default, any robot.">?</span></label>
+        <label>Near-Empty Robot Group <span class="tooltip-trigger" title="Robots for this bin once at or below the threshold. A count of 0 or less counts as empty.">?</span></label>
         <label style="font-weight:normal;display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem">
           <input type="checkbox" name="near_empty_enabled" id="plc-near-empty-on" value="1" data-action-change="refreshNearEmptyHint:plc">
           Allow another robot group to respond when the bin is empty or near empty
@@ -267,7 +267,7 @@
         <input type="text" name="robot_group" id="pl-edit-robot-group" list="robot-groups-list" placeholder="(vendor default)" autocomplete="off">
       </div>
       <div class="form-group mb-1">
-        <label>Near-Empty Robot Group <span class="tooltip-trigger" title="When the bin is empty or at/below the threshold, dispatch it to this group instead (e.g. let the 600kg robots answer a drained heavy bin). The box below is the switch: unticked keeps every move on the Robot Group above. A BLANK group here is meaningful - it means the vendor default, any robot.">?</span></label>
+        <label>Near-Empty Robot Group <span class="tooltip-trigger" title="Robots for this bin once at or below the threshold. A count of 0 or less counts as empty.">?</span></label>
         <label style="font-weight:normal;display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem">
           <input type="checkbox" name="near_empty_enabled" id="ple-near-empty-on" value="1" data-action-change="refreshNearEmptyHint:ple">
           Allow another robot group to respond when the bin is empty or near empty
