@@ -105,6 +105,29 @@ func (s *ProcessService) SetContainment(processID int64, enabled bool, destinati
 	return nil
 }
 
+// SetCurtain writes the FG light-curtain release interlock's per-process
+// state. The composer Settings drawer's write: a targeted update of the four
+// curtain columns, keyed on the process row itself (unlike SetContainment,
+// which stamps claims - the curtain reads the PROCESS, not the claims).
+//
+// Validation: an enabled interlock needs both pointers. The safe value is
+// carried as given - the polarity is a site fact settled at test time, and
+// the default (TRUE) is only a starting guess, so refusing to store it would
+// be a guess wearing a validation's clothes.
+func (s *ProcessService) SetCurtain(processID int64, enabled bool, plcName, tagName string, safeValue bool) error {
+	plcName = strings.TrimSpace(plcName)
+	tagName = strings.TrimSpace(tagName)
+	if enabled && (plcName == "" || tagName == "") {
+		return fmt.Errorf("a PLC name and a tag name are required when the curtain interlock is enabled")
+	}
+	if !enabled {
+		// Clearing the toggle keeps the pointers so a re-enable is a
+		// toggle-flip, not a re-typing of the addresses.
+		return s.db.SetProcessCurtain(processID, false, plcName, tagName, safeValue)
+	}
+	return s.db.SetProcessCurtain(processID, true, plcName, tagName, safeValue)
+}
+
 // Create inserts a new process and returns the new row id.
 func (s *ProcessService) Create(name, description, productionState, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
 	return s.db.CreateProcess(name, description, productionState, counterPLC, counterTag, counterEnabled)

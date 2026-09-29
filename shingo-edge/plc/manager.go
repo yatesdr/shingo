@@ -486,6 +486,23 @@ func (m *Manager) IsConnected(name string) bool {
 	return mp.Status == "Connected"
 }
 
+// ReadTagDirect reads a tag straight from WarLink, bypassing the cache - the
+// freshest answer the REST API can give, one HTTP round trip, value read at
+// the PLC at the moment of the call. The safety gates read this way (the
+// cache answers the button rendering, where two seconds of staleness is
+// cosmetic); a safety decision must not be older than the request that made
+// it. The context the caller passes bounds the round trip - a gate that
+// cannot get its answer in time refuses rather than waits, fail-closed.
+func (m *Manager) ReadTagDirect(ctx context.Context, plcName, tagName string) (any, error) {
+	m.mu.RLock()
+	wl := m.wl
+	m.mu.RUnlock()
+	if wl == nil {
+		return nil, fmt.Errorf("WarLink client not configured")
+	}
+	return wl.ReadTagValue(ctx, plcName, tagName)
+}
+
 // ReadTag reads a single tag from the WarLink cache.
 func (m *Manager) ReadTag(plcName, tagName string) (any, error) {
 	m.mu.RLock()

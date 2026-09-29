@@ -460,6 +460,19 @@ func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemaining
 	if claim.OutboundDestination == "" {
 		return nil, fmt.Errorf("node %s has no outbound destination configured", node.Name)
 	}
+	// FG light-curtain interlock: this door lifts a bin a position is holding,
+	// which on a produce claim is a release into the FG pickup's conversation.
+	// Gated ONLY on the Material-page door (fallback nil): the changeover
+	// evacuation of a fanned-out position arrives through the fallback and is
+	// changeover-scoped, which the interlock does not gate
+	// (curtain_gate.go). The line-pull owner ruling above is about traffic
+	// discipline, not about the curtain, and a safety interlock outranks an
+	// admin-door exemption unless the owner says otherwise.
+	if fallback == nil {
+		if err := e.curtainGate(node, claim); err != nil {
+			return nil, err
+		}
+	}
 	// THE FOURTH DOOR. This release opens an evac leg for whatever carrier is
 	// standing on the cell, and it read its destination off the REQUESTED claim
 	// — the same defect 1b17b0f9 fixed at the three swap-builder sites and did
@@ -720,6 +733,14 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 
+	// FG light-curtain interlock: a produce release waits for the curtain.
+	// A GATE - the changeover single-leg divert above already ran, so what
+	// reaches here is a swap release on this node's own claim
+	// (curtain_gate.go).
+	if err := e.curtainGate(node, claim); err != nil {
+		return err
+	}
+
 	// Load the active changeover node task so ResolveSwapPair can fall
 	// back to task.OldMaterialReleaseOrderID when both runtime pointers
 	// are nil. The HMI's ComputeSwapReady predicate already keys on this
@@ -732,6 +753,18 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// just means the resolver falls through to the runtime-pointer path,
 	// which is the pre-2026-05-12 behavior for non-changeover swaps.
 	task := loadReleaseSwapNodeTask(e.db, node)
+
+	// FG light-curtain interlock: a produce release waits for the curtain.
+	// A GATE - the changeover single-leg divert above already ran, so what
+	// reaches here is a swap release on this node's own claim
+	// (curtain_gate.go). A CHANGEOVER-OWNED pair (task non-nil) is exempt:
+	// the interlock gates the process's ordinary produce releases, not the
+	// changeover choreography.
+	if task == nil {
+		if err := e.curtainGate(node, claim); err != nil {
+			return err
+		}
+	}
 
 	// Resolve the swap pair via durable sibling pointer rather than the
 	// volatile runtime slots. Cleanup paths (per-order terminal clear, a

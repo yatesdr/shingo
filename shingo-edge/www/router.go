@@ -445,6 +445,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// claims (the claims stay the storage; the divert reads them).
 				r.Post("/processes/{id}/containment-setting", h.apiProcessContainmentSetting)
 
+				// The FG light-curtain release interlock's settings write
+				// (handlers_processes.go) - the toggle, the PLC/tag pointers,
+				// and the BOOL value that means "release allowed". The
+				// interlock itself lives in the release verbs.
+				r.Post("/processes/{id}/curtain-setting", h.apiProcessCurtainSetting)
+
 				// Routing set — the nodes a process may route through that are
 				// not its positions (handlers_routing_nodes.go).
 				// The desktop composer's one read (U9 SPEC §4). Everything else

@@ -86,6 +86,35 @@ func (h *Handlers) apiProcessContainmentSetting(w http.ResponseWriter, r *http.R
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// apiProcessCurtainSetting is the FG light-curtain release interlock's
+// settings write: the toggle, the PLC/tag pointers, and the BOOL value that
+// means "release allowed" (the polarity is a setting - which of the curtain
+// tag's two values is safe is a site fact discovered at test time). The
+// interlock itself lives in the release verbs; this endpoint only writes the
+// process row.
+func (h *Handlers) apiProcessCurtainSetting(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	var req struct {
+		Enabled   bool   `json:"enabled"`
+		PLCName   string `json:"plc_name"`
+		TagName   string `json:"tag_name"`
+		SafeValue bool   `json:"safe_value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.engine.ProcessService().SetCurtain(processID, req.Enabled, req.PLCName, req.TagName, req.SafeValue); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name              string `json:"name"`

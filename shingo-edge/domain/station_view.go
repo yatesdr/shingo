@@ -44,6 +44,13 @@ type StationNodeView struct {
 	// reads a property the server declares instead of a mode name: sequential
 	// and single_robot link their legs too, and release them one at a time.
 	ReleasesAsPair bool `json:"releases_as_pair"`
+	// CurtainOK is the FG light-curtain interlock's render half. Non-nil only
+	// when the node's process has the interlock enabled and this node's claim
+	// is a produce claim — the only release the gate checks. False greys the
+	// RELEASE button (the tag is not in its release state, or could not be
+	// read — the gate refuses fail-closed, so the button must not promise).
+	// True leaves the button normal. Nil = not gated here.
+	CurtainOK *bool `json:"curtain_ok,omitempty"`
 
 	// ChangeoverLoadDirective tells a loader's card what to load during a
 	// changeover — see the type. Nil when there is no changeover, the claim

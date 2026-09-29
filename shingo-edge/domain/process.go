@@ -63,8 +63,18 @@ type Process struct {
 	// FlowComposerEnabled gates the HMI flow composer for this process. Off
 	// until the engineer has reviewed the routing set (process_routing_nodes);
 	// the routing backfill re-derives only while it is off.
-	FlowComposerEnabled bool      `json:"flow_composer_enabled"`
-	CreatedAt           time.Time `json:"created_at"`
+	FlowComposerEnabled bool `json:"flow_composer_enabled"`
+	// The FG light-curtain release interlock. A light curtain stands at each
+	// finished-goods pickup location; an operator button writes a BOOL tag
+	// that mutes it. With the interlock on, a PRODUCE release is only allowed
+	// when the tag reads CurtainSafeValue, checked by a direct WarLink read
+	// at the moment of the release (fail-closed on any read trouble).
+	// Consume and changeover releases are never gated, whatever this says.
+	CurtainEnabled   bool      `json:"curtain_enabled"`
+	CurtainPLCName   string    `json:"curtain_plc_name"`
+	CurtainTagName   string    `json:"curtain_tag_name"`
+	CurtainSafeValue bool      `json:"curtain_safe_value"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.

@@ -123,10 +123,25 @@ function processGate(enabled) {
 // Quality Hold settings toggle's write: enabled stamps the destination onto
 // the process's produce claims; disabled clears them. The CLAIM stays the
 // storage (the divert reads the claim); this body is the batch editor's
-// intent, and destination is required whenever enabled is true — the server
+// intent, and destination is required whenever enabled is true - the server
 // refuses an on-toggle with nowhere to send bins.
 function processContainment(enabled, destination) {
     return { enabled: !!enabled, destination: String(destination || '') };
+}
+
+// processCurtain - POST /api/processes/{id}/curtain-setting. The FG
+// light-curtain release interlock's per-process state: the toggle, the
+// PLC/tag pointers, and the BOOL value that means "release allowed" (the
+// polarity is a setting - which of the curtain tag's two values is safe is
+// a site fact discovered at test time). The interlock itself lives in the
+// release verbs; this body only writes the process row.
+function processCurtain(enabled, plcName, tagName, safeValue) {
+    return {
+        enabled: !!enabled,
+        plc_name: String(plcName || ''),
+        tag_name: String(tagName || ''),
+        safe_value: !!safeValue,
+    };
 }
 
 // styleWrite — PUT /api/styles/{id}, for both the rename and the Expected
@@ -410,7 +425,7 @@ function saveOutcome(status, body) {
 // again.
 (function () {
     const api = {
-        processCreate, processSettings, processGate, processContainment, processGroupCreate,
+        processCreate, processSettings, processGate, processContainment, processCurtain, processGroupCreate,
         styleCreate, styleWrite, styleClone,
         processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
         routingSet, processPayloads,

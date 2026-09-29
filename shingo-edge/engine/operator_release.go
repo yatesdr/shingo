@@ -247,8 +247,21 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// from the leg's steps — see isSupplyOrderInTwoRobotSwap.
 	//
 	// Refuse the release if the leg cannot be classified: the operator retries,
-	// which is recoverable. Guessing is not — guess "evac" and Core wipes the
+	// which is recoverable. Guessing is not - guess "evac" and Core wipes the
 	// manifest of a bin that is about to feed the line (ALN_002).
+
+	// GATE, not side effect - nothing above has mutated anything, and this
+	// must stay ahead of everything below (curtain_gate.go). A release on an
+	// active changeover (nodeTask non-nil) is changeover-scoped and exempt:
+	// the curtain gates the process's ordinary produce releases, not the
+	// changeover choreography.
+	if nodeTask == nil {
+		if err := e.curtainGate(node, toClaim); err != nil {
+			e.logRelease("order=%d node=%s disposition=%q - curtain refused the release: %v",
+				orderID, node.Name, string(disp.Mode), err)
+			return err
+		}
+	}
 	isSupply, err := e.isSupplyOrderInTwoRobotSwap(order, node, toClaim)
 	if err != nil {
 		e.logRelease("order=%d node=%s disposition=%q — refusing release: %v",

@@ -169,6 +169,15 @@ function drawList() {
             '<td>' + (p.flow_composer_enabled ? '<span class="pd-tag ok">on</span>' : '<span class="pd-dim">off</span>') + '</td>' +
             '<td><span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' +
             esc(counting ? p.counter_plc_name + ' · counting' : 'not wired') + '</span></td>' +
+            // THE CURTAIN COLUMN: the interlock's state at a glance, the
+            // flow-composer column's on/off shape. The chip's title carries
+            // what the settings hold - the PLC, the tag, the polarity - so
+            // "is this one's interlock pointing at the right tag" is a hover,
+            // not a trip into the drawer.
+            '<td>' + (p.curtain_enabled
+                ? '<span class="pd-tag ok" title="' + esc((p.curtain_plc_name || '') + ' \u00B7 ' + (p.curtain_tag_name || '') +
+                    ' \u00B7 release on ' + (p.curtain_safe_value ? 'TRUE' : 'FALSE')) + '">curtain</span>'
+                : '<span class="pd-dim">off</span>') + '</td>' +
             '<td class="num">' + st.length + '</td>' +
             '<td><span class="pd-state ' + state.toLowerCase() + '">' + state.toUpperCase() + '</span></td>' +
             // A ROW THAT OPENS SOMETHING SAYS SO. The whole row has been
@@ -185,9 +194,9 @@ function drawList() {
     };
 
     const head = '<thead><tr><th>Process</th><th>Group</th><th>Running</th><th class="num">Flows</th>' +
-        '<th>HMI editing</th><th>Counter</th><th class="num">Screens</th><th>State</th><th></th></tr></thead>';
-    const cols = '<colgroup><col style="width:19%"><col style="width:10%"><col style="width:21%"><col style="width:6%">' +
-        '<col style="width:11%"><col style="width:13%"><col style="width:6%"><col style="width:8%">' +
+        '<th>HMI editing</th><th>Counter</th><th>Curtain</th><th class="num">Screens</th><th>State</th><th></th></tr></thead>';
+    const cols = '<colgroup><col style="width:17%"><col style="width:9%"><col style="width:19%"><col style="width:6%">' +
+        '<col style="width:10%"><col style="width:12%"><col style="width:8%"><col style="width:6%"><col style="width:8%">' +
         '<col style="width:11%"></colgroup>';
     // P0 is a table and gets the page, with the same 24 px gutter every other
     // block on this page has.
@@ -2761,10 +2770,16 @@ function settingsDraftFor(p) {
         changeover_auto_arm: p.changeover_auto_arm || 'auto',
         flow_composer_enabled: !!p.flow_composer_enabled,
         // Quality containment: DERIVED from the process's produce claims
-        // (stamped on the list rows by the server) — the toggle is a batch
+        // (stamped on the list rows by the server) - the toggle is a batch
         // editor over the claims, which stay the storage the divert reads.
         quality_hold_enabled: !!p.quality_hold_enabled,
         quality_hold_destination: p.quality_hold_destination || '',
+        // FG light-curtain release interlock: the process row IS the storage
+        // (unlike the hold, which stamps claims) - these are its columns.
+        curtain_enabled: !!p.curtain_enabled,
+        curtain_plc_name: p.curtain_plc_name || '',
+        curtain_tag_name: p.curtain_tag_name || '',
+        curtain_safe_value: p.curtain_safe_value !== undefined ? !!p.curtain_safe_value : true,
     };
 }
 
@@ -2788,6 +2803,21 @@ function stBlock(label, sub, inner) {
 function stText(key, wide) {
     return '<input class="pd-inp' + (wide ? ' wide' : '') + '" type="text" data-st="' + key +
         '" value="' + esc(S.settings[key]) + '">';
+}
+
+// stCombo is the typeahead field: the same input (data-st, so typing still
+// binds and saves exactly what is typed) with the picker's dropdown attached.
+// Options load lazily per kind - 'plc' lists WarLink's PLCs with their
+// connection state, 'tag' lists the CHOSEN curtain PLC's tags, published
+// state marked - and each keystroke filters to the closest matches. Picking
+// writes through the same binding a keystroke would, so the dropdown saves
+// keystrokes and adds no state of its own.
+function stCombo(key, kind) {
+    return '<span class="pd-combo" data-combo="' + kind + '">' +
+        '<input class="pd-inp" type="text" data-st="' + key + '" value="' + esc(S.settings[key]) +
+        '" autocomplete="off" spellcheck="false">' +
+        '<div class="pd-pop pd-combo-list" data-combolist hidden></div>' +
+        '</span>';
 }
 
 function stToggle(key) {
@@ -2816,6 +2846,28 @@ function drawSettings() {
         stField('Enabled',
             'a process that counts can skip a same-part swap at changeover; an unwired one never does',
             stToggle('counter_enabled'));
+
+    // FG LIGHT-CURTAIN INTERLOCK - a per-process opt-in. Off (the default)
+    // means every release behaves exactly as before. On, a PRODUCE release
+    // is only allowed when the curtain tag reads the safe value, checked by
+    // a direct WarLink read at the moment of the click (fail-closed on any
+    // read trouble); the operator-station's RELEASE button greys when the
+    // cached tag value disagrees. Consume and changeover releases are never
+    // gated, whatever this says.
+    const curtainOn = !!S.settings.curtain_enabled;
+    const curSeg = [['true', 'TRUE'], ['false', 'FALSE']].map(v =>
+        '<button class="' + ((!!S.settings.curtain_safe_value) === (v[0] === 'true') ? 'on' : '') +
+        '" data-act="st-curtainval" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
+    const curtain = '<div class="pd-sect"><h2>Light curtain interlock</h2></div>' +
+        stField('Gate produce releases on the FG light curtain',
+            'off: releases go as always - on: a produce release waits for the curtain tag to read the release value',
+            stToggle('curtain_enabled')) +
+        (curtainOn
+            ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', stCombo('curtain_plc_name', 'plc')) +
+              stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', stCombo('curtain_tag_name', 'tag')) +
+              stField('Release value', 'which reading allows the release - the polarity is a site fact; flip it here if the test says the other way',
+                  '<div class="pd-seg">' + curSeg + '</div>')
+            : '');
 
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
         '" data-act="st-arm" data-arm="' + m[0] + '">' + esc(m[1]) + '</button>').join('');
@@ -2876,7 +2928,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + changeover + hmi + hold + routingSection() + stylesSect + danger +
+        general + counter + curtain + changeover + hmi + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -2894,9 +2946,86 @@ function drawSettings() {
         });
     }
     bindPickers();
+    bindCombos();
     if (wasAt) {
         const box = root().querySelector('.pd-sheet');
         if (box) box.scrollTop = wasAt;
+    }
+}
+
+// bindCombos wires the curtain's typeahead fields. The list is FILTERED BY
+// WHAT IS TYPED - substring, case-insensitive, closest-first - and the typed
+// value remains the saved value: picking an option only saves keystrokes, it
+// never adds state of its own. Tag options key on the PLC currently typed,
+// cached per PLC, so correcting the PLC refetches on the next open. The
+// dropdown closes on blur with a grace period so a click on an option (which
+// fires before blur) still lands.
+function bindCombos() {
+    for (const wrap of root().querySelectorAll('[data-combo]')) {
+        const input = wrap.querySelector('input');
+        const list = wrap.querySelector('[data-combolist]');
+        let opts = null;
+        const load = async () => {
+            const kind = wrap.dataset.combo;
+            if (kind === 'plc') {
+                if (!S._plcList) {
+                    try {
+                        const res = await fetch('/api/plcs');
+                        S._plcList = res.ok ? await res.json() : [];
+                    } catch (_) { S._plcList = []; }
+                }
+                return (S._plcList || []).map(p => ({
+                    name: p.name, note: p.connected ? 'connected' : 'not connected',
+                }));
+            }
+            const plcName = (S.settings.curtain_plc_name || '').trim();
+            if (!plcName) return [{ name: '', note: 'pick a PLC first' }];
+            S._tagCache = S._tagCache || {};
+            if (!S._tagCache[plcName]) {
+                try {
+                    const res = await fetch('/api/plcs/all-tags/' + encodeURIComponent(plcName));
+                    S._tagCache[plcName] = res.ok ? await res.json() : [];
+                } catch (_) { S._tagCache[plcName] = []; }
+            }
+            return (S._tagCache[plcName] || []).map(t => ({
+                name: t.name,
+                note: (t.type || '') + (t.enabled ? ' · published' : ' · NOT published'),
+            }));
+        };
+        const render = items => {
+            const q = (input.value || '').trim().toLowerCase();
+            const matches = items
+                .filter(o => o.name && o.name.toLowerCase().includes(q))
+                .sort((a, b) =>
+                    (a.name.toLowerCase().indexOf(q) - b.name.toLowerCase().indexOf(q)) ||
+                    a.name.localeCompare(b.name))
+                .slice(0, 60);
+            list.innerHTML = matches.length
+                ? matches.map(o => '<button data-comboopt="' + esc(o.name) + '">' + esc(o.name) +
+                    '<span class="dim">' + esc(o.note) + '</span></button>').join('')
+                : '<div class="none">no match - the typed value is kept</div>';
+            list.hidden = false;
+        };
+        input.addEventListener('focus', async () => {
+            opts = await load();
+            if (opts.length) render(opts);
+        });
+        input.addEventListener('input', async () => {
+            if (!opts) opts = await load();
+            if (opts.length) render(opts);
+        });
+        input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; }, 200));
+        // mousedown, not click: it fires before the blur's timeout and so
+        // survives the close.
+        list.addEventListener('mousedown', ev => {
+            const b = ev.target.closest('[data-comboopt]');
+            list.hidden = true;
+            if (!b || !b.dataset.comboopt) return;
+            ev.preventDefault();
+            input.value = b.dataset.comboopt;
+            S.settings[input.dataset.st] = input.value;
+            markSettingsBar();
+        });
     }
 }
 
@@ -2949,6 +3078,25 @@ async function saveSettings() {
                 body: JSON.stringify(B().processContainment(S.settings.quality_hold_enabled, S.settings.quality_hold_destination)),
             });
             if (!c.ok) await fail(c);
+        }
+    }
+    // THE LIGHT-CURTAIN INTERLOCK rides its own door for the same reason: the
+    // PUT's handler knows nothing of the curtain columns (the store's general
+    // Update does not carry them). Only when one of the four moved. Enabled
+    // needs both pointers - refuse client-side so the operator fixes it before
+    // the round trip, the same courtesy the hold's save extends.
+    if (!S.settingsError && (S.settings.curtain_enabled !== before.curtain_enabled ||
+        S.settings.curtain_plc_name !== before.curtain_plc_name ||
+        S.settings.curtain_tag_name !== before.curtain_tag_name ||
+        S.settings.curtain_safe_value !== before.curtain_safe_value)) {
+        if (S.settings.curtain_enabled && (!S.settings.curtain_plc_name.trim() || !S.settings.curtain_tag_name.trim())) {
+            S.settingsError = 'A PLC name and a tag name are required when the curtain interlock is enabled.';
+        } else {
+            const cu = await fetch('/api/processes/' + S.processID + '/curtain-setting', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(B().processCurtain(S.settings.curtain_enabled, S.settings.curtain_plc_name, S.settings.curtain_tag_name, S.settings.curtain_safe_value)),
+            });
+            if (!cu.ok) await fail(cu);
         }
     }
     await reloadProcesses();
@@ -5391,6 +5539,10 @@ function onClick(e) {
                 return;
             case 'st-arm':
                 S.settings.changeover_auto_arm = btn.dataset.arm;
+                drawSettings();
+                return;
+            case 'st-curtainval':
+                S.settings.curtain_safe_value = btn.dataset.val === 'true';
                 drawSettings();
                 return;
             case 'st-group': openGroupPicker(btn); return;

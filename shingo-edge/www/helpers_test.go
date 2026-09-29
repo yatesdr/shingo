@@ -474,6 +474,8 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Post("/styles/{id}/claims/copy-to", h.apiCopyStyleClaims)
 			// The Quality Hold settings write (the toggle's stamp/clear).
 			r.Post("/processes/{id}/containment-setting", h.apiProcessContainmentSetting)
+			// The FG light-curtain interlock's settings write.
+			r.Post("/processes/{id}/curtain-setting", h.apiProcessCurtainSetting)
 
 			r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
 			r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)

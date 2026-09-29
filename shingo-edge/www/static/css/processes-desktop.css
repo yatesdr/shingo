@@ -433,6 +433,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-bar .prov { margin-left: auto; color: var(--text-muted); font-size: 12px; }
 .pd-bar .prov.dirty { color: var(--chip-ink-near); }
 
+
+/* typeahead combo - the curtain's PLC/tag fields: a text input with the
+   picker's dropdown attached. Type to filter, focus to open, pick to fill;
+   the typed value is always the saved value - picking only saves keystrokes. */
+.pd-combo { position: relative; display: block; }
+.pd-combo .pd-pop { left: 0; right: 0; min-width: 0; max-width: none; }
+.pd-combo .pd-pop button .dim { margin-left: auto; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 /* ── popover picker ───────────────────────────────────────────────────── */
 .pd-pop {
     position: absolute; min-width: 220px; max-width: 340px; max-height: 320px; overflow: auto;

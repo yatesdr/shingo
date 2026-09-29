@@ -501,7 +501,7 @@ export function renderModal(entry) {
         } else {
             const btn = cellCardAction(entry, claim, remaining);
             if (btn) {
-                html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action);
+                html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action, btn.title);
             }
 
             // Quality containment: a produce node whose claim declares a
@@ -684,11 +684,21 @@ function cellCardAction(entry, claim, remaining) {
         || orders.find(o => o.status === 'delivered' && !o.auto_confirm);
     const inFlight = active.find(o => !staged && !delivered);
 
+    // FG light-curtain interlock (render half): curtain_ok === false greys
+    // the release. The real interlock is the gate at the release verbs,
+    // which reads WarLink directly at the click; this is the button only
+    // promising what the gate will allow. curtain_ok is absent when the
+    // node is not gated - the button behaves exactly as before.
+    const curtainHeld = entry.curtain_ok === false;
     if (entry.swap_ready) {
         // Two-robot swap: lineside robot has reached its wait point.
         // One click releases both legs unconditionally regardless of
         // Order A's state. swap_ready is the single gate (see
         // store/station_views.go ComputeSwapReady).
+        if (curtainHeld) {
+            return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
+                title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
+        }
         return { label: 'RELEASE', cls: 'request', enabled: true,
             action: 'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged' };
     }
@@ -732,6 +742,10 @@ function cellCardAction(entry, claim, remaining) {
     }
     if (staged) {
         // Sequential / single-robot — single staged, single release.
+        if (curtainHeld) {
+            return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
+                title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
+        }
         return { label: 'RELEASE', cls: 'request', enabled: true,
             action: 'release-prompt:/api/orders/' + staged.id + '/release' };
     }
@@ -996,9 +1010,10 @@ function orderStatusChip(o) {
     return esc(withQueueCause(o.order_type + ': ' + o.status, o));
 }
 
-function actionBtn(label, cls, enabled, action) {
+function actionBtn(label, cls, enabled, action, title) {
     return '<button type="button" class="os-action-btn ' + cls + '"' +
         (!enabled ? ' disabled' : '') +
+        (title && !enabled ? ' title="' + esc(title) + '"' : '') +
         ' data-action="' + esc(action) + '">' + esc(label) + '</button>';
 }
 

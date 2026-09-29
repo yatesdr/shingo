@@ -49,6 +49,18 @@ CREATE TABLE IF NOT EXISTS processes (
     -- process_routing_nodes below; the backfill re-derives only while it is
     -- off, so a reviewed set is never silently re-seeded.
     flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
+    -- The FG light-curtain release interlock: a light curtain stands at each
+    -- finished-goods pickup location, an operator button mutes it via a BOOL
+    -- PLC tag, and with the interlock on a PRODUCE release is only allowed
+    -- when the tag reads curtain_safe_value. The gate is a direct WarLink
+    -- read at release time, fail-closed; consume and changeover releases are
+    -- never gated, whatever this says. safe_value defaults to 1 (TRUE):
+    -- the polarity is a site fact settled at test time, and the setting
+    -- flips it without a redeploy.
+    curtain_enabled      INTEGER NOT NULL DEFAULT 0,
+    curtain_plc_name     TEXT NOT NULL DEFAULT '',
+    curtain_tag_name     TEXT NOT NULL DEFAULT '',
+    curtain_safe_value   INTEGER NOT NULL DEFAULT 1,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

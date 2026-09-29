@@ -34,6 +34,12 @@ func (db *DB) UpdateProcess(id int64, name, description, productionState string,
 	return processes.Update(db.DB, id, name, description, productionState, counterPLC, counterTag, counterEnabled)
 }
 
+// SetProcessCurtain writes the FG light-curtain release interlock's
+// per-process state. See processes.SetProcessCurtain.
+func (db *DB) SetProcessCurtain(id int64, enabled bool, plcName, tagName string, safeValue bool) error {
+	return processes.SetProcessCurtain(db.DB, id, enabled, plcName, tagName, safeValue)
+}
+
 // DeleteProcess removes a process row.
 func (db *DB) DeleteProcess(id int64) error {
 	return processes.Delete(db.DB, id)
