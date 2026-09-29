@@ -873,7 +873,13 @@ function openPositionPanel(node) {
         '<button class="os-chip btn ' + (cc.part === p ? 'on' : '') + '" data-act="part" data-part="' + esc(p) + '">' +
         esc(M().shortPart(p)) + '</button>').join('') +
         (cc.part ? '' : '<span class="os-chip need">pick one</span>') +
-        addPartButton('os-chip btn', '+ another part', node);
+        addPartButton('os-chip btn', '+ another part', node) +
+        (cc.part ? '<button class="os-chip btn" data-act="rmpart" data-part="' + esc(cc.part) + '">Remove ' +
+            esc(M().shortPart(cc.part)) + ' from this flow</button>' : '');
+    // The role starts derived (deriveRole); this is where it is set by hand.
+    const roleChips = ['consume', 'produce'].map(r =>
+        '<button class="os-chip btn ' + (cc.role === r ? 'on' : '') + '" data-act="role" data-val="' + r + '">' +
+        r + '</button>').join('');
 
     const backs = model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
     // The view already filtered to ENABLED members (a retired lane is not an
@@ -947,6 +953,7 @@ function openPositionPanel(node) {
         (cc.mode ? esc(labels[cc.mode]) : 'not in the flow yet') + '</span></h3>' +
         '<div><div class="os-lbl">How it swaps</div><div class="os-comp-seg">' + seg + '</div>' +
         '<div class="help">' + esc(cc.mode ? help[cc.mode] : 'Pick how the bin gets swapped at this position.') + '</div></div>' +
+        row('Role', roleChips) +
         // F3: every row is the claim's own field name. `Part on this position`
         // stays — `part` is the floor's word for payload_code and every surface
         // already uses it, from the PARTS strip to the finding pill.
@@ -1498,6 +1505,8 @@ function onClick(e) {
         case 'compose-blank': openComposer(model ? model.styleId : 0, true); break;
         case 'mode': sendQuiet({ type: 'setMode', node: node, mode: btn.dataset.mode }); openPositionPanel(node); break;
         case 'part': sendQuiet({ type: 'setPart', node: node, payloadCode: btn.dataset.part }); openPositionPanel(node); break;
+        case 'rmpart': sendQuiet({ type: 'removePart', payloadCode: btn.dataset.part }); openPositionPanel(node); break;
+        case 'role': sendQuiet({ type: 'setRole', node: node, role: btn.dataset.val }); openPositionPanel(node); break;
         case 'pair': sendQuiet({ type: 'setPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;
         case 'pair2': sendQuiet({ type: 'setSecondPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;
         case 'stage': sendQuiet({ type: 'setStaging', node: node, staging: btn.dataset.val }); openPositionPanel(node); break;

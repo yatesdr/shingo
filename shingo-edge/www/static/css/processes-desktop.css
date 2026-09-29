@@ -319,6 +319,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-postbl tr.selrow td:first-child { box-shadow: inset 3px 0 0 var(--accent-solid); }
 .pd-postbl td.pos { font-weight: 600; }
 .pd-postbl td.pos small { display: block; color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.pd-postbl td.pos .pd-role {
+    display: block; margin-top: 3px; padding: 1px 6px; font: inherit; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.03em; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text);
+}
+.pd-postbl td.pos .pd-role.produce { border-color: var(--viz-green); color: var(--viz-green); }
+.pd-postbl td.pos .pd-role.consume { border-color: var(--accent); color: var(--accent); }
 .pd-postbl tr.paired td { color: var(--text-muted); font-size: 12px; }
 
 /* A CHIP NEVER WRAPS. Two lines of chip is a row that has stopped being

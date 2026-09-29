@@ -792,9 +792,9 @@ test('a part with no position is one finding, naming every loose part', () => {
     let one = M.reduce(initStyle(7), { type: 'setPart', node: 'PLN_01', payloadCode: null });
     assert.strictEqual(M.findings(one).find(x => x.field === 'unplaced_part').message,
         '1 part needs a position');
-    // AND NO ONE-TAP FIX: every fix-it writes to state.cells[node], and this
-    // finding deliberately names no position.
-    assert.strictEqual(M.fixItFor(s, f), null);
+    // Its one-tap fix takes the first loose part off the flow — it names no
+    // position, so it cannot place one.
+    assert.deepStrictEqual(M.fixItFor(s, f).action, { type: 'removePart', payloadCode: f.parts[0] });
 });
 
 // A BLANK FLOW LEAVES NOTHING UNPLACED. Every part is loose by construction

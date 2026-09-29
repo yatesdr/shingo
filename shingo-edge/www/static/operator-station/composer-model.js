@@ -676,6 +676,33 @@ function reduce(state, action) {
             break;
         }
 
+        // The other half of addPart: the part leaves THIS STYLE, and any
+        // position carrying it is left without a part — which the position's
+        // own finding then asks for. The palette is untouched, as with addPart.
+        case 'removePart': {
+            if (!action.payloadCode) break;
+            s.parts = s.parts.filter(p => p !== action.payloadCode);
+            for (const n of Object.keys(s.cells)) {
+                if (s.cells[n].part === action.payloadCode) s.cells[n].part = null;
+            }
+            break;
+        }
+
+        // ROLE SET BY HAND. deriveRole only picks the starting value; a
+        // position whose press does the other thing has to be told. The
+        // choreography is keyed by (role, mode), so anything the new row
+        // forbids is cleared — the same clean-up a mode change does. The mode
+        // itself is kept: a position with no mode is not drawn as a row, and
+        // the row is where the engineer re-picks one if this role lacks it.
+        case 'setRole': {
+            if (!cell || (action.role !== 'consume' && action.role !== 'produce')) break;
+            cell.role = action.role;
+            s.roleSources[action.node] = 'set by hand';
+            clearForbidden(s, cell);
+            ensurePartner(s, action.node);
+            break;
+        }
+
         case 'setPartner': if (cell) cell.paired = action.partner || ''; break;
         // The third press position, where the hardware has one — flowspec
         // marks second_paired_core_node Used on a press index and Forbidden
@@ -1040,6 +1067,13 @@ function findingShort(f) {
 // nothing safe to offer — a fix-it button that guesses is worse than none.
 function fixItFor(state, f) {
     if (!f) return null;
+    // The finding's own detail says "or take it off this flow"; this is that
+    // action, one part at a time. It needs no node, so it comes before the
+    // guard below.
+    if (f.field === 'unplaced_part' && f.parts && f.parts.length) {
+        const part = f.parts[0];
+        return { label: 'Remove ' + shortPart(part) + ' from this flow', action: { type: 'removePart', payloadCode: part } };
+    }
     const node = f.node || f.core_node_name;
     // A FINDING WITH NO NODE HAS NO ONE-TAP FIX. Every arm below writes to
     // `state.cells[node]`, and an unplaced part's finding deliberately names no

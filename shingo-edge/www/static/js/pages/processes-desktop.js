@@ -188,7 +188,7 @@ function drawList() {
             // and they are the same pair D4's screens table already carries.
             '<td class="pd-acts">' +
             '<button class="pd-dimlink" data-act="open-flows" data-process="' + p.id + '">Flows</button>' +
-            '<button class="pd-dimlink" data-act="edit-process" data-process="' + p.id + '">Edit</button>' +
+            '<button class="pd-btn" data-act="edit-process" data-process="' + p.id + '">Edit</button>' +
             '<button class="pd-dimlink" data-act="open-settings" data-process="' + p.id + '">Settings</button>' +
             '</td></tr>';
     };
@@ -841,7 +841,7 @@ function positionsTable() {
         if (!c || !c.on || !c.mode) continue;
         const advSet = advancedCount(n);
         rows.push('<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
-            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + '</small></td>' +
+            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + '</small>' + roleToggle(n, c.role) + '</td>' +
             '<td>' + picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) + '</td>' +
             '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad') + '</td>' +
             '<td>' + columnCell(n, 'partner') + '</td>' +
@@ -918,6 +918,15 @@ function positionsTable() {
         '<th>' + esc(W('outbound_destination')) + '</th><th>Advanced</th></tr></thead>' +
         '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
         footer + '</div>';
+}
+
+// roleToggle is the position's consume/produce switch. The role starts derived
+// (deriveRole) and an engineer sets it here when the press does the other
+// thing; clicking flips it.
+function roleToggle(node, role) {
+    const next = role === 'produce' ? 'consume' : 'produce';
+    return '<button class="pd-role ' + esc(role || '') + '" data-act="set-role" data-node="' + esc(node) + '"' +
+        ' data-role="' + next + '" title="Switch to ' + next + '">' + esc(role || 'no role') + '</button>';
 }
 
 // ONE WORD, ONE MEANING. The sub-label under a position is which ROW of the
@@ -1096,8 +1105,9 @@ function drawBar() {
     const b = M().bar(S.model);
     const bar = $('pd-bar');
     if (!bar) return;
+    const fix = b.fixIt ? ' <button class="pd-chip" data-act="bar-fix">' + esc(b.fixIt.label) + '</button>' : '';
     bar.innerHTML = '<div><div class="h' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>' +
-        '<div class="d">' + esc(b.detail) + '</div></div>' +
+        '<div class="d">' + esc(b.detail) + fix + '</div></div>' +
         '<div class="prov' + (dirty() ? ' dirty' : '') + '">' + (dirty() ? 'Unsaved changes' : 'No unsaved changes') + '</div>';
     const save = root().querySelector('[data-act="save"]');
     if (save) save.disabled = !dirty() || b.tone === 'blocked';
@@ -1211,14 +1221,24 @@ function optionsFor(node, kind) {
         //
         // partOffers puts the CATID matches first and marks the ones already on
         // this flow. Same rows the HMI's sheet draws, from the same function.
-        case 'part':
-            return M().partOffers(S.model).map(r => ({
+        case 'part': {
+            const offers = M().partOffers(S.model).map(r => ({
                 value: r.code, label: M().shortPart(r.code), on: c.part === r.code,
                 action: [
                     { type: 'addPart', payloadCode: r.code },
                     { type: 'setPart', node: node, payloadCode: r.code },
                 ],
             }));
+            // The way a part leaves this flow. Blank value, so a picker with
+            // nothing else to offer still reads as empty.
+            if (c.part) {
+                offers.push({
+                    value: '', label: 'Remove ' + M().shortPart(c.part) + ' from this flow',
+                    action: { type: 'removePart', payloadCode: c.part },
+                });
+            }
+            return offers;
+        }
         // col:<column>:<cellKey> — one of the mode-dependent chips. The FIELD
         // comes from the model's own rowColumns, which reads flowspec, so a
         // picker can only ever write a column this mode is allowed to have.
@@ -3853,11 +3873,8 @@ const PART_SET_PICKER = 'parts';
 // THE FOURTH SECTION, AND THE SAME WORDS ON BOTH SHEETS. Making a cell and
 // changing a cell ask the same four questions; a sentence written twice is a
 // sentence that will be edited once.
-const PART_SET_NOTE = 'The parts this process runs. Operators are offered these on a ' +
-    'position and never the whole catalog. A part already claimed by one of this process’s ' +
-    'flows is offered whether or not it is ticked here — this list is what makes a part ' +
-    'pickable BEFORE anything claims it, which is how a new part reaches a cell that has ' +
-    'never run one.';
+const PART_SET_NOTE = 'The parts this process can run. A part used by a flow stays ' +
+    'available until it is removed from that flow.';
 
 // loadProcessPayloads reads the STORED half of a process's part set — what
 // this sheet is about to replace. A failed read opens the picker empty, and
@@ -3878,21 +3895,26 @@ async function loadProcessPayloads(processID) {
 // live flows already run — so the picker can say that unticking one changes
 // nothing. Answerable only for the process whose composer block is loaded;
 // for any other row in the list the honest answer is silence.
-function claimedPayloads(processID) {
-    // S.processID IS SET BEFORE THE COMPOSER BLOCK IS READ. openEditProcessFor
-    // points it at the row being edited so loadRouting reads the right set, so
-    // "the open process" is true a moment before `S.composer` exists — and the
-    // Edit sheet is reachable from the LIST, for a process this page has never
-    // opened. Both halves are checked; the answer for either miss is silence,
-    // which is what a picker with no annotation shows.
-    if (S.processID !== processID || !S.composer) return new Set();
-    const out = new Set();
-    for (const st of (S.composer.styles || [])) {
+//
+// Returns part -> ["<style> at <position>", ...]. The Edit sheet is reachable
+// from the list for a process this page never opened, and the loaded composer
+// block carries no process id to check it against, so this always reads the
+// edited process's own block. A failed read is silence.
+async function claimedPayloads(processID) {
+    let styles = null;
+    try {
+        const res = await fetch('/api/processes/' + processID + '/composer');
+        if (res.ok) styles = ((await res.json()) || {}).styles;
+    } catch (_) { styles = null; }
+    const out = new Map();
+    for (const st of (styles || [])) {
         // styleFacts, not st.parts: on this page the block carries the cells
         // and not the summary. See composerStyle.
         for (const p of M().styleFacts(st).parts) {
             const code = p.payload_code || p;
-            if (code) out.add(code);
+            if (!code) continue;
+            if (!out.has(code)) out.set(code, []);
+            out.get(code).push((st.name || 'style ' + st.id) + (p.node ? ' at ' + p.node : ''));
         }
     }
     return out;
@@ -4092,12 +4114,12 @@ async function openEditProcessFor(p) {
     // offered. So the sheet reads the typed rows and says what the other half
     // is in its note.
     before.parts = await loadProcessPayloads(p.id);
-    const claimed = claimedPayloads(p.id);
+    const claimed = await claimedPayloads(p.id);
     pickerInit(PART_SET_PICKER, {
         source: 'payloads',
         selected: (before.parts || []).slice(),
         annotate: code => (claimed.has(code)
-            ? 'already claimed by a flow — offered either way' : ''),
+            ? 'used by ' + claimed.get(code).join(', ') + ' — remove it from that flow to take it off' : ''),
     });
 
     const screenField = one
@@ -5512,6 +5534,12 @@ function onClick(e) {
             case 'save': saveFlow(); return;
             case 'discard': selectStyle(S.styleID); return;
             case 'advanced': openAdvanced(btn.dataset.node); return;
+            case 'set-role': apply({ type: 'setRole', node: btn.dataset.node, role: btn.dataset.role }); return;
+            case 'bar-fix': {
+                const fx = S.model && M().bar(S.model).fixIt;
+                if (fx) apply(fx.action);
+                return;
+            }
             // The route's own two verbs. Both compute the whole new list and
             // hand it to setVia, because the order is the route and the model
             // has one action for it.

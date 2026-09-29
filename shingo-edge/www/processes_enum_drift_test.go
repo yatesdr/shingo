@@ -57,28 +57,19 @@ func TestComposerModesMatchProtocol(t *testing.T) {
 	assertSameSet(t, "swap_mode", got, want)
 }
 
-// TestComposerRolesAreDerivedNotOffered: role has no picker at all, and this
-// says so on purpose.
-//
-// The claim editor asked. The composer DERIVES (brief R2): the prior claim on
-// the node, then the majority of the style's other claims, then the majority
-// of the process's, then consume. A picker would be a fifth answer that
-// disagrees with the four, so the drift guard here is that protocol still has
-// exactly the two roles the derivation knows how to answer with — a third
-// would need a rule, and the silence would default it to consume.
-func TestComposerRolesAreDerivedNotOffered(t *testing.T) {
+// TestComposerRolesDerivedThenSettable: role starts derived — the prior claim
+// on the node, then the majority of the style's other claims, then the
+// majority of the process's, then consume — and an engineer can set it by hand
+// when the press does the other thing (setRole). The drift guard is that
+// protocol still has exactly the two roles both paths know how to answer with.
+func TestComposerRolesDerivedThenSettable(t *testing.T) {
 	roles := []string{string(protocol.ClaimRoleConsume), string(protocol.ClaimRoleProduce)}
 	if len(roles) != 2 {
-		t.Fatalf("protocol carries %d claim roles; deriveRole in composer-model.js answers with two", len(roles))
+		t.Fatalf("protocol carries %d claim roles; deriveRole and setRole in composer-model.js answer with two", len(roles))
 	}
 	src := readComposerModel(t)
-	// No picker offers it: a role option list would be the fifth answer, and
-	// it would be the one the operator sees.
-	if regexp.MustCompile(`case 'setRole'`).MatchString(src) {
-		t.Error("composer-model.js has a setRole action; role is derived, not chosen (brief R2)")
-	}
-	if regexp.MustCompile(`case 'role':`).MatchString(readDesktopPage(t)) {
-		t.Error("processes-desktop.js builds an option list for role; role is derived (brief R2)")
+	if !regexp.MustCompile(`case 'setRole'`).MatchString(src) {
+		t.Error("composer-model.js has no setRole action; a position's role must be settable by hand")
 	}
 	// The floor is consume, named once, and it is the FOURTH answer — the
 	// three above it read the prior claim and the majorities. A second literal
@@ -89,15 +80,6 @@ func TestComposerRolesAreDerivedNotOffered(t *testing.T) {
 	if !regexp.MustCompile(`return \{ role: 'consume', source: 'default' \}`).MatchString(src) {
 		t.Error("deriveRole's floor is not consume; a cell nobody has configured is what the store writes for one")
 	}
-}
-
-func readDesktopPage(t *testing.T) string {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
-	if err != nil {
-		t.Fatalf("read processes-desktop.js: %v", err)
-	}
-	return string(body)
 }
 
 func readComposerModel(t *testing.T) string {
