@@ -44,8 +44,9 @@ const (
 	ruleNoPayload rule = iota + 1
 	// ruleEmpty: a payload-bearing bin the count says is drained.
 	ruleEmpty
-	// ruleNegativeCount: the count went below zero, which is not a drain
-	// signal. See the comment on decideRobotGroup.
+	// ruleNegativeCount: the count went below zero. Treated as drained, see
+	// the comment on decideRobotGroup. Kept apart from ruleEmpty so the log
+	// still says the count was negative.
 	ruleNegativeCount
 	// ruleNoCapacity: the payload template carries no capacity, so there is no
 	// denominator and no fraction to compare. A config gap, not a bin state.
@@ -121,19 +122,14 @@ type groupFacts struct {
 // relaxed below it" would have no testable meaning. "Replaces the relaxed
 // outcome" does.
 //
-// ── WHY A NEGATIVE COUNT IS NOT A DRAIN SIGNAL ───────────────────────────────
+// ── A NEGATIVE COUNT IS TREATED AS DRAINED ──────────────────────────────────
 //
-// Not a probability argument: a negative count cannot bound the remaining
-// fraction in EITHER direction, so it says nothing about how full the bin is.
-// Every measured mechanism that produces one — overpack, a stale binding across
-// a bin swap, epoch-boundary coalescing, duplicate process_nodes counting PLC
-// ticks three times — leaves the bin heavier than it reads.
-//
-// The guard is also load-bearing rather than cautious. Without it the
-// near-empty test relaxes on every negative, because -1497 of 2160 is -69%,
-// which is at or below any threshold anyone would set. Five of sixteen carriers
-// at Hopkinsville were sitting negative when this was written; they all exit at
-// ruleNoPayload, which is why that branch is ordered first.
+// A count goes negative when ticks keep arriving against a bin that is not
+// really being consumed — a line that is not yet online still counting, for
+// one. The count then keeps falling long after the bin is empty, and holding
+// such a bin on the loaded group sent the heavy robots to fetch empties. So a
+// negative count takes the same relaxed outcome as zero. It is its own branch
+// only so the dispatch log keeps saying the count was negative.
 func decideRobotGroup(f groupFacts) (string, rule) {
 	// The relaxed outcome, decided once so every branch below agrees on it.
 	//
@@ -156,7 +152,7 @@ func decideRobotGroup(f groupFacts) (string, rule) {
 	case f.remaining == 0:
 		return relaxed, ruleEmpty
 	case f.remaining < 0:
-		return f.payloadGroup, ruleNegativeCount
+		return relaxed, ruleNegativeCount
 	case f.capacity <= 0:
 		return f.payloadGroup, ruleNoCapacity
 	// CROSS-MULTIPLIED, NEVER DIVIDED. remaining/capacity in integers truncates
@@ -246,12 +242,11 @@ func (d *Dispatcher) robotGroupForOrder(order *orders.Order) string {
 		order.ID, bin.Label, bin.PayloadCode, bin.UOPRemaining, bin.UOPCapacity,
 		nearEmptyPct(bin.UOPRemaining, bin.UOPCapacity), r, group)
 
-	// A payload-bearing bin reading below zero is a data defect, not a bin
-	// state. Dispatch is the only place positioned to notice it, so it says so
-	// once, here, rather than leaving the count to be quietly distrusted.
+	// A payload-bearing bin reading below zero is still worth saying out loud:
+	// the count is off even though dispatch treats the bin as empty.
 	if r == ruleNegativeCount {
-		log.Printf("dispatch: bin %s carries %s but reads %d units — negative count, robot group not relaxed",
-			bin.Label, bin.PayloadCode, bin.UOPRemaining)
+		log.Printf("dispatch: bin %s carries %s but reads %d units — negative count, treated as empty for robot group %q",
+			bin.Label, bin.PayloadCode, bin.UOPRemaining, group)
 	}
 	return group
 }

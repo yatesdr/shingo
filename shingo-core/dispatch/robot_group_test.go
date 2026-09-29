@@ -158,18 +158,36 @@ func TestDecideRobotGroup(t *testing.T) {
 			wantRule:  ruleAboveThreshold,
 		},
 
-		// ── data this feature must not trust ──────────────────────────────
+		// ── a count below zero is treated as drained ──────────────────────
 		{
-			// A payload-bearing bin reading negative is not drained, it is
-			// broken. Without ruleNegativeCount this falls into the near-empty
-			// test at -69% and relaxes.
-			name: "payload-bearing negative count does not relax",
+			// A line still counting while not really consuming drives the
+			// count far negative on an empty bin. It relaxes like zero, under
+			// its own rule so the log still says the count was negative.
+			name: "payload-bearing negative count relaxes like empty",
 			facts: with(relaxable, func(f *groupFacts) {
 				f.remaining = -1497
 			}),
+			wantGroup: light,
+			wantRule:  ruleNegativeCount,
+		},
+		{
+			name: "negative count takes the carrier group when one is set",
+			facts: with(relaxable, func(f *groupFacts) {
+				f.remaining, f.requiredGroup = -157, rack
+			}),
+			wantGroup: rack,
+			wantRule:  ruleNegativeCount,
+		},
+		{
+			// Relaxation off means off: a negative count is empty, and an
+			// empty bin with relaxation off stays on the payload's group.
+			name:      "negative count with relaxation off stays on the payload group",
+			facts:     groupFacts{payloadCode: "PANEL-A", remaining: -157, capacity: 2160, payloadGroup: heavy},
 			wantGroup: heavy,
 			wantRule:  ruleNegativeCount,
 		},
+
+		// ── data this feature must not trust ──────────────────────────────
 		{
 			// Over capacity is live data at Hopkinsville (2161 of 2160).
 			// Nothing may trip on >100%.
@@ -207,8 +225,8 @@ func TestDecideRobotGroup(t *testing.T) {
 // ClearForReuse cannot produce, since it writes the blank code and the zeroed
 // count in one UPDATE. Something applies deltas after the clear. That is not
 // this feature's bug, but it is the shape the rule table has to survive: every
-// one of them must exit at ruleNoPayload and never reach the near-empty test,
-// which would otherwise see -69% and relax.
+// one of them must exit at ruleNoPayload, decided by the carrier and never by
+// the count.
 func TestDecideRobotGroup_HopkinsvilleNegativeCarriers(t *testing.T) {
 	t.Parallel()
 
