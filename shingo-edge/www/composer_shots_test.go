@@ -931,7 +931,7 @@ func TestComposerShots(t *testing.T) {
 	// preferredColorScheme is Blink's own setting (0 dark, 1 light), which is
 	// what matchMedia answers from — so the page takes the same path a
 	// browser set to that scheme takes, rather than a test-only door.
-	desktopShotIn := func(file, path string, scheme int) {
+	desktopShotAt := func(file, path string, scheme int, size string) {
 		t.Helper()
 		target := filepath.Join(out, file)
 		_ = os.Remove(target)
@@ -940,7 +940,7 @@ func TestComposerShots(t *testing.T) {
 			"--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
 			"--no-default-browser-check", "--user-data-dir="+profile,
 			"--blink-settings=preferredColorScheme="+strconv.Itoa(scheme),
-			"--window-size=1440,900", "--virtual-time-budget=15000",
+			"--window-size="+size, "--virtual-time-budget=15000",
 			"--screenshot="+target, srv.URL+path)
 		cmd.Dir = out
 		raw, err := cmd.CombinedOutput()
@@ -956,6 +956,7 @@ func TestComposerShots(t *testing.T) {
 		}
 		t.Logf("wrote %s (%d bytes)", target, info.Size())
 	}
+	desktopShotIn := func(file, path string, scheme int) { t.Helper(); desktopShotAt(file, path, scheme, "1440,900") }
 	// The dark scheme is what the reference screenshots are in, so it stays the
 	// default for the set.
 	desktopShot := func(file, path string) { t.Helper(); desktopShotIn(file, path, 0) }
@@ -1194,6 +1195,14 @@ func TestComposerShots(t *testing.T) {
 	// www/static_assets_served_test.go — it needs no browser, and behind the
 	// shots tag it only ran when someone installed Chrome and remembered.
 	desktopShot("D1-flows-selected.png", d1)
+	// THE PART CHIP'S POPOVER, which is where the part set is changed now: the
+	// process's parts, Core's catalog under them, and the clear line.
+	desktopShot("D1-part-popover.png", d1+";part=PLN_01")
+	// A SMALLER LAPTOP. 1440x900 is the reference frame, and the floor's
+	// laptops are not all that: the header wraps rather than cutting the sub
+	// line off, and the picture lays out in whatever frame is left.
+	desktopShotAt("D1-flows-running-1366.png", fmt.Sprintf("/processes?process=%d#style=%d", seeded.ProcessID, seeded.Styles[swap]), 0, "1366,768")
+	desktopDOM("D1 part popover offers Core's catalog", d1+";part=PLN_01", "Add from Core’s catalog")
 	// D1 ON THE RUNNING PART (owner ruling R3, 2026-09-12). Until this round
 	// the seam refused a preview of the style on the press — `process is
 	// already running style N` — so this was a shot of a refusal, and D1's

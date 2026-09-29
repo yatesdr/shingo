@@ -77,6 +77,8 @@ const S = {
     coreNodesReq: null,  // the in-flight read of it, so four pickers share one request
     pickers: {},         // every open node picker, by key — see pickerInit
     add: null,           // the Add-process sheet's own non-text draft: {groupID}
+    partPop: null,       // the open part popover: {node, q, note, catalogFailed}
+    partSet: null,       // the STORED half of the open process's part set; null = not read
 };
 
 function root() { return $('pd-root'); }
@@ -302,6 +304,9 @@ async function openProcess(id) {
     // THIS process's rows, and one left behind would post another press's name
     // into this one.
     S.pickers = {};
+    // The part set is this process's too, and the popover writes it through.
+    S.partSet = null;
+    S.partPop = null;
     // AND SO DOES THE SETTINGS DRAFT. openSettings is `S.settings ||
     // settingsDraft()`, so a draft left behind was shown against the process
     // just opened — its name, description, PLC, tag, counter and group, with
@@ -330,6 +335,13 @@ async function openProcess(id) {
         (S.composer.styles[0] && S.composer.styles[0].id) || 0;
     selectStyle(first);
     if (h.adv) openAdvanced(h.adv);
+    // #part=<position> opens that position's part popover, for the shots
+    // harness and for a link that means "add a part here".
+    if (h.part) {
+        const chip = root().querySelector('.pd-postbl [data-act="pick"][data-kind="part"][data-node="' +
+            CSS.escape(h.part) + '"]');
+        if (chip) await openPartPop(chip, h.part);
+    }
     if (h.tab === 'screens') { S.tab = 'screens'; drawScreens(); }
     else if (h.tab === 'presets') {
         await openPresets();
@@ -773,15 +785,6 @@ function main() {
         '</div></div>' +
         '<div class="act">' +
         '<button class="pd-btn quiet" data-act="discard">Discard changes</button>' +
-        // COPY TO ANOTHER PART IS NOT WIRED, and it says so rather than
-        // answering a click with nothing. It is a FLOW copy from this style to
-        // another style on this press — the server path is flow/preview then
-        // flow/save against the target, which is what the preset-apply modal
-        // already walks — and whether it reuses that modal's preview-then-apply
-        // shape or is a plain confirm is an owner call, not a builder's.
-        '<button class="pd-btn" data-act="copy-to" disabled title="Not wired yet. ' +
-        'Copying a flow onto another part goes through preview and save, and which of those ' +
-        'two shapes it takes has not been ruled on.">Copy to another part…</button>' +
         // SAVE AS PRESET IS MADE FROM THE SAVED FLOW, so it is disabled while
         // the draft is dirty: a preset named from an unsaved draft would be a
         // shape the station does not run, under a name that claims it does.
@@ -841,9 +844,9 @@ function positionsTable() {
         if (!c || !c.on || !c.mode) continue;
         const advSet = advancedCount(n);
         rows.push('<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
-            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + '</small>' + roleToggle(n, c.role) + '</td>' +
+            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + roleToggle(n, c.role) + '</small></td>' +
             '<td>' + picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) + '</td>' +
-            '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad') + '</td>' +
+            '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') + '</td>' +
             '<td>' + columnCell(n, 'partner') + '</td>' +
             '<td>' + columnCell(n, 'staging') + '</td>' +
             '<td>' + fieldCell(n, 'source', 'inbound_source', c.source, '—') + '</td>' +
@@ -922,7 +925,9 @@ function positionsTable() {
 
 // roleToggle is the position's consume/produce switch. The role starts derived
 // (deriveRole) and an engineer sets it here when the press does the other
-// thing; clicking flips it.
+// thing; clicking flips it. It rides the front/back line under the name: on
+// a line of its own it made every row 72 px tall, and the table then showed
+// one position at 1440x900.
 function roleToggle(node, role) {
     const next = role === 'produce' ? 'consume' : 'produce';
     return '<button class="pd-role ' + esc(role || '') + '" data-act="set-role" data-node="' + esc(node) + '"' +
@@ -1210,35 +1215,6 @@ function optionsFor(node, kind) {
                 action: { type: 'setMode', node: node, mode: m },
             }));
         }
-        // THE PROCESS'S PART SET, NOT THE STYLE'S PARTS. This offered
-        // S.model.parts — what this style already claims — so a style with no
-        // flow yet offered NOTHING, and there was no way on any screen to give
-        // a new cell's first position a payload. The palette is the set the
-        // process may run (domain.ComposerData.Palette, a union of the typed
-        // rows and what its live claims name), which is the list a picker is
-        // for; `parts` stays what it is, the style's own, because it is what
-        // the unplaced-part finding reads.
-        //
-        // partOffers puts the CATID matches first and marks the ones already on
-        // this flow. Same rows the HMI's sheet draws, from the same function.
-        case 'part': {
-            const offers = M().partOffers(S.model).map(r => ({
-                value: r.code, label: M().shortPart(r.code), on: c.part === r.code,
-                action: [
-                    { type: 'addPart', payloadCode: r.code },
-                    { type: 'setPart', node: node, payloadCode: r.code },
-                ],
-            }));
-            // The way a part leaves this flow. Blank value, so a picker with
-            // nothing else to offer still reads as empty.
-            if (c.part) {
-                offers.push({
-                    value: '', label: 'Remove ' + M().shortPart(c.part) + ' from this flow',
-                    action: { type: 'removePart', payloadCode: c.part },
-                });
-            }
-            return offers;
-        }
         // col:<column>:<cellKey> — one of the mode-dependent chips. The FIELD
         // comes from the model's own rowColumns, which reads flowspec, so a
         // picker can only ever write a column this mode is allowed to have.
@@ -1358,8 +1334,10 @@ function pickerEmptyWord(kind) {
 // placePop): measure the room above and below the anchor in the VIEWPORT, open
 // on the side with room, and cap the height to what is there so the list
 // scrolls inside the screen rather than past it.
-function placePopover(pop, btn) {
-    const GAP = 6, EDGE = 8, MIN = 120;
+// `min` is the least room worth opening into; the part popover asks for more
+// than a short option list does, because it carries a search and two lists.
+function placePopover(pop, btn, min) {
+    const GAP = 6, EDGE = 8, MIN = min || 120;
     const r = btn.getBoundingClientRect();
     const host = pop.offsetParent
         ? pop.offsetParent.getBoundingClientRect()
@@ -1393,9 +1371,13 @@ function openPicker(btn) {
             '"][data-kind="' + CSS.escape(kind) + '"]');
         if (chip) { openPicker(chip); return; }
     }
+    if (kind === 'part') { void openPartPop(btn, node); return; }
     const opts = optionsFor(node, kind);
     const pop = $('pd-pop');
     if (!pop) return;
+    // A chip clicked while the part popover is open reuses the element.
+    pop.classList.remove('pd-partpop');
+    S.partPop = null;
     // NEVER AN EMPTY LIST WITH NO REASON (owner ruling, Amendment A). A source,
     // destination or staging picker with nothing in it is a routing set with
     // nothing in that role, and "Nothing to choose here yet" said the symptom
@@ -1423,7 +1405,8 @@ function openPicker(btn) {
 
 function closePop() {
     const pop = $('pd-pop');
-    if (pop) { pop.hidden = true; pop.innerHTML = ''; }
+    if (pop) { pop.hidden = true; pop.innerHTML = ''; pop.classList.remove('pd-partpop'); }
+    S.partPop = null;
     // SETTINGS' GROUP LIST IS A POPOVER TOO. It draws into #pd-stpop and
     // nothing ever hid it: click Group, change your mind, click elsewhere, and
     // the list stayed open and then floated over the form as the sheet
@@ -1434,6 +1417,223 @@ function closePop() {
     // pick gave it a value — `apply` redraws the whole tab and clears this
     // either way.
     if (S.openAs) { S.openAs = ''; redrawPositionsTable(); }
+}
+
+// ── the part popover ─────────────────────────────────────────────────────────
+//
+// THE PART CHIP IS WHERE PARTS ARE CHANGED. It offered only the process's part
+// set, and the one way to grow that set was Edit, a different sheet the picker
+// never mentioned — so a payload missing from the list looked like a bug. The
+// popover now searches the part set and Core's catalog together: a catalog
+// part picked here joins the part set AND lands on this position in one tap.
+//
+// TWO KINDS OF WRITE, SAID APART. Putting a part on a position is a draft
+// edit, saved with Save flow like every other chip. Adding a part to the
+// process, or taking one out with ×, writes the part set straight away — it is
+// the same PUT the Edit sheet sends, and it is not part of any one flow.
+async function openPartPop(btn, node) {
+    const pop = $('pd-pop');
+    if (!pop || !S.model) return;
+    S.partPop = { node: node, q: '', note: '', catalogFailed: false };
+    pop.classList.add('pd-partpop');
+    pop.innerHTML =
+        '<input class="pd-npkq pd-partq" type="text" autocomplete="off" ' +
+        'placeholder="Find a part, or add one from Core’s catalog">' +
+        '<div class="pd-partlist" id="pd-partlist"></div>';
+    pop.hidden = false;
+    drawPartList();
+    placePopover(pop, btn, 300);
+    const q = pop.querySelector('.pd-partq');
+    q.addEventListener('input', () => {
+        if (!S.partPop) return;
+        S.partPop.q = q.value;
+        S.partPop.note = '';
+        drawPartList();
+    });
+    q.focus();
+    pop.onclick = onPartPopClick;
+    await Promise.all([loadPayloadCatalog(), loadPartSet()]);
+    if (!S.partPop || S.partPop.node !== node) return;
+    S.partPop.catalogFailed = !S.payloadCatalog;
+    drawPartList();
+    // The catalog made the list taller, so it is placed again: a popover
+    // flipped above its chip at the short height would now hang over it.
+    if (btn.isConnected) placePopover(pop, btn, 300);
+}
+
+async function loadPartSet() {
+    if (S.partSet) return;
+    S.partSet = await loadProcessPayloads(S.processID);
+}
+
+// partPlace is where a part sits in the draft, or '' when it has no position.
+function partPlace(code) {
+    for (const n of Object.keys(S.model.cells)) {
+        if (S.model.cells[n].part === code) return n;
+    }
+    return '';
+}
+
+// partUsedElsewhere names the OTHER saved flows of this process that run a
+// part — the half of the palette the part set cannot take away (see
+// store/processes.ProcessPalette). The open flow is the draft's to answer.
+function partUsedElsewhere(code) {
+    const out = [];
+    for (const st of S.composer.styles) {
+        if (st.id === S.styleID) continue;
+        for (const p of M().styleFacts(st).parts) {
+            if ((p.payload_code || p) === code) out.push((st.name || 'style ' + st.id) + (p.node ? ' at ' + p.node : ''));
+        }
+    }
+    return out;
+}
+
+function drawPartList() {
+    const box = $('pd-partlist');
+    const pp = S.partPop;
+    if (!box || !pp || !S.model) return;
+    const c = S.model.cells[pp.node] || {};
+    const needle = pp.q.trim().toLowerCase();
+    const hit = (code, name) => !needle || String(code).toLowerCase().indexOf(needle) >= 0 ||
+        String(name || '').toLowerCase().indexOf(needle) >= 0;
+    const stored = new Set(S.partSet || []);
+    const offers = M().partOffers(S.model).filter(r => hit(r.code));
+    const palette = new Set(S.model.palette || []);
+
+    let h = '<div class="pd-lbl">This process’s parts</div>';
+    if (!offers.length) {
+        h += '<div class="none">' + (needle ? 'None of this process’s parts match.'
+            : 'No parts yet. Pick one from Core’s catalog below.') + '</div>';
+    }
+    for (const r of offers) {
+        const here = c.part === r.code;
+        const at = here ? '' : partPlace(r.code);
+        const sub = here ? 'on this position' : at ? 'on ' + at + ', moves here' : '';
+        h += '<div class="pd-partrow">' +
+            '<button class="' + (here ? 'on' : '') + '" data-pp="place" data-code="' + esc(r.code) + '" title="' + esc(r.code) + '">' +
+            '<span class="t">' + esc(M().shortPart(r.code)) + '</span>' +
+            (sub ? '<small>' + esc(sub) + '</small>' : '') + '</button>' +
+            (stored.has(r.code)
+                ? '<button class="x" data-pp="drop" data-code="' + esc(r.code) + '" ' +
+                'title="Take ' + esc(r.code) + ' out of this process’s parts" aria-label="Take ' +
+                esc(r.code) + ' out of this process’s parts">&times;</button>'
+                : '') +
+            '</div>';
+    }
+
+    h += '<div class="pd-lbl">Add from Core’s catalog</div>';
+    if (pp.catalogFailed) {
+        h += '<div class="none">Core’s catalog could not be read. Reload the page to try again.</div>';
+    } else if (!S.payloadCatalog) {
+        h += '<div class="none loading">Reading Core’s catalog…</div>';
+    } else {
+        const LIMIT = 40;
+        const more = payloadCatalogList()
+            .map(e => ({ code: String(e.code || e.name || ''), name: e.name || '' }))
+            .filter(e => e.code && !palette.has(e.code) && hit(e.code, e.name));
+        if (!more.length) {
+            h += '<div class="none">' + (needle ? 'Nothing in Core’s catalog matches. A part Core does not ' +
+                'have has to be made in Core first.' : 'Every part in Core’s catalog is already here.') + '</div>';
+        }
+        for (const e of more.slice(0, LIMIT)) {
+            h += '<div class="pd-partrow"><button data-pp="add" data-code="' + esc(e.code) + '" title="' + esc(e.code) + '">' +
+                '<span class="t">+ ' + esc(e.code) + '</span>' +
+                (e.name && e.name !== e.code ? '<small>' + esc(e.name) + '</small>' : '') + '</button></div>';
+        }
+        if (more.length > LIMIT) {
+            h += '<div class="none">' + (more.length - LIMIT) + ' more — type to narrow the list.</div>';
+        }
+    }
+
+    if (c.part) {
+        h += '<div class="pd-partfoot"><button data-pp="clear">Take ' + esc(M().shortPart(c.part)) +
+            ' off this position</button></div>';
+    }
+    if (pp.note) h += '<div class="none pd-partnote">' + esc(pp.note) + '</div>';
+    box.innerHTML = h;
+}
+
+// The popover redraws its own list, so a click inside it can land on a button
+// that is gone by the time the document's closer asks where it was. Stopping
+// it here keeps the popover open for the clicks that mean to.
+function onPartPopClick(e) {
+    const b = e.target.closest && e.target.closest('[data-pp]');
+    if (!S.partPop) return;
+    e.stopPropagation();
+    if (!b) return;
+    const node = S.partPop.node, code = b.dataset.code;
+    switch (b.dataset.pp) {
+        case 'place':
+            closePop();
+            apply([{ type: 'addPart', payloadCode: code }, { type: 'setPart', node: node, payloadCode: code }]);
+            return;
+        case 'clear': {
+            const cur = (S.model.cells[node] || {}).part;
+            closePop();
+            // One part is on one position (setPart moves it), so taking it off
+            // the position is taking it off the flow; removePart does both and
+            // leaves no part on the flow with nowhere to go.
+            if (cur) apply({ type: 'removePart', payloadCode: cur });
+            return;
+        }
+        case 'add': void addToPartSet(node, code); return;
+        case 'drop': void dropFromPartSet(code); return;
+        default: return;
+    }
+}
+
+function partNote(text) {
+    if (!S.partPop) return;
+    S.partPop.note = text;
+    drawPartList();
+}
+
+async function writePartSet(codes) {
+    const out = await postJSON('PUT', '/api/processes/' + S.processID + '/payloads', B().processPayloads(codes));
+    if (!out.ok) return out;
+    S.partSet = codes.slice().sort();
+    // The palette is the server's union with what saved flows run, so it is
+    // read back rather than guessed at here.
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/composer');
+        if (res.ok) {
+            const pal = ((await res.json()) || {}).palette || [];
+            S.composer.palette = pal;
+            if (S.model) S.model.palette = pal.slice();
+        }
+    } catch (_) { /* the write landed; the list catches up on the next open */ }
+    return out;
+}
+
+async function addToPartSet(node, code) {
+    if (!S.partSet) { partNote('This process’s part list could not be read, so it cannot be changed here. Reload the page.'); return; }
+    const out = await writePartSet(S.partSet.indexOf(code) >= 0 ? S.partSet : S.partSet.concat([code]));
+    if (!out.ok) { partNote('Could not add ' + code + ': ' + out.error); return; }
+    closePop();
+    apply([{ type: 'addPart', payloadCode: code }, { type: 'setPart', node: node, payloadCode: code }]);
+}
+
+async function dropFromPartSet(code) {
+    if (!S.partSet) { partNote('This process’s part list could not be read, so it cannot be changed here. Reload the page.'); return; }
+    const at = partPlace(code);
+    if (at) {
+        partNote(M().shortPart(code) + ' is on ' + (at === S.partPop.node ? 'this position' : at) +
+            '. Take it off there first.');
+        return;
+    }
+    const elsewhere = partUsedElsewhere(code);
+    if (elsewhere.length) {
+        partNote(M().shortPart(code) + ' is still used by ' + elsewhere.join(', ') +
+            '. Take it off there first.');
+        return;
+    }
+    const out = await writePartSet(S.partSet.filter(c => c !== code));
+    if (!out.ok) { partNote('Could not take ' + code + ' out: ' + out.error); return; }
+    // Still listed means a SAVED version of this flow runs it; the draft does
+    // not, so it goes when this flow is saved.
+    partNote((S.model.palette || []).indexOf(code) >= 0
+        ? M().shortPart(code) + ' is out of the part list. It stays here until this flow is saved.'
+        : '');
 }
 
 // Every picker applies instantly to the DRAFT; nothing is written until Save

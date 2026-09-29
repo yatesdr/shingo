@@ -578,8 +578,8 @@ function drawComposer() {
 // THE BUTTON IS STILL DISABLED WHEN THE SET IS EMPTY, with a title that names
 // where the set is made. A live-looking button that opens an empty sheet is
 // the dead control this pattern exists to avoid, one screen further in.
-const ADDPART_EMPTY_TITLE = 'This process has no part set yet. An engineer adds one on the ' +
-    'desktop — Processes › Edit — and every part in it becomes pickable here.';
+const ADDPART_EMPTY_TITLE = 'This process has no parts yet. An engineer adds them on the ' +
+    'desktop — Processes, the Part chip on any position — and every one becomes pickable here.';
 
 function drawStrip() {
     const presets = flow().presets || [];
@@ -695,24 +695,23 @@ function drawPartRows(q) {
     if (!rows.length) {
         h = '<div class="grp"><span class="os-lbl">No match</span>' +
             '<span class="n">' + (needle ? 'nothing in this cell’s part set matches that'
-            : 'this process has no part set yet') + '</span></div>';
+            : 'this process has no parts yet') + '</span></div>';
     } else {
         h += '<div class="grp"><span class="os-lbl">Parts</span><span class="n">' +
             rows.length + ' in this cell’s part set</span></div>';
         for (const r of rows) {
-            // THE FULL CODE ONLY WHEN IT SAYS SOMETHING THE SHORT ONE DOES NOT.
-            // shortPart trims a known prefix and is a no-op on a plain part
-            // number, so a row for `SYN-A-P016` printed that string twice,
-            // side by side, in two type sizes — which reads as two facts and is
-            // one.
-            const short = M().shortPart(r.code);
+            // The whole name, once. See shortPart.
             h += '<button class="os-comp-row" data-act="partpick" data-part="' + esc(r.code) + '">' +
-                '<span class="id">' + esc(short) + '</span>' +
-                (short === r.code ? '' : '<span class="meta">' + esc(r.code) + '</span>') +
+                '<span class="id">' + esc(M().shortPart(r.code)) + '</span>' +
                 (r.onFlow ? '<span class="vd ok">already on this flow</span>' : '') +
                 '</button>';
         }
     }
+    // WHERE A MISSING PART COMES FROM. The sheet offers the process's part
+    // set and nothing else, so the way to grow it is named here rather than
+    // left for the operator to guess.
+    h += '<div class="grp"><span class="n">Not listed? An engineer adds parts on the desktop: ' +
+        'Processes, the Part chip on a position.</span></div>';
     const box = $('os-comp-partpick');
     if (box) box.innerHTML = h;
 }
@@ -874,8 +873,8 @@ function openPositionPanel(node) {
         esc(M().shortPart(p)) + '</button>').join('') +
         (cc.part ? '' : '<span class="os-chip need">pick one</span>') +
         addPartButton('os-chip btn', '+ another part', node) +
-        (cc.part ? '<button class="os-chip btn" data-act="rmpart" data-part="' + esc(cc.part) + '">Remove ' +
-            esc(M().shortPart(cc.part)) + ' from this flow</button>' : '');
+        (cc.part ? '<button class="os-chip btn" data-act="rmpart" data-part="' + esc(cc.part) + '">Take ' +
+            esc(M().shortPart(cc.part)) + ' off this position</button>' : '');
     // The role starts derived (deriveRole); this is where it is set by hand.
     const roleChips = ['consume', 'produce'].map(r =>
         '<button class="os-chip btn ' + (cc.role === r ? 'on' : '') + '" data-act="role" data-val="' + r + '">' +

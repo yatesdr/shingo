@@ -1102,7 +1102,11 @@ function fixItFor(state, f) {
     }
 }
 
-function shortPart(p) { return String(p || '').replace(/^.*?(PIA\d+|Payload)$/, '$1'); }
+// shortPart is the part's name as the engineer typed it into Core. It used to
+// cut everything before a trailing `PIA<n>` or `Payload`, so Hopkinsville's
+// parts all read `PIA18` and two parts ending alike could not be told apart.
+// A cell too narrow for the whole name ellipsises and carries it as a title.
+function shortPart(p) { return String(p || ''); }
 
 // ── derived views ────────────────────────────────────────────────────────────
 

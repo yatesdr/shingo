@@ -315,14 +315,23 @@ function rowsOf(boxes) {
 function placeEvenly(positions, g) {
     const front = positions.filter(p => p.kind !== 'back');
     const back = positions.filter(p => p.kind === 'back');
+    // AS MANY TO A ROW AS THE WIDTH HOLDS, and never more than five. The pitch
+    // used to be the gutter-to-gutter width over the row's count, which on a
+    // narrow frame came out under a card's width and drew four cards on top
+    // of each other. A row that does not fit between the gutters may use the
+    // picture's own margins, and wraps once even those are full.
+    const room = Math.max(g.RIGHT - g.LEFT, CARD_W);
+    const wide = g.FIT_RIGHT - g.FIT_LEFT;
+    const perRow = Math.max(1, Math.min(5, Math.floor((wide + GAP) / (CARD_W + GAP))));
     const lines = [];
-    const wrap = list => { for (let i = 0; i < list.length; i += 5) lines.push(list.slice(i, i + 5)); };
+    const wrap = list => { for (let i = 0; i < list.length; i += perRow) lines.push(list.slice(i, i + perRow)); };
     wrap(front); wrap(back);
     const boxes = {};
     const pitchY = lines.length > 1 ? g.ROW_PITCH : 0;
     const firstY = g.CENTER_Y - pitchY * (lines.length - 1) / 2;
     lines.forEach((line, r) => {
-        const pitch = Math.min(CARD_W + 24, (g.RIGHT - g.LEFT) / line.length);
+        const fits = (CARD_W + GAP) * line.length - GAP <= room;
+        const pitch = Math.min(CARD_W + 24, Math.max(CARD_W + GAP, (fits ? room : wide) / line.length));
         const width = pitch * (line.length - 1);
         line.forEach((p, i) => {
             boxes[p.core_node_name] = { x: g.CENTER_X - width / 2 + pitch * i - CARD_W / 2, y: firstY + pitchY * r - CARD_H / 2, w: CARD_W, h: CARD_H };
@@ -350,17 +359,74 @@ export function layoutStaging(cell, frame) {
         ? a.x - b.x
         : String(a.core_node_name).localeCompare(String(b.core_node_name))));
     const top = g.DOCK_Y - stagingLift(cell, g, frame) - STAGING_H;
-    const pitch = Math.min(STAGING_W + STAGING_GAP,
-        (g.FIT_RIGHT - g.FIT_LEFT) / Math.max(order.length, 1));
-    const width = pitch * (order.length - 1);
+    const span = g.FIT_RIGHT - g.FIT_LEFT;
+    // AS WIDE AS ITS WORDS. `Inbound staging · for ALN_001` is wider than
+    // STAGING_W at the card's type size, and a fixed card let the line run out
+    // across whatever stood beside it — a position card, on a press whose
+    // staging lane sits between two of them.
+    const widths = order.map(c => Math.min(span, Math.max(STAGING_W, stagingTextW(c))));
+    const total = widths.reduce((a, w) => a + w, 0);
+    const gap = order.length > 1
+        ? Math.max(0, Math.min(STAGING_GAP, (span - total) / (order.length - 1)))
+        : 0;
+    let x = g.CENTER_X - (total + gap * (order.length - 1)) / 2;
     const boxes = {};
     order.forEach((c, i) => {
-        boxes[c.core_node_name] = {
-            x: g.CENTER_X - width / 2 + pitch * i - STAGING_W / 2,
-            y: top, w: STAGING_W, h: STAGING_H,
-        };
+        boxes[c.core_node_name] = { x: x, y: top, w: widths[i], h: STAGING_H };
+        x += widths[i] + gap;
     });
+    clearOfPositions(boxes, layoutPositions(cell, frame).boxes, g);
     return { boxes, top };
+}
+
+// stagingLine is the staging card's second line; stagingTextW estimates how
+// wide the card has to be to hold it and the name above it. An estimate from
+// the type sizes in flow-picture.css (.stage .nm 13px, .ln 11px) — the layout
+// runs where there is no DOM to measure, and a few units of slack are cheaper
+// than a card whose words run off it.
+export function stagingLine(st) {
+    const word = st.field === 'outbound_staging' ? 'Outbound staging'
+        : st.field === 'inbound_staging' ? 'Inbound staging' : 'Staging';
+    return word + ' · ' + (st.partner_of ? 'for ' + st.partner_of : 'not in this flow');
+}
+
+function stagingTextW(st) {
+    const ln = stagingLine(st).length * 6.1;
+    const nm = String(st.core_node_name || '').length * 8;
+    return Math.ceil(Math.max(ln, nm) + 24);
+}
+
+// clearOfPositions slides a band card sideways off any position card it
+// would sit on. The band's height is fixed by the dock, so on a short frame
+// a to-scale row can reach down into it; the band then takes the nearest
+// stretch of its own row that no position occupies, and stays where it was
+// when there is none rather than leaving the picture.
+function clearOfPositions(band, positions, g) {
+    const pos = Object.keys(positions).map(n => positions[n]);
+    const names = Object.keys(band).sort((a, b) => band[a].x - band[b].x);
+    const hits = (b, others) => others.some(o =>
+        b.x < o.x + o.w + GAP && o.x < b.x + b.w + GAP && b.y < o.y + o.h + GAP && o.y < b.y + b.h + GAP);
+    const placed = [];
+    for (const n of names) {
+        const b = band[n];
+        const blockers = pos.concat(placed);
+        if (hits(b, blockers)) {
+            // Candidate left edges: just right of each blocker, and just left
+            // of it. The nearest one that is clear and inside the frame wins.
+            const cands = [];
+            for (const o of blockers) {
+                cands.push(o.x + o.w + GAP, o.x - GAP - b.w);
+            }
+            let best = null;
+            for (const cx of cands) {
+                if (cx < g.FIT_LEFT || cx + b.w > g.FIT_RIGHT) continue;
+                if (hits({ x: cx, y: b.y, w: b.w, h: b.h }, blockers)) continue;
+                if (best === null || Math.abs(cx - b.x) < Math.abs(best - b.x)) best = cx;
+            }
+            if (best !== null) b.x = best;
+        }
+        placed.push(b);
+    }
 }
 
 // stagingLift is how far the band's floor sits above the dock's rule.
@@ -575,6 +641,11 @@ function litSet(cell, sel) {
 
 const IN = '<path d="M6 0v9M2 5l4 4 4-4M0 12h12" fill="none" stroke="currentColor" stroke-width="1.6"/>';
 const OUT = '<path d="M6 12V3M2 7l4-4 4 4M0 14h12" fill="none" stroke="currentColor" stroke-width="1.6"/>';
+// The in/out marks' room on a card, right to left: `out` starts IO_OUT_AT in
+// from the edge (16 of glyph and gap, ~20 of word, 8 of margin), and `in` gets
+// IO_IN_W to the left of it.
+const IO_OUT_AT = 46;
+const IO_IN_W = 34;
 
 // renderFlowPicture returns the SVG inner markup for one station view.
 //
@@ -685,8 +756,11 @@ export function renderFlowPicture(view, opts) {
         const dim = sel && !lit.has(n);
         let glyphs = '', chip = '';
         if (c) {
-            glyphs = '<g class="io" transform="translate(' + (b.w - 58) + ',10)" style="color:var(--os-r1, var(--robot-1))"><g>' + IN + '</g><text x="16" y="11" class="iot">in</text></g>' +
-                '<g class="io" transform="translate(' + (b.w - 30) + ',10)" style="color:var(--os-r2, var(--robot-2))"><g>' + OUT + '</g><text x="16" y="11" class="iot">out</text></g>';
+            // MEASURED FROM THE RIGHT EDGE BY WHAT EACH MARK IS: a 12-unit glyph
+            // and a word starting 16 in. `out` at b.w - 30 ended past the card's
+            // border, and `in` ran into the out glyph beside it.
+            glyphs = '<g class="io" transform="translate(' + (b.w - IO_OUT_AT - IO_IN_W) + ',10)" style="color:var(--os-r1, var(--robot-1))"><g>' + IN + '</g><text x="16" y="11" class="iot">in</text></g>' +
+                '<g class="io" transform="translate(' + (b.w - IO_OUT_AT) + ',10)" style="color:var(--os-r2, var(--robot-2))"><g>' + OUT + '</g><text x="16" y="11" class="iot">out</text></g>';
             if (bad) {
                 // The finding takes the chip's slot rather than sitting beside
                 // it: two things in one row is how a card starts scrolling.
@@ -695,7 +769,7 @@ export function renderFlowPicture(view, opts) {
                 chip = '<rect class="partbg" x="12" y="64" width="' + (b.w - 24) + '" height="20" rx="5"/><text class="partlbl" x="' + (b.w / 2) + '" y="78" text-anchor="middle">' + esc(c.payload_code) + '</text>';
             }
         } else if (pos.role === 'back') {
-            glyphs = '<g class="io" transform="translate(' + (b.w - 30) + ',10)" style="color:var(--os-r1, var(--robot-1))"><g>' + IN + '</g><text x="16" y="11" class="iot">in</text></g>';
+            glyphs = '<g class="io" transform="translate(' + (b.w - IO_IN_W - 8) + ',10)" style="color:var(--os-r1, var(--robot-1))"><g>' + IN + '</g><text x="16" y="11" class="iot">in</text></g>';
         }
         const parts = (sentences.cardLines && sentences.cardLines[n]) || [];
         const lines = parts.map((l, i) => '<text class="ln" x="14" y="' + (43 + i * 14) + '">' + esc(l) + '</text>').join('');
@@ -718,9 +792,6 @@ export function renderFlowPicture(view, opts) {
         const b = staged.boxes[st.core_node_name];
         if (!b) continue;
         const inUse = !!st.partner_of;
-        const word = st.field === 'outbound_staging' ? 'Outbound staging'
-            : st.field === 'inbound_staging' ? 'Inbound staging' : 'Staging';
-        const line2 = inUse ? 'for ' + st.partner_of : 'not in this flow';
         s += '<g class="stage ' + (inUse ? 'on' : 'off') + '" data-staging="' + esc(st.core_node_name) + '"' +
             // A TAP GOES TO THE POSITION THIS LANE SERVES, which is the thing
             // an operator can change — there is no panel for a lane itself, and
@@ -732,7 +803,7 @@ export function renderFlowPicture(view, opts) {
             ' transform="translate(' + b.x + ',' + b.y + ')">' +
             '<rect class="box" width="' + b.w + '" height="' + b.h + '" rx="10"/>' +
             '<text class="nm" x="12" y="20">' + esc(st.core_node_name) + '</text>' +
-            '<text class="ln" x="12" y="36">' + esc(word) + ' · ' + esc(line2) + '</text></g>';
+            '<text class="ln" x="12" y="36">' + esc(stagingLine(st)) + '</text></g>';
     }
 
     s += strips;

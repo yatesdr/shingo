@@ -236,12 +236,11 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-railfoot { border-top: 1px solid var(--sub-1); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 
 .pd-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-/* Title and sub line on the left, the three actions right-aligned beside them,
-   on ONE row that does not wrap. */
-.pd-head { display: flex; align-items: center; gap: 16px; padding: 18px 24px 10px; flex-wrap: nowrap; }
-/* The title block gives way before the actions do: the three buttons are the
-   controls, the sub line is a caption. */
-.pd-head .t { min-width: 0; overflow: hidden; }
+/* Title and sub line on the left, the actions right-aligned beside them. One
+   row where the column is wide enough; on a narrower laptop the actions drop
+   under the title rather than cutting the sub line off mid-word. */
+.pd-head { display: flex; align-items: center; gap: 10px 16px; padding: 18px 24px 10px; flex-wrap: wrap; }
+.pd-head .t { min-width: 0; overflow: hidden; flex: 1 1 260px; }
 .pd-head h1, .pd-head .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .pd-head .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
@@ -249,7 +248,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    ellipsises — the line before it gives way first. */
 .pd-head .sub { display: flex; align-items: center; gap: 8px; }
 .pd-head .sub .pd-tag { flex: none; }
-.pd-head .act { margin-left: auto; display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
+.pd-head .act { margin-left: auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; flex: 0 1 auto; }
 /* The picture's frame, and the reference's. The page script sets the viewBox
    to this height and the column's real width, so the drawing is 1:1 and a card
    is its own size rather than whatever preserveAspectRatio makes of it.
@@ -320,7 +319,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-postbl td.pos { font-weight: 600; }
 .pd-postbl td.pos small { display: block; color: var(--text-muted); font-size: 11px; font-weight: 400; }
 .pd-postbl td.pos .pd-role {
-    display: block; margin-top: 3px; padding: 1px 6px; font: inherit; font-size: 11px; font-weight: 600;
+    display: inline-block; margin-left: 6px; padding: 0 5px; font: inherit; font-size: 10px; line-height: 14px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.03em; cursor: pointer;
     border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text);
 }
@@ -359,13 +358,16 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    "Supermarket Empty Totes" is the reference's widest chip and 17.5% of the
    1107 px the main column has at 1440 is 194 px, which holds it. */
 .pd-postbl table { width: 100%; table-layout: fixed; }
-.pd-postbl col.c-pos { width: 6.5%; }
-.pd-postbl col.c-mode { width: 14%; }
-.pd-postbl col.c-part { width: 7%; }
+/* Position holds the name, front/back and the role switch on one line; Part
+   holds a whole part number, which is what an engineer reads the row for —
+   at 7% it was `SYN-…` on every row. */
+.pd-postbl col.c-pos { width: 8.5%; }
+.pd-postbl col.c-mode { width: 12.5%; }
+.pd-postbl col.c-part { width: 10%; }
 .pd-postbl col.c-partner { width: 13%; }
-.pd-postbl col.c-staging { width: 12.5%; }
+.pd-postbl col.c-staging { width: 9.5%; }
 .pd-postbl col.c-src { width: 16%; }
-.pd-postbl col.c-via { width: 8%; }
+.pd-postbl col.c-via { width: 7.5%; }
 .pd-postbl col.c-dst { width: 16%; }
 .pd-postbl col.c-adv { width: 7%; }
 /* The nine add to 100. They have to be WRITTEN as nine: leaving Advanced to
@@ -862,3 +864,42 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* The preset row's Apply button sits beside the ⋯ rather than wrapping under
  * it: two controls, one line, and the cell is sized for both (presetCols). */
 .pd-presettbl .pd-acts .pd-btn { padding: 4px 10px; font-size: 12px; }
+
+/* ── the part popover ─────────────────────────────────────────────────────
+   The part chip's popover is the part set's editor too: a search over the
+   process's parts and Core's catalog, a × to take a part out of the process,
+   and one line to clear the position. Same rows and type as .pd-pop. */
+/* The search stays put and the lists scroll under it. */
+.pd-pop.pd-partpop { width: 340px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.pd-partpop .pd-partlist { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.pd-partpop .pd-partq { flex: none; margin: 2px 0 4px; }
+.pd-partlist .pd-partrow { display: flex; align-items: stretch; gap: 2px; }
+.pd-partlist .pd-partrow > button:first-child { flex: 1; min-width: 0; flex-direction: column; align-items: flex-start; gap: 1px; }
+.pd-partlist .pd-partrow .t { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-partlist .pd-partrow small { color: var(--text-muted); font-size: 11.5px; }
+.pd-partlist .pd-partrow button.x { width: auto; flex: none; padding: 0 10px; color: var(--text-muted); font-size: 16px; }
+.pd-partlist .pd-partrow button.x:hover { color: var(--chip-ink-below); }
+.pd-partlist .pd-partfoot { border-top: 1px solid var(--sub-2); margin-top: 6px; padding-top: 4px; }
+.pd-partlist .pd-partfoot button { color: var(--chip-ink-below); }
+.pd-partlist .pd-partnote { color: var(--chip-ink-near); }
+
+/* ── smaller laptops ──────────────────────────────────────────────────────
+   The app shape above is sized for 1440x900: the picture gives way until it
+   hits its 240 floor, and below about 790 px of viewport the floor is all it
+   gets — two rows of cards and the dock do not fit in 240, and the drawing
+   falls back to a squeezed schematic. So on a short screen the flow column
+   SCROLLS instead: the picture keeps a height it can be drawn at, the table
+   shows its rows, and the bar sticks to the foot of the column so Save is
+   always on screen. The rail keeps scrolling on its own. */
+@media (max-height: 790px) {
+    .pd-main { overflow-y: auto; }
+    .pd-main > .pd-head, .pd-main > .pd-pic, .pd-main > .pd-posbox { flex: none; }
+    .pd-pic { height: 400px; }
+    .pd-posbox { min-height: 0; }
+    .pd-bar { position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto; }
+}
+/* A narrower laptop gives the rail less of the width; the flow column is the
+   one with nine columns to fit. */
+@media (max-width: 1280px) {
+    .pd-rail { width: 240px; flex-basis: 240px; }
+}

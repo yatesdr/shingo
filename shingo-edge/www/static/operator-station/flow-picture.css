@@ -105,7 +105,9 @@
 .os-flow-picture .node rect.box { fill: var(--os-surface, var(--surface)); stroke: var(--sub-3); stroke-width: 1.5; }
 .os-flow-picture .node text { fill: var(--text-strong); font-size: 15px; font-weight: 600; }
 .os-flow-picture .node text.ln { fill: var(--os-text-muted, var(--text-muted)); font-size: 12px; font-weight: 500; }
-.os-flow-picture .node.off text.ln { fill: var(--os-text-dim, var(--text-dim)); }
+/* The dashed border and the muted name already say "not in this flow"; the
+   line under it stays readable, because it is what says what the slot is. */
+.os-flow-picture .node.off text.ln { fill: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .node.off rect.box { stroke-dasharray: 5 5; }
 .os-flow-picture .node.off text.nm { fill: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .node.on rect.box { stroke: var(--sub-4); stroke-width: 1.5; }
@@ -143,7 +145,7 @@
 .os-flow-picture .stage text.ln { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; font-weight: 500; }
 .os-flow-picture .stage.off rect.box { stroke-dasharray: 5 5; }
 .os-flow-picture .stage.off text.nm { fill: var(--os-text-muted, var(--text-muted)); }
-.os-flow-picture .stage.off text.ln { fill: var(--os-text-dim, var(--text-dim)); }
+.os-flow-picture .stage.off text.ln { fill: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .stage[data-tap] { cursor: pointer; }
 
 /* THE ROUTE STRIP DIRECTS FLOW; IT IS NOT GEOGRAPHY (owner, 2026-09-17). It is
