@@ -45,7 +45,7 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 		return "", "", false
 	}
 	oldState = order.state
-	if oldState == newState {
+	if !isTransitionLocked(order, newState) {
 		// Not a transition — nothing to resolve, commit, emit or defer.
 		s.mu.Unlock()
 		return oldState, mapStateInternal(newState), false
@@ -57,8 +57,7 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 		// bus themselves — the DriveFullLifecycle contract). Legacy behavior:
 		// commit in place. There is no resolver that could miss, so nothing
 		// can defer on this path.
-		order.state = newState
-		s.stampTerminalLocked(order, newState)
+		s.commitStateLocked(order, newState)
 		s.mu.Unlock()
 		return oldState, mapStateInternal(newState), false
 	}
@@ -82,7 +81,7 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 	// order would resurrect it on Edge.
 	s.mu.Lock()
 	order, ok = s.orders[vendorOrderID]
-	if !ok || order.state != oldState {
+	if !ok || order.state != oldState || !isTransitionLocked(order, newState) {
 		current := "gone"
 		if ok {
 			current = order.state
@@ -92,9 +91,8 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 			oldState, newState, vendorOrderID, current)
 		return oldState, "", false
 	}
-	order.state = newState
+	s.commitStateLocked(order, newState)
 	mappedStatus = mapStateInternal(newState)
-	s.stampTerminalLocked(order, newState)
 	s.mu.Unlock()
 
 	// Emit after the commit, outside the lock. The state is on record before
@@ -125,7 +123,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 		return "", "", false
 	}
 	oldState = order.state
-	if oldState == newState {
+	if !isTransitionLocked(order, newState) {
 		// Not a transition — nothing to resolve, commit, emit or defer.
 		s.mu.Unlock()
 		return oldState, mapStateInternal(newState), false
@@ -134,8 +132,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 	resolver := s.resolver
 	if emitter == nil || resolver == nil {
 		// Unwired backend: commit in place, same as DriveState's legacy arm.
-		order.state = newState
-		s.stampTerminalLocked(order, newState)
+		s.commitStateLocked(order, newState)
 		s.mu.Unlock()
 		return oldState, mapStateInternal(newState), false
 	}
@@ -154,7 +151,7 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 	// Re-validate: same supersede window as DriveState.
 	s.mu.Lock()
 	order, ok = s.orders[vendorOrderID]
-	if !ok || order.state != oldState {
+	if !ok || order.state != oldState || !isTransitionLocked(order, newState) {
 		current := "gone"
 		if ok {
 			current = order.state
@@ -164,9 +161,8 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 			oldState, newState, vendorOrderID, robotID, current)
 		return oldState, "", false
 	}
-	order.state = newState
+	s.commitStateLocked(order, newState)
 	mappedStatus = mapStateInternal(newState)
-	s.stampTerminalLocked(order, newState)
 	s.mu.Unlock()
 
 	// Emit after the commit, outside the lock — same discipline as DriveState:
@@ -249,4 +245,24 @@ func (s *SimulatorBackend) DriveToFailed(vendorOrderID string) (oldState, mapped
 // Useful for testing cancellation scenarios.
 func (s *SimulatorBackend) DriveToStopped(vendorOrderID string) (oldState, mappedStatus string, deferred bool) {
 	return s.DriveState(vendorOrderID, "STOPPED")
+}
+
+// isTransitionLocked reports whether driving order to newState is a transition
+// the fleet would report. A changed state always is. WAITING -> WAITING is one
+// only after a release sent the robot on to its next wait (awaitingNextWait):
+// the robot left and parked again, and the RUNNING between was never seen.
+// The RDS poller applies the same rule (rds.Poller.ExpectNextWait).
+func isTransitionLocked(order *simulatedOrder, newState string) bool {
+	if order.state != newState {
+		return true
+	}
+	return newState == "WAITING" && order.awaitingNextWait
+}
+
+// commitStateLocked records a transition. Any committed transition answers
+// the release that armed awaitingNextWait.
+func (s *SimulatorBackend) commitStateLocked(order *simulatedOrder, newState string) {
+	order.state = newState
+	order.awaitingNextWait = false
+	s.stampTerminalLocked(order, newState)
 }

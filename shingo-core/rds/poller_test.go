@@ -487,3 +487,55 @@ func TestPollerGraceExpiry(t *testing.T) {
 		t.Errorf("ActiveCount after grace expiry = %d, want 0", p.ActiveCount())
 	}
 }
+
+// TestPollerReportsNextWaitAfterRelease is order 112 at the poller: a release
+// appends a segment and the robot drives it and parks again between two polls,
+// so both reads say WAITING. The second WAITING is reported once the appended
+// segment's last block is FINISHED, and only once. A WAITING read while that
+// block is still pending is the old wait and is not reported.
+func TestPollerReportsNextWaitAfterRelease(t *testing.T) {
+	t.Parallel()
+	var appendedState atomic.Value
+	appendedState.Store("CREATED")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-112","state":"WAITING","vehicle":"AMB-1","blocks":[
+			{"blockId":"b1","location":"AP-LINE","state":"FINISHED","binTask":"Unload"},
+			{"blockId":"b2","location":"AP-STORE","state":"` + appendedState.Load().(string) + `","binTask":"Unload"}
+		]}`)); err != nil {
+			t.Errorf("write RDS reply: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(NewClient(srv.URL, 2*time.Second), emitter, &mockResolver{}, time.Minute)
+	p.Track("rds-112")
+	count := func() int {
+		emitter.mu.Lock()
+		defer emitter.mu.Unlock()
+		return len(emitter.events)
+	}
+
+	p.poll() // CREATED -> WAITING: the first wait
+	if got := count(); got != 1 {
+		t.Fatalf("first wait: %d events, want 1", got)
+	}
+
+	p.ExpectNextWait("rds-112", "b2")
+	p.poll() // still parked at the first wait: the appended block has not run
+	if got := count(); got != 1 {
+		t.Fatalf("before the segment finished: %d events, want 1", got)
+	}
+
+	appendedState.Store("FINISHED")
+	p.poll() // parked at the next wait; RUNNING was never read
+	p.poll() // and again: reported once
+	if got := count(); got != 2 {
+		t.Fatalf("after the segment finished: %d events, want 2", got)
+	}
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	if ev := emitter.events[1]; ev.oldStatus != "WAITING" || ev.newStatus != "WAITING" {
+		t.Errorf("second event = %s -> %s, want WAITING -> WAITING", ev.oldStatus, ev.newStatus)
+	}
+}

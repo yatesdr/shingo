@@ -23,8 +23,9 @@ import (
 // so this pin has to hold first.
 //
 // The fleet side is the simulator driven by hand, which emits a status change
-// only when the vendor state CHANGES — the same rule the RDS poller applies
-// (rds/poller.go, `if newState == oldState { continue }`).
+// only when the vendor state CHANGES, or on WAITING -> WAITING after a release
+// sent the robot on — the same rule the RDS poller applies
+// (rds.Poller.ExpectNextWait).
 
 // pinOutcome asserts one characterised outcome. While bug names a known defect,
 // the cell holds today's outcome and says what it should be; the fix commit
@@ -87,13 +88,12 @@ func TestReleaseLayer_Order112_EveryStationWaitStages(t *testing.T) {
 			want: "stage1=1/1 stage2=2/2 status=staged blocks=5"},
 		{name: "bare wait, then a wait with a node", firstNode: false,
 			want: "stage1=1/1 stage2=2/2 status=staged blocks=5"},
-		// The fleet never reports the second WAITING as a change, because the
-		// RUNNING between them was never observed. Nothing tells Core the robot
-		// is parked again: the row stays in_transit and the Edge gets no
-		// OrderStaged, so the board never offers the second release.
-		{name: "RUNNING between the waits not observed", firstNode: true, missedRunning: true, bug: "order-112",
-			today: "stage1=1/1 stage2=1/1 status=in_transit blocks=5",
-			want:  "stage1=1/1 stage2=2/2 status=staged blocks=5"},
+		// The RUNNING between the waits is never observed, so the fleet reads
+		// WAITING twice. The release armed the backend to report the second
+		// WAITING once the robot finished the appended segment, so Core stages
+		// the second wait and the Edge gets OrderStaged.
+		{name: "RUNNING between the waits not observed", firstNode: true, missedRunning: true,
+			want: "stage1=1/1 stage2=2/2 status=staged blocks=5"},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {

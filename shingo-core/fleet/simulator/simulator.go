@@ -46,6 +46,13 @@ type simulatedOrder struct {
 	// (FINISHED/STOPPED/FAILED); zero until then. The driver's eviction
 	// sweep (T2.3) deletes terminal orders older than a retention window.
 	terminalAt time.Time
+	// awaitingNextWait is set when a release appends blocks and leaves the
+	// order open: the robot has been sent on to its next wait. A real fleet
+	// can read WAITING both before and after that segment when the RUNNING
+	// between them falls inside one poll, so WAITING -> WAITING counts as a
+	// transition exactly once while this is set. Cleared by any committed
+	// transition.
+	awaitingNextWait bool
 }
 
 type simulatedBlock struct {
@@ -240,6 +247,7 @@ func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Ord
 		})
 	}
 	order.complete = complete
+	order.awaitingNextWait = !complete && len(blocks) > 0
 	return nil
 }
 

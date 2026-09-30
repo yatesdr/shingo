@@ -49,9 +49,13 @@ type Poller struct {
 	// past their deadline are escalated to grace-expiry on the next poll
 	// cycle. Cleared on recovery (FAILED->RUNNING) or terminal transition.
 	faultedDeadline map[string]time.Time
-	graceDuration   time.Duration
-	stopChan        chan struct{}
-	stopOnce        sync.Once
+	// awaitingWait holds, per RDS order, the last block a release appended
+	// while leaving the order open (ExpectNextWait). Map: rdsOrderID ->
+	// blockID. Cleared by the next committed transition.
+	awaitingWait  map[string]string
+	graceDuration time.Duration
+	stopChan      chan struct{}
+	stopOnce      sync.Once
 	// doneChan closes when run() returns, which is what makes Stop
 	// synchronous. started gates the wait: Stop is documented as safe
 	// before Start, and waiting on a loop that was never launched would
@@ -82,6 +86,7 @@ func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, 
 		active:          make(map[string]OrderState),
 		blockStates:     make(map[string]map[string]OrderState),
 		faultedDeadline: make(map[string]time.Time),
+		awaitingWait:    make(map[string]string),
 		graceDuration:   gd,
 		stopChan:        make(chan struct{}),
 		doneChan:        make(chan struct{}),
@@ -110,6 +115,46 @@ func (p *Poller) Untrack(rdsOrderID string) {
 	delete(p.active, rdsOrderID)
 	delete(p.blockStates, rdsOrderID)
 	delete(p.faultedDeadline, rdsOrderID)
+	delete(p.awaitingWait, rdsOrderID)
+}
+
+// ExpectNextWait records that a release appended blocks to rdsOrderID and left
+// it open, so the robot is on its way to its next wait. lastBlockID is the
+// last block appended.
+//
+// The poller emits only on a state change, and a segment shorter than one poll
+// (or poll errors across it) reads WAITING before and after. Without this, that
+// second WAITING is never reported: Core keeps the order in_transit, the Edge
+// gets no OrderStaged, and no one can release the robot (order 112). With it, a
+// WAITING read counts as a transition once the last appended block is FINISHED
+// — the robot finished the segment and parked. A WAITING read before that
+// block finishes is the old wait, and is still not a transition.
+func (p *Poller) ExpectNextWait(rdsOrderID, lastBlockID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, tracked := p.active[rdsOrderID]; tracked {
+		p.awaitingWait[rdsOrderID] = lastBlockID
+	}
+}
+
+// reachedNextWait reports whether a WAITING -> WAITING read is the robot parked
+// at the next wait after a release (see ExpectNextWait).
+func (p *Poller) reachedNextWait(rdsID string, state OrderState, detail *OrderDetail) bool {
+	if state != StateWaiting {
+		return false
+	}
+	p.mu.Lock()
+	blockID, ok := p.awaitingWait[rdsID]
+	p.mu.Unlock()
+	if !ok {
+		return false
+	}
+	for _, b := range detail.Blocks {
+		if b.BlockID == blockID {
+			return b.State == StateFinished
+		}
+	}
+	return false
 }
 
 // ActiveCount returns the number of orders being polled.
@@ -259,7 +304,7 @@ func (p *Poller) poll() {
 		// though the underlying RDS state field is sampled at one moment.
 		p.diffBlockStates(rdsID, detail, resolveOrderID)
 
-		if newState == oldState {
+		if newState == oldState && !p.reachedNextWait(rdsID, newState, detail) {
 			continue
 		}
 
@@ -273,8 +318,10 @@ func (p *Poller) poll() {
 			continue
 		}
 
-		// Resolution succeeded — now commit the state transition.
+		// Resolution succeeded — now commit the state transition. Any committed
+		// transition answers an ExpectNextWait.
 		p.mu.Lock()
+		delete(p.awaitingWait, rdsID)
 		if newState == StateFailed {
 			// FAILED is no longer terminal per SEER docs. Record grace deadline
 			// and keep polling so the engine can recover or escalate on expiry.
@@ -322,6 +369,7 @@ func (p *Poller) checkGraceExpiry() {
 		delete(p.active, rdsID)
 		delete(p.blockStates, rdsID)
 		delete(p.faultedDeadline, rdsID)
+		delete(p.awaitingWait, rdsID)
 		p.mu.Unlock()
 
 		oid, err := p.resolver.ResolveRDSOrderID(rdsID)

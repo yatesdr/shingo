@@ -169,7 +169,15 @@ func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, 
 	// Pin the vehicle that's already assigned to the staged order so RDS
 	// doesn't re-dispatch to a different robot when adding post-wait blocks.
 	log.Printf("adapter: release pinning vehicle %s for order %s", detail.Vehicle, vendorOrderID)
-	return a.client.AddBlocks(vendorOrderID, rdsBlocks, complete, detail.Vehicle)
+	if err := a.client.AddBlocks(vendorOrderID, rdsBlocks, complete, detail.Vehicle); err != nil {
+		return err
+	}
+	// An open order sends the robot on to its next wait; the poller must
+	// report it parking there even if it never reads the RUNNING between.
+	if !complete && a.poller != nil {
+		a.poller.ExpectNextWait(vendorOrderID, rdsBlocks[len(rdsBlocks)-1].BlockID)
+	}
+	return nil
 }
 
 func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {
