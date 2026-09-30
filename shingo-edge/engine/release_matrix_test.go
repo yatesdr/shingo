@@ -341,9 +341,7 @@ func releaseMatrixCells() []relCell {
 
 		// ── Door 2: the operator's per-order click ───────────────────────
 		{name: "d2/two_robot/evac staged",
-			bug:   "L4",
-			today: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | uop=42 | env:evac uop=nil kind=-",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | uop=0 | env:evac uop=nil kind=-", build: pairAt(twoRobot, "evac", S, "supply", D),
+			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | uop=0 | env:evac uop=nil kind=-", build: pairAt(twoRobot, "evac", S, "supply", D),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP, pEnv)},
 		{name: "d2/two_robot/supply alone, evac not staged",
 			bug:   "G7-door2",

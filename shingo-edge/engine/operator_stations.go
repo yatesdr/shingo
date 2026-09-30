@@ -892,7 +892,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// placed bin from the departing one (see produceIngestAtRelease): the
 	// placing leg is the only half of the pair Edge can name a bin for.
 	if !departingIsChangeoverLeg {
-		if err := e.produceIngestAtRelease(node, runtime, claim, supplyOrderID); err != nil {
+		if err := e.produceIngestAtRelease(node, runtime, claim, supplyOrderID, evacOrderID); err != nil {
 			return err
 		}
 	}

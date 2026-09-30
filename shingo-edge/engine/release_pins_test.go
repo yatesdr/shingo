@@ -288,16 +288,16 @@ func releasePinCells() []relCell {
 
 		// ── N3 (Edge half): what the Edge does with each release-path code ──
 		{name: "N3/invalid_state",
-			want: "ok | evac=staged supply=dispatched | rel=evac | ingest=0 capred=0 | chip:evac=Core rejected the release", build: pairAt(twoRobot, "evac", S, "supply", D),
+			want: "ok | evac=staged supply=dispatched | rel=evac | ingest=1 capred=0 | chip:evac=Core rejected the release", build: pairAt(twoRobot, "evac", S, "supply", D),
 			act: seq(orderClick("evac", dispEmpty), refuse("evac", "invalid_state")), probe: probes(pChip("evac"))},
 		{name: "N3/manifest_sync_failed",
-			want: "ok | evac=staged supply=dispatched | rel=evac | ingest=0 capred=0 | chip:evac=Manifest sync failed at Core", build: pairAt(twoRobot, "evac", S, "supply", D),
+			want: "ok | evac=staged supply=dispatched | rel=evac | ingest=1 capred=0 | chip:evac=Manifest sync failed at Core", build: pairAt(twoRobot, "evac", S, "supply", D),
 			act: seq(orderClick("evac", dispEmpty), refuse("evac", "manifest_sync_failed")), probe: probes(pChip("evac"))},
 		{name: "N3/fleet_failed",
-			want: "ok | evac=failed supply=dispatched | rel=evac | ingest=0 capred=0 | chip:evac=-", build: pairAt(twoRobot, "evac", S, "supply", D),
+			want: "ok | evac=failed supply=dispatched | rel=evac | ingest=1 capred=0 | chip:evac=-", build: pairAt(twoRobot, "evac", S, "supply", D),
 			act: seq(orderClick("evac", dispEmpty), refuse("evac", "fleet_failed")), probe: probes(pChip("evac"))},
 		{name: "N3/internal_error",
-			want: "ok | evac=failed supply=dispatched | rel=evac | ingest=0 capred=0 | chip:evac=-", build: pairAt(twoRobot, "evac", S, "supply", D),
+			want: "ok | evac=failed supply=dispatched | rel=evac | ingest=1 capred=0 | chip:evac=-", build: pairAt(twoRobot, "evac", S, "supply", D),
 			act: seq(orderClick("evac", dispEmpty), refuse("evac", "internal_error")), probe: probes(pChip("evac"))},
 
 		// ── N4: a refused produce evac ───────────────────────────────────────
@@ -320,8 +320,6 @@ func releasePinCells() []relCell {
 			},
 			act: func(h *relHarness) error { return h.eng.ReleaseStagedOrders(h.partnerID, dispEmpty) }},
 		{name: "L4/per-order release of a departing produce leg",
-			bug:   "L4",
-			today: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | uop=42 | bin=9001",
 			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | uop=0 | bin=nil",
 			build: pairAt(twoRobot, "evac", S, "supply", D),
 			act:   orderClick("evac", dispEmpty), probe: probes(pUOP, pBin)},

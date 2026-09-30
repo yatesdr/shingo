@@ -561,7 +561,13 @@ func (e *Engine) producedManifest(payloadCode string, qty int64) []protocol.Inge
 	return out
 }
 
-func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, placingOrderID *int64) error {
+// ONCE PER DEPARTING ORDER. departingOrderID is the leg carrying the bin away;
+// when given, the ingest is recorded against it in release_paperwork and a
+// second call for the same order ships nothing. Two doors reach here for one
+// bin — the pair click, and then the trunk it releases the departing leg
+// through — and the zero-count skip above does not cover the second when the
+// clear below is skipped (the placed-bin case), which re-shipped the manifest.
+func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, placingOrderID, departingOrderID *int64) error {
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil
 	}
@@ -569,6 +575,17 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 		e.logFn("produce release: node %s remaining=%d — no release-time manifest to stamp",
 			node.Name, runtimeRemaining(runtime))
 		return nil
+	}
+	if departingOrderID != nil {
+		shipped, err := e.db.ReleaseIngestShipped(*departingOrderID)
+		if err != nil {
+			return fmt.Errorf("node %s: %w", node.Name, err)
+		}
+		if shipped {
+			e.logFn("produce release: node %s order %d — its ingest already shipped; not again",
+				node.Name, *departingOrderID)
+			return nil
+		}
 	}
 	qty := int64(runtime.RemainingUOPCached)
 	var binID int64
@@ -587,6 +604,12 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("queue release-time ingest for node %s: %w", node.Name, err)
+	}
+	if departingOrderID != nil {
+		if err := e.db.MarkReleaseIngestShipped(*departingOrderID, binID, qty); err != nil {
+			e.logFn("produce release: node %s order %d — ingest shipped but not recorded (%v); a second door may ship it again",
+				node.Name, *departingOrderID, err)
+		}
 	}
 	// ── gate: is the bound bin the one LEAVING, or the one that just
 	// ARRIVED? ───────────────────────────────────────────────────────────

@@ -291,6 +291,24 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return err
 	}
 
+	// THE DEPARTING PRODUCE LEG OWES ITS BIN'S INGEST, WHICHEVER DOOR RELEASES
+	// IT. A two-robot produce bin's manifest is stamped at the release tap
+	// (produceIngestAtRelease), and only the pair click stamped it: the
+	// per-order RELEASE of the evac — the button left when its supply leg has
+	// died — sent the full bin away unmanifested and left the count on the
+	// press (L4). A changeover leg's paperwork is the changeover's. Decided
+	// here, in the gates, so an unreadable answer refuses.
+	shipIngest := false
+	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.SwapMode.IsTwoRobot() &&
+		order.SiblingOrderID != nil && !isSupply {
+		changeoverLeg, cerr := e.isChangeoverLeg(&order.ID)
+		if cerr != nil {
+			e.logRelease("order=%d node=%s — refusing release: %v", orderID, node.Name, cerr)
+			return cerr
+		}
+		shipIngest = !changeoverLeg
+	}
+
 	// Side-cycle trigger (U1 only): fires when the operator declares a
 	// produce-side bin full (capture_lineside) on the line side of a
 	// swap (supply orders suppressed by isSupply). A SEND PARTIAL BACK
@@ -319,6 +337,15 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	if toClaim.Role == protocol.ClaimRoleProduce {
 		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
 			orderID, node.Name, string(disp.Mode))
+		// Ahead of the envelope, for the pair click's reason: the outbox drains
+		// by id, so Core applies the manifest before the release. Once per
+		// departing order, so the pair click's own call and this one ship it
+		// once between them.
+		if shipIngest {
+			if err := e.produceIngestAtRelease(node, runtime, toClaim, order.SiblingOrderID, &order.ID); err != nil {
+				return err
+			}
+		}
 		if err := e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy); err != nil {
 			return err
 		}
