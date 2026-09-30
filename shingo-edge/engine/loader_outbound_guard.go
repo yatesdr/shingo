@@ -11,49 +11,50 @@ import (
 // ── ONE BIN LEAVES A LOADER ONCE ──────────────────────────────────────────
 //
 // A loader window is one physical slot holding one bin, so at most one outbound
-// move can be owed at a time. Two paths create that move and neither knew about
-// the other:
+// move can be owed at a time. It is filed by LOAD (fileLoadedOutbound), the one
+// act that knows what the carrier holds, whichever way the empty that brought
+// the carrier was confirmed.
 //
-//	applyLoaderEmptyIn  — the L1 (empty-in) completion fires the L2 (filled-out)
-//	LoadBin's fallback  — "no L1 in flight, create the L2 directly"
+// THERE USED TO BE TWO DOORS. The L1's completion (applyLoaderEmptyIn) filed the
+// same move whenever the empty was confirmed, and LOAD filed it when it found no
+// delivered L1 left to confirm. For a Core-born empty the confirm is Core's
+// auto-confirm sweep, 5 to 10 minutes after the empty lands in production,
+// loaded or not: a robot was sent for a carrier the operator might still be
+// filling, with a blank part, so Core filled the part from the bin at dispatch
+// and the robot group followed whatever the bin read by then. And two callers
+// that both read the slot as owing nothing each filed a move: two orders, one
+// bin. MEASURED on the lane-stress rig, 2026-08-10: PLK_X2 took in 5 empties and
+// produced 10 outbound moves, the pairs 68ms apart; again on the B3 sim,
+// 2026-09-26, PLK_X2 orders 190 and 191 in one second. The loser asked an empty
+// node for material and reported finder-node-empty, which reads as a supply
+// problem at the loader. Pinned by TestLoaderOutbound_IsFiledAtTheLoad_* and
+// TestLoaderOutbound_ConfirmAndLoadTogetherFileOne.
 //
-// The fallback is guarded by "did we just confirm an L1", which is a question
-// about a moment, not about the world. Two callers that both read the loader's
-// bin as empty before either stamps it will both proceed: the first confirms the
-// L1 and the completion handler files an L2, the second finds no delivered L1
-// left and takes the fallback. Two orders, one bin.
+// THE GUARD STAYS for a second LOAD on the same bin (a double tap, or a stale
+// board): outboundMoveInFlight asks the world whether the slot already owes a
+// move, and the order layer has no dedup for move orders. PushEmptyOut carries
+// the same guard on the unloader side (the U2), for the same reason.
 //
-// MEASURED on the lane-stress rig, 2026-08-10: PLK_X2 took in 5 empties and
-// produced 10 outbound moves; PLK_X1, 3 and 6. Exactly double on both, with the
-// pairs 68ms apart. The winner carries the bin away and the loser is left asking
-// an empty node for material forever — it reports finder-node-empty, which reads
-// as a supply problem at the loader and sent this investigation to the plant
-// file twice before it landed here. Nine of fifteen open orders were these.
-//
-// The duplicate was invisible because the fallback logs only on ERROR: eight L2
-// creations appeared in the log and sixteen orders appeared in the database.
-// createLoaderOutbound logs both outcomes for that reason.
-//
-// THIS IS THE UNLOADER'S GUARD, MOVED ACROSS. PushEmptyOut has carried it for
-// the U2 side all along, and calls it a double-tap guard in as many words:
-// "the order layer has no dedup for move orders, so two rapid taps would each
-// create two U2 orders for the same physical bin". Same statement, same slot,
-// same order type — the loader side simply never got it.
+// fileLoadedOutbound logs both outcomes: while there were two doors the
+// duplicate was invisible because one of them logged only on ERROR — eight L2
+// creations in the log, sixteen orders in the database.
 
-// outboundFor resolves where a side-cycle move leaving node goes, for all three
-// creators of one: LoadBin's no-L1 fallback and applyLoaderEmptyIn (the L2,
-// RoleProduce) and createUnloaderEmptyOut (the U2, RoleConsume).
+// outboundFor resolves where a side-cycle move leaving node goes, for both
+// creators of one: fileLoadedOutbound (the L2, RoleProduce) and
+// createUnloaderEmptyOut (the U2, RoleConsume).
 //
 // THE AGGREGATE WINS, THE CLAIM IS THE FALLBACK: Core's loader for role, when it
-// names an outbound, overrides the claim's. The two L2 creators must resolve
-// alike or they can send one carrier to two places — a loader whose outbound was
-// edited in Core, or retired and recreated, used to route the LOAD's move to the
-// old destination and the L1-completion's to the new one.
+// names an outbound, overrides the claim's. A loader whose outbound was edited in
+// Core, or retired and recreated, used to route one L2 door's move to the old
+// destination and the other's to the new one.
+//
+// A consume window reaching LoadBin (the modal's delivered-card tap) misses the
+// produce lookup and keeps the claim's outbound.
 //
 // ok is false for a blank outbound (nowhere to send it) and for one equal to the
 // node itself (a same-node move), each logged in the sentence that site has
-// always printed. LoadBin's fallback used to skip the same-node check and file a
-// move from the window to itself. Pinned by TestPinOutbound_* and
+// always printed. LOAD used to skip the same-node check and file a move from
+// the window to itself. Pinned by TestPinOutbound_* and
 // TestLoadFallback_RefusesASameNodeL2.
 func (e *Engine) outboundFor(node *processes.Node, claim *processes.NodeClaim, role domain.LoaderRole) (string, bool) {
 	outbound := ""
@@ -115,32 +116,37 @@ func (e *Engine) outboundMoveInFlight(processNodeID int64, coreNodeName string) 
 	return false
 }
 
-// createLoaderOutbound files the one outbound move a loaded bin is owed, or
-// declines because the slot already owes one.
+// fileLoadedOutbound files the one outbound move (the L2) a loaded bin is owed,
+// or declines because the slot already owes one, and points the node's runtime
+// at the move it filed so the loader board shows it next. It reports whether it
+// filed one.
 //
-// Returns the created order's ID and whether it created anything, so callers
-// that bind runtime pointers can tell "filed" from "already owed" without
-// re-deriving it.
-func (e *Engine) createLoaderOutbound(processNodeID int64, coreNodeName, outbound, payloadCode, via string) (int64, bool) {
-	if outbound == "" {
-		return 0, false
+// The L2 carries the part the operator loaded, so the robot group is chosen from
+// it at birth; the move is unattended at the outbound end (a supermarket node),
+// so it auto-confirms, or it would stick at `delivered` with no operator to tap
+// CONFIRM there.
+func (e *Engine) fileLoadedOutbound(node *processes.Node, claim *processes.NodeClaim, payloadCode string) bool {
+	outbound, ok := e.outboundFor(node, claim, domain.RoleProduce)
+	if !ok {
+		return false
 	}
-	if e.outboundMoveInFlight(processNodeID, coreNodeName) {
-		// Not a warning: the guard doing its job is the normal outcome whenever
-		// both paths see the same load. It is logged because the absence of this
-		// line is what made the duplicate invisible for the whole first run.
-		e.debugFn("loader-outbound: %s already owes an outbound move — skipping duplicate from %s", coreNodeName, via)
-		return 0, false
+	if e.outboundMoveInFlight(node.ID, node.CoreNodeName) {
+		// Not a warning: a second LOAD on the same bin is the guard's whole job.
+		e.debugFn("loader-outbound: %s already owes an outbound move — skipping a second one from LOAD", node.CoreNodeName)
+		return false
 	}
 	// NoDemand: nothing asked for this. A loaded bin owes an outbound move, and
 	// the guard above is the system deciding to file it — the definition of
 	// structurally originless.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&processNodeID, 1, coreNodeName, outbound, payloadCode, true,
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&node.ID, 1, node.CoreNodeName, outbound, payloadCode, true,
 		orders.NoDemand())
 	if err != nil {
-		log.Printf("loader-outbound: create outbound move for %s → %s (%s): %v", coreNodeName, outbound, via, err)
-		return 0, false
+		log.Printf("loader-outbound: create outbound move for %s → %s: %v", node.CoreNodeName, outbound, err)
+		return false
 	}
-	log.Printf("loader-outbound: order %d for %s → %s payload=%q (%s)", order.ID, coreNodeName, outbound, payloadCode, via)
-	return order.ID, true
+	log.Printf("loader-outbound: order %d for %s → %s payload=%q (load)", order.ID, node.CoreNodeName, outbound, payloadCode)
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(node.ID, &order.ID); err != nil {
+		log.Printf("bin_ops: update runtime orders for node %d: %v", node.ID, err)
+	}
+	return true
 }

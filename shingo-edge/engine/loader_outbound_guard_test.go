@@ -7,6 +7,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // outboundOrder files a move LEAVING coreNode — the shape the guard must see.
@@ -81,54 +82,48 @@ func TestOutboundMoveInFlight_TerminalDoesNotBlock(t *testing.T) {
 	}
 }
 
-// TestCreateLoaderOutbound_FilesOnceForOneBin is the fix, stated as the
-// behaviour it buys.
-//
-// Both L2 paths — the L1 completion and LoadBin's fallback — run against the
-// same slot. The first files the move; the second must decline. On the
-// lane-stress rig, without this, PLK_X2 took in 5 empties and produced 10
-// outbound moves.
-func TestCreateLoaderOutbound_FilesOnceForOneBin(t *testing.T) {
+// TestFileLoadedOutbound_FilesOnceForOneBin: a second LOAD on the same bin (a
+// double tap, or a stale board) finds the move the first one filed and files
+// nothing. The order layer has no dedup for move orders; this guard is it.
+func TestFileLoadedOutbound_FilesOnceForOneBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	e := testEngine(t, db)
 	_, nodeID := seedProcessNode(t, db)
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "load node")
+	claim := &processes.NodeClaim{OutboundDestination: "SYN_COMP"}
 
-	id1, created1 := e.createLoaderOutbound(nodeID, "PLK_X2", "SYN_COMP", "STUD", "L1-completion")
-	if !created1 || id1 == 0 {
-		t.Fatal("the first outbound move was not filed — the loaded bin has nothing to carry it away")
-	}
+	e.fileLoadedOutbound(node, claim, "STUD")
+	e.fileLoadedOutbound(node, claim, "STUD")
 
-	id2, created2 := e.createLoaderOutbound(nodeID, "PLK_X2", "SYN_COMP", "STUD", "load-fallback")
-	if created2 {
-		t.Errorf("a SECOND outbound move (%d) was filed for the same bin. One of the two will "+
-			"carry the bin off and the other will sit queued against an empty node reporting "+
-			"finder-node-empty, which reads as a supply problem at the loader", id2)
-	}
-
-	moves, err := db.ListActiveOrdersByProcessNodeOrSource(nodeID, "PLK_X2")
+	moves, err := db.ListActiveOrdersByProcessNodeOrSource(nodeID, node.CoreNodeName)
 	testutil.MustNoErr(t, err, "list active")
 	n := 0
 	for _, o := range moves {
-		if o.OrderType == orders.TypeMove && o.SourceNode == "PLK_X2" {
+		if o.OrderType == orders.TypeMove && o.SourceNode == node.CoreNodeName {
 			n++
 		}
 	}
 	if n != 1 {
-		t.Errorf("loader owes %d outbound moves, want exactly 1 — one bin leaves a loader once", n)
+		t.Errorf("loader owes %d outbound moves after two LOADs, want exactly 1 — one bin leaves a loader "+
+			"once; the second would sit queued against an empty node reporting finder-node-empty", n)
 	}
 }
 
-// TestCreateLoaderOutbound_NoDestinationFilesNothing — a loader with no
+// TestFileLoadedOutbound_NoDestinationFilesNothing — a loader with no
 // OutboundDestination is misconfigured, not a reason to create a move with an
 // empty destination.
-func TestCreateLoaderOutbound_NoDestinationFilesNothing(t *testing.T) {
+func TestFileLoadedOutbound_NoDestinationFilesNothing(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	e := testEngine(t, db)
 	_, nodeID := seedProcessNode(t, db)
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "load node")
 
-	if _, created := e.createLoaderOutbound(nodeID, "PLK_X2", "", "STUD", "L1-completion"); created {
+	e.fileLoadedOutbound(node, &processes.NodeClaim{}, "STUD")
+	if e.outboundMoveInFlight(nodeID, node.CoreNodeName) {
 		t.Error("filed an outbound move with no destination")
 	}
 }

@@ -456,14 +456,9 @@ func advanceClaimOnRelease(e *Engine, ctx *orderCompletionCtx) {
 }
 
 // matchLoaderEmptyIn matches an L1 retrieve_empty order completing at a
-// manual_swap producer (loader) node. L1 brought an empty to the loader;
-// the operator filled it; CONFIRM means the bin is ready to send back to
-// the supermarket. Apply fires the L2 (filled-out) move.
-//
-// The OutboundDestination validity checks live in Apply rather than Match
-// to preserve the pre-table fall-through-with-warning behavior: a malformed
-// claim logs a diagnostic and lets the cascade continue to
-// handleNormalReplenishment for default cleanup. PR 3 may revisit.
+// manual_swap producer (loader) node: the empty that brought a carrier to the
+// window has been confirmed — by the operator's LOAD, the window's CONFIRM, or
+// Core's auto-confirm sweep for a Core-born empty.
 func matchLoaderEmptyIn(ctx *orderCompletionCtx) bool {
 	if !ctx.order.RetrieveEmpty {
 		return false
@@ -473,87 +468,40 @@ func matchLoaderEmptyIn(ctx *orderCompletionCtx) bool {
 		claim.Role == protocol.ClaimRoleProduce
 }
 
+// applyLoaderEmptyIn is the L1's bookkeeping and nothing else: no runtime
+// pointer keeps naming a confirmed order. It files NO outbound move. The L2 is
+// the operator's LOAD's (fileLoadedOutbound), the act that knows what the
+// carrier holds; a confirm is not a load — Core confirms a Core-born empty 5 to
+// 10 minutes after it lands whether or not anyone has filled it. See
+// loader_outbound_guard.go.
+//
+// WHEN LOAD IS THE CONFIRMER it moves the pointer itself, onto the L2 it files
+// next (or off the L1 when it files none), so this writes nothing: LoadBin
+// records the part it loaded on this runtime row immediately before it confirms,
+// and a carrier's identity leaves with the carrier (handler_bin_picked_up
+// records it unknown at departure), so a known part here is LOAD's hand. Any
+// other confirmer (the window's CONFIRM, Core's auto-confirm) clears the
+// pointer here, and only when it names the L1 — a Core-born empty's mirror row
+// is usually named by no pointer at all.
+//
+// Handled here rather than left to normal_replenishment: that row reads the
+// Edge's spelling of the type only, and an echoed L1 is `retrieve_empty`, so a
+// fall-through would leave the window's runtime pointing at a terminal L1.
+// Pinned by TestPinEcho_SharedWindowL1ToASiblingWindow and
+// TestHandleLoaderEmptyInCompletion_FilesNoL2.
 func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
-	claim := ctx.Claim() // cached in Match
-	// L2 outbound routing comes from the loader AGGREGATE (the config source of truth),
-	// not the legacy style_node_claim — this severs the completion handler's dependency
-	// on style_node_claims-as-loader-config (keystone step 5). See outboundFor. A blank
-	// or same-node outbound reports unhandled, so the cascade falls through to
-	// handleNormalReplenishment for default cleanup.
-	outbound, ok := e.outboundFor(ctx.node, claim, domain.RoleProduce)
-	if !ok {
-		return false
-	}
-	nodeID := ctx.node.ID
-	loadedPayloadCode := e.loadedPayloadForL2(ctx)
-	// L2 always auto-confirms: OutboundDestination is an unattended
-	// supermarket node, so without auto-confirm the order sits at
-	// `delivered` forever (no operator to tap CONFIRM there). This is
-	// independent of claim.AutoConfirm — that flag controls operator-facing
-	// orders at THIS loader, not the side-cycle move that Edge owns end-to-
-	// end. Pre-fix the L2 stuck delivered on Edge while Core auto-confirmed
-	// on its side; the divergence lit up the bin-loader UI as a permanent
-	// "Confirm" button on a move that had already physically completed.
-	// Through the shared guard: LoadBin's fallback creates this same move when it
-	// cannot find a delivered L1, and two callers that both read the slot as empty
-	// before either stamps it will both get here. One bin leaves a loader once —
-	// see loader_outbound_guard.go.
-	orderID, created := e.createLoaderOutbound(nodeID, ctx.node.CoreNodeName, outbound, loadedPayloadCode, "L1-completion")
-	if !created {
-		// Handled either way: the move exists, whoever filed it. Reporting
-		// unhandled would drop the completion through to normal replenishment,
-		// which is not what an already-owed outbound means.
+	rt := ctx.runtime
+	if rt == nil || (rt.LinesidePayloadKnown && rt.LinesidePayloadCode != "") {
 		return true
 	}
-	// Runtime cache binding is owned by the delivered handler — L1's
-	// empty bin landing at the loader already wrote active_bin_id /
-	// remaining_uop_cached. Confirm only swaps the active order pointer
-	// so the loader UI shows L2 next.
-	if err := e.db.SetProcessNodeRuntimeActiveOrder(ctx.node.ID, &orderID); err != nil {
-		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
+	id := ctx.order.ID
+	if (rt.ActiveOrderID == nil || *rt.ActiveOrderID != id) && (rt.StagedOrderID == nil || *rt.StagedOrderID != id) {
+		return true
+	}
+	if err := e.db.ClearProcessNodeRuntimeOrderRefs(id); err != nil {
+		log.Printf("side-cycle: clear runtime pointers to loader L1 %d: %v", id, err)
 	}
 	return true
-}
-
-// loadedPayloadForL2 is the part the L2 carries: the operator's pick, not the
-// claim's primary payload. A loader can list several payloads, and the board
-// matches the L2 to a tile by o.payload_code, so a mis-tag mis-renders the
-// IN_TRANSIT chip on a multi-payload loader.
-//
-// FROM LOAD'S HAND FIRST. LoadBin records the part it loaded on this node's
-// runtime row immediately before it confirms the L1, and the completion runs
-// synchronously inside that confirm, so ctx.runtime already holds it — the
-// answer costs no round trip. A carrier's identity leaves with the carrier
-// (handler_bin_picked_up records it unknown at departure), so a known part here
-// is the bin standing on the window.
-//
-// A confirm that did not come from LOAD (the modal's CONFIRM DELIVERY) finds no
-// known part and asks Core for the bin, as before.
-//
-// THE DECISION IS THE SAME EITHER WAY AND THE RECORD IS NOT. This is the one
-// census site where an unreachable Core neither refuses nor over-orders: the
-// L2 is created regardless, with a blank payload, and the mis-tag is durable
-// on the order row. Nothing distinguishes it afterwards from "Core said the
-// window is genuinely blank", which is a legitimate state after a race. Say
-// which one it was.
-func (e *Engine) loadedPayloadForL2(ctx *orderCompletionCtx) string {
-	if rt := ctx.runtime; rt != nil && rt.LinesidePayloadKnown && rt.LinesidePayloadCode != "" {
-		return string(rt.LinesidePayloadCode)
-	}
-	if e.coreClient == nil || !e.coreClient.Available() {
-		return ""
-	}
-	bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName})
-	switch {
-	case len(bins) > 0:
-		return bins[0].PayloadCode
-	case !reachable:
-		e.logFn("side-cycle: loader %s — could not read the loaded payload (Core %s); the L2 "+
-			"is tagged from the claim's primary payload, which mis-renders the IN_TRANSIT "+
-			"chip on a multi-payload loader",
-			ctx.node.Name, OccupancyOutcome(reachable, ferr))
-	}
-	return ""
 }
 
 // matchManualSwap matches a move order completion on a manual_swap node.

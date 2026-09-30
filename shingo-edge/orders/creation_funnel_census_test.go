@@ -284,7 +284,7 @@ var edgeCreationSites = map[string]string{
 	"engine/operator_node_changeover.go:StageNodeChangeoverMaterial":     "CreateComplexOrder,CreateRetrieveOrder",
 	"engine/wiring_status_changed.go:handleSequentialBackfill":           "CreateComplexOrder",
 	// loader and unloader side-cycles
-	"engine/loader_outbound_guard.go:createLoaderOutbound":              "CreateMoveOrderWithPayloadCode",
+	"engine/loader_outbound_guard.go:fileLoadedOutbound":                "CreateMoveOrderWithPayloadCode",
 	"engine/operator_bin_ops.go:RequestFullBin":                         "CreateRetrieveOrder",
 	"engine/operator_bin_ops.go:createUnloaderEmptyOut":                 "CreateMoveOrderWithPayloadCode",
 	"engine/operator_bin_ops.go:requestEmptyAtManualSwapLoader":         "CreateRetrieveOrder",

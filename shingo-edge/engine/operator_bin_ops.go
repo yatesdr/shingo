@@ -290,27 +290,28 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 
 	// The operator's tap on LOAD is the explicit confirmation that the L1
 	// retrieve_empty arrived and has been filled. Confirming the L1 here
-	// transitions it delivered → confirmed, sends a delivery receipt to Core,
-	// and emits the EventOrderCompleted that applyLoaderEmptyIn is wired to —
-	// that handler creates the L2 (filled-bin → outbound) move order and
-	// updates the loader's runtime. Pre-fix the L1 stayed at `delivered`
-	// indefinitely (Core would auto-confirm on its side, but Edge had no
-	// continuous status sync) and L2 was created here directly, duplicating the
-	// side-cycle handler's responsibility.
+	// transitions it delivered → confirmed and sends a delivery receipt to Core.
+	// An L1 Core already confirmed (its auto-confirm sweep, for a Core-born
+	// empty) is not found here and takes the branch below; either way the L2 is
+	// filed by this LOAD, after the confirm (fileLoadedOutbound).
 	//
-	// THE LOADED PART IS HANDED OVER ON THE RUNTIME ROW, before the confirm. The
-	// completion runs synchronously inside ConfirmDelivery and already reads this
-	// node's runtime row, so applyLoaderEmptyIn takes the L2's part from there
-	// instead of asking Core what it just wrote — no second round trip. It is the
-	// same write the fallback below makes (seatManuallyLoadedBin), and the
-	// operator is the instrument either way. Pinned by
+	// The operator is the instrument for what the window now holds: the same
+	// write the branch below makes through seatManuallyLoadedBin. Pinned by
 	// TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2.
 	e.recordLinesideCarrier(node.ID, node.CoreNodeName,
 		domain.KnownCarrier(domain.LinesidePayloadCode(payloadCode)), domain.CarrierFromOperator)
 	if l1ID, l1Confirmed := e.confirmDeliveredAt(node.CoreNodeName, true, seatedUOP); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
+		// The L1's completion left the runtime pointer to this LOAD
+		// (applyLoaderEmptyIn): onto the L2, or off the confirmed L1 when no
+		// L2 is filed (no outbound, or one already owed).
+		if !e.fileLoadedOutbound(node, claim, payloadCode) {
+			if err := e.db.ClearProcessNodeRuntimeOrderRefs(l1ID); err != nil {
+				log.Printf("bin_ops: clear runtime pointers to L1 %d: %v", l1ID, err)
+			}
+		}
 		// Belt-and-suspenders: set active_bin_id directly from Core's LoadBin
-		// response. The L1-completion path will also try to set it
+		// response. The delivered handler also sets it
 		// from the L1 order's BinID, but if Core's order.delivered envelope
 		// arrived without bin_id (multi-bin order, or pre-fix Core build)
 		// the event handler ends up with nil. The LoadBin response is the
@@ -335,10 +336,10 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		return nil
 	}
 
-	// Fallback: no L1 in flight (e.g. operator loaded a bin that was placed
-	// at the loader manually rather than via a retrieve_empty). Set runtime
-	// and create L2 directly so the bin still gets dispatched to outbound.
-	// active_bin_id comes from Core's LoadBin response — that's the
+	// No delivered L1 here: the operator loaded a bin placed at the loader by
+	// hand, or Core already confirmed the empty that brought it (its auto-confirm
+	// sweep, for a Core-born L1). Seat the bin and file the L2 so it still goes
+	// to outbound. active_bin_id comes from Core's LoadBin response — that's the
 	// authoritative pointer to the bin physically at this slot, regardless
 	// of whether any order was tracking it.
 	// claim.ID is 0 for a synthesized Core-loader claim (no style_node_claim row);
@@ -355,40 +356,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		deltaEpoch = loadResp.DeltaEpoch
 	}
 	e.seatManuallyLoadedBin(node, claimIDPtr, activeBinID, deltaEpoch, int(seatedUOP), payloadCode)
-	// L2 to OutboundDestination is unattended (supermarket node) — must
-	// auto-confirm or it sticks at `delivered` forever. See the same reasoning in
-	// applyLoaderEmptyIn. Thread the operator-selected payloadCode through so the
-	// order tile in operator-station renders IN_TRANSIT against the correct
-	// payload card (claim's primary payload would mis-bind on multi-payload
-	// loaders).
-	//
-	// THROUGH THE SHARED GUARD. "No L1 in flight" is a question about a moment;
-	// whether this slot already owes an outbound move is a question about the
-	// world, and only the second one is safe to create an order on. Two callers
-	// racing this branch and applyLoaderEmptyIn is what doubled every outbound
-	// move on the lane-stress rig — see loader_outbound_guard.go.
-	//
-	// THE AGGREGATE WINS, THE CLAIM IS THE FALLBACK — byte-for-byte the shape
-	// applyLoaderEmptyIn already uses, and RoleProduce for the same reason it
-	// does: these two are the only creators of this one L2 move, so a different
-	// resolution here is a way for them to send the same carrier to two places.
-	// They could: this read was the claim's alone, so a loader whose outbound was
-	// edited in Core — or retired and recreated — routed the LOAD's move to the
-	// old destination and the L1-completion's move to the new one.
-	//
-	// A consume window reaching LoadBin (the modal's delivered-card tap) misses
-	// the produce lookup and keeps the claim's outbound, exactly as today.
-	//
-	// outboundFor also refuses a blank or same-node outbound here, as the other
-	// two creators always did; this door alone used to file a move from the
-	// window to itself.
-	if outbound, ok := e.outboundFor(node, claim, domain.RoleProduce); ok {
-		if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, outbound, payloadCode, "load-fallback"); created {
-			if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &orderID); err != nil {
-				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-			}
-		}
-	}
+	e.fileLoadedOutbound(node, claim, payloadCode)
 
 	e.clearRefusalOnLoad(node.CoreNodeName, payloadCode)
 	return nil

@@ -380,28 +380,27 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 // staging (rePushOwnLoader / SweepPushLoaders — maybe_push_loader_test.go); there is no bin-count
 // DemandSignal path left to test here.
 
-// TestHandleLoaderEmptyInCompletion_FiresL2 verifies the L2 fire on the
-// loader side: when an L1 retrieve_empty order (empty bin, role produce,
-// manual_swap) confirms at the loader, L2 fires as a move from the loader
-// to claim.OutboundDestination. Symmetric counterpart to
-// TestHandleUnloaderFullInCompletion_FiresU2 — discriminator is the role
-// on the active claim (produce + RetrieveEmpty=true vs. consume + full).
-func TestHandleLoaderEmptyInCompletion_FiresL2(t *testing.T) {
+// TestHandleLoaderEmptyInCompletion_FilesNoL2: an L1 retrieve_empty confirming
+// at a loader (role produce, manual_swap) files no L2 and leaves no runtime
+// pointer on the confirmed L1. The L2 is the operator's LOAD's
+// (fileLoadedOutbound): a confirm is not a load. Symmetric with the unloader,
+// whose U2 is CLEAR's and not the U1's completion (note below).
+//
+// BEFORE (B3 close-out, stop 1; was ..._FiresL2): the completion filed the L2 as
+// a move to claim.OutboundDestination with whatever part it could read, which is
+// blank when the confirm is Core's auto-confirm and nobody has loaded.
+func TestHandleLoaderEmptyInCompletion_FilesNoL2(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	loaderNodeID, _ := seedManualSwapClaim(t, db, "L2-FIRE", "produce", "PART-L2", "STORAGE-NODE")
 
-	// L1 = retrieve_empty order at the loader. RetrieveEmpty=true is the
-	// trigger condition; the payload code on the L1 itself is not what
-	// drives L2's payload (loadedPayloadForL2 takes the part LOAD
-	// recorded on the runtime row, else reads coreClient.FetchNodeBins —
-	// this fixture confirms without LOAD and coreClient is nil, so L2
-	// ships with an empty payload code, which is acceptable for asserting
-	// the dispatch shape).
 	orderID, err := db.CreateOrder("uuid-l1-fire", orders.TypeRetrieve,
 		&loaderNodeID, true, 1, "L2-FIRE-MSWAP-NODE", "", "", "", false, "", "", "")
 	if err != nil {
 		t.Fatalf("create L1 order: %v", err)
+	}
+	if err := db.SetProcessNodeRuntimeActiveOrder(loaderNodeID, &orderID); err != nil {
+		t.Fatalf("point runtime at L1: %v", err)
 	}
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 
@@ -413,14 +412,17 @@ func TestHandleLoaderEmptyInCompletion_FiresL2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
 	}
-	var l2Found bool
 	for _, o := range all {
-		if o.OrderType == orders.TypeMove && o.DeliveryNode == "STORAGE-NODE" {
-			l2Found = true
+		if o.OrderType == orders.TypeMove {
+			t.Errorf("L1 completion filed a move %d to %s; the L2 is LOAD's", o.ID, o.DeliveryNode)
 		}
 	}
-	if !l2Found {
-		t.Errorf("expected L2 move from loader to STORAGE-NODE; got %+v", all)
+	rt, err := db.GetProcessNodeRuntime(loaderNodeID)
+	if err != nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if rt.ActiveOrderID != nil {
+		t.Errorf("runtime active order = %d after the L1 confirmed, want cleared", *rt.ActiveOrderID)
 	}
 }
 

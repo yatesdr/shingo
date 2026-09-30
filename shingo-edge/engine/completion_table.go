@@ -15,10 +15,8 @@ import "shingo/protocol"
 // "is this row applicable?" question) separate from its Apply side-effects.
 // The dispatcher walks completionChain top-down; the first row whose Match
 // returns true gets to Apply, and the cascade stops when Apply returns
-// true. loader_empty_in uses Apply's bool to signal "matched but malformed
-// config — log diagnostic and fall through to normal_replenishment for
-// default cleanup"; every other row's Apply returns true unconditionally
-// because Match has already gated it.
+// true. Every row's Apply returns true unconditionally because Match has
+// already gated it.
 //
 // Adding a new completion case is now: write Match + Apply, insert a row.
 // No cascade edits, no precedence-by-source-order, no precondition-gate
@@ -34,8 +32,7 @@ import "shingo/protocol"
 // Apply runs the row's side effects when Match returned true. The bool
 // return is "did this row handle the order? if so, stop the cascade." For
 // most rows the return is unconditionally true (Match is the gate, Apply
-// always handles). The loader/unloader side-cycle rows use false to signal
-// malformed-claim diagnostic logging + fall-through to normal_replenishment.
+// always handles); false falls through to the next row.
 type completionCase struct {
 	Name  string
 	Match func(*orderCompletionCtx) bool
@@ -60,13 +57,19 @@ func matchAlways(*orderCompletionCtx) bool { return true }
 //  3. order_b_simple         — Order B (old material release), manual
 //     move or non-swap-evacuate complex
 //  4. changeover_release     — Order A → direct (non-staged) delivery
-//  5. loader_empty_in        — L1 confirm fires L2 (filled-out)
+//  5. loader_empty_in        — L1 confirmed at a loader: pointers cleared, no L2
 //  6. manual_swap            — Move order on a manual_swap node
 //  7. normal_replenishment   — terminal fallback (retrieve/complex)
 //
 // The unloader empty-out (U2) is NOT a completion case: it is driven by the
 // operator's CLEAR tap (ClearBin → createUnloaderEmptyOut), not by a U1 retrieve
 // completing — a press/forklift-fed drain has no U1. See ClearBin in operator_bin_ops.go.
+//
+// Nor is the loader's filled-out (L2): it is filed by the operator's LOAD
+// (LoadBin → fileLoadedOutbound), the act that knows what the carrier holds,
+// not by the empty (L1) that brought the carrier being confirmed — Core
+// auto-confirms a Core-born empty whether or not anyone has loaded it.
+// loader_empty_in is the L1's bookkeeping only. See loader_outbound_guard.go.
 var completionChain = []completionCase{
 	{Name: "staged_delivery", Match: matchStagedDelivery, Apply: applyStagedDelivery},
 	{Name: "order_b_complex", Match: matchOrderBComplex, Apply: applyOrderBComplex},

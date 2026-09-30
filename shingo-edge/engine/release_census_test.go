@@ -136,7 +136,7 @@ var orderCreationSites = map[string]string{
 	"api_retrieve.go:createRetrieveDirect":                        "API retrieve, direct arm",
 	"changeover_applier.go:createComplexFromSpec":                 "changeover plan: complex legs (the planner's waits; S7 adds one before the per-position swap's pickup)",
 	"changeover_applier.go:createRetrieveFromSpec":                "changeover plan: simple retrieves (no steps)",
-	"loader_outbound_guard.go:createLoaderOutbound":               "loader outbound move (no wait)",
+	"loader_outbound_guard.go:fileLoadedOutbound":                 "loader outbound move, filed at the LOAD (no wait)",
 	"operator_bin_ops.go:RequestFullBin":                          "operator: full bin to a loader window",
 	"operator_bin_ops.go:createUnloaderEmptyOut":                  "unloader empty-out (no wait)",
 	"operator_bin_ops.go:requestEmptyAtManualSwapLoader":          "operator: empty to a manual-swap loader",

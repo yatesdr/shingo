@@ -287,7 +287,7 @@ func TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2(t *testing.T) {
 	}
 	moves := scMovesFrom(t, db, window)
 	if len(moves) != 1 {
-		t.Fatalf("L2s leaving %s = %d, want exactly 1 (from L1-completion)", window, len(moves))
+		t.Fatalf("L2s leaving %s = %d, want exactly 1 (LOAD files it after confirming the L1)", window, len(moves))
 	}
 	if moves[0].DeliveryNode != "FG-MARKET" || moves[0].PayloadCode != "PART-SC" {
 		t.Errorf("L2 = to %q payload %q, want FG-MARKET / PART-SC (the part LOAD held)",
@@ -322,8 +322,8 @@ func TestPinD3a_LoadAfterEcho_ConfirmsTheL1AndFilesOneL2(t *testing.T) {
 
 // TestPinD3b_ConfirmedL1AtACoreOwnedLoader_FilesOneL2: LOAD's confirmed branch
 // at a loader with no stored claim. The completion ctx resolves the claim through
-// claimAtNode (stored, else SynthClaim), so loader_empty_in matches and files
-// exactly one L2 with the loaded part.
+// claimAtNode (stored, else SynthClaim), and LOAD files exactly one L2 with the
+// loaded part.
 //
 // BEFORE D3 (pinned at c0c525c0 as ..._CreatesNoL2): the ctx read stored claims
 // only, IsLoaderNode() on nil was false, and the confirmed branch filed NO L2 —
@@ -373,7 +373,7 @@ func TestPinCoreOwnedLoader_L2LandingClearsAndRePushes(t *testing.T) {
 	testutil.MustNoErr(t, eng.LoadBin(nodeID, "", nil, scManifest), "LoadBin")
 	moves := scMovesFrom(t, db, window)
 	if len(moves) != 1 {
-		t.Fatalf("moves leaving %s = %d, want 1 (LOAD's fallback L2)", window, len(moves))
+		t.Fatalf("moves leaving %s = %d, want 1 (LOAD's L2)", window, len(moves))
 	}
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
@@ -648,8 +648,10 @@ func scDestsFrom(t *testing.T, db *store.DB, core string) []string {
 }
 
 // TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites: where the stored claim
-// and Core's loader disagree, all three creators route to Core's outbound —
-// LoadBin's fallback, createUnloaderEmptyOut, and applyLoaderEmptyIn.
+// and Core's loader disagree, every move routes to Core's outbound — LOAD with
+// no L1 to confirm, createUnloaderEmptyOut, and LOAD confirming an L1 (the
+// l1_completion case, which filed its L2 from the L1's completion until the B3
+// close-out; LOAD files it now).
 func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 	t.Parallel()
 
@@ -735,18 +737,26 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		c := newSCCore(t)
 		c.set(core, true, "")
 		eng.coreClient = stubCoreClient(c.srv.URL)
-		scDeliveredRetrieve(t, db, "obbc-l1", orders.TypeRetrieve, nodeID, true, core)
+		l1 := scDeliveredRetrieve(t, db, "obbc-l1", orders.TypeRetrieve, nodeID, true, core)
+		testutil.MustNoErr(t, db.SetProcessNodeRuntimeActiveOrder(nodeID, &l1), "point runtime at L1")
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
 			t.Errorf("L2 destinations = %v, want none", got)
+		}
+		// LOAD confirmed the L1 and filed nothing, so it takes the pointer off
+		// the confirmed L1 itself (the completion leaves it to LOAD).
+		rt, err := db.GetProcessNodeRuntime(nodeID)
+		testutil.MustNoErr(t, err, "read runtime")
+		if rt.ActiveOrderID != nil && *rt.ActiveOrderID == l1 {
+			t.Errorf("runtime still points at the confirmed L1 %d", l1)
 		}
 	})
 }
 
 // TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites: an outbound equal
-// to the window's own node is refused by createUnloaderEmptyOut and
-// applyLoaderEmptyIn, as it was at c0c525c0. The third site is
-// TestLoadFallback_RefusesASameNodeL2.
+// to the window's own node is refused by createUnloaderEmptyOut and by LOAD
+// confirming an L1 (the L1's completion's refusal at c0c525c0, now LOAD's). LOAD
+// with no L1 is TestLoadFallback_RefusesASameNodeL2.
 func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 	t.Parallel()
 
@@ -780,8 +790,8 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 	})
 }
 
-// TestLoadFallback_RefusesASameNodeL2: LoadBin's fallback refuses an outbound
-// that resolves to the window's own name, like the other two creators. At
+// TestLoadFallback_RefusesASameNodeL2: LOAD with no L1 to confirm refuses an
+// outbound that resolves to the window's own name, like every other move. At
 // c0c525c0 it filed a move from the window to itself (flat bug).
 func TestLoadFallback_RefusesASameNodeL2(t *testing.T) {
 	t.Parallel()
