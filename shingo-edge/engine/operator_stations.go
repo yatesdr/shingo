@@ -714,8 +714,9 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // design — the operator repeats the click — which is precisely why none of them
 // may leave a trace.
 //
-// Read alongside FinalizeProduceNode and the consume release path, which are
-// held to the same order by TestReleasePathsGateBeforeSideEffects.
+// Read alongside the consume release path. Every door is held to this order by
+// TestReleasePathsGateBeforeSideEffects and the release matrix
+// (release_matrix_test.go): a refusal must leave no envelope and no paperwork.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	// A changeover node whose work is a SINGLE leg — a cleared position's
 	// clear-and-refill, one order on one robot — is released through the

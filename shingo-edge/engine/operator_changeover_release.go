@@ -200,7 +200,7 @@ func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string,
 	// ── SEQUENTIAL ONLY, AND NOT AS AN EXCEPTION ──────────────────────────
 	//
 	// This was written mode-agnostically, on "half an A/B pair", and the sim
-	// refused it: TestReleaseStagedOrders went red across two_robot and
+	// refused it: the TestReleaseStagedOrders_ tests went red across two_robot and
 	// press-index because those modes RELEASE AT THE ACTIVE PULL POINT by
 	// design. A press-index front position is the active one AND the one being
 	// swapped — the index motion moves bins between positions with the press

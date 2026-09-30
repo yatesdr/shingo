@@ -162,9 +162,13 @@ func (e *Engine) handleSiblingReleaseRefire(changed OrderStatusChangedEvent) {
 		// fire on, and 112 held AMR-19 for 28 minutes under a board reading
 		// "Waiting for partner robot" about a partner that had finished.
 		//
-		// `in_transit` is RELEASABLE at Core (orders.ReleasableAtCore accepts it
-		// for exactly this multi-wait re-release), so nothing about the release
-		// itself needed changing — only something to ask for it.
+		// THIS ARM NO LONGER RESCUES THAT SHAPE. A release on an order already
+		// released past a station wait, with a wait still ahead, is a no-op at
+		// Core: re-appending there is what carried a leg past a wait nobody had
+		// released (N-a). So for 112's shape — parked at its second wait while
+		// Core still records in_transit — this re-release reaches Core and does
+		// nothing. What is left of that failure is Core's missing second
+		// `staged`, pinned at Core (bug:order-112) and owed there.
 		//
 		// Same one-shot bound, same terminal-SUCCESS test, same refusal to touch
 		// a leg whose partner DIED: releaseSurvivorOfFinishedPartner re-reads and

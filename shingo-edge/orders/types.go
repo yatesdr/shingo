@@ -93,9 +93,14 @@ func IsTerminalSuccess(status protocol.Status) bool {
 // ReleasableAtCore reports whether Core will ACCEPT an OrderRelease for an
 // order in this status. It mirrors Core's precondition verbatim — see
 // shingo-core/dispatch/complex_release.go, which rejects anything that is
-// neither staged nor in_transit with an "invalid_state" error (in_transit is
-// accepted for duplicate fan-out from the consolidated two-robot release and
-// for multi-wait re-release).
+// neither staged nor in_transit with an "invalid_state" error.
+//
+// ACCEPTED IS NOT ACTED ON. Core accepts in_transit so a duplicate from the
+// consolidated two-robot release does not error, but it appends nothing for an
+// order already released past a station wait and not re-staged since: that
+// release is a logged no-op at Core (a second press on a robot driving between
+// two waits used to append the NEXT wait's segment — N-a). An in_transit order
+// still driving to its FIRST wait is released on the way.
 //
 // Why callers need this: Manager.ReleaseOrderWithDisposition guards only
 // terminal + pending/submitted, and then transitions the Edge row to

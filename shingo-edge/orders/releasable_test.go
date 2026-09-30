@@ -24,7 +24,7 @@ func TestReleasableAtCore(t *testing.T) {
 		why    string
 	}{
 		{StatusStaged, true, "the normal release: robot is holding at its wait step"},
-		{StatusInTransit, true, "duplicate fan-out from consolidated release, and multi-wait re-release"},
+		{StatusInTransit, true, "duplicate fan-out from consolidated release (Core no-ops it past a station wait)"},
 
 		// The four that caused the divergence: Edge's manager guard admits
 		// them, Core refuses them with invalid_state.

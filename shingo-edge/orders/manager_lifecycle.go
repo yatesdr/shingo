@@ -81,9 +81,12 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 		return fmt.Errorf("enqueue release: %w", err)
 	}
 
-	// Transition Edge status to in_transit now that the robot is resuming.
-	// Core won't send a dedicated in_transit message (TypeOrderUpdate ignores
-	// status), so we transition locally to keep Edge in sync.
+	// Transition Edge status to in_transit now, at the click, without waiting
+	// for Core. Core does push in_transit too — its OrderUpdate carries the
+	// status and the Edge applies it (ApplyCoreStatus) — but only once the fleet
+	// moves, and Core answers a release only with errors, never an acceptance.
+	// Recording the release locally is what lets the board and the next click
+	// see it at once; a Core refusal rolls it back (RollbackReleaseRejection).
 	if err := m.TransitionOrder(orderID, StatusInTransit, ReleasedFromStagingDetail); err != nil {
 		return fmt.Errorf("transition to in_transit: %w", err)
 	}

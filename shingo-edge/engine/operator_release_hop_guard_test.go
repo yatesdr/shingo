@@ -414,9 +414,11 @@ func TestReleaseStagedOrders_DefersWhenSiblingAlreadyFinished(t *testing.T) {
 // 28 minutes under a board reading "Waiting for partner robot", about a partner
 // that had finished.
 //
-// `in_transit` IS releasable at Core — orders.ReleasableAtCore accepts it "for
-// multi-wait re-release", which is exactly this — so nothing about the release
-// needed changing. What was missing was anything to ask for it.
+// This pins the EDGE half only: the terminal arm sends the envelope. Core no
+// longer acts on it for 112's shape — a release on an order already released
+// past a station wait, with a wait still ahead, is a Core no-op (N-a) — so the
+// envelope rescues nothing there; Core's missing second `staged` is pinned at
+// Core (bug:order-112).
 //
 // RED without the terminal arm: the survivor stays in_transit and no envelope is
 // queued.

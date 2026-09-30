@@ -241,7 +241,6 @@ var phantomCitations = map[string]string{
 	"TestRegression_ReconciliationSelfHeal @ engine/wiring_concurrent_tick_test.go":                                "outside the release layer: reported, not fixed here",
 	"TestRegression_RemovalOrderClearsBinAndZeroesUOP @ engine/uop_regression_test.go":                             "outside the release layer: reported, not fixed here",
 	"TestRegression_RuntimeUOPNegativeNoReorderRefire @ engine/wiring_counter_delta_test.go":                       "outside the release layer: reported, not fixed here",
-	"TestReleaseStagedOrders @ engine/operator_changeover_release.go":                                              "release path: fixed with the S1 comment fixes",
 	"TestShapeFieldWordsAreTheClaimsOwnNames @ domain/flow_preset_word_drift_test.go":                              "outside the release layer: reported, not fixed here",
 	"TestShapeFieldWordsMatchTheModel @ domain/flow_preset_word_drift_test.go":                                     "outside the release layer: reported, not fixed here",
 	"TestStationView_CarriesNoCellPicture @ service/composer_budget_pins_test.go":                                  "outside the release layer: reported, not fixed here",
