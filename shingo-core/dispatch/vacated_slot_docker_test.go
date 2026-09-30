@@ -675,7 +675,7 @@ func TestVacatedSlot_P24_RepointedStampsDoNotCount(t *testing.T) {
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status = "vs24-redirected", "line-1", OrderTypeComplex, StatusStaged
 			o.DeliveryNode, o.StepsJSON = "VS24-ELSEWHERE", string(j)
 		})
-		if refusal := d.vacateReleaseRefusal(o); refusal != "" {
+		if _, refusal := d.vacateReleaseRefusal(o); refusal != "" {
 			t.Fatalf("a redirected drop was fenced on a stamp it no longer carries: %s", refusal)
 		}
 	})

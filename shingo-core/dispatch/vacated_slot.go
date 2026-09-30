@@ -388,7 +388,8 @@ func logVacated(order *orders.Order, st *vacateStamp, asker string) {
 // ── THE RELEASE FENCE (U5) ──────────────────────────────────────────────────
 
 // vacateReleaseRefusal is the fence HandleOrderRelease consults before it
-// appends a segment. It returns the refusal detail, or "" when the release may go.
+// appends a segment. It returns the arm that refused ("Z" or "Y") and the
+// refusal detail, or "" for both when the release may go.
 //
 // Z — THIS LEG DROPS ON A SLOT ITS PARTNER HAS NOT VACATED YET. A (b) grant
 // promised the partner lifts first; the release is what would break that
@@ -406,31 +407,37 @@ func logVacated(order *orders.Order, st *vacateStamp, asker string) {
 //
 // Both read the segment as it will be sent — after patchRedirectSegments, which
 // can rewrite the final drop at release.
-func (d *Dispatcher) vacateReleaseRefusal(order *orders.Order) string {
+func (d *Dispatcher) vacateReleaseRefusal(order *orders.Order) (arm, detail string) {
 	seg, ok := d.pendingSegment(order)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	for _, s := range seg {
 		st := partnerStamp(s)
 		if st == nil {
 			continue
 		}
-		if d.binStillOn(st.Bin, s.Node) {
-			return fmt.Sprintf("order %d would drop on %s, which its partner order %d has not yet emptied "+
+		on, err := d.binOn(st.Bin, s.Node)
+		if err != nil {
+			return "Z", fmt.Sprintf("order %d would drop on %s, which its partner order %d must empty first, "+
+				"and Core could not read where bin %d is (%v) — release again",
+				order.ID, s.Node, st.Partner, st.Bin, err)
+		}
+		if on {
+			return "Z", fmt.Sprintf("order %d would drop on %s, which its partner order %d has not yet emptied "+
 				"(bin %d is still there) — release again once that robot has lifted it", order.ID, s.Node, st.Partner, st.Bin)
 		}
 	}
 	if order.SiblingOrderUUID == "" {
-		return ""
+		return "", ""
 	}
 	z, err := d.db.GetOrderByUUID(order.SiblingOrderUUID)
 	if err != nil || z == nil || z.Status != StatusStaged {
-		return ""
+		return "", ""
 	}
 	zSeg, ok := d.pendingSegment(z)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	var held *vacateStamp
 	for _, s := range zSeg {
@@ -440,7 +447,7 @@ func (d *Dispatcher) vacateReleaseRefusal(order *orders.Order) string {
 		}
 	}
 	if held == nil {
-		return ""
+		return "", ""
 	}
 	for _, s := range seg {
 		if s.Action != protocol.ActionDropoff || s.Node == "" {
@@ -456,13 +463,13 @@ func (d *Dispatcher) vacateReleaseRefusal(order *orders.Order) string {
 		}
 		for _, b := range onNode {
 			if b.ClaimedBy != nil && *b.ClaimedBy == z.ID {
-				return fmt.Sprintf("order %d would drop on %s, which still holds bin %d of its partner order %d — "+
+				return "Y", fmt.Sprintf("order %d would drop on %s, which still holds bin %d of its partner order %d — "+
 					"and order %d is held until order %d empties %s. Release again once it has",
 					order.ID, s.Node, b.ID, z.ID, z.ID, held.Partner, held.Node)
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // pendingSegment is the segment a release of this order would append, exactly as
@@ -481,19 +488,24 @@ func (d *Dispatcher) pendingSegment(o *orders.Order) ([]resolvedStep, bool) {
 	return seg, true
 }
 
-// binStillOn reports whether a bin still stands on the named node. Unreadable
-// answers yes: the fence refuses, and a refused release is a click repeated.
-func (d *Dispatcher) binStillOn(binID int64, node string) bool {
+// binOn reports whether a bin still stands on the named node. An answer that
+// could not be read is an error: the fence still refuses on it (a refused
+// release is a click repeated), but says it could not read, rather than
+// claiming the bin is there.
+func (d *Dispatcher) binOn(binID int64, node string) (bool, error) {
 	b, err := d.db.GetBin(binID)
 	if err != nil {
-		return true
+		return false, fmt.Errorf("read bin %d: %w", binID, err)
 	}
 	if b == nil || b.NodeID == nil {
-		return false
+		return false, nil
 	}
 	n, err := d.db.GetNodeByDotName(node)
-	if err != nil || n == nil {
-		return true
+	if err != nil {
+		return false, fmt.Errorf("read node %s: %w", node, err)
 	}
-	return *b.NodeID == n.ID
+	if n == nil {
+		return false, fmt.Errorf("node %s not found", node)
+	}
+	return *b.NodeID == n.ID, nil
 }

@@ -49,9 +49,13 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	// Precondition: order must be staged or in_transit. InTransit is accepted
-	// for duplicate fan-out from Edge's consolidated two-robot release and for
-	// multi-wait re-release. The real duplicate gate is splitSegment returning nil.
+	// Precondition: order must be staged or in_transit. in_transit is accepted
+	// for an order driving to its first wait (released on the way, or reached by
+	// the consolidated two-robot fan-out before it staged) and for duplicates.
+	// splitSegment alone does not gate a duplicate: for a multi-wait order it
+	// returns the NEXT wait's segment. Three checks do: the in_transit repeat
+	// below (past a station wait, a wait still ahead), the gate fence (the wait
+	// ahead is a lane's), and splitSegment's nil past the final wait.
 	if order.Status != StatusStaged && order.Status != StatusInTransit {
 		d.sendError(env, p.OrderUUID, "invalid_state",
 			fmt.Sprintf("order must be staged or in_transit to release, got %s", order.Status))
@@ -93,10 +97,16 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// refused here; every other release reads one sibling row at most and goes.
 	//
 	// AHEAD OF THE MANIFEST SYNC, unlike the gate fence below: a refused release
-	// must change nothing, and the sync writes the operator's count. invalid_state
-	// is the code Edge rolls back to staged non-terminally (edge_handler.go).
-	if refusal := d.vacateReleaseRefusal(order); refusal != "" {
-		log.Printf("dispatch: release refused (vacated slot): %s", refusal)
+	// must write nothing of Core's, and the sync writes the operator's count.
+	// That is Core's half only. The Edge has already done its release paperwork
+	// (the lineside capture, the count finalize, the changeover task) before it
+	// sent this envelope, and a refusal undoes none of it. invalid_state is the
+	// code Edge rolls back to staged non-terminally (edge_handler.go).
+	//
+	// The log line names the arm, Z (this leg's stamped drop) or Y (the partner
+	// held with it), so a shift's refusals can be counted per arm.
+	if arm, refusal := d.vacateReleaseRefusal(order); refusal != "" {
+		log.Printf("dispatch: release refused (vacated slot, %s): %s", arm, refusal)
 		d.sendError(env, p.OrderUUID, "invalid_state", refusal)
 		return
 	}
@@ -366,11 +376,15 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 		physical = "clear"
 	}
 
-	// The vacated-slot fence is bypassed here the same way the gate fence is, on
-	// purpose — this is the hatch — and said out loud when it would have refused.
-	if refusal := d.vacateReleaseRefusal(order); refusal != "" {
+	// The vacated-slot fence is bypassed here the same way the gate fence is, and
+	// said out loud when it would have refused. It never sees a leg held at a
+	// station wait: the station-wait refusal above returns first, and a stamped
+	// leg and its partner are held at their station waits. It can fire only for
+	// a leg parked at a LANE wait whose pending segment carries a stamp, or drops
+	// onto a bin its staged, stamped sibling has claimed.
+	if arm, refusal := d.vacateReleaseRefusal(order); refusal != "" {
 		physical += "; VACATED-SLOT FENCE BYPASSED: " + refusal
-		log.Printf("HARD RELEASE: order %d bypasses the vacated-slot fence: %s", orderID, refusal)
+		log.Printf("HARD RELEASE: order %d bypasses the vacated-slot fence (%s): %s", orderID, arm, refusal)
 	}
 
 	d.db.AppendAudit("order", orderID, "hard_release", "",

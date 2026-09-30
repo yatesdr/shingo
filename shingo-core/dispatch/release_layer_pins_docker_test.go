@@ -347,3 +347,28 @@ func TestReleaseLayer_PairDeathRule(t *testing.T) {
 		})
 	}
 }
+
+// ── U5's refusal names its arm, and says when it could not read ─────────────
+
+// TestReleaseLayer_VacatedRefusalArms: the vacated-slot fence reports which arm
+// refused, Z (the stamped leg) or Y (its partner held with it), so a shift's
+// refusals can be counted per arm; and a stamped bin that cannot be read is
+// refused as "could not read", not as a bin still standing there.
+func TestReleaseLayer_VacatedRefusalArms(t *testing.T) {
+	t.Parallel()
+	r := newReleaseRig(t)
+	z, y, b1, _, _ := swapAtVacatedBuffer(t, r, "RLVS", StatusStaged)
+	if arm, detail := r.d.vacateReleaseRefusal(prReload(t, r.db, z.ID)); arm != "Z" || !strings.Contains(detail, "is still there") {
+		t.Errorf("stamped leg: arm %q detail %q, want Z and the bin still there", arm, detail)
+	}
+	if arm, _ := r.d.vacateReleaseRefusal(prReload(t, r.db, y.ID)); arm != "Y" {
+		t.Errorf("partner: arm %q, want Y", arm)
+	}
+	// The drop node no longer resolves by name, so where the bin stands cannot
+	// be compared with it.
+	mustExecDispatch(t, r.db, `UPDATE nodes SET name=$1 WHERE id=$2`, "RLVS-B1-RENAMED", b1.ID)
+	arm, detail := r.d.vacateReleaseRefusal(prReload(t, r.db, z.ID))
+	if arm != "Z" || !strings.Contains(detail, "could not read") || strings.Contains(detail, "is still there") {
+		t.Errorf("unreadable bin: arm %q detail %q, want Z and \"could not read\"", arm, detail)
+	}
+}
