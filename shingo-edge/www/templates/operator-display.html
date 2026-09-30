@@ -5,7 +5,16 @@
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- THE KIOSK FIT: width=1024, NOT device-width. A fixed layout width is
+         what Chrome's desktop-site toggle does, and it is how a 4.3-inch
+         scan-gun kiosk (480x800) reads the station at all: the mobile browser
+         lays the page out at 1024 CSS px and scales it to the physical screen
+         - the CSS-px viewport height becomes physical_height/scale, so the
+         full-height layout fills BOTH dimensions. Desktop browsers ignore the
+         viewport meta entirely, so every monitor is pixel-identical to what
+         it has always been. maximum-scale/user-scalable are gone on purpose:
+         they pinned the scale at 1.0 and prevented the fit. -->
+    <meta name="viewport" content="width=1024">
     <title>{{.Station.Name}} - Operator Station</title>
     {{template "clock-globals" .}}
     <!-- THE SHARED TOKENS, which every other edge page has had since
@@ -170,33 +179,5 @@
          open and holds them; see the note at the top of that file for what
          stays at boot and why. -->
     <script type="module" src="/static/operator-station/operator.js?v={{cacheBust}}"></script>
-
-    <!-- A MODULE TAG, not a classic block, deliberately: the page's invariant
-         (operator-boot-watchdog.test.js) is "exactly one classic inline
-         script tag" - the boot watchdog is the one classic inline script, and
-         the test extracts it by that shape. A module tag sits outside that
-         count and cannot confuse the extraction. -->
-    <script type="module">
-    // THE SMALL-SCREEN FIT: uniform zoom so ANY display fits without a layout
-    // of its own. The scale is min(1, viewport / 1024) - 1024 is the width the
-    // layout's narrow (max-width: 1024px) media tier is designed for - so a
-    // screen at or above the design width computes scale 1 and applies NO zoom
-    // at all (pixel-identical to today), and anything smaller shrinks
-    // uniformly. CSS zoom RE-FLOWS rather than pixel-scaling: the layout
-    // engine sees the design width, the responsive tier engages, and Chromium
-    // re-rasterizes text at the zoomed size so it stays crisp. Re-runs on
-    // resize, so rotating a tablet re-fits. A 4.3-inch kiosk (480x800) mounts
-    // landscape: 800px wide computes 0.78, which is where the whole station
-    // reads at arm's length; portrait fits too, just glance-sized.
-    (function () {
-        var DESIGN = 1024;
-        function fit() {
-            var z = Math.min(1, window.innerWidth / DESIGN);
-            document.documentElement.style.zoom = z < 1 ? z : '';
-        }
-        window.addEventListener('resize', fit);
-        fit();
-    })();
-    </script>
 </body>
 </html>
