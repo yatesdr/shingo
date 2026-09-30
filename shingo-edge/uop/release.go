@@ -81,6 +81,19 @@ type ReleaseDisposition struct {
 	ConfirmActivePull bool
 }
 
+// typedEmpty reports a SEND PARTIAL BACK whose operator-typed count is 0.
+//
+// ZERO MEANS EMPTY. The operator looked at the bin and said nothing is left in
+// it, and that is RELEASE EMPTY: the manifest is cleared and the release audits
+// as released_empty. It used to fall through to the runtime cache, so a typed 0
+// on a node whose counter still read 42 sent the bin back as a partial of 42 —
+// the operator's count, the one this field exists to carry, silently replaced
+// by the number it was entered to correct. Absent (nil) still means "the
+// client sent no count" and keeps the cache fallback below.
+func (d ReleaseDisposition) typedEmpty() bool {
+	return d.Mode == DispositionSendPartialBack && d.PartialCount != nil && *d.PartialCount == 0
+}
+
 // ComputeReleaseRemainingUOP returns the *int that should be threaded to
 // orderMgr.ReleaseOrder as the remaining_uop value, based on the disposition.
 //
@@ -102,6 +115,7 @@ type ReleaseDisposition struct {
 //   - nil for unrecognized / zero-value Mode (no manifest action).
 //
 // SendPartialBack source priority (Phase 0b):
+//  0. disp.PartialCount typed as 0: the bin is empty, &0 (typedEmpty).
 //  1. disp.PartialCount (operator-entered via the keypad) when set and >0.
 //     Per the SME contract the operator's count is ground truth.
 //  2. runtime.RemainingUOPCached when >0. Fallback for legacy HTTP clients that
@@ -134,6 +148,10 @@ func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.Runt
 		}
 		return nil
 	case DispositionSendPartialBack:
+		if disp.typedEmpty() {
+			zero := 0
+			return &zero
+		}
 		if disp.PartialCount != nil && *disp.PartialCount > 0 {
 			v := *disp.PartialCount
 			return &v
@@ -189,6 +207,9 @@ func BuildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 			CapturesSuggested: disp.LinesideCaptureSuggested,
 		}
 	case DispositionSendPartialBack:
+		if disp.typedEmpty() {
+			return &protocol.UOPDisposition{Kind: protocol.DispositionReleaseEmpty}
+		}
 		d := &protocol.UOPDisposition{Kind: protocol.DispositionReleasePartial}
 		switch {
 		case disp.PartialCount != nil && *disp.PartialCount > 0:
