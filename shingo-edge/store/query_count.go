@@ -32,14 +32,23 @@ import (
 // SQLite since the last Reset. Safe for concurrent use.
 type QueryCounter struct {
 	n atomic.Int64
+	q atomic.Int64 // of n, the ones sent as a query (rows back): the reads
 }
 
 // Count returns the statements issued since the last Reset (or open).
 func (c *QueryCounter) Count() int64 { return c.n.Load() }
 
+// Reads returns the statements of Count that were sent as queries, and Writes
+// the rest. The split is by how the statement was SENT, not by what the SQL
+// says: an INSERT ... RETURNING sent through Query counts as a read. For the
+// release path's measurements that is the honest line anyway — a query holds
+// the one connection until its rows are drained.
+func (c *QueryCounter) Reads() int64  { return c.q.Load() }
+func (c *QueryCounter) Writes() int64 { return c.n.Load() - c.q.Load() }
+
 // Reset zeroes the count. Call it after fixture seeding and before the call
 // under test, so the count is the call's and not the setup's.
-func (c *QueryCounter) Reset() { c.n.Store(0) }
+func (c *QueryCounter) Reset() { c.n.Store(0); c.q.Store(0) }
 
 // OpenCounting is Open with every statement counted. Same DSN pragmas, same
 // single-connection pin, same migrate + verifySchema — the only difference is
@@ -178,6 +187,7 @@ func (c *countingConn) QueryContext(ctx context.Context, query string, args []dr
 		return nil, driver.ErrSkip
 	}
 	c.counter.n.Add(1)
+	c.counter.q.Add(1)
 	return q.QueryContext(ctx, query, args)
 }
 
@@ -220,6 +230,7 @@ func (s *countingStmt) Exec(args []driver.Value) (driver.Result, error) {
 
 func (s *countingStmt) Query(args []driver.Value) (driver.Rows, error) {
 	s.counter.n.Add(1)
+	s.counter.q.Add(1)
 	return s.Stmt.Query(args) //nolint:staticcheck // fallback path for drivers without StmtQueryContext
 }
 
@@ -233,6 +244,7 @@ func (s *countingStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 
 func (s *countingStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	s.counter.n.Add(1)
+	s.counter.q.Add(1)
 	if q, ok := s.Stmt.(driver.StmtQueryContext); ok {
 		return q.QueryContext(ctx, args)
 	}
