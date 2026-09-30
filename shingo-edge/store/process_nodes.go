@@ -44,6 +44,12 @@ func (db *DB) UpdateProcessNode(id int64, in processes.NodeInput) error {
 	return processes.UpdateNode(db.DB, id, in)
 }
 
+// ListCurtainedProcessNodes returns every live node whose curtain interlock
+// is on. See processes.ListCurtainedNodes.
+func (db *DB) ListCurtainedProcessNodes() ([]processes.Node, error) {
+	return processes.ListCurtainedNodes(db.DB)
+}
+
 // SetProcessNodeCurtain writes one node's FG light-curtain interlock
 // settings. See processes.SetNodeCurtain for the refusals.
 func (db *DB) SetProcessNodeCurtain(id int64, enabled bool, plcName, tagName string, safeValue *bool) error {

@@ -356,6 +356,17 @@ func ListNodesByStation(db *sql.DB, stationID int64) ([]Node, error) {
 	return scanNodes(rows)
 }
 
+// ListCurtainedNodes returns every LIVE process_nodes row whose curtain
+// interlock is on, plant-wide.
+func ListCurtainedNodes(db *sql.DB) ([]Node, error) {
+	rows, err := db.Query(`SELECT ` + nodeSelect + ` ` + nodeJoin + ` WHERE n.curtain_enabled = 1 AND` + liveNodes + ` ORDER BY n.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodes(rows)
+}
+
 // GetNode returns one process_node row by id.
 func GetNode(db *sql.DB, id int64) (*Node, error) {
 	n, err := scanNode(db.QueryRow(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.id=?`, id))

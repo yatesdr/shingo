@@ -27,9 +27,10 @@ package engine
 // conversation.
 //
 // The render half is elsewhere: the station view folds the tag's cache value
-// into the node entry so the RELEASE button greys out before the click (see
-// the view enrichment). That is UX. This gate is the interlock, and the
-// button never being shown is not what stands between a pair and a release.
+// into the node entry so the RELEASE button greys out before the click
+// (stampViewCurtainState on /view). That is UX. This gate is the interlock,
+// and the button never being shown is not what stands between a pair and a
+// release.
 
 import (
 	"context"

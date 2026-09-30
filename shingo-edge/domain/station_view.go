@@ -21,6 +21,16 @@ type NodeBinState struct {
 	Occupied          bool    `json:"occupied"`
 }
 
+// CurtainPoint is one curtained node's interlock settings, as the view
+// build hands them to the render stamp. SafeValue nil is "polarity not
+// chosen", which the stamp renders as held, as the gate refuses it.
+type CurtainPoint struct {
+	Node      string
+	PLCName   string
+	TagName   string
+	SafeValue *bool
+}
+
 // StationNodeView is the per-node section of an OperatorStationView —
 // pairs the persisted process Node and its RuntimeState with the
 // claim-and-orders context needed for the HMI's node tile, plus the
@@ -44,13 +54,20 @@ type StationNodeView struct {
 	// reads a property the server declares instead of a mode name: sequential
 	// and single_robot link their legs too, and release them one at a time.
 	ReleasesAsPair bool `json:"releases_as_pair"`
-	// CurtainOK is the FG light-curtain interlock's render half. Non-nil only
-	// when the node's process has the interlock enabled and this node's claim
-	// is a produce claim — the only release the gate checks. False greys the
-	// RELEASE button (the tag is not in its release state, or could not be
-	// read — the gate refuses fail-closed, so the button must not promise).
-	// True leaves the button normal. Nil = not gated here.
+	// CurtainOK is the FG light-curtain interlock's render half, read from
+	// the PLC poll cache, never WarLink directly: the button is UX, the gate
+	// at the click is the interlock. Nil (absent) when none of CurtainPoints
+	// is curtained. False greys the RELEASE button: some curtained node does
+	// not read its release value in the cache, or the cache has no value for
+	// it (the gate refuses fail-closed, so the button must not promise). True
+	// leaves the button normal.
 	CurtainOK *bool `json:"curtain_ok,omitempty"`
+	// CurtainPoints are the curtained nodes this tile's release sends a robot
+	// into: the tile's own node and the paired positions of its configured
+	// claim, those with the interlock on. Resolved by the view build from
+	// node rows it already holds; the www layer turns them into CurtainOK
+	// from the tag cache. Not serialised: the board reads CurtainOK.
+	CurtainPoints []CurtainPoint `json:"-"`
 
 	// ChangeoverLoadDirective tells a loader's card what to load during a
 	// changeover — see the type. Nil when there is no changeover, the claim

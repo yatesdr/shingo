@@ -163,6 +163,24 @@ func (m *Manager) SetSSETimingsForTest(stall, reconcile time.Duration) {
 	m.sseReconcileIntervalOverride = reconcile
 }
 
+// SetTagValueForTest puts one value in the poll cache ReadTag serves, with the
+// PLC marked connected. Test-only, and named so: production fills the cache
+// from the WarLink poll or event stream, and a test outside this package that
+// needs a cached reading would otherwise have to run that whole pipeline.
+func (m *Manager) SetTagValueForTest(plcName, tagName string, value any) {
+	m.mu.Lock()
+	mp, ok := m.plcs[plcName]
+	if !ok {
+		mp = newManagedPLC(plcName)
+		m.plcs[plcName] = mp
+	}
+	m.mu.Unlock()
+	mp.mu.Lock()
+	defer mp.mu.Unlock()
+	mp.Status = "Connected"
+	mp.Values[tagName] = TagValue{Name: tagName, Value: value}
+}
+
 // NewManager creates a PLC manager. If wl is nil the default WarLink HTTP
 // client is built from config (production behavior); sim mode injects a fake
 // WarlinkClient here so the real poll pipeline runs against it (D3). The

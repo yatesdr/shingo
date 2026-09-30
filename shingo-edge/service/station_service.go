@@ -190,6 +190,14 @@ type StationService struct {
 	sceneMemoFor *domain.SceneGeometry
 	sceneMemo    *domain.ComposerScene
 
+	// curtained is every live node with the curtain interlock on, keyed by
+	// (process, core node), as of process_nodes generation curtainedGen. See
+	// curtainedNodes for why it is held rather than read per poll.
+	curtainMu     sync.Mutex
+	curtained     map[curtainKey]processes.Node
+	curtainedGen  uint64
+	curtainLoaded bool
+
 	// touched throttles the liveness write — see Touch.
 	touchMu sync.Mutex
 	touched map[int64]touchState
@@ -548,6 +556,13 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		return nil, err
 	}
 	b := s.prefetchBoardData(process, nodes, nodeTaskMap)
+	// The board's own node rows, for the curtain points: a paired position
+	// that is also on this board is read from here rather than from the
+	// plant-wide set.
+	stationNodes := make(map[curtainKey]processes.Node, len(nodes))
+	for _, n := range nodes {
+		stationNodes[curtainKey{n.ProcessID, n.CoreNodeName}] = n
+	}
 	for _, node := range nodes {
 		// See the BuildView doc comment: one abandoned tile-loop iteration is the
 		// granularity at which we give the single DB connection back.
@@ -571,12 +586,101 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 				view.ActiveChangeover.ID, s.stationTakesLoadDirective(node.CoreNodeName),
 				tile.ActiveClaim, b.targetClaimList, s.binTypeForPayload)
 		}
+		tile.CurtainPoints = s.curtainPoints(node, b, stationNodes)
 		view.Nodes = append(view.Nodes, tile)
 	}
 
 	s.applyLoaderLineside(view)
 
 	return view, nil
+}
+
+// curtainKey names a process_node by what a claim's pairing names it by: the
+// core node, within the claim's process.
+type curtainKey struct {
+	processID int64
+	coreNode  string
+}
+
+// curtainPoints resolves the curtained nodes a tile's release sends a robot
+// into: the tile's own node, and the paired and second-paired positions of
+// its configured claim - the process's active style first, the target style
+// when the active one has no claim here (store.ActiveStyleFirst, the
+// resolution the release verbs use). Nil when none of them is curtained.
+//
+// NO QUERY OF ITS OWN ON AN ORDINARY POLL. The tile's node and any paired
+// position on the same board come from rows the build already read. A
+// paired position off the board - a press-index back position has no
+// station - comes from curtainedNodes, which re-reads only when
+// process_nodes has been written since it last did.
+func (s *StationService) curtainPoints(node processes.Node, b *boardData, board map[curtainKey]processes.Node) []domain.CurtainPoint {
+	var out []domain.CurtainPoint
+	add := func(n processes.Node) {
+		if n.CurtainEnabled {
+			out = append(out, domain.CurtainPoint{
+				Node: n.Name, PLCName: n.CurtainPLCName, TagName: n.CurtainTagName, SafeValue: n.CurtainSafeValue,
+			})
+		}
+	}
+	add(node)
+	if node.CoreNodeName == "" {
+		return out
+	}
+	claim, ok := b.activeClaims[node.CoreNodeName]
+	if !ok {
+		claim, ok = b.targetClaims[node.CoreNodeName]
+	}
+	if !ok {
+		return out
+	}
+	seen := map[string]bool{node.CoreNodeName: true}
+	for _, name := range claim.ExtensionPositions() {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		key := curtainKey{node.ProcessID, name}
+		if n, onBoard := board[key]; onBoard {
+			add(n)
+			continue
+		}
+		if n, curtained := s.curtainedNodes()[key]; curtained {
+			add(n)
+		}
+	}
+	return out
+}
+
+// curtainedNodes is every live node with the interlock on, held between
+// polls and re-read when processes.NodeGeneration moves - every writer of
+// process_nodes bumps it, the curtain setter included, and
+// node_generation_drift_test.go holds that list. The station poll runs every
+// 500 ms per board on one SQLite connection, so a read here per poll would be
+// a read multiplied by every board for a setting an engineer changes a few
+// times a year. The generation is taken BEFORE the read, so a write racing it
+// leaves the held set marked stale and the next poll reads again.
+//
+// A failed read is not held, and answers with no off-board curtained nodes
+// for this poll: the render is advisory, and the gate reads the node itself
+// at the click.
+func (s *StationService) curtainedNodes() map[curtainKey]processes.Node {
+	s.curtainMu.Lock()
+	defer s.curtainMu.Unlock()
+	gen := processes.NodeGeneration()
+	if s.curtainLoaded && s.curtainedGen == gen {
+		return s.curtained
+	}
+	rows, err := s.db.ListCurtainedProcessNodes()
+	if err != nil {
+		log.Printf("station view: read curtained nodes: %v", err)
+		return nil
+	}
+	m := make(map[curtainKey]processes.Node, len(rows))
+	for _, n := range rows {
+		m[curtainKey{n.ProcessID, n.CoreNodeName}] = n
+	}
+	s.curtained, s.curtainedGen, s.curtainLoaded = m, gen, true
+	return m
 }
 
 // CellPictureForStation builds one station's cell picture. THE FETCH, made by

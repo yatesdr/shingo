@@ -254,6 +254,17 @@ func TestStationView_BuildsInOnePass(t *testing.T) {
 	} else {
 		t.Logf("station poll: %d queries, budget %d", n, budget)
 	}
+
+	// THE NEXT POLL DOES NOT READ THE CURTAINED NODES AGAIN: the set is held
+	// until process_nodes is written. Exact, for the budget's reason.
+	fx.counter.Reset()
+	if _, err := fx.svc.BuildView(context.Background(), fx.stationID); err != nil {
+		t.Fatalf("BuildView: %v", err)
+	}
+	if n := fx.counter.Count(); n != stationSteadyPollQueryBudget {
+		t.Errorf("a second station poll issues %d queries, want exactly %d - the curtained-node "+
+			"read is back on every poll", n, stationSteadyPollQueryBudget)
+	}
 }
 
 // stationPollQueryBudget is what one station poll costs at the budget
@@ -269,7 +280,18 @@ func TestStationView_BuildsInOnePass(t *testing.T) {
 //
 // The ceiling here was 34 while the actual was 33, which is one query of slack
 // nobody meant to leave. The exact-equality pin below is what closes that.
-const stationPollQueryBudget = 31
+//
+// 32 SINCE THE CURTAIN MOVED TO THE NODE. This is the board's FIRST poll, and
+// the one it adds is the plant's curtained nodes, read because the fixture's
+// press has a paired position off the board and a curtain there holds the
+// front's RELEASE. The set is held until process_nodes is next written, so the
+// steady poll below does not pay it.
+const stationPollQueryBudget = 32
+
+// stationSteadyPollQueryBudget is every poll after the first at the same
+// fixture: the first also materialises runtime rows and reads the curtained
+// nodes, and neither repeats. 19 before the curtain moved and 19 after.
+const stationSteadyPollQueryBudget = 19
 
 // stationViewByteBudget is the WHOLE view's serialised size, pre-gzip, at the
 // budget fixture's plant.

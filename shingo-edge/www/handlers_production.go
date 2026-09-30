@@ -11,6 +11,7 @@ import (
 
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/plc"
 )
 
 // enrichViewBinState fetches bin state from Core and attaches it to each node in the views.
@@ -63,6 +64,61 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 			}
 		}
 	}
+}
+
+// curtainTagCache is the one thing the curtain stamp needs from the PLC
+// manager: the poll cache's reading of a tag.
+type curtainTagCache interface {
+	ReadTag(plcName, tagName string) (any, error)
+}
+
+// stampViewCurtainState sets each tile's CurtainOK from its CurtainPoints
+// (resolved by the view build): absent when the tile has none, false when any
+// of them does not read its release value in the PLC poll cache, true
+// otherwise.
+//
+// THE RENDER HALF ONLY. The interlock is the gate at the release verbs
+// (engine/curtain_gate.go), which reads WarLink DIRECTLY at the click. This
+// reads the manager's CACHE, at most one poll or one change event old - fine
+// for a button, never for the gate - and issues no query.
+//
+// ANY READ TROUBLE STAMPS FALSE, never absent: no manager, no cached value,
+// a value that is not a BOOL, or a node whose polarity was never chosen. The
+// gate refuses every one of those fail-closed, so a button that stayed
+// enabled would promise a click the gate will refuse.
+func stampViewCurtainState(mgr *plc.Manager, nodes []domain.StationNodeView) {
+	var cache curtainTagCache
+	if mgr != nil {
+		cache = mgr
+	}
+	for i := range nodes {
+		points := nodes[i].CurtainPoints
+		if len(points) == 0 {
+			continue
+		}
+		ok := cache != nil
+		for _, p := range points {
+			if !ok {
+				break
+			}
+			ok = curtainPointReleased(cache, p)
+		}
+		nodes[i].CurtainOK = &ok
+	}
+}
+
+// curtainPointReleased reports whether one curtained node reads its release
+// value in the cache.
+func curtainPointReleased(cache curtainTagCache, p domain.CurtainPoint) bool {
+	if p.SafeValue == nil || p.PLCName == "" || p.TagName == "" {
+		return false
+	}
+	raw, err := cache.ReadTag(p.PLCName, p.TagName)
+	if err != nil {
+		return false
+	}
+	val, isBool := plc.CurtainBool(raw)
+	return isBool && val == *p.SafeValue
 }
 
 // enrichViewContainmentTargets stamps each node whose core node is named as a

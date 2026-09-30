@@ -85,6 +85,9 @@ type stubEngine struct {
 	core     map[string]protocol.NodeInfo
 	groups   map[string][]string // group membership the stub's StationService is wired with
 	orderMgr *orders.Manager
+	// plcMgr is what PLCManager returns: nil unless a test puts a manager
+	// (with a seeded tag cache) here.
+	plcMgr *plc.Manager
 
 	// Spy fields — populated by stub methods so handler tests can assert on
 	// the values that flowed through. Add new fields here as needed; keep
@@ -146,7 +149,7 @@ type stubEngine struct {
 func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
 func (s *stubEngine) ConfigPath() string            { return s.cfgPath }
 func (s *stubEngine) CoreAPI() *engine.CoreClient   { return nil }
-func (s *stubEngine) PLCManager() *plc.Manager      { return nil }
+func (s *stubEngine) PLCManager() *plc.Manager      { return s.plcMgr }
 func (s *stubEngine) OrderManager() *orders.Manager { return s.orderMgr }
 
 // A REAL reconciliation service over testDB. It used to return nil, which made
