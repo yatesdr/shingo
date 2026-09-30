@@ -171,14 +171,10 @@ func releasePinCells() []relCell {
 
 		// ── N-a′: the pickup chain releases a supply the pair click released ─
 		{name: "N-a'/pickup chain, R2 still driving to its hold",
-			bug:   "N-a'",
-			today: "ok | evac=in_transit supply=in_transit | rel=evac,supply,supply | ingest=0 capred=0",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), picks("evac"))},
 		{name: "N-a'/pickup chain, R2 already parked at its hold",
-			bug:   "N-a'",
-			today: "ok | evac=in_transit supply=in_transit | rel=evac,supply,supply | ingest=0 capred=0",
 			want:  "ok | evac=in_transit supply=staged | rel=evac,supply | ingest=0 capred=0",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), stages("supply"), picks("evac"))},

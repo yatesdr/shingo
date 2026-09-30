@@ -162,7 +162,15 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	// idempotent against terminal supply orders and skips a leg Core
 	// would refuse.
 	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil {
-		if task.NextMaterialOrderID != nil {
+		// ONLY THE DEFERRAL, NEVER A SECOND RELEASE. The sweep defers a paired
+		// supply to this moment; the station's pair RELEASE does not — it
+		// releases both legs at "ready". A supply that was already released
+		// past a wait is on its way to a LATER one (the tooling hold in front of
+		// the press), and releasing it again here carried it past that hold
+		// into a press with its tooling open (N-a'). An unreadable history
+		// leaves it for the operator: holding costs a click, releasing costs
+		// the hold.
+		if task.NextMaterialOrderID != nil && e.supplyDeferredToThisPickup(*task.NextMaterialOrderID, orderUUID) {
 			supplyDisp := ReleaseDisposition{CalledBy: "auto-evac-pickup"}
 			// releaseIfReleasable, not releaseUnlessTerminal: nothing upstream
 			// guarantees the supply leg has reached staged by the time the evac
@@ -251,4 +259,19 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	if it, ok := e.takeOrderIntent(order.ID, intentConsolidation); ok {
 		e.dispatchBufferConsolidation(it.consolidation())
 	}
+}
+
+// supplyDeferredToThisPickup reports whether a paired changeover supply's
+// release is still the one the sweep deferred to its evac's lift: this station
+// has never released it past a wait. A supply released at "ready" by the
+// station's pair RELEASE is not waiting on this pickup, and an unreadable
+// history answers no (see the call site for why holding is the safe side).
+func (e *Engine) supplyDeferredToThisPickup(supplyID int64, evacUUID string) bool {
+	passed, err := e.orderMgr.PassedAStationWait(supplyID)
+	if err != nil || passed {
+		e.logFn("bin_picked_up: supply %d not released at evac %s's pickup — already released past a wait (passed=%v err=%v)",
+			supplyID, evacUUID, passed, err)
+		return false
+	}
+	return true
 }
