@@ -131,7 +131,7 @@ func TestReleaseLayer_Na_SecondReleaseWhileDrivingToToolingDone(t *testing.T) {
 	pinOutcome(t, "", r.outcome(t, "na-evac"),
 		"", "appends=1 wait_index=1 status=in_transit errors=[]")
 
-	pinOutcome(t, "N-a", r.outcome(t, "na-evac"),
+	pinOutcome(t, "", r.outcome(t, "na-evac"),
 		"appends=1 wait_index=2 status=in_transit errors=[]",
 		"appends=0 wait_index=1 status=in_transit errors=[]")
 }
@@ -180,7 +180,7 @@ func TestReleaseLayer_Na_Neighbours(t *testing.T) {
 		// Today the gate fence answers invalid_state, which rolls a moving Edge
 		// leg back to staged. The press is a repeat of the one that already
 		// went, so it is N-a's no-op.
-		{"in_transit past a station wait toward a lane wait", StatusInTransit, 1, stationThenLane, "N-a",
+		{"in_transit past a station wait toward a lane wait", StatusInTransit, 1, stationThenLane, "",
 			"appends=0 wait_index=1 status=in_transit errors=[invalid_state]",
 			"appends=0 wait_index=1 status=in_transit errors=[]"},
 	} {

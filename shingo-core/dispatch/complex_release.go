@@ -48,6 +48,32 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// ── A REPEAT PRESS WHILE THE ROBOT DRIVES BETWEEN STATION WAITS (N-a) ──
+	//
+	// in_transit is two states. An order driving to its first wait and an order
+	// the station already released, driving on to its NEXT wait, both read
+	// in_transit, and splitSegment appends the segment after whatever wait
+	// wait_index points at. For the second state that is the segment after a
+	// wait nobody has released: a changeover leg released at "ready" and pressed
+	// again on its way out is handed "bring the new bin in" before "tooling done".
+	//
+	// So a release on an order in_transit past a STATION wait, with a wait still
+	// ahead, is a repeat of the press that sent it, and does nothing. No error
+	// either: the robot is really moving, and every code the Edge understands
+	// would roll its leg back to staged or fail it. The manifest sync below is
+	// skipped too; the release that consumed the wait carried it.
+	//
+	// Three in_transit shapes are left to the code below, as before: wait_index
+	// 0 (driving to its first wait, released early); a previous wait that was
+	// Core's lane wait (the station has not pressed for the wait ahead yet); and
+	// past the final wait (the no-op after splitSegment). S3 replaces this with
+	// an explicit wait-ordinal echo on OrderRelease.
+	if releasedPastStationWait(order) {
+		log.Printf("dispatch: release ignored: order %d is in transit past station wait %d, not re-staged since — "+
+			"a repeat of the release that sent it", order.ID, order.WaitIndex-1)
+		return
+	}
+
 	// ── THE VACATED-SLOT FENCE (vacated_slot.go) ──────────────────────────
 	//
 	// A drop the vacated-slot rule admitted is sound only once its partner has
@@ -123,6 +149,26 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 
 	d.patchRedirectSegments(segment, order, moreWaits)
 	d.dispatchFleetRelease(env, order, segment, moreWaits, blockOffset)
+}
+
+// releasedPastStationWait reports whether an order is in_transit because the
+// station released the wait before the one wait_index points at, and a wait is
+// still ahead. It decodes the plan only for an in_transit order past wait 0; an
+// ordinary staged release pays nothing. An unreadable plan answers false and
+// the release meets the parse error below.
+func releasedPastStationWait(order *orders.Order) bool {
+	if order.Status != StatusInTransit || order.WaitIndex == 0 {
+		return false
+	}
+	steps, ok := decodeSteps(order.StepsJSON)
+	if !ok {
+		return false
+	}
+	if _, ahead := waitAt(steps, order.WaitIndex); !ahead {
+		return false
+	}
+	prev, ok := waitAt(steps, order.WaitIndex-1)
+	return ok && IsStationWait(prev.WaitKind)
 }
 
 // syncManifestForRelease performs the late-bind bin manifest sync at release

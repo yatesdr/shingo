@@ -948,12 +948,14 @@ func TestHandleOrderRelease_FaultedLegIsNoOp(t *testing.T) {
 	}
 }
 
-// TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment verifies
-// that the relaxed precondition still does the right thing for a true
-// multi-wait order: when an in_transit order has more waits to consume,
-// the next segment is dispatched and WaitIndex advances. This exercises
-// the design intent documented at HandleOrderRelease.
-func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T) {
+// TestHandleOrderRelease_InTransitPastAStationWaitIsANoOp: an in_transit
+// order whose first (station) wait was already released, with a wait still
+// ahead, is driving to that wait. A release now is a repeat of the one that
+// sent it, and appending the segment after the wait ahead would carry the robot
+// through a wait nobody has released (N-a). It is a no-op: nothing appended,
+// WaitIndex unchanged, no error reply. This test used to pin the opposite (the
+// next segment dispatched), which was the defect.
+func TestHandleOrderRelease_InTransitPastAStationWaitIsANoOp(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
@@ -962,8 +964,8 @@ func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T
 	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
 
 	// Two-wait choreography: wait → pickup → wait → dropoff. WaitIndex=1
-	// means the first wait was already consumed; the next release should
-	// dispatch the segment between wait[1] and end.
+	// means the first wait was already consumed and the robot is on its way
+	// to the second.
 	order := &orders.Order{
 		EdgeUUID:     "uuid-multi-wait",
 		StationID:    "line-1",
@@ -983,7 +985,8 @@ func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T
 	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: mid-choreography"), "set in_transit")
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "set wait_index")
 
-	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	backend := testdb.NewTrackingBackend()
+	d, _ := newTestDispatcher(t, db, backend)
 
 	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
 		OrderUUID: "uuid-multi-wait",
@@ -1000,8 +1003,11 @@ func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T
 	}
 
 	got, _ := db.GetOrder(order.ID)
-	if got.WaitIndex != 2 {
-		t.Errorf("WaitIndex = %d, want 2 (multi-wait re-release should advance)", got.WaitIndex)
+	if got.WaitIndex != 1 {
+		t.Errorf("WaitIndex = %d, want 1 (a repeat release past a station wait must not advance)", got.WaitIndex)
+	}
+	if n := len(backend.ReleaseCalls()); n != 0 {
+		t.Errorf("fleet appends = %d, want 0", n)
 	}
 }
 
