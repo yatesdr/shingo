@@ -187,7 +187,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// Reading the outcome therefore only ever showed the yields, which is how a sim
 		// A/B of this decision came out unreadable: both arms looked like buffer.
 		isReturn := d.legReturnsToHome(order, steps)
-		clear := isReturn && d.homeClearForReturn(order, homeName)
+		clear := isReturn && d.homeClearForReturn(order, homeName, pc)
 		if isReturn && clear {
 			inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 			d.dbg("place: order %d return leg, home %s clear (occupant is this swap's own or none) — in-flight %d, err %v",
@@ -741,7 +741,10 @@ func (d *Dispatcher) legReturnsToHome(order *orders.Order, steps []resolvedStep)
 //
 // FAILS CLOSED: every unreadable answer returns false, routing the leg to the
 // full capacity gate, which is the more conservative of the two paths.
-func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string) bool {
+//
+// Inside a pair pass the sibling's row and plan come from the pass context (see
+// swapSiblingPlan); outside one they are read.
+func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string, pc *pairPass) bool {
 	node, err := d.db.GetNodeByDotName(homeName)
 	if err != nil || node == nil {
 		return false
@@ -763,16 +766,8 @@ func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string) bo
 	// Occupied — acceptable only if this swap's own supply sibling lifts from
 	// here. A sibling that has already gone terminal vouches for nothing: if it
 	// had lifted the carrier the node would read empty above.
-	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
-	if err != nil || sibUUID == "" {
-		return false
-	}
-	sib, err := d.db.GetOrderByUUID(sibUUID)
-	if err != nil || sib == nil || protocol.IsTerminal(sib.Status) {
-		return false
-	}
-	sibSteps, ok := decodeSteps(sib.StepsJSON)
-	if !ok {
+	sib, sibSteps, ok := d.swapSiblingPlan(order, pc)
+	if !ok || protocol.IsTerminal(sib.Status) {
 		return false
 	}
 	for _, s := range sibSteps {
@@ -781,6 +776,33 @@ func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string) bo
 		}
 	}
 	return false
+}
+
+// swapSiblingPlan returns this leg's swap sibling and the sibling's plan.
+//
+// In a pair pass the leg placed second is handed the first leg (pairPass), and
+// when that leg is this one's sibling its row and plan are what two reads would
+// return: its phases persisted the plan they resolved (persistWidenedPlan and
+// the applyPlanNode writers), and a leg that went terminal in them ended the
+// pass before this one ran. So the pass context answers, and the reads are
+// taken only outside a pass or when the context holds some other leg.
+func (d *Dispatcher) swapSiblingPlan(order *orders.Order, pc *pairPass) (*orders.Order, []resolvedStep, bool) {
+	if pc != nil && pc.partner != nil && order.SiblingOrderUUID != "" && pc.partner.EdgeUUID == order.SiblingOrderUUID {
+		return pc.partner, pc.steps, true
+	}
+	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
+	if err != nil || sibUUID == "" {
+		return nil, nil, false
+	}
+	sib, err := d.db.GetOrderByUUID(sibUUID)
+	if err != nil || sib == nil {
+		return nil, nil, false
+	}
+	sibSteps, ok := decodeSteps(sib.StepsJSON)
+	if !ok {
+		return nil, nil, false
+	}
+	return sib, sibSteps, true
 }
 
 // applyPlanNode is the ONE writer of a step's node in steps_json. Every

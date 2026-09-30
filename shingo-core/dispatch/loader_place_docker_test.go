@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -937,5 +938,62 @@ func TestPlaceForDedicatedLoader_SiblingLifting_BufferFull_HoldsHomeWithoutWaiti
 	}
 	if ret.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q", ret.DeliveryNode, home.Name)
+	}
+}
+
+// homeClearForReturn takes its sibling from the pair pass when the pass holds
+// it, instead of reading the sibling's uuid and row. The decision must be the
+// one the reads give: each shape is asked both ways and must answer alike, and
+// as the shape says. A context holding some other leg falls back to the reads.
+func TestHomeClearForReturn_PassContextDecidesAsTheReads(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name          string
+		occupied      bool
+		supplyLifts   string // "" = the home
+		foreignInPass bool
+		want          bool
+	}{
+		{name: "occupied, the sibling lifts the home", occupied: true, want: true},
+		{name: "occupied, the sibling lifts elsewhere", occupied: true, supplyLifts: "LX-ELSEWHERE", want: false},
+		{name: "empty home", want: true},
+		{name: "the pass holds a leg that is not the sibling", occupied: true, foreignInPass: true, want: true},
+	} {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			home, _, _, _ := parkFixture(t, db)
+			d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+			line := &nodes.Node{Name: "LX-HC-LINE", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(line), "create line node")
+			if c.occupied {
+				makeLoaderBin(t, db, "PART-X", home.ID, "on-the-home", 100, time.Now().UTC())
+			}
+			ret, _ := parkSwapPair(t, db, home.Name, line.Name, true)
+			supply, err := db.GetOrderByUUID("park-swap-supply")
+			testutil.MustNoErr(t, err, "load supply")
+			if c.supplyLifts != "" {
+				steps := []resolvedStep{vsPick(c.supplyLifts), vsDrop(line.Name)}
+				testutil.MustNoErr(t, db.UpdateOrderStepsJSON(supply.ID, string(mustJSON(t, steps))), "re-plan supply")
+				supply, err = db.GetOrderByUUID("park-swap-supply")
+				testutil.MustNoErr(t, err, "reload supply")
+			}
+			partner := supply
+			if c.foreignInPass {
+				partner = &orders.Order{ID: supply.ID + 1000, EdgeUUID: "someone-else", StepsJSON: "[]"}
+			}
+			steps, ok := decodeSteps(partner.StepsJSON)
+			if !ok {
+				steps = nil
+			}
+			pc := &pairPass{partner: partner, steps: steps}
+
+			read := d.homeClearForReturn(ret, home.Name, nil)
+			fromPass := d.homeClearForReturn(ret, home.Name, pc)
+			if read != c.want || fromPass != c.want {
+				t.Fatalf("reads %v, pass context %v, want %v for both", read, fromPass, c.want)
+			}
+		})
 	}
 }
