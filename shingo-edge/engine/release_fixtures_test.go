@@ -176,6 +176,9 @@ type coSpec struct {
 	carryover bool
 	// drop: the incoming style has no claim at the node.
 	drop bool
+	// toRole gives the incoming style's claim a different role (a produce press
+	// changing over to a consume part: produce→consume).
+	toRole protocol.ClaimRole
 	// neighbour adds a second node in the same process whose claim is identical
 	// in both styles — an `unchanged` task — with its own steady-state pair.
 	neighbour bool
@@ -205,6 +208,9 @@ func (h *relHarness) changeover(s coSpec) int64 {
 
 	from := ps.claimInput(fromID, fxPart)
 	to := ps.claimInput(toID, fxPartNext)
+	if s.toRole != "" {
+		to.Role = s.toRole
+	}
 	if s.tooling {
 		to.PayloadCode = fxPart
 		from.EvacuateOnChangeover = true
@@ -330,6 +336,13 @@ func (h *relHarness) changeover(s coSpec) int64 {
 // steady-state readiness flipTargetReady asks for.
 func (h *relHarness) sequentialAB(role protocol.ClaimRole, partnerReady bool) {
 	h.t.Helper()
+	h.sequentialPair(role, partnerReady)
+	h.requestRemoval(role)
+}
+
+// sequentialPair seeds the sequential A/B press without requesting anything.
+func (h *relHarness) sequentialPair(role protocol.ClaimRole, partnerReady bool) {
+	h.t.Helper()
 	db := h.db
 	pid, err := db.CreateProcess("SYN-SEQ-PROC", "release harness sequential", "active_production", "", "", false)
 	testutil.MustNoErr(h.t, err, "create process")
@@ -360,8 +373,14 @@ func (h *relHarness) sequentialAB(role protocol.ClaimRole, partnerReady bool) {
 	}
 	testutil.MustNoErr(h.t, h.eng.writePullSide(ids[fxPress], ids[fxPressB]), "line pulls from the front")
 	h.processID, h.nodeID, h.partnerID = pid, ids[fxPress], ids[fxPressB]
+}
 
+// requestRemoval is the operator's REQUEST at the front of a sequential press;
+// its removal leg (Order A) is named "removal".
+func (h *relHarness) requestRemoval(role protocol.ClaimRole) {
+	h.t.Helper()
 	var res *NodeOrderResult
+	var err error
 	if role == protocol.ClaimRoleConsume {
 		res, err = h.eng.RequestNodeMaterial(h.nodeID, 1)
 	} else {
