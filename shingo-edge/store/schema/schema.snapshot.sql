@@ -607,6 +607,13 @@ CREATE TABLE production_tick_cursor (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE release_paperwork (
+		order_id     INTEGER NOT NULL,
+		kind         TEXT NOT NULL,
+		applied_json TEXT NOT NULL DEFAULT '{}',
+		updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (order_id, kind));
+
 CREATE TABLE reporting_points (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     style_id        INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,

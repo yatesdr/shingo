@@ -562,15 +562,27 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		if runtime != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == resolvedBinID {
 			binEpoch = runtime.ActiveBinEpoch
 		}
+		// CAPTURE ONCE PER ORDER. The capture is the one ADDITIVE piece of
+		// release paperwork: the pile gains and the bin loses. Everything else
+		// here writes an absolute value and repeats harmlessly. A release can be
+		// attempted more than once for the same bin — Core refuses it and the
+		// operator clicks again (the modal pre-fills the same quantities), or a
+		// second click reaches a leg that is already moving — and each attempt
+		// used to capture again: the pile doubled and so did the reduction.
+		// captureOnce applies only what this order has not already captured.
+		captureDisp, prior, err := e.captureOnce(order.ID, disp, isSupply)
+		if err != nil {
+			return err
+		}
 		// The capture writes the buckets and records their deltas and the
 		// bin's reduction: one change to the seat for the lineside report
 		// (countMu). Held for the capture only; the absolute finalize below
 		// has no accumulator half.
 		e.countMu.Lock()
-		_, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
+		_, err = e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
 			NodeID:           node.ID,
 			CoreNodeName:     node.CoreNodeName,
-			Disposition:      disp,
+			Disposition:      captureDisp,
 			BinID:            resolvedBinID,
 			PayloadCode:      order.PayloadCode,
 			BinEpoch:         binEpoch,
@@ -580,6 +592,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		if err != nil {
 			return err
 		}
+		e.recordCapture(order.ID, disp, captureDisp, prior, resolvedBinID, binEpoch, isSupply)
 	}
 
 	// Release-click finalizes the OLD bin's local count to match the

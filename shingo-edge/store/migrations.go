@@ -1194,6 +1194,33 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// release_paperwork: what a release has already applied for an
+			// order, so a repeat — a click again after Core refused, or a second
+			// click on a leg already moving — applies only what it has not
+			// (engine's capture step). Keyed (order_id, kind); applied_json
+			// carries the bin, the epoch and the quantities as data, not as key:
+			// both can read differently between two attempts at the same
+			// release. Declared here and not in the baseline DDL, so the table
+			// has one home.
+			Version: 5,
+			Name:    "release_paperwork",
+			Fn: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS release_paperwork (
+		order_id     INTEGER NOT NULL,
+		kind         TEXT NOT NULL,
+		applied_json TEXT NOT NULL DEFAULT '{}',
+		updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (order_id, kind))`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'
+					AND name = 'release_paperwork'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 
