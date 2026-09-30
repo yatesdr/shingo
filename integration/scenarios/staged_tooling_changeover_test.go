@@ -207,7 +207,7 @@ func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tooling-done release: %v", err)
 	}
-	if res.Released+res.Pending == 0 {
+	if res.Released+res.Pending+res.Deferred == 0 {
 		t.Errorf("tooling-done released nothing; result = %+v", res)
 	}
 }

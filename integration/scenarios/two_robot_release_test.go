@@ -170,8 +170,11 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	if result.Released != 1 {
 		t.Errorf("step 1 result.Released = %d, want 1 (evac only)", result.Released)
 	}
-	if result.Pending != 1 {
-		t.Errorf("step 1 result.Pending = %d, want 1 (supply deferred)", result.Pending)
+	// The supply waits on the evac's pickup, which releases it with no click:
+	// Deferred, not Pending (Pending is a click the operator still owes).
+	if result.Deferred != 1 || result.Pending != 0 {
+		t.Errorf("step 1 result Deferred=%d Pending=%d, want 1 and 0 (supply deferred to the pickup)",
+			result.Deferred, result.Pending)
 	}
 
 	releases := pendingReleases(t, edge)

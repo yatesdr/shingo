@@ -119,14 +119,19 @@ async function releaseChangeoverMaterial() {
         var res = await api.post('/api/processes/' + processID + '/changeover/release', {
             called_by: 'operator_station'
         });
+        // deferred counts supply legs their evac's pickup releases on its own:
+        // they need no click, and asking for one would release an evac that
+        // has since staged at its tooling wait before tooling is done.
         var released = (res && res.released) || 0;
         var pending = (res && res.pending) || 0;
-        if (released === 0 && pending === 0) {
+        var deferred = (res && res.deferred) || 0;
+        var follow = deferred > 0 ? '; ' + deferred + ' will follow when the old bins are picked up' : '';
+        if (released === 0 && pending === 0 && deferred === 0) {
             toast('Nothing is waiting to be released', 'info');
         } else if (pending > 0) {
-            toast('Released ' + released + '; ' + pending + ' not ready yet — click again when they stage', 'warning');
+            toast('Released ' + released + follow + '; ' + pending + ' not ready yet — click again when they stage', 'warning');
         } else {
-            toast('Released ' + released + ' — material moving in', 'success');
+            toast('Released ' + released + follow + ' — material moving in', 'success');
         }
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {

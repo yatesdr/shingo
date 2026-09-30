@@ -136,7 +136,7 @@ func orderClick(leg string, d ReleaseDisposition) func(h *relHarness) error {
 func sweepClick(d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		res, err := h.eng.ReleaseChangeoverWait(h.processID, d)
-		h.extra = append(h.extra, fmt.Sprintf("sweep released=%d pending=%d flip=%v", res.Released, res.Pending, res.NeedsFlip))
+		h.extra = append(h.extra, fmt.Sprintf("sweep released=%d pending=%d deferred=%d flip=%v", res.Released, res.Pending, res.Deferred, res.NeedsFlip))
 		return err
 	}
 }
@@ -144,7 +144,7 @@ func sweepClick(d ReleaseDisposition) func(h *relHarness) error {
 func nodeCOClick(d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		res, err := h.eng.ReleaseChangeoverWaitForNode(h.processID, h.nodeID, d)
-		h.extra = append(h.extra, fmt.Sprintf("node released=%d pending=%d flip=%v", res.Released, res.Pending, res.NeedsFlip))
+		h.extra = append(h.extra, fmt.Sprintf("node released=%d pending=%d deferred=%d flip=%v", res.Released, res.Pending, res.Deferred, res.NeedsFlip))
 		return err
 	}
 }
@@ -378,16 +378,16 @@ func releaseMatrixCells() []relCell {
 
 		// ── Door 5: the changeover sweep and per-node click ──────────────
 		{name: "d5/co two_robot/both staged",
-			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
+			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co two_robot/curtain live",
-			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=1 flip=[] | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
+			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=0 deferred=1 flip=[] | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co pi tooling/evac staged",
-			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
+			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co pi tooling/node click",
-			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | node released=1 pending=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
+			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | node released=1 pending=0 deferred=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
 			act: nodeCOClick(dispNone), probe: probes(pUOP)},
 
 		// ── Door 6: the station button on a single-leg changeover node ────

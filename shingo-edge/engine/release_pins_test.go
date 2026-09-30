@@ -188,7 +188,7 @@ func releasePinCells() []relCell {
 		// half is pinned in shingo-core). The Edge half is characterised here:
 		// the envelope goes, through the sweep the page's own toast invites.
 		{name: "N-a/sweep twice on a single_robot tooling evac",
-			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | sweep released=1 pending=1 flip=[] | uop=42",
+			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[] | uop=42",
 			build: coAt(coSRTooling, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
 		{name: "N-a/station button twice on a press-index tooling pair",
@@ -196,7 +196,7 @@ func releasePinCells() []relCell {
 			build: coAt(coPITooling, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), pairClick(dispNone)), probe: probes(pUOP)},
 		{name: "N-a/sweep twice on a press-index tooling R1",
-			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | sweep released=1 pending=1 flip=[] | uop=42",
+			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[] | uop=42",
 			build: coAt(coPITooling, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
 
@@ -211,11 +211,11 @@ func releasePinCells() []relCell {
 			act:   seq(pairClick(dispNone), stages("supply"), picks("evac"))},
 		// KEEP: the sweep defers the holdInbound supply to the evac's lift.
 		{name: "keep/sweep defers the held supply to the evac's pickup",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=1 pending=1 flip=[]",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[]",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), picks("evac"))},
 		{name: "keep/two_robot changeover supply released at the evac's pickup",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=1 pending=1 flip=[]",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[]",
 			build: coAt(coTwoRobot, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), picks("evac"))},
 
@@ -236,7 +236,7 @@ func releasePinCells() []relCell {
 		// L1's companion: once the survivor stops releasing it, the held supply
 		// needs the tooling-done click to cover it.
 		{name: "L1c/tooling done sweep, R2 parked at its hold",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=0 | sweep released=2 pending=0 flip=[]",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), stages("evac"), stages("supply"), sweepClick(dispNone))},
 
@@ -264,7 +264,7 @@ func releasePinCells() []relCell {
 			act:   confirms("evac"), probe: probes(pChip("supply"))},
 		// ── Door 10: the pickup chain into a live curtain ────────────────────
 		{name: "d10/changeover supply at the evac's pickup, curtain live",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
+			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
 			build: withCurtain(curtainSafe, coAt(coTwoRobot, "evac", S, "supply", S)),
 			act: seq(sweepClick(dispNone), func(h *relHarness) error { h.wl.set(curtainLive); return nil },
 				picks("evac")),
@@ -402,7 +402,7 @@ func releasePinCells() []relCell {
 			build: func(h *relHarness) { h.sequentialAB(protocol.ClaimRoleConsume, false); statuses(h, "removal", S) },
 			act:   orderClick("removal", dispEmpty), probe: probes(pPull)},
 		{name: "L3/changeover node click at the pulled side, partner ready",
-			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 flip=[] | pull=SYN-PRESS-B",
+			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | pull=SYN-PRESS-B",
 			build: func(h *relHarness) {
 				h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential})
 				statuses(h, "supply", S)
@@ -416,15 +416,15 @@ func releasePinCells() []relCell {
 		// the owner.
 		{name: "L3/changeover node click at the pulled side, partner holds its outgoing carrier",
 			bug:   "L3-co",
-			today: "refuse:outgoing-carrier | supply=staged | rel=- | ingest=0 capred=0 | node released=0 pending=0 flip=[] | pull=SYN-PRESS",
-			want:  "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 flip=[] | pull=SYN-PRESS-B",
+			today: "refuse:outgoing-carrier | supply=staged | rel=- | ingest=0 capred=0 | node released=0 pending=0 deferred=0 flip=[] | pull=SYN-PRESS",
+			want:  "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 deferred=0 flip=[] | pull=SYN-PRESS-B",
 			build: func(h *relHarness) {
 				h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential})
 				statuses(h, "supply", S)
 			},
 			act: nodeCOClick(dispNone), probe: probes(pPull)},
 		{name: "L3/sweep declines the pulled side",
-			want: "ok | supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=2 flip=[SYN-PRESS] | pull=SYN-PRESS",
+			want: "ok | supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=2 deferred=0 flip=[SYN-PRESS] | pull=SYN-PRESS",
 			build: func(h *relHarness) {
 				h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential})
 				statuses(h, "supply", S)

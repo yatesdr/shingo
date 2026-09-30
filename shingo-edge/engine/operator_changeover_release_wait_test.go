@@ -383,8 +383,8 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 	if result.Released != 1 {
 		t.Errorf("result.Released = %d, want 1 (evac only at click; supply deferred to pickup-confirm)", result.Released)
 	}
-	if result.Pending != 1 {
-		t.Errorf("result.Pending = %d, want 1 (supply leg deferred until evac pickup)", result.Pending)
+	if result.Pending != 0 || result.Deferred != 1 {
+		t.Errorf("result pending=%d deferred=%d, want 0 and 1 (supply leg deferred until evac pickup, no click owed)", result.Pending, result.Deferred)
 	}
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
@@ -492,8 +492,8 @@ func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T
 	if result.Released != 1 {
 		t.Errorf("result.Released = %d, want 1 (evac fires from in_transit, not just from staged)", result.Released)
 	}
-	if result.Pending != 1 {
-		t.Errorf("result.Pending = %d, want 1 (supply deferred)", result.Pending)
+	if result.Pending != 0 || result.Deferred != 1 {
+		t.Errorf("result pending=%d deferred=%d, want 0 and 1 (supply deferred, no click owed)", result.Pending, result.Deferred)
 	}
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {

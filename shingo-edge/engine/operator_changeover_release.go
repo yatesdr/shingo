@@ -21,15 +21,17 @@ import (
 // ReleaseChangeoverWaitResult reports the outcome of a release-wait click so
 // the frontend can show the operator how much actually happened. Released is
 // the count of legs whose OrderRelease envelopes were queued this call;
-// Pending is the count of legs that exist but could not be released this
-// call — either a supply leg deliberately deferred to evac-pickup confirm, or
-// a leg Core would refuse because it has not reached staged yet (queued /
-// sourcing / dispatched / acknowledged). Both are legs the operator may need
-// to come back for on a second click. Already-terminal legs (released
-// earlier, cancelled, failed) are not counted in either field.
+// Pending is the count of legs the operator has to come back for with another
+// click: a leg Core would refuse because it has not reached staged yet
+// (queued / sourcing / dispatched / acknowledged), or a position the line is
+// still pulling from. Deferred is the count of supply legs waiting on their
+// evac's pickup, which releases them with no click (HandleBinPickedUp) — the
+// page must not ask for one. Already-terminal legs (released earlier,
+// cancelled, failed) are not counted in any field.
 type ReleaseChangeoverWaitResult struct {
 	Released int `json:"released"`
 	Pending  int `json:"pending"`
+	Deferred int `json:"deferred"`
 	// NeedsFlip names the A/B positions a SWEEP declined to release because the
 	// line is still pulling from them. A sweep is not aimed at one aisle, so it
 	// does not move the line for the operator — it reports them instead, by
@@ -110,9 +112,10 @@ type ReleaseChangeoverWaitResult struct {
 // the staged-only switch (Friday-incident fix) AND adds the defer
 // (the safer architecture the collapse demands).
 //
-// Result.Pending: includes both deferred-supply legs (non-terminal,
-// will fire on evac pickup) and any standalone-leg orders we skipped
-// because they weren't in a releasable state at click time.
+// Result.Pending counts the legs a later click is owed for: not yet
+// releasable at Core, or a position the line still pulls from.
+// Result.Deferred counts the paired supplies the evac's pickup releases
+// with no click.
 func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
 	return e.releaseChangeoverWaitScoped(processID, 0, disp)
 }
@@ -172,8 +175,8 @@ func (e *Engine) releaseSingleLegChangeoverNode(nodeID int64, disp ReleaseDispos
 	if err != nil {
 		return true, err
 	}
-	e.logFn("release-staged node=%s: single-leg changeover release — released=%d pending=%d",
-		node.Name, res.Released, res.Pending)
+	e.logFn("release-staged node=%s: single-leg changeover release — released=%d pending=%d deferred=%d",
+		node.Name, res.Released, res.Pending, res.Deferred)
 	return true, nil
 }
 
@@ -397,13 +400,16 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 			result.Released++
 		}
 
-		// Count deferred supply legs (paired-with-evac) so the operator
-		// HMI can show "released N, M deferred for pickup-confirm." Skip
-		// counting if the supply is already terminal.
+		// Count deferred supply legs (paired-with-evac) apart from Pending:
+		// the evac's pickup releases them, so the page tells the operator
+		// they follow on their own rather than asking for a second click —
+		// which, on an evac already staged at its tooling wait, would release
+		// it before tooling is done (N-a(ii)). Skip counting if the supply is
+		// already terminal.
 		if pairedEvacSupply && !supplyAtLaterWait {
 			supply, err := e.db.GetOrder(*task.NextMaterialOrderID)
 			if err == nil && !orders.IsTerminal(supply.Status) {
-				result.Pending++
+				result.Deferred++
 			}
 		}
 	}
