@@ -147,6 +147,12 @@ var requiredColumns = []requiredColumn{
 	{"processes", "group_id"},
 	// flow_composer_enabled is scanned by every process List/Get, like group_id.
 	{"processes", "flow_composer_enabled"},
+	// The curtain interlock's node columns: scanNode selects all four, so a
+	// failed ALTER would kill every process_nodes read on the box.
+	{"process_nodes", "curtain_enabled"},
+	{"process_nodes", "curtain_plc_name"},
+	{"process_nodes", "curtain_tag_name"},
+	{"process_nodes", "curtain_safe_value"},
 }
 
 // verifySchema reports every required table and column that is missing. It

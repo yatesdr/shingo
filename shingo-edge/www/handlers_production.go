@@ -9,10 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine"
-	"shingoedge/plc"
 )
 
 // enrichViewBinState fetches bin state from Core and attaches it to each node in the views.
@@ -63,58 +61,6 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 					Occupied:          info.Occupied,
 				}
 			}
-		}
-	}
-}
-
-// enrichViewCurtainState stamps each node entry whose claim is a PRODUCE
-// claim on a curtain-enabled process with the FG light-curtain interlock's
-// render state (domain.StationNodeView.CurtainOK): false greys the RELEASE
-// button, true leaves it normal, nil (absent) means not gated here.
-//
-// THE RENDER HALF ONLY. The interlock itself is the gate at the release
-// verbs (engine/curtain_gate.go), which reads WarLink DIRECTLY at the
-// click. This stamp reads the manager's CACHE, whose value is at most one
-// poll or one change-event old - fine for a button, never for the gate.
-//
-// ANY READ TROUBLE STAMPS FALSE, never absent: the gate refuses
-// fail-closed on an unreadable tag, so a button that stayed enabled would
-// promise a click the gate will refuse - and a grey button on a dead
-// WarLink is the truthful rendering of "this release is not available
-// right now". The claim is the node's active claim with the target claim
-// as fallback - the same resolution order the release paths use.
-func enrichViewCurtainState(eng ServiceAccess, views []domain.OperatorStationView) {
-	mgr := eng.PLCManager()
-	if mgr == nil {
-		return
-	}
-	procs := map[int64]*domain.Process{}
-	if list, err := eng.ProcessService().List(); err == nil {
-		for i := range list {
-			procs[list[i].ID] = &list[i]
-		}
-	}
-	for vi := range views {
-		for ni := range views[vi].Nodes {
-			nv := &views[vi].Nodes[ni]
-			claim := nv.ActiveClaim
-			if claim == nil {
-				claim = nv.TargetClaim
-			}
-			if claim == nil || claim.Role != protocol.ClaimRoleProduce {
-				continue
-			}
-			p := procs[nv.Node.ProcessID]
-			if p == nil || !p.CurtainEnabled {
-				continue
-			}
-			good := false
-			if raw, err := mgr.ReadTag(p.CurtainPLCName, p.CurtainTagName); err == nil {
-				if val, ok := plc.CurtainBool(raw); ok && val == p.CurtainSafeValue {
-					good = true
-				}
-			}
-			nv.CurtainOK = &good
 		}
 	}
 }
@@ -340,7 +286,6 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	}
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 	enrichViewContainmentTargets(h.engine, stationViews)
-	enrichViewCurtainState(h.engine, stationViews)
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
@@ -448,7 +393,6 @@ func (h *Handlers) handleProductionPartial(w http.ResponseWriter, r *http.Reques
 	}
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 	enrichViewContainmentTargets(h.engine, stationViews)
-	enrichViewCurtainState(h.engine, stationViews)
 
 	var activeProcessID int64
 	if activeProcess != nil {

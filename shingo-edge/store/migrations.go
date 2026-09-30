@@ -779,27 +779,6 @@ func (db *DB) migrate() error {
 		return err
 	}
 
-	// v40 (2026-09-25, FG light-curtain release interlock): the per-process
-	// curtain state - the toggle, the PLC/tag pointers, and the BOOL value
-	// that means "release allowed" (the polarity is a setting: which of the
-	// curtain tag's two values is safe is a site fact discovered at test
-	// time, not a code assumption). All four default to "no interlock" so
-	// every existing process reads exactly as it did. The gate is keyed on
-	// the claim's PRODUCE role at the release verbs; consume and changeover
-	// releases are never gated, whatever this says.
-	if err := db.addColumnIfMissing("ALTER TABLE processes ADD COLUMN curtain_enabled INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-	if err := db.addColumnIfMissing("ALTER TABLE processes ADD COLUMN curtain_plc_name TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := db.addColumnIfMissing("ALTER TABLE processes ADD COLUMN curtain_tag_name TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := db.addColumnIfMissing("ALTER TABLE processes ADD COLUMN curtain_safe_value INTEGER NOT NULL DEFAULT 1"); err != nil {
-		return err
-	}
-
 	// v31 (2026-07-24, post-cutover CATID verification): the live PLC part id
 	// observed disagreeing with the new active style shortly after a cutover
 	// completed. Non-empty flags that changeover for operator confirmation on the
@@ -1219,6 +1198,29 @@ func edgeMigrations() []migrate.Migration {
 				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'
 					AND name = 'release_paperwork'`).Scan(&n)
 				return err == nil && n == 1
+			},
+		},
+		{
+			// The FG light-curtain interlock moves from the process to the node
+			// (migrations_curtain.go): the node columns are added where missing,
+			// each process's settings are copied onto its produce nodes, and the
+			// four processes columns are dropped. An SPR-shaped Edge carries the
+			// process columns from the retired frozen-chain ALTERs; an HK-shaped
+			// one never had them and only gains the node columns. Re-run safe:
+			// the copy writes only untouched node rows, and once the process
+			// columns are gone there is nothing to copy from.
+			//
+			// Verify checks the node columns only. A "process columns absent"
+			// check would quietly re-drop a column something re-added, which is
+			// the regression the double-boot schema proof exists to show (v3).
+			Version: 6,
+			Name:    "curtain_interlock_per_node",
+			Fn:      moveCurtainToNodes,
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes')
+					WHERE name IN ('curtain_enabled', 'curtain_plc_name', 'curtain_tag_name', 'curtain_safe_value')`).Scan(&n)
+				return err == nil && n == 4
 			},
 		},
 	}

@@ -275,11 +275,13 @@ func (h *relHarness) order(name string) *storeorders.Order {
 	return o
 }
 
-// armCurtain enables the process's curtain interlock with the plant polarity
-// and sets the tag's reading.
+// armCurtain enables the front node's curtain interlock with the plant polarity
+// and sets the tag's reading. The front node is the produce node, which is
+// where the migration carried each process's live setting.
 func (h *relHarness) armCurtain(reading bool) {
 	h.t.Helper()
-	testutil.MustNoErr(h.t, h.db.SetProcessCurtain(h.processID, true, "CURTAIN-PLC", "CURTAIN-TAG", curtainSafe), "arm curtain")
+	safe := curtainSafe
+	testutil.MustNoErr(h.t, h.db.SetProcessNodeCurtain(h.nodeID, true, "CURTAIN-PLC", "CURTAIN-TAG", &safe), "arm curtain")
 	h.wl.set(reading)
 }
 

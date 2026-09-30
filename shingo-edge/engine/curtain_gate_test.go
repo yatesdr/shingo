@@ -51,19 +51,37 @@ func (c *curtainStubClient) OpenEventStream(ctx context.Context) (io.ReadCloser,
 	return nil, errors.New("no stream in this stub")
 }
 
-// curtainSeedProcess inserts a process row and writes the interlock's
-// columns through the side-door path the settings use.
-func curtainSeedProcess(t *testing.T, eng *Engine, enabled bool, plcName, tagName string, safe bool) int64 {
+// curtainSeedNode inserts a process and one node, writes the node's
+// interlock columns, and returns the node READ BACK - so each case also
+// proves the scan carries what the gate reads. Rows the setter would refuse
+// (enabled with a pointer or the polarity missing) are written directly: the
+// gate must refuse them anyway, whatever wrote them.
+func curtainSeedNode(t *testing.T, eng *Engine, enabled bool, plcName, tagName string, safe *bool) *processes.Node {
 	t.Helper()
-	id, err := eng.db.CreateProcess("CurtainProc", "", "active_production", "", "", false)
+	procID, err := eng.db.CreateProcess("CurtainProc", "", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	if err := eng.db.SetProcessCurtain(id, enabled, plcName, tagName, safe); err != nil {
+	nodeID, err := eng.db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "SYN-FG-1", Name: "SYN-FG-1", Enabled: true})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if enabled && (plcName == "" || tagName == "" || safe == nil) {
+		if _, err := eng.db.Exec(`UPDATE process_nodes SET curtain_enabled=1, curtain_plc_name=?, curtain_tag_name=?, curtain_safe_value=? WHERE id=?`,
+			plcName, tagName, safe, nodeID); err != nil {
+			t.Fatalf("write curtain row: %v", err)
+		}
+	} else if err := eng.db.SetProcessNodeCurtain(nodeID, enabled, plcName, tagName, safe); err != nil {
 		t.Fatalf("set curtain: %v", err)
 	}
-	return id
+	node, err := eng.db.GetProcessNode(nodeID)
+	if err != nil {
+		t.Fatalf("read node: %v", err)
+	}
+	return node
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 func curtainGateFixture(t *testing.T, client plc.WarlinkClient) (*Engine, *processes.Node) {
 	t.Helper()
@@ -77,11 +95,10 @@ func curtainGateFixture(t *testing.T, client plc.WarlinkClient) (*Engine, *proce
 // operator's screen will say, because these strings are the floor's
 // answer to "why won't it release".
 func TestCurtainGate(t *testing.T) {
-	t.Run("a consume claim is never gated, whatever the process says", func(t *testing.T) {
+	t.Run("a consume claim is never gated, whatever the node says", func(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "PRESS-PLC", "FG_CURTAIN", false)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(false))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleConsume}
 		if err := eng.curtainGate(node, claim); err != nil {
 			t.Fatalf("consume release gated: %v", err)
@@ -91,8 +108,7 @@ func TestCurtainGate(t *testing.T) {
 	t.Run("the interlock off releases as always", func(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, false, "", "", false)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, false, "", "", boolPtr(false))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
 		if err := eng.curtainGate(node, claim); err != nil {
 			t.Fatalf("interlock-off release refused: %v", err)
@@ -102,8 +118,7 @@ func TestCurtainGate(t *testing.T) {
 	t.Run("the safe reading releases", func(t *testing.T) {
 		client := &curtainStubClient{value: true}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "PRESS-PLC", "FG_CURTAIN", true)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
 		if err := eng.curtainGate(node, claim); err != nil {
 			t.Fatalf("safe reading refused: %v", err)
@@ -113,8 +128,7 @@ func TestCurtainGate(t *testing.T) {
 	t.Run("the unsafe reading refuses, naming both sides", func(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "PRESS-PLC", "FG_CURTAIN", true)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
 		err := eng.curtainGate(node, claim)
 		if err == nil {
@@ -128,8 +142,7 @@ func TestCurtainGate(t *testing.T) {
 	t.Run("an unreadable tag refuses, fail-closed", func(t *testing.T) {
 		client := &curtainStubClient{err: errors.New("WarLink GET returned 503")}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "PRESS-PLC", "FG_CURTAIN", true)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
 		err := eng.curtainGate(node, claim)
 		if err == nil {
@@ -143,8 +156,7 @@ func TestCurtainGate(t *testing.T) {
 	t.Run("enabled with no pointers refuses", func(t *testing.T) {
 		client := &curtainStubClient{value: true}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "", "", true)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "", "", boolPtr(true))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
 		err := eng.curtainGate(node, claim)
 		if err == nil {
@@ -155,11 +167,34 @@ func TestCurtainGate(t *testing.T) {
 		}
 	})
 
+	t.Run("enabled with no chosen polarity refuses, naming the setting", func(t *testing.T) {
+		client := &curtainStubClient{value: false}
+		eng, _ := curtainGateFixture(t, client)
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", nil)
+		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
+		err := eng.curtainGate(node, claim)
+		if err == nil {
+			t.Fatal("an interlock with no polarity released")
+		}
+		if !strings.Contains(err.Error(), "nobody has chosen which tag value allows the release") {
+			t.Fatalf("refusal does not name the missing polarity: %v", err)
+		}
+	})
+
+	t.Run("the FALSE polarity releases on FALSE", func(t *testing.T) {
+		client := &curtainStubClient{value: false}
+		eng, _ := curtainGateFixture(t, client)
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(false))
+		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
+		if err := eng.curtainGate(node, claim); err != nil {
+			t.Fatalf("FALSE-polarity safe reading refused: %v", err)
+		}
+	})
+
 	t.Run("a value that is not a BOOL refuses, not guesses", func(t *testing.T) {
 		client := &curtainStubClient{value: "MID-TRAVEL"}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "PRESS-PLC", "FG_CURTAIN", true)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
 		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
 		err := eng.curtainGate(node, claim)
 		if err == nil {
@@ -173,8 +208,7 @@ func TestCurtainGate(t *testing.T) {
 	t.Run("a nil claim is not a produce release", func(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
-		procID := curtainSeedProcess(t, eng, true, "PRESS-PLC", "FG_CURTAIN", true)
-		node := &processes.Node{ProcessID: procID, Name: "SMN-1", CoreNodeName: "SMN-1"}
+		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
 		if err := eng.curtainGate(node, nil); err != nil {
 			t.Fatalf("claim-less release gated: %v", err)
 		}

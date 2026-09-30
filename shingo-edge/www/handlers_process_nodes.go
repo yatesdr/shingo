@@ -6,7 +6,9 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -96,6 +98,40 @@ func (h *Handlers) apiUpdateProcessNode(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// apiProcessNodeCurtainSetting writes one node's FG light-curtain interlock
+// settings: the toggle, the PLC/tag pointers, and safe_value, the tag reading
+// that allows a release. safe_value is true, false, or null/absent for "not
+// chosen"; an enabled interlock with no chosen value, or with a pointer
+// missing, is refused (processes.SetNodeCurtain) - which value means
+// "released" is a site fact, and a default would invert the gate wherever it
+// guessed wrong.
+func (h *Handlers) apiProcessNodeCurtainSetting(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Enabled   bool   `json:"enabled"`
+		PLCName   string `json:"plc_name"`
+		TagName   string `json:"tag_name"`
+		SafeValue *bool  `json:"safe_value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.engine.ProcessService().SetNodeCurtain(id, req.Enabled, req.PLCName, req.TagName, req.SafeValue); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "process node not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // ── A MINTED core_node_name IS A CLAIM ABOUT CORE'S PLANT ─────────────────

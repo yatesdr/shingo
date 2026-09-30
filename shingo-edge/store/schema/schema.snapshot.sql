@@ -543,7 +543,19 @@ CREATE TABLE process_nodes (
     -- whose node is gone while all 118 parent changeovers survive: readable
     -- history with an unreadable middle. The uniqueness constraint moved to a
     -- partial index below so a re-created node can reuse a retired code.
-    deleted_at          TEXT
+    deleted_at          TEXT,
+    -- The FG light-curtain release interlock, per node: an operator button
+    -- mutes the curtain at this spot through a BOOL PLC tag, and with the
+    -- interlock on, a release that sends a robot in here waits for the tag
+    -- to read curtain_safe_value (a direct WarLink read at the click,
+    -- fail-closed). curtain_safe_value is NULL until someone chooses it:
+    -- which value means "released" is a site fact, and a default inverts
+    -- the gate wherever it guesses wrong. An enabled row with NULL refuses
+    -- every release, and the setter refuses to write one.
+    curtain_enabled     INTEGER NOT NULL DEFAULT 0,
+    curtain_plc_name    TEXT NOT NULL DEFAULT '',
+    curtain_tag_name    TEXT NOT NULL DEFAULT '',
+    curtain_safe_value  INTEGER
 );
 
 CREATE TABLE process_payloads (
@@ -586,18 +598,6 @@ CREATE TABLE processes (
     -- process_routing_nodes below; the backfill re-derives only while it is
     -- off, so a reviewed set is never silently re-seeded.
     flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
-    -- The FG light-curtain release interlock: a light curtain stands at each
-    -- finished-goods pickup location, an operator button mutes it via a BOOL
-    -- PLC tag, and with the interlock on a PRODUCE release is only allowed
-    -- when the tag reads curtain_safe_value. The gate is a direct WarLink
-    -- read at release time, fail-closed; consume and changeover releases are
-    -- never gated, whatever this says. safe_value defaults to 1 (TRUE):
-    -- the polarity is a site fact settled at test time, and the setting
-    -- flips it without a redeploy.
-    curtain_enabled      INTEGER NOT NULL DEFAULT 0,
-    curtain_plc_name     TEXT NOT NULL DEFAULT '',
-    curtain_tag_name     TEXT NOT NULL DEFAULT '',
-    curtain_safe_value   INTEGER NOT NULL DEFAULT 1,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

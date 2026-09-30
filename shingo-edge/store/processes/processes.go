@@ -40,7 +40,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
 	var groupID sql.NullInt64
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &p.CurtainEnabled, &p.CurtainPLCName, &p.CurtainTagName, &p.CurtainSafeValue, &createdAt); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
@@ -55,7 +55,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 // (the Changeover_Active tag was never wired at any plant). The column stays on
 // disk — dropping it means a SQLite table rebuild, and a rebuild is what
 // generates the dangling REFERENCES clauses the FK repair exists to fix.
-const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, flow_composer_enabled, curtain_enabled, curtain_plc_name, curtain_tag_name, curtain_safe_value, created_at`
+const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -104,17 +104,6 @@ func Update(db *sql.DB, id int64, name, description, productionState string, cou
 	}
 	_, err := db.Exec(`UPDATE processes SET name=?, description=?, production_state=?, counter_plc_name=?, counter_tag_name=?, counter_enabled=? WHERE id=?`,
 		name, description, productionState, counterPLC, counterTag, counterEnabled, id)
-	return err
-}
-
-// SetProcessCurtain writes the FG light-curtain release interlock's
-// per-process state. The settings side-door's storage: a targeted UPDATE of
-// the four curtain columns, so the general Update path (which knows nothing
-// of them) stays untouched. Validation lives in the service; the store
-// accepts what the service sends.
-func SetProcessCurtain(db *sql.DB, id int64, enabled bool, plcName, tagName string, safeValue bool) error {
-	_, err := db.Exec(`UPDATE processes SET curtain_enabled=?, curtain_plc_name=?, curtain_tag_name=?, curtain_safe_value=? WHERE id=?`,
-		enabled, plcName, tagName, safeValue, id)
 	return err
 }
 
@@ -282,7 +271,9 @@ func SetFlowComposerEnabled(db *sql.DB, processID int64, enabled bool) error {
 // --- process nodes ---
 
 const nodeSelect = `n.id, n.process_id, n.operator_station_id, n.core_node_name, n.code, n.name,
-	n.sequence, n.enabled, n.created_at, n.updated_at, n.deleted_at, COALESCE(s.name, ''), COALESCE(p.name, '')`
+	n.sequence, n.enabled, n.created_at, n.updated_at, n.deleted_at,
+	n.curtain_enabled, n.curtain_plc_name, n.curtain_tag_name, n.curtain_safe_value,
+	COALESCE(s.name, ''), COALESCE(p.name, '')`
 
 // liveNodes is the WHERE fragment for "process_nodes that still exist as far as
 // the plant is concerned". Applied to the LIST paths, which are pickers and
@@ -299,9 +290,12 @@ func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	var createdAt, updatedAt string
 	var stationID sql.NullInt64
 	var deletedAt sql.NullString
+	var curtainSafe sql.NullBool
 	err := scanner.Scan(
 		&n.ID, &n.ProcessID, &stationID, &n.CoreNodeName, &n.Code, &n.Name,
-		&n.Sequence, &n.Enabled, &createdAt, &updatedAt, &deletedAt, &n.StationName, &n.ProcessName,
+		&n.Sequence, &n.Enabled, &createdAt, &updatedAt, &deletedAt,
+		&n.CurtainEnabled, &n.CurtainPLCName, &n.CurtainTagName, &curtainSafe,
+		&n.StationName, &n.ProcessName,
 	)
 	if err != nil {
 		return n, err
@@ -309,6 +303,10 @@ func scanNode(scanner interface{ Scan(...any) error }) (Node, error) {
 	n.CreatedAt = helpers.ScanTime(createdAt)
 	n.UpdatedAt = helpers.ScanTime(updatedAt)
 	n.DeletedAt = helpers.ScanTimePtr(deletedAt)
+	if curtainSafe.Valid {
+		v := curtainSafe.Bool
+		n.CurtainSafeValue = &v
+	}
 	if stationID.Valid {
 		id := stationID.Int64
 		n.OperatorStationID = &id
@@ -514,6 +512,47 @@ func UpdateNode(db *sql.DB, id int64, in NodeInput) error {
 		BumpNodeGeneration()
 	}
 	return err
+}
+
+// ErrCurtainPolarityUnset refuses an enabled curtain interlock whose release
+// value was never chosen. See domain.Node.CurtainSafeValue.
+var ErrCurtainPolarityUnset = errors.New("choose which curtain tag value allows the release (TRUE or FALSE) before enabling the curtain interlock")
+
+// ErrCurtainPointersMissing refuses an enabled curtain interlock with no PLC
+// or tag to read: the gate would refuse every release at the node.
+var ErrCurtainPointersMissing = errors.New("a PLC name and a tag name are required when the curtain interlock is enabled")
+
+// SetNodeCurtain writes one node's FG light-curtain interlock settings. A
+// targeted UPDATE of the four curtain columns, so the general UpdateNode
+// (whose NodeInput knows nothing of them) cannot clear them on a rename.
+//
+// THE REFUSALS LIVE HERE, not only in the service, because this is the one
+// statement that writes the columns: an enabled interlock needs both
+// pointers and an explicit polarity, and no caller gets to store one
+// without. A disabled interlock stores whatever it is given, so switching
+// it off keeps the pointers and the polarity for the next switch-on.
+func SetNodeCurtain(db *sql.DB, id int64, enabled bool, plcName, tagName string, safeValue *bool) error {
+	if enabled && (plcName == "" || tagName == "") {
+		return ErrCurtainPointersMissing
+	}
+	if enabled && safeValue == nil {
+		return ErrCurtainPolarityUnset
+	}
+	var safe sql.NullBool
+	if safeValue != nil {
+		safe = sql.NullBool{Bool: *safeValue, Valid: true}
+	}
+	res, err := db.Exec(`UPDATE process_nodes SET curtain_enabled=?, curtain_plc_name=?, curtain_tag_name=?,
+		curtain_safe_value=?, updated_at=datetime('now') WHERE id=?`,
+		enabled, plcName, tagName, safe, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	BumpNodeGeneration()
+	return nil
 }
 
 // DeleteNode RETIRES a process_node: it sets deleted_at rather than removing

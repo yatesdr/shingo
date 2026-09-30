@@ -4,8 +4,8 @@ package engine
 //
 // A light curtain stands at each finished-goods pickup location. An operator
 // button writes a BOOL tag that mutes the curtain. With the interlock enabled
-// on a process, a PRODUCE release is only allowed when that tag reads the
-// configured safe value - checked by a DIRECT WarLink read at the moment of
+// on a node, a PRODUCE release there is only allowed when that node's tag
+// reads the node's configured safe value - checked by a DIRECT WarLink read at the moment of
 // the release (plc.Manager.ReadTagDirect), never the poll cache, because a
 // safety decision must not be older than the request that made it.
 //
@@ -13,18 +13,18 @@ package engine
 // here is a click the operator repeats a minute later, while every wrong pass
 // is a release the curtain was there to prevent:
 //
-//   - the interlock's configuration cannot be read - refuse (we cannot know
-//     whether the interlock is armed, so treat it as armed);
+//   - the interlock is on but its polarity was never chosen - refuse (a
+//     guessed polarity is an inverted gate wherever the guess is wrong);
 //   - the tag cannot be read (WarLink down, PLC unknown, tag unpublished) -
 //     refuse, with the reason named;
 //   - the tag reads something that is not recognisably a BOOL - refuse, not
 //     guess;
 //   - the value disagrees with the configured safe value - refuse.
 //
-// The gate is keyed on the CLAIM'S ROLE: a consume claim's release and a
-// changeover release are never gated, whatever the process says. The curtain
-// stands at the FG pickup; the produce release is the only release that puts
-// a robot into that conversation.
+// The gate is keyed on the CLAIM'S ROLE: a consume claim's release is never
+// gated, whatever the node says. The curtain stands at the FG pickup; the
+// produce release is the only release that puts a robot into that
+// conversation.
 //
 // The render half is elsewhere: the station view folds the tag's cache value
 // into the node entry so the RELEASE button greys out before the click (see
@@ -54,35 +54,35 @@ func (e *Engine) curtainGate(node *processes.Node, claim *processes.NodeClaim) e
 	if claim == nil || claim.Role != protocol.ClaimRoleProduce {
 		return nil // a consume release, or no claim to speak of
 	}
-	proc, err := e.db.GetProcess(node.ProcessID)
-	if err != nil || proc == nil {
-		return fmt.Errorf("release held: the light-curtain interlock's configuration could not be read - refusing until it can")
-	}
-	if !proc.CurtainEnabled {
+	if node == nil || !node.CurtainEnabled {
 		return nil
 	}
-	if proc.CurtainPLCName == "" || proc.CurtainTagName == "" {
-		return fmt.Errorf("release held: the curtain interlock is enabled but its PLC/tag pointers are missing - fix the process settings")
+	if node.CurtainPLCName == "" || node.CurtainTagName == "" {
+		return fmt.Errorf("release held: the curtain interlock at %s is enabled but its PLC/tag pointers are missing - fix the node's curtain settings", node.Name)
 	}
+	if node.CurtainSafeValue == nil {
+		return fmt.Errorf("release held: the curtain interlock at %s is enabled but nobody has chosen which tag value allows the release - set it in the node's curtain settings", node.Name)
+	}
+	plcName, tagName, safe := node.CurtainPLCName, node.CurtainTagName, *node.CurtainSafeValue
 	ctx, cancel := context.WithTimeout(context.Background(), curtainReadTimeout)
 	defer cancel()
-	raw, err := e.plcMgr.ReadTagDirect(ctx, proc.CurtainPLCName, proc.CurtainTagName)
+	raw, err := e.plcMgr.ReadTagDirect(ctx, plcName, tagName)
 	if err != nil {
 		return fmt.Errorf("release held: the curtain tag %s/%s could not be read (%s) - the interlock refuses on an unreadable curtain",
-			proc.CurtainPLCName, proc.CurtainTagName, err)
+			plcName, tagName, err)
 	}
 	val, ok := plc.CurtainBool(raw)
 	if !ok {
 		return fmt.Errorf("release held: the curtain tag %s/%s did not read as a BOOL (%v) - the interlock refuses on a value it cannot interpret",
-			proc.CurtainPLCName, proc.CurtainTagName, raw)
+			plcName, tagName, raw)
 	}
-	if val != proc.CurtainSafeValue {
+	if val != safe {
 		want := "TRUE"
-		if !proc.CurtainSafeValue {
+		if !safe {
 			want = "FALSE"
 		}
-		return fmt.Errorf("release held: the light curtain is not in its release state (tag reads %v, release requires %s)",
-			val, want)
+		return fmt.Errorf("release held: the light curtain at %s is not in its release state (tag reads %v, release requires %s)",
+			node.Name, val, want)
 	}
 	return nil
 }

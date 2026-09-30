@@ -172,13 +172,12 @@ function drawList() {
             '<td><span class="pd-cnt' + (counting ? ' ok' : '') + '"><i></i>' +
             esc(counting ? p.counter_plc_name + ' · counting' : 'not wired') + '</span></td>' +
             // THE CURTAIN COLUMN: the interlock's state at a glance, the
-            // flow-composer column's on/off shape. The chip's title carries
-            // what the settings hold - the PLC, the tag, the polarity - so
-            // "is this one's interlock pointing at the right tag" is a hover,
-            // not a trip into the drawer.
-            '<td>' + (p.curtain_enabled
-                ? '<span class="pd-tag ok" title="' + esc((p.curtain_plc_name || '') + ' \u00B7 ' + (p.curtain_tag_name || '') +
-                    ' \u00B7 release on ' + (p.curtain_safe_value ? 'TRUE' : 'FALSE')) + '">curtain</span>'
+            // flow-composer column's on/off shape. The interlock is set per
+            // node, so the chip counts the curtained nodes and its title names
+            // them; the pointers and polarity are in Settings, per node.
+            '<td>' + ((p.curtain_nodes || []).length
+                ? '<span class="pd-tag ok" title="' + esc(p.curtain_nodes.join(' \u00B7 ')) + '">curtain \u00D7 ' +
+                    p.curtain_nodes.length + '</span>'
                 : '<span class="pd-dim">off</span>') + '</td>' +
             '<td class="num">' + st.length + '</td>' +
             '<td><span class="pd-state ' + state.toLowerCase() + '">' + state.toUpperCase() + '</span></td>' +
@@ -2452,6 +2451,7 @@ function flashRoutingRow(name) {
 async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
+    await loadCurtainNodes();
     drawSettings();
 }
 
@@ -2994,17 +2994,49 @@ function settingsDraftFor(p) {
         // editor over the claims, which stay the storage the divert reads.
         quality_hold_enabled: !!p.quality_hold_enabled,
         quality_hold_destination: p.quality_hold_destination || '',
-        // FG light-curtain release interlock: the process row IS the storage
-        // (unlike the hold, which stamps claims) - these are its columns.
-        curtain_enabled: !!p.curtain_enabled,
-        curtain_plc_name: p.curtain_plc_name || '',
-        curtain_tag_name: p.curtain_tag_name || '',
-        curtain_safe_value: p.curtain_safe_value !== undefined ? !!p.curtain_safe_value : true,
     };
 }
 
+// THE LIGHT-CURTAIN INTERLOCK IS PER NODE, so its draft is not on the process
+// draft above: S.curtainNodes is the open process's live nodes as the server
+// last sent them, and S.curtain is the edit, keyed by node id. safe is true,
+// false or null - null is "not chosen", and nothing here turns it into a
+// value: which reading means "released" is a site fact, and a default is an
+// inverted gate wherever it guesses wrong.
+function curtainDraft() {
+    const out = {};
+    for (const n of (S.curtainNodes || [])) {
+        out[n.id] = {
+            enabled: !!n.curtain_enabled,
+            plc: n.curtain_plc_name || '',
+            tag: n.curtain_tag_name || '',
+            safe: (n.curtain_safe_value === true || n.curtain_safe_value === false) ? n.curtain_safe_value : null,
+        };
+    }
+    return out;
+}
+
+// The open process's live nodes, for the curtain section. Every node, not
+// only produce ones: the screen stands where the bin is picked up, and the
+// engineer who wired it knows which spot that is.
+async function loadCurtainNodes() {
+    S.curtainNodes = [];
+    try {
+        const res = await fetch('/api/process-nodes');
+        const rows = res.ok ? await res.json() : [];
+        S.curtainNodes = (Array.isArray(rows) ? rows : [])
+            .filter(n => n.process_id === S.processID)
+            .sort((a, b) => (a.sequence - b.sequence) || String(a.name).localeCompare(String(b.name)));
+    } catch (_) { S.curtainNodes = []; }
+    S.curtain = curtainDraft();
+}
+
+function curtainDirty() {
+    return !!S.curtain && JSON.stringify(S.curtain) !== JSON.stringify(curtainDraft());
+}
+
 function settingsDirty() {
-    return !!S.settings && JSON.stringify(S.settings) !== JSON.stringify(settingsDraft());
+    return (!!S.settings && JSON.stringify(S.settings) !== JSON.stringify(settingsDraft())) || curtainDirty();
 }
 
 function stField(label, sub, control) {
@@ -3025,17 +3057,18 @@ function stText(key, wide) {
         '" value="' + esc(S.settings[key]) + '">';
 }
 
-// stCombo is the typeahead field: the same input (data-st, so typing still
+// cuCombo is a node's curtain typeahead field: a plain input bound to one
+// field of that node's curtain draft (data-cn / data-cf, so typing still
 // binds and saves exactly what is typed) with the picker's dropdown attached.
 // Options load lazily per kind - 'plc' lists WarLink's PLCs with their
-// connection state, 'tag' lists the CHOSEN curtain PLC's tags, published
-// state marked - and each keystroke filters to the closest matches. Picking
-// writes through the same binding a keystroke would, so the dropdown saves
-// keystrokes and adds no state of its own.
-function stCombo(key, kind) {
-    return '<span class="pd-combo" data-combo="' + kind + '">' +
-        '<input class="pd-inp" type="text" data-st="' + key + '" value="' + esc(S.settings[key]) +
-        '" autocomplete="off" spellcheck="false">' +
+// connection state, 'tag' lists the tags of the PLC typed on the SAME node,
+// published state marked - and each keystroke filters to the closest
+// matches. Picking writes through the same binding a keystroke would, so the
+// dropdown saves keystrokes and adds no state of its own.
+function cuCombo(nodeID, field, kind) {
+    return '<span class="pd-combo" data-combo="' + kind + '" data-cn="' + nodeID + '">' +
+        '<input class="pd-inp" type="text" data-cn="' + nodeID + '" data-cf="' + field + '" value="' +
+        esc(S.curtain[nodeID][field]) + '" autocomplete="off" spellcheck="false">' +
         '<div class="pd-pop pd-combo-list" data-combolist hidden></div>' +
         '</span>';
 }
@@ -3067,27 +3100,34 @@ function drawSettings() {
             'a process that counts can skip a same-part swap at changeover; an unwired one never does',
             stToggle('counter_enabled'));
 
-    // FG LIGHT-CURTAIN INTERLOCK - a per-process opt-in. Off (the default)
-    // means every release behaves exactly as before. On, a PRODUCE release
-    // is only allowed when the curtain tag reads the safe value, checked by
-    // a direct WarLink read at the moment of the click (fail-closed on any
-    // read trouble); the operator-station's RELEASE button greys when the
-    // cached tag value disagrees. Consume and changeover releases are never
-    // gated, whatever this says.
-    const curtainOn = !!S.settings.curtain_enabled;
-    const curSeg = [['true', 'TRUE'], ['false', 'FALSE']].map(v =>
-        '<button class="' + ((!!S.settings.curtain_safe_value) === (v[0] === 'true') ? 'on' : '') +
-        '" data-act="st-curtainval" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
-    const curtain = '<div class="pd-sect"><h2>Light curtain interlock</h2></div>' +
-        stField('Gate produce releases on the FG light curtain',
-            'off: releases go as always - on: a produce release waits for the curtain tag to read the release value',
-            stToggle('curtain_enabled')) +
-        (curtainOn
-            ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', stCombo('curtain_plc_name', 'plc')) +
-              stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', stCombo('curtain_tag_name', 'tag')) +
-              stField('Release value', 'which reading allows the release - the polarity is a site fact; flip it here if the test says the other way',
-                  '<div class="pd-seg">' + curSeg + '</div>')
-            : '');
+    // FG LIGHT-CURTAIN INTERLOCK - a per-node opt-in. Off (the default)
+    // means releases at the node go as always. On, a produce release there
+    // waits for the node's curtain tag to read its release value, checked by
+    // a direct WarLink read at the click (fail-closed on any read trouble);
+    // the operator station's RELEASE button greys when the cached value
+    // disagrees. The release value starts unchosen and must be picked before
+    // the node can be saved switched on - the server refuses the same.
+    if (!S.curtain) S.curtain = curtainDraft();
+    const curtainRows = (S.curtainNodes || []).map(n => {
+        const d = S.curtain[n.id];
+        if (!d) return '';
+        const on = !!d.enabled;
+        const seg = [[true, 'TRUE'], [false, 'FALSE']].map(v =>
+            '<button class="' + (d.safe === v[0] ? 'on' : '') + '" data-act="cu-val" data-node="' + n.id +
+            '" data-val="' + v[0] + '">' + esc(v[1]) + '</button>').join('');
+        return stField(n.name + (n.core_node_name && n.core_node_name !== n.name ? ' (' + n.core_node_name + ')' : ''),
+            on ? 'releases here wait for the curtain tag' : 'off: releases here go as always',
+            '<button class="pd-chk' + (on ? ' on' : '') + '" data-act="cu-toggle" data-node="' + n.id +
+            '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button>') +
+            (on
+                ? stField('PLC', 'the WarLink PLC the curtain button writes - type to filter the live list', cuCombo(n.id, 'plc', 'plc')) +
+                  stField('Tag', 'the BOOL tag the button flips - type to filter; published tags are readable, unpublished ones are not', cuCombo(n.id, 'tag', 'tag')) +
+                  stField('Release value', 'which reading allows the release - a site fact; choose it from the test, there is no default',
+                      '<div class="pd-seg">' + seg + '</div>')
+                : '');
+    }).join('');
+    const curtain = '<div class="pd-sect"><h2>Light curtain interlock</h2><span class="pd-dim">per position</span></div>' +
+        (curtainRows || '<p class="pd-note">This process has no positions yet.</p>');
 
     const seg = AUTO_ARM.map(m => '<button class="' + (S.settings.changeover_auto_arm === m[0] ? 'on' : '') +
         '" data-act="st-arm" data-arm="' + m[0] + '">' + esc(m[1]) + '</button>').join('');
@@ -3165,6 +3205,12 @@ function drawSettings() {
             markSettingsBar();
         });
     }
+    for (const el of root().querySelectorAll('input[data-cn]')) {
+        el.addEventListener('input', () => {
+            S.curtain[el.dataset.cn][el.dataset.cf] = el.value;
+            markSettingsBar();
+        });
+    }
     bindPickers();
     bindCombos();
     if (wasAt) {
@@ -3173,7 +3219,7 @@ function drawSettings() {
     }
 }
 
-// bindCombos wires the curtain's typeahead fields. The list is FILTERED BY
+// bindCombos wires the curtain's per-node typeahead fields. The list is FILTERED BY
 // WHAT IS TYPED - substring, case-insensitive, closest-first - and the typed
 // value remains the saved value: picking an option only saves keystrokes, it
 // never adds state of its own. Tag options key on the PLC currently typed,
@@ -3198,7 +3244,7 @@ function bindCombos() {
                     name: p.name, note: p.connected ? 'connected' : 'not connected',
                 }));
             }
-            const plcName = (S.settings.curtain_plc_name || '').trim();
+            const plcName = ((S.curtain[wrap.dataset.cn] || {}).plc || '').trim();
             if (!plcName) return [{ name: '', note: 'pick a PLC first' }];
             S._tagCache = S._tagCache || {};
             if (!S._tagCache[plcName]) {
@@ -3243,7 +3289,7 @@ function bindCombos() {
             if (!b || !b.dataset.comboopt) return;
             ev.preventDefault();
             input.value = b.dataset.comboopt;
-            S.settings[input.dataset.st] = input.value;
+            S.curtain[input.dataset.cn][input.dataset.cf] = input.value;
             markSettingsBar();
         });
     }
@@ -3300,25 +3346,36 @@ async function saveSettings() {
             if (!c.ok) await fail(c);
         }
     }
-    // THE LIGHT-CURTAIN INTERLOCK rides its own door for the same reason: the
-    // PUT's handler knows nothing of the curtain columns (the store's general
-    // Update does not carry them). Only when one of the four moved. Enabled
-    // needs both pointers - refuse client-side so the operator fixes it before
-    // the round trip, the same courtesy the hold's save extends.
-    if (!S.settingsError && (S.settings.curtain_enabled !== before.curtain_enabled ||
-        S.settings.curtain_plc_name !== before.curtain_plc_name ||
-        S.settings.curtain_tag_name !== before.curtain_tag_name ||
-        S.settings.curtain_safe_value !== before.curtain_safe_value)) {
-        if (S.settings.curtain_enabled && (!S.settings.curtain_plc_name.trim() || !S.settings.curtain_tag_name.trim())) {
-            S.settingsError = 'A PLC name and a tag name are required when the curtain interlock is enabled.';
-        } else {
-            const cu = await fetch('/api/processes/' + S.processID + '/curtain-setting', {
+    // THE LIGHT-CURTAIN INTERLOCK rides its own door per node: the settings
+    // live on the node, and only the nodes whose four fields moved are sent.
+    // An enabled node needs both pointers and a chosen release value - refused
+    // here so the engineer fixes it before the round trip, and refused by the
+    // server regardless.
+    if (!S.settingsError && curtainDirty()) {
+        const was = curtainDraft();
+        for (const n of (S.curtainNodes || [])) {
+            const d = S.curtain[n.id];
+            if (!d || JSON.stringify(d) === JSON.stringify(was[n.id])) continue;
+            if (d.enabled && (!d.plc.trim() || !d.tag.trim())) {
+                S.settingsError = n.name + ': a PLC name and a tag name are required when the curtain interlock is enabled.';
+                break;
+            }
+            if (d.enabled && d.safe === null) {
+                S.settingsError = n.name + ': choose which curtain tag value allows the release (TRUE or FALSE) before enabling the interlock.';
+                break;
+            }
+            const cu = await fetch('/api/process-nodes/' + n.id + '/curtain-setting', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(B().processCurtain(S.settings.curtain_enabled, S.settings.curtain_plc_name, S.settings.curtain_tag_name, S.settings.curtain_safe_value)),
+                body: JSON.stringify(B().nodeCurtain(d.enabled, d.plc, d.tag, d.safe)),
             });
-            if (!cu.ok) await fail(cu);
+            if (!cu.ok) { await fail(cu); break; }
         }
     }
+    // A refused curtain edit keeps its draft on screen, so the engineer fixes
+    // the one field instead of re-entering the node.
+    const keepCurtain = S.settingsError ? S.curtain : null;
+    await loadCurtainNodes();
+    if (keepCurtain) S.curtain = keepCurtain;
     await reloadProcesses();
     S.settings = settingsDraft();
     drawSettings();
@@ -5769,13 +5826,21 @@ function onClick(e) {
                 S.settings.changeover_auto_arm = btn.dataset.arm;
                 drawSettings();
                 return;
-            case 'st-curtainval':
-                S.settings.curtain_safe_value = btn.dataset.val === 'true';
+            case 'cu-toggle': {
+                const d = S.curtain[btn.dataset.node];
+                if (d) d.enabled = !d.enabled;
                 drawSettings();
                 return;
+            }
+            case 'cu-val': {
+                const d = S.curtain[btn.dataset.node];
+                if (d) d.safe = btn.dataset.val === 'true';
+                drawSettings();
+                return;
+            }
             case 'st-group': openGroupPicker(btn); return;
         case 'st-holddest': openContainmentPicker(btn); return;
-            case 'st-discard': S.settings = settingsDraft(); S.settingsError = ''; drawSettings(); return;
+            case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.settingsError = ''; drawSettings(); return;
             case 'st-save': saveSettings(); return;
             case 'st-generate': openGenerate(); return;
             case 'st-sync': syncCatalog(); return;

@@ -63,18 +63,8 @@ type Process struct {
 	// FlowComposerEnabled gates the HMI flow composer for this process. Off
 	// until the engineer has reviewed the routing set (process_routing_nodes);
 	// the routing backfill re-derives only while it is off.
-	FlowComposerEnabled bool `json:"flow_composer_enabled"`
-	// The FG light-curtain release interlock. A light curtain stands at each
-	// finished-goods pickup location; an operator button writes a BOOL tag
-	// that mutes it. With the interlock on, a PRODUCE release is only allowed
-	// when the tag reads CurtainSafeValue, checked by a direct WarLink read
-	// at the moment of the release (fail-closed on any read trouble).
-	// Consume and changeover releases are never gated, whatever this says.
-	CurtainEnabled   bool      `json:"curtain_enabled"`
-	CurtainPLCName   string    `json:"curtain_plc_name"`
-	CurtainTagName   string    `json:"curtain_tag_name"`
-	CurtainSafeValue bool      `json:"curtain_safe_value"`
-	CreatedAt        time.Time `json:"created_at"`
+	FlowComposerEnabled bool      `json:"flow_composer_enabled"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.
@@ -199,6 +189,31 @@ type Node struct {
 	// is NOT NULL, so a hard delete destroys per-node changeover detail with no
 	// SET NULL alternative.
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The FG light-curtain release interlock, per node. A light curtain
+	// stands at a pickup location and an operator button mutes it through a
+	// BOOL PLC tag. With the interlock on, a release that sends a robot in
+	// here is only allowed when CurtainTagName on CurtainPLCName reads
+	// CurtainSafeValue, checked by a direct WarLink read at the click
+	// (engine/curtain_gate.go, fail-closed on any read trouble).
+	//
+	// Per node rather than per process because one tag per process cannot
+	// describe a cell with several screens: a combined signal either holds
+	// every robot until every screen is muted, or lets one in past a live
+	// screen because another is bypassed.
+	//
+	// CurtainSafeValue is nil until someone chooses it. Which of the tag's two
+	// values means "released" is a site fact (it is FALSE at the plant that
+	// first wired one), and a default would invert the gate wherever the
+	// guess is wrong, so an enabled interlock with no polarity refuses to
+	// save and, if one exists anyway, refuses every release.
+	//
+	// omitempty because every node rides the station poll: an uncurtained
+	// node costs the payload nothing, and an absent curtain_safe_value reads
+	// as "not chosen", the same as null.
+	CurtainEnabled   bool   `json:"curtain_enabled,omitempty"`
+	CurtainPLCName   string `json:"curtain_plc_name,omitempty"`
+	CurtainTagName   string `json:"curtain_tag_name,omitempty"`
+	CurtainSafeValue *bool  `json:"curtain_safe_value,omitempty"`
 	// Joined fields
 	StationName string `json:"station_name"`
 	ProcessName string `json:"process_name"`

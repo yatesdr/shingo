@@ -129,18 +129,18 @@ function processContainment(enabled, destination) {
     return { enabled: !!enabled, destination: String(destination || '') };
 }
 
-// processCurtain - POST /api/processes/{id}/curtain-setting. The FG
-// light-curtain release interlock's per-process state: the toggle, the
-// PLC/tag pointers, and the BOOL value that means "release allowed" (the
-// polarity is a setting - which of the curtain tag's two values is safe is
-// a site fact discovered at test time). The interlock itself lives in the
-// release verbs; this body only writes the process row.
-function processCurtain(enabled, plcName, tagName, safeValue) {
+// nodeCurtain - POST /api/process-nodes/{id}/curtain-setting. One node's FG
+// light-curtain release interlock: the toggle, the PLC/tag pointers, and the
+// tag reading that allows a release. safe_value is true, false, or null for
+// "not chosen" - never coerced, because which value means "released" is a
+// site fact and a default would invert the gate wherever it guessed wrong.
+// The server refuses an enabled interlock with null or a pointer missing.
+function nodeCurtain(enabled, plcName, tagName, safeValue) {
     return {
         enabled: !!enabled,
         plc_name: String(plcName || ''),
         tag_name: String(tagName || ''),
-        safe_value: !!safeValue,
+        safe_value: (safeValue === true || safeValue === false) ? safeValue : null,
     };
 }
 
@@ -425,7 +425,7 @@ function saveOutcome(status, body) {
 // again.
 (function () {
     const api = {
-        processCreate, processSettings, processGate, processContainment, processCurtain, processGroupCreate,
+        processCreate, processSettings, processGate, processContainment, nodeCurtain, processGroupCreate,
         styleCreate, styleWrite, styleClone,
         processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
         routingSet, processPayloads,

@@ -26,10 +26,6 @@
     "counter_enabled": false,
     "changeover_auto_arm": "auto",
     "flow_composer_enabled": false,
-    "curtain_enabled": false,
-    "curtain_plc_name": "",
-    "curtain_tag_name": "",
-    "curtain_safe_value": true,
     "created_at": "<ts>"
   },
   "active_changeover": {

@@ -44,6 +44,12 @@ func (db *DB) UpdateProcessNode(id int64, in processes.NodeInput) error {
 	return processes.UpdateNode(db.DB, id, in)
 }
 
+// SetProcessNodeCurtain writes one node's FG light-curtain interlock
+// settings. See processes.SetNodeCurtain for the refusals.
+func (db *DB) SetProcessNodeCurtain(id int64, enabled bool, plcName, tagName string, safeValue *bool) error {
+	return processes.SetNodeCurtain(db.DB, id, enabled, plcName, tagName, safeValue)
+}
+
 // DeleteProcessNode RETIRES a process_node row (soft delete). See
 // processes.DeleteNode.
 func (db *DB) DeleteProcessNode(id int64) error {
