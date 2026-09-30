@@ -987,8 +987,10 @@ func (e *SwapPairNotReadyError) Advisory() bool { return true }
 // A TERMINAL SIBLING IS NOT PENDING. If it already ran — or was cancelled, or
 // was skipped because the press was found empty — nothing is coming to collide
 // with, and refusing then would strand the other leg forever with no sibling
-// that can ever stage. Same for a sibling that is itself releasable: both legs
-// go on this click, in the safe order.
+// that can ever stage. Same for a sibling that is itself STAGED: both legs go
+// on this click, in the safe order. A sibling that is `in_transit` is not
+// staged — it may still be driving to its wait with the bin it must lift still
+// in place — so it is pending, and the placing leg is held (N-b).
 //
 // BOTH POSITIONS, NOT JUST THE HEAD. The guard used to ask only "does this leg
 // place a bin at CoreNodeName", which is the front position, and that is only half
@@ -1051,14 +1053,40 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 			// it and the deferral remembers it.
 			continue
 		}
+		// A leg released past its wait on an earlier click is not going on this
+		// one: it has already gone, and a second press asks nothing of it.
+		if leg.Status == orders.StatusInTransit {
+			if passed, perr := e.orderMgr.PassedAStationWait(legID); perr == nil && passed {
+				continue
+			}
+		}
 		sibling, err := e.db.GetOrder(siblingID)
 		if err != nil {
 			e.logFn("release-staged HELD node=%s: cannot read sibling %d to check for a collision: %v",
 				node.Name, siblingID, err)
 			return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
 		}
-		if orders.IsTerminal(sibling.Status) || orders.ReleasableAtCore(sibling.Status) {
+		// STAGED, NOT MERELY RELEASABLE. `in_transit` is releasable at Core, but
+		// for a sibling that has not reached its wait it means "still driving
+		// there": it has lifted nothing yet. Counting it as going on this click
+		// released R2 onto a press R1 had not cleared (and, unflipped, R1 onto the
+		// back position R2 had not cleared) — two bins on one position.
+		//
+		// An in_transit sibling this station ALREADY released is going — it was
+		// let go on an earlier click — and is treated as the staged one is.
+		if orders.IsTerminal(sibling.Status) || sibling.Status == orders.StatusStaged {
 			continue
+		}
+		if sibling.Status == orders.StatusInTransit {
+			passed, perr := e.orderMgr.PassedAStationWait(siblingID)
+			if perr != nil {
+				e.logFn("release-staged HELD node=%s: cannot read sibling %d's release history: %v",
+					node.Name, siblingID, perr)
+				return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
+			}
+			if passed {
+				continue
+			}
 		}
 		position := claim.CoreNodeName
 		if i == 1 {

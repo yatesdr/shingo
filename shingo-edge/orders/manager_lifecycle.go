@@ -84,7 +84,7 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 	// Transition Edge status to in_transit now that the robot is resuming.
 	// Core won't send a dedicated in_transit message (TypeOrderUpdate ignores
 	// status), so we transition locally to keep Edge in sync.
-	if err := m.TransitionOrder(orderID, StatusInTransit, "released from staging"); err != nil {
+	if err := m.TransitionOrder(orderID, StatusInTransit, ReleasedFromStagingDetail); err != nil {
 		return fmt.Errorf("transition to in_transit: %w", err)
 	}
 
@@ -351,4 +351,48 @@ func releaseRejectionDetail(order *orders.Order, coreDetail string) string {
 	}
 	b.WriteString(" Click release to retry.")
 	return b.String()
+}
+
+// ReleasedFromStagingDetail is the order_history detail this Edge writes when
+// it releases a leg from a wait. PassedAStationWait reads it back.
+const ReleasedFromStagingDetail = "released from staging"
+
+// PassedAStationWait reports whether this Edge released the order from a wait
+// and the release stood: its history holds a staged→in_transit transition with
+// ReleasedFromStagingDetail that no later rollback undid. A Core re-stage at a
+// later wait does not undo it — the leg is still past the wait it was released
+// from.
+//
+// It is the Edge's own account of "released past a wait, not merely driving
+// to one", which `in_transit` alone cannot say: an order driving to its FIRST
+// wait and one released and driving between waits both read in_transit. A
+// release Core refused is rolled back (RollbackReleaseRejection,
+// RollbackForRetry) and counts as not having passed.
+//
+// A stand-in until Core reports which wait an order is parked at; one
+// order_history read.
+func (m *Manager) PassedAStationWait(orderID int64) (bool, error) {
+	hist, err := m.db.ListOrderHistory(orderID)
+	if err != nil {
+		return false, err
+	}
+	passed := false
+	for _, h := range hist {
+		switch {
+		case h.OldStatus == StatusStaged && h.NewStatus == StatusInTransit && h.Detail == ReleasedFromStagingDetail:
+			passed = true
+		case h.OldStatus == StatusInTransit && h.NewStatus == StatusStaged && isReleaseRollback(h.Detail):
+			passed = false
+		}
+	}
+	return passed, nil
+}
+
+// isReleaseRollback reports whether an order_history detail is one of the two
+// rollback sentences a refused release writes. The same prefixes key the
+// board's release-error chip (store/station_views.go); they are repeated here
+// because store cannot import this package.
+func isReleaseRollback(detail string) bool {
+	return strings.HasPrefix(detail, "Core rejected the release") ||
+		strings.HasPrefix(detail, "Manifest sync failed at Core")
 }
