@@ -247,7 +247,7 @@ func TestReleaseLayer_N3_ReleasePathErrorCodes(t *testing.T) {
 		r := newReleaseRig(t)
 		rlLeg(t, r.db, "n3a", StatusStaged, 0, single(t))
 		r.backend.SetFail(true)
-		pinOutcome(t, "N3", r.outcome(t, "n3a"),
+		pinOutcome(t, "", r.outcome(t, "n3a"),
 			"appends=0 wait_index=0 status=staged errors=[fleet_failed]",
 			"appends=0 wait_index=0 status=staged errors=[invalid_state]")
 	})
@@ -267,7 +267,7 @@ func TestReleaseLayer_N3_ReleasePathErrorCodes(t *testing.T) {
 		}
 		got := releaseOutcome(t, db, d, func() int { return len(backend.ReleaseCalls()) }, "n3b")
 		got += fmt.Sprintf(" audits=%d", landedAudits(t, db, o.ID))
-		pinOutcome(t, "N3", got,
+		pinOutcome(t, "", got,
 			"appends=1 wait_index=1 status=faulted errors=[fleet_failed] audits=0",
 			"appends=1 wait_index=1 status=faulted errors=[] audits=1")
 	})
@@ -278,7 +278,7 @@ func TestReleaseLayer_N3_ReleasePathErrorCodes(t *testing.T) {
 		t.Parallel()
 		r := newReleaseRig(t)
 		rlLeg(t, r.db, "n3c", StatusStaged, 0, `{"not":"a plan"`)
-		pinOutcome(t, "N3", r.outcome(t, "n3c"),
+		pinOutcome(t, "", r.outcome(t, "n3c"),
 			"appends=0 wait_index=0 status=staged errors=[internal_error]",
 			"appends=0 wait_index=0 status=staged errors=[invalid_state]")
 	})
@@ -288,7 +288,7 @@ func TestReleaseLayer_N3_ReleasePathErrorCodes(t *testing.T) {
 	t.Run("d not found", func(t *testing.T) {
 		t.Parallel()
 		r := newReleaseRig(t)
-		pinOutcome(t, "N3", r.outcome(t, "n3d-unknown"),
+		pinOutcome(t, "", r.outcome(t, "n3d-unknown"),
 			"appends=0 row=none errors=[not_found]",
 			"appends=0 row=none errors=[invalid_state]")
 	})

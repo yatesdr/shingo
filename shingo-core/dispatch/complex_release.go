@@ -19,19 +19,29 @@ import (
 func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.OrderRelease) {
 	d.dbg("order release: station=%s uuid=%s", env.Src.Station, p.OrderUUID)
 
+	// ── NO RELEASE-PATH ERROR MAY FAIL THE EDGE ORDER ────────────────────
+	//
+	// The Edge routes order.error by code (edge_handler.go HandleOrderError):
+	// invalid_state rolls an in_transit leg back to staged with a "Core rejected
+	// the release" chip, manifest_sync_failed rolls back for retry, and every
+	// other code is a terminal Failed. A release is a request about an order,
+	// not a verdict on it, so every refusal and every error this handler sends
+	// uses one of the two rolled-back codes. That includes an order Core cannot
+	// find for this station: the chip says so, and nothing on the Edge dies.
 	order, ok := d.getOwnedOrder(env, p.OrderUUID)
 	if !ok {
-		d.sendError(env, p.OrderUUID, "not_found", "order not found or access denied")
+		d.sendError(env, p.OrderUUID, "invalid_state", "order not found or access denied")
 		return
 	}
 
 	// A faulted leg is mid-recovery (SEER FAILED → Core's non-terminal `faulted`),
 	// not terminally dead — Core keeps the order alive and it re-stages once the
 	// robot recovers. Edge's consolidated two-robot release fans a release out to
-	// BOTH legs of a swap; when it reaches a faulted leg we must NOT reply with an
-	// error, because Edge turns any non-`manifest_sync_failed` order-error into a
-	// terminal StatusFailed — killing the Edge mirror while Core's order lives on
-	// (the ALN_003 divergence, Springfield 2026-06-12). No-op the release: there
+	// BOTH legs of a swap; when it reaches a faulted leg we reply with nothing.
+	// Before invalid_state was rolled back, any error here turned the Edge row
+	// terminally Failed while Core's order lived on (the ALN_003 divergence,
+	// Springfield 2026-06-12), and even a rollback would put a moving leg back to
+	// staged. No-op the release: there
 	// is nothing to dispatch on a faulted leg, and the post-recovery re-release
 	// re-fires normally. Mirrors the in_transit duplicate-fan-out special-case below.
 	if order.Status == StatusFaulted {
@@ -131,7 +141,8 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
-		d.sendError(env, p.OrderUUID, "internal_error", "failed to parse stored steps")
+		log.Printf("dispatch: release refused: order %d has unparseable steps_json: %v", order.ID, err)
+		d.sendError(env, p.OrderUUID, "invalid_state", "Core could not read this order's stored steps")
 		return
 	}
 
@@ -436,10 +447,30 @@ func IsAppendLanded(err error) bool {
 
 func appendLanded(err error) error { return AppendLandedError{err: err} }
 
+// dispatchFleetRelease is the operator release's append, and its reply is chosen
+// by whether the fleet took the blocks:
+//
+//   - Not taken: the order is still where it was at Core (wait_index and status
+//     unmoved), so the Edge rolls its leg back to staged and the operator can
+//     press again. invalid_state is the code that does that on every Edge.
+//   - Taken (AppendLandedError): the robot has the segment and is driving it,
+//     and only Core's own write after the append failed. The Edge already has
+//     the leg in_transit, which is true, so nothing is sent; any code would
+//     roll back or fail a moving leg. It is logged and audited on the order,
+//     because the row now disagrees with the robot and someone should see why.
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
-	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release"); err != nil {
-		d.sendError(env, order.EdgeUUID, "fleet_failed", err.Error())
+	err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release")
+	if err == nil {
+		return
 	}
+	if IsAppendLanded(err) {
+		log.Printf("dispatch: complex release: order %d: the fleet took the segment and Core's write after it failed; "+
+			"no error sent to the Edge: %v", order.ID, err)
+		d.db.AppendAudit("order", order.ID, "release_append_landed", "",
+			fmt.Sprintf("release appended to the fleet, then Core's own write failed: %v", err), "system")
+		return
+	}
+	d.sendError(env, order.EdgeUUID, "invalid_state", "the fleet did not take the release: "+err.Error())
 }
 
 // appendSegmentAndAdvance is the ONE fleet-append path: convert a segment to
