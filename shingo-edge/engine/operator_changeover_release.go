@@ -31,9 +31,9 @@ type ReleaseChangeoverWaitResult struct {
 	Released int `json:"released"`
 	Pending  int `json:"pending"`
 	// NeedsFlip names the A/B positions a SWEEP declined to release because the
-	// line is still pulling from them. A sweep carries no per-node intent, so it
-	// can never answer the confirm the guard asks for — it reports them instead,
-	// by name, so the operator knows exactly which presses still want a click.
+	// line is still pulling from them. A sweep is not aimed at one aisle, so it
+	// does not move the line for the operator — it reports them instead, by
+	// name, so the operator knows exactly which presses still want a click.
 	NeedsFlip []string `json:"needs_flip,omitempty"`
 }
 
@@ -177,29 +177,18 @@ func (e *Engine) releaseSingleLegChangeoverNode(nodeID int64, disp ReleaseDispos
 	return true, nil
 }
 
-// linePullsFrom reports whether a node is one half of a SEQUENTIAL pair the
-// line is CURRENTLY DRAWING FROM, and if so why the partner cannot take over
-// yet.
+// linePullsFrom reports whether a node is one half of an A/B pair that the line
+// is CURRENTLY DRAWING FROM, and names its partner.
 //
 // That is the physical reason a robot must not strip a position, and it is the
 // whole of it — no changeover vocabulary, no situation, no mode. It is equally
 // true in steady state: sending a robot to lift the bin the line is pulling
 // from stops production whether or not a changeover is running.
 //
-// The QUESTION the guard asks changed on 2026-09-27 (owner ruling, fact-owners
-// Lane G): it was "does the stored bit say pulling", it is now "can the partner
-// feed the line" — flipTargetReady on the partner. The stored bit still decides
-// WHETHER this side is the one being drawn from (the parked side of a pair
-// must release; a bit-less trigger would decline both halves), but the bit no
-// longer ANSWERS the release: the partner's readiness does. pulling is
-// therefore "own bit true AND the partner is not ready"; why is that reason,
-// empty only when the partner IS ready.
-//
 // Reads nothing it does not need: the node's active claim for the A/B geometry
 // (PairedCoreNode, the same predicate wiring.go uses for "is this the parked
-// side"), the runtime row for the bit, and — only when the bit is set — the
-// partner node and its flipTargetReady answer.
-func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, why string, err error) {
+// side"), and the runtime row for the bit.
+func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string, err error) {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil || node == nil {
 		return false, "", "", fmt.Errorf("read process node %d: %w", nodeID, err)
@@ -223,87 +212,47 @@ func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, why string, err
 	// is what makes this side safe to clear. The scope is not a carve-out for a
 	// mode; it is the rule being stated about the choreography it describes.
 	if claim.SwapMode != protocol.SwapModeSequential {
-		return false, node.CoreNodeName, "", nil
+		return false, node.CoreNodeName, claim.PairedCoreNode, nil
 	}
 	rt, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
-		return false, node.CoreNodeName, "",
+		return false, node.CoreNodeName, claim.PairedCoreNode,
 			fmt.Errorf("read runtime for node %d: %w", nodeID, err)
 	}
-	if !rt.ActivePull {
-		return false, node.CoreNodeName, "", nil // the line pulls from the partner — this side is clear
-	}
-	// The line draws from THIS side. Ask the new question: can the partner
-	// feed the line? flipTargetReady names the partner and the reason in one
-	// string, so the refusal says what to go fix ("SEQ-B's new bin has not
-	// been delivered yet") instead of naming a button that no longer exists.
-	//
-	// A partner that cannot be RESOLVED is a reason, not a read failure of
-	// this side's own state: the operator can look at the aisle and confirm,
-	// whereas an unread own runtime (above) is err because a confirm cannot
-	// answer a question that was never asked.
-	partner, pErr := e.pairedNodeOf(node)
-	if pErr != nil || partner == nil {
-		return true, node.CoreNodeName,
-			fmt.Sprintf("its paired node %s could not be resolved", claim.PairedCoreNode), nil
-	}
-	why = e.flipTargetReady(partner)
-	if why == "" {
-		return false, node.CoreNodeName, "", nil // partner ready: release and flip, nothing to ask
-	}
-	return true, node.CoreNodeName, why, nil
+	return rt.ActivePull, node.CoreNodeName, claim.PairedCoreNode, nil
 }
 
-// activePullGuard decides what a release click may do at one task's node.
+// activePullGuard reports whether a changeover release must skip one task's
+// node because the line is pulling from it.
 //
-// ── A SPEED BUMP, NOT A WALL (owner ruling 2026-08-28) ────────────────────
+// A CLICK AIMED AT THIS NODE FLIPS AND RELEASES; A SWEEP DECLINES. One press on
+// the feeding side moves the line to the partner and then lets the robot in —
+// the trunk does both (ReleaseOrderWithLineside), refusing only when the
+// partner cannot feed, and naming why. A plant-wide sweep is not aimed at one
+// aisle: a supervisor letting robots into six stopped stations has not looked
+// at Press 2's, so the sweep moves no line and releases no feeding position; it
+// declines and reports the node by name. That is not an exception for a mode;
+// it is the difference between a click aimed at one press and a click aimed at
+// all of them.
 //
-// `active_pull` is a bit, and bits go stale — a PLC that missed an edge, a
-// runtime row written before someone moved a bin by hand. The person standing
-// at the press can see the aisle and the system cannot, so the guard states the
-// fact and names the next click; it never outranks him. An explicit confirm
-// releases anyway and is audited.
-//
-// THE SWEEP CANNOT CONFIRM. A plant-wide release carries no per-node intent —
-// a supervisor letting robots into six stopped stations has not looked at Press
-// 2's aisle — so it declines and reports the node by name rather than deciding
-// on his behalf. That is not an exception for a mode; it is the difference
-// between a click aimed at one press and a click aimed at all of them.
-//
-// An unreadable role declines the same way for the same reason.
-func (e *Engine) activePullGuard(task processes.NodeTask, onlyNodeID int64, disp ReleaseDisposition) (skip bool, err error) {
-	pulling, own, why, pErr := e.linePullsFrom(task.ProcessNodeID)
+// An unreadable pull state declines the sweep the same way. The per-node click
+// leaves it to the trunk, which declines on it and says why.
+func (e *Engine) activePullGuard(task processes.NodeTask, onlyNodeID int64) (skip bool) {
+	if onlyNodeID != 0 {
+		return false
+	}
+	pulling, own, _, pErr := e.linePullsFrom(task.ProcessNodeID)
 	if pErr != nil {
-		log.Printf("release changeover wait node %s: %v — declining rather than releasing on an "+
+		log.Printf("release changeover wait node %s: %v — the sweep declines rather than releasing on an "+
 			"unread pull state", task.NodeName, pErr)
-		if onlyNodeID != 0 {
-			return true, fmt.Errorf("node %s: could not read whether the line is pulling from it (%w)",
-				task.NodeName, pErr)
-		}
-		return true, nil
+		return true
 	}
 	if !pulling {
-		return false, nil
+		return false
 	}
-	// ── THE SWEEP ARM COMES FIRST, AND THE ORDER IS THE POINT ─────────────
-	//
-	// A confirm is an answer about ONE aisle: the operator looked at this press
-	// and said release anyway. A plant-wide click was not aimed at one press, so
-	// it cannot carry that answer — and if this arm sat below the confirm check,
-	// a single confirm on a sweep would spend itself on every press at once,
-	// which is the whole guard undone by one flag.
-	if onlyNodeID == 0 {
-		log.Printf("release changeover wait: node %s skipped — the line is pulling from it and a "+
-			"plant-wide sweep cannot confirm on the operator's behalf", own)
-		return true, nil
-	}
-	if disp.ConfirmActivePull {
-		log.Printf("AUDIT release-override: node=%s order=%v called_by=%q — the line was recorded as "+
-			"pulling from this position and the operator released it anyway",
-			own, task.NextMaterialOrderID, disp.CalledBy)
-		return false, nil
-	}
-	return true, fmt.Errorf("cannot release %s yet: %s; confirm to release anyway", own, why)
+	log.Printf("release changeover wait: node %s skipped — the line is pulling from it, and a plant-wide "+
+		"sweep does not move the line on the operator's behalf", own)
+	return true
 }
 
 // coreNameOf is the node's CORE name — what the flip button and the board key
@@ -347,12 +296,7 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 	// Supply leg always rides through with no manifest action regardless of
 	// what the operator chose. Empty Mode → buildProtocolDisposition returns
 	// nil → Core no-op. CalledBy still flows for audit.
-	// ConfirmActivePull rides along. It is an override of a PHYSICAL guard, not a
-	// manifest instruction, so stripping it with the mode would leave the
-	// operator's confirm answered at this layer and refused one call later by the
-	// trunk guard in ReleaseOrderWithLineside — which is exactly what happened
-	// the first time.
-	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy, ConfirmActivePull: disp.ConfirmActivePull}
+	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 
 	// Collect per-task failures rather than swallowing them. Pre-fix
 	// behaviour was log-and-continue + return nil, which silently recreated
@@ -369,12 +313,9 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 			continue
 		}
 		// A ROBOT MAY NOT STRIP A POSITION THE LINE IS PULLING FROM.
-		// See activePullGuard: refuse-by-default with an operator override,
-		// and a sweep declines because it cannot answer for him.
-		if skip, gErr := e.activePullGuard(task, onlyNodeID, disp); skip {
-			if gErr != nil {
-				return result, gErr
-			}
+		// See activePullGuard: a click aimed at this node flips the line and
+		// releases (in the trunk); a sweep declines and names the node.
+		if e.activePullGuard(task, onlyNodeID) {
 			result.NeedsFlip = append(result.NeedsFlip, coreNameOf(e, task))
 			result.Pending++
 			continue
@@ -488,21 +429,18 @@ func evacDispositionForTask(e *Engine, task processes.NodeTask, override Release
 	runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
 	if err != nil {
 		log.Printf("release changeover wait node %s: runtime lookup failed (%v); defaulting evac to release_empty", task.NodeName, err)
-		return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy,
-			ConfirmActivePull: override.ConfirmActivePull}
+		return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
 	}
 
 	if runtime != nil && runtime.RemainingUOPCached > 0 {
 		count := runtime.RemainingUOPCached
 		return ReleaseDisposition{
-			Mode:              DispositionSendPartialBack,
-			ConfirmActivePull: override.ConfirmActivePull,
-			PartialCount:      &count,
-			CalledBy:          override.CalledBy,
+			Mode:         DispositionSendPartialBack,
+			PartialCount: &count,
+			CalledBy:     override.CalledBy,
 		}
 	}
-	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy,
-		ConfirmActivePull: override.ConfirmActivePull}
+	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
 }
 
 // stagedPastAWait reports whether an order is staged at a wait after one this

@@ -227,6 +227,14 @@ export function renderModal(entry) {
             esc(entry.stranded_alarm) +
             '</div>';
     }
+    if (entry.count_waits) {
+        html += '<div class="os-count-waits-chip" style="' +
+            'margin:8px 0;padding:10px 14px;border-radius:6px;' +
+            'background:#1f2a36;color:#dbe7f5;border:1px solid #35485e;' +
+            'font-size:13px;line-height:1.4">' +
+            esc(entry.count_waits) +
+            '</div>';
+    }
 
     // Skip-note chip: surfaces when a linked changeover complex order
     // reached terminal "skipped" — Core's no_source_bin path (the source

@@ -90,6 +90,11 @@ type StationNodeView struct {
 	// "CARRIER-XXXX staged Nh at <node>, not bound — Record Count on the bin tab."
 	// Empty when the node has no active stranding alarm.
 	StrandedAlarm string `json:"stranded_alarm,omitempty"`
+	// CountWaits is the sentence for a sequential position the line has moved
+	// onto before its bin arrived: "The line is on <node>; its parts wait for
+	// <node>'s bin." The count is held (pending_uop_delta) and replays when the
+	// bin binds. Empty otherwise.
+	CountWaits string `json:"count_waits,omitempty"`
 	// ContainmentReleaseTarget marks this node as a QUALITY CONTAINMENT
 	// position: non-empty when some producing claim names this node as its
 	// containment destination, and carries that claim's OutboundDestination —

@@ -1349,6 +1349,17 @@ function createNodeButton(entry) {
         btn.appendChild(alarm);
     }
 
+    // The line moved onto this sequential position before its bin arrived:
+    // the count waits and replays onto the bin when it binds. Informational;
+    // the sentence is the server's (count_waits).
+    if (entry.count_waits && !entry.stranded_alarm) {
+        const waits = el('span', { className: 'os-node-alarm', textContent: 'COUNT WAITS FOR BIN' });
+        waits.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:11px;' +
+            'font-weight:700;padding:2px 6px;border-radius:4px;color:#dbe7f5;background:#2b3a4d';
+        waits.title = entry.count_waits;
+        btn.appendChild(waits);
+    }
+
     // CONTAINED chip — the bin on this tile carries a payload whose quality
     // containment flag is ACTIVE: its next FG-bound delivery diverts to the
     // hold spot automatically. Red, and it does not ask anyone to do

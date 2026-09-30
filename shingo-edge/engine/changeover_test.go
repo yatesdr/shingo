@@ -1601,59 +1601,65 @@ func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 	return eng, processID, activeNodeID, parkedNodeID, co
 }
 
-// ── THE RELEASE GUARD: A SPEED BUMP, NOT A WALL ───────────────────────────
+// ── THE RELEASE GUARD: ONE PRESS MOVES THE LINE TO THE PARTNER ─────────────
 //
-// A robot may not strip a position the line is drawing from. That is physical
-// and mode-agnostic — it is equally true in steady state — so the guard reads
-// one fact (`active_pull` on an A/B position) and nothing about changeovers.
-//
-// It is refuse-by-DEFAULT and override-by-CONFIRM, because `active_pull` is a
-// bit and bits go stale: a PLC that missed an edge, a runtime row written
-// before someone moved a bin by hand. The operator can see the aisle; the
-// system cannot. So the guard states the fact, names the next click, and gets
-// out of the way when he insists.
+// A RELEASE aimed at the feeding position moves the line to the partner and
+// releases this side (owner, 2026-09-30). A partner with no bin yet takes the
+// line anyway, and its count is held until its bin binds. The one refusal
+// left is a partner that is not ready and still has a carrier bound: the held
+// count would land on that outgoing carrier. A sweep declines and names the
+// node. The release matrix pins the same rule (release_pins_test.go, L3).
 
-// TestReleaseGuard_WarnsWhileTheLineIsPullingFromThePosition is the per-node
-// door: the click is refused with the fact and the flip that fixes it.
-func TestReleaseGuard_WarnsWhileTheLineIsPullingFromThePosition(t *testing.T) {
+// TestReleaseGuard_OnePressMovesTheLineOntoAPartnerWithNoBin is the per-node
+// door with a partner whose new carrier has not arrived and no bin bound: the
+// click flips the line to the partner and releases this side.
+func TestReleaseGuard_OnePressMovesTheLineOntoAPartnerWithNoBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
 	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
 
-	_, err := eng.ReleaseChangeoverWaitForNode(processID, activeNodeID, ReleaseDisposition{CalledBy: "op"})
-	if err == nil {
-		t.Fatal("the release went through while the line was still pulling from SEQ-A. A robot sent " +
-			"to lift that bin stops production on a press that was running.")
+	if _, err := eng.ReleaseChangeoverWaitForNode(processID, activeNodeID, ReleaseDisposition{CalledBy: "op"}); err != nil {
+		t.Fatalf("one press on the feeding side was refused: %v — the line goes to the partner and its "+
+			"count waits for its bin", err)
 	}
-	for _, want := range []string{"SEQ-A", "SEQ-B"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("warning = %q, want it to name %q — the fact and the next click, or it is just "+
-				"a button that does not work", err.Error(), want)
-		}
+	if got := orderStatusOf(t, db, activeOrder); got == string(orders.StatusStaged) {
+		t.Error("the feeding side was not released")
 	}
-	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
-		t.Errorf("the order moved to %q despite the warning; a refused click must change nothing", got)
+	if activePullOf(t, db, activeNodeID) || !activePullOf(t, db, parkedNodeID) {
+		t.Error("the release did not move the line onto SEQ-B")
 	}
 }
 
-// TestReleaseGuard_ConfirmReleasesAnyway — the operator outranks the bit.
-func TestReleaseGuard_ConfirmReleasesAnyway(t *testing.T) {
+// TestReleaseGuard_APartnerStillHoldingItsOutgoingCarrierRefuses is the one
+// shape hold-and-replay cannot carry: SEQ-B is not ready and a carrier is
+// still bound there, so its count would land on that carrier. The click is
+// refused, naming both positions and the reason, and nothing moves.
+func TestReleaseGuard_APartnerStillHoldingItsOutgoingCarrierRefuses(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	activeOrder, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
 	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+	outgoing := int64(7301)
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(parkedNodeID, &outgoing), "outgoing carrier on SEQ-B")
 
-	res, err := eng.ReleaseChangeoverWaitForNode(processID, activeNodeID,
-		ReleaseDisposition{CalledBy: "op", ConfirmActivePull: true})
-	if err != nil {
-		t.Fatalf("the confirmed release was refused: %v. The guard is a speed bump — the person at "+
-			"the press can see the aisle and the system cannot.", err)
+	_, err := eng.ReleaseChangeoverWaitForNode(processID, activeNodeID, ReleaseDisposition{CalledBy: "op"})
+	if err == nil {
+		t.Fatal("released onto a partner whose outgoing carrier is still bound — the line's count " +
+			"would land on the carrier that is leaving")
 	}
-	if res.Released != 1 {
-		t.Errorf("released=%d, want 1 — the confirm must actually release", res.Released)
+	for _, want := range []string{"SEQ-A", "SEQ-B", fmt.Sprint(parkedOrder)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal = %q, want it to name %q", err.Error(), want)
+		}
+	}
+	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
+		t.Errorf("the order moved to %q despite the refusal; a refused click must change nothing", got)
+	}
+	if !activePullOf(t, db, activeNodeID) || activePullOf(t, db, parkedNodeID) {
+		t.Error("a refused release wrote the pair")
 	}
 }
 
@@ -1663,10 +1669,10 @@ func TestReleaseGuard_ConfirmReleasesAnyway(t *testing.T) {
 // The scoped door declines on an unreadable pull state and says why. The trunk
 // — /orders/{id}/release, the door the sim's auto-operator and a real operator
 // both drive — asked `pErr == nil && pulling`, so a runtime row that could not
-// be read sent the robot. The whole guard is confirm-overridable, so failing
-// closed costs one extra click on a flaky read; failing open means the answer to
-// "may a robot strip this position" depends on which button was pressed, in a
-// file whose own banner says "policy there, physics here".
+// be read sent the robot. Failing closed costs one extra click on a flaky read;
+// failing open means the answer to "may a robot strip this position" depends on
+// which button was pressed, in a file whose own banner says "policy there,
+// physics here".
 //
 // The unread state is manufactured the way the plant produces it — the runtime
 // row missing under a sequential paired claim — because that is what a partially
@@ -1686,8 +1692,8 @@ func TestReleaseGuard_TheTrunkDeclinesOnAnUnreadPullState(t *testing.T) {
 	err := eng.ReleaseOrderWithLineside(activeOrder, ReleaseDisposition{CalledBy: "op"})
 	if err == nil {
 		t.Fatal("the trunk released SEQ-A on a pull state it could not read. The scoped door declines " +
-			"on exactly this error; the trunk sent the robot. A guard that is confirm-overridable " +
-			"costs one extra click when it fails closed, and costs a stopped press when it fails open.")
+			"on exactly this error; the trunk sent the robot. Failing closed costs one extra click; " +
+			"failing open costs a stopped press.")
 	}
 	if !strings.Contains(err.Error(), "SEQ-A") {
 		t.Errorf("refusal = %q, want it to name SEQ-A — the fact and the next click, or it is just a "+
@@ -1698,30 +1704,8 @@ func TestReleaseGuard_TheTrunkDeclinesOnAnUnreadPullState(t *testing.T) {
 	}
 }
 
-// TestReleaseGuard_TheTrunkStillConfirmsThroughAReadableRefusal is the other
-// half of the same amendment: making the ERROR path decline must not turn the
-// ordinary readable refusal into a wall. The operator can still see the aisle.
-func TestReleaseGuard_TheTrunkStillConfirmsThroughAReadableRefusal(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
-
-	if err := eng.ReleaseOrderWithLineside(activeOrder,
-		ReleaseDisposition{CalledBy: "op"}); err == nil {
-		t.Fatal("the fixture is wrong: the line IS pulling from SEQ-A, so the unconfirmed click must " +
-			"be refused")
-	}
-	if err := eng.ReleaseOrderWithLineside(activeOrder,
-		ReleaseDisposition{CalledBy: "op", ConfirmActivePull: true}); err != nil {
-		t.Fatalf("the confirmed release was refused: %v. active_pull was READABLE and said true — the "+
-			"speed bump, which the operator outranks — not an unread state.", err)
-	}
-}
-
-// TestReleaseGuard_SweepDeclinesAndNamesTheNode — a plant-wide click carries no
-// per-node intent, so it can never answer the confirm the guard asks for. It
+// TestReleaseGuard_SweepDeclinesAndNamesTheNode — a plant-wide click is not
+// aimed at one aisle, so it moves no line and releases no feeding position. It
 // reports the position by name instead of deciding for the operator.
 func TestReleaseGuard_SweepDeclinesAndNamesTheNode(t *testing.T) {
 	t.Parallel()
@@ -1746,32 +1730,6 @@ func TestReleaseGuard_SweepDeclinesAndNamesTheNode(t *testing.T) {
 	if len(res.NeedsFlip) != 1 || res.NeedsFlip[0] != "SEQ-A" {
 		t.Errorf("NeedsFlip = %v, want exactly [SEQ-A] — the operator has to know which press still "+
 			"wants a click", res.NeedsFlip)
-	}
-}
-
-// TestReleaseGuard_SweepNeverAutoConfirms pins the thing that would quietly
-// undo the whole guard: a sweep carrying a confirm.
-func TestReleaseGuard_SweepNeverAutoConfirms(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
-
-	// Even handed a confirm, the SWEEP must not use it: the confirm is an
-	// answer about one aisle, and a plant-wide click was not aimed at one.
-	res, err := eng.ReleaseChangeoverWait(processID,
-		ReleaseDisposition{CalledBy: "supervisor", ConfirmActivePull: true})
-	if err != nil {
-		t.Fatalf("sweep errored: %v", err)
-	}
-	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
-		t.Errorf("a plant-wide sweep carrying a confirm released the pulling position (status %q). "+
-			"A confirm answers for ONE press; a sweep was not aimed at one, so it may not spend it "+
-			"on every press at once.", got)
-	}
-	if len(res.NeedsFlip) == 0 {
-		t.Error("the sweep reported no NeedsFlip — it must still name what it declined")
 	}
 }
 
@@ -1866,10 +1824,10 @@ func readinessOf(t *testing.T, eng *Engine, db *store.DB, nodeID int64) string {
 
 // releaseActiveSide stages and releases the ACTIVE side's changeover order
 // through the trunk — the click that moves the line onto the parked side.
-func releaseActiveSide(t *testing.T, eng *Engine, db *store.DB, activeOrder int64, confirm bool) error {
+func releaseActiveSide(t *testing.T, eng *Engine, db *store.DB, activeOrder int64) error {
 	t.Helper()
 	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage the active side")
-	return eng.ReleaseOrderWithLineside(activeOrder, ReleaseDisposition{CalledBy: "op", ConfirmActivePull: confirm})
+	return eng.ReleaseOrderWithLineside(activeOrder, ReleaseDisposition{CalledBy: "op"})
 }
 
 // TestFlipGuard_SkippedSideIsReadyImmediately — arm (a). The reuse shortcut
@@ -1894,7 +1852,7 @@ func TestFlipGuard_SkippedSideIsReadyImmediately(t *testing.T) {
 			"same carrier, so the empty already standing there IS the one the new style wants — "+
 			"there is nothing to deliver and nothing to wait for.", why)
 	}
-	if err := releaseActiveSide(t, eng, db, activeOrder, false); err != nil {
+	if err := releaseActiveSide(t, eng, db, activeOrder); err != nil {
 		t.Fatalf("release of the active side was refused with a ready partner: %v", err)
 	}
 	if !activePullOf(t, db, parkedNodeID) || activePullOf(t, db, activeNodeID) {
@@ -1902,10 +1860,10 @@ func TestFlipGuard_SkippedSideIsReadyImmediately(t *testing.T) {
 	}
 }
 
-// TestFlipGuard_WarnsUntilTheTargetsOrderDelivers — arm (b), produce. A
+// TestFlipGuard_NamesTheOrderUntilTheTargetDelivers — arm (b), produce. A
 // different-carrier side has a real order; until it lands, the position cannot
 // feed the line.
-func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
+func TestFlipGuard_NamesTheOrderUntilTheTargetDelivers(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
@@ -1922,22 +1880,15 @@ func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
 				"order that fixes it", why, want)
 		}
 	}
-	// The trunk carries that reason on its refusal and moves nothing.
-	err := releaseActiveSide(t, eng, db, activeOrder, false)
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprint(parkedOrder)) {
-		t.Fatalf("release with an unready partner = %v, want the refusal carrying the partner's reason", err)
-	}
-	if activePullOf(t, db, parkedNodeID) {
-		t.Error("a refused release moved the pull anyway")
-	}
-
-	// CONFIRM OVERRIDES. The bit is the system's belief; the operator can see
-	// the aisle and may know better.
-	if err := releaseActiveSide(t, eng, db, activeOrder, true); err != nil {
-		t.Fatalf("the confirmed release was refused: %v — the guard is a speed bump, not a wall", err)
+	// The reason is what the line waits on, not a refusal (owner,
+	// 2026-09-30): SEQ-B has no bin bound, so the release moves the line onto
+	// it and its count is held until its new carrier binds.
+	if err := releaseActiveSide(t, eng, db, activeOrder); err != nil {
+		t.Fatalf("release with a partner whose carrier has not arrived = %v, want the line moved and "+
+			"the count held", err)
 	}
 	if !activePullOf(t, db, parkedNodeID) {
-		t.Error("the confirmed release did not move the pull")
+		t.Error("the release did not move the pull onto SEQ-B")
 	}
 
 	// AND ONCE IT DELIVERS, no warning at all.

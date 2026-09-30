@@ -358,9 +358,9 @@ func releasePinCells() []relCell {
 			want:  "ok | removal=in_transit | rel=removal | ingest=0 capred=0 | pull=SYN-PRESS-B",
 			build: func(h *relHarness) { h.sequentialAB(protocol.ClaimRoleConsume, true); statuses(h, "removal", S) },
 			act:   orderClick("removal", dispEmpty), probe: probes(pPull)},
-		{name: "L3/per-order release at the pulled side, partner not ready",
-			bug:   "L3",
-			today: "refuse:pull | removal=staged | rel=- | ingest=0 capred=0 | pull=SYN-PRESS",
+		// The line always goes to the partner (owner, 2026-09-30): a partner
+		// with no bin takes the line and its count waits for its bin.
+		{name: "L3/per-order release at the pulled side, partner has no bin",
 			want:  "ok | removal=in_transit | rel=removal | ingest=0 capred=0 | pull=SYN-PRESS-B",
 			build: func(h *relHarness) { h.sequentialAB(protocol.ClaimRoleConsume, false); statuses(h, "removal", S) },
 			act:   orderClick("removal", dispEmpty), probe: probes(pPull)},
@@ -372,9 +372,14 @@ func releasePinCells() []relCell {
 				deliverBack(h)
 			},
 			act: nodeCOClick(dispNone), probe: probes(pPull)},
-		{name: "L3/changeover node click at the pulled side, partner not ready",
+		// The partner is not ready and its outgoing carrier is still bound. The
+		// rule says flip and hold the count for the incoming carrier, but the
+		// tick path charges whatever bin is bound, so hold-and-replay cannot
+		// keep the count off the outgoing one. Refused as before; reported to
+		// the owner.
+		{name: "L3/changeover node click at the pulled side, partner holds its outgoing carrier",
 			bug:   "L3-co",
-			today: "refuse:pull | supply=staged | rel=- | ingest=0 capred=0 | node released=0 pending=0 flip=[] | pull=SYN-PRESS",
+			today: "refuse:outgoing-carrier | supply=staged | rel=- | ingest=0 capred=0 | node released=0 pending=0 flip=[] | pull=SYN-PRESS",
 			want:  "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | node released=1 pending=0 flip=[] | pull=SYN-PRESS-B",
 			build: func(h *relHarness) {
 				h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential})
@@ -382,9 +387,7 @@ func releasePinCells() []relCell {
 			},
 			act: nodeCOClick(dispNone), probe: probes(pPull)},
 		{name: "L3/sweep declines the pulled side",
-			bug:   "L3-sweep",
-			today: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | sweep released=1 pending=1 flip=[SYN-PRESS-B] | pull=SYN-PRESS-B",
-			want:  "ok | supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=2 flip=[SYN-PRESS] | pull=SYN-PRESS",
+			want: "ok | supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=2 flip=[SYN-PRESS] | pull=SYN-PRESS",
 			build: func(h *relHarness) {
 				h.coID = h.changeover(coSpec{mode: protocol.SwapModeSequential})
 				statuses(h, "supply", S)

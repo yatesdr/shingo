@@ -411,8 +411,9 @@ func errClass(err error) string {
 	switch {
 	case strings.Contains(msg, "light curtain"), strings.Contains(msg, "curtain"):
 		return "refuse:curtain"
-	case strings.Contains(msg, "line is pulling"), strings.Contains(msg, "whether the line is pulling"),
-		strings.Contains(msg, "confirm to release anyway"):
+	case strings.Contains(msg, "would land on the carrier still on"):
+		return "refuse:outgoing-carrier"
+	case strings.Contains(msg, "line is pulling"), strings.Contains(msg, "whether the line is pulling"):
 		return "refuse:pull"
 	case strings.Contains(msg, "which Core will not release"):
 		return "refuse:not-releasable"

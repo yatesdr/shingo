@@ -1406,6 +1406,7 @@ func (s *StationService) buildNodeTile(
 	if s.stranded != nil {
 		nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
 	}
+	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
 	// order for something a loader operator has said they cannot supply.
 	//
@@ -1502,4 +1503,19 @@ func (s *StationService) applyManualSwapLoaderFields(
 			}
 		}
 	}
+}
+
+// countWaits is the board's sentence for a sequential position the line has
+// moved onto before its bin arrived. A RELEASE on the other side always moves
+// the line here (owner, 2026-09-30); while no bin is bound, the tick path holds
+// the count in pending_uop_delta and replays it when the bin binds. Built from
+// the claim and runtime the view already holds: no read.
+func countWaits(coreNode string, claim *processes.NodeClaim, rt *processes.RuntimeState) string {
+	if claim == nil || claim.SwapMode != protocol.SwapModeSequential || claim.PairedCoreNode == "" {
+		return ""
+	}
+	if rt == nil || !rt.ActivePull || rt.ActiveBinID != nil {
+		return ""
+	}
+	return fmt.Sprintf("The line is on %s; its parts wait for %s's bin.", coreNode, coreNode)
 }

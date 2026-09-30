@@ -10,8 +10,10 @@ import (
 	"shingoedge/store/processes"
 )
 
-// flipTargetReady returns "" when the line may safely be put onto this position,
-// or an operator-readable reason why not.
+// flipTargetReady returns "" when this position can feed the line now, or an
+// operator-readable reason why not. It is not a refusal: a RELEASE on the
+// partner still moves the line here (owner, 2026-09-30), and the reason is
+// what the line's count waits on (releaseFlipPartner).
 //
 // ── THE INVARIANT CARRIES THE KNOWLEDGE ───────────────────────────────────
 //
@@ -43,9 +45,9 @@ import (
 //	STEADY STATE   no changeover is running, so there is nothing to be ready FOR
 //	               beyond a bin being present — the invariant covers the rest.
 //
-// Every failure to READ answers ready(""). This guard exists to catch the
-// operator's honest mistake, not to wall him out of his own press when a query
-// hiccups; and it is confirm-overridable anyway.
+// Every failure to READ answers ready(""): a query hiccup must not turn into a
+// refusal (releaseFlipPartner refuses only a not-ready partner with a carrier
+// still bound).
 func (e *Engine) flipTargetReady(node *processes.Node) string {
 	rt, err := e.db.GetProcessNodeRuntime(node.ID)
 	if err != nil || rt == nil {
@@ -115,8 +117,7 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 	// changeover's OWN material lands — before that fix it read as "the outgoing
 	// style" for a median 18 minutes and refused flips that were ready.
 	//
-	// Unreadable to-claim answers ready(""): this guard catches the operator's
-	// honest mistake, not a query hiccup, and it is confirm-overridable anyway.
+	// Unreadable to-claim answers ready(""), for the reason above.
 	claim := e.claimAtNode(node)
 	if claim != nil && claim.Role == protocol.ClaimRoleConsume {
 		if rt.RemainingUOPCached <= 0 {

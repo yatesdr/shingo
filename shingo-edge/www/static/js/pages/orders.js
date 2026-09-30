@@ -72,23 +72,8 @@ async function releaseOrder(orderID) {
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e, 'error'); }
 
-    // postRelease: the sequential release guard can refuse with a reason
-    // ("cannot release SEQ-A yet: …; confirm to release anyway"). This is
-    // the admin view, so the second click is the browser's own confirm() —
-    // and the answered POST carries confirm_active_pull: true, which the
-    // engine audits and then flips the pull side as part of the release.
     async function postRelease(b) {
-        try {
-            await api.post('/api/orders/' + orderID + '/release', b);
-        } catch (e) {
-            if (String(e).indexOf('confirm to release anyway') !== -1 &&
-                await confirm(String(e) + '\n\nRelease anyway?')) {
-                await api.post('/api/orders/' + orderID + '/release',
-                    Object.assign({}, b, { confirm_active_pull: true }));
-                return;
-            }
-            throw e;
-        }
+        await api.post('/api/orders/' + orderID + '/release', b);
     }
 }
 

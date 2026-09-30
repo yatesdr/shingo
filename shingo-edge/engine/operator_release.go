@@ -166,66 +166,40 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// This is the trunk every door runs through, including the changeover path,
 	// so the physical question is asked once here. The scoped path keeps its own
 	// pre-check for a different reason: a SWEEP must decline and NAME the node
-	// rather than attempt and fail, because it carries no per-node intent to
-	// confirm with. Policy there, physics here.
+	// rather than attempt and fail, because it is not aimed at one aisle.
+	// Policy there, physics here.
 	//
-	// Same speed-bump rule: refuse with the fact and the next click, and let an
-	// explicit confirm through with an audit line.
+	// ── ONE PRESS: RELEASE ON THE FEEDING SIDE MOVES THE LINE TO THE PARTNER ──
+	//
+	// The operator presses RELEASE once, and the line always goes to the
+	// partner (owner, 2026-09-30): releaseFlipPartner puts the pull side on
+	// the partner and this side is released. A partner with no bin yet is not
+	// a refusal: its count is held (hold-and-replay) until its bin binds, and
+	// the board says so. This replaces "flip first, or confirm to release
+	// anyway": the confirm had no button on the operator board (L3), and the
+	// one thing it wanted — the line on the other side before this one is
+	// stripped — is something the release does itself.
+	//
+	// The flip is a SIDE EFFECT, so it runs in every arm below after that
+	// arm's refusals and before its paperwork. A Core refusal after the flip
+	// leaves the line on the partner, which is right: the parts belong to the
+	// partner's bin from RELEASE on.
 	//
 	// ── AN UNREADABLE PULL STATE DECLINES ─────────────────────────────────
 	//
-	// This read `pErr == nil && pulling`, so a runtime row that could not be read
-	// released. The scoped sibling declines on that same error and says why
-	// (activePullGuard), and the asymmetry meant the answer to one PHYSICAL
-	// question — may a robot strip this position — depended on which door the
-	// click came through. In a trunk whose own banner says "policy there, physics
-	// here" that is the wrong half to be inconsistent about.
-	//
-	// The cost of failing closed is one extra click on a flaky read, because the
-	// guard is confirm-overridable. The cost of failing open is a robot lifting
-	// the bin a running press is drawing from.
-	//
-	// A CONFIRM DOES NOT PASS AN UNREAD STATE, again matching the scoped door: the
-	// confirm answers "the bit says pulling and I have looked", which is not an
-	// answer to "nothing could be read". The readable refusal below is unchanged
-	// and still confirms through.
-	//
-	// ── THE QUESTION CHANGED (owner ruling 2026-09-27, fact-owners Lane G) ──
-	//
-	// It was "does the stored bit say pulling"; it is now "can the partner feed
-	// the line". linePullsFrom answers it: pulling means "own bit true AND the
-	// partner is not ready", why carries flipTargetReady(partner)'s reason. A
-	// READY partner (why == "") is not pulling at all — the release proceeds and
-	// flips the line to the partner below, which is the point: releasing a
-	// sequential position IS the operator saying the line has moved. The flip
-	// arm lives after the guard, not inside linePullsFrom, so the parked side
-	// (own bit false) never rewrites the pair.
-	pulling, own, why, pErr := e.linePullsFrom(node.ID)
-	if own == "" {
-		own = node.CoreNodeName // linePullsFrom could not even name it
-	}
-	switch {
-	case pErr != nil:
+	// A runtime row that cannot be read declines, as the scoped door does: the
+	// answer to "may a robot strip this position" must not depend on which
+	// button was pressed. It is asked here, before EnsureProcessNodeRuntime
+	// below would create a missing row with the bit off. Failing closed costs
+	// a click on a flaky read; failing open is a robot lifting the bin a
+	// running press is drawing from.
+	if _, own, _, pErr := e.linePullsFrom(node.ID); pErr != nil {
+		if own == "" {
+			own = node.CoreNodeName // linePullsFrom could not even name it
+		}
 		log.Printf("release order %d at node %s: %v — declining rather than releasing on an "+
 			"unread pull state", orderID, own, pErr)
 		return fmt.Errorf("node %s: could not read whether the line is pulling from it (%w)", own, pErr)
-	case pulling && !disp.ConfirmActivePull:
-		return fmt.Errorf("cannot release %s yet: %s; confirm to release anyway", own, why)
-	case pulling:
-		log.Printf("AUDIT release-override: node=%s order=%d called_by=%q — the line was recorded as "+
-			"pulling from this position and the operator released it anyway", own, orderID, disp.CalledBy)
-	}
-	// The release is decided (refused above, or confirmed through). The
-	// release itself is the flip: the line has moved to the partner. The
-	// helper re-derives everything — sequential, paired, own bit true — so
-	// it runs on EVERY release that gets this far: a ready partner (why ==
-	// "", pulling false) proceeds and flips, a confirm proceeds and flips
-	// (the confirm answered the partner's readiness, not the line's move),
-	// and a parked side (own bit false) makes the helper a no-op. It runs
-	// BEFORE the rest of the release (boundary, writePullSide, sweep), so
-	// the pair is consistent before any order state moves.
-	if err := e.releaseFlipPartner(node); err != nil {
-		return err
 	}
 
 	runtime, err := e.db.EnsureProcessNodeRuntime(node.ID)
@@ -234,6 +208,9 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	}
 
 	if dropTask, _ := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); dropTask != nil && dropTask.Situation == "drop" {
+		if err := e.releaseFlipPartner(node); err != nil {
+			return err
+		}
 		return e.releaseOrderDropFastPath(orderID, node, runtime, disp)
 	}
 
@@ -259,6 +236,9 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		}
 		e.logRelease("order %d on node %s — toClaim is nil (runtime.ActiveClaimID=%s), skipping manifest sync; disposition %q dropped",
 			orderID, node.Name, activeClaimStr, string(disp.Mode))
+		if err := e.releaseFlipPartner(node); err != nil {
+			return err
+		}
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
@@ -307,6 +287,11 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 			return cerr
 		}
 		shipIngest = !changeoverLeg
+	}
+
+	// ── FROM HERE ON, SIDE EFFECTS. Every refusal is above this line. ──
+	if err := e.releaseFlipPartner(node); err != nil {
+		return err
 	}
 
 	// Side-cycle trigger (U1 only): fires when the operator declares a
@@ -372,20 +357,35 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply)
 }
 
-// releaseFlipPartner performs the sequential flip that a release IS. The
-// trunk guard above has decided the release may proceed (partner ready, or
-// the operator confirmed through the refusal); when the released side's own
-// active_pull bit was true, the operator's click is the statement "the line
-// has moved to the partner" — so the release itself puts the pull side on the
-// partner and takes it off the released position (writePullSide). There is no
-// separate flip button: the release is the flip. (The old operator flip
-// door, Engine.FlipABNode, was deleted with its last caller.)
+// releaseFlipPartner performs the sequential flip that a release IS: when the
+// released side's own active_pull bit is set, the line moves to the partner
+// (writePullSide) and this position goes dark. There is no separate flip
+// button: the release is the flip.
+//
+// It is the first side effect of every arm of the release trunk, below every
+// refusal, and reads everything before it writes anything, so its own
+// refusals leave the pair untouched.
 //
 // It re-derives sequential + paired + own-bit-true rather than trusting the
 // caller's context, for the same reason writePullSide is the only writer of
 // the pair: a parked-side release (own bit false) must never rewrite the
 // pair, and neither must a non-sequential or unpaired position that happened
 // to share the trunk.
+//
+// ── A PARTNER WITH NO BIN YET TAKES THE LINE, AND ITS COUNT WAITS ─────────
+//
+// flipTargetReady's reasons are not refusals (owner, 2026-09-30): the line
+// goes to the partner, and while no bin is bound there the tick path holds
+// its count in pending_uop_delta and replays it when the bin binds
+// (applyHoldAndReplay). The board says so (StationNodeView.CountWaits).
+//
+// The one shape hold-and-replay cannot carry is a partner that is not ready
+// and still has a carrier BOUND: mid-changeover, its outgoing carrier before
+// the evac lifts it. The tick path charges whatever bin is bound, so the
+// count would land on the outgoing carrier instead of the incoming one. That
+// release keeps today's refusal, with the reason. In steady state
+// flipTargetReady is not ready only when no bin is bound, so this refuses
+// nothing outside a changeover.
 //
 // The order of operations: attribution boundary on the partner (flush the
 // outgoing side's residual deltas before the new active side starts
@@ -410,14 +410,25 @@ func (e *Engine) releaseFlipPartner(node *processes.Node) error {
 	}
 	rt, err := e.db.GetProcessNodeRuntime(node.ID)
 	if err != nil || rt == nil {
-		return fmt.Errorf("read runtime for node %d: %w", node.ID, err)
+		log.Printf("release at node %s: runtime unreadable (%v) — declining rather than releasing on an "+
+			"unread pull state", node.CoreNodeName, err)
+		return fmt.Errorf("node %s: could not read whether the line is pulling from it (%w)", node.CoreNodeName, err)
 	}
 	if !rt.ActivePull {
 		return nil // the line already pulls from the partner — nothing to write
 	}
 	partner, err := e.pairedNodeOf(node)
 	if err != nil {
-		return err
+		return fmt.Errorf("the line is pulling from %s and its partner could not be resolved: %w",
+			node.CoreNodeName, err)
+	}
+	why := e.flipTargetReady(partner)
+	if why != "" {
+		prt, perr := e.db.GetProcessNodeRuntime(partner.ID)
+		if perr != nil || prt == nil || prt.ActiveBinID != nil {
+			return fmt.Errorf("cannot release %s yet: the line's parts would land on the carrier still on %s: %s",
+				node.CoreNodeName, partner.CoreNodeName, why)
+		}
 	}
 	// Attribution boundary on the node GOING LIVE: the flip is the
 	// inactive→active transition with no operator action of its own on that
@@ -432,8 +443,13 @@ func (e *Engine) releaseFlipPartner(node *processes.Node) error {
 	if err := e.writePullSide(partner.ID, node.ID); err != nil {
 		return err
 	}
-	log.Printf("release flip: node %s released — pull side now on partner %s",
-		node.CoreNodeName, partner.CoreNodeName)
+	if why != "" {
+		log.Printf("release flip: node %s released — the line is on %s; its parts wait for %s's bin (%s)",
+			node.CoreNodeName, partner.CoreNodeName, partner.CoreNodeName, why)
+	} else {
+		log.Printf("release flip: node %s released — pull side now on partner %s",
+			node.CoreNodeName, partner.CoreNodeName)
+	}
 	// The released position just went dark; the level sweep decides its
 	// reorder now rather than on its next pass (see above).
 	e.sweepNodeLevelNow(node.ID)

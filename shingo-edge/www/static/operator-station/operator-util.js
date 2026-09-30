@@ -174,13 +174,6 @@ export async function fetchWithTimeout(url, opts, ms) {
     }
 }
 
-// The release guard's confirmable refusal ends with this phrase (both the
-// trunk and the changeover board use the same sentence). The UI keys on it
-// to know a refusal can be answered with the same click plus
-// confirm_active_pull: true — the second click on the refusal message that
-// is the only UI change in the release-flip model (2026-09-27).
-export const PULL_CONFIRM_MARKER = 'confirm to release anyway';
-
 // postAction is the single POST→refresh path. Returns true on 2xx.
 // Caller passes its own loadView callback so this module stays free of
 // state/view dependencies.
@@ -230,15 +223,6 @@ export async function postAction(url, body, loadView, opts) {
                     const took = await postAction(exit.url, {}, null);
                     if (took) await postAction(url, body, loadView);
                 });
-                return false;
-            }
-            // A CONFIRMABLE refusal is the release guard's speed bump: the
-            // engine refused with a reason and the same click plus a confirm
-            // releases anyway. Callers that can offer that second click hook
-            // onRefusal (the marker identifies the shape); everyone else
-            // falls through to the plain error toast.
-            if (msg.includes(PULL_CONFIRM_MARKER) && opts && typeof opts.onRefusal === 'function') {
-                opts.onRefusal(msg, parsed);
                 return false;
             }
             // An ADVISORY refusal is the system working: the request was
