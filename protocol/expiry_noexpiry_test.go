@@ -130,3 +130,23 @@ func TestZeroOrDeadline(t *testing.T) {
 		t.Errorf("zeroOrDeadline(now, 5m) = %v, want %v", got, now.Add(5*time.Minute))
 	}
 }
+
+// TestNewEnvelope_OrderIngestCarriesNoExpiry: a produce ingest is a full bin's
+// count, and Core fences a late one by its bin_epoch, so an ingest drained
+// minutes or hours late must still apply (S1b; it used to expire at 10 min).
+func TestNewEnvelope_OrderIngestCarriesNoExpiry(t *testing.T) {
+	t.Parallel()
+	env, err := NewEnvelope(TypeOrderIngest, Address{Role: RoleEdge, Station: "plant-a.line-1"},
+		Address{Role: RoleCore}, &OrderIngestRequest{OrderUUID: "u", PayloadCode: "PART-X", Quantity: 47})
+	if err != nil {
+		t.Fatalf("NewEnvelope: %v", err)
+	}
+	if !env.ExpiresAt.IsZero() {
+		t.Fatalf("order.ingest ExpiresAt = %v, want zero (never expires)", env.ExpiresAt)
+	}
+	// The header's exp is all the reader checks: zero reads as never, at any age.
+	hdr := RawHeader{Type: TypeOrderIngest, ExpiresAt: env.ExpiresAt}
+	if IsExpiredHeader(&hdr) {
+		t.Error("an order.ingest header reads expired")
+	}
+}

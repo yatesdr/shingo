@@ -791,6 +791,21 @@ func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadC
 	return s.RecordProducedBin(binID, manifestJSON, payloadCode, uop, producedAt)
 }
 
+// RecordIngestRefused writes the audit row for a produce ingest refused on its
+// epoch fence (OpIngestStaleEpochRefused). The bin is unchanged.
+func (s *BinManifestService) RecordIngestRefused(binID int64, payloadCode string, uop int, wireEpoch, binEpoch, quantity int64) error {
+	meta, err := json.Marshal(struct {
+		WireEpoch int64 `json:"wire_epoch"`
+		BinEpoch  int64 `json:"bin_epoch"`
+		Quantity  int64 `json:"quantity"`
+	}{wireEpoch, binEpoch, quantity})
+	if err != nil {
+		return fmt.Errorf("marshal ingest refusal bin %d: %w", binID, err)
+	}
+	return audit.AppendBinUOPOverride(s.db, binID, uop, uop, audit.OpIngestStaleEpochRefused,
+		"service/bin_manifest.go:RecordIngestRefused", nil, payloadCode, "", meta)
+}
+
 // Unconfirm clears a bin's manifest confirmation flag, and writes its
 // manifest_unconfirmed ledger row in the same transaction — Confirm's mirror.
 //

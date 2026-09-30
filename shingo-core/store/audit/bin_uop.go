@@ -94,6 +94,13 @@ const (
 	// {wire_epoch, bin_epoch, sequence_id, delta}.
 	OpStaleEpochDropped = "stale_epoch_dropped"
 
+	// OpIngestStaleEpochRefused tags a produce ingest Core refused because its
+	// bin_epoch no longer matched the bin's delta_epoch: the bin was emptied or
+	// re-bound after the Edge counted it, so the count belongs to a retired
+	// life of the bin. An observation row (before_uop == after_uop); metadata
+	// carries {wire_epoch, bin_epoch, quantity}.
+	OpIngestStaleEpochRefused = "ingest_stale_epoch_refused"
+
 	// OpPayloadBoundFirstDelta tags the routine first-delta identity bind: a
 	// produce bin at exactly zero count took its payload_code from the first
 	// produce_tick that landed on it (the designed blank fresh carrier, or a

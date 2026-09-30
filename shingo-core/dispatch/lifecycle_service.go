@@ -484,6 +484,18 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	if binErr != nil {
 		return binErr
 	}
+	// THE EPOCH FENCE. An ingest never expires, so a late one must count the
+	// life of the bin it was taken from: the Edge stamps the epoch it counted
+	// under, and a bin emptied or re-bound since has a newer one. Absent (0) is
+	// the manual HTTP door, and today's behaviour.
+	if p.BinEpoch != 0 && bin.DeltaEpoch != p.BinEpoch {
+		if err := s.binManifest.RecordIngestRefused(bin.ID, p.PayloadCode, bin.UOPRemaining,
+			p.BinEpoch, bin.DeltaEpoch, p.Quantity); err != nil {
+			log.Printf("dispatch: ingest refusal audit bin=%d: %v", bin.ID, err)
+		}
+		return lifecycleErr("stale_epoch", fmt.Sprintf("ingest for bin %d counted epoch %d; the bin is at epoch %d",
+			bin.ID, p.BinEpoch, bin.DeltaEpoch), nil)
+	}
 	// Set the manifest AND confirm it in ONE transaction: a confirm failure must
 	// not leave a counted-but-unconfirmed bin. manifest_confirmed is a hard gate
 	// for a full bin to be a drain/retrieve source, so a stranded unconfirmed bin
@@ -523,7 +535,15 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		// SetBinManifestFromTemplate directly, bypassing audit; the resulting
 		// timeline gap made forensics confusing because freshly-loaded bins
 		// appeared in bin_uop_ledger only at the first downstream delta.
-		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, nil, p.ProducedAt); err != nil {
+		// No lines: the release-time produce ingest sends none and lets Core
+		// resolve the payload's template. The count is the Edge's (Quantity),
+		// not the template's capacity; 0 still falls back to capacity.
+		var uopOverride *int
+		if p.Quantity > 0 {
+			q := int(p.Quantity)
+			uopOverride = &q
+		}
+		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, uopOverride, p.ProducedAt); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	}

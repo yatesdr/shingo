@@ -13,7 +13,10 @@ var defaultTTLs = map[string]time.Duration{
 	TypeOrderRequest:  10 * time.Minute,
 	TypeOrderCancel:   10 * time.Minute,
 	TypeOrderRedirect: 10 * time.Minute,
-	TypeOrderIngest:   10 * time.Minute,
+	// An ingest is a produced bin's count. A dropped one leaves a full bin
+	// unconfirmed and invisible to sourcing; a late one is fenced by its
+	// bin_epoch at Core. So it never expires.
+	TypeOrderIngest: NoExpiry,
 
 	TypeOrderAck:    10 * time.Minute,
 	TypeOrderUpdate: 10 * time.Minute,

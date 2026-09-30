@@ -763,7 +763,13 @@ type OrderIngestRequest struct {
 	// indexed the fresh tote onto the position the manifest's tote occupied,
 	// so resolve-by-node would credit the wrong bin. Edge passes the runtime's
 	// active bin id, which Core itself seeded at delivery.
-	BinID      int64                `json:"bin_id,omitempty"`
+	BinID int64 `json:"bin_id,omitempty"`
+	// BinEpoch fences the ingest to one life of the bin: Core applies it only
+	// while the bin's delta_epoch still equals it, and refuses it with an
+	// audit row otherwise. The ingest neither expires nor dead-letters, so a
+	// late one must not re-stamp a bin that has since been emptied and
+	// refilled. 0 = absent (the manual HTTP door), today's behaviour.
+	BinEpoch   int64                `json:"bin_epoch,omitempty"`
 	SourceNode string               `json:"source_node"`
 	Quantity   int64                `json:"quantity"` // operator-measured produced count (UOP); 0 => payload capacity
 	Manifest   []IngestManifestItem `json:"manifest,omitempty"`
