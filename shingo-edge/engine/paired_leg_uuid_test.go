@@ -76,8 +76,6 @@ func TestApplyProducePlan_BothLegsGoOutPaired(t *testing.T) {
 	testutil.MustNoErr(t, err, "get runtime")
 
 	plan := &ProducePlan{
-		Manifest:          []protocol.IngestManifestItem{{PartNumber: "WIDGET-A", Quantity: 1}},
-		ProducedAtRFC3339: "2026-08-23T00:00:00Z",
 		Dispatch: &SwapDispatch{
 			CycleMode:     protocol.SwapModeTwoRobotPressIndex,
 			ProcessNode:   claim.CoreNodeName,

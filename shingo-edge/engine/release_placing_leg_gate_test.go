@@ -24,6 +24,11 @@ func seedSwapPairAt(t *testing.T, mode protocol.SwapMode, evacStatus, supplyStat
 	testutil.MustNoErr(t, err, "create evac")
 	supplyID, err := db.CreateOrder("uuid-supply", orders.TypeComplex, &nodeID, false, 1, "", "", "", "", false, "WIDGET-A", "", "")
 	testutil.MustNoErr(t, err, "create supply")
+	// The evac's steps say what it is: it waits at the press, then lifts the
+	// press's bin — the leg a RELEASE finalizes the produce bin for.
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(evacID,
+		`[{"action":"wait","node":"PRESS","wait_kind":"station"},{"action":"pickup","node":"PRESS"},{"action":"dropoff","node":"OUT"}]`),
+		"evac steps")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(evacStatus)), "evac status")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(supplyStatus)), "supply status")
 	testutil.MustNoErr(t, db.LinkOrderSiblings(evacID, supplyID), "link siblings")

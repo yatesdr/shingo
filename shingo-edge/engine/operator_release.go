@@ -230,10 +230,7 @@ func (e *Engine) releaseOrderInAct(act *releaseAct, orderID int64, disp ReleaseD
 	}
 
 	if dropTask, _ := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); dropTask != nil && dropTask.Situation == "drop" {
-		if err := e.releaseFlipPartner(node); err != nil {
-			return err
-		}
-		return e.releaseOrderDropFastPath(orderID, node, runtime, disp)
+		return e.releaseDropArm(act, order, node, runtime, disp)
 	}
 
 	// Resolve the target claim: if a changeover is active, use the
@@ -280,27 +277,27 @@ func (e *Engine) releaseOrderInAct(act *releaseAct, orderID int64, disp ReleaseD
 		return err
 	}
 
-	// THE DEPARTING PRODUCE LEG OWES ITS BIN'S INGEST, WHICHEVER DOOR RELEASES
-	// IT. A two-robot produce bin's manifest is stamped at the release tap
-	// (produceIngestAtRelease), and only the pair click stamped it: the
-	// per-order RELEASE of the evac — the button left when its supply leg has
-	// died — sent the full bin away unmanifested and left the count on the
-	// press (L4). A changeover leg's paperwork is the changeover's. Decided
-	// here, in the gates, so an unreadable answer refuses.
-	shipIngest := false
-	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.SwapMode.IsTwoRobot() &&
-		order.SiblingOrderID != nil && !isSupply {
-		changeoverLeg, cerr := e.isChangeoverLeg(&order.ID)
-		if cerr != nil {
-			e.logRelease("order=%d node=%s — refusing release: %v", orderID, node.Name, cerr)
-			return cerr
-		}
-		shipIngest = !changeoverLeg
+	// THE DEPARTING PRODUCE BIN IS FINALIZED AT ITS RELEASE, WHICHEVER DOOR
+	// AND WHATEVER MODE. Decided from the leg's steps and the bin's own claim
+	// (departingProduceLeg), here in the gates, so an unreadable answer
+	// refuses. A changeover evac is one of them: its bin used to leave with no
+	// confirmed manifest.
+	finalize, err := e.departingProduceLeg(act, order.ID, node, runtime, toClaim)
+	if err != nil {
+		e.logRelease("order=%d node=%s — refusing release: %v", orderID, node.Name, err)
+		return err
 	}
 
 	// ── FROM HERE ON, SIDE EFFECTS. Every refusal is above this line. ──
 	if err := e.releaseFlipPartner(node); err != nil {
 		return err
+	}
+	// After the flip: on a sequential press the line is already on the
+	// partner, so no tick lands on this bin between its count and its clear.
+	if finalize {
+		if err := e.finalizeDepartingProduce(node, runtime, order, order.SiblingOrderID); err != nil {
+			return err
+		}
 	}
 
 	// Side-cycle trigger (U1 only): fires when the operator declares a
@@ -331,15 +328,6 @@ func (e *Engine) releaseOrderInAct(act *releaseAct, orderID int64, disp ReleaseD
 	if toClaim.Role == protocol.ClaimRoleProduce {
 		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
 			orderID, node.Name, string(disp.Mode))
-		// Ahead of the envelope, for the pair click's reason: the outbox drains
-		// by id, so Core applies the manifest before the release. Once per
-		// departing order, so the pair click's own call and this one ship it
-		// once between them.
-		if shipIngest {
-			if err := e.produceIngestAtRelease(node, runtime, toClaim, order.SiblingOrderID, &order.ID); err != nil {
-				return err
-			}
-		}
 		if err := e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy); err != nil {
 			return err
 		}
@@ -363,7 +351,7 @@ func (e *Engine) releaseOrderInAct(act *releaseAct, orderID int64, disp ReleaseD
 		return nil
 	}
 
-	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply)
+	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply, finalize)
 }
 
 // releaseFlipPartner performs the sequential flip that a release IS: when the
@@ -479,6 +467,26 @@ func queueReasonSuffix(order *storeorders.Order) string {
 	return " — " + reason
 }
 
+// releaseDropArm is the trunk's arm for a changeover drop's evac: its one
+// refusal (the departing-bin check), then the flip, the produce finalize and
+// the drop fast path, in that order.
+func (e *Engine) releaseDropArm(act *releaseAct, order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition) error {
+	finalize, err := e.departingProduceLeg(act, order.ID, node, runtime, nil)
+	if err != nil {
+		e.logRelease("order=%d node=%s — refusing release: %v", order.ID, node.Name, err)
+		return err
+	}
+	if err := e.releaseFlipPartner(node); err != nil {
+		return err
+	}
+	if finalize {
+		if err := e.finalizeDepartingProduce(node, runtime, order, nil); err != nil {
+			return err
+		}
+	}
+	return e.releaseOrderDropFastPath(order.ID, node, runtime, disp, finalize)
+}
+
 // releaseOrderDropFastPath handles the drop-CO release shape. A drop has
 // no to-style claim by definition (the new style abandons this node), so
 // the normal toClaim-based bookkeeping (UOP reset for the next bin,
@@ -494,12 +502,18 @@ func queueReasonSuffix(order *storeorders.Order) string {
 // arrived empty at supermarket because resolveReleaseClaim returned nil
 // and the disposition was discarded; root cause was runtime ambiguity
 // in the fallback rather than a clean drop path).
-func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition) error {
+//
+// finalized: a produce bin's count went to Core as its ingest, so the release
+// carries none (the slot's count is already cleared and would wipe it).
+func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition, finalized bool) error {
 	// Drop fast path doesn't run CaptureToLineside (no to-style claim
 	// to fill buckets against), so resolvedBinID=0 is correct: any
 	// PULL PARTS LINESIDE shape here falls through to the legacy &0
 	// wipe rather than a delta-driven write.
 	manifestUOP := computeReleaseRemainingUOP(disp, runtime, 0)
+	if finalized {
+		manifestUOP = nil
+	}
 	wireDisposition := buildProtocolDisposition(disp, runtime)
 	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
 		orderID, node.Name, string(disp.Mode))
@@ -512,7 +526,11 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 // not a produce node). Owns: supply-bin guard, lineside bucket capture +
 // paired bin delta, release-click runtime cache binding, node-task state
 // transition to "released", outbox flush, final OrderRelease emit.
-func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, toClaim *processes.NodeClaim, nodeTask *processes.NodeTask, disp ReleaseDisposition, isSupply bool) error {
+//
+// finalized says the trunk has finalized a departing produce bin for this leg
+// (a produce press changing over to a consume part): its manifest is Core's
+// ingest, so the release carries no count and the cache is not rewritten.
+func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, toClaim *processes.NodeClaim, nodeTask *processes.NodeTask, disp ReleaseDisposition, isSupply, finalized bool) error {
 	orderID := order.ID
 
 	// Resolve the bin id used by the capture_reduction emit and the
@@ -573,6 +591,11 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		// supply-bin guard.
 		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: supply_bin_guard (two-robot swap)",
 			orderID, node.Name, string(disp.Mode))
+		manifestUOP = nil
+	}
+	// A produce bin finalized at this release: Core's manifest is its ingest,
+	// and the slot's count was cleared with it, so a count here would wipe it.
+	if finalized {
 		manifestUOP = nil
 	}
 

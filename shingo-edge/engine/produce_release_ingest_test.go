@@ -92,8 +92,9 @@ func TestReleaseStagedOrders_IngestAtRelease(t *testing.T) {
 	if ingests[0].BinID != departing {
 		t.Errorf("manifest bin id = %d, want %d — resolve-by-node can hit the freshly indexed tote", ingests[0].BinID, departing)
 	}
-	if len(ingests[0].Manifest) != 1 || ingests[0].Manifest[0].PartNumber != "WIDGET-A" {
-		t.Errorf("manifest items = %+v, want one WIDGET-A entry", ingests[0].Manifest)
+	// No lines: Core resolves the payload's template and stamps this count.
+	if len(ingests[0].Manifest) != 0 || ingests[0].PayloadCode != "WIDGET-A" {
+		t.Errorf("ingest payload %q, lines %+v; want WIDGET-A and no lines", ingests[0].PayloadCode, ingests[0].Manifest)
 	}
 
 	// Ordering: the ingest must precede BOTH OrderRelease envelopes.

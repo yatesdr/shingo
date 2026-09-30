@@ -936,14 +936,13 @@ func (op *simOperator) runRelease(orderID int64) {
 	}
 	// Two-robot swaps (two_robot, two_robot_press_index) go through the
 	// per-NODE release (releaseAsPair -> ReleaseStagedOrders), the same door a
-	// real operator's RELEASE BUTTON uses. That path runs the deferred produce
-	// paperwork (produceIngestAtRelease) that stamps + confirms the departing
-	// bin's manifest. The per-LEG release below sends a blank disposition and
-	// the produce-role branch skips manifest sync, so a two-robot press bin
-	// would land in the supermarket manifest_confirmed=false -- invisible to
-	// the retrieve resolver's manifest_confirmed gate -- and the downstream
-	// consumer starves once the seeded stock drains (observed: PRESS-1 PANEL-A
-	// -> SYN_MARKET, WELD-1 queued forever on "no bin of requested payload").
+	// real operator's RELEASE BUTTON uses. Both doors now finalize the
+	// departing produce bin (finalizeDepartingProduce); the per-node door is
+	// kept because it is the one a real operator presses. (Before S1b only
+	// that door stamped the manifest, and a two-robot press bin released per
+	// leg landed in the supermarket manifest_confirmed=false -- observed:
+	// PRESS-1 PANEL-A -> SYN_MARKET, WELD-1 queued forever on "no bin of
+	// requested payload".)
 	// Sequential / single-robot modes stay on the per-leg path: ReleaseStagedOrders
 	// rejects non-two-robot modes, and forcing it would wedge A/B nodes (the
 	// pair_release trap documented in the sim-traps memory).

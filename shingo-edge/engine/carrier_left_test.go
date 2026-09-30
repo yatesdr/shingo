@@ -102,15 +102,22 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 		assertCarrierLeft(t, db, nodeID, "cancel reconcile")
 	})
 
-	t.Run("produce finalize reset", func(t *testing.T) {
+	t.Run("produce finalize at release", func(t *testing.T) {
 		t.Parallel()
 		db := testEngineDB(t)
-		nodeID, _, _ := seedCarrierAtSlot(t, db, "CL-PROD")
-		eng := testEngine(t, db)
+		nodeID, _, core := seedCarrierAtSlot(t, db, "CL-PROD")
+		orderID, err := db.CreateOrder("uuid-cl-prod", orders.TypeComplex,
+			&nodeID, false, 1, core, "", "", "", false, "PART-CL", "", "")
+		testutil.MustNoErr(t, err, "create departing order")
+		departing, err := db.GetOrder(orderID)
+		testutil.MustNoErr(t, err, "read departing order")
+		node, err := db.GetProcessNode(nodeID)
+		testutil.MustNoErr(t, err, "read node")
 		rt, err := db.GetProcessNodeRuntime(nodeID)
 		testutil.MustNoErr(t, err, "read runtime")
-		eng.resetProduceRuntime(nodeID, rt, nil, nil, true)
-		assertCarrierLeft(t, db, nodeID, "produce reset")
+		eng := testEngine(t, db)
+		testutil.MustNoErr(t, eng.finalizeDepartingProduce(node, rt, departing, nil), "finalize")
+		assertCarrierLeft(t, db, nodeID, "produce finalize")
 	})
 }
 

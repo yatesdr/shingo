@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -851,45 +849,35 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		return err
 	}
 
-	// Only a produce claim has release paperwork here, so only it pays the read.
-	departingIsChangeoverLeg := false
-	if claim.Role == protocol.ClaimRoleProduce {
-		departingIsChangeoverLeg, err = e.isChangeoverLeg(evacOrderID)
-		if err != nil {
-			return fmt.Errorf("node %s: %w", node.Name, err)
+	// Does the departing leg take a produce bin away? Asked of its steps and
+	// the bin's own claim, here in the gates, so an unreadable answer refuses.
+	finalize, err := e.departingProduceLeg(act, *evacOrderID, node, runtime, claim)
+	if err != nil {
+		return fmt.Errorf("node %s: %w", node.Name, err)
+	}
+	var departing *storeorders.Order
+	if finalize {
+		if departing, err = e.db.GetOrder(*evacOrderID); err != nil {
+			return fmt.Errorf("node %s: read departing order %d: %w", node.Name, *evacOrderID, err)
 		}
 	}
 
 	// ── FROM HERE ON, SIDE EFFECTS. Nothing above this line has changed
 	// anything; nothing below it may refuse.
 	//
-	// The produce paperwork fires FIRST among them, before either release
-	// envelope, so Core applies the manifest first (the outbox drains by id).
-	// It used to fire above the gate, which meant an ADVISORY refusal —
-	// "the other robot has not cleared the press yet, click again" — had
-	// already shipped the departing bin's manifest, cleared active_bin_id and
-	// zeroed remaining_uop_cached, starting the hold-and-replay window for a
-	// bin still sitting on a press that was still making parts into it.
-	// Nothing in the gate reads anything the paperwork produces, so the two
-	// were only in that order by accident.
+	// The departing bin is finalized FIRST among them, before either release
+	// envelope, so Core applies its manifest before the release (the outbox
+	// drains by id). It runs at the press whether or not every leg goes on
+	// this click: the operator's RELEASE is the declaration that the bin is
+	// full (finalizeDepartingProduce). A changeover's legs are finalized the
+	// same way; the once-per-order record keeps the trunk's own call for the
+	// same leg from shipping it twice.
 	//
-	// Changeover-owned legs are excluded — their manifests belong to the
-	// changeover release dispositions, and this pair resolution can be
-	// serving a changeover task's legs (the task fallback above).
-	//
-	// PER ORDER, NOT PER NODE. This read `task == nil`, and the node's task is
-	// the wrong question: loadReleaseSwapNodeTask returns the node's task in ANY
-	// active changeover of the process, including an `unchanged` one. So an
-	// ordinary pair at a node nothing is changing — released while another
-	// node of the process changes over — shipped no manifest for the bin it
-	// sent away (L5). The departing leg itself answers whether it belongs to a
-	// changeover (isChangeoverLeg, read above the line).
-	//
-	// supplyOrderID rides along so the produce paperwork can tell the
-	// placed bin from the departing one (see produceIngestAtRelease): the
-	// placing leg is the only half of the pair Edge can name a bin for.
-	if !departingIsChangeoverLeg {
-		if err := e.produceIngestAtRelease(node, runtime, claim, supplyOrderID, evacOrderID); err != nil {
+	// supplyOrderID rides along so the finalize can tell the placed bin from
+	// the departing one: the placing leg is the only half of the pair the Edge
+	// can name a bin for.
+	if finalize {
+		if err := e.finalizeDepartingProduce(node, runtime, departing, supplyOrderID); err != nil {
 			return err
 		}
 	}
@@ -1250,24 +1238,6 @@ func orderIDStr(id *int64) string {
 		return "nil"
 	}
 	return strconv.FormatInt(*id, 10)
-}
-
-// isChangeoverLeg reports whether an order is a leg of a changeover task that
-// actually changes its node — any situation but `unchanged`. A nil order, or an
-// order no task names, is not. The paperwork of such a leg belongs to the
-// changeover, and its waits to the changeover's own release.
-func (e *Engine) isChangeoverLeg(orderID *int64) (bool, error) {
-	if orderID == nil {
-		return false, nil
-	}
-	task, _, err := e.db.FindChangeoverNodeTaskByOrderID(*orderID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("could not read whether order %d belongs to a changeover: %w", *orderID, err)
-	}
-	return task != nil && task.Situation != string(SituationUnchanged), nil
 }
 
 // refuseSecondMaterialRelease refuses a Material-page RELEASE while the move

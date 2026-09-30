@@ -19,14 +19,11 @@ import (
 // via SwapDispatch — the robot doesn't care whether the bin is filling
 // or emptying, the choreography is the same.
 //
-// Fix D renamed the tap: on two-robot modes this call only REQUESTS robots.
-// The manifest snapshot and the count reset — the actual "finalize" — happen
-// at the RELEASE tap (produceIngestAtRelease), because every part pressed
-// between this call and the physical swap still lands in the departing bin.
-// Snapshotting here understated the shipped tote and pre-credited the next
-// one, and calling robots early (desirable) widened that window on purpose.
-// Non-two-robot modes have no staged release step, so request time IS
-// release time for them and the paperwork stays here.
+// This call only REQUESTS robots, in every mode. The count splits at the
+// operator's RELEASE (owner, 2026-09-30): the manifest, the ingest and the
+// slot clear — the actual "finalize" — happen at the release of the leg that
+// takes the bin away (finalizeDepartingProduce), because every part pressed
+// between this call and RELEASE still belongs to the departing bin.
 // RequestProduceSwap is the OPERATOR entry point for the evacuate direction —
 // the mirror of RequestNodeMaterial, with the same dual-trigger shape. Tick-
 // driven callers use requestProduceSwapFor with the autoreorder trigger.
@@ -72,10 +69,7 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	// requested style's. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
 
-	// The carrier's contents, in the ledger's identifiers. Resolved here because
-	// BuildProducePlan is pure and the template lives on Core.
-	plan, err := BuildProducePlan(node, runtime, swapClaim, time.Now(), occupancy, primedPositions,
-		e.producedManifest(claim.PayloadCode, int64(runtime.RemainingUOPCached)))
+	plan, err := BuildProducePlan(node, runtime, swapClaim, occupancy, primedPositions)
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +94,7 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	}
 
 	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
-	// Runs BEFORE setProduceManifest so we don't burn an ingest order on a
-	// node that's about to be rejected. Edge-runtime-only — Core anomalies
-	// don't shut down the line.
+	// Edge-runtime-only — Core anomalies don't shut down the line.
 	if plan.Dispatch != nil && plan.Dispatch.RequiresActiveSwapGuard {
 		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
 			return nil, err
@@ -412,18 +404,10 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 		return &NodeOrderResult{PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
-	// Fix D: two-robot modes DEFER the paperwork (manifest ingest + count
-	// reset) to the release tap — the bin keeps filling until the robots are
-	// actually sent in, so the release-time count is the true shipped count.
-	// The runtime ORDER pointers still stamp below either way (release
-	// resolution and the swap_ready gate depend on them).
-	deferPaperwork := claim.SwapMode.IsTwoRobot()
-	if !deferPaperwork {
-		if err := e.dispatchProduceIngest(node, claim, plan); err != nil {
-			return nil, err
-		}
-	}
-
+	// No paperwork here, in any mode: the bin keeps filling until the
+	// operator's RELEASE, which finalizes it (finalizeDepartingProduce). The
+	// runtime ORDER pointers stamp below (release resolution and the
+	// swap_ready gate depend on them).
 	// Produce always has a swap mode now (BuildProducePlan errors otherwise), so
 	// Dispatch is always set.
 	dispatch := plan.Dispatch
@@ -455,7 +439,9 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	if orderB != nil {
 		orderBID = &orderB.ID
 	}
-	e.resetProduceRuntime(nodeID, runtime, &orderA.ID, orderBID, !deferPaperwork)
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+	}
 	if orderB != nil {
 		// Return-error on failure: see comment in
 		// operator_stations.go:LinkOrderSiblings call site.
@@ -481,110 +467,46 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 }
 
-// dispatchProduceIngest stamps Core's bin manifest with the produced count.
-// Produce is always manifest-only: the swap's complex order carries the bin, so
-// a local ingest order would only be a phantom for the abort fan-out to cancel
-// (the "not_found" bug). Fire-and-forget via QueueIngestManifest — no local
-// order, no reply on success. Non-two-robot request-time path only; two-robot
-// modes stamp at release via produceIngestAtRelease.
-func (e *Engine) dispatchProduceIngest(node *processes.Node, claim *processes.NodeClaim, plan *ProducePlan) error {
-	return e.orderMgr.QueueIngestManifest(
-		claim.PayloadCode,
-		"", // bin label resolved by core from node contents
-		0,  // bin id likewise
-		node.CoreNodeName,
-		plan.Manifest[0].Quantity,
-		plan.Manifest,
-		plan.ProducedAtRFC3339,
-	)
-}
-
-// produceIngestAtRelease is Fix D's deferred paperwork: at the RELEASE tap of
-// a two-robot produce swap, snapshot the manifest from the LIVE count — every
-// part pressed since the request landed in the departing bin, and the count
-// kept ticking because the request-time reset was skipped — then clear the
-// runtime so post-release ticks hold and replay onto the NEXT bin only.
+// finalizeDepartingProduce is the one finalize of a produce bin, run at the
+// operator's RELEASE of the leg that takes the bin away, in every mode and at
+// every door (the pair click, the per-order trunk, the changeover's clicks,
+// the sweep). The count splits at that press (owner, 2026-09-30): parts made
+// before it, including after the call for parts, belong to the departing bin;
+// parts made after it belong to the next one. It is the operator's
+// declaration, so it stands through a Core refusal of the release.
 //
-// Enqueue ordering is the contract with Core: the ingest is queued BEFORE the
-// two OrderRelease envelopes (same goroutine, sequential outbox inserts, and
-// the outbox drains strictly ORDER BY id), so Core applies the manifest
-// before any release-side manifest action. The ingest pins the departing bin
-// by runtime.ActiveBinID — node-based resolution could land on the freshly
-// indexed tote by the time Core processes a press-index release.
+// Three steps, in this order:
+//  1. flush the accumulator, so the ticks of the last window reach Core
+//     before the ingest bumps the bin's epoch (no stale-epoch drops);
+//  2. queue the ingest: the Edge's count, the bin and its epoch, and the
+//     departing ORDER's payload (for a changeover evac that is the outgoing
+//     style's, which the claim no longer names). No manifest lines: Core
+//     resolves the payload's template and stamps this count;
+//  3. clear the slot (carrierLeft), so later ticks hold and replay onto the
+//     next bin.
 //
-// Zero/negative count skips the stamp (nothing pressed, or a retry after a
-// prior successful stamp+clear — the guard is what makes the release click
-// idempotent). Ingest enqueue failure fails the release CLOSED: a full bin
-// must not leave un-manifested when the operator can just click again.
-// producedManifest names what a carrier this cell just filled actually contains,
-// in the identifiers the ledger counts by.
-//
-// THE TEMPLATE'S PART NUMBERS, NOT THE PAYLOAD CODE. A bin's manifest lists
-// parts; a payload code names a KIND OF CONTENT, and the two coincide only for
-// a single-part payload. Both produce sites used to write claim.PayloadCode
-// here, which is right for a bin of one part and wrong for a kit — and wrong at
-// any plant whose manifest lines do not spell the part the way the payload code
-// does. Where it is wrong, EVERY produced carrier is uncountable: the movement
-// builds no CMS rows at all and the part reaches the inventory ledger nowhere.
-// The build-failure counter says so per movement; this is the cause it was
-// pointing at.
-//
-// Asking the template is what makes the two cases one path, because nothing
-// here can tell them apart. One line per template line: material.go mints a
-// transaction per part and the wire rolls EntryNumber over them under one
-// ticket.
-//
-// FALLS BACK TO THE PAYLOAD CODE when Core has no template. That is today's
-// behaviour and it is still a guess — for a single-part payload it is the right
-// answer and for a kit it is a fiction, and this function cannot tell which it
-// is holding. The uncounted-lines log fires on the next movement and names the
-// bin, which is the honest outcome for a payload nobody has given a template.
-func (e *Engine) producedManifest(payloadCode string, qty int64) []protocol.IngestManifestItem {
-	// coreClient may be nil (tests, and any build that never wired one) — its own
-	// Available() is nil-safe for exactly that reason, and this asks before
-	// dereferencing rather than after.
-	var resp *PayloadManifestResponse
-	if e.coreClient.Available() {
-		resp, _ = e.coreClient.FetchPayloadManifest(payloadCode)
-	}
-	if resp == nil || len(resp.Items) == 0 {
-		e.logFn("produce: no manifest template for %s — the carrier is stamped with the payload "+
-			"code, which the ledger cannot count. Give the payload a template line.", payloadCode)
-		return []protocol.IngestManifestItem{{PartNumber: payloadCode, Quantity: qty, Description: payloadCode}}
-	}
-	out := make([]protocol.IngestManifestItem, 0, len(resp.Items))
-	for _, it := range resp.Items {
-		out = append(out, protocol.IngestManifestItem{
-			PartNumber: it.PartNumber, Quantity: qty, Description: it.Description,
-		})
-	}
-	return out
-}
-
-// ONCE PER DEPARTING ORDER. departingOrderID is the leg carrying the bin away;
-// when given, the ingest is recorded against it in release_paperwork and a
-// second call for the same order ships nothing. Two doors reach here for one
-// bin — the pair click, and then the trunk it releases the departing leg
-// through — and the zero-count skip above does not cover the second when the
-// clear below is skipped (the placed-bin case), which re-shipped the manifest.
-func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, placingOrderID, departingOrderID *int64) error {
-	if claim.Role != protocol.ClaimRoleProduce {
-		return nil
-	}
+// ONCE PER DEPARTING ORDER. The ingest is recorded against the departing leg
+// in release_paperwork, and a second door, click or re-fire for the same
+// order ships nothing. A zero count ships nothing either.
+func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *processes.RuntimeState, departing *orders.Order, placingOrderID *int64) error {
 	if runtime == nil || runtime.RemainingUOPCached <= 0 {
 		e.logFn("produce release: node %s remaining=%d — no release-time manifest to stamp",
 			node.Name, runtimeRemaining(runtime))
 		return nil
 	}
-	if departingOrderID != nil {
-		shipped, err := e.db.ReleaseIngestShipped(*departingOrderID)
-		if err != nil {
-			return fmt.Errorf("node %s: %w", node.Name, err)
-		}
-		if shipped {
-			e.logFn("produce release: node %s order %d — its ingest already shipped; not again",
-				node.Name, *departingOrderID)
-			return nil
+	shipped, err := e.db.ReleaseIngestShipped(departing.ID)
+	if err != nil {
+		return fmt.Errorf("node %s: %w", node.Name, err)
+	}
+	if shipped {
+		e.logFn("produce release: node %s order %d — its ingest already shipped; not again",
+			node.Name, departing.ID)
+		return nil
+	}
+	payload := departing.PayloadCode
+	if payload == "" {
+		if resident, rerr := e.residentClaim(node, runtime); rerr == nil && resident != nil {
+			payload = resident.PayloadCode
 		}
 	}
 	qty := int64(runtime.RemainingUOPCached)
@@ -592,24 +514,21 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 	if runtime.ActiveBinID != nil {
 		binID = *runtime.ActiveBinID
 	}
-	// Quantity here is the CYCLE count, not a part count, and Core no longer
-	// stores it: the bin's manifest records which parts, and the count is
-	// uop_remaining x parts_per_cycle. It is still carried because
-	// QueueIngestManifest's qty argument — the same number, one line down — is
-	// what Core writes to uop_remaining, and shipping the two consistently is
-	// what makes that readable. Do not read this field as a part count.
-	manifest := e.producedManifest(claim.PayloadCode, qty)
+	if e.inventoryDelta != nil {
+		e.inventoryDelta.Flush()
+	}
+	// Quantity is the CYCLE count, not a part count: Core writes it to
+	// uop_remaining, and the part count is uop_remaining x the template's
+	// parts_per_cycle.
 	if err := e.orderMgr.QueueIngestManifest(
-		claim.PayloadCode, "", binID, node.CoreNodeName, qty, manifest,
+		payload, "", binID, runtime.ActiveBinEpoch, node.CoreNodeName, qty, nil,
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("queue release-time ingest for node %s: %w", node.Name, err)
 	}
-	if departingOrderID != nil {
-		if err := e.db.MarkReleaseIngestShipped(*departingOrderID, binID, qty); err != nil {
-			e.logFn("produce release: node %s order %d — ingest shipped but not recorded (%v); a second door may ship it again",
-				node.Name, *departingOrderID, err)
-		}
+	if err := e.db.MarkReleaseIngestShipped(departing.ID, binID, qty); err != nil {
+		e.logFn("produce release: node %s order %d — ingest shipped but not recorded (%v); a second door may ship it again",
+			node.Name, departing.ID, err)
 	}
 	// ── gate: is the bound bin the one LEAVING, or the one that just
 	// ARRIVED? ───────────────────────────────────────────────────────────
@@ -641,6 +560,11 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 	// should have fired costs a few ticks landing on the departing bin
 	// before pickup (bounded, replays at the next cycle); a clear that
 	// should not have fired costs the press.
+	//
+	// The ingest above has already shipped in that state, with the count of
+	// the bin that is bound; the gate is latent at the pair door today (both
+	// press-index legs wait, and R2 places only after R1 lifts) and S4
+	// decides it.
 	if placingOrderID != nil {
 		if placing, err := e.db.GetOrder(*placingOrderID); err == nil {
 			if placing.BinID != nil && runtime.ActiveBinID != nil &&
@@ -656,15 +580,96 @@ func (e *Engine) produceIngestAtRelease(node *processes.Node, runtime *processes
 			}
 		}
 	}
-	// Snapshot taken — the count now belongs to the departing bin. Clear
-	// active + zero so the hold-and-replay window starts HERE, not at the
-	// request. Log-only on failure: the manifest already shipped, and the
-	// stale count would only re-stamp on a retry (Core's SetForProduction
-	// is idempotent).
+	// The count now belongs to the departing bin: clear the slot, so the
+	// hold-and-replay window starts HERE. Log-only on failure: the ingest
+	// already shipped.
 	if err := e.carrierLeft(node.ID, node.CoreNodeName); err != nil {
 		log.Printf("produce release: clear active bin for node %d: %v", node.ID, err)
 	}
 	return nil
+}
+
+// departingProduceLeg reports whether releasing this order takes a produce
+// bin off the node: the segment after the leg's first station wait lifts a
+// bin at the node, and the bin standing there was filled for a produce claim
+// (residentClaim). Read from the leg's steps, never from SwapMode or
+// SiblingOrderID, so every mode and every door answers it the same way. An
+// unreadable answer is an error: the caller refuses rather than ship or skip
+// a bin's count on a guess.
+//
+// Once per leg per act: the pair door asks it of the evac, and the trunk the
+// door releases the evac through asks again from the memo. known is the claim
+// the caller already resolved for the node; it answers for the resident when
+// it is the runtime's active claim, which saves the read.
+func (e *Engine) departingProduceLeg(act *releaseAct, orderID int64, node *processes.Node, runtime *processes.RuntimeState, known *processes.NodeClaim) (bool, error) {
+	if node == nil || runtime == nil {
+		return false, nil
+	}
+	if d, ok := act.departs[orderID]; ok {
+		return d, nil
+	}
+	// The bin's claim first: a consume bin never has a count to finalize, and
+	// when the caller's claim is the resident one this costs no read.
+	resident := known
+	if resident == nil || runtime.ActiveClaimID == nil || resident.ID != *runtime.ActiveClaimID {
+		var err error
+		if resident, err = e.residentClaim(node, runtime); err != nil {
+			return false, fmt.Errorf("departing-bin check: node %s: %w", node.Name, err)
+		}
+	}
+	departs := false
+	if resident != nil && resident.Role == protocol.ClaimRoleProduce {
+		steps, err := e.legSteps(act, orderID)
+		if err != nil {
+			return false, fmt.Errorf("departing-bin check: %w", err)
+		}
+		departs = segmentAfterFirstStationWaitLifts(steps, node.CoreNodeName)
+	}
+	if act.departs == nil {
+		act.departs = map[int64]bool{}
+	}
+	act.departs[orderID] = departs
+	return departs, nil
+}
+
+// residentClaim is the claim the bin standing on the node was filled for: the
+// runtime's active claim, which a changeover does not move until the incoming
+// material lands, or — on a node's first cycle, before one was stamped — the
+// node's current claim. nil when neither resolves.
+func (e *Engine) residentClaim(node *processes.Node, runtime *processes.RuntimeState) (*processes.NodeClaim, error) {
+	if runtime != nil && runtime.ActiveClaimID != nil {
+		c, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID)
+		if err != nil {
+			return nil, fmt.Errorf("read claim %d: %w", *runtime.ActiveClaimID, err)
+		}
+		return c, nil
+	}
+	return e.claimAtNode(node), nil
+}
+
+// segmentAfterFirstStationWaitLifts reports whether the steps between a leg's
+// first station wait and its next wait of any kind pick a bin up at node. A
+// leg with no station wait has no RELEASE, and answers false.
+func segmentAfterFirstStationWaitLifts(steps []protocol.ComplexOrderStep, node string) bool {
+	start := -1
+	for i, s := range steps {
+		if s.Action == protocol.ActionWait && (s.WaitKind == ordermgr.WaitKindStation || s.WaitKind == "") {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return false
+	}
+	for _, s := range steps[start:] {
+		if s.Action == protocol.ActionWait {
+			return false
+		}
+		if s.Action == protocol.ActionPickup && s.Node == node {
+			return true
+		}
+	}
+	return false
 }
 
 // runtimeRemaining is a nil-safe read for log lines.
@@ -700,33 +705,6 @@ func (e *Engine) dispatchPairedLeg(nodeID int64, quantity int64, steps []protoco
 		dn = ""
 	}
 	return e.orderMgr.CreateComplexOrderPaired(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, orderUUID, origin)
-}
-
-// resetProduceRuntime stamps the dispatched legs on the runtime and, when
-// clearCounts is set, resets the counting state. clearCounts=true is the
-// non-two-robot path (request time IS release time there): clear
-// active_bin_id, which puts the tick path into hold mode — parts produced
-// before the next empty bin lands accumulate in pending_uop_delta and replay
-// onto the new bin when its OrderDelivered seeds active_bin_id + epoch.
-// clearCounts=false is the two-robot request (Fix D): the bin is still under
-// the press until the RELEASE tap, so the count keeps ticking on it and
-// produceIngestAtRelease owns the clear.
-//
-// Errors are logged only — the order(s) already shipped, so failing
-// here would leave the caller with no actionable recovery.
-func (e *Engine) resetProduceRuntime(nodeID int64, runtime *processes.RuntimeState, activeID, stagedID *int64, clearCounts bool) {
-	if clearCounts {
-		// Clear the active bin (slot is empty after finalize → ticks hold)
-		// and zero the count (the next empty bin starts at 0); the carrier's
-		// identity leaves with it. The claim is untouched, so the next
-		// delivery binds against it.
-		if err := e.carrierLeft(nodeID, ""); err != nil {
-			log.Printf("produce: clear active bin for node %d: %v", nodeID, err)
-		}
-	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, activeID, stagedID); err != nil {
-		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
-	}
 }
 
 // refreshOrder re-reads an order after the runtime-orders write so the

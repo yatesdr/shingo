@@ -82,9 +82,11 @@ func (c *CurtainHeldError) Error() string { return c.Sentence }
 type releaseAct struct {
 	curtainedLoaded bool
 	curtainedErr    error
-	curtained       map[string]*processes.Node // by core node name
-	verdict         map[int64]error            // by node id; nil = clear
-	touches         map[int64][]string         // by order id: the nodes its release lets a bin cross
+	curtained       map[string]*processes.Node            // by core node name
+	verdict         map[int64]error                       // by node id; nil = clear
+	touches         map[int64][]string                    // by order id: the nodes its release lets a bin cross
+	steps           map[int64][]protocol.ComplexOrderStep // by order id; nil entry = no steps
+	departs         map[int64]bool                        // by order id: releasing it takes a produce bin away
 }
 
 func newReleaseAct() *releaseAct { return &releaseAct{} }
@@ -137,6 +139,35 @@ func (e *Engine) curtainForLeg(act *releaseAct, order *storeorders.Order) error 
 	return nil
 }
 
+// legSteps is a leg's decoded steps, read once per act and shared by every
+// question the act asks of the leg (the curtain's touched nodes, the departing
+// produce bin). nil with no error: the order has no steps (a plain retrieve or
+// move).
+func (e *Engine) legSteps(act *releaseAct, orderID int64) ([]protocol.ComplexOrderStep, error) {
+	if st, ok := act.steps[orderID]; ok {
+		return st, nil
+	}
+	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
+	if err != nil {
+		return nil, fmt.Errorf("order %d: load steps: %w", orderID, err)
+	}
+	var steps []protocol.ComplexOrderStep
+	if stepsJSON != "" && stepsJSON != "null" && stepsJSON != "[]" {
+		if steps, err = decodeSteps(stepsJSON); err != nil {
+			return nil, stepsUndecodable{fmt.Errorf("order %d: %w", orderID, err)}
+		}
+	}
+	if act.steps == nil {
+		act.steps = map[int64][]protocol.ComplexOrderStep{}
+	}
+	act.steps[orderID] = steps
+	return steps, nil
+}
+
+// stepsUndecodable is a leg whose stored steps did not decode, as opposed to a
+// leg whose steps could not be read or has none.
+type stepsUndecodable struct{ error }
+
 // legTouches is the nodes a leg's release lets a bin cross, read once per leg
 // per act: a door that checked the leg does not read its steps again when it
 // releases it through the trunk.
@@ -145,19 +176,19 @@ func (e *Engine) legTouches(act *releaseAct, order *storeorders.Order) ([]string
 		return t, nil
 	}
 	var touch []string
-	stepsJSON, err := e.db.GetOrderStepsJSON(order.ID)
-	if err != nil || stepsJSON == "" || stepsJSON == "null" || stepsJSON == "[]" {
+	steps, err := e.legSteps(act, order.ID)
+	var undecodable stepsUndecodable
+	switch {
+	case err != nil && !errors.As(err, &undecodable), err == nil && steps == nil:
 		if order.ProcessNodeID != nil {
 			if n, nerr := e.db.GetProcessNode(*order.ProcessNodeID); nerr == nil && n != nil {
 				touch = []string{n.CoreNodeName}
 			}
 		}
-	} else {
-		steps, derr := decodeSteps(stepsJSON)
-		if derr != nil {
-			return nil, &CurtainHeldError{Sentence: fmt.Sprintf(
-				"order %d's steps could not be read to check the light curtain (%v) - release held", order.ID, derr)}
-		}
+	case err != nil:
+		return nil, &CurtainHeldError{Sentence: fmt.Sprintf(
+			"order %d's steps could not be read to check the light curtain (%v) - release held", order.ID, err)}
+	default:
 		touch = binTouchesAfterFirstStationWait(steps)
 	}
 	if act.touches == nil {

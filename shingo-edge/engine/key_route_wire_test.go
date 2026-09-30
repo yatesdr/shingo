@@ -35,8 +35,6 @@ func setClaimRouting(t *testing.T, db *store.DB, claim *processes.NodeClaim, rou
 
 func producePlanFor(claim *processes.NodeClaim) *ProducePlan {
 	return &ProducePlan{
-		Manifest:          []protocol.IngestManifestItem{{PartNumber: "WIDGET-A", Quantity: 1}},
-		ProducedAtRFC3339: "2026-08-23T00:00:00Z",
 		Dispatch: &SwapDispatch{
 			CycleMode:     protocol.SwapModeTwoRobotPressIndex,
 			ProcessNode:   claim.CoreNodeName,

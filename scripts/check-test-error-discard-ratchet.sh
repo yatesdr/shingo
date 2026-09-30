@@ -95,7 +95,10 @@ cd "$(dirname "$0")/.."
 #
 # TO UPDATE: only downward, and only in the same commit that removed the
 # sites. Run this script; it prints the real count in the failure message.
-FROZEN=1471
+# 1471 → 1469: S1b (the produce count splits at RELEASE) rewrote
+# produce_swap_test.go's two call-for-parts checks, whose
+# `runtime, _ := db.GetProcessNodeRuntime` discards became checked reads.
+FROZEN=1469
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

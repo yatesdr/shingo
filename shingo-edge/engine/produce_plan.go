@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"time"
 
 	"shingo/protocol"
 	"shingoedge/store/processes"
@@ -15,12 +14,6 @@ import (
 //
 // Build with BuildProducePlan; apply with applyProducePlan.
 type ProducePlan struct {
-	// Manifest is the ingest order's manifest — currently always one entry,
-	// kept as a slice for protocol shape consistency. ProducedAt is the
-	// RFC3339 timestamp embedded on the ingest order.
-	Manifest          []protocol.IngestManifestItem
-	ProducedAtRFC3339 string
-
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot /
 	// two_robot / two_robot_press_index. Produce always has a swap mode now, so
 	// Dispatch is always set — BuildProducePlan errors on a claim with no swap.
@@ -66,9 +59,6 @@ func (p *ProducePlan) OrderCount() int {
 // the produce-finalization plan for the claim's swap mode. Pure — no DB,
 // fleet, or order-manager calls.
 //
-// now is the wall clock used for ProducedAt; tests inject a fixed value for
-// determinism.
-//
 // occupancy maps core node names to their telemetry-reported occupied state
 // (from engine.claimOccupancy / FetchNodeBins), same source and same
 // missing-entry-means-occupied reading as the consume side. primedPositions
@@ -77,10 +67,10 @@ func (p *ProducePlan) OrderCount() int {
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
-// manifest names what the filled carrier contains, resolved from the payload's
-// template by the caller (producedManifest). It is a parameter rather than
-// something built here because this function is pure and the answer needs Core.
-func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, now time.Time, occupancy map[string]bool, primedPositions map[string]bool, manifest []protocol.IngestManifestItem) (*ProducePlan, error) {
+//
+// The plan carries no manifest: the departing bin is finalized at the
+// operator's RELEASE (finalizeDepartingProduce), not at the call for parts.
+func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, occupancy map[string]bool, primedPositions map[string]bool) (*ProducePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -152,13 +142,7 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
 
-	// Quantity is the CYCLE count (see produceIngestAtRelease). Core writes it
-	// to uop_remaining and does not store it on the manifest line; the part
-	// count is uop_remaining x the template's parts_per_cycle.
-	plan := &ProducePlan{
-		Manifest:          manifest,
-		ProducedAtRFC3339: now.UTC().Format(time.RFC3339),
-	}
+	plan := &ProducePlan{}
 
 	dispatch, err := BuildSwapDispatch(node, claim)
 	if err != nil {

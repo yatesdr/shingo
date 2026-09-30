@@ -203,16 +203,23 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 // TestProduceSwap_FinalizeSendsIngestNoLocalOrder verifies that a
 // swap-mode produce finalize must NOT mint a local ingest order (the phantom
 // the operator-abort fan-out used to cancel into a "not_found"), yet Core must
-// still receive the manifest-only ingest stamp via the fire-and-forget outbox.
+// still receive the manifest-only ingest stamp via the fire-and-forget outbox —
+// at the RELEASE, not at the call for parts (the count splits at RELEASE).
 func TestProduceSwap_FinalizeSendsIngestNoLocalOrder(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
+	_, nodeID, _, _ := seedProduceNode(t, db, "single_robot")
 	eng := testEngine(t, db)
 
-	if _, err := eng.RequestProduceSwap(nodeID); err != nil {
+	res, err := eng.RequestProduceSwap(nodeID)
+	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
+	if n := countIngestStamps(t, db); n != 0 {
+		t.Fatalf("the call for parts queued %d ingest stamp(s), want 0 — the bin keeps filling until RELEASE", n)
+	}
+	markStaged(t, db, res.Order.ID)
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(res.Order.ID, ReleaseDisposition{CalledBy: "test-op"}), "RELEASE")
 
 	// No local ingest order should exist — the swap's complex order carries
 	// the bin; the ingest is now only a fire-and-forget manifest stamp.
@@ -269,10 +276,15 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 		t.Errorf("OrderType = %q, want %q", result.Order.OrderType, orders.TypeComplex)
 	}
 
-	// Runtime should be reset to UOP=0
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOPCached)
+	// The call for parts does not split the count: the bin keeps filling
+	// until the operator's RELEASE, which finalizes it.
+	runtime, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read runtime")
+	if runtime.RemainingUOPCached != 50 {
+		t.Errorf("after the call for parts: RemainingUOP = %d, want 50 unchanged", runtime.RemainingUOPCached)
+	}
+	if n := countIngestStamps(t, db); n != 0 {
+		t.Errorf("the call for parts queued %d ingest stamp(s), want 0", n)
 	}
 	// Active order should be the complex removal order (Order A)
 	if runtime.ActiveOrderID == nil || *runtime.ActiveOrderID != result.Order.ID {
@@ -313,10 +325,15 @@ func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
 		t.Errorf("OrderType = %q, want %q", result.Order.OrderType, orders.TypeComplex)
 	}
 
-	// Runtime should be reset to UOP=0
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOPCached)
+	// The call for parts does not split the count: the bin keeps filling
+	// until the operator's RELEASE, which finalizes it.
+	runtime, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read runtime")
+	if runtime.RemainingUOPCached != 50 {
+		t.Errorf("after the call for parts: RemainingUOP = %d, want 50 unchanged", runtime.RemainingUOPCached)
+	}
+	if n := countIngestStamps(t, db); n != 0 {
+		t.Errorf("the call for parts queued %d ingest stamp(s), want 0", n)
 	}
 }
 
@@ -580,4 +597,18 @@ func TestReleaseStagedOrders_NoTrackedOrders(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no orders are tracked on the node")
 	}
+}
+
+// countIngestStamps counts the TypeOrderIngest rows in the outbox.
+func countIngestStamps(t *testing.T, db *store.DB) int {
+	t.Helper()
+	msgs, err := db.ListPendingOutbox(1000)
+	testutil.MustNoErr(t, err, "list outbox")
+	n := 0
+	for _, m := range msgs {
+		if m.MsgType == protocol.TypeOrderIngest {
+			n++
+		}
+	}
+	return n
 }

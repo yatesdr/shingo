@@ -43,11 +43,11 @@ func TestReleaseMatrixSingleRobot(t *testing.T) {
 		// Produce: the manifest ships at REQUEST for a non-two-robot mode, so
 		// the count is already 0 here and the release carries no paperwork.
 		{name: "d2/single_robot/swap leg staged",
-			want:  "ok | swap=in_transit | rel=swap | ingest=0 capred=0 | uop=0 | env:swap uop=nil kind=-",
+			want:  "ok | swap=in_transit | rel=swap | ingest=1 capred=0 | uop=0 | env:swap uop=nil kind=-",
 			build: func(h *relHarness) { h.singleRobot(protocol.ClaimRoleProduce); statuses(h, "swap", S) },
 			act:   orderClick("swap", dispEmpty), probe: probes(pUOP, pEnv)},
 		{name: "d2/single_robot/swap leg, curtain live",
-			want:  "refuse:curtain | swap=staged | rel=- | ingest=0 capred=0 | uop=0",
+			want:  "refuse:curtain | swap=staged | rel=- | ingest=0 capred=0 | uop=42",
 			build: withCurtain(curtainLive, func(h *relHarness) { h.singleRobot(protocol.ClaimRoleProduce); statuses(h, "swap", S) }),
 			act:   orderClick("swap", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/single_robot consume/swap leg, PULL PARTS",

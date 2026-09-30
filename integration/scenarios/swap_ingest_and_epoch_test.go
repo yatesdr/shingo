@@ -34,6 +34,7 @@ import (
 	coreharness "shingocore/testharness"
 	"shingocore/uop"
 
+	edgeengine "shingoedge/engine"
 	"shingoedge/store/processes"
 	edgeharness "shingoedge/testharness"
 )
@@ -133,11 +134,24 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 	// Drain any startup envelopes so we pump only what finalize emits.
 	drainOutbox(t, edge)
 
-	// ── Drive the swap-mode produce request (sequential: request time IS
-	// release time, so the manifest-only ingest still fires here — Fix D
-	// defers it only on two-robot modes) ──
-	if _, err := edge.Engine.RequestProduceSwap(nodeID); err != nil {
+	// ── The call for parts ships nothing: the produce count splits at the
+	// operator's RELEASE (owner, 2026-09-30), in every mode. ──
+	res, err := edge.Engine.RequestProduceSwap(nodeID)
+	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
+	}
+	if n := countEdgeIngests(t, edge); n != 0 {
+		t.Fatalf("the call for parts queued %d ingest(s), want 0", n)
+	}
+	// ── RELEASE of the leg that takes the bin away finalizes it. ──
+	if err := edge.DB.UpdateOrderStatus(res.Order.ID, "staged"); err != nil {
+		t.Fatalf("stage the removal: %v", err)
+	}
+	if err := edge.Engine.ReleaseOrderWithLineside(res.Order.ID, edgeengine.ReleaseDisposition{CalledBy: "scenario-operator"}); err != nil {
+		t.Fatalf("RELEASE: %v", err)
+	}
+	if n := countEdgeIngests(t, edge); n != 1 {
+		t.Fatalf("RELEASE queued %d ingest(s), want 1", n)
 	}
 
 	// Edge minted no local ingest order (the phantom is gone).
@@ -336,4 +350,20 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	if got := uopOf(); got != 97 {
 		t.Errorf("after reload+consume uop = %d, want 97", got)
 	}
+}
+
+// countEdgeIngests counts the order.ingest rows waiting in the Edge outbox.
+func countEdgeIngests(t *testing.T, edge *edgeharness.Edge) int {
+	t.Helper()
+	msgs, err := edge.DB.ListPendingOutbox(1000)
+	if err != nil {
+		t.Fatalf("list edge outbox: %v", err)
+	}
+	n := 0
+	for _, m := range msgs {
+		if m.MsgType == protocol.TypeOrderIngest {
+			n++
+		}
+	}
+	return n
 }
