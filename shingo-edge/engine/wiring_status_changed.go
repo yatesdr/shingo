@@ -257,6 +257,36 @@ func (e *Engine) releaseSurvivorOfFinishedPartner(orderID int64) {
 		return
 	}
 
+	// ── ONLY A STEADY-STATE PAIR LEG, WHOSE ONE STATION WAIT WAS CLICKED ────
+	//
+	// This arm reads "my partner finished" as "the operator's click is still
+	// owed to me", and that holds only for a leg whose pair was released as one
+	// and which carries one station wait of its own. Two kinds of leg break it,
+	// and for both it released a wait nobody pressed (L1):
+	//
+	//   - A RELAY (single_robot changeover: a stage leg feeds the swap leg).
+	//     The stage leg confirming at staging is the feeder finishing, not the
+	//     operator releasing the swap leg's "ready".
+	//   - A LEG OF A CHANGEOVER TASK. Its waits are the changeover's decisions
+	//     — "ready", "tooling done" — and the changeover's own act releases
+	//     them. Press-index R2 confirming its index move is not the operator
+	//     saying the tool change is done, and this arm released R1 past
+	//     "tooling done" into a press with its tooling open.
+	//
+	// An `unchanged` task is not a changeover of this node: its pair is an
+	// ordinary pair and keeps the arm.
+	if e.storedLegsRelay(order.ID, sibling.ID) {
+		e.logFn("swap-survivor release: order %d is a relay leg — its partner %d finishing is not a release of its wait; left for the operator",
+			orderID, sibling.ID)
+		return
+	}
+	if task, _, terr := e.db.FindChangeoverNodeTaskByOrderID(order.ID); terr == nil && task != nil &&
+		task.Situation != string(SituationUnchanged) {
+		e.logFn("swap-survivor release: order %d is a leg of changeover task %d (%s) — its waits are the changeover's to release; left for the operator",
+			orderID, task.ID, task.Situation)
+		return
+	}
+
 	// One shot per order per Edge lifetime — SPENT ON A RELEASE, NOT ON A TRY.
 	//
 	// This marked the order before attempting, and that was wrong in a way the

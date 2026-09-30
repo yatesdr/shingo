@@ -194,14 +194,10 @@ func releasePinCells() []relCell {
 
 		// ── L1: the survivor arm releases waits nobody clicked ─────────────
 		{name: "L1/single_robot relay: stage leg confirms, swap leg at ready",
-			bug:   "L1",
-			today: "ok | evac=in_transit supply=confirmed | rel=evac | ingest=0 capred=0",
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coSRTooling, "evac", S, "supply", T),
 			act:   confirms("supply")},
 		{name: "L1/press-index tooling: R2 confirms, R1 at tooling done",
-			bug:   "L1",
-			today: "ok | evac=in_transit supply=confirmed | rel=evac | ingest=0 capred=0",
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coPITooling, "evac", S, "supply", T),
 			act:   confirms("supply")},
@@ -213,8 +209,6 @@ func releasePinCells() []relCell {
 		// L1's companion: once the survivor stops releasing it, the held supply
 		// needs the tooling-done click to cover it.
 		{name: "L1c/tooling done sweep, R2 parked at its hold",
-			bug:   "L1c",
-			today: "ok | evac=in_transit supply=staged | rel=evac,supply,evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[]",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=0 | sweep released=2 pending=0 flip=[]",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), stages("evac"), stages("supply"), sweepClick(dispNone))},

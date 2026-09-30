@@ -401,7 +401,18 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 		// (e.g., add-situation tasks). When paired with evac, we defer to
 		// HandleBinPickedUp which fires the sibling release on evac pickup
 		// confirm — see Phase 2 docstring above.
-		if hasSupply && !pairedEvacSupply {
+		//
+		// ...UNLESS THAT DEFERRAL HAS ALREADY BEEN SERVED. A paired supply this
+		// station has already released past a wait, now staged again, is parked
+		// at a LATER wait — the tooling hold in front of the press — and the
+		// evac lifted long ago. Nothing else releases it there: the pickup chain
+		// fired once, at "ready", and the survivor arm no longer releases a
+		// changeover leg's waits. This click — "tooling done" — is its release.
+		supplyAtLaterWait := false
+		if pairedEvacSupply {
+			supplyAtLaterWait = e.stagedPastAWait(*task.NextMaterialOrderID)
+		}
+		if hasSupply && (!pairedEvacSupply || supplyAtLaterWait) {
 			slots = append(slots, slot{id: task.NextMaterialOrderID, disp: supplyDisp, kind: "supply"})
 		}
 
@@ -444,7 +455,7 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 		// Count deferred supply legs (paired-with-evac) so the operator
 		// HMI can show "released N, M deferred for pickup-confirm." Skip
 		// counting if the supply is already terminal.
-		if pairedEvacSupply {
+		if pairedEvacSupply && !supplyAtLaterWait {
 			supply, err := e.db.GetOrder(*task.NextMaterialOrderID)
 			if err == nil && !orders.IsTerminal(supply.Status) {
 				result.Pending++
@@ -492,4 +503,17 @@ func evacDispositionForTask(e *Engine, task processes.NodeTask, override Release
 	}
 	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy,
 		ConfirmActivePull: override.ConfirmActivePull}
+}
+
+// stagedPastAWait reports whether an order is staged at a wait after one this
+// station already released it from: staged now, and its history holds a
+// release that stood (orders.Manager.PassedAStationWait). An unreadable order
+// or history answers no, which keeps the evac-first deferral.
+func (e *Engine) stagedPastAWait(orderID int64) bool {
+	order, err := e.db.GetOrder(orderID)
+	if err != nil || order.Status != orders.StatusStaged {
+		return false
+	}
+	passed, err := e.orderMgr.PassedAStationWait(orderID)
+	return err == nil && passed
 }
