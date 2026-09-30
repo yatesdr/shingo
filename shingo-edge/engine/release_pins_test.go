@@ -186,7 +186,8 @@ func releasePinCells() []relCell {
 		// ── N-a: a second release on an in_transit multi-wait leg ─────────
 		// The Edge sends it; Core appends the NEXT wait's segment (the Core
 		// half is pinned in shingo-core). The Edge half is characterised here:
-		// the envelope goes, through the sweep the page's own toast invites.
+		// the envelope goes, through a second sweep (which the page's toast
+		// invited until it reported deferred supply apart from pending).
 		{name: "N-a/sweep twice on a single_robot tooling evac",
 			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[] | uop=42",
 			build: coAt(coSRTooling, "evac", S, "supply", S),
@@ -199,6 +200,33 @@ func releasePinCells() []relCell {
 			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[] | uop=42",
 			build: coAt(coPITooling, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
+
+		// ── N-a(ii): a second click on an evac already staged at "tooling done" ─
+		// N-a covers a leg still driving between its waits. Once the evac has
+		// staged at its later wait, a second click meant for "ready" releases
+		// it past the tooling hold: the Edge cannot tell the two clicks apart,
+		// because the act does not say which wait it is for. S5's
+		// purpose-scoped act is the fix; until then the plant instruction
+		// stands (no second RELEASE on a tooling node before tooling is done).
+		{name: "N-a(ii)/ready clicked again after the evac staged at tooling done",
+			bug:   "N-a(ii)",
+			today: "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[]",
+			want:  "ok | evac=staged supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=0 pending=0 deferred=1 flip=[]",
+			build: coAt(coSRTooling, "evac", S, "supply", S),
+			act:   seq(sweepClick(dispNone), stages("evac"), sweepClick(dispNone))},
+
+		// ── §6.4: the station button on a single_robot changeover node ────────
+		// Its relay task carries both legs, so the adapter hands the click to
+		// the pair path, which refuses any mode but a two-robot swap. The
+		// changeover act releases this shape correctly (the sweep and the
+		// per-node changeover click do); S4 routes every changeover node's
+		// click there.
+		{name: "6.4/station RELEASE on a single_robot changeover node",
+			bug:   "6.4",
+			today: "err:node SYN-PRESS: release-staged requires a two-ro | evac=staged supply=staged | rel=- | ingest=0 capred=0",
+			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0",
+			build: coAt(coSRTooling, "evac", S, "supply", S),
+			act:   pairClick(dispNone)},
 
 		// ── N-a′: the pickup chain releases a supply the pair click released ─
 		{name: "N-a'/pickup chain, R2 still driving to its hold",
