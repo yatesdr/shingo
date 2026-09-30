@@ -38,15 +38,23 @@ type (
 // which rolled the order back to staged and rendered NO CHIP AT ALL, because
 // this list had one entry and its detail did not begin with that one. The
 // order reappeared in the active list with nothing to say why it had come back.
+//
+// The two curtain prefixes are the light-curtain interlock's refusal, written by
+// orders.Manager.NoteReleaseHeld when an AUTOMATIC release (a deferred re-fire,
+// a survivor) meets a live curtain: nobody is at a button to see a toast, so the
+// sentence goes on the order and the chip shows it.
 const (
 	releaseErrorPrefix    = "Manifest sync failed at Core"
 	releaseRejectedPrefix = "Core rejected the release"
+	releaseCurtainPrefix  = "Release the light curtain at"
+	curtainUnreadyPrefix  = "The light curtain at"
 )
 
 // isReleaseErrorDetail reports whether an order_history detail is one of the
-// rollback sentences the chip renders.
+// sentences the chip renders.
 func isReleaseErrorDetail(d string) bool {
-	return strings.HasPrefix(d, releaseErrorPrefix) || strings.HasPrefix(d, releaseRejectedPrefix)
+	return strings.HasPrefix(d, releaseErrorPrefix) || strings.HasPrefix(d, releaseRejectedPrefix) ||
+		strings.HasPrefix(d, releaseCurtainPrefix) || strings.HasPrefix(d, curtainUnreadyPrefix)
 }
 
 // LookupLastReleaseError returns the rollback detail for the runtime's

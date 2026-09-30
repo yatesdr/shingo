@@ -101,16 +101,18 @@ func checkCensus(t *testing.T, what string, found map[string]int, table map[stri
 // release reaches Core through one of these, so every gate has to stand in
 // front of all of them.
 var releaseEnvelopeSenders = map[string]string{
-	"operator_release.go:ReleaseOrderWithLineside":     "the trunk's early releases: no process node, nil claim, produce role",
+	"operator_release.go:releaseOrderInAct":            "the trunk's early releases: no process node, nil claim, produce role",
 	"operator_release.go:releaseOrderDropFastPath":     "a drop-situation evac: disposition straight through",
 	"operator_release.go:releaseOrderWithFullLineside": "the lineside release, after capture, finalize, task state and flush",
 }
 
-// releaseTrunkCallers are the callers of ReleaseOrderWithLineside, the per-leg
-// building block every door uses, and whose act each one carries.
+// releaseTrunkCallers are the callers of the per-leg trunk every door uses —
+// ReleaseOrderWithLineside, which opens an act, and releaseOrderInAct, which
+// joins one — and whose act each one carries.
 var releaseTrunkCallers = map[string]string{
-	"operator_stations.go:releaseIfReleasable":                   "per-leg arm of the pair click (operator) AND of the automatic re-fires",
-	"operator_changeover_release.go:releaseChangeoverWaitScoped": "operator: the changeover sweep and per-node click",
+	"operator_release.go:ReleaseOrderWithLineside":               "operator: the per-order click (door 2), in a fresh act",
+	"operator_stations.go:releaseIfReleasable":                   "per-leg arm of the pair click (the click's act) AND of the automatic re-fires (a fresh act each)",
+	"operator_changeover_release.go:releaseChangeoverWaitScoped": "operator: the changeover sweep and per-node click (the click's act)",
 	"sim_operator.go:runRelease":                                 "sim: the auto-operator's per-order arm (-tags sim)",
 }
 
@@ -175,7 +177,7 @@ func TestReleaseEnvelopeSendersAreCensused(t *testing.T) {
 
 func TestReleaseTrunkCallersAreCensused(t *testing.T) {
 	t.Parallel()
-	found := callSites(t, ".", regexp.MustCompile(`^ReleaseOrderWithLineside$`))
+	found := callSites(t, ".", regexp.MustCompile(`^(ReleaseOrderWithLineside|releaseOrderInAct)$`))
 	checkCensus(t, "trunk caller", found, releaseTrunkCallers)
 }
 

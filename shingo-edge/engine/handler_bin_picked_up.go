@@ -179,8 +179,9 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 			// force-transitioned to in_transit — an Edge/Core divergence that a
 			// later re-release cannot heal. Skipping is safe: the supply stages
 			// on its own and the operator's next release-wait click fires it.
-			if _, rerr := e.releaseIfReleasable(*task.NextMaterialOrderID, "deferred-supply-after-evac-pickup", supplyDisp); rerr != nil {
+			if _, rerr := e.releaseIfReleasable(newReleaseAct(), *task.NextMaterialOrderID, "deferred-supply-after-evac-pickup", supplyDisp); rerr != nil {
 				e.logFn("bin_picked_up: deferred-supply release order %d for evac %s: %v", *task.NextMaterialOrderID, orderUUID, rerr)
+				e.noteReleaseHeld(*task.NextMaterialOrderID, rerr)
 			}
 		}
 		// Drop tasks with the evacuate marker stay non-terminal until the

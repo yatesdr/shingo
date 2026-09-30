@@ -102,6 +102,14 @@ const (
 // release without special-casing, and Core's manifest stays untouched on
 // those legacy paths.
 func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition) error {
+	return e.releaseOrderInAct(newReleaseAct(), orderID, disp)
+}
+
+// releaseOrderInAct is ReleaseOrderWithLineside inside an act a door already
+// opened: a pair click, a changeover click, a re-fire. The act carries what the
+// door has already read (the curtain), so a leg released through here is not
+// read again below the door's own paperwork.
+func (e *Engine) releaseOrderInAct(act *releaseAct, orderID int64, disp ReleaseDisposition) error {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order %d: %w", orderID, err)
@@ -132,6 +140,20 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	if !orders.ReleasableAtCore(order.Status) {
 		return fmt.Errorf("order %d is %s, which Core will not release%s",
 			orderID, order.Status, queueReasonSuffix(order))
+	}
+
+	// ── THE LIGHT CURTAIN (curtain_gate.go) ──────────────────────────────
+	//
+	// Every curtained node this leg's next move lifts a bin from or sets one
+	// down on. Here, at the top, so every arm below is behind it — the early
+	// releases included (no process node, a drop, no claim): the nil-claim arm
+	// used to release ungated (A4) — and nothing above has changed anything.
+	// No exemption for a changeover: its robot crosses the same curtain. Read
+	// once per act: a door that already checked this leg does not read again.
+	if err := e.curtainForLeg(act, order); err != nil {
+		e.logRelease("order=%d disposition=%q - curtain refused the release: %v",
+			orderID, string(disp.Mode), err)
+		return err
 	}
 
 	// Orders without a process node (pure kanban, generic moves) skip
@@ -251,19 +273,6 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// Refuse the release if the leg cannot be classified: the operator retries,
 	// which is recoverable. Guessing is not - guess "evac" and Core wipes the
 	// manifest of a bin that is about to feed the line (ALN_002).
-
-	// GATE, not side effect - nothing above has mutated anything, and this
-	// must stay ahead of everything below (curtain_gate.go). A release on an
-	// active changeover (nodeTask non-nil) is changeover-scoped and exempt:
-	// the curtain gates the process's ordinary produce releases, not the
-	// changeover choreography.
-	if nodeTask == nil {
-		if err := e.curtainGate(node, toClaim); err != nil {
-			e.logRelease("order=%d node=%s disposition=%q - curtain refused the release: %v",
-				orderID, node.Name, string(disp.Mode), err)
-			return err
-		}
-	}
 	isSupply, err := e.isSupplyOrderInTwoRobotSwap(order, node, toClaim)
 	if err != nil {
 		e.logRelease("order=%d node=%s disposition=%q — refusing release: %v",

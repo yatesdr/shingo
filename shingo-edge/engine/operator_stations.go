@@ -462,18 +462,14 @@ func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemaining
 	if claim.OutboundDestination == "" {
 		return nil, fmt.Errorf("node %s has no outbound destination configured", node.Name)
 	}
-	// FG light-curtain interlock: this door lifts a bin a position is holding,
-	// which on a produce claim is a release into the FG pickup's conversation.
-	// Gated ONLY on the Material-page door (fallback nil): the changeover
-	// evacuation of a fanned-out position arrives through the fallback and is
-	// changeover-scoped, which the interlock does not gate
-	// (curtain_gate.go). The line-pull owner ruling above is about traffic
-	// discipline, not about the curtain, and a safety interlock outranks an
-	// admin-door exemption unless the owner says otherwise.
-	if fallback == nil {
-		if err := e.curtainGate(node, claim); err != nil {
-			return nil, err
-		}
+	// THE LIGHT CURTAIN. This door lifts the bin a position is holding the
+	// moment its order is created, so the check is here, on the node the bin
+	// leaves. Both callers — the Material page, and the changeover evacuation
+	// of a fanned-out position (the fallback claim) — are gated: a changeover
+	// robot crosses the same curtain (curtain_gate.go). The line-pull ruling
+	// above is about traffic discipline, not the curtain.
+	if err := e.curtainForNode(newReleaseAct(), claim.CoreNodeName); err != nil {
+		return nil, err
 	}
 	// ONE RELEASE PER BIN. This door creates a robot's order at the click, so
 	// a second tap before the first robot has lifted the bin sent a second
@@ -744,14 +740,6 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 
-	// FG light-curtain interlock: a produce release waits for the curtain.
-	// A GATE - the changeover single-leg divert above already ran, so what
-	// reaches here is a swap release on this node's own claim
-	// (curtain_gate.go).
-	if err := e.curtainGate(node, claim); err != nil {
-		return err
-	}
-
 	// Load the active changeover node task so ResolveSwapPair can fall
 	// back to task.OldMaterialReleaseOrderID when both runtime pointers
 	// are nil. The HMI's ComputeSwapReady predicate already keys on this
@@ -764,18 +752,6 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// just means the resolver falls through to the runtime-pointer path,
 	// which is the pre-2026-05-12 behavior for non-changeover swaps.
 	task := loadReleaseSwapNodeTask(e.db, node)
-
-	// FG light-curtain interlock: a produce release waits for the curtain.
-	// A GATE - the changeover single-leg divert above already ran, so what
-	// reaches here is a swap release on this node's own claim
-	// (curtain_gate.go). A CHANGEOVER-OWNED pair (task non-nil) is exempt:
-	// the interlock gates the process's ordinary produce releases, not the
-	// changeover choreography.
-	if task == nil {
-		if err := e.curtainGate(node, claim); err != nil {
-			return err
-		}
-	}
 
 	// Resolve the swap pair via durable sibling pointer rather than the
 	// volatile runtime slots. Cleanup paths (per-order terminal clear, a
@@ -863,6 +839,18 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// Whose paperwork is the departing bin? Asked of the departing LEG, not of
 	// the node — read here, in the gates half, so an unreadable answer refuses
 	// instead of guessing below the line.
+	// ── THE LIGHT CURTAIN, ONCE FOR THE CLICK (curtain_gate.go) ──────────
+	//
+	// Every curtained node either leg's next move lifts a bin from or sets one
+	// down on, for each leg that goes on this click — read once per node for
+	// the whole click, here in the gates, so the pair cannot pass for one leg
+	// and fail for the other, and the per-leg releases below reuse the answer
+	// instead of reading again beneath the paperwork. No changeover exemption.
+	act := newReleaseAct()
+	if err := e.curtainForPair(act, node, evacOrderID, supplyOrderID); err != nil {
+		return err
+	}
+
 	// Only a produce claim has release paperwork here, so only it pays the read.
 	departingIsChangeoverLeg := false
 	if claim.Role == protocol.ClaimRoleProduce {
@@ -915,7 +903,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// acknowledged is skipped, not force-flipped to in_transit.
 	evacReleased := false
 	if evacOrderID != nil {
-		released, err := e.releaseIfReleasable(*evacOrderID, "evac", disp)
+		released, err := e.releaseIfReleasable(act, *evacOrderID, "evac", disp)
 		if err != nil {
 			return err
 		}
@@ -924,7 +912,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// The SUPPLY leg - zero disposition (preserve the supply bin's manifest).
 	supplyReleased := false
 	if supplyOrderID != nil {
-		released, err := e.releaseIfReleasable(*supplyOrderID, "supply", supplyDisp)
+		released, err := e.releaseIfReleasable(act, *supplyOrderID, "supply", supplyDisp)
 		if err != nil {
 			return err
 		}
@@ -1222,7 +1210,10 @@ func loadReleaseSwapNodeTask(db *store.DB, node *processes.Node) *processes.Node
 // button on the Hopkinsville press-index hang. A leg skipped here re-fires when
 // it later reaches staged (handleSiblingReleaseRefire), scoped to a pair whose
 // sibling already released.
-func (e *Engine) releaseIfReleasable(orderID int64, label string, disp ReleaseDisposition) (bool, error) {
+//
+// act is the act the release belongs to: the door's, when a door checked the
+// leg already, or a fresh one for an automatic re-fire.
+func (e *Engine) releaseIfReleasable(act *releaseAct, orderID int64, label string, disp ReleaseDisposition) (bool, error) {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return false, fmt.Errorf("get order %s (%d): %w", label, orderID, err)
@@ -1236,7 +1227,7 @@ func (e *Engine) releaseIfReleasable(orderID int64, label string, disp ReleaseDi
 			label, orderID, order.Status)
 		return false, nil
 	}
-	if err := e.ReleaseOrderWithLineside(orderID, disp); err != nil {
+	if err := e.releaseOrderInAct(act, orderID, disp); err != nil {
 		return false, fmt.Errorf("release order %s (%d): %w", label, orderID, err)
 	}
 	return true, nil
@@ -1298,4 +1289,31 @@ func (e *Engine) refuseSecondMaterialRelease(node *processes.Node, runtime *proc
 	}
 	return fmt.Errorf("node %s: a release for this bin is already on its way (order %d, %s)",
 		node.Name, prior.ID, prior.Status)
+}
+
+// curtainForPair runs the light curtain for each leg of a pair that goes on
+// this click, in one act. A leg that is not going now (not yet releasable, or
+// terminal) is not checked; a later re-fire checks it in its own act. With no
+// curtained node on the Edge it reads no leg at all.
+func (e *Engine) curtainForPair(act *releaseAct, node *processes.Node, legIDs ...*int64) error {
+	curtainedAny, err := e.anyCurtained(act)
+	if err != nil || !curtainedAny {
+		return err
+	}
+	for _, legID := range legIDs {
+		if legID == nil {
+			continue
+		}
+		leg, lerr := e.db.GetOrder(*legID)
+		if lerr != nil {
+			return fmt.Errorf("node %s: get order %d: %w", node.Name, *legID, lerr)
+		}
+		if orders.IsTerminal(leg.Status) || !orders.ReleasableAtCore(leg.Status) {
+			continue
+		}
+		if err := e.curtainForLeg(act, leg); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -162,7 +162,7 @@ func TestReleaseIfReleasable_SkipsHeldOrder(t *testing.T) {
 	} {
 		testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(held)), "set held status")
 
-		released, err := eng.releaseIfReleasable(orderID, "test-deferred-supply", ReleaseDisposition{CalledBy: "test"})
+		released, err := eng.releaseIfReleasable(newReleaseAct(), orderID, "test-deferred-supply", ReleaseDisposition{CalledBy: "test"})
 		if err != nil {
 			t.Fatalf("releaseIfReleasable(%s): unexpected error: %v", held, err)
 		}
@@ -180,7 +180,7 @@ func TestReleaseIfReleasable_SkipsHeldOrder(t *testing.T) {
 
 	// And the positive control: staged releases and reports true.
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "stage it")
-	released, err := eng.releaseIfReleasable(orderID, "test-deferred-supply", ReleaseDisposition{CalledBy: "test"})
+	released, err := eng.releaseIfReleasable(newReleaseAct(), orderID, "test-deferred-supply", ReleaseDisposition{CalledBy: "test"})
 	if err != nil {
 		t.Fatalf("releaseIfReleasable(staged): %v", err)
 	}

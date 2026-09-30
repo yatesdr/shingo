@@ -202,9 +202,10 @@ func (e *Engine) handleSiblingReleaseRefire(changed OrderStatusChangedEvent) {
 	// The leg is at staged now, so it is releasable at Core; releaseIfReleasable
 	// is still the gate (defends against a race that moved it again) and reports
 	// whether the release actually queued.
-	released, err := e.releaseIfReleasable(changed.OrderID, "sibling-release-refire", disp)
+	released, err := e.releaseIfReleasable(newReleaseAct(), changed.OrderID, "sibling-release-refire", disp)
 	if err != nil {
 		e.logFn("sibling-release-refire: order %d reached staged but release failed: %v", changed.OrderID, err)
+		e.noteReleaseHeld(changed.OrderID, err)
 		return
 	}
 	if released {
@@ -319,10 +320,11 @@ func (e *Engine) releaseSurvivorOfFinishedPartner(orderID int64) {
 	// bin's manifest). A survivor whose partner has already completed is holding
 	// material somebody still expects to arrive intact, and inventing a
 	// disposition here would apply a UOP decision no operator made.
-	released, err := e.releaseIfReleasable(orderID, "swap-survivor", ReleaseDisposition{CalledBy: "swap-survivor-release"})
+	released, err := e.releaseIfReleasable(newReleaseAct(), orderID, "swap-survivor", ReleaseDisposition{CalledBy: "swap-survivor-release"})
 	if err != nil {
 		e.logFn("swap-survivor release: order %d staged with partner %d already completed, but release failed: %v",
 			orderID, sibling.ID, err)
+		e.noteReleaseHeld(orderID, err)
 		return
 	}
 	if released {

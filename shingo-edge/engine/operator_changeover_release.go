@@ -298,6 +298,10 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 	// nil → Core no-op. CalledBy still flows for audit.
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 
+	// One act for the click: each curtained node is read once however many
+	// tasks and legs the click covers (curtain_gate.go).
+	act := newReleaseAct()
+
 	// Collect per-task failures rather than swallowing them. Pre-fix
 	// behaviour was log-and-continue + return nil, which silently recreated
 	// the original ALN_001 incident on partial failure: one node's manifest
@@ -385,7 +389,7 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 				result.Pending++
 				continue
 			}
-			if err := e.ReleaseOrderWithLineside(order.ID, s.disp); err != nil {
+			if err := e.releaseOrderInAct(act, order.ID, s.disp); err != nil {
 				log.Printf("release changeover wait node %s (%s): %v", task.NodeName, s.kind, err)
 				failures = append(failures, fmt.Errorf("node %s (%s): %w", task.NodeName, s.kind, err))
 				continue

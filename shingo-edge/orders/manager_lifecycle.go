@@ -399,3 +399,16 @@ func isReleaseRollback(detail string) bool {
 	return strings.HasPrefix(detail, "Core rejected the release") ||
 		strings.HasPrefix(detail, "Manifest sync failed at Core")
 }
+
+// NoteReleaseHeld records, on the order, why an AUTOMATIC release of it was
+// held — a deferred re-fire or a survivor release that met a live light
+// curtain. It changes no status: the order stays where it is, and the note is
+// an order_history row the board's release chip reads (store's chip prefixes),
+// so the refusal is somewhere an operator can see it rather than only in a log.
+func (m *Manager) NoteReleaseHeld(orderID int64, sentence string) error {
+	order, err := m.db.GetOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("get order %d: %w", orderID, err)
+	}
+	return m.db.InsertOrderHistory(order.ID, string(order.Status), string(order.Status), sentence)
+}

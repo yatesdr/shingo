@@ -315,18 +315,14 @@ func releaseMatrixCells() []relCell {
 			}),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi2/curtain goes live after the top reads",
-			bug:   "A2",
-			today: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | uop=0",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
 			build: func(h *relHarness) {
 				withCurtain(curtainSafe, pairAt(pi2, "evac", S, "supply", S))(h)
 				h.wl.seq = []any{curtainSafe, curtainSafe, curtainLive}
 			},
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi2/curtain goes live between the legs",
-			bug:   "A2",
-			today: "refuse:curtain | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | uop=0",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
 			build: func(h *relHarness) {
 				withCurtain(curtainSafe, pairAt(pi2, "evac", S, "supply", S))(h)
 				h.wl.seq = []any{curtainSafe, curtainSafe, curtainSafe, curtainLive}
@@ -355,23 +351,17 @@ func releaseMatrixCells() []relCell {
 			want: "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", D)),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/two_robot/first cycle curtain live",
-			bug:   "A4",
-			today: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | uop=42",
-			want:  "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42",
+			want: "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42",
 			build: withCurtain(curtainLive, func(h *relHarness) {
 				pairAt(twoRobot, "evac", S, "supply", D)(h)
 				testutil.MustNoErr(h.t, h.db.SetProcessNodeRuntime(h.nodeID, nil, fxCount), "unstamp")
 			}),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/co two_robot/evac, curtain live",
-			bug:   "curtain-exempt",
-			today: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | uop=42",
-			want:  "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", D)),
+			want: "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", D)),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/co drop/evac, curtain live",
-			bug:   "curtain-exempt",
-			today: "ok | evac=in_transit | rel=evac | ingest=0 capred=0 | uop=42 | env:evac uop=0 kind=release_empty",
-			want:  "refuse:curtain | evac=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot, drop: true}, "evac", S)),
+			want: "refuse:curtain | evac=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot, drop: true}, "evac", S)),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP, pEnv)},
 		{name: "d2/co drop/evac",
 			want: "ok | evac=in_transit | rel=evac | ingest=0 capred=0 | uop=42 | env:evac uop=7 kind=release_partial/7", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot, drop: true}, "evac", S),
@@ -391,9 +381,7 @@ func releaseMatrixCells() []relCell {
 			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co two_robot/curtain live",
-			bug:   "curtain-exempt",
-			today: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | uop=42",
-			want:  "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=1 flip=[] | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
+			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=1 flip=[] | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co pi tooling/evac staged",
 			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
@@ -410,9 +398,7 @@ func releaseMatrixCells() []relCell {
 			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		{name: "d6/co carryover/round trip at its hold, curtain live",
-			bug:   "curtain-exempt",
-			today: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42",
-			want:  "refuse:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S)),
+			want: "refuse:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		// The per-position fan-out: one order per position, and no station wait
 		// anywhere in it — the robot lifts the press's bin at dispatch. Nothing
@@ -421,9 +407,7 @@ func releaseMatrixCells() []relCell {
 			want: "ok | supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, perPosition: true}, "supply", protocol.StatusDispatched),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		{name: "d6/co pi marked/single leg, curtain live",
-			bug:   "curtain-exempt",
-			today: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42",
-			want:  "refuse:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
+			want: "refuse:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 	}
 }

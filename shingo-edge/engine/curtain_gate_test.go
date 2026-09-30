@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"shingo/protocol"
 	"shingoedge/plc"
 	"shingoedge/store/processes"
 )
@@ -91,17 +90,24 @@ func curtainGateFixture(t *testing.T, client plc.WarlinkClient) (*Engine, *proce
 	return eng, nil
 }
 
+// gateNode runs the gate the way a door does for the node a bin leaves, in a
+// fresh act.
+func gateNode(eng *Engine, node *processes.Node) error {
+	return eng.curtainForNode(newReleaseAct(), node.CoreNodeName)
+}
+
 // TestCurtainGate walks the refusal ladder. Each case names what the
 // operator's screen will say, because these strings are the floor's
 // answer to "why won't it release".
 func TestCurtainGate(t *testing.T) {
-	t.Run("a consume claim is never gated, whatever the node says", func(t *testing.T) {
-		client := &curtainStubClient{value: false}
+	t.Run("a curtained node is gated whatever the release's claim", func(t *testing.T) {
+		// Per node, not per role: the node's own setting says it has a
+		// curtain, and a consume release through it crosses it like any other.
+		client := &curtainStubClient{value: true}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(false))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleConsume}
-		if err := eng.curtainGate(node, claim); err != nil {
-			t.Fatalf("consume release gated: %v", err)
+		if err := gateNode(eng, node); err == nil {
+			t.Fatal("a curtained node released with its curtain live")
 		}
 	})
 
@@ -109,8 +115,7 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, false, "", "", boolPtr(false))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		if err := eng.curtainGate(node, claim); err != nil {
+		if err := gateNode(eng, node); err != nil {
 			t.Fatalf("interlock-off release refused: %v", err)
 		}
 	})
@@ -119,23 +124,21 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{value: true}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		if err := eng.curtainGate(node, claim); err != nil {
+		if err := gateNode(eng, node); err != nil {
 			t.Fatalf("safe reading refused: %v", err)
 		}
 	})
 
-	t.Run("the unsafe reading refuses, naming both sides", func(t *testing.T) {
+	t.Run("the unsafe reading refuses with the plain sentence", func(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		err := eng.curtainGate(node, claim)
+		err := gateNode(eng, node)
 		if err == nil {
 			t.Fatal("unsafe reading released")
 		}
-		if !strings.Contains(err.Error(), "not in its release state") || !strings.Contains(err.Error(), "release requires TRUE") {
-			t.Fatalf("refusal does not name the mismatch: %v", err)
+		if err.Error() != "Release the light curtain at SYN-FG-1, then press RELEASE again." {
+			t.Fatalf("refusal = %q, want the plain sentence naming the node", err)
 		}
 	})
 
@@ -143,8 +146,7 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{err: errors.New("WarLink GET returned 503")}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		err := eng.curtainGate(node, claim)
+		err := gateNode(eng, node)
 		if err == nil {
 			t.Fatal("unreadable tag released")
 		}
@@ -157,12 +159,11 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{value: true}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "", "", boolPtr(true))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		err := eng.curtainGate(node, claim)
+		err := gateNode(eng, node)
 		if err == nil {
 			t.Fatal("pointer-less interlock released")
 		}
-		if !strings.Contains(err.Error(), "pointers are missing") {
+		if !strings.Contains(err.Error(), "PLC/tag are not set") {
 			t.Fatalf("refusal does not name the config gap: %v", err)
 		}
 	})
@@ -171,8 +172,7 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", nil)
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		err := eng.curtainGate(node, claim)
+		err := gateNode(eng, node)
 		if err == nil {
 			t.Fatal("an interlock with no polarity released")
 		}
@@ -185,8 +185,7 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{value: false}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(false))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		if err := eng.curtainGate(node, claim); err != nil {
+		if err := gateNode(eng, node); err != nil {
 			t.Fatalf("FALSE-polarity safe reading refused: %v", err)
 		}
 	})
@@ -195,22 +194,30 @@ func TestCurtainGate(t *testing.T) {
 		client := &curtainStubClient{value: "MID-TRAVEL"}
 		eng, _ := curtainGateFixture(t, client)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
-		claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce}
-		err := eng.curtainGate(node, claim)
+		err := gateNode(eng, node)
 		if err == nil {
 			t.Fatal("non-BOOL value released")
 		}
-		if !strings.Contains(err.Error(), "did not read as a BOOL") {
+		if !strings.Contains(err.Error(), "not a BOOL") {
 			t.Fatalf("refusal does not name the value problem: %v", err)
 		}
 	})
 
-	t.Run("a nil claim is not a produce release", func(t *testing.T) {
-		client := &curtainStubClient{value: false}
-		eng, _ := curtainGateFixture(t, client)
+	t.Run("one act reads a node once", func(t *testing.T) {
+		// The act's memo is what keeps a pair click from passing the check for
+		// one leg and failing it for the other, and what keeps the per-leg
+		// release below a door's paperwork from reading again.
+		wl := &scriptedWarLink{seq: []any{true, false}}
+		eng, _ := curtainGateFixture(t, wl)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
-		if err := eng.curtainGate(node, nil); err != nil {
-			t.Fatalf("claim-less release gated: %v", err)
+		act := newReleaseAct()
+		for i := 0; i < 3; i++ {
+			if err := eng.curtainForNode(act, node.CoreNodeName); err != nil {
+				t.Fatalf("read %d: %v", i, err)
+			}
+		}
+		if wl.count() != 1 {
+			t.Fatalf("one act read the curtain %d times, want 1", wl.count())
 		}
 	})
 }

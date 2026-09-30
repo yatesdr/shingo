@@ -75,6 +75,37 @@ func restarts() func(h *relHarness) error {
 func pPile(h *relHarness) []string { return []string{fmt.Sprintf("pile=%d", h.pile(fxPart))} }
 func pPull(h *relHarness) []string { return []string{h.activePull()} }
 
+// boundarySpy passes every call through to the real sink and counts the
+// attribution boundaries marked, per node.
+type boundarySpy struct {
+	InventoryDeltaSink
+	marked map[int64]int
+}
+
+func (s *boundarySpy) MarkAttributionBoundary(nodeID int64) error {
+	s.marked[nodeID]++
+	return s.InventoryDeltaSink.MarkAttributionBoundary(nodeID)
+}
+
+// pBoundary reports how many attribution boundaries the act marked on the
+// partner position.
+func pBoundary(h *relHarness) []string {
+	spy := h.eng.inventoryDelta.(*boundarySpy)
+	return []string{fmt.Sprintf("boundary=%d", spy.marked[h.partnerID])}
+}
+
+// seqWithCurtain builds a sequential produce pair with a staged removal, the
+// front position curtained at the given reading, and the attribution
+// boundaries counted.
+func seqWithCurtain(reading bool) func(h *relHarness) {
+	return func(h *relHarness) {
+		h.sequentialAB(protocol.ClaimRoleProduce, true)
+		statuses(h, "removal", protocol.StatusStaged)
+		h.armCurtain(reading)
+		h.eng.SetInventoryDeltaSink(&boundarySpy{InventoryDeltaSink: h.mutator, marked: map[int64]int{}})
+	}
+}
+
 // pBin is the front node's bound bin.
 func pBin(h *relHarness) []string {
 	rt, err := h.db.GetProcessNodeRuntime(h.nodeID)
@@ -221,8 +252,6 @@ func releasePinCells() []relCell {
 			build: pairAt(twoRobot, "evac", S, "supply", D),
 			act:   seq(pairClick(dispEmpty), stages("supply")), probe: probes(pDeferred)},
 		{name: "d8/two_robot re-fire into a live curtain",
-			bug:   "A6",
-			today: "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | chip:supply=-",
 			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
 			build: withCurtain(curtainSafe, pairAt(twoRobot, "evac", S, "supply", D)),
 			act: seq(pairClick(dispEmpty), func(h *relHarness) error { h.wl.set(curtainLive); return nil },
@@ -230,15 +259,11 @@ func releasePinCells() []relCell {
 			probe: probes(pDeferred, pChip("supply"))},
 		// ── Door 9: the survivor into a live curtain ─────────────────────────
 		{name: "d9/two_robot survivor into a live curtain",
-			bug:   "A6",
-			today: "ok | evac=confirmed supply=staged | rel=- | ingest=0 capred=0 | chip:supply=-",
 			want:  "ok | evac=confirmed supply=staged | rel=- | ingest=0 capred=0 | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
 			build: withCurtain(curtainLive, pairAt(twoRobot, "evac", T, "supply", S)),
 			act:   confirms("evac"), probe: probes(pChip("supply"))},
 		// ── Door 10: the pickup chain into a live curtain ────────────────────
 		{name: "d10/changeover supply at the evac's pickup, curtain live",
-			bug:   "curtain-exempt",
-			today: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | chip:supply=-",
 			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=1 flip=[] | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
 			build: withCurtain(curtainSafe, coAt(coTwoRobot, "evac", S, "supply", S)),
 			act: seq(sweepClick(dispNone), func(h *relHarness) error { h.wl.set(curtainLive); return nil },
@@ -343,11 +368,23 @@ func releasePinCells() []relCell {
 			act:   materialTap(0), probe: probes(pMoves)},
 		// ── Door 4: the changeover position evac (fallback claim) ────────────
 		{name: "d4/position evac, curtain live",
-			bug:   "curtain-exempt",
-			today: "ok |  | rel=- | ingest=0 capred=0 | moves=1",
 			want:  "refuse:curtain |  | rel=- | ingest=0 capred=0 | moves=0",
 			build: func(h *relHarness) { h.seedNode(twoRobot); h.armCurtain(curtainLive) },
 			act:   positionEvac, probe: probes(pMoves)},
+
+		// ── §15: a refused sequential release moves nothing ─────────────────
+		// The flip is the first side effect and every refusal is above it: a
+		// curtain refusal leaves the pull on the front and marks no
+		// attribution boundary on the partner. The control cell is the same
+		// release with the curtain clear.
+		{name: "§15/curtain refuses a sequential release: pull and attribution unchanged",
+			want:  "refuse:curtain | removal=staged | rel=- | ingest=0 capred=0 | pull=SYN-PRESS | boundary=0",
+			build: seqWithCurtain(curtainLive),
+			act:   orderClick("removal", dispEmpty), probe: probes(pPull, pBoundary)},
+		{name: "§15/control: the same release with the curtain clear flips and marks the boundary",
+			want:  "ok | removal=in_transit | rel=removal | ingest=0 capred=0 | pull=SYN-PRESS-B | boundary=1",
+			build: seqWithCurtain(curtainSafe),
+			act:   orderClick("removal", dispEmpty), probe: probes(pPull, pBoundary)},
 
 		// ── L3: one press on a sequential A/B press ──────────────────────────
 		// fact-owners Lane G (under this branch) already flips onto a ready
