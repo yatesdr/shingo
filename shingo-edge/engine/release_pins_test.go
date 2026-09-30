@@ -313,9 +313,7 @@ func releasePinCells() []relCell {
 
 		// ── L5 / L4: the produce paperwork ───────────────────────────────────
 		{name: "L5/unchanged neighbour's pair during another node's changeover",
-			bug:   "L5",
-			today: "ok | nevac=in_transit nsupply=in_transit evac=submitted supply=submitted | rel=nevac,nsupply | ingest=0 capred=0",
-			want:  "ok | nevac=in_transit nsupply=in_transit evac=submitted supply=submitted | rel=nevac,nsupply | ingest=1 capred=0",
+			want: "ok | nevac=in_transit nsupply=in_transit evac=submitted supply=submitted | rel=nevac,nsupply | ingest=1 capred=0",
 			build: func(h *relHarness) {
 				h.changeover(coSpec{mode: protocol.SwapModeTwoRobot, neighbour: true})
 				statuses(h, "nevac", S, "nsupply", S)
