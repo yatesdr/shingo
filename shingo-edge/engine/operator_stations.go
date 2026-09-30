@@ -475,6 +475,14 @@ func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemaining
 			return nil, err
 		}
 	}
+	// ONE RELEASE PER BIN. This door creates a robot's order at the click, so
+	// a second tap before the first robot has lifted the bin sent a second
+	// robot for the same bin (L8). The first tap's move order sits in the
+	// runtime's active slot; while it is live and still lifting from this node,
+	// the tap is refused and names it.
+	if err := e.refuseSecondMaterialRelease(node, runtime, claim); err != nil {
+		return nil, err
+	}
 	// THE FOURTH DOOR. This release opens an evac leg for whatever carrier is
 	// standing on the cell, and it read its destination off the REQUESTED claim
 	// — the same defect 1b17b0f9 fixed at the three swap-builder sites and did
@@ -1268,4 +1276,25 @@ func (e *Engine) isChangeoverLeg(orderID *int64) (bool, error) {
 		return false, fmt.Errorf("could not read whether order %d belongs to a changeover: %w", *orderID, err)
 	}
 	return task != nil && task.Situation != string(SituationUnchanged), nil
+}
+
+// refuseSecondMaterialRelease refuses a Material-page RELEASE while the move
+// order an earlier tap created for this node's bin is still live. That order is
+// the runtime's active order, a move, lifting from this node. Anything else in
+// the slot — a delivery, a swap leg — is not this door's and is left to the
+// guards that own it. An unreadable order refuses: a wrong refusal is a tap
+// repeated, a wrong pass is two robots for one bin.
+func (e *Engine) refuseSecondMaterialRelease(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
+	if runtime == nil || runtime.ActiveOrderID == nil {
+		return nil
+	}
+	prior, err := e.db.GetOrder(*runtime.ActiveOrderID)
+	if err != nil {
+		return fmt.Errorf("node %s: could not read the order already working this bin (%w)", node.Name, err)
+	}
+	if prior.OrderType != orders.TypeMove || prior.SourceNode != claim.CoreNodeName || orders.IsTerminal(prior.Status) {
+		return nil
+	}
+	return fmt.Errorf("node %s: a release for this bin is already on its way (order %d, %s)",
+		node.Name, prior.ID, prior.Status)
 }

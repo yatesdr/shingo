@@ -334,8 +334,6 @@ func releasePinCells() []relCell {
 			build: func(h *relHarness) { h.seedNode(twoRobot) },
 			act:   materialTap(0), probe: probes(pMoves, pUOP)},
 		{name: "d3/material release tapped twice",
-			bug:   "L8",
-			today: "ok |  | rel=- | ingest=0 capred=0 | moves=2",
 			want:  "refuse:in-flight |  | rel=- | ingest=0 capred=0 | moves=1",
 			build: func(h *relHarness) { h.seedNode(twoRobot) },
 			act:   seq(materialTap(0), materialTap(0)), probe: probes(pMoves)},
