@@ -33,9 +33,13 @@ type ReadinessFunc func(plcName string) bool
 // process list), each with counter tags that climb on a clock ticker — standing
 // in for presses/lines whose PLCs WarLink would normally poll.
 type FakeClient struct {
-	mu    sync.RWMutex
-	plcs  []string                    // distinct PLC names, sorted (stable output)
-	vals  map[string]map[string]int64 // plcName → tagName → counter
+	mu   sync.RWMutex
+	plcs []string                    // distinct PLC names, sorted (stable output)
+	vals map[string]map[string]int64 // plcName → tagName → counter
+	// bools are writable BOOL tags: a light curtain's state, standing in for
+	// the cell's bypass button (S7). A bool write creates or sets one; the
+	// counters stay unwritable.
+	bools map[string]map[string]bool
 	clk   clock.Clock
 	ready ReadinessFunc // nil = always ready (backward-compatible)
 }
@@ -54,7 +58,7 @@ func (f *FakeClient) SetReadinessFunc(fn ReadinessFunc) {
 }
 
 func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *FakeClient {
-	f := &FakeClient{vals: make(map[string]map[string]int64), clk: clk}
+	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), clk: clk}
 	seen := make(map[string]bool)
 	for _, p := range cfg.Processes {
 		if f.vals[p.PLCName] == nil {
@@ -135,7 +139,7 @@ func (f *FakeClient) ListTags(ctx context.Context, plcName string) (map[string]p
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	tags := f.vals[plcName]
-	out := make(map[string]plc.WarlinkTag, len(tags))
+	out := make(map[string]plc.WarlinkTag, len(tags)+len(f.bools[plcName]))
 	for tagName, v := range tags {
 		out[plcName+"."+tagName] = plc.WarlinkTag{
 			PLC:   plcName,
@@ -143,6 +147,9 @@ func (f *FakeClient) ListTags(ctx context.Context, plcName string) (map[string]p
 			Type:  "DINT",
 			Value: v,
 		}
+	}
+	for tagName, v := range f.bools[plcName] {
+		out[plcName+"."+tagName] = plc.WarlinkTag{PLC: plcName, Name: tagName, Type: "BOOL", Value: v}
 	}
 	return out, nil
 }
@@ -179,6 +186,9 @@ func (f *FakeClient) SetTagPublishing(ctx context.Context, plcName, tagName stri
 func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if b, ok := f.bools[plcName][tagName]; ok {
+		return b, nil
+	}
 	tags, ok := f.vals[plcName]
 	if !ok {
 		return nil, fmt.Errorf("simwarlink: PLC %q not found", plcName)
@@ -190,9 +200,28 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 	return v, nil
 }
 
-// WriteTagValue discards the write (Q4: zone lights / heartbeats have no sim
-// effect) and reports success.
+// WriteTagValue sets a BOOL tag when the value is a bool (a curtain's state,
+// the sim's bypass button), registering its PLC if new; any other write is
+// discarded (Q4: zone lights / heartbeats have no sim effect) and reports
+// success. A counter is never written.
 func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
+	b, ok := value.(bool)
+	if !ok {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, counter := f.vals[plcName][tagName]; counter {
+		return nil
+	}
+	if f.bools[plcName] == nil {
+		f.bools[plcName] = make(map[string]bool)
+		if f.vals[plcName] == nil {
+			f.plcs = append(f.plcs, plcName)
+			sort.Strings(f.plcs)
+		}
+	}
+	f.bools[plcName][tagName] = b
 	return nil
 }
 

@@ -23,6 +23,7 @@ func (h *Handlers) registerSimRoutes(r chi.Router) {
 	r.Post("/sim/seed-production-demo", h.apiSimSeedProductionDemo)
 	r.Post("/sim/seed-loader-graphs", h.apiSimSeedLoaderGraphs)
 	r.Post("/sim/clear-hourly-counts", h.apiSimClearHourlyCounts)
+	r.Post("/sim/curtain", h.apiSimCurtain)
 }
 
 // apiSimStatus reports the edge sim-clock speed + simulated time.
@@ -208,4 +209,30 @@ func (h *Handlers) apiSimClearHourlyCounts(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// apiSimCurtain sets a light curtain's BOOL tag in the fake WarLink: the sim's
+// stand-in for the cell's bypass button (S7). Body {"plc_name", "tag_name",
+// "value"}; the node's curtain setting (POST /process-nodes/{id}/curtain-setting)
+// names the tag and the value that allows a release.
+func (h *Handlers) apiSimCurtain(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		Value   *bool  `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PLCName == "" || body.TagName == "" || body.Value == nil {
+		http.Error(w, "want {plc_name, tag_name, value}", http.StatusBadRequest)
+		return
+	}
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	if err := mgr.WriteTagDirect(r.Context(), body.PLCName, body.TagName, *body.Value); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "value": *body.Value})
 }

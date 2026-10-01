@@ -134,3 +134,37 @@ func keysOf(m map[string]plc.WarlinkTag) []string {
 	}
 	return ks
 }
+
+// A curtain is a writable BOOL tag: the sim's stand-in for the cell's bypass
+// button (S7). A bool write creates or flips it, its PLC is listed, the poll
+// sees it as a BOOL, and a direct read returns it; a counter stays unwritable.
+func TestFakeCurtainIsAWritableBool(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeClient(ctx, twoProcessCfg(), clock.NewManual(time.Unix(0, 0)))
+	if err := f.WriteTagValue(ctx, "CURTAIN-PLC", "FG_CURTAIN", true); err != nil {
+		t.Fatalf("write curtain: %v", err)
+	}
+	if v, err := f.ReadTagValue(ctx, "CURTAIN-PLC", "FG_CURTAIN"); err != nil || v != true {
+		t.Fatalf("read curtain = %v, %v; want true", v, err)
+	}
+	_ = f.WriteTagValue(ctx, "CURTAIN-PLC", "FG_CURTAIN", false)
+	if v, _ := f.ReadTagValue(ctx, "CURTAIN-PLC", "FG_CURTAIN"); v != false {
+		t.Fatalf("the bypass flip did not take: %v", v)
+	}
+	plcs, _ := f.ListPLCs(ctx)
+	found := false
+	for _, p := range plcs {
+		found = found || p.Name == "CURTAIN-PLC"
+	}
+	if !found {
+		t.Error("the curtain's PLC is not listed, so the poll never caches it")
+	}
+	tags, _ := f.ListTags(ctx, "CURTAIN-PLC")
+	if tg := tags["CURTAIN-PLC.FG_CURTAIN"]; tg.Type != "BOOL" || tg.Value != false {
+		t.Errorf("polled curtain = %+v, want a BOOL false", tg)
+	}
+	_ = f.WriteTagValue(ctx, "PRESS-1", "PRESS-1_COUNTER", true)
+	if v, _ := f.ReadTagValue(ctx, "PRESS-1", "PRESS-1_COUNTER"); v.(int64) != 0 {
+		t.Errorf("a bool write changed a counter: %v", v)
+	}
+}

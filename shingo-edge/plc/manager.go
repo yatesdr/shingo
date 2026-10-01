@@ -522,6 +522,18 @@ func (m *Manager) ReadTagDirect(ctx context.Context, plcName, tagName string) (a
 }
 
 // ReadTag reads a single tag from the WarLink cache.
+// WriteTagDirect writes one tag through WarLink. The sim's curtain bypass
+// button is its one caller (www sim routes).
+func (m *Manager) WriteTagDirect(ctx context.Context, plcName, tagName string, value any) error {
+	m.mu.RLock()
+	wl := m.wl
+	m.mu.RUnlock()
+	if wl == nil {
+		return fmt.Errorf("WarLink client not configured")
+	}
+	return wl.WriteTagValue(ctx, plcName, tagName, value)
+}
+
 func (m *Manager) ReadTag(plcName, tagName string) (any, error) {
 	m.mu.RLock()
 	mp, ok := m.plcs[plcName]
