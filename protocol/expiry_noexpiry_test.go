@@ -136,6 +136,11 @@ func TestZeroOrDeadline(t *testing.T) {
 // minutes or hours late must still apply (S1b; it used to expire at 10 min).
 func TestNewEnvelope_OrderIngestCarriesNoExpiry(t *testing.T) {
 	t.Parallel()
+	// The release is durable for the same reason (R4-8).
+	if rel, err := NewEnvelope(TypeOrderRelease, Address{Role: RoleEdge, Station: "plant-a.line-1"},
+		Address{Role: RoleCore}, &OrderRelease{OrderUUID: "u"}); err != nil || !rel.ExpiresAt.IsZero() {
+		t.Fatalf("order.release ExpiresAt = %v (err %v), want zero (never expires)", rel.ExpiresAt, err)
+	}
 	env, err := NewEnvelope(TypeOrderIngest, Address{Role: RoleEdge, Station: "plant-a.line-1"},
 		Address{Role: RoleCore}, &OrderIngestRequest{OrderUUID: "u", PayloadCode: "PART-X", Quantity: 47})
 	if err != nil {
@@ -148,5 +153,20 @@ func TestNewEnvelope_OrderIngestCarriesNoExpiry(t *testing.T) {
 	hdr := RawHeader{Type: TypeOrderIngest, ExpiresAt: env.ExpiresAt}
 	if IsExpiredHeader(&hdr) {
 		t.Error("an order.ingest header reads expired")
+	}
+}
+
+// TestNewDataEnvelope_BinPickedUpCarriesNoExpiry: a bin's lift is durable
+// (R4-7): a copy dropped after an outage strands the slot's clear and a
+// changeover supply deferred to it.
+func TestNewDataEnvelope_BinPickedUpCarriesNoExpiry(t *testing.T) {
+	t.Parallel()
+	env, err := NewDataEnvelope(SubjectBinPickedUp, Address{Role: RoleCore}, Address{Role: RoleEdge, Station: "plant-a.line-1"},
+		&BinPickedUp{OrderUUID: "u", BinID: 9, Location: "SYN-PRESS"})
+	if err != nil {
+		t.Fatalf("NewDataEnvelope: %v", err)
+	}
+	if !env.ExpiresAt.IsZero() || IsExpired(env) {
+		t.Fatalf("transit.bin_picked_up ExpiresAt = %v, want zero (never expires)", env.ExpiresAt)
 	}
 }

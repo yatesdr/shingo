@@ -276,12 +276,18 @@ func (d *Drainer) drain() (failed bool) {
 // that happened and that Core never hears of; a dead-lettered pile level leaves
 // Core's mirror of the pile wrong until the pile next changes; a dead-lettered
 // ingest leaves a full produce bin with no confirmed manifest (its bin_epoch
-// fences a late one at Core). The panic path still exhausts
+// fences a late one at Core); a dead-lettered bin pickup strands the slot's
+// clear and a changeover supply deferred to it; a dead-lettered release strands
+// a robot Core holds staged (see protocol/expiry.go). The panic path still
+// exhausts
 // them: a payload that panics the publisher on every pass must be stood down.
 var neverDeadLetter = map[string]bool{
 	protocol.SubjectBinUOPDelta:         true,
 	protocol.SubjectLinesideBucketLevel: true,
 	protocol.TypeOrderIngest:            true,
+	// Core writes its data rows as "data."+subject (store/messaging).
+	"data." + protocol.SubjectBinPickedUp: true,
+	protocol.TypeOrderRelease:             true,
 }
 
 // publishOne reports whether the message was acked. False means the publish

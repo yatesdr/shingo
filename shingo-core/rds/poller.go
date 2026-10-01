@@ -427,6 +427,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 	type blockTransition struct {
 		blockID, location, binTask string
 		startTime, terminateTime   int64
+		prevState                  OrderState
 	}
 	var newlyFinished []blockTransition
 	for _, b := range detail.Blocks {
@@ -452,6 +453,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 				binTask:       b.BinTask,
 				startTime:     b.StartTime,
 				terminateTime: b.TerminateTime,
+				prevState:     old,
 			})
 		}
 	}
@@ -464,15 +466,22 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 
 	orderID, ok := resolveOrderID()
 	if !ok {
-		// Resolution failed — drop these block events. They'll be
-		// re-emitted next cycle since `prev` was already updated, but
-		// re-emit on the same already-FINISHED state is suppressed by
-		// the equality check. Lose these events but don't loop.
-		// Acceptable: order resolution failure means the ShinGo order
-		// row is missing, in which case binding events to it isn't
-		// useful anyway. Alternative would be to NOT update `prev`
-		// here, but that risks duplicate emissions on the next
-		// success.
+		// Resolution failed (R4-9). These FINISHED blocks are not recorded
+		// as seen: their previous state goes back, so the next cycle that
+		// resolves the order reports each of them once. Recording them and
+		// dropping the events lost the pickup they carry (the bin's move to
+		// _TRANSIT, BinPickedUp) for good; a resolver that recovers is the
+		// common case, a row truly gone is the rare one, and that one just
+		// keeps failing here.
+		p.mu.Lock()
+		for _, b := range newlyFinished {
+			if b.prevState == "" {
+				delete(prev, b.blockID)
+			} else {
+				prev[b.blockID] = b.prevState
+			}
+		}
+		p.mu.Unlock()
 		return
 	}
 

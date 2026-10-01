@@ -17,6 +17,13 @@ var defaultTTLs = map[string]time.Duration{
 	// unconfirmed and invisible to sourcing; a late one is fenced by its
 	// bin_epoch at Core. So it never expires.
 	TypeOrderIngest: NoExpiry,
+	// A release (R4-8). It fell to the 10-minute fallback, and one dropped
+	// after a longer outage left the Edge's leg in_transit (the Edge marks it
+	// so itself) and Core's staged: a robot nobody can release. A late copy
+	// releases the wait it was pressed for, because the robot cannot pass a
+	// station wait without it; the echo (OrderRelease.StationWait) makes a
+	// late copy for a wait already passed a no-op.
+	TypeOrderRelease: NoExpiry,
 
 	TypeOrderAck:    10 * time.Minute,
 	TypeOrderUpdate: 10 * time.Minute,
@@ -83,6 +90,20 @@ var subjectTTLs = map[string]time.Duration{
 	// Core sent it.
 	SubjectUOPAdjustment:   NoExpiry,
 	SubjectBinEpochRefresh: NoExpiry,
+
+	// The lift of a bin (R4-7). Dropped, it strands what only it triggers on
+	// the Edge: the slot's flush and clear, a changeover supply deferred to
+	// this lift, the drop's line-cleared advance, the departure stamp, the
+	// auto-push re-pull and a consolidation's Order B. Each branch was audited
+	// for a late copy (HandleBinPickedUp): the stamp, the flush and the
+	// line-cleared advance are idempotent; the deferred supply is released
+	// only if it was never released past a wait and Core still takes it; the
+	// re-pull asks Core's occupancy first; Order B's intent is taken once. The
+	// clear is gated on the bin still bound at the slot, so the one shape a
+	// late copy can still hurt is the SAME bin brought back to the SAME slot
+	// (a carryover round trip) before the copy lands — a window the 5-minute
+	// TTL already allowed for five minutes.
+	SubjectBinPickedUp: NoExpiry,
 
 	SubjectEdgeHeartbeat:    90 * time.Second,
 	SubjectEdgeHeartbeatAck: 90 * time.Second,

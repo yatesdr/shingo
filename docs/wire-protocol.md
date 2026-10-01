@@ -308,9 +308,10 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `production.ticks` | **none** | Batched increments keyed (cell, snapshot id, recorded_at) at Core — see below |
 | `inventory.uop_adjustment` | **none** | Count announcement a dropped copy strands under a dead generation — see below |
 | `inventory.bin_epoch_refresh` | **none** | Epoch re-anchor a dropped copy strands under a dead generation — see below |
+| `transit.bin_picked_up` | **none** | A bin's lift; a dropped copy strands the slot's clear and a supply deferred to it — see below |
 | Unknown subjects | 5 minutes | Safe general default |
 
-**Five subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
+**Six subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
 pinned against `protocol/expiry.go` by `protocol/docs_drift_test.go`). Every other data
 subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
 copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
@@ -322,7 +323,10 @@ delta — Core keys each tick on (cell, snapshot id, recorded_at), so a late cop
 a dropped one is a fake stop in MTBF and Lost. The two Core→Edge announcements (UoP adjustment,
 bin epoch refresh) are counts a station still holds after an outage longer than TypeData's
 5-minute TTL — dropped, every count that station reports under the superseded generation is
-discarded at Core until the next announcement.
+discarded at Core until the next announcement. A bin's lift (`transit.bin_picked_up`, 2026-09-30)
+is the only trigger for the slot's clear, a changeover supply deferred to that lift, and a
+consolidation's Order B; each branch of the Edge's handler is safe on a late copy (see
+`protocol/expiry.go` for the audit and the one residual shape).
 
 They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
 dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
@@ -357,7 +361,8 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 | Data channel | `data` (default) | 5 minutes | Safe general default for data exchange |
 | Data: heartbeat | `data` with subject `edge.heartbeat` / `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
 | Data: registration | `data` with subject `edge.register` / `edge.registered` | 5 minutes | Should complete quickly after connect |
-| Order commands | `order.request`, `order.complex_request`, `order.cancel`, `order.redirect`, `order.release`, `order.ingest` | 10 minutes | Operator can resubmit if expired |
+| Order commands | `order.request`, `order.complex_request`, `order.cancel`, `order.redirect` | 10 minutes | Operator can resubmit if expired |
+| Release and produce ingest | `order.release`, `order.ingest` | **none** | A dropped release strands a staged robot; a dropped ingest leaves a full bin unconfirmed. Core fences a late ingest by its `bin_epoch`, and the release's `station_wait` echo makes a late release for a passed wait a no-op. Neither is dead-lettered. |
 | Order status | `order.ack`, `order.update` | 10 minutes | Status updates age fast |
 | Important replies | `order.receipt`, `order.waybill`, `order.error`, `order.cancelled` | 30 minutes | Important, longer window needed |
 | Delivery notification | `order.delivered` | 60 minutes | Critical notification, longest window |

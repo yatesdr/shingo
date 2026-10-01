@@ -72,7 +72,8 @@ func (s *ackingStore) AckOutbox(id int64) error {
 func TestCountSubjectFailedPublishKeepsItsBudget(t *testing.T) {
 	t.Parallel()
 	// The produce ingest is a count too: a full bin's manifest (S1b).
-	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketLevel, protocol.TypeOrderIngest} {
+	for _, subject := range []string{protocol.SubjectBinUOPDelta, protocol.SubjectLinesideBucketLevel, protocol.TypeOrderIngest,
+		"data." + protocol.SubjectBinPickedUp, protocol.TypeOrderRelease} {
 		store := &mockStore{pending: []Message{
 			{ID: 1, Payload: []byte("count"), MsgType: subject, Retries: MaxRetries - 1},
 		}}

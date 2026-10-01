@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -580,5 +581,54 @@ func TestPollerRestartAfterRelease(t *testing.T) {
 	p.poll() // the robot finished the segment and parked at the next wait
 	if got := count(); got != 1 {
 		t.Fatalf("restart, robot parked at the next wait: %d events, want 1", got)
+	}
+}
+
+// flakyResolver fails its first n resolutions, then answers.
+type flakyResolver struct {
+	mu    sync.Mutex
+	fails int
+}
+
+func (r *flakyResolver) ResolveRDSOrderID(string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fails > 0 {
+		r.fails--
+		return 0, errors.New("resolver unavailable")
+	}
+	return 100, nil
+}
+
+// TestPollerBlockFinishedSurvivesAResolveFailure (R4-9): a block that reached
+// FINISHED while the order could not be resolved is reported on the next
+// cycle that resolves it, once. It was recorded as seen and then dropped, so
+// the pickup it carries (the bin's move to _TRANSIT, BinPickedUp) never came.
+func TestPollerBlockFinishedSurvivesAResolveFailure(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-r49","state":"RUNNING","vehicle":"AMB-1","blocks":[
+			{"blockId":"p1","location":"AP-LINE","state":"FINISHED","binTask":"JackLoad"}
+		]}`)); err != nil {
+			t.Errorf("write RDS reply: %v", err)
+		}
+	}))
+	defer srv.Close()
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(NewClient(srv.URL, 2*time.Second), emitter, &flakyResolver{fails: 1}, time.Minute)
+	p.Track("rds-r49")
+	blocks := func() int {
+		emitter.mu.Lock()
+		defer emitter.mu.Unlock()
+		return len(emitter.blockEvents)
+	}
+	p.poll() // the resolver fails
+	if got := blocks(); got != 0 {
+		t.Fatalf("with the resolver failing: %d block events, want 0", got)
+	}
+	p.poll() // it answers: the FINISHED block is reported now
+	p.poll() // and only once
+	if got := blocks(); got != 1 {
+		t.Fatalf("after the resolver recovered: %d block events, want 1", got)
 	}
 }
