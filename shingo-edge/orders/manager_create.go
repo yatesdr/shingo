@@ -309,6 +309,29 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 // binID (0 = absent) pins the exact Core bin for the release-time produce
 // manifest — see protocol.OrderIngestRequest.BinID; binEpoch (0 = absent) is
 // OrderIngestRequest.BinEpoch.
+// IngestEnvelope is QueueIngestManifest's envelope, encoded for a caller that
+// writes the outbox row inside its own transaction (the release ledger's).
+func (m *Manager) IngestEnvelope(payloadCode, binLabel string, binID, binEpoch int64, sourceNode string, quantity int64, producedAt string) ([]byte, string, error) {
+	env, err := m.sender.build(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
+		OrderUUID:   uuid.New().String(),
+		BinID:       binID,
+		BinEpoch:    binEpoch,
+		PayloadCode: payloadCode,
+		BinLabel:    binLabel,
+		SourceNode:  sourceNode,
+		Quantity:    quantity,
+		ProducedAt:  producedAt,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal envelope: %w", err)
+	}
+	return data, env.Type, nil
+}
+
 func (m *Manager) QueueIngestManifest(payloadCode, binLabel string, binID, binEpoch int64, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
 	return m.sender.Queue(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
 		OrderUUID:   uuid.New().String(),

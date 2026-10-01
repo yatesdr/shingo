@@ -14,6 +14,7 @@
 package uop
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 
@@ -38,7 +39,7 @@ type CaptureEvent struct {
 	// BinID + PayloadCode identify the bin being released (source of
 	// the capture_reduction delta). BinID == 0 skips the bin delta.
 	// PayloadCode is the order's recorded payload (not the to-style
-	// template) — see operator_release.go's comment on Core's
+	// template) — see releaseOrderWithFullLineside's comment on Core's
 	// payload-mismatch validation.
 	BinID       int64
 	PayloadCode string
@@ -48,6 +49,12 @@ type CaptureEvent struct {
 	// the right generation in the BinUOPDelta envelope. Caller
 	// resolves from the runtime bin-state at release time.
 	BinEpoch int64
+
+	// InTx, when set, runs in the same transaction as the pile writes: the
+	// caller's record of what it captured (the release ledger), so the gains
+	// and their record commit together or not at all. The in-memory level
+	// marks and the bin's reduction follow the commit.
+	InTx func(tx *sql.Tx) error
 
 	// SuppressBinDelta is true for the supply leg (Order A) of a
 	// two-robot swap. The supply bin is fresh and had nothing pulled
@@ -72,14 +79,31 @@ func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err err
 	if ev.SuppressBinDelta || ev.Disposition.Mode != DispositionCaptureLineside {
 		return 0, nil
 	}
+	parts := map[string]int{}
 	for part, qty := range ev.Disposition.LinesideCapture {
 		if qty <= 0 || part == "" {
 			continue
 		}
-		if _, err := m.buckets.CaptureLinesideBucket(ev.NodeID, part, qty); err != nil {
-			return capturedTotal, fmt.Errorf("capture lineside pile (node=%d part=%s): %w",
-				ev.NodeID, part, err)
+		parts[part] = qty
+	}
+	if ev.InTx != nil {
+		if err := m.buckets.CaptureLinesideBuckets(ev.NodeID, parts, ev.InTx); err != nil {
+			return 0, err
 		}
+	} else {
+		for part, qty := range parts {
+			if _, err := m.buckets.CaptureLinesideBucket(ev.NodeID, part, qty); err != nil {
+				return capturedTotal, fmt.Errorf("capture lineside pile (node=%d part=%s): %w",
+					ev.NodeID, part, err)
+			}
+			// A pile written before a later one failed keeps its mark, as
+			// the per-part writes always did.
+			m.acc.markBucket(ev.NodeID, ev.CoreNodeName, part, protocol.LinesideBucketActive, 0)
+			capturedTotal += qty
+		}
+		parts = nil
+	}
+	for part, qty := range parts {
 		// The CHIP's payload, not the bin's. They are the same on a
 		// single-payload node and different the moment an operator pulls
 		// one of several allowed payloads off a bin holding another.

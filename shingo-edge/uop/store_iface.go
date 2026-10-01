@@ -12,7 +12,11 @@
 //     boot resend need.
 package uop
 
-import "shingoedge/store/lineside"
+import (
+	"database/sql"
+
+	"shingoedge/store/lineside"
+)
 
 // runtimeWriter is the write surface on process_node_runtime_states
 // that uop verbs need. *store.DB satisfies this; engine wires the
@@ -69,6 +73,11 @@ type bucketStore interface {
 	// payload (creating it) and returns the pile's new qty. Never touches a
 	// stranded row. Used by CaptureToLineside.
 	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
+
+	// CaptureLinesideBuckets adds every part's qty to its active pile and
+	// runs inTx, in one transaction. Used by CaptureToLineside when the
+	// caller records the capture (CaptureEvent.InTx).
+	CaptureLinesideBuckets(nodeID int64, parts map[string]int, inTx func(tx *sql.Tx) error) error
 
 	// ListLinesidePileKeys returns the key of every pile row. Used by
 	// ResendLevels at boot.

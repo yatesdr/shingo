@@ -37,6 +37,22 @@ type Message struct {
 }
 
 // Enqueue inserts a new outbound message and returns its row id.
+// EnqueueIn inserts an outbound message through ex — the transaction the
+// effect it reports runs in — without waking the drainer: the row is not
+// visible until the caller commits, and the caller calls NotifyEnqueued then.
+func EnqueueIn(ex interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}, payload []byte, msgType string) (int64, error) {
+	res, err := ex.Exec(`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', ?, ?)`, payload, msgType)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// NotifyEnqueued wakes the drainer after a committed EnqueueIn.
+func NotifyEnqueued() { notifyEnqueued() }
+
 func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 	res, err := db.Exec(`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', ?, ?)`, payload, msgType)
 	if err != nil {

@@ -17,6 +17,7 @@ package engine
 // finalize, then the release itself.
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -26,9 +27,9 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	ordermgr "shingoedge/orders"
 	"shingoedge/release"
 	"shingoedge/store"
+	storemsg "shingoedge/store/messaging"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
@@ -102,7 +103,7 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 		return e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy)
 	case release.ArmDrop:
 		if p.Finalize {
-			if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order, nil); err != nil {
+			if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order); err != nil {
 				return err
 			}
 		}
@@ -111,7 +112,7 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 	// After the flip: on a sequential press the line is already on the
 	// partner, so no tick lands on this bin between its count and its clear.
 	if p.Finalize {
-		if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order, order.SiblingOrderID); err != nil {
+		if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order); err != nil {
 			return err
 		}
 	}
@@ -241,13 +242,18 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		// CAPTURE ONCE PER ORDER. The capture is the one ADDITIVE piece of
 		// release paperwork; a repeated release (Core refused it and the
 		// operator clicks again, or a second click reaches a leg already
-		// moving) applies only what this order has not already captured.
+		// moving) applies only what this order has not already captured. The
+		// ledger row commits in the capture's own transaction, so a crash
+		// between the pile writes and the record leaves neither (ruling 7).
+		// countMu holds the read, the capture and the record as one change to
+		// the seat for the lineside report.
+		e.countMu.Lock()
 		captureDisp, prior, err := e.captureOnce(order.ID, disp, isSupply)
 		if err != nil {
+			e.countMu.Unlock()
 			return err
 		}
-		e.countMu.Lock()
-		_, err = e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
+		ev := uop.CaptureEvent{
 			NodeID:           node.ID,
 			CoreNodeName:     node.CoreNodeName,
 			Disposition:      captureDisp,
@@ -255,12 +261,16 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 			PayloadCode:      order.PayloadCode,
 			BinEpoch:         binEpoch,
 			SuppressBinDelta: isSupply,
-		})
+		}
+		if rec, ok := capturedRecord(disp, prior, resolvedBinID, binEpoch, isSupply); ok {
+			ev.InTx = func(tx *sql.Tx) error { return store.PutReleaseCapture(tx, order.ID, rec) }
+		}
+		_, err = e.inventoryDelta.CaptureToLineside(ev)
 		e.countMu.Unlock()
 		if err != nil {
 			return err
 		}
-		e.recordCapture(order.ID, disp, captureDisp, prior, resolvedBinID, binEpoch, isSupply)
+		e.logCapture(order.ID, disp, captureDisp, prior, resolvedBinID, binEpoch, isSupply)
 	}
 
 	// The OLD bin's local count follows what Core was told (RELEASE EMPTY →
@@ -298,7 +308,7 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 // captureOnce returns the disposition the capture step should apply for this
 // order: the operator's per-part quantities less what an earlier attempt at
 // the same release already captured, floored at zero. prior is what had been
-// captured (nil when nothing had), for recordCapture. Only a release that
+// captured (nil when nothing had), for capturedRecord. Only a release that
 // carries captures reads the ledger. Keyed by the order, not the bin: the bin
 // a release resolves can differ between attempts.
 func (e *Engine) captureOnce(orderID int64, disp ReleaseDisposition, isSupply bool) (ReleaseDisposition, *store.ReleaseCaptureRecord, error) {
@@ -323,15 +333,13 @@ func (e *Engine) captureOnce(orderID int64, disp ReleaseDisposition, isSupply bo
 	return out, prior, nil
 }
 
-// recordCapture writes what this order has now captured — per part, the
-// larger of the earlier record and this attempt — and logs what was applied
-// and what was skipped as a repeat. Written after the capture, not in its
-// transaction (the capture's writes live in the uop mutator): a crash between
-// the two leaves the capture unrecorded, and a retry applies it again.
-func (e *Engine) recordCapture(orderID int64, requested, applied ReleaseDisposition, prior *store.ReleaseCaptureRecord,
-	binID, epoch int64, isSupply bool) {
+// capturedRecord is what this order will have captured once the capture
+// commits — per part, the larger of the earlier record and this attempt — the
+// ledger row written in the capture's transaction. ok is false for a release
+// that carries no captures, which writes no row.
+func capturedRecord(requested ReleaseDisposition, prior *store.ReleaseCaptureRecord, binID, epoch int64, isSupply bool) (store.ReleaseCaptureRecord, bool) {
 	if isSupply || requested.Mode != uop.DispositionCaptureLineside || len(requested.LinesideCapture) == 0 {
-		return
+		return store.ReleaseCaptureRecord{}, false
 	}
 	merged := map[string]int{}
 	if prior != nil {
@@ -344,8 +352,14 @@ func (e *Engine) recordCapture(orderID int64, requested, applied ReleaseDisposit
 			merged[part] = qty
 		}
 	}
-	if err := e.db.PutReleaseCapture(orderID, store.ReleaseCaptureRecord{BinID: binID, Epoch: epoch, Parts: merged}); err != nil {
-		e.logRelease("order=%d bin=%d capture: applied but NOT recorded (%v) — a retry of this release will capture again", orderID, binID, err)
+	return store.ReleaseCaptureRecord{BinID: binID, Epoch: epoch, Parts: merged}, true
+}
+
+// logCapture says what a capture applied and what it skipped as a repeat.
+func (e *Engine) logCapture(orderID int64, requested, applied ReleaseDisposition, prior *store.ReleaseCaptureRecord,
+	binID, epoch int64, isSupply bool) {
+	if isSupply || requested.Mode != uop.DispositionCaptureLineside || len(requested.LinesideCapture) == 0 {
+		return
 	}
 	parts := make([]string, 0, len(requested.LinesideCapture))
 	for part := range requested.LinesideCapture {
@@ -386,7 +400,7 @@ func (e *Engine) recordCapture(orderID int64, requested, applied ReleaseDisposit
 //
 // ONCE PER DEPARTING ORDER, through the ledger (release_paperwork, kind
 // ingest). A zero count ships nothing.
-func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *processes.RuntimeState, departing *storeorders.Order, placingOrderID *int64) error {
+func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *processes.RuntimeState, departing *storeorders.Order) error {
 	if runtime == nil || runtime.RemainingUOPCached <= 0 {
 		e.logFn("produce release: node %s remaining=%d — no release-time manifest to stamp",
 			node.Name, runtimeRemaining(runtime))
@@ -417,36 +431,22 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *process
 	}
 	// Quantity is the CYCLE count, not a part count: Core writes it to
 	// uop_remaining, and the part count is uop_remaining x the template's
-	// parts_per_cycle.
-	if err := e.orderMgr.QueueIngestManifest(
-		payload, "", binID, runtime.ActiveBinEpoch, node.CoreNodeName, qty, nil,
-		time.Now().UTC().Format(time.RFC3339),
-	); err != nil {
+	// parts_per_cycle. The outbox row and its ledger row commit together:
+	// a crash between them leaves neither, and the release is retried.
+	envelope, msgType, err := e.orderMgr.IngestEnvelope(payload, "", binID, runtime.ActiveBinEpoch, node.CoreNodeName, qty,
+		time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
 		return fmt.Errorf("queue release-time ingest for node %s: %w", node.Name, err)
 	}
-	if err := e.db.MarkReleaseIngestShipped(departing.ID, binID, qty); err != nil {
-		e.logFn("produce release: node %s order %d — ingest shipped but not recorded (%v); a second door may ship it again",
-			node.Name, departing.ID, err)
-	}
-	// The placed-bin gate: is the bound bin the one LEAVING, or the one the
-	// placing leg just ARRIVED with? Discriminated by bin identity; an
-	// ambiguous answer (a placing order terminal with no bin on its row)
-	// keeps the slot bound rather than risk erasing a bin on the press.
-	if placingOrderID != nil {
-		if placing, err := e.db.GetOrder(*placingOrderID); err == nil {
-			if placing.BinID != nil && runtime.ActiveBinID != nil &&
-				*placing.BinID == *runtime.ActiveBinID {
-				e.logFn("produce release: node %s active bin %d is the bin order %d PLACED here — not the departing one; keeping the slot bound",
-					node.Name, *runtime.ActiveBinID, placing.ID)
-				return nil
-			}
-			if placing.BinID == nil && ordermgr.IsTerminalSuccess(placing.Status) {
-				e.logFn("produce release: node %s placing order %d is terminal with no bin on the row — skipping the clear rather than risk erasing a bin standing on the position",
-					node.Name, placing.ID)
-				return nil
-			}
+	if err := e.db.InTx(func(tx *sql.Tx) error {
+		if _, err := store.EnqueueOutboxIn(tx, envelope, msgType); err != nil {
+			return fmt.Errorf("queue release-time ingest for node %s: %w", node.Name, err)
 		}
+		return store.MarkReleaseIngestShipped(tx, departing.ID, binID, qty)
+	}); err != nil {
+		return err
 	}
+	storemsg.NotifyEnqueued()
 	// The count now belongs to the departing bin: clear the slot, so the
 	// hold-and-replay window starts HERE. Log-only on failure: the ingest
 	// already shipped.
@@ -469,16 +469,14 @@ func runtimeRemaining(runtime *processes.RuntimeState) int {
 // commitPairPaperwork carries out the pair click's door-level plan: a refusal
 // is returned with nothing changed; otherwise the departing bin is finalized
 // FIRST, before either release envelope, whether or not every leg goes on this
-// click — the operator's RELEASE is the declaration that the bin is full. The
-// supply rides along so the finalize can tell the placed bin from the departing
-// one.
+// click — the operator's RELEASE is the declaration that the bin is full.
 func (e *Engine) commitPairPaperwork(p release.PairPlan, pl *pairLoad) error {
 	e.emitLogs(p.Logs)
 	if p.Verdict == release.Refuse {
 		return p.Refusal
 	}
 	if p.Finalize {
-		return e.finalizeDepartingProduce(pl.node, pl.runtime, pl.evac, p.Supply)
+		return e.finalizeDepartingProduce(pl.node, pl.runtime, pl.evac)
 	}
 	return nil
 }

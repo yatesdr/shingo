@@ -50,9 +50,7 @@ func TestReleaseLedgerPins(t *testing.T) {
 	runRelCells(t, []relCell{
 		// PULL PARTS 5: the pile gains 5 once, however the first attempt died.
 		{name: "ledger/capture crashes before its record, then the release is retried",
-			bug:   "ledger-capture",
-			today: "ok | evac=in_transit supply=dispatched | rel=evac,evac | ingest=0 capred=0 | pile=10",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | pile=5",
+			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=0 capred=0 | pile=5",
 			build: func(h *relHarness) {
 				pairAt(twoRobotConsume, "evac", S, "supply", D)(h)
 				crashLedger("capture")(h)
@@ -62,9 +60,7 @@ func TestReleaseLedgerPins(t *testing.T) {
 		// The produce bin's ingest: shipped once, by the attempt that recorded
 		// it; the crashed attempt ships nothing and releases nothing.
 		{name: "ledger/ingest crashes before its record, then the release is retried",
-			bug:   "ledger-ingest",
-			today: "ok | evac=in_transit supply=dispatched | rel=evac,evac | ingest=1 capred=0 | uop=0",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | uop=0",
+			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | uop=0",
 			build: func(h *relHarness) {
 				pairAt(twoRobot, "evac", S, "supply", D)(h)
 				crashLedger("ingest")(h)
