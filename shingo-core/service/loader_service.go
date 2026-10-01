@@ -136,6 +136,10 @@ type LoaderCreate struct {
 	// FedDirectly: fed straight from a process, not from an inbound source.
 	// When set, InboundSource is stored blank whatever was sent.
 	FedDirectly bool
+	// PulledDirectly: a stage 2's finished carts are pulled straight off its
+	// windows by the process. Refused here: only a pair's stage 2 takes it,
+	// and a pair is made by CreateTwoStage and set on the box afterwards.
+	PulledDirectly bool
 }
 
 // CreateLoader is Create with the settings Update takes, refused on the same
@@ -164,6 +168,10 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 	if in.AutoPush && in.Role != loaders.RoleConsume {
 		return 0, ErrAutoPushProduce
 	}
+	// A loader is created alone; a pair's stage 2 is made by CreateTwoStage.
+	if in.PulledDirectly {
+		return 0, ErrPulledDirectlyStage2Only
+	}
 	inbound := in.InboundSource
 	if in.FedDirectly {
 		inbound = ""
@@ -177,6 +185,7 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 		InboundSource: inbound, FunnelWindows: in.FunnelWindows,
 		ChangeoverLoadDirective: in.ChangeoverLoadDirective,
 		AcceptPartials:          in.AcceptPartials, AutoPush: in.AutoPush, FedDirectly: in.FedDirectly,
+		PulledDirectly: in.PulledDirectly,
 	})
 	if err != nil {
 		return 0, err
@@ -218,6 +227,10 @@ type LoaderUpdate struct {
 	// FedDirectly: fed straight from a process. When set, InboundSource is
 	// stored blank whatever was sent.
 	FedDirectly bool
+	// PulledDirectly: a stage 2's finished carts are pulled straight off its
+	// windows by the process. When set, OutboundDest is stored blank whatever
+	// was sent. A pair's stage 2 only.
+	PulledDirectly bool
 }
 
 func (s *LoaderService) Update(in LoaderUpdate) error {
@@ -252,6 +265,16 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	}
 	cur.InboundSource = inboundSource
 	cur.FedDirectly = in.FedDirectly
+	if in.PulledDirectly {
+		one, err := s.firstStageOf(id)
+		if err != nil {
+			return err
+		}
+		if one == nil {
+			return ErrPulledDirectlyStage2Only
+		}
+	}
+	cur.PulledDirectly = in.PulledDirectly
 	cur.FunnelWindows = funnelWindows
 	cur.ChangeoverLoadDirective = in.ChangeoverLoadDirective
 	if in.AcceptPartials && cur.Role != loaders.RoleConsume {

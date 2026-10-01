@@ -965,9 +965,15 @@ type LoaderInfo struct {
 	// the stored claim that used to carry it is retired and SynthClaim never set
 	// it. False — also what a Core predating this field sends — is what every
 	// Core-owned unloader does today.
-	AutoPush  bool                `json:"auto_push,omitempty"`
-	Positions []LoaderPosition    `json:"positions,omitempty"`
-	Payloads  []LoaderPayloadInfo `json:"payloads,omitempty"`
+	AutoPush bool `json:"auto_push,omitempty"`
+	// PulledDirectly marks a two-stage unloader's stage 2 whose finished carts
+	// the process pulls straight off its windows: the Edge's CLEAR there sends
+	// the cart nowhere, quietly, and the board says it waits for the line.
+	// False, also what a Core predating this field sends, is today's: the
+	// empty-out to OutboundDest.
+	PulledDirectly bool                `json:"pulled_directly,omitempty"`
+	Positions      []LoaderPosition    `json:"positions,omitempty"`
+	Payloads       []LoaderPayloadInfo `json:"payloads,omitempty"`
 	// Quota is the declared carrier mix — how many of each bin type this loader
 	// wants on hand. Empty means none declared, which is today's behaviour.
 	Quota []LoaderQuota `json:"quota,omitempty"`

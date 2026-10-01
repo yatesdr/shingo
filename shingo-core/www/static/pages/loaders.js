@@ -102,10 +102,11 @@ function readForm() {
 // normalizeForm folds in the choices that IMPLY another value, so the screen
 // and what gets saved cannot disagree:
 //   - FED DIRECTLY means there is no source, so the source is cleared, not
-//     merely hidden.
+//     merely hidden; PULLED DIRECTLY is its outbound mirror on a stage 2.
 //   - Two stations is an unloader's answer; a loader clears nothing.
 function normalizeForm(state) {
-  if (state.fedByHand) state.inbound = '';
+  if (state.fedDirectly) state.inbound = '';
+  if (state.pulledDirectly) state.outbound = '';
   if (state.role !== 'consume') state.stages = state.id ? 'single' : '';
   return state;
 }
@@ -126,7 +127,7 @@ function formShape(state) {
     // what an UNLOADER is fed; the service refuses both on a loader.
     partials: saved && unloader,
     autoPush: saved && unloader,
-    fedByHand: saved,
+    fedDirectly: saved,
     // An unloader drains when a window is cleared; only a loader has a supply
     // mode to choose, and only a loader has a changeover card to commandeer.
     supply: saved && !unloader,
@@ -262,7 +263,7 @@ async function submitLoader() {
 
 /* ── Saved station → state → update body ──────────────────────────────── */
 
-// fedDirectlyOf reads "fed directly from process" from its own field. A blank
+// fedDirectlyOf reads "fed directly by the process" from its own field. A blank
 // source is not the answer: a new station has a blank source too, and that one
 // needs a place.
 function fedDirectlyOf(l) {
@@ -284,7 +285,8 @@ function formStateFromLoader(l) {
     acceptPartials: !!l.accept_partials,
     autoPush: !!l.auto_push,
     replenishment: l.replenishment || 'operator',
-    fedByHand: fedDirectlyOf(l),
+    fedDirectly: fedDirectlyOf(l),
+    pulledDirectly: !!l.pulled_directly,
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
   };
@@ -305,7 +307,9 @@ function loaderPayload(state) {
     // Unloaders only; the server refuses true on a loader.
     accept_partials: unloader && !!state.acceptPartials,
     auto_push: unloader && !!state.autoPush,
-    fed_directly: !!state.fedByHand,
+    fed_directly: !!state.fedDirectly,
+    // A pair's stage 2 only; the server refuses it anywhere else.
+    pulled_directly: !!state.pulledDirectly,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };
@@ -320,11 +324,12 @@ function settingUpdate(loader, field, value) {
 }
 
 // placeUpdate is one place slot filled (or cleared, with ''). Naming a source
-// is the answer to "fed directly?" as well, so it clears that.
+// is the answer to "fed directly?" as well, so it clears that, and naming
+// where carts go clears "pulled directly?" the same way.
 function placeUpdate(loader, slot, name) {
   const state = formStateFromLoader(loader);
-  if (slot === 'inbound') { state.inbound = name; state.fedByHand = false; }
-  if (slot === 'outbound') state.outbound = name;
+  if (slot === 'inbound') { state.inbound = name; state.fedDirectly = false; }
+  if (slot === 'outbound') { state.outbound = name; if (name) state.pulledDirectly = false; }
   return loaderPayload(state);
 }
 
@@ -424,9 +429,14 @@ function stationSlots(item, s2) {
     one.push({ key: 'onto', label: 'Carts go on to', readonly: true, value: l.outbound_dest || '',
       loaderID: Number(l.id), required: false, empty: false });
   }
+  // Pulled directly: the process takes the carts off stage 2's windows, so
+  // the slot says that instead of asking for a place.
+  const pulled = !!s2.loader.pulled_directly;
+  const out2 = placeSlot(s2, 'outbound', 'Carts with an empty bin go to', s2.loader.outbound_dest, !pulled);
+  out2.pulled = pulled && !s2.loader.outbound_dest;
   const two = [
     windowsSlot(s2),
-    placeSlot(s2, 'outbound', 'Carts with an empty bin go to', s2.loader.outbound_dest, true),
+    out2,
     { key: 'waitCheck', checked: wait, loaderID: Number(l.id), required: false, empty: false },
   ];
   if (wait) {
@@ -622,7 +632,9 @@ function placeBodyHtml(slot) {
   if (!slot.empty) {
     inner = h`<span class="loader-place-name">${slot.value}</span>${raw(placeKindHtml(slot.value))}`;
   } else if (slot.fed) {
-    inner = h`<span class="loader-place-name">Fed directly from process</span>`;
+    inner = h`<span class="loader-place-name">Fed directly by the process</span>`;
+  } else if (slot.pulled) {
+    inner = h`<span class="loader-place-name">Pulled directly by the process</span>`;
   } else if (slot.stays) {
     inner = h`<span class="loader-place-name">Stays on its own spots</span>`;
   } else {
@@ -744,7 +756,9 @@ function settingsHtml(item, s2) {
   if (shape.supply) first += supplyHtml(state);
   if (shape.partials) first += settingCheck(lid, 'acceptPartials', state.acceptPartials, 'Accept partly used bins, not only full ones');
   if (shape.autoPush) first += settingCheck(lid, 'autoPush', state.autoPush, 'Pull the next full automatically when a window frees');
-  if (shape.fedByHand) first += settingCheck(lid, 'fedByHand', state.fedByHand, 'Fed directly from process');
+  if (shape.fedDirectly) first += settingCheck(lid, 'fedDirectly', state.fedDirectly, 'Fed directly by the process');
+  // Stage 2's outbound mirror. Its own row because it saves stage 2.
+  if (pair) first += settingCheck(Number(s2.loader.id), 'pulledDirectly', !!s2.loader.pulled_directly, 'Pulled directly by the process');
   if (shape.changeover) first += settingCheck(lid, 'changeoverLoadDirective', state.changeoverLoadDirective, 'During a changeover, tell this station which carrier to load');
   // "Cart" is the operator's word for a two-stage unloader's carrier (style
   // guide glossary); every other station says carrier.

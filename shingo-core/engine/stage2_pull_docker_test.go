@@ -10,12 +10,14 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
+	"shingocore/dispatch/binresolver"
 	"shingocore/fleet/simulator"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // stage2_pull_docker_test.go — Core moves the named bare cart from the wait
@@ -397,5 +399,81 @@ func TestStage2Pull_CycleTwoWindowsThreeCarts(t *testing.T) {
 	testutil.MustNoErr(t, err, "window")
 	if moves[2].DeliveryNode != w.Name {
 		t.Errorf("third cart delivers to %s, want the freed window %s", moves[2].DeliveryNode, w.Name)
+	}
+}
+
+// TestStage2Pull_PulledDirectlyRefillsWhenALineTakesTheCart: with stage 2
+// pulled directly, a line's robot takes the finished cart off the window
+// (the window now stands in the group Core made for the line to name), and
+// that lift frees the window like any other: the pull brings the next cart in.
+func TestStage2Pull_PulledDirectlyRefillsWhenALineTakesTheCart(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storage, _, _ := setupTestData(t, db)
+	f := newS2Fixture(t, db, "S2PD", 1)
+	p := f.pair(t, "S2PD", 1)
+	two, err := f.loaders.Get(p.stage2)
+	testutil.MustNoErr(t, err, "read stage 2")
+	testutil.MustNoErr(t, f.loaders.Update(service.LoaderUpdate{
+		ID: p.stage2, Name: two.Name, InboundSource: f.group.Name, PulledDirectly: true,
+	}), "pulled directly")
+	if w, err := db.GetNode(p.windows[0].ID); err != nil || w.ParentID == nil {
+		t.Fatalf("the window stands in no group with the option on (err %v)", err)
+	}
+	finished := f.cart(t, p.windows[0].ID, f.carrier, time.Hour)
+	f.cart(t, f.slots[0].ID, f.marker, time.Hour)
+	eng := newTestEngine(t, db, simulator.New())
+	time.Sleep(300 * time.Millisecond) // the startup sweep finds no free window
+	if got := s2Moves(t, db); len(got) != 0 {
+		t.Fatalf("moves before the line's pickup = %d, want 0", len(got))
+	}
+	_, err = db.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, storage.ID, finished.ID)
+	testutil.MustNoErr(t, err, "the line's robot lifts the finished cart")
+	eng.Events.Emit(Event{Type: EventBinEnteredTransit, Payload: BinEnteredTransitEvent{
+		BinID: finished.ID, FromNodeID: p.windows[0].ID,
+	}})
+	if got := awaitMoves(t, db, 1); len(got) != 1 {
+		t.Errorf("a line taking the finished cart made %d pulls, want 1: the window refills", len(got))
+	}
+}
+
+// TestStage2_PulledDirectlyDirectPairRefillsThroughStage1: in a direct pair
+// pulled directly, stage 1 sends its cart to the group Core made for stage 2's
+// windows, and a delivery to that group lands on the window a line emptied —
+// the store resolve every move into a group takes.
+func TestStage2_PulledDirectlyDirectPairRefillsThroughStage1(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	ls := service.NewLoaderService(db, nil)
+	carrier, _ := s2CartType(t, db, "S2PDD-CART")
+	s1, s2, err := ls.CreateTwoStage(service.TwoStageCreate{Name: "S2PDD"})
+	testutil.MustNoErr(t, err, "create pair")
+	var windows []*nodes.Node
+	for i := 1; i <= 2; i++ {
+		w := &nodes.Node{Name: fmt.Sprintf("S2PDD-S2-W%d", i), Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(w), "window")
+		testutil.MustNoErr(t, ls.SetHome(s2, w.ID, "", "", 0), "stage-2 window")
+		windows = append(windows, w)
+	}
+	two, err := ls.Get(s2)
+	testutil.MustNoErr(t, err, "read stage 2")
+	testutil.MustNoErr(t, ls.Update(service.LoaderUpdate{ID: s2, Name: two.Name, PulledDirectly: true}), "pulled directly")
+
+	one, err := ls.Get(s1)
+	testutil.MustNoErr(t, err, "read stage 1")
+	grp, err := db.GetNodeByDotName(one.OutboundDest)
+	if err != nil || grp == nil || !grp.IsSynthetic {
+		t.Fatalf("stage 1 sends to %q, want the group Core made for stage 2's windows (err %v)", one.OutboundDest, err)
+	}
+	// Window 1 holds a finished cart; a line has taken window 2's.
+	b := createTestBinAtNode(t, db, "", windows[0].ID, "BIN-S2PDD-FINISHED")
+	_, err = db.Exec(`UPDATE bins SET bin_type_id=$1 WHERE id=$2`, carrier.ID, b.ID)
+	testutil.MustNoErr(t, err, "retype")
+
+	got, err := (&dispatch.GroupResolver{DB: db}).ResolveStore(grp, "",
+		binresolver.UnknownBinType("test: stage 1's empty-out names no carrier"), reservations.Anyone)
+	if err != nil || got == nil || got.Node == nil || got.Node.ID != windows[1].ID {
+		t.Errorf("stage 1's cart into %s resolves to %+v (err %v), want the emptied window %s",
+			grp.Name, got, err, windows[1].Name)
 	}
 }

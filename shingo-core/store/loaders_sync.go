@@ -65,6 +65,8 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			// own type, so the Edge needs the fact and never the code.
 			LeavesBare: l.SecondStageLoaderID != nil,
 			AutoPush:   l.AutoPush,
+			// Stage 2's finished carts stay on its windows for the process.
+			PulledDirectly: l.PulledDirectly,
 		}
 
 		// A home's kind is fully determined by the parent loader's layout: a

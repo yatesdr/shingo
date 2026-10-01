@@ -216,7 +216,7 @@ console.log('create card — three questions and nothing else');
     check('stages: never asked of a loader', shape(card({ role: 'produce' })).stages === false);
     const s = shape(card({ role: 'consume' }));
     check('card: no Settings row appears on the create card',
-        ['partials', 'autoPush', 'fedByHand', 'supply', 'changeover', 'dedicated', 'funnel', 'mix', 'windows', 'remove']
+        ['partials', 'autoPush', 'fedDirectly', 'supply', 'changeover', 'dedicated', 'funnel', 'mix', 'windows', 'remove']
             .every(function (k) { return s[k] === false; }));
     check('a loader is never two stations, whatever was picked first',
         h.ctx.normalizeForm(card({ role: 'produce', stages: 'two' })).stages === '');
@@ -577,7 +577,7 @@ console.log('settings — one link, saves as ticked, nothing else moves');
     const h = load();
     const shape = function (l) { return h.ctx.formShape(h.ctx.formStateFromLoader(l)); };
     const u = shape(unloader());
-    check('unloader: partials, auto pull, fed directly', u.partials && u.autoPush && u.fedByHand);
+    check('unloader: partials, auto pull, fed directly', u.partials && u.autoPush && u.fedDirectly);
     check('unloader: no supply question and no changeover directive', !u.supply && !u.changeover);
     const l = shape(loader());
     check('loader: supply and changeover directive; no unloader switches', l.supply && l.changeover && !l.partials && !l.autoPush);
@@ -603,8 +603,8 @@ console.log('settings — one link, saves as ticked, nothing else moves');
         b.name === 'PAIR-A · stage 1' && b.layout === 'shared_window' && b.replenishment === 'operator');
     check('ticking "Fill one window at a time" writes it', h.ctx.settingUpdate(unloader(), 'funnel', true).funnel_windows === true);
     check('ticking "Fed directly" clears the source',
-        h.ctx.settingUpdate(stored, 'fedByHand', true).inbound_source === '' &&
-        h.ctx.settingUpdate(stored, 'fedByHand', true).fed_directly === true);
+        h.ctx.settingUpdate(stored, 'fedDirectly', true).inbound_source === '' &&
+        h.ctx.settingUpdate(stored, 'fedDirectly', true).fed_directly === true);
     check('"One spot per part" is the layout', h.ctx.settingUpdate(loader(), 'dedicated', true).layout === 'dedicated_positions');
     check('a loader never sends an unloader switch as true',
         h.ctx.settingUpdate(loader({ accept_partials: true, auto_push: true }), 'funnel', true).accept_partials === false);
@@ -624,25 +624,49 @@ await (async function settingsSaveThroughTheApi() {
         h.posts.length === 1 && h.posts[0].url === '/api/loader/update' &&
         h.posts[0].body.accept_partials === true && h.posts[0].body.funnel_windows === true);
 
-    // A new station shows the red source slot; ticking "Fed directly from
+    // A new station shows the red source slot; ticking "Fed directly by the
     // process" sends fed_directly:true, and the box then says so.
     const fresh = unloader({ fed_directly: false });
     const before = h.ctx.gridHtml([{ loader: fresh, homes: [], payloads: [] }]);
     check('a new station: the source slot is red', /loader-slot-inbound is-needed/.test(before) &&
-        before.indexOf('Fed directly from process') < 0);
+        before.indexOf('Fed directly by the process') < 0);
     const h2 = load({ auth: true });
     h2.set('loaderData = ' + JSON.stringify([{ loader: fresh, homes: [], payloads: [] }]));
     const fed = makeEl('', 'input');
     fed.type = 'checkbox';
     fed.checked = true;
     fed.setAttribute('data-loader-id', '20');
-    fed.setAttribute('data-field', 'fedByHand');
+    fed.setAttribute('data-field', 'fedDirectly');
     await h2.ctx.saveStationSetting(fed);
-    check('ticking "Fed directly from process" sends fed_directly:true and a blank source',
+    check('ticking "Fed directly by the process" sends fed_directly:true and a blank source',
         h2.posts.length === 1 && h2.posts[0].body.fed_directly === true && h2.posts[0].body.inbound_source === '');
     const after = h2.ctx.gridHtml([{ loader: unloader({ fed_directly: true }), homes: [], payloads: [] }]);
-    check('then the box shows "Fed directly from process", not red',
-        after.indexOf('Fed directly from process') >= 0 && !/loader-slot-inbound is-needed/.test(after));
+    check('then the box shows "Fed directly by the process", not red',
+        after.indexOf('Fed directly by the process') >= 0 && !/loader-slot-inbound is-needed/.test(after));
+})();
+
+(function pulledDirectly() {
+    // "Pulled directly by the process": stage 2's outbound mirror of "fed
+    // directly". The row is on a pair's settings, saves stage 2, and the box's
+    // stage-2 outbound slot then says so instead of asking for a place.
+    const h = load({ auth: true });
+    const [one, two] = pair();
+    const html = h.ctx.settingsHtml(one, two);
+    check('a pair offers "Pulled directly by the process", on stage 2',
+        html.indexOf('Pulled directly by the process') >= 0 && html.indexOf('loader-set-8-pulledDirectly') >= 0);
+    check('a single station does not', h.ctx.settingsHtml({ loader: unloader(), homes: [], payloads: [] }, null)
+        .indexOf('Pulled directly by the process') < 0);
+    const b = h.ctx.settingUpdate(unloader({ id: 8, outbound_dest: 'EMPTIES' }), 'pulledDirectly', true);
+    check('ticking it sends pulled_directly:true and a blank outbound', b.pulled_directly === true && b.outbound_dest === '');
+    const named = h.ctx.placeUpdate(unloader({ id: 8, pulled_directly: true }), 'outbound', 'EMPTIES');
+    check('naming where carts go answers "pulled directly" too',
+        named.outbound_dest === 'EMPTIES' && named.pulled_directly === false);
+    const [p1, p2] = pair({}, { pulled_directly: true });
+    const groups = h.ctx.stationSlots(p1, p2);
+    const out = groups[1].slots.filter(function (sl) { return sl.key === 'outbound'; })[0];
+    check('the stage-2 outbound slot says "pulled directly" and is not red', out && out.pulled && !out.required);
+    const grid = h.ctx.gridHtml([p1, p2]);
+    check('the box shows "Pulled directly by the process"', grid.indexOf('Pulled directly by the process') >= 0);
 })();
 
 (function settingsHtml() {
@@ -652,7 +676,7 @@ await (async function settingsSaveThroughTheApi() {
     h.set('loaderData = ' + JSON.stringify([u]));
     const html = h.ctx.settingsHtml(u, null);
     ['Accept partly used bins, not only full ones', 'Pull the next full automatically when a window frees',
-        'Fed directly from process', 'One spot per part (each window takes one part only)', 'Fill one window at a time',
+        'Fed directly by the process', 'One spot per part (each window takes one part only)', 'Fill one window at a time',
         'Keep on hand', 'Delete station', 'Changes save as you tick them.',
     ].forEach(function (w) { check('settings words: "' + w + '"', html.indexOf(w) >= 0); });
     check('settings, unloader: no supply dropdown, no changeover directive',

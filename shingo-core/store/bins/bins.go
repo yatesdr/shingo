@@ -447,7 +447,7 @@ func NotFencedArm() string {
 // marker is what keeps the bin out of the ordinary flow (v134). Occupancy
 // and inventory reads compose their own WHERE and still see held bins: the
 // bin physically occupies its spot either way.
-var EmptyCarrierWhere = emptyCarrierWhere("NULL")
+var EmptyCarrierWhere = emptyCarrierWhere("NULL", "NULL")
 
 // EmptyCarrierWhereFor is EmptyCarrierWhere asked on behalf of the delivery node
 // in parameter destParam (0 = no destination, which exempts nothing).
@@ -474,10 +474,29 @@ var EmptyCarrierWhere = emptyCarrierWhere("NULL")
 // Another loader's homes and buffers stay off-limits, and so do the requesting
 // loader's own other homes — an empty on a home is waiting to be loaded there.
 func EmptyCarrierWhereFor(destParam int) string {
-	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam))
+	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam), "NULL")
 }
 
-func emptyCarrierWhere(destExpr string) string {
+// EmptyCarrierWhereInGroup is EmptyCarrierWhereFor asked by a request that
+// names its source group in parameter groupParam: the in-group finders and
+// the level keeper's count, which pass the same group so the two agree.
+//
+// ── A PULLED-DIRECTLY STAGE 2'S CARTS ARE ITS GROUP'S EMPTIES ─────────────────
+//
+// A finished cart on a window of a two-stage unloader's stage 2 set "pulled
+// directly by the process" waits there for a line to take it, and Core made
+// those windows a group for the line to name (service/loader_two_stage.go).
+// So the loader arm lets a home of such a stage 2 through when, and only
+// when, its window stands in the requested group (exact parentage, the
+// group Core made). A request naming no group, or another one, sees the
+// window as a live loader home and takes nothing; a bare cart is still
+// nobody's empty. The arm is uncorrelated: the window set is read once per
+// query, and with no group it is empty.
+func EmptyCarrierWhereInGroup(destParam, groupParam int) string {
+	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam), fmt.Sprintf("$%d", groupParam))
+}
+
+func emptyCarrierWhere(destExpr, groupExpr string) string {
 	return `
 	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
 	  AND ` + BinUnheldSQL + `
@@ -488,7 +507,9 @@ func emptyCarrierWhere(destExpr string) string {
 	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
 	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL
 	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (
-	                            SELECT d.loader_id FROM bin_loader_homes d WHERE d.position_node_id = ` + destExpr + `)))
+	                            SELECT d.loader_id FROM bin_loader_homes d WHERE d.position_node_id = ` + destExpr + `))
+	                          AND NOT (l.pulled_directly AND h.position_node_id IN (
+	                            SELECT g.id FROM nodes g WHERE g.parent_id = ` + groupExpr + `)))
 	  AND NOT bt.bare
 	  AND NOT COALESCE(b.quality_hold, false)`
 }
@@ -606,7 +627,7 @@ func ExcludeNodeArm(nodeParam int) string {
 // destination, so a dedicated home sees its own loader's buffers
 // (EmptyCarrierWhereFor); the count passes 0 and so counts no loader's buffers
 // as group stock, which is the level a keeper should fill against.
-var EmptyOfTypeInGroupWhere = EmptyCarrierWhereFor(3) +
+var EmptyOfTypeInGroupWhere = EmptyCarrierWhereInGroup(3, 2) +
 	OfTypeArm(1) + InGroupArm() + ExcludeNodeArm(3)
 
 // SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
@@ -1258,7 +1279,7 @@ func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupN
 	var n int
 	err := db.QueryRow(
 		nodetree.DescendantsOf(2)+" SELECT COUNT(*) "+BinFromClause+
-			EmptyCarrierWhereFor(4)+OfTypeArm(1)+InGroupArm()+ExcludeNodeArm(3),
+			EmptyCarrierWhereInGroup(4, 2)+OfTypeArm(1)+InGroupArm()+ExcludeNodeArm(3),
 		binTypeCode, groupNodeID, excludeNodeID, 0).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count empty %s in group %d excluding node %d: %w", binTypeCode, groupNodeID, excludeNodeID, err)
@@ -1352,7 +1373,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 
 	a := &emptyQueryArgs{vals: []any{payloadCode, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + BinJoinQuery +
-		EmptyCarrierWhereFor(3) + InGroupArm() + ExcludeNodeArm(3) +
+		EmptyCarrierWhereInGroup(3, 2) + InGroupArm() + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner)) +
 		PayloadBinTypeRuleArm("$1") + AccessibleEmptyOrder

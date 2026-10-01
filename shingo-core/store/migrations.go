@@ -4337,6 +4337,10 @@ func migrationList() []migration {
 		{138, "retire the quality_hold bin STATUS value — any such bin becomes flagged (the bins.quality_hold containment marker is untouched)",
 			v138RetireQualityHoldStatus,
 			nil},
+
+		{139, "bin_loaders.pulled_directly — a two-stage unloader's stage 2 whose finished carts the process pulls straight off its windows",
+			v139LoaderPulledDirectly,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "pulled_directly") }},
 	}
 }
 
@@ -5041,6 +5045,18 @@ func v137EdgeSchemaVersion(tx *sql.Tx) error {
 func v138RetireQualityHoldStatus(tx *sql.Tx) error {
 	if _, err := tx.Exec(`UPDATE bins SET status='flagged', updated_at=NOW() WHERE status='quality_hold'`); err != nil {
 		return fmt.Errorf("v138 retire quality_hold status: %w", err)
+	}
+	return nil
+}
+
+// v139LoaderPulledDirectly adds stage 2's "pulled directly by the process"
+// (bin_loaders.pulled_directly). DEFAULT false is every loader's behaviour
+// today, so no pair changes shape. ROLLBACK is the previous binary plus DROP
+// COLUMN pulled_directly; nothing else reads it.
+func v139LoaderPulledDirectly(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS pulled_directly BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("v139 bin_loaders.pulled_directly: %w", err)
 	}
 	return nil
 }

@@ -18,6 +18,9 @@
 //   - stage 1's windows stand in a group Core makes too, so a press or cell
 //     feeding stage 1 has one name to pick as its outbound destination. It is
 //     the same problem as stage 2's group in the other direction.
+//   - "pulled directly by the process" on stage 2: its finished carts stay on
+//     its windows, and the windows stand in a group Core makes at the first
+//     one, in both modes, so a line has one name to source its empties from.
 
 package service
 
@@ -44,6 +47,11 @@ var ErrBareMarkerTaken = bins.ErrBareMarkerTaken
 // pair. Core parents those into a group of its own, and a node has one parent:
 // taking it would silently pull it out of the group it is in.
 var ErrWindowInAnotherGroup = errors.New("this node is already in another group: take it out of that group first")
+
+// ErrPulledDirectlyStage2Only refuses "pulled directly by the process" on
+// anything but a two-stage unloader's stage 2: it is about the carts stage 2
+// finishes, and only stage 2 finishes carts.
+var ErrPulledDirectlyStage2Only = errors.New("pulled directly by the process is a two-stage unloader's stage 2 setting")
 
 // ErrQuotaBare refuses a bare marker in a loader's carrier mix: the mix says
 // which empties to fetch, and no finder hands out a bare cart.
@@ -207,8 +215,9 @@ func (s *LoaderService) dropPairGroup(one, two *loaders.Loader) error {
 }
 
 // checkPairWindow refuses a window Core would have to take out of another
-// group: any stage-1 window, and a stage-2 window of a direct pair. Stage 2 in
-// pull mode never parents a window, so it has nothing to refuse.
+// group: any stage-1 window, and a stage-2 window of a direct pair or of one
+// pulled directly. Stage 2 in pull mode otherwise never parents a window, so
+// it has nothing to refuse.
 func (s *LoaderService) checkPairWindow(loaderID int64, node *nodes.Node) error {
 	one, two, err := s.pairOf(loaderID)
 	if err != nil || one == nil || node.ParentID == nil {
@@ -218,7 +227,7 @@ func (s *LoaderService) checkPairWindow(loaderID int64, node *nodes.Node) error 
 	switch {
 	case one.ID == loaderID:
 		own = stage1GroupName(one)
-	case two.InboundSource == "":
+	case two.InboundSource == "" || two.PulledDirectly:
 		own = pairGroupName(one)
 	default:
 		return nil
@@ -242,9 +251,16 @@ func (s *LoaderService) checkPairWindow(loaderID int64, node *nodes.Node) error 
 //   - direct, no windows: nowhere (the CLEAR refuses, naming it).
 //   - direct, one window: that node; a group Core made is dropped.
 //   - direct, several: a plain group Core makes, holding every window.
+//   - pulled directly (either mode): the group from the first window, as for
+//     stage 1's, so a line names one group; a direct pair's stage 1 sends there.
 func (s *LoaderService) syncPair(one, two *loaders.Loader) error {
 	dest := two.InboundSource
-	if dest != "" {
+	if two.PulledDirectly {
+		var err error
+		if dest, err = s.syncPulledDirectlyGroup(one, two); err != nil {
+			return err
+		}
+	} else if dest != "" {
 		if err := s.dropPairGroup(one, two); err != nil {
 			return err
 		}
@@ -281,6 +297,26 @@ func (s *LoaderService) syncPair(one, two *loaders.Loader) error {
 		}
 	}
 	return s.syncStage1Group(one)
+}
+
+// syncPulledDirectlyGroup keeps a pulled-directly stage 2's group in step with
+// its windows, made at the first one, and returns where stage 1 sends a cart:
+// the wait group in pull mode (the stage-2 pull moves carts into the windows,
+// as without the option), the group itself in direct mode, nowhere with no
+// windows.
+func (s *LoaderService) syncPulledDirectlyGroup(one, two *loaders.Loader) (string, error) {
+	homes, err := s.db.ListLoaderHomes(two.ID)
+	if err != nil {
+		return "", err
+	}
+	if len(homes) == 0 {
+		return two.InboundSource, s.dropPairGroup(one, two)
+	}
+	group, err := s.groupStage2Windows(one, two, homes)
+	if err != nil || two.InboundSource != "" {
+		return two.InboundSource, err
+	}
+	return group, nil
 }
 
 // syncStage1Group keeps the group Core makes for stage 1's windows in step with

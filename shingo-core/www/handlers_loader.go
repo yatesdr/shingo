@@ -50,6 +50,9 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		// FedDirectly: fed straight from a process; the inbound source is
 		// stored blank. Absent reads as false.
 		FedDirectly bool `json:"fed_directly"`
+		// PulledDirectly: a stage 2's finished carts are pulled straight off
+		// its windows by the process; the outbound is stored blank.
+		PulledDirectly bool `json:"pulled_directly"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -62,7 +65,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name, Role: req.Role, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource, FunnelWindows: req.FunnelWindows,
 		ChangeoverLoadDirective: req.ChangeoverLoadDirective,
-		AcceptPartials:          req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly,
+		AcceptPartials:          req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 	})
 	if err != nil {
 		h.jsonError(w, "create loader: "+err.Error(), loaderWriteStatus(err))
@@ -122,6 +125,9 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// FedDirectly: fed straight from a process; the inbound source is
 		// stored blank. Absent reads as false.
 		FedDirectly bool `json:"fed_directly"`
+		// PulledDirectly: a stage 2's finished carts are pulled straight off
+		// its windows by the process; the outbound is stored blank.
+		PulledDirectly bool `json:"pulled_directly"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -134,7 +140,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		ID: req.ID, Name: req.Name, Layout: req.Layout, Replenishment: req.Replenishment,
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
 		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
-		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly,
+		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return

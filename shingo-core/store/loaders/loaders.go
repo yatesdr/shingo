@@ -121,14 +121,22 @@ type Loader struct {
 	// is every Core-owned unloader's behaviour until a plant turns it on.
 	AutoPush bool `json:"auto_push"`
 
-	// FedDirectly says this loader is fed straight from a process — a press or
-	// a forklift — rather than pulling from an inbound source. When it is set
+	// FedDirectly says the process works this station directly: it is fed
+	// straight by the process rather than pulling from an inbound source. When it is set
 	// InboundSource is stored blank, which is what every reader (the Edge
 	// included, on LoaderInfo) already keys on; the column is the loader
 	// saying so on purpose, so a blank source is a choice and not a slot
 	// nobody filled. FALSE for a new loader; v136 backfilled every existing row
 	// as inbound_source = '', so no loader's pulling changed.
 	FedDirectly bool `json:"fed_directly"`
+
+	// PulledDirectly is FedDirectly's outbound mirror, on a two-stage
+	// unloader's stage 2: the process pulls its finished carts straight off its
+	// windows, so they are not sent anywhere. When it is set OutboundDest is
+	// stored blank, Core makes stage 2's windows a group a line can name as
+	// its source, and the empty finders hand that group's finished carts to a
+	// request naming it. FALSE for every loader until a plant turns it on.
+	PulledDirectly bool `json:"pulled_directly"`
 
 	// SecondStageLoaderID links the stage-1 half of a two-stage unloader to its
 	// stage 2, so the two are set up, shown and edited as one unloader. Set on the
@@ -181,7 +189,7 @@ type Config struct {
 }
 
 // loaderCols is every loader read's column list.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly`
 
 type scanner interface{ Scan(...any) error }
 
@@ -191,7 +199,7 @@ func scanLoader(s scanner) (Loader, error) {
 	var secondStageID sql.NullInt64
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
-		&l.ChangeoverLoadDirective, &l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly)
+		&l.ChangeoverLoadDirective, &l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly, &l.PulledDirectly)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -209,11 +217,11 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
 			funnel_windows, changeover_load_directive, accept_partials, auto_push,
-			second_stage_loader_id, fed_directly)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, inboundUnlessFedDirectly(l), l.FunnelWindows,
+			second_stage_loader_id, fed_directly, pulled_directly)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+		l.Name, l.Role, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.ChangeoverLoadDirective, l.AcceptPartials, l.AutoPush,
-		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly,
+		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -229,6 +237,16 @@ func inboundUnlessFedDirectly(l Loader) string {
 		return ""
 	}
 	return l.InboundSource
+}
+
+// outboundUnlessPulledDirectly is the outbound destination a write stores:
+// blank for a stage 2 whose finished carts the process pulls straight off its
+// windows, whatever the caller left in the field.
+func outboundUnlessPulledDirectly(l Loader) string {
+	if l.PulledDirectly {
+		return ""
+	}
+	return l.OutboundDest
 }
 
 // GetLoader returns the loader by id, or (nil, nil) if absent.
@@ -287,11 +305,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
 			changeover_load_directive=$7, accept_partials=$8, auto_push=$9,
-			second_stage_loader_id=$10, fed_directly=$11, config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$12`,
-		l.Name, l.Layout, l.Replenishment, l.OutboundDest, inboundUnlessFedDirectly(l), l.FunnelWindows,
+			second_stage_loader_id=$10, fed_directly=$11, pulled_directly=$12, config_gen=config_gen+1, updated_at=NOW()
+		WHERE id=$13`,
+		l.Name, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.ChangeoverLoadDirective, l.AcceptPartials, l.AutoPush,
-		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.ID)
+		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}
