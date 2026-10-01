@@ -1509,57 +1509,21 @@ function appendETAPills(btn, inboundOrders, binState) {
 // same phrasing, and importing the tile renderer for one pure formatter was
 // the wrong dependency direction.
 
-// isReleaseReady drives the os-release-ready blue glow. Same screen
-// handles both production and changeover; the gate behind the operator's
-// click differs per context, so this function picks the right gate.
+// isReleaseReady drives the os-release-ready blue glow.
 //
-// Changeover context (entry.changeover_task present):
-//   - Phase 2 model. Click fires evac via ReleaseOrderWithLineside; the
-//     supply leg auto-fires on evac pickup-confirm via HandleBinPickedUp's
-//     deferred-supply branch.
-//   - Paired evac+supply: glow when evac is at `staged` AND supply is at
-//     `in_transit` or `staged`. This condition is NOT duplication of
-//     ComputeSwapReady even though it looks like it — the two gates front
-//     DIFFERENT machinery, and that is the whole reason they differ:
-//       · This (changeover) path releases the evac and the supply auto-fires
-//         later from HandleBinPickedUp's deferred-supply branch, which calls
-//         releaseIfReleasable and registers NOTHING. A supply Core won't take
-//         yet is dropped, not deferred — so the glow must wait for it.
-//       · swap_ready gates /release-staged → ReleaseStagedOrders, which since
-//         hop A4-ii REMEMBERS the skipped leg and re-fires it on staged. There,
-//         waiting for the supply would remove a capability the system has.
-//     Before "unifying" this with swap_ready, check which path each one feeds:
-//     collapsing them moves a changeover-path condition onto the production
-//     gate, which removes the operator's ability to defer a supply that A4-ii
-//     would have re-fired for them.
-//   - Standalone evac (no paired supply, e.g. drop-situation tasks):
-//     glow when evac is at `staged`. No supply chain to coordinate.
+// Production: swap_ready (store.ComputeSwapReady), the pair released as one.
 //
-// Production context (no changeover_task):
-//   - Two-robot swap mid-cycle. Click fires ReleaseStagedOrders which
-//     releases both legs at once — needs both robots at wait points.
-//     entry.swap_ready (computed in store/station_views.go ComputeSwapReady)
-//     already encodes that condition. Single source of truth: defer to
-//     it for the production gate.
-//
-// Returns false otherwise (pre-dispatch, terminal, single-robot consume
-// where Release is always available without a "ready" moment, etc.).
+// Changeover: a leg parked at a station wait of a changeover purpose (ready,
+// tooling done), from the server's release_purposes (SHAPE 3.8). The act at
+// the click decides what goes and what holds, and a supply that cannot go yet
+// is held with an intent that goes by itself, so the glow no longer waits on
+// the supply. A node the changeover leaves unchanged keeps its production glow
+// (L10): it used to take this branch, find no evac on its task, and go dark.
 function isReleaseReady(entry) {
+    if (entry.swap_ready) return true;
     const task = entry.changeover_task;
-    if (task) {
-        const orders = entry.orders || [];
-        const byID = (id) => id == null ? null : orders.find(o => o.id === id) || null;
-        const evac = byID(task.old_material_release_order_id);
-        const supply = byID(task.next_material_order_id);
-        if (!evac) return false;
-        if (evac.status !== 'staged') return false;
-        if (supply) {
-            return supply.status === 'in_transit' || supply.status === 'staged';
-        }
-        return true;
-    }
-    // Production context — defer to the existing swap_ready flag.
-    return !!entry.swap_ready;
+    if (!task || task.situation === 'unchanged') return false;
+    return (entry.release_purposes || []).some(p => p.ready && p.purpose !== 'swap');
 }
 
 function nodeColorClass(entry) {

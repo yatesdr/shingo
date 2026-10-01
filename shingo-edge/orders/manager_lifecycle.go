@@ -332,7 +332,7 @@ func (m *Manager) RollbackReleaseRejection(orderUUID, coreDetail string) error {
 // releaseRejectionDetail builds the operator-facing sentence for an
 // invalid_state rollback.
 //
-// The prefix is load-bearing — store.releaseRejectedPrefix keys the chip on it.
+// The chip shows it from orders.release_held (clearIntentForRejection).
 //
 // The retry advice is CONDITIONAL, which is the whole point. When Core has told
 // us why the order is queued, that blocker is named and no retry is suggested:

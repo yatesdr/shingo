@@ -69,7 +69,7 @@ const ctx = vm.createContext({
 vm.runInContext(modalSrc.match(/const WAITING_BASE = '[^']*';/)[0].replace('const ', 'var '), ctx);
 vm.runInContext(modalSrc.match(/const TO_MARKET_LABEL = '[^']*';/)[0].replace('const ', 'var '), ctx);
 vm.runInContext(extractFn(utilSrc, 'distinctQueueCauses').replace('export function', 'function'), ctx);
-for (const fn of ['blockerPhrase', 'waitingLabel', 'statusWordOf', 'pairWaitingLabel',
+for (const fn of ['changeoverReleasePurpose', 'changeoverReleaseAction', 'blockerPhrase', 'waitingLabel', 'statusWordOf', 'pairWaitingLabel',
     'isStationReleasable', 'swapPair', 'orderStatusChip', 'cellCardAction']) {
     vm.runInContext(extractFn(modalSrc, fn), ctx);
 }

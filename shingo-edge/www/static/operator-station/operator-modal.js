@@ -698,6 +698,18 @@ function cellCardAction(entry, claim, remaining) {
     // promising what the gate will allow. curtain_ok is absent when the
     // node is not gated - the button behaves exactly as before.
     const curtainHeld = entry.curtain_ok === false;
+    // A changeover tile's RELEASE names the decision it makes (SHAPE 3.8):
+    // the purpose of the station wait a leg is parked at, from the server's
+    // release_purposes. It posts that purpose, so a "ready" press can never
+    // carry a leg through "tooling done".
+    const coPurpose = changeoverReleasePurpose(entry);
+    if (coPurpose) {
+        if (curtainHeld) {
+            return { label: 'RELEASE (CURTAIN)', cls: 'close', enabled: false, action: '',
+                title: 'The FG light curtain is not in its release state - the interlock blocks this release until it is.' };
+        }
+        return changeoverReleaseAction(entry, coPurpose);
+    }
     if (entry.swap_ready) {
         // Two-robot swap: lineside robot has reached its wait point.
         // One click releases both legs unconditionally regardless of
@@ -899,6 +911,30 @@ function swapPair(active) {
 // status and, when Core has given one, its reason. The CONTROL goes; the
 // information stays. Suppressing the status instead would leave the tile claiming
 // a parked robot is still driving.
+// changeoverReleasePurpose is the changeover decision a tile's RELEASE makes:
+// the first purpose, in the order a cell owes them, that a leg at this node is
+// parked at, or null. A node the changeover leaves unchanged keeps its
+// production button (L10), and so does a node whose legs carry no stored
+// purposes (orders created before Edge v8).
+function changeoverReleasePurpose(entry) {
+    const task = entry.changeover_task;
+    if (!task || task.situation === 'unchanged') return null;
+    const p = (entry.release_purposes || []).find(rp => rp.ready && rp.purpose !== 'swap');
+    return p ? p.purpose : null;
+}
+
+// changeoverReleaseAction is the labelled button for that decision. The
+// purpose and node ride the URL: they are which button was pressed, and the
+// release prompt's body stays the operator's disposition.
+function changeoverReleaseAction(entry, purpose) {
+    return {
+        label: purpose === 'tooling_done' ? 'RELEASE: TOOLING DONE' : 'RELEASE: READY',
+        cls: 'request', enabled: true,
+        action: 'release-prompt:/api/processes/' + entry.node.process_id + '/changeover/release?node_id=' +
+            entry.node.id + '&purpose=' + purpose,
+    };
+}
+
 function isStationReleasable(o) {
     return o.status === 'staged' && !o.lane_held;
 }

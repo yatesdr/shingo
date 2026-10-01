@@ -117,9 +117,9 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 		t.Fatalf("create consume node: %v", err)
 	}
 
-	// The release-error path: a staged order whose last history row is the
-	// rolled-back manifest sync. LookupLastReleaseError reads the most recent
-	// non-empty detail, so the ordinary transition below it must NOT win.
+	// The release-error path: a staged order whose rollback wrote its sentence
+	// to release_held, which the chip reads (release_render.go). The history
+	// rows stay, as a rollback writes them; the chip no longer reads them.
 	orderID, err := db.CreateOrder("gold-order-1", protocol.OrderTypeRetrieve, &pressNodeID,
 		false, 1, "PLN_G1", "", "SMN_01", "standard", false, "PAY-1", "", "")
 	if err != nil {
@@ -131,6 +131,9 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 	if err := db.InsertOrderHistory(orderID, "staged", "staged",
 		"Manifest sync failed at Core: bin 42 is claimed by another order"); err != nil {
 		t.Fatalf("insert release-error history: %v", err)
+	}
+	if err := db.SetOrderReleaseHeld(orderID, "Manifest sync failed at Core: bin 42 is claimed by another order"); err != nil {
+		t.Fatalf("set release held: %v", err)
 	}
 	// EnsureProcessNodeRuntime first: UpdateProcessNodeRuntimeOrders is a bare
 	// UPDATE ... WHERE process_node_id=?, and runtime rows are created lazily on

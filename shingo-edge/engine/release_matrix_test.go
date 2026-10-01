@@ -34,8 +34,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/release"
-	"shingoedge/store"
-	"shingoedge/store/processes"
 )
 
 // relCell is one characterised cell.
@@ -170,12 +168,11 @@ func deferred(h *relHarness, leg string) bool {
 	return err == nil && in != nil && !in.Sent()
 }
 
-// chipOf is the release-error chip the board would show for a leg if it held
-// the leg's runtime slot — the latest order_history rollback sentence.
+// chipOf is the release chip the board shows for a leg: its release_held
+// sentence, cut at its first colon.
 func chipOf(h *relHarness, leg string) string {
 	h.t.Helper()
-	id := h.leg(leg)
-	c := store.LookupLastReleaseError(h.db, &processes.RuntimeState{ActiveOrderID: &id})
+	c := h.order(leg).ReleaseHeld
 	if c == "" {
 		return "-"
 	}

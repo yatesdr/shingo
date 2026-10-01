@@ -54,6 +54,11 @@ type StationNodeView struct {
 	// reads a property the server declares instead of a mode name: sequential
 	// and single_robot link their legs too, and release them one at a time.
 	ReleasesAsPair bool `json:"releases_as_pair"`
+	// ReleasePurposes are the decisions this node owes, one per purpose a live
+	// leg stands at or heads to (SHAPE 3.8): the board renders one RELEASE per
+	// purpose, enabled when Ready (a leg parked at a station wait of it).
+	// Built from the order rows the view already holds.
+	ReleasePurposes []ReleasePurpose `json:"release_purposes,omitempty"`
 	// CurtainOK is the FG light-curtain interlock's render half, read from
 	// the PLC poll cache, never WarLink directly: the button is UX, the gate
 	// at the click is the interlock. Nil (absent) when none of CurtainPoints
@@ -303,4 +308,11 @@ type OperatorStationView struct {
 	// flow_composer_enabled gate on Process decides whether the operator may
 	// also CHANGE a flow, not whether they get the screen.
 	Composer *ComposerData `json:"composer,omitempty"`
+}
+
+// ReleasePurpose is one decision a node owes: "ready", "tooling_done" or
+// "swap", and whether a leg is parked at a station wait of it.
+type ReleasePurpose struct {
+	Purpose string `json:"purpose"`
+	Ready   bool   `json:"ready"`
 }

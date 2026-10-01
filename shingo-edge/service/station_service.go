@@ -1061,7 +1061,6 @@ type boardData struct {
 	pressPositionClaims map[int64]*processes.NodeClaim
 	runtimes            map[int64]*processes.RuntimeState
 	boardOrders         map[int64][]orders.Order
-	releaseErrors       map[int64]string
 	refusals            map[string]map[string]domain.SupplyRefusal
 	byPayload           map[string]domain.CellSupplyRefusal
 	activeBuckets       map[int64][]lineside.Bucket
@@ -1127,11 +1126,6 @@ func (s *StationService) prefetchBoardData(
 	if err != nil {
 		boardOrders = nil
 	}
-	// Pending release-time errors, ONE READ FOR THE WHOLE BOARD, indexed by
-	// process node. This used to be up to two ListOrderHistory queries per tile
-	// inside the loop below -- the last per-tile read on this path, and the same
-	// shape every batch above it exists to remove.
-	releaseErrors := store.LastReleaseErrorsForRuntimes(s.db, runtimes)
 	// Standing supply refusals, ONE READ FOR THE WHOLE BOARD, indexed
 	// loader_node → payload → refusal. The table holds only what is open — one
 	// row per card actually refused right now — so the whole-table read is
@@ -1185,7 +1179,6 @@ func (s *StationService) prefetchBoardData(
 		pressPositionClaims: pressPositionClaims,
 		runtimes:            runtimes,
 		boardOrders:         boardOrders,
-		releaseErrors:       releaseErrors,
 		refusals:            refusals,
 		byPayload:           byPayload,
 		activeBuckets:       activeBuckets,
@@ -1496,15 +1489,10 @@ func (s *StationService) buildNodeTile(
 	// just means the node has nothing pulled to lineside yet.
 	nodeView.LinesideActive = b.activeBuckets[node.ID]
 	nodeView.LinesideStranded = b.strandedBuckets[node.ID]
-	// Surface any pending release-time error that's been rolled back to
-	// Staged for the operator to retry. Prefetched for the board above; a
-	// node whose runtime the batch read missed falls back to the per-node
-	// form, so a freshly Ensured runtime still gets its chip.
-	if e, ok := b.releaseErrors[node.ID]; ok {
-		nodeView.LastReleaseError = e
-	} else if b.runtimes[node.ID] == nil {
-		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
-	}
+	// The chip and the buttons: from the node's live orders, which the
+	// board's prefetch already holds (release_render.go).
+	nodeView.LastReleaseError = releaseHeld(nodeView.Orders)
+	nodeView.ReleasePurposes = releasePurposes(nodeView.Orders)
 	// Surface any active parked-ticks alarm (P2-C7/C8): consume ticks piling
 	// up on this node while no bin is bound. Rendered as an amber chip.
 	if s.stranded != nil {

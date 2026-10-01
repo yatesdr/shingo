@@ -76,3 +76,30 @@ func TestReleaseCosts(t *testing.T) {
 		t.Logf("COUNT %-70s %s", p.name, h.counts())
 	}
 }
+
+// TestReleaseViewReadBudget pins the board's poll at the two release shapes to
+// S0's reads (SHAPE 3.8): a release field on the tile comes from the order rows
+// the build already holds, never a read of its own. S0 measured 20 and 25; S6
+// took the chip off order_history and onto release_held, one read fewer each.
+func TestReleaseViewReadBudget(t *testing.T) {
+	S := protocol.StatusStaged
+	for _, c := range []struct {
+		name   string
+		build  func(h *relHarness)
+		budget int64
+	}{
+		{"one paired tile, both staged, curtain armed",
+			withCurtain(curtainSafe, pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)), 20},
+		{"press-index tile in a changeover",
+			withCurtain(curtainSafe, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S)), 25},
+	} {
+		h := newRelHarness(t)
+		c.build(h)
+		h.mark()
+		_, err := h.eng.stationService.BuildView(context.Background(), h.stationID)
+		testutil.MustNoErr(t, err, c.name)
+		if n := h.counts().reads; n > c.budget {
+			t.Errorf("/view, %s: %d reads, budget %d (S0's) — a release field is reading for itself", c.name, n, c.budget)
+		}
+	}
+}

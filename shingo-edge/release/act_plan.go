@@ -195,6 +195,10 @@ type ActPlan struct {
 // ready before its tooling done; the steady state's swap.
 var purposeOrder = []Purpose{PurposeReady, PurposeToolingDone, PurposeSwap}
 
+// PurposeOrder is the order a cell owes its decisions in, for the board's
+// buttons.
+func PurposeOrder() []Purpose { return append([]Purpose(nil), purposeOrder...) }
+
 // PlanAct decides an act over its leg set (SHAPE §3.3-3.5):
 //
 //  1. scope: a leg is covered when its current or next station wait carries

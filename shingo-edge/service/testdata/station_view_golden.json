@@ -105,6 +105,7 @@
           "origin_id": "",
           "origin_class": "",
           "lane_held": false,
+          "release_held": "Manifest sync failed at Core: bin 42 is claimed by another order",
           "departed": false,
           "created_at": "<ts>",
           "updated_at": "<ts>",

@@ -118,3 +118,21 @@ func TestReleaseChangeoverProcess_CarriesThePurposeAndNode(t *testing.T) {
 		t.Errorf("an unknown purpose: status = %d, body = %s; want 400 naming it", rec.Code, body)
 	}
 }
+
+// The board's purpose button posts the release prompt's body to a URL that
+// names the decision and the node.
+func TestReleaseChangeoverProcess_TakesThePurposeFromTheURL(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandlers(t)
+	eng := h.orchestration.(*stubEngine)
+
+	rec, body := postRelease(t, changeoverReleaseRouter(h),
+		"/api/processes/7/changeover/release?node_id=12&purpose=ready", `{"called_by":"press-1-ops"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, body)
+	}
+	if eng.lastChangeoverReleaseNodeID != 12 || eng.lastChangeoverReleasePurpose != release.PurposeReady {
+		t.Errorf("engine got node %d purpose %q, want 12 and ready",
+			eng.lastChangeoverReleaseNodeID, eng.lastChangeoverReleasePurpose)
+	}
+}

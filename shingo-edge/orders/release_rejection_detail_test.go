@@ -49,29 +49,6 @@ func TestReleaseRejectionDetail_AdvisesRetryWhenTheBlockerIsUnknown(t *testing.T
 	}
 }
 
-// THE PREFIX IS LOAD-BEARING. store.releaseRejectedPrefix keys the operator
-// board's release-error chip on it; if this sentence stops starting with it,
-// the chip silently stops appearing and the order reappears in the active list
-// with nothing to say why.
-func TestReleaseRejectionDetail_KeepsTheChipPrefix(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name  string
-		order *orders.Order
-	}{
-		{"with a blocker", &orders.Order{QueueReason: "locked bin", QueueCode: "locked"}},
-		{"without a blocker", &orders.Order{}},
-	} {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := releaseRejectionDetail(tc.order, "rejected"); !strings.HasPrefix(got, "Core rejected the release") {
-				t.Errorf("detail must begin with the chip prefix.\nGot: %q", got)
-			}
-		})
-	}
-}
-
 // An empty Core detail must not produce a dangling colon.
 func TestReleaseRejectionDetail_EmptyCoreDetailReadsCleanly(t *testing.T) {
 	t.Parallel()

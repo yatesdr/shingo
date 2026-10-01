@@ -119,13 +119,16 @@ async function releaseChangeoverMaterial() {
         var res = await api.post('/api/processes/' + processID + '/changeover/release', {
             called_by: 'operator_station'
         });
-        // deferred counts supply legs their evac's pickup releases on its own:
-        // they need no click, and asking for one would release an evac that
-        // has since staged at its tooling wait before tooling is done.
+        // deferred counts legs the release HELD: each has an intent and goes by
+        // itself when what it waits on happens (its robot parks, the old bin is
+        // lifted, the curtain clears, Core answers), so it needs no click. The
+        // first hold's own sentence says what it is waiting on. pending counts
+        // legs nothing remembered, which do need the click again.
         var released = (res && res.released) || 0;
         var pending = (res && res.pending) || 0;
         var deferred = (res && res.deferred) || 0;
-        var follow = deferred > 0 ? '; ' + deferred + ' will follow when the old bins are picked up' : '';
+        var why = (res && res.held && res.held[0]) || 'they go by themselves';
+        var follow = deferred > 0 ? '; ' + deferred + ' held, ' + why : '';
         if (released === 0 && pending === 0 && deferred === 0) {
             toast('Nothing is waiting to be released', 'info');
         } else if (pending > 0) {

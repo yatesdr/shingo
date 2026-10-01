@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"shingoedge/release"
@@ -75,6 +76,19 @@ func parseReleaseRequest(r *http.Request) (releaseRequest, error) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return req, err
+	}
+	// The board's purpose button names its decision and node in the URL (the
+	// body is the release prompt's disposition); a body that names them wins.
+	q := r.URL.Query()
+	if req.Purpose == "" {
+		req.Purpose = q.Get("purpose")
+	}
+	if req.NodeID == 0 && q.Get("node_id") != "" {
+		id, err := strconv.ParseInt(q.Get("node_id"), 10, 64)
+		if err != nil {
+			return req, fmt.Errorf("invalid node_id %q", q.Get("node_id"))
+		}
+		req.NodeID = id
 	}
 	switch release.Purpose(req.Purpose) {
 	case "", release.PurposeReady, release.PurposeToolingDone, release.PurposeSwap:

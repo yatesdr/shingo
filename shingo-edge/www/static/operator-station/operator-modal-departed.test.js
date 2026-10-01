@@ -89,7 +89,7 @@ vm.runInContext(
 vm.runInContext(
     extractFn(fs.readFileSync(path.join(__dirname, 'operator-util.js'), 'utf8'), 'distinctQueueCauses')
         .replace('export function', 'function'), ctx);
-for (const fn of ['isStationReleasable', 'swapPair', 'blockerPhrase', 'waitingLabel',
+for (const fn of ['isStationReleasable', 'changeoverReleasePurpose', 'changeoverReleaseAction', 'swapPair', 'blockerPhrase', 'waitingLabel',
     'statusWordOf', 'pairWaitingLabel', 'orderStatusChip', 'cellCardAction']) {
     vm.runInContext(extractFn(modalSrc, fn), ctx);
 }
