@@ -376,6 +376,32 @@ func releaseMatrixCells() []relCell {
 			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | uop=0 | env:evac uop=0 kind=release_empty | env:supply uop=nil kind=-", build: pairAt(twoRobotConsume, "evac", S, "supply", S),
 			act: pairClick(dispPartial(0)), probe: probes(pUOP, pEnv)},
 
+		// ── G4: configuration that cannot be read or does not resolve ─────
+		// The supply leg's steps gone: the leg cannot be classified, and
+		// guessing "evac" wipes a supply bin's manifest (ALN_002).
+		{name: "d2/two_robot/supply leg cannot be classified",
+			want: "refuse:unclassifiable | evac=dispatched supply=staged | rel=- | ingest=0 capred=0 | uop=42",
+			build: func(h *relHarness) {
+				pairAt(twoRobot, "evac", D, "supply", S)(h)
+				_, err := h.db.Exec(`UPDATE orders SET steps_json = '' WHERE id = ?`, h.leg("supply"))
+				testutil.MustNoErr(h.t, err, "clear supply steps")
+			},
+			act: orderClick("supply", dispNone), probe: probes(pUOP)},
+		// The node's claim no longer resolves (no active style).
+		{name: "d1/two_robot/no active claim",
+			want: "refuse:no-claim | evac=staged supply=staged | rel=- | ingest=0 capred=0 | uop=42",
+			build: func(h *relHarness) {
+				pairAt(twoRobot, "evac", S, "supply", S)(h)
+				testutil.MustNoErr(h.t, h.db.SetActiveStyle(h.processID, nil), "clear active style")
+			},
+			act: pairClick(dispEmpty), probe: probes(pUOP)},
+		// No leg to release: the runtime slots, the staged legs and the task
+		// name nothing.
+		{name: "d1/two_robot/no tracked legs",
+			want:  "refuse:no-pair |  | rel=- | ingest=0 capred=0 | uop=42",
+			build: func(h *relHarness) { h.seedNode(twoRobot) },
+			act:   pairClick(dispEmpty), probe: probes(pUOP)},
+
 		// ── Door 5: the changeover sweep and per-node click ──────────────
 		{name: "d5/co two_robot/both staged",
 			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
