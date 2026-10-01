@@ -76,6 +76,10 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
+          # Every workflow pins this. Without it setup-go leaves the runner's
+          # own Go on the PATH, and the standalone build below failed on every
+          # module, shared and protocol included.
+          go-version: '1.25.0'
           # Per-module key — see the matrix comment above for why the old
           # "**/go.sum" glob was every job sharing one cache entry.
           cache-dependency-path: ${{ matrix.cache_key }}
