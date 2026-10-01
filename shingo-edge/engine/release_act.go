@@ -85,9 +85,13 @@ func (e *Engine) commitAct(act *releaseAct, p release.ActPlan, lls []*legLoad) e
 					e.logRelease("order=%d: drop release intent: %v", d.OrderID, err)
 				}
 			}
-			e.setReleaseHeld(d.OrderID, d.Sentence)
-			if d.Gate == release.G6 {
-				e.noteReleaseHeld(d.OrderID, d.Sentence)
+			// Once per sentence: a held leg is re-planned on every press and
+			// every 15 s floor, and a bypass can last a shift.
+			if ll.order == nil || ll.order.ReleaseHeld != d.Sentence {
+				e.setReleaseHeld(d.OrderID, d.Sentence)
+				if d.Gate == release.G6 {
+					e.noteReleaseHeld(d.OrderID, d.Sentence)
+				}
 			}
 			e.logRelease("order=%d held at %s: %s", d.OrderID, d.Gate, d.Sentence)
 		default:

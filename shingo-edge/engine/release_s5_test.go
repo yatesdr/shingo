@@ -3,6 +3,8 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"shingo/protocol/testutil"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -91,6 +93,23 @@ func held(act func(h *relHarness) error) func(h *relHarness) error {
 	}
 }
 
+// pCurtainNotes counts the curtain-hold notes on each leg's order_history.
+func pCurtainNotes(h *relHarness) []string {
+	var out []string
+	for _, l := range h.legs {
+		hist, err := h.db.ListOrderHistory(l.id)
+		testutil.MustNoErr(h.t, err, "history "+l.name)
+		n := 0
+		for _, r := range hist {
+			if strings.HasPrefix(r.Detail, "Release the light curtain at") {
+				n++
+			}
+		}
+		out = append(out, fmt.Sprintf("notes:%s=%d", l.name, n))
+	}
+	return out
+}
+
 func TestReleaseS5Pins(t *testing.T) {
 	t.Parallel()
 	twoRobot := pairSpec{mode: protocol.SwapModeTwoRobot}
@@ -98,6 +117,13 @@ func TestReleaseS5Pins(t *testing.T) {
 	pi2 := pairSpec{mode: protocol.SwapModeTwoRobotPressIndex}
 	S, D, T := protocol.StatusStaged, protocol.StatusDispatched, protocol.StatusInTransit
 	runRelCells(t, []relCell{
+		// A bypass can last a shift, and the held legs are re-planned on every
+		// press and every floor: the sentence is written and noted once.
+		{name: "S5/a curtain hold is noted once, however often it is re-planned",
+			want:  "ok | evac=staged supply=staged | rel=- | ingest=1 capred=0 | click=held:G6 | click=held:G6 | notes:evac=1 | notes:supply=1",
+			build: withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", S)),
+			act:   seq(held(pairClick(dispEmpty)), floor, floor, held(pairClick(dispEmpty)), floor),
+			probe: pCurtainNotes},
 		// The pair click remembers a supply not yet at its wait (G1); an Edge
 		// restart keeps it (the intent is on the row); the supply stages, then
 		// waits for the evac's lift (G7) and goes at it.
