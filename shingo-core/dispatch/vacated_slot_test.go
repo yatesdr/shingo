@@ -88,7 +88,7 @@ func TestHeldForRelease(t *testing.T) {
 }
 
 // TestHeldForRelease_UntaggedWait pins the drain-window reading: an untagged
-// wait counts as the station's today. When IsStationWait's `== ""` arm is
+// wait counts as the station's today. When protocol.IsStationWaitKind's `== ""` arm is
 // deleted this goes red, which is the point — an untagged plan then stops being
 // a (b) dropper, and that change must be seen, not discovered.
 func TestHeldForRelease_UntaggedWait(t *testing.T) {

@@ -131,7 +131,7 @@ func committedAtDispatch(steps []resolvedStep, i int, isLaneNode func(string) bo
 // heldForRelease reports whether the drop at step i waits for a station release:
 // a station-owned wait comes before it. A leg with none is never a (b) dropper,
 // because nothing then stands between its dispatch and its drop for the release
-// fence to hold. IsStationWait still counts an untagged wait as the station's
+// fence to hold. protocol.IsStationWaitKind still counts an untagged wait as the station's
 // during the drain window; when that arm goes, so does this answer for untagged
 // plans, and TestHeldForRelease_UntaggedWait pins it so the change is seen.
 func heldForRelease(steps []resolvedStep, i int) bool {
@@ -139,7 +139,7 @@ func heldForRelease(steps []resolvedStep, i int) bool {
 		i = len(steps)
 	}
 	for j := 0; j < i; j++ {
-		if steps[j].Action == protocol.ActionWait && IsStationWait(steps[j].WaitKind) {
+		if steps[j].Action == protocol.ActionWait && protocol.IsStationWaitKind(steps[j].WaitKind) {
 			return true
 		}
 	}

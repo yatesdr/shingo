@@ -82,7 +82,11 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// Core's lane wait (the station has not pressed for the wait ahead yet); and
 	// past the final wait (the no-op after splitSegment). S3 replaces this with
 	// an explicit wait-ordinal echo on OrderRelease.
-	if releasedPastStationWait(order) {
+	if p.StationWait != nil {
+		if !d.echoMatches(env, order, *p.StationWait) {
+			return
+		}
+	} else if releasedPastStationWait(order) {
 		log.Printf("dispatch: release ignored: order %d is in transit past station wait %d, not re-staged since — "+
 			"a repeat of the release that sent it", order.ID, order.WaitIndex-1)
 		return
@@ -172,6 +176,48 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	d.dispatchFleetRelease(env, order, segment, moreWaits, blockOffset)
 }
 
+// echoMatches is the echo (OrderRelease.StationWait): a release applies only to
+// the station wait the order's wait_index points at, whether the robot is
+// parked there or still driving to it. Anything else is a logged no-op with no
+// error, since every code the Edge understands would roll a moving leg back
+// or fail it:
+//   - in transit: a repeat of the press that sent it on (N-a); the robot is
+//     really moving;
+//   - staged: the Edge named a wait Core has left or not reached, so Core
+//     re-sends OrderStaged with the wait it holds and the Edge re-stages the
+//     leg there instead of leaving it marked in transit.
+//
+// It replaces releasedPastStationWait for an Edge that sends the echo.
+func (d *Dispatcher) echoMatches(env *protocol.Envelope, order *orders.Order, echo int) bool {
+	steps, ok := decodeSteps(order.StepsJSON)
+	var at *int
+	kind := ""
+	if ok {
+		at, kind, _ = stationPoint(steps, order.WaitIndex)
+	}
+	if at != nil && *at == echo {
+		return true
+	}
+	log.Printf("dispatch: release ignored: order %d (%s) was released for station wait %d, but its wait index %d "+
+		"is %s", order.ID, order.Status, echo, order.WaitIndex, describePoint(at, kind))
+	if order.Status == StatusStaged {
+		d.replies.SendStaged(env, order.EdgeUUID, "re-staged: the release named another wait", at, kind)
+	}
+	return false
+}
+
+// describePoint renders a wait point for a log line.
+func describePoint(at *int, kind string) string {
+	switch {
+	case at != nil:
+		return fmt.Sprintf("station wait %d", *at)
+	case kind == protocol.WaitKindLane:
+		return "a lane wait"
+	default:
+		return "no wait"
+	}
+}
+
 // releasedPastStationWait reports whether an order is in_transit because the
 // station released the wait before the one wait_index points at, and a wait is
 // still ahead. It decodes the plan only for an in_transit order past wait 0; an
@@ -189,7 +235,7 @@ func releasedPastStationWait(order *orders.Order) bool {
 		return false
 	}
 	prev, ok := waitAt(steps, order.WaitIndex-1)
-	return ok && IsStationWait(prev.WaitKind)
+	return ok && protocol.IsStationWaitKind(prev.WaitKind)
 }
 
 // syncManifestForRelease performs the late-bind bin manifest sync at release
@@ -348,7 +394,7 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 	if !ok {
 		return fmt.Errorf("hard release: order %d is not parked at a wait", orderID)
 	}
-	if IsStationWait(w.WaitKind) {
+	if protocol.IsStationWaitKind(w.WaitKind) {
 		return fmt.Errorf("hard release: order %d is parked at a STATION-owned wait at %q — release "+
 			"it from the station's board, where the operator can see whether the cell is clear. "+
 			"Core's hard release is for waits Core is responsible for advancing", orderID, w.Node)

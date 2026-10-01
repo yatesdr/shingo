@@ -225,7 +225,7 @@ func TestSplicedPlan_BlockOffsetsContinue(t *testing.T) {
 //	                  is one no floor sweeps and no board can render.
 //
 // When the drain window closes, the "" arm becomes an error and
-// IsStationWait's `== ""` arm goes with it — in the same commit, or an untagged
+// protocol.IsStationWaitKind's `== ""` arm goes with it — in the same commit, or an untagged
 // wait passes here while being unowned at the fence.
 func TestEveryWaitDeclaresAnOwner(t *testing.T) {
 	t.Parallel()
@@ -239,14 +239,14 @@ func TestEveryWaitDeclaresAnOwner(t *testing.T) {
 		t.Errorf("a plan whose waits are all owned was refused: %v", err)
 	}
 
-	// The drain window: allowed, and IsStationWait is what reads it.
+	// The drain window: allowed, and protocol.IsStationWaitKind is what reads it.
 	untagged := []resolvedStep{{Action: protocol.ActionWait, Node: "OLD-PLAN"}}
 	if err := assertEveryWaitDeclaresAnOwner(untagged); err != nil {
 		t.Errorf("an untagged wait was refused during the drain window: %v — orders authored before "+
 			"the field exists cannot be failed for not having it", err)
 	}
-	if !IsStationWait("") {
-		t.Error("IsStationWait(\"\") = false: the drain window's default must be station-owned, which " +
+	if !protocol.IsStationWaitKind("") {
+		t.Error("IsStationWaitKind(\"\") = false: the drain window's default must be station-owned, which " +
 			"is the meaning every pre-ruling plan already had")
 	}
 
@@ -278,7 +278,7 @@ func TestEveryWaitDeclaresAnOwner(t *testing.T) {
 // So CoreOwnsWaitAt is the gate, and both the button (via can_hard_release) and
 // the handler read it. An UNTAGGED wait is the station's for the drain window
 // and therefore refused: the conservative direction, decided in exactly one
-// place (IsStationWait) so the two readers cannot disagree.
+// place (protocol.IsStationWaitKind) so the two readers cannot disagree.
 func TestHardReleaseIsScopedToCoreOwnedWaits(t *testing.T) {
 	t.Parallel()
 

@@ -178,7 +178,7 @@ func StationOwnsWait(stepsJSON string, waitIndex int) bool {
 		if seen == waitIndex {
 			// "" is the drain window's default: pre-ruling plans carry no kind and
 			// have always been the station's to release.
-			return s.WaitKind == WaitKindStation || s.WaitKind == ""
+			return protocol.IsStationWaitKind(s.WaitKind)
 		}
 		seen++
 	}
@@ -187,9 +187,6 @@ func StationOwnsWait(stepsJSON string, waitIndex int) bool {
 
 // WaitKindStation mirrors Core's dispatch.WaitKindStation: the wait kind a
 // station wait carries, which Core's release fence and population partition
-// read. It is the Edge's ONE definition — engine/material_orders.go derives its
-// constant from this — and it is a literal because Edge cannot import Core.
-// Pinned by this package's TestWaitKindStation_MatchesCore; the wire-vocabulary
-// guard (protocol/wire_vocabulary_drift_test.go) lists this site and Core's as
-// the two known homes until the value moves into protocol/.
-const WaitKindStation = "station"
+// read. Derived from protocol.WaitKindStation, the one definition;
+// engine/material_orders.go derives its constant from this.
+const WaitKindStation = protocol.WaitKindStation

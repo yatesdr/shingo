@@ -251,4 +251,11 @@ func (h *EdgeHandler) HandleOrderStaged(env *protocol.Envelope, p *protocol.Orde
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyStaged, "", "", p.Detail); err != nil {
 		log.Printf("edge_handler: handle staged for %s: %v", p.OrderUUID, err)
 	}
+	// Where it is parked, when this Core says: an older Core sends no kind,
+	// and the point last recorded stands.
+	if p.WaitKind != "" {
+		if err := h.orderMgr.RecordWaitPoint(p.OrderUUID, p.StationWait, p.WaitKind); err != nil {
+			log.Printf("edge_handler: record wait point for %s: %v", p.OrderUUID, err)
+		}
+	}
 }

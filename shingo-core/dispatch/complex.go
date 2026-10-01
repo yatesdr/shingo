@@ -93,7 +93,7 @@ type resolvedStep struct {
 // something Core genuinely cannot see, and HandleOrderRelease advances it. That
 // asymmetry is deliberate: the older, larger population is the one that needs
 // no marker.
-const WaitKindLane = "lane"
+const WaitKindLane = protocol.WaitKindLane
 
 // WaitKindStation marks a wait the STATION advances — the swap choreography's
 // own gates ("hold at staging until the line clears", "tooling done", "ready",
@@ -111,26 +111,13 @@ const WaitKindLane = "lane"
 //
 // So ownership is now DECLARED by whoever authors the wait, on both sides, and
 // the zero value is reserved for pre-ruling plans still in flight.
-const WaitKindStation = "station"
-
-// IsStationWait reports whether a station may advance this wait.
-//
-// THE DRAIN WINDOW LIVES HERE, in one place, so there is exactly one thing to
-// change when it closes. Untagged reads as station-owned today — the historical
-// default, so no plan in flight changes meaning — and the drift tests
-// (TestEveryEdgeAuthoredWaitIsStamped, TestSplice_FenceHoldsOnASplicedPlan) already
-// fail on any NEW untagged wait from either author. When the last pre-ruling
-// order has drained, delete the `== ""` arm and an untagged wait becomes what it
-// should be: unowned, and refused by both fences.
-func IsStationWait(kind string) bool {
-	return kind == WaitKindStation || kind == ""
-}
+const WaitKindStation = protocol.WaitKindStation
 
 // CoreOwnsWaitAt reports whether the wait an order is parked at is CORE's to
 // advance — the read behind the hard-release affordance and anything else that
 // must distinguish the two owners from outside this package.
 //
-// It is the exact complement of IsStationWait over a real plan, so the drain
+// It is the exact complement of protocol.IsStationWaitKind over a real plan, so the drain
 // window's default (untagged = the station's) is honoured in one place rather
 // than re-decided by each caller. An unreadable plan, or an order parked at no
 // wait, answers FALSE: nothing should offer a Core override for a wait it cannot
@@ -147,7 +134,7 @@ func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
 	if !ok {
 		return false
 	}
-	return !IsStationWait(w.WaitKind)
+	return !protocol.IsStationWaitKind(w.WaitKind)
 }
 
 // claimedBin records which bin was claimed at which pickup step.

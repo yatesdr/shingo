@@ -82,6 +82,17 @@ func (s *ReplySender) SendError(env *protocol.Envelope, orderUUID, errorCode, de
 	}
 }
 
+// SendStaged re-announces where an order is parked: the station wait and its
+// kind. Sent when a release named a different wait (the echo), so the Edge
+// re-stages the leg at the wait Core holds instead of leaving it in transit.
+func (s *ReplySender) SendStaged(env *protocol.Envelope, orderUUID, detail string, stationWait *int, waitKind string) {
+	if err := s.SendReply(protocol.TypeOrderStaged, "order.staged", env.Src.Station, env.ID, &protocol.OrderStaged{
+		OrderUUID: orderUUID, Detail: detail, StationWait: stationWait, WaitKind: waitKind,
+	}); err != nil {
+		log.Printf("dispatch: staged reply for %s: %v", orderUUID, err)
+	}
+}
+
 func (s *ReplySender) SendCancelled(env *protocol.Envelope, orderUUID, reason string) {
 	if err := s.SendReply(protocol.TypeOrderCancelled, "order.cancelled", env.Src.Station, env.ID, &protocol.OrderCancelled{
 		OrderUUID: orderUUID,

@@ -45,8 +45,7 @@ var vocabularyNames = map[string]bool{
 	"invDeltaScopeBin":         true,
 	"invDeltaScopeBucket":      true,
 	// The station wait kind ("station" is an ordinary word, so it is guarded by
-	// name, not value). It has no protocol constant yet; see
-	// pendingPromotionHomes.
+	// name, not value). protocol.WaitKindStation is its home.
 	"WaitKindStation": true,
 	"waitKindStation": true,
 }
@@ -56,10 +55,10 @@ var vocabularyNames = map[string]bool{
 // are the named exception, so any OTHER literal binding of the same name still
 // fails. Promoting the value to protocol/ (and deriving these from it) is how
 // an entry leaves this list.
-var pendingPromotionHomes = map[string]bool{
-	"shingo-core/dispatch/complex.go WaitKindStation": true,
-	"shingo-edge/orders/types.go WaitKindStation":     true,
-}
+//
+// Empty: the station wait kind was the last entry, promoted with
+// protocol.WaitKindStation.
+var pendingPromotionHomes = map[string]bool{}
 
 // distinctiveValues are vocabulary strings specific enough that a constant
 // bound to one outside protocol is drift regardless of what it is called.

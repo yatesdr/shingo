@@ -270,25 +270,57 @@ func (d *Dispatcher) laneWaiters() ([]floorWaiter, error) {
 //
 // Best-effort: this is advisory metadata on a status the fleet already reported,
 // and failing to write it must not disturb the staged notification that follows.
-func (d *Dispatcher) MarkStationWaitIfOwned(orderID int64) {
+//
+// It returns the wait's point for the OrderStaged push, from the same decode:
+// its ordinal among the order's station waits (nil at a lane wait) and its
+// kind. An unreadable order or plan returns nil and "".
+func (d *Dispatcher) MarkStationWaitIfOwned(orderID int64) (stationWait *int, waitKind string) {
 	order, err := d.db.GetOrder(orderID)
 	if err != nil || order == nil {
-		return
+		return nil, ""
 	}
 	var steps []resolvedStep
 	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
-		return
+		return nil, ""
 	}
-	w, ok := waitAt(steps, order.WaitIndex)
-	if !ok || !IsStationWait(w.WaitKind) {
-		return
+	stationWait, waitKind, ok := stationPoint(steps, order.WaitIndex)
+	if !ok || stationWait == nil {
+		return nil, waitKind
 	}
+	w, _ := waitAt(steps, order.WaitIndex)
 	cause := CauseStationWait
 	if d.swapPartnerAlreadyFinished(order) {
 		cause = CauseSwapPartnerFinished
 	}
 	d.setQueueReason(order, protocol.QueueWaitingForPartner, cause,
 		QueueParams{Destination: w.Node})
+	return stationWait, waitKind
+}
+
+// stationPoint numbers the wait at waitIndex for the wire: its ordinal among
+// the plan's station waits (nil when it is a lane wait) and its kind, a
+// station wait's untagged drain-window form reported as WaitKindStation. ok
+// is false when waitIndex names no wait.
+func stationPoint(steps []resolvedStep, waitIndex int) (stationWait *int, waitKind string, ok bool) {
+	seen, station := 0, 0
+	for _, s := range steps {
+		if s.Action != protocol.ActionWait {
+			continue
+		}
+		isStation := protocol.IsStationWaitKind(s.WaitKind)
+		if seen == waitIndex {
+			if !isStation {
+				return nil, protocol.WaitKindLane, true
+			}
+			n := station
+			return &n, protocol.WaitKindStation, true
+		}
+		if isStation {
+			station++
+		}
+		seen++
+	}
+	return nil, "", false
 }
 
 // swapPartnerAlreadyFinished reports whether this leg is the SURVIVOR of a swap

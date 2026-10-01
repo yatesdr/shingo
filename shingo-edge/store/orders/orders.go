@@ -36,7 +36,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -156,18 +156,19 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var stagedExpireAt sql.NullString
 		var faultSince, faultDeadline, faultRef sql.NullString
 		var departedAt, cellLeftAt sql.NullString
-		var binID, siblingID sql.NullInt64
+		var binID, siblingID, stationWait sql.NullInt64
 		var createdAt, updatedAt string
 		var laneHeld int
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
 		o.LaneHeld = laneHeld == 1
+		o.StationWait = nullInt(stationWait)
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
 		applyDeparture(&o, departedAt, cellLeftAt)
 		if stagedExpireAt.Valid {
@@ -193,18 +194,19 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
 	var faultSince, faultDeadline, faultRef sql.NullString
 	var departedAt, cellLeftAt sql.NullString
-	var binID, siblingID sql.NullInt64
+	var binID, siblingID, stationWait sql.NullInt64
 	var createdAt, updatedAt string
 	var laneHeld int
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
 	o.LaneHeld = laneHeld == 1
+	o.StationWait = nullInt(stationWait)
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
 	applyDeparture(o, departedAt, cellLeftAt)
 	if stagedExpireAt.Valid {
@@ -1025,4 +1027,21 @@ func TakePendingIntent(db *sql.DB, id int64, expected string) (bool, error) {
 		return false, err
 	}
 	return n == 1, nil
+}
+
+// nullInt converts a nullable integer column to *int.
+func nullInt(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int64)
+	return &n
+}
+
+// SetWaitPoint records where Core staged an order: the station wait's ordinal
+// (nil at a lane wait) and the wait's kind.
+func SetWaitPoint(db *sql.DB, uuid string, stationWait *int, waitKind string) error {
+	_, err := db.Exec(`UPDATE orders SET station_wait=?, wait_kind=?, updated_at=datetime('now') WHERE uuid=?`,
+		stationWait, waitKind, uuid)
+	return err
 }

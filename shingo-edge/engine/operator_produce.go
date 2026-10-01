@@ -653,7 +653,7 @@ func (e *Engine) residentClaim(node *processes.Node, runtime *processes.RuntimeS
 func segmentAfterFirstStationWaitLifts(steps []protocol.ComplexOrderStep, node string) bool {
 	start := -1
 	for i, s := range steps {
-		if s.Action == protocol.ActionWait && (s.WaitKind == ordermgr.WaitKindStation || s.WaitKind == "") {
+		if s.Action == protocol.ActionWait && protocol.IsStationWaitKind(s.WaitKind) {
 			start = i + 1
 			break
 		}

@@ -734,12 +734,25 @@ type OrderRelease struct {
 	RemainingUOP *int            `json:"remaining_uop,omitempty"`
 	Disposition  *UOPDisposition `json:"disposition,omitempty"`
 	CalledBy     string          `json:"called_by,omitempty"`
+	// StationWait is the echo: the station wait this release is for, as
+	// OrderStaged.StationWait numbered it. Core applies a release only for the
+	// station wait its wait_index points at, parked there or driving to it;
+	// any other is a logged no-op. Absent = an Edge that predates it, which
+	// gets today's behaviour.
+	StationWait *int `json:"station_wait,omitempty"`
 }
 
 // OrderStaged notifies edge that an order is dwelling at a staging node.
 type OrderStaged struct {
 	OrderUUID string `json:"order_uuid"`
 	Detail    string `json:"detail,omitempty"`
+	// StationWait is the wait's ordinal among the order's STATION waits (0 is
+	// the first). Both sides agree on it, where the raw wait index does not:
+	// Core splices lane waits into a plan and the Edge's copy has none. Absent
+	// at a lane wait, and from a Core that predates it.
+	StationWait *int `json:"station_wait,omitempty"`
+	// WaitKind is the wait's owner: WaitKindStation or WaitKindLane.
+	WaitKind string `json:"wait_kind,omitempty"`
 }
 
 // --- Origination payloads: Edge -> Core ---

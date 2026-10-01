@@ -166,3 +166,9 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 		log.Printf("auto-submit order %s: %v (enqueued to outbox but status stayed pending; reconciles when Core replies)", orderUUID, err)
 	}
 }
+
+// RecordWaitPoint records the station wait and wait kind Core staged an order
+// at (protocol.OrderStaged). The release echo and the S5 act read it.
+func (m *Manager) RecordWaitPoint(uuid string, stationWait *int, waitKind string) error {
+	return m.db.SetOrderWaitPoint(uuid, stationWait, waitKind)
+}

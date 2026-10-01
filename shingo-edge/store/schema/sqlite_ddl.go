@@ -227,6 +227,11 @@ CREATE TABLE IF NOT EXISTS orders (
     -- pull-from-market's auto-clear on delivery, or a clear-loader-home's Order B
     -- on pickup. '' = nothing armed. Taken exactly once by the firing site.
     pending_intent  TEXT NOT NULL DEFAULT '',
+    -- station_wait / wait_kind (Edge v7): where Core last staged this order —
+    -- the station wait's ordinal among the plan's station waits (NULL at a
+    -- lane wait, and until a Core that reports it), and the wait's kind.
+    station_wait    INTEGER,
+    wait_kind       TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

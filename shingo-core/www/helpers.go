@@ -144,7 +144,7 @@ func canCancelStatus(s protocol.Status) bool {
 //
 // An untagged wait (pre-ruling plan, still draining) reads as station-owned and
 // therefore does NOT get the button — the conservative direction, and consistent
-// with dispatch.IsStationWait, which is the single place that rule lives.
+// with protocol.IsStationWaitKind, which is the single place that rule lives.
 //
 // AND THAT SCOPING IS WHAT KEEPS THE SEQUENTIAL SHAPE OUT OF THIS HATCH. Every
 // position of a sequential A/B changeover opens with a station wait at its own

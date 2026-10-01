@@ -234,7 +234,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// its own cause when it refuses; overwriting that here would replace a
 		// specific refusal ("lane-occupied", "lane-target-buried") with a
 		// generic one.
-		e.dispatcher.MarkStationWaitIfOwned(order.ID)
+		stationWait, waitKind := e.dispatcher.MarkStationWaitIfOwned(order.ID)
 		// AND A LANE WAIT GETS RE-ASKED THE MOMENT THE ROBOT IS THERE.
 		//
 		// For an inbound dweller this is a cheap extra firing of a question the
@@ -245,8 +245,10 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// uncommitted while the robot works the other lane.
 		e.dispatcher.EvaluateWaitLaneForStagedOrder(order.ID)
 		if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
-			OrderUUID: order.EdgeUUID,
-			Detail:    "robot dwelling at staging node",
+			OrderUUID:   order.EdgeUUID,
+			Detail:      "robot dwelling at staging node",
+			StationWait: stationWait,
+			WaitKind:    waitKind,
 		}); err != nil {
 			e.logFn("engine: staged notification: %v", err)
 		}

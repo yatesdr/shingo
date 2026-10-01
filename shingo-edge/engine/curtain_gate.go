@@ -229,7 +229,7 @@ func binTouchesAfterFirstStationWait(steps []protocol.ComplexOrderStep) []string
 	released := false
 	for _, s := range steps {
 		if !released {
-			if s.Action == protocol.ActionWait && (s.WaitKind == waitKindStation || s.WaitKind == "") {
+			if s.Action == protocol.ActionWait && protocol.IsStationWaitKind(s.WaitKind) {
 				released = true
 			}
 			continue

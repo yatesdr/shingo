@@ -150,6 +150,14 @@ type Order struct {
 	// is computed in the query beside the row it describes rather than being
 	// re-derived by each caller.
 	LaneHeld bool `json:"lane_held"`
+	// StationWait is Core's number for the station wait this order was last
+	// staged at (protocol.OrderStaged.StationWait): its ordinal among the
+	// plan's station waits, which Core and the Edge count alike. Nil until a
+	// Core that reports it has staged the order, and at a lane wait.
+	StationWait *int `json:"station_wait,omitempty"`
+	// WaitKind is the kind of that wait (protocol.WaitKindStation or
+	// WaitKindLane); "" until a Core that reports it has staged the order.
+	WaitKind string `json:"wait_kind,omitempty"`
 	// DepartedAt is when this leg stopped being its cell's business: the
 	// instant the fleet confirmed the last step of its plan whose node is in
 	// the claim's cell set. A departed leg is still a live order — what it

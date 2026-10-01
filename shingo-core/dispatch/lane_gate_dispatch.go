@@ -398,13 +398,13 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 //
 // Plans authored before the stamp existed are still in flight, and they carry no
 // kind at all. Refusing them would fail live orders for a field they could not
-// have had. So an untagged wait is LOUD and allowed — IsStationWait still reads
+// have had. So an untagged wait is LOUD and allowed — protocol.IsStationWaitKind still reads
 // it as the station's, the historical default — and this returns an error only
 // for a kind that is set to something unrecognised, which can only be a new
 // author disagreeing with the vocabulary.
 //
 // WHEN THE WINDOW CLOSES: turn the log into a returned error, and delete
-// IsStationWait's `== ""` arm. Both halves in the same commit, or an untagged
+// protocol.IsStationWaitKind's `== ""` arm. Both halves in the same commit, or an untagged
 // wait becomes unowned at the fence while still passing here.
 func assertEveryWaitDeclaresAnOwner(steps []resolvedStep) error {
 	for i, s := range steps {

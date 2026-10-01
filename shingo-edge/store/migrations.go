@@ -1223,6 +1223,39 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 4
 			},
 		},
+		{
+			// orders.station_wait / wait_kind: where Core last staged the order,
+			// as protocol.OrderStaged numbers it (the station wait's ordinal and
+			// the wait's kind). Column-check guarded, like v4: a fresh DB has
+			// both from schema.Apply's CREATE.
+			Version: 7,
+			Name:    "orders_wait_point",
+			Fn: func(tx *sql.Tx) error {
+				for _, col := range []struct{ name, decl string }{
+					{"station_wait", "INTEGER"},
+					{"wait_kind", "TEXT NOT NULL DEFAULT ''"},
+				} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name = ?`,
+						col.name).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN ` + col.name + ` ` + col.decl); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name IN ('station_wait', 'wait_kind')`).Scan(&n)
+				return err == nil && n == 2
+			},
+		},
 	}
 }
 

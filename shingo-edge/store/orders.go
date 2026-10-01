@@ -237,6 +237,12 @@ func (db *DB) ListOrderHistory(orderID int64) ([]orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }
 
+// SetOrderWaitPoint records the station wait and wait kind Core staged an order
+// at (protocol.OrderStaged).
+func (db *DB) SetOrderWaitPoint(uuid string, stationWait *int, waitKind string) error {
+	return orders.SetWaitPoint(db.DB, uuid, stationWait, waitKind)
+}
+
 // SetOrderPendingIntent arms (or, with "", disarms) the order's future action.
 // See orders.SetPendingIntent.
 func (db *DB) SetOrderPendingIntent(id int64, intent string) error {
