@@ -115,16 +115,12 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	if err := d.syncManifestForRelease(env, order, p); err != nil {
-		return
-	}
-
 	// ── The fence: one decider for every append ───────────────────────────
-	// Everything above this line consumed the station's contribution — the whole
-	// OrderRelease payload (RemainingUOP, Disposition, CalledBy) is read inside
-	// syncManifestForRelease and nowhere else. Everything below reads only the
-	// order row. So the cut between REPORTING a fact and DECIDING to append is
-	// already here; this states it.
+	// The station's contribution — the whole OrderRelease payload (RemainingUOP,
+	// Disposition, CalledBy) — is read inside syncManifestForRelease and nowhere
+	// else, and that sync runs BELOW every refusal (L11): a release Core refuses
+	// writes nothing of Core's, and the sync writes the operator's count onto the
+	// bin.
 	//
 	// A GATE WAIT's precondition is internal to Core — a lane claim, a robot
 	// inside, a slot reachable — and nothing outside Core can know when it is
@@ -163,12 +159,20 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	segment, moreWaits, blockOffset := splitSegment(steps, order.WaitIndex)
 	if segment == nil {
 		if order.Status == StatusInTransit {
+			// The past-final-wait no-op keeps the manifest sync until S5 removes
+			// the zero-disposition releases that arrive here carrying a count.
+			_ = d.syncManifestForRelease(env, order, p)
 			d.dbg("complex release: order %d already in_transit with wait_index %d past final wait — no-op",
 				order.ID, order.WaitIndex)
 			return
 		}
 		d.sendError(env, p.OrderUUID, "invalid_state",
 			fmt.Sprintf("wait_index %d exceeds number of waits in order", order.WaitIndex))
+		return
+	}
+
+	// ── FROM HERE ON, CORE'S WRITES. Every refusal is above this line (L11). ──
+	if err := d.syncManifestForRelease(env, order, p); err != nil {
 		return
 	}
 
