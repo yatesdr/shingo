@@ -93,6 +93,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithLeavesBare(l.LeavesBare),
 			domain.WithAutoPush(l.AutoPush),
+			domain.WithPulledDirectly(l.PulledDirectly),
 			domain.WithOutboundDest(l.OutboundDest))
 
 	case string(domain.LayoutDedicatedPositions):
@@ -113,6 +114,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithLeavesBare(l.LeavesBare),
 			domain.WithAutoPush(l.AutoPush),
+			domain.WithPulledDirectly(l.PulledDirectly),
 			domain.WithOutboundDest(l.OutboundDest))
 
 	default:

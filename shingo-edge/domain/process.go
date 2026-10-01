@@ -510,8 +510,12 @@ type NodeClaim struct {
 	// this comment used to name was deleted 2026-08. For a Core-owned loader
 	// window it comes from the loader (bin_loaders.auto_push) via
 	// Loader.SynthClaim.
-	AutoPush  bool      `json:"auto_push"`
-	CreatedAt time.Time `json:"created_at"`
+	AutoPush bool `json:"auto_push"`
+	// PulledDirectly is set by Loader.SynthClaim at a window of a two-stage
+	// unloader's stage 2 whose finished carts the process pulls straight off
+	// it: the CLEAR there sends the cart nowhere. Never stored on a claim.
+	PulledDirectly bool      `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
 
 	// ── ATTRIBUTION ────────────────────────────────────────────────────
 	// Who wrote this row and from where. The flow composer makes the claim

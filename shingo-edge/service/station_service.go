@@ -1572,6 +1572,7 @@ func (s *StationService) applyManualSwapLoaderFields(
 				nodeView.OperatorDriven = loader.IsOperatorDriven()
 				nodeView.HomeLocationLoader = loader.IsDedicated()
 				nodeView.LeavesBare = loader.LeavesBare()
+				nodeView.PulledDirectly = loader.PulledDirectly()
 				// Core owns the loader's payload set — the board shows it (the edge claim
 				// is just the node now). Overrides the claim-derived set above; falls back
 				// to it only when the loader carries no Core payloads (legacy / not migrated).

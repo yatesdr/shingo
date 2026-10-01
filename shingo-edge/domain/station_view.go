@@ -170,6 +170,11 @@ type StationNodeView struct {
 	// "Full off", with no dunnage picker and no type on it: it posts a blank
 	// code and Core stamps the cart's own marker. False for every other node.
 	LeavesBare bool `json:"leaves_bare,omitempty"`
+	// PulledDirectly marks a window of a two-stage unloader's stage 2 whose
+	// finished carts the process pulls straight off it (Loader.PulledDirectly,
+	// Core-owned): its CLEAR sends the cart nowhere, and the board says the
+	// cart waits for the line.
+	PulledDirectly bool `json:"pulled_directly,omitempty"`
 	// HasBufferPartial is true when this is a dedicated home position with a
 	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with
 	// the same payload. When set, the HMI shows the "Clear Bin" button so the

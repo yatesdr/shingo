@@ -566,7 +566,13 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		// missed empty-out strands one carrier at a window the operator can still
 		// tap PUSH EMPTY on; a duplicate sends two robots for one bin, and the
 		// second finds nothing there.
-		if existingID, inFlight, lerr := e.emptyOutInFlight(nodeID); lerr != nil {
+		if claim.PulledDirectly {
+			// A stage 2 pulled directly by the process: the finished cart
+			// stays on the window for the line to take, so there is no
+			// empty-out and nothing to tell the operator.
+			log.Printf("bin_ops: %s is pulled directly by the process — the cart waits on the window for the line",
+				node.Name)
+		} else if existingID, inFlight, lerr := e.emptyOutInFlight(nodeID); lerr != nil {
 			log.Printf("bin_ops: check in-flight move for node %s: %v", node.Name, lerr)
 		} else if inFlight {
 			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",

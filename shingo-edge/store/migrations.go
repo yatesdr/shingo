@@ -1307,6 +1307,31 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 2
 			},
 		},
+		{
+			// core_loaders.pulled_directly: a two-stage unloader's stage 2
+			// whose finished carts the process pulls straight off its windows
+			// (LoaderInfo.PulledDirectly). core_loaders is a cache rewritten on
+			// every node-list sync, so DEFAULT 0 only matters until the next
+			// one. Column-check guarded, like v7.
+			Version: 10,
+			Name:    "core_loaders_pulled_directly",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name = 'pulled_directly'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE core_loaders ADD COLUMN pulled_directly INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name = 'pulled_directly'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

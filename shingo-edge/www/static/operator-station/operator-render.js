@@ -398,6 +398,17 @@ export function renderGrid() {
 // The fallback is deliberate: a node whose payloads match nothing in the
 // catalog shows ALL dunnage codes rather than none, so the operator is never
 // stuck in front of an empty menu on a node nobody has finished configuring.
+// pulledDirectlyNote is the card's sentence at a window of a two-stage
+// unloader's stage 2 pulled directly by the process: its finished cart is not
+// sent anywhere, it waits on the window for the line. Empty for every other
+// window, and while the window holds no cart or a cart still carrying parts.
+function pulledDirectlyNote(entry) {
+    if (!entry || !entry.pulled_directly) return '';
+    var b = entry.bin_state;
+    if (!b || !b.occupied || b.payload_code) return '';
+    return 'The cart waits here for the line';
+}
+
 function dunnageTypesFor(allowedPayloadCodes) {
     var view = getView();
     var catalog = (view && view.payload_bin_types) || [];
@@ -906,6 +917,14 @@ function buildLoaderCard(entry, code, counters, opts) {
                 (refusal.refused_by ? ' — ' + refusal.refused_by : '') +
                 (refusal.answered ? ' · cell chose to ' + (refusal.ack_choice || 'wait') : ' · awaiting the cell'),
         }));
+    }
+
+    // A pulled-directly stage 2's finished cart stays on its window for the
+    // line to take; the card says so, so an empty cart standing there reads
+    // as done rather than stuck.
+    var waits = pulledDirectlyNote(entry);
+    if (waits) {
+        card.appendChild(el('div', { className: 'os-board-downtime', textContent: waits }));
     }
 
     // Corner badge, only for REAL per-payload orders (the agnostic blank-payload

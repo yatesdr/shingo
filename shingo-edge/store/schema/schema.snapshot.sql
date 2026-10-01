@@ -132,6 +132,9 @@ CREATE TABLE core_loaders (
     -- 1 = a CLEAR, a PUSH EMPTY or this unloader's own empty-out landing
     -- re-pulls its next full. Core owns it (bin_loaders.auto_push).
     auto_push INTEGER NOT NULL DEFAULT 0,
+    -- 1 = a stage 2 whose finished carts the process pulls straight off its
+    -- windows: the CLEAR sends the cart nowhere (Edge v10). Core owns it.
+    pulled_directly INTEGER NOT NULL DEFAULT 0,
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );

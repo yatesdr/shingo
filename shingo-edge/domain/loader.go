@@ -202,6 +202,7 @@ type Loader struct {
 	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
 	leavesBare              bool                // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
 	autoPush                bool                // a freed window re-pulls this unloader's next full (see AutoPush)
+	pulledDirectly          bool                // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -497,6 +498,18 @@ func WithAutoPush(on bool) LoaderOption {
 	return func(l *Loader) { l.autoPush = on }
 }
 
+// WithPulledDirectly marks a two-stage unloader's stage 2 whose finished carts
+// the process pulls straight off its windows (CoreLoader.PulledDirectly, owned
+// by Core's bin_loaders.pulled_directly). Not passing it is today's stage 2.
+func WithPulledDirectly(on bool) LoaderOption {
+	return func(l *Loader) { l.pulledDirectly = on }
+}
+
+// PulledDirectly reports whether this stage 2's finished carts stay on its
+// windows for the process to pull: its CLEAR sends the cart nowhere, and the
+// board says the cart waits for the line.
+func (l *Loader) PulledDirectly() bool { return l.pulledDirectly }
+
 // AutoPush reports whether a freed window re-pulls this unloader's next full.
 // SynthClaim carries it onto the claim the operator doors and the completion
 // chain read.
@@ -604,6 +617,7 @@ func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 		OutboundDestination: l.outboundDest,
 		AutoConfirm:         true, // mandatory for bin_loader claims (auto-confirm delivery)
 		AutoPush:            l.autoPush,
+		PulledDirectly:      l.pulledDirectly,
 	}
 }
 
