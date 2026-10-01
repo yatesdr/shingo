@@ -108,6 +108,26 @@ func (p *Poller) Track(rdsOrderID string) {
 	}
 }
 
+// TrackReleased adds an RDS order that Core had already released past a wait
+// and left open, as boot finds one: seeded WAITING, with lastBlockID (the last
+// block RDS holds for it) armed as ExpectNextWait arms it. A plain Track seeds
+// CREATED, so after a restart in the seconds after a release, before the robot
+// moves off, the first WAITING read (still the old wait) would be a transition
+// and Core would stage the order at its next wait early. Seeded this way, a
+// WAITING read counts only once lastBlockID is FINISHED, as on the live path.
+// An order already being polled is left as it is.
+func (p *Poller) TrackReleased(rdsOrderID, lastBlockID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if state, exists := p.active[rdsOrderID]; exists && state != StateCreated {
+		return
+	}
+	p.active[rdsOrderID] = StateWaiting
+	if lastBlockID != "" {
+		p.awaitingWait[rdsOrderID] = lastBlockID
+	}
+}
+
 // Untrack removes an RDS order ID from the active poll set.
 func (p *Poller) Untrack(rdsOrderID string) {
 	p.mu.Lock()

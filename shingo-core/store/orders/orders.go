@@ -1303,6 +1303,27 @@ func ListStalledChapters(db *sql.DB, since time.Time, limit int) ([]int64, error
 // period never ran, and since faulted is deliberately outside both stuck
 // predicates nothing else looked at it either — while it went on blocking
 // changeovers at its node.
+// ListReleasedOpenVendorOrderIDs returns the vendor ids of orders the station
+// released past a wait that are still open: in_transit with wait_index > 0.
+// Boot re-arms them (fleet.ReleasedOrderRearmer).
+func ListReleasedOpenVendorOrderIDs(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status = $1 AND wait_index > 0`,
+		string(protocol.StatusInTransit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func ListTrackedVendorOrderIDs(db *sql.DB) ([]string, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN (%s)`, protocol.VendorTrackedStatusSQLList()))
 	if err != nil {

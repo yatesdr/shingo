@@ -81,6 +81,16 @@ type MissionRegistry interface {
 	HasOrder(vendorOrderID string) bool
 }
 
+// ReleasedOrderRearmer is an optional interface for backends whose tracker
+// must be told, at boot, that an order was already released past a wait and
+// left open (order 112 across a restart). RearmReleased re-tracks it armed on
+// the last block the fleet holds for it, so the robot still standing at the
+// old wait is not reported as parked at the next one. Backends without it
+// (the in-process simulator, which loses its missions on a restart) skip it.
+type ReleasedOrderRearmer interface {
+	RearmReleased(vendorOrderID string) error
+}
+
 // VendorCommand represents a raw vendor command for debugging/testing.
 type VendorCommand struct {
 	Type          string

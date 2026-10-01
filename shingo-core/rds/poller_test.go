@@ -539,3 +539,46 @@ func TestPollerReportsNextWaitAfterRelease(t *testing.T) {
 		t.Errorf("second event = %s -> %s, want WAITING -> WAITING", ev.oldStatus, ev.newStatus)
 	}
 }
+
+// TestPollerRestartAfterRelease is order 112 across a Core restart (S3).
+// Core restarts in the seconds after a release, before the robot moves off:
+// RDS still reads WAITING at the old wait, and the appended block has not run.
+//
+// A plain Track (a new order) seeds CREATED, so that first WAITING is a
+// transition and Core would stage the order at its NEXT wait while the robot
+// still stands at the old one. TrackReleased, which boot uses for an open
+// order already released past a wait, seeds WAITING and arms the last block
+// RDS holds: the read counts only once that block is FINISHED.
+func TestPollerRestartAfterRelease(t *testing.T) {
+	t.Parallel()
+	var appendedState atomic.Value
+	appendedState.Store("CREATED")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-112r","state":"WAITING","vehicle":"AMB-1","blocks":[
+			{"blockId":"b1","location":"AP-LINE","state":"FINISHED","binTask":"Unload"},
+			{"blockId":"b2","location":"AP-STORE","state":"` + appendedState.Load().(string) + `","binTask":"Unload"}
+		]}`)); err != nil {
+			t.Errorf("write RDS reply: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(NewClient(srv.URL, 2*time.Second), emitter, &mockResolver{}, time.Minute)
+	count := func() int {
+		emitter.mu.Lock()
+		defer emitter.mu.Unlock()
+		return len(emitter.events)
+	}
+
+	p.TrackReleased("rds-112r", "b2")
+	p.poll() // the restart's first read: still the old wait
+	if got := count(); got != 0 {
+		t.Fatalf("restart, robot at the old wait: %d events, want 0 — Core would stage the next wait early", got)
+	}
+	appendedState.Store("FINISHED")
+	p.poll() // the robot finished the segment and parked at the next wait
+	if got := count(); got != 1 {
+		t.Fatalf("restart, robot parked at the next wait: %d events, want 1", got)
+	}
+}

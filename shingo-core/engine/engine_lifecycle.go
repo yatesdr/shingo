@@ -366,6 +366,31 @@ func (e *Engine) Stop() {
 	e.logFn("engine: stopped")
 }
 
+// rearmReleasedOrders re-arms, on the fleet's tracker, every open order the
+// station released past a wait (order 112 across a restart): a Core restart
+// in the seconds after a release would otherwise stage it at its next wait
+// while the robot still stands at the old one. One fleet read per such order,
+// at boot only.
+func (e *Engine) rearmReleasedOrders() {
+	r, ok := e.fleet.(fleet.ReleasedOrderRearmer)
+	if !ok {
+		return
+	}
+	ids, err := e.db.ListReleasedOpenVendorOrderIDs()
+	if err != nil {
+		e.logFn("engine: list released open orders: %v", err)
+		return
+	}
+	for _, id := range ids {
+		if err := r.RearmReleased(id); err != nil {
+			e.logFn("engine: %v — tracked as a new order; its next WAITING read stages it", err)
+		}
+	}
+	if len(ids) > 0 {
+		e.logFn("engine: re-armed %d released open order(s) on the tracker", len(ids))
+	}
+}
+
 func (e *Engine) loadActiveOrders() {
 	if e.tracker == nil {
 		return
@@ -381,6 +406,7 @@ func (e *Engine) loadActiveOrders() {
 	if len(ids) == 0 {
 		return
 	}
+	e.rearmReleasedOrders()
 
 	// ── AND ASK THE FLEET WHETHER IT AGREES THESE MISSIONS EXIST ──────────
 	//

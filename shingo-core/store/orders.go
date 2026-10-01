@@ -791,6 +791,11 @@ func (db *DB) ListStalledChapters(since time.Time, limit int) ([]int64, error) {
 
 // ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching.
 // (The old comment here said "all non-terminal orders", which it never was.)
+// ListReleasedOpenVendorOrderIDs: see orders.ListReleasedOpenVendorOrderIDs.
+func (db *DB) ListReleasedOpenVendorOrderIDs() ([]string, error) {
+	return orders.ListReleasedOpenVendorOrderIDs(db.DB)
+}
+
 func (db *DB) ListTrackedVendorOrderIDs() ([]string, error) {
 	return orders.ListTrackedVendorOrderIDs(db.DB)
 }

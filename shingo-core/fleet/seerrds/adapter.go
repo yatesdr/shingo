@@ -180,6 +180,26 @@ func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, 
 	return nil
 }
 
+// RearmReleased is fleet.ReleasedOrderRearmer: one detail read for the order's
+// blocks, then the poller re-tracks it seeded WAITING and armed on the last
+// block RDS holds (rds.Poller.TrackReleased). A read that fails leaves the
+// plain Track boot already did, and says so.
+func (a *Adapter) RearmReleased(vendorOrderID string) error {
+	if a.poller == nil {
+		return nil
+	}
+	detail, err := a.client.GetOrderDetails(vendorOrderID)
+	if err != nil {
+		return fmt.Errorf("rearm %s: the order read did not answer: %w", vendorOrderID, err)
+	}
+	last := ""
+	if n := len(detail.Blocks); n > 0 {
+		last = detail.Blocks[n-1].BlockID
+	}
+	a.poller.TrackReleased(vendorOrderID, last)
+	return nil
+}
+
 func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {
 	timeout := cfg.Timeout
 	if timeout == 0 {
