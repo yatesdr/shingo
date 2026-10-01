@@ -67,12 +67,9 @@ import (
 // a gate that hangs the operator's button is its own failure.
 const curtainReadTimeout = 3 * time.Second
 
-// CurtainHeldError and SwapPairNotReadyError are the release layer's two
-// typed refusals, defined with the plan that returns them.
-type (
-	CurtainHeldError      = release.CurtainHeldError
-	SwapPairNotReadyError = release.SwapPairNotReadyError
-)
+// CurtainHeldError is the light curtain's typed refusal, defined with the plan
+// that returns it.
+type CurtainHeldError = release.CurtainHeldError
 
 // releaseAct is one act: what the door decided it is, and what it has already
 // read, so each curtained node is read once and each leg's facts decoded once

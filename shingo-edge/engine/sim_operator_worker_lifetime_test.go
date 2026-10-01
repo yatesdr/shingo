@@ -33,7 +33,6 @@ import (
 func TestSimOperator_AWokenReleaseWorkerSurvivesAnEngineWithNoStore(t *testing.T) {
 	m := clock.NewManual(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	op := newTestSimOperator(m)
-	op.releaseTries = make(map[int64]int)
 	op.releasing = make(map[int64]bool)
 
 	op.scheduleRelease(99)
@@ -90,24 +89,5 @@ func TestSimOperator_DwellActsWhenTheTimerIsTheOnlyThingReady(t *testing.T) {
 	op := newTestSimOperator(m)
 	if !op.dwell(0) {
 		t.Error("dwell refused to act on a live operator whose delay had elapsed")
-	}
-}
-
-// TestSimOperator_HasStoreIsWhatTheDiagnosticAlreadyAsked keeps the two sites
-// on one predicate. releaseCapDiagnosis carried this check inline and
-// runRelease, one frame up and holding the same pointer across a longer wait,
-// had none.
-func TestSimOperator_HasStoreIsWhatTheDiagnosticAlreadyAsked(t *testing.T) {
-	op := newTestSimOperator(clock.NewManual(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	if op.hasStore() {
-		t.Fatal("fixture: newTestSimOperator builds an Engine with no db, deliberately")
-	}
-	if got := op.releaseCapDiagnosis(1); got == "" {
-		t.Error("the diagnostic must still answer without a store — it is the thing explaining " +
-			"a refusal, not a thing entitled to end the run")
-	}
-	op.e = nil
-	if op.hasStore() {
-		t.Error("a nil Engine has no store either")
 	}
 }

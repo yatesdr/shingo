@@ -510,11 +510,8 @@ func TestApiOrders_ReleaseOrder_InvalidID(t *testing.T) {
 func TestApiOrders_ReleaseOrder_WrongStatus(t *testing.T) {
 	_, router := newApiOrdersRouter(t)
 
-	// Terminal orders cannot be released. Pre-dispatch (pending/submitted)
-	// is now a silent no-op under the post-2026-04-27 contract because the
-	// consolidated release fan-out tolerates pre-dispatch siblings, so this
-	// test specifically exercises the terminal-rejection path that's still
-	// surfaced as an API error.
+	// A terminal order cannot be released: the per-order act skips it, and
+	// the click names that one order, so the API answers with an error.
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusConfirmed)
 
 	body := map[string]any{

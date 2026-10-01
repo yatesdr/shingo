@@ -54,30 +54,10 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
 	}
-	// Pre-2026-04-27 this required order.Status == StatusStaged. Relaxed to
-	// "non-terminal" because the simplified consolidated-release path
-	// (ReleaseStagedOrders, see operator_stations.go) fans out to both legs
-	// of a two-robot swap regardless of where each leg is in its choreography.
-	// The transition to in_transit below is idempotent (applyTransition no-ops
-	// when old == new), and Core's HandleOrderRelease only needs the order to
-	// have been dispatched (have a VendorOrderID) — which is true once any
-	// status past "acknowledged" is reached. See shingo_todo.md for the
-	// pre-dispatch edge case worth eventually guarding.
+	// The release act sends only staged and in_transit legs (release.Releasable);
+	// a terminal order here is a caller outside the act, and is refused.
 	if IsTerminal(order.Status) {
 		return fmt.Errorf("order is terminal (%s), cannot release", order.Status)
-	}
-	// Pre-dispatch guard: if Core hasn't acknowledged the order yet (no
-	// VendorOrderID, status is pending/submitted), there's nothing to release
-	// against. Core's HandleOrderRelease would fail trying to send blocks to
-	// an empty VendorOrderID. In practice this can't happen during a real
-	// two-robot swap (Robot B reaching staged means both orders dispatched),
-	// but the consolidated release fans out unconditionally so we guard here.
-	// Silent no-op: log and return nil so the consolidated call site doesn't
-	// abort over a pre-dispatch sibling. See shingo_todo.md.
-	if order.Status == StatusPending || order.Status == StatusSubmitted {
-		m.DebugLog.Log("release: id=%d uuid=%s status=%q is pre-dispatch — skipping (no VendorOrderID for Core to release against)",
-			orderID, order.UUID, order.Status)
-		return nil
 	}
 
 	env, err := m.sender.build(protocol.TypeOrderRelease, &protocol.OrderRelease{

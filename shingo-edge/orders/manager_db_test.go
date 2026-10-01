@@ -1265,30 +1265,6 @@ func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
 	}
 }
 
-// TestReleaseOrder_PreDispatchSkip covers the post-2026-04-27 contract:
-// ReleaseOrder no longer rejects non-staged orders. Pre-dispatch statuses
-// (pending, submitted) are treated as silent no-ops because the consolidated
-// release path fans out unconditionally and the sibling may legitimately be
-// pre-dispatch in unusual timing scenarios. Manager logs a debug line and
-// returns nil; the operator's intent is preserved (Order B's release fired)
-// without aborting the whole call. Terminal statuses still error.
-func TestReleaseOrder_PreDispatchSkip(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	oid, _ := db.CreateOrder("uuid-rns", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
-	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-
-	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, "", nil), "ReleaseOrder on pre-dispatch (submitted) should be a silent no-op, got")
-
-	// Status didn't change — no envelope queued, no transition.
-	o, _ := db.GetOrder(oid)
-	if o.Status != StatusSubmitted {
-		t.Errorf("status changed from submitted to %q; pre-dispatch release should be a no-op", o.Status)
-	}
-}
-
 func TestReleaseOrder_MissingOrder(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)

@@ -30,7 +30,6 @@ func simPress(leg string) func(h *relHarness) error {
 			ctx:       context.Background(),
 			pending:   make(map[int64]bool),
 			releasing: make(map[int64]bool),
-			cappedAt:  make(map[int64]time.Time),
 		}
 		op.runRelease(h.leg(leg))
 		return nil

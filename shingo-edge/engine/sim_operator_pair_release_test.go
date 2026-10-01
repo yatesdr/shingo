@@ -18,9 +18,9 @@ import (
 // ReleaseOrderWithLineside is the per-ORDER API door; ReleaseStagedOrders is
 // the per-NODE one, and it is the only thing an operator can actually press.
 // While the per-leg path was the only one a sim ran, everything the pair path
-// owns had no sim coverage at all: the collision gate that holds a placing leg
-// while its sibling is still coming, the produce paperwork's ordering against
-// that gate, the deferred-sibling re-fire, and the disposition split.
+// owns had no sim coverage at all: the lift hold on a placing leg while its
+// sibling is still coming, the press paperwork, the held leg's intent, and the
+// disposition split.
 // ---------------------------------------------------------------------------
 
 // TestSimOperator_SwapReleaseDelayIsConfigurable pins the knob. The default is
