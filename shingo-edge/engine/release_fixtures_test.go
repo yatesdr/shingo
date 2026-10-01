@@ -182,6 +182,9 @@ type coSpec struct {
 	// neighbour adds a second node in the same process whose claim is identical
 	// in both styles — an `unchanged` task — with its own steady-state pair.
 	neighbour bool
+	// curtained arms the front node's curtain, reading safe, before the
+	// changeover starts, so its creations see the node curtained (S7).
+	curtained bool
 }
 
 // changeover seeds from/to styles, starts the changeover, and names the front
@@ -316,6 +319,9 @@ func (h *relHarness) changeover(s coSpec) int64 {
 	}
 
 	h.processID, h.nodeID = pid, nid
+	if s.curtained {
+		h.armCurtain(curtainSafe)
+	}
 	co, err := h.eng.StartProcessChangeover(pid, toID, "harness", "release harness")
 	testutil.MustNoErr(h.t, err, "start changeover")
 	task, err := db.GetChangeoverNodeTaskByNode(co.ID, nid)

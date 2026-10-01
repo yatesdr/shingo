@@ -20,9 +20,9 @@ func stepsString(steps []protocol.ComplexOrderStep) string {
 	return strings.Join(out, ", ")
 }
 
-// S7: every pickup or dropoff at a curtained node gets a station wait in front
-// unless one already stands there; the reported ordinal is the first added
-// wait's among the plan's station waits.
+// S7: every pickup at a curtained node gets a station wait in front unless one
+// already stands there; a dropoff gets none. The reported ordinal is the first
+// added wait's among the plan's station waits.
 func TestWithCurtainWaits(t *testing.T) {
 	t.Parallel()
 	ready := func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeReady) }
@@ -39,18 +39,19 @@ func TestWithCurtainWaits(t *testing.T) {
 		want  string
 		first int
 	}{
-		{"the per-position swap crosses its position twice: a wait in front of each",
+		{"the per-position swap: one wait, before it lifts the old bin; the return drop finishes",
 			[]protocol.ComplexOrderStep{pick("SYN-FG"), drop("SYN-OUT"), pick("SYN-MKT"), drop("SYN-FG")},
-			"wait SYN-FG(ready), pickup SYN-FG, dropoff SYN-OUT, pickup SYN-MKT, wait SYN-FG(ready), dropoff SYN-FG", 0},
-		{"a delivery: the wait goes in front of the drop, after the fetch",
+			"wait SYN-FG(ready), pickup SYN-FG, dropoff SYN-OUT, pickup SYN-MKT, dropoff SYN-FG", 0},
+		{"a delivery: no wait in front of the drop",
 			[]protocol.ComplexOrderStep{pick("SYN-STAGE"), drop("SYN-FG")},
-			"pickup SYN-STAGE, wait SYN-FG(ready), dropoff SYN-FG", 0},
+			"pickup SYN-STAGE, dropoff SYN-FG", -1},
 		{"a crossing a wait already guards is left alone",
 			[]protocol.ComplexOrderStep{stationWait("SYN-FG", release.PurposeSwap), pick("SYN-FG"), drop("SYN-OUT")},
 			"wait SYN-FG(swap), pickup SYN-FG, dropoff SYN-OUT", -1},
 		{"an earlier station wait counts toward the ordinal",
-			[]protocol.ComplexOrderStep{stationWait("SYN-STAGE", release.PurposeToolingDone), pick("SYN-STAGE"), drop("SYN-FG")},
-			"wait SYN-STAGE(tooling_done), pickup SYN-STAGE, wait SYN-FG(ready), dropoff SYN-FG", 1},
+			[]protocol.ComplexOrderStep{stationWait("SYN-STAGE", release.PurposeToolingDone), pick("SYN-STAGE"), drop("SYN-OUT"),
+				pick("SYN-FG"), drop("SYN-OUT")},
+			"wait SYN-STAGE(tooling_done), pickup SYN-STAGE, dropoff SYN-OUT, wait SYN-FG(ready), pickup SYN-FG, dropoff SYN-OUT", 1},
 		{"no curtained node: unchanged",
 			[]protocol.ComplexOrderStep{pick("SYN-A"), drop("SYN-B")},
 			"pickup SYN-A, dropoff SYN-B", -1},

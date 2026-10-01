@@ -17,7 +17,6 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingoedge/release"
 )
 
 // handleSequentialBackfill watches for sequential Order A going in_transit
@@ -83,11 +82,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		return
 	}
 
-	// A curtained line gets a station wait in front of the drop, released by
-	// the Edge's own intent (S7). Nobody pressed for this order, so a live
-	// curtain at that wait asks for a RELEASE press (Q8).
-	steps, firstWait := withCurtainWaits(BuildSequentialBackfillSteps(claim), e.curtainedCoreNodes(),
-		func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeSwap) })
+	steps := BuildSequentialBackfillSteps(claim)
 	nodeID := node.ID
 	// ATTRIBUTED, and it was not. This order is the plant continuing to serve the
 	// demand that produced Order A, so it belongs to that demand's episode — see
@@ -99,7 +94,6 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		log.Printf("sequential backfill for node %s: %v", node.Name, err)
 		return
 	}
-	e.writeCreationIntent(orderB.ID, firstWait, release.PurposeSwap, "", release.Choices{})
 	if err := e.db.SetProcessNodeRuntimeStagedOrder(nodeID, &orderB.ID); err != nil {
 		log.Printf("update runtime orders for node %d: %v", nodeID, err)
 	}

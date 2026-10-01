@@ -103,10 +103,10 @@ func (e *Engine) SendBinToQualityHold(nodeID int64, actor string) (*orders.Order
 
 	nodeIDCopy := node.ID
 	var order *orders.Order
-	if curtained := e.curtainedCoreNodes(); curtained[node.CoreNodeName] || curtained[containment] {
-		// A bin carried across a curtained node gets a station wait in front
-		// (S7), so the order takes the complex shape: the same pickup and drop,
-		// the same payload and auto-confirm. The press of QUALITY HOLD is the
+	if curtained := e.curtainedCoreNodes(); curtained[node.CoreNodeName] {
+		// A bin lifted off a curtained node gets a station wait in front of the
+		// pickup (S7), so the order takes the complex shape: the same pickup and
+		// drop, the same payload and auto-confirm. The press of QUALITY HOLD is the
 		// operator's, remembered at the wait until the curtain clears.
 		steps, firstWait := withCurtainWaits([]protocol.ComplexOrderStep{
 			{Action: protocol.ActionPickup, Node: node.CoreNodeName},

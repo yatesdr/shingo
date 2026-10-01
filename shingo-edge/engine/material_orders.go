@@ -526,9 +526,9 @@ type ChangeoverDispatch struct {
 	StepsA        []protocol.ComplexOrderStep
 	DeliveryNodeA string
 	AutoConfirmA  bool
-	// CurtainWaitsA: StepsA crosses its position with no station wait, so at
-	// a curtained position the creation puts one in front of each crossing
-	// (S7, createComplexFromSpec).
+	// CurtainWaitsA: StepsA lifts the old bin off its position with no station
+	// wait, so at a curtained position the creation puts one in front of that
+	// pickup (S7, createComplexFromSpec). Its return drop gets none.
 	CurtainWaitsA bool
 
 	// CarriesFromPayloadA stamps StepsA with the from-style payload code. Set it

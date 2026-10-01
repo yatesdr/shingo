@@ -23,8 +23,8 @@ type ComplexOrderSpec struct {
 	Steps        []protocol.ComplexOrderStep
 	AutoConfirm  bool
 	PayloadCode  string // when non-empty, overrides lookupPayloadMeta
-	// CurtainWaits: put a station wait in front of each crossing of a
-	// curtained node at creation, with the Edge's own intent (S7).
+	// CurtainWaits: put a station wait in front of each pickup at a curtained
+	// node at creation, with the Edge's own intent (S7).
 	CurtainWaits bool
 }
 

@@ -1,13 +1,14 @@
 package engine
 
-// release_creation.go — S7: an order the Edge creates that would carry a bin
-// across a curtained node without a station wait gets one in front, and its
-// intent is written at creation. The curtain is tripped by the bin, not the
-// robot (owner, 2026-09-30), so every pickup or dropoff at a curtained node is
-// a crossing. The intent goes when Core parks the robot at the wait and the act
-// lets it: through a safe curtain at once; at a live one, an operator's press
-// is remembered and goes when it clears, and a system-created hold asks for a
-// RELEASE press (Q8).
+// release_creation.go — S7: an order the Edge creates that would lift a bin
+// off a curtained node without a station wait gets one in front of the pickup,
+// and its intent is written at creation. The robot drives in, the operator
+// clears the curtain from the cell, and the bin crossing the curtain on the
+// way out is what the gate is for. A dropoff gets no wait: the curtain was
+// cleared to let the robot in, and the robot finishes. The intent goes when
+// Core parks the robot at the wait and the act lets it: through a safe curtain
+// at once; at a live one, an operator's press is remembered and goes when it
+// clears, and a system-created hold asks for a RELEASE press (Q8).
 
 import (
 	"shingo/protocol"
@@ -30,9 +31,9 @@ func (e *Engine) curtainedCoreNodes() map[string]bool {
 	return out
 }
 
-// withCurtainWaits puts wait(node) in front of each pickup or dropoff at a
-// curtained node that no wait at that node already precedes, and reports the
-// ordinal (among the result's station waits) of the first wait it added, or -1.
+// withCurtainWaits puts wait(node) in front of each pickup at a curtained node
+// that no wait at that node already precedes, and reports the ordinal (among
+// the result's station waits) of the first wait it added, or -1.
 // wait names the purpose at the call, as the purpose census requires.
 func withCurtainWaits(steps []protocol.ComplexOrderStep, curtained map[string]bool,
 	wait func(node string) protocol.ComplexOrderStep) ([]protocol.ComplexOrderStep, int) {
@@ -42,7 +43,7 @@ func withCurtainWaits(steps []protocol.ComplexOrderStep, curtained map[string]bo
 	out := make([]protocol.ComplexOrderStep, 0, len(steps)+2)
 	first, waits := -1, 0
 	for _, s := range steps {
-		crossing := (s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff) && curtained[s.Node]
+		crossing := s.Action == protocol.ActionPickup && curtained[s.Node]
 		guarded := len(out) > 0 && out[len(out)-1].Action == protocol.ActionWait && out[len(out)-1].Node == s.Node
 		if crossing && !guarded {
 			if first < 0 {

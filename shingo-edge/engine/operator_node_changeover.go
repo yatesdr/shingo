@@ -218,16 +218,11 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 		stagedClaim.InboundStaging = staging
 		steps := BuildStagedDeliverSteps(&stagedClaim)
 		if steps != nil {
-			// A curtained node gets a station wait in front of the drop (S7):
-			// this button is the operator's press, remembered at the wait.
-			steps, firstWait := withCurtainWaits(steps, e.curtainedCoreNodes(),
-				func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeToolingDone) })
 			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps,
 				e.changeoverOrigin(ctx.changeover.ID))
 			if err != nil {
 				return nil, err
 			}
-			e.writeCreationIntent(order.ID, firstWait, release.PurposeToolingDone, "operator", release.Choices{})
 			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
 			return order, nil
 		}
