@@ -10,6 +10,7 @@ import (
 	"shingoedge/engine/changeover"
 	"shingoedge/orders"
 	"shingoedge/plc"
+	"shingoedge/release"
 	"shingoedge/service"
 )
 
@@ -115,7 +116,7 @@ type EngineOrchestration interface {
 	ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingUOP int) (*domain.Order, error)
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
-	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
+	ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	RequestProduceSwap(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string) error

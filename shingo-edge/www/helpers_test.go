@@ -27,6 +27,7 @@ import (
 	"shingoedge/orders"
 	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/plc"
+	"shingoedge/release"
 	"shingoedge/service"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
@@ -123,6 +124,8 @@ type stubEngine struct {
 
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 	lastChangeoverReleaseDisposition   *engine.ReleaseDisposition
+	lastChangeoverReleaseNodeID        int64
+	lastChangeoverReleasePurpose       release.Purpose
 	lastChangeoverReleaseProcessID     int64
 	changeoverReleaseResult            engine.ReleaseChangeoverWaitResult
 	changeoverReleaseErr               error
@@ -201,10 +204,12 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 	s.lastReleaseStagedOrdersDisposition = &d
 	return nil
 }
-func (s *stubEngine) ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
+func (s *stubEngine) ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
 	d := disp
 	s.lastChangeoverReleaseDisposition = &d
 	s.lastChangeoverReleaseProcessID = processID
+	s.lastChangeoverReleaseNodeID = processNodeID
+	s.lastChangeoverReleasePurpose = purpose
 	return s.changeoverReleaseResult, s.changeoverReleaseErr
 }
 func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {

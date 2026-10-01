@@ -23,6 +23,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
+	"shingoedge/release"
 )
 
 // The preview DTO (changeover.PreviewAction / PreviewSpec) lives in
@@ -199,7 +200,7 @@ func (h *Handlers) apiReleaseChangeoverProcess(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	res, err := h.orchestration.ReleaseChangeoverWait(processID, buildReleaseDisposition(req))
+	res, err := h.orchestration.ReleaseChangeoverWaitFor(processID, req.NodeID, release.Purpose(req.Purpose), buildReleaseDisposition(req))
 	if err != nil {
 		// Partial failure surfaces as an error with the failing nodes named —
 		// the engine joins them rather than reporting a success that left one

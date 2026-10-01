@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"shingoedge/release"
 )
 
 // releaseRequest is the parsed body shape shared by the disposition-carrying
@@ -36,12 +38,14 @@ type releaseRequest struct {
 	PartialCount          *int           `json:"partial_count"`
 	PartialCountSuggested *int           `json:"partial_count_suggested"`
 	CalledBy              string         `json:"called_by"`
-	// NodeID optionally scopes a changeover-wide release to ONE node's task.
-	// Zero/absent = every task, the historical behaviour. This is what gives
-	// the per-node release affordance a server path without a second engine
-	// method: same code, same evac-first sequencing, same disposition rules,
-	// just a filter.
+	// NodeID optionally scopes a changeover release to ONE node's task.
+	// Zero/absent = every task.
 	NodeID int64 `json:"node_id,omitempty"`
+	// Purpose names the decision a changeover release makes — the label of the
+	// button pressed: "ready" (the line is ready for the next part) or
+	// "tooling_done". Absent: the earliest decision each leg owes, which cannot
+	// tell ready-again from tooling-done for an evac staged at its tooling wait.
+	Purpose string `json:"purpose,omitempty"`
 }
 
 // parseReleaseRequest reads and validates the JSON body for any release
@@ -71,6 +75,11 @@ func parseReleaseRequest(r *http.Request) (releaseRequest, error) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return req, err
+	}
+	switch release.Purpose(req.Purpose) {
+	case "", release.PurposeReady, release.PurposeToolingDone, release.PurposeSwap:
+	default:
+		return req, fmt.Errorf("unknown release purpose %q (want ready, tooling_done or swap)", req.Purpose)
 	}
 	if strings.TrimSpace(req.CalledBy) == "" {
 		log.Printf("release: called_by empty, defaulting to operator_station (url=%s)", r.URL.Path)

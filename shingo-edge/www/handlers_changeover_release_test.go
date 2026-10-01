@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingoedge/engine"
+	"shingoedge/release"
 )
 
 // N1-d — the changeover-wide release has a door again, and this time it has a
@@ -90,5 +91,30 @@ func TestReleaseChangeoverProcess_SurfacesPartialFailure(t *testing.T) {
 	}
 	if !strings.Contains(body, "PLN_002") {
 		t.Errorf("the failing node is not named in %s", body)
+	}
+}
+
+// The button names its decision (S5): a station with "ready" and "tooling done"
+// buttons posts the one pressed, scoped to its node, and the engine's act gets
+// both. An unnamed purpose is refused rather than guessed.
+func TestReleaseChangeoverProcess_CarriesThePurposeAndNode(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandlers(t)
+	eng := h.orchestration.(*stubEngine)
+
+	rec, body := postRelease(t, changeoverReleaseRouter(h), "/api/processes/7/changeover/release",
+		`{"called_by":"press-1-ops","node_id":12,"purpose":"tooling_done"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, body)
+	}
+	if eng.lastChangeoverReleaseNodeID != 12 || eng.lastChangeoverReleasePurpose != release.PurposeToolingDone {
+		t.Errorf("engine got node %d purpose %q, want 12 and tooling_done",
+			eng.lastChangeoverReleaseNodeID, eng.lastChangeoverReleasePurpose)
+	}
+
+	rec, body = postRelease(t, changeoverReleaseRouter(h), "/api/processes/7/changeover/release",
+		`{"called_by":"press-1-ops","purpose":"done"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(body, "unknown release purpose") {
+		t.Errorf("an unknown purpose: status = %d, body = %s; want 400 naming it", rec.Code, body)
 	}
 }
