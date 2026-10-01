@@ -592,8 +592,8 @@ func (e *Engine) loadPair(act *releaseAct, pl *pairLoad, need release.Need) {
 	s := &pl.snap
 	switch need {
 	case release.NeedRoute:
-		// A changeover node whose work is a single leg is the changeover
-		// act's (doors 5 and 6).
+		// A changeover node whose work is not a coordinated two-robot swap is
+		// the changeover act's (doors 5 and 6).
 		if node, err := e.db.GetProcessNode(s.NodeID); err == nil && node != nil {
 			pl.routeProcess, pl.routeName = node.ProcessID, node.Name
 			if co, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil && co != nil {

@@ -217,15 +217,14 @@ func releasePinCells() []relCell {
 			act:   seq(sweepClick(dispNone), stages("evac"), sweepClick(dispNone))},
 
 		// ── §6.4: the station button on a single_robot changeover node ────────
-		// Its relay task carries both legs, so the adapter hands the click to
-		// the pair path, which refuses any mode but a two-robot swap. The
-		// changeover act releases this shape correctly (the sweep and the
-		// per-node changeover click do); S4 routes every changeover node's
-		// click there.
+		// Its relay task carries both legs, and the pair path refuses any mode
+		// but a two-robot swap. The adapters route a changeover node's click
+		// to the changeover act unless its work is a two-robot swap (S4), which
+		// releases the evac and defers the supply, as the sweep and the
+		// per-node click do. The ingest is S1b's rule: a changeover produce
+		// evac ships its bin's count at RELEASE.
 		{name: "6.4/station RELEASE on a single_robot changeover node",
-			bug:   "6.4",
-			today: "err:node SYN-PRESS: release-staged requires a two-ro | evac=staged supply=staged | rel=- | ingest=0 capred=0",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=0 capred=0",
+			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0",
 			build: coAt(coSRTooling, "evac", S, "supply", S),
 			act:   pairClick(dispNone)},
 

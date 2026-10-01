@@ -79,8 +79,8 @@ func (e *Engine) releaseIfReleasable(act *releaseAct, orderID int64, label strin
 // freshly loaded bin's manifest is never cleared), each through the trunk; a
 // leg Core cannot take yet is remembered and fires when it stages (door 8).
 //
-// A changeover node whose work is a single leg on one robot is the changeover
-// act's (N1-d): it is not a swap pair.
+// A changeover node whose work is not a coordinated two-robot swap is the
+// changeover act's (§6.4, and the single-leg shape, N1-d).
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	act := e.newAct(release.OriginStationPair, nodeID, disp.CalledBy)
 	pl := &pairLoad{snap: release.Pair{NodeID: nodeID}}
@@ -132,7 +132,7 @@ func (e *Engine) releaseChangeoverNode(pl *pairLoad, disp ReleaseDisposition) er
 	if err != nil {
 		return err
 	}
-	e.logFn("release-staged node=%s: single-leg changeover release — released=%d pending=%d deferred=%d",
+	e.logFn("release-staged node=%s: changeover node release — released=%d pending=%d deferred=%d",
 		pl.routeName, res.Released, res.Pending, res.Deferred)
 	return nil
 }

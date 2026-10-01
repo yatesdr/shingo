@@ -85,7 +85,7 @@ sweep/flip refused
 single-leg changeover task: the changeover act
   route: the changeover act
 relay task, single_robot claim (§6.4)
-  refuse G4: node Press 1: release-staged requires a two-robot swap mode, got "single_robot"
+  route: the changeover act
 changeover pair, two_robot claim: the pair path
   go finalize=false evac=11 supply=12
     log engine: release-staged node=Press 1 resolved evac=11 supply=12

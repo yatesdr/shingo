@@ -292,17 +292,27 @@ type PairPlan struct {
 	Logs         []Log
 }
 
-// PlanPair decides a pair click. Order: the route (a single-leg changeover
-// node goes to the changeover act), G4 the node and its claim and mode, G4
-// the pair, G7 the press-index collision, G6 the curtain, G4 the
-// departing-bin check.
+// PlanPair decides a pair click. Order: the route (a changeover node goes to
+// the changeover act), G4 the node and its claim and mode, G4 the pair, G7
+// the press-index collision, G6 the curtain, G4 the departing-bin check.
 func PlanPair(p Pair) PairPlan {
 	if !p.Loaded.Has(NeedRoute) {
 		return PairPlan{Need: NeedRoute}
 	}
-	if p.TaskEvac != p.TaskSupply {
+	switch {
+	case p.TaskEvac != p.TaskSupply:
 		// One leg on one robot: not a swap pair (N1-d).
 		return PairPlan{Route: true}
+	case p.TaskEvac && p.TaskSupply:
+		// Both legs: a two-robot swap stays on the pair path, which releases
+		// both at the click. Any other mode, or a node with no claim, is the
+		// changeover act's (§6.4): the pair path would refuse it.
+		if !p.Loaded.Has(NeedActive) {
+			return PairPlan{Need: NeedActive}
+		}
+		if p.LoadErr == nil && (!p.ClaimResolved || !p.Mode.IsTwoRobot()) {
+			return PairPlan{Route: true}
+		}
 	}
 	if !p.Loaded.Has(NeedActive) {
 		return PairPlan{Need: NeedActive}
