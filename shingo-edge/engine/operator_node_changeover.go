@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/release"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -143,13 +144,25 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 	// name; changeoverFromClaim resolves it through the parent the position's task
 	// was planned from.
 	fromClaim := e.changeoverFromClaim(ctx.node, ctx.nodeTask)
-	if fromClaim != nil && fromClaim.OutboundStaging != "" {
-		steps := BuildReleaseSteps(fromClaim)
+	// A curtained node takes the complex shape whatever its staging, so the
+	// pickup gets a station wait in front (S7); this button is the operator's
+	// press, remembered at the wait, with the count they entered.
+	curtained := e.curtainedCoreNodes()
+	if fromClaim != nil && (fromClaim.OutboundStaging != "" ||
+		(curtained[fromClaim.CoreNodeName] && fromClaim.OutboundDestination != "")) {
+		steps, firstWait := withCurtainWaits(BuildReleaseSteps(fromClaim), curtained,
+			func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeReady) })
 		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps,
 			e.changeoverOrigin(ctx.changeover.ID))
 		if err != nil {
 			return nil, err
 		}
+		var choices release.Choices
+		if partialQty > 0 {
+			n := int(partialQty)
+			choices = release.Choices{Mode: string(DispositionSendPartialBack), PartialCount: &n}
+		}
+		e.writeCreationIntent(order.ID, firstWait, release.PurposeReady, "operator", choices)
 		e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, &order.ID, domain.NodeTaskEmptyRequested)
 		return order, nil
 	}
@@ -205,11 +218,16 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 		stagedClaim.InboundStaging = staging
 		steps := BuildStagedDeliverSteps(&stagedClaim)
 		if steps != nil {
+			// A curtained node gets a station wait in front of the drop (S7):
+			// this button is the operator's press, remembered at the wait.
+			steps, firstWait := withCurtainWaits(steps, e.curtainedCoreNodes(),
+				func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeToolingDone) })
 			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps,
 				e.changeoverOrigin(ctx.changeover.ID))
 			if err != nil {
 				return nil, err
 			}
+			e.writeCreationIntent(order.ID, firstWait, release.PurposeToolingDone, "operator", release.Choices{})
 			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
 			return order, nil
 		}

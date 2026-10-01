@@ -2,6 +2,7 @@ package engine
 
 import (
 	"log"
+	"shingoedge/release"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -230,10 +231,18 @@ func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, si
 }
 
 func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID, orderUUID string, origin ordermgr.Origin) (int64, error) {
-	o, err := e.orderMgr.CreateComplexOrderPaired(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID, orderUUID, origin)
+	steps, firstWait := c.Steps, -1
+	if c.CurtainWaits {
+		// The changeover created this leg, not a press: a live curtain at its
+		// wait asks for a RELEASE press (Q8).
+		steps, firstWait = withCurtainWaits(c.Steps, e.curtainedCoreNodes(),
+			func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeReady) })
+	}
+	o, err := e.orderMgr.CreateComplexOrderPaired(&nodeID, 1, c.DeliveryNode, c.ProcessNode, steps, c.AutoConfirm, c.PayloadCode, siblingUUID, orderUUID, origin)
 	if err != nil {
 		return 0, err
 	}
+	e.writeCreationIntent(o.ID, firstWait, release.PurposeReady, "", release.Choices{})
 	return o.ID, nil
 }
 

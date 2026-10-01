@@ -12,6 +12,7 @@ const (
 	OriginChangeoverSweep Origin = "changeover_sweep" // door 5: the changeover's release of every node
 	OriginChangeoverNode  Origin = "changeover_node"  // doors 5 and 6: the changeover's release of one node
 	OriginIntent          Origin = "intent"           // the intent worker re-planning held intents
+	OriginCreation        Origin = "creation"         // an order created with a station wait in front of a curtained node (S7)
 )
 
 // Purpose is the station decision a station wait belongs to, from a closed

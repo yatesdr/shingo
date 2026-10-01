@@ -35,6 +35,7 @@ import (
 
 	"shingo/protocol"
 	ordermgr "shingoedge/orders"
+	"shingoedge/release"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -88,12 +89,41 @@ func (e *Engine) SendBinToQualityHold(nodeID int64, actor string) (*orders.Order
 	} else if len(existing) > 0 {
 		return nil, fmt.Errorf("a move order (%d) is already in flight for node %s", existing[0].ID, node.Name)
 	}
+	// On a curtained node the hold is a complex order (below), so the guard
+	// covers that shape too: one headed to the same containment destination.
+	if existing, lerr := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeComplex); lerr != nil {
+		return nil, fmt.Errorf("check in-flight hold: %w", lerr)
+	} else {
+		for _, o := range existing {
+			if o.DeliveryNode == containment {
+				return nil, fmt.Errorf("a quality hold (order %d) is already in flight for node %s", o.ID, node.Name)
+			}
+		}
+	}
 
 	nodeIDCopy := node.ID
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeIDCopy, 1, node.CoreNodeName, containment, bin.PayloadCode, true,
-		ordermgr.NoDemand())
-	if err != nil {
-		return nil, fmt.Errorf("create containment move: %w", err)
+	var order *orders.Order
+	if curtained := e.curtainedCoreNodes(); curtained[node.CoreNodeName] || curtained[containment] {
+		// A bin carried across a curtained node gets a station wait in front
+		// (S7), so the order takes the complex shape: the same pickup and drop,
+		// the same payload and auto-confirm. The press of QUALITY HOLD is the
+		// operator's, remembered at the wait until the curtain clears.
+		steps, firstWait := withCurtainWaits([]protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: node.CoreNodeName},
+			{Action: protocol.ActionDropoff, Node: containment},
+		}, curtained, func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeSwap) })
+		order, err = e.orderMgr.CreateComplexOrderWithPayload(&nodeIDCopy, 1, containment, node.CoreNodeName, steps, true,
+			bin.PayloadCode, ordermgr.NoDemand())
+		if err != nil {
+			return nil, fmt.Errorf("create containment move: %w", err)
+		}
+		e.writeCreationIntent(order.ID, firstWait, release.PurposeSwap, actor, release.Choices{})
+	} else {
+		order, err = e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeIDCopy, 1, node.CoreNodeName, containment, bin.PayloadCode, true,
+			ordermgr.NoDemand())
+		if err != nil {
+			return nil, fmt.Errorf("create containment move: %w", err)
+		}
 	}
 	// The marker is best-effort: the move IS the containment, so a failed
 	// marker write logs and continues rather than telling an operator their

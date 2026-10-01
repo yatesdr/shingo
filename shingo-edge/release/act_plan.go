@@ -127,6 +127,9 @@ type Decision struct {
 	Trunk    LegPlan
 	Point    StaticPoint
 	Logs     []Log
+	// DropIntent: the hold ends the leg's intent (a system-created hold at a
+	// live curtain, Q8); the next RELEASE press writes a new one.
+	DropIntent bool
 }
 
 // Out is a leg outside the act's scope: another decision's wait.
@@ -307,6 +310,12 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 		if c := legs[i].Leg.Curtain; c != nil {
 			d.Verdict, d.Gate, d.Wake = Hold, G6, WakeCurtain
 			d.Sentence = curtainHoldSentence(c)
+			// Q8: a system-created hold has no press to remember. It is
+			// dropped, and the chip asks for one in the curtain's own words.
+			if in := legs[i].Leg.Intent; a.Reevaluation && in != nil && in.System {
+				d.DropIntent, d.Wake = true, WakeClick
+				d.Sentence = c.Error()
+			}
 			d.Logs = append(d.Logs, Log{SinkRelease, fmt.Sprintf("order=%d disposition=%q - curtain held the release: %v",
 				legs[i].Leg.OrderID, legs[i].Leg.Mode, c)})
 		}

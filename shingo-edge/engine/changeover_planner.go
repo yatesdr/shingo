@@ -293,6 +293,7 @@ func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode 
 			payloadA = evacPayloadCode
 		}
 		action.SupplyOrder = complexSpecWithPayload(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA, payloadA)
+		action.SupplyOrder.Complex.CurtainWaits = d.CurtainWaitsA
 	}
 	if d.StepsB != nil {
 		action.EvacOrder = complexSpecWithPayload("", processNode, d.StepsB, d.AutoConfirmB, evacPayloadCode)

@@ -526,6 +526,10 @@ type ChangeoverDispatch struct {
 	StepsA        []protocol.ComplexOrderStep
 	DeliveryNodeA string
 	AutoConfirmA  bool
+	// CurtainWaitsA: StepsA crosses its position with no station wait, so at
+	// a curtained position the creation puts one in front of each crossing
+	// (S7, createComplexFromSpec).
+	CurtainWaitsA bool
 
 	// CarriesFromPayloadA stamps StepsA with the from-style payload code. Set it
 	// when StepsA opens by lifting an OLD bin off the line: without the stamp the
@@ -900,6 +904,7 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 		StepsA:        steps,
 		DeliveryNodeA: pos,
 		AutoConfirmA:  true,
+		CurtainWaitsA: true,
 		// The opening pickup lifts the OLD bin off the position, so the order
 		// carries the from-style payload. Safe alongside the Empty refill above,
 		// whose own payload filter is dropped.

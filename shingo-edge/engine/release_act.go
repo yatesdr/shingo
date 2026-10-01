@@ -80,6 +80,11 @@ func (e *Engine) commitAct(act *releaseAct, p release.ActPlan, lls []*legLoad) e
 			}
 		case release.Hold:
 			e.emitLogs(d.Logs)
+			if d.DropIntent {
+				if err := e.db.SetOrderReleaseIntent(d.OrderID, ""); err != nil {
+					e.logRelease("order=%d: drop release intent: %v", d.OrderID, err)
+				}
+			}
 			e.setReleaseHeld(d.OrderID, d.Sentence)
 			if d.Gate == release.G6 {
 				e.noteReleaseHeld(d.OrderID, d.Sentence)
@@ -447,6 +452,15 @@ func (e *Engine) onStagedMessage(orderID int64, stationWait *int) {
 	case release.StageConsume:
 		if err := e.db.SetOrderReleaseIntent(orderID, ""); err != nil {
 			e.logRelease("order=%d: consume release intent: %v", orderID, err)
+		}
+	case release.StageAdvance:
+		// A creation's standing intent (S7): the leg reached the next wait put
+		// in front of a curtained node, and the intent now waits there.
+		in.StationWait, in.SentAt, in.Resent = *stationWait, "", false
+		if raw, err := in.Encode(); err == nil {
+			if err := e.db.SetOrderReleaseIntent(orderID, raw); err != nil {
+				e.logRelease("order=%d: advance release intent: %v", orderID, err)
+			}
 		}
 	case release.StageResend:
 		in.SentAt, in.Resent = "", true

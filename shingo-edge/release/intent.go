@@ -22,6 +22,14 @@ type Intent struct {
 	// Resent: the one re-send on a same-wait re-stage (Core's faulted no-op)
 	// has been spent.
 	Resent bool `json:"resent,omitempty"`
+	// Standing: a creation's intent (S7), which follows its leg through each
+	// of the station waits put in front of curtained nodes, instead of being
+	// consumed at the next one.
+	Standing bool `json:"standing,omitempty"`
+	// System: nobody pressed for it (an order the Edge created on its own). A
+	// live curtain at its wait drops it and asks for a RELEASE press (Q8);
+	// an operator's remembered press goes by itself when the curtain clears.
+	System bool `json:"system,omitempty"`
 }
 
 // Choices is the operator's disposition as data: what was chosen, never a
@@ -66,6 +74,7 @@ const (
 	StageKeep    StageEffect = iota // nothing to do
 	StageConsume                    // clear the intent
 	StageResend                     // re-send the release once
+	StageAdvance                    // a standing intent moves to the new wait
 )
 
 // OnStaged decides what Core's OrderStaged at station wait ordinal does to
@@ -75,6 +84,8 @@ func (i *Intent) OnStaged(ordinal *int) StageEffect {
 		return StageKeep
 	}
 	switch {
+	case *ordinal > i.StationWait && i.Standing:
+		return StageAdvance
 	case *ordinal > i.StationWait:
 		return StageConsume
 	case *ordinal == i.StationWait && i.Sent() && !i.Resent:
