@@ -185,9 +185,13 @@ func (d *Dispatcher) reResolveSteps(order *orders.Order, steps []resolvedStep, p
 		}
 		// The rebuild drops any stamp the step carried: it names a node this
 		// resolve may have moved off. A stamp only this resolve just granted rides.
+		// Who owns a wait survives the rebuild (WaitKind, WaitLane): only the node
+		// is re-resolved.
 		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group, Empty: step.Empty,
 			PayloadCode:   step.PayloadCode,
 			ExclusiveSlot: step.ExclusiveSlot,
+			WaitKind:      step.WaitKind,
+			WaitLane:      step.WaitLane,
 			Vacate:        vacate,
 			Anchor:        step.Anchor})
 	}
@@ -204,7 +208,7 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 	out := make([]resolvedStep, 0, len(steps))
 	for _, s := range steps {
 		out = append(out, resolvedStep{Action: s.Action, Node: s.Node, Empty: s.Empty,
-			PayloadCode: s.PayloadCode, ExclusiveSlot: s.ExclusiveSlot})
+			PayloadCode: s.PayloadCode, ExclusiveSlot: s.ExclusiveSlot, WaitKind: s.WaitKind})
 	}
 	return out
 }

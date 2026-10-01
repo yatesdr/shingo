@@ -195,3 +195,39 @@ func TestWiden_StillStopsAtAnOperatorWait(t *testing.T) {
 			"pools parks orders whose conditions resolve mid-flight", hold)
 	}
 }
+
+// TestReResolve_StationWaitAtAGroupKeepsItsKind: a station wait whose node is
+// an NGRP goes through the group arm of the re-resolve, and the rebuilt step
+// keeps WaitKind. The rebuild used to drop it, so the wait came back untagged
+// and owned by the station only through the drain-window default (S3,
+// complex_steps.go).
+func TestReResolve_StationWaitAtAGroupKeepsItsKind(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	ngrpType, err := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
+	if err != nil {
+		t.Fatalf("get NGRP type: %v", err)
+	}
+	grp := &nodes.Node{Name: "SYN-WAIT-GRP", IsSynthetic: true, Enabled: true, NodeTypeID: &ngrpType.ID}
+	if err := db.CreateNode(grp); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	child := &nodes.Node{Name: "SYN-WAIT-SLOT", Enabled: true, ParentID: &grp.ID}
+	if err := db.CreateNode(child); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: sd.StorageNode.Name},
+		{Action: protocol.ActionWait, Node: grp.Name, WaitKind: WaitKindStation},
+		{Action: protocol.ActionDropoff, Node: sd.LineNode.Name},
+	}
+	out, _, err := d.reResolveComplexSteps(steps, sd.Payload.Code, reservations.Anyone)
+	if err != nil {
+		t.Fatalf("reResolveComplexSteps: %v", err)
+	}
+	if out[1].WaitKind != WaitKindStation {
+		t.Errorf("the station wait lost its kind in re-resolution: %+v", out[1])
+	}
+}
