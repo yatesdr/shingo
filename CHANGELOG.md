@@ -3,6 +3,76 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-01 — Release layer, fact owners, stage 2 pulled directly
+
+Core first, then Edge (Core 137–139, Edge v1–v11). Deployed SPR and HK at 6378a6c6.
+
+- Guards run on every push; gate failures print only failing tests
+- A private IP in a tracked file fails the gate; fixtures moved to TEST-NET
+- Dead lint rules fail a test; raw status and `claimed_by` writers pinned
+- soakstat reports a failed check instead of a clean 0
+- Faulted orders stay on the Edge orders screen past 7 days
+- Typed Edge–Core HTTP contract in `protocol`
+- One migration runner for Core and Edge; Edge old chain frozen at v1
+- `/edges` shows each station's schema version (137)
+- `production.report` and `tag.verify` deleted
+- `quality_hold` bin status retired; rows move to `flagged` (138)
+- A robot landing no longer un-flags a bin
+- Release only releases staged bins; bin edits write only their own fields
+- One order's release no longer deletes another's reservation
+- Produced bin manifest follows its payload
+- Payload capacity must be at least 1
+- bin-load names its bin on multi-bin nodes; unknown payload refused
+- Unconfirm writes a ledger row
+- Running styles can't be retired; groups with live orders can't be deleted
+- Dead routes, `staging_ttl`, two orphan Edge tables dropped (Edge v2)
+- `payload_catalog.cycle_seconds` dropped (Edge v3)
+- Style flip reaches Core in one message
+- Releasing a sequential position flips the line to its partner
+- Departing carrier clears its lineside identity
+- Retiring a node or process retires its piles
+- Pullback and consolidation intents survive restart (Edge v4)
+- Release-path fixes: no-op past a held wait, errors never fail the order
+- Next wait stages without RUNNING, and once after restart
+- Repeated release captures lineside once; double-tap refused
+- SEND PARTIAL with 0 releases the bin empty
+- One RELEASE on sequential A/B moves the line to B
+- Changeover station RELEASE goes to the changeover act
+- Produce count splits at RELEASE in every mode (Edge v5)
+- FG curtain configured per node (Edge v6)
+- Produce ingest never expires and is epoch-fenced
+- Pickups and releases never dead-letter
+- RDS resolve failure keeps the block
+- Staged orders carry station-wait number and kind (Edge v7)
+- `releasePoints` Core read (Edge v8)
+- Release layer: pure plans, one loader, one commit site
+- Station waits name a purpose: swap, ready, tooling_done
+- Release is an intent a worker keeps (Edge v9); sim release cap retired
+- Board renders release from persisted columns
+- Curtain wait only before a pickup; drops finish
+- Sim light curtain is a writable BOOL tag
+- Two-stage stage 2 can be pulled directly (139, Edge v10)
+- CLEAR at a pulled-directly stage 2 leaves the cart
+- Intent worker reads through a partial index (Edge v11)
+- CI: lint pins Go 1.25.0; citation guard same on every OS
+
+## 2026-09-29 — FG light curtain, display fits the screen
+
+Edge only; no migrations.
+
+- FG light-curtain release interlock
+- Operator display zooms to fit; kiosk fixed at 1024 wide
+- Flow composer: set position role, add/remove parts
+- Negative count picks the empty robot group; plain help text
+
+## 2026-09-28 — Vacated-slot swap rule
+
+No migrations. Deployed SPR at cae7f8cf.
+
+- Swap drop may land on a slot a committed lift vacates
+- Two-stage stage 1 gets a group of its windows
+- Node group as screen position is its nodes
+
 ## 2026-09-25 — Lineside piles as levels, quality containment, and the two-stage unloader
 
 Piles now mirror to Core as levels, quality containment lands, a loader return with nowhere safe to go
@@ -34,6 +104,9 @@ then the Edge (Core migrations 131–136, Edge `core_loaders.leaves_bare`; no Co
 - The style guide gains placement boxes, choice buttons, and the cart and bare-marker glossary rows
 - www no longer imports store for containment or copy-claims rows
 - The plant-claims mirror test builds its tables from the schema snapshot
+- Bin moved by hand onto a loader home lands available
+- Per-part loader keeps fulls on its own spots
+- Nodes page: one tile size, one card style
 
 ## 2026-09-24 — One count per carrier, a count feed that heals itself, and stranded bins told the truth
 
