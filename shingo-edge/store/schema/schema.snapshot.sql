@@ -15,6 +15,8 @@ CREATE INDEX idx_order_history_order_id ON order_history(order_id);
 
 CREATE INDEX idx_orders_process_node_id ON orders(process_node_id);
 
+CREATE INDEX idx_orders_release_intent ON orders(process_node_id) WHERE release_intent <> '';
+
 CREATE INDEX idx_orders_source_node ON orders(source_node);
 
 CREATE INDEX idx_orders_status ON orders(status);

@@ -1332,6 +1332,23 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// The intent worker's boot and 15 s floor ask which nodes hold an
+			// unsent release intent. Through idx_orders_process_node_id that
+			// walked every order with a node, history included, on every tick.
+			// A partial index holds only the rows carrying an intent, a handful.
+			Version: 11,
+			Name:    "orders_release_intent_index",
+			Fn: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_orders_release_intent ON orders(process_node_id) WHERE release_intent <> ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_orders_release_intent'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 
