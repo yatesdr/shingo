@@ -194,7 +194,7 @@ func TestDigMarkExemption_InTransitHolderStillRefusesTheDig(t *testing.T) {
 // it did not touch DigOwner, which is what that arm reads.
 //
 // When the dig finishes, the dweller is re-evaluated by existing wiring:
-// unlockLaneForCompound (compound.go:2144-2156) releases each held lane and then
+// unlockLaneForCompound (dispatch/compound.go) releases each held lane and then
 // calls EvaluateLaneReleases and EvaluateDwellersSharingGroupWith on it.
 func TestDigMarkExemption_DwellerIsNotReleasedWhileTheDigHoldsTheLane(t *testing.T) {
 	t.Parallel()

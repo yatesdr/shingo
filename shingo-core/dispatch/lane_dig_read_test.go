@@ -107,10 +107,11 @@ func TestAcquireLanesForOrder_ForeignDigRefuses(t *testing.T) {
 // (digOwner == orderID); an exemption written only for legs refuses the dig's
 // OWNER at its own dig row.
 //
-// That is not hypothetical on this path. In expose mode the lane lock is
-// TRANSFERRED from the compound parent to the complex parent (compound.go:327-
-// 331), and ResumeCompound then puts that parent back through the scanner to
-// re-resolve its own pickup. The scanner calls AcquireLanesForOrder. So the order
+// That is not hypothetical on this path. In expose mode the lane lock WAS
+// transferred from the compound parent to the complex parent (the expose bridge,
+// extendLaneLockForExposeMode, since removed: see the note after
+// cancelCompoundChildren in dispatch/compound.go), and ResumeCompound then put
+// that parent back through the scanner to re-resolve its own pickup. The scanner calls AcquireLanesForOrder. So the order
 // arriving here is routinely the dig owner, entering the lane its own dig holds,
 // and the lock is released by that very pickup — refuse it and nothing ever
 // clears it.

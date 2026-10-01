@@ -130,7 +130,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		}
 	}
 	// Durable supply ↔ evac sibling linkage for two-robot swap pairs.
-	// Mirrors operator_stations.go:134 (the operator-initiated path) —
+	// Mirrors applyConsumePlan (operator_stations.go, the operator-initiated path) —
 	// without it, isSupplyOrderInTwoRobotSwap can't identify the supply
 	// leg via SiblingOrderID, and the supply_bin_guard in
 	// releaseOrderWithFullLineside misses. Plant 2026-05-11 (SNF2 ALN_001):

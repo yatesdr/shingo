@@ -1490,7 +1490,7 @@ func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
 // asks a demand episode made, not the legs those asks grew.
 //
 // WHY THE PLAIN COUNT IS WRONG FOR THE LEVEL KEEPER. Compound reshuffle children
-// INHERIT their parent's origin (dispatch/compound.go:553), deliberately — a dig
+// INHERIT their parent's origin (dispatch writeCompoundChildren), deliberately — a dig
 // is part of the cost of the demand that caused it, and the demand grain wants
 // that recorded. But it means one physical ask that happens to trip a reshuffle
 // reports as N against the origin, and a keeper subtracting "what I have already

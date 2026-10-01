@@ -77,7 +77,7 @@ func (e *Engine) reconcileLoaderClaims(loaders []protocol.LoaderInfo) {
 	// Before it the population is NOT zero: rows survive from Edge boot to the
 	// first non-empty loader set — unbounded while Core is unreachable or sends
 	// an empty one. A style cloned in that window does NOT inherit them:
-	// cloneStyleTx's SELECT excludes manual_swap rows (styles.go:282, pinned by
+	// cloneStyleTx's SELECT excludes manual_swap rows (store/processes/styles.go, pinned by
 	// TestCloneStyle_LeavesWithheldConfigurationBehind). This loop is what
 	// empties the rows that remain in the source style.
 	for _, m := range moved {

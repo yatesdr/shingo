@@ -20,7 +20,7 @@ import (
 // three and a half hours, because the only guard was a count that could not see
 // the orders it had already created) at a new grain.
 
-// A dig child inherits its parent's origin ON PURPOSE (compound.go:553) — the
+// A dig child inherits its parent's origin ON PURPOSE (writeCompoundChildren) — the
 // reshuffle is part of the cost of the demand that caused it. That makes the
 // plain CountLiveByOrigin wrong for a keeper: one physical ask that trips a
 // reshuffle would report as several, and the keeper would stop refilling a group

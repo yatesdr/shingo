@@ -85,21 +85,32 @@ while IFS= read -r cite; do
   #               the glob form matched a SUFFIX, so a citation to reshuffle.go
   #               resolved to complex_reshuffle.go — a different, shorter file —
   #               and a perfectly good citation was reported as past the end.
+  #
+  # EVERY MATCH, NOT THE FIRST. A suffix or a basename can name several files,
+  # and "the first" is whichever find walks to first: alphabetical on NTFS, hash
+  # order on ext4. A citation to compound.go passed on Windows (dispatch's) and
+  # failed in CI (internal/testdb's, a tenth the length). The line must fit in
+  # at least one of the files the citation could name, the same answer on every
+  # OS.
   found=""
   [ -f "$f" ] && found="$f"
   if [ -z "$found" ] && [[ "$f" == */* ]]; then
-    found=$(find $MODULES -path "*/$f" -print -quit 2>/dev/null)
+    found=$(find $MODULES -path "*/$f" -print 2>/dev/null | sort)
   fi
   if [ -z "$found" ]; then
-    found=$(find $MODULES -name "$base" -print -quit 2>/dev/null)
+    found=$(find $MODULES -name "$base" -print 2>/dev/null | sort)
   fi
   if [ -z "$found" ]; then
     bad_cites+="$cite|no such file"$'\n'
     continue
   fi
-  total=$(wc -l < "$found" | tr -d ' ')
+  longest="" total=0
+  while IFS= read -r cand; do
+    n=$(wc -l < "$cand" | tr -d ' ')
+    if [ "$n" -gt "$total" ]; then total=$n longest=$cand; fi
+  done <<< "$found"
   if [ "$ln" -gt "$total" ]; then
-    bad_cites+="$cite|$found has only $total lines"$'\n'
+    bad_cites+="$cite|$longest has only $total lines"$'\n'
   fi
 done <<< "$cites"
 

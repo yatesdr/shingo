@@ -38,9 +38,9 @@ import (
 // station_id is carrying three jobs at once: authorization (this), addressing
 // (which Edge gets the status), and attribution (whose demand caused it). Only the
 // first is wrong for a leg. Blanking it would lose the audit actor on the
-// Fail/Cancel paths (compound.go:255, :452, :456), and a new originating-station
-// column would duplicate origin_id/origin_class, which is already copied
-// parent→child at compound.go:132. ParentOrderID != nil already means exactly
+// Fail/Cancel paths (dissolveCompound, cancelCompoundChildren), and a new
+// originating-station column would duplicate origin_id/origin_class, which is
+// already copied parent→child in writeCompoundChildren (dispatch/compound.go). ParentOrderID != nil already means exactly
 // "Core created this", structurally and durably.
 
 // TestAuthority_StationCannotCancelAReshuffleLeg is the red, and cancel is chosen
