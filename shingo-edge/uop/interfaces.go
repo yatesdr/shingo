@@ -59,7 +59,7 @@ type Pickup interface {
 
 // Boundary — non-UOP orchestration boundary that needs a flush before
 // attribution context changes. Today's caller: the release trunk's A/B
-// active-pull flip (releaseFlipPartner).
+// active-pull flip (commitFlip).
 type Boundary interface {
 	MarkAttributionBoundary(nodeID int64) error
 }

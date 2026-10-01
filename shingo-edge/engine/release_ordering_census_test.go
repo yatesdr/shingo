@@ -134,8 +134,9 @@ func TestReleaseSurfacesAreCensused(t *testing.T) {
 func TestReleaseSurfacesStateTheirOrdering(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ file, marker string }{
-		{"operator_stations.go", "FROM HERE ON, SIDE EFFECTS"},
-		{"operator_release.go", "U1 AFTER THE RELEASE, NOT BEFORE IT"},
+		{"release_commit.go", "It cannot refuse on policy"},
+		{"release_commit.go", "U1 AFTER THE RELEASE, NOT BEFORE IT"},
+		{"release_doors.go", "refuses anything itself"},
 	} {
 		src, err := os.ReadFile(filepath.Clean(tc.file))
 		if err != nil {

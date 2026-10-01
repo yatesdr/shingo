@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
+	"shingoedge/release"
 	"shingoedge/store/processes"
 )
 
@@ -37,6 +38,25 @@ func seedSwapPairAt(t *testing.T, mode protocol.SwapMode, evacStatus, supplyStat
 	return eng, nodeID, evacID, supplyID
 }
 
+// collisionGate runs the pair click's G7 row (the press-index collision) on
+// its own: the loader's collision facts for the two legs, then the plan's
+// verdict. It applies only to press-index with both legs, as the pair plan
+// asks it.
+func collisionGate(eng *Engine, node *processes.Node, claim *processes.NodeClaim, evacID, supplyID *int64) error {
+	if claim.SwapMode != protocol.SwapModeTwoRobotPressIndex || evacID == nil || supplyID == nil {
+		return nil
+	}
+	pl := &pairLoad{node: node, claim: claim,
+		snap: release.Pair{NodeName: node.Name, Mode: claim.SwapMode, Evac: evacID, Supply: supplyID}}
+	pl.evac, pl.evacErr = eng.db.GetOrder(*evacID)
+	pl.supply, pl.supplyErr = eng.db.GetOrder(*supplyID)
+	pl.snap.Arms = eng.collisionArms(newReleaseAct(), pl)
+	if p, held := release.PlanCollision(pl.snap); held {
+		return p.Refusal
+	}
+	return nil
+}
+
 func nodeAndClaim(t *testing.T, eng *Engine, nodeID int64) (*processes.Node, *processes.NodeClaim) {
 	t.Helper()
 	node, _, claim, err := loadActiveNode(eng.db, nodeID)
@@ -54,7 +74,7 @@ func TestRefusePlacingLegWhileSiblingPending_Refuses(t *testing.T) {
 		protocol.SwapModeTwoRobotPressIndex, protocol.StatusQueued, protocol.StatusStaged)
 	node, claim := nodeAndClaim(t, eng, nodeID)
 
-	err := eng.refusePlacingLegWhileSiblingPending(node, claim, &evacID, &supplyID)
+	err := collisionGate(eng, node, claim, &evacID, &supplyID)
 	if err == nil {
 		t.Fatal("want a refusal: the placing leg would drop onto a press the sibling has not cleared")
 	}
@@ -125,7 +145,7 @@ func TestRefusePlacingLegWhileSiblingPending_LetsEverythingElseThrough(t *testin
 			if tc.nilSupply {
 				sp = nil
 			}
-			if err := eng.refusePlacingLegWhileSiblingPending(node, claim, ep, sp); err != nil {
+			if err := collisionGate(eng, node, claim, ep, sp); err != nil {
 				t.Errorf("must not refuse: %v", err)
 			}
 		})

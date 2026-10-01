@@ -315,7 +315,7 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	//
 	//   - This gates /release-staged -> ReleaseStagedOrders, which since hop
 	//     A4-ii REMEMBERS a leg Core will not take yet
-	//     (rememberDeferredSiblingRelease) and re-fires it when it reaches staged
+	//     (release.PlanDeferral) and re-fires it when it reaches staged
 	//     (wiring_status_changed.handleSiblingReleaseRefire). The operator's
 	//     single click already means "go for the pair, defer the rest". Gating on
 	//     the supply deletes that capability and converts "click now, machinery

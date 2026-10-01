@@ -39,7 +39,7 @@ const manualSwapWindowSlots = 1
 // the threshold receiver that replaced it (HandleLoopBelowThreshold + its
 // park/replay machinery). A third followed (2026-08): the DemandSignal wire
 // subject itself was deleted — Core no longer emits it, so the unloader's U1
-// full-in now fires from operator release alone (operator_release.go).
+// full-in now fires from operator release alone (the release commit, release_commit.go).
 //
 // A fourth retirement: the L1Source type (L1SideCycle, L1LoopThreshold,
 // L1LoaderPush) and its operator-driven suppression policy. It existed to force

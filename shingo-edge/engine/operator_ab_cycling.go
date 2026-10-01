@@ -13,7 +13,7 @@ import (
 // flipTargetReady returns "" when this position can feed the line now, or an
 // operator-readable reason why not. It is not a refusal: a RELEASE on the
 // partner still moves the line here (owner, 2026-09-30), and the reason is
-// what the line's count waits on (releaseFlipPartner).
+// what the line's count waits on (commitFlip).
 //
 // ── THE INVARIANT CARRIES THE KNOWLEDGE ───────────────────────────────────
 //
@@ -46,7 +46,7 @@ import (
 //	               beyond a bin being present — the invariant covers the rest.
 //
 // Every failure to READ answers ready(""): a query hiccup must not turn into a
-// refusal (releaseFlipPartner refuses only a not-ready partner with a carrier
+// refusal (commitFlip refuses only a not-ready partner with a carrier
 // still bound).
 func (e *Engine) flipTargetReady(node *processes.Node) string {
 	rt, err := e.db.GetProcessNodeRuntime(node.ID)
@@ -134,7 +134,7 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 
 // pairedNodeOf resolves the other half of an A/B pair from a node's active claim.
 //
-// The release trunk's guard (linePullsFrom) and its flip (releaseFlipPartner)
+// The release trunk's guard (linePullsFrom) and its flip (commitFlip)
 // both go through it, so the question and the write cannot disagree about
 // which row the partner is.
 func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
@@ -161,7 +161,7 @@ func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
 // other, in one transaction. The canonical writer of active_pull. The one
 // other writer is tooling evacuate's clear (changeover_applier.go), which
 // sets both sides dark deliberately. writePullSide's one production caller is
-// the release trunk's releaseFlipPartner — releasing a sequential position is
+// the release trunk's commitFlip — releasing a sequential position is
 // the statement that the line has moved, taken as one atomic fact. (The
 // operator flip door, Engine.FlipABNode, was deleted with its last caller.)
 //

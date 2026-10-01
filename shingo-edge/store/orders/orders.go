@@ -36,7 +36,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -163,7 +163,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
@@ -201,7 +201,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
@@ -460,6 +460,15 @@ func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
 // scenesync runtime.
 func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
 	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now') WHERE id=?`, stepsJSON, id)
+	return err
+}
+
+// UpdateStepsAndFacts stores an order's steps with the release facts computed
+// from them (release.Facts), in one statement: the facts never describe steps
+// the row does not hold.
+func UpdateStepsAndFacts(db *sql.DB, id int64, stepsJSON, factsJSON string) error {
+	_, err := db.Exec(`UPDATE orders SET steps_json=?, release_facts=?, updated_at=datetime('now') WHERE id=?`,
+		stepsJSON, factsJSON, id)
 	return err
 }
 

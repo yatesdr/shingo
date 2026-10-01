@@ -259,7 +259,7 @@ The formula in the design brief is `max(2, ceil(threshold / C))` — the per-bin
 that is essentially the only automatic evaluation site. The produce-tick path
 evaluates the mirror-image relief level, and a sequential release runs the
 level sweep's own decision on the side that went dark at the moment the pair
-flips (`releaseFlipPartner`). There is NO periodic
+flips (`commitFlip`). There is NO periodic
 re-evaluation of a cell claim anywhere; the Edge reconciler only closes
 stranded episodes, it never fires.
 

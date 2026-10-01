@@ -83,7 +83,7 @@ Core fetches an empty carrier (not a full bin).
 - Two positions (A, B) share one process+style; `paired_core_node` points each at the other;
   `active_pull` marks the bin the line is currently filling. When it fills, the operator
   releases it, and the release flips `active_pull` to the other bin (the release trunk,
-  `releaseFlipPartner`); the level sweep then reorders the side that went dark, which swaps
+  `commitFlip`); the level sweep then reorders the side that went dark, which swaps
   it out:
 - Order A (removal): wait(node)→pickup(node)→dropoff(OutboundDestination)
 - Order B (backfill, auto-created when A goes in_transit): pickup(InboundSource)→dropoff(node)

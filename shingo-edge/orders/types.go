@@ -123,7 +123,7 @@ func IsTerminalSuccess(status protocol.Status) bool {
 // load-bearing distinction; do not reason about one path from the other.
 //
 //   - ReleaseStagedOrders (the /release-staged button) DEFERS. Hop A4-ii records
-//     a skipped leg via rememberDeferredSiblingRelease and re-fires it when it
+//     a skipped leg (release.PlanDeferral) and re-fires it when it
 //     reaches staged, so the operator's single click means "go for the pair,
 //     defer what Core will not take yet". Nothing is lost, so nothing upstream
 //     of that button needs to gate on this predicate — and gating on it would

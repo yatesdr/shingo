@@ -362,7 +362,7 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 // bin moves until the operator releases. The physical collision needs one leg
 // RELEASED while the other is not, and that is what the release-gate
 // precondition refuses (see ReleaseStagedOrders and
-// refusePlacingLegWhileSiblingPending). A refused release is a click the
+// release.PlanCollision, G7). A refused release is a click the
 // operator repeats; a refused dispatch was a mutual wait.
 func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orderR2 []protocol.ComplexOrderStep) {
 	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {

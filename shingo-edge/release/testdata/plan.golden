@@ -1,0 +1,227 @@
+# The release plans over named snapshots (release/plan_golden_test.go).
+
+## PlanLeg — the trunk
+door2/read error
+  refuse G4: get order 11: disk I/O error
+pair/read error
+  refuse G4: get order evac (11): disk I/O error
+sweep/read error
+  refuse G4: node SYN-PRESS (evac): get order: disk I/O error
+    log std: release changeover wait node SYN-PRESS (evac): get order: disk I/O error
+door2/queued
+  refuse G1: order 11 is queued, which Core will not release — no empty slot at SMN_029 (no_slot)
+pair/queued
+  skip G1: not-releasable
+    log engine: deferred release: order evac (11) status="queued" is not releasable at Core (needs staged or in_transit) — skipping, will release when it stages
+pair/confirmed
+  skip G1: terminal
+    log engine: deferred release: order evac (11) status="confirmed" is terminal — skipping
+sweep/dispatched
+  skip G1: not-releasable
+    log std: release changeover wait node SYN-PRESS (evac): order 11 status="dispatched" not releasable at Core — counting pending
+sweep/cancelled
+  skip G1: terminal
+door2/curtain live
+  refuse G6: Release the light curtain at SYN-PRESS, then press RELEASE again.
+    log release: order=11 disposition="capture_lineside" - curtain refused the release: Release the light curtain at SYN-PRESS, then press RELEASE again.
+sweep/curtain live
+  refuse G6: node SYN-PRESS (evac): Release the light curtain at SYN-PRESS, then press RELEASE again.
+    log release: order=11 disposition="capture_lineside" - curtain refused the release: Release the light curtain at SYN-PRESS, then press RELEASE again.
+    log std: release changeover wait node SYN-PRESS (evac): Release the light curtain at SYN-PRESS, then press RELEASE again.
+door2/no process node
+  go plain flip=false finalize=false suppress=false u1=false
+door2/node unreadable
+  refuse G4: get process node 5: disk I/O error
+door2/pull state unreadable
+  refuse G5: node SYN-PRESS: could not read whether the line is pulling from it (disk I/O error)
+    log std: release order 11 at node SYN-PRESS: disk I/O error — declining rather than releasing on an unread pull state
+door2/runtime unreadable
+  refuse G4: ensure runtime for node 5: disk I/O error
+door2/drop, departing check unreadable
+  refuse G4: departing-bin check: order 11: load steps: disk I/O error
+    log release: order=11 node=Press 1 — refusing release: departing-bin check: order 11: load steps: disk I/O error
+door2/drop of a produce bin
+  go drop flip=false finalize=true suppress=false u1=false
+door2/no claim
+  go no-claim flip=false finalize=false suppress=false u1=false
+    log release: order 11 on node Press 1 — toClaim is nil (runtime.ActiveClaimID=<nil>), skipping manifest sync; disposition "capture_lineside" dropped
+door2/no claim, partner blocked
+  refuse G5: cannot release SYN-A yet: the line's parts would land on the carrier still on SYN-B: SYN-B has no bin on it
+    log release: order 11 on node Press 1 — toClaim is nil (runtime.ActiveClaimID=<nil>), skipping manifest sync; disposition "capture_lineside" dropped
+door2/supply unclassifiable
+  refuse G4: supply-leg check: order 11: no steps stored
+    log release: order=11 node=Press 1 disposition="capture_lineside" — refusing release: supply-leg check: order 11: no steps stored
+door2/departing check unreadable
+  refuse G4: departing-bin check: node Press 1: read claim 7: disk I/O error
+    log release: order=11 node=Press 1 — refusing release: departing-bin check: node Press 1: read claim 7: disk I/O error
+door2/lineside evac
+  go lineside flip=false finalize=false suppress=false u1=false
+pair/lineside supply
+  go lineside flip=false finalize=false suppress=true u1=false
+door2/produce evac, bin full
+  go produce flip=false finalize=true suppress=false u1=true
+door2/produce supply
+  go produce flip=false finalize=false suppress=true u1=false
+door2/produce, consume-side capture mode absent
+  go produce flip=false finalize=false suppress=false u1=false
+door2/sequential, flip to a ready partner
+  go lineside flip=true finalize=false suppress=false u1=false
+door2/sequential, partner has no bin (count waits)
+  go lineside flip=true finalize=false suppress=false u1=false
+door2/sequential, partner's outgoing carrier bound (L3-co)
+  refuse G5: cannot release SYN-A yet: the line's parts would land on the carrier still on SYN-B: SYN-B's changeover order 2 has not delivered (submitted) — release it first
+door2/sequential, parked side (own bit off)
+  go lineside flip=false finalize=false suppress=false u1=false
+door2/sequential, runtime row missing
+  refuse G5: node SYN-A: could not read whether the line is pulling from it (%!w(<nil>))
+    log std: release at node SYN-A: runtime unreadable (<nil>) — declining rather than releasing on an unread pull state
+door2/sequential, partner unresolved
+  refuse G5: the line is pulling from SYN-A and its partner could not be resolved: paired node SYN-B not found
+sweep/flip refused
+  refuse G5: node SYN-PRESS (evac): the line is pulling from SYN-A and its partner could not be resolved: paired node SYN-B not found
+    log std: release changeover wait node SYN-PRESS (evac): the line is pulling from SYN-A and its partner could not be resolved: paired node SYN-B not found
+
+## PlanPair — door 1
+single-leg changeover task: the changeover act
+  route: the changeover act
+relay task, single_robot claim (§6.4)
+  refuse G4: node Press 1: release-staged requires a two-robot swap mode, got "single_robot"
+changeover pair, two_robot claim: the pair path
+  go finalize=false evac=11 supply=12
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+node unreadable
+  refuse G4: get runtime for node 5: disk I/O error
+no claim
+  refuse G4: node Press 1: no active claim for release
+not a two-robot mode
+  refuse G4: node Press 1: release-staged requires a two-robot swap mode, got "sequential"
+no pair resolves
+  refuse G4: node Press 1: no tracked orders to release
+    log engine: release-staged REFUSED node=Press 1: no tracked orders to release (runtime staged=nil active=nil, task=false) — operator clicked and got nothing
+slots inverted by the steps
+  go finalize=false evac=11 supply=12
+    log engine: release-staged node=Press 1: steps say the pair is inverted relative to the runtime slots - evac=11 supply=12 (slots said evac=12 supply=11)
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+press-index, R2 staged, R1 queued
+  refuse G7: node Press 1: the other robot has not cleared the press yet (queued) — release again once it is staged
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+    log engine: release-staged HELD node=Press 1: leg 12 is staged and would place a bin at SYN-PRESS, but leg 11 is "queued" and has not cleared it
+press-index, R2 staged, R1 driving to its wait (N-b)
+  refuse G7: node Press 1: the other robot has not cleared the press yet (in_transit) — release again once it is staged
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+    log engine: release-staged HELD node=Press 1: leg 12 is staged and would place a bin at SYN-PRESS, but leg 11 is "in_transit" and has not cleared it
+press-index, R1 released earlier and driving on
+  go finalize=false evac=11 supply=12
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+press-index flipped, R1 staged, R2 queued
+  go finalize=false evac=11 supply=12
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+press-index unflipped, R1 staged, R2 queued
+  refuse G7: node Press 1: the other robot has not cleared the press yet (queued) — release again once it is staged
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+    log engine: release-staged HELD node=Press 1: leg 11 is staged and would place a bin at SYN-B, but leg 12 is "queued" and has not cleared it
+press-index, sibling history unreadable
+  refuse G7: node Press 1: the other robot has not cleared the press yet (unreadable) — release again once it is staged
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+    log engine: release-staged HELD node=Press 1: cannot read sibling 11's release history: disk I/O error
+press-index, leg unreadable
+  refuse G7: node Press 1: the other robot has not cleared the press yet (unreadable) — release again once it is staged
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+    log engine: release-staged HELD node=Press 1: cannot read leg 12 to check for a collision: disk I/O error
+press-index, both staged
+  go finalize=false evac=11 supply=12
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+curtain live
+  refuse G6: Release the light curtain at SYN-PRESS, then press RELEASE again.
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+departing check unreadable
+  refuse G4: node Press 1: departing-bin check: node Press 1: read claim 7: disk I/O error
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+departing order unreadable
+  refuse G4: node Press 1: read departing order 11: disk I/O error
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+produce pair: finalize first
+  go finalize=true evac=11 supply=12
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+consume pair
+  go finalize=false evac=11 supply=12
+    log engine: release-staged node=Press 1 resolved evac=11 supply=12
+
+## PlanDeferral — door 1's deferral
+leg went
+  remember=false
+neither went, sibling never finished
+  remember=false
+sibling went on this click, leg dispatched
+  remember=true
+    log engine: two-robot release: leg 12 (dispatched) deferred — sibling already released; will re-fire when it reaches staged
+sibling already finished its half, leg queued
+  remember=true
+    log engine: two-robot release: leg 12 (queued) deferred — sibling already released; will re-fire when it reaches staged
+sibling went, leg terminal
+  remember=false
+sibling went, leg releasable (went another way)
+  remember=false
+sibling went, leg unreadable
+  remember=false
+
+## PlanChangeover — doors 5 and 6
+changeover unreadable
+  refuse: disk I/O error
+sweep: unchanged, out of scope, pulled, unreadable, paired, later wait, lone supply
+  N-unchanged: in-scope=false needs-flip=false slots=[] deferred=false
+  N-other: in-scope=false needs-flip=false slots=[] deferred=false
+  N-pulled: in-scope=true needs-flip=true slots=[] deferred=false
+    log std: release changeover wait: node SYN-A skipped — the line is pulling from it, and a plant-wide sweep does not move the line on the operator's behalf
+  N-unread: in-scope=true needs-flip=true slots=[] deferred=false
+    log std: release changeover wait node N-unread: disk I/O error — the sweep declines rather than releasing on an unread pull state
+  N-paired: in-scope=true needs-flip=false slots=[evac=4] deferred=true
+  N-tooling: in-scope=true needs-flip=false slots=[evac=6,supply=7] deferred=false
+  N-add: in-scope=true needs-flip=false slots=[supply=8] deferred=false
+  N-paired-done: in-scope=true needs-flip=false slots=[evac=9] deferred=false
+node click on a pulled position: the trunk flips
+  N-pulled: in-scope=true needs-flip=false slots=[evac=2] deferred=false
+
+## PlanMaterial — doors 3 and 4
+node unreadable
+  refuse G4: disk I/O error
+qty 0
+  refuse G4: qty must be at least 1
+no claim
+  refuse G4: node Press 1 has no active claim for release
+no outbound destination
+  refuse G4: node Press 1 has no outbound destination configured
+curtain live
+  refuse G6: Release the light curtain at SYN-PRESS, then press RELEASE again.
+the first tap's order unreadable
+  refuse G8: node Press 1: could not read the order already working this bin (disk I/O error)
+a second tap while the first robot is coming (L8)
+  refuse G8: node Press 1: a release for this bin is already on its way (order 41, dispatched)
+go
+  go
+
+## PlanSurvivor — door 9
+not paired
+  release=false gate=
+partner has not finished
+  release=false gate=
+relay leg
+  release=false gate=G2
+    log engine: swap-survivor release: order 12 is a relay leg — its partner 11 finishing is not a release of its wait; left for the operator
+changeover leg
+  release=false gate=G2
+    log engine: swap-survivor release: order 12 is a leg of changeover task 3 (evacuate) — its waits are the changeover's to release; left for the operator
+already fired this lifetime
+  release=false gate=
+owed the click
+  release=true gate=
+
+## PlanPickup — door 10
+deferred to this lift
+  release=true
+already released past a wait (N-a')
+  release=false
+    log engine: bin_picked_up: supply 8 not released at evac uuid-evac's pickup — already released past a wait (passed=true err=<nil>)
+history unreadable
+  release=false
+    log engine: bin_picked_up: supply 8 not released at evac uuid-evac's pickup — already released past a wait (passed=false err=disk I/O error)

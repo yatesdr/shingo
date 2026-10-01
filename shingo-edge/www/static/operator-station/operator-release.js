@@ -79,7 +79,7 @@ function releasedFullBody(calledBy) {
 // twice for one action" the plants report:
 //
 //   produce role           the engine discards the disposition entirely for
-//                          produce (operator_release.go ~189). The modal's
+//                          produce (release_commit.go, the produce arm). The modal's
 //                          lone RELEASE FULL posts a fixed body and the whole
 //                          consume framing — "anything pulled to lineside?",
 //                          "bin returning to supermarket" — is backwards for a
@@ -192,7 +192,7 @@ export async function openReleasePrompt(url, entry) {
 // framing — "anything pulled to lineside?", RELEASE PARTIAL / RELEASE EMPTY,
 // "bin returning to supermarket". A produce node is pushing a FULL bin OUT, so
 // that wording is backwards and the questions are meaningless: the engine
-// short-circuits produce role to a plain release (operator_release.go ~189),
+// short-circuits produce role to a plain release (release_commit.go, the produce arm),
 // discarding the disposition entirely. Render a simple "release the full bin"
 // confirm instead.
 function isProduceRelease(state) {
@@ -291,7 +291,7 @@ function renderReleasePromptStep1() {
 // (all consume-only). release-submit carries a capture_lineside disposition with
 // nothing pulled — the engine ignores the disposition for produce role but uses
 // capture_lineside as the trigger to fire the downstream unloader's full-in
-// side-cycle (operator_release.go ~179), which the old send_partial_back path
+// side-cycle (release_commit.go, the produce arm's U1), which the old send_partial_back path
 // (chosen whenever remaining_uop>0) silently suppressed.
 function renderReleasePromptProduce() {
     let html = '';

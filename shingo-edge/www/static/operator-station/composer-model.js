@@ -1585,7 +1585,7 @@ function bar(state) {
     // THE SWAP MODE IS ONE OF THOSE FIELDS. The produce tick, the release tap
     // and the request-empty path all read claim.SwapMode off a claim they
     // loaded for that operation (operator_produce.go's loadActiveNode,
-    // operator_release.go, operator_bin_ops.go), so changing how a position
+    // release_commit.go, operator_bin_ops.go), so changing how a position
     // swaps changes how the next swap runs. Telling an engineer it waits for a
     // changeover is telling them to start one they do not need.
     //

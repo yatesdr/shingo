@@ -194,7 +194,7 @@ type Node struct {
 	// BOOL PLC tag. With the interlock on, a release that sends a robot in
 	// here is only allowed when CurtainTagName on CurtainPLCName reads
 	// CurtainSafeValue, checked by a direct WarLink read at the click
-	// (engine/curtain_gate.go, fail-closed on any read trouble).
+	// (engine/release_load.go, fail-closed on any read trouble).
 	//
 	// Per node rather than per process because one tag per process cannot
 	// describe a cell with several screens: a combined signal either holds

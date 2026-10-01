@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingoedge/release"
 	"shingoedge/store/orders"
 )
 
@@ -250,8 +251,22 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		return nil, fmt.Errorf("create complex order: %w", err)
 	}
 
-	if err := m.db.UpdateOrderStepsJSON(orderID, string(stepsJSON)); err != nil {
-		return nil, fmt.Errorf("store steps: %w", err)
+	// The release facts are the steps' answers to what a release of this leg
+	// moves (release.Facts), computed once, here, where the steps are authored.
+	// A leg with no steps stores none: the release reads it as it reads any
+	// order with no plan (the curtain gates its process node).
+	if len(steps) == 0 {
+		if err := m.db.UpdateOrderStepsJSON(orderID, string(stepsJSON)); err != nil {
+			return nil, fmt.Errorf("store steps: %w", err)
+		}
+	} else {
+		facts, err := release.FactsFromSteps(steps, processNodeName).Encode()
+		if err != nil {
+			return nil, err
+		}
+		if err := m.db.UpdateOrderStepsAndFacts(orderID, string(stepsJSON), facts); err != nil {
+			return nil, fmt.Errorf("store steps: %w", err)
+		}
 	}
 
 	// Routing comes from the claim, resolved the same way and at the same

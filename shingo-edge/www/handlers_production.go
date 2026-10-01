@@ -78,7 +78,7 @@ type curtainTagCache interface {
 // otherwise.
 //
 // THE RENDER HALF ONLY. The interlock is the gate at the release verbs
-// (engine/curtain_gate.go), which reads WarLink DIRECTLY at the click. This
+// (engine/release_load.go), which reads WarLink DIRECTLY at the click. This
 // reads the manager's CACHE, at most one poll or one change event old - fine
 // for a button, never for the gate - and issues no query.
 //

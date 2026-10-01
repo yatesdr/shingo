@@ -393,7 +393,7 @@ func (e *Engine) closeEpisode(key, reason, closedBy string) error {
 // stops consuming produces no consume ticks, so its level is never
 // re-evaluated and its episode never closes. Both services have hit this
 // independently — the release flip's immediate level sweep
-// (releaseFlipPartner) exists on Edge for it, engagePayloads/Resync on Core.
+// (commitFlip) exists on Edge for it, engagePayloads/Resync on Core.
 //
 // It records the falling edge and reports whether the episode should now CLOSE.
 // Opening is left to the caller, because only the caller knows how many orders

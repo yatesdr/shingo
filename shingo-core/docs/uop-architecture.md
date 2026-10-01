@@ -299,7 +299,7 @@ Pre-flip, this was healed by the reconciler. Post-flip, no heal mechanism exists
 | `shingo-edge/uop/store_iface.go` | Narrow store interfaces (runtimeWriter / bucketStore) |
 | `shingo-edge/uop/archtest_test.go` | CI invariants: no direct delta recording outside uop/; only known files write node_lineside_bucket |
 | `shingo-edge/engine/wiring_counter_delta.go` | PLC tick path; resolves context + calls Consumed/Produced/Fallthrough |
-| `shingo-edge/engine/operator_release.go` | Release dispositions; finalizes the outgoing bin and calls CaptureToLineside (does not pre-load the incoming bin) |
+| `shingo-edge/engine/release_commit.go` | The release commit: dispositions, the outgoing bin's count and finalize, CaptureToLineside with its ledger row (does not pre-load the incoming bin) |
 | `shingo-edge/engine/operator_ab_cycling.go` | A/B flip; calls MarkAttributionBoundary before SetActivePull swap |
 | `shingo-edge/engine/lineside_strand.go` | The cutover's strand: every active pile at the process's nodes becomes stranded; called from completeCutover and SetProcessActiveStyle |
 | `shingo-edge/engine/handler_bin_picked_up.go` | Edge handler for BinPickedUp envelope; calls OnBinPickedUp + ClearActiveBin |

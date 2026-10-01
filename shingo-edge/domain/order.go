@@ -158,6 +158,12 @@ type Order struct {
 	// WaitKind is the kind of that wait (protocol.WaitKindStation or
 	// WaitKindLane); "" until a Core that reports it has staged the order.
 	WaitKind string `json:"wait_kind,omitempty"`
+	// ReleaseFacts is the leg's static release facts as stored
+	// (orders.release_facts, release.Facts JSON): computed from its steps when
+	// this Edge created it. "" for an order with no Edge-authored steps and for
+	// rows older than the column; the release loader computes those from the
+	// steps.
+	ReleaseFacts string `json:"-"`
 	// DepartedAt is when this leg stopped being its cell's business: the
 	// instant the fleet confirmed the last step of its plan whose node is in
 	// the claim's cell set. A departed leg is still a live order — what it

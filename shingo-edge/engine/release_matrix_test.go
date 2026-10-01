@@ -33,6 +33,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/release"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -45,6 +46,9 @@ type relCell struct {
 	// probe adds cell-specific fields to the outcome after the act (task state,
 	// piles, envelope contents, the chip).
 	probe func(h *relHarness) []string
+	// gate names the gate-table row the cell exercises when its outcome does
+	// not already say (TestEveryGateHasAMatrixRow reads the verdict class).
+	gate  string
 	bug   string // known defect id while the cell holds today's outcome
 	today string // the outcome at the base, when bug is set
 	want  string // the correct outcome
@@ -253,6 +257,40 @@ func TestReleasePathsGateBeforeSideEffects(t *testing.T) {
 	}
 }
 
+// TestEveryGateHasAMatrixRow: every row of the gate table (release.Gates) is
+// exercised by at least one characterised cell — by the verdict class its
+// outcome prints, or by the gate the cell names. Adding a gate without a cell
+// fails here.
+func TestEveryGateHasAMatrixRow(t *testing.T) {
+	t.Parallel()
+	byClass := map[string]string{}
+	for _, g := range release.Gates {
+		for _, v := range g.Verdicts {
+			byClass[v] = g.ID
+		}
+	}
+	covered := map[string][]string{}
+	for _, c := range append(releaseMatrixCells(), releasePinCells()...) {
+		for _, outcome := range []string{c.want, c.today} {
+			verdict := strings.SplitN(outcome, " | ", 2)[0]
+			if id, ok := byClass[verdict]; ok {
+				covered[id] = append(covered[id], c.name)
+			}
+			if strings.Contains(outcome, "deferred=") && !strings.Contains(outcome, "deferred=0") {
+				covered[byClass["deferred"]] = append(covered[byClass["deferred"]], c.name)
+			}
+		}
+		if c.gate != "" {
+			covered[c.gate] = append(covered[c.gate], c.name)
+		}
+	}
+	for _, g := range release.Gates {
+		if len(covered[g.ID]) == 0 {
+			t.Errorf("gate %s (%s) has no matrix cell: add the cells that exercise it", g.ID, g.Name)
+		}
+	}
+}
+
 // ── The matrix ───────────────────────────────────────────────────────────
 
 func TestReleaseMatrix(t *testing.T) {
@@ -383,7 +421,7 @@ func releaseMatrixCells() []relCell {
 			want: "refuse:unclassifiable | evac=dispatched supply=staged | rel=- | ingest=0 capred=0 | uop=42",
 			build: func(h *relHarness) {
 				pairAt(twoRobot, "evac", D, "supply", S)(h)
-				_, err := h.db.Exec(`UPDATE orders SET steps_json = '' WHERE id = ?`, h.leg("supply"))
+				_, err := h.db.Exec(`UPDATE orders SET steps_json = '', release_facts = NULL WHERE id = ?`, h.leg("supply"))
 				testutil.MustNoErr(h.t, err, "clear supply steps")
 			},
 			act: orderClick("supply", dispNone), probe: probes(pUOP)},

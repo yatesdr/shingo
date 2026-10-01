@@ -11,7 +11,7 @@
 // orchestration. Phase 3a's Capturer.CaptureToLineside verb takes a
 // ReleaseDisposition by value and consumes it internally.
 //
-// Moved from shingo-edge/engine/operator_release.go in Phase 2.
+// Moved from the engine's release path in Phase 2.
 package uop
 
 import (

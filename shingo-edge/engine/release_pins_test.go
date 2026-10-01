@@ -12,6 +12,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
+	"shingoedge/release"
 	"shingoedge/uop"
 )
 
@@ -248,11 +249,11 @@ func releasePinCells() []relCell {
 			act:   seq(sweepClick(dispNone), picks("evac"))},
 
 		// ── L1: the survivor arm releases waits nobody clicked ─────────────
-		{name: "L1/single_robot relay: stage leg confirms, swap leg at ready",
+		{name: "L1/single_robot relay: stage leg confirms, swap leg at ready", gate: release.G2,
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coSRTooling, "evac", S, "supply", T),
 			act:   confirms("supply")},
-		{name: "L1/press-index tooling: R2 confirms, R1 at tooling done",
+		{name: "L1/press-index tooling: R2 confirms, R1 at tooling done", gate: release.G2,
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coPITooling, "evac", S, "supply", T),
 			act:   confirms("supply")},

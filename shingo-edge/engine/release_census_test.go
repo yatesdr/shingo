@@ -101,19 +101,37 @@ func checkCensus(t *testing.T, what string, found map[string]int, table map[stri
 // release reaches Core through one of these, so every gate has to stand in
 // front of all of them.
 var releaseEnvelopeSenders = map[string]string{
-	"operator_release.go:releaseOrderInAct":            "the trunk's early releases: no process node, nil claim, produce role",
-	"operator_release.go:releaseOrderDropFastPath":     "a drop-situation evac: disposition straight through",
-	"operator_release.go:releaseOrderWithFullLineside": "the lineside release, after capture, finalize, task state and flush",
+	"release_commit.go:applyLeg":                     "the trunk's plain releases: no process node, no claim, produce role",
+	"release_commit.go:releaseOrderDropFastPath":     "a drop-situation evac: disposition straight through",
+	"release_commit.go:releaseOrderWithFullLineside": "the lineside release, after capture, finalize, task state and flush",
 }
 
 // releaseTrunkCallers are the callers of the per-leg trunk every door uses —
-// ReleaseOrderWithLineside, which opens an act, and releaseOrderInAct, which
-// joins one — and whose act each one carries.
+// releaseLeg, and its door-facing names ReleaseOrderWithLineside (door 2, its
+// own act) and releaseIfReleasable (a door's act, passing over a leg Core will
+// not take yet) — and whose act each one carries.
 var releaseTrunkCallers = map[string]string{
-	"operator_release.go:ReleaseOrderWithLineside":               "operator: the per-order click (door 2), in a fresh act",
-	"operator_stations.go:releaseIfReleasable":                   "per-leg arm of the pair click (the click's act) AND of the automatic re-fires (a fresh act each)",
-	"operator_changeover_release.go:releaseChangeoverWaitScoped": "operator: the changeover sweep and per-node click (the click's act)",
-	"sim_operator.go:runRelease":                                 "sim: the auto-operator's per-order arm (-tags sim)",
+	"release_doors.go:ReleaseOrderWithLineside":         "operator: the per-order click (door 2), in its own act",
+	"release_doors.go:releaseIfReleasable":              "the pass-over doors' per-leg release, in the act it is given",
+	"release_doors.go:releaseChangeoverWaitScoped":      "operator: the changeover sweep and per-node click (the click's act)",
+	"release_doors.go:ReleaseStagedOrders":              "operator: the pair click's two legs (the click's act)",
+	"release_doors.go:handleSiblingReleaseRefire":       "door 8: a deferred pair leg at its staging (its own act)",
+	"release_doors.go:releaseSurvivorOfFinishedPartner": "door 9: the swap survivor (its own act)",
+	"release_doors.go:releaseDeferredSupplyAtPickup":    "door 10: a changeover supply at its evac's lift (its own act)",
+	"sim_operator.go:runRelease":                        "sim: the auto-operator's per-order arm (-tags sim)",
+}
+
+// releasePlanCallers are the callers of the gate table's plans. Every one is a
+// door in release_doors.go: a decision taken anywhere else is a door with its
+// own gates, which is the failure the layer exists to make impossible.
+var releasePlanCallers = map[string]string{
+	"release_doors.go:releaseLeg":                       "the trunk: every leg of every door (PlanLeg)",
+	"release_doors.go:ReleaseStagedOrders":              "door 1 (PlanPair)",
+	"release_doors.go:deferIfSiblingWent":               "door 1's deferral (PlanDeferral)",
+	"release_doors.go:releaseChangeoverWaitScoped":      "doors 5 and 6 (PlanChangeover)",
+	"release_doors.go:releaseNodeWithClaim":             "doors 3 and 4 (PlanMaterial)",
+	"release_doors.go:releaseSurvivorOfFinishedPartner": "door 9 (PlanSurvivor)",
+	"release_doors.go:releaseDeferredSupplyAtPickup":    "door 10 (PlanPickup)",
 }
 
 // orderCreationSites are the functions that create an order at the Edge. A
@@ -144,7 +162,7 @@ var orderCreationSites = map[string]string{
 	"operator_quality_hold.go:ReleaseFromContainment":             "quality: release from containment (a creation, not a release door)",
 	"operator_quality_hold.go:SendBinToQualityHold":               "quality: send a bin to hold (no wait; S7)",
 	"operator_stations.go:applyConsumePlan":                       "consume REQUEST: the swap legs (the builders' waits)",
-	"operator_stations.go:releaseNodeWithClaim":                   "Material page RELEASE (door 3) and the position evac (door 4): a move created at the release",
+	"release_commit.go:commitMaterial":                            "Material page RELEASE (door 3) and the position evac (door 4): a move created at the release",
 	"operator_window_pullback.go:PullFromMarket":                  "loader window: pull from market",
 	"wiring_status_changed.go:handleSequentialBackfill":           "sequential backfill B, minted on Order A's in_transit (no wait; S7)",
 }
@@ -177,8 +195,31 @@ func TestReleaseEnvelopeSendersAreCensused(t *testing.T) {
 
 func TestReleaseTrunkCallersAreCensused(t *testing.T) {
 	t.Parallel()
-	found := callSites(t, ".", regexp.MustCompile(`^(ReleaseOrderWithLineside|releaseOrderInAct)$`))
+	found := callSites(t, ".", regexp.MustCompile(`^(ReleaseOrderWithLineside|releaseIfReleasable|releaseLeg)$`))
 	checkCensus(t, "trunk caller", found, releaseTrunkCallers)
+}
+
+func TestReleasePlanCallersAreCensused(t *testing.T) {
+	t.Parallel()
+	found := callSites(t, ".", regexp.MustCompile(`^Plan(Leg|Pair|Deferral|Changeover|Material|Survivor|Pickup|Collision|Flip)$`))
+	checkCensus(t, "plan caller", found, releasePlanCallers)
+}
+
+// TestReleaseDoorsDecideNothing holds release_doors.go to being adapters: no
+// refusal is constructed there (the plans construct every one), and nothing
+// is read or written there directly (the loader reads, the commit writes).
+func TestReleaseDoorsDecideNothing(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("release_doors.go")
+	if err != nil {
+		t.Fatalf("read release_doors.go: %v", err)
+	}
+	for _, banned := range []string{"fmt.Errorf(", "errors.New(", "Error{", "e.db.", "e.orderMgr.", "e.coreClient.", "e.plcMgr."} {
+		if strings.Contains(string(src), banned) {
+			t.Errorf("release_doors.go contains %q: a door builds its act, loads, plans and commits — "+
+				"a refusal belongs in a plan (package release), a read in release_load.go, an effect in release_commit.go", banned)
+		}
+	}
 }
 
 func TestOrderCreationSitesAreCensused(t *testing.T) {

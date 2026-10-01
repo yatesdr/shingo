@@ -97,7 +97,7 @@ func (m *Mutator) OnBinPickedUp(nodeID *int64) error {
 
 // MarkAttributionBoundary flushes pending deltas before a non-UOP
 // orchestration step changes attribution context. Today's caller is the
-// release trunk's releaseFlipPartner (fact-owners Lane G; the operator flip
+// release trunk's commitFlip (fact-owners Lane G; the operator flip
 // door FlipABNode was deleted with its last caller), which calls this
 // before writePullSide swaps which side is active-pull. Engine owns the
 // orchestration; UOP owns the flush.

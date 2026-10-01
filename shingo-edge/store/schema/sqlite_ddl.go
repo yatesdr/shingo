@@ -232,6 +232,12 @@ CREATE TABLE IF NOT EXISTS orders (
     -- lane wait, and until a Core that reports it), and the wait's kind.
     station_wait    INTEGER,
     wait_kind       TEXT NOT NULL DEFAULT '',
+    -- release_facts (Edge v8): the leg's static release facts, computed from
+    -- its steps when this Edge created it (release.Facts, JSON): the nodes it
+    -- leaves a bin at, the bin its release lifts, the nodes a release lets a
+    -- bin cross, its role at its process node. NULL for an order with no steps
+    -- this Edge authored, and for every row older than v8.
+    release_facts   TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

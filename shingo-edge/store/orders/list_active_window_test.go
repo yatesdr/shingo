@@ -93,6 +93,7 @@ CREATE TABLE orders (
     cell_left_at    TEXT,
     station_wait    INTEGER,
     wait_kind       TEXT NOT NULL DEFAULT '',
+    release_facts   TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
     steps_json      TEXT
