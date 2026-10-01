@@ -337,6 +337,15 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}
 	_ = loadFinal
 
+	// ── 14. release points: an order Core does not hold for this station ──
+	points, err := client.ReleasePoints("RT-STATION", []string{"rt-no-such-order"})
+	if err != nil {
+		t.Fatalf("ReleasePoints: %v", err)
+	}
+	if len(points) != 1 || points[0].OrderUUID != "rt-no-such-order" || points[0].Found {
+		t.Errorf("release points = %+v, want one point, not found", points)
+	}
+
 	// ── The traffic seen is exactly the calls above, in order ──
 	want := []struct{ label, method, path string }{
 		{"node-bins", http.MethodGet, "/api/telemetry/node-bins"},
@@ -352,6 +361,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 		{"bin-load-final", http.MethodPost, "/api/telemetry/bin-load"},
 		{"preflight", http.MethodPost, "/api/inventory/preflight"},
 		{"system-count", http.MethodPost, "/api/inventory/system-count"},
+		{"release-points", http.MethodPost, "/api/release/points"},
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()

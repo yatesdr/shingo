@@ -268,3 +268,42 @@ type PayloadSystemCount struct {
 type SystemBinCountResult struct {
 	Counts []PayloadSystemCount `json:"counts"`
 }
+
+// ReleasePointsRequest asks Core, for one act, what releasing each order would
+// let its robot do next (POST /api/release/points).
+type ReleasePointsRequest struct {
+	StationID  string   `json:"station_id"`
+	OrderUUIDs []string `json:"order_uuids"`
+}
+
+// ReleasePointsResponse answers ReleasePointsRequest, one point per order, in
+// the request's order.
+type ReleasePointsResponse struct {
+	Points []ReleasePoint `json:"points"`
+}
+
+// ReleasePoint is the dynamic half of a release point (SHAPE §3.7).
+type ReleasePoint struct {
+	OrderUUID string `json:"order_uuid"`
+	// Found is false when Core holds no such order for the station.
+	Found bool `json:"found"`
+	// Enters is every node the pending segment picks up at or drops at, in
+	// order, with Core's redirects applied.
+	Enters []string `json:"enters"`
+	// AwaitsLift is each drop node another leg must lift a bin from first.
+	AwaitsLift []LiftDependency `json:"awaits_lift"`
+	// LinesideBin is the bin a release lifts off the order's line node, when
+	// its segment picks up there; nil otherwise.
+	LinesideBin *NodeBinInfo `json:"lineside_bin,omitempty"`
+}
+
+// LiftDependency: the order's next segment sets a bin down on Node, which
+// holds a bin now, and the lifter (its Core sibling) lifts from Node before
+// any drop of its own there. CoRelease is true when both may go in one act:
+// the lifter is staged at the wait whose next segment contains that lift, and
+// this order picks something up before it places on Node (SHAPE §3.4 (b)).
+type LiftDependency struct {
+	LifterUUID string `json:"lifter_uuid"`
+	Node       string `json:"node"`
+	CoRelease  bool   `json:"co_release"`
+}

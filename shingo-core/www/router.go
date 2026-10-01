@@ -362,6 +362,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Telemetry
 			r.Get("/telemetry/node-bins", h.apiTelemetryNodeBins)
+			// What releasing an order would let its robot do next, per act
+			// (handlers_release_points.go).
+			r.Post("/release/points", h.apiReleasePoints)
 			r.Get("/telemetry/payload/{code}/manifest", h.apiTelemetryPayloadManifest)
 			r.Get("/telemetry/node/{name}/children", h.apiTelemetryNodeChildren)
 			r.Post("/telemetry/bin-load", h.apiBinLoad)

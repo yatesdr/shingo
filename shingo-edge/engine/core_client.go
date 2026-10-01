@@ -315,6 +315,34 @@ func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
 	return &result, nil
 }
 
+// ReleasePoints asks Core what releasing each order would let its robot do
+// next: the nodes its pending segment enters, the lifts it waits on, and the
+// lineside bin it departs with (protocol.ReleasePoint). One round trip per act.
+// A failure is an error: a release decided on facts Core did not give is the
+// guess this read exists to replace.
+func (c *CoreClient) ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error) {
+	if c.baseURL == "" {
+		return nil, ErrCoreNotConfigured
+	}
+	body, err := json.Marshal(protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: orderUUIDs})
+	if err != nil {
+		return nil, fmt.Errorf("marshal release points request: %w", err)
+	}
+	resp, err := c.http.Post(c.baseURL+"/api/release/points", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("release points request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("release points: core returned %d", resp.StatusCode)
+	}
+	var out protocol.ReleasePointsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode release points: %w", err)
+	}
+	return out.Points, nil
+}
+
 // PreflightInventory POSTs the to-style's required payload list to Core's
 // /api/inventory/preflight and returns the per-payload availability +
 // missing subset. Used by service.PreflightChecker to gate
