@@ -522,6 +522,12 @@ type ComplexOrderStep struct {
 	// drain window an untagged wait is a defect, and the drift tests on both
 	// sides say so.
 	WaitKind string `json:"wait_kind,omitempty"`
+	// Purpose names the station decision a station wait belongs to: which
+	// RELEASE lets the robot past it (the Edge's release.Purpose: swap, ready,
+	// tooling_done). The Edge authors it with the wait and reads it back from
+	// its own steps; Core carries steps as it receives them and decides nothing
+	// on it. Absent on a lane wait and on any step that is not a wait.
+	Purpose string `json:"purpose,omitempty"`
 	// ExclusiveSlot declares that this DROPOFF lands on a node that holds ONE
 	// bin at a time and must therefore be reserved before the robot is sent.
 	//

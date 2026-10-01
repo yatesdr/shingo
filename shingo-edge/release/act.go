@@ -16,6 +16,27 @@ const (
 	OriginPickup          Origin = "pickup"           // door 10: a changeover supply deferred to its evac's lift
 )
 
+// Purpose is the station decision a station wait belongs to, from a closed
+// set the step builders own (stationWait(node, purpose)). A coordination wait
+// — one robot holding while its partner decides — takes the purpose of the
+// decision it follows. The button that releases a wait is labelled with it.
+type Purpose string
+
+const (
+	// PurposeSwap: the steady-state cycle's decision — the bin is done (a
+	// produce bin full, a consume bin spent): swap it.
+	PurposeSwap Purpose = "swap"
+	// PurposeReady: a changeover's first decision — the cell is ready for the
+	// changeover's robots.
+	PurposeReady Purpose = "ready"
+	// PurposeToolingDone: a changeover's second decision — the tooling change
+	// is done: set the new bins down.
+	PurposeToolingDone Purpose = "tooling_done"
+)
+
+// Purposes is the closed set, in the order a cell meets them.
+var Purposes = []Purpose{PurposeSwap, PurposeReady, PurposeToolingDone}
+
 // Act is one decision to let robots go: an operator click or a system rule.
 type Act struct {
 	Origin   Origin

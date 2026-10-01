@@ -35,6 +35,10 @@ type Facts struct {
 	// has none.
 	Role          string `json:"role"`
 	DepartingStep *int   `json:"departing_step,omitempty"`
+	// Purposes is each station wait's purpose, by its ordinal among the
+	// leg's station waits (the number Core's OrderStaged reports). An
+	// untagged wait's entry is "".
+	Purposes []string `json:"purposes,omitempty"`
 }
 
 // The roles a leg can have at its process node.
@@ -57,6 +61,12 @@ func FactsFromSteps(steps []protocol.ComplexOrderStep, processNode string) Facts
 			if PlacesBinAt(steps, s.Node) {
 				f.Places = append(f.Places, s.Node)
 			}
+		}
+	}
+	// Purposes: one per station wait, in order.
+	for _, s := range steps {
+		if s.Action == protocol.ActionWait && protocol.IsStationWaitKind(s.WaitKind) {
+			f.Purposes = append(f.Purposes, s.Purpose)
 		}
 	}
 	// Departs and Touches: everything after the first station wait.
@@ -111,6 +121,15 @@ func (f Facts) PlacesBinAt(node string) bool {
 func (f Facts) DepartsFrom(node string) bool {
 	_, ok := f.Departs[node]
 	return node != "" && ok
+}
+
+// PurposeAt is the purpose of the leg's station wait with this ordinal, ""
+// past its last one.
+func (f Facts) PurposeAt(ordinal int) Purpose {
+	if ordinal < 0 || ordinal >= len(f.Purposes) {
+		return ""
+	}
+	return Purpose(f.Purposes[ordinal])
 }
 
 // PlacesAtAny returns the first of positions the leg leaves a bin at, or "".

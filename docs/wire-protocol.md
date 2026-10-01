@@ -1010,6 +1010,8 @@ Submits a multi-step transport order. Used by material handling cycles (sequenti
 |---|---|---|---|---|
 | Action | `action` | string | Yes | One of: `"pickup"`, `"dropoff"`, `"wait"`. |
 | Node | `node` | string | No | Node or group name. Core auto-detects groups (NGRP) and resolves to a concrete slot. If omitted, Core uses global fallback via payload code. |
+| Wait kind | `wait_kind` | string | No | On a `wait`: `"station"` (the station releases it) or `"lane"` (Core's lane gate). Untagged reads as station. |
+| Purpose | `purpose` | string | No | On a station `wait`: the station decision that releases it — `"swap"`, `"ready"` or `"tooling_done"`. Authored and read by the Edge; Core carries it and decides nothing on it. |
 
 Steps are executed in sequence. A `wait` step causes the robot to dwell at its current position until an `order.release` message is received.
 
@@ -1026,6 +1028,7 @@ Signals that a staged (dwelling) order should resume execution. Sent by the oper
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Order UUID | `order_uuid` | string | Yes | UUID of the staged order to release. |
+| Station wait | `station_wait` | int | No | The echo: the station wait this release is for, by its ordinal among the order's station waits (as `order.staged` numbered it). Core applies the release only when the order is parked at, or driving to, that wait; any other is a logged no-op, and a staged order is re-sent its `order.staged`. Absent: today's behaviour (an older Edge). |
 
 #### OrderIngestRequest
 
@@ -1080,6 +1083,8 @@ Notifies the edge that an order has entered a dwelling (wait) state at a staging
 |---|---|---|---|---|
 | Order UUID | `order_uuid` | string | Yes | The edge-generated order UUID. |
 | Detail | `detail` | string | No | Human-readable status detail. |
+| Station wait | `station_wait` | int | No | The ordinal of the wait among the order's station waits; absent at a lane wait. Core and the Edge count station waits alike (Core's lane waits are not counted). |
+| Wait kind | `wait_kind` | string | No | `"station"` or `"lane"`. Absent from an older Core. |
 
 ---
 

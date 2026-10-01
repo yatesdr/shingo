@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine/changeover"
+	"shingoedge/release"
 	"shingoedge/store/processes"
 )
 
@@ -614,7 +615,7 @@ func setCarryoverRoundTrip(a *changeover.NodeAction, staging string) {
 	steps := []protocol.ComplexOrderStep{
 		{Action: protocol.ActionPickup, Node: position},
 		{Action: protocol.ActionDropoff, Node: staging},
-		stationWait(staging),
+		stationWait(staging, release.PurposeToolingDone),
 		{Action: protocol.ActionPickup, Node: staging},
 		{Action: protocol.ActionDropoff, Node: position},
 	}
@@ -671,7 +672,7 @@ func holdInbound(a *changeover.NodeAction, staging string, fallbackAutoConfirm b
 		r := a.SupplyOrder.Retrieve
 		steps := []protocol.ComplexOrderStep{
 			{Action: protocol.ActionPickup, Node: r.SourceNode},
-			stationWait(staging),
+			stationWait(staging, release.PurposeToolingDone),
 			{Action: protocol.ActionDropoff, Node: r.DeliveryNode},
 		}
 		if r.RetrieveEmpty && r.SourceNode != "" {
@@ -707,12 +708,12 @@ func holdComplexInbound(spec *changeover.OrderSpec, node, staging string) {
 		return // this leg does not deliver to the position; nothing inbound to hold
 	}
 	if last > 0 && steps[last-1].Action == protocol.ActionWait {
-		steps[last-1] = stationWait(staging)
+		steps[last-1] = stationWait(staging, release.PurposeToolingDone)
 		return
 	}
 	out := make([]protocol.ComplexOrderStep, 0, len(steps)+1)
 	out = append(out, steps[:last]...)
-	out = append(out, stationWait(staging))
+	out = append(out, stationWait(staging, release.PurposeToolingDone))
 	out = append(out, steps[last:]...)
 	spec.Complex.Steps = out
 }

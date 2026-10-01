@@ -3,6 +3,7 @@ package engine
 import (
 	"shingo/protocol"
 	"shingoedge/orders"
+	"shingoedge/release"
 	"shingoedge/store/processes"
 )
 
@@ -37,11 +38,12 @@ func buildStep(action, node string) protocol.ComplexOrderStep {
 //
 // node may be empty: a bare wait is a split point with no drive-to (the shared
 // "tooling done" / "ready" gates), and it is no less station-owned for it.
-func stationWait(node string) protocol.ComplexOrderStep {
+func stationWait(node string, purpose release.Purpose) protocol.ComplexOrderStep {
 	return protocol.ComplexOrderStep{
 		Action:   "wait",
 		Node:     node,
 		WaitKind: waitKindStation,
+		Purpose:  string(purpose),
 	}
 }
 
@@ -125,7 +127,7 @@ func BuildReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 // needed.
 func BuildStagedReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		stationWait(claim.CoreNodeName),
+		stationWait(claim.CoreNodeName, release.PurposeReady),
 		{Action: "pickup", Node: claim.CoreNodeName},
 		buildStep("dropoff", claim.OutboundDestination),
 	}
@@ -269,15 +271,15 @@ func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderSte
 		return nil
 	}
 	steps := []protocol.ComplexOrderStep{
-		refillPickup(nil, claim),                        // 1
-		stagingDropoff(claim.InboundStaging),            // 2
-		stationWait(claim.CoreNodeName),                 // 3 drive to node + hold
-		{Action: "pickup", Node: claim.CoreNodeName},    // 4
-		stagingDropoff(claim.OutboundStaging),           // 5
-		{Action: "pickup", Node: claim.InboundStaging},  // 6
-		{Action: "dropoff", Node: claim.CoreNodeName},   // 7
-		{Action: "pickup", Node: claim.OutboundStaging}, // 8
-		buildStep("dropoff", claim.OutboundDestination), // 9
+		refillPickup(nil, claim),                             // 1
+		stagingDropoff(claim.InboundStaging),                 // 2
+		stationWait(claim.CoreNodeName, release.PurposeSwap), // 3 drive to node + hold
+		{Action: "pickup", Node: claim.CoreNodeName},         // 4
+		stagingDropoff(claim.OutboundStaging),                // 5
+		{Action: "pickup", Node: claim.InboundStaging},       // 6
+		{Action: "dropoff", Node: claim.CoreNodeName},        // 7
+		{Action: "pickup", Node: claim.OutboundStaging},      // 8
+		buildStep("dropoff", claim.OutboundDestination),      // 9
 	}
 	// Produce backfill pulls a fresh EMPTY carrier (the store dual of a consume's
 	// full retrieve). Step 1's pickup defaults to a full retrieve, so without this a
@@ -312,17 +314,17 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 	// stay at in_transit while physically parked, breaking swap_ready and
 	// requiring two RELEASE clicks. See shingo_todo.md.
 	orderA = []protocol.ComplexOrderStep{
-		refillPickup(nil, claim),                       // pick new from source
-		stagingDropoff(claim.InboundStaging),           // stage new
-		stationWait(claim.InboundStaging),              // hold at staging until line clears
-		{Action: "pickup", Node: claim.InboundStaging}, // pick new from staging
-		{Action: "dropoff", Node: claim.CoreNodeName},  // deliver to production
+		refillPickup(nil, claim),                               // pick new from source
+		stagingDropoff(claim.InboundStaging),                   // stage new
+		stationWait(claim.InboundStaging, release.PurposeSwap), // hold at staging until line clears
+		{Action: "pickup", Node: claim.InboundStaging},         // pick new from staging
+		{Action: "dropoff", Node: claim.CoreNodeName},          // deliver to production
 	}
 	// Robot B: drive to node and hold, wait for release, remove old to destination
 	orderB = []protocol.ComplexOrderStep{
-		stationWait(claim.CoreNodeName),                 // drive to node + hold (RDS BinTask=Wait)
-		{Action: "pickup", Node: claim.CoreNodeName},    // remove old from production
-		buildStep("dropoff", claim.OutboundDestination), // deliver to destination
+		stationWait(claim.CoreNodeName, release.PurposeSwap), // drive to node + hold (RDS BinTask=Wait)
+		{Action: "pickup", Node: claim.CoreNodeName},         // remove old from production
+		buildStep("dropoff", claim.OutboundDestination),      // deliver to destination
 	}
 	return orderA, orderB
 }
@@ -371,7 +373,7 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	// R1's opening is the same either way: drive to the press, hold, lift the
 	// full tote off, take it away.
 	orderR1 = []protocol.ComplexOrderStep{
-		stationWait(claim.CoreNodeName),
+		stationWait(claim.CoreNodeName, release.PurposeSwap),
 		{Action: "pickup", Node: claim.CoreNodeName},
 		buildStep("dropoff", claim.OutboundDestination),
 	}
@@ -384,7 +386,7 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 		// goes for the replacement itself. One robot leaves the cell the
 		// moment the press is clear.
 		orderR2 = []protocol.ComplexOrderStep{
-			stationWait(claim.PairedCoreNode),
+			stationWait(claim.PairedCoreNode, release.PurposeSwap),
 			{Action: "pickup", Node: claim.PairedCoreNode},
 			{Action: "dropoff", Node: claim.CoreNodeName},
 		}
@@ -403,7 +405,7 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 			refillPickup(nil, claim),
 			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
 		orderR2 = []protocol.ComplexOrderStep{
-			stationWait(claim.PairedCoreNode),
+			stationWait(claim.PairedCoreNode, release.PurposeSwap),
 			{Action: "pickup", Node: claim.PairedCoreNode},
 			{Action: "dropoff", Node: claim.CoreNodeName},
 		}
@@ -473,9 +475,9 @@ func markPressIndexOnDeckEmpty(steps []protocol.ComplexOrderStep, claim *process
 //  3. dropoff(OutboundDestination)  — deliver old to destination
 func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		stationWait(claim.CoreNodeName),                 // 1 drive to node + hold
-		{Action: "pickup", Node: claim.CoreNodeName},    // 2
-		buildStep("dropoff", claim.OutboundDestination), // 3
+		stationWait(claim.CoreNodeName, release.PurposeSwap), // 1 drive to node + hold
+		{Action: "pickup", Node: claim.CoreNodeName},         // 2
+		buildStep("dropoff", claim.OutboundDestination),      // 3
 	}
 }
 
@@ -682,12 +684,12 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 // release.
 func buildSingleRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tooling bool) ChangeoverDispatch {
 	stepsB := []protocol.ComplexOrderStep{
-		stationWait(fromClaim.CoreNodeName),              // drive to node + hold ("ready")
-		{Action: "pickup", Node: fromClaim.CoreNodeName}, // evacuate old
-		stagingDropoff(fromClaim.OutboundStaging),        // park old
+		stationWait(fromClaim.CoreNodeName, release.PurposeReady), // drive to node + hold ("ready")
+		{Action: "pickup", Node: fromClaim.CoreNodeName},          // evacuate old
+		stagingDropoff(fromClaim.OutboundStaging),                 // park old
 	}
 	if tooling {
-		stepsB = append(stepsB, stationWait("")) // "tooling done"
+		stepsB = append(stepsB, stationWait("", release.PurposeToolingDone)) // "tooling done"
 	}
 	stepsB = append(stepsB,
 		protocol.ComplexOrderStep{Action: "pickup", Node: toClaim.InboundStaging},    // grab new
@@ -716,16 +718,16 @@ func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Change
 		return ChangeoverDispatch{}
 	}
 	stepsA := []protocol.ComplexOrderStep{
-		refillPickup(fromClaim, toClaim),       // fetch the incoming carrier: EMPTY on produce, a payload-matched full retrieve on consume
-		stagingDropoff(toClaim.InboundStaging), // stage new
-		stationWait(toClaim.InboundStaging),    // "ready" — shared release gate
+		refillPickup(fromClaim, toClaim),                          // fetch the incoming carrier: EMPTY on produce, a payload-matched full retrieve on consume
+		stagingDropoff(toClaim.InboundStaging),                    // stage new
+		stationWait(toClaim.InboundStaging, release.PurposeReady), // "ready" — shared release gate
 		{Action: "pickup", Node: toClaim.InboundStaging},
 		{Action: "dropoff", Node: toClaim.CoreNodeName},
 	}
 	stepsB := []protocol.ComplexOrderStep{
-		stationWait(fromClaim.CoreNodeName),                 // drive to node + hold (shared "ready")
-		{Action: "pickup", Node: fromClaim.CoreNodeName},    // evacuate old
-		buildStep("dropoff", fromClaim.OutboundDestination), // straight to final
+		stationWait(fromClaim.CoreNodeName, release.PurposeReady), // drive to node + hold (shared "ready")
+		{Action: "pickup", Node: fromClaim.CoreNodeName},          // evacuate old
+		buildStep("dropoff", fromClaim.OutboundDestination),       // straight to final
 	}
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
@@ -774,12 +776,12 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 	}
 	// R1 prefix is identical for 2-pos and 3-pos: wait, evac, dropoff destination.
 	r1 := []protocol.ComplexOrderStep{
-		stationWait(fromClaim.CoreNodeName),
+		stationWait(fromClaim.CoreNodeName, release.PurposeReady),
 		{Action: "pickup", Node: fromClaim.CoreNodeName},
 		buildStep("dropoff", fromClaim.OutboundDestination),
 	}
 	if tooling {
-		r1 = append(r1, stationWait("")) // "tooling done"
+		r1 = append(r1, stationWait("", release.PurposeToolingDone)) // "tooling done"
 	}
 	// ── THE FLIP APPLIES HERE TOO ────────────────────────────────────────
 	//
@@ -807,7 +809,7 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 	var r2 []protocol.ComplexOrderStep
 	if fromClaim.SecondPairedCoreNode != "" {
 		r2 = []protocol.ComplexOrderStep{
-			stationWait(fromClaim.PairedCoreNode),
+			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
 			{Action: "pickup", Node: fromClaim.PairedCoreNode},
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 			{Action: "pickup", Node: fromClaim.SecondPairedCoreNode},
@@ -815,7 +817,7 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 		}
 	} else {
 		r2 = []protocol.ComplexOrderStep{
-			stationWait(fromClaim.PairedCoreNode),
+			stationWait(fromClaim.PairedCoreNode, release.PurposeReady),
 			{Action: "pickup", Node: fromClaim.PairedCoreNode},
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 		}
@@ -946,7 +948,7 @@ func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *proces
 		{Action: "pickup", Node: position},
 		buildStep("dropoff", evacDest),
 		refillPickup(fromClaim, toClaim),
-		stationWait(waitNode),
+		stationWait(waitNode, release.PurposeToolingDone),
 		{Action: "dropoff", Node: position},
 	}
 }
@@ -1074,7 +1076,7 @@ func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, ina
 	// indefinitely: nothing is standing in the aisle holding material for a
 	// position whose operator has not pressed anything yet.
 	steps := []protocol.ComplexOrderStep{
-		stationWait(pos),
+		stationWait(pos, release.PurposeReady),
 		{Action: "pickup", Node: pos, Empty: onDeckEmpty},
 		buildStep("dropoff", fromClaim.OutboundDestination),
 		refillPickup(fromClaim, toClaim),
@@ -1151,9 +1153,9 @@ func buildSequentialPerPositionEvacuate(fromClaim, toClaim *processes.NodeClaim,
 // straight to final destination after evacuation.
 func BuildKeepStagedEvacSteps(fromClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		stationWait(fromClaim.CoreNodeName),                 // drive to node + hold ("ready")
-		{Action: "pickup", Node: fromClaim.CoreNodeName},    // evacuate old
-		buildStep("dropoff", fromClaim.OutboundDestination), // straight to final
+		stationWait(fromClaim.CoreNodeName, release.PurposeReady), // drive to node + hold ("ready")
+		{Action: "pickup", Node: fromClaim.CoreNodeName},          // evacuate old
+		buildStep("dropoff", fromClaim.OutboundDestination),       // straight to final
 	}
 }
 
@@ -1164,7 +1166,7 @@ func BuildKeepStagedDeliverSteps(toClaim *processes.NodeClaim) []protocol.Comple
 	return []protocol.ComplexOrderStep{
 		refillPickup(nil, toClaim),                       // grab new
 		stagingDropoff(toClaim.InboundStaging),           // stage new
-		stationWait(""),                                  // "ready"
+		stationWait("", release.PurposeReady),            // "ready"
 		{Action: "pickup", Node: toClaim.InboundStaging}, // grab new
 		{Action: "dropoff", Node: toClaim.CoreNodeName},  // deliver to line
 	}
@@ -1179,7 +1181,7 @@ func BuildKeepStagedCombinedSteps(fromClaim, toClaim *processes.NodeClaim) []pro
 		buildStep("dropoff", fromClaim.InboundSource),    // return to market/source
 		refillPickup(fromClaim, toClaim),                 // grab changeover material
 		stagingDropoff(toClaim.InboundStaging),           // stage new
-		stationWait(""),                                  // "ready"
+		stationWait("", release.PurposeReady),            // "ready"
 		{Action: "pickup", Node: toClaim.InboundStaging}, // grab new
 		{Action: "dropoff", Node: toClaim.CoreNodeName},  // deliver to line
 	}

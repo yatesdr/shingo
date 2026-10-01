@@ -234,6 +234,57 @@ func TestStationWaitSitesAreCensused(t *testing.T) {
 	checkCensus(t, "station wait", found, stationWaitSites)
 }
 
+// TestStationWaitsNameAPurpose: every station wait a builder places names its
+// purpose with a release.Purpose constant (the closed set), never a computed
+// value or a literal, so the button that releases it and the act that covers
+// it are decided where the wait is written.
+func TestStationWaitsNameAPurpose(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	consts := map[string]bool{"PurposeSwap": true, "PurposeReady": true, "PurposeToolingDone": true}
+	calls := 0
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Clean(name), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "stationWait" {
+				return true
+			}
+			calls++
+			sel, ok := call.Args[len(call.Args)-1].(*ast.SelectorExpr)
+			pkg, pok := func() (*ast.Ident, bool) {
+				if !ok {
+					return nil, false
+				}
+				id, ok := sel.X.(*ast.Ident)
+				return id, ok
+			}()
+			if !ok || !pok || pkg.Name != "release" || !consts[sel.Sel.Name] {
+				t.Errorf("%s: stationWait must name a release.Purpose constant (release.PurposeSwap, PurposeReady, PurposeToolingDone)",
+					fset.Position(call.Pos()))
+			}
+			return true
+		})
+	}
+	if calls == 0 {
+		t.Fatal("no stationWait calls found")
+	}
+}
+
 // ── Cited tests exist ────────────────────────────────────────────────────
 
 var citedTest = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)

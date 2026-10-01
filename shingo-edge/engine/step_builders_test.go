@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingoedge/release"
 	"testing"
 
 	"shingo/protocol"
@@ -67,7 +68,7 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 	}
 
 	wantB := []protocol.ComplexOrderStep{
-		stationWait("CORE-A"),
+		stationWait("CORE-A", release.PurposeReady),
 		{Action: "pickup", Node: "CORE-A"},
 		{Action: "dropoff", Node: "OUT-STAGE", ExclusiveSlot: true},
 		{Action: "pickup", Node: "IN-STAGE"},
@@ -179,7 +180,7 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 	wantA := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "MARKET"},
 		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
-		stationWait("IN-STAGE"),
+		stationWait("IN-STAGE", release.PurposeReady),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE"},
 	}
@@ -196,7 +197,7 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 	}
 
 	wantB := []protocol.ComplexOrderStep{
-		stationWait("CORE"),
+		stationWait("CORE", release.PurposeReady),
 		{Action: "pickup", Node: "CORE"},
 		{Action: "dropoff", Node: "DEST"},
 	}
@@ -283,7 +284,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 	r1, r2 := disp.Roles.evac.steps, disp.Roles.supply.steps
 
 	wantR1 := []protocol.ComplexOrderStep{
-		stationWait("FRONT"),
+		stationWait("FRONT", release.PurposeReady),
 		{Action: "pickup", Node: "FRONT"},
 		{Action: "dropoff", Node: "DEST"},
 		{Action: "pickup", Node: "MARKET"},
@@ -303,7 +304,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 	}
 
 	wantR2 := []protocol.ComplexOrderStep{
-		stationWait("BACK"),
+		stationWait("BACK", release.PurposeReady),
 		{Action: "pickup", Node: "BACK"},
 		{Action: "dropoff", Node: "FRONT"},
 	}
@@ -346,7 +347,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
 	}
 
 	wantR2 := []protocol.ComplexOrderStep{
-		stationWait("MID"),
+		stationWait("MID", release.PurposeReady),
 		{Action: "pickup", Node: "MID"},
 		{Action: "dropoff", Node: "FRONT"},
 		{Action: "pickup", Node: "BACK"},
@@ -517,11 +518,11 @@ func TestBuildSwapChangeoverSteps_Sequential_ParkedSideWaitsAtItsOwnNode(t *test
 	disp := BuildSwapChangeoverSteps(from, to, "CORE-A" /* inactive */, "CORE-B" /* active */)
 
 	want := []protocol.ComplexOrderStep{
-		stationWait("CORE-A"),               // operator release, per node
-		{Action: "pickup", Node: "CORE-A"},  // evac what is standing here
-		{Action: "dropoff", Node: "DEST"},   // old bin to destination
-		{Action: "pickup", Node: "MARKET"},  // fetch new — AFTER the old one clears
-		{Action: "dropoff", Node: "CORE-A"}, // deliver new
+		stationWait("CORE-A", release.PurposeReady), // operator release, per node
+		{Action: "pickup", Node: "CORE-A"},          // evac what is standing here
+		{Action: "dropoff", Node: "DEST"},           // old bin to destination
+		{Action: "pickup", Node: "MARKET"},          // fetch new — AFTER the old one clears
+		{Action: "dropoff", Node: "CORE-A"},         // deliver new
 	}
 	if len(disp.StepsA) != len(want) {
 		t.Fatalf("StepsA: expected %d steps, got %d: %+v", len(want), len(disp.StepsA), disp.StepsA)
@@ -565,11 +566,11 @@ func TestBuildSwapChangeoverSteps_Sequential_ActiveSideWaitsForCutover(t *testin
 	disp := BuildSwapChangeoverSteps(from, to, "CORE-A" /* inactive */, "CORE-B" /* active */)
 
 	want := []protocol.ComplexOrderStep{
-		stationWait("CORE-B"),               // park at my own position, hold for cutover
-		{Action: "pickup", Node: "CORE-B"},  // evac old active, once pull has flipped away
-		{Action: "dropoff", Node: "DEST"},   // old bin to destination
-		{Action: "pickup", Node: "MARKET"},  // fetch new
-		{Action: "dropoff", Node: "CORE-B"}, // deliver new
+		stationWait("CORE-B", release.PurposeReady), // park at my own position, hold for cutover
+		{Action: "pickup", Node: "CORE-B"},          // evac old active, once pull has flipped away
+		{Action: "dropoff", Node: "DEST"},           // old bin to destination
+		{Action: "pickup", Node: "MARKET"},          // fetch new
+		{Action: "dropoff", Node: "CORE-B"},         // deliver new
 	}
 	if len(disp.StepsA) != len(want) {
 		t.Fatalf("StepsA: expected %d steps, got %d: %+v", len(want), len(disp.StepsA), disp.StepsA)
@@ -629,7 +630,7 @@ func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 			{Action: "pickup", Node: tc.own},  // evac old
 			{Action: "dropoff", Node: "DEST"}, // old to destination
 			{Action: "pickup", Node: "MARKET"},
-			stationWait(""), // bare — tooling-done shared gate
+			stationWait("", release.PurposeToolingDone), // bare — tooling-done shared gate
 			{Action: "dropoff", Node: tc.own},
 		}
 		if len(disp.StepsA) != len(want) {
@@ -765,7 +766,7 @@ func TestBuildKeepStagedDeliverSteps(t *testing.T) {
 	want := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "SOURCE"},
 		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
-		stationWait(""),
+		stationWait("", release.PurposeReady),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-NODE"},
 	}
@@ -797,7 +798,7 @@ func TestBuildKeepStagedEvacSteps(t *testing.T) {
 	}
 
 	want := []protocol.ComplexOrderStep{
-		stationWait("CORE-NODE"),
+		stationWait("CORE-NODE", release.PurposeReady),
 		{Action: "pickup", Node: "CORE-NODE"},
 		{Action: "dropoff", Node: "DEST-FINAL"},
 	}
@@ -858,7 +859,7 @@ func TestBuildKeepStagedCombinedSteps(t *testing.T) {
 		{Action: "dropoff", Node: "FROM-SOURCE"},
 		{Action: "pickup", Node: "TO-SOURCE"},
 		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
-		stationWait(""),
+		stationWait("", release.PurposeReady),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-NODE"},
 	}
