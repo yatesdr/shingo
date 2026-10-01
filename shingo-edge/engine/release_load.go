@@ -79,6 +79,12 @@ type (
 // however many legs and doors the act goes through.
 type releaseAct struct {
 	release.Act
+	actFacts release.ActFacts
+	// pressPaperwork is the door's own declaration at the press (the pair
+	// click's departing-bin finalize), run when the act covers a leg.
+	pressPaperwork  func() error
+	failed          map[int64]bool
+	failures        []error
 	curtainedLoaded bool
 	curtainedErr    error
 	curtained       map[string]*processes.Node // by core node name
@@ -183,6 +189,20 @@ type legLoad struct {
 	toClaim  *processes.NodeClaim
 	nodeTask *processes.NodeTask
 	partner  *processes.Node // the flip's target
+	press    string
+	point    release.StaticPoint
+	// flipped / finalized: the act's press paperwork already did these.
+	flipped, finalized bool
+}
+
+// echo is the release's station wait (OrderRelease.StationWait): the wait the
+// leg is at or heading to; none past its last.
+func (ll *legLoad) echo() *int {
+	if !ll.point.HasWait {
+		return nil
+	}
+	n := ll.point.Ordinal
+	return &n
 }
 
 func newLegLoad(orderID int64, label, taskNode string, disp ReleaseDisposition) *legLoad {
@@ -207,8 +227,18 @@ func (e *Engine) loadLeg(act *releaseAct, ll *legLoad, need release.Need) {
 		if order.ProcessNodeID != nil {
 			s.HasProcessNode, s.ProcessNodeID = true, *order.ProcessNodeID
 		}
+		in, ierr := release.DecodeIntent(order.ReleaseIntent)
+		if ierr != nil {
+			e.logRelease("order=%d: release intent unreadable (%v) — read as none", order.ID, ierr)
+		}
+		s.Intent = in
+		ll.point = release.PointOf(order.Status, order.StationWait, order.WaitKind, in, e.legFactsOf(act, order).facts.Purposes)
 	case release.NeedCurtain:
-		s.Curtain = e.curtainForLeg(act, ll.order)
+		if pt, ok := act.actFacts.Points[s.OrderID]; ok && pt.Found {
+			s.Curtain = e.curtainForNodes(act, pt.Enters)
+		} else {
+			s.Curtain = e.curtainForLeg(act, ll.order)
+		}
 	case release.NeedNode:
 		node, err := e.db.GetProcessNode(s.ProcessNodeID)
 		if err != nil {
@@ -481,6 +511,23 @@ func (e *Engine) curtainForLeg(act *releaseAct, order *storeorders.Order) error 
 	return nil
 }
 
+// curtainForNodes checks the curtained nodes among the ones Core says the
+// leg's next segment enters, in that order.
+func (e *Engine) curtainForNodes(act *releaseAct, nodes []string) error {
+	curtained, err := e.curtainedNodes(act)
+	if err != nil {
+		return &CurtainHeldError{Sentence: err.Error()}
+	}
+	for _, name := range nodes {
+		if n := curtained[name]; n != nil {
+			if err := e.curtainClear(act, n); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // legTouches is the nodes a leg's release lets a bin cross.
 func (e *Engine) legTouches(act *releaseAct, order *storeorders.Order) ([]string, error) {
 	lf := e.legFactsOf(act, order)
@@ -618,10 +665,6 @@ func (e *Engine) loadPair(act *releaseAct, pl *pairLoad, need release.Need) {
 		}
 	case release.NeedPair:
 		e.loadPairLegs(act, pl)
-	case release.NeedCollision:
-		s.Arms = e.collisionArms(act, pl)
-	case release.NeedCurtain:
-		s.Curtain = e.curtainForPair(act, pl)
 	case release.NeedDeparts:
 		// Asked of the leg's steps by id: an evac row that could not be read
 		// is refused only if its bin departs (the read of the departing order
@@ -685,97 +728,6 @@ func loadReleaseSwapNodeTask(db *store.DB, node *processes.Node) *processes.Node
 		return nil
 	}
 	return task
-}
-
-// collisionArms reads the press-index collision facts for both arms: the
-// supply (the placing leg by classification, placing at the front) and the
-// evac (placing only where its steps say: the back position, unflipped).
-func (e *Engine) collisionArms(act *releaseAct, pl *pairLoad) []release.CollisionArm {
-	s := &pl.snap
-	positions := pl.claim.Positions()
-	legs := []struct {
-		id      int64
-		order   *storeorders.Order
-		err     error
-		sibling int64
-		sibOrd  *storeorders.Order
-		sibErr  error
-	}{
-		{*s.Supply, pl.supply, pl.supplyErr, *s.Evac, pl.evac, pl.evacErr},
-		{*s.Evac, pl.evac, pl.evacErr, *s.Supply, pl.supply, pl.supplyErr},
-	}
-	type history struct {
-		passed bool
-		err    error
-	}
-	passedMemo := map[int64]history{}
-	passedAWait := func(id int64) (bool, error) {
-		if h, ok := passedMemo[id]; ok {
-			return h.passed, h.err
-		}
-		p, err := e.orderMgr.PassedAStationWait(id)
-		passedMemo[id] = history{p, err}
-		return p, err
-	}
-	arms := make([]release.CollisionArm, 0, 2)
-	for i, l := range legs {
-		arm := release.CollisionArm{Leg: l.id, Sibling: l.sibling, LegErr: l.err, SiblingErr: l.sibErr}
-		if l.err == nil {
-			arm.LegStatus = l.order.Status
-			if l.order.Status == orders.StatusInTransit {
-				passed, perr := passedAWait(l.id)
-				arm.LegPassed = perr == nil && passed
-			}
-		}
-		if l.sibErr == nil {
-			arm.SiblingState = l.sibOrd.Status
-			if l.sibOrd.Status == orders.StatusInTransit {
-				arm.SiblingPassed, arm.SiblingPassedErr = passedAWait(l.sibling)
-			}
-		}
-		if i == 0 {
-			arm.PlacesAt = pl.claim.CoreNodeName
-		} else if l.err == nil {
-			// Steps are the only truth for a complex order. An unreadable list
-			// answers "no position": this arm is the addition, and the supply
-			// arm's guarantee never depended on steps.
-			if lf := e.legFactsOf(act, l.order); lf.readErr == nil && lf.undecodable == nil && !(lf.fromSteps && lf.raw == "") {
-				arm.PlacesAt = lf.facts.PlacesAtAny(positions)
-			}
-		}
-		arms = append(arms, arm)
-	}
-	return arms
-}
-
-// curtainForPair runs the curtain for each leg of a pair that goes on this
-// click, in one act. A leg that is not going now (not yet releasable, or
-// terminal) is not checked; a later re-fire checks it in its own act. With no
-// curtained node on the Edge it reads no leg at all.
-func (e *Engine) curtainForPair(act *releaseAct, pl *pairLoad) error {
-	curtainedAny, err := e.anyCurtained(act)
-	if err != nil || !curtainedAny {
-		return err
-	}
-	for _, l := range []struct {
-		id    *int64
-		order *storeorders.Order
-		err   error
-	}{{pl.snap.Evac, pl.evac, pl.evacErr}, {pl.snap.Supply, pl.supply, pl.supplyErr}} {
-		if l.id == nil {
-			continue
-		}
-		if l.err != nil {
-			return fmt.Errorf("node %s: get order %d: %w", pl.node.Name, *l.id, l.err)
-		}
-		if orders.IsTerminal(l.order.Status) || !orders.ReleasableAtCore(l.order.Status) {
-			continue
-		}
-		if err := e.curtainForLeg(act, l.order); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // classifySwapLegsBySteps re-derives which of a resolved pair is the SUPPLY
@@ -889,14 +841,6 @@ func (e *Engine) loadChangeover(processID, onlyNodeID int64, disp ReleaseDisposi
 			}
 			if onlyNodeID != 0 || (t.PullErr == nil && !t.Pulling) {
 				cl.evacDisp[i] = evacDispositionForTask(e, task, disp)
-				if t.Evac != nil && t.Supply != nil {
-					t.SupplyAtLaterWait = e.stagedPastAWait(*t.Supply)
-					if !t.SupplyAtLaterWait {
-						if supply, err := e.db.GetOrder(*t.Supply); err == nil && !orders.IsTerminal(supply.Status) {
-							t.SupplyLive = true
-						}
-					}
-				}
 			}
 		}
 		cl.snap.Tasks = append(cl.snap.Tasks, t)
@@ -933,19 +877,6 @@ func evacDispositionForTask(e *Engine, task processes.NodeTask, override Release
 		return ReleaseDisposition{Mode: DispositionSendPartialBack, PartialCount: &count, CalledBy: override.CalledBy}
 	}
 	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
-}
-
-// stagedPastAWait reports whether an order is staged at a wait after one this
-// station already released it from: staged now, and its history holds a
-// release that stood (orders.Manager.PassedAStationWait). An unreadable order
-// or history answers no, which keeps the evac-first deferral.
-func (e *Engine) stagedPastAWait(orderID int64) bool {
-	order, err := e.db.GetOrder(orderID)
-	if err != nil || order.Status != orders.StatusStaged {
-		return false
-	}
-	passed, err := e.orderMgr.PassedAStationWait(orderID)
-	return err == nil && passed
 }
 
 // ── Doors 3 and 4's loads ─────────────────────────────────────────────────
@@ -993,87 +924,4 @@ func (e *Engine) loadMaterial(act *releaseAct, ml *materialLoad, need release.Ne
 		s.InFlight = prior.OrderType == orders.TypeMove && prior.SourceNode == ml.claim.CoreNodeName && !orders.IsTerminal(prior.Status)
 	}
 	s.Loaded |= need
-}
-
-// ── Door 9's loads ────────────────────────────────────────────────────────
-
-func (e *Engine) loadSurvivor(s *release.Survivor, need release.Need) {
-	switch need {
-	case release.NeedSiblings:
-		order, err := e.db.GetOrder(s.OrderID)
-		if err != nil || order.SiblingOrderID == nil {
-			break
-		}
-		sibling, err := e.db.GetOrder(*order.SiblingOrderID)
-		if err != nil {
-			break
-		}
-		s.Paired, s.SiblingID, s.SiblingStatus = true, sibling.ID, sibling.Status
-		s.SiblingSucceeded = orders.IsTerminalSuccess(sibling.Status)
-	case release.NeedScope:
-		s.Relay = e.storedLegsRelay(s.OrderID, s.SiblingID)
-		if s.Relay {
-			break
-		}
-		if task, _, terr := e.db.FindChangeoverNodeTaskByOrderID(s.OrderID); terr == nil && task != nil &&
-			task.Situation != string(SituationUnchanged) {
-			s.InChangeover, s.TaskID, s.TaskSituation = true, task.ID, task.Situation
-			break
-		}
-		e.survivorReleasedMu.Lock()
-		_, s.AlreadyFired = e.survivorReleased[s.OrderID]
-		e.survivorReleasedMu.Unlock()
-	}
-	s.Loaded |= need
-}
-
-// ── Door 1's deferral reads ───────────────────────────────────────────────
-
-// loadDeferral reads what the deferral rule asks of one pair leg after the
-// click's releases, in the rule's order: nothing for a leg that went; the
-// sibling's state only when it did not go on this click; the leg's own state
-// only when its sibling went.
-func (e *Engine) loadDeferral(legID, siblingID *int64, legReleased, siblingReleased bool) release.Deferral {
-	d := release.Deferral{Released: legReleased, SiblingReleased: siblingReleased}
-	if legID == nil {
-		d.Released = true // nothing to defer
-		return d
-	}
-	d.Leg = *legID
-	if legReleased {
-		return d
-	}
-	if !siblingReleased && siblingID != nil {
-		if sibling, err := e.db.GetOrder(*siblingID); err == nil {
-			d.SiblingSucceeded = orders.IsTerminalSuccess(sibling.Status)
-		}
-	}
-	if !d.SiblingReleased && !d.SiblingSucceeded {
-		return d
-	}
-	order, err := e.db.GetOrder(*legID)
-	if err != nil {
-		d.LegErr = err
-		return d
-	}
-	d.LegStatus = order.Status
-	return d
-}
-
-// ── Doors 8, 9 and 10's reads ─────────────────────────────────────────────
-
-// siblingOf is the order's pair partner, for a terminal leg's survivor
-// question.
-func (e *Engine) siblingOf(orderID int64) (int64, bool) {
-	o, err := e.db.GetOrder(orderID)
-	if err != nil || o.SiblingOrderID == nil {
-		return 0, false
-	}
-	return *o.SiblingOrderID, true
-}
-
-// supplyHistory is whether this station ever released a changeover supply
-// past a wait (door 10's question).
-func (e *Engine) supplyHistory(supplyID int64) (bool, error) {
-	return e.orderMgr.PassedAStationWait(supplyID)
 }

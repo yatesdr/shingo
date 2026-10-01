@@ -36,7 +36,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -163,7 +163,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
@@ -201,7 +201,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
@@ -1045,6 +1045,75 @@ func nullInt(v sql.NullInt64) *int {
 	}
 	n := int(v.Int64)
 	return &n
+}
+
+// SetReleaseIntent writes an order's release intent (release.Intent JSON;
+// "" clears it).
+func SetReleaseIntent(db *sql.DB, id int64, intent string) error {
+	_, err := db.Exec(`UPDATE orders SET release_intent=?, updated_at=datetime('now') WHERE id=?`, intent, id)
+	return err
+}
+
+// MarkReleaseIntentSent stamps the intent's sent_at, through ex: the
+// transaction the release's outbox row is written in. An order with no
+// intent is left alone.
+func MarkReleaseIntentSent(ex interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}, id int64, at string) error {
+	_, err := ex.Exec(`UPDATE orders SET release_intent = json_set(release_intent, '$.sent_at', ?)
+		WHERE id = ? AND release_intent <> ''`, at, id)
+	return err
+}
+
+// SetReleaseHeld writes the sentence the board's chip shows for an order's
+// held or rejected release ("" clears it).
+func SetReleaseHeld(db *sql.DB, id int64, sentence string) error {
+	_, err := db.Exec(`UPDATE orders SET release_held=?, updated_at=datetime('now') WHERE id=?`, sentence, id)
+	return err
+}
+
+// ListReleaseIntentNodes returns the process nodes of every live order that
+// holds an unsent release intent: the intent worker's boot and floor sweep. A
+// sent intent lingers until Core stages the leg again or it ends, and has
+// nothing for the floor to do.
+func ListReleaseIntentNodes(db *sql.DB) ([]int64, error) {
+	rows, err := db.Query(`SELECT DISTINCT process_node_id FROM orders
+		WHERE release_intent <> '' AND json_extract(release_intent, '$.sent_at') IS NULL
+		AND process_node_id IS NOT NULL
+		AND status NOT IN (` + protocol.TerminalStatusSQLList() + `)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ListReleaseIntentOrders returns the live orders at a process node that hold
+// a release intent.
+func ListReleaseIntentOrders(db *sql.DB, nodeID int64) ([]int64, error) {
+	rows, err := db.Query(`SELECT id FROM orders WHERE release_intent <> '' AND process_node_id = ?
+		AND status NOT IN (`+protocol.TerminalStatusSQLList()+`) ORDER BY id`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // SetWaitPoint records where Core staged an order: the station wait's ordinal

@@ -41,7 +41,7 @@ const (
 const ModeCaptureLineside = "capture_lineside"
 
 // Releasable reports whether Core will accept a release for an order in this
-// status: staged, or in_transit (orders.ReleasableAtCore).
+// status: staged, or in_transit (TestReleasable pins it against Core).
 func Releasable(s protocol.Status) bool {
 	return s == protocol.StatusStaged || s == protocol.StatusInTransit
 }
@@ -73,7 +73,7 @@ type LegPlan struct {
 // reads only the facts it needs (Need):
 //
 //	G4 the order reads               G1 Core will release it
-//	G6 the curtain                   (no process node: a plain release)
+//	(no process node: a plain release)
 //	G4 the node reads                G5 the pull state reads
 //	G4 the runtime reads             (the arm: drop, no claim, produce, lineside)
 //	G4 the supply classification     G4 the departing-bin check
@@ -87,13 +87,6 @@ func PlanLeg(a Act, l Leg) LegPlan {
 	}
 	if !Releasable(l.Status) {
 		return legNotReleasable(a, l)
-	}
-	if !l.Loaded.Has(NeedCurtain) {
-		return LegPlan{Need: NeedCurtain}
-	}
-	if l.Curtain != nil {
-		return legRefusal(a, l, G6, l.Curtain, Log{SinkRelease,
-			fmt.Sprintf("order=%d disposition=%q - curtain refused the release: %v", l.OrderID, l.Mode, l.Curtain)})
 	}
 	if !l.HasProcessNode {
 		return LegPlan{Verdict: Go, Arm: ArmPlain}
@@ -292,9 +285,10 @@ type PairPlan struct {
 	Logs         []Log
 }
 
-// PlanPair decides a pair click. Order: the route (a changeover node goes to
-// the changeover act), G4 the node and its claim and mode, G4 the pair, G7
-// the press-index collision, G6 the curtain, G4 the departing-bin check.
+// PlanPair decides a pair click's door: the route (a changeover node goes to
+// the changeover act), G4 the node and its claim and mode, G4 the pair, G4
+// the departing-bin check. Its two legs are then the act's (PlanAct), which
+// decides G1, G3, G6 and G7 for both together.
 func PlanPair(p Pair) PairPlan {
 	if !p.Loaded.Has(NeedRoute) {
 		return PairPlan{Need: NeedRoute}
@@ -342,23 +336,6 @@ func PlanPair(p Pair) PairPlan {
 	}
 	logs = append(logs, Log{SinkEngine, fmt.Sprintf("release-staged node=%s resolved evac=%s supply=%s",
 		p.NodeName, idStr(p.Evac), idStr(p.Supply))})
-	if p.Mode == protocol.SwapModeTwoRobotPressIndex && p.Evac != nil && p.Supply != nil {
-		if !p.Loaded.Has(NeedCollision) {
-			return PairPlan{Need: NeedCollision}
-		}
-		if out, held := PlanCollision(p); held {
-			out.Logs = append(logs, out.Logs...)
-			return out
-		}
-	}
-	if !p.Loaded.Has(NeedCurtain) {
-		return PairPlan{Need: NeedCurtain}
-	}
-	if p.Curtain != nil {
-		out := pairRefusal(G6, p.Curtain)
-		out.Logs = logs
-		return out
-	}
 	if !p.Loaded.Has(NeedDeparts) {
 		return PairPlan{Need: NeedDeparts}
 	}
@@ -375,53 +352,6 @@ func PlanPair(p Pair) PairPlan {
 	return PairPlan{Verdict: Go, Finalize: p.Departs, Evac: p.Evac, Supply: p.Supply, Logs: logs}
 }
 
-// PlanCollision is G7 at a press-index pair: never place onto a position the
-// sibling has not cleared. A terminal sibling is not pending, and neither is
-// one staged (both go on this click) or one this station already released.
-// The supply is the placing leg by classification; the evac places only when
-// its steps say so (unflipped, at the back position). An unreadable leg holds.
-func PlanCollision(p Pair) (PairPlan, bool) {
-	held := func(state string, line string) (PairPlan, bool) {
-		return PairPlan{Verdict: Refuse, Gate: G7,
-			Refusal: &SwapPairNotReadyError{NodeName: p.NodeName, SiblingState: state},
-			Logs:    []Log{{SinkEngine, line}}}, true
-	}
-	for _, arm := range p.Arms {
-		if arm.LegErr != nil {
-			return held("unreadable", fmt.Sprintf("release-staged HELD node=%s: cannot read leg %d to check for a collision: %v",
-				p.NodeName, arm.Leg, arm.LegErr))
-		}
-		if !Releasable(arm.LegStatus) {
-			continue
-		}
-		if arm.LegStatus == protocol.StatusInTransit && arm.LegPassed {
-			continue
-		}
-		if arm.SiblingErr != nil {
-			return held("unreadable", fmt.Sprintf("release-staged HELD node=%s: cannot read sibling %d to check for a collision: %v",
-				p.NodeName, arm.Sibling, arm.SiblingErr))
-		}
-		if protocol.IsTerminal(arm.SiblingState) || arm.SiblingState == protocol.StatusStaged {
-			continue
-		}
-		if arm.SiblingState == protocol.StatusInTransit {
-			if arm.SiblingPassedErr != nil {
-				return held("unreadable", fmt.Sprintf("release-staged HELD node=%s: cannot read sibling %d's release history: %v",
-					p.NodeName, arm.Sibling, arm.SiblingPassedErr))
-			}
-			if arm.SiblingPassed {
-				continue
-			}
-		}
-		if arm.PlacesAt == "" {
-			continue // sets nothing down on the press — the flipped R1
-		}
-		return held(string(arm.SiblingState), fmt.Sprintf("release-staged HELD node=%s: leg %d is staged and would place a bin at %s, "+
-			"but leg %d is %q and has not cleared it", p.NodeName, arm.Leg, arm.PlacesAt, arm.Sibling, arm.SiblingState))
-	}
-	return PairPlan{}, false
-}
-
 func pairRefusal(gate string, err error) PairPlan {
 	return PairPlan{Verdict: Refuse, Gate: gate, Refusal: err}
 }
@@ -433,27 +363,9 @@ func idStr(id *int64) string {
 	return strconv.FormatInt(*id, 10)
 }
 
-// ── Door 1's deferral (fired by door 8) ───────────────────────────────────
-
-// PlanDeferral decides whether a pair leg that did not go on the click is
-// remembered, to be released when it reaches its wait (G7, today's deferral):
-// only when its sibling went, by either spelling (released on this click, or
-// already finished its half), and only for a leg that is neither terminal
-// (nothing to fire) nor releasable (released on this click already).
-func PlanDeferral(d Deferral) (remember bool, logs []Log) {
-	if d.Released || !(d.SiblingReleased || d.SiblingSucceeded) || d.LegErr != nil {
-		return false, nil
-	}
-	if protocol.IsTerminal(d.LegStatus) || Releasable(d.LegStatus) {
-		return false, nil
-	}
-	return true, []Log{{SinkEngine, fmt.Sprintf("two-robot release: leg %d (%s) deferred — sibling already released; will re-fire when it reaches staged",
-		d.Leg, d.LegStatus)}}
-}
-
 // ── Doors 5 and 6: the changeover ─────────────────────────────────────────
 
-// Slot is one leg a changeover task releases on this act.
+// Slot is one leg of a changeover task the act covers.
 type Slot struct {
 	Order int64
 	Kind  string // "evac" | "supply"
@@ -465,7 +377,6 @@ type TaskPlan struct {
 	InScope   bool
 	NeedsFlip bool // declined: the line is pulling from it (a sweep only)
 	Slots     []Slot
-	Deferred  bool // a paired supply deferred to its evac's lift (G7)
 	Logs      []Log
 }
 
@@ -475,13 +386,13 @@ type ChangeoverPlan struct {
 	Tasks   []TaskPlan
 }
 
-// PlanChangeover decides which legs of which tasks a changeover release lets
-// go. A task that is `unchanged`, or not the clicked node, is out of scope. A
-// sweep declines a position the line pulls from (G5), or whose pull state
-// cannot be read, and names it; a click aimed at the node leaves it to the
-// trunk, which moves the line. The evac goes at the click; a paired supply is
-// deferred to the evac's lift (G7) unless that deferral was already served
-// (it is staged again at a later wait, the tooling hold).
+// PlanChangeover decides which tasks a changeover release covers. A task that
+// is `unchanged`, or not the clicked node, is out of scope. A sweep declines a
+// position the line pulls from (G5), or whose pull state cannot be read, and
+// names it; a click aimed at the node leaves it to the trunk, which moves the
+// line. Each covered task's legs are then the act's (PlanAct): the evac goes
+// at the click, and the paired supply goes with it when they co-release or
+// holds until the evac's lift (G7), at the wait the act's purpose names.
 func PlanChangeover(c Changeover) ChangeoverPlan {
 	if c.ReadErr != nil {
 		return ChangeoverPlan{Refusal: c.ReadErr}
@@ -505,14 +416,12 @@ func PlanChangeover(c Changeover) ChangeoverPlan {
 			out.Tasks = append(out.Tasks, tp)
 			continue
 		}
-		paired := t.Evac != nil && t.Supply != nil
 		if t.Evac != nil {
 			tp.Slots = append(tp.Slots, Slot{Order: *t.Evac, Kind: "evac"})
 		}
-		if t.Supply != nil && (!paired || t.SupplyAtLaterWait) {
+		if t.Supply != nil {
 			tp.Slots = append(tp.Slots, Slot{Order: *t.Supply, Kind: "supply"})
 		}
-		tp.Deferred = paired && !t.SupplyAtLaterWait && t.SupplyLive
 		out.Tasks = append(out.Tasks, tp)
 	}
 	return out
@@ -566,61 +475,6 @@ func PlanMaterial(m Material) MaterialPlan {
 			m.NodeName, m.InFlightOrder, m.InFlightStatus))
 	}
 	return MaterialPlan{Verdict: Go}
-}
-
-// ── Door 9: the swap survivor ─────────────────────────────────────────────
-
-// SurvivorPlan is the decision for a leg whose partner may have finished.
-type SurvivorPlan struct {
-	Need Need
-	// Release: release the leg through the trunk with the supply's (zero)
-	// disposition. False with no logs: not a survivor at all.
-	Release bool
-	Gate    string
-	Logs    []Log
-}
-
-// PlanSurvivor decides the durable half of the pair deferral: a leg whose
-// partner finished successfully is owed the operator's click, once per Edge
-// lifetime. A relay leg's wait and a changeover leg's waits are not the
-// survivor rule's to release (G2): a station wait is the station's.
-func PlanSurvivor(s Survivor) SurvivorPlan {
-	if !s.Loaded.Has(NeedSiblings) {
-		return SurvivorPlan{Need: NeedSiblings}
-	}
-	if !s.Paired || !s.SiblingSucceeded {
-		return SurvivorPlan{}
-	}
-	if !s.Loaded.Has(NeedScope) {
-		return SurvivorPlan{Need: NeedScope}
-	}
-	if s.Relay {
-		return SurvivorPlan{Gate: G2, Logs: []Log{{SinkEngine, fmt.Sprintf("swap-survivor release: order %d is a relay leg — its partner %d finishing is not a release of its wait; left for the operator",
-			s.OrderID, s.SiblingID)}}}
-	}
-	if s.InChangeover {
-		return SurvivorPlan{Gate: G2, Logs: []Log{{SinkEngine, fmt.Sprintf("swap-survivor release: order %d is a leg of changeover task %d (%s) — its waits are the changeover's to release; left for the operator",
-			s.OrderID, s.TaskID, s.TaskSituation)}}}
-	}
-	if s.AlreadyFired {
-		return SurvivorPlan{}
-	}
-	return SurvivorPlan{Release: true}
-}
-
-// ── Door 10: the evac's lift releases its deferred supply ─────────────────
-
-// PlanPickup decides whether an evac's lift releases the changeover supply the
-// sweep deferred to it (G7): only while this station has never released the
-// supply past a wait. A supply already released at "ready" by the pair click
-// is on its way to a later hold, and releasing it again would carry it past
-// that hold (N-a'); an unreadable history holds too.
-func PlanPickup(supply int64, evacUUID string, passed bool, passedErr error) (release bool, logs []Log) {
-	if passedErr != nil || passed {
-		return false, []Log{{SinkEngine, fmt.Sprintf("bin_picked_up: supply %d not released at evac %s's pickup — already released past a wait (passed=%v err=%v)",
-			supply, evacUUID, passed, passedErr)}}
-	}
-	return true, nil
 }
 
 // CommitFailure renders an error the commit hit after every gate passed (an

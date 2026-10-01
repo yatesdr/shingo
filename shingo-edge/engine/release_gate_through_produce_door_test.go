@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"shingoedge/release"
 	"testing"
 
 	"shingo/protocol"
@@ -54,9 +55,9 @@ func TestPlacingLegGate_HoldsAPairTheProduceDoorCreated(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(r2, string(orders.StatusQueued)), "R2 queued")
 
 	err = eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{CalledBy: "operator:test"})
-	var notReady *SwapPairNotReadyError
-	if !errors.As(err, &notReady) {
-		t.Fatalf("release returned %v, want a *SwapPairNotReadyError — R1 would set a carrier on the "+
+	var held *release.HeldError
+	if !errors.As(err, &held) || held.Gate != release.G7 {
+		t.Fatalf("release returned %v, want a G7 hold — R1 would set a carrier on the "+
 			"backfill position R2 has not cleared, on a pair whose runtime slots the produce door wrote", err)
 	}
 }

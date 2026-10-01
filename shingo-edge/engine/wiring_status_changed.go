@@ -1,28 +1,15 @@
 // wiring_status_changed.go — handlers subscribed to EventOrderStatusChanged.
 //
-// Two handlers:
-//   handleSequentialBackfill    – auto-create Order B (backfill) when
-//                                 Order A enters in_transit on a sequential
-//                                 swap-mode node.
-//   handleSiblingReleaseRefire  – fire a two-robot swap leg's release the
-//                                 moment it reaches staged, when that leg was
-//                                 deferred by ReleaseStagedOrders (Core would
-//                                 have refused it) while its sibling released
-//                                 on the same operator click (hop A4-ii). Falls
-//                                 through to releaseSurvivorOfFinishedPartner
-//                                 when the in-memory deferral is not there to
-//                                 find — the durable half of the same question.
+// handleSequentialBackfill auto-creates Order B (backfill) when Order A
+// enters in_transit on a sequential swap-mode node. Wired by
+// wireEventHandlers (wiring.go), which also hands the status event to the
+// release layer (onReleaseStatusChanged: a leg that ends wakes its sibling's
+// intents).
 //
-// Wired by wireEventHandlers (wiring.go).
-//
-// History: handleAutoReleaseOnStaged was removed 2026-04-27 along with the
-// auto-release coordination layer, on the theory that ReleaseStagedOrders
-// fanning out to both legs unconditionally made a late-sibling auto-release
-// unnecessary. The Hopkinsville press-index hang (2026-07-23) showed that
-// unconditional fan-out desyncs a not-yet-releasable leg instead; hop A4-i
-// makes the fan-out skip such a leg, and handleSiblingReleaseRefire is the
-// TARGETED revival of the removed hook — scoped to a leg whose sibling already
-// released, it re-fires (never cancels, never re-plans, no timer).
+// History: the deferred-sibling re-fire and the swap survivor lived here until
+// S5 replaced both with the release intent, which is on the order row and is
+// re-planned by the intent worker on Core's OrderStaged, the lifter's
+// BinPickedUp, a sibling's end and a 15 s floor.
 
 package engine
 

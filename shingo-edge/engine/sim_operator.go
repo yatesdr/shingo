@@ -14,6 +14,7 @@ import (
 	"shingo/protocol/clock"
 	"shingoedge/config"
 	"shingoedge/orders"
+	"shingoedge/release"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -1082,8 +1083,8 @@ func (op *simOperator) releaseAsPair(orderID int64) {
 		// A HELD release is the gate working, not a failure, and it must read
 		// that way in the log — a sim run that reports every hold as a rejection
 		// is a run nobody can tell a wedge from.
-		var notReady *SwapPairNotReadyError
-		if errors.As(err, &notReady) {
+		var held *release.HeldError
+		if errors.As(err, &held) {
 			op.e.logFn("[sim] operator pair-release node %d HELD: %v — will retry", nodeID, err)
 			return
 		}

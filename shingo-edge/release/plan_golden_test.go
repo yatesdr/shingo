@@ -145,19 +145,12 @@ func pairCases() []struct {
 	name string
 	p    Pair
 } {
-	all := NeedRoute | NeedActive | NeedPair | NeedCollision | NeedCurtain | NeedDeparts
+	all := NeedRoute | NeedActive | NeedPair | NeedDeparts
 	base := func() Pair {
 		return Pair{Loaded: all, NodeID: 5, NodeName: "Press 1", ClaimResolved: true, Mode: protocol.SwapModeTwoRobot,
 			Evac: ptr(11), Supply: ptr(12)}
 	}
 	with := func(f func(*Pair)) Pair { p := base(); f(&p); return p }
-	pi := func(p *Pair) { p.Mode = protocol.SwapModeTwoRobotPressIndex }
-	arms := func(supplyState, evacState protocol.Status, evacPlaces string) []CollisionArm {
-		return []CollisionArm{
-			{Leg: 12, Sibling: 11, LegStatus: supplyState, SiblingState: evacState, PlacesAt: "SYN-PRESS"},
-			{Leg: 11, Sibling: 12, LegStatus: evacState, SiblingState: supplyState, PlacesAt: evacPlaces},
-		}
-	}
 	return []struct {
 		name string
 		p    Pair
@@ -174,44 +167,6 @@ func pairCases() []struct {
 			p.ResolveErr, p.Evac, p.Supply = errors.New("no tracked orders to release"), nil, nil
 		})},
 		{"slots inverted by the steps", with(func(p *Pair) { p.Relabelled, p.SlotEvac, p.SlotSupply = true, 12, 11 })},
-		{"press-index, R2 staged, R1 queued", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusStaged, protocol.StatusQueued, "SYN-B")
-		})},
-		{"press-index, R2 staged, R1 driving to its wait (N-b)", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusStaged, protocol.StatusInTransit, "SYN-B")
-		})},
-		{"press-index, R1 released earlier and driving on", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusStaged, protocol.StatusInTransit, "SYN-B")
-			p.Arms[0].SiblingPassed, p.Arms[1].LegPassed = true, true
-		})},
-		{"press-index flipped, R1 staged, R2 queued", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusQueued, protocol.StatusStaged, "")
-		})},
-		{"press-index unflipped, R1 staged, R2 queued", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusQueued, protocol.StatusStaged, "SYN-B")
-		})},
-		{"press-index, sibling history unreadable", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusStaged, protocol.StatusInTransit, "SYN-B")
-			p.Arms[0].SiblingPassedErr = errRead
-		})},
-		{"press-index, leg unreadable", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusStaged, protocol.StatusStaged, "SYN-B")
-			p.Arms[0].LegErr = errRead
-		})},
-		{"press-index, both staged", with(func(p *Pair) {
-			pi(p)
-			p.Arms = arms(protocol.StatusStaged, protocol.StatusStaged, "SYN-B")
-		})},
-		{"curtain live", with(func(p *Pair) {
-			p.Curtain = &CurtainHeldError{Node: "SYN-PRESS", Sentence: "Release the light curtain at SYN-PRESS, then press RELEASE again."}
-		})},
 		{"departing check unreadable", with(func(p *Pair) {
 			p.DepartErr = errors.New("departing-bin check: node Press 1: read claim 7: disk I/O error")
 		})},
@@ -242,35 +197,19 @@ func TestPlanGolden(t *testing.T) {
 	for _, c := range pairCases() {
 		fmt.Fprintf(&b, "%s\n  %s\n", c.name, renderPair(PlanPair(c.p)))
 	}
-	b.WriteString("\n## PlanDeferral — door 1's deferral\n")
-	for _, c := range []struct {
-		name string
-		d    Deferral
-	}{
-		{"leg went", Deferral{Leg: 12, Released: true, SiblingReleased: true}},
-		{"neither went, sibling never finished", Deferral{Leg: 12}},
-		{"sibling went on this click, leg dispatched", Deferral{Leg: 12, SiblingReleased: true, LegStatus: protocol.StatusDispatched}},
-		{"sibling already finished its half, leg queued", Deferral{Leg: 12, SiblingSucceeded: true, LegStatus: protocol.StatusQueued}},
-		{"sibling went, leg terminal", Deferral{Leg: 12, SiblingReleased: true, LegStatus: protocol.StatusCancelled}},
-		{"sibling went, leg releasable (went another way)", Deferral{Leg: 12, SiblingReleased: true, LegStatus: protocol.StatusStaged}},
-		{"sibling went, leg unreadable", Deferral{Leg: 12, SiblingReleased: true, LegErr: errRead}},
-	} {
-		remember, logs := PlanDeferral(c.d)
-		fmt.Fprintf(&b, "%s\n  remember=%v%s\n", c.name, remember, renderLog(logs))
-	}
 	b.WriteString("\n## PlanChangeover — doors 5 and 6\n")
 	for _, c := range []struct {
 		name string
 		c    Changeover
 	}{
 		{"changeover unreadable", Changeover{ReadErr: errRead}},
-		{"sweep: unchanged, out of scope, pulled, unreadable, paired, later wait, lone supply", Changeover{Sweep: true, Tasks: []Task{
+		{"sweep: unchanged, out of scope, pulled, unreadable, paired, evacuate, lone supply", Changeover{Sweep: true, Tasks: []Task{
 			{NodeName: "N-unchanged", Situation: "unchanged"},
 			{NodeName: "N-other", Situation: "swap", Evac: ptr(1)},
 			{NodeName: "N-pulled", Situation: "swap", InScope: true, Pulling: true, PullNode: "SYN-A", Evac: ptr(2)},
 			{NodeName: "N-unread", Situation: "swap", InScope: true, PullErr: errRead, Evac: ptr(3)},
-			{NodeName: "N-paired", Situation: "swap", InScope: true, Evac: ptr(4), Supply: ptr(5), SupplyLive: true},
-			{NodeName: "N-tooling", Situation: "evacuate", InScope: true, Evac: ptr(6), Supply: ptr(7), SupplyAtLaterWait: true},
+			{NodeName: "N-paired", Situation: "swap", InScope: true, Evac: ptr(4), Supply: ptr(5)},
+			{NodeName: "N-tooling", Situation: "evacuate", InScope: true, Evac: ptr(6), Supply: ptr(7)},
 			{NodeName: "N-add", Situation: "add", InScope: true, Supply: ptr(8)},
 			{NodeName: "N-paired-done", Situation: "swap", InScope: true, Evac: ptr(9), Supply: ptr(10)},
 		}}},
@@ -289,8 +228,8 @@ func TestPlanGolden(t *testing.T) {
 			for _, s := range tp.Slots {
 				slots = append(slots, fmt.Sprintf("%s=%d", s.Kind, s.Order))
 			}
-			fmt.Fprintf(&b, "  %s: in-scope=%v needs-flip=%v slots=[%s] deferred=%v%s\n", c.c.Tasks[tp.Task].NodeName,
-				tp.InScope, tp.NeedsFlip, strings.Join(slots, ","), tp.Deferred, renderLog(tp.Logs))
+			fmt.Fprintf(&b, "  %s: in-scope=%v needs-flip=%v slots=[%s]%s\n", c.c.Tasks[tp.Task].NodeName,
+				tp.InScope, tp.NeedsFlip, strings.Join(slots, ","), renderLog(tp.Logs))
 		}
 	}
 	b.WriteString("\n## PlanMaterial — doors 3 and 4\n")
@@ -321,36 +260,7 @@ func TestPlanGolden(t *testing.T) {
 		}
 		fmt.Fprintf(&b, "%s\n  %s\n", c.name, line)
 	}
-	b.WriteString("\n## PlanSurvivor — door 9\n")
-	allS := NeedSiblings | NeedScope
-	for _, c := range []struct {
-		name string
-		s    Survivor
-	}{
-		{"not paired", Survivor{Loaded: allS, OrderID: 12}},
-		{"partner has not finished", Survivor{Loaded: allS, OrderID: 12, Paired: true, SiblingID: 11}},
-		{"relay leg", Survivor{Loaded: allS, OrderID: 12, Paired: true, SiblingID: 11, SiblingSucceeded: true, Relay: true}},
-		{"changeover leg", Survivor{Loaded: allS, OrderID: 12, Paired: true, SiblingID: 11, SiblingSucceeded: true,
-			InChangeover: true, TaskID: 3, TaskSituation: "evacuate"}},
-		{"already fired this lifetime", Survivor{Loaded: allS, OrderID: 12, Paired: true, SiblingID: 11, SiblingSucceeded: true, AlreadyFired: true}},
-		{"owed the click", Survivor{Loaded: allS, OrderID: 12, Paired: true, SiblingID: 11, SiblingSucceeded: true}},
-	} {
-		p := PlanSurvivor(c.s)
-		fmt.Fprintf(&b, "%s\n  release=%v gate=%s%s\n", c.name, p.Release, p.Gate, renderLog(p.Logs))
-	}
-	b.WriteString("\n## PlanPickup — door 10\n")
-	for _, c := range []struct {
-		name   string
-		passed bool
-		err    error
-	}{
-		{"deferred to this lift", false, nil},
-		{"already released past a wait (N-a')", true, nil},
-		{"history unreadable", false, errRead},
-	} {
-		fire, logs := PlanPickup(8, "uuid-evac", c.passed, c.err)
-		fmt.Fprintf(&b, "%s\n  release=%v%s\n", c.name, fire, renderLog(logs))
-	}
+	writeActGolden(&b)
 
 	path := filepath.Join("testdata", "plan.golden")
 	if *update {

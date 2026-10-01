@@ -128,67 +128,6 @@ func TestReleaseChangeoverWait_StagedLegStillReleases(t *testing.T) {
 	}
 }
 
-// TestReleaseIfReleasable_SkipsHeldOrder covers the DEFERRED path directly —
-// the one HandleBinPickedUp drives on evac-pickup confirm, where nothing
-// upstream guarantees the supply leg has staged.
-func TestReleaseIfReleasable_SkipsHeldOrder(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "deferred release guard")
-	if err != nil {
-		t.Fatalf("start changeover: %v", err)
-	}
-	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if err != nil {
-		t.Fatalf("get node task: %v", err)
-	}
-	if task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected an evac order on the task")
-	}
-	orderID := *task.OldMaterialReleaseOrderID
-
-	pending, _ := db.ListPendingOutbox(100)
-	for _, m := range pending {
-		_ = db.AckOutbox(m.ID)
-	}
-
-	for _, held := range []protocol.Status{
-		orders.StatusQueued, orders.StatusSourcing,
-		orders.StatusDispatched, orders.StatusAcknowledged,
-	} {
-		testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(held)), "set held status")
-
-		released, err := eng.releaseIfReleasable(newReleaseAct(), orderID, "test-deferred-supply", ReleaseDisposition{CalledBy: "test"})
-		if err != nil {
-			t.Fatalf("releaseIfReleasable(%s): unexpected error: %v", held, err)
-		}
-		if released {
-			t.Errorf("releaseIfReleasable(%s) = true, want false — Core would refuse this status", held)
-		}
-		if releases := findOutboxByType(t, db, protocol.TypeOrderRelease); len(releases) != 0 {
-			t.Errorf("status %s: OrderRelease envelopes queued: got %d, want 0", held, len(releases))
-		}
-		got, _ := db.GetOrder(orderID)
-		if got.Status != held {
-			t.Errorf("status %s: order moved to %q — a skipped release must not transition the row", held, got.Status)
-		}
-	}
-
-	// And the positive control: staged releases and reports true.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "stage it")
-	released, err := eng.releaseIfReleasable(newReleaseAct(), orderID, "test-deferred-supply", ReleaseDisposition{CalledBy: "test"})
-	if err != nil {
-		t.Fatalf("releaseIfReleasable(staged): %v", err)
-	}
-	if !released {
-		t.Error("releaseIfReleasable(staged) = false, want true")
-	}
-}
-
 // TestReleaseChangeoverWaitForNode_ScopesToThatTask pins the per-node release:
 // the same path, same sequencing, same dispositions — narrowed to one node's
 // task. A wrong node id releases nothing (and queues nothing); the right one

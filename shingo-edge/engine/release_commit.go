@@ -18,7 +18,6 @@ package engine
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -91,27 +90,27 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 		// has something to grep for.
 		e.logRelease("order=%d disposition=%q — skipping manifest sync: no_process_node",
 			order.ID, string(disp.Mode))
-		return e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy)
+		return e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy, ll.echo())
 	}
-	if p.Flip {
+	if p.Flip && !ll.flipped {
 		if err := e.commitFlip(ll); err != nil {
 			return err
 		}
 	}
 	switch p.Arm {
 	case release.ArmNoClaim:
-		return e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy)
+		return e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy, ll.echo())
 	case release.ArmDrop:
-		if p.Finalize {
+		if p.Finalize && !ll.finalized {
 			if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order); err != nil {
 				return err
 			}
 		}
-		return e.releaseOrderDropFastPath(order.ID, ll.node, ll.runtime, disp, p.Finalize)
+		return e.releaseOrderDropFastPath(order.ID, ll.node, ll.runtime, disp, p.Finalize, ll.echo())
 	}
 	// After the flip: on a sequential press the line is already on the
 	// partner, so no tick lands on this bin between its count and its clear.
-	if p.Finalize {
+	if p.Finalize && !ll.finalized {
 		if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order); err != nil {
 			return err
 		}
@@ -121,7 +120,7 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 		// release: the ingest is the bin's manifest.
 		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
 			order.ID, ll.node.Name, string(disp.Mode))
-		if err := e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy); err != nil {
+		if err := e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy, ll.echo()); err != nil {
 			return err
 		}
 		// U1 AFTER THE RELEASE, NOT BEFORE IT: the side-cycle's premise is "the
@@ -133,7 +132,7 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 		}
 		return nil
 	}
-	return e.releaseOrderWithFullLineside(order, ll.node, ll.runtime, ll.toClaim, ll.nodeTask, disp, p.SuppressManifest, p.Finalize)
+	return e.releaseOrderWithFullLineside(order, ll.node, ll.runtime, ll.toClaim, ll.nodeTask, disp, p.SuppressManifest, p.Finalize, ll.echo())
 }
 
 // commitFlip moves the line to the partner (L3: the release IS the flip):
@@ -172,7 +171,7 @@ func (e *Engine) commitFlip(ll *legLoad) error {
 //
 // finalized: a produce bin's count went to Core as its ingest, so the release
 // carries none (the slot's count is already cleared and would wipe it).
-func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition, finalized bool) error {
+func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition, finalized bool, echo *int) error {
 	// No CaptureToLineside here (no to-style claim to fill buckets against),
 	// so resolvedBinID=0: a PULL PARTS LINESIDE shape falls through to the
 	// legacy &0 wipe rather than a delta-driven write.
@@ -183,7 +182,7 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 	wireDisposition := buildProtocolDisposition(disp, runtime)
 	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
 		orderID, node.Name, string(disp.Mode))
-	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy)
+	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo)
 }
 
 // releaseOrderWithFullLineside is the lineside release: the capture of parts
@@ -196,7 +195,7 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 // finalized: a produce bin finalized at this release (a produce press changing
 // over to a consume part); its manifest is Core's ingest, so the release
 // carries no count.
-func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, toClaim *processes.NodeClaim, nodeTask *processes.NodeTask, disp ReleaseDisposition, isSupply, finalized bool) error {
+func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, toClaim *processes.NodeClaim, nodeTask *processes.NodeTask, disp ReleaseDisposition, isSupply, finalized bool, echo *int) error {
 	orderID := order.ID
 
 	// The bin the capture_reduction emit and the manifest-sync fallback
@@ -292,7 +291,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
 	}
-	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy)
+	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo)
 }
 
 func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState, resolvedBinID int64) *int {
@@ -464,83 +463,24 @@ func runtimeRemaining(runtime *processes.RuntimeState) int {
 	return runtime.RemainingUOPCached
 }
 
-// ── Door 1's paperwork and deferral ───────────────────────────────────────
+// ── Door 1's paperwork ────────────────────────────────────────────────────
 
-// commitPairPaperwork carries out the pair click's door-level plan: a refusal
-// is returned with nothing changed; otherwise the departing bin is finalized
-// FIRST, before either release envelope, whether or not every leg goes on this
-// click — the operator's RELEASE is the declaration that the bin is full.
+// commitPairPaperwork is the pair click's press paperwork: the departing bin
+// is finalized FIRST, before either release envelope, whether its legs go on
+// this click or hold — the operator's RELEASE is the declaration that the bin
+// is full (the held press).
 func (e *Engine) commitPairPaperwork(p release.PairPlan, pl *pairLoad) error {
-	e.emitLogs(p.Logs)
-	if p.Verdict == release.Refuse {
-		return p.Refusal
-	}
 	if p.Finalize {
 		return e.finalizeDepartingProduce(pl.node, pl.runtime, pl.evac)
 	}
 	return nil
 }
 
-// commitDeferral remembers a pair leg the click could not release yet, so it
-// is released when it reaches its wait (door 8). In memory: an Edge restart
-// loses it, and the survivor rule (door 9) asks the durable question.
-func (e *Engine) commitDeferral(remember bool, logs []release.Log, legID int64, disp ReleaseDisposition) {
-	if !remember {
-		return
-	}
-	e.pendingSiblingReleaseMu.Lock()
-	if e.pendingSiblingRelease == nil {
-		e.pendingSiblingRelease = make(map[int64]ReleaseDisposition)
-	}
-	e.pendingSiblingRelease[legID] = disp
-	e.pendingSiblingReleaseMu.Unlock()
-	e.emitLogs(logs)
-}
-
-// takeDeferral consumes a leg's deferral, if it has one.
-func (e *Engine) takeDeferral(orderID int64) (ReleaseDisposition, bool) {
-	e.pendingSiblingReleaseMu.Lock()
-	defer e.pendingSiblingReleaseMu.Unlock()
-	disp, ok := e.pendingSiblingRelease[orderID]
-	if ok {
-		delete(e.pendingSiblingRelease, orderID)
-	}
-	return disp, ok
-}
-
-// forgetLeg drops a terminal leg's deferral and survivor mark, so neither map
-// grows without bound.
-func (e *Engine) forgetLeg(orderID int64) {
-	e.pendingSiblingReleaseMu.Lock()
-	delete(e.pendingSiblingRelease, orderID)
-	e.pendingSiblingReleaseMu.Unlock()
-	e.survivorReleasedMu.Lock()
-	delete(e.survivorReleased, orderID)
-	e.survivorReleasedMu.Unlock()
-}
-
-// markSurvivorFired spends the survivor rule's one release for this order.
-// Spent on a release, not on a try: an attempt that never reached Core cannot
-// have flapped anything.
-func (e *Engine) markSurvivorFired(orderID int64) {
-	e.survivorReleasedMu.Lock()
-	if e.survivorReleased == nil {
-		e.survivorReleased = make(map[int64]struct{})
-	}
-	e.survivorReleased[orderID] = struct{}{}
-	e.survivorReleasedMu.Unlock()
-}
-
-// noteReleaseHeld puts an automatic release's curtain refusal on the order,
-// for the board's chip. Only the curtain's refusals: every other reason an
-// automatic release declines is the deferral working, and has its own account.
-func (e *Engine) noteReleaseHeld(orderID int64, err error) {
-	var held *CurtainHeldError
-	if !errors.As(err, &held) {
-		return
-	}
-	if nerr := e.orderMgr.NoteReleaseHeld(orderID, held.Sentence); nerr != nil {
-		e.logFn("release held for order %d (%s) but the note could not be written: %v", orderID, held.Sentence, nerr)
+// noteReleaseHeld puts a curtain hold's sentence (Q8's: the robot goes when
+// the curtain clears) on the order, for the board's chip.
+func (e *Engine) noteReleaseHeld(orderID int64, sentence string) {
+	if err := e.orderMgr.NoteReleaseHeld(orderID, sentence); err != nil {
+		e.logFn("release held for order %d (%s) but the note could not be written: %v", orderID, sentence, err)
 	}
 }
 

@@ -136,6 +136,9 @@ func TestReleaseOrderWithLineside_U1DoesNotFireForTheSupplyLeg(t *testing.T) {
 	legB := mkSwapLeg(t, db, nodeID, "uuid-u1s-b", dispatch.StepsB, "")
 	testutil.MustNoErr(t, db.LinkOrderSiblings(legA.ID, legB.ID), "link siblings")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(legB.ID, string(protocol.StatusStaged)), "stage supply")
+	// The evac has already lifted the press's bin and finished: nothing is left
+	// for the supply to wait on (G7).
+	testutil.MustNoErr(t, db.UpdateOrderStatus(legA.ID, string(protocol.StatusConfirmed)), "evac finished")
 	_, err = db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "ensure runtime")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, 0), "bind claim")

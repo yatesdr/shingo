@@ -39,7 +39,7 @@ import (
 // mix refusals with side effects, and which therefore have to say so. The value
 // is the ordering test that pins the behaviour.
 var releaseSurfacesWithStatedOrdering = map[string]string{
-	"ReleaseStagedOrders":      "TestReleaseStagedOrders_HeldReleaseShipsNoPaperwork",
+	"ReleaseStagedOrders":      "TestReleaseStagedOrders_HeldReleaseSplitsAtThePress",
 	"ReleaseOrderWithLineside": "TestReleaseOrderWithLineside_U1FiresAfterTheRelease",
 }
 
@@ -52,6 +52,7 @@ var releaseSurfacesWithoutGates = map[string]string{
 	"ReleaseNodeWithRemainingUOP":  "wrapper around releaseNodeInternal",
 	"ReleaseChangeoverWait":        "fans out to ReleaseChangeoverWaitForNode",
 	"ReleaseChangeoverWaitForNode": "validates, then releases; no side effect precedes a refusal",
+	"ReleaseChangeoverWaitFor":     "the same act as ReleaseChangeoverWaitForNode, its purpose named",
 	// Quality containment's Verify Good (2026-09-14): claim lookup, ambiguity
 	// and bin-still-standing refusals all precede the move creation; the hold
 	// marker clear follows the move as a best-effort audit write, so no side

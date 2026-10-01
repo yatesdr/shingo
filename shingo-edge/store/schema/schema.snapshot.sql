@@ -380,6 +380,11 @@ CREATE TABLE orders (
     -- bin cross, its role at its process node. NULL for an order with no steps
     -- this Edge authored, and for every row older than v8.
     release_facts   TEXT,
+    -- release_intent / release_held (Edge v9): the act's promise to this leg
+    -- for one station wait (release.Intent, JSON; '' = none), and the last
+    -- hold or rejection sentence the board's chip shows.
+    release_intent  TEXT NOT NULL DEFAULT '',
+    release_held    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 , payload_desc TEXT NOT NULL DEFAULT '', origin_id TEXT NOT NULL DEFAULT '', origin_class TEXT NOT NULL DEFAULT '');

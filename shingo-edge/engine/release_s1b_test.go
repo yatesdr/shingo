@@ -120,7 +120,7 @@ func TestReleaseS1bProduceSplit(t *testing.T) {
 	runRelCells(t, []relCell{
 		// two_robot splits at the pair click today, which is the rule.
 		{name: "S1b/two_robot: click, 5 ticks, Core refuses, re-click, lift, supply delivered",
-			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=1 capred=0 | " +
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac | ingest=1 capred=0 | " +
 				"ingests=[qty=42 bin=9001 payload=PART-X] | A uop=0 pending=5 bin=9002",
 			build: pairAt(twoRobot, "evac", S, "supply", S),
 			act: seq(pairClick(dispEmpty), ticks(5), refuse("evac", "invalid_state"), pairClick(dispEmpty),
@@ -158,7 +158,7 @@ func TestReleaseS1bProduceSplit(t *testing.T) {
 			build: coAt(coSpec{mode: protocol.SwapModeTwoRobot, toRole: protocol.ClaimRoleConsume}, "evac", S, "supply", S),
 			act:   orderClick("evac", dispEmpty), probe: probes(pIngests, pSlot("A", front))},
 		{name: "S1b/changeover evac produce→produce, the plant-wide sweep",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | ingests=[qty=42 bin=9001 payload=PART-X] | A uop=0 pending=0 bin=nil",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | ingests=[qty=42 bin=9001 payload=PART-X] | A uop=0 pending=0 bin=nil",
 			build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
 			act:   sweepClick(dispNone), probe: probes(pIngests, pSlot("A", front))},
 		{name: "S1b/changeover drop of a produce node, node click",

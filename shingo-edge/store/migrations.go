@@ -1280,6 +1280,33 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// orders.release_intent / release_held: the release layer's intent
+			// (S5) and the chip's sentence. Column-check guarded, like v7.
+			Version: 9,
+			Name:    "orders_release_intent",
+			Fn: func(tx *sql.Tx) error {
+				for _, col := range []string{"release_intent", "release_held"} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name = ?`, col).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name IN ('release_intent', 'release_held')`).Scan(&n)
+				return err == nil && n == 2
+			},
+		},
 	}
 }
 

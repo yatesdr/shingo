@@ -1186,7 +1186,7 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 	_ = db.UpdateOrderStatus(oid, string(StatusStaged))
 
-	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, ""), "ReleaseOrder")
+	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, "", nil), "ReleaseOrder")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusInTransit {
 		t.Errorf("Status: got %q, want in_transit", o.Status)
@@ -1218,7 +1218,7 @@ func TestReleaseOrder_ThreadsCalledBy(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 	_ = db.UpdateOrderStatus(oid, string(StatusStaged))
 
-	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, "stephen-station-7"), "ReleaseOrder")
+	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, "stephen-station-7", nil), "ReleaseOrder")
 	var rel protocol.OrderRelease
 	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRelease, &rel)
 	if rel.CalledBy != "stephen-station-7" {
@@ -1250,7 +1250,7 @@ func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
 			_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 			_ = db.UpdateOrderStatus(oid, string(StatusStaged))
 
-			testutil.MustNoErr(t, mgr.ReleaseOrder(oid, tc.uop, ""), "ReleaseOrder")
+			testutil.MustNoErr(t, mgr.ReleaseOrder(oid, tc.uop, "", nil), "ReleaseOrder")
 			var rel protocol.OrderRelease
 			decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRelease, &rel)
 			switch {
@@ -1280,7 +1280,7 @@ func TestReleaseOrder_PreDispatchSkip(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-rns", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, ""), "ReleaseOrder on pre-dispatch (submitted) should be a silent no-op, got")
+	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, "", nil), "ReleaseOrder on pre-dispatch (submitted) should be a silent no-op, got")
 
 	// Status didn't change — no envelope queued, no transition.
 	o, _ := db.GetOrder(oid)
@@ -1294,7 +1294,7 @@ func TestReleaseOrder_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.ReleaseOrder(99999, nil, "")
+	err := mgr.ReleaseOrder(99999, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}

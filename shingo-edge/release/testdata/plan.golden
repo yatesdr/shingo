@@ -22,12 +22,9 @@ sweep/dispatched
 sweep/cancelled
   skip G1: terminal
 door2/curtain live
-  refuse G6: Release the light curtain at SYN-PRESS, then press RELEASE again.
-    log release: order=11 disposition="capture_lineside" - curtain refused the release: Release the light curtain at SYN-PRESS, then press RELEASE again.
+  go lineside flip=false finalize=false suppress=false u1=false
 sweep/curtain live
-  refuse G6: node SYN-PRESS (evac): Release the light curtain at SYN-PRESS, then press RELEASE again.
-    log release: order=11 disposition="capture_lineside" - curtain refused the release: Release the light curtain at SYN-PRESS, then press RELEASE again.
-    log std: release changeover wait node SYN-PRESS (evac): Release the light curtain at SYN-PRESS, then press RELEASE again.
+  go lineside flip=false finalize=false suppress=false u1=false
 door2/no process node
   go plain flip=false finalize=false suppress=false u1=false
 door2/node unreadable
@@ -102,38 +99,6 @@ slots inverted by the steps
   go finalize=false evac=11 supply=12
     log engine: release-staged node=Press 1: steps say the pair is inverted relative to the runtime slots - evac=11 supply=12 (slots said evac=12 supply=11)
     log engine: release-staged node=Press 1 resolved evac=11 supply=12
-press-index, R2 staged, R1 queued
-  refuse G7: node Press 1: the other robot has not cleared the press yet (queued) — release again once it is staged
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-    log engine: release-staged HELD node=Press 1: leg 12 is staged and would place a bin at SYN-PRESS, but leg 11 is "queued" and has not cleared it
-press-index, R2 staged, R1 driving to its wait (N-b)
-  refuse G7: node Press 1: the other robot has not cleared the press yet (in_transit) — release again once it is staged
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-    log engine: release-staged HELD node=Press 1: leg 12 is staged and would place a bin at SYN-PRESS, but leg 11 is "in_transit" and has not cleared it
-press-index, R1 released earlier and driving on
-  go finalize=false evac=11 supply=12
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-press-index flipped, R1 staged, R2 queued
-  go finalize=false evac=11 supply=12
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-press-index unflipped, R1 staged, R2 queued
-  refuse G7: node Press 1: the other robot has not cleared the press yet (queued) — release again once it is staged
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-    log engine: release-staged HELD node=Press 1: leg 11 is staged and would place a bin at SYN-B, but leg 12 is "queued" and has not cleared it
-press-index, sibling history unreadable
-  refuse G7: node Press 1: the other robot has not cleared the press yet (unreadable) — release again once it is staged
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-    log engine: release-staged HELD node=Press 1: cannot read sibling 11's release history: disk I/O error
-press-index, leg unreadable
-  refuse G7: node Press 1: the other robot has not cleared the press yet (unreadable) — release again once it is staged
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-    log engine: release-staged HELD node=Press 1: cannot read leg 12 to check for a collision: disk I/O error
-press-index, both staged
-  go finalize=false evac=11 supply=12
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
-curtain live
-  refuse G6: Release the light curtain at SYN-PRESS, then press RELEASE again.
-    log engine: release-staged node=Press 1 resolved evac=11 supply=12
 departing check unreadable
   refuse G4: node Press 1: departing-bin check: node Press 1: read claim 7: disk I/O error
     log engine: release-staged node=Press 1 resolved evac=11 supply=12
@@ -147,40 +112,22 @@ consume pair
   go finalize=false evac=11 supply=12
     log engine: release-staged node=Press 1 resolved evac=11 supply=12
 
-## PlanDeferral — door 1's deferral
-leg went
-  remember=false
-neither went, sibling never finished
-  remember=false
-sibling went on this click, leg dispatched
-  remember=true
-    log engine: two-robot release: leg 12 (dispatched) deferred — sibling already released; will re-fire when it reaches staged
-sibling already finished its half, leg queued
-  remember=true
-    log engine: two-robot release: leg 12 (queued) deferred — sibling already released; will re-fire when it reaches staged
-sibling went, leg terminal
-  remember=false
-sibling went, leg releasable (went another way)
-  remember=false
-sibling went, leg unreadable
-  remember=false
-
 ## PlanChangeover — doors 5 and 6
 changeover unreadable
   refuse: disk I/O error
-sweep: unchanged, out of scope, pulled, unreadable, paired, later wait, lone supply
-  N-unchanged: in-scope=false needs-flip=false slots=[] deferred=false
-  N-other: in-scope=false needs-flip=false slots=[] deferred=false
-  N-pulled: in-scope=true needs-flip=true slots=[] deferred=false
+sweep: unchanged, out of scope, pulled, unreadable, paired, evacuate, lone supply
+  N-unchanged: in-scope=false needs-flip=false slots=[]
+  N-other: in-scope=false needs-flip=false slots=[]
+  N-pulled: in-scope=true needs-flip=true slots=[]
     log std: release changeover wait: node SYN-A skipped — the line is pulling from it, and a plant-wide sweep does not move the line on the operator's behalf
-  N-unread: in-scope=true needs-flip=true slots=[] deferred=false
+  N-unread: in-scope=true needs-flip=true slots=[]
     log std: release changeover wait node N-unread: disk I/O error — the sweep declines rather than releasing on an unread pull state
-  N-paired: in-scope=true needs-flip=false slots=[evac=4] deferred=true
-  N-tooling: in-scope=true needs-flip=false slots=[evac=6,supply=7] deferred=false
-  N-add: in-scope=true needs-flip=false slots=[supply=8] deferred=false
-  N-paired-done: in-scope=true needs-flip=false slots=[evac=9] deferred=false
+  N-paired: in-scope=true needs-flip=false slots=[evac=4,supply=5]
+  N-tooling: in-scope=true needs-flip=false slots=[evac=6,supply=7]
+  N-add: in-scope=true needs-flip=false slots=[supply=8]
+  N-paired-done: in-scope=true needs-flip=false slots=[evac=9,supply=10]
 node click on a pulled position: the trunk flips
-  N-pulled: in-scope=true needs-flip=false slots=[evac=2] deferred=false
+  N-pulled: in-scope=true needs-flip=false slots=[evac=2]
 
 ## PlanMaterial — doors 3 and 4
 node unreadable
@@ -200,28 +147,97 @@ a second tap while the first robot is coming (L8)
 go
   go
 
-## PlanSurvivor — door 9
-not paired
-  release=false gate=
-partner has not finished
-  release=false gate=
-relay leg
-  release=false gate=G2
-    log engine: swap-survivor release: order 12 is a relay leg — its partner 11 finishing is not a release of its wait; left for the operator
-changeover leg
-  release=false gate=G2
-    log engine: swap-survivor release: order 12 is a leg of changeover task 3 (evacuate) — its waits are the changeover's to release; left for the operator
-already fired this lifetime
-  release=false gate=
-owed the click
-  release=true gate=
+## PointOf — where a leg stands
+staged at station wait 0
+  ordinal=0 purpose="ready" at-wait=true driving=false has-wait=true lane=false no-waits=false
+staged at station wait 1
+  ordinal=1 purpose="tooling_done" at-wait=true driving=false has-wait=true lane=false no-waits=false
+staged at a lane wait, nothing released
+  ordinal=0 purpose="ready" at-wait=false driving=false has-wait=true lane=true no-waits=false
+staged, Core numbers no waits, intent held for 1
+  ordinal=1 purpose="tooling_done" at-wait=true driving=false has-wait=true lane=false no-waits=false
+driving, released at 0
+  ordinal=1 purpose="tooling_done" at-wait=false driving=true has-wait=true lane=false no-waits=false
+driving past its last wait
+  ordinal=2 purpose="" at-wait=false driving=true has-wait=false lane=false no-waits=false
+dispatched, not yet at a wait
+  ordinal=0 purpose="ready" at-wait=false driving=false has-wait=true lane=false no-waits=false
+a plan with no station waits
+  ordinal=0 purpose="" at-wait=true driving=false has-wait=false lane=false no-waits=true
 
-## PlanPickup — door 10
-deferred to this lift
-  release=true
-already released past a wait (N-a')
-  release=false
-    log engine: bin_picked_up: supply 8 not released at evac uuid-evac's pickup — already released past a wait (passed=true err=<nil>)
-history unreadable
-  release=false
-    log engine: bin_picked_up: supply 8 not released at evac uuid-evac's pickup — already released past a wait (passed=false err=disk I/O error)
+## PlanAct — an act over its legs
+pair: both at their swap wait, nothing to wait on
+  purpose="swap"
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+  order 12: go lineside flip=false finalize=false suppress=true u1=false
+pair: the supply sets down where the evac has not lifted (G7)
+  purpose="swap"
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+  order 12: hold G7 wake=lift: waiting for the bin on SYN-PRESS to be lifted
+pair: press-index, both staged, Core says they co-release
+  purpose="swap"
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+  order 12: go lineside flip=false finalize=false suppress=true u1=false
+pair: each waits on the other's lift (two-way)
+  purpose="swap"
+  order 11: hold G7 wake=lift: waiting for the bin on SYN-B to be lifted
+  order 12: hold G7 wake=lift: waiting for the bin on SYN-PRESS to be lifted
+  held: waiting for the bin on SYN-B to be lifted; waiting for the bin on SYN-PRESS to be lifted
+pair: the supply driving to its swap wait: released ahead (the echo)
+  purpose="swap"
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+  order 12: go lineside flip=false finalize=false suppress=true u1=false
+pair: the supply not yet moving (G1, remembered)
+  purpose="swap"
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+  order 12: hold G1 wake=staged: waiting for its robot to reach its wait
+    log engine: deferred release: order supply (12) status="queued" is not releasable at Core (needs staged or in_transit) — skipping, will release when it stages
+per-order click on a leg not yet moving (G1)
+  purpose="swap"
+  refuse G1: order 11 is queued, which Core will not release
+pair: the evac at a lane wait (G2)
+  purpose="swap"
+  order 11: out G2
+  order 12: go lineside flip=false finalize=false suppress=true u1=false
+per-order click on a leg at a lane wait (G2)
+  purpose="swap"
+  refuse G2: order 11 is waiting on a lane, not on the station: Core releases it when the lane is safe
+pair: Core unreachable (G3)
+  purpose="swap"
+  order 11: hold G3 wake=core: waiting for Core
+  order 12: hold G3 wake=core: waiting for Core
+  held: waiting for Core; waiting for Core
+pair: a curtained node on the point (G6)
+  purpose="swap"
+  order 11: hold G6 wake=curtain: Release the light curtain at SYN-PRESS: the robot goes when it clears.
+    log release: order=11 disposition="capture_lineside" - curtain held the release: Release the light curtain at SYN-PRESS, then press RELEASE again.
+  order 12: go lineside flip=false finalize=false suppress=true u1=false
+pair: a configuration refusal refuses the act (G4)
+  purpose="swap"
+  refuse G4: release order evac (11): get process node 5: disk I/O error
+explicit ready on a swap wait: out of scope
+  purpose="ready"
+  order 11: out G1
+no purpose named: the earliest owed (ready before tooling done)
+  purpose="ready"
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+  order 12: out G1
+a legacy wait with no purpose: covered
+  purpose=""
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+no station waits: the pair door covers it
+  purpose=""
+  order 11: go lineside flip=false finalize=false suppress=false u1=false
+no station waits: the sweep leaves it
+  purpose=""
+  order 11: out G1
+terminal leg: out
+  purpose=""
+  order 11: out G1
+re-evaluation: a leg at its intent's wait goes
+  purpose=""
+  order 12: go lineside flip=false finalize=false suppress=true u1=false
+re-evaluation: a refusal holds for the next click
+  purpose=""
+  order 12: hold G4 wake=click: release order supply (12): get process node 5: disk I/O error
+  held: release order supply (12): get process node 5: disk I/O error

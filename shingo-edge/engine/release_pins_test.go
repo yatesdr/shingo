@@ -17,8 +17,8 @@ import (
 )
 
 // restart replaces the engine with a fresh one over the same database — what an
-// Edge restart does to everything held in memory (the pair-deferral map, the
-// survivor bound). The fake Core and the curtain script carry over.
+// Edge restart does to everything held in memory. Intents are on the order
+// row and survive it. The fake Core and the curtain script carry over.
 func (h *relHarness) restart() {
 	h.t.Helper()
 	eng := testEngine(h.t, h.db)
@@ -27,6 +27,7 @@ func (h *relHarness) restart() {
 	mut := uop.New(h.db, "test.station", h.db, h.db)
 	eng.SetInventoryDeltaSink(mut)
 	eng.coreClient = h.eng.coreClient
+	eng.points = nil
 	eng.plcMgr = h.eng.plcMgr
 	h.eng, h.mutator = eng, mut
 	h.handler = newEdgeHandlerFor(eng)
@@ -35,6 +36,7 @@ func (h *relHarness) restart() {
 // pickedUp delivers Core's BinPickedUp for a leg lifting the front node's bin.
 func (h *relHarness) pickedUp(leg string) {
 	h.t.Helper()
+	h.lifted[fxPress] = true
 	h.eng.HandleBinPickedUp(h.order(leg).UUID, fxBin, fxPress)
 }
 
@@ -59,6 +61,12 @@ func refuse(leg, code string) func(h *relHarness) error {
 
 func stages(leg string) func(h *relHarness) error {
 	return func(h *relHarness) error { h.coreStages(leg); return nil }
+}
+
+// stagesAt delivers Core's OrderStaged for a leg parked at its station wait
+// with this ordinal (the number Core reports, S3).
+func stagesAt(leg string, ordinal int) func(h *relHarness) error {
+	return func(h *relHarness) error { h.coreStagesAt(leg, ordinal); return nil }
 }
 
 func confirms(leg string) func(h *relHarness) error {
@@ -190,15 +198,15 @@ func releasePinCells() []relCell {
 		// the envelope goes, through a second sweep (which the page's toast
 		// invited until it reported deferred supply apart from pending).
 		{name: "N-a/sweep twice on a single_robot tooling evac",
-			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[] | uop=0",
+			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[] | uop=0",
 			build: coAt(coSRTooling, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
 		{name: "N-a/station button twice on a press-index tooling pair",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=1 capred=0 | uop=0",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
 			build: coAt(coPITooling, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), pairClick(dispNone)), probe: probes(pUOP)},
 		{name: "N-a/sweep twice on a press-index tooling R1",
-			want:  "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[] | uop=0",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[] | uop=0",
 			build: coAt(coPITooling, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
 
@@ -210,11 +218,10 @@ func releasePinCells() []relCell {
 		// purpose-scoped act is the fix; until then the plant instruction
 		// stands (no second RELEASE on a tooling node before tooling is done).
 		{name: "N-a(ii)/ready clicked again after the evac staged at tooling done",
-			bug:   "N-a(ii)",
-			today: "ok | evac=in_transit supply=staged | rel=evac,evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=1 pending=0 deferred=1 flip=[]",
-			want:  "ok | evac=staged supply=staged | rel=evac | ingest=0 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | sweep released=0 pending=0 deferred=1 flip=[]",
+			want:  "ok | evac=staged supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[]",
 			build: coAt(coSRTooling, "evac", S, "supply", S),
-			act:   seq(sweepClick(dispNone), stages("evac"), sweepClick(dispNone))},
+			act: seq(sweepClickAs(release.PurposeReady, dispNone), stagesAt("evac", 1),
+				sweepClickAs(release.PurposeReady, dispNone))},
 
 		// ── §6.4: the station button on a single_robot changeover node ────────
 		// Its relay task carries both legs, and the pair path refuses any mode
@@ -239,15 +246,15 @@ func releasePinCells() []relCell {
 			act:   seq(pairClick(dispNone), stages("supply"), picks("evac"))},
 		// KEEP: the sweep defers the holdInbound supply to the evac's lift.
 		{name: "keep/sweep defers the held supply to the evac's pickup",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[]",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), picks("evac"))},
 		{name: "keep/two_robot changeover supply released at the evac's pickup",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[]",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
 			build: coAt(coTwoRobot, "evac", S, "supply", S),
 			act:   seq(sweepClick(dispNone), picks("evac"))},
 
-		// ── L1: the survivor arm releases waits nobody clicked ─────────────
+		// ── L1: no release goes for a wait nobody pressed ──────────────────
 		{name: "L1/single_robot relay: stage leg confirms, swap leg at ready", gate: release.G2,
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coSRTooling, "evac", S, "supply", T),
@@ -256,15 +263,8 @@ func releasePinCells() []relCell {
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coPITooling, "evac", S, "supply", T),
 			act:   confirms("supply")},
-		// KEEP: the steady-state survivor (run 12d order 84) still goes.
-		{name: "keep/two_robot survivor: evac confirms, supply staged",
-			want:  "ok | evac=confirmed supply=in_transit | rel=supply | ingest=0 capred=0",
-			build: pairAt(twoRobot, "evac", T, "supply", S),
-			act:   confirms("evac")},
-		// L1's companion: once the survivor stops releasing it, the held supply
-		// needs the tooling-done click to cover it.
 		{name: "L1c/tooling done sweep, R2 parked at its hold",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,supply,evac | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[]",
 			build: coAt(coPI3MarkedFront, "evac", S, "supply", S),
 			act:   seq(pairClick(dispNone), stages("evac"), stages("supply"), sweepClick(dispNone))},
 
@@ -274,48 +274,34 @@ func releasePinCells() []relCell {
 			build: coAt(coPI, "evac", S, "supply", S),
 			act:   pairClick(dispNone)},
 
-		// ── Door 8: the deferred re-fire ─────────────────────────────────────
+		// ── Door 8: the intent worker ────────────────────────────────────────
 		{name: "d8/two_robot supply stages after the click",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0",
 			build: pairAt(twoRobot, "evac", S, "supply", D),
 			act:   seq(pairClick(dispEmpty), stages("supply")), probe: probes(pDeferred)},
 		{name: "d8/two_robot re-fire into a live curtain",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
+			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | deferred=supply | chip:supply=Release the light curtain at SYN-PRESS",
 			build: withCurtain(curtainSafe, pairAt(twoRobot, "evac", S, "supply", D)),
 			act: seq(pairClick(dispEmpty), func(h *relHarness) error { h.wl.set(curtainLive); return nil },
 				stages("supply")),
 			probe: probes(pDeferred, pChip("supply"))},
-		// ── Door 9: the survivor into a live curtain ─────────────────────────
-		{name: "d9/two_robot survivor into a live curtain",
-			want:  "ok | evac=confirmed supply=staged | rel=- | ingest=0 capred=0 | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
-			build: withCurtain(curtainLive, pairAt(twoRobot, "evac", T, "supply", S)),
-			act:   confirms("evac"), probe: probes(pChip("supply"))},
-		// ── Door 10: the pickup chain into a live curtain ────────────────────
-		{name: "d10/changeover supply at the evac's pickup, curtain live",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | chip:supply=Release the light curtain at SYN-PRESS, then press RELEASE again.",
-			build: withCurtain(curtainSafe, coAt(coTwoRobot, "evac", S, "supply", S)),
-			act: seq(sweepClick(dispNone), func(h *relHarness) error { h.wl.set(curtainLive); return nil },
-				picks("evac")),
-			probe: probes(pChip("supply"))},
-
-		// ── L2: capture once (P-E1..P-E6) ────────────────────────────────────
 		{name: "L2/P-E1 refused, clicked again with the same qty",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=-5 | pile=5 | chip:evac=-",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac | ingest=0 capred=-5 | pile=5 | chip:evac=-",
 			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", S)),
 			act:   seq(pairClick(dispPull(5)), refuse("evac", "invalid_state"), pairClick(dispPull(5))),
 			probe: probes(pPile, pChip("evac"))},
 		{name: "L2/P-E2 refused, clicked again with a larger qty",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=-8 | pile=8",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac | ingest=0 capred=-8 | pile=8",
 			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", S)),
 			act:   seq(pairClick(dispPull(5)), refuse("evac", "invalid_state"), pairClick(dispPull(8))),
 			probe: probes(pPile)},
 		{name: "L2/P-E3 refused, Edge restarts, clicked again",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=-5 | pile=5",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac | ingest=0 capred=-5 | pile=5",
 			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", S)),
 			act:   seq(pairClick(dispPull(5)), refuse("evac", "invalid_state"), restarts(), pairClick(dispPull(5))),
 			probe: probes(pPile)},
 		{name: "L2/P-E4 refused on a gate wait, clicked again",
-			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac,supply | ingest=0 capred=-5 | pile=5",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply,evac | ingest=0 capred=-5 | pile=5",
 			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", S)),
 			act:   seq(pairClick(dispPull(5)), refuse("evac", "invalid_state"), pairClick(dispPull(5))),
 			probe: probes(pPile)},
@@ -325,7 +311,7 @@ func releasePinCells() []relCell {
 			act:   seq(orderClick("evac", dispPull(5)), orderClick("evac", dispPull(5))),
 			probe: probes(pPile)},
 		{name: "L2/P-E5 refused Z with a deferred Y: one extra Y round trip, then nothing",
-			want:  "ok | evac=staged supply=staged | rel=evac,supply | ingest=0 capred=-5",
+			want:  "ok | evac=staged supply=staged | rel=evac | ingest=0 capred=-5",
 			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", D)),
 			act: seq(pairClick(dispPull(5)), refuse("evac", "invalid_state"), stages("supply"),
 				refuse("supply", "invalid_state"))},
@@ -377,7 +363,7 @@ func releasePinCells() []relCell {
 			build: pairAt(twoRobot, "evac", S, "supply", D),
 			act:   orderClick("evac", dispEmpty), probe: probes(pUOP, pBin)},
 		{name: "L4/per-order release of the placing produce leg ships nothing",
-			want:  "ok | evac=in_transit supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42 | bin=9001",
+			want:  "hold:lift | evac=in_transit supply=staged | rel=- | ingest=0 capred=0 | uop=42 | bin=9001",
 			build: pairAt(twoRobot, "evac", T, "supply", S),
 			act:   orderClick("supply", dispNone), probe: probes(pUOP, pBin)},
 
@@ -405,8 +391,11 @@ func releasePinCells() []relCell {
 		// curtain refusal leaves the pull on the front and marks no
 		// attribution boundary on the partner. The control cell is the same
 		// release with the curtain clear.
-		{name: "§15/curtain refuses a sequential release: pull and attribution unchanged",
-			want:  "refuse:curtain | removal=staged | rel=- | ingest=0 capred=0 | pull=SYN-PRESS | boundary=0",
+		// S5: the curtain holds the release and remembers the press (Q8), and the
+		// press still declares what it declares: the line moves to the partner
+		// and the bin's count splits (the held press).
+		{name: "§15/curtain holds a sequential release: the press flips the line and splits the count",
+			want:  "hold:curtain | removal=staged | rel=- | ingest=1 capred=0 | pull=SYN-PRESS-B | boundary=1",
 			build: seqWithCurtain(curtainLive),
 			act:   orderClick("removal", dispEmpty), probe: probes(pPull, pBoundary)},
 		{name: "§15/control: the same release with the curtain clear flips and marks the boundary",

@@ -1,6 +1,8 @@
 package orders
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -8,6 +10,8 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store"
+	storemsg "shingoedge/store/messaging"
 	"shingoedge/store/orders"
 )
 
@@ -28,8 +32,8 @@ import (
 // return release path. Callers that have the structured disposition (the
 // main ReleaseOrderWithLineside path) call ReleaseOrderWithDisposition
 // directly so Core gets the override-audit context.
-func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string) error {
-	return m.ReleaseOrderWithDisposition(orderID, remainingUOP, nil, calledBy)
+func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string, stationWait *int) error {
+	return m.ReleaseOrderWithDisposition(orderID, remainingUOP, nil, calledBy, stationWait)
 }
 
 // ReleaseOrderWithDisposition is the Phase 0b release path that carries
@@ -41,7 +45,11 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string
 //
 // disposition may be nil — callers without an override-aware body
 // (legacy fallback paths) ship only the legacy pointer.
-func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, disposition *protocol.UOPDisposition, calledBy string) error {
+//
+// stationWait is the echo (protocol.OrderRelease.StationWait): the station
+// wait this release is for. The release's outbox row and its intent's sent_at
+// are written in one transaction.
+func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, disposition *protocol.UOPDisposition, calledBy string, stationWait *int) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -72,14 +80,29 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 		return nil
 	}
 
-	if err := m.sender.Queue(protocol.TypeOrderRelease, &protocol.OrderRelease{
+	env, err := m.sender.build(protocol.TypeOrderRelease, &protocol.OrderRelease{
 		OrderUUID:    order.UUID,
 		RemainingUOP: remainingUOP,
 		Disposition:  disposition,
 		CalledBy:     calledBy,
+		StationWait:  stationWait,
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue release: %w", err)
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("enqueue release: marshal envelope: %w", err)
+	}
+	if err := m.db.InTx(func(tx *sql.Tx) error {
+		if _, err := store.EnqueueOutboxIn(tx, data, env.Type); err != nil {
+			return err
+		}
+		return orders.MarkReleaseIntentSent(tx, orderID, time.Now().UTC().Format(time.RFC3339Nano))
 	}); err != nil {
 		return fmt.Errorf("enqueue release: %w", err)
 	}
+	storemsg.NotifyEnqueued()
 
 	// Transition Edge status to in_transit now, at the click, without waiting
 	// for Core. Core does push in_transit too — its OrderUpdate carries the
@@ -284,6 +307,7 @@ func (m *Manager) RollbackForRetry(orderUUID, detail string) error {
 	if err != nil {
 		return fmt.Errorf("get order %s: %w", orderUUID, err)
 	}
+	m.clearIntentForRejection(order.ID, detail)
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
 }
@@ -319,8 +343,10 @@ func (m *Manager) RollbackReleaseRejection(orderUUID, coreDetail string) error {
 		m.DebugLog.Log("release rejection ignored for order %s (status=%s, not in_transit)", orderUUID, order.Status)
 		return nil
 	}
+	detail := releaseRejectionDetail(order, coreDetail)
+	m.clearIntentForRejection(order.ID, detail)
 	m.lifecycle.debug = m.DebugLog
-	return m.lifecycle.ForceTransition(order.ID, StatusStaged, releaseRejectionDetail(order, coreDetail))
+	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
 }
 
 // releaseRejectionDetail builds the operator-facing sentence for an
@@ -360,49 +386,22 @@ func releaseRejectionDetail(order *orders.Order, coreDetail string) string {
 // it releases a leg from a wait. PassedAStationWait reads it back.
 const ReleasedFromStagingDetail = "released from staging"
 
-// PassedAStationWait reports whether this Edge released the order from a wait
-// and the release stood: its history holds a staged→in_transit transition with
-// ReleasedFromStagingDetail that no later rollback undid. A Core re-stage at a
-// later wait does not undo it — the leg is still past the wait it was released
-// from.
-//
-// It is the Edge's own account of "released past a wait, not merely driving
-// to one", which `in_transit` alone cannot say: an order driving to its FIRST
-// wait and one released and driving between waits both read in_transit. A
-// release Core refused is rolled back (RollbackReleaseRejection,
-// RollbackForRetry) and counts as not having passed.
-//
-// A stand-in until Core reports which wait an order is parked at; one
-// order_history read.
-func (m *Manager) PassedAStationWait(orderID int64) (bool, error) {
-	hist, err := m.db.ListOrderHistory(orderID)
-	if err != nil {
-		return false, err
+// clearIntentForRejection is a Core rejection's effect on the release intent:
+// cleared, in its own statement, before the rollback's status emit (so the
+// emit cannot wake a re-fire of the release Core just refused), and the
+// rejection's sentence written for the chip.
+func (m *Manager) clearIntentForRejection(orderID int64, sentence string) {
+	if err := m.db.SetOrderReleaseIntent(orderID, ""); err != nil {
+		m.DebugLog.Log("rollback: clear release intent for order %d: %v", orderID, err)
 	}
-	passed := false
-	for _, h := range hist {
-		switch {
-		case h.OldStatus == StatusStaged && h.NewStatus == StatusInTransit && h.Detail == ReleasedFromStagingDetail:
-			passed = true
-		case h.OldStatus == StatusInTransit && h.NewStatus == StatusStaged && isReleaseRollback(h.Detail):
-			passed = false
-		}
+	if err := m.db.SetOrderReleaseHeld(orderID, sentence); err != nil {
+		m.DebugLog.Log("rollback: write release held for order %d: %v", orderID, err)
 	}
-	return passed, nil
 }
 
-// isReleaseRollback reports whether an order_history detail is one of the two
-// rollback sentences a refused release writes. The same prefixes key the
-// board's release-error chip (store/station_views.go); they are repeated here
-// because store cannot import this package.
-func isReleaseRollback(detail string) bool {
-	return strings.HasPrefix(detail, "Core rejected the release") ||
-		strings.HasPrefix(detail, "Manifest sync failed at Core")
-}
-
-// NoteReleaseHeld records, on the order, why an AUTOMATIC release of it was
-// held — a deferred re-fire or a survivor release that met a live light
-// curtain. It changes no status: the order stays where it is, and the note is
+// NoteReleaseHeld records, on the order, why its release is held at a live
+// light curtain (Q8's sentence). It changes no status: the order stays where it
+// is, and the note is
 // an order_history row the board's release chip reads (store's chip prefixes),
 // so the refusal is somewhere an operator can see it rather than only in a log.
 func (m *Manager) NoteReleaseHeld(orderID int64, sentence string) error {

@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"testing"
 
 	"shingo/protocol"
@@ -30,31 +29,17 @@ func seedSwapPairAt(t *testing.T, mode protocol.SwapMode, evacStatus, supplyStat
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(evacID,
 		`[{"action":"wait","node":"PRESS","wait_kind":"station"},{"action":"pickup","node":"PRESS"},{"action":"dropoff","node":"OUT"}]`),
 		"evac steps")
+	// The supply is R2: it waits at the paired position, lifts that carrier
+	// and sets it on the press — the drop the evac must clear first.
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(supplyID,
+		`[{"action":"wait","node":"PRESS-B","wait_kind":"station","purpose":"swap"},{"action":"pickup","node":"PRESS-B"},{"action":"dropoff","node":"PRESS"}]`),
+		"supply steps")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(evacStatus)), "evac status")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyID, string(supplyStatus)), "supply status")
 	testutil.MustNoErr(t, db.LinkOrderSiblings(evacID, supplyID), "link siblings")
 	// ResolveSwapPair reads the runtime slots: Staged -> evac, Active -> supply.
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &supplyID, &evacID), "runtime slots")
 	return eng, nodeID, evacID, supplyID
-}
-
-// collisionGate runs the pair click's G7 row (the press-index collision) on
-// its own: the loader's collision facts for the two legs, then the plan's
-// verdict. It applies only to press-index with both legs, as the pair plan
-// asks it.
-func collisionGate(eng *Engine, node *processes.Node, claim *processes.NodeClaim, evacID, supplyID *int64) error {
-	if claim.SwapMode != protocol.SwapModeTwoRobotPressIndex || evacID == nil || supplyID == nil {
-		return nil
-	}
-	pl := &pairLoad{node: node, claim: claim,
-		snap: release.Pair{NodeName: node.Name, Mode: claim.SwapMode, Evac: evacID, Supply: supplyID}}
-	pl.evac, pl.evacErr = eng.db.GetOrder(*evacID)
-	pl.supply, pl.supplyErr = eng.db.GetOrder(*supplyID)
-	pl.snap.Arms = eng.collisionArms(newReleaseAct(), pl)
-	if p, held := release.PlanCollision(pl.snap); held {
-		return p.Refusal
-	}
-	return nil
 }
 
 func nodeAndClaim(t *testing.T, eng *Engine, nodeID int64) (*processes.Node, *processes.NodeClaim) {
@@ -64,97 +49,9 @@ func nodeAndClaim(t *testing.T, eng *Engine, nodeID int64) (*processes.Node, *pr
 	return node, claim
 }
 
-// THE COLLISION THIS EXISTS TO PREVENT: the supply leg is staged and ready to
-// drop a bin on the press, and the evac leg has not lifted the old one off.
-// Reachable through the operator's ordinary RELEASE click, because
-// ComputeSwapReady shows the button when EITHER leg is staged.
-func TestRefusePlacingLegWhileSiblingPending_Refuses(t *testing.T) {
-	t.Parallel()
-	eng, nodeID, evacID, supplyID := seedSwapPairAt(t,
-		protocol.SwapModeTwoRobotPressIndex, protocol.StatusQueued, protocol.StatusStaged)
-	node, claim := nodeAndClaim(t, eng, nodeID)
-
-	err := collisionGate(eng, node, claim, &evacID, &supplyID)
-	if err == nil {
-		t.Fatal("want a refusal: the placing leg would drop onto a press the sibling has not cleared")
-	}
-	// ADVISORY, not an error. Nothing is broken; the other robot is coming and
-	// the operator's only correct action is to click again. Typed rather than
-	// matched on the sentence — a reworded message must not turn an all-clear
-	// back into a red alarm.
-	var advisory interface{ Advisory() bool }
-	if !errors.As(err, &advisory) || !advisory.Advisory() {
-		t.Errorf("the hold must report itself advisory; got %T", err)
-	}
-	var notReady *SwapPairNotReadyError
-	if !errors.As(err, &notReady) {
-		t.Fatalf("want a *SwapPairNotReadyError; got %T", err)
-	}
-	// It names what is being waited on, so the operator knows when to retry.
-	if notReady.SiblingState != string(protocol.StatusQueued) {
-		t.Errorf("refusal reports sibling state %q, want %q", notReady.SiblingState, protocol.StatusQueued)
-	}
-	_ = supplyID
-}
-
-// Every case where there is nothing to collide with must pass through — a gate
-// that refuses too much strands a supply leg with no sibling that can ever
-// stage, which is worse than the collision it prevents.
-func TestRefusePlacingLegWhileSiblingPending_LetsEverythingElseThrough(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name                     string
-		mode                     protocol.SwapMode
-		evacStatus, supplyStatus protocol.Status
-		nilEvac, nilSupply       bool
-	}{
-		// The evac already ran, or was cancelled, or was skipped because the
-		// press was found empty. Nothing is coming.
-		{name: "evac already confirmed", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusConfirmed, supplyStatus: protocol.StatusStaged},
-		{name: "evac cancelled", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusCancelled, supplyStatus: protocol.StatusStaged},
-		{name: "evac skipped", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusSkipped, supplyStatus: protocol.StatusStaged},
-		// Both ready: the ordinary release, which must not be slowed down.
-		{name: "both staged", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusStaged, supplyStatus: protocol.StatusStaged},
-		// The placing leg is not going anywhere on this click anyway; the
-		// existing per-leg gate handles it and the deferral remembers it.
-		{name: "supply not releasable either", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusQueued, supplyStatus: protocol.StatusQueued},
-		// SCOPED TO PRESS-INDEX: two_robot's supply parks at a staging node,
-		// not on the press, and its release ordering has been in production
-		// unchanged for a long time.
-		{name: "two_robot is out of scope", mode: protocol.SwapModeTwoRobot,
-			evacStatus: protocol.StatusQueued, supplyStatus: protocol.StatusStaged},
-		// One-legged: no sibling to wait for.
-		{name: "no evac leg", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusQueued, supplyStatus: protocol.StatusStaged, nilEvac: true},
-		{name: "no supply leg", mode: protocol.SwapModeTwoRobotPressIndex,
-			evacStatus: protocol.StatusQueued, supplyStatus: protocol.StatusStaged, nilSupply: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			eng, nodeID, evacID, supplyID := seedSwapPairAt(t, tc.mode, tc.evacStatus, tc.supplyStatus)
-			node, claim := nodeAndClaim(t, eng, nodeID)
-			ep, sp := &evacID, &supplyID
-			if tc.nilEvac {
-				ep = nil
-			}
-			if tc.nilSupply {
-				sp = nil
-			}
-			if err := collisionGate(eng, node, claim, ep, sp); err != nil {
-				t.Errorf("must not refuse: %v", err)
-			}
-		})
-	}
-}
-
-// THE GATE'S OTHER HALF. When the evac IS releasable and the supply is not,
-// the evac goes and the supply is remembered — so the pair completes without a
-// second click once the supply stages. The gate above must not have broken it.
+// When the evac IS releasable and the supply is not, the evac goes and the
+// supply is remembered — a held intent, so the pair completes without a second
+// click once the supply stages (S5; the in-memory deferral before).
 func TestReleaseStagedOrders_DeferredSiblingStillRemembered(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, evacID, supplyID := seedSwapPairAt(t,
@@ -163,9 +60,11 @@ func TestReleaseStagedOrders_DeferredSiblingStillRemembered(t *testing.T) {
 	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{CalledBy: "gate-test"}); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	eng.pendingSiblingReleaseMu.Lock()
-	_, remembered := eng.pendingSiblingRelease[supplyID]
-	eng.pendingSiblingReleaseMu.Unlock()
+	o, err := eng.db.GetOrder(supplyID)
+	testutil.MustNoErr(t, err, "read supply")
+	in, err := release.DecodeIntent(o.ReleaseIntent)
+	testutil.MustNoErr(t, err, "decode intent")
+	remembered := in != nil && !in.Sent()
 	if !remembered {
 		t.Error("the deferred supply leg was not remembered — the operator's single click " +
 			"expressed 'go' for the whole pair, and deferring is not dropping")

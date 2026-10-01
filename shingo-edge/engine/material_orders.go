@@ -362,10 +362,9 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 // The conclusion is unchanged and now unconditional. BOTH legs open with a
 // stationWait either way, so dispatch parks two robots under two nodes and no
 // bin moves until the operator releases. The physical collision needs one leg
-// RELEASED while the other is not, and that is what the release-gate
-// precondition refuses (see ReleaseStagedOrders and
-// release.PlanCollision, G7). A refused release is a click the
-// operator repeats; a refused dispatch was a mutual wait.
+// RELEASED while the other is not, and that is what the release layer's lift
+// rule holds (release.PlanAct, G7, over Core's releasePoints). A held release
+// goes by itself when the lift happens; a refused dispatch was a mutual wait.
 func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orderR2 []protocol.ComplexOrderStep) {
 	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {
 		return nil, nil

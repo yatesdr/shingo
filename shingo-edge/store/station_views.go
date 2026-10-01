@@ -40,9 +40,9 @@ type (
 // order reappeared in the active list with nothing to say why it had come back.
 //
 // The two curtain prefixes are the light-curtain interlock's refusal, written by
-// orders.Manager.NoteReleaseHeld when an AUTOMATIC release (a deferred re-fire,
-// a survivor) meets a live curtain: nobody is at a button to see a toast, so the
-// sentence goes on the order and the chip shows it.
+// orders.Manager.NoteReleaseHeld when a release is held at a live curtain: the
+// robot goes by itself when it clears, often with nobody at the button to see a
+// toast, so the sentence goes on the order and the chip shows it.
 const (
 	releaseErrorPrefix    = "Manifest sync failed at Core"
 	releaseRejectedPrefix = "Core rejected the release"
@@ -313,16 +313,14 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	// operator-render.js) carries one that looks like the missing half of this
 	// predicate. It is not. The two front different machinery:
 	//
-	//   - This gates /release-staged -> ReleaseStagedOrders, which since hop
-	//     A4-ii REMEMBERS a leg Core will not take yet
-	//     (release.PlanDeferral) and re-fires it when it reaches staged
-	//     (wiring_status_changed.handleSiblingReleaseRefire). The operator's
-	//     single click already means "go for the pair, defer the rest". Gating on
-	//     the supply deletes that capability and converts "click now, machinery
-	//     defers" into "wait, then click".
-	//   - The glow gates the CHANGEOVER path, whose deferred supply release
-	//     (HandleBinPickedUp) calls releaseIfReleasable and registers NO re-fire.
-	//     There a skipped supply really is dropped, so waiting for it is right.
+	//   - This gates /release-staged -> ReleaseStagedOrders, which REMEMBERS a
+	//     leg Core will not take yet (its release intent, S5) and sends it when
+	//     it reaches its wait. The operator's single click already means "go for
+	//     the pair, hold the rest". Gating on the supply deletes that capability
+	//     and converts "click now, the layer holds" into "wait, then click".
+	//   - The glow's supply gate fronts the CHANGEOVER path, whose supply used to
+	//     be dropped if skipped at the evac's pickup. Since S5 that path holds an
+	//     intent too, and the glow's changeover branch is S6's to delete.
 	//
 	// The cost is concrete. On the ALN_003 2026-07-31 timeline the supply faulted
 	// three times while the evac sat parked — a supply gate would have taken the

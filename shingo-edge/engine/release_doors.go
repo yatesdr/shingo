@@ -2,11 +2,12 @@ package engine
 
 // release_doors.go — every release door, as an adapter (SHAPE §3.1).
 //
-// A door builds its act, loads what its plan asks for, plans, and commits:
-// nothing else. The decisions are release.Plan*'s (the gate table), the reads
-// are release_load.go's, the effects are release_commit.go's. No door here
-// refuses anything itself: TestReleaseDoorsDecideNothing holds the file to
-// that, and the census holds Plan's callers to this file.
+// A door builds its act — its origin, its purpose and its leg set — and runs
+// it: the act's plan asks the loader for what it needs, decides every leg
+// (release.PlanAct: scope, the trunk's gates, G1, G3, G6, G7), and the commit
+// carries it out. No door here reads, writes or refuses anything itself
+// (TestReleaseDoorsDecideNothing); the census holds Plan's callers to this
+// file.
 //
 //	1  operator pair click          ReleaseStagedOrders
 //	2  operator per-order click     ReleaseOrderWithLineside (also the sim's auto-operator)
@@ -15,74 +16,87 @@ package engine
 //	5  changeover sweep / per node  ReleaseChangeoverWait / ReleaseChangeoverWaitForNode
 //	6  a changeover node's station button: door 1 routes it to door 5
 //	7  drop-situation evac          the trunk's drop arm
-//	8  deferred pair leg            staged → handleSiblingReleaseRefire
-//	9  swap survivor                releaseSurvivorOfFinishedPartner
-//	10 changeover supply at pickup  HandleBinPickedUp → releaseDeferredSupplyAtPickup
+//	—  the intent worker            fireIntents: a node's held intents, re-planned on a wake
 //
-// The acts still load per leg, as the doors always did: the pair click's
-// finalize clears the slot before its legs' releases read the node, and
-// moving that paperwork below every leg's gates is the held press (S5).
+// What a held leg waits on is its intent, not a door: the intent worker re-plans
+// it on the leg's OrderStaged, a lifter's BinPickedUp, a sibling's end, Core
+// coming back, boot, and a 15 s floor while a machine-owned hold stands.
 
 import (
 	"errors"
 	"fmt"
 
-	"shingo/protocol"
-	"shingoedge/orders"
 	"shingoedge/release"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
-// releaseLeg runs one leg through the trunk inside act: load what the plan
-// asks for, plan, commit. released reports whether an envelope was queued.
-func (e *Engine) releaseLeg(act *releaseAct, orderID int64, label, taskNode string, disp ReleaseDisposition) (bool, release.LegPlan, error) {
-	ll := newLegLoad(orderID, label, taskNode, disp)
-	p := release.PlanLeg(act.Act, ll.snap)
-	for p.Need != 0 {
-		e.loadLeg(act, ll, p.Need)
-		p = release.PlanLeg(act.Act, ll.snap)
+// actLeg is one leg a door hands an act: the order, the disposition it
+// carries, and its press (the legs one decision covers together).
+type actLeg struct {
+	orderID  int64
+	label    string
+	taskNode string
+	press    string
+	disp     ReleaseDisposition
+}
+
+// runAct plans an act over its legs, loading what the plan asks for, and
+// commits it. The plan is returned for the door's account.
+func (e *Engine) runAct(act *releaseAct, in []actLeg) (release.ActPlan, []*legLoad, error) {
+	lls := make([]*legLoad, len(in))
+	for i, l := range in {
+		lls[i] = newLegLoad(l.orderID, l.label, l.taskNode, l.disp)
+		lls[i].press = l.press
 	}
-	released, err := e.commitLeg(act, p, ll)
-	return released, p, err
+	p := release.PlanAct(act.Act, act.actFacts, actLegsOf(lls))
+	for p.Need != 0 {
+		if p.NeedLeg < 0 {
+			e.loadAct(act, lls, p.Need)
+		} else {
+			e.loadLeg(act, lls[p.NeedLeg], p.Need)
+		}
+		p = release.PlanAct(act.Act, act.actFacts, actLegsOf(lls))
+	}
+	return p, lls, e.commitAct(act, p, lls)
+}
+
+func actLegsOf(lls []*legLoad) []release.ActLeg {
+	out := make([]release.ActLeg, len(lls))
+	for i, ll := range lls {
+		out[i] = release.ActLeg{Leg: ll.snap, Point: ll.point, Press: ll.press}
+	}
+	return out
 }
 
 // ── Door 2 ────────────────────────────────────────────────────────────────
 
 // ReleaseOrderWithLineside performs the operator's release click on one
-// order: the gates (release.PlanLeg), then — for a leg every gate let go — the
-// flip of a sequential line, the departing produce bin's finalize, the capture
-// of parts pulled to lineside, the old bin's count, the changeover task's
-// state, the flush and the OrderRelease envelope, whose remaining_uop and
-// disposition Core uses to sync the bin's manifest. An order Core will not
-// release is refused with Core's own account of why.
+// order, its purpose that of the wait the leg is at or heading to. The leg
+// goes (the flip of a sequential line, the departing produce bin's finalize,
+// the capture, the count, the task, the flush, the envelope with its echo) or
+// holds with an intent (the curtain, a lift, Core unreachable), and an order
+// Core will not release is refused with Core's own account of why.
 func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition) error {
 	act := e.newAct(release.OriginStationOrder, 0, disp.CalledBy)
-	_, _, err := e.releaseLeg(act, orderID, "", "", disp)
+	unlock := e.lockOrderNode(orderID)
+	defer unlock()
+	_, _, err := e.runAct(act, []actLeg{{orderID: orderID, disp: disp}})
 	return err
-}
-
-// releaseIfReleasable is the per-leg release of every door that covers legs
-// it did not name one by one (the pair click, the re-fires): a leg Core will
-// not take yet is passed over, not refused, and released reports whether the
-// release was actually queued. act is the door's act, or a fresh one.
-func (e *Engine) releaseIfReleasable(act *releaseAct, orderID int64, label string, disp ReleaseDisposition) (bool, error) {
-	released, _, err := e.releaseLeg(act, orderID, label, "", disp)
-	return released, err
 }
 
 // ── Door 1 ────────────────────────────────────────────────────────────────
 
-// ReleaseStagedOrders releases both legs of a two-robot swap on the
-// operator's one click. The departing bin is finalized first, then the evac
-// leg goes with the operator's disposition and the supply leg with none (its
-// freshly loaded bin's manifest is never cleared), each through the trunk; a
-// leg Core cannot take yet is remembered and fires when it stages (door 8).
+// ReleaseStagedOrders is the operator's one click on a paired node: both legs
+// of the swap, in one act. The evac carries the operator's disposition and
+// the supply none (its freshly loaded bin's manifest is never cleared). A leg
+// that cannot go yet holds with an intent and goes by itself when it can.
 //
 // A changeover node whose work is not a coordinated two-robot swap is the
 // changeover act's (§6.4, and the single-leg shape, N1-d).
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	act := e.newAct(release.OriginStationPair, nodeID, disp.CalledBy)
+	unlock := e.lockNode(nodeID)
 	pl := &pairLoad{snap: release.Pair{NodeID: nodeID}}
 	p := release.PlanPair(pl.snap)
 	for p.Need != 0 {
@@ -90,39 +104,24 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		p = release.PlanPair(pl.snap)
 	}
 	if p.Route {
+		unlock()
 		return e.releaseChangeoverNode(pl, disp)
 	}
-	if err := e.commitPairPaperwork(p, pl); err != nil {
+	defer unlock()
+	if err := e.commitPairDoor(p); err != nil {
 		return err
 	}
-	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
-	evacReleased, supplyReleased := false, false
+	press := fmt.Sprintf("pair:%d", nodeID)
+	var legs []actLeg
 	if p.Evac != nil {
-		released, err := e.releaseIfReleasable(act, *p.Evac, "evac", disp)
-		if err != nil {
-			return err
-		}
-		evacReleased = released
+		legs = append(legs, actLeg{orderID: *p.Evac, label: "evac", press: press, disp: disp})
 	}
 	if p.Supply != nil {
-		released, err := e.releaseIfReleasable(act, *p.Supply, "supply", supplyDisp)
-		if err != nil {
-			return err
-		}
-		supplyReleased = released
+		legs = append(legs, actLeg{orderID: *p.Supply, label: "supply", press: press, disp: ReleaseDisposition{CalledBy: disp.CalledBy}})
 	}
-	// The click expressed "go" for the whole pair: a leg that did not go while
-	// its sibling did is remembered, not dropped.
-	e.deferIfSiblingWent(p.Supply, p.Evac, supplyReleased, evacReleased, supplyDisp)
-	e.deferIfSiblingWent(p.Evac, p.Supply, evacReleased, supplyReleased, disp)
-	return nil
-}
-
-// deferIfSiblingWent is the pair's deferral for one leg (G7, release.PlanDeferral).
-func (e *Engine) deferIfSiblingWent(legID, siblingID *int64, legReleased, siblingReleased bool, disp ReleaseDisposition) {
-	d := e.loadDeferral(legID, siblingID, legReleased, siblingReleased)
-	remember, logs := release.PlanDeferral(d)
-	e.commitDeferral(remember, logs, d.Leg, disp)
+	act.pressPaperwork = func() error { return e.commitPairPaperwork(p, pl) }
+	_, _, err := e.runAct(act, legs)
+	return err
 }
 
 // releaseChangeoverNode hands a changeover node's station click to the
@@ -134,6 +133,9 @@ func (e *Engine) releaseChangeoverNode(pl *pairLoad, disp ReleaseDisposition) er
 	}
 	e.logFn("release-staged node=%s: changeover node release — released=%d pending=%d deferred=%d",
 		pl.routeName, res.Released, res.Pending, res.Deferred)
+	if res.Released == 0 && len(res.Held) > 0 {
+		return release.NewHeldError(res.HeldGate, res.Held)
+	}
 	return nil
 }
 
@@ -142,8 +144,8 @@ func (e *Engine) releaseChangeoverNode(pl *pairLoad, disp ReleaseDisposition) er
 // ReleaseChangeoverWaitResult reports a release-wait click: Released is the
 // legs whose envelopes were queued; Pending the legs a later click is owed for
 // (not yet at a wait, or a position the line still pulls from); Deferred the
-// paired supplies their evac's pickup releases with no click. Terminal legs
-// count nowhere.
+// legs held with an intent, which go by themselves when they can. Terminal
+// legs count nowhere.
 type ReleaseChangeoverWaitResult struct {
 	Released int `json:"released"`
 	Pending  int `json:"pending"`
@@ -152,43 +154,53 @@ type ReleaseChangeoverWaitResult struct {
 	// still pulling from them: a sweep is not aimed at one aisle, so it does
 	// not move the line for the operator.
 	NeedsFlip []string `json:"needs_flip,omitempty"`
+	// Held is each held leg's sentence (the chip's words), and HeldGate the
+	// first hold's gate.
+	Held     []string `json:"held,omitempty"`
+	HeldGate string   `json:"-"`
 }
 
-// ReleaseChangeoverWait releases the changeover's staged legs on every node
-// (the sweep). Each node's evac goes at the click, with a disposition from the
-// line's runtime cache unless the caller overrides it; a paired supply is
-// deferred to its evac's pickup (HandleBinPickedUp), the evac-first sequencing
-// that keeps the supply robot off a slot the evac has not cleared.
+// ReleaseChangeoverWait releases the changeover's decision on every node (the
+// sweep): one act over every in-scope task's legs, its purpose the earliest
+// decision they owe.
 func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
-	return e.releaseChangeoverWaitScoped(processID, 0, disp)
+	return e.releaseChangeoverWaitScoped(processID, 0, disp, "")
 }
 
-// ReleaseChangeoverWaitForNode releases one node's changeover legs: the
+// ReleaseChangeoverWaitForNode releases one node's changeover decision: the
 // operator's per-node click, the same act narrowed to one task.
 func (e *Engine) ReleaseChangeoverWaitForNode(processID, processNodeID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
-	return e.releaseChangeoverWaitScoped(processID, processNodeID, disp)
+	return e.releaseChangeoverWaitScoped(processID, processNodeID, disp, "")
 }
 
-func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
+// ReleaseChangeoverWaitFor releases the changeover decision a button names
+// (release.Purpose: ready, tooling_done) on one node, or every node with 0:
+// a "ready" act covers only legs at, or heading to, a ready wait, so it can
+// never carry a leg through "tooling done" (N-a(ii)). A button with no purpose
+// takes it from the legs at a wait (ReleaseChangeoverWait).
+func (e *Engine) ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
+	return e.releaseChangeoverWaitScoped(processID, processNodeID, disp, purpose)
+}
+
+func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp ReleaseDisposition, purpose release.Purpose) (ReleaseChangeoverWaitResult, error) {
 	origin, scope := release.OriginChangeoverSweep, "all-nodes"
 	if onlyNodeID != 0 {
 		origin, scope = release.OriginChangeoverNode, fmt.Sprintf("node=%d", onlyNodeID)
 	}
 	act := e.newAct(origin, onlyNodeID, disp.CalledBy)
+	act.Purpose = purpose
 	cl := e.loadChangeover(processID, onlyNodeID, disp)
 	plan := release.PlanChangeover(cl.snap)
 	if plan.Refusal != nil {
 		return ReleaseChangeoverWaitResult{}, plan.Refusal
 	}
-	// One line per click, before any slot, so a click that released nothing
-	// is not indistinguishable in the logs from one that never happened.
 	e.logFn("release_changeover_wait: process=%d changeover=%d tasks=%d scope=%s called_by=%q",
 		processID, cl.coID, len(cl.tasks), scope, disp.CalledBy)
 	// The supply leg rides through with no manifest action, whatever the
 	// operator chose: its bin is mid-transit carrying its real count.
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 	var res ReleaseChangeoverWaitResult
-	var failures []error
+	var legs []actLeg
 	for _, tp := range plan.Tasks {
 		e.emitLogs(tp.Logs)
 		if !tp.InScope {
@@ -205,23 +217,46 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 			if s.Kind == "evac" {
 				d = cl.evacDisp[tp.Task]
 			}
-			released, lp, err := e.releaseLeg(act, s.Order, s.Kind, task.NodeName, d)
-			switch {
-			case err != nil:
-				// Collected, not swallowed: one node's failure must reach the
-				// operator by name instead of a 200 OK (ALN_001).
-				failures = append(failures, err)
-			case released:
-				res.Released++
-			case lp.Skip == release.SkipNotReleasable:
-				res.Pending++
-			}
+			legs = append(legs, actLeg{orderID: s.Order, label: s.Kind, taskNode: task.NodeName,
+				press: fmt.Sprintf("task:%d", task.NodeID), disp: d})
 		}
-		if tp.Deferred {
+	}
+	if len(legs) == 0 {
+		return res, nil
+	}
+	unlock := e.lockNodes(nodesOfTasks(cl))
+	defer unlock()
+	p, _, err := e.runAct(act, legs)
+	var failures []error
+	var held *release.HeldError
+	if err != nil && !errors.As(err, &held) {
+		failures = append(failures, err)
+	}
+	for _, d := range p.Decisions {
+		switch {
+		case d.Verdict == release.Go && !act.failed[d.OrderID]:
+			res.Released++
+		case d.Verdict == release.Hold:
 			res.Deferred++
+			res.Held = append(res.Held, d.Sentence)
+			if res.HeldGate == "" {
+				res.HeldGate = d.Gate
+			}
+		case d.Verdict == release.Skip && d.Trunk.Skip == release.SkipNotReleasable:
+			res.Pending++
 		}
 	}
 	return res, errors.Join(failures...)
+}
+
+func nodesOfTasks(cl *changeoverLoad) []int64 {
+	out := make([]int64, 0, len(cl.snap.Tasks))
+	for _, t := range cl.snap.Tasks {
+		if t.InScope {
+			out = append(out, t.NodeID)
+		}
+	}
+	return out
 }
 
 // ── Doors 3 and 4 ─────────────────────────────────────────────────────────
@@ -280,96 +315,31 @@ func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemaining
 	return e.commitMaterial(p, ml, qty, overrideRemainingUOP)
 }
 
-// ── Doors 8 and 9: the pair's deferred legs ───────────────────────────────
+// ── The intent worker ─────────────────────────────────────────────────────
 
-// handleSiblingReleaseRefire fires the release the operator already asked
-// for, for a pair leg the click deferred (door 8), once it stages — never a
-// reaper, never an auto-cancel. A leg with no deferral, and a partner reaching
-// a successful terminal, ask the survivor rule instead (door 9): the two events
-// arrive in either order. A terminal leg's map entries are dropped.
-func (e *Engine) handleSiblingReleaseRefire(changed OrderStatusChangedEvent) {
-	newStatus := protocol.Status(changed.NewStatus)
-	if protocol.IsTerminal(newStatus) {
-		e.forgetLeg(changed.OrderID)
-		if orders.IsTerminalSuccess(newStatus) {
-			if sibling, ok := e.siblingOf(changed.OrderID); ok {
-				e.releaseSurvivorOfFinishedPartner(sibling)
-			}
+// fireIntents re-plans a node's held intents as one act (Origin intent): each
+// leg at its intent's wait, with the intent's choices. It can only hold or
+// release, never refuse. One lock per node, shared with the click doors.
+func (e *Engine) fireIntents(nodeID int64, why string) {
+	unlock := e.lockNode(nodeID)
+	defer unlock()
+	held := e.heldIntentLegs(nodeID)
+	if len(held) == 0 {
+		return
+	}
+	act := e.newAct(release.OriginIntent, nodeID, "")
+	act.Reevaluation = true
+	legs := make([]actLeg, 0, len(held))
+	for _, h := range held {
+		legs = append(legs, actLeg{orderID: h.orderID, label: "intent", press: fmt.Sprintf("intent:%d", nodeID), disp: h.disp})
+	}
+	p, _, err := e.runAct(act, legs)
+	if err != nil {
+		e.logFn("release intents at node %d (%s): %v", nodeID, why, err)
+	}
+	for _, d := range p.Decisions {
+		if d.Verdict == release.Go && !act.failed[d.OrderID] {
+			e.logFn("release intent: order %d released at node %d (%s)", d.OrderID, nodeID, why)
 		}
-		return
-	}
-	if newStatus != protocol.StatusStaged {
-		return
-	}
-	disp, ok := e.takeDeferral(changed.OrderID)
-	if !ok {
-		// No entry: this Edge restarted since the click, or the leg consumed
-		// its entry at an earlier wait. Ask the durable question.
-		e.releaseSurvivorOfFinishedPartner(changed.OrderID)
-		return
-	}
-	act := e.newAct(release.OriginDeferral, 0, disp.CalledBy)
-	released, err := e.releaseIfReleasable(act, changed.OrderID, "sibling-release-refire", disp)
-	switch {
-	case err != nil:
-		e.logFn("sibling-release-refire: order %d reached staged but release failed: %v", changed.OrderID, err)
-		e.noteReleaseHeld(changed.OrderID, err)
-	case released:
-		e.logFn("sibling-release-refire: order %d reached staged — released (sibling already released on the operator's click)", changed.OrderID)
-	default:
-		e.logFn("sibling-release-refire: order %d reached staged but was not releasable — dropped", changed.OrderID)
-	}
-}
-
-// releaseSurvivorOfFinishedPartner is the durable half of the pair deferral
-// (door 9): a swap leg whose partner finished successfully is owed the click,
-// with the supply's zero disposition (nobody chose a UOP decision for it),
-// once per order per Edge lifetime — the bound that stops a refusal flap.
-// Not a sweep, not a timer, not a reaper; it never cancels and never re-plans.
-func (e *Engine) releaseSurvivorOfFinishedPartner(orderID int64) {
-	s := release.Survivor{OrderID: orderID}
-	p := release.PlanSurvivor(s)
-	for p.Need != 0 {
-		e.loadSurvivor(&s, p.Need)
-		p = release.PlanSurvivor(s)
-	}
-	e.emitLogs(p.Logs)
-	if !p.Release {
-		return
-	}
-	act := e.newAct(release.OriginSurvivor, 0, "swap-survivor-release")
-	released, err := e.releaseIfReleasable(act, orderID, "swap-survivor", ReleaseDisposition{CalledBy: "swap-survivor-release"})
-	switch {
-	case err != nil:
-		e.logFn("swap-survivor release: order %d staged with partner %d already completed, but release failed: %v",
-			orderID, s.SiblingID, err)
-		e.noteReleaseHeld(orderID, err)
-	case released:
-		e.markSurvivorFired(orderID)
-		e.logFn("swap-survivor release: order %d released — its partner %d completed at %s and nothing was left to wait for",
-			orderID, s.SiblingID, s.SiblingStatus)
-	default:
-		e.logFn("swap-survivor release: order %d staged with partner %d already completed, but it was not releasable at Core",
-			orderID, s.SiblingID)
-	}
-}
-
-// ── Door 10 ───────────────────────────────────────────────────────────────
-
-// releaseDeferredSupplyAtPickup releases the changeover supply the sweep
-// deferred to its evac's lift, at the moment the slot is physically clear —
-// the pickup block FINISHED, not the evac's completion. A supply Core will not
-// take yet is passed over; it stages on its own and the next click fires it.
-func (e *Engine) releaseDeferredSupplyAtPickup(supplyID int64, evacUUID string) {
-	passed, perr := e.supplyHistory(supplyID)
-	fire, logs := release.PlanPickup(supplyID, evacUUID, passed, perr)
-	e.emitLogs(logs)
-	if !fire {
-		return
-	}
-	act := e.newAct(release.OriginPickup, 0, "auto-evac-pickup")
-	if _, err := e.releaseIfReleasable(act, supplyID, "deferred-supply-after-evac-pickup", ReleaseDisposition{CalledBy: "auto-evac-pickup"}); err != nil {
-		e.logFn("bin_picked_up: deferred-supply release order %d for evac %s: %v", supplyID, evacUUID, err)
-		e.noteReleaseHeld(supplyID, err)
 	}
 }

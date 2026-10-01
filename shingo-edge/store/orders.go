@@ -248,6 +248,24 @@ func (db *DB) SetOrderWaitPoint(uuid string, stationWait *int, waitKind string) 
 	return orders.SetWaitPoint(db.DB, uuid, stationWait, waitKind)
 }
 
+// SetOrderReleaseIntent writes (or, with "", clears) an order's release intent.
+func (db *DB) SetOrderReleaseIntent(id int64, intent string) error {
+	return orders.SetReleaseIntent(db.DB, id, intent)
+}
+
+// SetOrderReleaseHeld writes the chip's sentence for an order's held release.
+func (db *DB) SetOrderReleaseHeld(id int64, sentence string) error {
+	return orders.SetReleaseHeld(db.DB, id, sentence)
+}
+
+// ListReleaseIntentNodes: see orders.ListReleaseIntentNodes.
+func (db *DB) ListReleaseIntentNodes() ([]int64, error) { return orders.ListReleaseIntentNodes(db.DB) }
+
+// ListReleaseIntentOrders: see orders.ListReleaseIntentOrders.
+func (db *DB) ListReleaseIntentOrders(nodeID int64) ([]int64, error) {
+	return orders.ListReleaseIntentOrders(db.DB, nodeID)
+}
+
 // SetOrderPendingIntent arms (or, with "", disarms) the order's future action.
 // See orders.SetPendingIntent.
 func (db *DB) SetOrderPendingIntent(id int64, intent string) error {

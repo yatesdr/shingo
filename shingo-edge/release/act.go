@@ -11,9 +11,7 @@ const (
 	OriginPositionEvac    Origin = "position_evac"    // door 4: a fanned-out position's changeover evac
 	OriginChangeoverSweep Origin = "changeover_sweep" // door 5: the changeover's release of every node
 	OriginChangeoverNode  Origin = "changeover_node"  // doors 5 and 6: the changeover's release of one node
-	OriginDeferral        Origin = "deferral"         // door 8: a pair leg the click deferred, at its staging
-	OriginSurvivor        Origin = "survivor"         // door 9: a swap leg whose partner finished
-	OriginPickup          Origin = "pickup"           // door 10: a changeover supply deferred to its evac's lift
+	OriginIntent          Origin = "intent"           // the intent worker re-planning held intents
 )
 
 // Purpose is the station decision a station wait belongs to, from a closed
@@ -42,6 +40,12 @@ type Act struct {
 	Origin   Origin
 	Node     int64 // the process node the act was made at; 0 when it names an order
 	CalledBy string
+	// Purpose is the decision the act makes, the label of the button pressed.
+	// Empty: the earliest decision its legs owe.
+	Purpose Purpose
+	// Reevaluation: the intent worker re-planning held intents. It covers a
+	// leg at its intent's wait, and can only hold — never refuse.
+	Reevaluation bool
 }
 
 // passesOverUnreleasable reports whether the act skips a leg Core will not

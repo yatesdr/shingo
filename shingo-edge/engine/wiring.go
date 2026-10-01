@@ -40,6 +40,9 @@ import (
 // a sibling file (handle*). Type assertions are gone — eventbus.SubscribeTyped
 // extracts the concrete payload from TypedEvent[EventType, P].
 func (e *Engine) wireEventHandlers() {
+	if e.orderMgr != nil {
+		e.orderMgr.OnStagedMessage = e.onStagedMessage
+	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CounterDeltaEvent]) {
 		e.hourlyTracker.HandleDelta(evt.Payload)
 		e.handleCounterDelta(evt.Payload)
@@ -59,7 +62,7 @@ func (e *Engine) wireEventHandlers() {
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
 		e.handleSequentialBackfill(evt.Payload)
-		e.handleSiblingReleaseRefire(evt.Payload)
+		e.onReleaseStatusChanged(evt.Payload)
 		e.handleRelayPartnerDeath(evt.Payload)
 	}, EventOrderStatusChanged)
 }

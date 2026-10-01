@@ -13,9 +13,9 @@ package engine
 //	5  changeover sweep             ReleaseChangeoverWait / ReleaseChangeoverWaitForNode
 //	6  single-leg changeover node   ReleaseStagedOrders → releaseSingleLegChangeoverNode
 //	7  drop-situation evac          the trunk's drop fast path
-//	8  deferred sibling re-fire     staged → handleSiblingReleaseRefire
-//	9  swap survivor                partner terminal-success → releaseSurvivorOfFinishedPartner
-//	10 changeover supply at pickup  HandleBinPickedUp
+//	8  the intent worker            a held leg re-planned on a wake (staged, lift, sibling end, floor)
+//	9  (deleted in S5)              the swap survivor: a leg's own intent replaces it
+//	10 (deleted in S5)              the changeover supply at pickup: the lift is a wake (8)
 //	11 sim auto-operator            release_matrix_sim_test.go (-tags sim)
 //
 // RECORDING. RELEASE_MATRIX_RECORD=1 prints every cell's observed outcome
@@ -137,6 +137,16 @@ func orderClick(leg string, d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error { return h.eng.ReleaseOrderWithLineside(h.leg(leg), d) }
 }
 
+// sweepClickAs is the changeover's release of every node, its button naming
+// the decision it makes.
+func sweepClickAs(purpose release.Purpose, d ReleaseDisposition) func(h *relHarness) error {
+	return func(h *relHarness) error {
+		res, err := h.eng.ReleaseChangeoverWaitFor(h.processID, 0, purpose, d)
+		h.extra = append(h.extra, fmt.Sprintf("sweep released=%d pending=%d deferred=%d flip=%v", res.Released, res.Pending, res.Deferred, res.NeedsFlip))
+		return err
+	}
+}
+
 func sweepClick(d ReleaseDisposition) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		res, err := h.eng.ReleaseChangeoverWait(h.processID, d)
@@ -153,12 +163,11 @@ func nodeCOClick(d ReleaseDisposition) func(h *relHarness) error {
 	}
 }
 
-// deferred reports whether the in-memory pair deferral holds a leg.
+// deferred reports whether a leg holds a release intent not yet sent: the
+// act remembered it for its robot (S5; the in-memory deferral before).
 func deferred(h *relHarness, leg string) bool {
-	h.eng.pendingSiblingReleaseMu.Lock()
-	defer h.eng.pendingSiblingReleaseMu.Unlock()
-	_, ok := h.eng.pendingSiblingRelease[h.leg(leg)]
-	return ok
+	in, err := release.DecodeIntent(h.order(leg).ReleaseIntent)
+	return err == nil && in != nil && !in.Sent()
 }
 
 // chipOf is the release-error chip the board would show for a leg if it held
@@ -234,22 +243,26 @@ func pChip(leg string) func(h *relHarness) []string {
 // TestReleasePathsGateBeforeSideEffects holds every door to the rule the
 // release code states at its gates: a refusal is reachable without having
 // changed anything. For every characterised cell whose correct outcome is a
-// refusal or a hold, that outcome must show no release envelope and no
-// paperwork. The matrix then proves each cell reaches its outcome, so a door
-// that refuses AFTER its paperwork fails there, against a want this test has
-// already held to "no trace".
+// refusal, that outcome must show no release envelope and no paperwork; a hold
+// sends no envelope, and may carry the press's own paperwork (the held press:
+// the count splits at the operator's RELEASE whether the robot goes now or
+// later). The matrix then proves each cell reaches its outcome.
 func TestReleasePathsGateBeforeSideEffects(t *testing.T) {
 	t.Parallel()
 	cells := append(releaseMatrixCells(), releasePinCells()...)
 	refusals := 0
 	for _, c := range cells {
 		verdict, _, _ := strings.Cut(c.want, " | ")
-		if !strings.HasPrefix(verdict, "refuse:") && !strings.HasPrefix(verdict, "hold:") {
-			continue
-		}
-		refusals++
-		if !strings.Contains(c.want, "| rel=- |") || !strings.Contains(c.want, "| ingest=0 capred=0") {
-			t.Errorf("%s: a %s must leave no trace, but its outcome is %q", c.name, verdict, c.want)
+		switch {
+		case strings.HasPrefix(verdict, "refuse:"):
+			refusals++
+			if !strings.Contains(c.want, "| rel=- |") || !strings.Contains(c.want, "| ingest=0 capred=0") {
+				t.Errorf("%s: a %s must leave no trace, but its outcome is %q", c.name, verdict, c.want)
+			}
+		case strings.HasPrefix(verdict, "hold:"):
+			if !strings.Contains(c.want, "| rel=- |") || strings.Contains(c.want, "capred=-") {
+				t.Errorf("%s: a %s sends no envelope and captures nothing, but its outcome is %q", c.name, verdict, c.want)
+			}
 		}
 	}
 	if refusals == 0 {
@@ -322,31 +335,42 @@ func releaseMatrixCells() []relCell {
 			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0", build: pairAt(pi3, "evac", S, "supply", S),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi2 unflipped/R2 staged R1 queued",
-			want: "hold:collision | evac=queued supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(pi2, "evac", Q, "supply", S),
+			want: "hold:wait | evac=queued supply=staged | rel=- | ingest=1 capred=0 | uop=0", build: pairAt(pi2, "evac", Q, "supply", S),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi2 unflipped/R2 staged R1 in_transit",
-			want: "hold:collision | evac=in_transit supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(pi2, "evac", T, "supply", S),
+			want: "hold:lift | evac=in_transit supply=staged | rel=- | ingest=1 capred=0 | uop=0", build: pairAt(pi2, "evac", T, "supply", S),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi2 unflipped/R1 staged R2 in_transit",
-			want: "hold:collision | evac=staged supply=in_transit | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(pi2, "evac", S, "supply", T),
+			want: "hold:lift | evac=staged supply=in_transit | rel=- | ingest=1 capred=0 | uop=0", build: pairAt(pi2, "evac", S, "supply", T),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi3 unflipped/R2 staged R1 in_transit",
-			want: "hold:collision | evac=in_transit supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(pi3, "evac", T, "supply", S),
+			want: "hold:lift | evac=in_transit supply=staged | rel=- | ingest=1 capred=0 | uop=0", build: pairAt(pi3, "evac", T, "supply", S),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi2 flipped/R2 staged R1 in_transit",
-			want: "hold:collision | evac=in_transit supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(pi2f, "evac", T, "supply", S),
+			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | uop=0", build: pairAt(pi2f, "evac", T, "supply", S),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/pi3 flipped/R1 staged R2 queued",
 			want: "ok | evac=in_transit supply=queued | rel=evac | ingest=1 capred=0 | uop=0 | deferred=supply", build: pairAt(pi3f, "evac", S, "supply", Q),
 			act: pairClick(dispEmpty), probe: probes(pUOP, pDeferred)},
 		{name: "d1/two_robot/curtain live",
-			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", S)),
+			want: "hold:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | uop=0", build: withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", S)),
+			act: pairClick(dispEmpty), probe: probes(pUOP)},
+		// G3: Core's point for the act cannot be read — both legs hold, waiting
+		// for Core; the press still splits the count.
+		{name: "d1/two_robot/Core unreachable",
+			want: "hold:core | evac=staged supply=staged | rel=- | ingest=1 capred=0 | uop=0",
+			build: func(h *relHarness) {
+				pairAt(twoRobot, "evac", S, "supply", S)(h)
+				h.core.mu.Lock()
+				h.core.pointsDown = true
+				h.core.mu.Unlock()
+			},
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/two_robot/curtain safe",
 			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0", build: withCurtain(curtainSafe, pairAt(twoRobot, "evac", S, "supply", S)),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/two_robot/first cycle curtain live",
-			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | uop=42",
+			want: "hold:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | uop=0",
 			build: withCurtain(curtainLive, func(h *relHarness) {
 				pairAt(twoRobot, "evac", S, "supply", S)(h)
 				testutil.MustNoErr(h.t, h.db.SetProcessNodeRuntime(h.nodeID, nil, fxCount), "unstamp")
@@ -367,7 +391,7 @@ func releaseMatrixCells() []relCell {
 			},
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/co pi swap/curtain live",
-			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", S, "supply", S)),
+			want: "hold:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | uop=0", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", S, "supply", S)),
 			act: pairClick(dispEmpty), probe: probes(pUOP)},
 		{name: "d1/co two_robot/both staged",
 			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
@@ -378,28 +402,26 @@ func releaseMatrixCells() []relCell {
 			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | uop=0 | env:evac uop=nil kind=-", build: pairAt(twoRobot, "evac", S, "supply", D),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP, pEnv)},
 		{name: "d2/two_robot/supply alone, evac not staged",
-			bug:   "G7-door2",
-			today: "ok | evac=dispatched supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42 | env:supply uop=nil kind=-",
-			want:  "hold:lift | evac=dispatched supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(twoRobot, "evac", D, "supply", S),
+			want: "hold:lift | evac=dispatched supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(twoRobot, "evac", D, "supply", S),
 			act: orderClick("supply", dispNone), probe: probes(pUOP, pEnv)},
 		{name: "d2/two_robot/queued leg",
 			want: "refuse:not-releasable | evac=queued supply=queued | rel=- | ingest=0 capred=0 | uop=42", build: pairAt(twoRobot, "evac", Q, "supply", Q),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/two_robot/curtain live",
-			want: "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", D)),
+			want: "hold:curtain | evac=staged supply=dispatched | rel=- | ingest=1 capred=0 | uop=0", build: withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", D)),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/two_robot/first cycle curtain live",
-			want: "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42",
+			want: "hold:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42",
 			build: withCurtain(curtainLive, func(h *relHarness) {
 				pairAt(twoRobot, "evac", S, "supply", D)(h)
 				testutil.MustNoErr(h.t, h.db.SetProcessNodeRuntime(h.nodeID, nil, fxCount), "unstamp")
 			}),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/co two_robot/evac, curtain live",
-			want: "refuse:curtain | evac=staged supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", D)),
+			want: "hold:curtain | evac=staged supply=dispatched | rel=- | ingest=1 capred=0 | uop=0", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", D)),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP)},
 		{name: "d2/co drop/evac, curtain live",
-			want: "refuse:curtain | evac=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot, drop: true}, "evac", S)),
+			want: "hold:curtain | evac=staged | rel=- | ingest=1 capred=0 | uop=0", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot, drop: true}, "evac", S)),
 			act: orderClick("evac", dispEmpty), probe: probes(pUOP, pEnv)},
 		{name: "d2/co drop/evac",
 			want: "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | uop=0 | env:evac uop=nil kind=release_partial/7", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot, drop: true}, "evac", S),
@@ -442,16 +464,16 @@ func releaseMatrixCells() []relCell {
 
 		// ── Door 5: the changeover sweep and per-node click ──────────────
 		{name: "d5/co two_robot/both staged",
-			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co two_robot/curtain live",
-			want: "refuse:curtain | evac=staged supply=staged | rel=- | ingest=0 capred=0 | sweep released=0 pending=0 deferred=1 flip=[] | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
+			want: "ok | evac=staged supply=staged | rel=- | ingest=1 capred=0 | sweep released=0 pending=0 deferred=2 flip=[] | uop=0", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobot}, "evac", S, "supply", S)),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co pi tooling/evac staged",
-			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=1 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
 			act: sweepClick(dispNone), probe: probes(pUOP)},
 		{name: "d5/co pi tooling/node click",
-			want: "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | node released=1 pending=0 deferred=1 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
+			want: "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | node released=2 pending=0 deferred=0 flip=[] | uop=0", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", S, "supply", S),
 			act: nodeCOClick(dispNone), probe: probes(pUOP)},
 
 		// ── Door 6: the station button on a single-leg changeover node ────
@@ -462,7 +484,7 @@ func releaseMatrixCells() []relCell {
 			want: "ok | supply=in_transit | rel=supply | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		{name: "d6/co carryover/round trip at its hold, curtain live",
-			want: "refuse:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S)),
+			want: "hold:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, carryover: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		// The per-position fan-out: one order per position, and no station wait
 		// anywhere in it — the robot lifts the press's bin at dispatch. Nothing
@@ -471,7 +493,7 @@ func releaseMatrixCells() []relCell {
 			want: "ok | supply=dispatched | rel=- | ingest=0 capred=0 | uop=42", build: coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, perPosition: true}, "supply", protocol.StatusDispatched),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 		{name: "d6/co pi marked/single leg, curtain live",
-			want: "refuse:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
+			want: "hold:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
 	}
 }

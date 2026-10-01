@@ -222,60 +222,13 @@ type Engine struct {
 	// they live on the order row (orders.pending_intent, order_intent.go) so an
 	// Edge restart between arming and firing does not lose them.
 
-	// pendingSiblingRelease records a two-robot swap leg whose consolidated
-	// RELEASE was deferred by ReleaseStagedOrders because Core would have
-	// refused it (still queued/sourcing/dispatched/acknowledged) WHILE its
-	// sibling was released on the same operator click. When the deferred leg
-	// later reaches staged, handleSiblingReleaseRefire fires the release the
-	// operator already intended — the targeted revival of the auto-release-on-
-	// staged coordination removed 2026-04-27 (hop A4-ii, 2026-07-23). Key =
-	// deferred order id, value = the disposition to re-fire with. In-memory
-	// only: on Edge restart the entry is lost and the operator re-taps RELEASE
-	// (ComputeSwapReady keeps the button, P3-C3) — no timer, no reaper, and
-	// nothing here ever cancels or re-plans an order. Lazy-initialised under
-	// pendingSiblingReleaseMu so test fixtures that build Engine directly work.
-	pendingSiblingRelease   map[int64]ReleaseDisposition
-	pendingSiblingReleaseMu sync.Mutex
-
-	// survivorReleased records the swap survivors this Edge process has already
-	// auto-released from handleSiblingReleaseRefire's durable re-derivation, so
-	// the re-derivation fires AT MOST ONCE per order. Key = order id; the value
-	// carries nothing.
-	//
-	// ── WHY A BOUND IS REQUIRED AND NOT MERELY TIDY ───────────────────────
-	//
-	// "my sibling terminal-succeeded and I am staged" is a LEVEL-triggered fact:
-	// it stays true. The re-derivation fires on the staged transition, and Core
-	// refuses a release for a wait its own lane evaluator owns
-	// (complex_release.go's fence, error code invalid_state) — which Edge
-	// correctly handles by rolling the leg back to staged
-	// (RollbackReleaseRejection, the ALN_003 divergence). That rollback is
-	// itself a staged transition. Unbounded, the two make the 1.25s refusal flap
-	// measured on the lane-stress rig 2026-08-10: 240 refusals in five minutes,
-	// 1796 outbox rows for 46 completed orders.
-	//
-	// THE POPULATION IS REAL AND WAS IN THE SNAPSHOT. Run 12d order 232 is a
-	// staged leg whose partner (230) confirmed 42 seconds later, and its wait is
-	// a LANE wait (`lane-deeper-pending`, Lane_05) — Core's to advance, not the
-	// station's. It sits beside order 84, whose wait IS the station's. The two
-	// are indistinguishable from here: protocol.OrderStaged carries only a uuid
-	// and a detail string, so the Edge is told an order staged and never told
-	// WHICH wait it staged at. orders.StationOwnsWait exists for exactly this
-	// question and has no caller, because Core sends no wait index to ask it
-	// with. Until it does, the bound is what keeps a lane-waiting survivor to a
-	// single refused envelope instead of a flap.
-	//
-	// ONCE IS ENOUGH FOR THE POPULATION IT SERVES, which is why this is a bound
-	// rather than a compromise: a coordinated leg carries ONE station wait of
-	// its own choreography, and its other waits are lane waits Core spliced in
-	// and Core releases. Order 84 needed exactly one.
-	//
-	// In-memory, and cleared on terminal. On restart a lane-waiting survivor
-	// costs one more refused envelope — bounded, not a flap — and a
-	// station-waiting one gets the re-derivation this map exists to bound, which
-	// is the restart case the re-derivation was built for.
-	survivorReleased   map[int64]struct{}
-	survivorReleasedMu sync.Mutex
+	// intents is the release intent worker's queue, and relLocks the one lock
+	// per node the click doors and the worker share (release_act.go).
+	intents  intentQueue
+	relLocks nodeLocks
+	// points is where the act reads Core's release points; nil reads them
+	// from the Core client (releasePointSource).
+	points releasePointSource
 }
 
 // Config holds the parameters needed to create an Engine.
@@ -432,6 +385,8 @@ func (e *Engine) Start() {
 	// wrong-part alert. Independent of auto-cutover — runs for every process
 	// with a counter binding. No-op when the plant publishes no CATID tag.
 	e.startCatidMonitor()
+
+	e.startIntentWorker()
 
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)

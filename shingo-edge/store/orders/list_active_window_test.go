@@ -94,6 +94,8 @@ CREATE TABLE orders (
     station_wait    INTEGER,
     wait_kind       TEXT NOT NULL DEFAULT '',
     release_facts   TEXT,
+    release_intent  TEXT NOT NULL DEFAULT '',
+    release_held    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
     steps_json      TEXT

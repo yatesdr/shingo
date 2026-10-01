@@ -187,6 +187,12 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	if err := s.db.UpdateOrderStatus(order.ID, string(newStatus)); err != nil {
 		return fmt.Errorf("update order status: %w", err)
 	}
+	// A leg that ends takes its release intent with it, before the emit.
+	if IsTerminal(newStatus) && order.ReleaseIntent != "" {
+		if err := s.db.SetOrderReleaseIntent(order.ID, ""); err != nil {
+			log.Printf("clear release intent for order %d: %v", order.ID, err)
+		}
+	}
 	if err := s.db.InsertOrderHistory(order.ID, string(oldStatus), string(newStatus), detail); err != nil {
 		log.Printf("insert order history: %v", err)
 	}

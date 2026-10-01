@@ -113,13 +113,15 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		stopChan: make(chan struct{}),
 		// logFn is initialized to a no-op for tests that exercise diagnostic
 		// logging paths (e.g. ReleaseOrderWithLineside's toClaim==nil case,
-		// releaseIfReleasable's terminal-skip branch). Production sets
+		// the trunk's terminal-skip branch). Production sets
 		// this in engine.New; this fixture mirrors that contract so tests
 		// don't nil-pointer panic on log calls.
 		logFn:   func(string, ...any) {},
 		debugFn: func(string, ...any) {},
 	}
 	eng.hourlyTracker = NewHourlyTracker(db)
+	// Core's release points, answered from the database (release_fake_points_test.go).
+	eng.points = dbPoints{db: db}
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
 	// DeleteProcess composes its demand-episode closes on top of this one, so a
@@ -476,9 +478,8 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 // button on the Hopkinsville press-index hang. hop A4-i reverses it: a leg Core
 // would refuse is deferred, not desynced.
 //
-// The deferred Order A re-fires when it later reaches staged, its sibling having
-// already released (handleSiblingReleaseRefire, hop A4-ii — a targeted revival
-// of the removed auto-release-on-staged hook).
+// The deferred Order A holds a release intent and goes when it reaches staged
+// (Core's OrderStaged wakes its node's intents; S5).
 func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -560,10 +561,10 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 	}
 }
 
-// TestReleaseStagedOrders_Idempotent verifies that if one order has already
-// advanced past staged (e.g. a concurrent Core reply transitioned it to
-// in_transit between the operator's click and the handler running), the
-// release call treats it as success rather than erroring.
+// TestReleaseStagedOrders_Idempotent verifies that a pair click with one leg
+// already in_transit (driving to its wait) is not an error: that leg is
+// released on its way, and the supply — which sets its bin on the press the
+// evac has not lifted yet — holds with an intent until the lift (G7, S5).
 func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -581,8 +582,8 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}), "ReleaseStagedOrders should be idempotent on already-released order")
 
 	a, _ := db.GetOrder(result.OrderA.ID)
-	if a.Status != orders.StatusInTransit {
-		t.Errorf("OrderA status = %q, want in_transit", a.Status)
+	if a.Status != orders.StatusStaged || a.ReleaseIntent == "" {
+		t.Errorf("OrderA status = %q intent=%q, want staged and holding an intent (waiting for B's lift)", a.Status, a.ReleaseIntent)
 	}
 }
 

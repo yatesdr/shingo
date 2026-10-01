@@ -106,32 +106,25 @@ var releaseEnvelopeSenders = map[string]string{
 	"release_commit.go:releaseOrderWithFullLineside": "the lineside release, after capture, finalize, task state and flush",
 }
 
-// releaseTrunkCallers are the callers of the per-leg trunk every door uses —
-// releaseLeg, and its door-facing names ReleaseOrderWithLineside (door 2, its
-// own act) and releaseIfReleasable (a door's act, passing over a leg Core will
-// not take yet) — and whose act each one carries.
+// releaseTrunkCallers are the callers of the act every release runs through —
+// runAct, and its door-facing name ReleaseOrderWithLineside — and whose act
+// each one carries.
 var releaseTrunkCallers = map[string]string{
-	"release_doors.go:ReleaseOrderWithLineside":         "operator: the per-order click (door 2), in its own act",
-	"release_doors.go:releaseIfReleasable":              "the pass-over doors' per-leg release, in the act it is given",
-	"release_doors.go:releaseChangeoverWaitScoped":      "operator: the changeover sweep and per-node click (the click's act)",
-	"release_doors.go:ReleaseStagedOrders":              "operator: the pair click's two legs (the click's act)",
-	"release_doors.go:handleSiblingReleaseRefire":       "door 8: a deferred pair leg at its staging (its own act)",
-	"release_doors.go:releaseSurvivorOfFinishedPartner": "door 9: the swap survivor (its own act)",
-	"release_doors.go:releaseDeferredSupplyAtPickup":    "door 10: a changeover supply at its evac's lift (its own act)",
-	"sim_operator.go:runRelease":                        "sim: the auto-operator's per-order arm (-tags sim)",
+	"release_doors.go:ReleaseOrderWithLineside":    "operator: the per-order click (door 2)",
+	"release_doors.go:ReleaseStagedOrders":         "operator: the pair click's two legs, one act (door 1)",
+	"release_doors.go:releaseChangeoverWaitScoped": "operator: the changeover sweep and per-node click, one act (doors 5 and 6)",
+	"release_doors.go:fireIntents":                 "the intent worker: a node's held intents, re-planned on a wake",
+	"sim_operator.go:runRelease":                   "sim: the auto-operator's per-order arm (-tags sim)",
 }
 
 // releasePlanCallers are the callers of the gate table's plans. Every one is a
 // door in release_doors.go: a decision taken anywhere else is a door with its
 // own gates, which is the failure the layer exists to make impossible.
 var releasePlanCallers = map[string]string{
-	"release_doors.go:releaseLeg":                       "the trunk: every leg of every door (PlanLeg)",
-	"release_doors.go:ReleaseStagedOrders":              "door 1 (PlanPair)",
-	"release_doors.go:deferIfSiblingWent":               "door 1's deferral (PlanDeferral)",
-	"release_doors.go:releaseChangeoverWaitScoped":      "doors 5 and 6 (PlanChangeover)",
-	"release_doors.go:releaseNodeWithClaim":             "doors 3 and 4 (PlanMaterial)",
-	"release_doors.go:releaseSurvivorOfFinishedPartner": "door 9 (PlanSurvivor)",
-	"release_doors.go:releaseDeferredSupplyAtPickup":    "door 10 (PlanPickup)",
+	"release_doors.go:runAct":                      "every act's legs (PlanAct: scope, the trunk, G1, G3, G6, G7)",
+	"release_doors.go:ReleaseStagedOrders":         "door 1's own gates (PlanPair)",
+	"release_doors.go:releaseChangeoverWaitScoped": "doors 5 and 6's tasks (PlanChangeover)",
+	"release_doors.go:releaseNodeWithClaim":        "doors 3 and 4 (PlanMaterial)",
 }
 
 // orderCreationSites are the functions that create an order at the Edge. A
@@ -195,13 +188,13 @@ func TestReleaseEnvelopeSendersAreCensused(t *testing.T) {
 
 func TestReleaseTrunkCallersAreCensused(t *testing.T) {
 	t.Parallel()
-	found := callSites(t, ".", regexp.MustCompile(`^(ReleaseOrderWithLineside|releaseIfReleasable|releaseLeg)$`))
+	found := callSites(t, ".", regexp.MustCompile(`^(ReleaseOrderWithLineside|runAct)$`))
 	checkCensus(t, "trunk caller", found, releaseTrunkCallers)
 }
 
 func TestReleasePlanCallersAreCensused(t *testing.T) {
 	t.Parallel()
-	found := callSites(t, ".", regexp.MustCompile(`^Plan(Leg|Pair|Deferral|Changeover|Material|Survivor|Pickup|Collision|Flip)$`))
+	found := callSites(t, ".", regexp.MustCompile(`^Plan(Act|Leg|Pair|Changeover|Material|Flip)$`))
 	checkCensus(t, "plan caller", found, releasePlanCallers)
 }
 

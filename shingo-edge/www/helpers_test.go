@@ -194,7 +194,7 @@ func (s *stubEngine) ReleaseNodeWithRemainingUOP(int64, int64, int) (*storeorder
 func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error {
 	d := disp
 	s.lastReleaseOrderDisposition = &d
-	return s.orderMgr.ReleaseOrder(orderID, nil, "")
+	return s.orderMgr.ReleaseOrder(orderID, nil, "", nil)
 }
 func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition) error {
 	d := disp

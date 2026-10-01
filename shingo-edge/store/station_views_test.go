@@ -134,9 +134,9 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 // TestComputeSwapReady_SupplyStatusIrrelevant pins that the parked evac is the
 // SINGLE gate — the supply's status must not affect the button.
 //
-// swap_ready gates /release-staged -> ReleaseStagedOrders, which since hop A4-ii
-// remembers a leg Core will not accept yet (rememberDeferredSiblingRelease) and
-// re-fires it when it reaches staged. The operator's single click therefore
+// swap_ready gates /release-staged -> ReleaseStagedOrders, which remembers a
+// leg Core will not accept yet (its release intent, S5) and sends it when it
+// reaches its wait. The operator's single click therefore
 // already means "go for the pair, defer what cannot go yet". Gating the button
 // on the supply removes the ability to express that and — on the ALN_003
 // 2026-07-31 timeline specifically — would have taken the button away during

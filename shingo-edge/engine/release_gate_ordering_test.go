@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"shingoedge/release"
 	"testing"
 
 	"shingo/protocol"
@@ -49,41 +50,36 @@ func remainingUOP(t *testing.T, db *store.DB, nodeID int64) int {
 	return rt.RemainingUOPCached
 }
 
-// TestReleaseStagedOrders_HeldReleaseShipsNoPaperwork is the F3 regression.
+// TestReleaseStagedOrders_HeldReleaseSplitsAtThePress is the held press (S5).
 //
-// The supply leg is staged and the evac has not run, so the collision guard
-// holds the release. Nothing about the departing bin may have moved.
-func TestReleaseStagedOrders_HeldReleaseShipsNoPaperwork(t *testing.T) {
+// The supply leg is staged and the evac has not run, so the release holds: no
+// robot moves, and each leg's intent is remembered. The operator's RELEASE is
+// still the declaration that the bin is full, so the departing bin's count
+// splits at the press — its ingest ships and the slot clears — whether the
+// robots go now or later (owner, 2026-09-30). A refusal, by contrast, leaves
+// no trace (TestReleasePathsGateBeforeSideEffects).
+func TestReleaseStagedOrders_HeldReleaseSplitsAtThePress(t *testing.T) {
 	t.Parallel()
 	eng, nodeID, _, _ := seedSwapPairAt(t,
 		protocol.SwapModeTwoRobotPressIndex, protocol.StatusQueued, protocol.StatusStaged)
-
-	// The press has counted parts into the bin that is on it.
 	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntime(nodeID, nil, 42), "seed a live count")
-	before := remainingUOP(t, eng.db, nodeID)
-	if before != 42 {
-		t.Fatalf("seeded remaining = %d, want 42", before)
-	}
 	manifestsBefore := ingestManifestsQueued(t, eng.db)
+	releasesBefore := len(findOutboxByType(t, eng.db, protocol.TypeOrderRelease))
 
 	err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{CalledBy: "operator:test"})
-	if err == nil {
-		t.Fatal("want the collision guard to hold this release")
+	var held *release.HeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("want the release held; got %T (%v)", err, err)
 	}
-	var notReady *SwapPairNotReadyError
-	if !errors.As(err, &notReady) {
-		t.Fatalf("want a *SwapPairNotReadyError; got %T (%v)", err, err)
+	if got := len(findOutboxByType(t, eng.db, protocol.TypeOrderRelease)); got != releasesBefore {
+		t.Errorf("a HELD release queued %d release envelope(s), want none", got-releasesBefore)
 	}
-
-	if got := ingestManifestsQueued(t, eng.db); got != manifestsBefore {
-		t.Errorf("a HELD release queued %d ingest manifest(s) — the bin has not left the press, "+
-			"so its count has not been handed to anyone; the gate must run before the paperwork",
+	if got := ingestManifestsQueued(t, eng.db); got != manifestsBefore+1 {
+		t.Errorf("a held press queued %d ingest manifest(s), want 1 — the count splits at the operator's RELEASE",
 			got-manifestsBefore)
 	}
-	if got := remainingUOP(t, eng.db, nodeID); got != before {
-		t.Errorf("remaining_uop_cached = %d after a HELD release, want %d unchanged — zeroing it "+
-			"starts the hold-and-replay window for a bin that is still on the press and still filling",
-			got, before)
+	if got := remainingUOP(t, eng.db, nodeID); got != 0 {
+		t.Errorf("remaining_uop_cached = %d after a held press, want 0 — the later parts belong to the next bin", got)
 	}
 }
 

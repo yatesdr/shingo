@@ -22,6 +22,10 @@ type Manager struct {
 	sender    *OrderSender
 
 	DebugLog DebugLogFunc
+
+	// OnStagedMessage is the release layer's wake on Core's OrderStaged
+	// (engine.onStagedMessage); nil until the engine wires it.
+	OnStagedMessage func(orderID int64, stationWait *int)
 }
 
 // NewManager creates an order manager.
@@ -171,4 +175,25 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 // at (protocol.OrderStaged). The release echo and the S5 act read it.
 func (m *Manager) RecordWaitPoint(uuid string, stationWait *int, waitKind string) error {
 	return m.db.SetOrderWaitPoint(uuid, stationWait, waitKind)
+}
+
+// NoteStaged is Core's OrderStaged message, after its status reply: the wait
+// point recorded (when this Core reports one), then the release layer's wake
+// (OnStagedMessage) — the message, never the status event, so a rollback to
+// staged cannot wake a re-fire.
+func (m *Manager) NoteStaged(uuid string, stationWait *int, waitKind string) error {
+	if waitKind != "" {
+		if err := m.RecordWaitPoint(uuid, stationWait, waitKind); err != nil {
+			return err
+		}
+	}
+	if m.OnStagedMessage == nil {
+		return nil
+	}
+	o, err := m.db.GetOrderByUUID(uuid)
+	if err != nil || o == nil {
+		return err
+	}
+	m.OnStagedMessage(o.ID, stationWait)
+	return nil
 }

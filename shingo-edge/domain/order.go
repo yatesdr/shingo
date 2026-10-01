@@ -164,6 +164,12 @@ type Order struct {
 	// rows older than the column; the release loader computes those from the
 	// steps.
 	ReleaseFacts string `json:"-"`
+	// ReleaseIntent is the release layer's intent for this leg
+	// (orders.release_intent, release.Intent JSON); "" when none.
+	ReleaseIntent string `json:"-"`
+	// ReleaseHeld is the last hold or rejection sentence for this leg's
+	// release, which the board's chip shows; "" when none.
+	ReleaseHeld string `json:"release_held,omitempty"`
 	// DepartedAt is when this leg stopped being its cell's business: the
 	// instant the fleet confirmed the last step of its plan whose node is in
 	// the claim's cell set. A departed leg is still a live order — what it

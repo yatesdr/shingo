@@ -94,9 +94,9 @@ func TestSimOperator_PairReleaseSendsCaptureLinesideOnProduce(t *testing.T) {
 	}
 }
 
-// TestSimOperator_PairReleaseReportsAHoldAsAHold: the collision gate refusing is
-// the gate WORKING. A run that logs every hold as a rejection is a run nobody
-// can tell a wedge from.
+// TestSimOperator_PairReleaseReportsAHoldAsAHold: a release that holds (the
+// supply waits on the evac's lift, G7) is the layer WORKING. A run that logs
+// every hold as a rejection is a run nobody can tell a wedge from.
 func TestSimOperator_PairReleaseReportsAHoldAsAHold(t *testing.T) {
 	t.Parallel()
 	eng, _, evacID, _ := seedSwapPairAt(t,

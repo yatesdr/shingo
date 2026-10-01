@@ -56,6 +56,8 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		e.logFn("bin_picked_up: order uuid=%s not found", orderUUID)
 		return
 	}
+	// A lift anywhere is a held placer's wake (G7), before every filter below.
+	e.onPickupForIntents(orderUUID)
 
 	// === Departure stamp — ABOVE the location gate, and the only thing above it ===
 	//
@@ -133,46 +135,10 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		return
 	}
 
-	// === F' Phase 2 — deferred-supply release on evac pickup confirm ===
-	//
-	// Now gated; only fires at-our-slot.
-	//
-	// When the picked-up order is the evac leg of a changeover node
-	// task (matched via task.OldMaterialReleaseOrderID = order.ID),
-	// release the paired supply leg (task.NextMaterialOrderID) now
-	// that the evac robot has the old bin and is moving away from the
-	// slot. The evac order itself is still RUNNING (it has dropoff
-	// blocks remaining at outbound) — we trigger on the pickup block's
-	// FINISHED transition mid-order, NOT on evac order completion.
-	// The pickup-block-done moment is the only one that matters: it
-	// means the slot is physically clear for the supply robot to come
-	// in. ReleaseChangeoverWait deliberately defers the supply leg at
-	// click time precisely so this auto-release closes the loop
-	// deterministically — no slot-collision race.
-	//
-	// Scoped to changeover paths only via the task lookup. Operator-
-	// station two-robot paths (operator_stations.go, operator_produce,
-	// operator_bin_ops) use SiblingOrderID for their own supply↔evac
-	// pairing and continue to rely on operator-click release; we don't
-	// touch them here.
-	//
-	// Runs before the inventoryDelta-nil early-return so the chain
-	// works whether or not the delta reporter is wired (the chain is
-	// orthogonal to delta flushing). releaseIfReleasable is
-	// idempotent against terminal supply orders and skips a leg Core
-	// would refuse.
+	// A changeover evac's pickup at our slot advances its drop task. (Its
+	// supply is no longer released here: the lift is a wake for the supply's
+	// own intent — onPickupForIntents, above — S5.)
 	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil {
-		// ONLY THE DEFERRAL, NEVER A SECOND RELEASE. The sweep defers a paired
-		// supply to this moment; the station's pair RELEASE does not — it
-		// releases both legs at "ready". A supply that was already released
-		// past a wait is on its way to a LATER one (the tooling hold in front of
-		// the press), and releasing it again here carried it past that hold
-		// into a press with its tooling open (N-a'). An unreadable history
-		// leaves it for the operator: holding costs a click, releasing costs
-		// the hold.
-		if task.NextMaterialOrderID != nil {
-			e.releaseDeferredSupplyAtPickup(*task.NextMaterialOrderID, orderUUID)
-		}
 		// Drop tasks with the evacuate marker stay non-terminal until the
 		// line is physically clear — the operator opted in to "wait for
 		// this node to be evacuated before cutover." Pickup is that

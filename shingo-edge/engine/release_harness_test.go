@@ -42,6 +42,7 @@ import (
 	"shingoedge/messaging"
 	"shingoedge/orders"
 	"shingoedge/plc"
+	"shingoedge/release"
 	"shingoedge/store"
 	storemsg "shingoedge/store/messaging"
 	storeorders "shingoedge/store/orders"
@@ -78,6 +79,10 @@ type fakeCore struct {
 	// binTypes answers the payload manifest's bin_type_code per payload — what
 	// the changeover planner reads to decide a press-index fan-out.
 	binTypes map[string]string
+	// points answers releasePoints (release_fake_points_test.go); pointsDown
+	// makes Core unreachable for it (G3).
+	points     func(protocol.ReleasePointsRequest) protocol.ReleasePointsResponse
+	pointsDown bool
 }
 
 func newFakeCore(t *testing.T) *fakeCore {
@@ -88,7 +93,21 @@ func newFakeCore(t *testing.T) *fakeCore {
 		fc.calls[r.URL.Path]++
 		bin := fc.binAt
 		binTypes := fc.binTypes
+		points, down := fc.points, fc.pointsDown
 		fc.mu.Unlock()
+		if r.URL.Path == "/api/release/points" {
+			if down || points == nil {
+				http.Error(w, "core unreachable", http.StatusServiceUnavailable)
+				return
+			}
+			var req protocol.ReleasePointsRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(points(req))
+			return
+		}
 		if r.URL.Path == "/api/telemetry/node-bins" && bin != nil {
 			_ = json.NewEncoder(w).Encode([]NodeBinInfo{*bin})
 			return
@@ -202,6 +221,15 @@ type relHarness struct {
 	legs  []relLeg
 	extra []string // outcome fields a cell adds (task state, pile, ...)
 
+	// lifted: nodes a lift was reported at (h.pickedUp), which no longer hold
+	// the bin the fake Core's lift dependencies ask about.
+	lifted map[string]bool
+	// coreReads / coreWrites: statements the fake Core issued against the
+	// shared database while standing in for Core, which are Core's cost and
+	// not the Edge's. Its handler runs while the Edge waits on the HTTP call
+	// over the one connection, so they never interleave and subtract exactly.
+	coreReads, coreWrites int64
+
 	outboxMark int64
 }
 
@@ -228,15 +256,21 @@ func newRelHarness(t *testing.T) *relHarness {
 
 	fc := newFakeCore(t)
 	eng.coreClient = NewCoreClient(fc.srv.URL)
+	eng.points = nil // Core's points over HTTP, from the fake Core (counted)
 
 	wl := &scriptedWarLink{value: curtainSafe}
 	eng.plcMgr = plc.NewManager(nil, nil, nil, wl)
 
-	return &relHarness{
+	h := &relHarness{
 		t: t, db: db, eng: eng, counter: counter, core: fc, wl: wl,
 		handler: newEdgeHandlerFor(eng),
 		mutator: mut,
+		lifted:  map[string]bool{},
 	}
+	fc.mu.Lock()
+	fc.points = h.fakePoints
+	fc.mu.Unlock()
+	return h
 }
 
 // newEdgeHandlerFor is the production Core-reply handler over an engine's
@@ -298,6 +332,7 @@ func (h *relHarness) mark() {
 		}
 	}
 	h.counter.Reset()
+	h.coreReads, h.coreWrites = 0, 0
 	h.core.reset()
 	h.wl.reset()
 }
@@ -405,9 +440,9 @@ func errClass(err error) string {
 	if err == nil {
 		return "ok"
 	}
-	var notReady *SwapPairNotReadyError
-	if errors.As(err, &notReady) {
-		return "hold:collision"
+	var held *release.HeldError
+	if errors.As(err, &held) {
+		return "hold:" + map[string]string{release.G1: "wait", release.G3: "core", release.G6: "curtain", release.G7: "lift"}[held.Gate]
 	}
 	msg := err.Error()
 	switch {
@@ -481,8 +516,18 @@ func (h *relHarness) coreStages(name string) {
 	h.handler.HandleOrderStaged(&protocol.Envelope{}, &protocol.OrderStaged{OrderUUID: o.UUID, Detail: "stub: parked"})
 }
 
+// coreStagesAt is coreStages from a Core that numbers its station waits: the
+// leg is parked at station wait ordinal.
+func (h *relHarness) coreStagesAt(name string, ordinal int) {
+	h.t.Helper()
+	o := h.order(name)
+	n := ordinal
+	h.handler.HandleOrderStaged(&protocol.Envelope{}, &protocol.OrderStaged{OrderUUID: o.UUID, Detail: "stub: parked",
+		StationWait: &n, WaitKind: protocol.WaitKindStation})
+}
+
 // coreConfirms drives a leg to confirmed through the lifecycle, firing the
-// terminal-success transition the survivor arm listens for.
+// terminal transition that wakes its sibling's held intent.
 func (h *relHarness) coreConfirms(name string) {
 	h.t.Helper()
 	testutil.MustNoErr(h.t, h.eng.orderMgr.TransitionOrder(h.leg(name), protocol.StatusDelivered, "stub: delivered"), "deliver "+name)
@@ -502,8 +547,8 @@ type actCounts struct {
 
 func (h *relHarness) counts() actCounts {
 	return actCounts{
-		reads:    h.counter.Reads(),
-		writes:   h.counter.Writes(),
+		reads:    h.counter.Reads() - h.coreReads,
+		writes:   h.counter.Writes() - h.coreWrites,
 		warlink:  h.wl.count(),
 		coreHTTP: h.core.total(),
 	}

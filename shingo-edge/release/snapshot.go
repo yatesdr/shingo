@@ -10,22 +10,19 @@ import "shingo/protocol"
 type Need uint32
 
 const (
-	NeedOrder     Need = 1 << iota // the order row (and its release facts)
-	NeedCurtain                    // the curtained nodes the leg's release lets a bin cross
-	NeedNode                       // the process node row
-	NeedPull                       // whether the line is pulling from the node
-	NeedRuntime                    // the node's runtime row
-	NeedKind                       // the drop task, the claim the release resets against, its role
-	NeedSupply                     // whether the leg is the supply of a two-robot swap
-	NeedDeparts                    // whether releasing the leg takes a produce bin away
-	NeedFlip                       // the sequential partner the release moves the line to
-	NeedRoute                      // pair door: the node's changeover task
-	NeedActive                     // pair and Material doors: the node, its runtime and its claim
-	NeedPair                       // pair door: the two legs and their classification
-	NeedCollision                  // pair door: the legs' statuses and placements on the press
-	NeedSiblings                   // survivor door: the order and its partner
-	NeedScope                      // survivor door: relay and changeover-task membership
-	NeedInFlight                   // Material door: the order already working the node's bin
+	NeedOrder    Need = 1 << iota // the order row (and its release facts)
+	NeedCurtain                   // the curtained nodes the leg's release lets a bin cross
+	NeedNode                      // the process node row
+	NeedPull                      // whether the line is pulling from the node
+	NeedRuntime                   // the node's runtime row
+	NeedKind                      // the drop task, the claim the release resets against, its role
+	NeedSupply                    // whether the leg is the supply of a two-robot swap
+	NeedDeparts                   // whether releasing the leg takes a produce bin away
+	NeedFlip                      // the sequential partner the release moves the line to
+	NeedRoute                     // pair door: the node's changeover task
+	NeedActive                    // pair and Material doors: the node, its runtime and its claim
+	NeedPair                      // pair door: the two legs and their classification
+	NeedInFlight                  // Material door: the order already working the node's bin
 )
 
 // Has reports whether every group in n is loaded.
@@ -60,6 +57,7 @@ type Leg struct {
 	Mode     string // the disposition's mode
 
 	// NeedOrder
+	Intent      *Intent // the leg's release intent, if any
 	ReadErr     error
 	Status      protocol.Status
 	QueueReason string
@@ -69,7 +67,8 @@ type Leg struct {
 	ProcessNodeID  int64
 
 	// NeedCurtain: the first curtained node, in the order the release lets a
-	// bin cross them, that is not safe; nil when every one is.
+	// bin cross them (Core's point when the act has it), that is not safe;
+	// nil when every one is.
 	Curtain error
 
 	// NeedNode
@@ -146,31 +145,9 @@ type Pair struct {
 	HasTask              bool
 	DepartingReadErr     error
 
-	// NeedCollision: press-index with both legs. Arms[0] is the supply (the
-	// placing leg by classification), Arms[1] the evac.
-	Arms []CollisionArm
-
-	// NeedCurtain
-	Curtain error
-
 	// NeedDeparts: the evac takes a produce bin off the node.
 	DepartErr error
 	Departs   bool
-}
-
-// CollisionArm is one leg of a press-index pair and its sibling.
-type CollisionArm struct {
-	Leg, Sibling int64
-	LegErr       error
-	LegStatus    protocol.Status
-	LegPassed    bool // released past a station wait (an unreadable history reads false)
-	SiblingErr   error
-	SiblingState protocol.Status
-	// SiblingPassedErr / SiblingPassed: only read for an in_transit sibling.
-	SiblingPassedErr error
-	SiblingPassed    bool
-	// PlacesAt: the press position the leg sets a bin down on, "" for none.
-	PlacesAt string
 }
 
 // Changeover is what the loader has read for the changeover's release of its
@@ -195,11 +172,6 @@ type Task struct {
 	PullNode string
 	Evac     *int64
 	Supply   *int64
-	// SupplyAtLaterWait: a paired supply this station already released past
-	// a wait, staged again at a later one.
-	SupplyAtLaterWait bool
-	// SupplyLive: the paired supply reads and is not terminal.
-	SupplyLive bool
 }
 
 // Material is what the loader has read for the Material page's release of a
@@ -223,36 +195,4 @@ type Material struct {
 	InFlightOrder  int64
 	InFlightStatus protocol.Status
 	InFlight       bool // a live move lifting from this node
-}
-
-// Survivor is what the loader has read for a swap leg whose partner may have
-// finished (door 9).
-type Survivor struct {
-	Loaded Need
-
-	OrderID int64
-
-	// NeedSiblings
-	Paired           bool
-	SiblingID        int64
-	SiblingSucceeded bool
-	SiblingStatus    protocol.Status
-
-	// NeedScope
-	Relay         bool
-	TaskID        int64
-	TaskSituation string
-	InChangeover  bool // a leg of a changeover task that is not `unchanged`
-	AlreadyFired  bool // the one release this Edge lifetime is spent
-}
-
-// Deferral is what the loader has read, after a pair click's legs, for one
-// leg that did not go (door 1's deferral, fired by door 8).
-type Deferral struct {
-	Leg              int64
-	Released         bool
-	SiblingReleased  bool
-	SiblingSucceeded bool // the sibling had already finished its half
-	LegErr           error
-	LegStatus        protocol.Status
 }

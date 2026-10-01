@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"shingoedge/release"
 	"testing"
 
 	"shingo/protocol"
@@ -98,12 +99,10 @@ func TestPlacingLegGate_UnflippedEvacAtBackfillPositionIsHeld(t *testing.T) {
 	if err == nil {
 		t.Fatal("want a hold: R1 would place a bin on the backfill position that R2 has not cleared")
 	}
-	var notReady *SwapPairNotReadyError
-	if !errors.As(err, &notReady) {
-		t.Fatalf("want a *SwapPairNotReadyError; got %T (%v)", err, err)
-	}
-	if notReady.SiblingState != string(protocol.StatusQueued) {
-		t.Errorf("refusal reports sibling state %q, want %q", notReady.SiblingState, protocol.StatusQueued)
+	// S5: a hold that fires by itself when R2 lifts (G7), not a refusal.
+	var held *release.HeldError
+	if !errors.As(err, &held) || held.Gate != release.G7 {
+		t.Fatalf("want a G7 hold; got %T (%v)", err, err)
 	}
 }
 
