@@ -7,7 +7,6 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/release"
-	"shingoedge/store/processes"
 )
 
 // seedSwapPairAt creates a linked evac/supply pair at a press-index node in
@@ -40,13 +39,6 @@ func seedSwapPairAt(t *testing.T, mode protocol.SwapMode, evacStatus, supplyStat
 	// ResolveSwapPair reads the runtime slots: Staged -> evac, Active -> supply.
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &supplyID, &evacID), "runtime slots")
 	return eng, nodeID, evacID, supplyID
-}
-
-func nodeAndClaim(t *testing.T, eng *Engine, nodeID int64) (*processes.Node, *processes.NodeClaim) {
-	t.Helper()
-	node, _, claim, err := loadActiveNode(eng.db, nodeID)
-	testutil.MustNoErr(t, err, "load node")
-	return node, claim
 }
 
 // When the evac IS releasable and the supply is not, the evac goes and the

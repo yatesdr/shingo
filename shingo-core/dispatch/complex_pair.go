@@ -49,7 +49,7 @@ import (
 // the evac went on its own.
 //
 // So RELEASE IS UNCHANGED and must stay so. ComputeSwapReady, the RELEASE
-// button, the deferral-and-refire machinery and the Edge's press-index collision gate (release.PlanCollision)
+// button, the deferral-and-refire machinery and the Edge's press-index lift rule (release.PlanAct's G7)
 // are not this file's business and are not touched by it.
 //
 // ── NO MODE NAMES. NOT ONE ────────────────────────────────────────────────
@@ -361,7 +361,7 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 	//
 	// This used to say the order bought nothing anyone consumes. For a press-index
 	// pair that is still true — both legs open with a wait, and the bins move at
-	// release, where the Edge's press-index collision gate (release.PlanCollision) orders them. It stopped
+	// release, where the Edge's press-index lift rule (release.PlanAct's G7) orders them. It stopped
 	// being true for a pair the vacated-slot rule cleared: the second leg's drop
 	// is sound only because the first leg's lift is committed. So the lifter's
 	// create goes first, and a create that fails returns before the dropper is

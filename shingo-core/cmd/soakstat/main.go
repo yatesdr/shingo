@@ -1801,7 +1801,7 @@ func checkExhaustedCarrierPool(db *store.DB) []string {
 //
 // The lane invariants above protect corridors; nothing protects POSITIONS.
 // A placing leg that does not ride the release-click path bypasses
-// the Edge's press-index collision gate (release.PlanCollision) entirely, so a robot can set a bin down
+// the Edge's press-index lift rule (release.PlanAct's G7) entirely, so a robot can set a bin down
 // on an occupied position and no existing assertion ever sees it. Sim
 // 2026-09-07 proved the shape real: an index leg placed bin 30 on PLN_001 at
 // 11:32:19 while bin 17 still stood there — twenty seconds of two bins at one

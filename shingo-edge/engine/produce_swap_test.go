@@ -467,8 +467,8 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 // (2026-07-23): when Robot B (the lineside robot, StagedOrderID slot) is at
 // staged and Robot A is still in a pre-staged status Core would refuse
 // (acknowledged), a single click releases ONLY the staged leg. Order A is
-// SKIPPED — not force-flipped to in_transit — because orders.ReleasableAtCore
-// is false for acknowledged.
+// SKIPPED — not force-flipped to in_transit — because release.Releasable is
+// false for acknowledged.
 //
 // The pre-hop contract (2026-04-27 → 2026-07-23) fanned out unconditionally on
 // IsTerminal alone: Order A's release envelope was queued regardless and the

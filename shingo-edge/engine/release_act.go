@@ -233,6 +233,15 @@ type releasePointSource interface {
 	ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error)
 }
 
+// SetReleasePointSource replaces the Core client as the act's point source:
+// for an Edge running without a Core (the integration harness, which answers
+// from engine/releasefake). Call before Start.
+func (e *Engine) SetReleasePointSource(src interface {
+	ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error)
+}) {
+	e.points = src
+}
+
 // ── The intent worker ─────────────────────────────────────────────────────
 
 // heldIntent is one leg a node's intents hold, with its choices.

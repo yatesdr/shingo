@@ -7,6 +7,12 @@
 // GetChangeoverNodeTaskByEvacOrderID's lookup or in HandleBinPickedUp's
 // per-event dispatch.
 //
+// S5: a pickup no longer releases a supply. These supplies are stage-only
+// legs (the claims' "simple" mode has no swap builder, so the changeover
+// falls back to fetch-and-stage with no station wait), and the deleted chain
+// sent each one an OrderRelease Core could only no-op. The lock now reads:
+// neither pickup sends a release for either supply.
+//
 //go:build docker
 
 package scenarios
@@ -170,7 +176,10 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 		t.Errorf("evac releases missing — got %+v, want both %s and %s", uuids, evacA.UUID, evacB.UUID)
 	}
 
-	// ── Pickup-confirm fires for evac A FIRST. Only supply A should release. ──
+	// Drain the evac releases so what follows counts only the pickups' effect.
+	drainOutbox(t, edge)
+
+	// ── Pickup-confirm fires for evac A FIRST. Neither supply is released. ──
 	bpEnv, err := protocol.NewDataEnvelope(
 		protocol.SubjectBinPickedUp,
 		protocol.Address{Role: protocol.RoleCore},
@@ -186,15 +195,12 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 	encoded, _ := bpEnv.Encode()
 	edge.Ingestor.HandleRaw(encoded)
 
-	releases = pendingReleases(t, edge)
-	if len(releases) != 1 {
-		t.Fatalf("after evac A pickup: got %d envelopes, want 1 (supply A only — supply B must NOT cross-fire)", len(releases))
-	}
-	if releases[0].OrderUUID != supplyA.UUID {
-		t.Errorf("evac A pickup fired wrong supply: got %s, want supply A %s", releases[0].OrderUUID, supplyA.UUID)
+	if releases = pendingReleases(t, edge); len(releases) != 0 {
+		t.Fatalf("after evac A pickup: got %d envelopes, want 0 — supply A (%s) is a stage leg with no "+
+			"wait to release, and supply B (%s) must not cross-fire", len(releases), supplyA.UUID, supplyB.UUID)
 	}
 
-	// ── Now evac B picks up. Only supply B fires. ──
+	// ── Now evac B picks up. Still nothing. ──
 	bpEnv, err = protocol.NewDataEnvelope(
 		protocol.SubjectBinPickedUp,
 		protocol.Address{Role: protocol.RoleCore},
@@ -210,11 +216,8 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 	encoded, _ = bpEnv.Encode()
 	edge.Ingestor.HandleRaw(encoded)
 
-	releases = pendingReleases(t, edge)
-	if len(releases) != 1 {
-		t.Fatalf("after evac B pickup: got %d envelopes, want 1 (supply B only)", len(releases))
-	}
-	if releases[0].OrderUUID != supplyB.UUID {
-		t.Errorf("evac B pickup fired wrong supply: got %s, want supply B %s", releases[0].OrderUUID, supplyB.UUID)
+	if releases = pendingReleases(t, edge); len(releases) != 0 {
+		t.Fatalf("after evac B pickup: got %d envelopes, want 0 — supply B (%s) is a stage leg with no "+
+			"wait to release", len(releases), supplyB.UUID)
 	}
 }

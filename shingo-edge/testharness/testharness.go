@@ -15,6 +15,7 @@ import (
 
 	"shingoedge/config"
 	"shingoedge/engine"
+	"shingoedge/engine/releasefake"
 	"shingoedge/messaging"
 	"shingoedge/orders"
 	"shingoedge/store"
@@ -106,6 +107,9 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 		DB:        db,
 		LogFunc:   t.Logf,
 	})
+	// No Core runs here (a coreAPI is a telemetry stub), so the release act's
+	// point is answered from the Edge's own rows, as Core's rule reads them.
+	eng.SetReleasePointSource(releasefake.DB{DB: db})
 	eng.Start()
 	t.Cleanup(eng.Stop)
 

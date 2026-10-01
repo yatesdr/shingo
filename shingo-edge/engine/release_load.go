@@ -544,16 +544,6 @@ func (e *Engine) legTouches(act *releaseAct, order *storeorders.Order) ([]string
 	return lf.facts.Touches, nil
 }
 
-// anyCurtained reports whether the Edge has any curtained node at all, so a
-// door can skip reading its legs when there is nothing to check them against.
-func (e *Engine) anyCurtained(act *releaseAct) (bool, error) {
-	curtained, err := e.curtainedNodes(act)
-	if err != nil {
-		return false, &CurtainHeldError{Sentence: err.Error()}
-	}
-	return len(curtained) > 0, nil
-}
-
 // curtainForNode checks one node by core name: the node a door lifts a bin
 // from directly (the Material page, the position evac).
 func (e *Engine) curtainForNode(act *releaseAct, coreNodeName string) error {

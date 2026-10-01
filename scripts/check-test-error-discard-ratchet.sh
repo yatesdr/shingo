@@ -98,7 +98,10 @@ cd "$(dirname "$0")/.."
 # 1471 → 1469: S1b (the produce count splits at RELEASE) rewrote
 # produce_swap_test.go's two call-for-parts checks, whose
 # `runtime, _ := db.GetProcessNodeRuntime` discards became checked reads.
-FROZEN=1469
+# 1469 → 1447: S5-S7 (release intents) deleted the deferral, survivor and
+# collision tests and the release-cap and chip-prefix tests with the code
+# they pinned; their replacements check every read.
+FROZEN=1447
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

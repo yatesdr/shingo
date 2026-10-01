@@ -6,6 +6,13 @@
 // miss: envelope marshal/unmarshal, ingestor routing, and handler
 // dispatch through the EdgeHandler the production binary wires.
 //
+// S5: the supply is no longer released at the evac's pickup. In this shape
+// it is a stage-only leg (the claims' "simple" mode has no swap builder, so
+// the changeover falls back to fetch-and-stage with no station wait), and
+// the deleted chain sent it an OrderRelease Core could only no-op. The
+// scenario now pins that the pickup sends nothing for it, which also keeps
+// the manifest-preservation contract (order 682) by construction.
+//
 // Doesn't drive Core. The picked-up signal that production gets from
 // Core's RDS poller is synthesized inline as a BinPickedUp envelope and
 // fed directly to Edge's ingestor — same path Core's published message
@@ -31,27 +38,21 @@ import (
 )
 
 // TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup is
-// the Phase-3 wire-level regression for F' Phase 2's deferred-supply
-// chain.
+// the wire-level regression for a changeover node's release.
 //
 //	Step 1: operator clicks Release Wait. Edge enqueues exactly ONE
 //	        OrderRelease envelope — for the evac leg, with the auto-
 //	        detected disposition (release_partial / release_empty).
-//	        Supply leg is deferred.
+//	        The supply is a stage leg with no wait: nothing to release.
 //
 //	Step 2: Core's RDS poller observes the evac robot finish its
-//	        pickup block — the robot has the old bin and is now in
-//	        transit toward outbound. The evac ORDER is still running
-//	        (dropoff blocks remain), but the slot is physically clear.
-//	        Core sends a BinPickedUp envelope to Edge. We synthesize
-//	        that envelope inline and feed it to Edge's ingestor —
-//	        same path as production.
+//	        pickup block. Core sends a BinPickedUp envelope to Edge. We
+//	        synthesize that envelope inline and feed it to Edge's
+//	        ingestor — same path as production.
 //
-//	Step 3: Edge's HandleBinPickedUp fires the deferred-supply auto-
-//	        release. Edge enqueues a SECOND OrderRelease envelope for
-//	        the supply leg, with NIL disposition and NIL RemainingUOP
-//	        (manifest preservation — the bug fingerprint from order
-//	        682 / 2026-05-06).
+//	Step 3: the pickup sends nothing for the supply, so no envelope can
+//	        carry a disposition for it (manifest preservation — the bug
+//	        fingerprint from order 682 / 2026-05-06).
 //
 // Failure modes this catches that unit tests miss:
 //   - JSON round-trip on BinPickedUp (a type-shape change on the
@@ -172,8 +173,8 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	}
 	// The supply waits on the evac's pickup, which releases it with no click:
 	// Deferred, not Pending (Pending is a click the operator still owes).
-	if result.Deferred != 1 || result.Pending != 0 {
-		t.Errorf("step 1 result Deferred=%d Pending=%d, want 1 and 0 (supply deferred to the pickup)",
+	if result.Deferred != 0 || result.Pending != 0 {
+		t.Errorf("step 1 result Deferred=%d Pending=%d, want 0 and 0 (the supply is a stage leg with no wait)",
 			result.Deferred, result.Pending)
 	}
 
@@ -228,27 +229,12 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	}
 	edge.Ingestor.HandleRaw(encoded)
 
-	// ── Step 3: HandleBinPickedUp's deferred-supply branch fires. ──
-	releases = pendingReleases(t, edge)
-	if len(releases) != 1 {
-		t.Fatalf("step 3: OrderRelease envelopes after BinPickedUp = %d, want 1 (deferred supply)",
-			len(releases))
-	}
-	supplyRel := releases[0]
-	if supplyRel.OrderUUID != supplyOrder.UUID {
-		t.Errorf("step 3 OrderRelease UUID = %q, want supply %q",
-			supplyRel.OrderUUID, supplyOrder.UUID)
-	}
-	// Supply leg manifest-preservation contract through the wire. This is
-	// the regression lock from order 682 / 2026-05-06: anything other
-	// than nil here means we wiped Core's bin manifest by accident.
-	if supplyRel.Disposition != nil {
-		t.Errorf("step 3 supply OrderRelease.Disposition = %+v, want nil (manifest preservation)",
-			supplyRel.Disposition)
-	}
-	if supplyRel.RemainingUOP != nil {
-		t.Errorf("step 3 supply OrderRelease.RemainingUOP = &%d, want nil (manifest preservation)",
-			*supplyRel.RemainingUOP)
+	// ── Step 3: the pickup sends nothing for the supply. ──
+	// No envelope can carry a disposition for it, so Core's bin manifest is
+	// left alone (order 682, 2026-05-06).
+	if releases = pendingReleases(t, edge); len(releases) != 0 {
+		t.Fatalf("step 3: OrderRelease envelopes after BinPickedUp = %d, want 0 — supply %s is a stage "+
+			"leg with no wait to release", len(releases), supplyOrder.UUID)
 	}
 }
 

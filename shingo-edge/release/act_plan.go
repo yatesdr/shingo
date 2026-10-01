@@ -271,8 +271,20 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 		decisions[i] = d
 	}
 
-	// G1: a leg not yet at its wait, whose partner on the same press goes on
-	// this act, holds; a re-evaluation keeps holding it.
+	holdForThePress(a, legs, decisions)
+	if need := gatesOnThePoint(a, f, legs, decisions); need != nil {
+		return *need
+	}
+	liftDependencies(f, legs, decisions)
+
+	plan.Decisions = commitOrder(f, decisions)
+	return plan
+}
+
+// holdForThePress is G1's remembering: a leg not yet at its wait, whose
+// partner on the same press goes on this act, holds; a re-evaluation keeps
+// holding it.
+func holdForThePress(a Act, legs []ActLeg, decisions []Decision) {
 	pressGoes := map[string]bool{}
 	for i, d := range decisions {
 		if d.Verdict == Go && legs[i].Press != "" {
@@ -289,10 +301,14 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 			d.Sentence = "waiting for its robot to reach its wait"
 		}
 	}
+}
 
-	// G3, G6, G7 ask Core's point and the curtain on it.
+// gatesOnThePoint asks Core's point and the curtain on it: G3 (no point) and
+// G6 (a curtained node on it) for every leg that would go. It returns the
+// fact group still to load, or nil.
+func gatesOnThePoint(a Act, f ActFacts, legs []ActLeg, decisions []Decision) *ActPlan {
 	if !f.Loaded.Has(NeedPoint) && anyGoOrHold(decisions) {
-		return ActPlan{Need: NeedPoint, NeedLeg: -1}
+		return &ActPlan{Need: NeedPoint, NeedLeg: -1}
 	}
 	for i := range decisions {
 		d := &decisions[i]
@@ -305,7 +321,7 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 			continue
 		}
 		if !legs[i].Leg.Loaded.Has(NeedCurtain) {
-			return ActPlan{Need: NeedCurtain, NeedLeg: i}
+			return &ActPlan{Need: NeedCurtain, NeedLeg: i}
 		}
 		if c := legs[i].Leg.Curtain; c != nil {
 			d.Verdict, d.Gate, d.Wake = Hold, G6, WakeCurtain
@@ -320,10 +336,7 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 				legs[i].Leg.OrderID, legs[i].Leg.Mode, c)})
 		}
 	}
-	liftDependencies(f, legs, decisions)
-
-	plan.Decisions = commitOrder(f, decisions)
-	return plan
+	return nil
 }
 
 // covered is the act's scope (SHAPE §3.5). An act that names its purpose

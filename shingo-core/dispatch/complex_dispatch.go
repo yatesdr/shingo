@@ -808,7 +808,7 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// scanner pass or neither is (complex_pair.go), so a parked evac implies a
 	// dispatched supply by construction; a leg going terminal takes its sibling
 	// (swap_peer.go); and the collision hazard is answered at RELEASE, where the
-	// bins actually move and the Edge's press-index collision gate (release.PlanCollision) already orders
+	// bins actually move and the Edge's press-index lift rule (release.PlanAct's G7) already orders
 	// the legs. That guard is not this layer's to help.
 	//
 	// The peer-terminal unwind above stays. It resolves a leg whose sibling was
