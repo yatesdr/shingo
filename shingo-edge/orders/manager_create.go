@@ -74,7 +74,7 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 // operator station is wired up to confirm manually.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, false, origin)
 }
 
 // CreateMoveOrderWithPayloadCode is CreateMoveOrder with an explicit payload
@@ -88,7 +88,7 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 // no-payload-code fallback in operator-render.js / operator-modal.js.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, origin)
 }
 
 // CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
@@ -105,7 +105,22 @@ func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity 
 // with the incoming style's part. Empty still backfills, for callers with no
 // better answer.
 func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, remainingUOP *int, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, false, origin)
+}
+
+// CreateMoveOrderCarrying moves the carrier standing on sourceNode and names
+// it by what it CARRIES: carried is the bin's own payload as Core reported it,
+// and a blank means an empty carrier and stays blank.
+//
+// Every other move variant back-fills a blank payload from the node's claim,
+// and mid-changeover that claim is the TARGET style's (resolveClaimForNode,
+// TargetStyleFirst). A carrier already standing on a cell is the opposite case:
+// an empty spare going back to its supply would go out tagged with the
+// incoming part, and Core's store restriction for that part would judge where
+// it may land. So this one says exactly what the bin is. Auto-confirmed: no
+// operator receives a carrier going back to where it came from.
+func (m *Manager) CreateMoveOrderCarrying(processNodeID *int64, sourceNode, deliveryNode, carried string, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, origin)
 }
 
 // createMoveOrder is the one body behind all four move variants.
@@ -114,12 +129,20 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // which is how a change lands in three of them: the origin plumbing would have
 // been exactly that change. Collapsing them first makes "every move order can
 // carry an origin" true by construction rather than by inspection.
+//
+// carried says payloadCode is the carrier's own and is not back-filled when
+// blank (CreateMoveOrderCarrying).
 func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 	sourceNode, deliveryNode, payloadCode string, remainingUOP *int,
-	autoConfirm bool, origin Origin) (*orders.Order, error) {
+	autoConfirm, carried bool, origin Origin) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
+	var payloadDesc string
+	if carried {
+		payloadDesc = m.payloadDesc(payloadCode)
+	} else {
+		payloadDesc, payloadCode = m.lookupPayloadMeta(processNodeID, payloadCode)
+	}
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,

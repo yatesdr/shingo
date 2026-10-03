@@ -75,7 +75,8 @@ func (db *DB) CloneStyle(srcID int64, name, description, calledBy string) (int64
 // processes.ClaimOverride). Returns the notes the override layer produced.
 // Callers own the active-style and same-process rules.
 func (db *DB) CopyStyleClaims(srcID, targetID int64, includePayloads bool, overrides []processes.ClaimOverride) ([]string, error) {
-	return processes.CopyStyleClaims(db.DB, srcID, targetID, includePayloads, overrides)
+	notes, _, err := processes.CopyStyleClaims(db.DB, srcID, targetID, includePayloads, overrides)
+	return notes, err
 }
 
 // GenerateStyles scaffolds a family of styles from one base style, each a

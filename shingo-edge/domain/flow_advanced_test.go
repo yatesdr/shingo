@@ -10,9 +10,9 @@ import (
 
 // flow_advanced_test.go — the columns the flow does not draw.
 //
-// The Advanced modal (U9b, spec §2 D2) is the desktop's home for the twelve
+// The Advanced modal (U9b, spec §2 D2) is the desktop's home for the thirteen
 // claim columns the picture has no line for: the allowed payload list, the
-// replenishment policy, the changeover specials the cell does not already
+// replenishment policy and the kept spare, the changeover specials the cell does not already
 // carry, which robot of an index pair supplies, and auto-confirm.
 //
 // WHY THE CELL HAS TO CARRY THEM. Expand's carry-through reads the PRIOR
@@ -48,7 +48,7 @@ func advancedPrior() NodeClaim {
 
 // TestFlowAdvanced_UntouchedIsExpandUnchanged: a cell whose Advanced is nil
 // expands to the same input, field for field, as a cell that does not carry
-// the field at all — so every one of the twelve is left exactly as Expand
+// the field at all — so every one of the thirteen is left exactly as Expand
 // carried it.
 func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 	t.Parallel()
@@ -71,7 +71,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 		t.Fatalf("an untouched Advanced changed the write:\n got  %+v\n want %+v", got, want)
 	}
 
-	// And the row that lands still holds the engineer's twelve.
+	// And the row that lands still holds the engineer's thirteen.
 	row := MaterializeClaim(got, &prior)
 	if !reflect.DeepEqual(row.AllowedPayloadCodes, prior.AllowedPayloadCodes) ||
 		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
@@ -116,12 +116,10 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	if row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverOutboundStaging {
 		t.Errorf("changeover specials did not land: %v / %q", row.EvacuateOnChangeover, row.ChangeoverCarryoverDisposition)
 	}
-	// AND THE WITHHELD COLUMN SURVIVED AN APPLY. keep_staged is not on
-	// FlowAdvanced any more, so the modal cannot write it in either direction:
-	// the prior's true is still true after a save that set every field the
-	// block does carry. That is what "the stored column is untouched" means.
-	if !row.KeepStaged {
-		t.Error("an Apply cleared keep_staged — the block does not carry that column and must not be able to move it")
+	// keep_staged is the modal's: an Apply that leaves it off clears the
+	// prior's true.
+	if row.KeepStaged {
+		t.Error("keep_staged survived an Apply that cleared it")
 	}
 	if row.IndexRobotSupplies || row.AutoConfirm {
 		t.Errorf("hardware/policy did not land: %v / %v", row.IndexRobotSupplies, row.AutoConfirm)

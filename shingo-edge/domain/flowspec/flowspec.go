@@ -261,27 +261,22 @@ func steadyBase() map[Field]Need {
 	// Forbidden because the stored value is left alone rather than cleared —
 	// the old numbers are the only record of how far the copies had drifted.
 	out[UOPCapacity] = Unused
-	// KeepStaged is Unused in EVERY mode, and this is the rebase carrying a
-	// decision main had already made everywhere else.
-	//
-	// The option is WITHHELD: domain.ValidateNodeClaim, processes.UpsertClaim
-	// and the changeover planner all refuse a claim that asks for it, with one
-	// message (domain.KeepStagedWithheld), because nothing restages the spare
-	// after a changeover. The old claim editor's checkbox was removed in the
-	// same change. This table is what the composer offers from, so leaving it
-	// Used here would put the control back on the Advanced sheet — an entry
-	// whose save the store answers with a refusal.
-	//
-	// Unused and not Forbidden, for the same reason as UOPCapacity above and
-	// the same one main gives: stored rows are left exactly as they are.
-	out[KeepStaged] = Unused
+	// KeepStaged is Forbidden by default; single_robot and two_robot override
+	// it to Used below. A kept spare stands on the claim's inbound staging and
+	// the swap starts by lifting it, and only those two modes have a swap that
+	// begins with a pickup at inbound staging. sequential has no staging hop,
+	// and press-index's swap moves bins between its own positions. Forbidden
+	// rather than Unused because the server refuses it in those modes
+	// (ValidateNodeClaim and the store's modeArmViolation), so the editor must
+	// clear it on a mode change rather than carry a value that will not save.
+	out[KeepStaged] = Forbidden
 	// ReorderPointSource is Unused in EVERY mode. It is a STAMP, not a
 	// setting: the calculator writes "calculated" when it sets a point and a
 	// hand edit writes "manual", so it says how the number beside it was
 	// arrived at. A control over it would let an engineer claim a number was
 	// calculated when it was typed.
 	//
-	// Unused rather than Forbidden, like the two above: stored values are
+	// Unused rather than Forbidden, like UOPCapacity above: stored values are
 	// left exactly as they are, and they are the record of where each
 	// press's numbers came from.
 	out[ReorderPointSource] = Unused
@@ -340,6 +335,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	sr[InboundStaging] = Required
 	sr[OutboundStaging] = Required
 	sr[OutboundDestination] = Required
+	sr[KeepStaged] = Used
 	rows[protocol.SwapModeSingleRobot] = sr
 
 	// two_robot: robot A waits at inbound staging until robot B clears the
@@ -356,6 +352,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	tr[InboundStaging] = Required
 	tr[OutboundStaging] = Forbidden
 	tr[OutboundDestination] = Required
+	tr[KeepStaged] = Used
 	rows[protocol.SwapModeTwoRobot] = tr
 
 	// two_robot_press_index: the cell with positions. Everything the
@@ -364,7 +361,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	// D5 RESOLVED BY DELETION, and it is the only one on the list that no code
 	// change closed. InboundStaging / OutboundStaging are Used here — the
 	// staged tooling changeover reads to-claim InboundStaging
-	// (planKeepStagedAction) and the composer draws both columns. The
+	// (changeover_tooling.go) and the composer draws both columns. The
 	// disagreement was the claim modal's claimForbiddenFields, a hand-written
 	// drop list that cleared both at save whatever this table said. U9d deleted
 	// that modal; what replaced it wipes a field only where this table says
@@ -396,7 +393,6 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	sq[InboundSource] = Required
 	sq[InboundStaging] = Forbidden
 	sq[OutboundStaging] = Forbidden
-	sq[KeepStaged] = Unused // withheld in every mode; see steadyBase
 	rows[protocol.SwapModeSequential] = sq
 
 	// manual_swap: a loader or unloader card. Core owns the loader's payload
@@ -416,7 +412,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	ms[AutoPush] = Used // consume only; produce is overridden in Steady
 	for _, f := range []Field{
 		UOPCapacity, ReorderPoint, AutoReorder, LinesideSoftThreshold,
-		InboundStaging, OutboundStaging, KeepStaged, InboundSource,
+		InboundStaging, OutboundStaging, InboundSource,
 		EvacuateOnChangeover, ChangeoverEvacDestination,
 		AutoConfirm, AutoRequestPayload,
 	} {
@@ -435,7 +431,6 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	simple[PayloadCode] = Required
 	simple[InboundStaging] = Forbidden
 	simple[OutboundStaging] = Forbidden
-	simple[KeepStaged] = Unused // withheld in every mode; see steadyBase
 	rows[protocol.SwapModeSimple] = simple
 
 	return rows

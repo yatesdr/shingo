@@ -423,6 +423,8 @@ func (p *Plant) Validate() error {
 		}
 	}
 
+	errs = append(errs, p.keepStagedFindings()...)
+
 	// --- demands / reporting points / cell configs ---
 	for _, d := range p.Demands {
 		if !payloads[d.Payload] {

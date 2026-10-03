@@ -117,13 +117,11 @@ import (
 //	tooling carry-over      pickup(position) → dropoff(staging) → wait →
 //	                        pickup(staging) → dropoff(position)
 //	                        (changeover_tooling.go)     T=false P=false  <- both
-//	keep-staged evac        BuildKeepStagedEvacSteps: pickup(LINE)
-//	                                                    T=TRUE  P=false
-//	keep-staged deliver     BuildKeepStagedDeliverSteps: dropoff(LINE)
+//	keep-staged supply      BuildTwoRobotSwapFromSpare A: wait(STAGING) →
+//	                        pickup(STAGING) → dropoff(LINE)
 //	                                                    T=false P=TRUE
-//	keep-staged combined    BuildKeepStagedCombinedSteps: dropoff(LINE); its
-//	                        pickups are all at staging or the source
-//	                                                    T=false P=TRUE
+//	keep-staged single      BuildSingleSwapFromSpare: the single_robot row
+//	                        without its fetch           T=TRUE  P=TRUE  <- both
 //
 // ── THE THIRD SHAPE, AND WHAT READS IT ────────────────────────────────────
 //

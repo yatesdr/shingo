@@ -507,33 +507,6 @@ func TestPlanNodeAction_AddNoStaging_RetrieveFallback(t *testing.T) {
 	}
 }
 
-// TestPlanNodeAction_KeepStagedIsWithheld: a claim carrying keep_staged — only a
-// row stored before the option was withheld can — is refused with
-// domain.KeepStagedWithheld instead of being planned, for both variants the
-// planner used to build (split for two_robot, combined for single_robot), and
-// no order is planned for it.
-func TestPlanNodeAction_KeepStagedIsWithheld(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
-		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
-			from := fullSwapClaim("N1", "PART-A", "consume")
-			from.KeepStaged = true
-			from.SwapMode = mode
-			to := fullSwapClaim("N1", "PART-B", "consume")
-			diff := ChangeoverNodeDiff{CoreNodeName: "N1", Situation: situation, FromClaim: &from, ToClaim: &to}
-			action := planNodeAction(diff, &processes.Node{ID: 42, Name: "N1"}, false, nil)
-
-			if action.Err == nil || !strings.Contains(action.Err.Error(), domain.KeepStagedWithheld) {
-				t.Errorf("%s/%s: planned %q (err %v), want the keep-staged refusal", mode, situation, action.LogTag, action.Err)
-				continue
-			}
-			if action.SupplyOrder != nil || action.EvacOrder != nil {
-				t.Errorf("%s/%s: a refused node still planned orders", mode, situation)
-			}
-		}
-	}
-}
-
 func TestBuildChangeoverPlan_SkipsUnchangedAndUnknownNodes(t *testing.T) {
 	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")

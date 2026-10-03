@@ -430,26 +430,23 @@ func findingOnField(findings []FieldError, field string) bool {
 	return false
 }
 
-// TestValidateNodeClaim_KeepStagedIsWithheld: keep-staged is withheld from plant
-// configuration, so a claim asking for it is refused at ingress with the one
-// message every door gives; a claim that says false, or nothing, is not.
-func TestValidateNodeClaim_KeepStagedIsWithheld(t *testing.T) {
+// TestValidateNodeClaim_KeepStagedFollowsTheMatrix: keep_staged is accepted
+// on single_robot and two_robot and refused at ingress on sequential and
+// two_robot_press_index, the modes whose flowspec row forbids it.
+func TestValidateNodeClaim_KeepStagedFollowsTheMatrix(t *testing.T) {
 	t.Parallel()
-	c := validClaim()
-	c.KeepStaged = Ptr(true)
-	var got string
-	for _, f := range ValidateNodeClaim(c, ClaimNodeContext{}) {
-		if f.Field == "keep_staged" {
-			got = f.Message
-		}
-	}
-	if got != KeepStagedWithheld {
-		t.Fatalf("keep_staged=true: finding %q, want %q", got, KeepStagedWithheld)
-	}
-	for _, v := range []*bool{Ptr(false), nil} {
-		c.KeepStaged = v
-		if hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "keep_staged") {
-			t.Errorf("keep_staged=%v produced a finding; only asking for it is refused", v)
+	for _, role := range flowspec.Roles() {
+		for mode, want := range map[protocol.SwapMode]bool{
+			protocol.SwapModeSingleRobot:        false,
+			protocol.SwapModeTwoRobot:           false,
+			protocol.SwapModeSequential:         true,
+			protocol.SwapModeTwoRobotPressIndex: true,
+		} {
+			c := completeClaimFor(role, mode)
+			c.KeepStaged = Ptr(true)
+			if got := hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "keep_staged"); got != want {
+				t.Errorf("%s/%s keep_staged refused = %v, want %v", role, mode, got, want)
+			}
 		}
 	}
 }
@@ -496,6 +493,7 @@ var serverEnforcedForbids = map[flowspec.Field]bool{
 	flowspec.IndexRobotSupplies:             true,
 	flowspec.KeyRoute:                       true,
 	flowspec.ChangeoverCarryoverDisposition: true,
+	flowspec.KeepStaged:                     true,
 }
 
 func serverEnforcesForbid(mode protocol.SwapMode, f flowspec.Field) bool {

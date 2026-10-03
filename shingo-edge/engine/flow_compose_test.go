@@ -907,16 +907,13 @@ func TestSaveFlow_WritesACellTheEngineerHasConfigured(t *testing.T) {
 	in := domain.InputFromClaim(*same)
 	in.ReorderPoint = 42
 	in.LinesideSoftThreshold = 7
+	// The third, keep_staged, is pointer-gated and not on the cell, so a save
+	// that does not open the Advanced sheet can only preserve or destroy it.
+	// The kept spare needs a staging node of its own: the scenario's other
+	// claims share FLOW-STG, and a kept spot is dedicated to its line.
+	in.InboundStaging, in.KeepStaged = "FLOW-SAME-SPOT", domain.Ptr(true)
 	_, err = db.UpsertStyleNodeClaim(in)
 	testutil.MustNoErr(t, err, "configure the cell")
-
-	// THE THIRD ONE GOES IN AS A LEGACY ROW, because keep_staged is withheld at
-	// every write door now (domain.KeepStagedWithheld) and stored rows are left
-	// alone — which makes it the sharpest witness this test has. A column the
-	// composer cannot write is one it can only preserve or destroy, and there
-	// would be no way back from destroying it.
-	_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, same.ID)
-	testutil.MustNoErr(t, err, "store a legacy keep_staged")
 
 	fp, err := eng.FlowFingerprint(processID, toStyleID)
 	testutil.MustNoErr(t, err, "fingerprint")
@@ -950,8 +947,7 @@ func TestSaveFlow_WritesACellTheEngineerHasConfigured(t *testing.T) {
 		t.Errorf("reorder_point = %d, want 42 — a composer save flattened a replenishment policy", after.ReorderPoint)
 	}
 	if !after.KeepStaged {
-		t.Error("a legacy keep_staged was cleared by a composer save — a column the composer " +
-			"cannot write is one it must not be able to destroy either")
+		t.Error("keep_staged was cleared by a composer save that never opened the Advanced sheet")
 	}
 	if after.LinesideSoftThreshold != 7 {
 		t.Errorf("lineside_soft_threshold = %d, want 7", after.LinesideSoftThreshold)

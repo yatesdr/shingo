@@ -140,3 +140,55 @@ func assertOneStationWait(t *testing.T, steps []protocol.ComplexOrderStep, node,
 			waits[0].Node, waits[0].Purpose, waits[0].WaitKind, node, purpose, waitKindStation)
 	}
 }
+
+// THE SAME ROWS FOR A KEEP-STAGED CELL. The keep-staged exemption (isSpotRefill)
+// excuses a plain order bound for the claim's spot and nothing else: every
+// population above still keeps the cell shut, including the complex fallback
+// staging order that delivers to the same node.
+func TestGuardPositionSpokenFor_ArmTwoRefusesEveryNonLinePopulation_KeepStaged(t *testing.T) {
+	t.Parallel()
+	for _, row := range cellShuttingRows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			eng, db, nodeID, claimID := keeperFixture(t)
+			setLevel(t, db, nodeID, claimID, 0)
+			markKeepStaged(t, db, claimID)
+			row.make(t, eng, db, nodeID, keeperClaim(t, db, nodeID))
+			assertCellShut(t, eng, db, nodeID, row.name+" is live at a keep-staged line")
+		})
+	}
+}
+
+// THE ROW THAT FLIPS. For a keep-staged claim a plain retrieve bound for its
+// spot is a refill: it brings the line no bin, so it neither refuses the line's
+// REQUEST nor silences the level keeper. Before isSpotRefill it did both, for
+// the whole trip, and for ever with a dry market (E20).
+func TestSpotBoundRetrieve_LeavesAKeepStagedCellOpen(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID, claimID := keeperFixture(t)
+	setLevel(t, db, nodeID, claimID, 0)
+	markKeepStaged(t, db, claimID)
+	claim := keeperClaim(t, db, nodeID)
+	spotBoundRetrieve(t, eng, nodeID, claim)
+
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "node")
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "runtime")
+	if gerr := eng.guardPositionSpokenFor(node, rt, claim); gerr != nil {
+		t.Errorf("a refill bound for the spot refused the line's downgrade: %v", gerr)
+	}
+	before := countOrders(t, db)
+	eng.sweepCellLevels()
+	if after := countOrders(t, db); after == before {
+		t.Errorf("the level sweep asked for nothing while the only order at the line was a refill bound for the spot")
+	}
+}
+
+// markKeepStaged sets the flag straight on the row: these tests are about the
+// two readers of orderWorksTheCell, not the config door that admits the flag.
+func markKeepStaged(t *testing.T, db *store.DB, claimID int64) {
+	t.Helper()
+	_, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
+	testutil.MustNoErr(t, err, "keep_staged")
+}

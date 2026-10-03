@@ -141,10 +141,18 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	if payloadCode == "" && !claim.IsLoaderNode() {
 		payloadCode = claim.PayloadCode
 	}
-	if entry, err := catalog.GetCatalogByCode(m.db.DB, payloadCode); err == nil && entry.Description != "" {
-		desc = entry.Description
+	return m.payloadDesc(payloadCode), payloadCode
+}
+
+// payloadDesc is the catalog's description for a payload code, or blank.
+func (m *Manager) payloadDesc(payloadCode string) string {
+	if payloadCode == "" {
+		return ""
 	}
-	return desc, payloadCode
+	if entry, err := catalog.GetCatalogByCode(m.db.DB, payloadCode); err == nil && entry.Description != "" {
+		return entry.Description
+	}
+	return ""
 }
 
 // enqueueAndAutoSubmit enqueues a protocol envelope and transitions the order

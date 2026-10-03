@@ -845,6 +845,25 @@ func ListActiveByDeliveryNodeSet(db *sql.DB, deliveryNodes []string) ([]Order, e
 	return scanOrders(rows)
 }
 
+// ListActiveByProcessNodeWithLatestTo is ListActiveByProcessNode plus, whatever
+// its status, the newest retrieve the line sent to deliveryNode — in ONE
+// statement. The keep-staged floor needs both: what is live at the line, and
+// how the last refill to the spot ended, so a refill that failed structurally
+// is not re-created every period. One read, where two queries would be two.
+func ListActiveByProcessNodeWithLatestTo(db *sql.DB, processNodeID int64, deliveryNode string) ([]Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id = ? AND (o.status NOT IN (%s) OR o.id = (
+			SELECT MAX(r.id) FROM orders r
+			WHERE r.process_node_id = ? AND r.delivery_node = ? AND r.order_type IN (?, ?)))
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()),
+		processNodeID, processNodeID, deliveryNode, string(protocol.OrderTypeRetrieve), string(protocol.OrderTypeRetrieveEmpty))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListActiveByProcessNode returns non-terminal orders for a process
 // node.
 func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {

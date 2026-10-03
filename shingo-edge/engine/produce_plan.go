@@ -31,6 +31,10 @@ type ProducePlan struct {
 	// than a nil Dispatch because applyProducePlan dereferences Dispatch
 	// unconditionally, and a nil there is a panic rather than a branch.
 	SuppressSwap bool
+
+	// Spot is what a keep-staged claim's spot needs from this request
+	// (planSpotForProduce); zero for every other claim.
+	Spot spotPlan
 }
 
 // OrderCount is how many ORDER ROWS applying this plan will create — the
@@ -52,7 +56,7 @@ func (p *ProducePlan) OrderCount() int {
 	if p.Dispatch.StepsB != nil {
 		n++
 	}
-	return n
+	return n + p.Spot.orders()
 }
 
 // BuildProducePlan validates the (node, runtime, claim) triple and composes

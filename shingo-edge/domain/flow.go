@@ -130,19 +130,12 @@ type FlowAdvanced struct {
 	// EvacuateOnChangeover and CarryoverDisposition are the changeover
 	// specials that are not positions on the picture.
 	//
-	// KeepStaged IS NOT HERE, and the column it would write still is. flowspec
-	// marks keep_staged Unused in every (role, mode) and every door refuses a
-	// claim that asks for it (domain.KeepStagedWithheld) — nothing restages the
-	// spare bin yet — so the block carried a field the modal never drew, the
-	// validator never accepted and Expand could only ever write as false.
-	// Counted at both plants on 2026-09-13 before it went: `SELECT COUNT(*)
-	// FROM style_node_claims WHERE keep_staged = 1` is 0 at Springfield and 0
-	// at Hopkinsville, so no stored row loses an opinion by the composer no
-	// longer speaking the column. Expand leaves it alone now, which is what
-	// NodeClaimInput's nil pointer means, so the column survives a save
-	// untouched — pinned in flow_advanced_test.go.
 	EvacuateOnChangeover bool                 `json:"evacuate_on_changeover,omitempty"`
 	CarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition"`
+	// KeepStaged keeps a spare bin on this position's inbound staging, so the
+	// swap starts from it. The modal draws it only where flowspec says the
+	// mode uses it (single_robot, two_robot).
+	KeepStaged bool `json:"keep_staged,omitempty"`
 	// IndexRobotSupplies describes the cell's hardware, so the modal's note
 	// says it is the same for every part on this press.
 	IndexRobotSupplies bool `json:"index_robot_supplies,omitempty"`
@@ -177,6 +170,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		AutoPush:              c.AutoPush,
 		EvacuateOnChangeover:  c.EvacuateOnChangeover,
 		CarryoverDisposition:  CarryoverFor(c),
+		KeepStaged:            c.KeepStaged,
 		IndexRobotSupplies:    c.IndexRobotSupplies,
 		AutoConfirm:           c.AutoConfirm,
 		Sequence:              c.Sequence,
@@ -251,7 +245,7 @@ func Collapse(c NodeClaim) FlowCell {
 // All of that describes a cell whose Advanced is nil, which is every save the
 // station HMI makes and every desktop save nobody opened the modal on. A cell
 // that DOES carry Advanced overrides seven of the nine carried columns and
-// five of the nine silent ones, at the bottom of the function — see FlowCell.
+// six of the nine silent ones, at the bottom of the function — see FlowCell.
 func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimInput {
 	in := NodeClaimInput{
 		CoreNodeName:              cell.CoreNodeName,
@@ -303,6 +297,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.AutoConfirm = a.AutoConfirm
 		in.ReorderPointSource = Ptr(a.ReorderPointSource)
 		in.AutoReorder = Ptr(a.AutoReorder)
+		in.KeepStaged = Ptr(a.KeepStaged)
 		in.IndexRobotSupplies = Ptr(a.IndexRobotSupplies)
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)

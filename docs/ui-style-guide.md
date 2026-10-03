@@ -2664,26 +2664,21 @@ separate deprecations file, and a link to one would be a link to nothing.
   legacy row still renders when opened in edit mode. The allowlist, the
   dropdown, and its drift test all key on `protocol.ConfigurableSwapModes()`.
 
-### `claim.keep_staged` column — WITHHELD from plant configuration
-- **Withheld:** 2026-09-10. The claim editor and the compare grid do not offer
-  it. `domain.ValidateNodeClaim` and `processes.UpsertClaim` refuse
-  `keep_staged=true` with "inbound-staging option not available yet"
-  (`domain.KeepStagedWithheld`), and the changeover planner refuses a stored
-  claim that carries it, with the same message, instead of planning it
-  (`keepStagedWithheld` in `shingo-edge/engine/changeover_planner.go`). Stored
-  rows are not migrated.
-- **Why, three reasons, one closed:** (a) nothing restages the spare after a
-  changeover — `handleKeepStagedOrderBCompletion` is a disabled no-op, so
-  `applyOrderBComplex` falls through to "released"; (b) the split (two-robot)
-  variant stages onto a spot the old spare still occupies —
-  `BuildKeepStagedDeliverSteps` drops the new carrier on `InboundStaging` and
-  `BuildKeepStagedEvacSteps` lifts only the line's bin; (c) plan-time occupancy
-  was not step-aware, so the combined (one-robot) variant,
-  `BuildKeepStagedCombinedSteps`, could never source. (c) is closed: Core's
-  `binsAtStep` answers what is on a node at a given step, for the destination
-  gate, the relay rule and the slot claim alike. (a) and (b) are open.
-- **Schema:** kept. `BuildKeepStaged*` kept — the combined shape is what the
-  occupancy fix is pinned on.
+### `claim.keep_staged` column — configurable; changeover planning not built yet
+- **Withheld:** 2026-09-10 to 2026-10-03.
+- **Configurable again:** flowspec marks it Used for `single_robot` and
+  `two_robot` and Forbidden elsewhere; `domain.ValidateNodeClaim` and
+  `processes.UpsertClaim` refuse it on any other mode. The composer's Advanced
+  sheet carries it, and clone and copy carry it.
+- **Dedicated spot:** every write transaction that touches claims ends with
+  `processes.CheckKeepStagedSpots`, which refuses another claim naming a kept
+  spot (any routing column within a style or across processes; staging only
+  across the styles of one process) and refuses moving or clearing a spot
+  while open orders deliver to it. Per Edge only. `plantspec.Validate` carries
+  the twin for the seeder.
+- **Still refused:** the changeover planner errors a node whose claim keeps a
+  spare (`keepStagedWithheld` in `shingo-edge/engine/changeover_planner.go`)
+  until the keep-staged swap shapes replace it.
 
 ### `ClaimRole = "changeover"` — REMOVED (UI consistency refactor)
 - **Status:** removed. Surviving evacuate-during-changeover mechanic is

@@ -212,10 +212,13 @@ func RestoreStyle(db *sql.DB, id int64) error {
 // cloneClaimColumns is the verbatim-copy column list for cloneStyleTx. It
 // mirrors UpsertClaim's INSERT in claims.go: a claim column added there MUST be
 // added here too, or clones silently drop it. Excludes id (autoincrement),
-// style_id (set to the new style) and created_at (defaults to now) — and
-// keep_staged, on purpose: a clone takes that column's default, off, because the
-// option is withheld (see cloneStyleTx). Kept as a single const so the SELECT and
-// INSERT lists can't drift apart from each other.
+// style_id (set to the new style) and created_at (defaults to now). Kept as a
+// single const so the SELECT and INSERT lists can't drift apart from each other.
+//
+// keep_staged IS copied: a clone or copy carries the kept spare and then meets
+// the dedicated-spot check at the end of its transaction
+// (CheckKeepStagedSpots), which allows the spot across the styles of one
+// process and refuses it across processes.
 //
 // Attribution is the other deliberate exception: source, called_by and
 // updated_at are NOT copied — the clone is its own write and stamps its own
@@ -229,7 +232,7 @@ func RestoreStyle(db *sql.DB, id int64) error {
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
-	evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,
 	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
@@ -253,14 +256,9 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description, source, calledBy st
 		return 0, err
 	}
 	// THE COPY IS VERBATIM EXCEPT FOR WHAT THE WRITE GATE REFUSES. This INSERT
-	// never meets UpsertClaim, so the two stored values the gate refuses are left
+	// never meets UpsertClaim, so the stored rows the gate refuses are left
 	// behind here rather than spread to a brand-new style:
 	//
-	//   - keep_staged set. The option is withheld: UpsertClaim and
-	//     ValidateNodeClaim refuse it with domain.KeepStagedWithheld, and the
-	//     changeover planner refuses a stored flag the same way, erroring the node
-	//     task. The column is out of cloneClaimColumns, so a clone takes its
-	//     default, off.
 	//   - a manual_swap claim. The mode is retired as a persisted value: it is not
 	//     in protocol.ConfigurableSwapModes, so UpsertClaim refuses it, and the
 	//     first loader sync quarantines any stored row (QuarantineLoaderClaims). A
@@ -274,6 +272,9 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description, source, calledBy st
 	//     deleted claim onto a brand-new style.
 	//
 	// Pinned by TestCloneStyle_LeavesWithheldConfigurationBehind (store).
+	//
+	// The dedicated-spot check is the caller's, once its transaction has
+	// written everything (CloneStyle, GenerateStyles).
 	//
 	// The copies are ATTRIBUTED to this write rather than carrying src's: a
 	// clone is its own act, by whoever asked for it.
@@ -309,6 +310,9 @@ func CloneStyle(db *sql.DB, srcID int64, name, description, calledBy string) (in
 	defer tx.Rollback()
 	newID, err := cloneStyleTx(tx, src, name, description, domain.ClaimSourceCloned, calledBy)
 	if err != nil {
+		return 0, err
+	}
+	if _, err := CheckKeepStagedSpots(tx, nil); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -372,6 +376,9 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, ca
 			}
 		}
 		ids = append(ids, newID)
+	}
+	if _, err := CheckKeepStagedSpots(tx, nil); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -709,19 +716,19 @@ func renameClaimReferences(tx *sql.Tx, targetID int64, oldName, newName string) 
 // overrides it could not match, renames it refused, pair references it
 // auto-fixed, role changes it withheld — because a batch that silently
 // drops part of what was asked for is how the next incident starts.
-func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, overrides []ClaimOverride) ([]string, error) {
+func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, overrides []ClaimOverride) ([]string, []KeptSpot, error) {
 	if srcID == targetID {
-		return nil, fmt.Errorf("source and target are the same style")
+		return nil, nil, fmt.Errorf("source and target are the same style")
 	}
 	if _, err := GetStyle(db, srcID); err != nil {
-		return nil, fmt.Errorf("source style: %w", err)
+		return nil, nil, fmt.Errorf("source style: %w", err)
 	}
 	tgt, err := GetStyle(db, targetID)
 	if err != nil {
-		return nil, fmt.Errorf("target style: %w", err)
+		return nil, nil, fmt.Errorf("target style: %w", err)
 	}
 	if tgt == nil {
-		return nil, fmt.Errorf("target style %d not found", targetID)
+		return nil, nil, fmt.Errorf("target style %d not found", targetID)
 	}
 
 	// The target's payloads per node — snapshotted before the replace when
@@ -733,7 +740,7 @@ func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, ov
 	if !includePayloads {
 		claims, err := ListClaims(db, targetID)
 		if err != nil {
-			return nil, fmt.Errorf("read target claims: %w", err)
+			return nil, nil, fmt.Errorf("read target claims: %w", err)
 		}
 		for _, c := range claims {
 			if c.PayloadCode != "" {
@@ -744,35 +751,66 @@ func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, ov
 
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM style_node_claims WHERE style_id = ?`, targetID); err != nil {
-		return nil, err
+	// The replace removes every claim of the target, so the spots it kept are
+	// what this copy may move or clear; the DELETE returns them itself.
+	before, err := deleteStyleClaims(tx, targetID)
+	if err != nil {
+		return nil, nil, err
 	}
 	// swap_mode is copied verbatim on the same trust as cloneStyleTx: live
 	// claims already hold a configurable mode, nothing stale to re-validate.
 	if _, err := tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
 		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ? AND`+liveClaims,
 		targetID, srcID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !includePayloads {
 		for node, payload := range savedPayloads {
 			if _, err := tx.Exec(`UPDATE style_node_claims SET payload_code = ?
 				WHERE style_id = ? AND core_node_name = ?`, payload, targetID, node); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 	notes, err := applyClaimOverrides(tx, targetID, overrides)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	moved, err := CheckKeepStagedSpots(tx, before)
+	if err != nil {
+		return nil, nil, err
 	}
 	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return notes, moved, nil
+}
+
+// deleteStyleClaims removes every claim of a style and returns the spots its
+// keep-staged claims kept.
+func deleteStyleClaims(tx *sql.Tx, styleID int64) ([]KeptSpot, error) {
+	rs, err := tx.Query(`DELETE FROM style_node_claims WHERE style_id = ?
+		RETURNING core_node_name, keep_staged, inbound_staging, inbound_source`, styleID)
+	if err != nil {
 		return nil, err
 	}
-	return notes, nil
+	defer rs.Close()
+	var kept []KeptSpot
+	for rs.Next() {
+		var k KeptSpot
+		var keep bool
+		if err := rs.Scan(&k.Line, &keep, &k.Spot, &k.Source); err != nil {
+			return nil, err
+		}
+		if keep && k.Spot != "" {
+			k.StyleID = styleID
+			kept = append(kept, k)
+		}
+	}
+	return kept, rs.Err()
 }
 
 // StyleImpact is what a style is carrying, counted so a confirmation dialog can

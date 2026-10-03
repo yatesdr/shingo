@@ -39,73 +39,85 @@ func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
-				name := string(mode)
-				if flipped {
-					name += "/flipped"
-				}
-				if second != "" {
-					name += "/3pos"
-				}
-				t.Run(name, func(t *testing.T) {
-					t.Parallel()
-					claim := standardClaim(mode, second, flipped)
-					disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
-					if err != nil {
-						t.Fatalf("BuildSwapDispatch: %v", err)
+				for _, keep := range []bool{false, true} {
+					// Keep-staged is a dimension for the two modes that offer it: its
+					// swap is the same cell's choreography without the fetch, and it
+					// is held to the same standard.
+					if keep && mode != protocol.SwapModeTwoRobot && mode != protocol.SwapModeSingleRobot {
+						continue
 					}
-					if disp == nil {
-						// manual_swap issues no complex orders — it uses a
-						// multi-order queue and has no swap choreography to
-						// depart from. Nothing to walk.
-						return
+					name := string(mode)
+					if flipped {
+						name += "/flipped"
 					}
+					if second != "" {
+						name += "/3pos"
+					}
+					if keep {
+						name += "/keep_staged"
+					}
+					t.Run(name, func(t *testing.T) {
+						t.Parallel()
+						claim := standardClaim(mode, second, flipped)
+						claim.KeepStaged = keep
+						disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
+						if err != nil {
+							t.Fatalf("BuildSwapDispatch: %v", err)
+						}
+						if disp == nil {
+							// manual_swap issues no complex orders — it uses a
+							// multi-order queue and has no swap choreography to
+							// depart from. Nothing to walk.
+							return
+						}
 
-					cell := cellSetFor(claim)
-					legs := []struct {
-						label string
-						steps []protocol.ComplexOrderStep
-						auto  bool
-					}{
-						{"leg A", disp.StepsA, disp.AutoConfirmA},
-						{"leg B", disp.StepsB, disp.AutoConfirmB},
-					}
-					if mode == protocol.SwapModeSequential {
-						// SEQUENTIAL'S OTHER HALF IS NOT IN THE DISPATCH. Its
-						// backfill leg is minted later by handleSequentialBackfill
-						// when the removal reaches in_transit, and it never passes
-						// through BuildSwapDispatch — so a walker that only read
-						// the dispatch would certify half a cycle. It runs at the
-						// cell like any other leg and is held to the same standard.
-						// createComplexOrder gives it autoConfirm=false.
-						legs = append(legs, struct {
+						cell := cellSetFor(claim)
+						legs := []struct {
 							label string
 							steps []protocol.ComplexOrderStep
 							auto  bool
-						}{"backfill leg (auto-created)", BuildSequentialBackfillSteps(claim), false})
-					}
-					receipts := 0
-					for _, leg := range legs {
-						if len(leg.steps) == 0 {
-							continue
+						}{
+							{"leg A", disp.StepsA, disp.AutoConfirmA},
+							{"leg B", disp.StepsB, disp.AutoConfirmB},
 						}
-						assertDepartureIsProvable(t, leg.label, mode, leg.steps, cell)
-						assertConfirmFollowsPlacement(t, leg.label, leg.steps, claim.CoreNodeName, leg.auto)
-						if legPlacesBinAt(leg.steps, claim.CoreNodeName) {
-							receipts++
+						if mode == protocol.SwapModeSequential {
+							// SEQUENTIAL'S OTHER HALF IS NOT IN THE DISPATCH. Its
+							// backfill leg is minted later by handleSequentialBackfill
+							// when the removal reaches in_transit, and it never passes
+							// through BuildSwapDispatch — so a walker that only read
+							// the dispatch would certify half a cycle. It runs at the
+							// cell like any other leg and is held to the same standard.
+							// createComplexOrder gives it autoConfirm=false.
+							legs = append(legs, struct {
+								label string
+								steps []protocol.ComplexOrderStep
+								auto  bool
+							}{"backfill leg (auto-created)", BuildSequentialBackfillSteps(claim), false})
 						}
-					}
-					// EXACTLY ONE, not "at least one". Zero means the cycle puts
-					// nothing on the machine and nobody ever counts a bin in; two
-					// means the operator taps twice for one swap, which is what the
-					// whole-cell rule cost unflipped press-index (R1's index
-					// backfill alongside R2's press placement).
-					if receipts != 1 {
-						t.Errorf("this cycle asks for %d operator receipts; exactly one leg must leave a bin "+
-							"on %s. Zero means nothing lands on the machine; more than one means the operator "+
-							"signs twice for one swap.\nA: %v\nB: %v",
-							receipts, claim.CoreNodeName, disp.StepsA, disp.StepsB)
-					}
-				})
+						receipts := 0
+						for _, leg := range legs {
+							if len(leg.steps) == 0 {
+								continue
+							}
+							assertDepartureIsProvable(t, leg.label, mode, leg.steps, cell)
+							assertConfirmFollowsPlacement(t, leg.label, leg.steps, claim.CoreNodeName, leg.auto)
+							if legPlacesBinAt(leg.steps, claim.CoreNodeName) {
+								receipts++
+							}
+						}
+						// EXACTLY ONE, not "at least one". Zero means the cycle puts
+						// nothing on the machine and nobody ever counts a bin in; two
+						// means the operator taps twice for one swap, which is what the
+						// whole-cell rule cost unflipped press-index (R1's index
+						// backfill alongside R2's press placement).
+						if receipts != 1 {
+							t.Errorf("this cycle asks for %d operator receipts; exactly one leg must leave a bin "+
+								"on %s. Zero means nothing lands on the machine; more than one means the operator "+
+								"signs twice for one swap.\nA: %v\nB: %v",
+								receipts, claim.CoreNodeName, disp.StepsA, disp.StepsB)
+						}
+					})
+				}
 			}
 		}
 	}

@@ -305,6 +305,7 @@ func New(c Config) *Engine {
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
 	e.styleService = service.NewStyleService(e.db)
+	e.styleService.OnKeepStagedSpotsCleared(e.spotsCleared)
 	e.shiftService = service.NewShiftService(e.db)
 	e.counterService = service.NewCounterService(e.db, ReportingLocation(e.cfg.Timezone))
 	e.catalogService = service.NewCatalogService(e.db)

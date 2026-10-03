@@ -220,7 +220,7 @@ func TestFlowspecPinsKnownDisagreements(t *testing.T) {
 	t.Run("D5_press_index_staging_used_by_planner_shown_by_editor", func(t *testing.T) {
 		row := flowspec.Steady(protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex)
 		if row[flowspec.InboundStaging] != flowspec.Used || row[flowspec.OutboundStaging] != flowspec.Used {
-			t.Errorf("Steady(press_index) staging = %v/%v, want Used/Used — the planner reads to-claim inbound staging (planKeepStagedAction) and the composer's wipe follows this row (composer-fields.characterization.test.js section 3)",
+			t.Errorf("Steady(press_index) staging = %v/%v, want Used/Used — the planner reads to-claim inbound staging (changeover_tooling.go) and the composer's wipe follows this row (composer-fields.characterization.test.js section 3)",
 				row[flowspec.InboundStaging], row[flowspec.OutboundStaging])
 		}
 		if got := flowspec.Changeover(protocol.SwapModeTwoRobotPressIndex)[flowspec.SideField{Side: flowspec.SideTo, Field: flowspec.InboundStaging}]; got != flowspec.Used {

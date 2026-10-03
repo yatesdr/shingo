@@ -19,19 +19,12 @@ func splitColumns(list string) []string {
 }
 
 // cloneOnlyExclusions are columns the FINGERPRINT reads that the CLONE list
-// deliberately leaves out. Each one is a stored column of a live claim — so a
-// preview has to see it change — that a clone must nonetheless not carry to a
-// brand-new style.
-//
-//	keep_staged  the option is withheld: UpsertClaim, ValidateNodeClaim and the
-//	             changeover planner all refuse a claim that asks for it
-//	             (domain.KeepStagedWithheld), and a clone takes the column's
-//	             default rather than spreading a legacy flag. Stored rows keep
-//	             theirs, which is exactly why the fingerprint still reads it —
-//	             a save that clears one is a change to the flow.
-var cloneOnlyExclusions = map[string]string{
-	"keep_staged": "withheld at every write door; a clone takes the default",
-}
+// deliberately leaves out. Each one would be a stored column of a live claim —
+// so a preview has to see it change — that a clone must nonetheless not carry
+// to a brand-new style. There are none: keep_staged was the one, while the
+// option was withheld, and a clone now carries it and meets the dedicated-spot
+// check.
+var cloneOnlyExclusions = map[string]string{}
 
 // fingerprintExclusions are the mirror: columns a CLONE carries that the
 // FINGERPRINT deliberately does not read. A preview is a plan, and the

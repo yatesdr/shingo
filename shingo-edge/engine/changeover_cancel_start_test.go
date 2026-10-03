@@ -221,7 +221,7 @@ func TestChangeoverStart_CancelReportsWhatItCancelled(t *testing.T) {
 
 	plan, err := eng.planChangeover(processID, toStyleID, false)
 	testutil.MustNoErr(t, err, "plan changeover")
-	cancelled, cerr := eng.cancelPreDispatchAtParticipants(plan)
+	cancelled, _, cerr := eng.cancelPreDispatchAtParticipants(plan)
 	testutil.MustNoErr(t, cerr, "cancel")
 	if len(cancelled) != 1 || cancelled[0] != orderID {
 		t.Errorf("cancelled = %v, want exactly [%d] — the abandon path needs the ID list "+

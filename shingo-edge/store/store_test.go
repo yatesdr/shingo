@@ -1663,6 +1663,20 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 				InboundStaging: "IN"},
 			field: flowspec.OutboundDestination,
 		},
+		// keep_staged is Forbidden outside single_robot and two_robot, and the
+		// store refuses it by that row for every mode, strict or not.
+		{
+			name: "sequential_keep_staged",
+			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SQ-KEEP", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL",
+				PairedCoreNode: "SQ-B", InboundSource: "SRC", OutboundDestination: "OD", KeepStaged: &flip},
+			field: flowspec.KeepStaged,
+		},
+		{
+			name: "press_index_keep_staged",
+			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "PI-KEEP", SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "PL",
+				PairedCoreNode: "PI-B", InboundStaging: "PI-IN", OutboundDestination: "OD", KeepStaged: &flip},
+			field: flowspec.KeepStaged,
+		},
 	}
 	for _, tc := range refused {
 		t.Run("refuses_"+tc.name, func(t *testing.T) {
@@ -1789,30 +1803,28 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 }
 
 // TestCloneStyle_LeavesWithheldConfigurationBehind: Clone and Generate copy claims
-// with a raw INSERT that never meets UpsertClaim, so the two stored values the
-// write gate refuses have to be left behind at the copy. A keep_staged flag (the
-// option is withheld: UpsertClaim and ValidateNodeClaim refuse it, and the
-// changeover planner errors the node task) and a manual_swap claim (retired as a
-// persisted mode: loaders are Core's, and the first loader sync quarantines the
+// with a raw INSERT that never meets UpsertClaim, so a stored value the write
+// gate refuses has to be left behind at the copy: a manual_swap claim (retired as
+// a persisted mode: loaders are Core's, and the first loader sync quarantines the
 // row) must not reach a brand-new style.
+//
+// keep_staged is the other half, and it flipped: the option is configurable, so
+// a clone CARRIES the kept spare. The clone is in the same process, where a
+// second style may reuse a kept spot, so the dedicated-spot check at the end of
+// the clone's transaction accepts it.
 func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
 
-	lineID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: baseID, CoreNodeName: "LINE", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100,
 		// Required at save since flowspec D1/D2 — the seed satisfies the mode
 		// so the copy is the only thing under test.
 		InboundStaging: "LINE-IN", OutboundStaging: "LINE-OUT", OutboundDestination: "LINE-DEST",
-	})
-	if err != nil {
+		KeepStaged: domain.Ptr(true),
+	}); err != nil {
 		t.Fatalf("seed line claim: %v", err)
-	}
-	// A stored flag, as an Edge that took it before the option was withheld
-	// still holds it; the write gate refuses it now.
-	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, lineID); err != nil {
-		t.Fatalf("store keep_staged: %v", err)
 	}
 	// A stored loader claim, as one survives until its Edge's first loader sync.
 	if _, err := upsertClaimRetiredMode(t, db, processes.NodeClaimInput{
@@ -1835,9 +1847,8 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 		switch c.CoreNodeName {
 		case "LINE":
 			foundLine = true
-			if c.KeepStaged {
-				t.Errorf("the clone's LINE claim has keep_staged set — a flag the write gate refuses, and the " +
-					"changeover planner errors the node task on it at the style's first changeover")
+			if !c.KeepStaged || c.InboundStaging != "LINE-IN" {
+				t.Errorf("the clone's LINE claim lost its kept spare: keep_staged %v at %q", c.KeepStaged, c.InboundStaging)
 			}
 		case "LOADER":
 			t.Errorf("the clone carries the stored loader claim (swap_mode %q) — a second authority for "+
@@ -1845,7 +1856,7 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 		}
 	}
 	if !foundLine {
-		t.Fatal("the clone lost its LINE claim — only the withheld values are to be left behind")
+		t.Fatal("the clone lost its LINE claim — only the loader claim is to be left behind")
 	}
 }
 

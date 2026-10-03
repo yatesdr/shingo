@@ -39,8 +39,9 @@ func TestClaimReads_CarryTheLivePredicate(t *testing.T) {
 	allowed := map[string]string{
 		"FROM style_node_claims WHERE id=?":                                      "GetClaim: by id, the caller already has the row",
 		"SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?": "the upsert's own existence check",
-		"SELECT COALESCE(MAX(sequence), 0) FROM style_node_claims":               "next sequence: retired rows still hold their number",
-		"SELECT below_reorder_since FROM style_node_claims WHERE id = ?":         "read-back of a stamp this call just wrote",
+		"SELECT id, keep_staged, inbound_staging, inbound_source, swap_mode FROM style_node_claims WHERE style_id=? AND core_node_name=?": "the upsert's own existence check, reading the prior's kept spot and where its spare came from",
+		"SELECT COALESCE(MAX(sequence), 0) FROM style_node_claims":                                                                        "next sequence: retired rows still hold their number",
+		"SELECT below_reorder_since FROM style_node_claims WHERE id = ?":                                                                  "read-back of a stamp this call just wrote",
 	}
 
 	// Files whose every statement is outside the live-behaviour question.

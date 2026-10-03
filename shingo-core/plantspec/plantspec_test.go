@@ -74,6 +74,12 @@ func TestValidate_CatchesProblems(t *testing.T) {
 		{"reporting point unknown node", func(p *Plant) { p.ReportingPoints[0].Node = "GHOST" }, "unknown node"},
 		{"style unknown process", func(p *Plant) { p.Styles[0].Process = "NOPE" }, "unknown process"},
 		{"slot zero depth", func(p *Plant) { p.Zones[0].Lanes[0].Slots[0].Depth = 0 }, "non-positive depth"},
+		// The twin of the Edge's dedicated-spot check, for the seeder's raw INSERT.
+		{"keep_staged spot named by another claim", func(p *Plant) {
+			p.Claims[1].KeepStaged = true
+			p.Claims[2].InboundSource = "STAGE-P1-IN"
+		}, "STAGE-P1-IN is claim[1] PRESS-1/STYLE-A's kept spot"},
+		{"keep_staged on sequential", func(p *Plant) { p.Claims[2].KeepStaged = true }, "keep_staged applies to single_robot and two_robot"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,6 +93,16 @@ func TestValidate_CatchesProblems(t *testing.T) {
 				t.Fatalf("expected error containing %q, got: %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// A kept spare on its own staging, named by nothing else, is a valid spec: the
+// claim's own inbound_staging is the spot, not a touch on it.
+func TestValidate_KeepStagedAlonePasses(t *testing.T) {
+	p := validPlant()
+	p.Claims[1].KeepStaged = true
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a lone keep-staged claim was refused: %v", err)
 	}
 }
 

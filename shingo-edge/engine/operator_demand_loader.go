@@ -93,6 +93,11 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // other is mid-prime cannot double-fire. The InboundSource they pull FROM may
 // well be a loader group; that is Core's resolver's business, not this budget's.
 //
+// A keep-staged refill (applySpotPlan, keep_staged_spot.go) creates outside this
+// seam for the same reason: its delivery node is a line's inbound staging spot,
+// never a loader window. Its count->decide->create runs under the same
+// Engine.primeResv lock, and its count is reconcileSpot's, over the line's rows.
+//
 // An earlier version of this comment claimed EVERY empty-firing writer routed
 // through here. It did not, and the claim was load-bearing in two review rounds
 // before a census refuted it. TestCensus_RetrieveOrderCreatorSites now fails when

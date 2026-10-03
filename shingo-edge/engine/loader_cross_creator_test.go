@@ -130,7 +130,11 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// window, so it does NOT belong behind withLoaderBudget. It takes the same
 	// Engine.primeResv lock keyed by the CORE node, which is what serialises the
 	// two prime doors against each other. See that function's SCOPE comment.
-	const want = 11
+	//
+	// 12 since applySpotPlan (keep_staged_spot.go): a keep-staged refill to a
+	// line's inbound staging. Censused; not a loader window, so outside
+	// withLoaderBudget, under the same primeResv lock.
+	const want = 12
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

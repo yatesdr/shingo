@@ -254,6 +254,7 @@ const ADVANCED_DEFAULTS = {
     lineside_soft_threshold: 0,
     auto_request_payload: '',
     auto_push: false,
+    keep_staged: false,
     evacuate_on_changeover: false,
     changeover_carryover_disposition: 'replace',
     index_robot_supplies: false,

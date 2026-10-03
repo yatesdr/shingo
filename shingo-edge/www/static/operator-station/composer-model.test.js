@@ -958,9 +958,6 @@ test('changing mode clears a Forbidden advanced field and leaves an Unused one a
     const s = initStyle(7);
     // index_robot_supplies is press-index's alone; lineside_soft_threshold is
     // Unused on produce, not Forbidden, and flowspec.go says why that matters.
-    // (keep_staged was this example until it came off the wire — it is Unused
-    // in every mode and withheld at every door, so it is no longer a field the
-    // block carries.)
     const adv = Object.assign(M.advancedFor(s, 'PLN_01'), { index_robot_supplies: true, lineside_soft_threshold: 7 });
     let after = M.reduce(s, { type: 'setAdvanced', node: 'PLN_01', advanced: adv });
     assert.strictEqual(M.advancedFor(after, 'PLN_01').index_robot_supplies, true);

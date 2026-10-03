@@ -746,129 +746,13 @@ func TestResolveSequentialActivePull(t *testing.T) {
 // BuildKeepStagedDeliverSteps — 1 wait, stage→deliver sequence
 // ---------------------------------------------------------------------------
 
-func TestBuildKeepStagedDeliverSteps(t *testing.T) {
-	t.Parallel()
-	to := &processes.NodeClaim{
-		CoreNodeName:   "CORE-NODE",
-		InboundSource:  "SOURCE",
-		InboundStaging: "IN-STAGE",
-	}
-
-	steps := BuildKeepStagedDeliverSteps(to)
-
-	if len(steps) != 5 {
-		t.Fatalf("expected 5 steps, got %d", len(steps))
-	}
-	if w := countWaits(steps); w != 1 {
-		t.Errorf("expected 1 wait, got %d", w)
-	}
-
-	want := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "SOURCE"},
-		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
-		stationWait("", release.PurposeReady),
-		{Action: "pickup", Node: "IN-STAGE"},
-		{Action: "dropoff", Node: "CORE-NODE"},
-	}
-	for i, s := range steps {
-		if s != want[i] {
-			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // BuildKeepStagedEvacSteps — 1 wait, pre-position→evacuate→final
 // ---------------------------------------------------------------------------
 
-func TestBuildKeepStagedEvacSteps(t *testing.T) {
-	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE-NODE",
-		OutboundDestination: "DEST-FINAL",
-	}
-
-	steps := BuildKeepStagedEvacSteps(from)
-
-	if len(steps) != 3 {
-		t.Fatalf("expected 3 steps, got %d", len(steps))
-	}
-	if w := countWaits(steps); w != 1 {
-		t.Errorf("expected 1 wait, got %d", w)
-	}
-
-	want := []protocol.ComplexOrderStep{
-		stationWait("CORE-NODE", release.PurposeReady),
-		{Action: "pickup", Node: "CORE-NODE"},
-		{Action: "dropoff", Node: "DEST-FINAL"},
-	}
-	for i, s := range steps {
-		if s != want[i] {
-			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // BuildKeepStagedCombinedSteps — 1 wait, clear-then-stage sequence
 // ---------------------------------------------------------------------------
-
-func TestBuildKeepStagedCombinedSteps(t *testing.T) {
-	t.Parallel()
-	from := &processes.NodeClaim{
-		InboundSource: "FROM-SOURCE",
-	}
-	to := &processes.NodeClaim{
-		CoreNodeName:   "CORE-NODE",
-		InboundSource:  "TO-SOURCE",
-		InboundStaging: "IN-STAGE",
-	}
-
-	steps := BuildKeepStagedCombinedSteps(from, to)
-
-	if len(steps) != 7 {
-		t.Fatalf("expected 7 steps, got %d", len(steps))
-	}
-	if w := countWaits(steps); w != 1 {
-		t.Errorf("expected 1 wait, got %d", w)
-	}
-
-	// Verify the clear-then-stage sequence:
-	// step 0: pickup from InboundStaging (grab old staged bin)
-	// step 1: dropoff to fromClaim.InboundSource (return to market)
-	// step 2: pickup from toClaim.InboundSource (grab new material)
-	// step 3: dropoff to InboundStaging (stage new)
-	if steps[0].Action != "pickup" || steps[0].Node != "IN-STAGE" {
-		t.Errorf("step 0: expected pickup IN-STAGE, got %+v", steps[0])
-	}
-	if steps[1].Action != "dropoff" || steps[1].Node != "FROM-SOURCE" {
-		t.Errorf("step 1: expected dropoff FROM-SOURCE (return old), got %+v", steps[1])
-	}
-	if steps[2].Action != "pickup" || steps[2].Node != "TO-SOURCE" {
-		t.Errorf("step 2: expected pickup TO-SOURCE (grab new), got %+v", steps[2])
-	}
-	if steps[3].Action != "dropoff" || steps[3].Node != "IN-STAGE" {
-		t.Errorf("step 3: expected dropoff IN-STAGE (stage new), got %+v", steps[3])
-	}
-	if steps[4].Action != "wait" {
-		t.Errorf("step 4: expected wait, got %q", steps[4].Action)
-	}
-
-	want := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "IN-STAGE"},
-		{Action: "dropoff", Node: "FROM-SOURCE"},
-		{Action: "pickup", Node: "TO-SOURCE"},
-		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
-		stationWait("", release.PurposeReady),
-		{Action: "pickup", Node: "IN-STAGE"},
-		{Action: "dropoff", Node: "CORE-NODE"},
-	}
-	for i, s := range steps {
-		if s != want[i] {
-			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // BuildStageSteps — source → staging route
@@ -979,21 +863,6 @@ func TestBuildStageSteps_MissingInboundSource(t *testing.T) {
 	}
 	if steps[0].Node != "" {
 		t.Errorf("step 0 node: got %q, want empty string (payload-based fallback)", steps[0].Node)
-	}
-}
-
-// BuildKeepStagedDeliverSteps with empty InboundSource: first pickup has no Node.
-func TestBuildKeepStagedDeliverSteps_MissingInboundSource(t *testing.T) {
-	t.Parallel()
-	to := &processes.NodeClaim{
-		CoreNodeName:   "CORE-NODE",
-		InboundStaging: "IN-STAGE",
-		// InboundSource empty
-	}
-	steps := BuildKeepStagedDeliverSteps(to)
-
-	if steps[0].Action != "pickup" || steps[0].Node != "" {
-		t.Errorf("step 0: expected pickup with empty node (fallback), got %+v", steps[0])
 	}
 }
 

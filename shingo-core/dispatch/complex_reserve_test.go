@@ -909,8 +909,10 @@ func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
 	market := &nodes.Node{Name: "CHOREO-MARKET", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(market), "create market")
 
-	// THE KEEP-STAGED BIN, standing on the staging node at dispatch time. This is
-	// the occupancy the naive gate trips over.
+	// A BIN STANDING ON THE STAGING NODE at dispatch time, which step 1 takes
+	// away. This is the occupancy the naive gate trips over. (The shape was the
+	// old keep-staged combined changeover's; it is pinned here as a binsAtStep
+	// question about any plan that empties a node and refills it.)
 	testdb.CreateBinAtNode(t, db, bp.Code, staging.ID, "CHOREO-KEPT")
 	// And the changeover material the order picks up at step 3.
 	testdb.CreateBinAtNode(t, db, bp.Code, market.ID, "CHOREO-NEW")

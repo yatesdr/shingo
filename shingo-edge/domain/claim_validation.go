@@ -263,11 +263,13 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 	return out
 }
 
-// KeepStagedWithheld is the refusal every door gives a claim that asks for
-// keep_staged: API ingress (ValidateNodeClaim), the store (UpsertClaim) and the
-// changeover planner. Why it is withheld is written once, beside the planner's
-// refusal in planSwapAction.
-const KeepStagedWithheld = "inbound-staging option not available yet"
+// ErrKeepStagedSpot marks a write refused by the dedicated-spot check
+// (processes.CheckKeepStagedSpots): a configuration error, not a fault.
+var ErrKeepStagedSpot = errors.New("keep_staged")
+
+// KeepStagedModesMessage is the refusal both write paths give a claim that
+// asks for keep_staged in a mode whose flowspec row forbids it.
+const KeepStagedModesMessage = "Keep staged applies to Single Robot and Two Robot claims only"
 
 // ValidateNodeClaim is the one server-side statement of what a claim must look
 // like. Pure: no database, no HTTP, no logging.
@@ -308,10 +310,6 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		add("swap_mode", "swap_mode is required")
 	case !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode):
 		add("swap_mode", fmt.Sprintf("%q is not a configurable swap mode", in.SwapMode))
-	}
-
-	if in.KeepStaged != nil && *in.KeepStaged {
-		add("keep_staged", KeepStagedWithheld)
 	}
 
 	// Board order. A negative position is not a position; absent means "no
@@ -401,6 +399,13 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	if ClaimInputHas(in, flowspec.IndexRobotSupplies) && spec[flowspec.IndexRobotSupplies] == flowspec.Forbidden {
 		add("index_robot_supplies",
 			"Index robot fetches the replacement applies to 2-Robot Press Index only")
+	}
+
+	// A kept spare is lifted by the first step of the swap, and only the
+	// single_robot and two_robot swaps start with a pickup at inbound staging.
+	// The store refuses the same claim (modeArmViolation) by the same table.
+	if ClaimInputHas(in, flowspec.KeepStaged) && spec[flowspec.KeepStaged] == flowspec.Forbidden {
+		add("keep_staged", KeepStagedModesMessage)
 	}
 
 	// STRICT MODES REFUSE EVERY FIELD THEY DO NOT USE (D4). The four rules

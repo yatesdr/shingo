@@ -58,7 +58,17 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	mu.Lock()
 	defer mu.Unlock()
 
-	occupancy := e.occupancyKnownNodesOnly(e.claimOccupancy(claim), node.Name)
+	// Asked again under the lock, for the reason RequestNodeMaterial gives: a
+	// changeover start holds a keep-staged line's lock, so this request may be let
+	// in only after the changeover is armed.
+	if claim.KeepStaged {
+		if err := e.guardStyleTransition(node, claim); err != nil {
+			return nil, err
+		}
+	}
+
+	occ, spot := e.claimOccupancy(claim)
+	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
 	primedPositions, err := e.pairedPositionsAlreadyPrimed(node, claim)
 	if err != nil {
 		return nil, err
@@ -71,6 +81,14 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	plan, err := BuildProducePlan(node, runtime, swapClaim, occupancy, primedPositions)
 	if err != nil {
 		return nil, err
+	}
+	if claim.KeepStaged && spot.known {
+		coming, leaving, cerr := e.readSpotComing(node, claim)
+		if cerr != nil {
+			return nil, fmt.Errorf("node %s: cannot tell what is on its way to %s (%w) — the next request will re-ask",
+				node.Name, claim.InboundStaging, cerr)
+		}
+		planSpotForProduce(plan, claim, spot.lessLeaving(leaving), coming)
 	}
 	if plan.SuppressSwap {
 		if len(plan.PrimePairedPositions) == 0 {
@@ -119,7 +137,12 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	// episode key and not a separate kind.
 	origin := e.openEpisodeForProduce(node, runtime, claim, plan, trigger)
 
-	return e.applyProducePlan(node, runtime, claim, plan, origin)
+	result, err := e.applyProducePlan(node, runtime, claim, plan, origin)
+	if err != nil {
+		return nil, err
+	}
+	e.applySpotPlan(node, claim, plan.Spot, spot, origin)
+	return result, nil
 }
 
 // PrimeInFlightError says a press-index swap was refused because the empty it
@@ -176,7 +199,8 @@ func (e *Engine) primeBarePressIndexPositions(
 	mu.Lock()
 	defer mu.Unlock()
 
-	occupancy := e.occupancyKnownNodesOnly(e.claimOccupancy(claim), node.Name)
+	occ, _ := e.claimOccupancy(claim) // a press is never keep-staged
+	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
 	// A BARE HEAD IS A DIFFERENT SHAPE and not this function's to answer: with
 	// nothing on the press there is nothing to index forward, and the consume
 	// side's node-empty downgrade owns that case. Matching BuildProducePlan's

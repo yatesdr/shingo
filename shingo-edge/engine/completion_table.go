@@ -67,10 +67,6 @@ func matchAlways(*orderCompletionCtx) bool { return true }
 // The unloader empty-out (U2) is NOT a completion case: it is driven by the
 // operator's CLEAR tap (ClearBin → createUnloaderEmptyOut), not by a U1 retrieve
 // completing — a press/forklift-fed drain has no U1. See ClearBin in operator_bin_ops.go.
-//
-// order_b_complex's KeepStaged branch is preserved as a no-op stub
-// (handleKeepStagedOrderBCompletion) rather than a separate table row;
-// the shelved-rewire-seam rationale lives in the stub's docstring.
 var completionChain = []completionCase{
 	{Name: "staged_delivery", Match: matchStagedDelivery, Apply: applyStagedDelivery},
 	{Name: "order_b_complex", Match: matchOrderBComplex, Apply: applyOrderBComplex},

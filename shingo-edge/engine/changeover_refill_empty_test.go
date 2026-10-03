@@ -74,8 +74,10 @@ func TestEveryChangeoverRefillFetchesAnEmpty(t *testing.T) {
 	// and it is named because it cannot be reached through the registry.
 	modes := withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode))
 
-	// keep_staged is not a dimension here any more: it is withheld, and the
-	// planner refuses it (TestPlanNodeAction_KeepStagedIsWithheld).
+	// keep_staged is not a dimension here: a keep-staged to-claim's changeover
+	// fetches nothing from the inbound source (its spare is already staged), and
+	// its refills are plain retrieve-empty orders, not steps in these legs
+	// (TestKeepStagedSwap_LiftsTheSpareOnceAfterTheWait).
 	for _, mode := range modes {
 		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
 			t.Run(string(mode)+"/"+string(situation), func(t *testing.T) {

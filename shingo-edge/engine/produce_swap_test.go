@@ -128,6 +128,10 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 	// fixture without it nil-panics on the delete rather than on anything the
 	// test is about.
 	eng.processService = service.NewProcessService(db)
+	// Wired as engine.New wires it: a claim save that leaves a keep-staged spot
+	// tells the engine, which sends the spare back.
+	eng.styleService = service.NewStyleService(db)
+	eng.styleService.OnKeepStagedSpotsCleared(eng.spotsCleared)
 	// Phase 3a: default sink that does real DB writes so tests
 	// exercising state-mutation verbs (BindActiveBin, ClearActiveBin,
 	// OnDelivered, etc.) see post-state correctly without each test

@@ -63,10 +63,10 @@ func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger st
 // treated as occupied by isOccupied — safe default that suppresses both
 // the downgrade and any paired-prime emission so a Core blip can't
 // dispatch phantom deliveries.
-func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
+func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, spotRead) {
 	occ := map[string]bool{}
 	if claim == nil {
-		return occ
+		return occ, spotRead{}
 	}
 	// The head node unconditionally, EVEN IF BLANK: the map is keyed by the
 	// names asked about and isOccupied treats a missing key as occupied, so
@@ -78,12 +78,20 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 		names = append(names, claim.ExtensionPositions()...)
 	}
+	// A KEEP-STAGED CLAIM ASKS ABOUT ITS SPOT IN THE SAME CALL: one more name, no
+	// more round trips. The spot's row is kept whole (whether a bin stands there
+	// and what it carries) and stays out of the map, which answers only for the
+	// line's own positions.
+	asked := names
+	if claim.KeepStaged && claim.InboundStaging != "" {
+		asked = append(append([]string(nil), names...), claim.InboundStaging)
+	}
 	if !e.coreClient.Available() {
 		log.Printf("[occupied-check] core API not configured, assuming occupied for %v", names)
 		for _, n := range names {
 			occ[n] = true
 		}
-		return occ
+		return occ, spotRead{}
 	}
 	// THE DECISION HERE IS ALREADY RIGHT AND IS NOT CHANGING. The map is filled
 	// from the REQUESTED names rather than the returned rows, so a name Core
@@ -99,8 +107,11 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 	// inheriting it from FetchNodeBins returning nil on every failure — if that
 	// ever returned partial rows alongside an error, this site would silently
 	// start trusting a partial read.
-	bins, reachable, ferr := e.coreClient.FetchNodeBins(names)
+	bins, reachable, ferr := e.coreClient.FetchNodeBins(asked)
 	for _, b := range bins {
+		if b.NodeName == claim.InboundStaging && claim.KeepStaged && b.NodeName != claim.CoreNodeName {
+			continue // the spot: read below, not a line position
+		}
 		occ[b.NodeName] = b.Occupied
 	}
 	for _, n := range names {
@@ -110,7 +121,17 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 			occ[n] = true
 		}
 	}
-	return occ
+	return occ, spotOf(claim, bins, e.spotNodeKnown)
+}
+
+// spotNodeKnown reports whether Core has a keep-staged spot's node. Core answers
+// an unknown node as present and empty, which would read a typo'd spot as bare
+// on every request and send a refill each time. An empty node list is Core not
+// heard from yet, not evidence of a typo, so it skips the check, as
+// occupancyKnownNodesOnly does for the same reason.
+func (e *Engine) spotNodeKnown(name string) bool {
+	known := e.CoreNodes()
+	return len(known) == 0 || coreNodeKnown(known, name)
 }
 
 // requestNodeFromClaim constructs orders using style_node_claims routing.
@@ -135,7 +156,29 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	if claim != nil {
 		autoConfirm = claim.AutoConfirm || e.cfg.Web.AutoConfirm
 	}
-	occupancy := e.claimOccupancy(claim)
+	// ONE CELL, ONE DECISION AT A TIME. The occupancy read, the plan and the
+	// apply run under the cell's prime lock, as the produce request does: a
+	// keep-staged spot's refills are counted from rows this request is about to
+	// write, and a second request or the level keeper's floor deciding in the
+	// same moment has to see them.
+	mu := e.primeNodeLock(claim)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// A CHANGEOVER CAN ARM WHILE THIS REQUEST WAITS FOR THE CELL. A changeover
+	// start holds a keep-staged line's prime lock from its pre-dispatch cancel to
+	// its last spot order, so a request that passed the guard above can be let in
+	// only after the changeover is armed. Asked again under the lock, it is
+	// refused like any request against an armed changeover instead of building an
+	// outgoing-style swap that no changeover leg owns. Keep-staged lines only:
+	// theirs is the lock a start holds.
+	if claim.KeepStaged {
+		if err := e.guardStyleTransition(node, claim); err != nil {
+			return nil, err
+		}
+	}
+
+	occupancy, spot := e.claimOccupancy(claim)
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
@@ -144,6 +187,14 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	plan, err := BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, autoConfirm)
 	if err != nil {
 		return nil, err
+	}
+	if claim.KeepStaged && spot.known {
+		coming, leaving, cerr := e.readSpotComing(node, claim)
+		if cerr != nil {
+			return nil, fmt.Errorf("node %s: cannot tell what is on its way to %s (%w) — the next request will re-ask",
+				node.Name, claim.InboundStaging, cerr)
+		}
+		planSpotForConsume(plan, claim, spot.lessLeaving(leaving), coming)
 	}
 	if plan.DowngradedFromSwapMode != "" {
 		// THE DOWNGRADE IS THE ONE DECISION THAT IGNORES WHAT THIS CELL ALREADY
@@ -197,7 +248,12 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// both swap legs. Choreography is not demand.
 	origin := e.openEpisodeForConsume(node, runtime, claim, plan, trigger)
 
-	return e.applyConsumePlan(node, plan, origin)
+	result, err := e.applyConsumePlan(node, plan, origin)
+	if err != nil {
+		return nil, err
+	}
+	e.applySpotPlan(node, claim, plan.Spot, spot, origin)
+	return result, nil
 }
 
 // openEpisodeForConsume opens or joins the supply-direction episode for a

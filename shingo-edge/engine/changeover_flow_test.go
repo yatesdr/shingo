@@ -686,121 +686,13 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 // Section 4: Keep-staged edge cases
 // ===========================================================================
 
-// Keep-staged with evacuate — both flags on same claim.
-func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-
-	processID, _ := db.CreateProcess("KS-EV-PROC", "ks+evac test", "active_production", "", "", false)
-	nodeID, _ := db.CreateProcessNode(processes.NodeInput{
-		ProcessID: processID, CoreNodeName: "KS-EV-NODE", Code: "KE1", Name: "KS+EV Node", Sequence: 1, Enabled: true,
-	})
-	fromStyleID, _ := db.CreateStyle("KS-EV-FROM", "from", processID)
-	toStyleID, _ := db.CreateStyle("KS-EV-TO", "to", processID)
-	db.SetActiveStyle(processID, &fromStyleID)
-
-	fcID, _ := upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID: fromStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
-		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC",
-		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		EvacuateOnChangeover: true,
-	})
-	upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID: toStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
-		PayloadCode: "PART-SAME", UOPCapacity: 200, InboundSource: "SRC",
-		InboundStaging: "STAGING", EvacuateOnChangeover: true,
-	})
-	setLegacyKeepStagedClaim(t, db, fcID)
-
-	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &fcID, 50)
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "ks+evac")
-	if err != nil {
-		t.Fatalf("start changeover: %v", err)
-	}
-
-	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	// Same payload + EvacuateOnChangeover → SituationEvacuate
-	if task.Situation != "evacuate" {
-		t.Fatalf("expected evacuate, got %s", task.Situation)
-	}
-	// keep_staged is withheld: the planner refuses the node instead of planning
-	// it, so its task lands in error with no orders.
-	if task.State != domain.NodeTaskError {
-		t.Errorf("node task state = %q, want %q — a stored keep-staged claim is refused, not planned",
-			task.State, domain.NodeTaskError)
-	}
-	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID != nil {
-		t.Errorf("a refused keep-staged node created orders (next %v, release %v)",
-			task.NextMaterialOrderID, task.OldMaterialReleaseOrderID)
-	}
-}
-
-// setLegacyKeepStagedClaim writes keep_staged=1 behind the store's back. The
-// option is withheld and no writer can set it any more, but rows stored before
-// the withholding carry it, and the planner has to answer for them.
+// setLegacyKeepStagedClaim writes keep_staged=1 behind the store's back, on a
+// claim whose retired mode the field matrix would refuse it on. Rows written
+// before the matrix carry it, and the planner has to answer for them.
 func setLegacyKeepStagedClaim(t *testing.T, db *store.DB, claimID int64) {
 	t.Helper()
 	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID); err != nil {
 		t.Fatalf("set legacy keep_staged on claim %d: %v", claimID, err)
-	}
-}
-
-// Keep-staged from → non-keep-staged to. Old style had keep-staged,
-// new style doesn't. The from-claim's KeepStaged flag drives the handler.
-func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-
-	processID, _ := db.CreateProcess("KS2NK-PROC", "ks→nokeep", "active_production", "", "", false)
-	nodeID, _ := db.CreateProcessNode(processes.NodeInput{
-		ProcessID: processID, CoreNodeName: "KS2NK-NODE", Code: "K2N", Name: "KS→NK Node", Sequence: 1, Enabled: true,
-	})
-	fromStyleID, _ := db.CreateStyle("KS2NK-FROM", "from", processID)
-	toStyleID, _ := db.CreateStyle("KS2NK-TO", "to", processID)
-	db.SetActiveStyle(processID, &fromStyleID)
-
-	fcID, _ := upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID: fromStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
-		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
-		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-	})
-	upsertClaimRetiredMode(db, processes.NodeClaimInput{
-		StyleID: toStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
-		PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SRC-NEW",
-		InboundStaging: "STAGING",
-		// KeepStaged not set — new style doesn't use keep-staged
-	})
-	setLegacyKeepStagedClaim(t, db, fcID)
-
-	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &fcID, 50)
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "ks→nk")
-	if err != nil {
-		t.Fatalf("start changeover: %v", err)
-	}
-
-	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	// Different payload → SituationSwap, but FromClaim.KeepStaged → keep-staged handler
-	if task.Situation != "swap" {
-		t.Fatalf("expected swap (different payload), got %s", task.Situation)
-	}
-	// The from-claim's flag is what the planner reads, and it refuses the node.
-	if task.State != domain.NodeTaskError {
-		t.Errorf("node task state = %q, want %q — the from-claim's keep_staged is refused, not planned",
-			task.State, domain.NodeTaskError)
-	}
-	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID != nil {
-		t.Errorf("a refused keep-staged node created orders (next %v, release %v)",
-			task.NextMaterialOrderID, task.OldMaterialReleaseOrderID)
 	}
 }
 
@@ -828,8 +720,8 @@ func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
 		PayloadCode: "PART-NEW", UOPCapacity: 200, InboundSource: "SRC-NEW",
 		// InboundStaging not set
 	})
-	// The staging check comes before the keep-staged one, so a stored flag on a
-	// node with no staging still falls back rather than being refused.
+	// The staging check comes before the keep-staged branch (changeoverDispatch),
+	// so a stored flag on a node with no staging still falls back.
 	setLegacyKeepStagedClaim(t, db, fcID)
 
 	db.EnsureProcessNodeRuntime(nodeID)

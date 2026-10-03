@@ -510,9 +510,13 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		// rows, so resolveDropoffBin returns false for them above". resolveDropoffBin
 		// stopped reading the junction (see its own header) — it asks what this order
 		// has at _TRANSIT — and a two_robot supply leg's intermediate dropoff at
-		// InboundStaging resolves fine and reaches this broadcast. Harmless at Edge,
-		// which no-ops for a staging node, but a reader reasoning from "dormant"
-		// would be reasoning from a fact that has not held for some time.
+		// InboundStaging resolves fine and reaches this broadcast. Edge binds by the
+		// node's NAME (GetProcessNodeByCoreNodeName), so this is a no-op only for a
+		// staging node that is not also some style's line position; one that is gets
+		// its runtime bound to the staged bin. Keep-staged refuses that overlap at
+		// config, and never stages a complex leg on its spot at all. A reader
+		// reasoning from "dormant" would be reasoning from a fact that has not held
+		// for some time.
 		//
 		// It is also load-bearing now, and not only for the tile: this is the
 		// PLACEMENT RECORD half of a leg's departure. Edge's settleCellPlacement

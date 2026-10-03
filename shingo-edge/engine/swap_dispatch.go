@@ -206,7 +206,16 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 			return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
 		}
-		stepsA := BuildSingleSwapSteps(claim)
+		// KEEP-STAGED: the spare already stands on inbound staging, so the swap is
+		// the full shape without its fetch-to-staging prefix. Chosen by the claim's
+		// configuration, never by what Core says is standing there: a by-occupancy
+		// choice that read the spot as bare would send the full shape, whose staging
+		// dropoff then waits behind the spare.
+		build := BuildSingleSwapSteps
+		if claim.KeepStaged {
+			build = BuildSingleSwapFromSpare
+		}
+		stepsA := build(claim)
 		return &SwapDispatch{
 			CycleMode:    protocol.SwapModeSingleRobot,
 			ProcessNode:  claim.CoreNodeName,
@@ -240,7 +249,12 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		if claim.OutboundDestination == "" {
 			return nil, fmt.Errorf("node %s: two-robot swap requires outbound destination (the evac leg's dropoff)", node.Name)
 		}
-		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
+		// KEEP-STAGED: the supply robot starts at the spare (see single_robot).
+		build := BuildTwoRobotSwapSteps
+		if claim.KeepStaged {
+			build = BuildTwoRobotSwapFromSpare
+		}
+		stepsA, stepsB := build(claim)
 		return &SwapDispatch{
 			CycleMode:               protocol.SwapModeTwoRobot,
 			ProcessNode:             claim.CoreNodeName,

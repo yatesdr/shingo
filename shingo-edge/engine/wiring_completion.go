@@ -9,9 +9,7 @@
 //   orderCompletionCtx + Claim() / ToClaim()     – cascade-scope cache for expensive lookups
 //   handleNodeOrderCompleted                     – table-driven dispatcher
 //   match* / apply* per cascade row              – the table rows (see completion_table.go)
-//   handleKeepStagedOrderBCompletion             – intentionally disabled no-op (rewire seam preserved)
 //   handleNormalReplenishment                    – terminal-row handler (void; adapted via applyNormalReplenishmentTerminal)
-//   maybePreStage                                – intentionally disabled no-op (called from handleNormalReplenishment)
 //   handleOrphanedTaskOrderCompleted             – non-success terminal path (cancelled / failed)
 //   handleNodeOrderFailed                        – EventOrderFailed counterpart (lives here because
 //                                                  it reads the same node-task context the completion
@@ -70,15 +68,6 @@ type orderCompletionCtx struct {
 	toClaim         *processes.NodeClaim
 	toClaimErr      error
 	toClaimResolved bool
-
-	// Lazy field — the from-style NodeClaim attached to ctx.nodeTask via
-	// FromClaimID. Distinct from Claim() (active claim by node) and
-	// ToClaim() (to-style claim by node + style). FromClaim is a direct
-	// lookup by claim id; used by the complex Order B path to read the
-	// from-claim's KeepStaged flag. fromClaim==nil with fromClaimResolved==true
-	// means no changeover, no FromClaimID on the task, or the lookup failed.
-	fromClaim         *processes.NodeClaim
-	fromClaimResolved bool
 }
 
 // Claim returns the claim governing ctx.node, caching the lookup so repeated
@@ -125,21 +114,6 @@ func (c *orderCompletionCtx) ToStyleClaimsNothingHere() bool {
 	return errors.Is(c.toClaimErr, sql.ErrNoRows)
 }
 
-// FromClaim returns the from-style NodeClaim attached to ctx.nodeTask
-// via FromClaimID, caching the direct-by-id lookup. Returns nil when
-// there's no node task, no FromClaimID, or the lookup failed.
-func (c *orderCompletionCtx) FromClaim() *processes.NodeClaim {
-	if !c.fromClaimResolved {
-		if c.nodeTask != nil && c.nodeTask.FromClaimID != nil {
-			if fc, err := c.e.db.GetStyleNodeClaim(*c.nodeTask.FromClaimID); err == nil {
-				c.fromClaim = fc
-			}
-		}
-		c.fromClaimResolved = true
-	}
-	return c.fromClaim
-}
-
 // loadOrderCompletionCtx fetches the order, node, runtime, and changeover context.
 // Returns nil if any required lookup fails (order, node, runtime).
 // nodeTask may be nil when no active changeover exists — callers must check.
@@ -176,6 +150,9 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if ctx == nil {
 		return
 	}
+	// A keep-staged refill going terminal re-runs the spot's floor once the
+	// cascade below has settled the line's slots (kickKeepStagedFloor).
+	defer e.kickKeepStagedFloor(ctx)
 
 	// EmitOrderCompleted fires for any terminal status (confirmed, cancelled,
 	// failed) — it's the engine bus's "order reached terminal" signal. Every
@@ -280,8 +257,7 @@ func applyStagedDelivery(e *Engine, ctx *orderCompletionCtx) bool {
 
 // matchOrderBComplex matches the completion of Order B for the complex-
 // evacuate path: linked OldMaterialReleaseOrderID + complex order type +
-// swap-or-evacuate situation. Apply transitions the task to "released"
-// after delegating to the shelved KeepStaged no-op hook.
+// swap-or-evacuate situation. Apply transitions the task to "released".
 func matchOrderBComplex(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.OldMaterialReleaseOrderID == nil || *ctx.nodeTask.OldMaterialReleaseOrderID != ctx.order.ID {
 		return false
@@ -300,19 +276,7 @@ func matchOrderBComplex(ctx *orderCompletionCtx) bool {
 // ctx.node.CoreNodeName which is the primary). Per-slot resets fire
 // from handleNodeOrderDelivered for each leg of a sequential SWAP
 // terminal step; applyOrderBComplex only advances the state machine.
-//
-// KeepStaged claims invoke the shelved no-op handler first; it returns
-// false (no-op) so legacy claims with KeepStaged=true fall through to
-// the standard "released" path. See implementer notes' "Known issue —
-// phantom-inventory pin latent under CO-0b fall-through" for the
-// rewire-time risk this falls through to. The function call is
-// preserved as a one-line rewire seam.
 func applyOrderBComplex(e *Engine, ctx *orderCompletionCtx) bool {
-	if fc := ctx.FromClaim(); fc != nil && fc.KeepStaged {
-		if e.handleKeepStagedOrderBCompletion(ctx) {
-			return true
-		}
-	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
@@ -360,21 +324,6 @@ func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
 		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
 	}
 	return true
-}
-
-// Intentionally disabled — handleKeepStagedOrderBCompletion is a short-
-// circuited no-op preserved as the one-line rewire seam for the shelved
-// KeepStaged path. Called from applyOrderBComplex when the from-claim has
-// KeepStaged=true.
-//
-// Returning false makes applyOrderBComplex fall through to the standard
-// "released" path, which is the desired behaviour until KeepStaged is
-// rewired. See implementer notes' "Known issue — phantom-inventory pin
-// latent under CO-0b fall-through" for the rewire-time risk this falls
-// through to.
-func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
-	_ = ctx
-	return false
 }
 
 // matchChangeoverRelease matches Order A completing to release staged or
@@ -788,8 +737,7 @@ func (e *Engine) unloaderPullsCovered(l *domain.Loader, payloads []domain.Payloa
 // Cache binding is owned by handleNodeOrderDelivered — the delivered
 // bin's authoritative UOP arrives on its OrderDelivered envelope and
 // seeds active_bin_id + remaining_uop_cached. Confirm only does
-// order-pointer bookkeeping for manual_swap nodes and fires the
-// keep-staged hook (currently a no-op).
+// order-pointer bookkeeping for manual_swap nodes.
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return
@@ -811,21 +759,6 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 		// side-cycle drives empty-in creation from line REQUESTs via
 		// the loader replenishment path, not from completion-time sweeps.
 	}
-
-	// Keep-staged: immediately pre-populate inbound staging for next swap
-	e.maybePreStage(ctx.node, claim)
-}
-
-// Intentionally disabled — maybePreStage is a short-circuited no-op.
-//
-// KeepStaged is shelved pending a future rewire. The function signature
-// is preserved for call sites; schema column, planner branches, and
-// step builders stay intact so the rewire is a one-line restore. The
-// previous body fired an automatic pre-stage order after every release;
-// that path was the broken behaviour SME asked to stop.
-func (e *Engine) maybePreStage(node *processes.Node, claim *processes.NodeClaim) {
-	_ = node
-	_ = claim
 }
 
 // handleOrphanedTaskOrderCompleted reconciles a changeover_node_task

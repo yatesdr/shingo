@@ -2471,7 +2471,7 @@ async function openSettings() {
 // take it away mid-edit.
 const ADV_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
-    ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push']],
+    ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged']],
     ['Changeover specials', ['evacuate_on_changeover', 'evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
     ['Press hardware', ['index_robot_supplies']],
     ['Station policy', ['auto_confirm']],
@@ -2482,7 +2482,7 @@ const ADV_SECTIONS = [
     ['Board', ['sequence']],
 ];
 
-// ADV_COPY — the sheet's thirteen rows: which CLAIM FIELD each one edits, and
+// ADV_COPY — the sheet's fourteen rows: which CLAIM FIELD each one edits, and
 // the one-line help under it.
 //
 // THE HELP IS THIS PAGE'S; THE NAME IS NOT. This used to carry both, so it was
@@ -2502,6 +2502,7 @@ const ADV_COPY = {
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
     auto_request_payload: ['auto_request_payload', 'which part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
+    keep_staged: ['keep_staged', 'a spare waits on inbound staging; the swap starts from it'],
     evacuate_on_changeover: ['evacuate_on_changeover', 'clear this position before the new style'],
     evac_nodes: ['changeover_evac_nodes', 'tooling change — which positions get cleared'],
     evac_dest: ['changeover_evac_destination', ''],
@@ -2666,7 +2667,7 @@ function closeAdvanced() {
     S.adv = null;
 }
 
-// Apply: the twelve through setAdvanced, the two evacuation fields through the
+// Apply: the thirteen through setAdvanced, the two evacuation fields through the
 // cell's own actions. Three reduces rather than one because they are three
 // different things the model already knows how to do.
 function applyAdvanced() {

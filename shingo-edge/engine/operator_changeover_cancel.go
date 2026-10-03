@@ -32,6 +32,26 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// node task. Sibling orders that happen to be on the same nodes
 	// (manual storage, replenishment, etc.) are owned by other flows
 	// and not the changeover-cancel's business to terminate.
+	// The keep-staged spots, put back for the style that stays. Decided with the
+	// styles reversed — the outgoing style keeps its spots again, the incoming
+	// one's are to be left empty — and the changeover's plan left out, since
+	// nothing lifts a spare now.
+	origin := e.changeoverOrigin(changeover.ID)
+	spots := e.cancelledChangeoverSpots(processID, changeover)
+	// Under the spots' cell locks from the abort to the reconcile: the target
+	// style clears in between, and a request on one of those lines may run again
+	// from then. Released before a redirect, whose start takes them itself.
+	unlock := e.lockKeepStagedCells(spotLines(spots))
+	locked := true
+	release := func() {
+		if locked {
+			locked = false
+			unlock()
+		}
+	}
+	defer release()
+	flows := e.abortSpotOrdersNotFlown(spots, changeover.StartedAt)
+
 	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
 	for _, task := range nodeTasks {
 		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
@@ -88,6 +108,13 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	}
 
 	// Redirect — start new changeover immediately to a different target style
+	// A redirect starts the next changeover at once, and its start reconciles
+	// every spot itself; the style being reverted to is not staying.
+	if nextStyleID == nil || *nextStyleID == 0 {
+		e.applyChangeoverSpots(spots, e.readSpots(spots), flows, origin)
+	}
+	release()
+
 	if nextStyleID != nil && *nextStyleID != 0 {
 		_, err := e.StartProcessChangeover(processID, *nextStyleID,
 			"changeover-redirect", "redirected from cancelled changeover")

@@ -6,7 +6,11 @@ package store
 // file preserves the *store.DB method surface and public struct names
 // so external callers do not need to change.
 
-import "shingoedge/store/processes"
+import (
+	"database/sql"
+
+	"shingoedge/store/processes"
+)
 
 // ListStyleNodeClaims returns every claim for a style.
 func (db *DB) ListStyleNodeClaims(styleID int64) ([]processes.NodeClaim, error) {
@@ -38,14 +42,26 @@ func (db *DB) IsPairedOnDeckNode(processID int64, coreNodeName string) (bool, er
 	return processes.IsPairedOnDeckNode(db.DB, processID, coreNodeName)
 }
 
-// UpsertStyleNodeClaim inserts or updates a claim and returns the row id.
+// UpsertStyleNodeClaim inserts or updates a claim and returns the row id. The
+// write and the dedicated-spot check share one transaction, so a claim that
+// would touch another's kept spot is never stored.
 func (db *DB) UpsertStyleNodeClaim(in processes.NodeClaimInput) (int64, error) {
-	return processes.UpsertClaim(db.DB, in)
+	var id int64
+	err := db.Transaction(func(tx *sql.Tx) error {
+		var err error
+		id, _, err = processes.UpsertClaimChecked(tx, in)
+		return err
+	})
+	return id, err
 }
 
-// DeleteStyleNodeClaim removes a claim row by id.
+// DeleteStyleNodeClaim removes a claim row by id, refused while it keeps a
+// spot that open orders still deliver to.
 func (db *DB) DeleteStyleNodeClaim(id int64) error {
-	return processes.DeleteClaim(db.DB, id)
+	return db.Transaction(func(tx *sql.Tx) error {
+		_, err := processes.DeleteClaimChecked(tx, id)
+		return err
+	})
 }
 
 // NO ListBackPositionNames. It was a second read of style_node_claims — its

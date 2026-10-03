@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"strings"
 
 	"shingoedge/domain"
@@ -17,6 +18,25 @@ import (
 // Phase 6.2′ extracted this from named methods on *engine.Engine.
 type StyleService struct {
 	db *store.DB
+
+	// spotsCleared hears every keep-staged spot a claim write moved or cleared,
+	// once the write has committed. The engine installs it
+	// (OnKeepStagedSpotsCleared): a spare left standing on a spot nothing keeps
+	// any more goes back to where it came from. Nil in a service built without
+	// an engine.
+	spotsCleared func([]processes.KeptSpot)
+}
+
+// OnKeepStagedSpotsCleared installs the listener for spots a claim write moved
+// or cleared. Installed once, at engine construction, before any write.
+func (s *StyleService) OnKeepStagedSpotsCleared(fn func([]processes.KeptSpot)) {
+	s.spotsCleared = fn
+}
+
+func (s *StyleService) keepStagedSpotsCleared(moved []processes.KeptSpot) {
+	if len(moved) > 0 && s.spotsCleared != nil {
+		s.spotsCleared(moved)
+	}
 }
 
 // NewStyleService constructs a StyleService wrapping the shared
@@ -134,6 +154,55 @@ func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads 
 	if len(targets) == 0 {
 		return results
 	}
+	overrides = cleanCopyOverrides(overrides)
+
+	src, err := s.db.GetStyle(srcID)
+	if err != nil || src == nil {
+		return []CopyClaimsResult{{Status: "failed", Reason: "source style not found"}}
+	}
+	var activeStyleID int64
+	if proc, err := s.db.GetProcess(src.ProcessID); err == nil && proc != nil && proc.ActiveStyleID != nil {
+		activeStyleID = *proc.ActiveStyleID
+	}
+
+	seen := map[int64]bool{}
+	for _, targetID := range targets {
+		if seen[targetID] {
+			continue
+		}
+		seen[targetID] = true
+		res := CopyClaimsResult{StyleID: targetID}
+		switch {
+		case targetID == srcID:
+			res.Status, res.Reason = "skipped", "is the source style"
+		default:
+			tgt, err := s.db.GetStyle(targetID)
+			switch {
+			case err != nil || tgt == nil:
+				res.Status, res.Reason = "failed", "style not found"
+			case tgt.ProcessID != src.ProcessID:
+				res.Status, res.Reason = "failed", "style belongs to a different process"
+			case tgt.ID == activeStyleID:
+				res.Status, res.Reason = "failed", "active style cannot be a copy target"
+			default:
+				notes, moved, err := processes.CopyStyleClaims(s.db.DB, srcID, targetID, includePayloads, overrides)
+				if err != nil {
+					res.Status, res.Reason = "failed", err.Error()
+				} else {
+					s.keepStagedSpotsCleared(moved)
+					res.Status = "copied"
+					res.Notes = notes
+				}
+			}
+		}
+		results = append(results, res)
+	}
+	return results
+}
+
+// cleanCopyOverrides leaves one well-formed override row per node for the
+// store layer.
+func cleanCopyOverrides(overrides []domain.CopiedClaimOverride) []domain.CopiedClaimOverride {
 	// One well-formed row per node survives to the store layer: trimmed,
 	// duplicates collapsed last-wins, no-ops (nothing set) dropped. Rows
 	// without a match key cannot attach to anything and are refused here —
@@ -175,49 +244,7 @@ func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads 
 		ovSeen[key] = true
 		clean = append(clean, ov)
 	}
-	overrides = clean
-
-	src, err := s.db.GetStyle(srcID)
-	if err != nil || src == nil {
-		return []CopyClaimsResult{{Status: "failed", Reason: "source style not found"}}
-	}
-	var activeStyleID int64
-	if proc, err := s.db.GetProcess(src.ProcessID); err == nil && proc != nil && proc.ActiveStyleID != nil {
-		activeStyleID = *proc.ActiveStyleID
-	}
-
-	seen := map[int64]bool{}
-	for _, targetID := range targets {
-		if seen[targetID] {
-			continue
-		}
-		seen[targetID] = true
-		res := CopyClaimsResult{StyleID: targetID}
-		switch {
-		case targetID == srcID:
-			res.Status, res.Reason = "skipped", "is the source style"
-		default:
-			tgt, err := s.db.GetStyle(targetID)
-			switch {
-			case err != nil || tgt == nil:
-				res.Status, res.Reason = "failed", "style not found"
-			case tgt.ProcessID != src.ProcessID:
-				res.Status, res.Reason = "failed", "style belongs to a different process"
-			case tgt.ID == activeStyleID:
-				res.Status, res.Reason = "failed", "active style cannot be a copy target"
-			default:
-				notes, err := s.db.CopyStyleClaims(srcID, targetID, includePayloads, overrides)
-				if err != nil {
-					res.Status, res.Reason = "failed", err.Error()
-				} else {
-					res.Status = "copied"
-					res.Notes = notes
-				}
-			}
-		}
-		results = append(results, res)
-	}
-	return results
+	return clean
 }
 
 // ── Style/node claims ─────────────────────────────────────────────
@@ -258,10 +285,29 @@ func (s *StyleService) GetClaim(id int64) (*processes.NodeClaim, error) {
 // Validates manual_swap invariants (auto_confirm and outbound
 // destination) inside the underlying sub-package.
 func (s *StyleService) UpsertClaim(in processes.NodeClaimInput) (int64, error) {
-	return s.db.UpsertStyleNodeClaim(in)
+	var id int64
+	var moved []processes.KeptSpot
+	err := s.db.Transaction(func(tx *sql.Tx) error {
+		var err error
+		id, moved, err = processes.UpsertClaimChecked(tx, in)
+		return err
+	})
+	if err == nil {
+		s.keepStagedSpotsCleared(moved)
+	}
+	return id, err
 }
 
 // DeleteClaim removes a claim row by id.
 func (s *StyleService) DeleteClaim(id int64) error {
-	return s.db.DeleteStyleNodeClaim(id)
+	var moved []processes.KeptSpot
+	err := s.db.Transaction(func(tx *sql.Tx) error {
+		var err error
+		moved, err = processes.DeleteClaimChecked(tx, id)
+		return err
+	})
+	if err == nil {
+		s.keepStagedSpotsCleared(moved)
+	}
+	return err
 }

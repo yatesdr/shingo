@@ -214,36 +214,29 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 	return action
 }
 
-// ── KEEP-STAGED IS WITHHELD ─────────────────────────────────────────────────
+// changeoverDispatch builds a node's changeover choreography, and it is the ONE
+// place the planner reads keep_staged.
 //
-// A claim with keep_staged set is refused here instead of being planned, and
-// refused the same way at API ingress (domain.ValidateNodeClaim) and at the store
-// (processes.UpsertClaim), all with domain.KeepStagedWithheld. Stored rows are
-// left as they are.
-//
-// Three reasons, one of them closed:
-//
-//   - (a) Nothing restages the spare after a changeover. The option keeps a
-//     carrier on inbound staging across the changeover, and the hook that was to
-//     put one back, handleKeepStagedOrderBCompletion, is a disabled no-op:
-//     applyOrderBComplex falls through to "released" and the spare is gone.
-//   - (b) The split (two-robot) variant stages onto a spot the old spare still
-//     occupies. BuildKeepStagedDeliverSteps drops the new carrier on
-//     InboundStaging, and BuildKeepStagedEvacSteps lifts only the line's bin, so
-//     nothing in the pair takes the spare off first.
-//   - (c) Plan-time occupancy was not step-aware, so the combined (one-robot)
-//     variant, BuildKeepStagedCombinedSteps, could never source: Core read the
-//     kept bin as a source at the reserve and as an obstacle at the slot claim,
-//     though the plan's own first pickup takes it away. CLOSED — Core's
-//     binsAtStep now answers what is on a node at a given step, for the
-//     destination gate, the relay rule and the slot claim alike.
-//
-// (a) and (b) are open. The BuildKeepStaged* builders stay: the combined shape is
-// what the occupancy fix is pinned on (TestPairRule_KeepStagedCombinedPairIsOneJob,
-// in Core).
-func keepStagedWithheld(action changeover.NodeAction, node *processes.Node) changeover.NodeAction {
-	action.Err = fmt.Errorf("node %s: keep_staged: %s", node.Name, domain.KeepStagedWithheld)
-	return action
+// A keep-staged to-claim's spare stands on its inbound staging, so its supply
+// is the swap without the fetch-to-staging prefix, released by the shared
+// "ready" wait: the two-robot supply tail, or the single-robot order B with no
+// stage order in front of it. The choreography still follows the from-claim's
+// mode, as every changeover does; a keep-staged to-claim reached from a mode
+// with no short shape (sequential, press-index) gets that mode's full
+// changeover, and keep-staged itself is refused on those modes at config.
+func changeoverDispatch(fromClaim, toClaim *processes.NodeClaim, tooling bool, inactive, active string) ChangeoverDispatch {
+	if toClaim.KeepStaged {
+		switch fromClaim.SwapMode {
+		case protocol.SwapModeTwoRobot:
+			return buildTwoRobotChangeoverFromSpare(fromClaim, toClaim)
+		case protocol.SwapModeSingleRobot:
+			return buildSingleRobotChangeoverFromSpare(fromClaim, toClaim, tooling)
+		}
+	}
+	if tooling {
+		return BuildEvacuateChangeoverSteps(fromClaim, toClaim, inactive, active)
+	}
+	return BuildSwapChangeoverSteps(fromClaim, toClaim, inactive, active)
 }
 
 // assignDispatch wires a ChangeoverDispatch into NodeAction.SupplyOrder/EvacOrder.
@@ -404,8 +397,8 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 	// two_robot still stages its supply leg's new bin, so it requires
 	// InboundStaging (but not OutboundStaging — its evac goes straight to
 	// OutboundDestination); single_robot (and the default fallthrough)
-	// require both. KeepStaged is a single_robot/two_robot concept;
-	// direct-trip modes skip it too.
+	// require both. A keep-staged to-claim needs its InboundStaging too: it
+	// is where the spare stands (changeoverDispatch).
 	if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 		switch diff.FromClaim.SwapMode {
 		case protocol.SwapModeTwoRobot:
@@ -416,9 +409,6 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 			if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
 				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 			}
-		}
-		if diff.FromClaim.KeepStaged {
-			return keepStagedWithheld(action, node)
 		}
 	}
 	// Per-mode field validation runs BEFORE the builder so missing
@@ -436,7 +426,7 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 		inactive, active = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 	}
-	disp := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim, inactive, active)
+	disp := changeoverDispatch(diff.FromClaim, diff.ToClaim, false, inactive, active)
 	// An empty dispatch (no StepsA and no Roles) is the builder's "I
 	// rejected this claim" signal. Per-mode field validation above already
 	// catches the known rejection cases with operator-readable diagnostics;
@@ -473,9 +463,6 @@ func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, n
 				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 			}
 		}
-		if diff.FromClaim.KeepStaged {
-			return keepStagedWithheld(action, node)
-		}
 	}
 	// Per-mode field validation for evacuate.
 	if missing := requiredChangeoverFields(diff.FromClaim, diff.ToClaim); len(missing) > 0 {
@@ -487,7 +474,7 @@ func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, n
 	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 		einactive, eactive = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 	}
-	disp := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim, einactive, eactive)
+	disp := changeoverDispatch(diff.FromClaim, diff.ToClaim, true, einactive, eactive)
 	if disp.rejected() {
 		action.Err = fmt.Errorf("cannot build evacuate steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
 		return action

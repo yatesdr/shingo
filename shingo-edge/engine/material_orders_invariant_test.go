@@ -73,6 +73,14 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 		{"press_index FLIPPED 3-pos R1", fl3R1},
 		{"press_index FLIPPED 3-pos R2", fl3R2},
 	}
+	from, to := claim(""), claim("")
+	to.CoreNodeName = "PRESS-B"
+	for name, steps := range keepStagedLegs(claim(""), from, to) {
+		legs = append(legs, struct {
+			name  string
+			steps []protocol.ComplexOrderStep
+		}{name, steps})
+	}
 
 	for _, leg := range legs {
 		t.Run(leg.name, func(t *testing.T) {
@@ -159,13 +167,13 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 		"press_index 2-pos R2":         pi2R2,
 		"press_index 3-pos R1":         pi3R1,
 		"press_index 3-pos R2":         pi3R2,
-		"keep-staged evac":             BuildKeepStagedEvacSteps(from),
-		"keep-staged deliver":          BuildKeepStagedDeliverSteps(to),
-		"keep-staged combined":         BuildKeepStagedCombinedSteps(from, to),
 		"changeover swap A":            swapCO.StepsA,
 		"changeover swap B":            swapCO.StepsB,
 		"changeover evacuate A":        evacCO.StepsA,
 		"changeover evacuate B":        evacCO.StepsB,
+	}
+	for name, steps := range keepStagedLegs(claim(""), from, to) {
+		legs[name] = steps
 	}
 
 	seen := 0
@@ -265,13 +273,13 @@ func TestEveryStagingDropoffIsDeclared(t *testing.T) {
 		"press_index 2-pos R2":  pi2R2,
 		"press_index 3-pos R1":  pi3R1,
 		"press_index 3-pos R2":  pi3R2,
-		"keep-staged evac":      BuildKeepStagedEvacSteps(from),
-		"keep-staged deliver":   BuildKeepStagedDeliverSteps(to),
-		"keep-staged combined":  BuildKeepStagedCombinedSteps(from, to),
 		"changeover swap A":     swapCO.StepsA,
 		"changeover swap B":     swapCO.StepsB,
 		"changeover evacuate A": evacCO.StepsA,
 		"changeover evacuate B": evacCO.StepsB,
+	}
+	for name, steps := range keepStagedLegs(claim(""), from, to) {
+		legs[name] = steps
 	}
 
 	seen := 0
@@ -411,5 +419,27 @@ func TestSingleRobotCollector_NamesTheIncomingPart(t *testing.T) {
 				t.Errorf("tooling=%v to=%s: collect = %+v, want payload %q and not Empty", tooling, c.to, collects[0], c.want)
 			}
 		}
+	}
+}
+
+// keepStagedLegs is every step list a keep-staged claim sends, for the builder
+// walks: the steady two-robot pair and single-robot swap from the spare, and
+// both changeover shapes for a keep-staged to-claim. base is a claim fixture;
+// from and to are the walk's changeover pair, to being the keep-staged one.
+func keepStagedLegs(base, from, to *processes.NodeClaim) map[string][]protocol.ComplexOrderStep {
+	ks := *base
+	ks.KeepStaged = true
+	ksTo := *to
+	ksTo.KeepStaged = true
+	a, b := BuildTwoRobotSwapFromSpare(&ks)
+	two := buildTwoRobotChangeoverFromSpare(from, &ksTo)
+	single := buildSingleRobotChangeoverFromSpare(from, &ksTo, true)
+	return map[string][]protocol.ComplexOrderStep{
+		"keep-staged two_robot A":                 a,
+		"keep-staged two_robot B":                 b,
+		"keep-staged single_robot":                BuildSingleSwapFromSpare(&ks),
+		"keep-staged changeover two_robot supply": two.Roles.supply.steps,
+		"keep-staged changeover two_robot evac":   two.Roles.evac.steps,
+		"keep-staged changeover single_robot B":   single.StepsB,
 	}
 }

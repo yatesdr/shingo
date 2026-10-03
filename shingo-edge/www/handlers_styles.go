@@ -501,7 +501,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		// import value) is a client input problem — surface it as 400 with the
 		// store's message. Genuine DB faults stay 500.
 		status := http.StatusInternalServerError
-		if errors.Is(err, protocol.ErrInvalidSwapMode) {
+		if errors.Is(err, protocol.ErrInvalidSwapMode) || errors.Is(err, domain.ErrKeepStagedSpot) {
 			status = http.StatusBadRequest
 		}
 		writeError(w, status, err.Error())
@@ -634,7 +634,11 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// neither can be read back, so resolve the style first.
 	claim, _ := h.engine.StyleService().GetClaim(id)
 	if err := h.engine.StyleService().DeleteClaim(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, domain.ErrKeepStagedSpot) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	h.requestBackup("style-node-claim-deleted")

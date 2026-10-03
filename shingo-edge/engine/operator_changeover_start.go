@@ -87,11 +87,19 @@ func blockNodeSet(plan *changeoverPlan) []string {
 			out = append(out, p.CoreNodeName)
 		}
 	}
-	return out
+	// Every keep-staged spot either style names: a refill already with the
+	// fleet would land a spare the start reconcile cannot see coming.
+	return append(out, keepStagedSpotNames(plan.diffs)...)
 }
 
-// cancelNodeSet is the CHANGED diff nodes only — deliberately narrower than
-// blockNodeSet, and they must stay two separately named functions.
+// cancelNodeSet is the CHANGED diff nodes and the keep-staged spots — deliberately
+// narrower than blockNodeSet, and they must stay two separately named functions.
+//
+// A spot is in it whether or not its line changes: the start reconcile decides
+// every spot from what stands there and what is already with the fleet
+// (spotFlows), so a refill still wanted by an unchanged keep-staged claim that is
+// not yet with the fleet is cancelled here and made again by the reconcile a
+// moment later, never lost.
 //
 // Widening the BLOCK to a position is safe: it says "not yet", the operator presses
 // again. Widening the CANCEL to one is the Hopkinsville deadlock — and widening
@@ -108,7 +116,10 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 		}
 		out = append(out, diff.CoreNodeName)
 	}
-	return out
+	// And the keep-staged spots: a refill not yet with the fleet is cancelled
+	// rather than left to land a spare for the outgoing style, and to be counted
+	// as coming for the incoming one.
+	return append(out, keepStagedSpotNames(plan.diffs)...)
 }
 
 // cancelPreDispatchAtParticipants cancels every PRE-DISPATCH order sitting at a
@@ -151,7 +162,7 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 // Best-effort per order: one failure is logged and the rest proceed. A changeover
 // half-cleared is not worse than one not cleared at all, and refusing to start
 // over a single stuck abort would put the operator back where they were.
-func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64, error) {
+func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64, []domain.Order, error) {
 	var cancelled []int64
 	seen := map[int64]bool{}
 
@@ -173,11 +184,11 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 
 	nodes := cancelNodeSet(plan)
 	if len(nodes) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	live, err := e.db.ListActiveOrders()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reason := "cancelled at changeover start — the line is changing over"
 	for i := range live {
@@ -226,7 +237,7 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 			}
 		}
 	}
-	return cancelled, nil
+	return cancelled, live, nil
 }
 
 // nodesWithOrdersInFlight returns an operator-readable blocker per participating
@@ -343,6 +354,10 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	if err != nil {
 		return nil, err
 	}
+	// The keep-staged cells are decided under their prime locks from the cancel
+	// below, which clears their spots of orders not yet flown, to the last spot
+	// order, so a request on one of those lines cannot add to a spot between.
+	defer e.lockKeepStagedCells(keepStagedLines(plan.diffs))()
 
 	// Refuse while a participating node still has an order in flight.
 	//
@@ -374,7 +389,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// CANCEL FIRST, THEN GATE. Reversed, the gate would refuse on the very orders
 	// the cancel is about to remove and the fix would do nothing. Both read the
 	// plan, so both run after planChangeover.
-	cancelled, cerr := e.cancelPreDispatchAtParticipants(plan)
+	cancelled, live, cerr := e.cancelPreDispatchAtParticipants(plan)
 	if cerr != nil {
 		return nil, cerr
 	}
@@ -410,8 +425,24 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// its order count IS expected_orders — and before any order does. Unlike
 	// the cell kinds this is an EVENT trigger: the changeover arming is the
 	// edge, so there is no level and no hysteresis.
-	e.openChangeoverEpisode(changeover, orderPlan.OrderCount())
+	//
+	// The keep-staged spots are decided once each across the whole plan, from ONE
+	// node-bins read for all of them, before the episode opens so its expected
+	// order count includes them; their orders go after the plan's own.
+	outgoing, incoming := claimsOfDiffs(plan.diffs)
+	spots := changeoverSpots(outgoing, incoming, plan.nodes, orderPlan)
+	spotReads := e.readSpots(spots)
+	// What is already moving at each spot, from the rows the pre-dispatch cancel
+	// read: what it cancelled is gone, and a return already with the fleet means
+	// the spare there is leaving.
+	gone := make(map[int64]bool, len(cancelled))
+	for _, id := range cancelled {
+		gone[id] = true
+	}
+	flows := spotFlows(live, spots, gone, nil)
+	e.openChangeoverEpisode(changeover, orderPlan.OrderCount()+spotOrderCount(spots, spotReads, flows))
 	e.applyChangeoverPlan(changeover, orderPlan)
+	e.applyChangeoverSpots(spots, spotReads, flows, e.changeoverOrigin(changeover.ID))
 
 	final, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {

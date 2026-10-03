@@ -157,6 +157,15 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 		if runtime == nil {
 			continue
 		}
+		// THE KEEP-STAGED FLOOR, ahead of the level: a swap waiting at Core for a
+		// spare that is never coming is a state the level says nothing about, and
+		// it reaches cells that never auto-reorder. Not while a changeover is
+		// armed: its legs fill the slots, and the claim resolved here is the
+		// outgoing style's, which would judge the incoming spare wrong. The
+		// changeover's own start and cancel reconcile the spots.
+		if claim.KeepStaged && process.TargetStyleID == nil {
+			e.keepStagedFloor(node, runtime, claim)
+		}
 		e.sweepNodeLevel(node, runtime, claim)
 	}
 }
@@ -272,7 +281,10 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	// above CanAcceptOrders, so without the filter a departed leg stops the
 	// sweep here and the guards downstream never get asked. See leg_departure.go.
 	for _, o := range rows {
-		if !orderWorksTheCell(&o) {
+		// A keep-staged refill does not work the cell (isSpotRefill): read as
+		// working it, every refill trip would silence the keeper, and a dry market
+		// would silence it for good.
+		if !worksTheCell(&o, claim) {
 			continue
 		}
 		e.debugFn("demand_sweep: node %s below its level, but order %d (%s, %s) already points here",

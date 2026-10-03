@@ -489,7 +489,36 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 // UpsertClaim inserts or updates a claim and returns the row id. Validates
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
 // must declare an outbound destination).
+//
+// It does NOT run the dedicated-spot check: that is a property of the whole
+// table, so it runs once at the end of the caller's transaction
+// (CheckKeepStagedSpots). A door that writes one claim uses
+// UpsertClaimChecked; the composer, which writes several, calls the check
+// itself after its last write.
 func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
+	id, _, err := upsertClaim(db, in)
+	return id, err
+}
+
+// UpsertClaimChecked is UpsertClaim followed by the dedicated-spot check, for
+// a transaction that writes this one claim and nothing else.
+func UpsertClaimChecked(tx DBTX, in NodeClaimInput) (int64, []KeptSpot, error) {
+	id, prior, err := upsertClaim(tx, in)
+	if err != nil {
+		return 0, nil, err
+	}
+	var before []KeptSpot
+	if prior != nil {
+		before = append(before, *prior)
+	}
+	moved, err := CheckKeepStagedSpots(tx, before)
+	return id, moved, err
+}
+
+// upsertClaim is UpsertClaim, also returning the spot the row kept before
+// this write when it was a keep-staged claim (nil otherwise), read by the
+// same statement that finds the row: the check needs it to see a spot move.
+func upsertClaim(db DBTX, in NodeClaimInput) (int64, *KeptSpot, error) {
 	// Defense-in-depth: API ingress (apiUpsertStyleNodeClaim) trims
 	// these. Trim again here so a non-API caller can't bypass it.
 	// Internal write path; silent trim, no warning log.
@@ -510,7 +539,7 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	// single_robot needs inbound+outbound staging, so any default would only
 	// trade a mode error for a more misleading staging error.
 	if in.SwapMode == "" {
-		return 0, fmt.Errorf("%w: swap_mode is required", protocol.ErrInvalidSwapMode)
+		return 0, nil, fmt.Errorf("%w: swap_mode is required", protocol.ErrInvalidSwapMode)
 	}
 	// SwapMode allowlist, keyed on protocol.ConfigurableSwapModes() — the set of
 	// values that may be PERSISTED. It is deliberately NOT the editor dropdown:
@@ -525,7 +554,7 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	// must never persist; the allowlist also rejects typos and stale import
 	// values.
 	if !slices.Contains(protocol.ConfigurableSwapModes(), in.SwapMode) {
-		return 0, fmt.Errorf("%w: %q is not a configurable swap_mode", protocol.ErrInvalidSwapMode, in.SwapMode)
+		return 0, nil, fmt.Errorf("%w: %q is not a configurable swap_mode", protocol.ErrInvalidSwapMode, in.SwapMode)
 	}
 	// The two standing rules for a loader claim, asked once. It requires an
 	// OutboundDestination — without one the post-swap bin has nowhere to go and
@@ -551,7 +580,7 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	// loader claim must look like, and it costs nothing to keep saying so.
 	if in.IsLoaderNode() {
 		if in.OutboundDestination == "" {
-			return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
+			return 0, nil, fmt.Errorf("manual_swap claims require outbound_destination to be set")
 		}
 		in.AutoConfirm = true
 	}
@@ -562,11 +591,11 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 		in.Source = domain.ClaimSourceAdmin
 	}
 	if !domain.IsClaimSource(in.Source) {
-		return 0, fmt.Errorf("claim source must be admin, hmi, generated or cloned, got %q", in.Source)
+		return 0, nil, fmt.Errorf("claim source must be admin, hmi, generated or cloned, got %q", in.Source)
 	}
 	// The per-mode arms, one refusal, naming one field — see modeArmViolation.
 	if err := modeArmViolation(in); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach
 	// the supermarket from that press. Two styles on one press disagreeing
@@ -579,18 +608,27 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 	// four saves and the first three would each be refused by the other three.
 	warnIndexRobotSuppliesDrift(db, in)
 
-	// Withheld at the store as well as at ingress, for the same reason the
-	// guards above are: a non-API caller must not write what the API refuses.
-	// An absent flag leaves a stored one untouched — nothing here migrates data.
-	if in.KeepStaged != nil && *in.KeepStaged {
-		return 0, fmt.Errorf("keep_staged: %s", domain.KeepStagedWithheld)
-	}
-
 	var existingID int64
-	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
-		in.StyleID, in.CoreNodeName).Scan(&existingID)
+	var priorKeep bool
+	var priorSpot, priorSource string
+	var priorMode protocol.SwapMode
+	err := db.QueryRow(`SELECT id, keep_staged, inbound_staging, inbound_source, swap_mode FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
+		in.StyleID, in.CoreNodeName).Scan(&existingID, &priorKeep, &priorSpot, &priorSource, &priorMode)
 	if err == nil {
-		return existingID, updateClaim(db, existingID, in)
+		// An absent flag leaves a stored one in place, so a mode change that
+		// says nothing about keep_staged would carry a spare into a mode that
+		// refuses one. The input check above cannot see the stored flag. A save
+		// that keeps the mode is left alone: absent means untouched.
+		if priorKeep && in.KeepStaged == nil && priorMode != in.SwapMode &&
+			flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeepStaged] == flowspec.Forbidden {
+			return 0, nil, fmt.Errorf("keep_staged: %s keeps a spare at %s; clear keep_staged before changing it to %s",
+				in.CoreNodeName, priorSpot, in.SwapMode)
+		}
+		var prior *KeptSpot
+		if priorKeep && priorSpot != "" {
+			prior = &KeptSpot{StyleID: in.StyleID, Line: in.CoreNodeName, Spot: priorSpot, Source: priorSource}
+		}
+		return existingID, prior, updateClaim(db, existingID, in)
 	}
 
 	// INSERT takes the documented defaults for the absent-means-untouched
@@ -640,16 +678,17 @@ func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
 		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition),
 		in.Source, in.CalledBy, in.SourcePresetID, in.SourcePresetVersion)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if affected, _ := res.RowsAffected(); affected == 1 {
-		return res.LastInsertId()
+		id, err := res.LastInsertId()
+		return id, nil, err
 	}
 	if err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
 		in.StyleID, in.CoreNodeName).Scan(&existingID); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return existingID, updateClaim(db, existingID, in)
+	return existingID, nil, updateClaim(db, existingID, in)
 }
 
 // updateClaim writes the columns the caller expressed an opinion about.
@@ -715,6 +754,13 @@ func modeArmViolation(in NodeClaimInput) error {
 				return fmt.Errorf("second_paired_core_node must differ from paired_core_node (back position)")
 			}
 		}
+	}
+	// keep_staged in a mode whose row forbids it: refused here as at ingress
+	// (ValidateNodeClaim), by the same table, so an import cannot store a flag
+	// no swap of that mode reads.
+	if domain.ClaimInputHas(in, flowspec.KeepStaged) &&
+		flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeepStaged] == flowspec.Forbidden {
+		return fmt.Errorf("keep_staged: %s", domain.KeepStagedModesMessage)
 	}
 	// THE STRICT MODES READ ONE TABLE (D4). single_robot had no arm here at
 	// all; it now takes its whole row from flowspec.Steady through
@@ -895,6 +941,26 @@ func marshalAllowedPayloads(codes []string) string {
 // (liveClaims), and re-adding the same (style, node) claim revives it under
 // the same id.
 func DeleteClaim(db DBTX, id int64) error {
+	_, err := deleteClaim(db, id)
+	return err
+}
+
+// DeleteClaimChecked is DeleteClaim for a transaction that removes this one
+// claim. Removing a row cannot make two claims share a spot, so the check runs
+// only when the row kept one: clearing a spot is refused while orders still
+// deliver to it.
+func DeleteClaimChecked(tx DBTX, id int64) ([]KeptSpot, error) {
+	prior, err := deleteClaim(tx, id)
+	if err != nil || prior == nil {
+		return nil, err
+	}
+	return CheckKeepStagedSpots(tx, []KeptSpot{*prior})
+}
+
+// deleteClaim is DeleteClaim, returning the spot the row kept when it was a
+// keep-staged claim. The DELETE / retire returns the old values itself, so a
+// delete costs no extra read to know whether it cleared a spot.
+func deleteClaim(db DBTX, id int64) (*KeptSpot, error) {
 	// THE FLOOR EVERY DOOR STANDS ON. SaveFlow refuses a position move on the
 	// running style, but it was the only door that did — the legacy
 	// POST/DELETE /api/style-node-claims and the replenishment page's write
@@ -914,21 +980,30 @@ func DeleteClaim(db DBTX, id int64) error {
 	// "PLN_01 is running, move it to PLN_03 after the next changeover". This
 	// one sees a row, and it is the half that cannot be bypassed.
 	if err := refuseStrandingARunningBin(db, id); err != nil {
-		return err
+		return nil, err
 	}
 	var refs int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM changeover_node_tasks
 		WHERE from_claim_id = ?1 OR to_claim_id = ?1`, id).Scan(&refs); err != nil {
-		return fmt.Errorf("claim %d: count history references: %w", id, err)
+		return nil, fmt.Errorf("claim %d: count history references: %w", id, err)
 	}
+	const returning = ` RETURNING style_id, core_node_name, keep_staged, inbound_staging, inbound_source`
+	stmt := `DELETE FROM style_node_claims WHERE id=?` + returning
 	if refs > 0 {
-		_, err := db.Exec(`UPDATE style_node_claims
+		stmt = `UPDATE style_node_claims
 			SET retired_at = datetime('now'), updated_at = datetime('now')
-			WHERE id = ? AND retired_at IS NULL`, id)
-		return err
+			WHERE id = ? AND retired_at IS NULL` + returning
 	}
-	_, err := db.Exec(`DELETE FROM style_node_claims WHERE id=?`, id)
-	return err
+	var prior KeptSpot
+	var keep bool
+	err := db.QueryRow(stmt, id).Scan(&prior.StyleID, &prior.Line, &keep, &prior.Spot, &prior.Source)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // no live row by that id: nothing removed, as before
+	}
+	if err != nil || !keep || prior.Spot == "" {
+		return nil, err
+	}
+	return &prior, nil
 }
 
 // refuseStrandingARunningBin refuses deleting a claim whose position is (a) on

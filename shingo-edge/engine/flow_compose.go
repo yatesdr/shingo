@@ -531,6 +531,19 @@ func flowRowsAndFingerprint(db processes.DBTX, processID, toStyleID int64) (from
 	return from, to, fingerprint, nil
 }
 
+// keptSpots is the spots a style's stored claims keep, for the dedicated-spot
+// check to compare with what a save leaves.
+func keptSpots(stored []processes.NodeClaim) []processes.KeptSpot {
+	var out []processes.KeptSpot
+	for _, c := range stored {
+		if c.KeepStaged && c.InboundStaging != "" {
+			out = append(out, processes.KeptSpot{StyleID: c.StyleID, Line: c.CoreNodeName, Spot: c.InboundStaging,
+				Source: c.InboundSource})
+		}
+	}
+	return out
+}
+
 // ErrRunningPositionMove refuses the one mid-run edit the runtime cannot
 // follow: moving the RUNNING style off a position while its bin is on it.
 // THE SENTINEL LIVES IN domain, where the store can raise it. This alias is
@@ -724,6 +737,7 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 	//   - The NEW fingerprint is computed from the rows the transaction holds
 	//     and returned, rather than re-reading the whole flow after commit.
 	var result FlowSaveResult
+	var cleared []processes.KeptSpot
 	err = e.db.Transaction(func(tx *sql.Tx) error {
 		fromClaims, stored, current, err := flowRowsAndFingerprint(tx, processID, req.ToStyleID)
 		if err != nil {
@@ -761,6 +775,15 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 			}
 			result.Deleted++
 		}
+		// The dedicated-spot check, AFTER the deletes: the upserts above run
+		// first, so a spot moved from one cell to another in this save is named
+		// by both until the old cell's row goes. The spots the style kept
+		// before the save are the stored rows already in hand.
+		moved, err := processes.CheckKeepStagedSpots(tx, keptSpots(stored))
+		if err != nil {
+			return err
+		}
+		cleared = moved
 		// The new fingerprint, computed INSIDE the transaction and returned.
 		//
 		// ONE READ, NOT FOUR. It used to be recomputed after the commit, which
@@ -789,5 +812,8 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 	if err != nil {
 		return nil, err
 	}
+	// A spot this save moved or cleared may still hold a spare nothing keeps
+	// now; it goes back, after the commit (spotsCleared).
+	e.spotsCleared(cleared)
 	return &result, nil
 }
