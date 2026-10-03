@@ -6,7 +6,9 @@ type OrderView struct {
 	State         string
 	Complete      bool
 	Priority      int
-	Blocks        []BlockView
+	// Vehicle is the robot the order was pinned to, "" for any robot.
+	Vehicle string
+	Blocks  []BlockView
 }
 
 // BlockView is a read-only snapshot of a single block in a simulated order.
@@ -106,6 +108,7 @@ func orderToView(o *simulatedOrder) *OrderView {
 		State:         o.state,
 		Complete:      o.complete,
 		Priority:      o.priority,
+		Vehicle:       o.vehicle,
 	}
 	for _, b := range o.blocks {
 		v.Blocks = append(v.Blocks, BlockView{BlockID: b.blockID, Location: b.location, BinTask: b.binTask})

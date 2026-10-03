@@ -54,12 +54,19 @@ func isActiveRobotState(state string) bool {
 // So the pool is the answer: in-use robots by their real name and Busy, free
 // robots Available. The driver publishes it once per tick (see Driver.Fleet).
 //
-// TIER 3 OF THE RECOVERY DESTINATION FALLBACK STAYS UNREACHABLE IN SIM, and
-// that is not fixed here. It resolves "the node the robot is parked at", and
-// the driver has no position model — CurrentStation below is the order's first
-// block location for a busy robot and empty for a free one, neither of which is
-// where the robot is. A sim run exercises tiers 1 and 2; tier 3 needs a
-// position model that does not exist.
+// THE DECK IS REPORTED, so Core's carried-bin logic has something to read.
+// service.RobotCarryingBin keys on JackState: 1 = loaded at rest, 3 = empty at
+// rest, anything else = uncertain. A sim robot's deck is never mid-travel (a
+// block completes in one step), so it always reports one of the two at-rest
+// states, with JackIsFull/IsLoaded/LiftHeight agreeing the way a plant robot's
+// do. Before the deck model this reported JackState 0 and LiftHeight 0, which
+// the resolver reads as "uncertain" — every cancel in sim was an anomaly.
+//
+// CurrentStation is the robot's coarse position: where it last completed a
+// block, kept after its order ends (FleetRobot.At). That makes recovery tier 3
+// ("unload where the robot is parked") reachable in sim, but only as coarsely
+// as that model is — a robot driving between blocks still reports the last
+// point it worked at.
 func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 	d := s.typedDriver()
 	if d == nil {
@@ -69,11 +76,20 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 	}
 	robots := make([]fleet.RobotStatus, 0)
 	for _, r := range d.Fleet() {
+		jackState, liftHeight := 3, 0.0 // empty at rest
+		if r.Loaded {
+			jackState, liftHeight = 1, simLiftHeightLoaded // loaded at rest
+		}
 		robots = append(robots, fleet.RobotStatus{
 			VehicleID:    r.ID,
 			Connected:    true,
 			Available:    !r.Busy,
 			Busy:         r.Busy,
+			IsError:      r.Fault,
+			JackState:    jackState,
+			JackIsFull:   r.Loaded,
+			IsLoaded:     r.Loaded,
+			LiftHeight:   liftHeight,
 			BatteryLevel: 100,
 			Model:        "SimBot",
 			CurrentMap:   "sim",

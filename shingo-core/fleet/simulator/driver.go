@@ -116,6 +116,15 @@ type Driver struct {
 	// single-threaded.
 	fleetMu   sync.RWMutex
 	fleetSnap []FleetRobot
+
+	// robots is each named robot's physical state — deck, position, injected
+	// fault — plus the cancel-refusal toggle (deck_sim.go). Locked, because the
+	// dev HTTP routes write it from outside the driver goroutine.
+	robots robotState
+
+	// pinWaitLogged remembers which pinned orders have already said they are
+	// waiting for their robot, so a long wait logs once and not every tick.
+	pinWaitLogged map[string]bool
 }
 
 // FleetRobot is one member of the simulated fleet as the driver knows it:
@@ -124,13 +133,20 @@ type Driver struct {
 type FleetRobot struct {
 	ID   string
 	Busy bool
-	// At is the first block location of the order this robot is running, or ""
-	// when it is free. AN APPROXIMATION, and the only one available: the
-	// simulator has no position model, so this is where the work is, not where
-	// the robot is. It exists so a board renders somewhere rather than nowhere.
-	// Nothing that decides anything may read it — see the note on
-	// GetRobotsStatus about recovery tier 3.
+	// At is the location of the last block this robot COMPLETED, kept after its
+	// order ends — "" until it has completed one. A coarse position model: the
+	// robot is reported standing where it last did something, including while it
+	// drives to its next block. It used to be the busy order's FIRST block
+	// location and "" for a free robot, which put a robot whose order was
+	// cancelled after the pickup nowhere at all; the cancel-return scenario needs
+	// it standing where it lifted the bin.
 	At string
+	// Loaded is the deck: true when a load-shaped block was the last bin task
+	// this robot completed (or a scenario forced it). Reported as the jack state.
+	Loaded bool
+	// Fault is the injected fault toggle: reported as IsError, and the driver
+	// assigns the robot no new order while it is on.
+	Fault bool
 }
 
 // NewDriver builds a Driver from sim config. Exported so callers can construct
@@ -163,15 +179,26 @@ func NewDriver(sim *SimulatorBackend, cfg config.SimConfig, clk clock.Clock, rng
 		retention:  defaultRetention,
 		progress:   make(map[string]*orderProgress),
 		fleetSize:  cfg.FleetSize,
+
+		pinWaitLogged: make(map[string]bool),
 	}
+	d.robots.init()
 	// Mint the named fleet up front for a finite pool (sim.fleet_size in the
 	// YAML — 20 on the dev plant, 7 at Springfield). The infinite fleet mints
 	// on demand instead; see the freeRobots comment.
 	for i := 0; i < cfg.FleetSize; i++ {
-		d.mintedBots++
-		d.freeRobots = append(d.freeRobots, robotName(d.mintedBots))
+		d.freeRobots = append(d.freeRobots, d.mintRobot())
 	}
 	return d
+}
+
+// mintRobot names the next pool member and registers it with the robot state,
+// so the injection toggles can address it.
+func (d *Driver) mintRobot() string {
+	d.mintedBots++
+	id := robotName(d.mintedBots)
+	d.robots.mint(id)
+	return id
 }
 
 // robotName renders a pool slot as a plant-style vehicle ID. Two digits keeps
@@ -282,9 +309,7 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 		// sequence is identical for any order that never has to wait.
 		// An order retrying a deferred RUNNING already holds its robot (Fix
 		// A), so the full pool it counts toward is not full FOR IT.
-		if d.fleetSize > 0 && p.robotID == "" && d.robotsInUse >= d.fleetSize {
-			d.enqueue(now, p)
-			p.deadline = now.Add(time.Second)
+		if p.robotID == "" && d.waitForRobot(now, vid, ov.Vehicle, p) {
 			return
 		}
 		d.dequeue(p) // leaving CREATED this tick, unless the RUNNING report defers
@@ -296,7 +321,7 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 			return
 		}
 		if p.robotID == "" {
-			d.acquireRobot(p) // a retried attempt re-supplies the robot it holds
+			d.acquireRobot(p, ov.Vehicle) // a retried attempt re-supplies the robot it holds
 		}
 		// Carry a robot ID on the first RUNNING transition. Core gates the
 		// waybill — and thus the acknowledged→in_transit transition — on first
@@ -415,6 +440,11 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 				d.holdDeferred(p, now)
 				return
 			}
+			// The final block is still a block the robot physically ran, even
+			// though it is reported as FINISHED rather than CompleteBlock: its
+			// unload empties the deck. Applied before markDone, which forgets
+			// which robot ran it.
+			d.robots.blockCompleted(p.robotID, blocks[p.blockIndex].Location, blocks[p.blockIndex].BinTask)
 			d.markDone(p)
 			return
 		}
@@ -424,6 +454,9 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 			return
 		}
 		d.sim.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask, p.blockStart.Unix(), now.Unix())
+		// The deck follows the block whether or not an emitter heard it: the
+		// lift happened on the robot, not in Core.
+		d.robots.blockCompleted(p.robotID, b.Location, b.BinTask)
 		p.blockIndex++
 		p.blockStart = now
 		p.deadline = d.nextDeadline(now)
@@ -435,6 +468,32 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 // A robot is held from the moment an order departs CREATED (goes RUNNING) until
 // it reaches a terminal driver phase. With fleetSize 0 these are all no-ops and
 // the simulator behaves as the legacy infinite fleet.
+
+// waitForRobot holds an order in CREATED when no robot it may take is free,
+// and reports whether it did. "Full" means "no robot THIS order may take": a
+// pinned order waits for its own robot, and an unpinned one skips robots that
+// are faulted or already carrying a bin (see eligibleFree). With no pins,
+// faults or loaded decks that is exactly the old robotsInUse >= fleetSize test.
+//
+// The infinite fleet never holds an unpinned order here (robotFor mints), so
+// only a pinned wait reaches the hold for it; that wait stays out of the
+// finite-fleet queue metrics, which are zero for the infinite fleet by
+// contract.
+func (d *Driver) waitForRobot(now time.Time, vid, vehicle string, p *orderProgress) bool {
+	if d.robotFor(vehicle) {
+		return false
+	}
+	if d.fleetSize > 0 {
+		d.enqueue(now, p)
+	}
+	if vehicle != "" && !d.pinWaitLogged[vid] {
+		d.pinWaitLogged[vid] = true
+		log.Printf("[sim] order %s is pinned to %s and waits for it (busy, faulted or not in the fleet)",
+			vid, vehicle)
+	}
+	p.deadline = now.Add(time.Second)
+	return true
+}
 
 // enqueue marks an order as waiting for a free robot. Idempotent across the
 // ticks it spends queued (queuedSince is set once).
@@ -465,15 +524,11 @@ func (d *Driver) dequeue(p *orderProgress) {
 // answers no.
 func (d *Driver) publishFleet() {
 	snap := make([]FleetRobot, 0, len(d.freeRobots)+len(d.progress))
-	for vid, p := range d.progress {
+	for _, p := range d.progress {
 		if p.robotID == "" {
 			continue
 		}
-		at := ""
-		if ov := d.sim.GetOrder(vid); ov != nil && len(ov.Blocks) > 0 {
-			at = ov.Blocks[0].Location
-		}
-		snap = append(snap, FleetRobot{ID: p.robotID, Busy: true, At: at})
+		snap = append(snap, FleetRobot{ID: p.robotID, Busy: true})
 	}
 	for _, id := range d.freeRobots {
 		snap = append(snap, FleetRobot{ID: id, Busy: false})
@@ -487,23 +542,69 @@ func (d *Driver) publishFleet() {
 
 // Fleet returns the simulated fleet as of the last tick. Safe from any
 // goroutine; nil before the driver's first step.
+//
+// Busy is the tick's snapshot; deck, position and fault are read LIVE, so a
+// toggle set from the dev routes shows on the very next read rather than a
+// tick later.
 func (d *Driver) Fleet() []FleetRobot {
 	d.fleetMu.RLock()
-	defer d.fleetMu.RUnlock()
-	return append([]FleetRobot(nil), d.fleetSnap...)
+	out := append([]FleetRobot(nil), d.fleetSnap...)
+	d.fleetMu.RUnlock()
+
+	d.robots.mu.Lock()
+	defer d.robots.mu.Unlock()
+	for i := range out {
+		id := out[i].ID
+		out[i].At = d.robots.at[id]
+		out[i].Loaded = d.robots.loaded[id]
+		out[i].Fault = d.robots.fault[id]
+	}
+	return out
+}
+
+// eligibleFree returns the index in freeRobots of the robot an order may take,
+// or -1. A pinned order may take only its own robot, and only while it is not
+// faulted — a loaded deck does not stop it, because the pinned order is the
+// one that unloads it. An unpinned order takes the first (longest-idle) robot
+// that is neither faulted nor carrying a bin: handing a fresh pickup to a robot
+// with a bin already on its deck is a lift onto a full jack.
+func (d *Driver) eligibleFree(vehicle string) int {
+	for i, id := range d.freeRobots {
+		if vehicle != "" {
+			if id == vehicle && !d.robots.faulted(id) {
+				return i
+			}
+			continue
+		}
+		if !d.robots.faulted(id) && !d.robots.deckLoaded(id) {
+			return i
+		}
+	}
+	return -1
+}
+
+// robotFor reports whether an order pinned to vehicle ("" = any) can take a
+// robot this tick. The infinite fleet can always supply an unpinned order —
+// acquireRobot mints — but never invents a pinned robot: a pin names a robot
+// that must already exist.
+func (d *Driver) robotFor(vehicle string) bool {
+	if d.eligibleFree(vehicle) >= 0 {
+		return true
+	}
+	return vehicle == "" && d.fleetSize <= 0
 }
 
 // acquireRobot takes a robot from the pool and records its ID on the order.
-// For the finite fleet the caller has already confirmed one is free, so the
-// pre-minted free list is never empty here; for the infinite fleet the pool
-// grows by one name when it runs dry.
-func (d *Driver) acquireRobot(p *orderProgress) {
-	if len(d.freeRobots) == 0 {
-		d.mintedBots++
-		d.freeRobots = append(d.freeRobots, robotName(d.mintedBots))
+// The caller has already confirmed via robotFor that one is available; for the
+// infinite fleet with no eligible free robot, the pool grows by one name.
+func (d *Driver) acquireRobot(p *orderProgress, vehicle string) {
+	i := d.eligibleFree(vehicle)
+	if i < 0 {
+		d.freeRobots = append(d.freeRobots, d.mintRobot())
+		i = len(d.freeRobots) - 1
 	}
-	p.robotID = d.freeRobots[0]
-	d.freeRobots = append(d.freeRobots[:0], d.freeRobots[1:]...)
+	p.robotID = d.freeRobots[i]
+	d.freeRobots = append(d.freeRobots[:i], d.freeRobots[i+1:]...)
 
 	if d.fleetSize <= 0 {
 		return
@@ -674,6 +775,7 @@ func (d *Driver) gcProgress() {
 			d.releaseRobot(p)
 			d.dequeue(p)
 			delete(d.progress, vid)
+			delete(d.pinWaitLogged, vid)
 		}
 	}
 }

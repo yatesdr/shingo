@@ -41,7 +41,13 @@ type simulatedOrder struct {
 	// wrong group is a 600 kg robot sent for a 1500 kg load. Recorded so that
 	// can be asserted rather than assumed. Read via RobotGroupFor.
 	robotGroup string
-	blocks     []simulatedBlock
+	// vehicle is the robot the order was PINNED to (CreateOrderRequest.Vehicle),
+	// or "" for any robot. The sim driver honours it — a pinned order waits for
+	// that robot rather than taking whichever is free — because the cancel-return
+	// path pins its order to the robot carrying the bin, and a return driven by
+	// some other robot would be a robot unloading a deck it does not have.
+	vehicle string
+	blocks  []simulatedBlock
 	// terminalAt is when the order first entered a terminal state
 	// (FINISHED/STOPPED/FAILED); zero until then. The driver's eviction
 	// sweep (T2.3) deletes terminal orders older than a retention window.
@@ -181,6 +187,7 @@ func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Tran
 		priority:      req.Priority,
 		complete:      req.Complete,
 		robotGroup:    req.RobotGroup,
+		vehicle:       req.Vehicle,
 	}
 	for _, b := range req.Blocks {
 		order.blocks = append(order.blocks, simulatedBlock{
@@ -252,12 +259,19 @@ func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Ord
 }
 
 // CancelOrder sets the order state to STOPPED.
+//
+// In a sim build the dev routes can make it refuse instead (cancelRefused,
+// deck_sim.go): the order is left exactly as it was — RUNNING, robot busy — as
+// a vendor terminate that did not take. Every other build answers false there.
 func (s *SimulatorBackend) CancelOrder(vendorOrderID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	order, ok := s.orders[vendorOrderID]
 	if !ok {
 		return fmt.Errorf("simulator: order %s not found", vendorOrderID)
+	}
+	if s.cancelRefused() {
+		return fmt.Errorf("simulator: injected cancel refusal for order %s (cancel-fails is on)", vendorOrderID)
 	}
 	order.state = "STOPPED"
 	s.stampTerminalLocked(order, "STOPPED")
