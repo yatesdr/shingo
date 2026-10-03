@@ -842,9 +842,11 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 		if n, err := d.db.GetNodeByDotName(anchor); err != nil || n == nil || n.IsSynthetic {
 			continue // unknown or synthetic anchor — not this seam's job
 		}
+		// The STEP's part when it names one: a changeover supply carries the
+		// outgoing part on the order and names the incoming one on its fetch.
 		res := d.finder.FindSourceForNeed(SourceNeed{
 			SourceNode:   anchor,
-			PayloadCode:  order.PayloadCode,
+			PayloadCode:  resolvedStepPayload(step, order.PayloadCode),
 			DeliveryNode: order.DeliveryNode,
 			Intent:       IntentFull,
 			NodeLocal:    true,
@@ -972,7 +974,7 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 	if anchor != "" {
 		res := d.finder.FindSourceForNeed(SourceNeed{
 			SourceNode:   anchor,
-			PayloadCode:  order.PayloadCode,
+			PayloadCode:  resolvedStepPayload(*step, order.PayloadCode),
 			DeliveryNode: order.DeliveryNode,
 			Intent:       IntentFull,
 			NodeLocal:    true,

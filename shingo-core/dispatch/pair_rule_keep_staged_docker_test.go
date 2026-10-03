@@ -79,11 +79,8 @@ func TestPairRule_KeepStagedCombinedPairIsOneJob(t *testing.T) {
 			fetch := prPick(newSrc.Name)
 			if tc.twoPay {
 				// The new carrier is another part, named on its own pickup, and it
-				// comes from a node group, as a market is. Widen judges a pre-wait
-				// pickup at a CONCRETE node by the order's payload, not the step's
-				// (complex_steps.go widenSupplyPickups; P2 in the keep-staged SHAPE),
-				// which would park this row for a reason that has nothing to do
-				// with binsAtStep. A group anchor is not widened.
+				// comes from a node group, as a market is. (A concrete source is
+				// TestWiden_AsksASupplyPickupForItsOwnPart.)
 				newPay = tc.prefix + "-NEWPART"
 				testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: newPay, UOPCapacity: 100}), "new payload")
 				grpType, err := db.GetNodeTypeByCode("NGRP")
