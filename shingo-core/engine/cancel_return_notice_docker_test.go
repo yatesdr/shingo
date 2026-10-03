@@ -151,3 +151,34 @@ func TestCancelReturnNotice_AnOrdinaryOrderEndingReadsNothing(t *testing.T) {
 		t.Error("the return order's terminal event read nothing — the counter is not watching this engine")
 	}
 }
+
+// A DIG LEG IS CORE'S OWN ORDER: its uuid is minted by Core and the Edge has no
+// row for it, so a notice keyed on it is stored at the station and shown on no
+// order. The notice goes to the nearest ancestor, the order the Edge placed,
+// whose station row shows it under the cancelled order.
+func TestCancelReturnNotice_ADigLegsNoticeGoesToTheOrderTheEdgePlaced(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+
+	parent := &orders.Order{EdgeUUID: "crnd-parent", StationID: "edge.test", OrderType: "retrieve",
+		Status: protocol.StatusCancelled, Quantity: 1}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "the order the Edge placed")
+	bin, leg := seedCancelledCarry(t, db, "AMR-CRND", "CRND-NOCLAIM", "LINE-CRND")
+	_, err := db.DB.Exec(`UPDATE orders SET parent_order_id=$1, station_id=$2 WHERE id=$3`,
+		parent.ID, parent.StationID, leg.ID)
+	testutil.MustNoErr(t, err, "make the carrier a dig leg of the parent")
+	cacheRobot(eng, loadedDispatchable("AMR-CRND"))
+	eng.sweepCarriedBins()
+	assertNoRecoveryOrder(t, db, bin.ID)
+
+	if got, _ := binReturnNotices(t, db, leg.EdgeUUID); len(got) != 0 {
+		t.Errorf("notices keyed on the dig leg's own uuid = %+v, want none: the Edge has no row for it", got)
+	}
+	got, stations := binReturnNotices(t, db, parent.EdgeUUID)
+	if len(got) != 1 || got[0].State != protocol.BinReturnHeld || got[0].Reason == "" ||
+		stations[0] != parent.StationID {
+		t.Errorf("notices keyed on the parent = %+v to %v, want one held with the reason to %s",
+			got, stations, parent.StationID)
+	}
+}

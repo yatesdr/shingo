@@ -204,6 +204,7 @@ func (e *Engine) tryReturnCarriedBin(bin *bins.Bin, robotID string, robot fleet.
 // nobody to tell. Best-effort: a send that fails is logged, and the bin's
 // fate is still on the order page and in recovery_actions.
 func (e *Engine) notifyBinReturn(cancelled *orders.Order, bin *bins.Bin, state, destination, reason string) {
+	cancelled = e.orderTheEdgeHolds(cancelled)
 	if cancelled == nil || cancelled.StationID == "" || cancelled.EdgeUUID == "" {
 		return
 	}
@@ -218,6 +219,23 @@ func (e *Engine) notifyBinReturn(cancelled *orders.Order, bin *bins.Bin, state, 
 	}); err != nil {
 		e.logFn("engine: cancel return: notify %s of bin %d (%s): %v", cancelled.StationID, bin.ID, state, err)
 	}
+}
+
+// orderTheEdgeHolds is the order a notice about o's bin is keyed on: o itself,
+// or, for a compound child (a dig leg), its nearest ancestor with no parent.
+// Core mints a child's uuid and never sends it to the Edge, so a notice keyed
+// on it would be stored at the station and shown on no order; the root is the
+// order the station placed. One read per hop, only when a notice is sent. A
+// read that fails keeps what it has.
+func (e *Engine) orderTheEdgeHolds(o *orders.Order) *orders.Order {
+	for hops := 0; o != nil && o.ParentOrderID != nil && hops < 8; hops++ {
+		parent, err := e.db.GetOrder(*o.ParentOrderID)
+		if err != nil || parent == nil {
+			return o
+		}
+		o = parent
+	}
+	return o
 }
 
 // returnOrderEnded is the second half of the notice: a return order reaching a

@@ -24,7 +24,9 @@ package scenarios
 
 import (
 	"fmt"
+	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,18 +34,27 @@ import (
 	"shingo/integration/harness"
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/debuglog"
 	"shingo/protocol/router"
 
+	coreconfig "shingocore/config"
 	"shingocore/dispatch"
+	coreengine "shingocore/engine"
 	coremessaging "shingocore/messaging"
+	"shingocore/service"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
 	corepayloads "shingocore/store/payloads"
+	coreplantclaims "shingocore/store/plantclaims"
+	coreharness "shingocore/testharness"
+	"shingocore/www"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
+	edgemessaging "shingoedge/messaging"
 	"shingoedge/store/catalog"
+	edgeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	edgeharness "shingoedge/testharness"
 )
@@ -146,6 +157,46 @@ type ksrCell struct {
 	laneB        *corenodes.Node // case e only
 	robot        int
 	robots       map[string]string // vendor order -> robot
+
+	// case e only: the fleet reports its robots' decks, so Core's carried-bin
+	// watch can read the jack of the robot carrying the blocker.
+	deck *deckFleet
+	dig  ksrDig
+	// heldBlocker: case e-held only. No claim names the blocker's part, so the
+	// carried-bin return holds it on its robot, and the end checks expect it
+	// there.
+	heldBlocker bool
+}
+
+// ksrDig is what case e's moment saw at the cancel: the dig leg carrying the
+// blocker, its robot, its parent and every child.
+type ksrDig struct {
+	child    *coreorders.Order
+	robot    string
+	parentID int64
+	blocker  int64
+	kids     []*coreorders.Order
+}
+
+// startKsrCoreOnDeck is startKeepStagedCore with a fleet that lists robots and
+// their decks (deckFleet): the real engine, router and simulator, and a robot
+// report the scenario sets.
+func startKsrCoreOnDeck(t *testing.T, fl *deckFleet) kscCore {
+	t.Helper()
+	db := coreharness.OpenDB(t)
+	cfg := coreconfig.Defaults()
+	cfg.Messaging.StationID = "core"
+	eng := coreengine.New(coreengine.Config{AppConfig: cfg, DB: db, Fleet: fl, LogFunc: t.Logf})
+	eng.Start()
+	t.Cleanup(eng.Stop)
+	dbg, err := debuglog.New(64, nil)
+	mustNil(t, err, "debuglog")
+	r, stop, err := www.NewRouter(eng, dbg)
+	mustNil(t, err, "core router")
+	t.Cleanup(stop)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	return kscCore{eng: eng, sim: fl.SimulatorBackend, url: srv.URL}
 }
 
 type ksrOpts struct {
@@ -154,6 +205,9 @@ type ksrOpts struct {
 	// buriedB stocks B's market as one lane: the only B bin behind a
 	// blocker, so B's refill is a dig.
 	buriedB bool
+	// claimC: some line's consume claim sources the blocker's part (C) from
+	// B's market, so a carried blocker has a declared place to go back to.
+	claimC bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -162,8 +216,14 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	clock.SetDefault(kicks)
 	t.Cleanup(func() { clock.SetDefault(clock.Real()) })
 
-	c := &ksrCell{t: t, kicks: kicks, role: o.role, mode: o.mode, robots: map[string]string{}}
-	c.core = startKeepStagedCore(t)
+	c := &ksrCell{t: t, kicks: kicks, role: o.role, mode: o.mode, robots: map[string]string{},
+		heldBlocker: o.buriedB && !o.claimC}
+	if o.buriedB {
+		c.deck = newDeckFleet()
+		c.core = startKsrCoreOnDeck(t, c.deck)
+	} else {
+		c.core = startKeepStagedCore(t)
+	}
 	coreDB := c.core.eng.DB()
 	produce := o.role == protocol.ClaimRoleProduce
 
@@ -315,12 +375,50 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
 	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
+	if o.buriedB {
+		// The Edge's claims reach Core's mirror as in the plant: the publisher's
+		// report over the wire. The cancel-return policy reads that mirror.
+		dataSvc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{
+			Topic: "shingo.dispatch", CoreStation: "core",
+		})
+		subjects := router.NewSubject()
+		router.RegisterSubject(subjects, protocol.SubjectPlantClaims, dataSvc.HandlePlantClaims)
+		router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
+			subjects.Dispatch(env, p)
+		})
+	}
 	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
+	if o.buriedB {
+		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),
+			"publish plant claims")
+	}
 	c.settle()
+	if o.claimC {
+		// Another station's line draws C from B's market. Its claim reaches
+		// Core's mirror the way every claim does, by process; this cell's
+		// publisher owns KSR-PROC only, so the two do not overwrite each other.
+		mustNil(t, coreDB.ReplacePlantClaims("KSR-PROC-C",
+			[]coreplantclaims.StyleRow{{ProcessID: "KSR-PROC-C", StyleID: "KSR-STY-C", ConfigGen: 1, IsActive: true}},
+			[]coreplantclaims.ClaimRow{{ProcessID: "KSR-PROC-C", StyleID: "KSR-STY-C", CoreNodeName: "KSR-LINE-C",
+				Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: ksrPartC,
+				InboundSource: ksrMktB}}, 0), "a claim that sources C from B's market")
+	}
+	if o.buriedB {
+		for _, part := range []string{ksrPartA, ksrPartB, ksrPartC} {
+			srcs, err := coreDB.ReturnSourcesForPayload(part, nil)
+			mustNil(t, err, "return sources for "+part)
+			t.Logf("case e: Core's claim mirror sources %s from %v", part, srcs)
+		}
+		srcs, err := coreDB.ReturnSourcesForPayload(ksrPartA, nil)
+		mustNil(t, err, "return sources for "+ksrPartA)
+		if len(srcs) == 0 && o.role == protocol.ClaimRoleConsume {
+			t.Fatalf("Core's claim mirror names no source for %s after the publish", ksrPartA)
+		}
+	}
 	return c
 }
 
@@ -477,6 +575,13 @@ func (c *ksrCell) dump(label string) {
 func (c *ksrCell) robotFor(vid string) string {
 	if r, ok := c.robots[vid]; ok {
 		return r
+	}
+	// A recovery order is pinned to the robot already carrying the bin.
+	if c.deck != nil {
+		if r := c.deck.pinnedTo(vid); r != "" {
+			c.robots[vid] = r
+			return r
+		}
 	}
 	c.robot++
 	r := fmt.Sprintf("KSR-AMR-%d", c.robot)
@@ -874,6 +979,8 @@ type ksrMoment struct {
 	at func(c *ksrCell, co ksrCO)
 	// buriedB stocks B's market as a lane with B's only bin dug for.
 	buriedB bool
+	// claimC: a claim names the dig's blocker's part (see ksrOpts).
+	claimC bool
 }
 
 var ksrMoments = []ksrMoment{
@@ -929,34 +1036,9 @@ var ksrMoments = []ksrMoment{
 			c.notReached("B's refill finished but no B bin is on the spot")
 		}
 	}},
-	{name: "e", what: "while B's refill is a dig", buriedB: true, at: func(c *ksrCell, co ksrCO) {
-		c.spareLeaves(co)
-		var child *coreorders.Order
-		c.eventually("B's refill digging, its first leg with the fleet", func() bool {
-			for _, r := range co.refills {
-				parent := c.coreOf(r)
-				kids, err := c.core.eng.DB().ListChildOrders(parent.ID)
-				mustNil(c.t, err, "children")
-				for _, k := range kids {
-					if k.VendorOrderID != "" && !protocol.IsTerminal(k.Status) {
-						child = k
-						return true
-					}
-				}
-			}
-			return false
-		})
-		// The dig's first leg lifts the blocker and dwells at the lane with it,
-		// waiting for Core to give it somewhere to go.
-		c.drive(child, "RUNNING")
-		if !c.liftAt(child, child.SourceNode, true) {
-			c.notReached("the dig's first leg has no pickup at " + child.SourceNode)
-		}
-		c.drive(child, "WAITING")
-		if !c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID) {
-			c.notReached("B's lane is not held by the dig")
-		}
-	}},
+	{name: "e", what: "while B's refill is a dig", buriedB: true, claimC: true, at: ksrDigMoment},
+	{name: "e-held", what: "while B's refill is a dig, its blocker's part named by no claim", buriedB: true,
+		at: ksrDigMoment},
 	{name: "f", what: "with the changeover's swap robots at their waits", at: func(c *ksrCell, co ksrCO) {
 		c.spareLeaves(co)
 		r := c.refillFlying(co)
@@ -982,6 +1064,64 @@ var ksrMoments = []ksrMoment{
 			return true
 		})
 	}},
+}
+
+// ksrDigMoment runs the changeover until B's refill is a dig whose first leg
+// has lifted the blocker and waits at the lane with it.
+func ksrDigMoment(c *ksrCell, co ksrCO) {
+	c.spareLeaves(co)
+	var child *coreorders.Order
+	c.eventually("B's refill digging, its first leg with the fleet", func() bool {
+		for _, r := range co.refills {
+			parent := c.coreOf(r)
+			kids, err := c.core.eng.DB().ListChildOrders(parent.ID)
+			mustNil(c.t, err, "children")
+			for _, k := range kids {
+				if k.VendorOrderID != "" && !protocol.IsTerminal(k.Status) {
+					child = k
+					return true
+				}
+			}
+		}
+		return false
+	})
+	// The dig's first leg lifts the blocker and dwells at the lane with it,
+	// waiting for Core to give it somewhere to go.
+	c.drive(child, "RUNNING")
+	if !c.liftAt(child, child.SourceNode, true) {
+		c.notReached("the dig's first leg has no pickup at " + child.SourceNode)
+	}
+	// The deck reads loaded from the lift on.
+	robot := c.robotFor(child.VendorOrderID)
+	c.deck.set(robot, true, true)
+	c.eventually("Core's robot poll reads the dig robot's deck loaded", func() bool {
+		r, ok := c.core.eng.GetCachedRobotStatus(robot)
+		return ok && r.JackState == 1
+	})
+	c.drive(child, "WAITING")
+	if !c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID) {
+		c.notReached("B's lane is not held by the dig")
+	}
+	child = c.mustOrder(child.ID)
+	if child.ParentOrderID == nil {
+		c.notReached("the dig's leg has no parent")
+	}
+	kids, err := c.core.eng.DB().ListChildOrders(*child.ParentOrderID)
+	mustNil(c.t, err, "children at the cancel")
+	c.dig = ksrDig{child: child, robot: robot, parentID: *child.ParentOrderID, kids: kids}
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	for _, b := range bins {
+		if b.Label == "KSR-C-BLOCKER" {
+			if child.BinID != nil && *child.BinID != b.ID {
+				c.t.Logf("case e: the dig leg carries bin %d, not the blocker %d", *child.BinID, b.ID)
+			}
+			c.dig.blocker = b.ID
+			c.t.Logf("case e: at the cancel the blocker %s (payload %q, type %s) is at %s; dig leg %d (%s, %s->%s) on %s, parent %d, %d children",
+				b.Label, b.PayloadCode, b.BinTypeCode, c.nodeName(b.NodeID), child.ID, child.Status,
+				child.SourceNode, child.DeliveryNode, robot, c.dig.parentID, len(kids))
+		}
+	}
 }
 
 // ── the end state ───────────────────────────────────────────────────────────
@@ -1026,6 +1166,12 @@ func (c *ksrCell) assertRecovered() {
 			o.PayloadCode, o.Status, o.QueueReason)
 	}
 	for _, o := range active {
+		// A carried bin's return that has set its bin down is done. No station
+		// receipts it, so it waits for the delivered-order auto-confirm
+		// (staging.auto_confirm_delivered, 5 minutes by default), holding nothing.
+		if o.RecoversOrderID != nil && o.Status == protocol.StatusDelivered {
+			continue
+		}
 		if o.PayloadCode != ksrPartB {
 			c.t.Errorf("Core order %d (%s %s->%s %s) left %s (cause %q: %s)", o.ID, o.OrderType, o.SourceNode,
 				o.DeliveryNode, o.PayloadCode, o.Status, o.QueueCause, o.QueueReason)
@@ -1070,6 +1216,9 @@ func (c *ksrCell) assertRecovered() {
 
 	// Every B bin back in B's source, and B's source holding nothing of A's.
 	for _, b := range bins {
+		if c.heldBlocker && b.ID == c.dig.blocker {
+			continue // held on its robot: a person's (assertBlockerHeld)
+		}
 		if b.BinTypeID == c.typeB.ID && !c.inB(b.NodeID) {
 			c.t.Errorf("B bin %s is at %s, not back in %s", b.Label, c.nodeName(b.NodeID), ksrMktB)
 		}
@@ -1106,18 +1255,16 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s/%s", cl.role, cl.mode, m.name), func(t *testing.T) {
-				if m.buriedB {
-					// A cancel that lands while B's refill is a dig cancels the dig, and
-					// the blocker its leg was carrying is stranded at _TRANSIT. Returning a
-					// carried bin is cancel-return's work (a separate branch), not
-					// keep-staged's; on keep-staged alone this case needs a person.
-					t.Skip("person-needed on keep-staged alone: a cancelled dig strands its carried blocker; cancel-return returns it")
-				}
-				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB})
+				started := time.Now()
+				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()
+				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC})
 				co := c.startChangeover()
 				m.at(c, co)
 				c.dump("at the cancel: " + m.what)
 				mustNil(t, c.edge.Engine.CancelProcessChangeover(c.processID), "cancel")
+				if m.buriedB {
+					c.caseEReturn()
+				}
 
 				// Nobody touches anything.
 				c.quiet()
@@ -1143,7 +1290,289 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				c.dump("the end")
 				// 3. The end state.
 				c.assertRecovered()
+				if m.buriedB {
+					c.assertNothingCarried("the end")
+					c.assertNoTerminalReservations("the end")
+				}
 			})
 		}
 	}
+}
+
+// ── case e on the join: the carried blocker's return ────────────────────────
+
+func (c *ksrCell) mustOrder(id int64) *coreorders.Order {
+	c.t.Helper()
+	o, err := c.core.eng.DB().GetOrder(id)
+	mustNil(c.t, err, fmt.Sprintf("core order %d", id))
+	return o
+}
+
+// recoveryRows is every cancel-return / carried-bin recovery_actions row for
+// the bin, oldest first.
+func (c *ksrCell) recoveryRows(binID int64) []string {
+	c.t.Helper()
+	rows, err := c.core.eng.DB().DB.Query(`SELECT action, detail, actor FROM recovery_actions
+		WHERE target_type = 'bin' AND target_id = $1 ORDER BY id`, binID)
+	mustNil(c.t, err, "recovery actions")
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a, d, actor string
+		mustNil(c.t, rows.Scan(&a, &d, &actor), "scan recovery action")
+		out = append(out, a+" | "+actor+" | "+d)
+	}
+	return out
+}
+
+// onDeckOrders is every on-deck (carried-bin) order the bin has had.
+func (c *ksrCell) onDeckOrders(binID int64) []*coreorders.Order {
+	c.t.Helper()
+	ords, err := c.core.eng.DB().ListOrdersByBin(binID, 50)
+	mustNil(c.t, err, "orders of the blocker")
+	var out []*coreorders.Order
+	for _, o := range ords {
+		if o.SourceIntent == dispatch.SourceIntentOnDeck {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// inDeclaredGroup reports whether the node is, or sits under, a place some
+// claim declares as the source for the bin's payload (an empty: a declared
+// empties place for its type), and which.
+func (c *ksrCell) inDeclaredGroup(b *corebins.Bin) (string, []string, bool) {
+	c.t.Helper()
+	db := c.core.eng.DB()
+	var names []string
+	var err error
+	if b.PayloadCode != "" {
+		names, err = db.ReturnSourcesForPayload(b.PayloadCode, nil)
+	} else {
+		names, err = db.EmptiesPlacesForBinType(b.BinTypeID, nil)
+	}
+	mustNil(c.t, err, "declared places")
+	id := b.NodeID
+	for hops := 0; id != nil && hops < 5; hops++ {
+		n, err := db.GetNode(*id)
+		if err != nil {
+			break
+		}
+		for _, name := range names {
+			if n.Name == name {
+				return name, names, true
+			}
+		}
+		id = n.ParentID
+	}
+	return "", names, false
+}
+
+// assertNothingCarried: no bin at _TRANSIT or on any robot's carrier node.
+func (c *ksrCell) assertNothingCarried(when string) {
+	c.t.Helper()
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	for _, b := range bins {
+		if c.heldBlocker && b.ID == c.dig.blocker {
+			continue // held on its robot: a person's (assertBlockerHeld)
+		}
+		at := c.nodeName(b.NodeID)
+		if at == "_TRANSIT" || strings.HasPrefix(at, corebins.CarrierNodePrefix) {
+			c.t.Errorf("%s: bin %s (payload %q) is at %s", when, b.Label, b.PayloadCode, at)
+		}
+	}
+}
+
+// assertNoTerminalReservations: no reservation row of any kind (bin, slot,
+// mouth, occupancy) owned by a terminal Core order, and none on B's lane.
+func (c *ksrCell) assertNoTerminalReservations(when string) {
+	c.t.Helper()
+	rows, err := c.core.eng.DB().DB.Query(`SELECT r.order_id, o.status, r.resource_kind, r.state,
+		COALESCE(r.node_id, 0) FROM reservations r JOIN orders o ON o.id = r.order_id`)
+	mustNil(c.t, err, "reservations")
+	defer rows.Close()
+	for rows.Next() {
+		var oid, node int64
+		var st, kind, state string
+		mustNil(c.t, rows.Scan(&oid, &st, &kind, &state, &node), "scan reservation")
+		if protocol.IsTerminal(protocol.Status(st)) {
+			c.t.Errorf("%s: %s order %d still holds a %s reservation (%s) on node %q", when, st, oid, kind, state,
+				c.nodeName(&node))
+		}
+		if c.laneB != nil && node == c.laneB.ID {
+			c.t.Errorf("%s: order %d (%s) holds a %s reservation (%s) on B's lane", when, oid, st, kind, state)
+		}
+	}
+	if c.laneB != nil && c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID) {
+		c.t.Errorf("%s: B's lane is still held", when)
+	}
+}
+
+// caseEReturn follows the cancel while B's refill is a dig: the cascade, the
+// blocker parked on its robot, the carried-bin watch's verdict, and the return
+// to the end.
+func (c *ksrCell) caseEReturn() {
+	c.t.Helper()
+	d := c.dig
+	if d.child == nil || d.blocker == 0 {
+		c.notReached("case e saw no dig leg carrying the blocker")
+	}
+	db := c.core.eng.DB()
+
+	// 1. The cascade cancelled the dig parent and every non-terminal child.
+	c.eventually("the dig and its legs end", func() bool {
+		return protocol.IsTerminal(c.mustOrder(d.parentID).Status) && protocol.IsTerminal(c.mustOrder(d.child.ID).Status)
+	})
+	parent := c.mustOrder(d.parentID)
+	c.t.Logf("case e: dig parent %d is %s (cause %q: %s)", parent.ID, parent.Status, parent.QueueCause, parent.QueueReason)
+	if parent.Status != protocol.StatusCancelled {
+		c.t.Errorf("the dig parent %d ended %s, want cancelled", parent.ID, parent.Status)
+	}
+	for _, k := range d.kids {
+		now := c.mustOrder(k.ID)
+		c.t.Logf("case e: dig child %d (%s->%s) was %s at the cancel, now %s (cause %q: %s)", k.ID,
+			k.SourceNode, k.DeliveryNode, k.Status, now.Status, now.QueueCause, now.QueueReason)
+		if !protocol.IsTerminal(k.Status) && now.Status != protocol.StatusCancelled {
+			c.t.Errorf("dig child %d was %s at the cancel and ended %s, want cancelled", k.ID, k.Status, now.Status)
+		}
+	}
+
+	// 2. The blocker rides its robot (branch B), not _TRANSIT.
+	want := corebins.CarrierNodePrefix + d.robot
+	var at string
+	c.eventually("the blocker off _TRANSIT", func() bool {
+		b, err := db.GetBin(d.blocker)
+		mustNil(c.t, err, "blocker")
+		at = c.nodeName(b.NodeID)
+		return at != "_TRANSIT"
+	})
+	if at != want {
+		c.dump("STOP: blocker not on its robot")
+		c.t.Fatalf("STOP: the blocker is at %q after the cancel, want %s: the watch never sees it", at, want)
+	}
+	c.t.Logf("case e: the blocker is parked on %s", at)
+
+	// 3. The fleet stops the job; the deck stays loaded. The robot poll's watch
+	// decides.
+	c.deck.set(d.robot, false, true)
+	var verdict []string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		c.settle()
+		verdict = nil
+		for _, r := range c.recoveryRows(d.blocker) {
+			if strings.HasPrefix(r, "carried_bin_return_") {
+				verdict = append(verdict, r)
+			}
+		}
+		if len(verdict) > 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	for _, r := range c.recoveryRows(d.blocker) {
+		c.t.Logf("case e: recovery_actions row for the blocker: %s", r)
+	}
+	if len(verdict) == 0 {
+		c.dump("STOP: the watch made no decision")
+		c.t.Fatalf("STOP: the carried-bin watch neither returned nor held the blocker in 20s")
+	}
+	if strings.HasPrefix(verdict[0], "carried_bin_return_held") {
+		if !c.heldBlocker {
+			c.dump("case e: the blocker held on the robot")
+			c.t.Errorf("the carried-bin watch held the blocker instead of returning it: %s", verdict[0])
+			return
+		}
+		c.assertBlockerHeld(d, parent, verdict[0])
+		return
+	}
+	if c.heldBlocker {
+		c.t.Errorf("no claim names the blocker's part, yet the watch did not hold it: %v", verdict)
+		return
+	}
+	rets := c.onDeckOrders(d.blocker)
+	if len(rets) != 1 || len(verdict) != 1 {
+		c.t.Errorf("the watch ordered %d returns (%d verdict rows), want exactly one", len(rets), len(verdict))
+	}
+	if len(rets) == 0 {
+		c.t.FailNow()
+	}
+	ret := rets[0]
+	if ret.RecoversOrderID == nil || *ret.RecoversOrderID != d.child.ID {
+		c.t.Errorf("return %d recovers %v, want the cancelled dig leg %d", ret.ID, ret.RecoversOrderID, d.child.ID)
+	}
+	c.eventually("the return with the fleet", func() bool {
+		ret = c.mustOrder(ret.ID)
+		return ret.VendorOrderID != ""
+	})
+	rec := int64(0)
+	if ret.RecoversOrderID != nil {
+		rec = *ret.RecoversOrderID
+	}
+	c.t.Logf("case e: return order %d recovers_order_id=%d %s->%s vendor=%s pinned to %q", ret.ID, rec,
+		ret.SourceNode, ret.DeliveryNode, ret.VendorOrderID, c.deck.pinnedTo(ret.VendorOrderID))
+	if p := c.deck.pinnedTo(ret.VendorOrderID); p != d.robot {
+		c.t.Errorf("the return went to the fleet pinned to %q, want %s", p, d.robot)
+	}
+
+	// 4. The robot sets the blocker down.
+	c.deck.set(d.robot, true, true)
+	c.drive(ret, "RUNNING", "FINISHED")
+	c.deck.set(d.robot, false, false)
+	c.eventually("the return ends", func() bool {
+		return protocol.IsTerminal(c.mustOrder(ret.ID).Status) || c.mustOrder(ret.ID).Status == protocol.StatusDelivered
+	})
+	ret = c.mustOrder(ret.ID)
+	b, err := db.GetBin(d.blocker)
+	mustNil(c.t, err, "blocker after its return")
+	group, names, ok := c.inDeclaredGroup(b)
+	c.t.Logf("case e: return %d ended %s; the blocker is at %s (declared places for it: %v)", ret.ID, ret.Status,
+		c.nodeName(b.NodeID), names)
+	if !ok {
+		c.t.Errorf("STOP: the blocker landed at %s, in no group a claim declares for %q (declared: %v)",
+			c.nodeName(b.NodeID), b.PayloadCode, names)
+	} else {
+		c.t.Logf("case e: the blocker is in %s, a declared source for its payload", group)
+	}
+
+	// 5. End state of the episode.
+	c.tick()
+	c.assertNothingCarried("after the return")
+	c.assertNoTerminalReservations("after the return")
+}
+
+// assertBlockerHeld: with no claim naming the blocker's part there is nowhere
+// declared to take it, so the carried-bin return holds it on its robot, and the
+// station that placed the cancelled refill is told so on that refill's row. The
+// dig leg is Core's own order; the Edge has no row for it.
+func (c *ksrCell) assertBlockerHeld(d ksrDig, parent *coreorders.Order, verdict string) {
+	c.t.Helper()
+	c.t.Logf("case e-held: %s", verdict)
+	b, err := c.core.eng.DB().GetBin(d.blocker)
+	mustNil(c.t, err, "the held blocker")
+	if at := c.nodeName(b.NodeID); at != corebins.CarrierNodePrefix+d.robot {
+		c.t.Errorf("the held blocker is at %s, want on %s", at, corebins.CarrierNodePrefix+d.robot)
+	}
+	if rets := c.onDeckOrders(d.blocker); len(rets) != 0 {
+		c.t.Errorf("a held blocker has %d return orders, want none", len(rets))
+	}
+	row, err := c.edge.DB.GetOrderByUUID(parent.EdgeUUID)
+	if err != nil || row == nil {
+		c.t.Fatalf("the dig's parent %d (%s) is not an order the station holds: %v", parent.ID, parent.EdgeUUID, err)
+	}
+	var line string
+	c.eventually("the hold sentence on the cancelled refill's station row", func() bool {
+		c.settle()
+		line = c.edge.Engine.OrderService().BinReturnLines([]edgeorders.Order{*row})[row.ID]
+		return line != ""
+	})
+	c.t.Logf("case e-held: station row %d (%s %s->%s, %s) reads %q", row.ID, row.OrderType, row.SourceNode,
+		row.DeliveryNode, row.Status, line)
+	if !strings.Contains(line, ksrPartC) {
+		c.t.Errorf("the station row reads %q, want the hold naming %s", line, ksrPartC)
+	}
+	c.tick()
+	c.assertNoTerminalReservations("after the hold")
 }
