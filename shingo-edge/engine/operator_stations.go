@@ -233,9 +233,12 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		// cannot source were created hundreds of times per changeover, and every
 		// mechanism downstream — including the spare that is now deleted — was
 		// coping with orders that should never have existed. Refusing here
-		// creates nothing, so nothing churns; the level keeper re-asks.
-		if err := e.guardSourceKnownDry(node, claim); err != nil {
-			return nil, err
+		// creates nothing, so nothing churns; the level keeper re-asks. A pair
+		// only: a single-robot swap is one order and waits for stock.
+		if plan.Dispatch.StepsB != nil {
+			if err := e.guardSourceKnownDry(node, claim); err != nil {
+				return nil, err
+			}
 		}
 	}
 

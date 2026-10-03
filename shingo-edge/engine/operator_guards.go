@@ -8,7 +8,7 @@ import (
 	"shingoedge/store/processes"
 )
 
-// guardNoActiveSwap refuses to dispatch a new two-robot cycle on a node when
+// guardNoActiveSwap refuses to dispatch a new swap cycle on a node when
 // the runtime slots (ActiveOrderID / StagedOrderID) still reference orders
 // that are non-terminal — another swap is already in motion locally and
 // dispatching a second one would race with the first.
@@ -36,7 +36,7 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 		return nil // caller already short-circuited on claim==nil; defense.
 	}
 	if hasActiveSwap(e, runtime) {
-		return fmt.Errorf("node %s: two-robot swap already in progress — wait for the current cycle to complete or abort it before requesting more material", node.Name)
+		return fmt.Errorf("node %s: a swap is already in progress — wait for the current cycle to complete or abort it before requesting more material", node.Name)
 	}
 	return nil
 }
@@ -83,10 +83,11 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // and this guard does not pretend it can. Produce-direction pairs are not
 // covered; the consume direction, which is where 07-21 happened, is.
 //
-// NO MODE NAME. The caller gates on plan.Dispatch.RequiresActiveSwapGuard — a
-// declared property of the dispatch shape, set by the modes that build a
-// multi-leg pair — so this reads "is a pair about to be armed", never "is this
-// two_robot".
+// NO MODE NAME. The caller gates on the dispatch shape — the swap guard's flag
+// AND a second leg (StepsB) — so this reads "is a pair about to be armed",
+// never "is this two_robot". A single-robot swap is one order: refused, it
+// would not arm, and it is not churned by a dry source, so it is created and
+// waits for stock.
 func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.NodeClaim) error {
 	if node == nil || claim == nil {
 		return nil

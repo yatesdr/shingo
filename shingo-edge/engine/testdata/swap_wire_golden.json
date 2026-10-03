@@ -682,7 +682,7 @@
       "AutoConfirmA": false,
       "StepsB": null,
       "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": false
+      "RequiresActiveSwapGuard": true
     }
   },
   "consume/two_robot/base": {
@@ -4020,7 +4020,7 @@
       "AutoConfirmA": false,
       "StepsB": null,
       "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": false
+      "RequiresActiveSwapGuard": true
     }
   },
   "produce/two_robot/base": {

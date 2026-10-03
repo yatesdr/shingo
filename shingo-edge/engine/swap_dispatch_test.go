@@ -146,8 +146,10 @@ func TestBuildSwapDispatch_SingleRobot_OK(t *testing.T) {
 	if d.StepsB != nil {
 		t.Errorf("single_robot is single-order; StepsB should be nil")
 	}
-	if d.RequiresActiveSwapGuard {
-		t.Errorf("single_robot should not require swap guard")
+	// One line, one live swap: a second REQUEST while this one works the cell is
+	// refused. StepsB is nil, so no dry-source check: it is not a pair.
+	if !d.RequiresActiveSwapGuard {
+		t.Errorf("single_robot must require swap guard")
 	}
 }
 

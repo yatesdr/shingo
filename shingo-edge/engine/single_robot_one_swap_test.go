@@ -88,7 +88,7 @@ func oneSwapRequest(eng *Engine, role protocol.ClaimRole, nodeID int64) error {
 
 func TestOneLiveSwap_SecondRequestIsRefused(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot} {
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot} {
 		for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
 			t.Run(string(mode)+"/"+string(role), func(t *testing.T) {
 				t.Parallel()

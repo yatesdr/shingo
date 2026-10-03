@@ -46,7 +46,10 @@ type SwapDispatch struct {
 
 	// RequiresActiveSwapGuard true when the apply caller must run
 	// guardNoActiveSwap before dispatching. Set by modes that don't tolerate
-	// overlapping swaps (two_robot, two_robot_press_index).
+	// overlapping swaps (single_robot, two_robot, two_robot_press_index): one
+	// line, one live swap. Sequential tolerates it (its backfill is created on
+	// transit). A dispatch that also has StepsB arms a pair, and only a pair is
+	// checked against a dry source (guardSourceKnownDry).
 	RequiresActiveSwapGuard bool
 }
 
@@ -217,10 +220,11 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		}
 		stepsA := build(claim)
 		return &SwapDispatch{
-			CycleMode:    protocol.SwapModeSingleRobot,
-			ProcessNode:  claim.CoreNodeName,
-			StepsA:       stepsA,
-			AutoConfirmA: confirmPolicy(claim, stepsA),
+			CycleMode:               protocol.SwapModeSingleRobot,
+			ProcessNode:             claim.CoreNodeName,
+			StepsA:                  stepsA,
+			AutoConfirmA:            confirmPolicy(claim, stepsA),
+			RequiresActiveSwapGuard: true,
 		}, nil
 
 	case protocol.SwapModeTwoRobot:
