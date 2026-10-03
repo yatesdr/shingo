@@ -53,6 +53,8 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	flows := e.abortSpotOrdersNotFlown(spots, changeover.StartedAt)
 
 	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
+	// The line's bin an aborted leg left parked on its way out (changeover_cancel_park.go).
+	var parks []parkedBin
 	for _, task := range nodeTasks {
 		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 			if orderID == nil {
@@ -67,6 +69,9 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 			}
 			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
 				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
+			}
+			if p, ok := e.parkOf(order, task.ProcessNodeID); ok {
+				parks = append(parks, p)
 			}
 		}
 		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
@@ -110,10 +115,21 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// Redirect — start new changeover immediately to a different target style
 	// A redirect starts the next changeover at once, and its start reconciles
 	// every spot itself; the style being reverted to is not staying.
+	//
+	// The parks ride the spots' read; a redirect, which reads no spots here,
+	// reads the parks alone, and only when there are any.
+	var parkRows map[string]NodeBinInfo
 	if nextStyleID == nil || *nextStyleID == 0 {
-		e.applyChangeoverSpots(spots, e.readSpots(spots), flows, origin)
+		var reads map[string]spotRead
+		reads, parkRows = e.readSpotsAnd(spots, parkNames(parks))
+		e.applyChangeoverSpots(spots, reads, flows, origin)
+	} else {
+		_, parkRows = e.readSpotsAnd(nil, parkNames(parks))
 	}
 	release()
+	// After the spots' locks are let go: a park is decided under its own line's
+	// lock, which the spots may already have held.
+	e.finishParkedTrips(parks, parkRows, origin)
 
 	if nextStyleID != nil && *nextStyleID != 0 {
 		_, err := e.StartProcessChangeover(processID, *nextStyleID,

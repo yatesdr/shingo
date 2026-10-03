@@ -153,6 +153,7 @@ var orderCreationSites = map[string]string{
 	"operator_produce.go:primeBarePressIndexPositions":            "produce REQUEST: prime a bare press-index position",
 	"keep_staged_spot.go:refillSpot":                              "keep-staged spot: a plain retrieve from the inbound source (no wait: it lands on staging)",
 	"keep_staged_spot.go:returnSpare":                             "keep-staged spot: a wrong or unwanted spare back to its inbound source (no wait)",
+	"changeover_cancel_park.go:finishParkedTrips":                 "changeover cancel: the line's bin an aborted leg parked on staging, on to that leg's destination (no wait)",
 	"operator_quality_hold.go:RecallContainedPayload":             "quality: recall a contained payload",
 	"operator_quality_hold.go:ReleaseFromContainment":             "quality: release from containment (a creation, not a release door)",
 	"operator_quality_hold.go:SendBinToQualityHold":               "quality: send a bin to hold (a wait in front of a curtained pickup, S7)",

@@ -265,25 +265,45 @@ func keepStagedSpotNames(diffs []ChangeoverNodeDiff) []string {
 // readSpots asks Core about every spot in ONE call. A spot Core does not
 // answer for, or does not have, reads unknown and gets nothing.
 func (e *Engine) readSpots(changes []spotChange) map[string]spotRead {
+	reads, _ := e.readSpotsAnd(changes, nil)
+	return reads
+}
+
+// readSpotsAnd is readSpots with more nodes in the same call: also's rows come
+// back whole, by node name. Nothing to ask about, no call.
+func (e *Engine) readSpotsAnd(changes []spotChange, also []string) (map[string]spotRead, map[string]NodeBinInfo) {
 	reads := make(map[string]spotRead, len(changes))
-	if len(changes) == 0 || e.coreClient == nil || !e.coreClient.Available() {
-		return reads
+	extra := map[string]NodeBinInfo{}
+	if len(changes)+len(also) == 0 || e.coreClient == nil || !e.coreClient.Available() {
+		return reads, extra
 	}
-	names := make([]string, 0, len(changes))
+	names := make([]string, 0, len(changes)+len(also))
+	isSpot := make(map[string]bool, len(changes))
 	for _, ch := range changes {
 		names = append(names, ch.spot)
+		isSpot[ch.spot] = true
+	}
+	isAlso := make(map[string]bool, len(also))
+	for _, n := range also {
+		isAlso[n] = true
+		if !isSpot[n] {
+			names = append(names, n)
+		}
 	}
 	rows, _, err := e.coreClient.FetchNodeBins(names)
 	if err != nil {
-		e.logFn("keep-staged: read %d spot(s) at changeover: %v — no spot orders this time", len(names), err)
-		return reads
+		e.logFn("keep-staged: read %d node(s) at changeover: %v — no spot orders this time", len(names), err)
+		return reads, extra
 	}
 	for _, b := range rows {
-		if e.spotNodeKnown(b.NodeName) {
+		if isSpot[b.NodeName] && e.spotNodeKnown(b.NodeName) {
 			reads[b.NodeName] = spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare}
 		}
+		if isAlso[b.NodeName] {
+			extra[b.NodeName] = b
+		}
 	}
-	return reads
+	return reads, extra
 }
 
 // spotOrderCount is how many orders the spot decisions create, for the episode's

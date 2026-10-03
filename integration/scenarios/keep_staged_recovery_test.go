@@ -5,9 +5,11 @@
 // different part, carrier and market) starts and is cancelled at one moment of
 // the spot's handover: before A's spare leaves, after it leaves, while B's
 // refill flies, after B's spare lands, while B's refill digs it out of a lane,
-// and with the changeover's own swap robots waiting at the cell. Then nobody
-// touches anything: the fleet carries what it was given, Core's scanner passes,
-// messages flow. After that an operator REQUEST for A must run a normal A swap
+// with the changeover's own swap robots waiting at the cell, and, on a
+// single-robot cell, with the line's bin parked on outbound staging by the
+// changeover's leg. Then nobody touches anything: the fleet carries what it
+// was given, Core's scanner passes, messages flow. After that an operator
+// REQUEST for A must run a normal A swap (or fill a line the cancel left empty)
 // to the end, the level keeper's next ask must run the fast swap from a
 // standing A spare, and at the end there is one A spare on the spot or coming,
 // nothing of B in flight, nothing waiting, no lane held and every B bin back in
@@ -889,6 +891,40 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 	return legs, fast
 }
 
+// fill runs the delivery the trigger asks for on an empty line to the end: one
+// plain order to the line, carried by the fleet, confirmed by the operator.
+func (c *ksrCell) fill(label string, trigger func()) {
+	c.t.Helper()
+	before := c.lastID()
+	trigger()
+	c.tick()
+	var to []domain.Order
+	for _, o := range c.newRows(before) {
+		if o.OrderType == protocol.OrderTypeComplex {
+			c.dump(label)
+			c.t.Fatalf("%s: a swap leg %d on an empty line, want a delivery", label, o.ID)
+		}
+		if o.DeliveryNode == ksrLine {
+			to = append(to, o)
+		}
+	}
+	if len(to) != 1 {
+		c.dump(label)
+		c.t.Fatalf("%s: %d deliveries to the line, want 1", label, len(to))
+	}
+	d := to[0]
+	c.eventually(label+": the delivery landed and confirmed", func() bool {
+		c.fleetStep()
+		if c.edgeRow(d.ID).Status == protocol.StatusDelivered {
+			mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(d.ID, 1), "confirm")
+		}
+		return protocol.IsTerminal(c.edgeRow(d.ID).Status) && protocol.IsTerminal(c.coreOf(d).Status)
+	})
+	if s := c.coreOf(d).Status; s != protocol.StatusConfirmed {
+		c.t.Errorf("%s: delivery %d ended %s at Core, want confirmed", label, d.ID, s)
+	}
+}
+
 // ── the changeover and its moments ──────────────────────────────────────────
 
 // ksrCO is what the changeover start made.
@@ -981,6 +1017,13 @@ type ksrMoment struct {
 	buriedB bool
 	// claimC: a claim names the dig's blocker's part (see ksrOpts).
 	claimC bool
+	// singleRobot: the moment exists only in the single-robot changeover leg.
+	singleRobot bool
+	// lineEmpty: the cancel leaves the line without a bin, so the operator's
+	// REQUEST is answered by a plain delivery to the line, not a swap. Consume
+	// only: a produce line left empty has no request that fills it (every
+	// produce request builds a swap, whose lift at the empty line holds).
+	lineEmpty bool
 }
 
 var ksrMoments = []ksrMoment{
@@ -1064,6 +1107,63 @@ var ksrMoments = []ksrMoment{
 			return true
 		})
 	}},
+	{name: "g", what: "with the line's bin parked on outbound staging", singleRobot: true, lineEmpty: true,
+		at: ksrParkedMoment},
+}
+
+// ksrParkedMoment runs the single-robot changeover leg past its park: the
+// operator releases it, the robot lifts the line's bin and sets it down on
+// outbound staging, and the cancel comes before it collects the B spare.
+func ksrParkedMoment(c *ksrCell, co ksrCO) {
+	c.spareLeaves(co)
+	r := c.refillFlying(co)
+	c.drive(r, "FINISHED")
+	if len(co.legs) != 1 {
+		c.notReached(fmt.Sprintf("the single-robot changeover made %d legs, want 1", len(co.legs)))
+	}
+	leg := co.legs[0]
+	c.eventually("the changeover's leg with the fleet", func() bool {
+		c.fleetStep()
+		return c.coreOf(leg).VendorOrderID != ""
+	})
+	c.drive(c.coreOf(leg), "RUNNING", "WAITING")
+	c.eventually("the changeover's leg staged at Edge", func() bool {
+		return c.edgeRow(leg.ID).Status == protocol.StatusStaged
+	})
+	mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(leg.ID, edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}),
+		"release the changeover's leg")
+	c.settle()
+	o := c.coreOf(leg)
+	c.drive(o, "RUNNING")
+	if !c.blockDone(o, ksrLine, "JackLoad") || !c.blockDone(o, ksrOutStg, "JackUnload") {
+		c.notReached("the changeover's leg has no lift at the line or set-down on outbound staging")
+	}
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	for _, b := range bins {
+		if b.Label == "KSR-LINE-BIN" && c.nodeName(b.NodeID) == ksrOutStg {
+			return
+		}
+	}
+	c.notReached("the line's bin is not on outbound staging after the leg set it down")
+}
+
+// blockDone is the fleet reporting the order's first block at node with the
+// given task done, as the real poller does mid-order.
+func (c *ksrCell) blockDone(o *coreorders.Order, node, task string) bool {
+	c.t.Helper()
+	v := c.core.sim.GetOrder(o.VendorOrderID)
+	if v == nil {
+		return false
+	}
+	for _, b := range v.Blocks {
+		if b.Location == node && b.BinTask == task {
+			ok := c.core.sim.CompleteBlock(o.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0)
+			c.settle()
+			return ok
+		}
+	}
+	return false
 }
 
 // ksrDigMoment runs the changeover until B's refill is a dig whose first leg
@@ -1241,17 +1341,19 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 	type cell struct {
 		role protocol.ClaimRole
 		mode protocol.SwapMode
-		only string // the one moment run for this cell, "" for all
 	}
 	cells := []cell{
-		{protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, ""},
-		{protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, ""},
-		{protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, "c"},
-		{protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, "c"},
+		{protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot},
+		{protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot},
+		{protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot},
+		{protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot},
 	}
 	for _, cl := range cells {
 		for _, m := range ksrMoments {
-			if cl.only != "" && m.name != cl.only {
+			if m.singleRobot && cl.mode != protocol.SwapModeSingleRobot {
+				continue
+			}
+			if m.lineEmpty && cl.role != protocol.ClaimRoleConsume {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s/%s", cl.role, cl.mode, m.name), func(t *testing.T) {
@@ -1270,8 +1372,13 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				c.quiet()
 				c.dump("the cell left alone after the cancel")
 
-				// 1. The operator asks for A: a normal swap, to the end.
-				c.swap("REQUEST", c.operatorRequest)
+				// 1. The operator asks for A: a normal swap, to the end; on a line
+				// the cancel left empty, the delivery that fills it.
+				if m.lineEmpty {
+					c.fill("REQUEST", c.operatorRequest)
+				} else {
+					c.swap("REQUEST", c.operatorRequest)
+				}
 				c.quiet()
 				// 2. The level keeper asks for A: the fast swap from a standing spare.
 				spare := c.spareOnSpot()
