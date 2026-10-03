@@ -248,14 +248,24 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 			// dig do re-enter through the lane gate, and letting them demote the
 			// parent's tag would be the same bug with the clock turned round.
 			if IsExcavation(reservedBy) {
-				if _, err := tx.Exec(
-					`UPDATE reservations SET reserved_by=$1
+				// A row lock on the owner's own mouth row: the owner test comes
+				// first in the statement (OwnerLiveSQL's lock-order rule).
+				var live bool
+				if err := tx.QueryRow(
+					`WITH live AS (SELECT `+OwnerLiveSQL(2)+` AS ok),
+					 upd AS (UPDATE reservations SET reserved_by=$1
 					  WHERE order_id=$2 AND resource_kind='mouth' AND node_id=$3
 					    AND state IN ('pending','confirmed')
-					    AND COALESCE(reserved_by, '') <> $1`,
+					    AND COALESCE(reserved_by, '') <> $1
+					    AND (SELECT ok FROM live)
+					  RETURNING 1)
+					 SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
 					reservedBy, owner, lane,
-				); err != nil {
+				).Scan(&live, new(int)); err != nil {
 					return fmt.Errorf("reservations acquire-lanes: promote lane %d: %w", lane, err)
+				}
+				if !live {
+					return ErrOwnerEnded
 				}
 			}
 			continue // owner already holds this lane in this mode
@@ -264,21 +274,33 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 		case admitUpgrade:
 			// The owner holds this lane in a weaker mode and is now digging it for
 			// itself. UPDATE rather than INSERT: one owner on one lane is one row.
-			if _, err := tx.Exec(
-				`UPDATE reservations SET mode=$1, reserved_by=$2
+			var live bool
+			if err := tx.QueryRow(
+				`WITH live AS (SELECT `+OwnerLiveSQL(3)+` AS ok),
+				 upd AS (UPDATE reservations SET mode=$1, reserved_by=$2
 				  WHERE order_id=$3 AND resource_kind='mouth' AND node_id=$4
-				    AND state IN ('pending','confirmed')`,
+				    AND state IN ('pending','confirmed')
+				    AND (SELECT ok FROM live)
+				  RETURNING 1)
+				 SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
 				string(mode), reservedBy, owner, lane,
-			); err != nil {
+			).Scan(&live, new(int)); err != nil {
 				return fmt.Errorf("reservations acquire-lanes: upgrade lane %d: %w", lane, err)
 			}
+			if !live {
+				return ErrOwnerEnded
+			}
 		case admitFresh:
-			if _, err := tx.Exec(
+			res, err := tx.Exec(
 				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
-				 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4, $5)`,
+				 SELECT $1, 'mouth', $2, 'confirmed', $3, $4, $5 WHERE `+OwnerLiveSQL(1),
 				owner, lane, reservedBy, string(mode), clock.Now().UTC(),
-			); err != nil {
+			)
+			if err != nil {
 				return fmt.Errorf("reservations acquire-lanes: insert lane %d: %w", lane, err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return ErrOwnerEnded // the whole call rolls back: nothing is held for an ended order
 			}
 		}
 	}
@@ -805,11 +827,17 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 		// take. The dig row is gone; the inbound row is the picker's own and stays.
 		return HandOffPickerNotCollector, tx.Commit()
 	}
-	if _, err := tx.Exec(
+	ins, err := tx.Exec(
 		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
-		 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4, $5)`,
-		picker, laneID, reservedBy, string(ModeOutbound), clock.Now().UTC()); err != nil {
+		 SELECT $1, 'mouth', $2, 'confirmed', $3, $4, $5 WHERE `+OwnerLiveSQL(1),
+		picker, laneID, reservedBy, string(ModeOutbound), clock.Now().UTC())
+	if err != nil {
 		return HandOffNoDigRow, fmt.Errorf("reservations hand-off-lane: insert outbound row: %w", err)
+	}
+	if n, _ := ins.RowsAffected(); n == 0 {
+		// The picker has ended. The dig row is gone and nobody takes the lane, as
+		// when the picker is not the bin's collector: the lane is free.
+		return HandOffPickerNotCollector, tx.Commit()
 	}
 	return HandOffConverted, tx.Commit()
 }
@@ -876,23 +904,29 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 // no-ops — and the caller releases a row it did not take. The INSERT .. WHERE
 // NOT EXISTS decides and reports in one statement, so the answer is a property
 // of the row rather than of the interleaving.
-func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
-	res, err := db.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, created_at)
-		 SELECT $1, `+OccupancyKindSQL()+`, $2, 'confirmed', $3, $4
-		 WHERE NOT EXISTS (
-		   SELECT 1 FROM reservations
-		   WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2
-		     AND state IN ('pending','confirmed')
-		 )`,
+func AcquireOccupancy(db RowExecer, owner, nodeID int64) (bool, error) {
+	var live bool
+	var n int
+	err := db.QueryRow(
+		`WITH live AS (SELECT `+OwnerLiveSQL(1)+` AS ok),
+		 ins AS (
+		   INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, created_at)
+		   SELECT $1, `+OccupancyKindSQL()+`, $2, 'confirmed', $3, $4
+		   FROM live WHERE live.ok AND NOT EXISTS (
+		     SELECT 1 FROM reservations
+		     WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2
+		       AND state IN ('pending','confirmed')
+		   )
+		   RETURNING 1
+		 )
+		 SELECT (SELECT ok FROM live), (SELECT count(*) FROM ins)`,
 		owner, nodeID, "lane-occupancy", clock.Now().UTC(),
-	)
+	).Scan(&live, &n)
 	if err != nil {
 		return false, fmt.Errorf("reservations acquire-occupancy: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("reservations acquire-occupancy rows: %w", err)
+	if !live {
+		return false, ErrOwnerEnded
 	}
 	return n > 0, nil
 }

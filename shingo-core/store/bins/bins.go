@@ -1100,6 +1100,7 @@ func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool) er
 // lets the hard claim commit atomically with the reservation confirm.
 type binExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // Claim marks a bin as claimed by an order to prevent double-dispatch.
@@ -1130,14 +1131,25 @@ func ClaimTx(tx *sql.Tx, binID, orderID int64) error {
 }
 
 func claimBin(db binExecer, binID, orderID int64) error {
-	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3
-		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2),
-		orderID, binID, clock.Now().UTC())
+	// The owner test runs before the bin row is locked: the liveness CTE is
+	// evaluated ahead of the UPDATE's row locks (reservations.OwnerLiveSQL).
+	var live bool
+	var n int
+	err := db.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
+		upd AS (
+		  UPDATE bins SET claimed_by=$1, updated_at=$3
+		  WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
+		    AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2)+`
+		    AND (SELECT ok FROM live)
+		  RETURNING 1)
+		SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
+		orderID, binID, clock.Now().UTC()).Scan(&live, &n)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	if !live {
+		return reservations.ErrOwnerEnded
+	}
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}

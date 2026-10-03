@@ -54,13 +54,14 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 		EdgeUUID:     "recovery-reapply-1",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
-		Status:       "confirmed",
+		Status:       "in_transit", // claimed live, then confirmed below: an ended order takes no new hold
 		SourceNode:   storageNode.Name,
 		DeliveryNode: lineNode.Name,
 		BinID:        &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
+	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "seed")
 
 	testutil.MustNoErr(t, eng.Recovery().ReapplyOrderCompletion(order.ID, "op-recovery"), "ReapplyOrderCompletion")
 
@@ -148,13 +149,14 @@ func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
 		EdgeUUID:     "recovery-reapply-replay",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
-		Status:       "confirmed",
+		Status:       "in_transit", // claimed live, then confirmed below: an ended order takes no new hold
 		SourceNode:   srcRoot.Name + "." + srcSlot.Name,
 		DeliveryNode: dstRoot.Name + "." + dstSlot.Name,
 		BinID:        &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
+	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "seed")
 
 	testutil.MustNoErr(t, eng.Recovery().ReapplyOrderCompletion(order.ID, "op-recovery"), "ReapplyOrderCompletion")
 
@@ -259,12 +261,12 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 		EdgeUUID:  "recovery-release-1",
 		StationID: "line-1",
 		OrderType: "retrieve",
-		Status:    "cancelled",
+		Status:    "in_transit", // claimed live, then cancelled below: an ended order takes no new hold
 		BinID:     &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "seed")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
+	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "seed")
 
 	testutil.MustNoErr(t, eng.ReleaseTerminalBinClaim(bin.ID, "op-term"), "ReleaseTerminalBinClaim")
 

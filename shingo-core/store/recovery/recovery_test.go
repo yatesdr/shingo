@@ -32,12 +32,12 @@ func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
 	if err := bins.Create(db.DB, bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "repair-order-1", StationID: "edge.1", OrderType: "retrieve", Status: "confirmed", SourceNode: origin.Name, DeliveryNode: dest.Name, BinID: &bin.ID}
+	order := &orders.Order{EdgeUUID: "repair-order-1", StationID: "edge.1", OrderType: "retrieve", Status: "in_transit", SourceNode: origin.Name, DeliveryNode: dest.Name, BinID: &bin.ID}
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "simulated")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
+	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "simulated")
 	if err := recovery.RepairConfirmedOrderCompletion(db.DB, order.ID, bin.ID, dest.ID, true, nil); err != nil {
 		t.Fatalf("repair: %v", err)
 	}
@@ -126,9 +126,9 @@ func TestRepair_ScopesItsUnclaimAndCouplesTheReservation(t *testing.T) {
 
 	// ── ARM 1: the repairing order owns the claim. Cleared, reservation with it.
 	ownBin := mkBin("SCOPE-BIN-OWN")
-	owner := mkOrder("scope-repair-own", "confirmed", &ownBin.ID, destOwn.Name)
-	testdb.SeedOrderStatus(t, db, owner.ID, "confirmed", "simulated")
+	owner := mkOrder("scope-repair-own", "in_transit", &ownBin.ID, destOwn.Name)
 	testdb.ClaimBinForTest(t, db, ownBin.ID, owner.ID)
+	testdb.SeedOrderStatus(t, db, owner.ID, "confirmed", "simulated")
 	if countRes(ownBin.ID) == 0 {
 		t.Fatalf("fixture: expected a reservation on the own-claim bin before repair")
 	}
@@ -224,12 +224,12 @@ func TestCoverage_ReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
 	if err := bins.Create(db.DB, bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "cancelled-order", StationID: "edge.1", OrderType: "retrieve", Status: "cancelled", SourceNode: node.Name, BinID: &bin.ID}
+	order := &orders.Order{EdgeUUID: "cancelled-order", StationID: "edge.1", OrderType: "retrieve", Status: "in_transit", SourceNode: node.Name, BinID: &bin.ID}
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "simulated")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
+	testdb.SeedOrderStatus(t, db, order.ID, "cancelled", "simulated")
 	gotOrderID, err := recovery.ReleaseTerminalBinClaim(db.DB, bin.ID)
 	if err != nil {
 		t.Fatalf("release: %v", err)

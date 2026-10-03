@@ -127,7 +127,14 @@ func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64, partnerI
 	if partnerTaken == nil || partnerID == 0 {
 		partnerTaken = []int64{}
 	}
-	res, err := tx.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
+	// The owner test is taken before this UPDATE's row lock, the transaction's
+	// first (reservations.OwnerLiveSQL). The partner arm only reads the
+	// partner's row; nothing here locks a second order.
+	var live bool
+	var n int
+	err := tx.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
+		upd AS (
+		UPDATE nodes SET claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2
 		      AND NOT ((b.id = ANY($3::bigint[])
@@ -140,11 +147,17 @@ func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64, takenFirst []int64, partnerI
 		               AND EXISTS (SELECT 1 FROM orders p JOIN orders l ON l.id = $1
 		                    WHERE p.id = $4::bigint AND l.sibling_order_uuid = p.edge_uuid
 		                      AND p.status NOT IN (`+protocol.TerminalStatusSQLList()+`)))))
-		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2), orderID, nodeID, takenFirst, partnerID, partnerTaken)
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2)+`
+		  AND (SELECT ok FROM live)
+		RETURNING 1)
+		SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
+		orderID, nodeID, takenFirst, partnerID, partnerTaken).Scan(&live, &n)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	if !live {
+		return reservations.ErrOwnerEnded
+	}
 	if n == 0 {
 		return fmt.Errorf("slot %d claim refused: already claimed, occupied, or no pending reservation", nodeID)
 	}

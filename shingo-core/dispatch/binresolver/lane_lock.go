@@ -105,7 +105,7 @@ func (l *LaneLock) TryLockFor(laneID, orderID int64, beneficiary reservations.Di
 	if err == nil {
 		return true
 	}
-	if !errors.Is(err, reservations.ErrReservationConflict) {
+	if !errors.Is(err, reservations.ErrReservationConflict) && !errors.Is(err, reservations.ErrOwnerEnded) {
 		log.Printf("lanelock: acquire failed for lane %d order %d: %v (treated as held)", laneID, orderID, err)
 	}
 	return false

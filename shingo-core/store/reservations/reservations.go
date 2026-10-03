@@ -173,6 +173,77 @@ var ErrReservationConflict = fmt.Errorf("reservations: resource already reserved
 // on it today. It exists so the log line and any future caller can be honest.
 var ErrLaneDugByAnother = fmt.Errorf("reservations: bin stands in a lane held by another order's dig")
 
+// ErrOwnerEnded is an insert refused because the owning order is terminal. It is
+// neither a lost race nor a wait: the order ended after its caller read it, and
+// nothing is to be held for it. Callers stop: no queue reason, no fail, no retry.
+// ErrReservationConflict and ErrLaneDugByAnother are lost races, retried next
+// tick; this is not.
+var ErrOwnerEnded = fmt.Errorf("reservations: the owning order has ended")
+
+// OwnerLiveSQL is the one liveness test every reservation INSERT makes, inside
+// the insert statement itself: the owning order (bind parameter number param)
+// exists and is not terminal. Every insert into reservations uses it, so the
+// test cannot drift between them.
+//
+// FOR SHARE is what makes it hold against a terminalize running at the same
+// moment, not only one that has committed. TerminalizeOrder writes the status and
+// deletes the order's reservations in one transaction; under READ COMMITTED an
+// insert that only READ the row while that transaction was open would see the
+// old status, insert, and leave a row the terminalize's DELETE could not see
+// (TestReservations_NoneWrittenAlongsideAnOpenTerminalize). Locking the row makes
+// the insert wait for that transaction, then re-check the row as committed, and
+// insert nothing.
+//
+// THE RULE THAT KEEPS IT FROM DEADLOCKING: in every transaction that uses it,
+// the owner test is in the FIRST statement that takes a row lock. A terminalize
+// takes the order row and then the order's bins, nodes, order_bins and
+// reservations; a transaction that locked any of those first and then waited
+// here on the order row would close a cycle with it. So a writer whose
+// transaction starts with a DELETE or UPDATE puts the test in that statement
+// (ReplaceOrderBins, the mouth promote and upgrade), and a single-statement
+// writer carries it in its one statement. Inside a statement the test is a CTE
+// evaluated before the statement locks its target rows. The transactions, in
+// statement order, first lock marked *:
+//
+//	acquire (bin, slot)        *INSERT reservations
+//	AcquireOccupancy           *INSERT reservations
+//	AcquireLanesFor            advisory lane lock; per lane a plain read, then
+//	                           *UPDATE (promote/upgrade) or *INSERT
+//	HandOffLaneToPicker        advisory lane lock; *DELETE the dig owner's mouth
+//	                           row (the dig owner's, not the picker's); a plain
+//	                           read; INSERT the picker's row with the picker's
+//	                           test. The rows it locks belong to another order,
+//	                           whose terminalize does not wait on the picker.
+//	claimAndConfirm            plain read; *UPDATE bins (claim); epoch, audit,
+//	                           confirm
+//	ConfirmSlotClaimWithPartner *UPDATE nodes (ClaimSlotTx); confirm. The partner
+//	                           arm reads the partner's rows without locking them.
+//	ReplaceOrderBins           *DELETE order_bins (test in the same statement);
+//	                           INSERTs
+//	InsertOrderBin             *INSERT order_bins
+//	CreateCompoundChildren     *SELECT the parent FOR UPDATE; child rows; claims;
+//	                           the child's ledger INSERT tests the child, a row
+//	                           this transaction created and no other can lock.
+//
+// No transaction holds an order row for update while taking this share lock on
+// a different, existing order's row: CreateCompoundChildren's second order is
+// its own new child, and every other writer tests only the order it writes for.
+//
+// The lock is a share lock on the OWNER'S OWN order row, taken after any lane
+// advisory lock the caller holds. What it can wait on: a transaction updating
+// that order row — a terminalize, a status transition. Those take the row and
+// then touch only that order's rows (its status, its history, its own
+// reservations, bins and nodes claimed by it); none of them takes a lane
+// advisory lock or waits on a row this inserter holds, since the inserter's own
+// uncommitted rows are invisible to their deletes. HandOffLaneToPicker takes the
+// lane's advisory lock, deletes the dig owner's mouth row, then waits here on the
+// picker's order row; the picker's terminalize holds that row and waits on
+// nothing HandOff holds. No cycle.
+func OwnerLiveSQL(param int) string {
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM orders o WHERE o.id = $%d AND o.status NOT IN (%s) FOR SHARE OF o)`,
+		param, protocol.TerminalStatusSQLList())
+}
+
 // Acquire inserts a bin reservation row for (orderID, binID) in state "pending".
 // reservedBy is the actor tag for forensics. (The former reason + expiresAt params
 // are gone in v44 — reason was always "", and expires_at is retired as a reaping
@@ -297,7 +368,7 @@ func AcquireSlot(db RowExecer, orderID, nodeID int64, reservedBy string) error {
 // reading is by definition a mutual miss — which is the only way left to reach
 // the state. One confirmed occurrence is what earns the advisory lock.
 func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string) error {
-	var dugByAnother bool
+	var ownerLive, dugByAnother bool
 	var inserted int
 	err := db.QueryRow(
 		// BINS ONLY. `$2 = 'bin'` is the whole scope statement; see AcquireSlot for
@@ -316,22 +387,26 @@ func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string)
 		        AND `+DigExclusionSQL("dig_hold.order_id", 1, 7)+`
 		   ) AS blocked
 		 ),
+		 live AS (SELECT `+OwnerLiveSQL(1)+` AS ok),
 		 ins AS (
 		   INSERT INTO reservations (order_id, resource_kind, bin_id, node_id, state, reserved_by, created_at)
 		   SELECT $1, $2,
 		     CASE WHEN $2 = 'bin' THEN $3::bigint END,
 		     CASE WHEN $2 <> 'bin' THEN $3::bigint END,
 		     'pending', $4, $5
-		   FROM dug WHERE NOT dug.blocked
+		   FROM dug, live WHERE NOT dug.blocked AND live.ok
 		   ON CONFLICT DO NOTHING
 		   RETURNING 1
 		 )
-		 SELECT (SELECT blocked FROM dug), (SELECT count(*) FROM ins)`,
+		 SELECT (SELECT ok FROM live), (SELECT blocked FROM dug), (SELECT count(*) FROM ins)`,
 		orderID, string(ref.Kind), ref.ID, reservedBy, clock.Now().UTC(),
 		string(ModeDig), laneOwner,
-	).Scan(&dugByAnother, &inserted)
+	).Scan(&ownerLive, &dugByAnother, &inserted)
 	if err != nil {
 		return fmt.Errorf("reservations acquire: %w", err)
+	}
+	if !ownerLive {
+		return ErrOwnerEnded
 	}
 	if dugByAnother {
 		return ErrLaneDugByAnother

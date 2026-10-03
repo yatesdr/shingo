@@ -113,9 +113,14 @@ func TestCompoundDig_ParentCancelledBeforeTheWrite(t *testing.T) {
 	f.cancel(t)
 	ended := testdb.RequireOrder(t, f.db, f.order.EdgeUUID)
 
-	err := f.d.PlanBuriedReshuffle(f.order, f.buried) // the scanner's stale row
-	if !errors.Is(err, ErrParentGone) {
-		t.Fatalf("PlanBuriedReshuffle = %v, want ErrParentGone: the caller must stop, not fail or park", err)
+	// The first thing the pass takes for the dead parent is its lane lock, and a
+	// lane row is a reservation: its insert refuses an ended owner
+	// (reservations.OwnerLiveSQL), so the pass stops there, a layer before the
+	// compound write would refuse with ErrParentGone (the store pin below holds
+	// that one on its own). Either way it stops: nothing is written or held, and
+	// the order is neither failed nor parked.
+	if err := f.d.PlanBuriedReshuffle(f.order, f.buried); err == nil { // the scanner's stale row
+		t.Fatal("PlanBuriedReshuffle planned a dig for an ended order")
 	}
 	f.nothingLeftBehind(t)
 	if o := testdb.RequireOrder(t, f.db, f.order.EdgeUUID); o.QueueCause != ended.QueueCause ||
@@ -208,8 +213,10 @@ func TestCompoundDig_RequesterDigForAnEndedRequester(t *testing.T) {
 
 	res := f.d.proposeLaneClearDig(f.sc.Lane, target, f.order)
 
-	if res.outcome != laneClearParentGone {
-		t.Fatalf("outcome %v (%v), want laneClearParentGone", res.outcome, res.err)
+	// The lane lock refuses the ended requester before the compound write can
+	// (both are reservation-guarded); either refusal is a stop with nothing held.
+	if res.outcome != laneClearParentGone && res.outcome != laneClearLaneBusy {
+		t.Fatalf("outcome %v (%v), want a refusal: laneClearParentGone or the lane lock's laneClearLaneBusy", res.outcome, res.err)
 	}
 	f.nothingLeftBehind(t)
 }

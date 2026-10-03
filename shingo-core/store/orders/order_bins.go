@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"shingocore/domain"
+	"shingocore/store/reservations"
 )
 
 // OrderBin is the order-bin junction domain type. The struct lives in
@@ -67,8 +68,19 @@ func ReplaceOrderBins(db *sql.DB, orderID int64, rows []OrderBinRow) error {
 		return fmt.Errorf("replace order_bins: begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id = $1`, orderID); err != nil {
+	// THE OWNER TEST IS THE FIRST STATEMENT, because the DELETE is the first
+	// lock: a terminalize holds the order row and deletes these rows, so taking
+	// them first and then waiting on the order row is a cycle. The CTE takes the
+	// order row (reservations.OwnerLiveSQL) before the DELETE locks anything, in
+	// the same statement; the inserts after it run under that lock.
+	var live bool
+	if err := tx.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
+		del AS (DELETE FROM order_bins WHERE order_id = $1 AND (SELECT ok FROM live) RETURNING 1)
+		SELECT (SELECT ok FROM live), (SELECT count(*) FROM del)`, orderID).Scan(&live, new(int)); err != nil {
 		return fmt.Errorf("replace order_bins: clear order %d: %w", orderID, err)
+	}
+	if !live {
+		return reservations.ErrOwnerEnded
 	}
 	for _, r := range rows {
 		if _, err := tx.Exec(
@@ -105,8 +117,8 @@ func ReplaceOrderBins(db *sql.DB, orderID int64, rows []OrderBinRow) error {
 // stale one while reporting success. The unique index (v80) is what makes either
 // possible.
 func InsertOrderBin(db *sql.DB, orderID, binID int64, stepIndex int, action, nodeName, destNode string) error {
-	_, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
-		VALUES ($1, $2, $3, $4, $5, $6)
+	res, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
+		SELECT $1, $2, $3, $4, $5, $6 WHERE `+reservations.OwnerLiveSQL(1)+`
 		ON CONFLICT (order_id, bin_id) DO UPDATE
 		SET step_index = EXCLUDED.step_index,
 		    action     = EXCLUDED.action,
@@ -115,6 +127,9 @@ func InsertOrderBin(db *sql.DB, orderID, binID int64, stepIndex int, action, nod
 		orderID, binID, stepIndex, action, nodeName, destNode)
 	if err != nil {
 		return fmt.Errorf("insert order_bin: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return reservations.ErrOwnerEnded
 	}
 	return nil
 }

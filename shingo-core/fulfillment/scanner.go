@@ -511,6 +511,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// sourcing under the failing leg's code; next tick it re-enters via the BinID
 	// branch and re-confirms (owner-idempotent).
 	if err := s.dispatcher.ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
+		if errors.Is(err, reservations.ErrOwnerEnded) {
+			return false // the order ended after this pass read it: nothing claimed, nothing to requeue
+		}
 		s.logFn("fulfillment: confirm-at-dispatch for order %d failed: %v", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseClaimFailed,
 			dispatch.QueueParams{Payload: order.PayloadCode})
@@ -640,6 +643,9 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// step, before the fleet call — same Rule-1 step as the fresh path. On failure
 	// keep the soft holds and park in sourcing; next tick re-confirms.
 	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
+		if errors.Is(err, reservations.ErrOwnerEnded) {
+			return false // the order ended after this pass read it: its row is not touched
+		}
 		// ── "KEEP THE HOLD AND RETRY" NEEDS THERE TO STILL BE A HOLD ──────
 		//
 		// The sentence above is the whole premise of this arm, and when it is false

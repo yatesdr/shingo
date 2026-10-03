@@ -10,6 +10,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/store"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // isConcreteStorageDropoff reports whether a delivery node is a concrete
@@ -481,8 +482,16 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	// inconsistency the birth-rung move ended rather than created. Both are
 	// retried by the complex-scoped scanner, and each wrote queue_reason for the
 	// Edge push.
+	// THIS IS NOT THE GUARD AGAINST A CANCELLED ORDER. MoveToSourcing skips a
+	// sourcing→sourcing move without touching the row, and a complex order is born
+	// sourcing, so for these orders the CAS below never runs and a cancel that
+	// landed after the scanner read the order is not seen here. The guard is in
+	// the reservation statements: every insert takes the owner's row and refuses
+	// a terminal one (reservations.OwnerLiveSQL), and the refusal stops this pass
+	// (ownerEnded). The fleet handover's own CAS (handoverToFleet) is the last
+	// one before a robot moves.
 	if err := d.lifecycle.MoveToSourcing(order, "scanner", "reserving source bins"); err != nil {
-		// Refused CAS = another actor terminalized or moved this order while we
+		// Refused CAS = another actor moved this order out of queued while we
 		// held a stale snapshot. Everything below reserves bins and ends in a
 		// fleet dispatch, so yield rather than commit robots for an order that
 		// is no longer ours.
@@ -523,6 +532,10 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	// holds anything, so a crash leaves a `sourcing` order whose pending holds the
 	// owner-liveness reaper reclaims — not a `queued` order stranded with claimed bins.
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
+	if ownerEnded(rerr) {
+		d.dbg("complex: order %d ended before its source reserve: nothing held", order.ID)
+		return nil, dispatchStep{done: true, err: rerr}
+	}
 	if rerr != nil {
 		// A DATABASE ERROR, AND THE ROW SAYS SO. This arm parked the order in
 		// `sourcing` and wrote nothing, so an order stuck behind a database that
@@ -562,6 +575,10 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	// another order between reserve and confirm) requeues the attempt; a malformed
 	// order (no source pickup) fails.
 	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
+		if ownerEnded(cerr) {
+			d.dbg("complex: order %d ended before its claims: nothing claimed", order.ID)
+			return nil, dispatchStep{done: true, err: cerr}
+		}
 		var pe *planningError
 		if errors.As(cerr, &pe) && pe.Code == codeClaimFailed {
 			d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseClaimFailed,
@@ -575,6 +592,12 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 
 	return assigned, dispatchStep{}
 }
+
+// ownerEnded reports a reservation refused because its order has ended: a
+// cancel landed after the caller read the order. The caller stops — nothing is
+// held, nothing is written on the row, nothing is retried — and says so only at
+// debug.
+func ownerEnded(err error) bool { return errors.Is(err, reservations.ErrOwnerEnded) }
 
 // dispatchComplexToFleet performs the guardless happy-path tail of complex
 // dispatch (Phase E): split the resolved steps at the wait boundary, create the
@@ -704,6 +727,10 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// wall that lane for the whole dwell — the mistake the gated arm exists to
 	// avoid, arrived at from the other direction.
 	if err := d.commitToFleet(order, req, "scanner", d.planNodes(preWait)...); err != nil {
+		if ownerEnded(err) {
+			d.dbg("complex: order %d ended before its fleet handover: nothing sent", order.ID)
+			return err
+		}
 		d.failOrderInternal(order, "fleet_failed", err.Error())
 		return err
 	}
@@ -1039,6 +1066,10 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 		// one wrote nothing, so two branches of one if/else disagreed about whether
 		// a wait gets a sentence. A reserve error is a database error: it resolves
 		// on its own and the scanner replays.
+		if ownerEnded(serr) {
+			d.dbg("complex: order %d ended before its slot reserve: nothing held", order.ID)
+			return dispatchStep{done: true, err: serr}
+		}
 		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed,
 			QueueParams{Destination: order.DeliveryNode})

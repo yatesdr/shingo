@@ -740,6 +740,9 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 			claimErr = a.db.ConfirmSlotClaim(node.ID, order.ID, takenFirst)
 		}
 		if err := claimErr; err != nil {
+			if ownerEnded(err) {
+				return err // the order ended: nothing is claimed, nothing requeued
+			}
 			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("confirm slot claim %s for order %d: %v", sn.nodeName, order.ID, err)}
 		}
 		a.db.AppendAudit("node", node.ID, "slot_claimed", "",
@@ -775,6 +778,9 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 			// RemainingUOP is nil for complex intake (Edge threads it at release,
 			// not intake) — same as the old ApplyComplexPlan call.
 			if err := a.binManifest.ConfirmClaim(rp.binID, order.ID, nil); err != nil {
+				if ownerEnded(err) {
+					return err // the order ended: nothing is claimed, nothing requeued
+				}
 				return &planningError{
 					Code:   codeClaimFailed,
 					Detail: fmt.Sprintf("confirm claim bin %d for order %d: %v", rp.binID, order.ID, err),
@@ -830,7 +836,11 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 				DestNode:  destinations[cb.binID],
 			})
 		}
-		if err := a.db.ReplaceOrderBins(order.ID, rows); err != nil {
+		if err := a.db.ReplaceOrderBins(order.ID, rows); ownerEnded(err) {
+			// The order ended after its claims: the junction is not written, and
+			// the pass stops here rather than reaching the fleet handover.
+			return err
+		} else if err != nil {
 			log.Printf("dispatch: record order_bins for order %d: %v", order.ID, err)
 		}
 		log.Printf("dispatch: complex order %d has %d pickups — per-bin destinations recorded in order_bins",
