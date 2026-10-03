@@ -46,6 +46,15 @@ CREATE TABLE admin_users (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE bin_returns (
+		order_uuid   TEXT PRIMARY KEY,
+		bin_label    TEXT NOT NULL DEFAULT '',
+		payload_code TEXT NOT NULL DEFAULT '',
+		state        TEXT NOT NULL,
+		destination  TEXT NOT NULL DEFAULT '',
+		reason       TEXT NOT NULL DEFAULT '',
+		updated_at   TEXT NOT NULL);
+
 CREATE TABLE changeover_node_tasks (
     id                         INTEGER PRIMARY KEY AUTOINCREMENT,
     process_changeover_id      INTEGER NOT NULL REFERENCES process_changeovers(id) ON DELETE CASCADE,

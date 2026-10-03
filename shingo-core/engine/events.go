@@ -104,6 +104,11 @@ type OrderCompletedEvent struct {
 	OrderID   int64
 	EdgeUUID  string
 	StationID string
+	// RecoversOrderID is the emitting order's recovers_order_id: set only on a
+	// cancel-return order (the cancelled order whose bin it returns), nil on
+	// every other order. Carried so a subscriber that cares about returns can
+	// tell from the payload, with no read, that this order is not one.
+	RecoversOrderID *int64
 }
 
 // OrderResumedEvent carries a compound's parent going back to Queued. Same
@@ -123,6 +128,11 @@ type OrderFailedEvent struct {
 	StationID string
 	ErrorCode string
 	Detail    string
+	// RecoversOrderID is the emitting order's recovers_order_id: set only on a
+	// cancel-return order (the cancelled order whose bin it returns), nil on
+	// every other order. Carried so a subscriber that cares about returns can
+	// tell from the payload, with no read, that this order is not one.
+	RecoversOrderID *int64
 }
 
 // OrderSkippedEvent signals an order reached terminal "skipped" — the work
@@ -145,7 +155,12 @@ type OrderCancelledEvent struct {
 	EdgeUUID       string
 	StationID      string
 	Reason         string
-	PreviousStatus string // status before cancellation — used to skip auto-return for delivered/confirmed orders
+	PreviousStatus string // status before cancellation; carried on the event, read by no engine subscriber today
+	// RecoversOrderID is the emitting order's recovers_order_id: set only on a
+	// cancel-return order (the cancelled order whose bin it returns), nil on
+	// every other order. Carried so a subscriber that cares about returns can
+	// tell from the payload, with no read, that this order is not one.
+	RecoversOrderID *int64
 }
 
 type OrderQueuedEvent struct {

@@ -88,7 +88,8 @@ func TestDispatchEmitter_EmitOrderFailed(t *testing.T) {
 	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
-	em.EmitOrderFailed(11, "euid", "st", "ERR_TIMEOUT", "vendor timed out")
+	rec := int64(40)
+	em.EmitOrderFailed(11, "euid", "st", "ERR_TIMEOUT", "vendor timed out", &rec)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -98,7 +99,8 @@ func TestDispatchEmitter_EmitOrderFailed(t *testing.T) {
 	}
 	p := evt.Payload.(OrderFailedEvent)
 	if p.OrderID != 11 || p.EdgeUUID != "euid" || p.StationID != "st" ||
-		p.ErrorCode != "ERR_TIMEOUT" || p.Detail != "vendor timed out" {
+		p.ErrorCode != "ERR_TIMEOUT" || p.Detail != "vendor timed out" ||
+		p.RecoversOrderID == nil || *p.RecoversOrderID != 40 {
 		t.Errorf("OrderFailedEvent fields = %+v", p)
 	}
 }
@@ -107,7 +109,8 @@ func TestDispatchEmitter_EmitOrderCancelled(t *testing.T) {
 	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
-	em.EmitOrderCancelled(12, "euid", "st", "user_request", "dispatched")
+	rec := int64(41)
+	em.EmitOrderCancelled(12, "euid", "st", "user_request", "dispatched", &rec)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -116,7 +119,8 @@ func TestDispatchEmitter_EmitOrderCancelled(t *testing.T) {
 		t.Fatal("EventOrderCancelled not emitted")
 	}
 	p := evt.Payload.(OrderCancelledEvent)
-	if p.OrderID != 12 || p.Reason != "user_request" || p.PreviousStatus != "dispatched" {
+	if p.OrderID != 12 || p.Reason != "user_request" || p.PreviousStatus != "dispatched" ||
+		p.RecoversOrderID == nil || *p.RecoversOrderID != 41 {
 		t.Errorf("OrderCancelledEvent fields = %+v", p)
 	}
 }
@@ -125,7 +129,8 @@ func TestDispatchEmitter_EmitOrderCompleted(t *testing.T) {
 	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
-	em.EmitOrderCompleted(13, "euid-c", "st-c")
+	rec := int64(42)
+	em.EmitOrderCompleted(13, "euid-c", "st-c", &rec)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -134,7 +139,8 @@ func TestDispatchEmitter_EmitOrderCompleted(t *testing.T) {
 		t.Fatal("EventOrderCompleted not emitted")
 	}
 	p := evt.Payload.(OrderCompletedEvent)
-	if p.OrderID != 13 || p.EdgeUUID != "euid-c" || p.StationID != "st-c" {
+	if p.OrderID != 13 || p.EdgeUUID != "euid-c" || p.StationID != "st-c" ||
+		p.RecoversOrderID == nil || *p.RecoversOrderID != 42 {
 		t.Errorf("OrderCompletedEvent fields = %+v", p)
 	}
 }
@@ -166,9 +172,9 @@ func TestDispatchEmitter_AllMethodsCovered(t *testing.T) {
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderReceived(1, "", "", "", "", "")
 	em.EmitOrderDispatched(1, "", "", "")
-	em.EmitOrderFailed(1, "", "", "", "")
-	em.EmitOrderCancelled(1, "", "", "", "")
-	em.EmitOrderCompleted(1, "", "")
+	em.EmitOrderFailed(1, "", "", "", "", nil)
+	em.EmitOrderCancelled(1, "", "", "", "", nil)
+	em.EmitOrderCompleted(1, "", "", nil)
 	em.EmitOrderQueued(1, "", "", "")
 
 	mu.Lock()

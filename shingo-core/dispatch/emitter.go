@@ -6,10 +6,13 @@ import "shingo/protocol"
 type Emitter interface {
 	EmitOrderReceived(orderID int64, edgeUUID, stationID string, orderType protocol.OrderType, payloadCode, deliveryNode string)
 	EmitOrderDispatched(orderID int64, vendorOrderID, sourceNode, destNode string)
-	EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string)
+	// recovers is the order's recovers_order_id (nil for every order that is not
+	// a cancel-return), passed through onto the event payload for the three
+	// terminal emits below.
+	EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string, recovers *int64)
 	EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string)
-	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string)
-	EmitOrderCompleted(orderID int64, edgeUUID, stationID string)
+	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64)
+	EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64)
 	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)
 	// EmitOrderResumed announces Reshuffling → Queued — a compound finished and
 	// its complex parent is live again.

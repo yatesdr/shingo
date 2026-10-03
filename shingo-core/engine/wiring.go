@@ -75,6 +75,7 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 // ── Event subscriptions ───────────────────────────────────────────
 
 func (e *Engine) wireEventHandlers() {
+	e.wireCancelReturnNotices()
 	// ── Dispatch tracking ───────────────────────────────────────────
 	// When an order is dispatched, track it in the tracker
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderDispatchedEvent]) {

@@ -55,13 +55,14 @@ func (e *dispatchEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, sour
 	}})
 }
 
-func (e *dispatchEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string) {
+func (e *dispatchEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string, recovers *int64) {
 	e.bus.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
-		OrderID:   orderID,
-		EdgeUUID:  edgeUUID,
-		StationID: stationID,
-		ErrorCode: errorCode,
-		Detail:    detail,
+		OrderID:         orderID,
+		EdgeUUID:        edgeUUID,
+		StationID:       stationID,
+		ErrorCode:       errorCode,
+		Detail:          detail,
+		RecoversOrderID: recovers,
 	}})
 }
 
@@ -75,21 +76,23 @@ func (e *dispatchEmitter) EmitOrderSkipped(orderID int64, edgeUUID, stationID, e
 	}})
 }
 
-func (e *dispatchEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string) {
+func (e *dispatchEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64) {
 	e.bus.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
-		OrderID:        orderID,
-		EdgeUUID:       edgeUUID,
-		StationID:      stationID,
-		Reason:         reason,
-		PreviousStatus: previousStatus,
+		OrderID:         orderID,
+		EdgeUUID:        edgeUUID,
+		StationID:       stationID,
+		Reason:          reason,
+		PreviousStatus:  previousStatus,
+		RecoversOrderID: recovers,
 	}})
 }
 
-func (e *dispatchEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string) {
+func (e *dispatchEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64) {
 	e.bus.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID:   orderID,
-		EdgeUUID:  edgeUUID,
-		StationID: stationID,
+		OrderID:         orderID,
+		EdgeUUID:        edgeUUID,
+		StationID:       stationID,
+		RecoversOrderID: recovers,
 	}})
 }
 

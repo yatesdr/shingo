@@ -208,6 +208,14 @@ const (
 	SubjectBinPickedUp   = "transit.bin_picked_up"
 	SubjectUOPAdjustment = "inventory.uop_adjustment" // Core -> Edge
 
+	// SubjectBinReturn — Core → Edge: what happened to the bin a cancelled
+	// order left on a robot's deck (returning, returned, or held for an
+	// engineer). NOTICE-ONLY: the cancelled order is already terminal at the
+	// Edge, and this changes no order status and no lineside count. Sent to
+	// the cancelled order's station; an Edge too old to register the subject
+	// logs and drops it (SubjectRouter unknown-subject path).
+	SubjectBinReturn = "transit.bin_return"
+
 	// SubjectBinEpochRefresh — Core → Edge: "the carrier you are holding has
 	// started a new generation; adopt the stamp." Nothing else. It carries no
 	// count, because nobody declared one — Core noticed that a count arrived
@@ -359,6 +367,7 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,
 		SubjectBinPickedUp,
+		SubjectBinReturn,
 		SubjectUOPAdjustment,
 		SubjectBinEpochRefresh,
 		SubjectSourcingState,

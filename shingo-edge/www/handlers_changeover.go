@@ -18,6 +18,9 @@ type changeoverNodeView struct {
 	FromRole       protocol.ClaimRole `json:"from_role"`
 	ToRole         protocol.ClaimRole `json:"to_role"`
 	LastOrderError string             `json:"last_order_error,omitempty"`
+	// BinReturn is the one line for a linked order that was cancelled with a
+	// bin on a robot's deck: Core's notice of where that bin went. Display only.
+	BinReturn string `json:"bin_return,omitempty"`
 }
 
 // styleSourcingView is the changeover picker's per-style sourceability
@@ -155,12 +158,24 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 					view.ToRole = claim.Role
 				}
 			}
-			// Check linked orders for failures
+			// Check linked orders for failures, and for a cancelled order's
+			// bin-return notice.
+			var linked []domain.Order
 			for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 				if orderID != nil {
-					if o, err := h.engine.OrderService().Get(*orderID); err == nil && o.Status == protocol.StatusFailed {
-						view.LastOrderError = "Order " + o.UUID[:8] + " failed"
+					if o, err := h.engine.OrderService().Get(*orderID); err == nil {
+						linked = append(linked, *o)
+						if o.Status == protocol.StatusFailed {
+							view.LastOrderError = "Order " + o.UUID[:8] + " failed"
+						}
 					}
+				}
+			}
+			lines := h.engine.OrderService().BinReturnLines(linked)
+			for _, o := range linked {
+				if line, ok := lines[o.ID]; ok {
+					view.BinReturn = line
+					break
 				}
 			}
 			stationID := nodeStationMap[task.ProcessNodeID]

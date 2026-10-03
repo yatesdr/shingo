@@ -79,16 +79,16 @@ func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _ string, _ protocol.O
 func (m *mockEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, _, _ string) {
 	m.dispatched = append(m.dispatched, emitDispatched{orderID, vendorOrderID})
 }
-func (m *mockEmitter) EmitOrderFailed(orderID int64, _, _, errorCode, _ string) {
+func (m *mockEmitter) EmitOrderFailed(orderID int64, _, _, errorCode, _ string, _ *int64) {
 	m.failed = append(m.failed, emitFailed{orderID, errorCode})
 }
 func (m *mockEmitter) EmitOrderSkipped(orderID int64, _, _, errorCode, _ string) {
 	m.skipped = append(m.skipped, emitSkipped{orderID, errorCode})
 }
-func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason, _ string) {
+func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason, _ string, _ *int64) {
 	m.cancelled = append(m.cancelled, emitCancelled{orderID, reason})
 }
-func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
+func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string, _ *int64) {
 	m.completed = append(m.completed, emitCompleted{orderID})
 }
 func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {

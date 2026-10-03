@@ -125,10 +125,11 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 		{
 			name:    "OrderCompleted",
 			evtType: EventOrderCompleted,
-			payload: OrderCompletedEvent{OrderID: 4, EdgeUUID: "uc", StationID: "sc"},
+			payload: OrderCompletedEvent{OrderID: 4, EdgeUUID: "uc", StationID: "sc", RecoversOrderID: ptrInt64(3)},
 			check: func(t *testing.T, got any) {
 				p := got.(OrderCompletedEvent)
-				if p.OrderID != 4 || p.EdgeUUID != "uc" || p.StationID != "sc" {
+				if p.OrderID != 4 || p.EdgeUUID != "uc" || p.StationID != "sc" ||
+					p.RecoversOrderID == nil || *p.RecoversOrderID != 3 {
 					t.Errorf("payload = %+v", p)
 				}
 			},
@@ -136,10 +137,10 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 		{
 			name:    "OrderFailed",
 			evtType: EventOrderFailed,
-			payload: OrderFailedEvent{OrderID: 5, EdgeUUID: "uf", StationID: "sf", ErrorCode: "E01", Detail: "oops"},
+			payload: OrderFailedEvent{OrderID: 5, EdgeUUID: "uf", StationID: "sf", ErrorCode: "E01", Detail: "oops", RecoversOrderID: ptrInt64(3)},
 			check: func(t *testing.T, got any) {
 				p := got.(OrderFailedEvent)
-				if p.ErrorCode != "E01" || p.Detail != "oops" {
+				if p.ErrorCode != "E01" || p.Detail != "oops" || p.RecoversOrderID == nil || *p.RecoversOrderID != 3 {
 					t.Errorf("payload = %+v", p)
 				}
 			},
@@ -147,10 +148,10 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 		{
 			name:    "OrderCancelled",
 			evtType: EventOrderCancelled,
-			payload: OrderCancelledEvent{OrderID: 6, EdgeUUID: "uc6", StationID: "s6", Reason: "user", PreviousStatus: "dispatched"},
+			payload: OrderCancelledEvent{OrderID: 6, EdgeUUID: "uc6", StationID: "s6", Reason: "user", PreviousStatus: "dispatched", RecoversOrderID: ptrInt64(3)},
 			check: func(t *testing.T, got any) {
 				p := got.(OrderCancelledEvent)
-				if p.Reason != "user" || p.PreviousStatus != "dispatched" {
+				if p.Reason != "user" || p.PreviousStatus != "dispatched" || p.RecoversOrderID == nil || *p.RecoversOrderID != 3 {
 					t.Errorf("payload = %+v", p)
 				}
 			},
@@ -479,3 +480,5 @@ func TestBinAction_FieldContract(t *testing.T) {
 		})
 	}
 }
+
+func ptrInt64(v int64) *int64 { return &v }

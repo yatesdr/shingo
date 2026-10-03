@@ -427,6 +427,13 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			bp.OrderUUID, bp.BinID, bp.Location)
 		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
 	})
+	// What became of the bin a cancelled order left on a robot's deck.
+	// Notice only: stored for display, no order status or count moves.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
+		log.Printf("edge_handler: bin_return: order=%s bin=%s state=%s dest=%s",
+			br.OrderUUID, br.BinLabel, br.State, br.Destination)
+		eng.HandleBinReturn(*br)
+	})
 	// UOP adjustment from Core Bins record-count action. Admin sets
 	// the absolute UOP value; Edge writes it directly to the runtime
 	// cache and emits EventUOPAdjusted for SSE operator screen refresh.

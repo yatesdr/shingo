@@ -107,3 +107,61 @@ func (s *OrderService) WaitSince(list []orders.Order) map[int64]string {
 	}
 	return out
 }
+
+// BinReturnLines answers "what became of the bin this cancelled order left on
+// a robot" for every order in the list that has a bin_returns row — one line
+// of display text, keyed by order id. Absent means no notice, which renders as
+// nothing. One read for the whole list. The notice changes nothing about the
+// order (store/bin_returns.go); this is display only.
+func (s *OrderService) BinReturnLines(list []orders.Order) map[int64]string {
+	if len(list) == 0 {
+		return nil
+	}
+	uuids := make([]string, 0, len(list))
+	for _, o := range list {
+		uuids = append(uuids, o.UUID)
+	}
+	returns, err := s.db.BinReturnsForOrders(uuids)
+	if err != nil {
+		log.Printf("orders board: bin return lines for %d order(s): %v", len(uuids), err)
+		return nil
+	}
+	if len(returns) == 0 {
+		return nil
+	}
+	out := make(map[int64]string, len(returns))
+	for _, o := range list {
+		if r, ok := returns[o.UUID]; ok {
+			if line := BinReturnLine(r); line != "" {
+				out[o.ID] = line
+			}
+		}
+	}
+	return out
+}
+
+// BinReturnLine is the one sentence a bin-return notice prints as.
+func BinReturnLine(r store.BinReturn) string {
+	bin := "Bin"
+	if r.BinLabel != "" {
+		bin = "Bin " + r.BinLabel
+	}
+	switch r.State {
+	case protocol.BinReturnReturning:
+		if r.Destination != "" {
+			return bin + " returning to " + r.Destination
+		}
+		return bin + " returning to storage"
+	case protocol.BinReturnReturned:
+		if r.Destination != "" {
+			return bin + " returned to " + r.Destination
+		}
+		return bin + " returned to storage"
+	case protocol.BinReturnHeld:
+		if r.Reason != "" {
+			return bin + " held on the robot: " + r.Reason
+		}
+		return bin + " held on the robot"
+	}
+	return ""
+}

@@ -39,6 +39,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/eventbus"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
@@ -121,8 +122,9 @@ func (e *Engine) maybeReturnCarriedBin(bin *bins.Bin, robotID string, robot flee
 	// ordering both down is two phantoms. Held, once, with the reason — the
 	// person who sorts out which bin is real presses Recover.
 	if !soleOnNode {
-		e.recordReturnHeld(bin, robotID, carrier, "another bin is recorded on "+bin.NodeName+
-			"; one loaded deck says nothing about which of them is on it")
+		reason := "another bin is recorded on " + bin.NodeName + "; one loaded deck says nothing about which of them is on it"
+		e.recordReturnHeld(bin, robotID, carrier, reason)
+		e.notifyBinReturn(carrier, bin, protocol.BinReturnHeld, "", reason)
 		return
 	}
 	e.tryReturnCarriedBin(bin, robotID, robot, carrier)
@@ -188,10 +190,84 @@ func (e *Engine) tryReturnCarriedBin(bin *bins.Bin, robotID string, robot fleet.
 			reason = nr.Reason
 		}
 		e.recordReturnHeld(bin, robotID, carrier, reason)
+		e.notifyBinReturn(carrier, bin, protocol.BinReturnHeld, "", reason)
 		return
 	}
 	e.logFn("engine: cancel return: bin %d returns for cancelled order %d as order %d — %s",
 		bin.ID, carrier.ID, order.ID, detail)
+	e.notifyBinReturn(carrier, bin, protocol.BinReturnReturning, order.DeliveryNode, "")
+}
+
+// notifyBinReturn tells the cancelled order's station what became of its bin
+// (P2). Notice-only: the Edge records it against the cancelled order and shows
+// it; no order status and no lineside count moves. A station-less carrier has
+// nobody to tell. Best-effort: a send that fails is logged, and the bin's
+// fate is still on the order page and in recovery_actions.
+func (e *Engine) notifyBinReturn(cancelled *orders.Order, bin *bins.Bin, state, destination, reason string) {
+	if cancelled == nil || cancelled.StationID == "" || cancelled.EdgeUUID == "" {
+		return
+	}
+	if err := e.SendDataToEdge(protocol.SubjectBinReturn, cancelled.StationID, &protocol.BinReturn{
+		OrderUUID:   cancelled.EdgeUUID,
+		BinLabel:    bin.Label,
+		PayloadCode: bin.PayloadCode,
+		State:       state,
+		Destination: destination,
+		Reason:      reason,
+		At:          clock.Now().UTC(),
+	}); err != nil {
+		e.logFn("engine: cancel return: notify %s of bin %d (%s): %v", cancelled.StationID, bin.ID, state, err)
+	}
+}
+
+// returnOrderEnded is the second half of the notice: a return order reaching a
+// terminal status tells the cancelled order's station how it ended. Delivered
+// is "returned"; failed or cancelled is "held", because the bin did not reach
+// the slot and is wherever the robot left it — on its deck, for the watch.
+//
+// EVERY OTHER ORDER COSTS NOTHING. The terminal events carry the emitting
+// order's recovers_order_id (set in dispatch.transition's fire actions, where
+// the order is in hand), so an order that returns no bin — every order but a
+// cancel-return — is turned away here on the payload, with no read.
+func (e *Engine) returnOrderEnded(orderID int64, recovers *int64, state, reason string) {
+	if recovers == nil {
+		return
+	}
+	ret, err := e.db.GetOrder(orderID)
+	if err != nil || ret == nil || ret.BinID == nil {
+		return
+	}
+	// EventOrderCompleted fires on (*, Delivered) AND on (Delivered,
+	// Confirmed). "Returned" is the bin set down, which is the first.
+	if state == protocol.BinReturnReturned && ret.Status != protocol.StatusDelivered {
+		return
+	}
+	cancelled, err := e.db.GetOrder(*recovers)
+	if err != nil || cancelled == nil {
+		return
+	}
+	bin, err := e.BinService().GetBin(*ret.BinID)
+	if err != nil || bin == nil {
+		return
+	}
+	if state == protocol.BinReturnHeld {
+		reason = fmt.Sprintf("return order %d ended %s: %s", ret.ID, ret.Status, reason)
+	}
+	e.notifyBinReturn(cancelled, bin, state, ret.DeliveryNode, reason)
+}
+
+// wireCancelReturnNotices subscribes returnOrderEnded to the three terminal
+// events a return order can reach.
+func (e *Engine) wireCancelReturnNotices() {
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		e.returnOrderEnded(evt.Payload.OrderID, evt.Payload.RecoversOrderID, protocol.BinReturnReturned, "")
+	}, EventOrderCompleted)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+		e.returnOrderEnded(evt.Payload.OrderID, evt.Payload.RecoversOrderID, protocol.BinReturnHeld, evt.Payload.Detail)
+	}, EventOrderFailed)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
+		e.returnOrderEnded(evt.Payload.OrderID, evt.Payload.RecoversOrderID, protocol.BinReturnHeld, evt.Payload.Reason)
+	}, EventOrderCancelled)
 }
 
 // recordReturnHeld writes the episode's hold: the bin stays on the deck, as it

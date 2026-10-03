@@ -79,6 +79,9 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		// always shown WHY a parked order waits; without a duration beside it the
 		// sentence reads the same at forty seconds and at four hours.
 		"WaitSince": h.engine.OrderService().WaitSince(orders),
+		// What became of the bin a cancelled order left on a robot — one line
+		// under the status, only where Core sent a notice (bin_returns).
+		"BinReturns": h.engine.OrderService().BinReturnLines(orders),
 	}
 
 	h.renderTemplate(w, r, "orders.html", data)
@@ -127,7 +130,8 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 		"ActiveOrders": orders,
 		// Same map the page builds — the partial IS the page's rows, and a
 		// refresh that dropped the clock would blank it every three seconds.
-		"WaitSince": h.engine.OrderService().WaitSince(orders),
+		"WaitSince":  h.engine.OrderService().WaitSince(orders),
+		"BinReturns": h.engine.OrderService().BinReturnLines(orders),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "orders-body", data); err != nil {

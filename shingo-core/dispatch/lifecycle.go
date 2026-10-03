@@ -697,12 +697,12 @@ func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
 // ── Action implementations ──────────────────────────────────────────────
 
 func fireCompleted(s *LifecycleService, ord *orders.Order, ev Event) error {
-	s.emitter.EmitOrderCompleted(ord.ID, ord.EdgeUUID, ev.StationID)
+	s.emitter.EmitOrderCompleted(ord.ID, ord.EdgeUUID, ev.StationID, ord.RecoversOrderID)
 	return nil
 }
 
 func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
-	s.emitter.EmitOrderCancelled(ord.ID, ord.EdgeUUID, ev.StationID, ev.Reason, string(ev.PreviousStatus))
+	s.emitter.EmitOrderCancelled(ord.ID, ord.EdgeUUID, ev.StationID, ev.Reason, string(ev.PreviousStatus), ord.RecoversOrderID)
 	return nil
 }
 
@@ -752,7 +752,7 @@ func fireFailed(s *LifecycleService, ord *orders.Order, ev Event) error {
 	if detail == "" {
 		detail = ev.Reason
 	}
-	s.emitter.EmitOrderFailed(ord.ID, ord.EdgeUUID, ev.StationID, code, detail)
+	s.emitter.EmitOrderFailed(ord.ID, ord.EdgeUUID, ev.StationID, code, detail, ord.RecoversOrderID)
 	return nil
 }
 

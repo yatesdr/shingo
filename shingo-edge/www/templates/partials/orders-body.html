@@ -80,6 +80,9 @@
                      contract the staged countdown and the fault line use. */}}
                 {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
                 {{with faultLine .}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}
+                {{/* A cancelled order's bin, left on a robot's deck: Core's notice of
+                     where it went (returning / returned / held). Display only. */}}
+                {{if $.BinReturns}}{{with index $.BinReturns .ID}}<div class="orders-subtext">{{.}}</div>{{end}}{{end}}
             </td>
             <td class="orders-time">{{formatTime .CreatedAt}}</td>
             <td class="orders-time">{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>

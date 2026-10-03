@@ -147,11 +147,12 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 					h.engine.EventBus().Emit(engine.Event{
 						Type: engine.EventOrderFailed,
 						Payload: engine.OrderFailedEvent{
-							OrderID:   order.ID,
-							EdgeUUID:  order.EdgeUUID,
-							StationID: order.StationID,
-							ErrorCode: "group_restructured",
-							Detail:    "source group restructured (node reparented)",
+							OrderID:         order.ID,
+							EdgeUUID:        order.EdgeUUID,
+							StationID:       order.StationID,
+							ErrorCode:       "group_restructured",
+							Detail:          "source group restructured (node reparented)",
+							RecoversOrderID: order.RecoversOrderID,
 						},
 					})
 				}
@@ -335,11 +336,12 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 				h.engine.EventBus().Emit(engine.Event{
 					Type: engine.EventOrderFailed,
 					Payload: engine.OrderFailedEvent{
-						OrderID:   order.ID,
-						EdgeUUID:  order.EdgeUUID,
-						StationID: order.StationID,
-						ErrorCode: "group_deleted",
-						Detail:    "source group deleted",
+						OrderID:         order.ID,
+						EdgeUUID:        order.EdgeUUID,
+						StationID:       order.StationID,
+						ErrorCode:       "group_deleted",
+						Detail:          "source group deleted",
+						RecoversOrderID: order.RecoversOrderID,
 					},
 				})
 			}

@@ -113,7 +113,7 @@
         <tbody>
             {{range .CentralNodeTasks}}
             <tr>
-                <td class="mono">{{.NodeName}}{{if .LastOrderError}}<br><span style="color:red;font-size:0.8rem">{{.LastOrderError}}</span>{{end}}</td>
+                <td class="mono">{{.NodeName}}{{if .LastOrderError}}<br><span style="color:red;font-size:0.8rem">{{.LastOrderError}}</span>{{end}}{{if .BinReturn}}<br><span style="color:var(--text-muted);font-size:0.8rem">{{.BinReturn}}</span>{{end}}</td>
                 <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
                 <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
                 <td>{{template "nodeActions" .}}</td>
@@ -144,7 +144,7 @@
             <tbody>
                 {{range index $.NodeTaskMap .OperatorStationID}}
                 <tr>
-                    <td class="mono">{{.NodeName}}{{if .LastOrderError}}<br><span style="color:red;font-size:0.8rem">{{.LastOrderError}}</span>{{end}}</td>
+                    <td class="mono">{{.NodeName}}{{if .LastOrderError}}<br><span style="color:red;font-size:0.8rem">{{.LastOrderError}}</span>{{end}}{{if .BinReturn}}<br><span style="color:var(--text-muted);font-size:0.8rem">{{.BinReturn}}</span>{{end}}</td>
                     <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
                     <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
                     <td>{{template "nodeActions" .}}</td>

@@ -128,6 +128,9 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
 		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
 	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
+		eng.HandleBinReturn(*br)
+	})
 
 	ingestor := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {
 		return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast

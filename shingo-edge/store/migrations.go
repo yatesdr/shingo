@@ -1349,6 +1349,31 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// bin_returns: what became of the bin a cancelled order left on a
+			// robot's deck (protocol.SubjectBinReturn), one row per cancelled
+			// order, display only (store/bin_returns.go). Declared here and not
+			// in the baseline DDL, so the table has one home, like v5.
+			Version: 12,
+			Name:    "bin_returns",
+			Fn: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS bin_returns (
+		order_uuid   TEXT PRIMARY KEY,
+		bin_label    TEXT NOT NULL DEFAULT '',
+		payload_code TEXT NOT NULL DEFAULT '',
+		state        TEXT NOT NULL,
+		destination  TEXT NOT NULL DEFAULT '',
+		reason       TEXT NOT NULL DEFAULT '',
+		updated_at   TEXT NOT NULL)`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'
+					AND name = 'bin_returns'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

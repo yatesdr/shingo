@@ -254,6 +254,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `supply.refusal` | Edge -> Core | `SupplyRefusalState` | A loader operator says they cannot fill a call, or takes that back |
 | `supply.refusal_state` | Core -> Edge | `SupplyRefusalState` | Core broadcasts the refusal's state so the cell can answer; station-broadcast, filtered per-process on arrival |
 | `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
+| `transit.bin_return` | Core -> Edge | `BinReturn` | Notice only: the bin a cancelled order left on a robot is returning, returned, or held — keyed by the cancelled order's uuid; no status or count changes |
 | `node.structure_changed` | Core -> Edge | `NodeStructureChanged` | A node was reparented or deleted, so the Edge's topology view is stale |
 | `inventory.uop_adjustment` | Core -> Edge | `UOPAdjustment` | An operator's UoP correction on Core, pushed so the Edge's Bins view agrees |
 | `inventory.bin_epoch_refresh` | Core -> Edge | `BinEpochRefresh` | Re-anchor a bin's counting epoch without a full resync |

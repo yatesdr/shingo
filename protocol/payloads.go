@@ -425,6 +425,33 @@ type BinPickedUp struct {
 	PickedUpAt time.Time `json:"picked_up_at"`
 }
 
+// BinReturn tells a station what became of the bin its cancelled order left
+// on a robot's deck. Sent on SubjectBinReturn, keyed by the CANCELLED order's
+// uuid, at most three times per episode: returning (the return order was
+// dispatched or parked), then returned (it completed) — or held, when no
+// return was made or the return order itself ended without placing the bin.
+//
+// Destination is where the return is taking (or took) the bin; Reason is the
+// hold's sentence. Both are display text: the Edge stores and shows them and
+// decides nothing from them.
+type BinReturn struct {
+	OrderUUID   string    `json:"order_uuid"`
+	BinLabel    string    `json:"bin_label"`
+	PayloadCode string    `json:"payload_code,omitempty"`
+	State       string    `json:"state"`
+	Destination string    `json:"destination,omitempty"`
+	Reason      string    `json:"reason,omitempty"`
+	At          time.Time `json:"at"`
+}
+
+// BinReturn states. returned and held are final for an episode; a late
+// returning never overwrites either.
+const (
+	BinReturnReturning = "returning"
+	BinReturnReturned  = "returned"
+	BinReturnHeld      = "held"
+)
+
 // OrderError signals order failure.
 type OrderError struct {
 	OrderUUID string `json:"order_uuid"`
