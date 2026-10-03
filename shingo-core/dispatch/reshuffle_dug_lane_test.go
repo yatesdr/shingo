@@ -85,7 +85,7 @@ func TestFindShuffleSlots_MustNotParkInTheDugLane(t *testing.T) {
 	db := testDBShared(t)
 	grp, lane, slots, _ := dugLaneFixture(t, db, "D3", 0)
 
-	got, err := findShuffleSlots(db, lane.ID, grp.ID, 1, reservations.Anyone, nil)
+	got, err := findShuffleSlots(db, lane.ID, grp.ID, 1, reservations.Anyone, noClaimantYet, nil)
 
 	for _, s := range got {
 		if s.ParentID != nil && *s.ParentID == lane.ID {
@@ -114,7 +114,7 @@ func TestFindShuffleSlots_StillParksInAnotherLane(t *testing.T) {
 	db := testDBShared(t)
 	grp, lane, _, _ := dugLaneFixture(t, db, "D3ALT", 1)
 
-	got, err := findShuffleSlots(db, lane.ID, grp.ID, 1, reservations.Anyone, nil)
+	got, err := findShuffleSlots(db, lane.ID, grp.ID, 1, reservations.Anyone, noClaimantYet, nil)
 	if err != nil {
 		t.Fatalf("findShuffleSlots: %v — an empty sibling lane is a legitimate place to park a blocker", err)
 	}

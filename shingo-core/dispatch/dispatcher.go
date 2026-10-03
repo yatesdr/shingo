@@ -48,6 +48,11 @@ type Dispatcher struct {
 	// reshuffling: the window a cancel can land in. Nil in production; set via
 	// SetCompoundWrittenHook.
 	compoundWrittenHook func(parentID int64)
+	// dwellChoiceHook is a test-only seam fired by the dig dwell's resolver after
+	// it has chosen a destination and before it claims it: the window another
+	// chooser can take the slot in. Nil in production; set directly by tests in
+	// this package.
+	dwellChoiceHook func(legID int64, dest *nodes.Node)
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {

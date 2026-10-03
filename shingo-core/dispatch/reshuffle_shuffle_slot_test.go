@@ -204,7 +204,7 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 //
 // The test above proves the gate REFUSES when the pool is one deep. That is the
 // starvation shape, and on its own it is compatible with a gate that has simply
-// become too strict — a `return false` in shuffleSlotFree passes it. What the fix
+// become too strict — a walk that offers nothing passes it. What the fix
 // is supposed to buy is the opposite behaviour on a group with room: the second
 // dig sees the first one's slot as spoken for and TAKES THE OTHER ONE, rather than
 // waiting for it or landing on top of it. Neither of those two facts implies the
@@ -215,8 +215,9 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 // that diverts correctly and then leaks — a slot never released, a lock held past
 // the compound — would show up.
 //
-// MUTATION (verified): revert shuffleSlotFree (reshuffle.go) to the pre-D83a body,
-// `cnt, _ := db.CountBinsByNode(n.ID); return cnt == 0`. Both digs then pick the
+// MUTATION (verified against the pre-D83a body): make the shuffle walk's
+// availability test count bins only — reduce nodes.SlotTakeableSQL, as
+// TakeableSlotsInGroup asks it, to its bin clause. Both digs then pick the
 // same empty slot and the "different drop-offs" assertion fires — the second
 // blocker lands on the first, which is the SMN_008/SMN_009 orphaning the sibling
 // test above describes.

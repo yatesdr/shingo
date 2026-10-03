@@ -64,8 +64,8 @@ import (
 // bin that had not been picked up yet.
 //
 // And the chosen slot can no longer be buried before the robot arrives. The
-// plan-time pick is held by NOTHING (shuffleSlotFree says the non-reservation is
-// deliberate), and the burial test that would protect it is a plan-time snapshot
+// plan-time pick is held by NOTHING (a span reservation for the dig is Track 3's
+// open entry gate, deliberately not taken here), and the burial test that would protect it is a plan-time snapshot
 // by its own admission — "the set is computed once above". Two ordinary stores
 // into shallower slots in B while the robot is still in A and the leg arrives at
 // a slot it cannot reach, which lands in handleStaleDigLeg with two dispositions
@@ -251,8 +251,12 @@ func (d *Dispatcher) digDwellPlan(order *orders.Order, sourceNode *nodes.Node) (
 //	5 burial set computed ONCE    one read for one pick          IMPROVED. The
 //	  ("the set is computed                                      snapshot no longer
 //	  once above")                                               spans N picks.
-//	6 shuffleSlotFree passes      would exclude the leg's OWN    BUILT: choose once.
-//	  excludeOrderID = 0          destination on a retry         dwellDestination
+//	6 availability is asked for   would exclude the leg's OWN    BUILT: choose once,
+//	  a claimant                  destination on a retry         and the leg is the
+//	                                                             claimant, so its
+//	                                                             own holds read as
+//	                                                             its own.
+//	                                                             dwellDestination
 //	                                                             returns early when
 //	                                                             delivery_node is
 //	                                                             set, so the choice
@@ -274,7 +278,7 @@ func (d *Dispatcher) digDwellPlan(order *orders.Order, sourceNode *nodes.Node) (
 //	                              they are under different       (§R.71 rider 1).
 //	                              lane mutexes
 //
-// TWO THINGS THE AUDIT FOUND AND DID NOT FIX, both recorded rather than absorbed:
+// TWO THINGS THE AUDIT FOUND, recorded rather than absorbed; the second is fixed:
 //
 // A. THE PLAN-TIME COUNT CHECK SEES LESS THAN IT DID. It asks whether the group
 //
@@ -286,14 +290,19 @@ func (d *Dispatcher) digDwellPlan(order *orders.Order, sourceNode *nodes.Node) (
 //	real span reservation, which is Track 3's open entry gate and explicitly not
 //	this build's to pre-empt.
 //
-// B. A SLOT RESERVATION IS INVISIBLE TO shuffleSlotFree. The claim makes
+// B. A SLOT RESERVATION WAS INVISIBLE TO THE WALK. FIXED. The claim makes
 //
-//	double-booking impossible — the loser gets a conflict — but it does not make
-//	the loser's NEXT read skip the slot; that happens one moment later, when the
-//	winner's delivery_node makes it count as inbound traffic. Teaching
-//	shuffleSlotFree to read reservations would close the gap and would also
-//	narrow the pool for the plan-time caller, which is a behaviour change wider
-//	than this build. Declined here, named here.
+//	double-booking impossible — the loser gets a conflict — but the walk's
+//	availability test (then shuffleSlotFree, over CheckDropoffCapacity) counted
+//	only bins and orders bringing a bin, so the loser's NEXT read offered the
+//	same slot. This was declined as a pool-narrowing change and assumed to clear
+//	"one moment later, when the winner's delivery_node makes it count as inbound
+//	traffic". That is false for a holder with no claimed bin: a complex order
+//	reserve-holding a slot while it waits for material never counts as inbound.
+//	In the scripted sim 2026-10-03 (F6) nine dwellers re-asked onto one such slot
+//	every twelve seconds for 8 to 12 minutes. The walk now asks the store
+//	selector's availability spelling, which reads the reservation, and a claim
+//	lost in a true race walks on to the next candidate in the same pass.
 //
 // ── AND ONE THING THE AUDIT GOT WRONG, CORRECTED BY MEASUREMENT ───────────
 //
@@ -480,7 +489,7 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 		refused  GateVerdict
 	)
 	for {
-		slots, err := findShuffleSlots(d.db, lane.ID, *lane.ParentID, 1, digAskerFor(leg), excluded)
+		slots, err := findShuffleSlots(d.db, lane.ID, *lane.ParentID, 1, digAskerFor(leg), leg.ID, excluded)
 		if err != nil {
 			// RIGHT OF WAY ANSWERS FIRST, because it names an order and the other two
 			// name a shortage. Asked before ErrNoShuffleSlot deliberately: this error
@@ -534,7 +543,18 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 			return nil, GateVerdict{}, aErr
 		}
 		if v.Admitted() {
-			return d.bindChosenDestination(leg, lane, dest)
+			bound, bv, bErr := d.bindChosenDestination(leg, lane, dest)
+			if !errors.Is(bErr, ErrSlotContended) {
+				return bound, bv, bErr
+			}
+			// LOST IN A TRUE RACE: another order claimed the slot between this
+			// walk's read and this claim. That slot is taken, not the pool, so it
+			// is excluded and the walk goes on in this same pass. Only an exhausted
+			// pool reports no-shuffle-slot.
+			excluded[dest.ID] = true
+			d.dbg("dig dwell: leg %d lost %s between choosing it and claiming it (%v) — walking on",
+				leg.ID, dest.Name, bErr)
+			continue
 		}
 		refused = v
 		excluded[dest.ID] = true
@@ -609,16 +629,26 @@ func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.
 	// wait), and it is owner-idempotent, so a retry of this leg's own choice is not
 	// a self-conflict.
 	//
-	// THE LOSER'S CAUSE IS CauseNoShuffleSlot, and it is not a new one on purpose.
-	// "The slot I picked was taken from under me" and "there was no slot" are the
-	// same wait to the robot standing in the lane, they clear on the same event —
-	// any order anywhere in the group releasing a slot — and the loser re-asks on
-	// the next firing, by which time the winner's delivery_node makes its slot
-	// visibly spoken for and the loser picks another. A cause that lasts one pass
-	// is vocabulary nobody groups by.
+	// THE LOSER WALKS ON IN THE SAME PASS. A lost claim returns ErrSlotContended
+	// to dwellDestination's walk, which excludes this slot and asks for the next
+	// candidate; only a pool with nothing left reports CauseNoShuffleSlot.
+	//
+	// It used to report CauseNoShuffleSlot at once and re-ask on the next firing,
+	// reasoning that by then "the winner's delivery_node makes its slot visibly
+	// spoken for and the loser picks another". That holds only for a winner
+	// bringing a bin. A holder with no claimed bin — a complex order that has
+	// reserved the slot and is waiting for material — never counted as inbound to
+	// the old availability test, so the loser was offered the same slot on every
+	// firing (F6, scripted sim 2026-10-03). The walk now reads the reservation
+	// itself, so a lost claim here is a true race, and the next candidate is
+	// already known.
+	if d.dwellChoiceHook != nil {
+		d.dwellChoiceHook(leg.ID, dest)
+	}
 	if err := claimStoreSlot(d.db, leg, dest); err != nil {
-		d.dbg("dig dwell: leg %d lost %s between choosing it and claiming it (%v) — re-asking", leg.ID, dest.Name, err)
-		return nil, RefusedAt(CauseNoShuffleSlot, lane.Name), nil
+		// ErrSlotContended goes back to the walk, which excludes this slot and
+		// carries on. Anything else is a read or write that did not answer.
+		return nil, GateVerdict{}, fmt.Errorf("dig dwell: leg %d claim %s: %w", leg.ID, dest.Name, err)
 	}
 	if err := bindDwellTail(d.db, leg, dest); err != nil {
 		return nil, GateVerdict{}, err

@@ -435,6 +435,12 @@ func (db *DB) FindStoreSlotInLaneExcluding(laneID, excludeOrderID int64) (*nodes
 	return nodes.FindStoreSlotInLaneExcluding(db.DB, laneID, excludeOrderID)
 }
 
+// TakeableSlotsInGroup is the store selector's availability question asked once
+// for a whole group's shuffle pool. See nodes.TakeableSlotsInGroup.
+func (db *DB) TakeableSlotsInGroup(groupID, owner int64) (map[int64]bool, error) {
+	return nodes.TakeableSlotsInGroup(db.DB, groupID, owner)
+}
+
 // CountBinsInLane counts total bins across all slots in a lane.
 func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 	return nodes.CountBinsInLane(db.DB, laneID)

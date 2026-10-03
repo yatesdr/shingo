@@ -93,7 +93,7 @@ func walkShuffleSlots(t *testing.T, db *store.DB, f *choiceFixture, asker reserv
 	exclude := map[int64]bool{}
 	var got []string
 	for i := 0; i < 32; i++ {
-		slots, err := findShuffleSlots(db, f.dug.ID, f.grp.ID, 1, asker, exclude)
+		slots, err := findShuffleSlots(db, f.dug.ID, f.grp.ID, 1, asker, noClaimantYet, exclude)
 		if err != nil {
 			return got, err
 		}
@@ -226,8 +226,11 @@ func TestShuffleWalk_PicksForTheHoldsItAlreadyRespects(t *testing.T) {
 		},
 		{
 			// A live order names LB-S1 as its delivery_node but holds no bin and no
-			// reservation yet (it has planned, not dispatched). The walk counts only
-			// orders BRINGING a bin, so LB-S1 is still offered.
+			// reservation yet (it has planned, not dispatched). THIS PICK CHANGED.
+			// The walk used to count only orders BRINGING a bin, and offered LB-S1.
+			// It now asks the store selector's spelling (nodes.SlotTakeableSQL),
+			// whose delivery_node clause counts any live order naming the slot, so
+			// the dig and a store agree that LB-S1 is spoken for.
 			name: "named-not-bringing",
 			hold: func(t *testing.T, db *store.DB, f *choiceFixture, p string) reservations.DigAsker {
 				strangerOrder(t, db, p+"-PLANNED", func(o *orders.Order) {
@@ -237,7 +240,7 @@ func TestShuffleWalk_PicksForTheHoldsItAlreadyRespects(t *testing.T) {
 				return reservations.Anyone
 			},
 			want: func(f *choiceFixture) []string {
-				return []string{f.p1.Name, f.laSlots[1].Name, f.laSlots[0].Name, f.lbSlot.Name}
+				return []string{f.p1.Name, f.laSlots[1].Name, f.laSlots[0].Name}
 			},
 		},
 		{

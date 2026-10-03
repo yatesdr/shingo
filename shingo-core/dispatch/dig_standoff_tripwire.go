@@ -104,7 +104,7 @@ func (d *Dispatcher) digBlockingEdges() (map[int64]int64, map[int64]string) {
 		if !slices.Contains(owing, h.OrderID) {
 			continue
 		}
-		_, sErr := findShuffleSlots(d.db, h.LaneID, *lane.ParentID, 1, d.digAsker(h.OrderID), nil)
+		_, sErr := findShuffleSlots(d.db, h.LaneID, *lane.ParentID, 1, d.digAsker(h.OrderID), noClaimantYet, nil)
 		var held *DigParkingHeldError
 		if !errors.As(sErr, &held) || held.HolderID == 0 {
 			continue // not blocked by another dig: no edge

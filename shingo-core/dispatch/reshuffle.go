@@ -133,8 +133,8 @@ func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, e
 // the obvious objection is that deferral trades an all-or-nothing acquisition
 // for an incremental one that could strand a dig half-excavated. Today's
 // guarantee was never an acquisition: the slots this call returns are RESERVED
-// BY NOTHING (shuffleSlotFree says the non-reservation is deliberate — a real
-// span reservation for the dig is Track 3's open entry gate), and
+// BY NOTHING (the non-reservation is deliberate — a real span reservation for
+// the dig is Track 3's open entry gate), and
 // writeCompoundChildren writes bin claims only. So a dig can already be stranded
 // half-excavated by another order taking a planned slot; it just fails later and
 // worse, by arriving at a buried slot and dissolving. What is kept here is
@@ -232,7 +232,7 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 	// configuration capacity problem, not a dispatch one. The seed has to carry
 	// enough reachable room to clear a lane, which is what the census at birth
 	// asserts before a single order runs.
-	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, exclude); err != nil {
+	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, noClaimantYet, exclude); err != nil {
 		return nil, 0, fmt.Errorf("find shuffle slots: %w", err)
 	}
 
@@ -450,12 +450,12 @@ var ErrNothingInTheWay = errors.New("nothing is in front of the target slot")
 // rejection, and it is not silently re-pointed: it is inverted in place, under
 // the name TestCrossFlow_TwoDigsOneLane_ANeverStarts, with the premise it used to
 // assert quoted in its own header.
-func findShuffleSlots(db *store.DB, laneID, groupID int64, count int, asker reservations.DigAsker, exclude map[int64]bool) ([]*nodes.Node, error) {
+func findShuffleSlots(db *store.DB, laneID, groupID int64, count int, asker reservations.DigAsker, claimant int64, exclude map[int64]bool) ([]*nodes.Node, error) {
 	children, err := db.ListChildNodesUnlocked(groupID, asker)
 	if err != nil {
 		return nil, err
 	}
-	return shuffleSlotsFrom(db, laneID, groupID, children, count, asker, consultTheMouth, exclude)
+	return shuffleSlotsFrom(db, laneID, groupID, children, count, asker, claimant, consultTheMouth, exclude)
 }
 
 // shuffleSlotsFrom is findShuffleSlots' body over a candidate list it is HANDED.
@@ -480,7 +480,7 @@ const (
 	skipTheMouth    = false
 )
 
-func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, askTheMouth bool, exclude map[int64]bool) ([]*nodes.Node, error) {
+func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, claimant int64, askTheMouth bool, exclude map[int64]bool) ([]*nodes.Node, error) {
 
 	// A GATED DIG MAY PARK ITS BLOCKER IN ANOTHER GATED LANE. IT USED NOT TO.
 	//
@@ -674,6 +674,42 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		return nil, fmt.Errorf("%w: could not read spoken-for slots: %v", ErrNoShuffleSlot, eErr)
 	}
 
+	// MAY A BIN GO ON THIS SLOT AT ALL. Asked through the store selector's own
+	// spelling (nodes.SlotTakeableSQL): no bin on it, no stranger's hard claim, no
+	// stranger's active slot reservation, no other live order naming it as its
+	// delivery_node. claimant is the order whose claim will take the slot — the
+	// dwelling leg at release, nobody (0) at plan time, when no leg exists yet.
+	//
+	// THE RESERVATION CLAUSE IS THE CLAIM DOOR'S OWN TEST. bindChosenDestination
+	// claims through claimStoreSlot, and a slot reservation is exclusive per node.
+	// The walk used to ask CheckDropoffCapacity instead, which counts bins and
+	// orders BRINGING a bin; an order that has reserved a slot and is waiting for
+	// material brings nothing, so its slot read free here and taken at the door.
+	// The walk is deterministic, so every dweller in the group was offered that
+	// slot on every ask and lost it on every ask, for as long as the holder held
+	// it. Measured in the scripted sim 2026-10-03 (F6): nine dwellers from nine
+	// lanes stood 8 to 12 minutes on SMN_004 with eighteen market slots free,
+	// until a person terminated the holder.
+	//
+	// The entombing set above already counted a stranger's reservation as
+	// "spoken for" (EntombsASpokenForSlotSQL), so the walk refused to park in
+	// FRONT of a reserved slot and offered the reserved slot itself.
+	//
+	// READ ONCE PER ASK, ON FIRST USE: one statement for the group in place of a
+	// capacity check (two or three statements) per candidate, and none at all on
+	// an ask that reaches no candidate.
+	var takeable map[int64]bool
+	isTakeable := func(id int64) (bool, error) {
+		if takeable == nil {
+			t, err := db.TakeableSlotsInGroup(groupID, claimant)
+			if err != nil {
+				return false, err
+			}
+			takeable = t
+		}
+		return takeable[id], nil
+	}
+
 	var available []*nodes.Node
 
 	// A candidate whose reachability could not be READ is not a candidate — fail
@@ -695,7 +731,11 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		if !c.Enabled || c.IsSynthetic || exclude[c.ID] {
 			continue
 		}
-		if !shuffleSlotFree(db, c) {
+		ok, tErr := isTakeable(c.ID)
+		if tErr != nil {
+			return nil, fmt.Errorf("%w: could not read slot availability: %v", ErrNoShuffleSlot, tErr)
+		}
+		if !ok {
 			continue
 		}
 		available = append(available, c)
@@ -844,7 +884,15 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 			if !acc {
 				continue
 			}
-			if !shuffleSlotFree(db, slot) {
+			// Availability after accessibility, where the per-candidate capacity
+			// check used to sit: the set is read at the first candidate that would
+			// have paid for that check, so no ask issues more statements than it
+			// did.
+			ok, tErr := isTakeable(slot.ID)
+			if tErr != nil {
+				return nil, fmt.Errorf("%w: could not read slot availability: %v", ErrNoShuffleSlot, tErr)
+			}
+			if !ok {
 				continue
 			}
 			available = append(available, slot)
@@ -862,7 +910,7 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		// re-run this same walk against the unfiltered group and see whether the
 		// lanes right of way removed would have made the count. Refusal path only —
 		// the happy path still runs one query.
-		if held := digHeldParking(db, laneID, groupID, children, count, len(available), asker, exclude); held != nil {
+		if held := digHeldParking(db, laneID, groupID, children, count, len(available), asker, claimant, exclude); held != nil {
 			return nil, held
 		}
 		// AND THE SAME QUESTION FOR HOLD B. Dropping occupied lanes at the source is
@@ -1052,7 +1100,7 @@ func parkingLaneOf(err error, fallback string) string {
 // A read failure loses the better cause and nothing else, so it is silent: the
 // caller falls through to ErrNoShuffleSlot, which waits on a superset of the
 // events this one waits on.
-func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node, count, have int, asker reservations.DigAsker, exclude map[int64]bool) error {
+func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node, count, have int, asker reservations.DigAsker, claimant int64, exclude map[int64]bool) error {
 	all, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil
@@ -1075,7 +1123,7 @@ func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node,
 	// lucky: it is handed `all`, so if it comes up short it re-enters here with
 	// unlocked == all, the diff is empty, and this returns at the len(removed)==0
 	// line above without walking again.
-	if _, wErr := shuffleSlotsFrom(db, laneID, groupID, all, count, asker, skipTheMouth, exclude); wErr != nil {
+	if _, wErr := shuffleSlotsFrom(db, laneID, groupID, all, count, asker, claimant, skipTheMouth, exclude); wErr != nil {
 		return nil // the wider pool comes up short too — right of way is not the reason
 	}
 
@@ -1097,41 +1145,35 @@ func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node,
 	}
 }
 
-// shuffleSlotFree reports whether a dig may park a blocker in this node.
+// noClaimantYet is the claimant a PLAN-TIME ask passes to findShuffleSlots. The
+// dig's legs do not exist yet, so no order's own holds are exempt: a slot the
+// requester itself has reserved is one its legs' claims would be refused, since
+// a slot reservation is exclusive per node and the legs are different orders.
 //
-// Shuffle slots are a GROUP-scoped shared resource, but the lane lock is keyed on
-// the lane being dug (planBuriedReshuffle → laneLock.TryLock(buried.LaneID)). Two
-// digs in DIFFERENT lanes therefore take different locks, both proceed, and then
-// compete for the same shuffle slots. This used to test "is the node empty RIGHT
-// NOW" (CountBinsByNode == 0) and nothing else — so a slot with another dig's
-// blocker already in flight to it looked free. Both digs picked it, the second
-// blocker landed on the first, and ApplyArrival's EvictStaleGhostBinsTx threw the
-// first bin to _TRANSIT. Observed on the houseserver sim 2026-07-13: lane 1 and
-// lane 2 each unburied into SMN_008 + SMN_009 three seconds apart, orphaning two
-// bins and leaving lane 1's restore compound with nothing to restock.
+// ── WHAT THE AVAILABILITY TEST REPLACED, AND WHY NOTHING OF IT IS KEPT ────
 //
-// CheckDropoffCapacity is the gate every OTHER dropoff in the system passes
-// through, and it already tests exactly what was missing: occupied, OR an order
-// in flight inbound. The unbury legs carry delivery_node, so they are counted --
-// the information was always there, findShuffleSlots just never asked. Reusing the
-// gate (rather than reserving shuffle slots) is deliberate: a real span/mouth
-// reservation for the dig is Track 3's open entry gate, and this must not
-// pre-empt that design.
+// The walk used to ask shuffleSlotFree: claimed_by is NULL, and
+// CheckDropoffCapacity(node, 0) — no bin, and no other order delivering there
+// that holds a claimed bin. It was added because two digs in different lanes
+// take different lane locks and compete for one group's shuffle slots; it used
+// to test only "is the node empty right now", and on the houseserver sim
+// 2026-07-13 two digs unburied into SMN_008 + SMN_009 three seconds apart, a
+// blocker landed on a blocker, and two bins were orphaned.
 //
-// ClaimedBy is checked too, mirroring what the storage resolver already does for
-// ordinary slots (group_resolver.go's "slot already claimed by another order's
-// dispatch").
+// The shared spelling (nodes.SlotTakeableSQL) covers every part of it:
+// claimed_by by the same clause (owner-aware, where shuffleSlotFree was
+// owner-blind; the claimant is a leg that has not claimed anything yet), the bin
+// count by the same clause, and the in-flight count by the delivery_node clause,
+// which is wider — any live order naming the slot, not only one already bringing
+// a bin. The capacity check's own arms for a missing node, a synthetic node and
+// an NGRP destination never apply here: pass 1 skips synthetic children and pass
+// 2 offers only lane slots. So none of it is left to keep, and keeping it would
+// be a second answer to the question the shared spelling asks.
 //
-// Tightening this makes "no free shuffle slot" MORE frequent — which is safe only
-// because that outcome now WAITS instead of failing terminally (ErrNoShuffleSlot,
-// same commit). The two changes are a pair; do not keep one without the other.
-func shuffleSlotFree(db *store.DB, n *nodes.Node) bool {
-	if n.ClaimedBy != nil {
-		return false
-	}
-	blocked, _ := CheckDropoffCapacity(db, n.Name, 0)
-	return !blocked
-}
+// Tightening the pool makes "no free shuffle slot" more frequent, which is safe
+// only because that outcome WAITS (ErrNoShuffleSlot) rather than failing the
+// order.
+const noClaimantYet int64 = 0
 
 // ErrNoShuffleSlot means the reshuffle has nowhere to park its blockers RIGHT
 // NOW. This is congestion, not a fault: a shuffle slot frees the moment any

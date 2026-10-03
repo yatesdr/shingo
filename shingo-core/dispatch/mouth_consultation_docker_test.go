@@ -52,7 +52,7 @@ func TestMouthConsultation_AHeldLaneIsNotParking(t *testing.T) {
 	// The digger, and the pool it can reach while nothing holds the sibling.
 	digger := testdb.CreateOrder(t, db)
 	asker := reservations.AskerFor(digger.ID, digger.ID)
-	slots, err := findShuffleSlots(db, dugID, grpID, 1, asker, nil)
+	slots, err := findShuffleSlots(db, dugID, grpID, 1, asker, noClaimantYet, nil)
 	testutil.MustNoErr(t, err, "the sibling must be parking while it is free")
 	if len(slots) != 1 {
 		t.Fatalf("free pool returned %d slot(s), want 1 — the fixture has no parking to lose", len(slots))
@@ -73,7 +73,7 @@ func TestMouthConsultation_AHeldLaneIsNotParking(t *testing.T) {
 			"this test proves nothing about the mouth", held)
 	}
 
-	_, err = findShuffleSlots(db, dugID, grpID, 1, asker, nil)
+	_, err = findShuffleSlots(db, dugID, grpID, 1, asker, noClaimantYet, nil)
 	if err == nil {
 		t.Fatal("the pool offered parking in a lane whose mouth another order owns. The dig would be " +
 			"refused at admission, drop that slot, and walk to the next one shallower in the same " +

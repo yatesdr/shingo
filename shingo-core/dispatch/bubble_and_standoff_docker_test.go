@@ -69,7 +69,7 @@ func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T
 	carried := createTestBinAtNode(t, db, bp.Code, prNode(t, db, "BUBBLE-INBOUND-SRC").ID, "BUBBLE-INBOUND-BIN")
 	testdb.ClaimBinForTest(t, db, carried.ID, inbound.ID)
 
-	slots, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), nil)
+	slots, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), noClaimantYet, nil)
 	testutil.MustNoErr(t, err, "ask for parking with a deeper slot spoken for")
 	if len(slots) == 0 {
 		t.Fatal("no parking offered at all — the lane has slots deeper than the spoken-for one and " +
@@ -103,7 +103,7 @@ func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T
 			behind[s.ID] = true
 		}
 	}
-	if _, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), behind); err == nil {
+	if _, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), noClaimantYet, behind); err == nil {
 		t.Fatal("with everything behind the target excluded, the only slots left in that lane are in " +
 			"front of it — and they are refused while order is driving there. Offering one is the bubble")
 	}
@@ -111,7 +111,7 @@ func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T
 	testutil.MustNoErr(t, db.FailOrderAtomic(inbound.ID, "the inbound order went away"),
 		"terminalize the inbound order")
 
-	after, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), behind)
+	after, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(inbound), noClaimantYet, behind)
 	testutil.MustNoErr(t, err, "ask again once nothing is coming for that slot")
 	if len(after) == 0 {
 		t.Fatal("still nothing offered after the only order driving to that slot reached a terminal " +

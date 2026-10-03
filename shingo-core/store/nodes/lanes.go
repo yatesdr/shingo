@@ -233,8 +233,10 @@ var ErrLaneClosedByClaim = errors.New(
 // ── DIGS ARE STRUCTURALLY EXEMPT, and get no arm here ─────────────────────
 //
 // A reshuffle picks its shuffle slots through findShuffleSlots
-// (dispatch/reshuffle.go), which does not call this selector at all. So the
-// moves that exist to UNBURY things can never be refused by a burial guard —
+// (dispatch/reshuffle.go), which does not call this selector at all. It shares
+// the availability clauses (SlotTakeableSQL, through TakeableSlotsInGroup) and
+// never this burial clause. So the moves that exist to UNBURY things can never
+// be refused by a burial guard —
 // the deadlock a self-blind guard would cause is prevented by the call graph,
 // not by an exemption, and an exemption added here would be dead code that
 // looked load-bearing.
@@ -293,15 +295,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		WHERE n.parent_id = $1
 		  AND n.is_synthetic = false
 		  AND `+helpers.NodeEnabledSQL+`
-		  AND (n.claimed_by IS NULL OR n.claimed_by = $2)
-		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
-		  AND NOT `+reservations.SlotSpokenForByStrangerSQL("r", "n.id", "$2")+`
-		  AND NOT EXISTS (
-			SELECT 1 FROM orders o
-			WHERE o.delivery_node = n.name
-			  AND o.status NOT IN (%s)
-			  AND o.id <> $2
-		  )
+		  AND `+SlotTakeableSQL("n", "$2")+`
 		  -- THE MIRROR OF ALL THREE IS DELIBERATELY *NOT* ASKED HERE, and that
 		  -- is a decision rather than an omission. The clauses above refuse to
 		  -- PICK a slot somebody else holds and say nothing about the slots in
@@ -364,13 +358,77 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		  -- re-resolve a slot behind a bin it is itself coming for.
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) DESC
-		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList(),
+		LIMIT 1`, SelectCols, FromClause,
 		helpers.ReachableSQL("n"), burial), laneID, excludeOrderID)
 	n, err := ScanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)
 	}
 	return n, nil
+}
+
+// SlotTakeableSQL is the one spelling of "may this order put a bin on this
+// slot": no stranger's hard claim on it, no bin on it, no stranger's active slot
+// reservation on it (pending or confirmed), and no other live order naming it as
+// its delivery_node.
+//
+// alias is the candidate node's alias in the outer query; ownerExpr is the asking
+// order's id (a bind placeholder such as "$2"). Every clause exempts the owner, so
+// an order sees the slot it already holds as takeable; an owner of 0 exempts
+// nobody, since order ids are positive and claimed_by is NULL or a real id.
+//
+// The store selector (findStoreSlot) and the dig's shuffle walk
+// (TakeableSlotsInGroup) both ask it, so the two cannot disagree about which
+// slots are spoken for. They differ only in the rules layered on top: the store
+// selector adds the burial clause, and the shuffle walk adds its dig-only
+// exclusions in Go.
+//
+// The reservation clause is the claim door's own test. A slot reservation is
+// exclusive per node (uq_reservations_slot_active), so a chooser that skips this
+// clause offers a slot whose claim is refused on every ask for as long as the
+// holder holds it. A holder that is reserve-holding (waiting for material, no
+// claimed bin) can hold it indefinitely.
+func SlotTakeableSQL(alias, ownerExpr string) string {
+	return fmt.Sprintf(`(%[1]s.claimed_by IS NULL OR %[1]s.claimed_by = %[2]s)
+		  AND NOT EXISTS (SELECT 1 FROM bins tk_bin WHERE tk_bin.node_id = %[1]s.id)
+		  AND NOT %[3]s
+		  AND NOT EXISTS (
+			SELECT 1 FROM orders tk_ord
+			WHERE tk_ord.delivery_node = %[1]s.name
+			  AND tk_ord.status NOT IN (%[4]s)
+			  AND tk_ord.id <> %[2]s
+		  )`, alias, ownerExpr,
+		reservations.SlotSpokenForByStrangerSQL("tk_res", alias+".id", ownerExpr),
+		protocol.TerminalStatusSQLList())
+}
+
+// TakeableSlotsInGroup returns the ids of every node in a group's shuffle pool —
+// its direct children and the slots of its lanes — that SlotTakeableSQL admits
+// for owner. One statement for the whole group, so a caller walking many
+// candidates reads availability once rather than once per candidate.
+//
+// It answers availability only. Enabled, synthetic, lane-being-dug, burial,
+// entombing and accessibility are the caller's rules and are not applied here.
+func TakeableSlotsInGroup(db *sql.DB, groupID, owner int64) (map[int64]bool, error) {
+	rows, err := db.Query(`
+		SELECT n.id
+		FROM nodes n
+		WHERE (n.parent_id = $1
+		       OR n.parent_id IN (SELECT lane.id FROM nodes lane WHERE lane.parent_id = $1))
+		  AND `+SlotTakeableSQL("n", "$2"), groupID, owner)
+	if err != nil {
+		return nil, fmt.Errorf("takeable slots in group %d: %w", groupID, err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan takeable slot in group %d: %w", groupID, err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // LaneForNode returns the LANE node that directly parents nodeID, or (nil, nil)

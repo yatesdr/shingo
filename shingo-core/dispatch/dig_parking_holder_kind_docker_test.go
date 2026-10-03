@@ -56,7 +56,7 @@ func TestRightOfWay_NamesTheKindOfHolderItWasRefusedBy(t *testing.T) {
 			t.Fatalf("plant the source lock: %v", err)
 		}
 
-		_, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(digger), nil)
+		_, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(digger), noClaimantYet, nil)
 		var held *DigParkingHeldError
 		if !errors.As(err, &held) {
 			t.Fatalf("findShuffleSlots err = %v, want a DigParkingHeldError. §R.101's source lock is "+
@@ -91,7 +91,7 @@ func TestRightOfWay_NamesTheKindOfHolderItWasRefusedBy(t *testing.T) {
 			t.Fatal("the sibling dig could not take the parking lane")
 		}
 
-		_, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(digger), nil)
+		_, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(digger), noClaimantYet, nil)
 		var held *DigParkingHeldError
 		if !errors.As(err, &held) {
 			t.Fatalf("findShuffleSlots err = %v, want a DigParkingHeldError — this is §R.61's "+

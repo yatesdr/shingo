@@ -1463,8 +1463,9 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // this count either (TestHeldBinDig_NeverParksOnTheOrdersOwnDestination).
 //
 // Every reader inherits it through the counts below: CheckDropoffCapacityForType
-// (the node arm and the NGRP arm), shuffleSlotFree through that, and
-// loader_place's two direct reads. soakstat's pre-dispatch tallies keep their
+// (the node arm and the NGRP arm) and loader_place's two direct reads. The
+// dig's shuffle walk no longer does: it asks nodes.SlotTakeableSQL, whose
+// delivery_node clause counts any live order naming the slot. soakstat's pre-dispatch tallies keep their
 // own status list, because they count something else.
 func InFlightForDropoffSQL() string {
 	return `EXISTS (SELECT 1 FROM bins b WHERE b.claimed_by = orders.id)`

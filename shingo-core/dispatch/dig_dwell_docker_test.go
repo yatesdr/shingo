@@ -1136,8 +1136,8 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 // test for the specimen the shape was written against.
 //
 // THE OLD FAILURE: the leg was dispatched carrying delivery_node = a slot in
-// another lane, and nothing held it — shuffleSlotFree says the non-reservation is
-// deliberate, and the burial test that would have protected it is a plan-time
+// another lane, and nothing held it — a span reservation for the dig was
+// deliberately not taken, and the burial test that would have protected it is a plan-time
 // snapshot by its own admission ("the set is computed once above"). Two ordinary
 // stores into shallower slots in that lane while the robot was still working the
 // first one, and the leg arrived at a slot it could not reach: admission refuses

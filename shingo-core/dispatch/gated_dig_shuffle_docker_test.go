@@ -152,8 +152,9 @@ func TestGatedDig_BlockerMayGoToAnotherGatedLane(t *testing.T) {
 // another mark", a condition nothing in the plant clears, and now it means what
 // it says.
 //
-// The same reasoning is written next to shuffleSlotFree for an earlier
-// tightening of this function. It is load-bearing every time.
+// The same reasoning is written next to noClaimantYet (reshuffle.go) for the
+// tightenings of this function's availability test. It is load-bearing every
+// time.
 //
 // MUTATION: drop codeNoShuffleSlot from the transient set in
 // planning_service.go's classifier. The Transient() assertion fires -- the

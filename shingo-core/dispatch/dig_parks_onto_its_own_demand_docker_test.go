@@ -82,7 +82,7 @@ func TestFindShuffleSlots_WillNotWallInABinAnOrderHasResolvedOnto(t *testing.T) 
 	})
 
 	// The pool the dig would be offered, asked exactly as planUnbury asks it.
-	slots, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(demand), nil)
+	slots, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(demand), noClaimantYet, nil)
 
 	// EVERY SLOT IN THAT LANE IS IN FRONT OF THE BIN, so a correct pool offers
 	// none of them. There is no other parking in this group, so the honest answer
@@ -105,7 +105,7 @@ func TestFindShuffleSlots_WillNotWallInABinAnOrderHasResolvedOnto(t *testing.T) 
 	// terminalization where claimed_by does not, so without a liveness test on the
 	// holder this would wall the lane off forever.
 	testutil.MustNoErr(t, db.FailOrderAtomic(demand.ID, "demand went away"), "cancel the demand")
-	after, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(demand), nil)
+	after, err := findShuffleSlots(db, dug.ID, grp.ID, 1, digAskerFor(demand), noClaimantYet, nil)
 	testutil.MustNoErr(t, err, "ask for parking again after the demand was cancelled")
 	if len(after) == 0 {
 		t.Fatal("the parking lane is still excluded after the order aiming at the bin was cancelled. " +

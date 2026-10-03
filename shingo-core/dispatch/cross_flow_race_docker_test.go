@@ -108,7 +108,7 @@ func twoDigsOneGroup(t *testing.T, db *store.DB, prefix string) (grp, laneA, lan
 // Both halves read exactly what production reads. Occupancy comes from
 // reservations.OccupantsOf, which is admission's own source (admitLane arm 2), and
 // the inbound count is CountInFlightOrdersByDeliveryNodeExcluding, which is the
-// count CheckDropoffCapacity consults on shuffleSlotFree's behalf. Asserting
+// count CheckDropoffCapacity consults for every other dropoff. Asserting
 // against a second definition of "inside" would let the two drift and call it a
 // pass.
 type crossFlowInvariant struct {
@@ -233,8 +233,9 @@ func legsOf(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 //  4. B's legs run out. The lane clears, the lock lifts.
 //  5. A plans NOW, against a group with room in it, and both demands finish.
 //
-// MUTATION 1 (verified): revert shuffleSlotFree (reshuffle.go) to the pre-D83a
-// body — `cnt, _ := db.CountBinsByNode(n.ID); return cnt == 0`. Dig A then takes
+// MUTATION 1 (verified against the pre-D83a body): make the shuffle walk's
+// availability test count bins only — reduce nodes.SlotTakeableSQL, as
+// TakeableSlotsInGroup asks it, to its bin clause. Dig A then takes
 // the parking node dig B's leg is already flying to, and the INBOUND half of the
 // invariant fires at step 2: "2 orders are inbound to XF-PARK".
 //

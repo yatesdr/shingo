@@ -822,8 +822,9 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 //     slots strictly SHALLOWER than the target, so the order's own bin is never
 //     one of the things being moved.
 //   - Its DESTINATION slot is never parking for its own dig. The order holds it
-//     only as a pending reservation, which the dropoff count does not read, so
-//     shuffleSlotFree would count it free; planUnbury excludes the destination
+//     only as a pending reservation. The shuffle walk reads slot reservations
+//     (nodes.SlotTakeableSQL) and at plan time exempts nobody, so it counts the
+//     destination taken; planUnbury also excludes the destination
 //     the dig's retrieve delivers to, and once the compound exists the retrieve
 //     child's claim makes the slot inbound for the release-time resolver too.
 //     With the destination as the only free parking the order waits under
