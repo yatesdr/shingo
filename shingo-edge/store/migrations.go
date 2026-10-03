@@ -1374,6 +1374,28 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// A keep_staged flag stored before keeping a staged spare was built
+			// (the column dates from an earlier, shelved design, whose planner
+			// ignored it) would switch its line to the short swap the moment this
+			// build starts: buildSwapDispatch reads the flag directly, on a spot
+			// no one chose for it and no claim save checked. Every flag already
+			// stored is cleared, once, and the count is logged so a plant can
+			// see whether it had any. A flag set after the upgrade comes through
+			// a checked save and is left alone: no Verify, because "no flag
+			// set" is not this migration's post-condition after day one.
+			Version: 13,
+			Name:    "clear_keep_staged_stored_before_the_design",
+			Fn: func(tx *sql.Tx) error {
+				res, err := tx.Exec(`UPDATE style_node_claims SET keep_staged = 0 WHERE keep_staged <> 0`)
+				if err != nil {
+					return err
+				}
+				n, _ := res.RowsAffected()
+				log.Printf("store: upgrade cleared keep_staged on %d claim(s) stored before keeping a staged spare was built", n)
+				return nil
+			},
+		},
 	}
 }
 
