@@ -310,12 +310,11 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return false
 	case dispatch.OutcomeReshuffle:
-		// Plan the reshuffle HERE, not only at intake. planTransport runs once, at
-		// intake, but burial arises over TIME: an order that queued with an accessible
-		// source — behind a full destination, or behind inventory — can be buried by a
-		// later store while it waits. This scanner is the only thing that looks at it
-		// again. Before this arm existed the order re-queued forever ("awaiting
-		// reshuffle") and nothing in the system would ever unbury its lane.
+		// Plan the reshuffle HERE, and only here. Intake queues a buried source
+		// (planning_service.go parkBuried) and the pass the queued event runs plans it
+		// before HandleOrderRequest returns. Burial also arises over TIME: an order
+		// that queued with an accessible source can be buried by a later store while
+		// it waits, and this arm is what unburies its lane.
 		//
 		// The dropoff gate above is the PRECONDITION, not an incidental ordering: a
 		// simple-retrieve reshuffle compound IS the delivery, so it may only be planned

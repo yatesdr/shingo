@@ -138,17 +138,12 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 }
 
 // PlanBuriedReshuffle plans and dispatches the reshuffle compound for an order
-// whose source resolved BURIED on scanner replay. It is the replay-side twin of
-// the intake path in planTransport.
-//
-// Reshuffle planning cannot live at intake alone. planTransport runs exactly once
-// (PlanningService.Register wires it to the three simple order types and nothing
-// re-invokes it), but burial is a condition that arises over TIME: an order that
-// queued with an accessible source — behind a full destination, or behind
-// inventory — can be buried by a later store while it waits. The fulfillment
-// scanner is the only thing that looks at it again, so without a planner here
-// that order re-queues forever and nothing in the system will ever unbury its
-// lane.
+// whose source resolved BURIED in the fulfillment scanner. It is the only place a
+// plain order's dig is planned: intake queues a buried source (parkBuried) and
+// the scanner's pass on the queued event plans it before HandleOrderRequest
+// returns. Burial also arises over TIME — an order that queued with an
+// accessible source can be buried by a later store while it waits — and the same
+// arm serves both.
 //
 // PRECONDITION: the caller must have cleared the dropoff-capacity gate. A
 // simple-retrieve reshuffle compound IS the delivery — PlanReshuffle's retrieve
@@ -156,7 +151,10 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 // and compound children are dispatched by AdvanceCompoundOrder, which never
 // re-checks capacity. So planning a reshuffle COMMITS the delivery, and may only
 // be done against a destination already known clear. Scanner.tryFulfill checks
-// CheckDropoffCapacity before it resolves the source, which is exactly that.
+// CheckDropoffCapacity before it resolves the source, under scanMu, which is
+// exactly that — and since intake stopped planning digs, every plain dig is
+// planned there, so the precondition holds for every compound AdvanceCompoundOrder
+// will ever dispatch (TestTwoHoldersThroughIntakeBuriedArm).
 //
 // Do NOT advance the compound after this returns: createCompound already
 // dispatched the first child. Stacking a second advance is the 2026-05-27

@@ -1524,8 +1524,14 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 
 // TestDispatcher_MoveOrder_NGRPSource_BuriedBin verifies that a move order
 // with an NGRP source where the only matching bin is buried behind blockers
-// triggers the reshuffle path (planBuriedReshuffle) rather than silently
-// dispatching without a bin claim.
+// takes the reshuffle path rather than silently dispatching without a bin claim.
+//
+// Two halves, because the reshuffle is planned in two places' worth of code now:
+// intake names the burial and queues (planning_service.go parkBuried), and the
+// fulfillment scanner plans the dig behind its own dropoff gate under scanMu
+// (Dispatcher.PlanBuriedReshuffle, the arm tryFulfill takes). This package has
+// no scanner, so the second half calls that arm directly — exactly what a scan
+// does with the finder's OutcomeReshuffle.
 func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -1533,8 +1539,6 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 	// SetupCompound with NumSlots=2 (default) creates:
 	//   Slot 1 (depth 1, front) — blocker bin
 	//   Slot 2 (depth 2, back)  — target bin (oldest, the one we want)
-	// The target bin is buried behind the blocker, so the resolver returns
-	// a BuriedError, which planMove should delegate to planBuriedReshuffle.
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
 		Prefix: "MVBURY",
 	})
@@ -1544,9 +1548,7 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 	resolver := &DefaultResolver{DB: db, DebugLog: nil}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
-	env := testEnvelope()
-
-	d.HandleOrderRequest(env, &protocol.OrderRequest{
+	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 		OrderUUID:    "move-buried-1",
 		OrderType:    OrderTypeMove,
 		PayloadCode:  sc.Payload.Code,
@@ -1556,17 +1558,25 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 	})
 
 	order := testdb.RequireOrder(t, db, "move-buried-1")
+	if order.Status != StatusQueued || order.QueueCause != string(CauseIntakeBuried) {
+		t.Fatalf("after intake: status %q cause %q, want %q under %q — intake names the burial and queues",
+			order.Status, order.QueueCause, StatusQueued, CauseIntakeBuried)
+	}
+	if len(backend.Orders()) != 0 {
+		t.Fatalf("intake dispatched %d fleet orders — intake plans no dig", len(backend.Orders()))
+	}
 
-	// The order should trigger a compound reshuffle — status = "reshuffling"
+	res := d.finder.FindSource(order, IntentFull)
+	if res.Outcome != OutcomeReshuffle {
+		t.Fatalf("finder outcome %v, want OutcomeReshuffle", res.Outcome)
+	}
+	if err := d.PlanBuriedReshuffle(order, res.Buried); err != nil {
+		t.Fatalf("plan the dig: %v", err)
+	}
+	order = testdb.RequireOrder(t, db, "move-buried-1")
 	if order.Status != StatusReshuffling {
 		t.Errorf("status = %q, want %q (buried bin should trigger reshuffle)", order.Status, StatusReshuffling)
 	}
-
-	// BinID should NOT be set yet — the reshuffle must complete first
-	// before the actual bin can be claimed and moved.
-	// (The compound order children handle the individual moves.)
-
-	// Fleet should have received dispatch(es) for the compound children
 	if len(backend.Orders()) == 0 {
 		t.Error("fleet orders = 0, want >= 1 (compound reshuffle children should be dispatched)")
 	}

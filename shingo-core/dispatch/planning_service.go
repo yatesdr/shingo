@@ -149,10 +149,10 @@ type PlanningHandler func(order *orders.Order, env *protocol.Envelope, payloadCo
 // the claim-move to the fulfillment scanner made the scanner the single bin
 // claimer, so the planner no longer claims, syncs manifests, or transitions the
 // order to sourcing. Its remaining intake-only jobs are the shared capacity gate,
-// move's named-source validations + concrete-dest resolution, and pivoting a
-// buried source to a reshuffle compound (reshuffle planning lives at intake; the
-// scanner only re-queues). It therefore no longer depends on the bin-manifest or
-// lifecycle services.
+// move's named-source validations + concrete-dest resolution, and naming a
+// buried source on the row before it queues. It plans no dig: the scanner does,
+// under scanMu (parkBuried). It therefore no longer depends on the bin-manifest
+// or lifecycle services.
 type PlanningService struct {
 	db       *store.DB
 	resolver NodeResolver
@@ -262,8 +262,8 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 	case OutcomeFound:
 		return res.Bin, res.Node, nil, nil, true
 	case OutcomeReshuffle:
-		pr, pe := s.planBuriedReshuffle(order, res.Buried)
-		return nil, nil, pr, pe, false
+		s.parkBuried(order, res.Buried)
+		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	case OutcomeStructural:
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
@@ -271,6 +271,33 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}
+}
+
+// parkBuried is intake's whole answer to a buried source: name the burial on the
+// row and queue the order. The dig is planned by the fulfillment scanner, which
+// the queued event runs before HandleOrderRequest returns (engine/wiring.go,
+// EventOrderQueued → RunOnce).
+//
+// INTAKE DOES NOT DIG. It did, and that put a claim outside scanMu: planning a
+// dig creates the compound, and CreateCompoundChildren claims the retrieve
+// child's bin for the parent's delivery node in its own transaction. A scanner
+// pass for another order to the same node could sit between its gate and its
+// claim while intake's gate passed and the compound claimed, and both carriers
+// went (TestTwoHoldersThroughIntakeBuriedArm). The scanner plans a burial
+// behind the dropoff gate under scanMu, which is the precondition
+// PlanBuriedReshuffle states, and the only place it now holds.
+//
+// The cause is the one complex intake writes for the same fact
+// (complex_reshuffle.go). The scanner's park overwrites it with the narrower
+// cause when the dig cannot start; a lane that cannot be read leaves the row
+// naming the payload alone, which is still not blank.
+func (s *PlanningService) parkBuried(order *orders.Order, buried *BuriedError) {
+	params := QueueParams{Payload: order.PayloadCode}
+	if lane, err := s.db.GetNode(buried.LaneID); err == nil && lane != nil {
+		params.Lane = lane.Name
+	}
+	s.dbg("transport: order %d source buried in lane %d — queued for the scanner to plan the dig", order.ID, buried.LaneID)
+	s.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried, params)
 }
 
 // setQueueReason is the planning side's door onto the queue-reason columns —
@@ -296,10 +323,9 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 // status-first queued → scanner claims at dispatch). planTransport validates,
 // resolves the source, gates capacity, resolves a move's concrete dest, then
 // QUEUES; the scanner re-finds + claims + reserves + dispatches. Source resolution
-// STAYS at intake for two dispositions the scanner cannot produce: a BURIED source
-// pivots to a reshuffle compound (reshuffle planning lives at intake — the scanner
-// only re-queues), and a WAIT/STRUCTURAL outcome sets the queue reason / terminal
-// error. On Found the resolved sourceNode is ADVISORY (for the shadow plan); the
+// stays at intake so a WAIT/STRUCTURAL outcome sets the queue reason / terminal
+// error at submit time, and a BURIED source queues under a cause naming the lane
+// — the scanner plans its dig (parkBuried). On Found the resolved sourceNode is ADVISORY (for the shadow plan); the
 // scanner's re-find is authoritative. The one datum the scanner cannot recompute —
 // the operator's declared release-correction count (RemainingUOP, carried only by a
 // move) — is persisted onto the order so the scanner's claim seeds the same
@@ -363,17 +389,10 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	}
 
 	// Resolve the source through the shared SourceFinder. The dispositions live in
-	// resolveSource so intake and scanner-replay cannot drift on them. In particular
-	// OutcomeReshuffle returns Handled=true: planBuriedReshuffle has already made
-	// THIS order the compound parent (BeginReshuffle → Reshuffling), so the
-	// dispatcher must NOT queue it. Queuing it would transition the live compound
-	// parent Reshuffling → Queued, and the later CompleteCompound would then attempt
-	// the invalid Queued → Confirmed and strand the retrieve forever.
-	//
-	// Intake is not the only reshuffle planner: an order whose source is accessible
-	// here but buried by the time its destination frees is replanned by the
-	// fulfillment scanner, which resolves the source behind its own copy of this
-	// gate. See Scanner.tryFulfill's OutcomeReshuffle arm.
+	// resolveSource so intake and scanner-replay cannot drift on them. A buried
+	// source comes back Queued like any wait: the scanner is the one reshuffle
+	// planner, behind its own copy of this gate and under scanMu (parkBuried,
+	// Scanner.tryFulfill's OutcomeReshuffle arm).
 	intent := IntentFull
 	if isEmpty {
 		intent = IntentEmpty

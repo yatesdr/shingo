@@ -68,9 +68,16 @@ func buriedRequest(uuid string, sc *testdb.CompoundScenario) *protocol.OrderRequ
 }
 
 // A clear destination and a free shuffle slot: the dig is planned before
-// HandleOrderRequest returns and its first leg is with the fleet. The Edge has
-// been sent the order's projection and nothing else: no status update names
-// the dig at intake.
+// HandleOrderRequest returns and its first leg is with the fleet. No order waits
+// a tick: the test runs no scan of its own, and on this otherwise idle database
+// the only pass that can have planned it is the one the queued event runs
+// synchronously inside HandleOrderRequest (engine/wiring.go, EventOrderQueued).
+//
+// The Edge has been sent the order's projection and the queued reply. At
+// ec11ecbd intake planned the dig itself and sent the projection alone; it now
+// queues every plain order, buried or not, and says so. No envelope names the
+// dig: the Edge's mirror reads queued while Core digs, as it always has for a
+// burial the scanner found on replay.
 func TestIntakeBuried_ClearDestination_DigPlannedBeforeReturn(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -106,7 +113,7 @@ func TestIntakeBuried_ClearDestination_DigPlannedBeforeReturn(t *testing.T) {
 	}
 
 	got := edgeEnvelopesFor(t, db, "ib-clear")
-	if want := []string{"data.order.projected:pending"}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if want := []string{"data.order.projected:pending", "order.update:queued"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("envelopes queued for the Edge = %v, want %v", got, want)
 	}
 }
