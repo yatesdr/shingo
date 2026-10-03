@@ -420,6 +420,20 @@ func TestAcknowledgedAndSubmittedAreCancelledNotBlockedAndNotIgnored(t *testing.
 	}
 }
 
+// TestReshufflingIsCancelledAtChangeoverStart pins the one answer for a digging
+// order. The Edge's live mirror shows it queued and the boot snapshot shows it
+// reshuffling; both must be cancelled, or the same order survives a changeover
+// only on an Edge that restarted while Core was digging.
+func TestReshufflingIsCancelledAtChangeoverStart(t *testing.T) {
+	t.Parallel()
+	if a := ChangeoverStartActionFor(StatusReshuffling); a != ChangeoverStartCancel {
+		t.Errorf("reshuffling classified %s, want cancel", a)
+	}
+	if a, q := ChangeoverStartActionFor(StatusReshuffling), ChangeoverStartActionFor(StatusQueued); a != q {
+		t.Errorf("reshuffling classified %s but queued %s — one order must get one answer", a, q)
+	}
+}
+
 // containsToken reports whether the comma-separated quoted SQL list
 // contains the exact token. Substring-safe: 'failed' must not match
 // 'failed_x' or similar. The projector builds quoted tokens so we

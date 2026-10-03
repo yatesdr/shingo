@@ -730,7 +730,8 @@ func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
 //     against an order the changeover does not own is how ledger errors are
 //     manufactured.
 //   - reshuffling: a compound parent waiting on children that rearrange
-//     storage, not a carrier bound for the line.
+//     storage, not a carrier bound for the line. IT IS CANCELLED: see
+//     ChangeoverStartActionFor.
 //
 // DEFINED VIA THE CLASSIFIER so this gate and the cancel sweep read one source.
 // It was IsVendorActive(s) || s == StatusFaulted, which is the same set, but two
@@ -812,16 +813,28 @@ func (a ChangeoverStartAction) String() string {
 // belongs to the fulfillment scanner and means "retryable acquisition state",
 // which is a different question from "is anything holding this yet". The name
 // fit and the membership did not.
+//
+// RESHUFFLING IS CANCELLED, NOT PASSED. The Edge's live mirror never writes
+// reshuffling, so a digging order reads queued there and a changeover start
+// cancels it. The boot snapshot does write it, and passing it let the same
+// order survive a changeover on a restarted Edge and later deliver the outgoing
+// style to the line — the two-styles-live shape above. One order, one answer:
+//
+//   - the parent is pre-fleet for its own carrier; no robot holds a bin for it
+//     until its dig is done and its own leg is dispatched;
+//   - its dig legs are ended by Core's cancel cascade on the parent;
+//   - a blocker a dig leg already lifted is the carried-bin return's to bring
+//     back, not this classifier's to protect.
 func ChangeoverStartActionFor(s Status) ChangeoverStartAction {
 	switch s {
-	case StatusPending, StatusSubmitted, StatusAcknowledged, StatusSourcing, StatusQueued:
-		// Pre-fleet, contiguous. Nothing is carrying a bin for any of these, so
-		// cancelling cannot strand a changeover the way the Hopkinsville case
-		// did — that hazard begins at dispatched.
+	case StatusPending, StatusSubmitted, StatusAcknowledged, StatusSourcing, StatusQueued, StatusReshuffling:
+		// Pre-fleet for the order's own carrier. Nothing is carrying a bin for
+		// any of these, so cancelling cannot strand a changeover the way the
+		// Hopkinsville case did — that hazard begins at dispatched.
 		return ChangeoverStartCancel
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusFaulted:
 		return ChangeoverStartBlock
-	case StatusDelivered, StatusReshuffling:
+	case StatusDelivered:
 		return ChangeoverStartPass
 	case StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped:
 		// Terminal. There is nothing to cancel and nothing to wait for.
