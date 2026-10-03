@@ -278,11 +278,26 @@ func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
 	refuse := func(err error) StorageDropoff {
 		return StorageDropoff{Cause: causeForStorageDropoff(err), Err: err}
 	}
+	asked := order.DeliveryNode
 	if err := d.resolveSyntheticDropoff(order); err != nil {
 		return refuse(err)
 	}
+	resolved := order.DeliveryNode != asked
 	d.redirectStoreOffDugLane(order)
 	if err := reserveStorageDropoff(d.db, order); err != nil {
+		// A SLOT LOST TO A RACE GOES BACK TO ITS GROUP. The resolved slot was
+		// written onto the order before the claim, so an order that kept it would
+		// wait for that one slot: the winner's bin lands there, and a storage slot
+		// can stay full for good while the group has room. Aimed at the group
+		// again, the next pass resolves afresh. One update, only on this path.
+		if resolved && errors.Is(err, ErrSlotContended) {
+			if uErr := d.db.UpdateOrderDeliveryNode(order.ID, asked); uErr != nil {
+				log.Printf("dispatch: order %d lost slot %s and could not be aimed back at %s: %v",
+					order.ID, order.DeliveryNode, asked, uErr)
+			} else {
+				order.DeliveryNode = asked
+			}
+		}
 		return refuse(err)
 	}
 	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
