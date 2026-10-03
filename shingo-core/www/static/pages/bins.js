@@ -422,24 +422,24 @@ function requestTransport() {
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
-// askRobotToSetDown is the bins page's door to the recover_carried_bin recovery
-// action: it asks the robot holding this bin to put it down somewhere Core can
-// name.
+// askRobotToSetDown is the bins page's Return button: the recover_carried_bin
+// recovery action, which sends the bin on a robot back to where a claim
+// declares it is used from — the same chooser the cancel-return watch uses.
 //
 // THE ONLY ACTION ON THIS PAGE THAT PUTS A ROBOT IN MOTION, which is why the
 // answer is shown rather than swallowed. On success the detail names the
-// destination and which tier chose it; on refusal the sentence the server
-// returns is shown UNCHANGED — "AMR-09 is not dispatchable, the plant has
-// taken it out of the pool" is already written for a person, and flattening it
-// to "could not recover" would throw away the only useful part.
+// destination and which declaration chose it; on refusal the sentence the
+// server returns is shown UNCHANGED — "AMR-09 is not dispatchable, the plant
+// has taken it out of the pool" is already written for a person, and
+// flattening it to "could not recover" would throw away the only useful part.
 //
 // It POSTs the existing /api/recovery/repair action rather than a new route:
 // the diagnostics Recovery tab is the receipt for these, and there is one
 // handler behind both.
-async function askRobotToSetDown(binId) {
+async function askRobotToSetDown(binId, robot) {
   var id = parseInt(binId, 10) || 0;
   if (!id) return;
-  if (!await uiConfirm('Ask the robot to set this bin down? It will drive to a free node and unload.')) return;
+  if (!await uiConfirm('Return this bin to where it is used from? ' + (robot && typeof robot === 'string' ? robot : 'The robot') + ' will drive there and unload. If nothing declares a place for it, nothing moves.')) return;
   apiPost('/api/recovery/repair', { action: 'recover_carried_bin', order_id: 0, bin_id: id })
     .then(function(data) { toast(data.detail || 'Recovery order created', 'info'); refreshBinRow(id); })
     .catch(function(e) { toast(e.error || e, 'error'); });

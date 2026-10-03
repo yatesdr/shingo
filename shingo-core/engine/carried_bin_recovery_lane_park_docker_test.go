@@ -8,8 +8,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
-	"shingocore/store"
-	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -27,30 +25,6 @@ import (
 // these prove. A park nobody releases is a wedge wearing a cause, which is worse
 // than the loud fail it replaces.
 // ---------------------------------------------------------------------------
-
-// laneWithSlot builds an unmarked lane in a group, with one slot at the mouth.
-//
-// THE GROUP IS NOT DECORATION. resolveOrderLaneHolds takes no mouth hold when
-// `lane.ParentID == nil` ("a lane with no group — no hold"), so a parentless lane
-// cannot be held and this test would silently exercise nothing: the recovery
-// order would sail past the lane question and dispatch.
-func laneWithSlot(t *testing.T, db *store.DB, prefix string) (lane, slot *nodes.Node) {
-	t.Helper()
-	ngrpType, err := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
-	testutil.MustNoErr(t, err, "get NGRP type")
-	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
-	testutil.MustNoErr(t, err, "get LANE type")
-
-	grp := &nodes.Node{Name: prefix + "-GRP", NodeTypeID: &ngrpType.ID, Enabled: true, IsSynthetic: true}
-	testutil.MustNoErr(t, db.CreateNode(grp), "create lane group")
-	lane = &nodes.Node{Name: prefix + "-LANE", NodeTypeID: &laneType.ID, ParentID: &grp.ID,
-		Enabled: true, IsSynthetic: true}
-	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
-	d0 := 0
-	slot = &nodes.Node{Name: prefix + "-LANE-S0", ParentID: &lane.ID, Enabled: true, Depth: &d0}
-	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
-	return lane, slot
-}
 
 // TestRecoveryOrderParksOnAHeldLaneAndTheScannerDispatchesIt is the anti-wedge
 // proof, and it is the whole justification for converting the arm.
@@ -70,46 +44,10 @@ func TestRecoveryOrderParksOnAHeldLaneAndTheScannerDispatchesIt(t *testing.T) {
 	backend := testdb.NewTrackingBackend()
 	eng := newTestEngine(t, db, backend)
 
-	lane, slot := laneWithSlot(t, db, "CBR-PARK")
-	bin := seedCarried(t, db, "AMR-PARK", slot.Name)
-	cacheRobot(eng, dispatchableRobot("AMR-PARK"))
-
-	// SOMEBODY ELSE IS IN THE CORRIDOR. Taken through the same public door the
-	// recovery order will use, so the refusal is the real one and not a row this
-	// test invented.
-	//
-	// Its delivery_node deliberately is NOT the recovery slot: usableDropPoint
-	// counts active orders aimed at a node, so a blocker pointed at the same slot
-	// would make the destination unusable and the door would refuse one tier
-	// earlier, never reaching the lane question this test is about. The mouth hold
-	// is resolved from the node PASSED to AcquireLanesForOrder, so the lane is
-	// held either way.
-	elsewhere := &nodes.Node{Name: "CBR-PARK-ELSEWHERE", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(elsewhere), "create the blocker's own destination")
-	//
-	// AND IT IS in_transit, NOT queued. A queued blocker is in the scanner's own
-	// scan set: the synchronous scan this test triggers picked it up, failed it
-	// for having no payload_code, and terminalizing RELEASED ITS LANE — so the
-	// corridor was free by the time the assertion ran and the test proved nothing
-	// about the park. in_transit is also the honest state for what this row
-	// represents: a robot actually inside the lane.
-	blocker := &orders.Order{
-		EdgeUUID: "cbr-park-blocker", StationID: "edge.test", OrderType: "move",
-		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: elsewhere.Name,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(blocker), "create blocking order")
-	// IN ModeDig, which is the mode that excludes everyone. Two INBOUND holds
-	// SHARE a lane (admitMouth: "only an exact same-mode share is admitted"), so a
-	// blocker merely aimed into the lane refuses nothing — the recovery order
-	// would take its own inbound row beside it and dispatch, and this test would
-	// assert nothing while passing.
-	//
-	// Taken through the reservations API rather than AcquireLanesForOrder because
-	// the latter's admission first resolves a PICKUP SLOT for the source, and this
-	// blocker owns no bin — the fixture would fail on the setup rather than on the
-	// thing under test.
-	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, blocker.ID, reservations.ModeDig,
-		"test-blocker", lane.ID), "blocker takes the lane in dig mode")
+	// SOMEBODY ELSE IS IN THE CORRIDOR: the lane the claim's group would take
+	// the bin into is held outbound by an order in transit.
+	bin, blocker, lane := heldLaneReturn(t, db, "CBR-PARK")
+	cacheRobot(eng, dispatchableRobot("AMR-CBR-PARK"))
 
 	// THE PRESS. It must not fail: a busy corridor is a wait, not an answer.
 	order, _, rerr := eng.RecoverCarriedBin(bin.ID, "operator:test")
@@ -198,8 +136,8 @@ func TestRecoveryOrderParksOnAHeldLaneAndTheScannerDispatchesIt(t *testing.T) {
 		t.Fatal("the fleet was never asked to create anything")
 	}
 	last := reqs[len(reqs)-1]
-	if last.Vehicle != "AMR-PARK" {
-		t.Errorf("the scanner dispatched the recovery with Vehicle=%q, want AMR-PARK.\n"+
+	if last.Vehicle != "AMR-CBR-PARK" {
+		t.Errorf("the scanner dispatched the recovery with Vehicle=%q, want AMR-CBR-PARK.\n"+
 			"An unpinned unload-only plan tells whichever robot the fleet picks to put down a bin "+
 			"it is not carrying. orders.Create does not persist robot_id, so a parked recovery order "+
 			"loses its pin unless the door writes it down.", last.Vehicle)
@@ -218,9 +156,7 @@ func TestRecoveryFleetRefusalStaysTerminal(t *testing.T) {
 	backend := testdb.NewTrackingBackend()
 	eng := newTestEngine(t, db, backend)
 
-	dest := &nodes.Node{Name: "CBR-FLEET-DEST", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	bin := seedCarried(t, db, "AMR-FLEET", dest.Name)
+	bin, _ := seedCarriedHome(t, db, "AMR-FLEET")
 	cacheRobot(eng, dispatchableRobot("AMR-FLEET"))
 
 	backend.SetFail(true)

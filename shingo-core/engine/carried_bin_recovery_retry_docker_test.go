@@ -9,7 +9,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
-	"shingocore/store/nodes"
 )
 
 // ---------------------------------------------------------------------------
@@ -39,9 +38,7 @@ func TestRecoverCarriedBin_RetryAfterAFleetRefusal(t *testing.T) {
 	backend := testdb.NewTrackingBackend()
 	eng := newTestEngine(t, db, backend)
 
-	dest := &nodes.Node{Name: "DEST-RETRY", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	bin := seedCarried(t, db, "AMR-RETRY", "DEST-RETRY")
+	bin, _ := seedCarriedHome(t, db, "AMR-RETRY")
 	cacheRobot(eng, dispatchableRobot("AMR-RETRY"))
 
 	// The fleet is not taking orders right now.
@@ -84,9 +81,7 @@ func TestRecoverCarriedBin_LiveOrderStillBlocksARetry(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	dest := &nodes.Node{Name: "DEST-LIVE", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	bin := seedCarried(t, db, "AMR-LIVE", "DEST-LIVE")
+	bin, _ := seedCarriedHome(t, db, "AMR-LIVE")
 	cacheRobot(eng, dispatchableRobot("AMR-LIVE"))
 
 	first, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")

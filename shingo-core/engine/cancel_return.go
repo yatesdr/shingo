@@ -491,47 +491,53 @@ func (e *Engine) storeIntoLoader(home *loaders.Home, bin *bins.Bin) (*nodes.Node
 // the carrier the watch decided on, the bin's job changed under the attempt and
 // the policy declines rather than return a bin for an order it did not judge.
 func (e *Engine) chooseReturn(judged *orders.Order) func(*bins.Bin, fleet.RobotStatus, *orders.Order) (*nodes.Node, string, error) {
-	return func(bin *bins.Bin, _ fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error) {
+	return func(bin *bins.Bin, robot fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error) {
 		if carrier == nil || carrier.ID != judged.ID {
 			return nil, "", fmt.Errorf("the bin's last order is no longer cancelled order %d", judged.ID)
 		}
-		srcs, err := e.returnSources(bin, carrier)
-		if err != nil {
-			return nil, "", fmt.Errorf("could not read where %s is sourced from: %v", describeBinLoad(bin), err)
-		}
-		if len(srcs) == 0 {
-			if bin.PayloadCode == "" {
-				return nil, "", fmt.Errorf("no claim declares a place for an empty %s; "+
-					"the Recover button's ladder differs and may still find a slot", bin.BinTypeCode)
-			}
-			return nil, "", fmt.Errorf("no claim reports where %s is sourced from; "+
-				"the Recover button's ladder differs and may still find a slot", bin.PayloadCode)
-		}
-		var refusals []string
-		for _, s := range srcs {
-			if bin.PayloadCode == "" {
-				if fenced, why := e.fencedFor(s.node, carrier); fenced {
-					refusals = append(refusals, s.name+": "+why)
-					continue
-				}
-			}
-			dest, why := e.storeInto(s.node, bin)
-			if dest != nil {
-				tier := "returned to " + s.name + ", where " + describeBinLoad(bin) + " is sourced from"
-				if bin.PayloadCode == "" {
-					tier = "returned to " + s.name + ", a declared place for " + describeBinLoad(bin)
-				}
-				if why != "" {
-					tier += "; " + why
-				}
-				return dest, tier, nil
-			}
-			refusals = append(refusals, s.name+": "+why)
-		}
-		return nil, "", fmt.Errorf("every place %s is sourced from refused it (%s); "+
-			"the Recover button's ladder differs and may still find a slot",
-			describeBinLoad(bin), strings.Join(refusals, "; "))
+		return e.chooseDeclared(bin, robot, carrier)
 	}
+}
+
+// chooseDeclared is the one chooser both triggers share — the watch through
+// chooseReturn, the bins page's Return button directly. It walks returnSources
+// and takes the first storeInto answer; with none, it refuses with a sentence
+// naming every place tried and why it said no. carrier may be nil (a bin with
+// no order on record): the walk then has no "own process" to put first.
+func (e *Engine) chooseDeclared(bin *bins.Bin, _ fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error) {
+	srcs, err := e.returnSources(bin, carrier)
+	if err != nil {
+		return nil, "", fmt.Errorf("could not read where %s is sourced from: %v", describeBinLoad(bin), err)
+	}
+	if len(srcs) == 0 {
+		if bin.PayloadCode == "" {
+			return nil, "", fmt.Errorf("no claim declares a place for an empty %s", bin.BinTypeCode)
+		}
+		return nil, "", fmt.Errorf("no claim reports where %s is sourced from", bin.PayloadCode)
+	}
+	var refusals []string
+	for _, s := range srcs {
+		if bin.PayloadCode == "" {
+			if fenced, why := e.fencedFor(s.node, carrier); fenced {
+				refusals = append(refusals, s.name+": "+why)
+				continue
+			}
+		}
+		dest, why := e.storeInto(s.node, bin)
+		if dest != nil {
+			tier := "returned to " + s.name + ", where " + describeBinLoad(bin) + " is sourced from"
+			if bin.PayloadCode == "" {
+				tier = "returned to " + s.name + ", a declared place for " + describeBinLoad(bin)
+			}
+			if why != "" {
+				tier += "; " + why
+			}
+			return dest, tier, nil
+		}
+		refusals = append(refusals, s.name+": "+why)
+	}
+	return nil, "", fmt.Errorf("every place %s is sourced from refused it (%s)",
+		describeBinLoad(bin), strings.Join(refusals, "; "))
 }
 
 // carrierProcessNodes: the nodes that make a claim "the cancelled order's own".
@@ -539,6 +545,9 @@ func (e *Engine) chooseReturn(judged *orders.Order) func(*bins.Bin, fleet.RobotS
 // a supply order delivers to the line that claims the payload, an evacuation
 // lifts off it — deduplicated, blanks dropped.
 func carrierProcessNodes(o *orders.Order) []string {
+	if o == nil {
+		return nil
+	}
 	var out []string
 	seen := map[string]bool{}
 	for _, n := range []string{o.ProcessNode, o.DeliveryNode, o.SourceNode} {

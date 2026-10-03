@@ -514,7 +514,7 @@ func TestStrandedSweep_CarrierBinIsRecheckedDespiteAStaleOrder(t *testing.T) {
 }
 
 // A robot that is DRIVING resolves to a station it merely passed, because
-// CurrentStation is empty while it moves and ResolveRobotStation falls back to
+// CurrentStation is empty while it moves and ResolveReportedPoints falls back to
 // LastStation. The jack being at rest says nothing about the vehicle under it.
 func TestStrandedTransit_MovingRobotIsNotAPlacement(t *testing.T) {
 	t.Parallel()

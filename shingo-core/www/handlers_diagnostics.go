@@ -169,11 +169,13 @@ func (h *Handlers) apiRepairAnomaly(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "recover_carried_bin":
-		// Ask the robot holding this bin to set it down. The only recovery
-		// action here that DISPATCHES rather than repairing a record — every
-		// other case above rewrites Core's bookkeeping, this one puts a robot
-		// on the floor in motion, which is why the refusals are surfaced
-		// verbatim rather than flattened to "could not repair".
+		// The bins page's Return button: send the bin on this robot back to
+		// where a claim declares it is used from — the same chooser the
+		// cancel-return watch uses. The only recovery action here that
+		// DISPATCHES rather than repairing a record — every other case above
+		// rewrites Core's bookkeeping, this one puts a robot on the floor in
+		// motion, which is why the refusals are surfaced verbatim rather than
+		// flattened to "could not repair".
 		if req.BinID == 0 {
 			h.jsonError(w, "bin_id is required", http.StatusBadRequest)
 			return
@@ -196,8 +198,9 @@ func (h *Handlers) apiRepairAnomaly(w http.ResponseWriter, r *http.Request) {
 		}
 		// THE ONLY CASE THAT ANSWERS WITH MORE THAN "ok", because it is the only
 		// one that put a robot in motion. The detail names the destination and
-		// which tier chose it, and the person who pressed the button is owed
-		// both — "why did it go there" is the question a misplaced bin raises.
+		// which declaration chose it, and the person who pressed the button is
+		// owed both — "why did it go there" is the question a misplaced bin
+		// raises.
 		h.jsonOK(w, map[string]any{
 			"status":   "ok",
 			"order_id": order.ID,

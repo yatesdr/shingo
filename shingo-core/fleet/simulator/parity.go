@@ -63,10 +63,9 @@ func isActiveRobotState(state string) bool {
 // the resolver reads as "uncertain" — every cancel in sim was an anomaly.
 //
 // CurrentStation is the robot's coarse position: where it last completed a
-// block, kept after its order ends (FleetRobot.At). That makes recovery tier 3
-// ("unload where the robot is parked") reachable in sim, but only as coarsely
-// as that model is — a robot driving between blocks still reports the last
-// point it worked at.
+// block, kept after its order ends (FleetRobot.At), only as coarsely as that
+// model is — a robot driving between blocks still reports the last point it
+// worked at.
 func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 	d := s.typedDriver()
 	if d == nil {

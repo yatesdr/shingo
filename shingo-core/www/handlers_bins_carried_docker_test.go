@@ -57,9 +57,9 @@ func binsPage(t *testing.T, h *Handlers, cookie *http.Cookie) string {
 }
 
 // THE BUTTON IS FOR CARRIED BINS AND NOTHING ELSE. A bin at a real node is not
-// on anybody's deck, and offering to ask a robot to put it down would be
+// on anybody's deck, and offering to return it would be
 // offering an action that can only be refused.
-func TestBinsPage_SetItDownButtonRendersOnlyForCarriedBins(t *testing.T) {
+func TestBinsPage_ReturnButtonRendersOnlyForCarriedBins(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	loadTestTemplates(t, h)
@@ -79,22 +79,27 @@ func TestBinsPage_SetItDownButtonRendersOnlyForCarriedBins(t *testing.T) {
 
 	body := binsPage(t, h, loginCookie(t, h))
 
-	if !strings.Contains(body, "Ask AMR-09 to set it down") {
-		t.Error("the carried bin's row offers no way to ask the robot to put it down — " +
-			"which is the state that made recover_carried_bin unreachable")
-	}
 	if got := strings.Count(body, "askRobotToSetDown"); got != 1 {
 		t.Errorf("%d rows carry the button, want exactly 1 — only the bin on a deck can "+
-			"be set down by a robot", got)
+			"be returned by a robot", got)
 	}
-	if !strings.Contains(body, "askRobotToSetDown:"+strconv.FormatInt(riding.ID, 10)) {
-		t.Errorf("the button does not name bin %d", riding.ID)
+	at := strings.Index(body, "askRobotToSetDown:"+strconv.FormatInt(riding.ID, 10)+":AMR-09")
+	if at < 0 {
+		t.Fatalf("the button does not name bin %d and AMR-09", riding.ID)
+	}
+	// IN THE ACTIONS CELL, NOT THE LOCATION CELL: the nearest cell opened
+	// before the button is the row's flags cell.
+	if cell := body[strings.LastIndex(body[:at], "<td"):at]; !strings.HasPrefix(cell, `<td class="bin-flags">`) {
+		t.Errorf("the Return button is not in the actions cell; it sits in %.60q", cell)
+	}
+	if !strings.Contains(body[at:], ">Return</button>") {
+		t.Error(`the button is not labelled "Return"`)
 	}
 }
 
 // A READER IS NOT AN OPERATOR. Every other write affordance on this page is
 // behind .Authenticated and this one dispatches a robot, so it is too.
-func TestBinsPage_SetItDownButtonIsHiddenFromAnAnonymousReader(t *testing.T) {
+func TestBinsPage_ReturnButtonIsHiddenFromAnAnonymousReader(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	loadTestTemplates(t, h)

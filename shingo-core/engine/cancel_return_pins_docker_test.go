@@ -114,20 +114,32 @@ func seedRoleClaim(t *testing.T, db *store.DB, proc, node string, role protocol.
 		"seed claim "+proc)
 }
 
-// holdLaneInDig puts a foreign order in the lane in dig mode, which excludes
-// every other hold — the corridor-busy refusal the park exists for.
-func holdLaneInDig(t *testing.T, db *store.DB, prefix string, lane *nodes.Node) *orders.Order {
+// heldLaneReturn is a full bin on AMR-<prefix> whose cancelled order a claim
+// sources from a two-lane group, with lane 0 already holding the payload — so
+// the store takes the bin into lane 0 — and lane 0 held OUTBOUND by an order in
+// transit. The return is chosen, then parks at the lane admission: congestion,
+// not a refusal.
+//
+// OUTBOUND, NOT DIG. A dig takes the lane out of the store's candidates, so the
+// group would answer "no available slot" and the press would be refused before
+// any lane question. And IN TRANSIT, not queued: a queued blocker is in the
+// scanner's own scan set, which fails it and releases the lane before the
+// assertion runs.
+func heldLaneReturn(t *testing.T, db *store.DB, prefix string) (*bins.Bin, *orders.Order, *nodes.Node) {
 	t.Helper()
+	grp, lanes, slots := laneGroup(t, db, prefix, 2, 2)
+	binAt(t, db, slots[0][1], prefix+"-P")
+	seedClaim(t, db, "PROC-"+prefix, "STY", "LINE-"+prefix, prefix+"-P", grp.Name, true)
+	bin, _ := seedCancelledCarry(t, db, "AMR-"+prefix, prefix+"-P", "LINE-"+prefix)
+
 	elsewhere := &nodes.Node{Name: prefix + "-ELSEWHERE", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(elsewhere), "create the blocker's destination")
-	blocker := &orders.Order{
-		EdgeUUID: prefix + "-blocker", StationID: "edge.test", OrderType: "move",
-		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: elsewhere.Name,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(blocker), "create blocking order")
-	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, blocker.ID, reservations.ModeDig,
-		"test-blocker", lane.ID), "blocker takes the lane in dig mode")
-	return blocker
+	blocker := &orders.Order{EdgeUUID: prefix + "-blocker", StationID: "edge.test", OrderType: "move",
+		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: elsewhere.Name}
+	testutil.MustNoErr(t, db.CreateOrder(blocker), "create blocker")
+	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, blocker.ID, reservations.ModeOutbound,
+		"test-blocker", lanes[0].ID), "blocker holds lane 0 outbound")
+	return bin, blocker, lanes[0]
 }
 
 func onDeckOrders(t *testing.T, db *store.DB, binID int64) []*orders.Order {
@@ -149,18 +161,16 @@ func onDeckOrders(t *testing.T, db *store.DB, binID int64) []*orders.Order {
 // (queued) recovery order refused the next press as "already in flight", exactly
 // as a dispatched one did — and a parked order never goes terminal on its own,
 // so nothing released it. The button is now that releaser: the press cancels
-// the parked order and runs the ladder afresh (here it parks again, behind the
-// same held lane). A dispatched one still refuses
+// the parked order and chooses afresh (here it parks again, behind the same
+// held lane). A dispatched one still refuses
 // (TestRecoverCarriedBin_SecondCallIsRefused).
 func TestPin_RecoverCarriedBin_PressSupersedesAParkedRecovery(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	lane, slot := laneWithSlot(t, db, "PIN-PARK")
-	bin := seedCarried(t, db, "AMR-PIN-PARK", slot.Name)
+	bin, _, _ := heldLaneReturn(t, db, "PIN-PARK")
 	cacheRobot(eng, dispatchableRobot("AMR-PIN-PARK"))
-	holdLaneInDig(t, db, "PIN-PARK", lane)
 
 	parked, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "first press parks")
@@ -193,39 +203,6 @@ func countLive(ords []*orders.Order) int {
 		}
 	}
 	return n
-}
-
-// PIN, CHANGED BY THE DOOR EXTRACTION (SHAPE §3.4). At the base tree tier 1
-// read the NEWEST order that ever named the bin — a dead recovery order of the
-// button's own included — so a recovery that failed at X sent the next press to
-// X as "where it was going". It now reads the carrier the door hands it, the
-// newest NON-on-deck order.
-func TestPin_RecoverCarriedBin_Tier1ReadsTheCarrierNotADeadRecovery(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-
-	orig := &nodes.Node{Name: "PIN-T1-ORIG", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(orig), "create the carrier's destination")
-	dead := &nodes.Node{Name: "PIN-T1-DEAD", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(dead), "create the dead recovery's destination")
-	bin := seedCarried(t, db, "AMR-PIN-T1", orig.Name)
-
-	failed := &orders.Order{
-		EdgeUUID: "pin-t1-dead", OrderType: dispatch.OrderTypeMove, Status: protocol.StatusFailed,
-		Quantity: 1, BinID: &bin.ID, SourceNode: bins.CarrierNodePrefix + "AMR-PIN-T1",
-		DeliveryNode: dead.Name, SourceIntent: dispatch.SourceIntentOnDeck,
-		OriginClass: protocol.OriginClassNoDemand,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(failed), "create a dead recovery order")
-	cacheRobot(eng, dispatchableRobot("AMR-PIN-T1"))
-
-	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
-	testutil.MustNoErr(t, err, "recover")
-	if order.DeliveryNode != orig.Name {
-		t.Errorf("tier 1 chose %q, want the carrier's destination %s — %s is a dead recovery's",
-			order.DeliveryNode, orig.Name, dead.Name)
-	}
 }
 
 // PIN, CHANGED BY THE TRIGGER (SHAPE §3.1). At the base tree the watch, on a

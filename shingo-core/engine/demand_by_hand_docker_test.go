@@ -10,7 +10,6 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
-	"shingocore/store/nodes"
 )
 
 // demand_by_hand_docker_test.go — the two doors where a PERSON is the caller.
@@ -85,9 +84,7 @@ func TestRecoverCarriedBin_StampsItsOriginClass(t *testing.T) {
 	backend := testdb.NewTrackingBackend()
 	eng := newTestEngine(t, db, backend)
 
-	dest := &nodes.Node{Name: "RECOVERY-DEST", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
-	bin := seedCarried(t, db, "AMR-OC1", "RECOVERY-DEST")
+	bin, _ := seedCarriedHome(t, db, "AMR-OC1")
 	cacheRobot(eng, dispatchableRobot("AMR-OC1"))
 
 	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")

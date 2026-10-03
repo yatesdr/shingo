@@ -466,9 +466,8 @@ func TestCancelReturn_TheButtonSupersedesAParkedReturn(t *testing.T) {
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 	bin, ret, _, _, _ := parkedReturn(t, db, eng, "CR7B")
 
-	// The button's ladder answers at tier 1, the carrier's own destination.
-	line := &nodes.Node{Name: "LINE-CR7B", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(line), "the carrier's destination exists and is empty")
+	// The button asks the same chooser: the claim's group, parked again behind
+	// the held lane.
 	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "the button on a parked return")
 	old, err := db.GetOrder(ret.ID)
@@ -476,8 +475,9 @@ func TestCancelReturn_TheButtonSupersedesAParkedReturn(t *testing.T) {
 	if old.Status != protocol.StatusCancelled {
 		t.Errorf("parked return is %s after the press, want cancelled", old.Status)
 	}
-	if order.RecoversOrderID != nil {
-		t.Errorf("the button's order recovers %v — a press recovers no order in particular", *order.RecoversOrderID)
+	if order.RecoversOrderID == nil || ret.RecoversOrderID == nil || *order.RecoversOrderID != *ret.RecoversOrderID {
+		t.Errorf("the button's order recovers %v, want the cancelled order the parked return recovered (%v)",
+			order.RecoversOrderID, ret.RecoversOrderID)
 	}
 	// The watch does not try again: the episode had its attempt.
 	eng.sweepCarriedBins()

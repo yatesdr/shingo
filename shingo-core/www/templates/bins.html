@@ -138,21 +138,12 @@
           {{/* Where it actually is. A bin on a robot names the robot; a stranded
                one carries the position inferred from that robot's last telemetry,
                so the operator walks to a pin instead of searching. */}}
-          {{/* THE ONLY SURFACE THAT CAN SHOW THIS BUTTON. RecoverCarriedBin
-               accepts exactly the bins on a carrier node, and the diagnostics
-               anomalies table cannot list one — ListAnomalousTransitBins
-               excludes carrier nodes by name. This row is where a carried bin
-               is already visible, so this is where the door goes. Diagnostics
-               stays the read-only receipt. */}}
           {{if .CarriedBy}}<div class="text-muted-xs">on {{.CarriedBy}}</div>
             {{/* And why it has not settled. The diagnostics anomalies table
                  excludes carrier nodes, so this row is the only place the jack
-                 watch's reason is ever shown. */}}
-            {{if .AnomalyNote}}<div class="text-muted-xs">{{.AnomalyNote}}</div>{{end}}
-            {{if $.Authenticated}}<div data-action="stopPropagation">
-              <button class="btn btn-sm" data-action="askRobotToSetDown:{{.ID}}"
-                      title="Creates an order pinned to {{.CarriedBy}} whose only step is to put this bin down">Ask {{.CarriedBy}} to set it down</button>
-            </div>{{end}}
+                 watch's reason is ever shown. One line, truncated; the whole
+                 sentence is the tooltip. */}}
+            {{if .AnomalyNote}}<div class="text-muted-xs bin-loc-note" title="{{.AnomalyNote}}">{{.AnomalyNote}}</div>{{end}}
           {{end}}
           {{if .Stranded}}<div class="text-muted-xs">stranded{{if .AnomalyNote}} &mdash; {{.AnomalyNote}}{{end}}</div>{{end}}
         </td>
@@ -171,6 +162,16 @@
           {{if not .ManifestConfirmed}}{{if .PayloadCode}}<span title="Manifest unconfirmed">&#9888;</span>{{end}}{{end}}
           {{if .AnomalyAt}}<span title="Counts refused — payload mismatch (anomaly); reconcile this bin" style="color:var(--danger)">&#9940;</span>{{end}}
           {{if index $.BinHasNotes .ID}}<span title="Has notes">&#128221;</span>{{end}}
+          {{/* THE ONLY SURFACE THAT CAN SHOW THIS BUTTON. RecoverCarriedBin
+               accepts exactly the bins on a carrier node, and the diagnostics
+               anomalies table cannot list one — ListAnomalousTransitBins
+               excludes carrier nodes by name. This row is where a carried bin
+               is already visible, so this is where the door goes. Diagnostics
+               stays the read-only receipt. It sits with the row's other
+               flags and actions; the location cell only says where the bin
+               is. */}}
+          {{if and .CarriedBy $.Authenticated}}<span data-action="stopPropagation"><button class="btn btn-sm" data-action="askRobotToSetDown:{{.ID}}:{{.CarriedBy}}"
+            title="Return this bin to where it is used from">Return</button></span>{{end}}
         </td>
       </tr>
       {{end}}

@@ -119,17 +119,6 @@ type pointRefusal struct {
 	Detail string
 }
 
-// ResolveRobotStation maps the RDS point a robot is sitting at to a Core node.
-//
-// The signature is unchanged so its other caller — the carried-bin recovery's
-// tier 3 (engine/carried_bin_recovery.go) — inherits the alias untouched. That
-// tier has never been reachable at the plant, because the point a parked robot
-// reports never resolved; it is reachable now.
-func ResolveRobotStation(s *NodeService, r fleet.RobotStatus) (*nodes.Node, bool) {
-	node, _, ok := ResolveReportedPoints(s, r.CurrentStation, r.LastStation)
-	return node, ok
-}
-
 // ResolveReportedPoints resolves point names the caller supplies, in the order
 // supplied, and reports which one answered.
 //
@@ -193,8 +182,8 @@ func resolvePoint(s *NodeService, name string) (*nodes.Node, pointRefusal) {
 // Synthetic is refused because _TRANSIT and the per-robot carrier nodes are
 // bookkeeping, not places, and resolving a station onto one would move a bin to
 // a location that does not exist on the floor. Disabled is refused because a
-// node the plant has switched off is not somewhere the floor will look —
-// usableDropPoint has always checked it and branch A never did.
+// node the plant has switched off is not somewhere the floor will look, and
+// branch A never checked it.
 func placeableNode(s *NodeService, name string) (*nodes.Node, pointRefusal) {
 	node, err := s.GetByName(name)
 	if err != nil || node == nil {

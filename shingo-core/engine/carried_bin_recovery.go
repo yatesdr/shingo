@@ -26,7 +26,6 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/fleet"
-	"shingocore/service"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -58,14 +57,24 @@ func (s *RecoveryService) RecoverCarriedBin(binID int64, actor string) (*orders.
 	return s.engine.RecoverCarriedBin(binID, actor)
 }
 
-// RecoverCarriedBin creates a vehicle-pinned unload-only order for a bin riding
-// a robot's deck, and returns it with the sentence describing what it will do.
+// RecoverCarriedBin is the bins page's Return button: the HUMAN trigger of the
+// same chooser the cancel-return watch uses (chooseDeclared,
+// engine/cancel_return.go). One policy, two triggers. The bin goes where a
+// claim declares it is used from, or it stays on the deck and the person is
+// told why — there is no ladder of its own, because every rung that had one
+// chose a place nobody declared, and an engineer who wants a bin at a specific
+// node has the bin move.
 //
-// The DETAIL is returned and not only recorded, because the operator pressing
-// the button is owed the same sentence the audit row gets: which robot, which
-// destination, and WHICH TIER chose it. "Why did it go there" is the question a
-// misplaced bin raises, and the tier is the whole answer — a person who is told
-// only "ok" has to go and read the diagnostics page to learn it.
+// What differs from the watch, and only this: no cancelled-order precondition
+// (a press is a person's ask, whatever the bin's last order was, and the door
+// already supersedes a parked order), no once-per-episode memo (a press is a
+// fresh ask), the actor is the person, and the audit verb is the button's. The
+// return is linked to the bin's last order when that order is over
+// (recoversTerminalCarrier), so the watch's restart guard and the station's
+// notice see it as that order's return.
+//
+// The DETAIL is returned and not only recorded: the person pressing the button
+// is owed which robot, which node and WHICH DECLARATION chose it.
 //
 // Every refusal is a *CarriedBinNotRecoverable naming the reason. None of them
 // are failures of this function — a robot that is charging, or a plant with no
@@ -76,9 +85,10 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 		return nil, "", fmt.Errorf("actor is required for a recovery order")
 	}
 	return e.orderCarriedBinDown(binID, "", onDeckRequest{
-		actor:  actor,
-		action: "carried_bin_recovery_ordered",
-		choose: e.resolveCarriedBinDestination,
+		actor:                   actor,
+		action:                  "carried_bin_recovery_ordered",
+		choose:                  e.chooseDeclared,
+		recoversTerminalCarrier: true,
 	})
 }
 
@@ -93,16 +103,18 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 //	action    the recovery_actions verb, which says WHICH policy chose the
 //	          destination.
 //	recovers  the cancelled order this one returns the bin of
-//	          (orders.recovers_order_id), or nil — the button recovers no order
-//	          in particular.
+//	          (orders.recovers_order_id), when the caller already knows it.
+//	recoversTerminalCarrier  link to the carrier the door reads when that
+//	          order is over — the button's case, which is handed only a bin.
 //	choose    the policy: where this bin goes. It is handed the CARRIER — the
 //	          newest order that named the bin and was not itself an on-deck
 //	          order — from the read the door makes anyway, so no policy re-reads
 //	          it and none can mistake a dead recovery order for the bin's job.
 type onDeckRequest struct {
-	actor, action string
-	recovers      *int64
-	choose        func(bin *bins.Bin, robot fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error)
+	actor, action           string
+	recovers                *int64
+	recoversTerminalCarrier bool
+	choose                  func(bin *bins.Bin, robot fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error)
 }
 
 // orderCarriedBinDown is the door: a vehicle-pinned unload-only order for a bin
@@ -255,6 +267,10 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		// "already in flight" true of an automatic return too.
 		EdgeUUID:        recoveryEdgeUUID(binID, robotID),
 		RecoversOrderID: req.recovers,
+	}
+	if order.RecoversOrderID == nil && req.recoversTerminalCarrier &&
+		carrier != nil && protocol.IsTerminal(carrier.Status) {
+		order.RecoversOrderID = &carrier.ID
 	}
 	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
 	//
@@ -570,158 +586,6 @@ func robotCanTakeARecoveryOrder(robotID string, robot fleet.RobotStatus, haveRob
 		return fmt.Errorf("%s is in an error state", robotID)
 	}
 	return nil
-}
-
-// resolveCarriedBinDestination is the three-tier fallback, in the order a
-// person would try them.
-//
-// The tiers descend from most-informed to least, and each one is a strictly
-// weaker claim than the last:
-//
-//	1  WHERE IT WAS GOING. The order that was carrying this bin named a
-//	   destination, and that destination is still the best answer available:
-//	   somebody wanted the bin there and the robot was on its way. Requires the
-//	   node to still exist, be enabled, be concrete, and be empty — a stale
-//	   destination is worth nothing.
-//	2  WHERE A BIN OF ITS KIND BELONGS. No original destination, or it is taken.
-//	   A free storage slot that accepts this payload puts the bin somewhere the
-//	   system will find it again by ordinary means.
-//	3  WHERE THE ROBOT ALREADY IS. No slot anywhere. If the robot is parked at a
-//	   node we can name and that node is empty, unloading there is the shortest
-//	   possible job and it converts a bin nobody can reach into a bin at a known
-//	   place. Weakest, because the node was chosen by where the robot stopped
-//	   rather than by anything about the bin.
-//
-// AND THERE IS NO FOURTH. When none of the three answer, no order is created
-// and the bin keeps riding — which is exactly what happens today, and is
-// better than unloading a bin into a slot the floor does not expect it in. The
-// refusal names the tiers that were tried.
-func (e *Engine) resolveCarriedBinDestination(bin *bins.Bin, robot fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error) {
-	if node := e.tierOriginalDestination(carrier); node != nil {
-		return node, "tier 1: the destination its order was carrying it to", nil
-	}
-	node, err := e.db.FindEmptyStorageNodeForPayload(bin.PayloadCode)
-	if err != nil {
-		// Still falls through to tier 3 — a recovery that refuses outright
-		// leaves the bin on the deck, which is the state this whole path exists
-		// to end. But the fall-through is now SAID: without it, a database that
-		// could not answer looked exactly like a plant with no storage node
-		// linked to this payload, and the refusal at the bottom would name a
-		// configuration problem that does not exist.
-		e.logFn("engine: carried bin recovery: tier 2 storage-slot lookup for %q failed: %v — "+
-			"falling through to tier 3, which is NOT the same as there being no slot",
-			bin.PayloadCode, err)
-	} else if usable := e.usableDropPoint(node); usable != nil {
-		// THROUGH THE SAME GATE AS THE OTHER TWO. This tier used to return the
-		// query's answer directly, which made usableDropPoint's "one place so a
-		// tier cannot forget one" false of the tier most likely to need it: the
-		// other two name a node somebody already had in mind, this one picks a
-		// stranger. The query asks the same questions now, so this is
-		// defence-in-depth against the two drifting apart rather than a second
-		// opinion — and it costs two reads on a path that runs when a robot is
-		// already stopped.
-		return usable, "tier 2: a free storage slot for " + bin.PayloadCode, nil
-	}
-	if node := e.tierRobotsCurrentStation(robot); node != nil {
-		return node, "tier 3: the node the robot is parked at", nil
-	}
-	return nil, "", fmt.Errorf(
-		"nowhere to put it: its order's destination is gone or occupied, no free storage slot accepts %q, "+
-			"and the robot is not parked at an empty node we can name",
-		bin.PayloadCode)
-}
-
-// tierOriginalDestination is tier 1. nil for every reason it does not apply.
-//
-// It reads the CARRIER the door hands it — the newest order that named the bin
-// and was not an on-deck order itself — and not the newest order outright. The
-// newest order outright is this door's own previous attempt whenever there was
-// one, so a recovery that failed at X made X "where it was going" for the next
-// press, which is the one thing tier 1 must never mean.
-func (e *Engine) tierOriginalDestination(carrier *orders.Order) *nodes.Node {
-	if carrier == nil || carrier.DeliveryNode == "" {
-		return nil
-	}
-	node, err := e.db.GetNodeByDotName(carrier.DeliveryNode)
-	if err != nil || node == nil {
-		return nil
-	}
-	return e.usableDropPoint(node)
-}
-
-// tierRobotsCurrentStation is tier 3: unload where the robot already is.
-//
-// THE `Busy` CHECK IS WEAK, AND THIS COMMENT USED TO CLAIM IT WAS NOT — it said
-// the tier "requires the robot to be PARKED". It cannot. `Busy` is the vendor's
-// `procBusiness` (fleet/seerrds/mappers.go), a TASK flag rather than a motion
-// one: on 2026-08-24 it read false for the whole of AMR-09's 2 m 18 s drive-off,
-// because the order had already been cancelled. What it does exclude is a robot
-// the fleet is actively driving under an order, which is worth the one field
-// read; what it does not do is detect a parked robot.
-//
-// The consequence is bounded here in a way it is not on branch A. This tier
-// COMMANDS a destination — the order drives the robot there and the ordinary
-// arrival path records where the bin landed — where branch A ASSERTS a location
-// nobody visits. So a station resolved from a LastStation the robot merely
-// drove past costs a short trip, not a phantom bin. It is also the reason this
-// tier matters now at all: the scene alias makes it reachable at the plant for
-// the first time, where the point a parked robot reports never resolved before.
-func (e *Engine) tierRobotsCurrentStation(robot fleet.RobotStatus) *nodes.Node {
-	if robot.Busy {
-		return nil
-	}
-	node, ok := service.ResolveRobotStation(e.NodeService(), robot)
-	if !ok {
-		return nil
-	}
-	return e.usableDropPoint(node)
-}
-
-// usableDropPoint returns the node if a bin can actually be set down on it, and
-// nil otherwise. One place for the conditions every tier needs, so a tier added
-// later cannot forget one.
-//
-// ── IT HAD THREE CONDITIONS AND A DEEP LANE NEEDS FIVE ────────────────────
-//
-// "Enabled, not synthetic, unclaimed, empty" is the whole question for a FLAT
-// position and only half of it for a lane slot — and every tier here can return
-// a lane slot, because `STOR` is the class of both (30 of demo.yaml's SMN_*
-// slots carry it). Two things were never asked:
-//
-//	REACHABLE  — a slot with an occupied slot in front of it is a slot no robot
-//	             can lower a bin onto. An unattended recovery sent there ends
-//	             with the robot standing in the aisle holding the bin, which is
-//	             the exact state this whole path exists to end.
-//	UNSPOKEN-FOR — another live order's delivery_node may already name it. Two
-//	             bins, one slot, and the second robot cannot place either.
-//
-// Same two predicates, in the same words, as every other destination reader:
-// IsSlotAccessible and the delivery_node proxy. A flat position answers both
-// trivially, so nothing changes for the population the original three were
-// written against.
-//
-// FAILS CLOSED, and that is not the usual direction for this file. Elsewhere a
-// recovery prefers a worse answer to no answer, because leaving a bin on the
-// deck is the failure. Here an unreadable slot is not a worse answer, it is an
-// unknown one — and the tier below is a real alternative, so a doubt costs a
-// fallback rather than a stranded carrier.
-func (e *Engine) usableDropPoint(node *nodes.Node) *nodes.Node {
-	if node == nil || !node.Enabled || node.IsSynthetic || node.ClaimedBy != nil {
-		return nil
-	}
-	cnt, err := e.db.CountBinsByNode(node.ID)
-	if err != nil || cnt > 0 {
-		return nil
-	}
-	reachable, err := e.db.IsSlotAccessible(node.ID)
-	if err != nil || !reachable {
-		return nil
-	}
-	inbound, err := e.db.CountActiveOrdersByDeliveryNode(node.Name)
-	if err != nil || inbound > 0 {
-		return nil
-	}
-	return node
 }
 
 // liveRecoveryOrderForBin returns an unfinished recovery order for this bin, if

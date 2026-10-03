@@ -823,6 +823,7 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Bin flags column */
 .bin-flags { font-size:0.85rem; white-space:nowrap; }
+.bin-loc-note { max-width:18rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .bin-flags span { margin-right:0.2rem; cursor:help; }
 
 /* Clickable bin rows */

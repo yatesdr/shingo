@@ -3,7 +3,6 @@
 package engine
 
 import (
-	"strings"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -14,18 +13,14 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Two guards on this path failed OPEN on a read error — the direction that
-// costs the most.
+// A guard on this path failed OPEN on a read error — the direction that costs
+// the most.
 //
 // The carrier-node stand-down asks "is a recovery order already moving this
 // bin". It discarded the error, so a list it could not read meant "no" and the
 // watch went on to place the bin — racing the arrival of the very order it was
 // written to yield to. Standing down wrongly costs one tick; the next poll asks
 // again. Proceeding wrongly is the double placement.
-//
-// The storage-slot finder returned (nil, nil) on a failed Scan as well as on no
-// row, so its error return was dead and a database that could not answer was
-// indistinguishable from a plant with no linked storage node.
 // ---------------------------------------------------------------------------
 
 // withTableHidden renames a table for the duration of fn, so a query that reads
@@ -54,7 +49,7 @@ func TestSweepCarriedBins_StandsDownWhenItCannotTell(t *testing.T) {
 
 	elsewhere := &nodes.Node{Name: "ELSEWHERE-FC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(elsewhere), "create the node the watch would pick")
-	bin := seedCarried(t, db, "AMR-FC", "DEST-FC")
+	bin := seedCarried(t, db, "AMR-FC", "")
 
 	// The deck has just emptied at a node the watch could name, and the robot
 	// is parked — every condition for a placement is met except the one it
@@ -75,35 +70,4 @@ func TestSweepCarriedBins_StandsDownWhenItCannotTell(t *testing.T) {
 			"precisely to avoid racing a recovery order's arrival. Standing down costs one tick; "+
 			"placing costs a bin recorded somewhere it is not.", got)
 	}
-}
-
-// TestFindEmptyStorageNodeForPayload_ReportsRealErrors pins that the error
-// return is no longer dead: an unreadable database is distinguishable from a
-// plant with no linked storage node.
-func TestFindEmptyStorageNodeForPayload_ReportsRealErrors(t *testing.T) {
-	db := testdb.Open(t)
-
-	// No matching node: a real answer, and not an error.
-	node, err := db.FindEmptyStorageNodeForPayload("NO-SUCH-PAYLOAD")
-	if err != nil {
-		t.Fatalf("no matching storage node must not be an error: %v", err)
-	}
-	if node != nil {
-		t.Fatalf("expected no node for an unknown payload, got %+v", node)
-	}
-
-	// An unreadable database: an error, not "no slot".
-	withTableHidden(t, db, "node_payloads", func() {
-		node, err := db.FindEmptyStorageNodeForPayload("ANY-PAYLOAD")
-		if node != nil {
-			t.Errorf("returned a node from an unreadable query: %+v", node)
-		}
-		if err == nil {
-			t.Error("a failed read returned (nil, nil) — the same answer as 'no storage node is " +
-				"linked to this payload'. The caller falls to the next destination tier either way, " +
-				"but an outage must not read as configuration.")
-		} else if !strings.Contains(err.Error(), "ANY-PAYLOAD") {
-			t.Errorf("error %q does not name the payload it was looking for", err)
-		}
-	})
 }
