@@ -287,6 +287,7 @@ func (noopEmitter) EmitOrderCancelled(_ int64, _, _, _, _ string, _ *int64) {}
 func (noopEmitter) EmitOrderCompleted(_ int64, _, _ string, _ *int64)       {}
 func (noopEmitter) EmitOrderQueued(_ int64, _, _, _ string)                 {}
 func (noopEmitter) EmitOrderResumed(_ int64, _, _ string)                   {}
+func (noopEmitter) EmitOrderWaitChanged(_ int64, _, _ string)               {}
 func (noopEmitter) EmitOrderFaulted(_ int64, _, _, _ string)                {}
 func (noopEmitter) EmitOrderFaultedRecovered(_ int64, _, _, _ string)       {}
 

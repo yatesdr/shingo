@@ -896,7 +896,11 @@ func (s *Scanner) logTransition(orderID int64, what string, err error) {
 // through a sink the process wires up, and the dispatch side writes through the
 // standard logger. One body, two destinations.
 func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams) {
-	dispatch.WriteQueueDetail(s.db, s.logFn, "fulfillment", order, code, cause, params)
+	var notify func(*orders.Order)
+	if s.dispatcher != nil {
+		notify = s.dispatcher.NotifyWaitChanged
+	}
+	dispatch.WriteQueueDetail(s.db, s.logFn, "fulfillment", order, code, cause, params, notify)
 }
 
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful

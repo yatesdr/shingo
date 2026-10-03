@@ -79,8 +79,19 @@ type QueueDetailStore interface {
 //
 // who names the subsystem in the log line, so a failure is still attributable
 // after the three copies became one.
+//
+// A CHANGED WAIT IS TOLD TO THE STATION, ONCE. The station learns an order's
+// sentence when the order enters the queue (the queued event's push, wired in
+// the engine). A wait that changes cause later, while the order stays queued or
+// sourcing, used to stay in Core: a refill that waited for material and then
+// for its slot went on reading "waiting for material" at the station. notify is
+// called when the code or the cause changes on an order that already had a wait
+// and is still acquiring; the first wait is the queued push's, and a sentence
+// whose code and cause are unchanged (a count in it moved) is not a new wait.
+// One message per change of cause, never one per pass. nil notifies nobody.
 func WriteQueueDetail(db QueueDetailStore, logf func(string, ...any), who string,
-	order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
+	order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams,
+	notify func(*orders.Order)) bool {
 	reason := FormatQueueSentence(code, params)
 	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
 		return false
@@ -89,8 +100,13 @@ func WriteQueueDetail(db QueueDetailStore, logf func(string, ...any), who string
 		logf("%s: set queue_reason (%s) for order %d: %v", who, cause, order.ID, err)
 		return false
 	}
+	changed := order.QueueCode != "" && code != "" &&
+		(order.QueueCode != string(code) || order.QueueCause != string(cause))
 	order.QueueReason = reason
 	order.QueueCode = string(code)
 	order.QueueCause = string(cause)
+	if changed && notify != nil && protocol.IsAcquiring(order.Status) {
+		notify(order)
+	}
 	return true
 }

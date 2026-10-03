@@ -23,6 +23,9 @@ type Emitter interface {
 	// is over. So the status never reached the Edge and its mirror stayed at
 	// `reshuffling`, rejecting everything after it.
 	EmitOrderResumed(orderID int64, edgeUUID, stationID string)
+	// EmitOrderWaitChanged: an order still waiting has a new reason for it, and
+	// its station should read the new sentence (see WriteQueueDetail).
+	EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string)
 	EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)
 	EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)
 

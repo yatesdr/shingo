@@ -17,6 +17,10 @@ import (
 type Dispatcher interface {
 	DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error)
 
+	// NotifyWaitChanged tells the order's station its wait changed cause
+	// (dispatch.WriteQueueDetail decides when).
+	NotifyWaitChanged(order *orders.Order)
+
 	// DispatchPreparedComplex is the scanner-replay entrypoint for
 	// complex orders queued via HandleComplexOrderRequest. The dispatcher
 	// already has the resolved steps stored on the order (StepsJSON);

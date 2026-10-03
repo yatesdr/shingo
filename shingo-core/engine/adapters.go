@@ -113,6 +113,12 @@ func (e *dispatchEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID st
 	}})
 }
 
+// EmitOrderWaitChanged pushes the order's new wait to its station directly:
+// the push is the whole of it, and nothing else in Core listens for it.
+func (e *dispatchEmitter) EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string) {
+	e.engine.pushQueueReason(orderID, edgeUUID, stationID)
+}
+
 func (e *dispatchEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFaulted, Payload: OrderFaultedEvent{
 		OrderID:   orderID,

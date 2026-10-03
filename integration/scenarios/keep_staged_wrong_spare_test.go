@@ -191,6 +191,29 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 			t.Errorf("%s %d went to the fleet with a wrong part on the spot", o.OrderType, o.ID)
 		}
 	}
+	// The station reads Core's CURRENT wait for each refill. Each refill entered
+	// the queue waiting for material in a dry market; it now waits for its slot
+	// behind the wrong part, and the station says so.
+	for _, o := range refills {
+		if c, e := coreOf(o), edgeRow(o); e.QueueReason != c.QueueReason {
+			t.Errorf("refill %d: the station reads %q, Core %q", o.ID, e.QueueReason, c.QueueReason)
+		}
+	}
+	// And a wait that does not change sends nothing more, pass after pass.
+	updates := func() int {
+		var n int
+		mustNil(t, core.eng.DB().DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = $1`,
+			protocol.TypeOrderUpdate).Scan(&n), "count order updates")
+		return n
+	}
+	before := updates()
+	for i := 0; i < 5; i++ {
+		core.eng.RunFulfillmentScan()
+		settle()
+	}
+	if n := updates() - before; n != 0 {
+		t.Errorf("five scan passes with nothing changed sent %d order updates, want 0", n)
+	}
 	if _, err := edge.Engine.RequestNodeMaterial(nodeID, 1); err == nil {
 		t.Fatal("REQUEST was accepted with the swap in flight; the state is supposed to need the cancel")
 	}

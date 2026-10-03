@@ -84,7 +84,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	// seam exists so complex sourcing cannot drift from simple sourcing again;
 	// two finder instances would be two seams.
 	d.finder = NewSourceFinder(db, resolver, d.dbg)
-	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.CreateCompoundOrder)
+	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.CreateCompoundOrder, d.NotifyWaitChanged)
 	d.allocator = newAllocator(db, binManifest, d.finder, d.dbg)
 	return d
 }

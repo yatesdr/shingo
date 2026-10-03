@@ -161,11 +161,13 @@ type PlanningService struct {
 	debug    func(string, ...any)
 
 	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan) error
+	// waitChanged tells a station its order's wait changed (WriteQueueDetail).
+	waitChanged func(*orders.Order)
 
 	handlers map[protocol.OrderType]PlanningHandler
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, waitChanged func(*orders.Order)) *PlanningService {
 	s := &PlanningService{
 		db:             db,
 		resolver:       resolver,
@@ -173,6 +175,7 @@ func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinde
 		laneLock:       laneLock,
 		debug:          debug,
 		createCompound: createCompound,
+		waitChanged:    waitChanged,
 		handlers:       make(map[protocol.OrderType]PlanningHandler),
 	}
 	// One planTransport folds the three simple families (retrieve,
@@ -307,7 +310,7 @@ func (s *PlanningService) parkBuried(order *orders.Order, buried *BuriedError) {
 // was new. The door returns one and this drops it, rather than every planning
 // call site growing a discard.
 func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
-	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params)
+	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params, s.waitChanged)
 }
 
 // planTransport is the single planner for the three "simple" transport families —

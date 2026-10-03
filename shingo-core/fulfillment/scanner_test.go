@@ -139,6 +139,8 @@ func (d *recordingDispatcher) DispatchDirect(o *orders.Order, src, dst *nodes.No
 	return "V-1", nil
 }
 
+func (d *recordingDispatcher) NotifyWaitChanged(*orders.Order) {}
+
 func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 	panic("recordingDispatcher: complex path not expected in this test")
 }

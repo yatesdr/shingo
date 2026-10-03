@@ -559,25 +559,7 @@ func (e *Engine) wireEventHandlers() {
 	// order's block reason still reaches Edge (its actual status rides along).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
-		if ev.EdgeUUID == "" || ev.StationID == "" {
-			return
-		}
-		order, err := e.db.GetOrder(ev.OrderID)
-		if err != nil {
-			e.logFn("engine: queue_reason push: load order %d: %v", ev.OrderID, err)
-			return
-		}
-		if !protocol.IsAcquiring(order.Status) || order.QueueReason == "" {
-			return
-		}
-		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
-			OrderUUID:   ev.EdgeUUID,
-			Status:      string(order.Status),
-			QueueReason: order.QueueReason,
-			QueueCode:   order.QueueCode,
-		}); err != nil {
-			e.logFn("engine: queue_reason update to edge: %v", err)
-		}
+		e.pushQueueReason(ev.OrderID, ev.EdgeUUID, ev.StationID)
 	}, EventOrderQueued)
 
 	// ── Resume push: the parent left `reshuffling` ────────────────────────
@@ -835,4 +817,31 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		e.onStage2OrderCompleted(evt.Payload)
 	}, EventOrderCompleted)
+}
+
+// pushQueueReason sends the order's current wait to its station: the queued
+// event's push, and a wait that changed cause while the order stayed queued or
+// sourcing (dispatch.WriteQueueDetail). One order read and one outbox message.
+// Only while the order is acquiring and has a sentence; the Edge keeps a reason
+// only while acquiring, on the same predicate.
+func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string) {
+	if edgeUUID == "" || stationID == "" {
+		return
+	}
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		e.logFn("engine: queue_reason push: load order %d: %v", orderID, err)
+		return
+	}
+	if !protocol.IsAcquiring(order.Status) || order.QueueReason == "" {
+		return
+	}
+	if err := e.sendToEdge(protocol.TypeOrderUpdate, stationID, &protocol.OrderUpdate{
+		OrderUUID:   edgeUUID,
+		Status:      string(order.Status),
+		QueueReason: order.QueueReason,
+		QueueCode:   order.QueueCode,
+	}); err != nil {
+		e.logFn("engine: queue_reason update to edge: %v", err)
+	}
 }

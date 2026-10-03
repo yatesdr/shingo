@@ -1092,7 +1092,17 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 // lives once, in queue_detail.go, along with the account of what the bool and
 // the short-circuit are load-bearing for.
 func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
-	return WriteQueueDetail(d.db, log.Printf, "dispatch", order, code, cause, params)
+	return WriteQueueDetail(d.db, log.Printf, "dispatch", order, code, cause, params, d.NotifyWaitChanged)
+}
+
+// NotifyWaitChanged tells the order's station that the reason it is waiting
+// changed (WriteQueueDetail decides when). A Core-internal order no station
+// placed has nobody to tell.
+func (d *Dispatcher) NotifyWaitChanged(order *orders.Order) {
+	if order.EdgeUUID == "" || order.StationID == "" || order.ParentOrderID != nil {
+		return
+	}
+	d.emitter.EmitOrderWaitChanged(order.ID, order.EdgeUUID, order.StationID)
 }
 
 // SetQueueReason is the exported form, for a door OUTSIDE this package that

@@ -55,6 +55,7 @@ func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason
 func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64) {}
 func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)        {}
 func (noopEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string)                    {}
+func (noopEmitter) EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string)                {}
 func (noopEmitter) ProjectOrder(stationID string, projection protocol.OrderProjection)            {}
 
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {

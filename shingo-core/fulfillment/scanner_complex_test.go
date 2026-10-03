@@ -20,6 +20,7 @@ type stubDispatcher struct {
 func (s *stubDispatcher) DispatchDirect(*orders.Order, *nodes.Node, *nodes.Node) (string, error) {
 	panic("scanner complex-order branch should not call DispatchDirect")
 }
+func (s *stubDispatcher) NotifyWaitChanged(*orders.Order) {}
 func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	s.preparedCalls = append(s.preparedCalls, o.ID)
 	return s.preparedErr
