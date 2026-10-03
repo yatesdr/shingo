@@ -3,7 +3,6 @@
 package engine
 
 import (
-	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -133,13 +132,14 @@ func onDeckOrders(t *testing.T, db *store.DB, binID int64) []*orders.Order {
 
 // ── the pins ─────────────────────────────────────────────────────────────────
 
-// PIN: a PARKED (queued) recovery order refuses the next press as "already in
-// flight", exactly as a dispatched one does.
-//
-// EXPECTED TO CHANGE (SHAPE §3.4): the button becomes the engineer's override
-// for a parked order — it cancels the queued one and proceeds. A dispatched one
-// still refuses.
-func TestPin_RecoverCarriedBin_ParkedRecoveryRefusesTheNextPress(t *testing.T) {
+// PIN, CHANGED BY THE DOOR EXTRACTION (SHAPE §3.4). At the base tree a PARKED
+// (queued) recovery order refused the next press as "already in flight", exactly
+// as a dispatched one did — and a parked order never goes terminal on its own,
+// so nothing released it. The button is now that releaser: the press cancels
+// the parked order and runs the ladder afresh (here it parks again, behind the
+// same held lane). A dispatched one still refuses
+// (TestRecoverCarriedBin_SecondCallIsRefused).
+func TestPin_RecoverCarriedBin_PressSupersedesAParkedRecovery(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
@@ -157,19 +157,37 @@ func TestPin_RecoverCarriedBin_ParkedRecoveryRefusesTheNextPress(t *testing.T) {
 		t.Fatalf("setup: the first recovery order is %s, want it parked", got.Status)
 	}
 
-	_, _, err = eng.RecoverCarriedBin(bin.ID, "operator:test")
-	if err == nil || !strings.Contains(err.Error(), "already in flight") {
-		t.Fatalf("second press on a parked recovery: err = %v, want the base tree's 'already in flight'", err)
+	second, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	testutil.MustNoErr(t, err, "second press on a parked recovery")
+	if second.ID == parked.ID {
+		t.Fatal("the second press returned the parked order instead of superseding it")
+	}
+	old, err := db.GetOrder(parked.ID)
+	testutil.MustNoErr(t, err, "re-read the superseded order")
+	if old.Status != protocol.StatusCancelled {
+		t.Errorf("the superseded parked order is %s, want cancelled", old.Status)
+	}
+	if live := onDeckOrders(t, db, bin.ID); countLive(live) != 1 {
+		t.Errorf("%d live on-deck orders after the press, want exactly the new one", countLive(live))
 	}
 }
 
-// PIN: tier 1 reads the NEWEST order that ever named the bin, whatever it was —
-// including a dead recovery order of the button's own.
-//
-// EXPECTED TO CHANGE (SHAPE §3.4): tier 1 reads the carrier the door hands it,
-// the newest NON-on-deck order, so a failed recovery's destination is never
-// re-used as "where it was going".
-func TestPin_RecoverCarriedBin_Tier1ReadsTheNewestOrderEvenADeadRecovery(t *testing.T) {
+func countLive(ords []*orders.Order) int {
+	n := 0
+	for _, o := range ords {
+		if !protocol.IsTerminal(o.Status) {
+			n++
+		}
+	}
+	return n
+}
+
+// PIN, CHANGED BY THE DOOR EXTRACTION (SHAPE §3.4). At the base tree tier 1
+// read the NEWEST order that ever named the bin — a dead recovery order of the
+// button's own included — so a recovery that failed at X sent the next press to
+// X as "where it was going". It now reads the carrier the door hands it, the
+// newest NON-on-deck order.
+func TestPin_RecoverCarriedBin_Tier1ReadsTheCarrierNotADeadRecovery(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
@@ -191,9 +209,9 @@ func TestPin_RecoverCarriedBin_Tier1ReadsTheNewestOrderEvenADeadRecovery(t *test
 
 	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "recover")
-	if order.DeliveryNode != dead.Name {
-		t.Errorf("tier 1 chose %q; the base tree reads the newest order by bin, which is the dead recovery (%s)",
-			order.DeliveryNode, dead.Name)
+	if order.DeliveryNode != orig.Name {
+		t.Errorf("tier 1 chose %q, want the carrier's destination %s — %s is a dead recovery's",
+			order.DeliveryNode, orig.Name, dead.Name)
 	}
 }
 
