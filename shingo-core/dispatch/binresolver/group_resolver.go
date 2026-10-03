@@ -629,6 +629,17 @@ func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating [
 	if inflight > 0 {
 		return nil, fmt.Errorf("%s has %d other order(s) inbound", c.Name, inflight)
 	}
+	// ANOTHER ORDER'S SLOT RESERVATION is the claim door's own refusal (a slot
+	// reservation is exclusive per node), and nothing above reads it: a holder
+	// reserve-holding with no bin and no delivery_node on this child passes every
+	// other test here.
+	spoken, err := r.DB.SlotSpokenForByStranger(c.ID, asker.OrderID)
+	if err != nil {
+		return nil, fmt.Errorf("read slot reservations at %s: %w", c.Name, err)
+	}
+	if spoken {
+		return nil, fmt.Errorf("%s is reserved by another order", c.Name)
+	}
 	return &ResolveResult{Node: c}, nil
 }
 
@@ -750,6 +761,11 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 			if count+inflight >= 1 {
 				continue
 			}
+			// Another order's slot reservation: the claim door refuses it, so
+			// offering it hands the caller the same refusal on every resolve.
+			if spoken, sErr := r.DB.SlotSpokenForByStranger(child.ID, asker.OrderID); sErr != nil || spoken {
+				continue
+			}
 
 			// Skip nodes with bin type restrictions that don't match
 			if !r.binTypeAllowed(child.ID, binTypeID) {
@@ -844,9 +860,15 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 			continue
 		}
 		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
-		if count+inflight < 1 {
-			return &ResolveResult{Node: child}, nil
+		if count+inflight >= 1 {
+			continue
 		}
+		// Another order's slot reservation: see the same check in
+		// resolveStoreLKND's flat branch.
+		if spoken, sErr := r.DB.SlotSpokenForByStranger(child.ID, asker.OrderID); sErr != nil || spoken {
+			continue
+		}
+		return &ResolveResult{Node: child}, nil
 	}
 
 	r.noteClosedLanes(group, closedByClaim)

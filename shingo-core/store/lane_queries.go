@@ -441,6 +441,12 @@ func (db *DB) TakeableSlotsInGroup(groupID, owner int64) (map[int64]bool, error)
 	return nodes.TakeableSlotsInGroup(db.DB, groupID, owner)
 }
 
+// SlotSpokenForByStranger reports whether an order other than owner holds an
+// active slot reservation on nodeID. See nodes.SlotSpokenForByStranger.
+func (db *DB) SlotSpokenForByStranger(nodeID, owner int64) (bool, error) {
+	return nodes.SlotSpokenForByStranger(db.DB, nodeID, owner)
+}
+
 // CountBinsInLane counts total bins across all slots in a lane.
 func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 	return nodes.CountBinsInLane(db.DB, laneID)

@@ -192,7 +192,17 @@ func (e *Engine) freeStage2Windows(two *loaders.Loader) ([]*nodes.Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		if n == 0 && inbound == 0 {
+		if n != 0 || inbound != 0 {
+			continue
+		}
+		// Another order's slot reservation: the pull's move claims a
+		// storage-classed window through ReserveStorageDropoff, which refuses a
+		// window somebody else has reserved.
+		spoken, err := e.db.SlotSpokenForByStranger(w.ID, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !spoken {
 			free = append(free, w)
 		}
 	}

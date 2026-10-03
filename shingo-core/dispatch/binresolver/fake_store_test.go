@@ -180,6 +180,9 @@ func (f *fakeStore) CountActiveOrdersByDeliveryNode(nodeName string) (int, error
 // CountActiveOrdersByDeliveryNodeExcluding reads activeByDelivery less any entry
 // activeByOrder attributes to the excluded order — how the vacated-slot tests
 // say "this traffic is the asker's own".
+// SlotSpokenForByStranger: the fake carries no reservations.
+func (f *fakeStore) SlotSpokenForByStranger(int64, int64) (bool, error) { return false, nil }
+
 func (f *fakeStore) CountActiveOrdersByDeliveryNodeExcluding(nodeName string, excludeID int64) (int, error) {
 	n := f.activeByDelivery[nodeName]
 	if f.activeByOrder[nodeName] == excludeID && excludeID != 0 && n > 0 {

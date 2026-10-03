@@ -157,7 +157,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		// group resolver and ignored through this one, which is the same
 		// lane/flat asymmetry payloadAllowedAt was written to end.
 		stated = gr.settleBinType(stated, asker, syntheticNode)
-		node, err := r.resolveStore(children, payloadCode, stated.TypeID(), gr)
+		node, err := r.resolveStore(children, payloadCode, stated.TypeID(), gr, asker.OrderID)
 		if err != nil {
 			return nil, err
 		}
@@ -221,7 +221,7 @@ func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode st
 
 // resolveStore finds the best child node for storage (consolidation-first, then emptiest).
 func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode string,
-	binTypeID *int64, gr *GroupResolver) (*nodes.Node, error) {
+	binTypeID *int64, gr *GroupResolver, owner int64) (*nodes.Node, error) {
 	var candidates []storageCandidate
 	for _, child := range children {
 		if !child.Enabled || child.IsSynthetic {
@@ -240,6 +240,11 @@ func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode strin
 		}
 		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
 		if count+inflight >= 1 {
+			continue
+		}
+		// Another order's slot reservation, which is also what a hard slot claim
+		// carries: the claim door refuses it, so it is not a candidate.
+		if spoken, sErr := r.DB.SlotSpokenForByStranger(child.ID, owner); sErr != nil || spoken {
 			continue
 		}
 

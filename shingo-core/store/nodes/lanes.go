@@ -402,6 +402,21 @@ func SlotTakeableSQL(alias, ownerExpr string) string {
 		protocol.TerminalStatusSQLList())
 }
 
+// SlotSpokenForByStranger reports whether another order (anyone but owner) holds
+// an active slot reservation on nodeID — the claim door's refusal, asked before
+// the claim. For choosers that test a candidate's other holds in Go and need
+// only this clause added; a chooser written in SQL composes SlotTakeableSQL
+// instead. owner 0 exempts nobody.
+func SlotSpokenForByStranger(db *sql.DB, nodeID, owner int64) (bool, error) {
+	var spoken bool
+	err := db.QueryRow(`SELECT `+reservations.SlotSpokenForByStrangerSQL("r", "$1", "$2"),
+		nodeID, owner).Scan(&spoken)
+	if err != nil {
+		return false, fmt.Errorf("slot reservation on node %d: %w", nodeID, err)
+	}
+	return spoken, nil
+}
+
 // TakeableSlotsInGroup returns the ids of every node in a group's shuffle pool —
 // its direct children and the slots of its lanes — that SlotTakeableSQL admits
 // for owner. One statement for the whole group, so a caller walking many

@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -321,11 +323,8 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		if len(res.Created) >= want {
 			break
 		}
-		// Decision-time capacity, per window. Pass 0 for the exclude-order id:
-		// there is no order of ours yet to exclude, which is the whole difference
-		// between deciding and retrying.
-		if blocked, block := CheckDropoffCapacity(d.db, t.NodeName, 0); blocked {
-			res.HeldBy[t.NodeName] = string(block.Cause)
+		if held := d.windowHeldBy(req, t.NodeName); held != "" {
+			res.HeldBy[t.NodeName] = held
 			continue
 		}
 		// A carrier has already been ASKED FOR here and the ask has not been given
@@ -486,4 +485,38 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 // distinguishable.
 func (d *Dispatcher) QueueCoreAsk(order *orders.Order, stationID string) {
 	d.queueOrderInternal(order, stationID, "")
+}
+
+// windowHeldBy is the decision-time check on one window: why a carrier may not
+// be ordered to it now, or "" when it may.
+//
+// Capacity first. Pass 0 for the exclude-order id: there is no order of ours yet
+// to exclude, which is the whole difference between deciding and retrying.
+//
+// Then ANOTHER ORDER'S SLOT RESERVATION, which the capacity check does not read:
+// the pull's claim on a storage-classed window would be refused for as long as
+// the holder holds it. No pull exists yet, so nobody is exempt. A name that
+// resolves to no node passes, the same answer CheckDropoffCapacity gives it, so
+// the dispatch produces the real error.
+func (d *Dispatcher) windowHeldBy(req ReplenishRequest, name string) string {
+	if blocked, block := CheckDropoffCapacity(d.db, name, 0); blocked {
+		return string(block.Cause)
+	}
+	node, err := d.db.GetNodeByDotName(name)
+	switch {
+	case errors.Is(err, sql.ErrNoRows), err == nil && node == nil:
+		return ""
+	case err != nil:
+		return "window-check-failed"
+	}
+	spoken, err := d.db.SlotSpokenForByStranger(node.ID, 0)
+	if err != nil {
+		d.dbg("loader_replenish loader=%d payload=%s window=%s: read slot reservations: %v",
+			req.LoaderID, req.PayloadCode, name, err)
+		return "window-check-failed"
+	}
+	if spoken {
+		return "window-reserved"
+	}
+	return ""
 }

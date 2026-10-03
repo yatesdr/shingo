@@ -62,6 +62,12 @@ type Store interface {
 	// In-flight orders (used for storage candidate screening).
 	CountActiveOrdersByDeliveryNode(nodeName string) (int, error)
 	CountActiveOrdersByDeliveryNodeExcluding(nodeName string, excludeID int64) (int, error)
+	// SlotSpokenForByStranger is the claim door's refusal asked before the
+	// claim: another order holds an active slot reservation on the node. The
+	// flat-child arms ask it because their callers claim through ReserveSlot
+	// (claimStoreSlot or the complex reserve), and a slot reservation is
+	// exclusive per node.
+	SlotSpokenForByStranger(nodeID, owner int64) (bool, error)
 
 	// Lane-aware queries.
 	ListLaneSlots(laneID int64) ([]*nodes.Node, error)
