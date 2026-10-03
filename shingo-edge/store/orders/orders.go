@@ -386,6 +386,11 @@ type ProjectionRow struct {
 // values on every re-projection would erase what the Edge learned by doing the
 // work.
 func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
+	// A terminal projection lands with no queue text, as UpdateStatus clears it:
+	// an ended order is not waiting for anything.
+	if protocol.IsTerminal(protocol.Status(r.Status)) {
+		r.QueueReason, r.QueueCode = "", ""
+	}
 	var existed int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE uuid=?`, r.UUID).Scan(&existed); err != nil {
 		return false, fmt.Errorf("check existing order %s: %w", r.UUID, err)
@@ -426,8 +431,18 @@ func UpdateProcessNode(db *sql.DB, id int64, processNodeID *int64) error {
 }
 
 // UpdateStatus changes the order status and bumps updated_at.
+//
+// A terminal status clears queue_reason and queue_code in the same statement.
+// They are Core's reason the order is waiting, and an ended order is not
+// waiting: left in place, a cancelled row went on reading "Waiting for a slot
+// at ...". A non-terminal write leaves them alone; the queue-reason write owns
+// them while the order lives.
 func UpdateStatus(db *sql.DB, id int64, newStatus string) error {
-	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`, newStatus, id)
+	q := `UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`
+	if protocol.IsTerminal(protocol.Status(newStatus)) {
+		q = `UPDATE orders SET status=?, queue_reason='', queue_code='', updated_at=datetime('now') WHERE id=?`
+	}
+	_, err := db.Exec(q, newStatus, id)
 	return err
 }
 
