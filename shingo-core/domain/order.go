@@ -143,4 +143,9 @@ type Order struct {
 	// `Sealed bool` field would have zero-valued to "open" and disagreed with
 	// its own column. Openness is never inherited; it is written.
 	OpenForChildren bool `json:"open_for_children,omitempty"`
+	// RecoversOrderID is set on a Core-minted return order: the cancelled
+	// order whose bin was still on the robot's deck when it was cancelled, and
+	// which this order carries back. nil on every other order. Written once at
+	// creation; the reverse lookup is store.GetOrderRecovering.
+	RecoversOrderID *int64 `json:"recovers_order_id,omitempty"`
 }

@@ -535,7 +535,7 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 	if full, err := r.atDeclaredLevel(group, binTypeID, levels); err != nil {
 		return nil, err
 	} else if full {
-		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+		return nil, &atLevelError{group: group.Name}
 	}
 
 	algo := r.getGroupAlgorithm(group.ID, PropStoreAlgorithm, StoreLKND)
@@ -984,7 +984,8 @@ func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID *int64) bool {
 // payloadAllowedAt reports whether a store of payloadCode may land at a child
 // node — lane or flat slot alike.
 //
-// ONE SPELLING FOR FOUR SITES. This was written out four times, and only twice:
+// ONE SPELLING FOR FIVE SITES. The four store arms (lane and flat, LKND and
+// DPTH) and ResolveStoreVacated. This was written out four times, and only twice:
 // both lane branches carried it and neither flat branch did, so a group of flat
 // slots that declared its payloads had those declarations ignored for stores
 // while an identically-configured laned group honoured them. The asymmetry was

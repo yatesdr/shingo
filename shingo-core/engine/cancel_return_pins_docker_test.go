@@ -101,6 +101,19 @@ func seedClaim(t *testing.T, db *store.DB, proc, style, line, payload, source st
 		"seed claim "+proc+"/"+style)
 }
 
+// seedRoleClaim mirrors one claim with a role and both of its legs: a consume
+// claim's inbound is where its fulls come from and its outbound where its spent
+// carriers go; a produce claim's inbound is where it draws empties.
+func seedRoleClaim(t *testing.T, db *store.DB, proc, node string, role protocol.ClaimRole, payload, inbound, outbound string) {
+	t.Helper()
+	testutil.MustNoErr(t, db.ReplacePlantClaims(proc,
+		[]plantclaims.StyleRow{{ProcessID: proc, StyleID: "STY", ConfigGen: 1, IsActive: true}},
+		[]plantclaims.ClaimRow{{ProcessID: proc, StyleID: "STY", CoreNodeName: node,
+			Role: role, SwapMode: protocol.SwapModeSimple, PayloadCode: payload,
+			InboundSource: inbound, OutboundDestination: outbound}}, 0),
+		"seed claim "+proc)
+}
+
 // holdLaneInDig puts a foreign order in the lane in dig mode, which excludes
 // every other hold — the corridor-busy refusal the park exists for.
 func holdLaneInDig(t *testing.T, db *store.DB, prefix string, lane *nodes.Node) *orders.Order {
@@ -215,28 +228,30 @@ func TestPin_RecoverCarriedBin_Tier1ReadsTheCarrierNotADeadRecovery(t *testing.T
 	}
 }
 
-// PIN: the watch, on a loaded deck after a cancel, with a dispatchable robot at
-// rest and a claim naming where the payload is sourced from, creates no order —
-// it marks the deck and waits.
-//
-// EXPECTED TO CHANGE (SHAPE §3.1): this is the trigger. After the build the
-// same fixture yields one return order into the claim's source group.
-func TestPin_Watch_LoadedDeckAfterACancelCreatesNoOrder(t *testing.T) {
+// PIN, CHANGED BY THE TRIGGER (SHAPE §3.1). At the base tree the watch, on a
+// loaded deck after a cancel, with a dispatchable robot at rest and a claim
+// naming where the payload is sourced from, created no order — it marked the
+// deck and waited for a person. It now orders the bin back into the claim's
+// source, and still marks the deck.
+func TestPin_Watch_LoadedDeckAfterACancelOrdersTheReturn(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	backend := testdb.NewTrackingBackend()
 	eng := newTestEngine(t, db, backend)
 
-	grp, _ := storeGroupWithSlot(t, db, "PIN-W")
+	grp, slot := storeGroupWithSlot(t, db, "PIN-W")
 	seedClaim(t, db, "PROC-PIN-W", "STYLE-A", "LINE-PIN-W", "PART-PIN-W", grp.Name, true)
 	bin, _ := seedCancelledCarry(t, db, "AMR-PIN-W", "PART-PIN-W", "LINE-PIN-W")
 	cacheRobot(eng, loadedDispatchable("AMR-PIN-W"))
 
 	eng.sweepCarriedBins()
 
-	assertNoRecoveryOrder(t, db, bin.ID)
+	ret := onDeckOrders(t, db, bin.ID)
+	if len(ret) != 1 || ret[0].DeliveryNode != slot.Name {
+		t.Fatalf("on-deck orders = %d, want one return into %s", len(ret), slot.Name)
+	}
 	if got := binNodeName(t, db, bin.ID); got != bins.CarrierNodePrefix+"AMR-PIN-W" {
-		t.Errorf("bin moved to %q on a loaded deck", got)
+		t.Errorf("bin moved to %q on a loaded deck — the return's arrival places it, not the watch", got)
 	}
 	eng.dropObsMu.Lock()
 	_, marked := eng.deckSeenLoaded[bin.ID]

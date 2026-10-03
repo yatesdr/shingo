@@ -6,7 +6,10 @@ import (
 	"errors"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
@@ -102,4 +105,51 @@ func TestLoaderService_InboundSourceIsResolveChecked(t *testing.T) {
 				"create is guarded on the path nobody uses twice")
 		}
 	})
+}
+
+// A source is a node group or a loader position — never a lane, and an
+// unloader's fulls never come from an empties bank. Refused at save, where the
+// operator can fix it, rather than discovered when a bin put back in a sibling
+// lane, or a full refused by the bank, is never found again.
+func TestLoaderService_FlowEndpointsAreTheRightKindOfNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewLoaderService(db, nil)
+
+	ngrp, err := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
+	testutil.MustNoErr(t, err, "NGRP type")
+	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
+	testutil.MustNoErr(t, err, "LANE type")
+	group := &nodes.Node{Name: "FE-GRP", NodeTypeID: &ngrp.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(group), "group")
+	lane := &nodes.Node{Name: "FE-LANE", NodeTypeID: &laneType.ID, ParentID: &group.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(lane), "lane")
+	bank := &nodes.Node{Name: "FE-BANK", NodeTypeID: &ngrp.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(bank), "bank")
+	bt := &bins.BinType{Code: "FE-T", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "bin type")
+	testutil.MustNoErr(t, db.SetMaintainLevel(store.MaintainLevel{GroupNodeID: bank.ID, BinTypeID: bt.ID, Want: 2}),
+		"the bank's level")
+
+	if _, err := svc.Create("FE-IN-LANE", "consume", "dedicated_positions",
+		loaders.ReplenishmentOperator, "", lane.Name, false); !errors.Is(err, ErrSourceIsALane) {
+		t.Errorf("an inbound source naming a lane: err = %v, want ErrSourceIsALane", err)
+	}
+	if _, err := svc.Create("FE-OUT-LANE", "consume", "dedicated_positions",
+		loaders.ReplenishmentOperator, lane.Name, "", false); !errors.Is(err, ErrSourceIsALane) {
+		t.Errorf("an outbound destination naming a lane: err = %v, want ErrSourceIsALane", err)
+	}
+	if _, err := svc.Create("FE-FULLS-BANK", "consume", "dedicated_positions",
+		loaders.ReplenishmentOperator, "", bank.Name, false); !errors.Is(err, ErrFullsFromAnEmptiesBank) {
+		t.Errorf("an unloader's fulls from a maintained group: err = %v, want ErrFullsFromAnEmptiesBank", err)
+	}
+	// A loader's EMPTIES coming from a bank is what a bank is for.
+	if _, err := svc.Create("FE-EMPTIES-BANK", "produce", "dedicated_positions",
+		loaders.ReplenishmentThreshold, "", bank.Name, false); err != nil {
+		t.Errorf("a loader drawing empties from a maintained group was refused: %v", err)
+	}
+	if _, err := svc.Create("FE-GROUP-OK", "consume", "dedicated_positions",
+		loaders.ReplenishmentOperator, "", group.Name, false); err != nil {
+		t.Errorf("an ordinary group as an unloader's inbound source was refused: %v", err)
+	}
 }

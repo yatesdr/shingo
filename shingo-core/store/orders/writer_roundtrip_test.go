@@ -61,6 +61,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	std := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "RT-BIN-1")
 	parent := testdb.CreateOrder(t, db)
+	// A second, distinct order for RecoversOrderID, so a swap with
+	// ParentOrderID reads back as a mismatch instead of passing by sharing an id.
+	recovered := testdb.CreateOrder(t, db)
 
 	// Every value is distinguishable from every other field's value and from
 	// the DDL default, so a column bound to the wrong parameter shows up as a
@@ -95,6 +98,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"Coordinated":  true,
 		"OriginID":     "6f1c8b2e-4a9d-4c3f-8e5b-7d2a1f0c9b34",
 		"OriginClass":  "demand",
+		// A birth fact like ParentOrderID: a return order names the cancelled
+		// order it recovers when it is created, and nothing rewrites it.
+		"RecoversOrderID": &recovered.ID,
 		// A birth fact, so unlike OpenForChildren it round-trips through Create.
 		// That is the property worth pinning: if this ever stops surviving the
 		// INSERT, a service dig's lane releases on the last blocker and the bin

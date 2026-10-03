@@ -334,6 +334,16 @@ function buildManifest(data, opts) {
     ident.push('step ' + o.sequence + ' of <a href="#" data-action="openOrderModal:' + o.parent_order_id +
       '" data-prevent-default="1">#' + o.parent_order_id + '</a>');
   }
+  // A return order and the cancelled order whose bin it carried back off the
+  // robot's deck, linked from both ends. Ids are integers from the server.
+  if (o.recovers_order_id) {
+    ident.push('Returns the bin of cancelled order <a href="#" data-action="openOrderModal:' + o.recovers_order_id +
+      '" data-prevent-default="1">#' + o.recovers_order_id + '</a>');
+  }
+  if (data.recovered_by) {
+    ident.push('Bin returned by order <a href="#" data-action="openOrderModal:' + data.recovered_by.id +
+      '" data-prevent-default="1">#' + data.recovered_by.id + '</a>');
+  }
   out += '<div class="manifest-ident">' + ident.join('<span class="manifest-dot">&middot;</span>') + '</div>';
   out += '<div class="manifest-uuid">' + escapeHtml(o.edge_uuid) + '</div>';
   out += '</div>';

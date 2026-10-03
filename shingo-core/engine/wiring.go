@@ -114,8 +114,9 @@ func (e *Engine) wireEventHandlers() {
 		// Mirrors the EventOrderCancelled handler's notification block below.
 		// The edge handler (HandleOrderError) is idempotent — duplicate
 		// failure notifications for an already-failed order are harmless.
-		// Auto-return orders have empty EdgeUUID by design (Core-internal);
-		// the gate correctly skips them.
+		// Core-minted orders with no Edge behind them — the on-deck recovery
+		// and cancel-return orders — carry an EdgeUUID but no StationID, and
+		// the gate skips them on the station.
 		if ev.StationID != "" && ev.EdgeUUID != "" {
 			if err := e.sendToEdge(protocol.TypeOrderError, ev.StationID,
 				&protocol.OrderError{
@@ -262,12 +263,13 @@ func (e *Engine) wireEventHandlers() {
 			}
 		}
 
-		// Auto-return (minting a store order to send the bin back to its origin on
-		// cancel/fail) was removed with the plain-store family — it was dormant
-		// (never completed in production) and store was the wrong vehicle. The bin's
-		// claim is released by the standard terminal teardown; the physical bin stays
-		// where the robot left it until an operator moves it. The requirement (return
-		// a bin on cancel/fail) is preserved as a future COORDINATED return-order build.
+		// NO RETURN IS ATTEMPTED HERE. A bin still on the robot's deck after a
+		// cancel goes back to where it is sourced from through the carried-bin
+		// watch (engine/cancel_return.go), not this handler: a cancel can be
+		// emitted under the fulfillment scanner's lock, and a lane-held return
+		// runs a synchronous scanner pass. A failed order's bin is not returned.
+		// (An earlier auto-return here minted a plain store order; it never
+		// completed in production and was removed with the plain-store family.)
 
 		// If a two-robot swap leg was cancelled (operator terminate, fleet fault,
 		// or this handler cancelling the sibling), unwind its peer so a half-swap

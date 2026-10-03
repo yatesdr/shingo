@@ -621,6 +621,41 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	return sourceNode, newDest, nil
 }
 
+// overflowReader is what OverflowGroupOf reads: the group's property and the
+// node it names.
+type overflowReader interface {
+	GetNodeProperty(nodeID int64, key string) string
+	GetNodeByDotName(name string) (*nodes.Node, error)
+}
+
+// OverflowGroupOf is a maintained group's configured overflow destination: the
+// node it names, or nil. With nil, why is "" when none is configured (a real
+// answer, not a missing one) and a sentence when one is configured and
+// unusable.
+//
+// THE LOOKUP HALF OF tryOverflow, and the only copy. The cancel-return policy
+// (engine/cancel_return.go) follows the same overflow for a bin it is returning
+// to a group at its level, and two lookups would be two answers the first time
+// either grows a rule.
+func OverflowGroupOf(db overflowReader, group *nodes.Node) (*nodes.Node, string) {
+	overflow := db.GetNodeProperty(group.ID, nodes.PropOverflowDestination)
+	if overflow == "" {
+		return nil, ""
+	}
+	dest, err := db.GetNodeByDotName(overflow)
+	if err != nil || dest == nil {
+		return nil, fmt.Sprintf("overflow %q of %s does not resolve (%v)", overflow, group.Name, err)
+	}
+	if dest.ID == group.ID {
+		// A group naming itself is the one-hop rule's degenerate case, and it is
+		// worth refusing explicitly: without this it would re-resolve the same
+		// full group and return the same capacity error, which reads as a
+		// mysterious no-op rather than a configuration mistake.
+		return nil, fmt.Sprintf("overflow of %s names itself", group.Name)
+	}
+	return dest, ""
+}
+
 // tryOverflow resolves a maintained group's configured overflow destination.
 // Reports whether it found one and where.
 //
@@ -644,24 +679,14 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 // the overflow is a different group with its own algorithm, its own children,
 // and possibly its own level.
 func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node) (string, time.Time, bool) {
-	overflow := s.db.GetNodeProperty(group.ID, nodes.PropOverflowDestination)
-	if overflow == "" {
+	dest, why := OverflowGroupOf(s.db, group)
+	if dest == nil {
+		if why != "" {
+			s.dbg("intake: %s — parking instead", why)
+		}
 		return "", time.Time{}, false
 	}
-	dest, err := s.db.GetNodeByDotName(overflow)
-	if err != nil || dest == nil {
-		s.dbg("intake: overflow %q of %s does not resolve (%v) — parking instead",
-			overflow, group.Name, err)
-		return "", time.Time{}, false
-	}
-	if dest.ID == group.ID {
-		// A group naming itself is the one-hop rule's degenerate case, and it is
-		// worth refusing explicitly: without this it would re-resolve the same
-		// full group and return the same capacity error, which reads as a
-		// mysterious no-op rather than a configuration mistake.
-		s.dbg("intake: overflow of %s names itself — parking instead", group.Name)
-		return "", time.Time{}, false
-	}
+	overflow := dest.Name
 
 	// The overflow destination is the same placement one group over, so it gets
 	// the same carrier answer rather than a second, weaker one.

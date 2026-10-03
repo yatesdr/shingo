@@ -136,6 +136,10 @@ func (p *Plant) Validate() error {
 		add("storage hierarchy missing: need at least one zone → lane → slot (kanban only sees nodes under a LANE/NGRP parent)")
 	}
 	ref := func(name string) bool { _, ok := nodes[name]; return ok }
+	maintained := make(map[string]bool, len(p.MaintainedGroups))
+	for _, mg := range p.MaintainedGroups {
+		maintained[mg.Group] = true
+	}
 
 	// loaderIdentities are SYNTHETIC loader-aggregate ids named by window_of claims
 	// that are not themselves declared nodes — a multi-window loader with no physical
@@ -248,6 +252,25 @@ func (p *Plant) Validate() error {
 		}
 		if c.OutboundDestination != "" && !ref(c.OutboundDestination) {
 			add("%s: unknown outbound_destination %q", where, c.OutboundDestination)
+		}
+		// A SOURCE IS A GROUP OR A LOADER POSITION, NEVER A LANE (owner,
+		// 2026-10-03). A need that names a lane searches that lane only, so a bin
+		// put back anywhere else in its group is one that need never finds. The
+		// same refusal as the loader save check (service.ErrSourceIsALane).
+		for _, leg := range []struct{ field, name string }{
+			{"inbound_source", c.InboundSource}, {"outbound_destination", c.OutboundDestination},
+		} {
+			if leg.name != "" && nodes[leg.name] == "lane" {
+				add("%s: %s %q is a lane; a lane is not a source — name its group", where, leg.field, leg.name)
+			}
+		}
+		// A CONSUMER'S FULLS DO NOT COME FROM AN EMPTIES BANK. A maintained group
+		// refuses a carrier holding a part (binresolver.ResolveStore's empties-only
+		// refusal), so a full could be drawn from it and never put back. The same
+		// refusal as service.ErrFullsFromAnEmptiesBank.
+		if c.Role == "consume" && c.InboundSource != "" && maintained[c.InboundSource] {
+			add("%s: inbound_source %q is a maintained (empties) group; a consumer's fulls cannot come from it",
+				where, c.InboundSource)
 		}
 		if c.PairedCoreNode != "" && !ref(c.PairedCoreNode) {
 			add("%s: unknown paired_core_node %q", where, c.PairedCoreNode)

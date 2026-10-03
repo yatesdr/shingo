@@ -4341,6 +4341,13 @@ func migrationList() []migration {
 		{139, "bin_loaders.pulled_directly — a two-stage unloader's stage 2 whose finished carts the process pulls straight off its windows",
 			v139LoaderPulledDirectly,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "pulled_directly") }},
+
+		{140, "orders.recovers_order_id — a return order minted for a bin left on a robot's deck names the cancelled order it recovers",
+			v140OrderRecoversOrderID,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "recovers_order_id") &&
+					schema.IndexExists(q, "idx_orders_recovers_order_id")
+			}},
 	}
 }
 
@@ -5057,6 +5064,37 @@ func v139LoaderPulledDirectly(tx *sql.Tx) error {
 	if _, err := tx.Exec(
 		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS pulled_directly BOOLEAN NOT NULL DEFAULT false`); err != nil {
 		return fmt.Errorf("v139 bin_loaders.pulled_directly: %w", err)
+	}
+	return nil
+}
+
+// v140OrderRecoversOrderID adds orders.recovers_order_id: the link from a
+// Core-minted return order back to the cancelled order whose bin it recovers.
+// When an order is cancelled after its robot has picked the bin up, the bin is
+// still on the robot's deck and a new order carries it back; this column is how
+// that return names the order it is cleaning up after, so the order page can
+// show the pair from either end without matching on bins or timestamps.
+//
+// NULLABLE, because every other order recovers nothing. REFERENCES orders(id),
+// as parent_order_id does: the target is always an existing order row, and no
+// production path deletes orders.
+//
+// THE INDEX IS PARTIAL and serves the reverse lookup ("which return recovers
+// order X", GetRecovering). It holds no rows on any plant until the feature
+// runs. It lives here and NOT in the baseline DDL: the baseline is applied
+// before migrations, so a baseline index over this column would fail on every
+// existing database (see schema_index_drift_test.go).
+//
+// INERT TO AN OLDER BINARY, which never names the column. ROLLBACK is the
+// previous binary plus DROP COLUMN recovers_order_id (the index goes with it).
+func v140OrderRecoversOrderID(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS recovers_order_id BIGINT NULL REFERENCES orders(id)`,
+		`CREATE INDEX IF NOT EXISTS idx_orders_recovers_order_id ON orders (recovers_order_id) WHERE recovers_order_id IS NOT NULL`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v140 orders.recovers_order_id: %w", err)
+		}
 	}
 	return nil
 }

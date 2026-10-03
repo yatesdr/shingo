@@ -844,7 +844,8 @@ CREATE TABLE public.orders (
     origin_class text DEFAULT ''::text NOT NULL,
     open_for_children boolean DEFAULT false NOT NULL,
     orphan_aged_at timestamp with time zone,
-    destination_resolved_at timestamp with time zone
+    destination_resolved_at timestamp with time zone,
+    recovers_order_id bigint
 );
 
 CREATE SEQUENCE public.orders_id_seq
@@ -1818,6 +1819,8 @@ CREATE INDEX idx_orders_delivery_node ON public.orders USING btree (delivery_nod
 
 CREATE INDEX idx_orders_origin_id ON public.orders USING btree (origin_id) WHERE (origin_id IS NOT NULL);
 
+CREATE INDEX idx_orders_recovers_order_id ON public.orders USING btree (recovers_order_id) WHERE (recovers_order_id IS NOT NULL);
+
 CREATE INDEX idx_orders_status ON public.orders USING btree (status);
 
 CREATE UNIQUE INDEX idx_orders_uuid ON public.orders USING btree (edge_uuid) WHERE (edge_uuid <> ''::text);
@@ -1992,6 +1995,9 @@ ALTER TABLE ONLY public.orders
 
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_parent_order_id_fkey FOREIGN KEY (parent_order_id) REFERENCES public.orders(id);
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_recovers_order_id_fkey FOREIGN KEY (recovers_order_id) REFERENCES public.orders(id);
 
 ALTER TABLE ONLY public.payload_bin_types
     ADD CONSTRAINT payload_bin_types_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;

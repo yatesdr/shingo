@@ -501,6 +501,10 @@ func (e *Engine) sweepCarriedBins() {
 		e.logFn("engine: carried bins: %v", err)
 		return
 	}
+	onNode := make(map[string]int, len(carried))
+	for _, bin := range carried {
+		onNode[bin.NodeName]++
+	}
 	for _, bin := range carried {
 		robotID := strings.TrimPrefix(bin.NodeName, bins.CarrierNodePrefix)
 		if robotID == "" || robotID == bin.NodeName {
@@ -510,7 +514,7 @@ func (e *Engine) sweepCarriedBins() {
 		if !ok {
 			continue
 		}
-		e.placeCarriedBinIfSettled(bin, robotID, robot)
+		e.placeCarriedBinIfSettled(bin, robotID, robot, onNode[bin.NodeName] == 1)
 	}
 	e.pruneDropObservations(carried)
 }
@@ -560,8 +564,11 @@ func (e *Engine) retireEmptyCarrierNodes() {
 
 // placeCarriedBinIfSettled is the per-bin body of the watch: place the bin as
 // soon as the deck it is riding reports empty at rest, at the station it
-// reported WHEN IT EMPTIED.
-func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot fleet.RobotStatus) {
+// reported WHEN IT EMPTIED — and, while the deck reads loaded, ask the
+// cancel-return policy whether to order it down (cancel_return.go).
+//
+// soleOnNode says this bin is the only one on its carrier node.
+func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot fleet.RobotStatus, soleOnNode bool) {
 	carrying, certain := service.RobotCarryingBin(robot)
 	if !certain || carrying {
 		// Still loaded, or the deck is mid-travel. Leave it riding; the next
@@ -579,6 +586,12 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// mark by hand.
 		if robot.Connected {
 			e.markDeckLoaded(bin.ID)
+		}
+		// THE CANCEL-RETURN TRIGGER, on a reading that is certainly a loaded
+		// deck at rest — an uncertain jack (lowering, mid-travel) is no basis
+		// for an order that tells this robot to set a bin down.
+		if certain && carrying {
+			e.maybeReturnCarriedBin(bin, robotID, robot, soleOnNode)
 		}
 		return
 	}

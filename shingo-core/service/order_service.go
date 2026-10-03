@@ -182,6 +182,13 @@ func (s *OrderService) ListChildOrders(parentOrderID int64) ([]*orders.Order, er
 	return s.db.ListChildOrders(parentOrderID)
 }
 
+// GetOrderRecovering returns the return order that carried back the bin of
+// the cancelled order cancelledID, or (nil, nil) when none did. The order page
+// uses it to link a cancelled order forward to its return.
+func (s *OrderService) GetOrderRecovering(cancelledID int64) (*orders.Order, error) {
+	return s.db.GetOrderRecovering(cancelledID)
+}
+
 // ListOrdersByStation returns the most recent orders originated by a
 // specific station id, capped at limit rows. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration

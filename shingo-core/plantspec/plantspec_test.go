@@ -273,3 +273,35 @@ func TestShippedDemoPlantHasMaintainedGroup(t *testing.T) {
 			mg.Group, total, len(zone.Positions))
 	}
 }
+
+// A source is a group or a loader position, never a lane, and a consumer's
+// fulls never come from an empties bank — the same two refusals the loader save
+// check makes (service.ErrSourceIsALane / ErrFullsFromAnEmptiesBank), so a spec
+// cannot seed a claim the settings screen would refuse.
+func TestValidate_SourceKindRefusals(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Plant)
+		want   string
+	}{
+		{"consumer names a lane", func(p *Plant) { p.Claims[2].InboundSource = "SM-A-LANE-1" }, "a lane is not a source"},
+		{"outbound names a lane", func(p *Plant) { p.Claims[0].OutboundDestination = "SM-A-LANE-1" }, "a lane is not a source"},
+		{"consumer's fulls from a bank", func(p *Plant) { p.Claims[2].InboundSource = "PRESS-EMPTIES" }, "a consumer's fulls cannot come from it"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := maintainedPlant()
+			tc.mutate(p)
+			err := p.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+	// A press drawing its EMPTIES from the bank is what the bank is for.
+	p := maintainedPlant()
+	p.Claims[1].InboundSource = "PRESS-EMPTIES"
+	if err := p.Validate(); err != nil && strings.Contains(err.Error(), "PRESS-EMPTIES") {
+		t.Errorf("a producer drawing empties from a maintained group was refused: %v", err)
+	}
+}

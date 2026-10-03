@@ -264,4 +264,9 @@ func (e *Engine) pruneDropObservations(carried []*bins.Bin) {
 			delete(e.deckSeenLoaded, id)
 		}
 	}
+	for id := range e.returnAttempted {
+		if !live[id] {
+			delete(e.returnAttempted, id)
+		}
+	}
 }

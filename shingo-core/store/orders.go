@@ -673,6 +673,12 @@ func (db *DB) GetIntakeRefusal(edgeUUID string) (*orders.IntakeRefusal, error) {
 	return orders.GetIntakeRefusal(db.DB, edgeUUID)
 }
 
+// GetOrderRecovering returns the return order that recovers the cancelled
+// order cancelledID, or (nil, nil) when none does. See orders.GetRecovering.
+func (db *DB) GetOrderRecovering(cancelledID int64) (*orders.Order, error) {
+	return orders.GetRecovering(db.DB, cancelledID)
+}
+
 func (db *DB) GetOrderByVendorID(vendorOrderID string) (*orders.Order, error) {
 	return orders.GetByVendorID(db.DB, vendorOrderID)
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"shingo/protocol"
 
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -179,6 +180,9 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 	if err := s.checkInboundSource(inbound); err != nil {
 		return 0, err
 	}
+	if err := s.checkFlowEndpoints(in.Role, inbound, in.OutboundDest); err != nil {
+		return 0, err
+	}
 	id, err := s.db.CreateLoader(loaders.Loader{
 		Name: in.Name, Role: in.Role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: in.OutboundDest,
@@ -261,6 +265,9 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 		inboundSource = ""
 	}
 	if err := s.checkInboundSource(inboundSource); err != nil {
+		return err
+	}
+	if err := s.checkFlowEndpoints(cur.Role, inboundSource, outboundDest); err != nil {
 		return err
 	}
 	cur.InboundSource = inboundSource
@@ -536,6 +543,18 @@ func (s *LoaderService) rederive() {
 // node that does not exist.
 var ErrInboundSourceUnresolved = errors.New("inbound source does not resolve to a node")
 
+// ErrSourceIsALane is returned when a loader's inbound source or outbound
+// destination names a LANE. Lines name node groups or loader positions, never
+// lanes (owner, 2026-10-03): a need that names a lane searches that lane only,
+// so anything placed in a sibling lane of the same group is invisible to it.
+var ErrSourceIsALane = errors.New("a lane is not a source; name its group")
+
+// ErrFullsFromAnEmptiesBank is returned when a CONSUME loader's inbound source
+// (where its fulls come from) names a maintained group. A maintained group is an
+// empties bank: the store resolver refuses a carrier holding a part there, so
+// fulls could be pulled from it but never put back into it.
+var ErrFullsFromAnEmptiesBank = errors.New("an unloader's fulls cannot come from a maintained (empties) group")
+
 // checkInboundSource resolve-checks a claim's inbound source at SAVE TIME.
 // MG3-3.
 //
@@ -564,6 +583,47 @@ var ErrInboundSourceUnresolved = errors.New("inbound source does not resolve to 
 // be edited in any order; refusing a save on it would make the form unusable
 // during a reconfiguration. Existence is the part that is always knowable and
 // always wrong when it fails.
+// checkFlowEndpoints is the second half of the save-time check: not whether the
+// endpoints exist (checkInboundSource) but whether they are the KIND of node a
+// source can be. Two refusals, both about places a bin could be put and never
+// found again:
+//
+//   - a LANE as the inbound source or the outbound destination (ErrSourceIsALane);
+//   - a MAINTAINED GROUP as an unloader's inbound source (ErrFullsFromAnEmptiesBank):
+//     the empties-only store refusal (binresolver.ResolveStore) means a full of
+//     the part can be retrieved from it but not returned to it.
+//
+// A blank endpoint is valid, as it is for checkInboundSource.
+func (s *LoaderService) checkFlowEndpoints(role, inboundSource, outboundDest string) error {
+	for _, name := range []string{inboundSource, outboundDest} {
+		if name == "" {
+			continue
+		}
+		n, err := s.db.GetNodeByDotName(name)
+		if err != nil || n == nil {
+			continue // existence is checkInboundSource's question
+		}
+		if n.NodeTypeCode == protocol.NodeClassLANE {
+			return fmt.Errorf("%w: %q", ErrSourceIsALane, name)
+		}
+	}
+	if role != loaders.RoleConsume || inboundSource == "" {
+		return nil
+	}
+	n, err := s.db.GetNodeByDotName(inboundSource)
+	if err != nil || n == nil {
+		return nil
+	}
+	levels, err := s.db.ListMaintainLevels(n.ID)
+	if err != nil {
+		return fmt.Errorf("read maintained levels of %s: %w", inboundSource, err)
+	}
+	if len(levels) > 0 {
+		return fmt.Errorf("%w: %q", ErrFullsFromAnEmptiesBank, inboundSource)
+	}
+	return nil
+}
+
 func (s *LoaderService) checkInboundSource(inboundSource string) error {
 	if inboundSource == "" {
 		return nil

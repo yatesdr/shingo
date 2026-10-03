@@ -209,7 +209,14 @@ CREATE TABLE IF NOT EXISTS orders (
     -- is judged against fleet-commit exactly as before, so the column can be
     -- absent, unwritten, or new without the tripwire changing its mind about
     -- anything it can already decide.
-    destination_resolved_at TIMESTAMPTZ
+    destination_resolved_at TIMESTAMPTZ,
+    -- The cancelled order whose bin this order returns. Set only on a
+    -- Core-minted return for a bin left on a robot's deck by a cancel; NULL on
+    -- every other order. Added by migration 140, which also builds the partial
+    -- index over it -- the index is NOT declared here, because this constant
+    -- runs before migrations and the column is absent on an existing database
+    -- at that point.
+    recovers_order_id BIGINT REFERENCES orders(id)
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

@@ -84,8 +84,17 @@ type Engine struct {
 	// Both are bounded by the bins on carrier nodes and pruned against that
 	// list on every sweep. Neither is persisted: they describe what this
 	// process witnessed, and a restart genuinely did not witness it.
-	dropObs               map[int64]dropObservation
-	deckSeenLoaded        map[int64]time.Time
+	dropObs        map[int64]dropObservation
+	deckSeenLoaded map[int64]time.Time
+	// returnAttempted is the cancel-return policy's one-attempt-per-episode
+	// record: bin → the carrier order whose return was attempted or declined
+	// (cancel_return.go). Beside the drop maps, under dropObsMu, pruned with
+	// them, because both hosts of the watch write it.
+	returnAttempted map[int64]int64
+	// onDeckMu serializes the on-deck door (orderCarriedBinDown) across the
+	// button and both hosts of the watch, so one caller's chosen slot is
+	// reserved before the next caller chooses. See the door.
+	onDeckMu              sync.Mutex
 	dropObsMu             sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService

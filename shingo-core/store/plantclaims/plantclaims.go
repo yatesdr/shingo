@@ -126,9 +126,14 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 	// this column in the first place.
 	//
 	// THE FOUR LEG COLUMNS BELOW ARE THE OPPOSITE CASE, and it is worth saying
-	// so next to a write-only column. They have no reader in shingo-core TODAY
-	// either — the loop compiler that reads them is the next lane — but they
-	// are written because the mirror is REPLACED WHOLESALE on every message:
+	// so next to a write-only column. They have readers: the cancel-return
+	// policy (store/return_sources.go) reads inbound_source and
+	// outbound_destination to know where a line's bins come from and its
+	// empties go, and the containment divert (store/containment.go) reads
+	// outbound_destination to scope itself to the claim's own flow. The
+	// sourceability path still must not, and legs_not_read_test.go names the
+	// sanctioned readers so the next one lands flagged. They are written
+	// because the mirror is REPLACED WHOLESALE on every message:
 	// there is no later pass that could fill them in, so a claim mirrored
 	// without its legs is a claim whose legs are lost until Edge happens to
 	// republish that process. v118 gives them an empty-string default, so unlike

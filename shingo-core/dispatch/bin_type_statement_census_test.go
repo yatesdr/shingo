@@ -58,6 +58,8 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 			"the same placement one group over, so it gets the same answer rather than a second weaker one"},
 		{"engine/maintainer.go", "createAsks", "known",
 			"the level IS a bin type; the one door that always named it, and the only caller that exercised the fence for years"},
+		{"engine/cancel_return.go", "storeInto", "known",
+			"the bin is on the deck and its own bin type is in hand; the store into the source's group is asked with it"},
 		{"dispatch/complex_steps.go", "resolveStepNode", "known",
 			"the paired pickup resolves to a slot holding exactly one carrier; unknown when it is not exactly one"},
 

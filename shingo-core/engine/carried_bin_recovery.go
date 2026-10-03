@@ -37,11 +37,11 @@ import (
 // operator who pressed Recover on the bins page is owed the reason, and "ok, no"
 // is not one.
 //
-// THERE IS NO SWEEP CALLER. This used to say there were two callers, an operator
-// and a sweep, and that was never true of this door: sweepCarriedBins is the
-// WATCH half described at the top of this file — it places a bin the robot has
-// already set down, and creates no order. The one caller is
-// www/handlers_diagnostics.go's recover_carried_bin action.
+// TWO CALLERS, ONE DOOR (orderCarriedBinDown). The operator, through
+// www/handlers_diagnostics.go's recover_carried_bin action; and the watch, whose
+// loaded arm asks the cancel-return policy (cancel_return.go) to order a bin
+// down after its order was cancelled. The watch caller turns a refusal into a
+// carried_bin_return_held row rather than a sentence on a screen.
 type CarriedBinNotRecoverable struct {
 	BinID  int64
 	Reason string
@@ -88,15 +88,20 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 // one sequence in orderCarriedBinDown, so the policies cannot drift apart on
 // any of it.
 //
-//	actor   who the audit row names: the operator, for the button.
-//	action  the recovery_actions verb, which says WHICH policy chose the
-//	        destination.
-//	choose  the policy: where this bin goes. It is handed the CARRIER — the
-//	        newest order that named the bin and was not itself an on-deck
-//	        order — from the read the door makes anyway, so no policy re-reads
-//	        it and none can mistake a dead recovery order for the bin's job.
+//	actor     who the audit row names: the operator, for the button;
+//	          system:cancel-return for the cancel-return policy.
+//	action    the recovery_actions verb, which says WHICH policy chose the
+//	          destination.
+//	recovers  the cancelled order this one returns the bin of
+//	          (orders.recovers_order_id), or nil — the button recovers no order
+//	          in particular.
+//	choose    the policy: where this bin goes. It is handed the CARRIER — the
+//	          newest order that named the bin and was not itself an on-deck
+//	          order — from the read the door makes anyway, so no policy re-reads
+//	          it and none can mistake a dead recovery order for the bin's job.
 type onDeckRequest struct {
 	actor, action string
+	recovers      *int64
 	choose        func(bin *bins.Bin, robot fleet.RobotStatus, carrier *orders.Order) (*nodes.Node, string, error)
 }
 
@@ -107,7 +112,23 @@ type onDeckRequest struct {
 // on now" (the button, which is handed only a bin). A caller that names a robot
 // and finds the bin on another deck is refused: what it decided was about a
 // deck the bin has left.
+//
+// ONE CALL AT A TIME, ACROSS EVERY CALLER. The policy chooses a concrete slot
+// before the order exists, and the slot is only reserved further down, in
+// dispatchRecoveryOrder; between the two, the slot is free to anyone else who
+// asks. The callers are the button and both hosts of the watch (the robot poll
+// and the reconciliation sweep), each on its own goroutine, and the per-bin
+// attempt record serializes nothing across two bins. On the sim rig a swap
+// cancelled with both decks loaded put the two hosts on the two bins in the
+// same instant: both chose SMN_001, the second lost the reservation, and its
+// bin's one attempt was spent (evidence S2, 2026-10-02). Holding this across
+// choose-to-reserve makes the second caller choose after the first has
+// reserved. Nothing inside the door calls back into it — the lane park's
+// synchronous scanner pass and the cancel and fail handlers do not — and
+// attempts are rare, so the lock costs nothing in steady state.
 func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequest) (*orders.Order, string, error) {
+	e.onDeckMu.Lock()
+	defer e.onDeckMu.Unlock()
 	bin, err := e.BinService().GetBin(binID)
 	if err != nil {
 		return nil, "", fmt.Errorf("read bin %d: %w", binID, err)
@@ -160,6 +181,13 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		// pressing the button is the releaser that wait was promised: the press
 		// cancels it and this attempt runs its policy afresh. A dispatched one
 		// has a robot acting on it and still refuses above.
+		//
+		// CANCELLED BEFORE THE POLICY RUNS, because the parked order is aimed
+		// at its slot and every tier refuses a slot another live order is aimed
+		// at — asked first, the press could never choose the slot it was pressed
+		// to retry. The cost: a press whose policy then finds nowhere leaves the
+		// bin riding with no order, exactly as any refused press does, and says
+		// so.
 		if cerr := e.cancelParkedOnDeckOrder(live, req.actor); cerr != nil {
 			return nil, "", &CarriedBinNotRecoverable{BinID: binID, Reason: cerr.Error()}
 		}
@@ -221,7 +249,12 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 		// bucket does not count it and the orphan surface does not show it.
 		OriginClass: protocol.OriginClassNoDemand,
 		RobotID:     robotID,
-		EdgeUUID:    recoveryEdgeUUID(binID, robotID),
+		// ONE UUID FOR BOTH DOORS, per (bin, robot). It is what refuses the
+		// second of two concurrent creates (the watch's two hosts, or the
+		// watch and a press) at the unique index, and what makes the button's
+		// "already in flight" true of an automatic return too.
+		EdgeUUID:        recoveryEdgeUUID(binID, robotID),
+		RecoversOrderID: req.recovers,
 	}
 	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
 	//
@@ -702,9 +735,7 @@ func (e *Engine) liveRecoveryOrderForBin(binID int64) (*orders.Order, error) {
 }
 
 // onDeckHistory is the one read the door makes about a bin's orders, and both
-// answers it needs come out of it: the LIVE on-deck order, if any, and the
-// CARRIER — the newest order that named the bin and was not an on-deck order,
-// which is the job the bin was on when it ended up riding the deck.
+// answers it needs come out of it (onDeckSplit).
 //
 // The last ten rows: a bin's on-deck orders are its own recovery attempts, and a
 // carrier buried under ten of them belongs to a bin whose problem is not where
@@ -714,6 +745,15 @@ func (e *Engine) onDeckHistory(binID int64) (live, carrier *orders.Order, err er
 	if err != nil {
 		return nil, nil, err
 	}
+	live, carrier = onDeckSplit(ords)
+	return live, carrier, nil
+}
+
+// onDeckSplit reads a bin's orders, newest first, for the LIVE on-deck order, if
+// any, and the CARRIER — the newest order that named the bin and was not an
+// on-deck order, which is the job the bin was on when it ended up riding the
+// deck.
+func onDeckSplit(ords []*orders.Order) (live, carrier *orders.Order) {
 	for _, o := range ords {
 		if o.SourceIntent == dispatch.SourceIntentOnDeck {
 			if live == nil && !protocol.IsTerminal(o.Status) {
@@ -725,7 +765,7 @@ func (e *Engine) onDeckHistory(binID int64) (live, carrier *orders.Order, err er
 			carrier = o
 		}
 	}
-	return live, carrier, nil
+	return live, carrier
 }
 
 // recoveryEdgeUUID is the order's external id. Deterministic per (bin, robot)

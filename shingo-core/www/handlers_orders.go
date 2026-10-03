@@ -458,6 +458,10 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		Parent       *domain.Order            `json:"parent,omitempty"`
 		VendorDetail *fleet.VendorOrderDetail `json:"vendor_detail,omitempty"`
 		Robot        *fleet.RobotStatus       `json:"robot,omitempty"`
+		// RecoveredBy is the return order that carried this cancelled order's
+		// bin back off the robot's deck. The other direction needs no lookup:
+		// a return order carries recovers_order_id on its own row.
+		RecoveredBy *domain.Order `json:"recovered_by,omitempty"`
 		// CanCancel drives the manifest's Terminate button. Computed here
 		// rather than re-derived in JS so the client-rendered controls use
 		// the same gate as the server-rendered list rows — a status list
@@ -512,6 +516,10 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 	if order.ParentOrderID != nil {
 		result.Parent, _ = svc.GetOrder(*order.ParentOrderID)
+	}
+
+	if order.Status == protocol.StatusCancelled {
+		result.RecoveredBy, _ = svc.GetOrderRecovering(id)
 	}
 
 	children, _ := svc.ListChildOrders(id)

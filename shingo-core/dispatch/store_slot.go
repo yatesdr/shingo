@@ -395,11 +395,16 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 // destination named by a human at a door (the bin move, the spot order), and
 // re-aiming that is not a recalculation, it is Core overruling somebody. Those
 // park and wait, which is the honest outcome for a destination Core did not pick.
+// The one no-demand order Core DID pick for is a cancel-return
+// (recovers_order_id set, engine/cancel_return.go): the policy chose its slot,
+// so a dig taking that lane is re-aimed like any other plan, and without this
+// the return would hold behind the dig with nothing else to release it.
 //
 // Best-effort throughout: every doubt leaves the order exactly as it was, and the
 // worst case is the behaviour that existed before this function.
 func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
-	if d.resolver == nil || order == nil || order.OriginClass == protocol.OriginClassNoDemand {
+	if d.resolver == nil || order == nil ||
+		(order.OriginClass == protocol.OriginClassNoDemand && order.RecoversOrderID == nil) {
 		return
 	}
 	if !isStorageDropoff(d.db, order.DeliveryNode) {

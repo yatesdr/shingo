@@ -54,6 +54,28 @@ func TestLevelFilter_AtLevelRefuses(t *testing.T) {
 		t.Errorf("err = %q, want the capacity phrasing. A different sentence would classify "+
 			"as structural and FAIL the push instead of parking it", got)
 	}
+	// And it says WHY, to a caller that asks the type: at its level, not full.
+	if !errors.Is(err, ErrAtDeclaredLevel) {
+		t.Errorf("err = %v does not match ErrAtDeclaredLevel — a caller that follows an overflow "+
+			"only for a group at its level cannot tell this refusal from a full one", err)
+	}
+}
+
+// A GROUP THAT IS ONLY FULL is not at its level, whatever the sentence says.
+func TestLevelFilter_AFullGroupIsNotAtLevel(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	grp := levelGroup(110, "FULL-GRP")
+	f.nodes[grp.ID] = grp
+	f.children[grp.ID] = nil
+	r := &GroupResolver{DB: f}
+	_, err := r.ResolveStore(grp, "", NoBinType, reservations.Anyone)
+	if err == nil {
+		t.Fatal("a group with no children took a store")
+	}
+	if errors.Is(err, ErrAtDeclaredLevel) {
+		t.Errorf("err = %v matched ErrAtDeclaredLevel for a group with no level declared", err)
+	}
 }
 
 // BELOW LEVEL, the store proceeds exactly as before.

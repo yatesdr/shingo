@@ -287,8 +287,11 @@ func endsItsChapter(c *orders.Order) bool {
 // a constraint rather than a preference: dissolveCompound is reachable from
 // inside the fulfillment scanner under a non-reentrant scanMu, so transitioning
 // there would self-deadlock on the first leg of a freshly planned dig. The
-// cancels land, their events fire asynchronously, and this arm — on a later
-// goroutine — is where the routing happens.
+// cancels land and their events fire SYNCHRONOUSLY, on this goroutine and under
+// that lock (eventbus.Bus.Emit calls every subscriber in line); the
+// EventOrderCancelled handler (engine/wiring.go) is what hops — it spawns the
+// advance that reaches this arm on a new goroutine, and that is where the
+// routing happens.
 func digWasDissolved(children []*orders.Order) bool {
 	open, superseded := compoundGenerations(children)
 	return superseded && len(open) == 0
@@ -1807,8 +1810,13 @@ func (d *Dispatcher) claimantStopped(claimantID int64) (bool, time.Duration, err
 // scanner: tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
 // AdvanceCompoundOrder, all under a non-reentrant scanMu. Transitioning here
 // would self-deadlock the process on the first leg of a freshly planned dig. So
-// the cancels land, their events fire asynchronously, and the terminal arm — on a
-// later goroutine — reads digWasDissolved and returns the parent.
+// the cancels land and their events fire SYNCHRONOUSLY, still under scanMu
+// (eventbus.Bus.Emit calls every subscriber in line). Everything a cancel
+// handler does inline therefore runs under the scanner's lock; the parent's
+// routing is the handler's one hop off it — it spawns the advance, and the
+// terminal arm, on that new goroutine, reads digWasDissolved and returns the
+// parent. It is also why the cancel-return policy is not attempted from the
+// handler (engine/cancel_return.go).
 //
 // THE LANE LOCK IS RELEASED, and this is required, not tidy. IsLocked is
 // owner-blind: planBuriedReshuffle refuses to plan into a locked lane whoever

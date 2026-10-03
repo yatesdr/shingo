@@ -109,3 +109,63 @@ func funcSource(t *testing.T, path, name string) string {
 	}
 	return ""
 }
+
+// sanctionedLegReaders are the files allowed to read a leg column of
+// style_claims, each with the reason it may. A new reader is a decision, not an
+// accident: add it here with its reason, or move the read behind one of these.
+var sanctionedLegReaders = map[string]string{
+	"store/plantclaims/plantclaims.go": "the writer (ReplaceProcess)",
+	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
+	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
+	"store/migrations.go":              "the schema",
+}
+
+// TestLegColumnsHaveOnlySanctionedReaders walks shingo-core for any file that
+// names style_claims beside a leg column. The sourceability boundary above is
+// one rule; this is the census it sits in, so a third reader cannot arrive
+// without somebody writing down why.
+func TestLegColumnsHaveOnlySanctionedReaders(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join("..", "..")
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == "testdata" || info.Name() == "schema" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		src := string(b)
+		if !strings.Contains(src, "style_claims") {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		rel = filepath.ToSlash(rel)
+		for _, col := range legColumns {
+			if strings.Contains(src, col) {
+				if _, ok := sanctionedLegReaders[rel]; !ok {
+					t.Errorf("%s names style_claims and the leg %s, and is not a sanctioned leg reader.\n"+
+						"Add it to sanctionedLegReaders with the reason it may read the legs, "+
+						"or read them through one of the files already there.", rel, col)
+				}
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+}
