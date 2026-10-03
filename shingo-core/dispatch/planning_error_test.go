@@ -13,7 +13,7 @@ import "testing"
 func TestPlanningError_Transient(t *testing.T) {
 	t.Parallel()
 
-	transient := []string{"claim_failed", "lane_locked", "no_shuffle_slot", "blocker_claimed"}
+	transient := []string{"claim_failed", "lane_locked", "no_shuffle_slot", "blocker_claimed", "read_failed"}
 	for _, code := range transient {
 		if !(&planningError{Code: code}).Transient() {
 			t.Errorf("code %q should be transient (queue + retry), got terminal", code)
