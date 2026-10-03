@@ -354,6 +354,13 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 					dispatch.ReshuffleWaitParams(err, order.PayloadCode))
 				return false
 			}
+			if errors.Is(err, dispatch.ErrParentGone) {
+				// The order ended while its dig was being planned (a cancel landed
+				// after this pass read it). Nothing was written and nothing waits:
+				// no fail on a terminal order, no queue reason on it.
+				s.logFn("fulfillment: order %d ended while its dig was planned — no dig: %v", order.ID, err)
+				return false
+			}
 			// Structural — real lane geometry (no parent group, bad target slot). Route
 			// through failFn so the standard EventOrderFailed chain fires, the same
 			// disposition intake gives a non-transient planning error.
@@ -838,6 +845,10 @@ func (s *Scanner) digForBuriedHeldBin(order *orders.Order) bool {
 		if errors.Is(err, dispatch.ErrReshuffleWait) {
 			s.setQueueReason(order, protocol.QueueStorageRearranging,
 				dispatch.ReshuffleWaitCause(err), dispatch.QueueParams{Payload: order.PayloadCode})
+			return false
+		}
+		if errors.Is(err, dispatch.ErrParentGone) {
+			s.logFn("fulfillment: held-bin order %d ended while its dig was planned — no dig: %v", order.ID, err)
 			return false
 		}
 		s.logFn("fulfillment: held-bin order %d buried-reshuffle plan failed: %v", order.ID, err)

@@ -173,6 +173,10 @@ const (
 	// empty: every remaining path is either a read or the geometry above. Kept
 	// fail-closed for whatever a future planner adds.
 	laneClearUnplannable
+	// laneClearParentGone — the requester ended (a cancel landed) between the
+	// plan and the compound write. Nothing was written and the lane is released;
+	// the caller stops, failing and parking nothing.
+	laneClearParentGone
 )
 
 // classifyPlanError maps an excavation planner's error onto the disposition its
@@ -570,6 +574,13 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 	if err := d.CreateCompoundOrder(requester, plan); err != nil {
+		// A REQUESTER THAT HAS ENDED HOLDS NOTHING, gate-staged or not: the lock
+		// was taken in the name of an order that no longer exists, and a dead
+		// order holding a lane is every later dig behind that lane starving.
+		if errors.Is(err, store.ErrParentGone) {
+			d.laneLock.Unlock(lane.ID, requester.ID)
+			return laneClearResult{outcome: laneClearParentGone, err: err}
+		}
 		// A WAITING DIG HOLDS NOTHING — UNLESS ITS ROBOT IS ALREADY IN THE MOUTH.
 		//
 		// Backing out whole is the rule for a dig planned from scratch: it leaves

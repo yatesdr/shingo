@@ -175,6 +175,10 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		park(protocol.QueueStorageRearranging, CauseLaneOccupied,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
 
+	case laneClearParentGone:
+		// The demand ended while its dig was being written: nothing was written, the
+		// lane is released, and a terminal order is neither failed nor parked.
+		d.dbg("complex: demand %d ended while its dig at %s was planned — no dig", order.ID, buried.Slot.Name)
 	case laneClearNothingInTheWay:
 		// The lane moved between the resolve and the plan, which is the outcome we
 		// wanted. Keep CauseIntakeBuried; the next scan finds the bin reachable.

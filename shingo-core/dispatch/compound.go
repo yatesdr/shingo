@@ -362,9 +362,28 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 // {Reshuffling → Queued} fires fireRequeued, which runs the scanner
 // synchronously, and the scanner is where this refusal is discovered on the
 // replay path — it holds a non-reentrant scanMu, so the "repair" would deadlock.
+//
+// A PARENT THAT HAS ENDED GETS NO DIG. The caller planned from a row it read
+// earlier, and a cancel can land in between. The write reads the parent under a
+// row lock before anything else (store.CreateCompoundChildren), so it serialises
+// with the cancel's status write: a terminal parent gets nothing written and
+// store.ErrParentGone, and a cancel that comes after the commit finds the
+// children in its cascade. A parent that cannot begin reshuffling after the
+// write and has ended in that window is no longer logged and advanced: its legs
+// are withdrawn and the error is ErrParentGone (withdrawIfParentEnded). A live
+// parent the transition refuses (already reshuffling, or a requester already in
+// transit) keeps its dig and advances, as a gate-staged one does. Callers stop on ErrParentGone and release the lane they took in
+// the parent's name: the plain dig in planning_service planBuriedReshuffle,
+// which drops it on any error, and the requester's dig in proposeLaneClearDig,
+// which drops it even for a gate-staged requester. AdvanceCompoundOrder sends no
+// leg of a terminal parent. "Live" is non-terminal, so a gate-staged parent
+// still takes its dig as it stands.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan) error {
 	if err := d.writeCompoundChildren(parentOrder, plan); err != nil {
 		return err
+	}
+	if d.compoundWrittenHook != nil {
+		d.compoundWrittenHook(parentOrder.ID)
 	}
 	// ── A GATE-STAGED PARENT KEEPS ITS STATUS (§R.104) ────────────────────
 	//
@@ -392,10 +411,49 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 			"(%d steps) — it keeps `staged` and its lane lock; its tail is appended where it stands "+
 			"when the chapter closes", parentOrder.ID, len(plan.Steps))
 	} else if err := d.lifecycle.BeginReshuffle(parentOrder, reshuffleBeginDetail(plan)); err != nil {
-		log.Printf("dispatch: begin reshuffle order %d: %v", parentOrder.ID, err)
+		if gone := d.withdrawIfParentEnded(parentOrder); gone != nil {
+			return gone
+		}
+		// A LIVE PARENT THE TRANSITION REFUSES KEEPS ITS DIG, as a gate-staged one
+		// does. Two shapes reach here and both are lawful: a parent already in
+		// `reshuffling` taking a re-planned chapter (reshuffling → reshuffling is not
+		// an edge), and a requester already `in_transit` whose own dig rescues it
+		// (TestServiceDig_StaleDigDissolves_DemandUntouched and
+		// TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue). Its
+		// status is already what the floor says; the legs advance under it.
+		log.Printf("dispatch: compound %d keeps %s under its dig: %v", parentOrder.ID, parentOrder.Status, err)
 	}
 	return d.AdvanceCompoundOrder(parentOrder.ID)
 }
+
+// withdrawIfParentEnded is CreateCompoundOrder when the parent cannot be moved
+// into `reshuffling` after the legs are written: if the parent has ended, the
+// legs are withdrawn and the result is ErrParentGone; if it is live, nil.
+//
+// The parent ended in that window means a cancel landed between the commit and
+// the transition. The write took the parent's row first, so a cancel's cascade
+// lists these legs after they exist and cancels them too; the second cancel of
+// a leg is a no-op. Withdrawing here as well covers an end that does not
+// cascade. Nothing is advanced, and the caller stops.
+func (d *Dispatcher) withdrawIfParentEnded(parent *orders.Order) error {
+	fresh, err := d.db.GetOrder(parent.ID)
+	if err != nil || !protocol.IsTerminal(fresh.Status) {
+		return nil
+	}
+	children, lerr := d.db.ListChildOrders(parent.ID)
+	if lerr != nil {
+		log.Printf("dispatch: compound %d: list the legs to withdraw: %v", parent.ID, lerr)
+	}
+	for _, c := range children {
+		d.lifecycle.CancelOrder(c, parent.StationID, reshuffleWithdrawnDetail, CancelCause{})
+	}
+	log.Printf("dispatch: compound %d ended (%s) as its dig was written: legs withdrawn", parent.ID, fresh.Status)
+	return &store.ParentGoneError{ParentID: parent.ID, Status: fresh.Status}
+}
+
+// reshuffleWithdrawnDetail is the cancel prose on a leg whose parent ended as
+// the legs were written.
+const reshuffleWithdrawnDetail = "reshuffle withdrawn: the parent ended as its dig was written"
 
 // firstLaneName resolves a readable name for the first of a compound's held
 // lanes, for a queue sentence. Empty when there are none or the read fails — a
@@ -683,6 +741,20 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// advanceCompoundChapterEnd: it shares no local with the dispatch half
 		// below and reads only parentOrderID.
 		return d.advanceCompoundChapterEnd(parentOrderID)
+	}
+
+	// A TERMINAL PARENT'S LEG IS NEVER SENT. Its cascade cancels the legs it
+	// lists, and the compound write serialises with the cancel on the parent's
+	// row, so a leg found pending here under an ended parent is one that cascade
+	// is about to cancel or did not see (an end that does not cascade). Either
+	// way no robot drives it: the cascade's own tail runs here, cancelling every
+	// live leg, releasing their claims and the lanes the parent holds.
+	if parent, perr := d.db.GetOrder(parentOrderID); perr == nil && protocol.IsTerminal(parent.Status) {
+		log.Printf("dispatch: compound %d is %s: leg %d is not dispatched, its legs are cancelled",
+			parentOrderID, parent.Status, next.ID)
+		d.cancelCompoundChildren(parent, parent.StationID, fmt.Sprintf("parent order %s", parent.Status),
+			CancelCause{}, d.digLanesHeld(parent.ID))
+		return nil
 	}
 
 	// Dispatch the child to fleet

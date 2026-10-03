@@ -43,6 +43,11 @@ type Dispatcher struct {
 	// Find and Claim (the single claim point after the claim-move to the scanner).
 	// Nil in production; set via SetPostFindHook for deterministic concurrency tests.
 	postFindHook func()
+	// compoundWrittenHook is a test-only seam fired by CreateCompoundOrder after
+	// the compound's children commit and before the parent is moved into
+	// reshuffling: the window a cancel can land in. Nil in production; set via
+	// SetCompoundWrittenHook.
+	compoundWrittenHook func(parentID int64)
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
@@ -136,6 +141,11 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	// substrate for the unified-create follow-up, not consumed here.
 	d.queueOrder(order, env, payloadCode)
 }
+
+// ErrParentGone is a dig refused because the order it was for had already
+// ended: the store's refusal (store.ErrParentGone), named here for the scanner.
+// The caller stops; it neither fails the order nor parks it.
+var ErrParentGone = store.ErrParentGone
 
 // PlanBuriedReshuffle plans and dispatches the reshuffle compound for an order
 // whose source resolved BURIED in the fulfillment scanner. It is the only place a
@@ -1203,6 +1213,12 @@ func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, erro
 // for deterministic concurrency testing (a claim race must re-queue, never drop).
 func (d *Dispatcher) SetPostFindHook(fn func()) {
 	d.postFindHook = fn
+}
+
+// SetCompoundWrittenHook installs a test-only hook CreateCompoundOrder fires
+// between the compound write and the parent's transition. Not for production use.
+func (d *Dispatcher) SetCompoundWrittenHook(fn func(parentID int64)) {
+	d.compoundWrittenHook = fn
 }
 
 // PostFindHook fires the installed find→claim hook (a no-op when none is set).

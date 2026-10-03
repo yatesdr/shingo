@@ -1144,6 +1144,8 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 		log.Printf("dispatch: service dig %d created for %s — complex order %d's pickup at %s is "+
 			"walled in and admission refused it; the demand keeps waiting with its cause",
 			res.parent.ID, lane.Name, order.ID, target.Name)
+	case laneClearParentGone:
+		log.Printf("dispatch: complex order %d ended while its dig at %s was planned — no dig", order.ID, lane.Name)
 	case laneClearLaneBusy, laneClearNoShuffleSlot, laneClearBlockerClaimed,
 		laneClearNothingInTheWay, laneClearReadFailed, laneClearParkingHeldByDig,
 		laneClearEpisodeAlreadyDigging, laneClearLaneOccupied:

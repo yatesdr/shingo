@@ -211,6 +211,10 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 	case laneClearNothingInTheWay:
 		d.dbg("lane gate: order %d needs no dig at %s after all — the lane changed under the verdict",
 			req.order.ID, lane.Name)
+	case laneClearParentGone:
+		// The order ended while its dig was being written: nothing was written, the
+		// lane is released, and there is nobody left to fail or park.
+		d.dbg("lane gate: order %d ended while its dig at %s was planned — no dig", req.order.ID, lane.Name)
 	case laneClearLaneOccupied, laneClearNoShuffleSlot, laneClearParkingHeldByDig,
 		laneClearEpisodeAlreadyDigging:
 		// Congestion, each with its own live releaser, and the classifier's cause

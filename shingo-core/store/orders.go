@@ -99,6 +99,26 @@ func (e *BlockerClaimedError) Error() string {
 
 func (e *BlockerClaimedError) Unwrap() error { return ErrBlockerClaimed }
 
+// ErrParentGone is CreateCompoundChildren refusing a compound whose parent is
+// already terminal.
+var ErrParentGone = errors.New("compound parent is terminal")
+
+// ParentGoneError is the typed form of ErrParentGone. Its disposition is unlike
+// every other error out of CreateCompoundChildren: nothing failed and nothing
+// waits. The order the dig was for has ended (a cancel landed between the
+// planner's read of it and this write), so the caller stops: it fails nothing,
+// parks nothing, and releases the lane it took in the parent's name.
+type ParentGoneError struct {
+	ParentID int64
+	Status   protocol.Status
+}
+
+func (e *ParentGoneError) Error() string {
+	return fmt.Sprintf("compound parent %d is %s: no dig is written under it", e.ParentID, e.Status)
+}
+
+func (e *ParentGoneError) Unwrap() error { return ErrParentGone }
+
 // DisplacedByHand names an order the steal took a bin from and DELIBERATELY did
 // not repair: one whose caller is a person at a Core door.
 //
@@ -127,6 +147,23 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	// THE PARENT IS READ UNDER LOCK, FIRST. A cancel's status write takes this
+	// row, so the two serialise: either this transaction commits before the
+	// cancel and the cancel's cascade lists these children and cancels them, or
+	// the cancel commits first and nothing is written here. Without the lock the
+	// cascade could list the children before this write and miss every one of
+	// them: legs dispatched, bins claimed and a delivery made for an order that
+	// had ended. "Live" is non-terminal, not "reshuffling": a gate-staged parent
+	// stays `staged` and takes its dig as it stands (dispatch CreateCompoundOrder).
+	if parentID := compoundParentID(children); parentID != 0 {
+		var status protocol.Status
+		if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1 FOR UPDATE`, parentID).Scan(&status); err != nil {
+			return nil, fmt.Errorf("read compound parent %d: %w", parentID, err)
+		}
+		if protocol.IsTerminal(status) {
+			return nil, &ParentGoneError{ParentID: parentID, Status: status}
+		}
+	}
 	var displaced []DisplacedByHand
 	var stolen []stolenBin
 
@@ -273,6 +310,17 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 	// child's refusal can un-do, and soakstat counts those lines.
 	logSteals(stolen)
 	return displaced, nil
+}
+
+// compoundParentID is the parent the children are written under, 0 if none
+// names one.
+func compoundParentID(children []CompoundChild) int64 {
+	for _, c := range children {
+		if c.Order != nil && c.Order.ParentOrderID != nil {
+			return *c.Order.ParentOrderID
+		}
+	}
+	return 0
 }
 
 // stealSoftHolds releases the FOREIGN soft holds on a bin a dig is about to
