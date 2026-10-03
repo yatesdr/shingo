@@ -652,6 +652,12 @@ func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string,
 	return orders.UpdateStatusFromWithReason(db.DB, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
 }
 
+// ClaimAppend is orders.ClaimAppend: the compare-and-set a fleet append is made
+// under.
+func (db *DB) ClaimAppend(id int64, waitIndex int) (bool, error) {
+	return orders.ClaimAppend(db.DB, id, waitIndex)
+}
+
 // UpdateOrderWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
 func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {

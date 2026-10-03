@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -782,7 +783,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 			order.ID, target.gatePoint, target.lane.Name, v.Cause())
 		return vendorOrderID, nil
 	}
-	if err := d.appendGateTail(order, "lane gate open"); err != nil {
+	if err := d.appendGateTail(order, "lane gate open"); err != nil && !errors.Is(err, ErrAppendNotOwed) {
 		log.Printf("lane gate: order %d created but tail append failed (%v) - left staged, robot holds at %s",
 			order.ID, err, target.gatePoint)
 	}

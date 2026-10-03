@@ -1474,7 +1474,7 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 			d.setQueueReason(parent, "", "", QueueParams{})
 			log.Printf("dispatch: order %d's own dig chapter is closed — appending its tail to the "+
 				"robot standing at its mark", parentOrderID)
-			if err := d.appendGateTail(parent, "own-dig resume"); err != nil {
+			if err := d.appendGateTail(parent, "own-dig resume"); err != nil && !errors.Is(err, ErrAppendNotOwed) {
 				log.Printf("dispatch: order %d could not be appended after its own dig: %v "+
 					"(it stays at the mark; the evaluator re-asks)", parentOrderID, err)
 				d.setQueueReason(parent, protocol.QueueWaitingForSlot, CauseGateAppendFailed,

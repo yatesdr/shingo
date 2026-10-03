@@ -401,6 +401,21 @@ func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
 	return err
 }
 
+// ClaimAppend is the compare-and-set a fleet append is made under: it touches
+// the row only while the order is non-terminal and still at waitIndex, and
+// reports whether it did. A cancel that wrote first makes it answer false, and
+// the caller appends nothing.
+func ClaimAppend(db *sql.DB, id int64, waitIndex int) (bool, error) {
+	res, err := db.Exec(fmt.Sprintf(`UPDATE orders SET updated_at=$3
+		WHERE id=$1 AND wait_index=$2 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
+		id, waitIndex, clock.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // SetQueueDetail stores the blocking reason on a queued order — the generated
 // sentence (queue_reason), its structured category (queue_code), and the
 // engineer-only call-site tag (queue_cause) — together, in one write. Pass all

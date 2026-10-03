@@ -15,6 +15,7 @@ type MockBackend struct {
 	createReqs  []fleet.CreateOrderRequest
 	cancelled   []string
 	onCreate    func()
+	onRelease   func()
 	releaseReqs []ReleaseCall
 }
 
@@ -50,6 +51,11 @@ func (m *MockBackend) SetFail(fail bool) { m.fail = fail }
 // the pre-dispatch status re-read must still see a live order, and the status
 // write afterwards must not.
 func (m *MockBackend) SetOnCreate(fn func()) { m.onCreate = fn }
+
+// SetOnRelease installs a hook run inside ReleaseOrder after the append is
+// recorded: a write that lands while the fleet holds the segment and before
+// Core's own write after it.
+func (m *MockBackend) SetOnRelease(fn func()) { m.onRelease = fn }
 
 // CreateRequests returns the CreateOrderRequests seen by CreateOrder, in call
 // order. This is the unified capture (the single create primitive) and the one
@@ -138,6 +144,9 @@ func (m *MockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlo
 		Blocks:        append([]fleet.OrderBlock(nil), blocks...),
 		Complete:      complete,
 	})
+	if m.onRelease != nil {
+		m.onRelease()
+	}
 	return nil
 }
 

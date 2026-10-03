@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -474,6 +475,12 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			rErr = d.releaseGatedRetrieve(c.order, lane, c.entryIndex)
 		} else {
 			rErr = d.releaseGatedOrder(c.order, lane, c)
+		}
+		if errors.Is(rErr, ErrAppendNotOwed) {
+			// The leg ended while it waited (or another pass appended it). It owes
+			// the lane nothing: no wait is written on it, nothing is proposed, and
+			// the next candidate behind it is still asked.
+			continue
 		}
 		if rErr != nil {
 			// AND THE CAUSE GOES ON THE ROW. This arm wrote nothing, and it is the
@@ -1065,7 +1072,9 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c 
 	}
 
 	if err := d.appendGateTail(fresh, "lane gate release"); err != nil {
-		d.noteGateAppendFailure(fresh, lane)
+		if !errors.Is(err, ErrAppendNotOwed) {
+			d.noteGateAppendFailure(fresh, lane)
+		}
 		return err
 	}
 	d.clearGateAppendFailures(fresh.ID)
@@ -1106,7 +1115,9 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 	}
 
 	if err := d.appendGateTail(fresh, "lane gate release (retrieve)"); err != nil {
-		d.noteGateAppendFailure(fresh, lane)
+		if !errors.Is(err, ErrAppendNotOwed) {
+			d.noteGateAppendFailure(fresh, lane)
+		}
 		return err
 	}
 	d.clearGateAppendFailures(fresh.ID)
@@ -1605,6 +1616,8 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 	// GROUP to put a bin, and no dig on this lane produces one.
 	v, rErr := d.releaseDwellingDigLeg(c.order, lane)
 	switch {
+	case errors.Is(rErr, ErrAppendNotOwed):
+		// The leg ended while it dwelled; nothing is written on it.
 	case rErr != nil:
 		log.Printf("lane gate: release dwelling leg %d in lane %s: %v", c.order.ID, lane.Name, rErr)
 		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,

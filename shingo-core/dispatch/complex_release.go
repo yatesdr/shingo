@@ -537,6 +537,12 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 	d.sendError(env, order.EdgeUUID, "invalid_state", "the fleet did not take the release: "+err.Error())
 }
 
+// ErrAppendNotOwed is an append refused because the order has ended, or its tail
+// at this wait was appended by another pass. Nothing went to the fleet and
+// nothing is owed: callers stop, writing no wait on the row and proposing
+// nothing.
+var ErrAppendNotOwed = errors.New("the order has ended or its tail was already appended")
+
 // appendSegmentAndAdvance is the ONE fleet-append path: convert a segment to
 // blocks, append them to the order's live (unsealed) waybill, and — only on
 // success — advance wait_index and take the staged→in_transit transition.
@@ -584,6 +590,22 @@ func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []reso
 	d.dbg("%s: order=%d vendor=%s wait_index=%d adding %d blocks complete=%v",
 		what, order.ID, order.VendorOrderID, order.WaitIndex, len(blocks), complete)
 
+	// THE APPEND IS CLAIMED ON THE ROW, NOT READ AND THEN MADE. A cancel can land
+	// while a leg waits for its tail, and every caller's reload asks IsGateStaged,
+	// which reads the plan and the wait index, never the status: a cancelled leg
+	// got its tail appended to a vendor order the fleet had just cancelled. The
+	// compare-and-set touches the row only while it is non-terminal and still at
+	// this wait index, so a cancel or a second appender that wrote first refuses
+	// this one. What is left is the gap between this write and the fleet call
+	// below; a cancel landing there cancels the vendor order, and the append then
+	// meets a terminated order at the fleet.
+	if owed, err := d.db.ClaimAppend(order.ID, order.WaitIndex); err != nil {
+		return fmt.Errorf("%s: claim the append for order %d: %w", what, order.ID, err)
+	} else if !owed {
+		log.Printf("dispatch: %s: order %d has ended or its tail at wait %d was already appended — nothing appended",
+			what, order.ID, order.WaitIndex)
+		return fmt.Errorf("%s: order %d: %w", what, order.ID, ErrAppendNotOwed)
+	}
 	if err := d.backend.ReleaseOrder(order.VendorOrderID, blocks, complete); err != nil {
 		log.Printf("dispatch: %s: fleet append for order %d failed: %v", what, order.ID, err)
 		return err

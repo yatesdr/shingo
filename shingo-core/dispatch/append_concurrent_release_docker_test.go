@@ -66,7 +66,7 @@ func TestAppendSegment_ConcurrentInTransitIsNotAFailure(t *testing.T) {
 		o.VendorOrderID = "sg-appendconc-benign"
 	})
 	// MarkInTransit lands between the fleet append and our transition.
-	concurrentWriter(t, db, ord.ID, protocol.StatusInTransit)
+	backend.SetOnRelease(func() { concurrentWriter(t, db, ord.ID, protocol.StatusInTransit) })
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "concurrent probe")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestAppendSegment_ConcurrentCancelStaysAFailure(t *testing.T) {
 		o.Status = protocol.StatusStaged
 		o.VendorOrderID = "sg-appendconc-cancel"
 	})
-	concurrentWriter(t, db, ord.ID, protocol.StatusCancelled)
+	backend.SetOnRelease(func() { concurrentWriter(t, db, ord.ID, protocol.StatusCancelled) })
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "concurrent probe")
 	if err == nil {
@@ -130,7 +130,7 @@ func TestAppendSegment_ConcurrentDeliveredStaysAFailure(t *testing.T) {
 		o.Status = protocol.StatusStaged
 		o.VendorOrderID = "sg-appendconc-delivered"
 	})
-	concurrentWriter(t, db, ord.ID, protocol.StatusDelivered)
+	backend.SetOnRelease(func() { concurrentWriter(t, db, ord.ID, protocol.StatusDelivered) })
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "concurrent probe")
 	if err == nil {

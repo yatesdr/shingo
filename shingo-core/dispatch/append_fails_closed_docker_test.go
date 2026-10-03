@@ -112,11 +112,14 @@ func TestAppendSegment_UnwrittenWitnessIsNotSuccess(t *testing.T) {
 		o.VendorOrderID = "sg-appendclosed-witness"
 	})
 
-	// Take the database away between the append and the write after it. The
-	// backend is not on the database, so the segment still goes out.
-	if err := db.DB.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
+	// Take the database away between the append and the write after it: inside
+	// the fleet call, after the append's own claim on the row. The backend is
+	// not on the database, so the segment still goes out.
+	backend.SetOnRelease(func() {
+		if err := db.DB.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "fails-closed probe")
 	if err == nil {
