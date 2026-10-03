@@ -694,8 +694,15 @@ func buildSingleRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, too
 	if tooling {
 		stepsB = append(stepsB, stationWait("", release.PurposeToolingDone)) // "tooling done"
 	}
+	// THE COLLECT NAMES THE INCOMING PART. This order carries the FROM payload,
+	// because its first pickup lifts the outgoing bin off the line, and Core judges
+	// a step that names nothing against the order's payload. The bin waiting on
+	// inbound staging is the TO part, so on a payload change it was never collected
+	// and the changeover held for ever. Blank when the payloads agree, so the wire
+	// is unchanged for every changeover that keeps its part.
 	stepsB = append(stepsB,
-		protocol.ComplexOrderStep{Action: "pickup", Node: toClaim.InboundStaging},    // grab new
+		protocol.ComplexOrderStep{Action: "pickup", Node: toClaim.InboundStaging, // grab new
+			PayloadCode: refillCarrierPayload(fromClaim, toClaim)},
 		protocol.ComplexOrderStep{Action: "dropoff", Node: toClaim.CoreNodeName},     // deliver new
 		protocol.ComplexOrderStep{Action: "pickup", Node: fromClaim.OutboundStaging}, // grab old
 		buildStep("dropoff", fromClaim.OutboundDestination),                          // clear old to final

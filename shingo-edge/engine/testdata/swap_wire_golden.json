@@ -295,7 +295,8 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN"
+                  "node": "STG-IN",
+                  "payload_code": "P-TO"
                 },
                 {
                   "action": "dropoff",
@@ -367,7 +368,8 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN"
+                  "node": "STG-IN",
+                  "payload_code": "P-TO"
                 },
                 {
                   "action": "dropoff",
@@ -455,7 +457,8 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN"
+          "node": "STG-IN",
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
@@ -562,7 +565,8 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN"
+          "node": "STG-IN",
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
@@ -3620,7 +3624,8 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN"
+                  "node": "STG-IN",
+                  "payload_code": "P-TO"
                 },
                 {
                   "action": "dropoff",
@@ -3694,7 +3699,8 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN"
+                  "node": "STG-IN",
+                  "payload_code": "P-TO"
                 },
                 {
                   "action": "dropoff",
@@ -3785,7 +3791,8 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN"
+          "node": "STG-IN",
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
@@ -3894,7 +3901,8 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN"
+          "node": "STG-IN",
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
