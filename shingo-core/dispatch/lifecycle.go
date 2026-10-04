@@ -663,22 +663,24 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 // blocked, the very next pass writes the real reason. That makes a blank row on
 // a resumed parent MEANINGFUL rather than ambient: one that persists past a
 // scanner tick is an order nothing picked up, which is a finding.
+//
+// IT CLEARS BEFORE THE TRANSITION. The transition announces the parent queued,
+// and that runs the fulfillment scanner on this goroutine; if the scan parks
+// the parent again, the wait it writes is the parent's real reason. Clearing
+// afterwards erased it, and the parent sat queued with a blank row.
 func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
-	if err := s.transition(ord, StatusQueued, Event{
-		Actor:     "system",
-		Reason:    "reshuffle complete; parent requeued for re-resolution",
-		StationID: ord.StationID,
-	}); err != nil {
-		return err
-	}
 	if err := s.db.SetOrderQueueDetail(ord.ID, "", "", ""); err != nil {
 		// Best-effort, like every other queue-detail write: a stale sentence is
 		// worth a log line, never worth failing a completed reshuffle's resume.
 		log.Printf("dispatch: clear queue_reason on resume for order %d: %v", ord.ID, err)
-		return nil
+	} else {
+		ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
 	}
-	ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
-	return nil
+	return s.transition(ord, StatusQueued, Event{
+		Actor:     "system",
+		Reason:    "reshuffle complete; parent requeued for re-resolution",
+		StationID: ord.StationID,
+	})
 }
 
 // MarkPending AND MarkReshuffling ARE BOTH DELETED, and the SHAPE is why this
