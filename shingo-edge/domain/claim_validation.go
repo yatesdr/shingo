@@ -66,6 +66,106 @@ type ClaimNodeContext struct {
 	// KnownCoreNodes is a subset, and a plain waypoint — the feature's primary
 	// use — is absent from it. Same nil-means-could-not-look rule as above.
 	KnownScenePoints map[string]bool
+	// Kinds is which of Core's nodes are lanes and which groups keep a level
+	// of empties, for the leg refusals. Same could-not-look rule: empty sets
+	// refuse nothing.
+	Kinds CoreNodeKinds
+}
+
+// CoreNodeKinds is what a claim save reads off Core's node list beyond the
+// names: which nodes are lanes, and which groups keep a level of empties.
+//
+// Lines name node groups, never lanes (owner, 2026-10-03). A leg that names a
+// lane searches that lane only, so a bin put in a sibling lane of the same
+// group is invisible to it. And a maintained group holds empties: the store
+// refuses a full there, so a consume line's fulls could be taken from it but
+// never put back. Core refuses both for a loader at its own save; these sets
+// let the Edge say the same at its claim and routing-set saves.
+//
+// EMPTY REFUSES NOTHING. No node list heard yet leaves both sets empty, and an
+// older Core never sends the maintained flag, so its groups read as unmarked.
+// Neither is evidence, and neither refuses a write.
+type CoreNodeKinds struct {
+	Lanes      map[string]bool
+	Maintained map[string]bool
+}
+
+// CoreNodeKindsOf reduces Core's node list, as the engine holds it, to the
+// two sets. One pass over a map already in memory, at save time only.
+func CoreNodeKindsOf(known map[string]protocol.NodeInfo) CoreNodeKinds {
+	var k CoreNodeKinds
+	for name, n := range known {
+		if n.NodeType == protocol.NodeClassLANE {
+			if k.Lanes == nil {
+				k.Lanes = map[string]bool{}
+			}
+			k.Lanes[name] = true
+		}
+		if n.Maintained {
+			if k.Maintained == nil {
+				k.Maintained = map[string]bool{}
+			}
+			k.Maintained[name] = true
+		}
+	}
+	return k
+}
+
+// kindsHas looks a name up as the engine keys it: exact, then bare. The engine
+// keys a group child by its bare name, and a leg may still carry the
+// "Group.CHILD" form Core displays.
+func kindsHas(set map[string]bool, name string) bool {
+	if set[name] {
+		return true
+	}
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return set[name[i+1:]]
+	}
+	return false
+}
+
+// IsMaintained reports whether name is a group Core keeps a level of empties in.
+func (k CoreNodeKinds) IsMaintained(name string) bool { return kindsHas(k.Maintained, name) }
+
+// LegRefusal is the refusal for a lane named on a source or destination leg
+// (a routing role), in Core's sentence, or "" when the leg is fine. A staging
+// leg is never refused: staging lanes are the ordinary case.
+func (k CoreNodeKinds) LegRefusal(role, name string) string {
+	if name == "" || !kindsHas(k.Lanes, name) {
+		return ""
+	}
+	switch role {
+	case RoutingRoleSource:
+		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotASource, name)
+	case RoutingRoleDestination:
+		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotADestination, name)
+	}
+	return ""
+}
+
+// validateLegKinds refuses a lane on the source or destination leg, and a
+// maintained group as a consume claim's source. The source leg is where a
+// consume line's fulls and a produce line's empties come from; the destination
+// is where the other half goes, so these two fields carry every leg Core
+// checks for a loader. A field already refused for another reason is not
+// refused twice.
+func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[string]bool, add func(field, msg string)) {
+	legs := []struct{ field, role, name string }{
+		{"inbound_source", RoutingRoleSource, in.InboundSource},
+		{"outbound_destination", RoutingRoleDestination, in.OutboundDestination},
+	}
+	for _, leg := range legs {
+		if reported[leg.field] {
+			continue
+		}
+		if msg := kinds.LegRefusal(leg.role, leg.name); msg != "" {
+			add(leg.field, msg)
+		}
+	}
+	if in.Role == protocol.ClaimRoleConsume && in.InboundSource != "" && !reported["inbound_source"] &&
+		kinds.IsMaintained(in.InboundSource) {
+		add("inbound_source", fmt.Sprintf("%s: %q", protocol.MsgFullsFromAnEmptiesBank, in.InboundSource))
+	}
 }
 
 // ErrRunningPositionMove refuses the one mid-run edit the runtime cannot
@@ -107,6 +207,7 @@ type ClaimContextSet struct {
 	nodeProcessIDs map[string][]int64
 	knownCore      map[string]bool
 	scenePoints    map[string]bool
+	kinds          CoreNodeKinds
 }
 
 // ClaimContextInput is what NewClaimContextSet needs, as the caller already
@@ -122,6 +223,8 @@ type ClaimContextInput struct {
 	// vendor map's point set.
 	KnownCoreNodes   map[string]bool
 	KnownScenePoints map[string]bool
+	// Kinds is the lane and maintained-group sets (CoreNodeKindsOf).
+	Kinds CoreNodeKinds
 }
 
 // ClaimContextNode is one process_node, reduced to the two fields the
@@ -149,6 +252,7 @@ func NewClaimContextSet(in ClaimContextInput) ClaimContextSet {
 		nodeProcessIDs: byName,
 		knownCore:      in.KnownCoreNodes,
 		scenePoints:    in.KnownScenePoints,
+		kinds:          in.Kinds,
 	}
 }
 
@@ -172,6 +276,7 @@ func (s ClaimContextSet) ForNode(coreNodeName string) ClaimNodeContext {
 		NodeProcessIDs:   s.nodeProcessIDs[coreNodeName],
 		KnownCoreNodes:   s.knownCore,
 		KnownScenePoints: s.scenePoints,
+		Kinds:            s.kinds,
 	}
 }
 
@@ -421,6 +526,8 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 		add(string(v.Field), fmt.Sprintf("%s does not use %s; clear it", swapModeLabel(in.SwapMode), flowspec.Label(v.Field)))
 	}
+
+	validateLegKinds(in, nodeCtx.Kinds, reported, add)
 
 	out = append(out, validateKeyRoute(in, nodeCtx)...)
 

@@ -139,6 +139,12 @@ func (h *Handlers) apiUpsertRoutingNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	// A lane on a source or destination row is refused here as at the claim
+	// save: the composer offers these rows on exactly those legs.
+	if msg := domain.CoreNodeKindsOf(h.engine.CoreNodes()).LegRefusal(in.Role, in.CoreNodeName); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	rowID, err := h.engine.ProcessService().UpsertRoutingNode(in)
 	if err != nil {
 		switch {
@@ -279,6 +285,7 @@ func (h *Handlers) apiProcessComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such process")
 		return
 	}
+	data.DropLaneLegs(domain.CoreNodeKindsOf(h.engine.CoreNodes()))
 	writeJSON(w, data)
 }
 
@@ -310,5 +317,6 @@ func (h *Handlers) apiStationComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such process")
 		return
 	}
+	data.DropLaneLegs(domain.CoreNodeKindsOf(h.engine.CoreNodes()))
 	writeJSON(w, data)
 }

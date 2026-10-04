@@ -551,6 +551,7 @@ func (h *Handlers) claimNodeContext(in domain.NodeClaimInput) domain.ClaimNodeCo
 		for name := range known {
 			ctx.KnownCoreNodes[name] = true
 		}
+		ctx.Kinds = domain.CoreNodeKindsOf(known)
 	}
 	// The plant MAP, which is the universe a key route is expressed in — see
 	// ClaimNodeContext.KnownScenePoints. Same could-not-look rule; the

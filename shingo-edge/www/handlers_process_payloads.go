@@ -106,6 +106,7 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := make([]domain.RoutingNodeInput, 0, len(req.Nodes))
+	kinds := domain.CoreNodeKindsOf(h.engine.CoreNodes())
 	for _, n := range req.Nodes {
 		name := strings.TrimSpace(n.CoreNodeName)
 		if name == "" {
@@ -121,6 +122,10 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		// name Core does not have is refused when Core's list is there to check,
 		// and allowed (and logged) when it is not.
 		if msg, unknown := h.coreNodeNameIsUnknown(name); unknown {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		if msg := kinds.LegRefusal(n.Role, name); msg != "" {
 			writeError(w, http.StatusBadRequest, msg)
 			return
 		}

@@ -273,6 +273,23 @@ type ComposerRoutingNode struct {
 	Sequence     int    `json:"sequence"`
 }
 
+// DropLaneLegs takes out the source and destination rows that name a lane, so
+// the composer offers no lane chip on a leg the claim save would refuse. A row
+// can be there from before the routing-set save refused one, or derived from a
+// claim stored before. Staging rows stay: a staging lane is the ordinary case.
+func (d *ComposerData) DropLaneLegs(kinds CoreNodeKinds) {
+	if d == nil || len(kinds.Lanes) == 0 {
+		return
+	}
+	kept := d.Routing[:0]
+	for _, r := range d.Routing {
+		if kinds.LegRefusal(r.Role, r.CoreNodeName) == "" {
+			kept = append(kept, r)
+		}
+	}
+	d.Routing = kept
+}
+
 // ComposerPreset is one preset card on the S4 strip.
 type ComposerPreset struct {
 	// ID is the preset's row id as a string: a tap has to resolve to ONE
