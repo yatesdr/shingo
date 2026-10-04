@@ -392,11 +392,14 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 		return GateVerdict{}, err
 	}
 
-	// AND NOW IT IS LEAVING. The tail is on the waybill, so the robot is driving
-	// out of the dug lane — which is the exit the lift used to stand for and the
-	// moment the corridor genuinely frees. Releasing here rather than at the lift
-	// is the whole of the occupancy hold: the next leg still enters during the
-	// drive-out, and only the dwell's own overlap is given up.
+	// AND NOW IT CAN LEAVE. The tail is on the waybill, so once the robot has the
+	// blocker up it drives out of the dug lane without stopping — which is the
+	// exit the lift used to stand for. Released at the lift (the ordinary case),
+	// it is driving out now; released on the arrival report or a lane event
+	// before it lifted, it is still on its way in, and the row goes before it has
+	// entered. Releasing here rather than at the lift is the whole of the
+	// occupancy hold: the next leg still enters during the drive-out, and only
+	// the dwell's own overlap is given up.
 	//
 	// ── THE ROW DROPS HERE; THE WAKE HAPPENS AFTER THE PASS ───────────────
 	//

@@ -42,8 +42,13 @@ import (
 // BOTH POPULATIONS, ONE PASS. Splitting the mechanism is right (the evaluator
 // appends a tail to a waybill the fleet holds; the re-drive dispatches a
 // `pending` leg for the first time) but splitting the COVERAGE would recreate
-// F-22 in whichever population the floor skipped. So the lane set is the union
-// and both re-drivers run for every lane in it.
+// F-22 in whichever population the floor skipped. So the lane set is the union.
+// The held-leg re-drive runs for every lane in it; the evaluator runs for every
+// lane with a gate-staged waiter in the set. Every lane a dig works has its next
+// leg held in it, so evaluating a lane for its held legs alone would release the
+// one gate-staged order the set leaves out on purpose: a dig leg whose robot has
+// not lifted its blocker yet (digLegNotYetLifted), bound and appended before the
+// lift that is its releaser.
 //
 // ── CADENCE IS A MAXIMUM WAIT, NOT A POLL RATE ────────────────────────────
 //
@@ -129,11 +134,15 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 	// what serializes this against a concurrent event firing — the floor takes no
 	// lock of its own and must not, or it would be a second arbitration of a
 	// question the evaluator already settles.
+	//
+	// The value says whether the lane has a gate-staged waiter, which is what the
+	// evaluator releases; a lane in the set for its held legs alone is re-driven
+	// but not evaluated (see the population note in the header).
 	lanes := make(map[int64]bool, len(before))
 	for _, w := range before {
-		lanes[w.laneID] = true
+		lanes[w.laneID] = lanes[w.laneID] || w.pop == PopGateStaged
 	}
-	for laneID := range lanes {
+	for laneID, gateStaged := range lanes {
 		// RE-READ THE CAUSE FIRST, and read it HERE rather than after the release.
 		//
 		// The snapshot in `before` was taken for every lane at once, so by the time
@@ -148,7 +157,9 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		// re-drive is the last moment the live value still means "why this order is
 		// waiting".
 		d.refreshWaiterCauses(before, laneID)
-		d.EvaluateLaneReleases(laneID)
+		if gateStaged {
+			d.EvaluateLaneReleases(laneID)
+		}
 		d.RedriveHeldCompoundLegs(laneID)
 	}
 
@@ -230,6 +241,9 @@ func (d *Dispatcher) laneWaiters() ([]floorWaiter, error) {
 		if lane == 0 {
 			continue
 		}
+		if d.digLegNotYetLifted(o) {
+			continue
+		}
 		out = append(out, floorWaiter{
 			orderID: o.ID, laneID: lane, pop: PopGateStaged,
 			cause: QueueCause(o.QueueCause), state: waiterState(o),
@@ -248,6 +262,37 @@ func (d *Dispatcher) laneWaiters() ([]floorWaiter, error) {
 		})
 	}
 	return out, nil
+}
+
+// digLegNotYetLifted reports whether o is a dig leg whose blocker is still in
+// the slot it is to be lifted from.
+//
+// A dig leg's plan is parked at its lane wait from dispatch (IsGateStaged reads
+// the plan, not the robot), but until the lift its robot is driving to the
+// blocker, and the lift is that leg's releaser: the transit handler wakes the
+// lane, and Core chooses where the blocker goes and appends the tail. The floor
+// is the backstop for a release that went missing, and nothing has gone missing
+// before the lift. Counting the leg from dispatch let a floor tick bind its
+// destination and append its tail before the robot had the bin, and record a
+// robot standing still that was driving.
+//
+// The lift's own durable fact answers it, no new column: a lifted blocker has
+// left its slot for the transit node (handlePickupBlockCompleted). One bin read
+// per dig leg awaiting its tail, per floor pass. Anything that cannot be read or
+// is not a dig leg answers false, so the floor keeps it, as it always has.
+func (d *Dispatcher) digLegNotYetLifted(o *orders.Order) bool {
+	if o.ParentOrderID == nil || o.BinID == nil || o.SourceNode == "" {
+		return false
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(o.StepsJSON), &steps) != nil || !waitGatesAnAppend(steps, o.WaitIndex) {
+		return false
+	}
+	bin, err := d.db.GetBin(*o.BinID)
+	if err != nil || bin == nil {
+		return false
+	}
+	return bin.NodeName == o.SourceNode
 }
 
 // MarkStationWaitIfOwned writes CauseStationWait on an order that has just
@@ -455,13 +500,17 @@ func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
 		log.Printf("lane floor: could not record the release of order %d: %v", w.orderID, err)
 	}
 
-	// THE ONE LOUD CASE. A gate-staged order is a robot physically parked at a
-	// mark holding an unsealed waybill, so a floor release there means a
-	// committed vehicle stood still for up to a whole interval waiting for Core
-	// to notice. A held leg is a row; this is a robot.
+	// THE ONE LOUD CASE. A gate-staged order is a robot committed to a lane wait
+	// on an unsealed waybill, so a floor release there means a committed vehicle
+	// waited on Core, at its mark or on its way there, for up to a whole interval.
+	// The plan says the wait is reached; the vendor's arrival report is not read
+	// here, so the line does not claim the robot was standing. (A dig leg is
+	// counted only once its blocker is up, when it is standing in the lane:
+	// digLegNotYetLifted.) A held leg is a row; this is a robot.
 	if w.pop == PopGateStaged {
-		log.Printf("LANE FLOOR: order %d was dwelling at lane %d under %q and only the periodic floor "+
-			"freed it — a committed robot stood still for up to one interval. %s",
+		log.Printf("LANE FLOOR: order %d was waiting at lane %d under %q and only the periodic floor "+
+			"freed it — a committed robot waited on Core, at its mark or on its way there, for up to "+
+			"one interval. %s",
 			w.orderID, w.laneID, cause, should)
 		return
 	}

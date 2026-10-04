@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -360,6 +361,13 @@ func TestDwell_ClosedDestinationWaitsWithACauseAndWakesOnAGroupSlot(t *testing.T
 	// THE GROUP CLOSES while the robot is working: the freed sibling slot fills.
 	refill := createTestBinAtNode(t, db, bp.Code, sibSlots[0].ID, "DWFULL-REFILL")
 
+	// The robot lifts the blocker and arrives at its wait. A robot reporting its
+	// arrival at the dwell wait has the blocker up (the wait follows the pickup),
+	// so the bin is in transit; only its durable half is modelled here, because
+	// the release under test is the arrival's.
+	transit, err := db.GetNodeByName(domain.TransitNodeName)
+	testutil.MustNoErr(t, err, "find the transit node")
+	testutil.MustNoErr(t, db.MoveBinToTransit(*legs[0].BinID, transit.ID), "lift the blocker")
 	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
 	held, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the dwelling leg")

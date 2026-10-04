@@ -52,8 +52,10 @@ const (
 	// PopAcquiring is {queued, sourcing}: pre-dispatch, no robot committed. The
 	// fulfillment scanner is both its event consumer and its floor.
 	PopAcquiring WaitPopulation = "acquiring"
-	// PopGateStaged is an order `staged` at a lane's mark — a robot physically
-	// parked, holding an unsealed waybill only Core can append to. The lane-gate
+	// PopGateStaged is an order whose plan is parked at a lane wait — a robot
+	// committed to it, at the mark or still on its way there, holding an
+	// unsealed waybill only Core can append to. IsGateStaged reads the plan, not
+	// the robot, so membership starts at dispatch, not at arrival. The lane-gate
 	// evaluator releases it.
 	PopGateStaged WaitPopulation = "gate-staged"
 	// PopCompoundLeg is a dig leg Core has not yet handed to the fleet
