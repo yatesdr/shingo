@@ -56,6 +56,9 @@ type spotRead struct {
 	bare    bool
 	// binType is the carrier type of the bin standing there, as Core names it.
 	binType string
+	// binID is Core's id for the bin standing there; 0 when none was named. A
+	// return of the spare names it, so the return lifts that bin or nothing.
+	binID int64
 	// catalog is the part-to-carrier list Core sent with the node list, in
 	// force when the spot was read; nil before the first one arrives. An empty
 	// is judged against it (spareIsRight).
@@ -67,7 +70,7 @@ type spotRead struct {
 // through it.
 func readOfRow(b NodeBinInfo, catalog []protocol.PayloadBinTypeInfo) spotRead {
 	return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare,
-		binType: b.BinTypeCode, catalog: catalog}
+		binType: b.BinTypeCode, binID: b.BinID, catalog: catalog}
 }
 
 // spotPlan is the orders one decision point makes for the spot.
@@ -258,7 +261,7 @@ func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, read spotRead
 // request or the level keeper's floor — re-reads the spot and asks again.
 func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, plan spotPlan, read spotRead, origin ordermgr.Origin) {
 	if plan.returnSpare {
-		e.returnSpare(node, spotNode(c), c.InboundSource, read.payload, origin)
+		e.returnSpare(node, spotNode(c), c.InboundSource, read.payload, read.binID, origin)
 	}
 	e.refillSpot(node, c, plan.refills, origin)
 	if plan.orders() > 0 {
@@ -268,11 +271,14 @@ func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, pla
 }
 
 // returnSpare sends the bin standing on a spot back to a claim's inbound source
-// by a plain move that names the bin by what it carries (blank for an empty).
-// It is attributed to node, the line whose spare it was.
-func (e *Engine) returnSpare(node *processes.Node, spot, source, carried string, origin ordermgr.Origin) {
+// by a plain move that says what it carries (blank for an empty) and names the
+// bin: binID, as the read that decided the return saw it. Core lifts that bin
+// or nothing, so a return still waiting when something else lifts the spare
+// does not carry away the refill that lands after it. 0 names no bin, and Core
+// takes whatever stands there. Attributed to node, the line whose spare it was.
+func (e *Engine) returnSpare(node *processes.Node, spot, source, carried string, binID int64, origin ordermgr.Origin) {
 	nodeID := node.ID
-	if _, err := e.orderMgr.CreateMoveOrderCarrying(&nodeID, spot, source, carried, origin); err != nil {
+	if _, err := e.orderMgr.CreateMoveOrderForBin(&nodeID, spot, source, carried, binID, origin); err != nil {
 		e.logFn("keep-staged: node %s: return the spare on %s to %s: %v", node.Name, spot, source, err)
 	}
 }

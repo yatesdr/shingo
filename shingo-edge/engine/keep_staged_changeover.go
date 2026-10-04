@@ -302,7 +302,7 @@ func (e *Engine) applyChangeoverSpots(changes []spotChange, reads map[string]spo
 		plan := ch.decide(read, flows[ch.spot])
 		if plan.returnSpare {
 			if c, n := ch.returnTo(); c != nil && n != nil {
-				e.returnSpare(n, ch.spot, c.InboundSource, read.payload, origin)
+				e.returnSpare(n, ch.spot, c.InboundSource, read.payload, read.binID, origin)
 			}
 		}
 		if plan.refills > 0 && ch.keeper != nil && ch.keeperNode != nil {
@@ -454,7 +454,7 @@ func (e *Engine) spotsCleared(moved []processes.KeptSpot) {
 		}
 		mu := e.primeNodeLock(&processes.NodeClaim{CoreNodeName: g.k.Line})
 		mu.Lock()
-		e.returnSpare(g.node, g.k.Spot, g.k.Source, read.payload, ordermgr.NoDemand())
+		e.returnSpare(g.node, g.k.Spot, g.k.Source, read.payload, read.binID, ordermgr.NoDemand())
 		mu.Unlock()
 		e.logFn("keep-staged: spot %s no longer kept by %s: its spare goes back to %s", g.k.Spot, g.k.Line, g.k.Source)
 	}

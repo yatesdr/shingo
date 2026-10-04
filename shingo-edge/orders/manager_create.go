@@ -74,7 +74,7 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 // operator station is wired up to confirm manually.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, false, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, false, 0, origin)
 }
 
 // CreateMoveOrderWithPayloadCode is CreateMoveOrder with an explicit payload
@@ -88,7 +88,7 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 // no-payload-code fallback in operator-render.js / operator-modal.js.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, false, 0, origin)
 }
 
 // CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
@@ -105,7 +105,7 @@ func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity 
 // with the incoming style's part. Empty still backfills, for callers with no
 // better answer.
 func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, remainingUOP *int, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, false, origin)
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, remainingUOP, autoConfirm, false, 0, origin)
 }
 
 // CreateMoveOrderCarrying moves the carrier standing on sourceNode and names
@@ -120,14 +120,24 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // it may land. So this one says exactly what the bin is. Auto-confirmed: no
 // operator receives a carrier going back to where it came from.
 func (m *Manager) CreateMoveOrderCarrying(processNodeID *int64, sourceNode, deliveryNode, carried string, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, origin)
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, 0, origin)
+}
+
+// CreateMoveOrderForBin is CreateMoveOrderCarrying for one bin: binID is Core's
+// id for the bin standing on sourceNode, as the read that decided the move saw
+// it. Core lifts that bin and no other, and only while it stands on sourceNode;
+// once it has left, the move ends skipped (protocol.OrderRequest.BinID). For a
+// move decided from a read of what stands on the source, which must not carry
+// away whatever lands there after.
+func (m *Manager) CreateMoveOrderForBin(processNodeID *int64, sourceNode, deliveryNode, carried string, binID int64, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, binID, origin)
 }
 
 // CreateMoveOrderCarryingTo is CreateMoveOrderCarrying for a carrier delivered
 // to a line: the line's own confirm policy applies, since an operator may be
 // there to receive it.
 func (m *Manager) CreateMoveOrderCarryingTo(processNodeID *int64, sourceNode, deliveryNode, carried string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, autoConfirm, true, origin)
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, autoConfirm, true, 0, origin)
 }
 
 // createMoveOrder is the one body behind all four move variants.
@@ -138,10 +148,11 @@ func (m *Manager) CreateMoveOrderCarryingTo(processNodeID *int64, sourceNode, de
 // carry an origin" true by construction rather than by inspection.
 //
 // carried says payloadCode is the carrier's own and is not back-filled when
-// blank (CreateMoveOrderCarrying).
+// blank (CreateMoveOrderCarrying). binID names the one bin the move is for, 0
+// for none (CreateMoveOrderForBin).
 func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 	sourceNode, deliveryNode, payloadCode string, remainingUOP *int,
-	autoConfirm, carried bool, origin Origin) (*orders.Order, error) {
+	autoConfirm, carried bool, binID int64, origin Origin) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	var payloadDesc string
@@ -170,11 +181,12 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 		RemainingUOP: remainingUOP,
 		OriginID:     origin.ID,
 		OriginClass:  origin.Class,
+		BinID:        binID,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s payload=%s remainingUOP=%v origin=%s",
-		TypeMove, orderID, orderUUID, sourceNode, deliveryNode, payloadCode, remainingUOP, origin.ID)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s payload=%s remainingUOP=%v bin=%d origin=%s",
+		TypeMove, orderID, orderUUID, sourceNode, deliveryNode, payloadCode, remainingUOP, binID, origin.ID)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }

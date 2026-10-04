@@ -201,9 +201,14 @@ func (e *Engine) returnUnwantedLanding(ctx *orderCompletionCtx) {
 	if o.RetrieveEmpty {
 		carried = ""
 	}
+	// The bin the refill delivered, when Core told the station which one.
+	var binID int64
+	if o.BinID != nil {
+		binID = *o.BinID
+	}
 	e.logFn("keep-staged: node %s: refill %d landed %s on %s, which is not kept for it — sent back to %s",
 		ctx.node.Name, o.ID, o.PayloadCode, o.DeliveryNode, o.SourceNode)
-	e.returnSpare(ctx.node, o.DeliveryNode, o.SourceNode, carried, ordermgr.NoDemand())
+	e.returnSpare(ctx.node, o.DeliveryNode, o.SourceNode, carried, binID, ordermgr.NoDemand())
 }
 
 // landingWanted reports whether claim keeps the refill's spot for its part and
