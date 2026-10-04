@@ -87,7 +87,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// Asked again under the lock, for the reason RequestNodeMaterial gives: a
 	// changeover start holds a keep-staged line's lock, so this request may be let
 	// in only after the changeover is armed.
-	if claim.KeepStaged {
+	if spotNode(claim) != "" {
 		if err := e.guardStyleTransition(node, claim); err != nil {
 			return nil, err
 		}

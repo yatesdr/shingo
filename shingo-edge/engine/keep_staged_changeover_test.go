@@ -458,3 +458,29 @@ func TestKeepStagedRequest_ARequestLetInAfterAStartIsRefused(t *testing.T) {
 		t.Fatalf("%d order(s) created by a request refused under the lock", len(live))
 	}
 }
+
+// A single-robot changeover onto a keep-staged claim has no stage order: its
+// leg collects the spare standing on the spot. The manual stage button on that
+// line stages nothing. It used to send a complex fetch from the market onto the
+// spot, a second bin for one place, and no complex leg may set down on a
+// keep-staged spot.
+func TestKeepStagedChangeover_TheStageButtonStagesNothing(t *testing.T) {
+	t.Parallel()
+	fx := seedKeepStagedChangeover(t,
+		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, true, false}},
+		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, true, false}},
+		map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+			"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}})
+	startKSChangeover(t, fx)
+	before, err := fx.db.ListActiveOrders()
+	testutil.MustNoErr(t, err, "orders before")
+	order, err := fx.eng.StageNodeChangeoverMaterial(fx.processID, fx.nodeIDs["L1"])
+	if err == nil || order != nil {
+		t.Fatalf("the stage button made %+v (err %v), want a refusal: the spare on the spot is the incoming bin", order, err)
+	}
+	after, err := fx.db.ListActiveOrders()
+	testutil.MustNoErr(t, err, "orders after")
+	if len(after) != len(before) {
+		t.Errorf("the stage button made %d order(s), want none", len(after)-len(before))
+	}
+}

@@ -99,8 +99,9 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	// and what it carries) and stays out of the map, which answers only for the
 	// line's own positions.
 	asked := names
-	if claim.KeepStaged && claim.InboundStaging != "" {
-		asked = append(append([]string(nil), names...), claim.InboundStaging)
+	spot := spotNode(claim)
+	if spot != "" {
+		asked = append(append([]string(nil), names...), spot)
 	}
 	// A SINGLE-ROBOT CLAIM ASKS ABOUT ITS OUTBOUND STAGING TOO, in the same call,
 	// for a bin a cancelled changeover's leg left parked there (parkAsked). Its
@@ -132,7 +133,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	bins, reachable, ferr := e.coreClient.FetchNodeBins(asked)
 	var park NodeBinInfo
 	for _, b := range bins {
-		if b.NodeName == claim.InboundStaging && claim.KeepStaged && b.NodeName != claim.CoreNodeName {
+		if b.NodeName == spot && b.NodeName != claim.CoreNodeName {
 			continue // the spot: read below, not a line position
 		}
 		if parkAsked(claim) && b.NodeName == claim.OutboundStaging && b.NodeName != claim.CoreNodeName {
@@ -199,7 +200,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// refused like any request against an armed changeover instead of building an
 	// outgoing-style swap that no changeover leg owns. Keep-staged lines only:
 	// theirs is the lock a start holds.
-	if claim.KeepStaged {
+	if spotNode(claim) != "" {
 		if err := e.guardStyleTransition(node, claim); err != nil {
 			return nil, err
 		}

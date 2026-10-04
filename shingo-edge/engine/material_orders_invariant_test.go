@@ -423,21 +423,21 @@ func TestSingleRobotCollector_NamesTheIncomingPart(t *testing.T) {
 }
 
 // keepStagedLegs is every step list a keep-staged claim sends, for the builder
-// walks: the steady two-robot pair and single-robot swap from the spare, and
-// both changeover shapes for a keep-staged to-claim. base is a claim fixture;
+// walks: the steady two-robot pair and single-robot swap, and both changeover
+// shapes for a keep-staged to-claim, all fetching from the spot. base is a claim fixture;
 // from and to are the walk's changeover pair, to being the keep-staged one.
 func keepStagedLegs(base, from, to *processes.NodeClaim) map[string][]protocol.ComplexOrderStep {
 	ks := *base
 	ks.KeepStaged = true
 	ksTo := *to
 	ksTo.KeepStaged = true
-	a, b := BuildTwoRobotSwapFromSpare(&ks)
-	two := buildTwoRobotChangeoverFromSpare(from, &ksTo)
-	single := buildSingleRobotChangeoverFromSpare(from, &ksTo, true)
+	a, b := BuildTwoRobotSwapSteps(&ks)
+	two := buildTwoRobotChangeoverSwap(from, &ksTo)
+	single := buildSingleRobotChangeoverSwap(from, &ksTo, true)
 	return map[string][]protocol.ComplexOrderStep{
 		"keep-staged two_robot A":                 a,
 		"keep-staged two_robot B":                 b,
-		"keep-staged single_robot":                BuildSingleSwapFromSpare(&ks),
+		"keep-staged single_robot":                BuildSingleSwapSteps(&ks),
 		"keep-staged changeover two_robot supply": two.Roles.supply.steps,
 		"keep-staged changeover two_robot evac":   two.Roles.evac.steps,
 		"keep-staged changeover single_robot B":   single.StepsB,

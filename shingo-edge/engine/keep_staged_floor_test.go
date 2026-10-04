@@ -18,7 +18,7 @@ import (
 func holdingSwap(t *testing.T, db *store.DB, nodeID int64) {
 	t.Helper()
 	claim := keeperClaimByID(t, db, nodeID)
-	a, _ := BuildTwoRobotSwapFromSpare(claim)
+	a, _ := BuildTwoRobotSwapSteps(claim)
 	leg := mkSwapLeg(t, db, nodeID, "floor-swap", a, "")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(leg.ID, string(protocol.StatusQueued)), "queued")
 	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &leg.ID, nil), "slot")

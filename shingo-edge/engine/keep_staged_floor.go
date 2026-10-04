@@ -37,7 +37,8 @@ import (
 // operator's REQUEST is not subject to the stop and re-arms it. A cancelled
 // refill is re-created: a cancel is a person's or the fleet's, not the plan's.
 func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) {
-	if node == nil || runtime == nil || claim == nil || !claim.KeepStaged || claim.InboundStaging == "" {
+	spot := spotNode(claim)
+	if node == nil || runtime == nil || spot == "" {
 		return
 	}
 	if runtime.ActiveOrderID == nil && runtime.StagedOrderID == nil {
@@ -54,7 +55,7 @@ func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.Runtim
 	}
 	defer mu.Unlock()
 
-	rows, err := storeorders.ListActiveByProcessNodeWithLatestTo(e.db.DB, node.ID, claim.InboundStaging)
+	rows, err := storeorders.ListActiveByProcessNodeWithLatestTo(e.db.DB, node.ID, spot)
 	if err != nil {
 		e.logFn("keep-staged floor: node %s: read the line's orders: %v — the next pass re-asks", node.Name, err)
 		return
@@ -66,18 +67,18 @@ func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.Runtim
 	if last := latestRefill(rows, claim); last != nil &&
 		(last.Status == ordermgr.StatusFailed || last.Status == ordermgr.StatusSkipped) {
 		e.debugFn("keep-staged floor: node %s: the last refill to %s ended %s; not re-created — REQUEST re-arms it",
-			node.Name, claim.InboundStaging, last.Status)
+			node.Name, spot, last.Status)
 		return
 	}
 	if e.coreClient == nil || !e.coreClient.Available() {
 		return
 	}
-	bins, _, ferr := e.coreClient.FetchNodeBins([]string{claim.InboundStaging})
+	bins, _, ferr := e.coreClient.FetchNodeBins([]string{spot})
 	if ferr != nil {
-		e.logFn("keep-staged floor: node %s: read the spot %s: %v — the next pass re-asks", node.Name, claim.InboundStaging, ferr)
+		e.logFn("keep-staged floor: node %s: read the spot %s: %v — the next pass re-asks", node.Name, spot, ferr)
 		return
 	}
-	read := spotOf(claim, bins, e.spotNodeKnown).lessLeaving(spotLeaving(rows, claim.InboundStaging, claim.CoreNodeName))
+	read := spotOf(claim, bins, e.spotNodeKnown).lessLeaving(spotLeaving(rows, spot, claim.CoreNodeName))
 	if !read.known {
 		return
 	}
@@ -87,7 +88,7 @@ func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.Runtim
 		origin = ordermgr.Attached(leg.OriginID) // the refill serves the swap's demand
 	}
 	e.logFn("keep-staged floor: node %s: swap %d waits for a spare with nothing coming to %s",
-		node.Name, leg.ID, claim.InboundStaging)
+		node.Name, leg.ID, spot)
 	e.applySpotPlan(node, claim, plan, read, origin)
 }
 
@@ -111,7 +112,7 @@ func latestRefill(rows []domain.Order, c *processes.NodeClaim) *domain.Order {
 	var last *domain.Order
 	for i := range rows {
 		o := &rows[i]
-		if isRetrieve(o.OrderType) && o.DeliveryNode == c.InboundStaging && (last == nil || o.ID > last.ID) {
+		if isRetrieve(o.OrderType) && o.DeliveryNode == spotNode(c) && (last == nil || o.ID > last.ID) {
 			last = o
 		}
 	}
@@ -207,11 +208,10 @@ func (e *Engine) returnUnwantedLanding(ctx *orderCompletionCtx) {
 // landingWanted reports whether claim keeps the refill's spot for its part and
 // role.
 func landingWanted(c *processes.NodeClaim, o *domain.Order) bool {
-	return keptSpot(c, o.DeliveryNode) && o.PayloadCode == c.PayloadCode &&
-		o.RetrieveEmpty == (c.Role == protocol.ClaimRoleProduce)
+	return keptSpot(c, o.DeliveryNode) && o.PayloadCode == c.PayloadCode && o.RetrieveEmpty == carriesEmpty(c)
 }
 
 // keptSpot reports whether claim keeps a spare on spot.
 func keptSpot(c *processes.NodeClaim, spot string) bool {
-	return c != nil && c.KeepStaged && c.InboundStaging == spot
+	return spot != "" && spotNode(c) == spot
 }

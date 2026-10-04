@@ -94,7 +94,7 @@ func TestScenario_KeepStagedProduceSupplyNeverTakesTheOldCarrier(t *testing.T) {
 			}
 			supplyUUID := p + "-supply"
 			if mode == protocol.SwapModeTwoRobot {
-				a, b := edgeengine.BuildTwoRobotSwapFromSpare(to)
+				a, b := edgeengine.BuildTwoRobotSwapSteps(to)
 				// The changeover's two-robot supply goes out with a blank payload,
 				// back-filled from the incoming style; the evac carries the outgoing.
 				submit(supplyUUID, p+"-evac", pNew.Code, a)
@@ -102,7 +102,7 @@ func TestScenario_KeepStagedProduceSupplyNeverTakesTheOldCarrier(t *testing.T) {
 			} else {
 				// The single-robot order B carries the outgoing payload (its first
 				// pickup lifts the press's bin); its spot pickup names the incoming.
-				submit(supplyUUID, "", pOld.Code, edgeengine.BuildSingleSwapFromSpare(to))
+				submit(supplyUUID, "", pOld.Code, edgeengine.BuildSingleSwapSteps(to))
 			}
 			pass := func() {
 				for _, uuid := range legs {

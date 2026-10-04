@@ -55,15 +55,15 @@ func changeoverSpots(outgoing, incoming []processes.NodeClaim, nodes []processes
 	}
 	for i := range outgoing {
 		c := &outgoing[i]
-		if c.KeepStaged && c.InboundStaging != "" {
-			ch := at(c.InboundStaging)
+		if spot := spotNode(c); spot != "" {
+			ch := at(spot)
 			ch.leaver, ch.leaverNode = c, byNode[c.CoreNodeName]
 		}
 	}
 	for i := range incoming {
 		c := &incoming[i]
-		if c.KeepStaged && c.InboundStaging != "" {
-			ch := at(c.InboundStaging)
+		if spot := spotNode(c); spot != "" {
+			ch := at(spot)
 			ch.keeper, ch.keeperNode = c, byNode[c.CoreNodeName]
 		}
 	}
@@ -79,7 +79,8 @@ func changeoverSpots(outgoing, incoming []processes.NodeClaim, nodes []processes
 }
 
 // planLiftsSpot reports whether the plan's action for a line node picks up at
-// the spot: the short supply a keep-staged incoming claim gets (changeoverDispatch).
+// the spot: a keep-staged incoming claim's changeover leg fetches its carrier
+// there (refillPickup), in whatever mode the line changes over in.
 func planLiftsSpot(plan changeover.Plan, coreNode, spot string) bool {
 	for _, a := range plan.Actions {
 		if a.CoreNodeName != coreNode || a.Err != nil {
@@ -129,7 +130,7 @@ func (ch spotChange) decide(read spotRead, flow spotFlow) spotPlan {
 		judge, target = ch.leaver, 0
 	}
 	right := ch.keeper != nil && spareIsRight(ch.keeper, read)
-	if right && ch.keeper.Role == protocol.ClaimRoleProduce && ch.leaver != nil && !flow.keeperOwns &&
+	if right && carriesEmpty(ch.keeper) && ch.leaver != nil && !flow.keeperOwns &&
 		(ch.leaver.Role != ch.keeper.Role || ch.leaver.PayloadCode != ch.keeper.PayloadCode) {
 		right = false
 	}
@@ -175,7 +176,7 @@ func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool
 			o := &live[i]
 			if landedSince != nil && ch.leaver != nil && o.Status == ordermgr.StatusConfirmed &&
 				isRetrieve(o.OrderType) && o.DeliveryNode == ch.spot && o.PayloadCode == ch.leaver.PayloadCode &&
-				o.RetrieveEmpty == (ch.leaver.Role == protocol.ClaimRoleProduce) && !o.CreatedAt.Before(*landedSince) {
+				o.RetrieveEmpty == carriesEmpty(ch.leaver) && !o.CreatedAt.Before(*landedSince) {
 				leaverLanded = true
 			}
 			if aborted[o.ID] || ordermgr.IsTerminal(o.Status) {
@@ -185,7 +186,7 @@ func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool
 			case o.OrderType == protocol.OrderTypeMove && o.SourceNode == ch.spot && !lines[o.DeliveryNode]:
 				f.leaving++
 			case ch.keeper != nil && isSpotRefill(o, ch.keeper) && o.PayloadCode == ch.keeper.PayloadCode &&
-				o.RetrieveEmpty == (ch.keeper.Role == protocol.ClaimRoleProduce):
+				o.RetrieveEmpty == carriesEmpty(ch.keeper):
 				f.coming++
 			}
 		}
@@ -220,12 +221,12 @@ func (e *Engine) lockKeepStagedCells(lines []string) func() {
 
 // keepStagedLines is every line node whose outgoing or incoming claim keeps a
 // spot.
-func keepStagedLines(diffs []ChangeoverNodeDiff) []string {
+func keepStagedLines(claimSets ...[]processes.NodeClaim) []string {
 	var out []string
-	for _, d := range diffs {
-		for _, c := range []*processes.NodeClaim{d.FromClaim, d.ToClaim} {
-			if c != nil && c.KeepStaged && c.InboundStaging != "" {
-				out = append(out, c.CoreNodeName)
+	for _, claims := range claimSets {
+		for i := range claims {
+			if spotNode(&claims[i]) != "" {
+				out = append(out, claims[i].CoreNodeName)
 			}
 		}
 	}
@@ -247,14 +248,14 @@ func spotLines(changes []spotChange) []string {
 
 // keepStagedSpotNames is every keep-staged spot either style names: the nodes
 // the changeover start gate covers and the cancel aborts toward.
-func keepStagedSpotNames(diffs []ChangeoverNodeDiff) []string {
+func keepStagedSpotNames(claimSets ...[]processes.NodeClaim) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, d := range diffs {
-		for _, c := range []*processes.NodeClaim{d.FromClaim, d.ToClaim} {
-			if c != nil && c.KeepStaged && c.InboundStaging != "" && !seen[c.InboundStaging] {
-				seen[c.InboundStaging] = true
-				out = append(out, c.InboundStaging)
+	for _, claims := range claimSets {
+		for i := range claims {
+			if spot := spotNode(&claims[i]); spot != "" && !seen[spot] {
+				seen[spot] = true
+				out = append(out, spot)
 			}
 		}
 	}
@@ -335,20 +336,6 @@ func (e *Engine) applyChangeoverSpots(changes []spotChange, reads map[string]spo
 			e.logFn("keep-staged: changeover spot %s: return=%v refills=%d", ch.spot, plan.returnSpare, plan.refills)
 		}
 	}
-}
-
-// claimsOfDiffs splits a changeover's diffs into the outgoing and incoming
-// claims they carry.
-func claimsOfDiffs(diffs []ChangeoverNodeDiff) (outgoing, incoming []processes.NodeClaim) {
-	for _, d := range diffs {
-		if d.FromClaim != nil {
-			outgoing = append(outgoing, *d.FromClaim)
-		}
-		if d.ToClaim != nil {
-			incoming = append(incoming, *d.ToClaim)
-		}
-	}
-	return outgoing, incoming
 }
 
 // cancelledChangeoverSpots is changeoverSpots for a changeover being cancelled:
@@ -452,7 +439,7 @@ func (e *Engine) spotsCleared(moved []processes.KeptSpot) {
 		}
 		stillKept := false
 		for _, c := range claims {
-			if c.KeepStaged && c.InboundStaging == k.Spot {
+			if spotNode(&c) == k.Spot {
 				stillKept = true
 			}
 		}

@@ -89,7 +89,7 @@ func blockNodeSet(plan *changeoverPlan) []string {
 	}
 	// Every keep-staged spot either style names: a refill already with the
 	// fleet would land a spare the start reconcile cannot see coming.
-	return append(out, keepStagedSpotNames(plan.diffs)...)
+	return append(out, keepStagedSpotNames(plan.fromClaims, plan.toClaims)...)
 }
 
 // cancelNodeSet is the CHANGED diff nodes and the keep-staged spots — deliberately
@@ -119,7 +119,7 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 	// And the keep-staged spots: a refill not yet with the fleet is cancelled
 	// rather than left to land a spare for the outgoing style, and to be counted
 	// as coming for the incoming one.
-	return append(out, keepStagedSpotNames(plan.diffs)...)
+	return append(out, keepStagedSpotNames(plan.fromClaims, plan.toClaims)...)
 }
 
 // cancelPreDispatchAtParticipants cancels every PRE-DISPATCH order sitting at a
@@ -357,7 +357,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// The keep-staged cells are decided under their prime locks from the cancel
 	// below, which clears their spots of orders not yet flown, to the last spot
 	// order, so a request on one of those lines cannot add to a spot between.
-	defer e.lockKeepStagedCells(keepStagedLines(plan.diffs))()
+	defer e.lockKeepStagedCells(keepStagedLines(plan.fromClaims, plan.toClaims))()
 
 	// Refuse while a participating node still has an order in flight.
 	//
@@ -429,8 +429,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// The keep-staged spots are decided once each across the whole plan, from ONE
 	// node-bins read for all of them, before the episode opens so its expected
 	// order count includes them; their orders go after the plan's own.
-	outgoing, incoming := claimsOfDiffs(plan.diffs)
-	spots := changeoverSpots(outgoing, incoming, plan.nodes, orderPlan)
+	spots := changeoverSpots(plan.fromClaims, plan.toClaims, plan.nodes, orderPlan)
 	spotReads := e.readSpots(spots)
 	// What is already moving at each spot, from the rows the pre-dispatch cancel
 	// read: what it cancelled is gone, and a return already with the fleet means

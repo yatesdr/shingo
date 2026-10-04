@@ -163,7 +163,7 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 		// armed: its legs fill the slots, and the claim resolved here is the
 		// outgoing style's, which would judge the incoming spare wrong. The
 		// changeover's own start and cancel reconcile the spots.
-		if claim.KeepStaged && process.TargetStyleID == nil {
+		if spotNode(claim) != "" && process.TargetStyleID == nil {
 			e.keepStagedFloor(node, runtime, claim)
 		}
 		e.sweepNodeLevel(node, runtime, claim)

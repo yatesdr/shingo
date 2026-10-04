@@ -214,25 +214,11 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 	return action
 }
 
-// changeoverDispatch builds a node's changeover choreography, and it is the ONE
-// place the planner reads keep_staged.
-//
-// A keep-staged to-claim's spare stands on its inbound staging, so its supply
-// is the swap without the fetch-to-staging prefix, released by the shared
-// "ready" wait: the two-robot supply tail, or the single-robot order B with no
-// stage order in front of it. The choreography still follows the from-claim's
-// mode, as every changeover does; a keep-staged to-claim reached from a mode
-// with no short shape (sequential, press-index) gets that mode's full
-// changeover, and keep-staged itself is refused on those modes at config.
+// changeoverDispatch builds a node's changeover choreography: the from-claim's
+// mode decides it, for every to-claim. A keep-staged to-claim needs nothing of
+// its own here: its builders fetch the incoming carrier from its spot
+// (refillPickup), whatever the mode.
 func changeoverDispatch(fromClaim, toClaim *processes.NodeClaim, tooling bool, inactive, active string) ChangeoverDispatch {
-	if toClaim.KeepStaged {
-		switch fromClaim.SwapMode {
-		case protocol.SwapModeTwoRobot:
-			return buildTwoRobotChangeoverFromSpare(fromClaim, toClaim)
-		case protocol.SwapModeSingleRobot:
-			return buildSingleRobotChangeoverFromSpare(fromClaim, toClaim, tooling)
-		}
-	}
 	if tooling {
 		return BuildEvacuateChangeoverSteps(fromClaim, toClaim, inactive, active)
 	}

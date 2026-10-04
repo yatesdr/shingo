@@ -9,13 +9,39 @@ import (
 
 // keep_staged_spot.go — what a keep-staged spot needs, decided in one place.
 //
-// A keep-staged claim keeps one spare on its inbound staging node (the spot),
-// and its swap starts from it. Nothing about the spot is stored on Edge: what
+// A keep-staged claim keeps one spare on its spot, and its swap fetches its
+// carrier from there instead of from the inbound source (refillPickup), in
+// every swap mode. Nothing about the spot is stored on Edge: what
 // stands there is Core's answer, read in the occupancy call the request already
 // makes, and what is coming is Edge's own order rows. Every arrival at the spot
 // is a plain order — a retrieve from the inbound source, or nothing — and a
 // wrong spare leaves by a plain move back to that source. Those are the only
 // orders this file makes, and reconcileSpot is the only thing that decides them.
+
+// spotNode is the claim's keep-staged spot, blank when it keeps no spare.
+func spotNode(c *processes.NodeClaim) string {
+	if c == nil || !c.KeepStaged {
+		return ""
+	}
+	return c.InboundStaging
+}
+
+// carriesEmpty reports whether the claim's carrier travels empty: a produce
+// line is fed empties to fill, a consume line fulls of its part. It is the one
+// thing about the role the spot asks, so what the spare carries is taken from
+// the claim in one place: an unstamped empty, or the claim's part.
+func carriesEmpty(c *processes.NodeClaim) bool {
+	return c.Role == protocol.ClaimRoleProduce
+}
+
+// spareCarries is what the right spare on a claim's spot carries: blank for an
+// empty, the claim's part for a full.
+func spareCarries(c *processes.NodeClaim) string {
+	if carriesEmpty(c) {
+		return ""
+	}
+	return c.PayloadCode
+}
 
 // spotRead is Core's answer for a keep-staged claim's spot.
 type spotRead struct {
@@ -64,7 +90,7 @@ func (p spotPlan) orders() int {
 // A bare spot with a swap about to consume gives two refills: one the swap
 // eats, one to stand after it. Core's dropoff gate serialises their landings.
 func reconcileSpot(c *processes.NodeClaim, present, right bool, coming, consumes, target int) spotPlan {
-	if c == nil || c.InboundStaging == "" {
+	if spotNode(c) == "" {
 		return spotPlan{}
 	}
 	plan := spotPlan{returnSpare: present && (!right || target == 0)}
@@ -79,16 +105,11 @@ func reconcileSpot(c *processes.NodeClaim, present, right bool, coming, consumes
 }
 
 // spareIsRight reports whether the bin on the spot suits the claim as far as
-// Edge can tell: an unstamped, non-bare carrier for produce; a carrier stamped
-// with the claim's part for consume.
+// Edge can tell: a carrier that is there and carries what the claim's spare
+// carries (spareCarries). Edge holds no carrier rule; Core judges bin type at
+// the pickup.
 func spareIsRight(c *processes.NodeClaim, read spotRead) bool {
-	if !read.occupied || read.bare {
-		return false
-	}
-	if c.Role == protocol.ClaimRoleProduce {
-		return read.payload == ""
-	}
-	return read.payload != "" && read.payload == c.PayloadCode
+	return read.occupied && !read.bare && read.payload == spareCarries(c)
 }
 
 // isSpotRefill reports whether a line's order is a keep-staged refill: a plain
@@ -96,8 +117,8 @@ func spareIsRight(c *processes.NodeClaim, read spotRead) bool {
 // work the cell, so it neither refuses the line's REQUEST nor silences the
 // level keeper; everything else bound anywhere near the line still does.
 func isSpotRefill(o *domain.Order, c *processes.NodeClaim) bool {
-	return c != nil && c.KeepStaged && c.InboundStaging != "" &&
-		o.DeliveryNode == c.InboundStaging && o.SourceNode != c.CoreNodeName &&
+	spot := spotNode(c)
+	return spot != "" && o.DeliveryNode == spot && o.SourceNode != c.CoreNodeName &&
 		(isRetrieve(o.OrderType) || o.OrderType == protocol.OrderTypeMove)
 }
 
@@ -125,7 +146,7 @@ func spotComing(rows []domain.Order, c *processes.NodeClaim) int {
 		if !isSpotRefill(o, c) || ordermgr.IsTerminal(o.Status) {
 			continue
 		}
-		if o.PayloadCode == c.PayloadCode && o.RetrieveEmpty == (c.Role == protocol.ClaimRoleProduce) {
+		if o.PayloadCode == c.PayloadCode && o.RetrieveEmpty == carriesEmpty(c) {
 			n++
 		}
 	}
@@ -157,43 +178,52 @@ func (r spotRead) lessLeaving(leaving int) spotRead {
 	return r
 }
 
-// planSpotForConsume adds the spot's orders to a consume plan. The swap from the
-// spare lifts it; the node-empty downgrade lifts it too when it stands there
-// right, by sourcing the simple delivery from the spot instead of the market.
-// Pure: the read and the count come from the caller.
-func planSpotForConsume(plan *ConsumePlan, c *processes.NodeClaim, read spotRead, coming int) {
-	if plan == nil || c == nil || !c.KeepStaged || !read.known {
-		return
+// planRequestSpot is what a request decides for the spot, for both roles.
+// swap is a plan whose swap lifts the spare (its carrier comes from the spot,
+// refillPickup); bareLine is a plan that brings one bin to a bare line, which
+// takes the spare instead of a market bin when it stands there right. fromSpot
+// says the bare-line delivery is sourced from the spot. Pure: the read and the
+// count come from the caller.
+func planRequestSpot(c *processes.NodeClaim, read spotRead, coming int, swap, bareLine bool) (plan spotPlan, fromSpot bool) {
+	if spotNode(c) == "" || !read.known {
+		return spotPlan{}, false
 	}
 	right := spareIsRight(c, read)
 	consumes := 0
 	switch {
-	case plan.Dispatch != nil:
+	case swap:
 		consumes = 1
-	case plan.SimpleMove && plan.DowngradedFromSwapMode != "" && right:
-		plan.SimpleSource = c.InboundStaging
-		consumes = 1
+	case bareLine && right:
+		fromSpot, consumes = true, 1
 	}
-	plan.Spot = reconcileSpot(c, read.occupied, right, coming, consumes, 1)
+	return reconcileSpot(c, read.occupied, right, coming, consumes, 1), fromSpot
 }
 
-// planSpotForProduce adds the spot's orders to a produce plan: the swap from the
-// spare lifts it, and so does the empty-line delivery when the spare stands
-// there right, as on the consume side.
-func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, read spotRead, coming int) {
-	if plan == nil || c == nil || !c.KeepStaged || !read.known || (plan.Dispatch == nil && !plan.SimpleMove) {
+// planSpotForConsume adds the spot's orders to a consume plan. The node-empty
+// downgrade's delivery is the bare-line one.
+func planSpotForConsume(plan *ConsumePlan, c *processes.NodeClaim, read spotRead, coming int) {
+	if plan == nil {
 		return
 	}
-	right := spareIsRight(c, read)
-	consumes := 1
-	if plan.SimpleMove {
-		consumes = 0
-		if right {
-			plan.SimpleSource, plan.FromSpot = c.InboundStaging, true
-			consumes = 1
-		}
+	spot, fromSpot := planRequestSpot(c, read, coming, plan.Dispatch != nil,
+		plan.SimpleMove && plan.DowngradedFromSwapMode != "")
+	if fromSpot {
+		plan.SimpleSource = spotNode(c)
 	}
-	plan.Spot = reconcileSpot(c, read.occupied, right, coming, consumes, 1)
+	plan.Spot = spot
+}
+
+// planSpotForProduce adds the spot's orders to a produce plan, as on the
+// consume side.
+func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, read spotRead, coming int) {
+	if plan == nil {
+		return
+	}
+	spot, fromSpot := planRequestSpot(c, read, coming, plan.Dispatch != nil, plan.SimpleMove)
+	if fromSpot {
+		plan.SimpleSource, plan.FromSpot = spotNode(c), true
+	}
+	plan.Spot = spot
 }
 
 // applySpotPlan creates the spot's orders: the return move first, so the spot
@@ -207,11 +237,11 @@ func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, read spotRead
 // request or the level keeper's floor — re-reads the spot and asks again.
 func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, plan spotPlan, read spotRead, origin ordermgr.Origin) {
 	if plan.returnSpare {
-		e.returnSpare(node, c.InboundStaging, c.InboundSource, read.payload, origin)
+		e.returnSpare(node, spotNode(c), c.InboundSource, read.payload, origin)
 	}
 	e.refillSpot(node, c, plan.refills, origin)
 	if plan.orders() > 0 {
-		e.logFn("keep-staged: node %s spot %s: return=%v refills=%d", node.Name, c.InboundStaging,
+		e.logFn("keep-staged: node %s spot %s: return=%v refills=%d", node.Name, spotNode(c),
 			plan.returnSpare, plan.refills)
 	}
 }
@@ -227,25 +257,26 @@ func (e *Engine) returnSpare(node *processes.Node, spot, source, carried string,
 }
 
 // refillSpot sends n plain retrieves from the claim's inbound source to its
-// spot: retrieve-empty for a produce claim, a full of the claim's part for a
-// consume claim. Attributed to the claim's line and auto-confirmed.
+// spot, for what the claim's carrier carries (carriesEmpty). Attributed to the
+// claim's line and auto-confirmed.
 func (e *Engine) refillSpot(node *processes.Node, c *processes.NodeClaim, n int, origin ordermgr.Origin) {
 	nodeID := node.ID
 	for i := 0; i < n; i++ {
-		if _, err := e.orderMgr.CreateRetrieveOrder(&nodeID, c.Role == protocol.ClaimRoleProduce, 1,
-			c.InboundStaging, c.InboundSource, "", "standard", c.PayloadCode, true, false, origin); err != nil {
-			e.logFn("keep-staged: node %s: refill %d/%d for %s: %v", node.Name, i+1, n, c.InboundStaging, err)
+		if _, err := e.orderMgr.CreateRetrieveOrder(&nodeID, carriesEmpty(c), 1,
+			spotNode(c), c.InboundSource, "", "standard", c.PayloadCode, true, false, origin); err != nil {
+			e.logFn("keep-staged: node %s: refill %d/%d for %s: %v", node.Name, i+1, n, spotNode(c), err)
 		}
 	}
 }
 
 // spotOf reads the spot's row out of a node-bins answer.
 func spotOf(c *processes.NodeClaim, rows []NodeBinInfo, nodeKnown func(string) bool) spotRead {
-	if c == nil || !c.KeepStaged || c.InboundStaging == "" || !nodeKnown(c.InboundStaging) {
+	spot := spotNode(c)
+	if spot == "" || !nodeKnown(spot) {
 		return spotRead{}
 	}
 	for _, b := range rows {
-		if b.NodeName == c.InboundStaging {
+		if b.NodeName == spot {
 			return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare}
 		}
 	}

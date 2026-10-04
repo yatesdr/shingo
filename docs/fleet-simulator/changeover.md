@@ -18,7 +18,7 @@ Run this domain's tests:
 
 ```bash
 cd shingo-edge
-go test -v -run "TestChangeover|TestWiring_ABCycling|TestSequential|TestCanAcceptOrders|TestDiffStyleClaims|TestBuildSwapChangeover|TestBuildEvacuateChangeover|TestBuildKeepStaged|TestBuildStage|TestBuildRelease|TestBuildRestore" ./engine/ -timeout 60s
+go test -v -run "TestChangeover|TestWiring_ABCycling|TestSequential|TestCanAcceptOrders|TestDiffStyleClaims|TestBuildSwapChangeover|TestBuildEvacuateChangeover|TestBuildStage|TestBuildRelease|TestBuildRestore" ./engine/ -timeout 60s
 ```
 
 The TC-61…TC-108 case ledger that used to sit below this line was a test report —

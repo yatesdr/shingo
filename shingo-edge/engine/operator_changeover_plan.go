@@ -50,6 +50,11 @@ type changeoverPlan struct {
 	// tooling is the marked-press decoration, computed from the ORIGINAL claim
 	// lists rather than from the diffs. See changeover_tooling.go.
 	tooling toolingChangeover
+	// fromClaims and toClaims are those original lists: the outgoing (active)
+	// style's claims and the incoming style's. The keep-staged spots are decided
+	// from them, not from the diffs, because a press's fan-out replaces its claim
+	// with per-position claims that keep no spot.
+	fromClaims, toClaims []processes.NodeClaim
 }
 
 // planChangeover assembles all data needed for a changeover without writing anything.
@@ -240,6 +245,8 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 
 		unresolvedParticipants: unresolved,
 		tooling:                tooling,
+		fromClaims:             fromClaims,
+		toClaims:               toClaims,
 	}, nil
 }
 

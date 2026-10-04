@@ -107,6 +107,14 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 
 	if toClaim.InboundStaging != "" {
 		steps := BuildStageSteps(toClaim)
+		// Nothing to stage: the incoming carrier is the spare already standing on
+		// inbound staging (a keep-staged claim naming the same node as both). The
+		// changeover's own leg collects it from there; a retrieve to the line
+		// would put a second bin on it.
+		if steps == nil && spotNode(toClaim) == toClaim.InboundStaging {
+			return nil, fmt.Errorf("node %s: its incoming bin is the spare kept on %s — there is nothing to stage",
+				ctx.node.Name, toClaim.InboundStaging)
+		}
 		if steps != nil {
 			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, toClaim.CoreNodeName, steps,
 				e.changeoverOrigin(ctx.changeover.ID))

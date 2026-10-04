@@ -262,7 +262,7 @@ func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, 
 	if claim.IsLoaderNode() {
 		bare = false
 	}
-	spotKnown := claim.KeepStaged && spot.known && planSpot != nil
+	spotKnown := spotNode(claim) != "" && spot.known && planSpot != nil
 	if !spotKnown && !bare {
 		return nil
 	}
@@ -272,7 +272,7 @@ func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, 
 		return fmt.Errorf("node %s: cannot tell what is on its way to it (%w) — the next request will re-ask", node.Name, err)
 	}
 	if spotKnown {
-		leaving := spotLeaving(rows, claim.InboundStaging, claim.CoreNodeName)
+		leaving := spotLeaving(rows, spotNode(claim), claim.CoreNodeName)
 		planSpot(spot.lessLeaving(leaving), spotComing(rows, claim))
 	}
 	if !bare {
