@@ -35,7 +35,28 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	if err != nil {
 		return nil, err
 	}
+	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true})
+}
 
+// produceAsk is how the two buttons onto a produce line differ. Everything else
+// about them, from the occupancy read to the orders, is one path, so a line
+// with no bin, a press with a bare paired position and a keep-staged spot get
+// the same answer whichever button was pressed.
+type produceAsk struct {
+	// trigger is the episode's trigger for a request that finalizes.
+	trigger string
+	// finalizes is the produce request: it finalizes the filled bin a swap takes
+	// away, so the guards about the parts are its own. The press's live part
+	// (guardCatidMismatch) must be the style's, and a swap needs parts counted.
+	// The empty-bin request asks for an empty whatever is counted and whatever
+	// part the press reports, and joins the cell's episode as an operator's ask.
+	finalizes bool
+}
+
+// produceRequest is the one door onto a produce line's plan. The guards that
+// are about sending a robot to the line run for both buttons; the guards that
+// are about the parts run only for the request that finalizes (produceAsk).
+func (e *Engine) produceRequest(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, ask produceAsk) (*NodeOrderResult, error) {
 	// A2 (hop 2026-07-23): refuse outgoing-style relief while a changeover is
 	// armed on this process — don't let a produce swap race the cutover.
 	if err := e.guardStyleTransition(node, claim); err != nil {
@@ -44,8 +65,10 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	// A5 (hop 2026-07-23): refuse outgoing-style relief when the press's live
 	// CATID says the wrong part is physically on it — the ground-truth sibling
 	// of the changeover guard above.
-	if err := e.guardCatidMismatch(node, claim); err != nil {
-		return nil, err
+	if ask.finalizes {
+		if err := e.guardCatidMismatch(node, claim); err != nil {
+			return nil, err
+		}
 	}
 
 	// The partial-empty prime reads two things and then writes: what is
@@ -82,10 +105,10 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	if err != nil {
 		return nil, err
 	}
-	// THE COUNT IS THIS REQUEST'S QUESTION. It finalizes the filled bin a swap
-	// takes away, so a swap with no parts counted is refused. Only a swap: an
-	// empty to a bare line and a press's primes take nothing away.
-	if plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
+	// THE COUNT IS THE FINALIZING REQUEST'S QUESTION. It finalizes the filled bin
+	// a swap takes away, so a swap with no parts counted is refused. Only a swap:
+	// an empty to a bare line and a press's primes take nothing away.
+	if ask.finalizes && plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
 	if err := e.planProduceRows(node, runtime, claim, plan, spot); err != nil {
@@ -131,14 +154,19 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	// this cell's circle rather than opening a row each. Splitting a supply
 	// episode out for the primes-only round would re-create exactly the
 	// two-rows-for-one-cell shape that change removed. expected_orders comes
-	// from ProducePlan.OrderCount, which counts the primes.
+	// from ProducePlan.OrderCount, which counts the primes, for both buttons.
 	//
 	// A produce node's level runs the OTHER WAY: it fills toward capacity
 	// rather than draining toward a reorder point, so "needs attention" is a
 	// HIGH reading. The episode still means one thing — this process needs
 	// material moved, in this direction — which is why direction is part of the
 	// episode key and not a separate kind.
-	origin := e.openEpisodeForProduce(node, runtime, claim, plan, trigger)
+	var origin ordermgr.Origin
+	if ask.finalizes {
+		origin = e.openEpisodeForProduce(node, runtime, claim, plan, ask.trigger)
+	} else {
+		origin = e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, plan.OrderCount())
+	}
 
 	result, err := e.applyProducePlan(node, runtime, claim, plan, origin)
 	if err != nil {
@@ -227,96 +255,6 @@ func (e *PrimeInFlightError) Error() string {
 // than a fault. The handler keys on the behaviour, not on the concrete type,
 // so a second advisory refusal later needs no handler change.
 func (e *PrimeInFlightError) Advisory() bool { return true }
-
-// primeBarePressIndexPositions is the partial-empty prime for callers that do
-// NOT go through BuildProducePlan — today that is RequestEmptyBin, which
-// reaches BuildSwapDispatch directly.
-//
-// Returns (primes, suppressed, err). suppressed=true means this round minted
-// the primes and the caller must NOT build a swap; suppressed=false with a nil
-// error means the cell is whole and the caller carries on as before. A
-// suppressed round can still carry an error — the no-inbound-source refusal and
-// the advisory PrimeInFlightError both mean "no swap this round" too.
-//
-// WHY THIS IS A SECOND IMPLEMENTATION AND NOT A CALL INTO BuildProducePlan:
-// that function is a pure planner over a (node, runtime, claim) triple and its
-// UOP guard refuses a cell with nothing counted, which is every cell at
-// Springfield — the counter tag is not wired, so RemainingUOPCached reads 0
-// forever. Routing REQUEST EMPTY BIN through it would trade a missing guard for
-// a guaranteed refusal. The predicate below is the same one, lifted out of it;
-// the two must not drift, which is what TestRequestEmptyBin_PrimesBarePosition
-// and produce_swap_test.go's prime cases pin from either side.
-//
-// The lock, both reads, and the create sit inside one critical section for the
-// same reason the produce path does it: a double-tap must not fire two empties
-// at one bare position.
-func (e *Engine) primeBarePressIndexPositions(
-	node *processes.Node, claim *processes.NodeClaim, origin ordermgr.Origin,
-) (primes []*orders.Order, suppressed bool, err error) {
-	if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
-		return nil, false, nil
-	}
-	mu := e.primeNodeLock(claim)
-	mu.Lock()
-	defer mu.Unlock()
-
-	occ, _, _ := e.claimOccupancy(claim) // a press is never keep-staged or single-robot
-	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
-	// A BARE HEAD IS A DIFFERENT SHAPE and not this function's to answer: with
-	// nothing on the press there is nothing to index forward, and the consume
-	// side's node-empty downgrade owns that case. Matching BuildProducePlan's
-	// precondition exactly keeps the two from disagreeing about which shape
-	// they each handle.
-	if !isOccupied(occupancy, claim.CoreNodeName) {
-		return nil, false, nil
-	}
-	primedPositions, perr := e.pairedPositionsAlreadyPrimed(node, claim)
-	if perr != nil {
-		return nil, false, perr
-	}
-	var bare, needsPrime []string
-	for _, pos := range claim.ExtensionPositions() {
-		if isOccupied(occupancy, pos) {
-			continue
-		}
-		bare = append(bare, pos)
-		if !primedPositions[pos] {
-			needsPrime = append(needsPrime, pos)
-		}
-	}
-	if len(bare) == 0 {
-		return nil, false, nil
-	}
-	// SUPPRESSED FROM HERE DOWN, on every arm. A position that is physically
-	// bare cannot be indexed from whether or not the empty filling it is
-	// already on its way, so the swap stays suppressed for as long as the
-	// position reads empty and only the duplicate ORDER is skipped. Releasing
-	// the swap on the second tap of a double-tap would hand it exactly the
-	// un-sourceable leg this exists to prevent.
-	if len(needsPrime) == 0 {
-		return nil, true, &PrimeInFlightError{NodeName: node.Name}
-	}
-	if claim.InboundSource == "" {
-		return nil, true, fmt.Errorf("node %s has no inbound source configured", node.Name)
-	}
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
-	nodeID := node.ID
-	for _, pos := range needsPrime {
-		po, cerr := e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
-			pos, claim.InboundSource, "", "standard", claim.PayloadCode,
-			autoConfirm, false, origin)
-		if cerr != nil {
-			// Partial success is still suppression: whatever was created is on
-			// its way, and minting a swap on top of a half-primed cell is the
-			// original bug with fewer steps.
-			return primes, true, fmt.Errorf("prime %s: %w", pos, cerr)
-		}
-		primes = append(primes, po)
-	}
-	log.Printf("[request-empty] node %s: head occupied, paired %v bare — priming from %s, no swap this round",
-		node.Name, needsPrime, claim.InboundSource)
-	return primes, true, nil
-}
 
 // primeNodeLock returns the per-cell prime mutex, creating it on first use.
 // Keyed by the claim's CORE node name so every process_node row that shares

@@ -32,6 +32,22 @@ type NodeOrderResult struct {
 	ProcessNodeID int64                `json:"process_node_id"`
 }
 
+// primary is the order a caller that reports one order names: the plain order,
+// the first leg of a swap, or the first prime of a primes-only round.
+func (r *NodeOrderResult) primary() *storeorders.Order {
+	switch {
+	case r == nil:
+		return nil
+	case r.Order != nil:
+		return r.Order
+	case r.OrderA != nil:
+		return r.OrderA
+	case len(r.PrimeOrders) > 0:
+		return r.PrimeOrders[0]
+	}
+	return nil
+}
+
 // RequestNodeMaterial is the OPERATOR entry point for the supply direction.
 //
 // The trigger matters to the demand episode and cannot be inferred here:

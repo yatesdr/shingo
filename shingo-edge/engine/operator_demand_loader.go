@@ -80,18 +80,15 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // not a cleared one.
 //
 // The press-index partial-empty prime creates outside this seam DELIBERATELY,
-// from TWO sites now: applyProducePlan (REQUEST SWAP) and
-// primeBarePressIndexPositions (REQUEST EMPTY BIN, added 2026-08-26 — the same
-// guard was missing on that door and a bare paired position minted a swap whose
-// index leg could never source). Both have the same delivery node: a press's
-// bare paired POSITION, never a loader window, so this seam's budget — one bin
-// per delivery node across a loader's window set — has nothing to say about
-// either. Both carry the same count->decide->create lock for the same never-2N
-// reason at their own grain: Engine.primeResv, keyed by the cell's core node,
-// around pairedPositionsAlreadyPrimed — and because the key is the CORE node
-// they serialise against each other, so an operator hitting one door while the
-// other is mid-prime cannot double-fire. The InboundSource they pull FROM may
-// well be a loader group; that is Core's resolver's business, not this budget's.
+// from one site: applyProducePlan, which REQUEST SWAP and REQUEST EMPTY BIN both
+// reach through produceRequest. Its delivery node is a press's bare paired
+// POSITION, never a loader window, so this seam's budget — one bin per delivery
+// node across a loader's window set — has nothing to say about it. It carries
+// its own count->decide->create lock for the same never-2N reason at its own
+// grain: Engine.primeResv, keyed by the cell's core node, around
+// pairedPositionsAlreadyPrimed, so a second press of either button while a prime
+// is being decided cannot double-fire. The InboundSource it pulls FROM may well
+// be a loader group; that is Core's resolver's business, not this budget's.
 //
 // A keep-staged refill (applySpotPlan, keep_staged_spot.go) creates outside this
 // seam for the same reason: its delivery node is a line's inbound staging spot,

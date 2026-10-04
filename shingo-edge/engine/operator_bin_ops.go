@@ -48,7 +48,12 @@ import (
 // and a produce cell's circle is empty in, fill, full out. Taking the role off
 // the claim collapses those two rows into the one episode that was always meant
 // to be there, and removes the parameter a caller could get wrong.
-func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.NodeClaim, remaining int) ordermgr.Origin {
+//
+// expected is the number of orders this press creates, the episode's
+// denominator: one for a loader's empty or full, the plan's own count for a
+// produce line's empty-bin request, which can be a swap of two legs or an empty
+// with a prime for each bare paired position.
+func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.NodeClaim, remaining, expected int) ordermgr.Origin {
 	// Discretionary means the operator asked while still above the reorder
 	// point — a pull they chose rather than one the level forced. Same
 	// predicate as the produce and station paths so the flag means one thing.
@@ -57,7 +62,7 @@ func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.No
 	originID, _, err := e.openCellEpisode(
 		node.ProcessID, claim,
 		protocol.EpisodeTriggerOperator,
-		1, // one press, one order
+		expected,
 		remaining,
 		discretionary,
 	)
@@ -107,11 +112,11 @@ func (e *Engine) changeoverLoadOrigin(node *processes.Node, claim *processes.Nod
 // RequestEmptyBin is at its statement budget: main extracted it down to the
 // limit and retired its funlen exclusion in the same commit that this addition
 // met at the merge. The two lookups were always one question.
-func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeClaim, cachedUOP int) ordermgr.Origin {
+func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeClaim, cachedUOP, expected int) ordermgr.Origin {
 	if o := e.changeoverLoadOrigin(node, claim); o.ID != "" {
 		return o
 	}
-	return e.operatorRequestOrigin(node, claim, cachedUOP)
+	return e.operatorRequestOrigin(node, claim, cachedUOP, expected)
 }
 
 // loadablePayloads returns the payload codes an operator may load or request at
@@ -790,11 +795,12 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 }
 
 // RequestEmptyBin delivers an empty bin to a produce node. Manual_swap and
-// simple modes issue a single retrieve order; multi-step modes (single_robot,
-// two_robot, two_robot_press_index, sequential) reuse the swap dispatch so
-// the robot choreography is identical to a Finalize swap — empties move
-// through the same multi-stop trip a full bin would. Returns the primary
-// order; the second leg (R2) is tracked on the runtime row.
+// simple modes issue a single retrieve order; the swap modes (single_robot,
+// two_robot, two_robot_press_index, sequential) plan and apply exactly what the
+// produce request would, without its guards about the parts, so the robot
+// choreography is the produce request's. Returns the primary order (the plain
+// empty, the first swap leg, or the first prime); a second leg is tracked on
+// the runtime row.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -809,8 +815,6 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
-
-	reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached)
 
 	// Payload handling splits by mode:
 	//
@@ -830,28 +834,21 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	//     empty, which on a loader spanning several carrier types can be the
 	//     wrong container.
 	//
-	//   - simple / multi-step (press swap) nodes: the empty rides the same robot
-	//     choreography as the part it precedes, so a payload is still required.
+	//   - a swap-mode line: the empty is the claim's, planned and created by the
+	//     produce request's own path, which reads the claim and not this
+	//     argument. The code is neither required nor checked there: a check of
+	//     an argument nothing reads refuses requests for no reason.
 	//
-	// Validation and routing are ONE decision, asked once: a loader validates
-	// loosely and routes to the per-loader reservation seam — the same seam the
-	// demand and threshold paths use — while every other mode validates strictly
-	// and routes to the swap seam. They were two consecutive branches on the same
-	// predicate, which read as though a claim could answer them differently.
+	//   - a legacy line with no swap mode: one retrieve that carries the code,
+	//     so it is required and checked against the loadable set.
 	if claim.IsLoaderNode() {
 		if payloadCode != "" && !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
 			return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 		}
+		reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, 1)
 		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
 	}
-
-	if payloadCode == "" {
-		return nil, fmt.Errorf("no payload code specified")
-	}
-	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
-		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
-	}
-	return e.requestEmptyForSwapModes(nodeID, node, runtime, claim, payloadCode, reqOrigin)
+	return e.requestEmptyForSwapModes(nodeID, node, runtime, claim, payloadCode)
 }
 
 // requestEmptyAtManualSwapLoader is RequestEmptyBin's manual_swap arm, lifted out
@@ -933,21 +930,34 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 	}
 }
 
-// requestEmptyForSwapModes is RequestEmptyBin's non-manual_swap arm: the simple and
-// multi-step (press swap) modes, where the empty rides the same robot choreography
-// as the part it precedes.
+// requestEmptyForSwapModes is RequestEmptyBin's non-manual_swap arm: a line with
+// a swap mode, and the legacy line with none.
 //
 // Split from the manual_swap arm above for the funlen ceiling — see that function
 // for why the arm moved rather than being shaved. The two are genuinely different
 // mechanisms that shared only a name: one reserves through the per-loader never-2N
-// seam, the other guards a single physical slot and builds a swap dispatch.
+// seam, the other guards a single physical slot and plans what the line needs.
+//
+// A SWAP-MODE LINE GOES THROUGH THE PRODUCE REQUEST'S OWN PATH (produceRequest),
+// with the guards about the parts left out: this button asks for an empty
+// whatever is counted. So the line is read before anything is decided, as the
+// produce request reads it: a bare line gets the plain empty, a press with a bare
+// paired position gets its primes and no swap, a keep-staged spot gets its refill
+// and return, a bin left on single-robot outbound staging is moved first, and a
+// position still being worked refuses. Before, this button built the swap blind,
+// and on a bare line that swap's lift held at Core for good.
+//
+// The press's paired-position prime had a second copy here for that reason, and
+// it is the case this button exists for: an operator reaches for it when LOOKING
+// at an empty position. Springfield PLN_004, 2026-08-26: the full swap minted
+// here with the paired position bare, its index leg parked in sourcing, and the
+// pair was cancelled eight times without one completed cycle.
 func (e *Engine) requestEmptyForSwapModes(
 	nodeID int64,
 	node *processes.Node,
 	runtime *processes.RuntimeState,
 	claim *processes.NodeClaim,
 	payloadCode string,
-	reqOrigin ordermgr.Origin,
 ) (*orders.Order, error) {
 	// Anti-spam for simple / multi-step modes (manual_swap is handled above via
 	// the reservation seam): one physical slot, so reject a second request while a
@@ -966,104 +976,15 @@ func (e *Engine) requestEmptyForSwapModes(
 		return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
 	}
 
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
-
-	// ── THE SECOND DOOR ONTO A PRESS-INDEX SWAP ─────────────────────────
-	//
-	// The partial-empty prime lives in BuildProducePlan, which is REQUEST SWAP's
-	// planner. This is REQUEST EMPTY BIN, and it reaches BuildSwapDispatch
-	// directly — so a cell whose on-deck position is bare minted the full
-	// two-leg swap here with no guard at all, and the index leg opened with a
-	// pickup at a position holding nothing. Core cannot reserve a bin that is
-	// not there: the leg parks in `sourcing` forever, the release gate refuses
-	// its sibling for a collision that will never clear, and the operator
-	// cancels a pair that never had a chance. Springfield PLN_004, cancelled
-	// eight times on 2026-08-26 without one completed cycle.
-	//
-	// This is the button an operator reaches for when they are LOOKING at an
-	// empty position, so it is the door that most needs the guard, not the one
-	// that could go without it.
-	//
-	// Same reads, same lock, same order shape as the produce path — see
-	// primeBarePressIndexPositions. A prime is a legitimate answer to "request
-	// an empty bin": it puts an empty carrier exactly where the operator can
-	// see one is missing, and the next press runs the swap against a full cell.
-	if primes, suppressed, perr := e.primeBarePressIndexPositions(node, claim, reqOrigin); suppressed {
-		if perr != nil {
-			return nil, perr
-		}
-		return primes[0], nil
-	} else if perr != nil {
-		return nil, perr
-	}
-
-	// Multi-step swap modes reuse the same dispatch the consume side uses on
-	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
-	// choreography for empty and full bins; the order shape doesn't depend
-	// on contents.
-	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
-	// requested style's. Blank override = today's behaviour.
-	dispatch, err := BuildSwapDispatch(node, withResidentEvacDest(claim, e.residentEvacDest(runtime, claim)))
-	if err != nil {
-		return nil, err
-	}
-	if dispatch != nil {
-		if dispatch.RequiresActiveSwapGuard {
-			if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
-				return nil, err
-			}
-		}
-		// NO DRY-SOURCE GUARD ON THIS DOOR, and not by omission. The consume door
-		// refuses to arm a pair into a payload Core has no bin of
-		// (guardSourceKnownDry); this door asks for an EMPTY carrier, and the
-		// preflight counts bins of a payload — it cannot say whether empties
-		// exist. Guarded, this door would always let the request through, and a
-		// check that never refuses is a comment that runs.
-		// reqOrigin, not Origin{}. The episode was opened at the top of this
-		// method precisely so the orders it creates could name what caused
-		// them, and then the multi-step arm dropped it on the floor while the
-		// manual_swap arm four screens up carried it. Both legs of one swap
-		// belong to the operator's one request: an R2 that names no demand is
-		// an orphan by construction, and a service dig raised for it cannot
-		// look up who is collecting its target.
-		//
-		// Both uuids before either create, as at the consume door and for the
-		// same reason: minted inside the create, leg A went to Core unpaired.
-		uuidA, uuidB := ordermgr.NewOrderUUID(), ""
-		if dispatch.StepsB != nil {
-			uuidB = ordermgr.NewOrderUUID()
-		}
-		sibA, sibB := coreSiblings(dispatch.StepsA, dispatch.StepsB, uuidA, uuidB)
-		orderA, err := e.dispatchPairedLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, sibA, uuidA, reqOrigin)
+	if slices.Contains(protocol.ConfigurableSwapModes(), claim.SwapMode) {
+		res, err := e.produceRequest(node, runtime, claim, produceAsk{})
 		if err != nil {
 			return nil, err
 		}
-		var orderB *orders.Order
-		if dispatch.StepsB != nil {
-			orderB, err = e.dispatchPairedLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, sibB, uuidB, reqOrigin)
-			if err != nil {
-				return nil, err
-			}
-		}
-		var orderBID *int64
-		if orderB != nil {
-			orderBID = &orderB.ID
-		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
-			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-		}
-		if orderB != nil {
-			// Return-error on failure: see comment in
-			// operator_stations.go:LinkOrderSiblings call site.
-			if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
-				return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
-			}
-		}
-		return orderA, nil
+		return res.primary(), nil
 	}
 
-	// Simple mode: single retrieve (manual_swap returned above via the seam; the
-	// multi-step modes returned in the dispatch branch). Core queues if no empty
+	// A legacy line with no swap mode: a single retrieve. Core queues if no empty
 	// is immediately available.
 	//
 	// Source group is the loader's claim.InboundSource (the supermarket the
@@ -1072,6 +993,14 @@ func (e *Engine) requestEmptyForSwapModes(
 	// payload-matching empty bin from anywhere — including the empty-tote
 	// return area (Hopkinsville, 2026-05-14, Mission #51 pulled SMN_07
 	// instead of from Supermarket Area).
+	if payloadCode == "" {
+		return nil, fmt.Errorf("no payload code specified")
+	}
+	if !slices.Contains(e.loadablePayloads(node, claim), payloadCode) {
+		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, 1)
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
 		"standard", payloadCode, autoConfirm, false, reqOrigin,
@@ -1106,7 +1035,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 
 	// Same for a full-carrier request on the consume side: the press asking to
 	// be fed is cell demand, and it had no episode either.
-	reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
+	reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached, 1)
 
 	// Validate payload code against the loader's Core-owned payload set — same
 	// aggregate-first resolution as the produce side (see loadablePayloads), so a

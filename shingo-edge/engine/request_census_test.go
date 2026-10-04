@@ -216,18 +216,17 @@ func TestRequestCensus(t *testing.T) {
 		{produce, pi, doorProduce, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}, ""},
 
 		// The empty-bin request, pressed at a count of 0 as the station offers it.
-		{produce, sr, doorEmptyBin, lineBare, 0, censusResult{legs: 1, expected: 1},
-			"a swap whose lift holds at Core for good"},
-		{produce, sr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, expected: 1}, ""},
-		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{legs: 2, expected: 1},
+		{produce, sr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
+		{produce, sr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}, ""},
+		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{legs: 2, trips: 1, expected: 2},
 			"a swap whose removal Core skips; a bare line gets one plain empty"},
-		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, expected: 1}, ""},
-		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{legs: 1, expected: 1},
+		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}, ""},
+		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{legs: 1, trips: 1, expected: 1},
 			"a removal Core skips and no backfill: nothing is delivered"},
-		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, expected: 1}, ""},
-		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{legs: 2, trips: 1, expected: 1},
+		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}, ""},
+		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{legs: 2, trips: 1, expected: 2},
 			"a swap whose index leg holds for good at the bare paired position"},
-		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 1}, ""},
+		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}, ""},
 		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}, ""},
 	}
 	for _, r := range rows {

@@ -138,7 +138,11 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// 13 since applyProduceEmptyLine (operator_produce.go): an empty to a
 	// single-robot produce line Core reports bare. Censused; the line, not a
 	// loader window, so outside withLoaderBudget, under the same primeResv lock.
-	const want = 13
+	//
+	// 12 again since REQUEST EMPTY BIN goes through the produce request's own
+	// plan and apply: primeBarePressIndexPositions, its copy of the prime, is
+	// gone, and its primes are created by applyProducePlan, already counted.
+	const want = 12
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",
