@@ -159,6 +159,7 @@ var orderCreationSites = map[string]string{
 	"operator_quality_hold.go:ReleaseFromContainment":             "quality: release from containment (a creation, not a release door)",
 	"operator_quality_hold.go:SendBinToQualityHold":               "quality: send a bin to hold (a wait in front of a curtained pickup, S7)",
 	"operator_stations.go:applyConsumePlan":                       "consume REQUEST: the swap legs (the builders' waits)",
+	"operator_stations.go:createConsumePrimes":                    "consume REQUEST: a full to a press's bare paired position (no wait: a drop finishes)",
 	"release_commit.go:commitMaterial":                            "Material page RELEASE (door 3) and the position evac (door 4): a move created at the release",
 	"operator_window_pullback.go:PullFromMarket":                  "loader window: pull from market",
 	"wiring_status_changed.go:handleSequentialBackfill":           "sequential backfill B, minted on Order A's in_transit (no wait: a drop finishes, S7)",

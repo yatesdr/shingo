@@ -92,7 +92,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 
 	occ, spot, park := e.claimOccupancy(claim)
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
-	primedPositions, err := e.pairedPositionsAlreadyPrimed(node, claim)
+	inbound, err := e.pairedPositionsInbound(node, claim)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +101,26 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// requested style's. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
 
-	plan, err := BuildProducePlan(node, runtime, swapClaim, occupancy, primedPositions)
+	plan, err := BuildProducePlan(node, runtime, swapClaim, occupancy, inbound)
 	if err != nil {
 		return nil, err
 	}
 	// THE COUNT IS THE FINALIZING REQUEST'S QUESTION. It finalizes the filled bin
 	// a swap takes away, so a swap with no parts counted is refused. Only a swap:
-	// an empty to a bare line and a press's primes take nothing away.
+	// an empty to a bare line and a press's primes take nothing away. A cold press
+	// reads RemainingUOPCached == 0 (where the counter tag is not wired it reads 0
+	// always), and a cold press with a bare paired position is exactly the cell
+	// that needs priming.
+	//
+	// THE UNWIRED COUNTER HAS A SECOND READER, and this is the place a person
+	// looking at RemainingUOPCached will be standing. binDrainedAtCoreNode asks
+	// the same field whether a press position has been drained, and the
+	// reuse-compatible-bins shortcut skips a press-index swap when it says yes.
+	// At a press whose counter is not wired that predicate answers "drained" for
+	// every position. It gates nothing today (ReuseCompatibleBins has no plantspec
+	// key and no fixture sets it, so it takes an operator flipping the Edge
+	// column AND running a changeover), but enabling that flag before wiring the
+	// counter would skip swaps that need to happen. Wire the counter first.
 	if ask.finalizes && plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
@@ -115,23 +128,9 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		return nil, err
 	}
 	if plan.SuppressSwap {
-		if len(plan.PrimePairedPositions) == 0 {
-			// HOLD: every bare position already has an empty on the way. Refuse
-			// BEFORE the episode opens — an episode with expected_orders 0 is
-			// noise, and the operator needs a sentence, not a silent success.
-			//
-			// TYPED, because this refusal is the system working. Rendered as a
-			// red error it reads as a fault the operator has to do something
-			// about, and the only correct response is to wait. The type is what
-			// lets the station render it as a notice instead.
-			return nil, &PrimeInFlightError{NodeName: node.Name}
+		if err := e.guardPairedPrimes(node, runtime, claim, plan.PrimePairedPositions); err != nil {
+			return nil, err
 		}
-		dests := make([]string, 0, len(plan.PrimePairedPositions))
-		for _, p := range plan.PrimePairedPositions {
-			dests = append(dests, p.Dest)
-		}
-		log.Printf("[produce-swap] node %s: head occupied, paired %v bare — priming from %s, no swap this round",
-			node.Name, dests, claim.InboundSource)
 	}
 
 	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
@@ -263,8 +262,9 @@ func (e *Engine) createProducePrimes(node *processes.Node, claim *processes.Node
 	return out, nil
 }
 
-// PrimeInFlightError says a press-index swap was refused because the empty it
-// needs is already on its way. It is ADVISORY: nothing is wrong, nothing needs
+// PrimeInFlightError says a press-index swap was refused because the bin it
+// needs at a paired position is already on its way: an empty to a produce
+// press, a full to a consume press. It is ADVISORY: nothing is wrong, nothing needs
 // fixing, and the next press of the button after the bin lands will run the
 // swap.
 //
@@ -276,7 +276,7 @@ type PrimeInFlightError struct {
 }
 
 func (e *PrimeInFlightError) Error() string {
-	return fmt.Sprintf("node %s: an empty bin is already inbound to the index position — "+
+	return fmt.Sprintf("node %s: a bin is already inbound to the index position — "+
 		"the swap will run once it lands", e.NodeName)
 }
 
@@ -299,30 +299,59 @@ func (e *Engine) primeNodeLock(claim *processes.NodeClaim) *sync.Mutex {
 	return m.(*sync.Mutex)
 }
 
-// pairedPositionsAlreadyPrimed reports which of the claim's paired positions
-// already have a non-terminal empty inbound, so a second request while the
-// first prime is still travelling adds nothing. Reuses the same in-flight
-// count RequestEmptyBin uses for its one-slot anti-spam guard, scoped by
-// delivery node for the same reason.
+// pairedPositionsInbound reports which of the claim's paired positions already
+// have a bin on its way: any non-terminal order bound for the position, an
+// empty to a produce press or a full to a consume press, a prime or a swap leg
+// that backfills it. A second request while the first prime is still travelling
+// adds nothing. Scoped by delivery node, as RequestEmptyBin's in-flight count
+// is, so every process node sharing the position is counted. Press claims only:
+// one Edge read per paired position, no Core call.
 //
 // FAILS CLOSED. A read error means we do not know what is inbound, and
 // priming on that is how a position collects a carrier it has no room for; a
 // refused request is a click the operator can repeat.
-func (e *Engine) pairedPositionsAlreadyPrimed(node *processes.Node, claim *processes.NodeClaim) (map[string]bool, error) {
+func (e *Engine) pairedPositionsInbound(node *processes.Node, claim *processes.NodeClaim) (map[string]bool, error) {
 	if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return nil, nil
 	}
-	primed := map[string]bool{}
+	inbound := map[string]bool{}
 	for _, pos := range claim.ExtensionPositions() {
-		n, err := e.countActiveOrdersAtNode(pos, func(o orders.Order) bool { return o.RetrieveEmpty })
+		n, err := e.countActiveOrdersAtNode(pos, func(orders.Order) bool { return true })
 		if err != nil {
-			return nil, fmt.Errorf("node %s: check inbound empties at paired position %s: %w", node.Name, pos, err)
+			return nil, fmt.Errorf("node %s: check bins inbound to paired position %s: %w", node.Name, pos, err)
 		}
 		if n > 0 {
-			primed[pos] = true
+			inbound[pos] = true
 		}
 	}
-	return primed, nil
+	return inbound, nil
+}
+
+// guardPairedPrimes gates a plan that primes a press's bare paired positions
+// while its line holds a bin, for both roles. It is the gate the swap it
+// replaces had: no prime while a swap is still working the cell, because that
+// swap's own legs are what is about to fill the position, and a second bin
+// there is one no robot can set down. Then, with no prime left to send, every
+// bare position already has a bin on its way, and the request is held with a
+// notice rather than refused as a fault.
+func (e *Engine) guardPairedPrimes(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, primes []SimplePrime) error {
+	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+		return err
+	}
+	if len(primes) == 0 {
+		// HOLD. Refuse BEFORE the episode opens: an episode expecting no
+		// orders is noise, and the operator needs a sentence, not a silent
+		// success. TYPED, because this refusal is the system working; the type
+		// is what lets the station render it as a notice instead of a fault.
+		return &PrimeInFlightError{NodeName: node.Name}
+	}
+	dests := make([]string, 0, len(primes))
+	for _, p := range primes {
+		dests = append(dests, p.Dest)
+	}
+	log.Printf("[request] node %s: line occupied, paired %v bare — priming from %s, no swap this round",
+		node.Name, dests, claim.InboundSource)
+	return nil
 }
 
 // occupancyKnownNodesOnly re-reads an "empty" telemetry answer as occupied

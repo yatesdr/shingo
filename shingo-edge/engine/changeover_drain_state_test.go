@@ -13,7 +13,7 @@ import (
 //
 // THE CASE THIS EXISTS FOR. A press whose counter tag is not wired reads
 // RemainingUOPCached == 0 forever — that is Springfield today, and
-// produce_plan.go's partial-empty prime branch is ordered around it. Asked as a
+// the produce request's count refusal is ordered around it. Asked as a
 // bool, "is the bin drained" answered yes at every position of such a press,
 // and the reuse-compatible-bins shortcut would have skipped every same-part
 // swap there. The per-claim opt-in was the only thing keeping that theoretical;

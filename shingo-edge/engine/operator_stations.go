@@ -210,12 +210,16 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// position named wrong would read bare on every request.
 	occ, spot, park := e.claimOccupancy(claim)
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
+	inbound, err := e.pairedPositionsInbound(node, claim)
+	if err != nil {
+		return nil, err
+	}
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
 
-	plan, err := BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, autoConfirm)
+	plan, err := BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, inbound, autoConfirm)
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +253,12 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 				node.Name, dests, claim.CoreNodeName, plan.DowngradedFromSwapMode)
 		} else {
 			log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, plan.DowngradedFromSwapMode)
+		}
+	}
+
+	if plan.SuppressSwap {
+		if err := e.guardPairedPrimes(node, runtime, claim, plan.PrimePairedPositions); err != nil {
+			return nil, err
 		}
 	}
 
@@ -338,6 +348,13 @@ func (e *Engine) openEpisodeForConsume(
 func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origin orders.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
+	if plan.SuppressSwap {
+		primes, err := e.createConsumePrimes(nodeID, plan, origin)
+		if err != nil {
+			return nil, err
+		}
+		return &NodeOrderResult{PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+	}
 	if plan.SimpleMove {
 		order, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
 		if err != nil {
@@ -350,23 +367,12 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		if err != nil {
 			return nil, err
 		}
-		// Press-index empty-station primes: attributed to the head node
-		// for ownership/audit, NOT tracked in runtime slots (those belong
-		// to the head's serial-order machinery for swap cycles). Failure
-		// of any single prime is logged and surfaced — the head order is
-		// already created and we don't roll it back, but we do return the
-		// error so the operator sees that priming was incomplete.
-		var primes []*storeorders.Order
-		for _, p := range plan.PrimePairedPositions {
-			po, perr := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
-			if perr != nil {
-				return nil, fmt.Errorf("prime %s: %w", p.Dest, perr)
-			}
-			refreshed, perr := e.refreshOrderStation(po.ID)
-			if perr != nil {
-				return nil, perr
-			}
-			primes = append(primes, refreshed)
+		// The head order is already created and is not rolled back if a prime
+		// fails; the error is returned so the operator sees that priming was
+		// incomplete.
+		primes, err := e.createConsumePrimes(nodeID, plan, origin)
+		if err != nil {
+			return nil, err
 		}
 		return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
@@ -434,6 +440,26 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
 	}
 	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+}
+
+// createConsumePrimes creates one delivery of a full per bare paired position
+// of a press: attributed to the head node for ownership and audit, NOT tracked
+// in runtime slots (those belong to the head's serial-order machinery for swap
+// cycles), as the produce side's primes are.
+func (e *Engine) createConsumePrimes(nodeID int64, plan *ConsumePlan, origin orders.Origin) ([]*storeorders.Order, error) {
+	var primes []*storeorders.Order
+	for _, p := range plan.PrimePairedPositions {
+		po, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
+		if err != nil {
+			return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
+		}
+		refreshed, err := e.refreshOrderStation(po.ID)
+		if err != nil {
+			return nil, err
+		}
+		primes = append(primes, refreshed)
+	}
+	return primes, nil
 }
 
 // refreshOrderStation re-reads an order after the runtime-orders write

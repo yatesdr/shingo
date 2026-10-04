@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +29,8 @@ import (
 // orders its demand episode expects.
 
 const (
-	censusDeck = "KS-DECK"
+	censusDeck  = "KS-DECK"
+	censusDeck2 = "KS-DECK-2" // the back position of a three-position press
 
 	doorMaterial = "material request"
 	doorProduce  = "produce request"
@@ -46,6 +48,7 @@ type censusResult struct {
 	legs     int    // swap legs (complex orders)
 	toHead   int    // plain orders bound for the line's own position
 	toDeck   int    // plain orders bound for the press's paired position
+	toDeck2  int    // plain orders bound for a three-position press's back position
 	trips    int    // Core round trips the request made
 	expected int    // the demand episode's expected orders; 0 when none opened
 	refused  string // the refusal, "" when the request went through
@@ -79,6 +82,13 @@ func censusStub(t *testing.T, calls *atomic.Int32, occupied ...string) *httptest
 // given, and a press's paired position when the mode has one.
 func seedCensusCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, uop int) (*Engine, *store.DB, int64) {
 	t.Helper()
+	return seedCensusPress(t, role, mode, uop, false)
+}
+
+// seedCensusPress is seedCensusCell with a three-position press when threePos
+// is set: a second paired position behind the first.
+func seedCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, uop int, threePos bool) (*Engine, *store.DB, int64) {
+	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	eng.logFn = func(string, ...any) {}
@@ -100,6 +110,9 @@ func seedCensusCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 		in.OutboundStaging = "KS-OUT"
 	case protocol.SwapModeTwoRobotPressIndex:
 		in.PairedCoreNode = censusDeck
+		if threePos {
+			in.SecondPairedCoreNode = censusDeck2
+		}
 	}
 	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "claim")
@@ -112,7 +125,6 @@ func seedCensusCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 // runCensusRow seeds the line, presses the door and reads what it left.
 func runCensusRow(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, door, line string, uop int) censusResult {
 	t.Helper()
-	eng, db, nodeID := seedCensusCell(t, role, mode, uop)
 	var occupied []string
 	switch line {
 	case lineOccupied:
@@ -120,6 +132,15 @@ func runCensusRow(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode,
 	case lineDeckBare:
 		occupied = []string{ksLine}
 	}
+	return runCensusPress(t, role, mode, door, uop, false, occupied...)
+}
+
+// runCensusPress seeds the line (a three-position press when threePos is set)
+// with a bin on exactly the positions named occupied, presses the door and
+// reads what it left.
+func runCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, door string, uop int, threePos bool, occupied ...string) censusResult {
+	t.Helper()
+	eng, db, nodeID := seedCensusPress(t, role, mode, uop, threePos)
 	var calls atomic.Int32
 	eng.coreClient = NewCoreClient(censusStub(t, &calls, occupied...).URL)
 
@@ -146,6 +167,8 @@ func runCensusRow(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode,
 			got.toHead++
 		case o.DeliveryNode == censusDeck:
 			got.toDeck++
+		case o.DeliveryNode == censusDeck2:
+			got.toDeck2++
 		default:
 			t.Errorf("an order the census does not place: %d %s %s->%s", o.ID, o.OrderType, o.SourceNode, o.DeliveryNode)
 		}
@@ -192,7 +215,7 @@ func TestRequestCensus(t *testing.T) {
 		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
 		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
 		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}},
-		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{legs: 2, trips: 2, expected: 2}},
+		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{toDeck: 1, trips: 1, expected: 1}},
 
 		// The produce request.
 		{produce, sr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
@@ -240,11 +263,23 @@ func TestRequestCensus(t *testing.T) {
 	}
 }
 
-// A bare line is handled the same for both roles in every mode: the material
-// request, the produce request and the empty-bin request make the same row.
+// A bare position is handled the same for both roles: the material request, the
+// produce request and the empty-bin request make the same row in every mode on
+// a line with no bin, and on a press at every occupancy of the line and each
+// paired position, two positions and three. Any bare position gets one plain
+// delivery and no swap is built while one is bare; only what the bin carries
+// differs, a full for consume and an empty for produce.
+//
+// THE ONE DIFFERENCE LEFT is the dry-source check on a swap pair: a consume
+// request asks Core whether the part has any stock before it arms the two legs,
+// and a produce request cannot ask that about empties. So on a press with every
+// position full the consume row makes one more Core call, and only there.
 func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 	t.Parallel()
 	for _, mode := range protocol.ConfigurableSwapModes() {
+		if mode == protocol.SwapModeTwoRobotPressIndex {
+			continue // every occupancy, below
+		}
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			consume := runCensusRow(t, protocol.ClaimRoleConsume, mode, doorMaterial, lineBare, 30)
@@ -254,6 +289,59 @@ func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 				t.Errorf("material %+v, produce %+v, empty-bin %+v: want one row", consume, produce, emptyBin)
 			}
 		})
+	}
+	pi := protocol.SwapModeTwoRobotPressIndex
+	for _, threePos := range []bool{false, true} {
+		positions := []string{ksLine, censusDeck}
+		if threePos {
+			positions = append(positions, censusDeck2)
+		}
+		// Every subset of the positions holds a bin: bit i set is position i
+		// occupied.
+		for mask := 0; mask < 1<<len(positions); mask++ {
+			var occupied, bare []string
+			for i, pos := range positions {
+				if mask&(1<<i) != 0 {
+					occupied = append(occupied, pos)
+				} else {
+					bare = append(bare, pos)
+				}
+			}
+			name := fmt.Sprintf("press %d positions/bare %v", len(positions), bare)
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				consume := runCensusPress(t, protocol.ClaimRoleConsume, pi, doorMaterial, 30, threePos, occupied...)
+				produce := runCensusPress(t, protocol.ClaimRoleProduce, pi, doorProduce, 30, threePos, occupied...)
+				emptyBin := runCensusPress(t, protocol.ClaimRoleProduce, pi, doorEmptyBin, 0, threePos, occupied...)
+				if len(bare) == 0 {
+					// The pair's dry-source check: see above.
+					consume.trips--
+				}
+				if produce != consume || emptyBin != consume {
+					t.Errorf("material %+v, produce %+v, empty-bin %+v: want one row", consume, produce, emptyBin)
+				}
+				var want censusResult
+				switch {
+				case len(bare) == 0:
+					want = censusResult{legs: 2, trips: 1, expected: 2}
+				default:
+					want = censusResult{trips: 1, expected: len(bare)}
+					for _, pos := range bare {
+						switch pos {
+						case ksLine:
+							want.toHead = 1
+						case censusDeck:
+							want.toDeck = 1
+						case censusDeck2:
+							want.toDeck2 = 1
+						}
+					}
+				}
+				if consume != want {
+					t.Errorf("got %+v, want %+v: one delivery to each bare position and no swap while one is bare", consume, want)
+				}
+			})
+		}
 	}
 }
 

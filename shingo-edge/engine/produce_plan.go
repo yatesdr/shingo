@@ -78,16 +78,16 @@ func (p *ProducePlan) OrderCount() int {
 //
 // occupancy maps core node names to their telemetry-reported occupied state
 // (from engine.claimOccupancy / FetchNodeBins), same source and same
-// missing-entry-means-occupied reading as the consume side. primedPositions
-// marks paired positions that already have a non-terminal empty inbound, so a
-// second request while the first prime is still travelling adds nothing.
+// missing-entry-means-occupied reading as the consume side. inbound marks
+// paired positions that already have a bin on its way, so a second request
+// while the first prime is still travelling adds nothing.
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
 //
 // The plan carries no manifest: the departing bin is finalized at the
 // operator's RELEASE (finalizeDepartingProduce), not at the call for parts.
-func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, occupancy map[string]bool, primedPositions map[string]bool) (*ProducePlan, error) {
+func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, occupancy, inbound map[string]bool) (*ProducePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -95,76 +95,22 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, fmt.Errorf("node %s is not a produce node", node.Name)
 	}
 
-	// PARTIAL-EMPTY PRIME.
-	//
-	// A press-index cell with the head occupied and a paired position bare
-	// mints a swap whose index leg has nothing to source: R2 is sent to move a
-	// bin that is not there, and the cycle wedges. Prime the bare position(s)
-	// instead and mint no swap; the next request runs the swap against a full
-	// cell.
-	//
-	// The produce request refuses a SWAP with no parts counted, and only a swap:
-	// a cold press reads RemainingUOPCached == 0 — at Springfield the counter tag
-	// is not wired at all, so it reads 0 always — and a cold press with a bare
-	// paired position is exactly the cell that needs priming. A primes-only plan
-	// has nothing to finalize, so the refusal does not reach it.
-	//
-	// THE UNWIRED COUNTER HAS A SECOND READER, and this is the place a person
-	// looking at RemainingUOPCached will be standing. binDrainedAtCoreNode asks
-	// the same field whether a press position has been drained, and the
-	// reuse-compatible-bins shortcut skips a press-index swap when it says yes.
-	// At a press whose counter is not wired that predicate answers "drained" for
-	// every position. It gates nothing at Springfield today — ReuseCompatibleBins
-	// has no plantspec key and no fixture sets it, so it takes an operator
-	// flipping the Edge column AND running a changeover — but enabling that flag
-	// before wiring the counter would skip swaps that need to happen. Wire the
-	// counter first.
-	// primedPositions gates the ORDER, not the suppression. A position that is
-	// still physically bare cannot be indexed from, whether or not the empty
-	// filling it is already on its way — so the swap stays suppressed for as
-	// long as the position reads empty, and only the duplicate order is
-	// skipped. Suppressing the order and releasing the swap together would
-	// hand the second click of a double-tap exactly the un-sourceable swap
-	// this branch exists to prevent.
-	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex && isOccupied(occupancy, claim.CoreNodeName) {
-		var bare, needsPrime []string
-		for _, pos := range claim.ExtensionPositions() {
-			if isOccupied(occupancy, pos) {
-				continue
-			}
-			bare = append(bare, pos)
-			if !primedPositions[pos] {
-				needsPrime = append(needsPrime, pos)
-			}
-		}
-		if len(bare) > 0 {
-			if len(needsPrime) > 0 && claim.InboundSource == "" {
-				return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
-			}
-			plan := &ProducePlan{SuppressSwap: true}
-			for _, pos := range needsPrime {
-				plan.PrimePairedPositions = append(plan.PrimePairedPositions,
-					SimplePrime{Source: claim.InboundSource, Dest: pos})
-			}
-			// len(PrimePairedPositions) == 0 here is the HOLD: every bare
-			// position already has an empty inbound, so this round mints
-			// nothing and waits for it to land. The caller turns that into an
-			// operator-legible refusal.
-			return plan, nil
-		}
-	}
-
-	// AN EMPTY LINE GETS AN EMPTY, in every mode: the bare line's plain delivery
-	// (planBareLine), as the consume side's node-empty downgrade gives a full, and
-	// an empty for each bare paired position of a press. Every swap opens by
-	// lifting the line's bin, and with none there it does nothing useful: a
-	// single-robot lift holds at Core for good, a two-robot or sequential removal
-	// is skipped by Core and a sequential backfill is never made, and a press's
-	// index leg holds at a bare paired position. The caller gates this plan with
-	// positionWorkedBy.
-	bare, err := planBareLine(node, claim, occupancy)
+	// A BARE POSITION GETS A BIN, in every mode and for both roles
+	// (planBareLine): a line with no bin gets an empty, as the consume side's
+	// gets a full, plus one for each bare paired position of a press; a press
+	// whose line holds a bin and whose paired position is bare gets that
+	// position's empty and no swap. Every swap opens by lifting the line's bin,
+	// and with none there it does nothing useful: a single-robot lift holds at
+	// Core for good, a two-robot or sequential removal is skipped by Core and a
+	// sequential backfill is never made, and a press's index leg holds at a bare
+	// paired position. The caller gates this plan (positionWorkedBy,
+	// guardPairedPrimes).
+	bare, err := planBareLine(node, claim, occupancy, inbound)
 	if err != nil {
 		return nil, err
+	}
+	if bare != nil && bare.lineHeld() {
+		return &ProducePlan{SuppressSwap: true, PrimePairedPositions: bare.primes}, nil
 	}
 	if bare != nil {
 		return &ProducePlan{SimpleMove: true, SimpleSource: bare.source, PrimePairedPositions: bare.primes}, nil

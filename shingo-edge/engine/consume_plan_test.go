@@ -41,7 +41,7 @@ func TestBuildConsumePlan_SimpleMode(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := consumeFixtures("simple")
 
-	plan, err := BuildConsumePlan(node, runtime, claim, 1, occMap(claim.CoreNodeName, true), true)
+	plan, err := BuildConsumePlan(node, runtime, claim, 1, occMap(claim.CoreNodeName, true), nil, true)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBuildConsumePlan_NodeEmptyDowngrade(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := consumeFixtures("two_robot")
 
-	plan, err := BuildConsumePlan(node, runtime, claim, 2, occMap(claim.CoreNodeName, false), false)
+	plan, err := BuildConsumePlan(node, runtime, claim, 2, occMap(claim.CoreNodeName, false), nil, false)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestBuildConsumePlan_PressIndexAllEmptyPrimes(t *testing.T) {
 		claim.PairedCoreNode:       false,
 		claim.SecondPairedCoreNode: false,
 	}
-	plan, err := BuildConsumePlan(node, runtime, claim, 1, occ, false)
+	plan, err := BuildConsumePlan(node, runtime, claim, 1, occ, nil, false)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestBuildConsumePlan_PressIndexHeadEmptyPairedFull(t *testing.T) {
 		claim.PairedCoreNode:       true,
 		claim.SecondPairedCoreNode: true,
 	}
-	plan, err := BuildConsumePlan(node, runtime, claim, 1, occ, false)
+	plan, err := BuildConsumePlan(node, runtime, claim, 1, occ, nil, false)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestBuildConsumePlan_TwoRobot_Occupied(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := consumeFixtures("two_robot")
 
-	plan, err := BuildConsumePlan(node, runtime, claim, 1, occMap(claim.CoreNodeName, true), false)
+	plan, err := BuildConsumePlan(node, runtime, claim, 1, occMap(claim.CoreNodeName, true), nil, false)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestBuildConsumePlan_Sequential(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := consumeFixtures("sequential")
 
-	plan, err := BuildConsumePlan(node, runtime, claim, 1, occMap(claim.CoreNodeName, true), false)
+	plan, err := BuildConsumePlan(node, runtime, claim, 1, occMap(claim.CoreNodeName, true), nil, false)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestBuildConsumePlan_QuantityFloor(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := consumeFixtures("simple")
 
-	plan, err := BuildConsumePlan(node, runtime, claim, 0, occMap(claim.CoreNodeName, true), false)
+	plan, err := BuildConsumePlan(node, runtime, claim, 0, occMap(claim.CoreNodeName, true), nil, false)
 	if err != nil {
 		t.Fatalf("BuildConsumePlan: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestBuildConsumePlan_PreconditionErrors(t *testing.T) {
 	node, runtime, claim := consumeFixtures("simple")
 
 	t.Run("nil_claim", func(t *testing.T) {
-		if _, err := BuildConsumePlan(node, runtime, nil, 1, occMap(claim.CoreNodeName, true), false); err == nil {
+		if _, err := BuildConsumePlan(node, runtime, nil, 1, occMap(claim.CoreNodeName, true), nil, false); err == nil {
 			t.Fatalf("expected error for nil claim")
 		}
 	})
@@ -213,7 +213,7 @@ func TestBuildConsumePlan_PreconditionErrors(t *testing.T) {
 	t.Run("wrong_role", func(t *testing.T) {
 		c := *claim
 		c.Role = protocol.ClaimRoleProduce
-		if _, err := BuildConsumePlan(node, runtime, &c, 1, occMap(claim.CoreNodeName, true), false); err == nil {
+		if _, err := BuildConsumePlan(node, runtime, &c, 1, occMap(claim.CoreNodeName, true), nil, false); err == nil {
 			t.Fatalf("expected error for non-consume role")
 		}
 	})
@@ -221,7 +221,7 @@ func TestBuildConsumePlan_PreconditionErrors(t *testing.T) {
 	t.Run("simple_missing_inbound_source", func(t *testing.T) {
 		c := *claim
 		c.InboundSource = ""
-		if _, err := BuildConsumePlan(node, runtime, &c, 1, occMap(claim.CoreNodeName, true), false); err == nil {
+		if _, err := BuildConsumePlan(node, runtime, &c, 1, occMap(claim.CoreNodeName, true), nil, false); err == nil {
 			t.Fatalf("expected error for missing inbound_source on simple mode")
 		}
 	})
@@ -230,7 +230,7 @@ func TestBuildConsumePlan_PreconditionErrors(t *testing.T) {
 		c := *claim
 		c.SwapMode = "two_robot"
 		c.InboundSource = ""
-		if _, err := BuildConsumePlan(node, runtime, &c, 1, occMap(claim.CoreNodeName, false), false); err == nil {
+		if _, err := BuildConsumePlan(node, runtime, &c, 1, occMap(claim.CoreNodeName, false), nil, false); err == nil {
 			t.Fatalf("expected error for missing inbound_source on node-empty downgrade")
 		}
 	})

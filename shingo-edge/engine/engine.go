@@ -188,9 +188,9 @@ type Engine struct {
 	loaderResv sync.Map
 
 	// primeResv serializes the count->decide->create sequence for the
-	// press-index partial-empty prime, so two concurrent produce requests on
-	// one cell cannot both read "nothing inbound" and both fire an empty at
-	// the same bare paired position. Keyed by the claim's CORE node name, not
+	// press-index partial-empty prime, so two concurrent requests on one cell
+	// cannot both read "nothing inbound" and both fire a bin at the same bare
+	// paired position. Keyed by the claim's CORE node name, not
 	// its process_node id: a shared core node carries many process_node rows
 	// for one physical cell, and the in-flight count that the lock protects is
 	// itself scoped by delivery node. map[coreNodeName]*sync.Mutex.
